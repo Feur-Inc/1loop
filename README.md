@@ -45,6 +45,20 @@ Les lectures et éditions sont limitées au workspace, y compris la résolution 
 
 Les conversations, projets et réglages sont conservés dans `~/.config/1loop/state.json`, hors du projet (un ancien `.1loop/state.json` est migré automatiquement). Les clés saisies restent en mémoire et doivent être renseignées à nouveau après redémarrage. Les jetons OAuth sont enregistrés dans `~/.config/1loop/openai-<profil>.json` (ou `openai.json` pour le compte historique) avec des permissions 0600 et renouvelés par 1loop. Aucune conversation Codex n’est créée. Les anciens historiques locaux sont conservés ; une nouvelle autorisation OAuth est nécessaire pour OpenAI.
 
+## Télécommande Android
+
+`android/` contient l'application Android native (Kotlin + Jetpack Compose) qui pilote 1loop depuis un téléphone : même style, même logo, même animation de lancement et même roue de travail que l'application de bureau.
+
+- 1loop sert ses conversations sur le réseau local : découverte en broadcast UDP (port 47100), API JSON et événements en direct (port 47101). Désactivable dans **Settings → Phone remote**, où l'on retire aussi les téléphones appairés.
+- Au premier contact, 1loop affiche sur l'ordinateur un code à six chiffres à saisir sur le téléphone. Seule l'empreinte du jeton est conservée ; sans jeton, aucune requête n'aboutit (cinq essais par code).
+- Ce que le téléphone envoie passe par les mêmes chemins que la fenêtre : la conversation s'ouvre et s'affiche sur l'ordinateur. Les approbations peuvent se donner sur l'un ou l'autre.
+- Le trafic circule en HTTP sur le réseau local : à réserver à un réseau de confiance.
+
+```bash
+cd android && ./gradlew assembleDebug   # JDK 17+, SDK Android (compileSdk 37)
+adb install -r app/build/outputs/apk/debug/app-debug.apk
+```
+
 ## Raccourcis
 
 - Entrée envoie le message ; pendant qu’une tâche tourne, il est mis en file d’attente et devient le tour suivant une fois la réponse terminée.

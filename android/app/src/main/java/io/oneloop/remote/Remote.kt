@@ -1,0 +1,361 @@
+package io.oneloop.remote
+
+import android.content.Context
+import android.os.Build
+import android.provider.Settings
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.mutableStateMapOf
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.setValue
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
+import org.json.JSONArray
+import org.json.JSONObject
+
+data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean)
+
+data class Item(
+    val kind: String, val text: String, val images: Int,
+    val tool: String, val verb: String, val target: String, val mono: Boolean,
+    val meta: String, val tone: String, val state: String,
+    val args: String, val diff: String, val millis: Long, val failed: String,
+) {
+    companion object {
+        fun from(o: JSONObject) = Item(
+            o.optString("kind"), o.optString("text"), o.optInt("images"),
+            o.optString("tool"), o.optString("verb"), o.optString("target"), o.optBoolean("mono"),
+            o.optString("meta"), o.optString("tone"), o.optString("state", "done"),
+            o.optString("args"), o.optString("diff"), o.optLong("millis"), o.optString("failed"),
+        )
+    }
+}
+
+data class Approval(val chat: String, val id: String, val title: String, val preview: String)
+
+data class Meta(
+    val chat: String, val title: String, val running: Boolean, val label: String, val mark: String,
+    val queue: List<String>, val steer: List<String>, val approval: Approval?,
+) {
+    companion object {
+        fun from(o: JSONObject) = Meta(
+            o.optString("chat"), o.optString("title"), o.optBoolean("running"),
+            o.optString("label"), o.optString("mark"), strings(o.optJSONArray("queue")), strings(o.optJSONArray("steer")),
+            o.optJSONObject("approval")?.let { Approval(it.optString("chat"), it.optString("id"), it.optString("title"), it.optString("preview")) },
+        )
+    }
+}
+
+private fun strings(array: JSONArray?) = (0 until (array?.length() ?: 0)).map { array!!.optString(it) }
+
+sealed interface Screen {
+    data object Launch : Screen
+    data object Servers : Screen
+    data class Pair(val server: Server, val pairing: String) : Screen
+    data object Chat : Screen
+}
+
+/**
+ * Everything the app shows. Network calls run on IO; state changes happen on
+ * the main thread, in the order the computer sent them.
+ */
+class RemoteApp(private val context: Context, private val scope: CoroutineScope) {
+    private val prefs = context.getSharedPreferences("1loop", Context.MODE_PRIVATE)
+
+    var screen by mutableStateOf<Screen>(Screen.Launch)
+    val servers = mutableStateListOf<Server>()
+    val online = mutableStateListOf<String>() // keys of the servers that answered the last scan
+    var scanning by mutableStateOf(false)
+    var problem by mutableStateOf<String?>(null)
+
+    var server by mutableStateOf<Server?>(null)
+    var connected by mutableStateOf(false)
+    val chats = mutableStateListOf<ChatSummary>()
+    var projects by mutableStateOf(listOf<String>())
+    var workspace by mutableStateOf("")
+    var model by mutableStateOf("")
+    var approvalMode by mutableStateOf("")
+    var current by mutableStateOf<String?>(null) // null: a new chat
+    val items = mutableStateListOf<Item>()
+    var meta by mutableStateOf<Meta?>(null)
+    val approvals = mutableStateMapOf<String, Approval>() // by chat
+    var busy by mutableStateOf(false)
+
+    private var events: Job? = null
+
+    init {
+        servers.addAll(saved())
+    }
+
+    // -- known computers --------------------------------------------------
+
+    private fun saved(): List<Server> = runCatching {
+        val array = JSONArray(prefs.getString("servers", "[]"))
+        (0 until array.length()).map { i ->
+            array.getJSONObject(i).let { Server(it.getString("name"), it.getString("host"), it.getInt("port"), it.optString("token")) }
+        }
+    }.getOrDefault(emptyList())
+
+    private fun store() {
+        val array = JSONArray()
+        servers.filter { it.paired }.forEach {
+            array.put(JSONObject().put("name", it.name).put("host", it.host).put("port", it.port).put("token", it.token))
+        }
+        prefs.edit().putString("servers", array.toString()).apply()
+    }
+
+    private fun upsert(server: Server) {
+        val i = servers.indexOfFirst { it.key == server.key || (it.name == server.name && it.port == server.port) }
+        if (i >= 0) servers[i] = server.copy(token = server.token.ifEmpty { servers[i].token }) else servers.add(server)
+        store()
+    }
+
+    fun forget(server: Server) {
+        servers.removeAll { it.key == server.key }
+        store()
+    }
+
+    /** After the launch animation: back to the last computer, or the list. */
+    fun started() {
+        val last = prefs.getString("last", null)
+        val known = servers.firstOrNull { it.key == last && it.paired }
+        if (known != null) connect(known) else {
+            screen = Screen.Servers
+            scan()
+        }
+    }
+
+    fun scan() {
+        if (scanning) return
+        scanning = true
+        scope.launch {
+            val found = runCatching { discover(context) }.getOrDefault(emptyList())
+            online.clear()
+            for (s in found) {
+                // A known computer keeps its token when its address changed.
+                val known = servers.firstOrNull { it.key == s.key || (it.name == s.name && it.port == s.port) }
+                upsert(s.copy(token = known?.token.orEmpty()))
+                online.add(s.key)
+            }
+            scanning = false
+        }
+    }
+
+    fun addManually(address: String) {
+        val text = address.trim().removePrefix("http://").trimEnd('/')
+        if (text.isEmpty()) return
+        val host = text.substringBefore(':')
+        val port = text.substringAfter(':', "").toIntOrNull() ?: DEFAULT_PORT
+        scope.launch {
+            problem = null
+            val probe = Server(host, host, port)
+            val info = runCatching { withContext(Dispatchers.IO) { Api(probe).get("/api/info") } }.getOrNull()
+            if (info == null) {
+                problem = "No 1loop answered at $host:$port."
+                return@launch
+            }
+            val server = probe.copy(name = info.optString("name", host))
+            upsert(server)
+            online.add(server.key)
+            choose(server)
+        }
+    }
+
+    // -- pairing -------------------------------------------------------------
+
+    fun choose(server: Server) {
+        problem = null
+        if (server.paired) connect(server) else pair(server)
+    }
+
+    private fun deviceName(): String =
+        Settings.Global.getString(context.contentResolver, "device_name") ?: "${Build.MANUFACTURER} ${Build.MODEL}"
+
+    fun pair(server: Server) {
+        scope.launch {
+            busy = true
+            try {
+                val reply = withContext(Dispatchers.IO) { Api(server).post("/api/pair", JSONObject().put("device", deviceName())) }
+                screen = Screen.Pair(server, reply.getString("pairing"))
+            } catch (e: Exception) {
+                problem = e.message
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    fun confirm(pair: Screen.Pair, code: String) {
+        scope.launch {
+            busy = true
+            problem = null
+            try {
+                val reply = withContext(Dispatchers.IO) {
+                    Api(pair.server).post("/api/pair/confirm", JSONObject().put("pairing", pair.pairing).put("code", code))
+                }
+                val server = pair.server.copy(token = reply.getString("token"))
+                upsert(server)
+                connect(server)
+            } catch (e: Exception) {
+                problem = e.message
+            } finally {
+                busy = false
+            }
+        }
+    }
+
+    // -- connection ----------------------------------------------------------
+
+    fun connect(target: Server) {
+        events?.cancel()
+        server = target
+        connected = false
+        chats.clear()
+        items.clear()
+        meta = null
+        current = null
+        approvals.clear()
+        prefs.edit().putString("last", target.key).apply()
+        screen = Screen.Chat
+        events = scope.launch {
+            var wait = 500L
+            while (true) {
+                try {
+                    Api(target).events(
+                        onOpen = {
+                            wait = 500L
+                            scope.launch { connected = true; refresh() }
+                        },
+                        onEvent = { name, data -> scope.launch { handle(name, data) } },
+                    )
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: ApiError) {
+                    if (e.status == 401) { // the computer removed this phone
+                        withContext(Dispatchers.Main) {
+                            forget(target)
+                            upsert(target.copy(token = ""))
+                            problem = "${target.name} no longer knows this phone. Pair it again."
+                            leave()
+                        }
+                        return@launch
+                    }
+                } catch (_: Exception) {
+                }
+                connected = false
+                delay(wait)
+                wait = (wait * 2).coerceAtMost(8000)
+            }
+        }
+    }
+
+    fun leave() {
+        events?.cancel()
+        events = null
+        connected = false
+        prefs.edit().remove("last").apply()
+        screen = Screen.Servers
+        scan()
+    }
+
+    private suspend fun refresh() {
+        val target = server ?: return
+        runCatching {
+            val state = withContext(Dispatchers.IO) { Api(target).get("/api/state") }
+            chats.clear()
+            chats.addAll(parseChats(state.optJSONArray("chats")))
+            projects = strings(state.optJSONArray("projects"))
+            workspace = state.optString("workspace")
+            model = state.optString("model")
+            approvalMode = state.optString("approvalMode")
+            if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull()?.id
+            current?.let { load(it) }
+        }
+    }
+
+    private fun parseChats(array: JSONArray?) = (0 until (array?.length() ?: 0)).map { i ->
+        array!!.getJSONObject(i).let { ChatSummary(it.getString("id"), it.optString("title"), it.optString("workspace"), it.optBoolean("running")) }
+    }
+
+    private suspend fun load(id: String) {
+        val target = server ?: return
+        val chat = runCatching { withContext(Dispatchers.IO) { Api(target).get("/api/chats/$id") } }.getOrNull() ?: return
+        if (current != id) return
+        val array = chat.optJSONArray("items")
+        items.clear()
+        items.addAll((0 until (array?.length() ?: 0)).map { Item.from(array!!.getJSONObject(it)) })
+        chat.optJSONObject("meta")?.let { applyMeta(Meta.from(it)) }
+    }
+
+    fun open(id: String?) {
+        current = id
+        items.clear()
+        meta = null
+        if (id != null) scope.launch { load(id) }
+    }
+
+    private fun applyMeta(m: Meta) {
+        if (m.approval != null) approvals[m.chat] = m.approval else approvals.remove(m.chat)
+        if (m.chat == current) meta = m
+    }
+
+    private fun handle(name: String, data: JSONObject) {
+        when (name) {
+            "chats" -> {
+                val list = parseChats(data.optJSONArray("chats"))
+                chats.clear()
+                chats.addAll(list)
+            }
+            "item" -> {
+                if (data.optString("chat") != current) return
+                val index = data.optInt("index")
+                val item = Item.from(data.getJSONObject("item"))
+                when {
+                    index < items.size -> items[index] = item
+                    index == items.size -> items.add(item)
+                    else -> current?.let { scope.launch { load(it) } } // missed some: reload
+                }
+            }
+            "meta" -> applyMeta(Meta.from(data))
+        }
+    }
+
+    // -- actions -------------------------------------------------------------
+
+    fun send(text: String, mode: String = "send", project: String? = null) {
+        val target = server ?: return
+        scope.launch {
+            problem = null
+            try {
+                val body = JSONObject().put("chat", current.orEmpty()).put("text", text).put("mode", mode)
+                    .put("workspace", project ?: workspace)
+                val reply = withContext(Dispatchers.IO) { Api(target).post("/api/send", body) }
+                val id = reply.optString("chat")
+                if (current == null && id.isNotEmpty()) open(id)
+            } catch (e: Exception) {
+                problem = e.message
+            }
+        }
+    }
+
+    fun stop() {
+        val target = server ?: return
+        val id = current ?: return
+        scope.launch { runCatching { withContext(Dispatchers.IO) { Api(target).post("/api/stop", JSONObject().put("chat", id)) } } }
+    }
+
+    fun answer(approval: Approval, allow: Boolean) {
+        val target = server ?: return
+        approvals.remove(approval.chat)
+        scope.launch {
+            runCatching {
+                withContext(Dispatchers.IO) { Api(target).post("/api/approve", JSONObject().put("id", approval.id).put("allow", allow)) }
+            }.onFailure { problem = it.message }
+        }
+    }
+}

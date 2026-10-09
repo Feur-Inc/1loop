@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 1loop runs on the user's own computer, reached by its local address:
+     plain HTTP on the local network (pairing tokens guard every request). -->
+<network-security-config>
+    <base-config cleartextTrafficPermitted="true" />
+</network-security-config>

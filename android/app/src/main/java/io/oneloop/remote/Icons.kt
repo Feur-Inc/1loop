@@ -1,0 +1,54 @@
+package io.oneloop.remote
+
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.graphics.vector.PathParser
+import androidx.compose.ui.unit.dp
+
+// The desktop's thin line icons (ui.go, lineIcon): the same 16 unit paths,
+// stroked at 1.5 with round ends. Rectangles are written as paths here.
+private fun lineIcon(name: String, vararg paths: Pair<String, Float>): ImageVector {
+    val builder = ImageVector.Builder(name, 24.dp, 24.dp, 16f, 16f)
+    for ((data, width) in paths) {
+        builder.addPath(
+            pathData = PathParser().parsePathString(data).toNodes(),
+            stroke = SolidColor(Color.White), strokeLineWidth = width,
+            strokeLineCap = StrokeCap.Round, strokeLineJoin = StrokeJoin.Round,
+        )
+    }
+    return builder.build()
+}
+
+private fun line(d: String, width: Float = 1.5f) = d to width
+
+object Icons {
+    val chevron = lineIcon("chevron", line("M4.5 6.5 8 10l3.5-3.5"))
+    val chevronRight = lineIcon("chevron-right", line("M6.5 4.5 10 8l-3.5 3.5"))
+    val check = lineIcon("check", line("M3.5 8.4 6.6 11.4 12.5 4.8"))
+    val close = lineIcon("close", line("M4.5 4.5l7 7M11.5 4.5l-7 7"))
+    val sidebar = lineIcon("sidebar", line("M4.5 3h7a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"), line("M6.5 3v10"))
+    val plus = lineIcon("plus", line("M8 3v10M3 8h10", 1.8f))
+    val copy = lineIcon("copy", line("M7.1 5.5h4.3a1.6 1.6 0 0 1 1.6 1.6v4.3a1.6 1.6 0 0 1-1.6 1.6H7.1a1.6 1.6 0 0 1-1.6-1.6V7.1a1.6 1.6 0 0 1 1.6-1.6z"),
+        line("M10.5 5.5V4.2c0-.7-.5-1.2-1.2-1.2H4.2C3.5 3 3 3.5 3 4.2v5.1c0 .7.5 1.2 1.2 1.2h1.3"))
+    val folder = lineIcon("folder", line("M2.5 5c0-.8.6-1.5 1.4-1.5h2.7l1.3 1.4h4.2c.8 0 1.4.6 1.4 1.4v4.9c0 .8-.6 1.3-1.4 1.3H3.9c-.8 0-1.4-.5-1.4-1.3z"))
+    val send = lineIcon("send", line("M8 13.2V2.9M3.5 7.4 8 2.9l4.5 4.5", 2f))
+    val shield = lineIcon("shield", line("M8 2.2l4.6 1.8v3.5c0 3-2 5.1-4.6 6.3-2.6-1.2-4.6-3.3-4.6-6.3V4z"))
+    val bolt = lineIcon("bolt", line("M8.9 1.8 3.7 9h4.1l-.7 5.2L12.3 7H8.2z"))
+    val terminal = lineIcon("terminal", line("M3.5 4.5 6.5 7.5 3.5 10.5M8 11.5h4.5"))
+    val document = lineIcon("document", line("M4 2.8h5l3 3v7.4H4z"), line("M9 2.8v3h3M6 8.6h4M6 10.9h4"))
+    val pencil = lineIcon("pencil", line("M3.2 12.8l.7-3 6.6-6.6 2.3 2.3-6.6 6.6zM9.2 4.5l2.3 2.3"))
+    val arrowTurn = lineIcon("arrow-turn", line("M4 3.5v3.7c0 1.1.9 2 2 2h6M9.6 6.8 12 9.2l-2.4 2.4"))
+    val compact = lineIcon("compact", line("M8 2.5v4M5.8 4.6 8 6.6l2.2-2M8 13.5v-4M5.8 11.4 8 9.4l2.2 2M3 8h10"))
+    val computer = lineIcon("computer", line("M3.5 3.5h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z"), line("M6 13.5h4"))
+    val refresh = lineIcon("refresh", line("M12.8 7.2A4.9 4.9 0 1 0 11.4 11"), line("M13 3.6v3.6H9.4"))
+
+    fun forTool(tool: String) = when (tool) {
+        "shell" -> terminal
+        "edit_file" -> pencil
+        "list_directory" -> folder
+        else -> document
+    }
+}

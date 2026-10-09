@@ -481,6 +481,7 @@ func copyChip(text func() string) *tapRow {
 func (u *desktopUI) addItem(chat *conversation, item chatItem) int {
 	chat.Items = append(chat.Items, item)
 	index := len(chat.Items) - 1
+	u.remote.itemChanged(chat, index)
 	if chat == u.current {
 		u.appendItem(chat, index)
 		u.relayoutColumn()
@@ -609,6 +610,7 @@ func (t *turn) render(force bool) {
 		return
 	}
 	t.lastParse = time.Now()
+	t.u.remote.itemChanged(t.chat, t.index)
 	if view, ok := t.u.liveView(t.chat, t.index).(*markdownView); ok {
 		view.ParseMarkdown(t.chat.Items[t.index].Text)
 		t.u.relayoutColumn()
@@ -618,6 +620,7 @@ func (t *turn) render(force bool) {
 // setRow changes a tool row's state, on screen too when it is shown.
 func (t *turn) setRow(index int, state string) {
 	t.states[index] = state
+	t.u.remote.itemChanged(t.chat, index)
 	if row, ok := t.u.liveView(t.chat, index).(*toolRow); ok {
 		row.update(t.chat.Items[index], state)
 	}
@@ -787,6 +790,7 @@ func (t *turn) showRun(o toolOutcome) {
 
 // applyActivity shows a turn's activity when its chat is on screen.
 func (u *desktopUI) applyActivity(t *turn) {
+	u.remote.metaChanged(t.chat)
 	if t.chat != u.current || t.mark == "" {
 		return
 	}

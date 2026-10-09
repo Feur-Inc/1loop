@@ -329,6 +329,9 @@ func (u *desktopUI) takeAttachments() []ImagePart {
 func (u *desktopUI) takeSteer(chat *conversation) []message {
 	out := chat.steer
 	chat.steer = nil
+	if len(out) > 0 {
+		u.remote.metaChanged(chat)
+	}
 	if len(out) > 0 && chat == u.current {
 		u.renderQueue()
 	}
@@ -341,6 +344,7 @@ func (u *desktopUI) takeNext(chat *conversation) (message, bool) {
 	}
 	next := chat.queue[0]
 	chat.queue = chat.queue[1:]
+	u.remote.metaChanged(chat)
 	if chat == u.current {
 		u.renderQueue()
 	}
@@ -403,6 +407,7 @@ func (u *desktopUI) clearQueue() {
 func (u *desktopUI) renderQueue() {
 	u.queueList.RemoveAll()
 	chat := u.current
+	u.remote.metaChanged(chat)
 	if chat == nil || len(chat.steer)+len(chat.queue) == 0 {
 		u.queueTray.Hide()
 		return

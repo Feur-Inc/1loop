@@ -29,6 +29,7 @@ import (
 )
 
 type conversation struct {
+	ID      string     `json:"id,omitempty"` // stable, for the phone remote
 	Title   string     `json:"title"`
 	Config  config     `json:"config"`
 	History []message  `json:"history"`
@@ -45,6 +46,9 @@ type chatRun struct {
 	cancel   context.CancelFunc
 	turn     *turn
 	approval *sheet
+	// The pending approval, so the phone remote can show and answer it.
+	approvalID, approvalTitle, approvalPreview string
+	answer                                     func(allow bool)
 }
 
 type desktopUI struct {
@@ -66,6 +70,9 @@ type desktopUI struct {
 	ctx              context.Context
 	shutdown         context.CancelFunc
 	modelLoad        int
+	remote           *remoteServer  // the phone remote, nil when off
+	remoteEnabled    bool           // see remote.go
+	devices          []pairedDevice // phones paired with the remote
 	modelsLoading    bool
 	chrome           bool
 
@@ -185,6 +192,7 @@ func runDesktop(backend *app, root string) {
 	u.renderChats()
 	u.refreshModels()
 	u.refreshContextRing()
+	u.startRemote()
 	u.window.Canvas().Focus(u.prompt)
 	// The launch sequence covers the first frames and only starts once the
 	// window is really on screen, otherwise it would play unseen.
@@ -262,6 +270,7 @@ func (u *desktopUI) shortcut(s fyne.Shortcut) bool {
 // release stops background work and saves, before closing or restarting.
 func (u *desktopUI) release() {
 	u.shutdown() // every run's context derives from it
+	u.remote.close()
 	u.mark.stop()
 	u.workMark.stop()
 	u.saveNow()
@@ -635,6 +644,7 @@ func (u *desktopUI) syncRun() {
 // runStarted marks a chat as working.
 func (u *desktopUI) runStarted(chat *conversation, run *chatRun) {
 	chat.run = run
+	u.remote.metaChanged(chat)
 	if chat == u.current {
 		u.syncRun()
 	}
@@ -646,6 +656,7 @@ func (u *desktopUI) runStarted(chat *conversation, run *chatRun) {
 func (u *desktopUI) runEnded(chat *conversation, ended string) {
 	run := chat.run
 	chat.run = nil
+	u.remote.metaChanged(chat)
 	if run != nil && run.approval != nil {
 		run.approval.dismiss()
 	}
@@ -737,23 +748,29 @@ func (u *desktopUI) steerNow() {
 	}
 }
 
-// ready checks that a message can be sent now.
+// ready checks that a message can be sent now, and says why not.
 func (u *desktopUI) ready() bool {
-	if u.modelsLoading {
-		u.notice("Models", "The models are still loading.")
+	if problem := u.notReady(); problem != "" {
+		u.notice("Not ready", problem)
 		return false
 	}
+	return true
+}
+
+// notReady is why a message cannot be sent now ("" when it can).
+func (u *desktopUI) notReady() string {
+	if u.modelsLoading {
+		return "The models are still loading."
+	}
 	if u.cfg.Model == "" {
-		u.notice("Connection", "Choose a connection and a model.")
-		return false
+		return "Choose a connection and a model."
 	}
 	root, err := resolveWorkspace(u.cfg.Workspace)
 	if err != nil {
-		u.notice("Workspace", err.Error())
-		return false
+		return err.Error()
 	}
 	u.cfg.Workspace = root
-	return true
+	return ""
 }
 
 // start sends a message in the open chat (a new one if none is open) and
@@ -775,7 +792,7 @@ func (u *desktopUI) start(m message) {
 		if len(title) == 0 {
 			title = []rune("[image]")
 		}
-		chat = &conversation{Title: string(title), Config: u.cfg}
+		chat = &conversation{ID: identifier()[:16], Title: string(title), Config: u.cfg}
 		u.chats = append([]*conversation{chat}, u.chats...)
 		u.current = chat
 	}
@@ -897,6 +914,8 @@ func (u *desktopUI) showApproval(chat *conversation, p map[string]any) {
 	forget := func() {
 		if chat.run != nil && chat.run.approval == s {
 			chat.run.approval = nil
+			chat.run.approvalID, chat.run.answer = "", nil
+			u.remote.metaChanged(chat)
 		}
 	}
 	answer := func(allow bool) {
@@ -921,6 +940,9 @@ func (u *desktopUI) showApproval(chat *conversation, p map[string]any) {
 	}, refuse, allow)
 	if chat.run != nil {
 		chat.run.approval = s
+		chat.run.approvalID, chat.run.approvalTitle, chat.run.approvalPreview = id, title, preview
+		chat.run.answer = answer
+		u.remote.metaChanged(chat)
 	}
 }
 
@@ -1019,6 +1041,8 @@ func field(caption string, input fyne.CanvasObject) fyne.CanvasObject {
 }
 
 type savedState struct {
+	RemoteEnabled    *bool           `json:"remoteEnabled,omitempty"`
+	Devices          []pairedDevice  `json:"devices,omitempty"`
 	Config           config          `json:"config"`
 	Chats            []*conversation `json:"chats"`
 	Projects         []string        `json:"projects"`
@@ -1041,7 +1065,8 @@ func (u *desktopUI) saveNow() {
 		u.saveTimer.Stop()
 		u.saveTimer = nil
 	}
-	state := savedState{u.cfg, u.chats, u.projects, u.connectionsList, u.userInstructions, u.approvalMode}
+	remote := u.remoteEnabled
+	state := savedState{&remote, u.devices, u.cfg, u.chats, u.projects, u.connectionsList, u.userInstructions, u.approvalMode}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err == nil {
 		err = os.MkdirAll(filepath.Dir(u.statePath), 0700)
@@ -1063,6 +1088,8 @@ func (u *desktopUI) saveNow() {
 }
 
 func (u *desktopUI) load() {
+	u.remoteEnabled = true // the remote is on until the user turns it off
+	defer u.remoteDefaults()
 	data, err := os.ReadFile(u.statePath)
 	if err != nil {
 		return
@@ -1071,6 +1098,10 @@ func (u *desktopUI) load() {
 	if json.Unmarshal(data, &state) != nil {
 		return
 	}
+	if state.RemoteEnabled != nil {
+		u.remoteEnabled = *state.RemoteEnabled
+	}
+	u.devices = state.Devices
 	if state.Config.Provider == "codex" {
 		state.Config.Provider = "openai"
 		state.Config.Model = ""

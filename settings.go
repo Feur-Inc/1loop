@@ -54,6 +54,8 @@ func (u *desktopUI) settings() {
 			body.Add(u.connectionSettings())
 		case "Instructions":
 			body.Add(u.instructionSettings())
+		case "Phone remote":
+			body.Add(u.remoteSettings())
 		}
 		for _, raw := range nav.Objects {
 			row := raw.(*tapRow)
@@ -61,7 +63,7 @@ func (u *desktopUI) settings() {
 		}
 		body.Refresh()
 	}
-	for _, page := range []string{"General", "Connections", "Instructions"} {
+	for _, page := range []string{"General", "Connections", "Instructions", "Phone remote"} {
 		page := page
 		nav.Add(newRow(page, nil, styleNav, func() { show(page) }))
 	}

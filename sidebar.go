@@ -316,6 +316,7 @@ func (u *desktopUI) confirm(title, text, verb string, run func()) {
 
 // renderChats redraws the project list and the current project's conversations.
 func (u *desktopUI) renderChats() {
+	u.remote.chatsChanged()
 	u.ensureProject(u.cfg.Workspace)
 	u.projectList.RemoveAll()
 	for _, p := range u.projects {

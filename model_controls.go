@@ -56,6 +56,8 @@ func (u *desktopUI) modelMenu() {
 			u.model.relayout()
 		}
 		u.save()
+		u.remote.settingsChanged()
+		u.remote.metaChanged(u.current)
 	})
 	var control fyne.CanvasObject = slider
 	if len(choice.Efforts) == 1 {
@@ -93,6 +95,7 @@ func (u *desktopUI) updateApprovalControl() {
 	if u.controls != nil {
 		u.controls.Refresh()
 	}
+	u.remote.settingsChanged()
 }
 
 func (u *desktopUI) approvalMenu() {

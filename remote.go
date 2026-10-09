@@ -23,6 +23,8 @@ package main
 //   POST /api/send       {chat,text,mode,workspace}  mode: send, queue or steer
 //   POST /api/stop       {chat}
 //   POST /api/approve    {id,allow}
+//   POST /api/model      {chat,label,effort}    model and reasoning effort
+//   POST /api/approval-mode {mode}              "approval" or "yolo"
 
 import (
 	"crypto/rand"
@@ -85,6 +87,7 @@ type remoteServer struct {
 	dirty     map[*conversation]map[int]bool
 	meta      map[*conversation]bool
 	chatsDirt bool
+	settings  bool
 	flushing  bool
 }
 
@@ -115,6 +118,8 @@ func (u *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/send", r.authorized(r.send))
 	mux.HandleFunc("POST /api/stop", r.authorized(r.stop))
 	mux.HandleFunc("POST /api/approve", r.authorized(r.approve))
+	mux.HandleFunc("POST /api/model", r.authorized(r.setModel))
+	mux.HandleFunc("POST /api/approval-mode", r.authorized(r.setApprovalMode))
 	r.http = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go r.http.Serve(ln)
 	if udp, err := net.ListenUDP("udp4", &net.UDPAddr{Port: remoteDiscoveryPort}); err == nil {
@@ -335,6 +340,11 @@ type remoteMeta struct {
 	Steer    []string        `json:"steer"`
 	Items    int             `json:"items"`
 	Approval *remoteApproval `json:"approval,omitempty"`
+	// The chat's model, by its label in the model list, and context use.
+	Model  string `json:"model"`
+	Effort string `json:"effort"`
+	Used   int    `json:"used"`
+	Window int    `json:"window"`
 }
 
 type remoteApproval struct {
@@ -384,7 +394,7 @@ func itemForPhone(chat *conversation, index int) remoteItem {
 	return out
 }
 
-func metaForPhone(chat *conversation) remoteMeta {
+func (u *desktopUI) metaForPhone(chat *conversation) remoteMeta {
 	m := remoteMeta{Chat: chat.ID, Title: chat.Title, Running: chat.run != nil, Items: len(chat.Items), Queue: []string{}, Steer: []string{}}
 	for _, q := range chat.queue {
 		m.Queue = append(m.Queue, q.Content)
@@ -392,7 +402,15 @@ func metaForPhone(chat *conversation) remoteMeta {
 	for _, s := range chat.steer {
 		m.Steer = append(m.Steer, s.Content)
 	}
+	m.Model, m.Effort = u.choiceLabel(chat.Config), chat.Config.Effort
+	m.Window = modelContextWindow(chat.Config)
+	for _, h := range chat.History {
+		m.Used = max(m.Used, h.Usage)
+	}
 	if run := chat.run; run != nil {
+		if run.turn.usage > 0 {
+			m.Used = run.turn.usage
+		}
 		m.Label, m.Mark = run.turn.label, run.turn.mark
 		if run.approvalID != "" {
 			m.Approval = &remoteApproval{Chat: chat.ID, ID: run.approvalID, Title: run.approvalTitle, Preview: run.approvalPreview}
@@ -412,13 +430,9 @@ func (r *remoteServer) state(w http.ResponseWriter, _ *http.Request) {
 		if r.u.current != nil {
 			current = r.u.current.ID
 		}
-		model := r.u.cfg.Model
-		if choice, ok := r.u.selectedChoice(); ok {
-			model = choice.Name
-		}
 		projects := append([]string{}, r.u.projects...)
 		out = map[string]any{"name": r.name, "projects": projects, "workspace": r.u.cfg.Workspace,
-			"chats": chats, "current": current, "model": model, "approvalMode": r.u.approvalMode}
+			"chats": chats, "current": current, "settings": r.u.settingsForPhone()}
 	})
 	writeJSON(w, http.StatusOK, out)
 }
@@ -434,7 +448,7 @@ func (r *remoteServer) chat(w http.ResponseWriter, req *http.Request) {
 		for i := range chat.Items {
 			items[i] = itemForPhone(chat, i)
 		}
-		out = map[string]any{"chat": chatSummary(chat), "items": items, "meta": metaForPhone(chat)}
+		out = map[string]any{"chat": chatSummary(chat), "items": items, "meta": r.u.metaForPhone(chat)}
 	})
 	if out == nil {
 		fail(w, http.StatusNotFound, "This chat no longer exists")
@@ -526,6 +540,14 @@ func (r *remoteServer) metaChanged(chat *conversation) {
 	r.schedule()
 }
 
+func (r *remoteServer) settingsChanged() {
+	if r == nil {
+		return
+	}
+	r.settings = true
+	r.schedule()
+}
+
 func (r *remoteServer) chatsChanged() {
 	if r == nil {
 		return
@@ -548,7 +570,7 @@ func (r *remoteServer) flush() {
 	listening := len(r.subs) > 0
 	r.mu.Unlock()
 	if !listening {
-		r.dirty, r.meta, r.chatsDirt = map[*conversation]map[int]bool{}, map[*conversation]bool{}, false
+		r.dirty, r.meta, r.chatsDirt, r.settings = map[*conversation]map[int]bool{}, map[*conversation]bool{}, false, false
 		return
 	}
 	if r.chatsDirt {
@@ -566,9 +588,12 @@ func (r *remoteServer) flush() {
 		}
 	}
 	for chat := range r.meta {
-		r.broadcast("meta", metaForPhone(chat))
+		r.broadcast("meta", r.u.metaForPhone(chat))
 	}
-	r.dirty, r.meta, r.chatsDirt = map[*conversation]map[int]bool{}, map[*conversation]bool{}, false
+	if r.settings {
+		r.broadcast("settings", r.u.settingsForPhone())
+	}
+	r.dirty, r.meta, r.chatsDirt, r.settings = map[*conversation]map[int]bool{}, map[*conversation]bool{}, false, false
 }
 
 // ---------------------------------------------------------------------------
@@ -670,6 +695,123 @@ func (r *remoteServer) approve(w http.ResponseWriter, req *http.Request) {
 		fail(w, http.StatusNotFound, "This request was already answered")
 		return
 	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// ---------------------------------------------------------------------------
+// Models, reasoning effort and approval mode, as the composer offers them.
+
+type remoteEffort struct {
+	Value string `json:"value"`
+	Label string `json:"label"`
+}
+
+type remoteModel struct {
+	Label   string         `json:"label"` // unique key, as in the desktop picker
+	Name    string         `json:"name"`
+	Detail  string         `json:"detail"`
+	Efforts []remoteEffort `json:"efforts"`
+}
+
+// choiceLabel finds the picker label of a configuration's model.
+func (u *desktopUI) choiceLabel(cfg config) string {
+	for label, choice := range u.choices {
+		if choice.Connection.ID == cfg.ConnectionID && choice.ID == cfg.Model {
+			return label
+		}
+	}
+	return ""
+}
+
+func (u *desktopUI) settingsForPhone() map[string]any {
+	models := []remoteModel{}
+	for _, label := range u.model.Options {
+		choice := u.choices[label]
+		m := remoteModel{Label: label, Name: choice.Name, Detail: u.model.Details[label], Efforts: []remoteEffort{}}
+		for _, e := range choice.Efforts {
+			m.Efforts = append(m.Efforts, remoteEffort{e, effortLabel(e)})
+		}
+		models = append(models, m)
+	}
+	return map[string]any{"models": models, "model": u.choiceLabel(u.cfg), "effort": u.cfg.Effort,
+		"approvalMode": u.approvalMode, "loading": u.modelsLoading, "window": modelContextWindow(u.cfg)}
+}
+
+func (r *remoteServer) setModel(w http.ResponseWriter, req *http.Request) {
+	var body struct {
+		Chat   string `json:"chat"`
+		Label  string `json:"label"`
+		Effort string `json:"effort"`
+	}
+	if readJSON(req, &body) != nil {
+		fail(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	problem := ""
+	r.onUI(func() { problem = r.u.remoteModel(body.Chat, body.Label, body.Effort) })
+	if problem != "" {
+		fail(w, http.StatusConflict, problem)
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// remoteModel picks a chat's model and effort from the phone, through the
+// same picker as the window (the chat opens there to show it).
+func (u *desktopUI) remoteModel(chatID, label, effort string) string {
+	if chatID != "" {
+		chat := u.chatByID(chatID)
+		if chat == nil {
+			return "This chat no longer exists"
+		}
+		if chat != u.current {
+			u.cfg.Workspace = chat.Config.Workspace
+			u.openChat(chat)
+		}
+	} else if u.current != nil {
+		u.startNew()
+	}
+	if label != "" && label != u.choiceLabel(u.cfg) {
+		choice, ok := u.choices[label]
+		if !ok {
+			return "This model is no longer available"
+		}
+		u.model.Selected = label
+		u.selectModel(choice)
+	}
+	if effort != "" {
+		choice, ok := u.selectedChoice()
+		if !ok || !contains(choice.Efforts, effort) {
+			return "This model has no such reasoning level"
+		}
+		u.cfg.Effort = effort
+		if u.current != nil {
+			u.current.Config.Effort = effort
+		}
+		u.model.row.SetTrailing(effortLabel(effort))
+		if u.model.relayout != nil {
+			u.model.relayout()
+		}
+		u.save()
+		u.remote.settingsChanged()
+		u.remote.metaChanged(u.current)
+	}
+	return ""
+}
+
+func (r *remoteServer) setApprovalMode(w http.ResponseWriter, req *http.Request) {
+	var body struct {
+		Mode string `json:"mode"`
+	}
+	if readJSON(req, &body) != nil || (body.Mode != "approval" && body.Mode != "yolo") {
+		fail(w, http.StatusBadRequest, "Invalid mode")
+		return
+	}
+	r.onUI(func() {
+		r.u.approvalMode = body.Mode
+		r.u.updateApprovalControl()
+		r.u.save()
+	})
 	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 

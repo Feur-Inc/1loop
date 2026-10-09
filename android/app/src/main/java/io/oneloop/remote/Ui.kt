@@ -406,7 +406,7 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
                 val title = app.chats.firstOrNull { it.id == app.current }?.title ?: "New chat"
                 Text(title, style = Type.body.copy(fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 Text(
-                    if (app.connected) app.model.ifEmpty { app.server?.name.orEmpty() } else "Reconnecting to ${app.server?.name}…",
+                    if (app.connected) app.chatModel?.name ?: app.server?.name.orEmpty() else "Reconnecting to ${app.server?.name}…",
                     style = Type.caption.copy(color = if (app.connected) Palette.faint else Palette.amber), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -543,6 +543,7 @@ private fun toneColor(tone: String) = when (tone) {
 private fun Composer(app: RemoteApp, running: Boolean) {
     var text by remember { mutableStateOf("") }
     var project by remember { mutableStateOf<String?>(null) }
+    var models by remember { mutableStateOf(false) }
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val border by animateColorAsState(if (focused) Palette.borderHot else Palette.border, tween(160), label = "card")
@@ -553,6 +554,14 @@ private fun Composer(app: RemoteApp, running: Boolean) {
         val meta = app.meta
         if (meta != null && (meta.queue.isNotEmpty() || meta.steer.isNotEmpty())) QueueTray(meta)
         app.problem?.let { Text(it, style = Type.small.copy(color = Palette.danger), modifier = Modifier.padding(bottom = 6.dp)) }
+        // The desktop's context line: the project and the computer.
+        Row(Modifier.widthIn(max = 760.dp).fillMaxWidth().padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
+            ProjectChip(app, project) { project = it }
+            Spacer(Modifier.width(4.dp))
+            Icon(Icons.computer, null, tint = Palette.muted, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(app.server?.name.orEmpty(), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         Column(
             Modifier.widthIn(max = 760.dp).fillMaxWidth().background(Palette.surface, RoundedCornerShape(18.dp))
                 .border(1.dp, border, RoundedCornerShape(18.dp)).padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
@@ -568,8 +577,12 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 },
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                ProjectChip(app, project) { project = it }
-                Spacer(Modifier.weight(1f))
+                ApprovalChip(app)
+                Spacer(Modifier.width(4.dp))
+                ModelChip(app, onClick = { models = true }, modifier = Modifier.weight(1f, fill = false))
+                Spacer(Modifier.weight(0.001f))
+                val meta = app.meta
+                ContextRing(meta?.used?.takeIf { app.current != null } ?: 0, meta?.window?.takeIf { app.current != null && it > 0 } ?: app.defaultWindow)
                 val send = { mode: String ->
                     val message = text.trim()
                     if (message.isNotEmpty()) {
@@ -591,6 +604,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
             }
         }
     }
+    if (models) ModelSheet(app) { models = false }
 }
 
 // The project a new chat starts in; an open chat shows its own.
@@ -608,10 +622,6 @@ private fun ProjectChip(app: RemoteApp, chosen: String?, onChoose: (String) -> U
             Icon(Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
             Text(path.substringAfterLast('/'), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
-            if (app.approvalMode == "yolo") {
-                Spacer(Modifier.width(10.dp))
-                Icon(Icons.bolt, null, tint = Palette.danger, modifier = Modifier.size(14.dp))
-            }
         }
         DropdownMenu(open, { open = false }, containerColor = Palette.popover) {
             for (p in app.projects) DropdownMenuItem(

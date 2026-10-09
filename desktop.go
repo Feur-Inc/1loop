@@ -1018,6 +1018,7 @@ func (u *desktopUI) refreshModels() {
 				u.modelProblems = "Unavailable connections\n" + strings.Join(problems, "\n")
 			}
 			u.model.Options = options
+			u.remote.settingsChanged()
 			u.model.Enable()
 			if len(options) == 0 {
 				u.cfg.Model = ""

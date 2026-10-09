@@ -143,6 +143,8 @@ func (u *desktopUI) selectModel(choice modelChoice) {
 	}
 	u.updateHeader()
 	u.save()
+	u.remote.settingsChanged()
+	u.remote.metaChanged(u.current)
 }
 
 // showChatModel puts the open chat's model in the picker, from the catalog

@@ -581,6 +581,7 @@ type turn struct {
 	states    map[int]string // tool row state while the call runs
 	lastCall  string         // the call an approval request is about
 	waiting   int            // bumped to cancel the wait counter of a long command
+	usage     int            // context tokens last reported during this run
 	label     string         // what the activity line says
 	mark      string         // what the ring shows
 }
@@ -689,6 +690,8 @@ func (t *turn) handle(e uiEvent) {
 	case "history":
 		t.chat.History = e.data.([]message)
 	case "usage":
+		t.usage = e.data.(int)
+		u.remote.metaChanged(t.chat)
 		if t.chat == u.current {
 			u.setContextUsage(e.data.(int), modelContextWindow(t.cfg))
 		}

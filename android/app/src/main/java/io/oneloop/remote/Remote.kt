@@ -38,15 +38,21 @@ data class Item(
 
 data class Approval(val chat: String, val id: String, val title: String, val preview: String)
 
+data class Effort(val value: String, val label: String)
+
+data class ModelOption(val label: String, val name: String, val detail: String, val efforts: List<Effort>)
+
 data class Meta(
     val chat: String, val title: String, val running: Boolean, val label: String, val mark: String,
     val queue: List<String>, val steer: List<String>, val approval: Approval?,
+    val model: String, val effort: String, val used: Int, val window: Int,
 ) {
     companion object {
         fun from(o: JSONObject) = Meta(
             o.optString("chat"), o.optString("title"), o.optBoolean("running"),
             o.optString("label"), o.optString("mark"), strings(o.optJSONArray("queue")), strings(o.optJSONArray("steer")),
             o.optJSONObject("approval")?.let { Approval(it.optString("chat"), it.optString("id"), it.optString("title"), it.optString("preview")) },
+            o.optString("model"), o.optString("effort"), o.optInt("used"), o.optInt("window"),
         )
     }
 }
@@ -78,8 +84,12 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     val chats = mutableStateListOf<ChatSummary>()
     var projects by mutableStateOf(listOf<String>())
     var workspace by mutableStateOf("")
-    var model by mutableStateOf("")
-    var approvalMode by mutableStateOf("")
+    val models = mutableStateListOf<ModelOption>()
+    var modelsLoading by mutableStateOf(false)
+    var defaultModel by mutableStateOf("") // the model a new chat starts with
+    var defaultEffort by mutableStateOf("")
+    var defaultWindow by mutableStateOf(0)
+    var approvalMode by mutableStateOf("approval")
     var current by mutableStateOf<String?>(null) // null: a new chat
     val items = mutableStateListOf<Item>()
     var meta by mutableStateOf<Meta?>(null)
@@ -271,8 +281,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             chats.addAll(parseChats(state.optJSONArray("chats")))
             projects = strings(state.optJSONArray("projects"))
             workspace = state.optString("workspace")
-            model = state.optString("model")
-            approvalMode = state.optString("approvalMode")
+            state.optJSONObject("settings")?.let { applySettings(it) }
             if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull()?.id
             current?.let { load(it) }
         }
@@ -299,6 +308,28 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         if (id != null) scope.launch { load(id) }
     }
 
+    private fun applySettings(o: JSONObject) {
+        val array = o.optJSONArray("models")
+        models.clear()
+        for (i in 0 until (array?.length() ?: 0)) {
+            val m = array!!.getJSONObject(i)
+            val efforts = m.optJSONArray("efforts")
+            models.add(ModelOption(
+                m.optString("label"), m.optString("name"), m.optString("detail"),
+                (0 until (efforts?.length() ?: 0)).map { efforts!!.getJSONObject(it).let { e -> Effort(e.optString("value"), e.optString("label")) } },
+            ))
+        }
+        defaultModel = o.optString("model")
+        defaultEffort = o.optString("effort")
+        defaultWindow = o.optInt("window")
+        approvalMode = o.optString("approvalMode", "approval")
+        modelsLoading = o.optBoolean("loading")
+    }
+
+    /** The model of the chat on screen (or of a new chat), with its effort. */
+    val chatModel: ModelOption? get() = models.firstOrNull { it.label == (meta?.model?.takeIf { current != null } ?: defaultModel) }
+    val chatEffort: String get() = meta?.effort?.takeIf { current != null } ?: defaultEffort
+
     private fun applyMeta(m: Meta) {
         if (m.approval != null) approvals[m.chat] = m.approval else approvals.remove(m.chat)
         if (m.chat == current) meta = m
@@ -322,6 +353,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 }
             }
             "meta" -> applyMeta(Meta.from(data))
+            "settings" -> applySettings(data)
         }
     }
 
@@ -340,6 +372,30 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             } catch (e: Exception) {
                 problem = e.message
             }
+        }
+    }
+
+    fun setModel(label: String? = null, effort: String? = null) {
+        val target = server ?: return
+        // Shown at once; the computer confirms through its events.
+        if (current == null) {
+            label?.let { defaultModel = it }
+            effort?.let { defaultEffort = it }
+        } else meta = meta?.let { it.copy(model = label ?: it.model, effort = effort ?: it.effort) }
+        scope.launch {
+            runCatching {
+                val body = JSONObject().put("chat", current.orEmpty()).put("label", label.orEmpty()).put("effort", effort.orEmpty())
+                withContext(Dispatchers.IO) { Api(target).post("/api/model", body) }
+            }.onFailure { problem = it.message }
+        }
+    }
+
+    fun chooseApprovalMode(mode: String) {
+        val target = server ?: return
+        approvalMode = mode
+        scope.launch {
+            runCatching { withContext(Dispatchers.IO) { Api(target).post("/api/approval-mode", JSONObject().put("mode", mode)) } }
+                .onFailure { problem = it.message }
         }
     }
 

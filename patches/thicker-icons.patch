@@ -1,0 +1,90 @@
+# Épaissit les traits des icônes de la roue (5→7, 6→8, 7→9, moyeu de l'horloge 5→6).
+# Pour revenir aux traits d'avant :  patch -R -p1 < patches/thicker-icons.patch
+--- a/branding.go
++++ b/branding.go
+@@ -258,27 +258,27 @@
+ 	case "think": // drawn dot by dot, see thinkDot
+ 		return ""
+ 	case "write":
+-		return `<path stroke-width="6" d="M49 40 C55.5 40 60 42.5 60 48 C60 42.5 64.5 40 71 40 M60 48 V72 M49 80 C55.5 80 60 77.5 60 72 C60 77.5 64.5 80 71 80"/>`
++		return `<path stroke-width="8" d="M49 40 C55.5 40 60 42.5 60 48 C60 42.5 64.5 40 71 40 M60 48 V72 M49 80 C55.5 80 60 77.5 60 72 C60 77.5 64.5 80 71 80"/>`
+ 	case "wait":
+-		return `<path stroke-width="6.5" d="M60 60 V33 M60 60 L77 71"/><circle cx="60" cy="60" r="5" fill="#F4F4F4" stroke="none"/>`
++		return `<path stroke-width="8.5" d="M60 60 V33 M60 60 L77 71"/><circle cx="60" cy="60" r="6" fill="#F4F4F4" stroke="none"/>`
+ 	case "call":
+-		return `<path stroke-width="5" d="M52 41 C46 41 47 49 47 53 C47 57 45 60 42 60 C45 60 47 63 47 67 C47 71 46 79 52 79 M68 41 C74 41 73 49 73 53 C73 57 75 60 78 60 C75 60 73 63 73 67 C73 71 74 79 68 79"/>`
++		return `<path stroke-width="7" d="M52 41 C46 41 47 49 47 53 C47 57 45 60 42 60 C45 60 47 63 47 67 C47 71 46 79 52 79 M68 41 C74 41 73 49 73 53 C73 57 75 60 78 60 C75 60 73 63 73 67 C73 71 74 79 68 79"/>`
+ 	case "read":
+-		return `<path stroke-width="6" d="M44 49 H76 M44 60 H76 M44 71 H64"/>`
++		return `<path stroke-width="8" d="M44 49 H76 M44 60 H76 M44 71 H64"/>`
+ 	case "list":
+-		return `<path stroke-width="6" d="M40.4 50.2 C40.4 47.82 42.22 46 44.6 46 H52.3 L57.2 50.9 H75.4 C77.78 50.9 79.6 52.72 79.6 55.1 V71.2 C79.6 73.58 77.78 75.4 75.4 75.4 H44.6 C42.22 75.4 40.4 73.58 40.4 71.2 Z"/>`
++		return `<path stroke-width="8" d="M40.4 50.2 C40.4 47.82 42.22 46 44.6 46 H52.3 L57.2 50.9 H75.4 C77.78 50.9 79.6 52.72 79.6 55.1 V71.2 C79.6 73.58 77.78 75.4 75.4 75.4 H44.6 C42.22 75.4 40.4 73.58 40.4 71.2 Z"/>`
+ 	case "edit":
+-		return `<path stroke-width="5" d="M46 75 L48.5 64.5 L67 46 L75 54 L56.5 72.5 Z M63 50 L71 58"/>`
++		return `<path stroke-width="7" d="M46 75 L48.5 64.5 L67 46 L75 54 L56.5 72.5 Z M63 50 L71 58"/>`
+ 	case "bash":
+-		return `<path stroke-width="6" d="M44 48 L55 59 L44 70 M60 72 H76"/>`
++		return `<path stroke-width="8" d="M44 48 L55 59 L44 70 M60 72 H76"/>`
+ 	case "approval":
+-		return `<path stroke-width="6" d="M60 39.7 L75.95 46.23 V58.55 C75.95 68.41 69.57 75.37 60 79.58 C50.43 75.37 44.05 68.41 44.05 58.55 V46.23 Z"/>`
++		return `<path stroke-width="8" d="M60 39.7 L75.95 46.23 V58.55 C75.95 68.41 69.57 75.37 60 79.58 C50.43 75.37 44.05 68.41 44.05 58.55 V46.23 Z"/>`
+ 	case "compact":
+-		return `<path stroke-width="6" d="M60 37 V52 M52.5 45 L60 52 L67.5 45 M60 83 V68 M52.5 75 L60 68 L67.5 75 M42 60 H78"/>`
++		return `<path stroke-width="8" d="M60 37 V52 M52.5 45 L60 52 L67.5 45 M60 83 V68 M52.5 75 L60 68 L67.5 75 M42 60 H78"/>`
+ 	case "done":
+-		return `<path stroke="#FFB000" stroke-width="7" d="M45 61 L55 71 L76 50"/>`
++		return `<path stroke="#FFB000" stroke-width="9" d="M45 61 L55 71 L76 50"/>`
+ 	case "stopped":
+-		return `<path stroke-width="7" d="M47 47 L73 73 M73 47 L47 73"/>`
++		return `<path stroke-width="9" d="M47 47 L73 73 M73 47 L47 73"/>`
+ 	}
+ 	return ""
+ }
+--- a/DA/1loop-anneau-travail.html
++++ b/DA/1loop-anneau-travail.html
+@@ -70,32 +70,32 @@
+         <circle cx="46" cy="60" r="5"/><circle cx="60" cy="60" r="5"/><circle cx="74" cy="60" r="5"/>
+       </g>
+       <!-- lit un fichier : lignes de texte -->
+-      <path class="icon icon-read" stroke-width="6" d="M44 49 H76 M44 60 H76 M44 71 H64"/>
++      <path class="icon icon-read" stroke-width="8" d="M44 49 H76 M44 60 H76 M44 71 H64"/>
+       <!-- édite : crayon -->
+-      <path class="icon icon-edit" stroke-width="5" d="M46 75 L48.5 64.5 L67 46 L75 54 L56.5 72.5 Z M63 50 L71 58"/>
++      <path class="icon icon-edit" stroke-width="7" d="M46 75 L48.5 64.5 L67 46 L75 54 L56.5 72.5 Z M63 50 L71 58"/>
+       <!-- commande shell : >_ -->
+-      <path class="icon icon-bash" stroke-width="6" d="M44 48 L55 59 L44 70 M60 72 H76"/>
++      <path class="icon icon-bash" stroke-width="8" d="M44 48 L55 59 L44 70 M60 72 H76"/>
+       <!-- terminé : coche -->
+-      <path class="icon icon-done" stroke="var(--amber)" stroke-width="7" d="M45 61 L55 71 L76 50"/>
++      <path class="icon icon-done" stroke="var(--amber)" stroke-width="9" d="M45 61 L55 71 L76 50"/>
+ 
+       <!-- Ajouts 1loop (les mêmes tracés que l'application, branding.go) -->
+       <!-- écrit la réponse : un curseur texte -->
+-      <path class="icon icon-write" stroke-width="6" d="M49 40 C55.5 40 60 42.5 60 48 C60 42.5 64.5 40 71 40 M60 48 V72 M49 80 C55.5 80 60 77.5 60 72 C60 77.5 64.5 80 71 80"/>
++      <path class="icon icon-write" stroke-width="8" d="M49 40 C55.5 40 60 42.5 60 48 C60 42.5 64.5 40 71 40 M60 48 V72 M49 80 C55.5 80 60 77.5 60 72 C60 77.5 64.5 80 71 80"/>
+       <!-- attend le modèle : les aiguilles, l'anneau sert de cadran -->
+       <g class="icon icon-wait">
+-        <path stroke-width="6.5" d="M60 60 V33 M60 60 L77 71"/>
+-        <circle cx="60" cy="60" r="5" fill="var(--white)" stroke="none"/>
++        <path stroke-width="8.5" d="M60 60 V33 M60 60 L77 71"/>
++        <circle cx="60" cy="60" r="6" fill="var(--white)" stroke="none"/>
+       </g>
+       <!-- prépare un appel d'outil : accolades -->
+-      <path class="icon icon-call" stroke-width="5" d="M52 41 C46 41 47 49 47 53 C47 57 45 60 42 60 C45 60 47 63 47 67 C47 71 46 79 52 79 M68 41 C74 41 73 49 73 53 C73 57 75 60 78 60 C75 60 73 63 73 67 C73 71 74 79 68 79"/>
++      <path class="icon icon-call" stroke-width="7" d="M52 41 C46 41 47 49 47 53 C47 57 45 60 42 60 C45 60 47 63 47 67 C47 71 46 79 52 79 M68 41 C74 41 73 49 73 53 C73 57 75 60 78 60 C75 60 73 63 73 67 C73 71 74 79 68 79"/>
+       <!-- parcourt un dossier -->
+-      <path class="icon icon-list" stroke-width="6" d="M40.4 50.2 C40.4 47.82 42.22 46 44.6 46 H52.3 L57.2 50.9 H75.4 C77.78 50.9 79.6 52.72 79.6 55.1 V71.2 C79.6 73.58 77.78 75.4 75.4 75.4 H44.6 C42.22 75.4 40.4 73.58 40.4 71.2 Z"/>
++      <path class="icon icon-list" stroke-width="8" d="M40.4 50.2 C40.4 47.82 42.22 46 44.6 46 H52.3 L57.2 50.9 H75.4 C77.78 50.9 79.6 52.72 79.6 55.1 V71.2 C79.6 73.58 77.78 75.4 75.4 75.4 H44.6 C42.22 75.4 40.4 73.58 40.4 71.2 Z"/>
+       <!-- attend ton accord : bouclier -->
+-      <path class="icon icon-approval" stroke-width="6" d="M60 39.7 L75.95 46.23 V58.55 C75.95 68.41 69.57 75.37 60 79.58 C50.43 75.37 44.05 68.41 44.05 58.55 V46.23 Z"/>
++      <path class="icon icon-approval" stroke-width="8" d="M60 39.7 L75.95 46.23 V58.55 C75.95 68.41 69.57 75.37 60 79.58 C50.43 75.37 44.05 68.41 44.05 58.55 V46.23 Z"/>
+       <!-- compacte la conversation : deux flèches vers une ligne -->
+-      <path class="icon icon-compact" stroke-width="6" d="M60 37 V52 M52.5 45 L60 52 L67.5 45 M60 83 V68 M52.5 75 L60 68 L67.5 75 M42 60 H78"/>
++      <path class="icon icon-compact" stroke-width="8" d="M60 37 V52 M52.5 45 L60 52 L67.5 45 M60 83 V68 M52.5 75 L60 68 L67.5 75 M42 60 H78"/>
+       <!-- arrêté : croix -->
+-      <path class="icon icon-stopped" stroke-width="7" d="M47 47 L73 73 M73 47 L47 73"/>
++      <path class="icon icon-stopped" stroke-width="9" d="M47 47 L73 73 M73 47 L47 73"/>
+     </g>
+   </svg>
+ 

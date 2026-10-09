@@ -1,0 +1,60 @@
+# 1loop
+
+Application de bureau en Go avec une fenêtre native Fyne, une interface sombre, des conversations et un sélecteur de modèles. Le moteur et l’interface sont écrits en Go ; l’interface ne nécessite aucun navigateur. La connexion OAuth utilise le navigateur et un callback HTTP temporaire sur `localhost:1455`, écouté uniquement sur 127.0.0.1.
+
+## Lancer sous Linux
+
+Go 1.23+, un compilateur C, les bibliothèques de développement OpenGL, X11 et Wayland (`libwayland-dev`, `libxkbcommon-dev`), Bash et `diff` sont nécessaires. La première compilation télécharge Fyne et ses dépendances.
+
+```bash
+make            # compile bin/1loop (X11) et bin/1loop-wayland (Wayland natif)
+make run        # compile puis ouvre 1loop sur le dossier courant
+./bin/1loop -workspace /chemin/vers/projet
+```
+
+Lancez toujours `bin/1loop` : dans une session Wayland il passe la main à `bin/1loop-wayland` (texte net, sans mise à l’échelle XWayland), sinon il reste en X11. `ONELOOP_BACKEND=x11` force X11 ; `ONELOOP_SYSTEM_TITLEBAR=1` remet la barre de titre du système.
+
+## Connexions
+
+Le panneau **Settings → Connections** permet d’ajouter, désactiver ou retirer autant de connexions indépendantes que nécessaire, y compris plusieurs comptes du même service. Leurs modèles sont réunis dans le sélecteur du compositeur. **Load / refresh models** charge le catalogue ; les cases choisissent les modèles visibles. **Configure** règle les paramètres de chaque modèle ; enregistrer ensuite la connexion pour les appliquer.
+
+- **vLLM**, sélectionné par défaut : `http://localhost:8000/v1`. Les modèles sont découverts via `/models`. Le serveur doit prendre en charge le streaming Chat Completions et le tool calling automatique pour utiliser les outils.
+- **OpenRouter** : renseigner une clé dans Connexions, ou démarrer avec la variable `OPENROUTER_API_KEY`. Choisir un modèle qui prend en charge les outils.
+- **Compte ChatGPT** : choisir « Continue with ChatGPT », ouvrir le lien et autoriser la connexion. OAuth avec PKCE et renouvellement des jetons, selon le flux utilisé par OpenCode. L’inférence et le catalogue passent par le backend d’abonnement `https://chatgpt.com/backend-api/codex`, avec l’identifiant de compte. Aucun processus Codex CLI ni chat dans l’application Codex n’est créé. Les anciens comptes du flux de partage direct nécessitent une nouvelle connexion. Le port local 1455 doit être disponible.
+
+- **API compatibles OpenAI** : URL `/v1` personnalisée et clé facultative, avec Chat Completions et streaming.
+
+Pour OpenRouter, **Fetch providers** propose les fournisseurs du modèle. L’ordre, les fallbacks et les autres options de routage sont modifiables en JSON, globalement ou par modèle. Les paramètres de requête (température, limites de tokens, etc.) suivent le même principe ; les réglages du modèle remplacent les valeurs correspondantes de la connexion.
+
+Cliquer sur le modèle dans le compositeur ouvre le réglage d’effort lorsqu’il est disponible ; cliquer sur son nom dans ce panneau ouvre la liste des modèles. Les niveaux proviennent du catalogue du fournisseur ou, pour vLLM, du template du tokenizer du serveur. Si ce dernier n’est pas publié, 1loop consulte le template public du dépôt indiqué par le serveur ; sa source figure dans les paramètres du modèle. Un template modifié côté serveur peut donc exposer des capacités différentes. Sans métadonnées connues, aucun réglage d’effort n’est affiché.
+
+**Settings → General** règle le workspace et les permissions. Les dossiers et images sont choisis avec le sélecteur du bureau (portail XDG, sinon zenity ou kdialog). **Instructions** ajoute des consignes utilisateur au prompt système existant, pour les prochaines requêtes de tous les chats.
+
+## Outils
+
+Les connexions utilisent quatre outils exécutés par le backend Go :
+
+- `read_file` : lecture d’un fichier texte, jusqu’à 1 MiB.
+- `list_directory` : liste des fichiers d’un dossier.
+- `shell` : commande Bash, avec aperçu et validation, délai de 60 secondes et sortie limitée à 128 KiB.
+- `edit_file` : remplacement exact unique ou création d’un fichier, avec diff unifié avant validation. Les suppressions passent par `shell` (`rm`, `mv`…), limitées au workspace par le prompt, avec validation hors mode YOLO.
+
+Le menu **Approval required** du compositeur demande une validation avant chaque commande ou édition. **YOLO mode** les approuve automatiquement ; ce réglage est également accessible dans Settings.
+
+Les lectures et éditions sont limitées au workspace, y compris la résolution des liens symboliques. Le shell s’exécute avec les droits de l’utilisateur : **la validation d’une commande lui permet d’agir sur la machine**, sans sandbox supplémentaire.
+
+Les conversations, projets et réglages sont conservés dans `~/.config/1loop/state.json`, hors du projet (un ancien `.1loop/state.json` est migré automatiquement). Les clés saisies restent en mémoire et doivent être renseignées à nouveau après redémarrage. Les jetons OAuth sont enregistrés dans `~/.config/1loop/openai-<profil>.json` (ou `openai.json` pour le compte historique) avec des permissions 0600 et renouvelés par 1loop. Aucune conversation Codex n’est créée. Les anciens historiques locaux sont conservés ; une nouvelle autorisation OAuth est nécessaire pour OpenAI.
+
+## Raccourcis
+
+- Entrée envoie le message ; pendant qu’une tâche tourne, il est mis en file d’attente et devient le tour suivant une fois la réponse terminée.
+- Ctrl + Entrée, pendant une tâche : le message est injecté dans la tâche en cours, à la prochaine étape (après les appels d’outils en cours).
+- Maj + Entrée ajoute une ligne ; le bouton carré arrête la réponse. Les messages en attente restent dans la file, réordonnables et modifiables ; Entrée sur un champ vide relance la file.
+- Les tâches tournent en arrière-plan : on peut ouvrir une autre conversation, en démarrer une nouvelle ou aller dans Settings pendant que l’agent travaille (un point ambre marque les conversations en cours). Les demandes d’approbation s’affichent où que l’on soit.
+- Le crayon d’un message en attente le remet dans le champ de saisie : Entrée l’enregistre à sa place, Échap annule.
+- Clic sur un appel d’outil : panneau latéral à onglets avec la commande ou le diff, la sortie complète et la durée d’exécution.
+- Ctrl + K : nouvelle conversation. Ctrl + B : replier ou déplier la barre latérale.
+- Ctrl + Maj + R : relance complète de l’application (interface et moteur).
+- Clic droit ou « ⋯ » sur une conversation ou un projet : renommer, supprimer, retirer.
+
+Sources des intégrations : [implémentation OAuth OpenCode](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/plugin/openai/codex.ts), [vLLM](https://docs.vllm.ai/en/stable/serving/openai_compatible_server/), [OpenRouter](https://openrouter.ai/docs/guides/features/tool-calling).

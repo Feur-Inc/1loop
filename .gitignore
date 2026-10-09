@@ -1,0 +1,6 @@
+# Compiled programs live in bin/, never next to the sources.
+/bin/
+# State written by versions before 1loop moved it to ~/.config/1loop.
+/.1loop/
+# A stray build from before the Makefile wrote to bin/.
+/1loop

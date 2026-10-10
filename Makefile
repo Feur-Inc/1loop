@@ -7,14 +7,19 @@ BIN := bin
 # compiles its C without warnings. The X11 build keeps them all.
 WAYLAND_CFLAGS := $(shell go env CGO_CFLAGS) -w
 
-.PHONY: build run clean
+.PHONY: build run dev clean
 
 build:
 	go build -o $(BIN)/1loop .
 	CGO_CFLAGS="$(WAYLAND_CFLAGS)" go build -tags wayland -o $(BIN)/1loop-wayland .
 
 run: build
-	./$(BIN)/1loop -workspace .
+	./$(BIN)/1loop -workspace . $(ARGS)
+
+# The developer log: everything 1loop does and how long the interface takes,
+# in the terminal and in ~/.cache/1loop/dev.log (see devlog.go).
+dev: build
+	./$(BIN)/1loop -dev -workspace . $(ARGS)
 
 clean:
 	rm -rf $(BIN)

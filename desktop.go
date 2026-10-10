@@ -49,6 +49,7 @@ type chatRun struct {
 	// The pending approval, so the phone remote can show and answer it.
 	approvalID, approvalTitle, approvalPreview string
 	answer                                     func(allow bool)
+	started                                    time.Time
 }
 
 type desktopUI struct {
@@ -106,6 +107,7 @@ type desktopUI struct {
 	scroll      *kineticScroll
 	followTail  bool
 	items       *transcriptLayout
+	frames      *frameHook
 	building    bool // openChat is adding a whole chat's items (see place)
 	welcome     fyne.CanvasObject
 	thinking    *fyne.Container
@@ -156,6 +158,9 @@ func useEnglishUI() {
 func runDesktop(backend *app, root string) {
 	useEnglishUI()
 	switchBackend()
+	if devWanted {
+		startDevLog()
+	}
 	go installLauncher()
 	// Follow the desktop's own scale (Xft.dpi) instead of Fyne's guess from
 	// the panel's physical DPI, which made everything ~40 % larger than other
@@ -211,6 +216,9 @@ func runDesktop(backend *app, root string) {
 			chromeReady()
 		}
 		windowIdentity(u.window) // again, should the window not have existed yet below
+		u.startFrames()
+		size := u.window.Canvas().Size()
+		devf("app", "window %.0f x %.0f at scale %.2f, own title bar %v", size.Width, size.Height, u.window.Canvas().Scale(), u.chrome)
 		time.AfterFunc(180*time.Millisecond, func() { fyne.Do(launch.play) })
 	})
 	// Shown, named, then run: the desktop learns which application this is
@@ -256,10 +264,17 @@ func (u *desktopUI) restart() {
 		u.notice("Restart", err.Error())
 		return
 	}
+	devf("ui", "restart (Ctrl+Shift+R)")
 	u.release()
-	if err := syscall.Exec(exe, os.Args, os.Environ()); err != nil {
-		u.notice("Restart", err.Error())
+	// The binary may be in the middle of being rebuilt: wait for it rather
+	// than fail, since after release this process cannot go on.
+	var failure error
+	for attempt := 0; attempt < 50; attempt++ {
+		failure = syscall.Exec(exe, os.Args, os.Environ())
+		time.Sleep(100 * time.Millisecond)
 	}
+	fmt.Fprintln(os.Stderr, "1loop: could not restart:", failure)
+	os.Exit(1)
 }
 
 func (u *desktopUI) shortcut(s fyne.Shortcut) bool {
@@ -450,6 +465,7 @@ func (u *desktopUI) buildFooter() fyne.CanvasObject {
 	u.send.iconPx = 20
 	u.stop = newIconButton(iconStop, colText, colInk, func() {
 		if u.current != nil && u.current.run != nil {
+			devf("ui", "stop pressed for %q", u.current.Title)
 			u.current.run.cancel()
 		}
 	})
@@ -538,6 +554,7 @@ func (u *desktopUI) updateHeader() {
 }
 
 func (u *desktopUI) startNew() {
+	devf("ui", "new chat screen (workspace %s)", u.cfg.Workspace)
 	u.finishEdit(false)
 	u.current = nil
 	u.cfg.Session = ""
@@ -661,6 +678,9 @@ func (u *desktopUI) syncRun() {
 
 // runStarted marks a chat as working.
 func (u *desktopUI) runStarted(chat *conversation, run *chatRun) {
+	devf("run", "start %q [%s]: %s %s, effort %q, approval %q, session %q, on screen %v",
+		chat.Title, chat.ID, chat.Config.Provider, chat.Config.Model, chat.Config.Effort, approvalFor(u.approvalMode, chat.Config), chat.Config.Session, chat == u.current)
+	run.started = time.Now()
 	chat.run = run
 	u.remote.metaChanged(chat)
 	if chat == u.current {
@@ -673,6 +693,9 @@ func (u *desktopUI) runStarted(chat *conversation, run *chatRun) {
 // answer when the chat is on screen: "done" or "stopped".
 func (u *desktopUI) runEnded(chat *conversation, ended string) {
 	run := chat.run
+	if run != nil {
+		devf("run", "end %q [%s]: %s after %s, on screen %v", chat.Title, chat.ID, ended, time.Since(run.started).Round(time.Millisecond), chat == u.current)
+	}
 	chat.run = nil
 	u.remote.metaChanged(chat)
 	if run != nil && run.approval != nil {
@@ -1093,6 +1116,7 @@ func (u *desktopUI) saveNow() { u.persist(false) }
 // freeze the window for as long as it took. wait is for closing, when the
 // file must be on disk before the process ends.
 func (u *desktopUI) persist(wait bool) {
+	started := time.Now()
 	if u.saveTimer != nil {
 		u.saveTimer.Stop()
 		u.saveTimer = nil
@@ -1136,6 +1160,7 @@ func (u *desktopUI) persist(wait bool) {
 				err = os.Rename(tmp, path)
 			}
 		}
+		devf("app", "state saved: %d chats, %d KiB, %s in all (error: %v)", len(chats), len(data)>>10, time.Since(started).Round(time.Millisecond), err)
 		report := func() {
 			if err != nil && err.Error() != u.saveError && u.ctx.Err() == nil {
 				u.notice("Unable to save", err.Error()) // once per distinct problem

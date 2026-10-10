@@ -52,7 +52,9 @@ func identifier() string {
 
 func main() {
 	workspace := flag.String("workspace", ".", "Workspace")
+	developer := flag.Bool("dev", false, "Write a detailed developer log (events, performance, stalls) to the terminal and to ~/.cache/1loop/dev.log")
 	flag.Parse()
+	devWanted = *developer || os.Getenv("ONELOOP_DEV") == "1"
 	root, err := resolveWorkspace(*workspace)
 	if err != nil {
 		log.Fatal(err)

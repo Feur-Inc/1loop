@@ -115,7 +115,12 @@ func (u *desktopUI) updateApprovalControl() {
 
 func (u *desktopUI) approvalMenu() {
 	set := func(mode string) func() {
-		return func() { u.approvalMode = mode; u.updateApprovalControl(); u.save() }
+		return func() {
+			devf("ui", "approval mode %s", mode)
+			u.approvalMode = mode
+			u.updateApprovalControl()
+			u.save()
+		}
 	}
 	mode := approvalFor(u.approvalMode, u.cfg)
 	actions := []menuAction{{label: "Approval required", detail: "Ask before each command and edit", icon: iconShield,

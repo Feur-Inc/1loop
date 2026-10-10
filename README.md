@@ -9,10 +9,15 @@ Go 1.23+, un compilateur C, les bibliothèques de développement OpenGL, X11 et 
 ```bash
 make            # compile bin/1loop (X11) et bin/1loop-wayland (Wayland natif)
 make run        # compile puis ouvre 1loop sur le dossier courant
+make dev        # pareil, avec le journal développeur (option -dev)
 ./bin/1loop -workspace /chemin/vers/projet
 ```
 
 Lancez toujours `bin/1loop` : dans une session Wayland il passe la main à `bin/1loop-wayland` (texte net, sans mise à l’échelle XWayland), sinon il reste en X11. `ONELOOP_BACKEND=x11` force X11 ; `ONELOOP_SYSTEM_TITLEBAR=1` remet la barre de titre du système.
+
+**Journal développeur** : `make dev` (ou `./bin/1loop -dev`, ou `ONELOOP_DEV=1`) écrit dans le terminal et dans `~/.cache/1loop/dev.log` (la session précédente reste dans `dev.log.1`) tout ce que fait 1loop : actions de l’utilisateur, événements de chaque agent, lignes du processus Claude Code, outils, sauvegardes, et les performances de l’interface (images dessinées, tours trop longs, opérations lentes). Un chien de garde suit le fil de l’interface : s’il s’arrête plus de 1,5 s, la pile de toutes les goroutines est écrite, ce qui dit où il est bloqué. `kill -USR1 <pid>` écrit la même chose à la demande.
+
+**Fenêtre masquée** : sous Wayland, 1loop cadence lui-même ses images sur l’écran au lieu de laisser le pilote graphique attendre dans l’échange d’images. Cette attente ne finissait jamais pour une fenêtre masquée (recouverte, réduite, sur un autre espace de travail) : l’interface se bloquait, l’agent et la télécommande avec elle. `ONELOOP_VSYNC=1` rétablit l’ancien comportement, pour comparer.
 
 Au démarrage, 1loop s’enregistre auprès du bureau dans le dossier de l’utilisateur (`~/.local/share/applications/1loop.desktop` et son icône) : le dock, la vue d’ensemble et le menu des applications affichent ainsi son nom et son icône. L’entrée pointe vers le binaire lancé et n’est réécrite que s’il a changé de place.
 

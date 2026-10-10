@@ -155,6 +155,7 @@ func (a *app) executeTool(ctx context.Context, root string, call toolCall, emit 
 		}
 	}()
 	outcome.Output, outcome.Diff, outcome.Err = a.runTool(ctx, root, call, begin, emit)
+	devf("tool", "%s %s: %d bytes of output, error %v", outcome.Name, devText(outcome.Args, 120), len(outcome.Output), outcome.Err)
 	return outcome
 }
 

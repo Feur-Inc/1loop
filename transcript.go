@@ -642,6 +642,7 @@ func (u *desktopUI) liveView(chat *conversation, index int) any {
 // redraw every message, and a resize alone does nothing while the chat is
 // shorter than the window (the activity line then stayed over the answer).
 func (u *desktopUI) relayoutColumn() {
+	defer devSlow("laying the conversation out", 6*time.Millisecond, time.Now())
 	content := u.scroll.Content.(*fyne.Container)
 	relayout(u.transcript) // first: it measures the items the sizes below are made of
 	content.Resize(content.MinSize().Max(u.scroll.Size()))
@@ -703,8 +704,46 @@ func (p *eventPump) flush() {
 	events := p.events
 	p.events, p.scheduled = nil, false
 	p.mu.Unlock()
+	started := time.Now()
 	for _, e := range events {
+		devEvent(e)
 		p.handle(e)
+	}
+	if dev != nil {
+		if took := time.Since(started); took > 8*time.Millisecond {
+			devf("perf", "slow: handling %d agent events took %s (first: %s)", len(events), took.Round(100*time.Microsecond), events[0].kind)
+		}
+	}
+}
+
+// devEvent logs one event of an agent loop as the interface receives it.
+func devEvent(e uiEvent) {
+	if dev == nil {
+		return
+	}
+	switch data := e.data.(type) {
+	case string:
+		if e.kind == "delta" {
+			devf("run", "delta, %d characters", len(data))
+		} else {
+			devf("run", "%s %s", e.kind, devText(data, 120))
+		}
+	case activity:
+		devf("run", "activity %s %s %s", data.State, data.Tool, devText(data.Detail, 80))
+	case toolOutcome:
+		failure := ""
+		if data.Err != nil {
+			failure = ", error: " + devText(data.Err.Error(), 80)
+		}
+		devf("run", "%s %s %s, output %d bytes, %s%s", e.kind, data.Name, devText(data.Args, 100), len(data.Output), data.Elapsed.Round(time.Millisecond), failure)
+	case message:
+		devf("run", "%s %s: %s", e.kind, data.Role, devText(data.Content, 100))
+	case []message:
+		devf("run", "%s, %d messages", e.kind, len(data))
+	case map[string]any:
+		devf("run", "%s %v", e.kind, devText(fmt.Sprint(data["title"]), 100))
+	default:
+		devf("run", "%s %v", e.kind, data)
 	}
 }
 

@@ -150,6 +150,7 @@ func (c modelChoice) display() string {
 }
 func (u *desktopUI) selectModel(choice modelChoice) {
 	previous := u.cfg
+	devf("ui", "model %s (%s)", choice.ID, choice.display())
 	cfg := choice.Connection.config(previous.Workspace)
 	cfg.Model = choice.ID
 	cfg.ReasoningMode = choice.ReasoningMode

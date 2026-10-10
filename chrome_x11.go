@@ -155,6 +155,13 @@ func windowMoveResize(w fyne.Window, direction int) {
 	withX11(w, func(d *C.Display, x C.Window) { C.loop_moveresize(d, x, C.int(direction)) })
 }
 
+// X11 has no frame pacing of 1loop's own: the swap never waits for a
+// hidden window there. Nor does it tell when fingers leave a touchpad.
+func framePaceSetup(fyne.Window)                      {}
+func framePaceWait(bool)                              {}
+func scrollGesture() (finger, released, ok bool)      { return false, false, false }
+func scrollEventTime() (milliseconds uint32, ok bool) { return 0, false }
+
 // windowIdentity has nothing to do on X11: GLFW already names the window
 // class after its title, which is the application id.
 func windowIdentity(fyne.Window) {}

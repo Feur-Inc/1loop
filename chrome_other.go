@@ -18,11 +18,16 @@ const (
 	edgeMove
 )
 
-func chromeReady()                      {}
-func windowIdentity(fyne.Window)        {}
-func switchBackend()                    {}
-func customChromeSupported() bool       { return false }
-func systemScale() float32              { return 0 }
-func windowMoveResize(fyne.Window, int) {}
-func windowToggleMaximize(fyne.Window)  {}
-func windowMinimize(fyne.Window)        {}
+func chromeReady()               {}
+func windowIdentity(fyne.Window) {}
+func framePaceSetup(fyne.Window) {}
+func framePaceWait(bool)         {}
+
+func scrollGesture() (finger, released, ok bool)      { return false, false, false }
+func scrollEventTime() (milliseconds uint32, ok bool) { return 0, false }
+func switchBackend()                                  {}
+func customChromeSupported() bool                     { return false }
+func systemScale() float32                            { return 0 }
+func windowMoveResize(fyne.Window, int)               {}
+func windowToggleMaximize(fyne.Window)                {}
+func windowMinimize(fyne.Window)                      {}

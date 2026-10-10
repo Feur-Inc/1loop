@@ -364,6 +364,8 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 	if err != nil {
 		return err
 	}
+	devf("claude", "start in %s: %s", cfg.Workspace, strings.Join(cmd.Args, " "))
+	defer func() { devf("claude", "process ended: %v", cmd.ProcessState) }()
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
 	var stderr limitedBuffer
@@ -467,6 +469,7 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 		var line []byte
 		select {
 		case <-ctx.Done():
+			devf("claude", "stop asked: interrupt sent, waiting for it to close its session")
 			// Stop: Claude Code got the interrupt it documents (SIGINT);
 			// it has a moment to close its session before it is killed.
 			grace := time.After(1500 * time.Millisecond)
@@ -492,6 +495,7 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 				inject(next)
 			} else if len(background) == 0 && time.Since(idleSince) > 600*time.Millisecond {
 				idle = false
+				devf("claude", "nothing runs, nothing waits: closing its input")
 				finish() // nothing runs, nothing waits: the task is over
 			}
 			continue
@@ -506,7 +510,11 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 		}
 		var e claudeEvent
 		if json.Unmarshal(line, &e) != nil {
+			devf("claude", "unreadable line: %s", devText(string(line), 160))
 			continue
+		}
+		if dev != nil && e.Type != "stream_event" {
+			devf("claude", "%s %s, %d bytes, idle %v, background tasks %d", e.Type, e.Subtype, len(line), idle, len(background))
 		}
 		if e.Parent != nil && e.Type != "result" {
 			continue // a subagent's own stream: its outcome comes as the Agent tool's result

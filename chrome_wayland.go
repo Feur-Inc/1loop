@@ -10,6 +10,7 @@ package main
 /*
 #cgo LDFLAGS: -lwayland-client
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
 #include <wayland-client.h>
 
@@ -29,6 +30,7 @@ extern void _glfwInputMouseClick(void* window, int button, int action, int mods)
 #define LOOP_GLFW_MAXIMIZED 0x00020008
 
 // xdg_toplevel request opcodes (xdg-shell, stable).
+#define XDG_TOPLEVEL_SET_APP_ID 3
 #define XDG_TOPLEVEL_MOVE 5
 #define XDG_TOPLEVEL_RESIZE 6
 
@@ -147,6 +149,18 @@ static void loop_toggle_maximize(uintptr_t handle) {
 	else glfwMaximizeWindow(window);
 }
 
+// GLFW 3.3 only names the window through libdecor, which is off here: the
+// compositor would know neither which application this is nor its icon.
+static void loop_set_app_id(uintptr_t handle, const char* id) {
+	struct wl_surface* surface = (struct wl_surface*) handle;
+	void* window = loop_glfw_window(surface);
+	if (!window) return;
+	void* toplevel = loop_toplevel(window, surface);
+	if (!toplevel) return;
+	wl_proxy_marshal((struct wl_proxy*) toplevel, XDG_TOPLEVEL_SET_APP_ID, id);
+	wl_display_flush(glfwGetWaylandDisplay());
+}
+
 static void loop_minimize(uintptr_t handle) {
 	struct wl_surface* surface = (struct wl_surface*) handle;
 	void* window = loop_glfw_window(surface);
@@ -160,6 +174,7 @@ import (
 	"os/exec"
 	"strings"
 	"syscall"
+	"unsafe"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver"
@@ -247,6 +262,16 @@ func withSurface(w fyne.Window, f func(C.uintptr_t)) {
 func windowMoveResize(w fyne.Window, direction int) {
 	go fyne.Do(func() {
 		withSurface(w, func(s C.uintptr_t) { C.loop_moveresize(s, C.int(direction)) })
+	})
+}
+
+// windowIdentity gives the window its application id, which the desktop
+// matches with the launcher entry of the same name (see installLauncher).
+func windowIdentity(w fyne.Window) {
+	withSurface(w, func(s C.uintptr_t) {
+		id := C.CString(appID)
+		defer C.free(unsafe.Pointer(id))
+		C.loop_set_app_id(s, id)
 	})
 }
 

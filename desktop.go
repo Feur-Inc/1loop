@@ -66,6 +66,9 @@ type desktopUI struct {
 	projects         []string
 	statePath        string
 	saveTimer        *time.Timer
+	saveLock         sync.Mutex // one write at a time, the newest state last
+	saveCount        int        // states handed to persist
+	saveDone         int        // the newest one written (under saveLock)
 	saveError        string
 	ctx              context.Context
 	shutdown         context.CancelFunc
@@ -102,6 +105,8 @@ type desktopUI struct {
 	column      *fyne.Container
 	scroll      *container.Scroll
 	followTail  bool
+	items       *transcriptLayout
+	building    bool // openChat is adding a whole chat's items (see place)
 	welcome     fyne.CanvasObject
 	thinking    *fyne.Container
 	thinkLabel  *fitLabel
@@ -151,6 +156,7 @@ func useEnglishUI() {
 func runDesktop(backend *app, root string) {
 	useEnglishUI()
 	switchBackend()
+	go installLauncher()
 	// Follow the desktop's own scale (Xft.dpi) instead of Fyne's guess from
 	// the panel's physical DPI, which made everything ~40 % larger than other
 	// apps. An explicit FYNE_SCALE from the user still wins.
@@ -204,9 +210,14 @@ func runDesktop(backend *app, root string) {
 		if u.chrome {
 			chromeReady()
 		}
+		windowIdentity(u.window) // again, should the window not have existed yet below
 		time.AfterFunc(180*time.Millisecond, func() { fyne.Do(launch.play) })
 	})
-	u.window.ShowAndRun()
+	// Shown, named, then run: the desktop learns which application this is
+	// before the window's first frame, when it picks its name and icon.
+	u.window.Show()
+	windowIdentity(u.window)
+	a.Run()
 }
 
 // statePath keeps conversations and settings in the user's config folder
@@ -275,7 +286,7 @@ func (u *desktopUI) release() {
 	u.remote.close()
 	u.mark.stop()
 	u.workMark.stop()
-	u.saveNow()
+	u.persist(true)
 }
 
 // fitLabel is a single line of text that ellipsises to the space it gets.
@@ -337,7 +348,9 @@ func (u *desktopUI) build() fyne.CanvasObject {
 
 	// Conversation column. While the model works, the animated ring sits
 	// under the last message.
-	u.transcript = container.New(layout.NewCustomPaddedVBoxLayout(14))
+	u.items = &transcriptLayout{u: u}
+	u.items.reset()
+	u.transcript = container.New(u.items)
 	u.views, u.copyRows = map[int]any{}, map[int]*fyne.Container{}
 	u.workMark = newLoopMark(inlineMarkSize)
 	u.thinkLabel = newFitLabel("", 14, colMuted)
@@ -355,6 +368,7 @@ func (u *desktopUI) build() fyne.CanvasObject {
 		// Content.Size, not MinSize: MinSize walks the whole chat on every event.
 		bottom := fyne.Max(0, u.scroll.Content.Size().Height-u.scroll.Size().Height)
 		u.followTail = bottom-position.Y <= 2
+		relayout(u.transcript) // items entering the view come back, those leaving it rest
 	}
 	u.mark = newLoopMark(60)
 	u.welcome = container.NewCenter(container.NewVBox(
@@ -529,6 +543,7 @@ func (u *desktopUI) startNew() {
 	u.cfg.Session = ""
 	u.followTail = true
 	u.transcript.RemoveAll()
+	u.items.reset()
 	u.views, u.copyRows = map[int]any{}, map[int]*fyne.Container{}
 	u.panel.reset()
 	u.showTranscript(false)
@@ -855,7 +870,7 @@ func (u *desktopUI) runConfig(chat *conversation) config {
 	cfg := chat.Config
 	cfg.APIKey = u.keys[cfg.ConnectionID]
 	cfg.UserInstructions = u.userInstructions
-	cfg.ApprovalMode = u.approvalMode
+	cfg.ApprovalMode = approvalFor(u.approvalMode, cfg)
 	return cfg
 }
 
@@ -1070,30 +1085,76 @@ func (u *desktopUI) save() {
 	u.saveTimer = time.AfterFunc(400*time.Millisecond, func() { fyne.Do(u.saveNow) })
 }
 
-func (u *desktopUI) saveNow() {
+func (u *desktopUI) saveNow() { u.persist(false) }
+
+// persist writes the state file. The conversations are nearly all of it
+// (megabytes once they hold tool outputs and images), so they are encoded
+// and written beside the interface, from copies taken here: a save used to
+// freeze the window for as long as it took. wait is for closing, when the
+// file must be on disk before the process ends.
+func (u *desktopUI) persist(wait bool) {
 	if u.saveTimer != nil {
 		u.saveTimer.Stop()
 		u.saveTimer = nil
 	}
 	remote := u.remoteEnabled
-	state := savedState{u.claudeOffered, &remote, u.devices, u.cfg, u.chats, u.projects, u.connectionsList, u.userInstructions, u.approvalMode}
-	data, err := json.MarshalIndent(state, "", "  ")
+	// Everything but the chats is small, and holds maps the settings edit:
+	// it is encoded here, on the interface's thread.
+	head, err := json.Marshal(savedState{u.claudeOffered, &remote, u.devices, u.cfg, nil, u.projects, u.connectionsList, u.userInstructions, u.approvalMode})
+	fields := map[string]json.RawMessage{}
 	if err == nil {
-		err = os.MkdirAll(filepath.Dir(u.statePath), 0700)
+		err = json.Unmarshal(head, &fields)
 	}
-	if err == nil {
-		// Write then rename, so a crash never leaves half a state file.
-		tmp := u.statePath + ".tmp"
-		if err = os.WriteFile(tmp, data, 0600); err == nil {
-			err = os.Rename(tmp, u.statePath)
+	chats := make([]*conversation, len(u.chats))
+	for i, chat := range u.chats { // messages are never edited in place: copying the lists is enough
+		chats[i] = &conversation{ID: chat.ID, Title: chat.Title, Config: chat.Config,
+			History: append([]message{}, chat.History...), Items: append([]chatItem{}, chat.Items...)}
+	}
+	u.saveCount++
+	count, path := u.saveCount, u.statePath
+	write := func() {
+		u.saveLock.Lock()
+		defer u.saveLock.Unlock()
+		if count < u.saveDone {
+			return // a newer state is already on disk
+		}
+		u.saveDone = count
+		var data []byte
+		if err == nil {
+			fields["chats"], err = json.Marshal(chats)
+		}
+		if err == nil {
+			data, err = json.Marshal(fields)
+		}
+		if err == nil {
+			err = os.MkdirAll(filepath.Dir(path), 0700)
+		}
+		if err == nil {
+			// Write then rename, so a crash never leaves half a state file.
+			tmp := path + ".tmp"
+			if err = os.WriteFile(tmp, data, 0600); err == nil {
+				err = os.Rename(tmp, path)
+			}
+		}
+		report := func() {
+			if err != nil && err.Error() != u.saveError && u.ctx.Err() == nil {
+				u.notice("Unable to save", err.Error()) // once per distinct problem
+			}
+			u.saveError = ""
+			if err != nil {
+				u.saveError = err.Error()
+			}
+		}
+		if wait {
+			report()
+		} else {
+			fyne.Do(report)
 		}
 	}
-	if err != nil && err.Error() != u.saveError && u.ctx.Err() == nil {
-		u.notice("Unable to save", err.Error()) // once per distinct problem
-	}
-	u.saveError = ""
-	if err != nil {
-		u.saveError = err.Error()
+	if wait {
+		write()
+	} else {
+		go write()
 	}
 }
 

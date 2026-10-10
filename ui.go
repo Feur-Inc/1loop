@@ -202,6 +202,13 @@ func padded(top, bottom, left, right float32, object fyne.CanvasObject) *fyne.Co
 	return container.New(layout.NewCustomPaddedLayout(top, bottom, left, right), object)
 }
 
+// relayout places a container's objects again without redrawing them.
+// Container.Refresh refreshes every descendant, which on the conversation
+// means parsing and measuring all its text: far too slow for an animation.
+func relayout(c *fyne.Container) {
+	c.Layout.Layout(c.Objects, c.Size())
+}
+
 // surface draws a rounded, finely bordered card behind content.
 func surface(content fyne.CanvasObject, fill, stroke color.Color, radius, pad float32) *fyne.Container {
 	background := canvas.NewRectangle(fill)
@@ -214,10 +221,13 @@ func surface(content fyne.CanvasObject, fill, stroke color.Color, radius, pad fl
 }
 
 func fitText(text string, size float32, style fyne.TextStyle, width float32) string {
-	if width <= 0 || fyne.MeasureText(text, size, style).Width <= width {
+	if width <= 0 || (len(text) <= 600 && fyne.MeasureText(text, size, style).Width <= width) {
 		return text
 	}
 	runes := []rune(text)
+	if len(runes) > 600 { // no row is that wide: never measure a whole one-line script
+		runes = runes[:600]
+	}
 	low, high := 0, len(runes)
 	for low < high {
 		mid := (low + high + 1) / 2
@@ -258,6 +268,7 @@ var (
 	iconStop         = fyne.NewStaticResource("1loop-stop.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"><rect x="4.5" y="4.5" width="7" height="7" rx="1.4" fill="currentColor"/></svg>`))
 	iconShield       = lineIcon("shield", `<path d="M8 2.2l4.6 1.8v3.5c0 3-2 5.1-4.6 6.3-2.6-1.2-4.6-3.3-4.6-6.3V4z"/>`)
 	iconBolt         = lineIcon("bolt", `<path d="M8.9 1.8 3.7 9h4.1l-.7 5.2L12.3 7H8.2z"/>`)
+	iconShieldCheck  = lineIcon("shield-check", `<path d="M8 2.2l4.6 1.8v3.5c0 3-2 5.1-4.6 6.3-2.6-1.2-4.6-3.3-4.6-6.3V4z"/><path d="M5.9 7.8 7.4 9.3l2.8-3"/>`)
 	iconPanel        = lineIcon("panel", `<rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M9.5 3v10"/>`)
 	iconTerminal     = lineIcon("terminal", `<path d="M3.5 4.5 6.5 7.5 3.5 10.5M8 11.5h4.5"/>`)
 	iconDocument     = lineIcon("document", `<path d="M4 2.8h5l3 3v7.4H4z"/><path d="M9 2.8v3h3M6 8.6h4M6 10.9h4"/>`)

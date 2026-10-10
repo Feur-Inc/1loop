@@ -83,10 +83,13 @@ func (u *desktopUI) generalSettings() fyne.CanvasObject {
 		})
 	})
 	mode := newPicker(u.window, "Tool permissions", styleField, nil)
-	mode.Options = []string{"Approval required", "YOLO mode (automatic approval)"}
-	selected := "Approval required"
-	if u.approvalMode == "yolo" {
-		selected = mode.Options[1]
+	mode.Options = []string{"Approval required", "YOLO mode (automatic approval)", "Auto mode (Claude Code only)"}
+	modes := []string{"approval", "yolo", "auto"}
+	selected := mode.Options[0]
+	for i, name := range modes {
+		if u.approvalMode == name {
+			selected = mode.Options[i]
+		}
 	}
 	mode.SetSelected(selected)
 	status := note("")
@@ -96,9 +99,10 @@ func (u *desktopUI) generalSettings() fyne.CanvasObject {
 			status.SetText(err.Error())
 			return
 		}
-		u.approvalMode = "approval"
-		if mode.Selected == mode.Options[1] {
-			u.approvalMode = "yolo"
+		for i, option := range mode.Options {
+			if mode.Selected == option {
+				u.approvalMode = modes[i]
+			}
 		}
 		u.updateApprovalControl()
 		if root != u.cfg.Workspace {
@@ -107,7 +111,7 @@ func (u *desktopUI) generalSettings() fyne.CanvasObject {
 		u.save()
 		status.SetText("General settings saved.")
 	})
-	return container.NewVBox(textLine("General", 20, colText), spacer(0, 12), field("Workspace", container.NewBorder(nil, nil, nil, choose, workspace)), field("Default tool permissions", mode.row), note("Approval asks before each shell command or file edit. YOLO executes them automatically with your user permissions."), spacer(0, 12), container.NewHBox(save), status)
+	return container.NewVBox(textLine("General", 20, colText), spacer(0, 12), field("Workspace", container.NewBorder(nil, nil, nil, choose, workspace)), field("Default tool permissions", mode.row), note("Approval asks before each shell command or file edit. YOLO executes them automatically with your user permissions. Auto is Claude Code's own mode: it runs what it judges safe; other models ask instead."), spacer(0, 12), container.NewHBox(save), status)
 }
 func (u *desktopUI) instructionSettings() fyne.CanvasObject {
 	entry := widget.NewMultiLineEntry()

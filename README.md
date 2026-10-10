@@ -14,6 +14,8 @@ make run        # compile puis ouvre 1loop sur le dossier courant
 
 Lancez toujours `bin/1loop` : dans une session Wayland il passe la main à `bin/1loop-wayland` (texte net, sans mise à l’échelle XWayland), sinon il reste en X11. `ONELOOP_BACKEND=x11` force X11 ; `ONELOOP_SYSTEM_TITLEBAR=1` remet la barre de titre du système.
 
+Au démarrage, 1loop s’enregistre auprès du bureau dans le dossier de l’utilisateur (`~/.local/share/applications/1loop.desktop` et son icône) : le dock, la vue d’ensemble et le menu des applications affichent ainsi son nom et son icône. L’entrée pointe vers le binaire lancé et n’est réécrite que s’il a changé de place.
+
 ## Connexions
 
 Le panneau **Settings → Connections** permet d’ajouter, désactiver ou retirer autant de connexions indépendantes que nécessaire, y compris plusieurs comptes du même service. Leurs modèles sont réunis dans le sélecteur du compositeur. **Load / refresh models** charge le catalogue ; les cases choisissent les modèles visibles. **Configure** règle les paramètres de chaque modèle ; enregistrer ensuite la connexion pour les appliquer.
@@ -25,6 +27,8 @@ Le panneau **Settings → Connections** permet d’ajouter, désactiver ou retir
 - **API compatibles OpenAI** : URL `/v1` personnalisée et clé facultative, avec Chat Completions et streaming.
 
 - **Claude Code** : 1loop pilote le Claude Code installé sur l’ordinateur, sans le modifier, dans son mode programmatique documenté (`claude -p` en `stream-json`). Ici le travail tourne dans le harness de Claude Code, pas dans celui de 1loop : sa connexion (l’abonnement Claude), ses outils, ses règles de permission, `CLAUDE.md` et ses serveurs MCP. 1loop envoie les messages, affiche le flux (texte, réflexion, appels d’outils, diffs) et relaie ses demandes de permission, sur l’ordinateur comme sur le téléphone. Les modèles et niveaux d’effort viennent de Claude Code lui-même ; chaque conversation garde sa session et la reprend. Le sélecteur les marque « · Claude Code ». Garde-fou : si un tour n’est pas sur la connexion de l’abonnement, ou commence à puiser dans l’« extra usage », 1loop l’arrête aussitôt. La connexion est proposée automatiquement au premier lancement si `claude` est installé.
+
+  Quand Claude Code laisse une tâche tourner en arrière-plan (commande lancée en arrière-plan, Monitor), le tour reste ouvert : la ligne d’activité indique la tâche attendue et le temps écoulé, et Claude Code reprend seul quand elle se termine. **Stop** arrête Claude Code et tout ce qu’il a lancé. Les sous-agents de Claude Code sont désactivés pour l’instant (`--disallowedTools`, voir `claudeDisabledTools` dans `claudecode.go`) : l’interface ne sait pas encore montrer leurs étapes.
 
 Pour OpenRouter, **Fetch providers** propose les fournisseurs du modèle. L’ordre, les fallbacks et les autres options de routage sont modifiables en JSON, globalement ou par modèle. Les paramètres de requête (température, limites de tokens, etc.) suivent le même principe ; les réglages du modèle remplacent les valeurs correspondantes de la connexion.
 
@@ -41,7 +45,7 @@ Les connexions utilisent quatre outils exécutés par le backend Go :
 - `shell` : commande Bash, avec aperçu et validation, délai de 60 secondes et sortie limitée à 128 KiB.
 - `edit_file` : remplacement exact unique ou création d’un fichier, avec diff unifié avant validation. Les suppressions passent par `shell` (`rm`, `mv`…), limitées au workspace par le prompt, avec validation hors mode YOLO.
 
-Le menu **Approval required** du compositeur demande une validation avant chaque commande ou édition. **YOLO mode** les approuve automatiquement ; ce réglage est également accessible dans Settings.
+Le menu **Approval required** du compositeur demande une validation avant chaque commande ou édition. **YOLO mode** les approuve automatiquement ; ce réglage est également accessible dans Settings. Avec un modèle Claude Code, un troisième choix apparaît : **Auto mode**, le mode de permission « auto » de Claude Code, qui exécute ce qu’il juge sûr et relaie le reste à l’utilisateur. Avec un autre modèle, ce réglage revient à **Approval required**.
 
 Les lectures et éditions sont limitées au workspace, y compris la résolution des liens symboliques. Le shell s’exécute avec les droits de l’utilisateur : **la validation d’une commande lui permet d’agir sur la machine**, sans sandbox supplémentaire.
 

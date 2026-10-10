@@ -80,17 +80,32 @@ func (u *desktopUI) modelMenu() {
 	u.window.Canvas().Focus(menu)
 }
 
+// approvalFor is the approval mode a run with this configuration uses.
+// "auto" is Claude Code's own permission mode (it runs what it judges safe
+// and blocks or asks for the rest); 1loop's harness has no such judge, so
+// with any other model it falls back to asking.
+func approvalFor(mode string, cfg config) string {
+	if mode == "auto" && cfg.Provider != "claudecode" {
+		return "approval"
+	}
+	return mode
+}
+
 func (u *desktopUI) updateApprovalControl() {
 	if u.approvalControl == nil {
 		return
 	}
-	yolo := u.approvalMode == "yolo"
+	mode := approvalFor(u.approvalMode, u.cfg)
 	u.approvalControl.icon = iconShield
-	u.approvalControl.danger = yolo
+	u.approvalControl.danger = mode == "yolo"
 	u.approvalControl.SetText("Approval required")
-	if yolo {
+	switch mode {
+	case "yolo":
 		u.approvalControl.icon = iconBolt
 		u.approvalControl.SetText("YOLO mode")
+	case "auto":
+		u.approvalControl.icon = iconShieldCheck
+		u.approvalControl.SetText("Auto mode")
 	}
 	if u.controls != nil {
 		u.controls.Refresh()
@@ -102,10 +117,14 @@ func (u *desktopUI) approvalMenu() {
 	set := func(mode string) func() {
 		return func() { u.approvalMode = mode; u.updateApprovalControl(); u.save() }
 	}
-	showMenu(u.window, u.approvalControl, []menuAction{
-		{label: "Approval required", detail: "Ask before each command and edit", icon: iconShield,
-			checked: u.approvalMode != "yolo", run: set("approval")},
-		{label: "YOLO mode", detail: "Run commands and edits automatically", icon: iconBolt,
-			checked: u.approvalMode == "yolo", run: set("yolo")},
-	})
+	mode := approvalFor(u.approvalMode, u.cfg)
+	actions := []menuAction{{label: "Approval required", detail: "Ask before each command and edit", icon: iconShield,
+		checked: mode == "approval", run: set("approval")}}
+	if u.cfg.Provider == "claudecode" { // only Claude Code's harness has this mode
+		actions = append(actions, menuAction{label: "Auto mode", detail: "Claude Code runs what it judges safe", icon: iconShieldCheck,
+			checked: mode == "auto", run: set("auto")})
+	}
+	actions = append(actions, menuAction{label: "YOLO mode", detail: "Run commands and edits automatically", icon: iconBolt,
+		checked: mode == "yolo", run: set("yolo")})
+	showMenu(u.window, u.approvalControl, actions)
 }

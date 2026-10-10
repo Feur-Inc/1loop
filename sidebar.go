@@ -54,7 +54,7 @@ func (u *desktopUI) toggleSidebar() {
 	}
 	u.paneAnim = fyne.NewAnimation(240*time.Millisecond, func(p float32) {
 		u.pane.shown = from + (to-from)*p
-		u.root.Refresh()
+		relayout(u.root) // never Refresh: it would redraw the whole conversation on every frame
 		if p >= 1 && to == 0 {
 			sidebar.Hide()
 			shade.Hide()
@@ -240,10 +240,13 @@ func (u *desktopUI) openChat(chat *conversation) {
 	u.followTail = true
 	u.panel.reset()
 	u.transcript.RemoveAll()
+	u.items.reset()
 	u.views, u.copyRows = map[int]any{}, map[int]*fyne.Container{}
+	u.building = true
 	for i := range chat.Items {
 		u.appendItem(chat, i)
 	}
+	u.building = false
 	u.showTranscript(true)
 	u.syncRun()
 	u.updateHeader()

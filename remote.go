@@ -734,7 +734,7 @@ func (u *desktopUI) settingsForPhone() map[string]any {
 		models = append(models, m)
 	}
 	return map[string]any{"models": models, "model": u.choiceLabel(u.cfg), "effort": u.cfg.Effort,
-		"approvalMode": u.approvalMode, "loading": u.modelsLoading, "window": modelContextWindow(u.cfg)}
+		"approvalMode": approvalFor(u.approvalMode, u.cfg), "autoMode": u.cfg.Provider == "claudecode", "loading": u.modelsLoading, "window": modelContextWindow(u.cfg)}
 }
 
 func (r *remoteServer) setModel(w http.ResponseWriter, req *http.Request) {
@@ -803,7 +803,7 @@ func (r *remoteServer) setApprovalMode(w http.ResponseWriter, req *http.Request)
 	var body struct {
 		Mode string `json:"mode"`
 	}
-	if readJSON(req, &body) != nil || (body.Mode != "approval" && body.Mode != "yolo") {
+	if readJSON(req, &body) != nil || (body.Mode != "approval" && body.Mode != "yolo" && body.Mode != "auto") {
 		fail(w, http.StatusBadRequest, "Invalid mode")
 		return
 	}

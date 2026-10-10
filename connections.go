@@ -175,6 +175,7 @@ func (u *desktopUI) selectModel(choice modelChoice) {
 	} else {
 		u.model.row.SetTrailing("")
 	}
+	u.updateApprovalControl() // Auto mode exists only with Claude Code
 	if u.model.relayout != nil {
 		u.model.relayout()
 	}

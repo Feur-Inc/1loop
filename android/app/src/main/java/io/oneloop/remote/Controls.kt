@@ -213,18 +213,22 @@ fun ModelSheet(app: RemoteApp, onDone: () -> Unit) {
 fun ApprovalChip(app: RemoteApp) {
     var open by remember { mutableStateOf(false) }
     val yolo = app.approvalMode == "yolo"
+    val auto = app.approvalMode == "auto"
     Box {
         Row(
             Modifier.clip(RoundedCornerShape(8.dp)).clickable { open = true }.padding(horizontal = 6.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             val ink = if (yolo) Palette.danger else Palette.muted
-            Icon(if (yolo) Icons.bolt else Icons.shield, null, tint = ink, modifier = Modifier.size(16.dp))
+            Icon(if (yolo) Icons.bolt else if (auto) Icons.shieldCheck else Icons.shield, null, tint = ink, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
-            Text(if (yolo) "YOLO" else "Approval", style = Type.small.copy(color = ink))
+            Text(if (yolo) "YOLO" else if (auto) "Auto" else "Approval", style = Type.small.copy(color = ink))
         }
         DropdownMenu(open, { open = false }, containerColor = Palette.popover) {
-            ModeItem(Icons.shield, "Approval required", "Ask before each command and edit", !yolo) { app.chooseApprovalMode("approval"); open = false }
+            ModeItem(Icons.shield, "Approval required", "Ask before each command and edit", !yolo && !auto) { app.chooseApprovalMode("approval"); open = false }
+            if (app.autoMode) { // only Claude Code's harness has this mode
+                ModeItem(Icons.shieldCheck, "Auto mode", "Claude Code runs what it judges safe", auto) { app.chooseApprovalMode("auto"); open = false }
+            }
             ModeItem(Icons.bolt, "YOLO mode", "Run commands and edits automatically", yolo, danger = true) { app.chooseApprovalMode("yolo"); open = false }
         }
     }

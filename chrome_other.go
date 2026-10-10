@@ -19,6 +19,7 @@ const (
 )
 
 func chromeReady()                      {}
+func windowIdentity(fyne.Window)        {}
 func switchBackend()                    {}
 func customChromeSupported() bool       { return false }
 func systemScale() float32              { return 0 }

@@ -155,6 +155,10 @@ func windowMoveResize(w fyne.Window, direction int) {
 	withX11(w, func(d *C.Display, x C.Window) { C.loop_moveresize(d, x, C.int(direction)) })
 }
 
+// windowIdentity has nothing to do on X11: GLFW already names the window
+// class after its title, which is the application id.
+func windowIdentity(fyne.Window) {}
+
 func windowToggleMaximize(w fyne.Window) {
 	withX11(w, func(d *C.Display, x C.Window) { C.loop_toggle_maximize(d, x) })
 }

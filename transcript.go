@@ -332,7 +332,7 @@ const stoppedCall = "Stopped"
 // shortError keeps the transcript row readable; the panel shows it all.
 func shortError(text string) string {
 	switch {
-	case strings.HasSuffix(text, "denied"):
+	case strings.HasSuffix(text, "denied"), strings.Contains(text, "denied this action"):
 		return "Denied"
 	case strings.HasPrefix(text, "exit status "):
 		return "Exit " + strings.TrimPrefix(text, "exit status ")
@@ -391,7 +391,7 @@ func (u *desktopUI) appendItem(chat *conversation, index int) {
 		copyRow.Hide() // see syncCopies
 		u.views[index] = view
 		u.copyRows[index] = copyRow
-		u.transcript.Add(container.NewVBox(view.box, copyRow))
+		u.place(container.NewVBox(view.box, copyRow))
 	case "user":
 		content := container.NewVBox()
 		var pics []fyne.CanvasObject
@@ -420,20 +420,20 @@ func (u *desktopUI) appendItem(chat *conversation, index int) {
 		}
 		bubble := container.New(bubbleLayout{text: item.Text, chrom: 2*theme.InnerPadding() + 4}, surface(content, colRaised, nil, 14, 2))
 		if item.Text == "" {
-			u.transcript.Add(bubble)
+			u.place(bubble)
 			break
 		}
 		copyRow := container.NewHBox(layout.NewSpacer(), copyChip(func() string { return item.Text }))
-		u.transcript.Add(container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, copyRow))
+		u.place(container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, copyRow))
 	case "error":
 		label := widget.NewLabel(item.Text)
 		label.Wrapping = fyne.TextWrapWord
 		label.Importance = widget.DangerImportance
-		u.transcript.Add(label)
+		u.place(label)
 	case "note":
 		icon := canvas.NewImageFromResource(tinted(iconCompact, colFaint))
 		icon.SetMinSize(fyne.NewSquareSize(15))
-		u.transcript.Add(container.NewHBox(layout.NewSpacer(), icon, textLine(item.Text, 12.5, colFaint), layout.NewSpacer()))
+		u.place(container.NewHBox(layout.NewSpacer(), icon, textLine(item.Text, 12.5, colFaint), layout.NewSpacer()))
 	case "tool":
 		state := "done"
 		if t != nil && t.states[index] != "" {
@@ -444,7 +444,120 @@ func (u *desktopUI) appendItem(chat *conversation, index int) {
 		row.onTap = func() { u.panel.open(chat, index) }
 		row.selected = u.panel.showing(chat, index)
 		u.views[index] = row
-		u.transcript.Add(row)
+		u.place(row)
+	}
+}
+
+// place adds an item's view to the conversation. While a whole chat is
+// being built (openChat) nothing is laid out before the last one:
+// Container.Add lays everything out each time, which made opening a chat
+// quadratic (0.7 s for 240 items).
+func (u *desktopUI) place(view fyne.CanvasObject) {
+	if u.building {
+		u.transcript.Objects = append(u.transcript.Objects, view)
+		return
+	}
+	u.transcript.Add(view)
+}
+
+// transcriptLayout stacks the conversation's items like a VBox, but keeps
+// only those around the viewport visible. Fyne measures every visible
+// object on each frame it draws, so in a long conversation every frame of
+// an animation, every scroll step and every streamed word paid for the
+// whole history. A hidden item costs nothing: it keeps its place with the
+// size it last measured, and is measured again when it comes back in view.
+type transcriptLayout struct {
+	u     *desktopUI
+	sizes map[fyne.CanvasObject]fyne.Size // each item's last measured minimum size
+	width float32                         // the width they were measured at
+}
+
+const transcriptGap = 14
+
+func (l *transcriptLayout) reset() { l.sizes = map[fyne.CanvasObject]fyne.Size{} }
+
+// changed forgets the size of the item that holds part: it changed while
+// perhaps out of sight, where nothing measures it.
+func (l *transcriptLayout) changed(part fyne.CanvasObject) {
+	for item := range l.sizes {
+		if _, holds := offsetIn(item, part); holds {
+			delete(l.sizes, item)
+			return
+		}
+	}
+}
+
+// measure sizes an item at the column's width: wrapped text only knows its
+// height once it has its width.
+func (l *transcriptLayout) measure(o fyne.CanvasObject, width float32) fyne.Size {
+	if o.Size().Width != width {
+		o.Resize(fyne.NewSize(width, o.Size().Height))
+	}
+	min := o.MinSize()
+	l.sizes[o] = min
+	return min
+}
+
+// view is the band of the column worth keeping alive, in the transcript's
+// coordinates: the viewport and a screen on each side, so a scroll step
+// always lands on items that are already there.
+func (l *transcriptLayout) view() (top, bottom float32) {
+	scroll := l.u.scroll
+	if scroll == nil {
+		return -1e9, 1e9
+	}
+	origin, found := offsetIn(scroll.Content, l.u.transcript)
+	if !found {
+		return -1e9, 1e9
+	}
+	height := scroll.Size().Height
+	margin := fyne.Max(height, 600)
+	offset := scroll.Offset.Y - origin.Y
+	return offset - margin, offset + height + margin
+}
+
+func (l *transcriptLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	size := fyne.NewSize(120, 0)
+	for i, o := range objects {
+		min, known := l.sizes[o]
+		if o.Visible() || !known {
+			min = o.MinSize()
+		}
+		size.Width = fyne.Max(size.Width, min.Width)
+		size.Height += min.Height
+		if i > 0 {
+			size.Height += transcriptGap
+		}
+	}
+	return size
+}
+
+func (l *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	if size.Width <= 0 {
+		return // not on screen yet: nothing can be measured
+	}
+	resized := size.Width != l.width
+	l.width = size.Width
+	top, bottom := l.view()
+	y := float32(0)
+	for _, o := range objects {
+		min, known := l.sizes[o]
+		if o.Visible() || !known || resized {
+			min = l.measure(o, size.Width)
+		}
+		near := y+min.Height >= top && y <= bottom
+		switch {
+		case near && !o.Visible():
+			o.Show()
+			min = l.measure(o, size.Width) // it may have changed while out of sight
+		case !near && o.Visible():
+			o.Hide()
+		}
+		o.Move(fyne.NewPos(0, y))
+		if near {
+			o.Resize(fyne.NewSize(size.Width, min.Height))
+		}
+		y += min.Height + transcriptGap
 	}
 }
 
@@ -474,6 +587,7 @@ func (u *desktopUI) syncCopies() {
 			} else {
 				row.Hide()
 			}
+			u.items.changed(row)
 		}
 	}
 }
@@ -529,6 +643,7 @@ func (u *desktopUI) liveView(chat *conversation, index int) any {
 // shorter than the window (the activity line then stayed over the answer).
 func (u *desktopUI) relayoutColumn() {
 	content := u.scroll.Content.(*fyne.Container)
+	relayout(u.transcript) // first: it measures the items the sizes below are made of
 	content.Resize(content.MinSize().Max(u.scroll.Size()))
 	for _, c := range []*fyne.Container{content, u.column, u.transcript} {
 		c.Layout.Layout(c.Objects, c.Size())
@@ -538,6 +653,7 @@ func (u *desktopUI) relayoutColumn() {
 	} else {
 		u.scroll.ScrollToOffset(u.scroll.Offset) // the bars follow the new height
 	}
+	relayout(u.transcript) // the view moved without a scroll event: bring its items in
 }
 
 // ---------------------------------------------------------------------------
@@ -639,6 +755,7 @@ func (t *turn) render(force bool) {
 	t.u.remote.itemChanged(t.chat, t.index)
 	if view, ok := t.u.liveView(t.chat, t.index).(*markdownView); ok {
 		view.ParseMarkdown(t.chat.Items[t.index].Text)
+		t.u.items.changed(view.box) // measured again even if the reader is elsewhere in the chat
 		t.u.relayoutColumn()
 	}
 }
@@ -803,6 +920,18 @@ func (t *turn) show(a activity) {
 		if a.Detail != "" {
 			label += ": " + a.Detail
 		}
+	case "background":
+		// The answer is written; the agent now waits for a task it left
+		// running (Claude Code's background commands and monitors).
+		what := "the background task"
+		if a.Detail != "" {
+			what += " “" + firstLine(a.Detail) + "”"
+		}
+		if strings.HasSuffix(a.Detail, "background tasks") {
+			what = a.Detail
+		}
+		t.countWait(what, 0)
+		return
 	}
 	t.label, t.mark = label+"…", a.State
 	t.u.applyActivity(t)
@@ -814,7 +943,7 @@ func (t *turn) showRun(o toolOutcome) {
 	switch o.Name {
 	case "shell":
 		t.label, t.mark = "Running "+firstLine(command)+"…", "bash"
-		t.countWait(firstLine(command))
+		t.countWait(firstLine(command), longCommand)
 	case "read_file":
 		t.label, t.mark = "Reading "+path+"…", "read"
 	case "list_directory":
@@ -855,9 +984,10 @@ func runState(chat *conversation, index int) string {
 // agent is waiting for it: the clock, with the time it has taken so far.
 const longCommand = 2 * time.Second
 
-// countWait switches a running command to the clock once it lasts, and
-// counts the seconds until its result (any new activity stops it).
-func (t *turn) countWait(command string) {
+// countWait shows the clock for something the agent waits for (a command
+// that lasts, a background task) from the given delay on, and counts the
+// time until any new activity.
+func (t *turn) countWait(what string, after time.Duration) {
 	t.waiting++
 	turn, started := t.waiting, time.Now()
 	var tick func()
@@ -866,11 +996,21 @@ func (t *turn) countWait(command string) {
 			if t.waiting != turn || t.u.ctx.Err() != nil {
 				return
 			}
-			t.label = fmt.Sprintf("Waiting for %s… %d s", command, int(time.Since(started).Seconds()))
+			seconds := int(time.Since(started).Seconds())
+			spent := fmt.Sprintf("%d s", seconds)
+			if seconds >= 60 {
+				spent = fmt.Sprintf("%d min %02d s", seconds/60, seconds%60)
+			}
+			t.label = fmt.Sprintf("Waiting for %s… %s", what, spent)
 			t.mark = "wait"
 			t.u.applyActivity(t)
 			time.AfterFunc(time.Second, tick)
 		})
 	}
-	time.AfterFunc(longCommand, tick)
+	if after == 0 { // shown at once: the line must not keep saying "Writing"
+		t.label, t.mark = "Waiting for "+what+"…", "wait"
+		t.u.applyActivity(t)
+		after = time.Second
+	}
+	time.AfterFunc(after, tick)
 }

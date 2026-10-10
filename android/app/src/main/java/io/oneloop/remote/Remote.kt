@@ -90,6 +90,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var defaultEffort by mutableStateOf("")
     var defaultWindow by mutableStateOf(0)
     var approvalMode by mutableStateOf("approval")
+    var autoMode by mutableStateOf(false) // Claude Code's Auto mode exists for the model in use
     var current by mutableStateOf<String?>(null) // null: a new chat
     val items = mutableStateListOf<Item>()
     var meta by mutableStateOf<Meta?>(null)
@@ -323,6 +324,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         defaultEffort = o.optString("effort")
         defaultWindow = o.optInt("window")
         approvalMode = o.optString("approvalMode", "approval")
+        autoMode = o.optBoolean("autoMode")
         modelsLoading = o.optBoolean("loading")
     }
 

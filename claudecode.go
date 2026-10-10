@@ -41,7 +41,10 @@ type claudeEvent struct {
 	Parent       *string `json:"parent_tool_use_id"` // set for a subagent's messages
 	APIKeySource string  `json:"apiKeySource"`
 	Status       string  `json:"status"`
-	Event        *struct {
+	Tasks        []struct {
+		Description string `json:"description"`
+	} `json:"tasks"` // background_tasks_changed: what still runs in the background
+	Event *struct {
 		Type         string `json:"type"`
 		Index        int    `json:"index"`
 		ContentBlock struct {
@@ -113,6 +116,15 @@ type claudeModel struct {
 type planUsage struct {
 	FiveHour, Week float64
 }
+
+// claudeDisabledTools are the Claude Code tools 1loop turns off, with
+// Claude Code's own --disallowedTools option.
+//
+// Subagents (Task, named Agent in other versions) are off FOR NOW: 1loop
+// has no view of what a subagent does, so the conversation would show one
+// opaque row while a whole second agent works. To allow them again once the
+// interface can show their steps, empty this list.
+const claudeDisabledTools = "Task,Agent"
 
 // claudeCommand prepares a Claude Code process in its stream-json mode.
 // The environment is the user's, minus what would change who pays (an API
@@ -328,6 +340,14 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 	}
 	ctx = toolContext(ctx, cfg)
 	args := []string{"--include-partial-messages", "--permission-prompt-tool", "stdio"}
+	if cfg.ApprovalMode == "auto" {
+		// Claude Code's own judge decides; what it still asks reaches the
+		// user like any other permission request.
+		args = append(args, "--permission-mode", "auto")
+	}
+	if claudeDisabledTools != "" {
+		args = append(args, "--disallowedTools", claudeDisabledTools)
+	}
 	if cfg.Model != "" && cfg.Model != "default" {
 		args = append(args, "--model", cfg.Model)
 	}
@@ -368,7 +388,16 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 			stdin.Close()
 		}
 	}
-	defer func() { finish(); cmd.Wait() }() // Wait also ends a process that outlives a stop
+	var failure error
+	defer func() {
+		finish()
+		if ctx.Err() != nil || failure != nil {
+			// Stopped: nothing Claude Code started may keep running (its
+			// commands and background tasks share its process group).
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		}
+		cmd.Wait()
+	}()
 
 	messages := append([]message(nil), history...)
 	prompt := messages[len(messages)-1]
@@ -390,26 +419,114 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 	sawText := false                 // the current text arrived as deltas
 	status := &announcer{emit: emit}
 	usage := 0
-	var failure error
+	// Between two turns Claude Code is idle: either the task is over, or it
+	// waits for what it left running in the background (a command started
+	// with run_in_background, a Monitor) and will start a turn of its own
+	// when that reports. Its input stays open meanwhile, so that turn can
+	// still ask for a permission and the user can still send a message.
+	idle := false
+	var idleSince time.Time
+	var background []string // what Claude Code runs in the background
+	waitBackground := func() {
+		switch len(background) {
+		case 0:
+		case 1:
+			status.set(activity{State: "background", Detail: background[0]})
+		default:
+			status.set(activity{State: "background", Detail: fmt.Sprintf("%d background tasks", len(background))})
+		}
+	}
 	inject := func(m message) {
+		idle = false
 		messages = append(messages, m)
 		emit("injected", m)
+		status.set(activity{State: "wait"})
 		send(claudePrompt(m, ""))
 	}
 
-	scanner := bufio.NewScanner(stdout)
-	scanner.Buffer(make([]byte, 64<<10), 64<<20)
-	for scanner.Scan() {
+	// The output is read apart, so the loop below can also watch the clock
+	// (an idle Claude Code says nothing) and the Stop button.
+	lines := make(chan []byte)
+	done := make(chan struct{})
+	defer close(done)
+	go func() {
+		defer close(lines)
+		scanner := bufio.NewScanner(stdout)
+		scanner.Buffer(make([]byte, 64<<10), 64<<20)
+		for scanner.Scan() {
+			select {
+			case lines <- append([]byte(nil), scanner.Bytes()...):
+			case <-done:
+				return
+			}
+		}
+	}()
+	tick := time.NewTicker(200 * time.Millisecond)
+	defer tick.Stop()
+	for failure == nil {
+		var line []byte
+		select {
+		case <-ctx.Done():
+			// Stop: Claude Code got the interrupt it documents (SIGINT);
+			// it has a moment to close its session before it is killed.
+			grace := time.After(1500 * time.Millisecond)
+			for {
+				select {
+				case _, more := <-lines:
+					if more {
+						continue
+					}
+				case <-grace:
+				}
+				return ctx.Err()
+			}
+		case <-tick.C:
+			if !idle {
+				continue
+			}
+			if extras := in.steer(); len(extras) > 0 {
+				for _, extra := range extras {
+					inject(extra)
+				}
+			} else if next, ok := in.next(); ok {
+				inject(next)
+			} else if len(background) == 0 && time.Since(idleSince) > 600*time.Millisecond {
+				idle = false
+				finish() // nothing runs, nothing waits: the task is over
+			}
+			continue
+		case next, more := <-lines:
+			if !more {
+				lines = nil
+			}
+			line = next
+		}
+		if lines == nil {
+			break
+		}
 		var e claudeEvent
-		if json.Unmarshal(scanner.Bytes(), &e) != nil {
+		if json.Unmarshal(line, &e) != nil {
 			continue
 		}
 		if e.Parent != nil && e.Type != "result" {
 			continue // a subagent's own stream: its outcome comes as the Agent tool's result
 		}
 		switch e.Type {
+		case "stream_event", "assistant", "user", "control_request":
+			idle = false // a turn is running
+		}
+		switch e.Type {
 		case "system":
 			switch e.Subtype {
+			case "background_tasks_changed":
+				background = background[:0]
+				for _, task := range e.Tasks {
+					background = append(background, task.Description)
+				}
+				if idle {
+					idleSince = time.Now() // a finished task reports: its turn comes next
+					waitBackground()
+				}
 			case "init":
 				if e.APIKeySource != "" && e.APIKeySource != "none" {
 					failure = fmt.Errorf("Claude Code is not using your subscription here (credentials: %s). 1loop stopped before anything was billed to an API key.", e.APIKeySource)
@@ -419,6 +536,7 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 				}
 			case "status":
 				if e.Status == "requesting" {
+					idle = false
 					status.set(activity{State: "wait"})
 				}
 			case "api_retry":
@@ -563,16 +681,13 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 			} else if next, ok := in.next(); ok {
 				inject(next)
 			} else {
-				finish()
+				idle, idleSince = true, time.Now()
+				waitBackground()
 			}
-		}
-		if failure != nil {
-			break
 		}
 	}
 	if failure != nil {
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) // stop it now: nothing more may be spent
-		return failure
+		return failure // the deferred kill stops it now: nothing more may be spent
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()

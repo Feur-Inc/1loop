@@ -377,6 +377,6 @@ func (u *desktopUI) buildSidebar() fyne.CanvasObject {
 	divider := canvas.NewRectangle(colBorderSoft)
 	divider.SetMinSize(fyne.NewSize(0, 1))
 	bottom := container.NewVBox(divider, padded(6, 8, 0, 0, u.connections))
-	content := padded(0, 0, 12, 12, container.NewBorder(top, bottom, nil, nil, container.NewVScroll(lists)))
+	content := padded(0, 0, 12, 12, container.NewBorder(top, bottom, nil, nil, newKineticVScroll(lists)))
 	return container.NewStack(canvas.NewRectangle(colSidebar), content)
 }

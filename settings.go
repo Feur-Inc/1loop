@@ -70,7 +70,7 @@ func (u *desktopUI) settings() {
 	sidebar := container.NewGridWrap(fyne.NewSize(160, 540), nav)
 	content := container.NewBorder(nil, nil, sidebar, nil, padded(0, 0, 20, 0, body))
 	show("Connections")
-	scroll := container.NewVScroll(content)
+	scroll := newKineticVScroll(content)
 	scroll.SetMinSize(fyne.NewSize(880, 540))
 	u.modal("Settings", scroll, 960, nil)
 }
@@ -393,7 +393,7 @@ func (u *desktopUI) connectionEditor(original connection, changed func()) {
 	}
 	modelsSection := container.NewVBox(textLine("Model visibility", 16, colText), allModels, container.NewHBox(load), search, container.NewGridWrap(fyne.NewSize(600, 220), modelList))
 	content := container.NewVBox(field("Connection name", name), field("Type", typePicker.row), enabled, apiFields, oauthFields, claudeFields, modelsSection, routingSection, field("Default request parameters (JSON)", parameters), note("Examples: temperature, top_p, max_tokens, seed, chat_template_kwargs. Model, tools and streaming are managed by 1loop."), status)
-	scroll := container.NewVScroll(content)
+	scroll := newKineticVScroll(content)
 	scroll.SetMinSize(fyne.NewSize(640, 490))
 	var modal *sheet
 	save := newRow("Save connection", nil, stylePrimary, func() {
@@ -537,7 +537,7 @@ func (u *desktopUI) modelPreferencesEditor(c *connection, model modelChoice, key
 		c.ModelOptions[model.ID] = modelPreferences{Provider: route, Parameters: params}
 		modal.Hide()
 	})
-	scroll := container.NewVScroll(content)
+	scroll := newKineticVScroll(content)
 	scroll.SetMinSize(fyne.NewSize(560, 420))
 	modal = u.modal("Model settings", scroll, 640, nil, newRow("Cancel", nil, styleOutline, func() { modal.dismiss() }), save)
 }

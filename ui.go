@@ -1163,7 +1163,7 @@ func (p *picker) show() {
 	}
 	var content fyne.CanvasObject = list
 	if len(p.Options) > 9 {
-		scroll := container.NewVScroll(list)
+		scroll := newKineticVScroll(list)
 		scroll.SetMinSize(fyne.NewSize(list.MinSize().Width, 9*list.Objects[0].MinSize().Height))
 		content = scroll
 	}

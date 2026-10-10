@@ -103,7 +103,7 @@ type desktopUI struct {
 	// Conversation
 	transcript  *fyne.Container
 	column      *fyne.Container
-	scroll      *container.Scroll
+	scroll      *kineticScroll
 	followTail  bool
 	items       *transcriptLayout
 	building    bool // openChat is adding a whole chat's items (see place)
@@ -361,7 +361,7 @@ func (u *desktopUI) build() fyne.CanvasObject {
 	u.dockRow = container.NewStack()
 	u.dockRow.Hide()
 	u.column = container.NewVBox(u.transcript, u.inlineRow)
-	u.scroll = container.NewVScroll(container.New(columnLayout{width: 760, inset: 24}, u.column))
+	u.scroll = newKineticVScroll(container.New(columnLayout{width: 760, inset: 24}, u.column))
 	u.followTail = true
 	u.scroll.OnScrolled = func(position fyne.Position) {
 		// A small tolerance absorbs fractional pixel rounding at the bottom.

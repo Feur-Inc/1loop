@@ -22,7 +22,7 @@ type toolPanel struct {
 	u      *desktopUI
 	view   fyne.CanvasObject
 	strip  *fyne.Container
-	body   *container.Scroll
+	body   *kineticScroll
 	texts  []*outputView // the code wells of the call on display
 	tabs   []panelTab
 	active int
@@ -46,7 +46,7 @@ func newToolPanel(u *desktopUI) *toolPanel {
 	header := container.NewBorder(nil, nil, nil, container.NewCenter(fold), container.NewHScroll(p.strip))
 	rule := canvas.NewRectangle(colBorderSoft)
 	rule.SetMinSize(fyne.NewSize(0, 1))
-	p.body = container.NewVScroll(spacer(0, 0))
+	p.body = newKineticVScroll(spacer(0, 0))
 	p.body.OnScrolled = func(fyne.Position) { p.place() }
 	card := canvas.NewRectangle(colSurface)
 	card.CornerRadius = 12

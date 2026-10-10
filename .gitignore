@@ -4,3 +4,6 @@
 /.1loop/
 # A stray build from before the Makefile wrote to bin/.
 /1loop
+
+# Local secrets: never committed.
+/TOKEN

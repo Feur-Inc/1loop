@@ -202,8 +202,10 @@ func (u *desktopUI) connectionEditor(original connection, changed func()) {
 	enabled := widget.NewCheck("Enable this connection", nil)
 	enabled.SetChecked(draft.Enabled)
 	typePicker := newPicker(u.window, "Connection type", styleField, nil)
-	typePicker.Options = []string{"Local vLLM", "OpenRouter", "ChatGPT account", "OpenAI-compatible API"}
-	ids := map[string]string{"Local vLLM": "vllm", "OpenRouter": "openrouter", "ChatGPT account": "openai", "OpenAI-compatible API": "compatible"}
+	typePicker.Options = []string{"Local vLLM", "OpenRouter", "ChatGPT account", "OpenAI-compatible API", "Claude Code"}
+	ids := map[string]string{"Local vLLM": "vllm", "OpenRouter": "openrouter", "ChatGPT account": "openai", "OpenAI-compatible API": "compatible", "Claude Code": "claudecode"}
+	// Claude Code is driven as installed: nothing to configure here.
+	claudeFields := container.NewVBox(note("Uses the Claude Code installed on this computer, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it."))
 	apiFields := container.NewVBox(field("API base URL", base), field("API key", key))
 	loginLink := widget.NewHyperlink("Open sign-in in your browser", nil)
 	loginLink.Hide()
@@ -270,12 +272,16 @@ func (u *desktopUI) connectionEditor(original connection, changed func()) {
 	typePicker.onChanged = func(label string) {
 		previous := draft.Provider
 		draft.Provider = ids[label]
-		if draft.Provider == "openai" {
-			apiFields.Hide()
+		apiFields.Hide()
+		oauthFields.Hide()
+		claudeFields.Hide()
+		switch draft.Provider {
+		case "openai":
 			oauthFields.Show()
-		} else {
+		case "claudecode":
+			claudeFields.Show()
+		default:
 			apiFields.Show()
-			oauthFields.Hide()
 		}
 		if draft.Provider == "openrouter" {
 			base.SetText("https://openrouter.ai/api/v1")
@@ -382,7 +388,7 @@ func (u *desktopUI) connectionEditor(original connection, changed func()) {
 		}
 	}
 	modelsSection := container.NewVBox(textLine("Model visibility", 16, colText), allModels, container.NewHBox(load), search, container.NewGridWrap(fyne.NewSize(600, 220), modelList))
-	content := container.NewVBox(field("Connection name", name), field("Type", typePicker.row), enabled, apiFields, oauthFields, modelsSection, routingSection, field("Default request parameters (JSON)", parameters), note("Examples: temperature, top_p, max_tokens, seed, chat_template_kwargs. Model, tools and streaming are managed by 1loop."), status)
+	content := container.NewVBox(field("Connection name", name), field("Type", typePicker.row), enabled, apiFields, oauthFields, claudeFields, modelsSection, routingSection, field("Default request parameters (JSON)", parameters), note("Examples: temperature, top_p, max_tokens, seed, chat_template_kwargs. Model, tools and streaming are managed by 1loop."), status)
 	scroll := container.NewVScroll(content)
 	scroll.SetMinSize(fyne.NewSize(640, 490))
 	var modal *sheet
@@ -408,7 +414,7 @@ func (u *desktopUI) connectionEditor(original connection, changed func()) {
 		draft.Enabled = enabled.Checked
 		draft.Routing = route
 		draft.Parameters = params
-		if draft.Provider != "openai" {
+		if draft.Provider != "openai" && draft.Provider != "claudecode" {
 			cfg := draft.config("")
 			cfg.APIKey = key.Text
 			if _, _, err = endpoint(cfg); err != nil {

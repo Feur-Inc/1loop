@@ -602,6 +602,7 @@ func (u *desktopUI) finishEdit(commit bool) {
 type contextRing struct {
 	widget.BaseWidget
 	used, window int
+	plan         planUsage // Claude Code: how much of the subscription's windows is used
 	tips         *tipLayer
 	track, fill  *canvas.Arc
 }
@@ -635,7 +636,11 @@ func (r *contextRing) describe() string {
 	if percent > 100 {
 		percent = 100
 	}
-	return fmt.Sprintf("%d%% of the context used\n%s of %s tokens", percent, tokens(r.used), tokens(r.window))
+	text := fmt.Sprintf("%d%% of the context used\n%s of %s tokens", percent, tokens(r.used), tokens(r.window))
+	if r.plan != (planUsage{}) {
+		text += fmt.Sprintf("\nClaude plan: %.0f%% of the 5 h window · %.0f%% of the week", r.plan.FiveHour*100, r.plan.Week*100)
+	}
+	return text
 }
 
 func tokens(n int) string {
@@ -683,6 +688,10 @@ func (u *desktopUI) setContextUsage(used, window int) {
 // refreshContextRing recomputes the usage of the open conversation from its
 // history, so the ring is right after opening a chat or when nothing runs.
 func (u *desktopUI) refreshContextRing() {
+	u.contextRing.plan = planUsage{}
+	if u.cfg.Provider == "claudecode" {
+		u.contextRing.plan = u.plan
+	}
 	if u.current == nil {
 		u.setContextUsage(0, modelContextWindow(u.cfg))
 		return

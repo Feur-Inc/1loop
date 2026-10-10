@@ -113,7 +113,32 @@ func describeTool(item chatItem, running bool) (verb, target string, mono bool) 
 		}
 		return pick("Edited", "Editing"), path, false
 	}
-	return pick("Called", "Calling"), item.Tool, false
+	// A tool of another harness (Claude Code's Grep, WebFetch, Agent…):
+	// its name and the argument that says what it is about.
+	var args map[string]any
+	_ = json.Unmarshal([]byte(item.Args), &args)
+	for _, key := range []string{"pattern", "query", "url", "description", "skill", "subject", "prompt"} {
+		if text, ok := args[key].(string); ok && text != "" {
+			target = firstLine(text)
+			break
+		}
+	}
+	switch item.Tool {
+	case "Grep", "Glob":
+		return pick("Searched", "Searching"), target, true
+	case "WebSearch":
+		return pick("Searched the web for", "Searching the web for"), target, false
+	case "WebFetch":
+		return pick("Fetched", "Fetching"), target, false
+	case "Task", "Agent":
+		return pick("Ran an agent:", "Running an agent:"), target, false
+	case "TodoWrite":
+		return pick("Updated", "Updating"), "the task list", false
+	}
+	if target == "" {
+		return pick("Used", "Using"), item.Tool, false
+	}
+	return pick("Used", "Using") + " " + item.Tool + ":", target, false
 }
 
 func diffPath(diff string) string {
@@ -698,6 +723,17 @@ func (t *turn) handle(e uiEvent) {
 	case "notice":
 		t.label = e.data.(string)
 		u.applyActivity(t)
+	case "session": // Claude Code named the chat's session: later turns resume it
+		t.chat.Config.Session = e.data.(string)
+		if t.chat == u.current {
+			u.cfg.Session = t.chat.Config.Session
+		}
+		u.save()
+	case "plan":
+		u.plan = e.data.(planUsage)
+		if t.chat == u.current {
+			u.contextRing.plan = u.plan
+		}
 	}
 }
 
@@ -785,8 +821,8 @@ func (t *turn) showRun(o toolOutcome) {
 		t.label, t.mark = "Listing "+path+"…", "list"
 	case "edit_file":
 		t.label, t.mark = "Applying the edit to "+path+"…", "edit"
-	default:
-		return
+	default: // a tool of another harness (Claude Code's Grep, WebFetch, Agent…)
+		t.label, t.mark = "Using "+o.Name+"…", "call"
 	}
 	t.u.applyActivity(t)
 }

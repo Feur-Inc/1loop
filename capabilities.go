@@ -196,6 +196,23 @@ func (a *app) localCapabilities(ctx context.Context, cfg config, row map[string]
 }
 
 func (a *app) connectionModels(ctx context.Context, c connection, key string) ([]modelChoice, error) {
+	if c.Provider == "claudecode" {
+		models, err := a.claudeModels(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var choices []modelChoice
+		for _, m := range models {
+			efforts := sortedEfforts(m.Efforts)
+			def := ""
+			if contains(efforts, "medium") {
+				def = "medium"
+			}
+			choices = append(choices, modelChoice{Connection: c, ID: m.Value, Name: m.DisplayName, Efforts: efforts,
+				DefaultEffort: def, ReasoningMode: "effort", Source: "Claude Code"})
+		}
+		return choices, nil
+	}
 	cfg := c.config("")
 	cfg.APIKey = key
 	result, err := a.models(ctx, cfg)

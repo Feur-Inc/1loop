@@ -727,7 +727,7 @@ func (u *desktopUI) settingsForPhone() map[string]any {
 	models := []remoteModel{}
 	for _, label := range u.model.Options {
 		choice := u.choices[label]
-		m := remoteModel{Label: label, Name: choice.Name, Detail: u.model.Details[label], Efforts: []remoteEffort{}}
+		m := remoteModel{Label: label, Name: choice.display(), Detail: u.model.Details[label], Efforts: []remoteEffort{}}
 		for _, e := range choice.Efforts {
 			m.Efforts = append(m.Efforts, remoteEffort{e, effortLabel(e)})
 		}

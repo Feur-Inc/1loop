@@ -29,6 +29,7 @@ type config struct {
 	APIKey           string         `json:"-"`
 	Model            string         `json:"model"`
 	Workspace        string         `json:"workspace"`
+	Session          string         `json:"session,omitempty"` // Claude Code connection: the chat's session there
 }
 
 type emitter func(string, any)

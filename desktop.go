@@ -70,6 +70,8 @@ type desktopUI struct {
 	ctx              context.Context
 	shutdown         context.CancelFunc
 	modelLoad        int
+	plan             planUsage      // Claude Code connection: the subscription windows in use
+	claudeOffered    bool           // the Claude Code connection was proposed once
 	remote           *remoteServer  // the phone remote, nil when off
 	remoteEnabled    bool           // see remote.go
 	devices          []pairedDevice // phones paired with the remote
@@ -524,6 +526,7 @@ func (u *desktopUI) updateHeader() {
 func (u *desktopUI) startNew() {
 	u.finishEdit(false)
 	u.current = nil
+	u.cfg.Session = ""
 	u.followTail = true
 	u.transcript.RemoveAll()
 	u.views, u.copyRows = map[int]any{}, map[int]*fyne.Container{}
@@ -721,7 +724,8 @@ func (u *desktopUI) submit() {
 		}
 		return
 	}
-	if text == "/compact" || strings.HasPrefix(text, "/compact ") {
+	// Claude Code compacts its own session: there /compact is sent as it is.
+	if u.cfg.Provider != "claudecode" && (text == "/compact" || strings.HasPrefix(text, "/compact ")) {
 		u.prompt.SetText("")
 		u.compactChat(strings.TrimSpace(strings.TrimPrefix(text, "/compact")))
 		return
@@ -792,6 +796,7 @@ func (u *desktopUI) start(m message) {
 		if len(title) == 0 {
 			title = []rune("[image]")
 		}
+		u.cfg.Session = "" // a new chat starts its own Claude Code session
 		chat = &conversation{ID: identifier()[:16], Title: string(title), Config: u.cfg}
 		u.chats = append([]*conversation{chat}, u.chats...)
 		u.current = chat
@@ -822,7 +827,7 @@ func (u *desktopUI) start(m message) {
 	}
 	go func() {
 		defer cancel()
-		err := u.backend.runCompatible(ctx, cfg, history, in, pump.emit)
+		err := u.backend.run(ctx, cfg, history, in, pump.emit)
 		canceled := ctx.Err() == context.Canceled
 		fyne.Do(func() {
 			pump.flush() // whatever the stream sent last comes first
@@ -1008,6 +1013,9 @@ func (u *desktopUI) refreshModels() {
 					options = append(options, label)
 					u.choices[label] = choice
 					u.model.Details[label] = choice.Connection.Name + " · " + choice.ID
+					if choice.Connection.Provider == "claudecode" {
+						u.model.Details[label] = "Runs in Claude Code's own harness · " + choice.ID
+					}
 					if choice.Connection.ID == previous.ConnectionID && choice.ID == previous.Model {
 						selected = label
 					}
@@ -1042,6 +1050,7 @@ func field(caption string, input fyne.CanvasObject) fyne.CanvasObject {
 }
 
 type savedState struct {
+	ClaudeOffered    bool            `json:"claudeOffered,omitempty"`
 	RemoteEnabled    *bool           `json:"remoteEnabled,omitempty"`
 	Devices          []pairedDevice  `json:"devices,omitempty"`
 	Config           config          `json:"config"`
@@ -1067,7 +1076,7 @@ func (u *desktopUI) saveNow() {
 		u.saveTimer = nil
 	}
 	remote := u.remoteEnabled
-	state := savedState{&remote, u.devices, u.cfg, u.chats, u.projects, u.connectionsList, u.userInstructions, u.approvalMode}
+	state := savedState{u.claudeOffered, &remote, u.devices, u.cfg, u.chats, u.projects, u.connectionsList, u.userInstructions, u.approvalMode}
 	data, err := json.MarshalIndent(state, "", "  ")
 	if err == nil {
 		err = os.MkdirAll(filepath.Dir(u.statePath), 0700)
@@ -1103,13 +1112,14 @@ func (u *desktopUI) load() {
 		u.remoteEnabled = *state.RemoteEnabled
 	}
 	u.devices = state.Devices
+	u.claudeOffered = state.ClaudeOffered
 	if state.Config.Provider == "codex" {
 		state.Config.Provider = "openai"
 		state.Config.Model = ""
 		state.Config.BaseURL = ""
 	}
 	switch state.Config.Provider {
-	case "vllm", "openrouter", "openai", "compatible":
+	case "vllm", "openrouter", "openai", "compatible", "claudecode":
 	default:
 		return
 	}

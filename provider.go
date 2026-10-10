@@ -58,7 +58,7 @@ type activity struct {
 
 // callTarget pulls the path or command out of a tool call's arguments while
 // they stream in, once the JSON string is complete.
-var callTarget = regexp.MustCompile(`"(path|command)"\s*:\s*"((?:[^"\\]|\\.)*)"`)
+var callTarget = regexp.MustCompile(`"(path|file_path|command|pattern|query|url)"\s*:\s*"((?:[^"\\]|\\.)*)"`)
 
 func toolTarget(arguments string) string {
 	m := callTarget.FindStringSubmatch(arguments)
@@ -694,6 +694,15 @@ type inbox struct {
 	// next returns the first message queued with Enter: it becomes the next
 	// turn once the model has finished answering.
 	next func() (message, bool)
+}
+
+// run works on a chat with the connection's harness: Claude Code's own for
+// a Claude Code connection, 1loop's agent loop for every other provider.
+func (a *app) run(ctx context.Context, cfg config, history []message, in inbox, emit emitter) error {
+	if cfg.Provider == "claudecode" {
+		return a.runClaudeCode(ctx, cfg, history, in, emit)
+	}
+	return a.runCompatible(ctx, cfg, history, in, emit)
 }
 
 // runCompatible drives the agent loop: no step limit and no overall

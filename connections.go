@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"os/exec"
 	"strings"
 )
 
@@ -75,7 +76,31 @@ func requestParameters(raw string) (map[string]any, error) {
 	}
 	return params, nil
 }
+
+// offerClaudeCode adds a Claude Code connection the first time 1loop finds
+// Claude Code installed, with its current models; the user can edit or
+// remove it like any other connection, and it is never added again.
+func (u *desktopUI) offerClaudeCode() {
+	if u.claudeOffered {
+		return
+	}
+	for _, c := range u.connectionsList {
+		if c.Provider == "claudecode" {
+			u.claudeOffered = true
+			return
+		}
+	}
+	if _, err := exec.LookPath("claude"); err != nil {
+		return
+	}
+	u.claudeOffered = true
+	id := identifier()
+	u.connectionsList = append(u.connectionsList, connection{ID: id, AuthProfile: id, Name: "Claude Code", Provider: "claudecode",
+		Enabled: true, Models: []string{"opus", "sonnet", "fable", "haiku"}})
+}
+
 func (u *desktopUI) initializeConnections() {
+	defer u.offerClaudeCode()
 	if u.connectionsList == nil {
 		id := identifier()
 		u.connectionsList = []connection{{ID: id, Name: providerName(u.cfg.Provider), Provider: u.cfg.Provider, BaseURL: u.cfg.BaseURL, Enabled: true, AllModels: true}}
@@ -109,8 +134,19 @@ func providerName(id string) string {
 		return "ChatGPT account"
 	case "compatible":
 		return "OpenAI-compatible API"
+	case "claudecode":
+		return "Claude Code"
 	}
 	return id
+}
+
+// display is the model's name as the composer shows it. A Claude Code model
+// says so: there the work runs in Claude Code's harness, not in 1loop's.
+func (c modelChoice) display() string {
+	if c.Connection.Provider == "claudecode" {
+		return c.Name + " · Claude Code"
+	}
+	return c.Name
 }
 func (u *desktopUI) selectModel(choice modelChoice) {
 	previous := u.cfg
@@ -124,8 +160,9 @@ func (u *desktopUI) selectModel(choice modelChoice) {
 	options := choice.Connection.ModelOptions[choice.ID]
 	cfg.Routing = mergeOptions(cfg.Routing, options.Provider)
 	cfg.Parameters = mergeOptions(cfg.Parameters, options.Parameters)
+	cfg.Session = previous.Session // the chat keeps its Claude Code session across model changes
 	u.cfg = cfg
-	display := choice.Name
+	display := choice.display()
 	if runes := []rune(display); len(runes) > 32 {
 		display = string(runes[:32]) + "…"
 	}

@@ -238,6 +238,7 @@ func (u *desktopUI) openChat(chat *conversation) {
 	devf("ui", "open chat %q [%s]: %d items, running %v", chat.Title, chat.ID, len(chat.Items), chat.run != nil)
 	defer devSlow("opening the chat", 30*time.Millisecond, time.Now())
 	u.finishEdit(false)
+	u.prefs.close()
 	u.clearSelection()
 	u.current = chat
 	u.cfg = chat.Config
@@ -377,10 +378,11 @@ func (u *desktopUI) buildSidebar() fyne.CanvasObject {
 		sectionHeader("Projects", addProject), u.projectList,
 		sectionHeader("Conversations", nil), u.chatList)
 	lists := u.sideLists
-	top := container.NewVBox(brand, u.newChat)
 	divider := canvas.NewRectangle(colBorderSoft)
 	divider.SetMinSize(fyne.NewSize(0, 1))
 	bottom := container.NewVBox(divider, padded(6, 8, 0, 0, u.connections))
-	content := padded(0, 0, 12, 12, container.NewBorder(top, bottom, nil, nil, newKineticVScroll(lists)))
+	// Under the logo: the chats, or the settings' sections while they are open.
+	u.sideApp = container.NewBorder(u.newChat, bottom, nil, nil, newKineticVScroll(lists))
+	content := padded(0, 0, 12, 12, container.NewBorder(brand, nil, nil, nil, container.NewStack(u.sideApp, u.prefs.side)))
 	return container.NewStack(canvas.NewRectangle(colSidebar), content)
 }

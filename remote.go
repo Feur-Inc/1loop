@@ -819,20 +819,16 @@ func (r *remoteServer) setApprovalMode(w http.ResponseWriter, req *http.Request)
 // Settings: the remote switch and the paired phones.
 
 func (u *desktopUI) remoteSettings() fyne.CanvasObject {
-	enabled := widget.NewCheck("Allow the 1loop phone app on this network", nil)
-	enabled.SetChecked(u.remoteEnabled)
-	status := note("")
-	describe := func() {
+	describe := func() string {
 		switch {
 		case u.remote != nil:
-			status.SetText(fmt.Sprintf("Listening on port %d as “%s”. Phones must be paired with a code shown here.", u.remote.port, u.remote.name))
+			return fmt.Sprintf("Listening on port %d as “%s”. A phone must be paired with a code shown on this screen.", u.remote.port, u.remote.name)
 		case u.remoteEnabled:
-			status.SetText("The remote could not start (network unavailable).")
-		default:
-			status.SetText("Off: phones cannot find or reach this computer.")
+			return "The remote could not start: the network is unavailable."
 		}
+		return "Off: phones can neither find nor reach this computer."
 	}
-	enabled.OnChanged = func(on bool) {
+	enabled := newToggle(u.remoteEnabled, func(on bool) {
 		u.remoteEnabled = on
 		if on && u.remote == nil {
 			u.startRemote()
@@ -841,31 +837,27 @@ func (u *desktopUI) remoteSettings() fyne.CanvasObject {
 			u.remote = nil
 		}
 		u.save()
-		describe()
+		u.prefs.show("Phone remote") // the state line and the list follow
+	})
+	var phones []fyne.CanvasObject
+	for i, d := range u.devices {
+		i := i
+		remove := newRow("Forget", iconTrash, styleChip, func() {
+			u.devices = append(u.devices[:i], u.devices[i+1:]...)
+			u.save()
+			u.prefs.show("Phone remote")
+		})
+		phones = append(phones, settingRow(d.Name, "Paired "+d.Added.Format("2 Jan 2006 15:04"), remove))
 	}
-	describe()
-	list := container.NewVBox()
-	var render func()
-	render = func() {
-		list.Objects = nil
-		for i, d := range u.devices {
-			i := i
-			remove := newRow("", iconTrash, styleWindow, func() {
-				u.devices = append(u.devices[:i], u.devices[i+1:]...)
-				u.save()
-				render()
-			})
-			title := container.NewVBox(textLine(d.Name, 15, colText), textLine("Paired "+d.Added.Format("2 Jan 2006 15:04"), 12, colMuted))
-			list.Add(surface(container.NewBorder(nil, nil, nil, remove, title), colRaised, colBorderSoft, 10, 10))
-		}
-		if len(u.devices) == 0 {
-			list.Add(note("No paired phone yet. Open the 1loop app on a phone connected to the same network."))
-		}
-		list.Refresh()
+	if len(phones) == 0 {
+		phones = append(phones, settingRow("No paired phone yet", "Open the 1loop app on a phone connected to the same network.", nil))
 	}
-	render()
-	return container.NewVBox(textLine("Phone remote", 20, colText), spacer(0, 8), enabled, status, spacer(0, 8),
-		textLine("Paired phones", 16, colText), list)
+	return container.NewVBox(
+		u.prefs.pageTitle("Phone remote", "", nil),
+		card(settingRow("Allow the 1loop phone app on this network", describe(), enabled)),
+		sectionTitle("Paired phones"),
+		card(phones...),
+	)
 }
 
 // remoteDefaults gives conversations saved before the remote an id.

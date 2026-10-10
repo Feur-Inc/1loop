@@ -251,6 +251,10 @@ func lineIcon(name, body string) fyne.Resource {
 
 var (
 	iconChevron      = lineIcon("chevron", `<path d="M4.5 6.5 8 10l3.5-3.5"/>`)
+	iconChevronLeft  = lineIcon("chevron-left", `<path d="M9.5 4.5 6 8l3.5 3.5"/>`)
+	iconSliders      = lineIcon("sliders", `<path d="M2.5 5h6M11.5 5h2M2.5 11h2M7.5 11h6"/><circle cx="10" cy="5" r="1.5"/><circle cx="6" cy="11" r="1.5"/>`)
+	iconPlug         = lineIcon("plug", `<path d="M6 2.5v3M10 2.5v3M4.5 5.5h7v2.2a3.5 3.5 0 0 1-7 0zM8 11.2v2.3"/>`)
+	iconPhone        = lineIcon("phone", `<rect x="4.5" y="2" width="7" height="12" rx="1.6"/><path d="M7.2 11.8h1.6"/>`)
 	iconChevronRight = lineIcon("chevron-right", `<path d="M6.5 4.5 10 8l-3.5 3.5"/>`)
 	iconChevronUp    = lineIcon("chevron-up", `<path d="M4.5 9.5 8 6l3.5 3.5"/>`)
 	iconCheck        = lineIcon("check", `<path d="M3.5 8.4 6.6 11.4 12.5 4.8"/>`)

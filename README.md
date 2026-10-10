@@ -39,6 +39,8 @@ Pour OpenRouter, **Fetch providers** propose les fournisseurs du modèle. L’or
 
 Cliquer sur le modèle dans le compositeur ouvre le réglage d’effort lorsqu’il est disponible ; cliquer sur son nom dans ce panneau ouvre la liste des modèles. Les niveaux proviennent du catalogue du fournisseur ou, pour vLLM, du template du tokenizer du serveur. Si ce dernier n’est pas publié, 1loop consulte le template public du dépôt indiqué par le serveur ; sa source figure dans les paramètres du modèle. Un template modifié côté serveur peut donc exposer des capacités différentes. Sans métadonnées connues, aucun réglage d’effort n’est affiché.
 
+Les réglages s’ouvrent en pleine fenêtre : leurs sections remplacent la barre latérale, la section choisie remplace la conversation, et une connexion ou un modèle s’ouvre comme une page à la place de la précédente (Échap ou le lien en haut pour revenir). La plupart des réglages s’appliquent dès qu’ils changent ; une connexion s’édite comme un brouillon, enregistré avec les boutons fixés en bas de sa page.
+
 **Settings → General** règle le workspace et les permissions. Les dossiers et images sont choisis avec le sélecteur du bureau (portail XDG, sinon zenity ou kdialog). **Instructions** ajoute des consignes utilisateur au prompt système existant, pour les prochaines requêtes de tous les chats.
 
 ## Réponses

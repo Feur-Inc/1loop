@@ -108,8 +108,10 @@ type desktopUI struct {
 	followTail  bool
 	items       *transcriptLayout
 	frames      *frameHook
-	selected    textSelection // what holds the selected text, if anything does
-	building    bool          // openChat is adding a whole chat's items (see place)
+	prefs       *settingsView     // the settings page
+	sideApp     fyne.CanvasObject // the sidebar's usual content, hidden while settings are open
+	selected    textSelection     // what holds the selected text, if anything does
+	building    bool              // openChat is adding a whole chat's items (see place)
 	welcome     fyne.CanvasObject
 	thinking    *fyne.Container
 	thinkLabel  *fitLabel
@@ -366,6 +368,7 @@ func (t flatScrollTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) co
 
 func (u *desktopUI) build() fyne.CanvasObject {
 	u.tips = newTipLayer()
+	u.buildSettings()
 	sidebar := u.buildSidebar()
 
 	// Conversation column. While the model works, the animated ring sits
@@ -439,7 +442,8 @@ func (u *desktopUI) build() fyne.CanvasObject {
 	if u.chrome {
 		header = container.NewStack(newDragArea(u.window), padded(8, 4, 20, 8, u.headerBar))
 	}
-	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, u.split))
+	// The settings page takes the conversation's place while it is open.
+	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(u.split, u.prefs.view)))
 	// No rule between the panes: the sidebar only casts a faint shadow.
 	shade := canvas.NewHorizontalGradient(color.NRGBA{A: 0x2a}, color.NRGBA{})
 	u.pane = &paneLayout{shown: 1, shade: 14}
@@ -459,6 +463,11 @@ func (u *desktopUI) buildFooter() fyne.CanvasObject {
 	u.prompt.send = u.submit
 	u.prompt.steer = u.steerNow
 	u.prompt.escape = func() { u.finishEdit(false); u.clearSelection() }
+	u.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
+		if key.Name == fyne.KeyEscape && u.prefs.open { // Escape goes back a page, then to the conversation
+			u.prefs.back()
+		}
+	})
 	u.prompt.shortcut = u.shortcut
 	u.prompt.paste = u.pasteFromClipboard
 
@@ -564,11 +573,15 @@ func (u *desktopUI) updateHeader() {
 	if u.current != nil {
 		title = u.current.Title
 	}
+	if u.prefs != nil && u.prefs.open {
+		title = "Settings"
+	}
 	u.header.SetText(title)
 }
 
 func (u *desktopUI) startNew() {
 	devf("ui", "new chat screen (workspace %s)", u.cfg.Workspace)
+	u.prefs.close()
 	u.clearSelection()
 	u.finishEdit(false)
 	u.current = nil

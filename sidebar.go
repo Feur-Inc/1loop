@@ -238,6 +238,7 @@ func (u *desktopUI) openChat(chat *conversation) {
 	devf("ui", "open chat %q [%s]: %d items, running %v", chat.Title, chat.ID, len(chat.Items), chat.run != nil)
 	defer devSlow("opening the chat", 30*time.Millisecond, time.Now())
 	u.finishEdit(false)
+	u.clearSelection()
 	u.current = chat
 	u.cfg = chat.Config
 	u.followTail = true

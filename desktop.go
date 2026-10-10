@@ -108,7 +108,8 @@ type desktopUI struct {
 	followTail  bool
 	items       *transcriptLayout
 	frames      *frameHook
-	building    bool // openChat is adding a whole chat's items (see place)
+	selected    textSelection // what holds the selected text, if anything does
+	building    bool          // openChat is adding a whole chat's items (see place)
 	welcome     fyne.CanvasObject
 	thinking    *fyne.Container
 	thinkLabel  *fitLabel
@@ -201,6 +202,7 @@ func runDesktop(backend *app, root string) {
 	} {
 		u.window.Canvas().AddShortcut(s, func(s fyne.Shortcut) { u.shortcut(s) })
 	}
+	u.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { u.copySelection() })
 	u.updateHeader()
 	u.renderChats()
 	u.refreshModels()
@@ -278,6 +280,11 @@ func (u *desktopUI) restart() {
 }
 
 func (u *desktopUI) shortcut(s fyne.Shortcut) bool {
+	if _, copies := s.(*fyne.ShortcutCopy); copies {
+		// Ctrl+C with the prompt focused but nothing selected in it: the
+		// text selected in the conversation is what is meant.
+		return (u.prompt == nil || u.prompt.SelectedText() == "") && u.copySelection()
+	}
 	c, ok := s.(*desktop.CustomShortcut)
 	if !ok {
 		return false
@@ -363,6 +370,11 @@ func (u *desktopUI) build() fyne.CanvasObject {
 
 	// Conversation column. While the model works, the animated ring sits
 	// under the last message.
+	afterTypeset = func() {
+		if u.ctx.Err() == nil {
+			u.relayoutColumn()
+		}
+	}
 	u.items = &transcriptLayout{u: u}
 	u.items.reset()
 	u.transcript = container.New(u.items)
@@ -390,10 +402,12 @@ func (u *desktopUI) build() fyne.CanvasObject {
 		container.NewCenter(u.mark.image), spacer(0, 18),
 		container.NewCenter(textLine("What shall we build today?", 24, colText)), spacer(0, 4),
 		container.NewCenter(textLine("Your project. Your model. One loop.", 14, colMuted)), spacer(0, 40)))
-	fade := canvas.NewVerticalGradient(withAlpha(colBackground, 0), colBackground)
-	fade.SetMinSize(fyne.NewSize(0, 22))
+	// Nothing is drawn between the conversation and the composer: no rule,
+	// no fade (a gradient of the background over itself showed as darker
+	// bands, 8 bits being too few for so dark a colour). The messages just
+	// end where the composer's block begins.
 	scroll := container.NewThemeOverride(u.scroll, flatScrollTheme{loopTheme{theme.DefaultTheme()}})
-	view := container.NewStack(u.welcome, scroll, container.NewBorder(nil, fade, nil, nil))
+	view := container.NewStack(u.welcome, scroll)
 	u.scroll.Hide()
 
 	conversation := container.NewBorder(nil, u.buildFooter(), nil, nil, view)
@@ -444,7 +458,7 @@ func (u *desktopUI) buildFooter() fyne.CanvasObject {
 	u.prompt.SetPlaceHolder("Describe what you want to build…")
 	u.prompt.send = u.submit
 	u.prompt.steer = u.steerNow
-	u.prompt.escape = func() { u.finishEdit(false) }
+	u.prompt.escape = func() { u.finishEdit(false); u.clearSelection() }
 	u.prompt.shortcut = u.shortcut
 	u.prompt.paste = u.pasteFromClipboard
 
@@ -555,6 +569,7 @@ func (u *desktopUI) updateHeader() {
 
 func (u *desktopUI) startNew() {
 	devf("ui", "new chat screen (workspace %s)", u.cfg.Workspace)
+	u.clearSelection()
 	u.finishEdit(false)
 	u.current = nil
 	u.cfg.Session = ""

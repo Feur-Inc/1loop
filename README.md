@@ -41,6 +41,14 @@ Cliquer sur le modèle dans le compositeur ouvre le réglage d’effort lorsqu�
 
 **Settings → General** règle le workspace et les permissions. Les dossiers et images sont choisis avec le sélecteur du bureau (portail XDG, sinon zenity ou kdialog). **Instructions** ajoute des consignes utilisateur au prompt système existant, pour les prochaines requêtes de tous les chats.
 
+## Réponses
+
+Les réponses sont mises en page par 1loop lui-même (`markdown.go`, `mdinline.go`, `flowtext.go`) : titres, paragraphes, listes à puces, numérotées et imbriquées, cases à cocher, citations, filets, tableaux, blocs de code avec leur bouton de copie, gras, italique, barré, code en ligne sur fond teinté, liens `[texte](adresse)` et adresses nues, cliquables (ouverts par l’application du bureau).
+
+**Formules** : `$…$`, `\(…\)`, `$$…$$` et `\[…\]` sont composées par le TeX de l’ordinateur quand `latex` et `dvipng` sont installés (paquets `texlive-latex-extra` et `dvipng` sous Debian), avec `amsmath` et `amssymb`. Elles sont calculées à côté de l’interface puis gardées dans `~/.cache/1loop/math`. Sans TeX, ou si une formule ne compile pas, sa source reste affichée comme du code. TeX tourne sans accès au shell et sans lecture de fichiers hors de son dossier de travail.
+
+**Sélection** : le texte d’une réponse se sélectionne à la souris, d’un paragraphe à l’autre, code et tableaux compris ; double-clic pour un mot, Ctrl+C pour copier, Échap pour annuler.
+
 ## Outils
 
 Les connexions utilisent quatre outils exécutés par le backend Go :

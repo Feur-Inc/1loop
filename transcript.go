@@ -391,7 +391,8 @@ func (u *desktopUI) appendItem(chat *conversation, index int) {
 		copyRow.Hide() // see syncCopies
 		u.views[index] = view
 		u.copyRows[index] = copyRow
-		u.place(container.NewVBox(view.box, copyRow))
+		view.layer = newSelectLayer(u, view.box)
+		u.place(container.NewVBox(container.NewStack(view.box, view.layer), copyRow))
 	case "user":
 		content := container.NewVBox()
 		var pics []fyne.CanvasObject

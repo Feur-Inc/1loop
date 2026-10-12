@@ -829,7 +829,6 @@ type sheet struct {
 	menu       bool
 	alignLeft  bool
 	columns    bool // the model selector uses the HTML demo's surface and radius
-	tips       *tipLayer
 	onDismiss  func()
 	onClosed   func()
 	afterClose func()                    // runs once the sheet is gone (menu actions)
@@ -1076,9 +1075,6 @@ func (r *sheetRenderer) Layout(size fyne.Size) {
 	pad := s.pad()
 	s.content.Move(box.pos.AddXY(pad, pad))
 	s.content.Resize(fyne.NewSize(box.size.X-2*pad, box.size.Y-2*pad))
-	if s.tips != nil {
-		s.tips.layer.Resize(size)
-	}
 }
 
 func (r *sheetRenderer) MinSize() fyne.Size { return fyne.NewSize(0, 0) }
@@ -1130,9 +1126,6 @@ func (r *sheetRenderer) Objects() []fyne.CanvasObject {
 	objects := []fyne.CanvasObject{r.s.dim}
 	objects = append(objects, r.s.shadow.objects()...)
 	objects = append(objects, r.s.panel, r.s.content)
-	if r.s.tips != nil {
-		objects = append(objects, r.s.tips.layer)
-	}
 	return objects
 }
 

@@ -217,32 +217,16 @@ func (a *app) connectionLimits(ctx context.Context, c connection, key string) (a
 	return limits, nil
 }
 
-func showAccountLimits(row *tapRow, limits accountLimits, tips *tipLayer) {
-	row.detail = limits.summary()
-	row.onHover = func(in bool) {
-		if in {
-			tips.show(row, limits.describe())
-		} else {
-			tips.hide()
-		}
-	}
-	row.Refresh()
-}
-
-func (u *desktopUI) loadAccountLimits(ctx context.Context, menu *sheet, c connection, row *tapRow) {
-	if row.disabled {
-		return
-	}
+func (u *desktopUI) loadAccountLimits(ctx context.Context, menu *sheet, c connection, show func(accountLimits)) {
 	if cached, ok := u.accountLimits[c.ID]; ok && time.Since(cached.checked) < time.Minute {
-		showAccountLimits(row, cached, menu.tips)
+		show(cached)
 		return
 	}
 	if c.Provider != "openai" && c.Provider != "claudecode" && c.Provider != "openrouter" {
-		showAccountLimits(row, accountLimits{note: "Limites non fournies"}, menu.tips)
+		show(accountLimits{note: "Limites non fournies"})
 		return
 	}
-	row.detail = "Chargement des limites…"
-	row.Refresh()
+	show(accountLimits{note: "Chargement des limites…"})
 	key := u.keys[c.ID]
 	go func() {
 		limits, err := u.backend.connectionLimits(ctx, c, key)
@@ -258,10 +242,7 @@ func (u *desktopUI) loadAccountLimits(ctx context.Context, menu *sheet, c connec
 				u.accountLimits = map[string]accountLimits{}
 			}
 			u.accountLimits[c.ID] = limits
-			showAccountLimits(row, limits, menu.tips)
-			if menu.tips.anchor == row {
-				menu.tips.place(row, limits.describe())
-			}
+			show(limits)
 		})
 	}()
 }

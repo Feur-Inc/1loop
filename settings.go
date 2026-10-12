@@ -16,6 +16,7 @@ import (
 	"fmt"
 	"image/color"
 	"net/url"
+	"reflect"
 	"strings"
 	"time"
 
@@ -74,9 +75,10 @@ var settingsSections = []struct {
 // settingsFrame is one page of the settings: a section, or what was opened
 // from it.
 type settingsFrame struct {
-	content fyne.CanvasObject
-	actions []fyne.CanvasObject // pinned under the page: Cancel, Save
-	leave   func()              // called when the page is left without saving
+	content     fyne.CanvasObject
+	actions     []fyne.CanvasObject // pinned under the page: Cancel, Save
+	leave       func()              // called when the page is left without saving
+	beforeLeave func(func())        // asks what to do with an unsaved draft
 }
 
 type settingsView struct {
@@ -147,6 +149,10 @@ func (v *settingsView) close() {
 	if !v.open {
 		return
 	}
+	v.confirmLeave(0, v.closeNow)
+}
+
+func (v *settingsView) closeNow() {
 	u := v.u
 	for len(v.frames) > 0 {
 		v.drop()
@@ -166,6 +172,10 @@ func (v *settingsView) close() {
 
 // show opens a section, leaving whatever was open.
 func (v *settingsView) show(section string) {
+	v.confirmLeave(0, func() { v.showNow(section) })
+}
+
+func (v *settingsView) showNow(section string) {
 	for len(v.frames) > 0 {
 		v.drop()
 	}
@@ -210,8 +220,20 @@ func (v *settingsView) back() {
 		v.close()
 		return
 	}
-	v.drop()
-	v.present()
+	v.confirmLeave(len(v.frames)-1, func() {
+		v.drop()
+		v.present()
+	})
+}
+
+func (v *settingsView) confirmLeave(keep int, next func()) {
+	for i := len(v.frames) - 1; i >= keep; i-- {
+		if ask := v.frames[i].beforeLeave; ask != nil {
+			ask(next)
+			return
+		}
+	}
+	next()
 }
 
 // done leaves the page on top after it saved: the one below is built again
@@ -219,6 +241,7 @@ func (v *settingsView) back() {
 func (v *settingsView) done() {
 	if n := len(v.frames); n > 1 {
 		v.frames[n-1].leave = nil
+		v.frames[n-1].beforeLeave = nil
 	}
 	if len(v.frames) == 2 {
 		v.show(v.section)
@@ -802,21 +825,21 @@ func (u *desktopUI) connectionEditor(original connection) {
 	}
 	page.Add(spacer(0, 16))
 
-	save := newRow("Save connection", nil, stylePrimary, func() {
+	saveDraft := func() bool {
 		if strings.TrimSpace(name.Text) == "" {
 			say("Enter a connection name.")
-			return
+			return false
 		}
 		params, err := requestParameters(parameters.Text)
 		if err != nil {
 			say(err.Error())
-			return
+			return false
 		}
 		var route map[string]any
 		if draft.Provider == "openrouter" {
 			if err = json.Unmarshal([]byte(routing.Text), &route); err != nil || route == nil {
 				say("Routing must be a JSON object.")
-				return
+				return false
 			}
 		}
 		draft.Name = strings.TrimSpace(name.Text)
@@ -828,7 +851,7 @@ func (u *desktopUI) connectionEditor(original connection) {
 			cfg.APIKey = key.Text
 			if _, _, err = endpoint(cfg); err != nil {
 				say(err.Error())
-				return
+				return false
 			}
 		}
 		found := false
@@ -846,10 +869,35 @@ func (u *desktopUI) connectionEditor(original connection) {
 		devf("ui", "connection %q saved", draft.Name)
 		u.save()
 		u.refreshModels()
-		v.done()
+		return true
+	}
+	save := newRow("Save connection", nil, stylePrimary, func() {
+		if saveDraft() {
+			v.done()
+		}
 	})
+	initial := cloneConnection(draft)
+	fields := func() [5]string { return [5]string{name.Text, base.Text, key.Text, routing.Text, parameters.Text} }
+	initialFields := fields()
+	beforeLeave := func(next func()) {
+		if reflect.DeepEqual(draft, initial) && fields() == initialFields {
+			next()
+			return
+		}
+		var warning *sheet
+		stay := newRow("Revenir", nil, styleOutline, func() { warning.dismiss() })
+		discard := newRow("Abandonner", nil, styleOutline, func() { warning.Hide(); next() })
+		discard.danger = true
+		keep := newRow("Enregistrer", nil, stylePrimary, func() {
+			warning.Hide()
+			if saveDraft() {
+				next()
+			}
+		})
+		warning = u.modal("Modifications non enregistrées", note("Enregistrez vos choix pour les conserver. Voulez-vous vraiment les abandonner ?"), 520, nil, stay, discard, keep)
+	}
 	cancel := newRow("Cancel", nil, styleOutline, v.back)
-	v.push(settingsFrame{content: page, actions: []fyne.CanvasObject{container.NewCenter(sized(360, status)), cancel, save}, leave: func() {
+	v.push(settingsFrame{content: page, actions: []fyne.CanvasObject{container.NewCenter(sized(360, status)), cancel, save}, beforeLeave: beforeLeave, leave: func() {
 		loadGeneration++
 		if cancelLogin != nil {
 			cancelLogin()

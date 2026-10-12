@@ -36,7 +36,7 @@ func (u *desktopUI) modelMenu() {
 		catalog[choice.Connection.ID] = append(catalog[choice.Connection.ID], label)
 	}
 	for _, account := range u.connectionsList {
-		if account.Enabled && (len(catalog[account.ID]) > 0 || u.modelUnavailable[account.ID]) {
+		if account.Enabled {
 			accounts = append(accounts, account)
 		}
 	}
@@ -47,12 +47,12 @@ func (u *desktopUI) modelMenu() {
 	lists := [3]*fyne.Container{}
 	scrolls := [3]*kineticScroll{}
 	columns := make([]fyne.CanvasObject, 3)
-	for i, title := range []string{"ACCOUNT · RESTANT", "MODEL", "REASONING"} {
+	for i, title := range []string{"ACCOUNT", "MODEL", "REASONING"} {
 		lists[i] = container.New(layout.NewCustomPaddedVBoxLayout(0))
 		var body fyne.CanvasObject = lists[i]
 		if i < 2 {
 			scrolls[i] = newKineticVScroll(lists[i])
-			scrolls[i].SetMinSize(fyne.NewSize(0, 276))
+			scrolls[i].SetMinSize(fyne.NewSize(0, 276-modelLimitsStripHeight))
 			body = scrolls[i]
 		}
 		caption := textLine(title, 11, colFaint)
@@ -66,12 +66,21 @@ func (u *desktopUI) modelMenu() {
 			columns[i] = column
 		}
 	}
-	menu := newSheet(u.window.Canvas(), container.New(modelColumnsLayout{}, columns...), 674)
-	menu.tips = newTipLayer()
+	strip := container.NewStack()
+	menu := newSheet(u.window.Canvas(), container.New(modelColumnsLayout{}, append(columns, strip)...), 674)
 	ctx, cancel := context.WithCancel(u.ctx)
 	menu.menu, menu.columns, menu.anchor = true, true, u.model.row
 	shown := ""
 	groups := [3][]*tapRow{}
+	values := map[string]accountLimits{}
+	refreshStrip := func() {
+		for _, account := range accounts {
+			if account.ID == shown {
+				strip.Objects = []fyne.CanvasObject{modelLimitsStrip(account, values[account.ID], u.modelUnavailable[account.ID])}
+			}
+		}
+		strip.Refresh()
+	}
 	column, cursor := 0, 0
 	var update func(string)
 	var reasoning *stepSlider
@@ -99,6 +108,10 @@ func (u *desktopUI) modelMenu() {
 		account := account
 		r := row(account.Name, providerName(account.Provider), modelAccountBadge(account.Provider), func() {
 			labels := catalog[account.ID]
+			if len(labels) == 0 {
+				update(account.ID)
+				return
+			}
 			selected := labels[0]
 			for _, label := range labels {
 				if u.choices[label].ID == u.cfg.Model {
@@ -108,12 +121,18 @@ func (u *desktopUI) modelMenu() {
 			}
 			choose(selected)
 		})
-		if u.modelUnavailable[account.ID] {
-			r.detail = "Injoignable"
-			r.Disable()
+		if problem := u.modelUnavailable[account.ID]; problem != "" {
+			r.detail = problem
+			if account.Provider == "vllm" {
+				r.Disable()
+			}
+		}
+		values[account.ID] = accountLimits{note: "Chargement des limites…"}
+		if r.disabled {
+			values[account.ID] = accountLimits{note: r.detail}
 		}
 		groups[0] = append(groups[0], r)
-		lists[0].Add(r)
+		lists[0].Add(container.New(modelAccountLayout{}, r))
 	}
 	update = func(accountID string) {
 		if shown != accountID {
@@ -128,9 +147,17 @@ func (u *desktopUI) modelMenu() {
 				lists[1].Add(r)
 			}
 			scrolls[1].ScrollToTop()
+			if len(groups[1]) == 0 {
+				message := "Aucun modèle sélectionné dans les paramètres."
+				if problem := u.modelUnavailable[shown]; problem != "" {
+					message = problem
+				}
+				lists[1].Add(padded(7, 7, 9, 9, note(message)))
+			}
 		}
+		refreshStrip()
 		for i, r := range groups[0] {
-			mark(r, !r.disabled && accounts[i].ID == u.cfg.ConnectionID)
+			mark(r, !r.disabled && accounts[i].ID == shown)
 		}
 		for i, r := range groups[1] {
 			mark(r, u.choices[catalog[shown][i]].ID == u.cfg.Model)
@@ -138,7 +165,7 @@ func (u *desktopUI) modelMenu() {
 		groups[2] = nil
 		lists[2].RemoveAll()
 		choice, ok := u.selectedChoice()
-		disabled := !ok || len(choice.Efforts) == 0
+		disabled := !ok || shown != u.cfg.ConnectionID || len(choice.Efforts) == 0
 		efforts := choice.Efforts
 		if len(efforts) == 0 {
 			efforts = effortOrder[2:]
@@ -219,9 +246,13 @@ func (u *desktopUI) modelMenu() {
 			menu.items = groups[column]
 			menu.highlight(cursor)
 			item, scroll := groups[column][cursor], scrolls[column]
-			if y := item.Position().Y; y < scroll.Offset.Y {
+			y := item.Position().Y
+			if column == 0 {
+				y = lists[0].Objects[cursor].Position().Y
+			}
+			if y < scroll.Offset.Y {
 				scroll.ScrollToOffset(fyne.NewPos(0, y))
-			} else if bottom := y + item.MinSize().Height; bottom > scroll.Offset.Y+scroll.Size().Height {
+			} else if bottom := y + item.Size().Height; bottom > scroll.Offset.Y+scroll.Size().Height {
 				scroll.ScrollToOffset(fyne.NewPos(0, bottom-scroll.Size().Height))
 			}
 		}
@@ -229,7 +260,6 @@ func (u *desktopUI) modelMenu() {
 	}
 	menu.onClosed = func() {
 		cancel()
-		menu.tips.hide()
 		if u.tips != nil {
 			u.tips.hide()
 		}
@@ -238,13 +268,24 @@ func (u *desktopUI) modelMenu() {
 			u.model.setOpen(false)
 		}
 	}
-	update(u.cfg.ConnectionID)
+	initial := u.cfg.ConnectionID
+	if !slices.ContainsFunc(accounts, func(c connection) bool { return c.ID == initial }) {
+		initial = accounts[0].ID
+	}
+	update(initial)
 	u.model.open = menu
 	u.model.setOpen(true)
 	menu.Show()
 	u.window.Canvas().Focus(menu)
 	for i, account := range accounts {
-		u.loadAccountLimits(ctx, menu, account, groups[0][i])
+		account := account
+		if groups[0][i].disabled {
+			continue
+		}
+		u.loadAccountLimits(ctx, menu, account, func(limits accountLimits) {
+			values[account.ID] = limits
+			refreshStrip()
+		})
 	}
 }
 
@@ -256,9 +297,15 @@ func (modelColumnsLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	for i, weight := range []float32{240, 220, 214} {
 		width := size.Width * weight / 674
 		objects[i].Move(fyne.NewPos(x, 0))
-		objects[i].Resize(fyne.NewSize(width, size.Height))
+		height := size.Height
+		if i < 2 {
+			height -= modelLimitsStripHeight
+		}
+		objects[i].Resize(fyne.NewSize(width, height))
 		x += width
 	}
+	objects[3].Move(fyne.NewPos(0, size.Height-modelLimitsStripHeight))
+	objects[3].Resize(fyne.NewSize(size.Width*460/674, modelLimitsStripHeight))
 }
 
 type modelReasoningLayout struct{}

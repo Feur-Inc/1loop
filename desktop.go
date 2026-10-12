@@ -3,10 +3,12 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -59,8 +61,7 @@ type desktopUI struct {
 	keys             map[string]string
 	connectionsList  []connection
 	choices          map[string]modelChoice
-	modelProblems    string // connections that failed to list their models
-	modelUnavailable map[string]bool
+	modelUnavailable map[string]string // model catalog problems, displayed inside the selector
 	accountLimits    map[string]accountLimits
 	userInstructions string
 	approvalMode     string
@@ -479,13 +480,6 @@ func (u *desktopUI) buildFooter() fyne.CanvasObject {
 		}
 	})
 	u.model.row.onTap = u.modelMenu
-	u.model.row.onHover = func(in bool) {
-		if in && u.modelProblems != "" {
-			u.tips.show(u.model.row, u.modelProblems)
-		} else if !in {
-			u.tips.hide()
-		}
-	}
 	u.send = newIconButton(iconSend, colAmber, colInk, u.submit)
 	u.send.iconPx = 20
 	u.stop = newIconButton(iconStop, colText, colInk, func() {
@@ -1049,6 +1043,10 @@ func (u *desktopUI) refreshModels() {
 			go func(i int, c connection) {
 				defer wg.Done()
 				results[i].choices, results[i].err = u.backend.connectionModels(u.ctx, c, keys[c.ID])
+				var timeout net.Error
+				if c.Provider == "openai" && errors.As(results[i].err, &timeout) && timeout.Timeout() && u.ctx.Err() == nil {
+					results[i].choices, results[i].err = u.backend.connectionModels(u.ctx, c, keys[c.ID])
+				}
 			}(i, c)
 		}
 		wg.Wait()
@@ -1059,15 +1057,21 @@ func (u *desktopUI) refreshModels() {
 			u.modelsLoading = false
 			u.choices = map[string]modelChoice{}
 			u.model.Details = map[string]string{}
-			u.modelUnavailable = map[string]bool{}
-			var options, problems []string
+			u.modelUnavailable = map[string]string{}
+			var options []string
 			selected := ""
 			for i, result := range results {
 				if result.err != nil {
+					problem := "Modèles indisponibles"
 					if connections[i].Provider == "vllm" {
-						u.modelUnavailable[connections[i].ID] = true
+						problem = "Indispo"
+					} else {
+						var timeout net.Error
+						if errors.As(result.err, &timeout) && timeout.Timeout() {
+							problem = "Délai réseau dépassé"
+						}
 					}
-					problems = append(problems, connections[i].Name+": "+firstLine(result.err.Error()))
+					u.modelUnavailable[connections[i].ID] = problem
 					continue
 				}
 				for _, choice := range result.choices {
@@ -1092,10 +1096,6 @@ func (u *desktopUI) refreshModels() {
 						selected = label
 					}
 				}
-			}
-			u.modelProblems = ""
-			if len(problems) > 0 {
-				u.modelProblems = "Unavailable connections\n" + strings.Join(problems, "\n")
 			}
 			u.model.Options = options
 			u.remote.settingsChanged()

@@ -25,7 +25,7 @@ import (
 // PNG artwork is rasterized from the original DA files; the intro sheet preserves its geometry.
 // The work ring is drawn from the DA geometry itself (see workFrame).
 //
-//go:embed assets/*.png
+//go:embed assets/*.png assets/provider-*.svg
 var artwork embed.FS
 
 func brandResource(name string) fyne.Resource {

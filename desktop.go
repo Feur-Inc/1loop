@@ -60,6 +60,8 @@ type desktopUI struct {
 	connectionsList  []connection
 	choices          map[string]modelChoice
 	modelProblems    string // connections that failed to list their models
+	modelUnavailable map[string]bool
+	accountLimits    map[string]accountLimits
 	userInstructions string
 	approvalMode     string
 	chats            []*conversation
@@ -1057,10 +1059,14 @@ func (u *desktopUI) refreshModels() {
 			u.modelsLoading = false
 			u.choices = map[string]modelChoice{}
 			u.model.Details = map[string]string{}
+			u.modelUnavailable = map[string]bool{}
 			var options, problems []string
 			selected := ""
 			for i, result := range results {
 				if result.err != nil {
+					if connections[i].Provider == "vllm" {
+						u.modelUnavailable[connections[i].ID] = true
+					}
 					problems = append(problems, connections[i].Name+": "+firstLine(result.err.Error()))
 					continue
 				}

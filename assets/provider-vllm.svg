@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="26" height="26" viewBox="0 0 26 26">
+<!-- Source: https://github.com/vllm-project/media-kit/blob/main/vLLM-Logo.svg -->
+<rect x=".5" y=".5" width="25" height="25" rx="7" ry="7" fill="#242424" stroke="#2a2a2a"/>
+<g transform="translate(1 1) scale(.25 .25)"><path fill="#fdb515" d="m41.0477 27.293962l0 55.30709l-27.653542 -55.30709z" fill-rule="evenodd"/><path fill="#30a2ff" d="m41.046566 82.60105l21.72966 0l18.653545 -70.385826l-25.574806 13.461943z" fill-rule="evenodd"/></g>
+</svg>

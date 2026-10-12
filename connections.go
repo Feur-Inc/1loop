@@ -154,10 +154,7 @@ func (u *desktopUI) selectModel(choice modelChoice) {
 	cfg := choice.Connection.config(previous.Workspace)
 	cfg.Model = choice.ID
 	cfg.ReasoningMode = choice.ReasoningMode
-	cfg.Effort = choice.DefaultEffort
-	if cfg.ConnectionID == previous.ConnectionID && cfg.Model == previous.Model && contains(choice.Efforts, previous.Effort) {
-		cfg.Effort = previous.Effort
-	}
+	cfg.Effort = nearestModelEffort(choice, previous.Effort)
 	options := choice.Connection.ModelOptions[choice.ID]
 	cfg.Routing = mergeOptions(cfg.Routing, options.Provider)
 	cfg.Parameters = mergeOptions(cfg.Parameters, options.Parameters)

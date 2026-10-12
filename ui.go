@@ -325,6 +325,7 @@ const (
 	styleMenu                    // item inside a dropdown menu
 	styleField                   // select box shaped like an input
 	styleWindow                  // title bar window control
+	styleModel                   // rows in the three-column model selector
 )
 
 type tapRow struct {
@@ -489,6 +490,8 @@ func (rr *tapRowRenderer) metrics() (padX, padY, iconSize, gap float32) {
 		return pad, pad, icon, 0
 	case styleMenu:
 		return 10, 8, 18, 11
+	case styleModel:
+		return 9, 7, 26, 10
 	case styleField:
 		return 10, 7, 16, 8
 	case styleWindow:
@@ -540,6 +543,8 @@ func (rr *tapRowRenderer) Layout(size fyne.Size) {
 		rr.bg.CornerRadius = 6
 	case stylePrimary, styleField:
 		rr.bg.CornerRadius = 8
+	case styleModel:
+		rr.bg.CornerRadius = 9
 	default:
 		rr.bg.CornerRadius = 6
 	}
@@ -658,6 +663,12 @@ func (rr *tapRowRenderer) colorsAt(h float32) (fill, stroke, ink color.NRGBA) {
 		if r.danger {
 			ink = colDanger
 		}
+	case styleModel:
+		fill = mix(clear, colRaised, h)
+		ink = mix(colMuted, colText, h)
+		if r.selected {
+			ink = colText
+		}
 	case styleField:
 		fill = colField
 		stroke = mix(colBorder, color.NRGBA{R: 0x3c, G: 0x3c, B: 0x3c, A: 0xff}, h)
@@ -675,6 +686,9 @@ func (rr *tapRowRenderer) colorsAt(h float32) (fill, stroke, ink color.NRGBA) {
 	}
 	if r.disabled {
 		ink = colFaint
+		if r.style == styleModel {
+			fill = clear
+		}
 		if r.style == stylePrimary || r.style == styleIcon && r.fill.A != 0 {
 			fill = colRaised
 		}
@@ -706,6 +720,9 @@ func (rr *tapRowRenderer) Refresh() {
 	rr.trailing.Color = text(colFaint)
 	rr.detail.Text = r.detail
 	rr.detail.Color = text(colMuted)
+	if r.style == styleModel {
+		rr.detail.Color = text(colFaint)
+	}
 	rr.label.Color = text(ink)
 	iconInk := ink
 	if r.style == styleField || r.style == styleChip && !r.accent && r.iconAfter {
@@ -723,7 +740,11 @@ func (rr *tapRowRenderer) Refresh() {
 	}
 	// Translucency is read at draw time; refreshing the image would only
 	// throw its texture away.
-	rr.icon.Translucency = float64(1 - r.alpha)
+	iconAlpha := r.alpha
+	if r.disabled && r.style == styleModel {
+		iconAlpha *= 0.4
+	}
+	rr.icon.Translucency = float64(1 - iconAlpha)
 	rr.badge.Translucency = rr.icon.Translucency
 	rr.Layout(r.Size())
 	rr.bg.Refresh()
@@ -807,6 +828,8 @@ type sheet struct {
 	anchorSz   fyne.Size     // the trigger may move or hide while it is open
 	menu       bool
 	alignLeft  bool
+	columns    bool // the model selector uses the HTML demo's surface and radius
+	tips       *tipLayer
 	onDismiss  func()
 	onClosed   func()
 	afterClose func()                    // runs once the sheet is gone (menu actions)
@@ -1012,6 +1035,9 @@ func (s *sheet) panelRect() rect {
 		if y+height > size.Height-8 {
 			y = at.Y - height - 6 + shift
 		}
+		if s.columns {
+			y = fyne.Max(8, fyne.Min(y, size.Height-height-8))
+		}
 		return rect{fyne.NewPos(x, y), fyne.NewPos(width, height)}
 	}
 	shift := (1 - s.progress) * 12
@@ -1050,6 +1076,9 @@ func (r *sheetRenderer) Layout(size fyne.Size) {
 	pad := s.pad()
 	s.content.Move(box.pos.AddXY(pad, pad))
 	s.content.Resize(fyne.NewSize(box.size.X-2*pad, box.size.Y-2*pad))
+	if s.tips != nil {
+		s.tips.layer.Resize(size)
+	}
 }
 
 func (r *sheetRenderer) MinSize() fyne.Size { return fyne.NewSize(0, 0) }
@@ -1068,6 +1097,11 @@ func (r *sheetRenderer) Refresh() {
 		s.panel.FillColor = withAlpha(colPopover, o)
 		s.panel.StrokeColor = withAlpha(colPopBorder, o)
 		s.panel.CornerRadius = 10
+		if s.columns {
+			s.panel.FillColor = withAlpha(colSurface, o)
+			s.panel.StrokeColor = withAlpha(colBorder, o)
+			s.panel.CornerRadius = 14
+		}
 		s.shadow.setOpacity(o)
 		// Items follow the surface slightly later, so the panel leads.
 		itemAlpha := fyne.Min(1, fyne.Max(0, (o-0.25)/0.75))
@@ -1095,7 +1129,11 @@ func (r *sheetRenderer) Refresh() {
 func (r *sheetRenderer) Objects() []fyne.CanvasObject {
 	objects := []fyne.CanvasObject{r.s.dim}
 	objects = append(objects, r.s.shadow.objects()...)
-	return append(objects, r.s.panel, r.s.content)
+	objects = append(objects, r.s.panel, r.s.content)
+	if r.s.tips != nil {
+		objects = append(objects, r.s.tips.layer)
+	}
+	return objects
 }
 
 func (r *sheetRenderer) Destroy() {}

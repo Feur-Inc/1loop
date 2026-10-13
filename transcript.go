@@ -73,6 +73,9 @@ func toolArgs(raw string) (path, command string, creates bool) {
 }
 
 func toolGlyph(tool string) fyne.Resource {
+	if strings.HasPrefix(tool, "browser_") {
+		return iconBrowser
+	}
 	switch tool {
 	case "shell":
 		return iconTerminal
@@ -93,6 +96,12 @@ func toolGlyph(tool string) fyne.Resource {
 // describeTool is the one-line summary of a call: "Ran go test ./..." or
 // "Editing main.go". The target is the command's first line or the path.
 func describeTool(item chatItem, running bool) (verb, target string, mono bool) {
+	if strings.HasPrefix(item.Tool, "browser_") {
+		if running {
+			return "Using", strings.TrimPrefix(item.Tool, "browser_"), false
+		}
+		return "Used browser:", strings.TrimPrefix(item.Tool, "browser_"), false
+	}
 	path, command, creates := toolArgs(item.Args)
 	pick := func(done, doing string) string {
 		if running {
@@ -867,7 +876,7 @@ func (t *turn) handle(e uiEvent) {
 			return
 		}
 		item := &t.chat.Items[index]
-		item.Text, item.Diff, item.Millis = o.Output, o.Diff, o.Elapsed.Milliseconds()
+		item.Text, item.Diff, item.Millis, item.Images = o.Output, o.Diff, o.Elapsed.Milliseconds(), o.Images
 		if o.Err != nil {
 			item.Failed = o.Err.Error()
 		}

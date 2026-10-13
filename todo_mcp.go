@@ -6,12 +6,17 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"strings"
 	"time"
 )
 
-// Claude Code keeps its own harness. Expose the same TODO store through
-// its MCP transport rather than maintaining a second native task list.
-func startTodoMCP(ctx context.Context, state *todoState, emit emitter) (string, func(), error) {
+// Claude Code keeps its own harness. Its MCP transport exposes the same
+// TODO store and browser tabs used by 1loop's other providers.
+func startTodoMCP(ctx context.Context, state *todoState, emit emitter, browser ...browserHandler) (string, func(), error) {
+	var browserTools browserHandler
+	if len(browser) > 0 {
+		browserTools = browser[0]
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", nil, err
@@ -48,19 +53,47 @@ func startTodoMCP(ctx context.Context, state *todoState, emit emitter) (string, 
 		case "ping":
 			response["result"] = map[string]any{}
 		case "tools/list":
-			f := todoToolDefinition()["function"].(map[string]any)
-			response["result"] = map[string]any{"tools": []any{map[string]any{"name": f["name"], "description": f["description"], "inputSchema": f["parameters"]}}}
+			definitions := []map[string]any{todoToolDefinition()}
+			if browserTools != nil {
+				definitions = append(definitions, browserToolDefinitions()...)
+			}
+			tools := []any{}
+			for _, definition := range definitions {
+				f := definition["function"].(map[string]any)
+				tools = append(tools, map[string]any{"name": f["name"], "description": f["description"], "inputSchema": f["parameters"]})
+			}
+			response["result"] = map[string]any{"tools": tools}
 		case "tools/call":
 			var call struct {
 				Name      string          `json:"name"`
 				Arguments json.RawMessage `json:"arguments"`
 			}
-			if err := json.Unmarshal(request.Params, &call); err != nil || call.Name != "update_todo" {
-				response["error"] = map[string]any{"code": -32602, "message": "Expected update_todo arguments"}
+			if err := json.Unmarshal(request.Params, &call); err != nil {
+				response["error"] = map[string]any{"code": -32602, "message": "Invalid tool arguments"}
 				break
 			}
 			if ctx.Err() != nil {
 				response["error"] = map[string]any{"code": -32603, "message": "This run has ended"}
+				break
+			}
+			if call.Name != "update_todo" {
+				if browserTools == nil || !strings.HasPrefix(call.Name, "browser_") {
+					response["error"] = map[string]any{"code": -32602, "message": "Unknown 1loop tool"}
+					break
+				}
+				operation, cancel := context.WithCancel(ctx)
+				stop := context.AfterFunc(r.Context(), cancel)
+				result, err := browserTools(operation, call.Name, call.Arguments)
+				stop()
+				cancel()
+				content := []any{map[string]any{"type": "text", "text": result.Text}}
+				if err != nil {
+					content = []any{map[string]any{"type": "text", "text": err.Error()}}
+				}
+				for _, im := range result.Images {
+					content = append(content, map[string]any{"type": "image", "data": im.Data, "mimeType": im.Mime})
+				}
+				response["result"] = map[string]any{"isError": err != nil, "content": content}
 				break
 			}
 			items, err := state.update(call.Arguments)

@@ -30,6 +30,7 @@ type config struct {
 	Cache             *contextCache                             `json:"-"`
 	ContextKey        string                                    `json:"-"`
 	Todo              *todoState                                `json:"-"`
+	Browser           browserHandler                            `json:"-"`
 	Recall            func(context.Context) ([]chatItem, error) `json:"-"`
 	Provider          string                                    `json:"provider"`
 	BaseURL           string                                    `json:"baseURL"`

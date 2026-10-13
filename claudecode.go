@@ -194,6 +194,9 @@ func (a *app) claudeModels(ctx context.Context) ([]claudeModel, error) {
 // commands, reads and edits use 1loop's own rows (and their detail panel);
 // every other tool keeps its name and arguments.
 func claudeTool(root, name string, input json.RawMessage) (tool, args string) {
+	if strings.HasPrefix(name, "mcp__1loop_todo__browser_") {
+		return strings.TrimPrefix(name, "mcp__1loop_todo__"), string(input)
+	}
 	var in struct {
 		Command  string `json:"command"`
 		FilePath string `json:"file_path"`
@@ -358,14 +361,14 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 		args = append(args, "--resume", cfg.Session)
 	}
 	if cfg.Todo != nil {
-		config, close, err := startTodoMCP(ctx, cfg.Todo, emit)
+		config, close, err := startTodoMCP(ctx, cfg.Todo, emit, cfg.Browser)
 		if err != nil {
 			return err
 		}
 		defer close()
 		args = append(args, "--mcp-config", config)
 	}
-	appendPrompt := todoInstructions(cfg)
+	appendPrompt := todoInstructions(cfg) + browserInstructions(cfg)
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
 		appendPrompt = "Additional instructions from the user:\n" + cfg.UserInstructions + appendPrompt
 	}
@@ -644,7 +647,7 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 			}
 			title, preview := claudeApproval(cfg.Workspace, e.Request.ToolName, e.Request.Input)
 			response := map[string]any{"behavior": "deny", "message": "The user denied this action."}
-			if e.Request.ToolName == "mcp__1loop_todo__update_todo" || a.confirm(ctx, emit, title, preview) {
+			if e.Request.ToolName == "mcp__1loop_todo__update_todo" || strings.HasPrefix(e.Request.ToolName, "mcp__1loop_todo__browser_") || a.confirm(ctx, emit, title, preview) {
 				response = map[string]any{"behavior": "allow", "updatedInput": e.Request.Input}
 				for _, p := range calls { // the approved call starts now
 					p.started = time.Now()
@@ -667,6 +670,9 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 				}
 				delete(calls, b.ToolUseID)
 				p.outcome.Output = claudeText(b.Content)
+				if strings.HasPrefix(p.outcome.Name, "browser_") {
+					p.outcome.Images = claudeBrowserImages(b.Content)
+				}
 				p.outcome.Elapsed = time.Since(p.started)
 				if b.IsError {
 					p.outcome.Err = errors.New(firstLine(p.outcome.Output))
@@ -726,4 +732,30 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 		return fmt.Errorf("Claude Code stopped without answering")
 	}
 	return nil
+}
+
+func claudeBrowserImages(raw json.RawMessage) []ImagePart {
+	var blocks []struct {
+		Type, Data string
+		Mime       string `json:"mimeType"`
+		Source     struct {
+			MediaType string `json:"media_type"`
+			Data      string
+		}
+	}
+	if json.Unmarshal(raw, &blocks) != nil {
+		return nil
+	}
+	var images []ImagePart
+	for _, b := range blocks {
+		if b.Type != "image" {
+			continue
+		}
+		if b.Source.Data != "" {
+			images = append(images, ImagePart{Mime: b.Source.MediaType, Data: b.Source.Data})
+		} else if b.Data != "" {
+			images = append(images, ImagePart{Mime: b.Mime, Data: b.Data})
+		}
+	}
+	return images
 }

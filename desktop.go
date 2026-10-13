@@ -63,6 +63,7 @@ type chatRun struct {
 }
 
 type desktopUI struct {
+	browser          *browserEngine
 	window           fyne.Window
 	backend          *app
 	cfg              config
@@ -940,6 +941,7 @@ func (u *desktopUI) runConfig(chat *conversation) config {
 	}
 	cfg := chat.Config
 	cfg.Todo = chat.Todo
+	cfg.Browser = u.browserTools(chat)
 	if chat.Cache == nil {
 		chat.Cache = &contextCache{}
 	}

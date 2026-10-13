@@ -23,8 +23,9 @@ type savedPanel struct {
 }
 
 type savedTab struct {
-	Kind  string `json:"kind"`            // "tool", "todo", "changes" or "terminal"
-	Index int    `json:"index,omitempty"` // tool: the call's item in the conversation
+	Kind    string       `json:"kind"` // "tool", "todo", "changes", "terminal" or "browser"
+	Browser *browserInfo `json:"browser,omitempty"`
+	Index   int          `json:"index,omitempty"` // tool: the call's item in the conversation
 }
 
 // saved describes a state for the chat's file. A new value each time: the
@@ -35,7 +36,12 @@ func (s *panelState) saved() *savedPanel {
 	}
 	out := &savedPanel{Open: s.open, Width: s.width, Active: s.active}
 	for _, tab := range s.tabs {
-		out.Tabs = append(out.Tabs, savedTab{Kind: tab.kind, Index: tab.index})
+		saved := savedTab{Kind: tab.kind, Index: tab.index}
+		if tab.browser != nil {
+			info := tab.browser.snapshot()
+			saved.Browser = &info
+		}
+		out.Tabs = append(out.Tabs, saved)
 	}
 	return out
 }
@@ -65,6 +71,12 @@ func (p *toolPanel) stateOf(chat *conversation) *panelState {
 			opened = p.todoTab(chat)
 		case "changes":
 			opened = p.changesTab(chat.Config.Workspace)
+		case "browser":
+			info := browserInfo{Adaptive: true}
+			if tab.Browser != nil {
+				info = *tab.Browser
+			}
+			opened = p.browserTab(chat, info, state.tabs)
 		case "terminal": // a new shell in the chat's folder: the old one ended with 1loop
 			terminal, err := p.terminalTab(chat.Config.Workspace)
 			if err != nil {
@@ -143,6 +155,9 @@ func (p *toolPanel) adopt(chat *conversation) {
 	state := p.home
 	p.home = panelState{active: -1}
 	for i := range state.tabs {
+		if state.tabs[i].browser != nil {
+			state.tabs[i].browser.view.chat = chat
+		}
 		if state.tabs[i].kind == "todo" {
 			state.tabs[i].todoChat = chat
 		}

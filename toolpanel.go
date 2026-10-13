@@ -1,7 +1,10 @@
 package main
 
 import (
+	"bytes"
+	"encoding/base64"
 	"fmt"
+	"image"
 	"image/color"
 	"path/filepath"
 	"regexp"
@@ -38,12 +41,13 @@ type toolPanel struct {
 }
 
 type panelTab struct {
-	kind      string // "tool", "todo", "changes" or "terminal": what to open again with the chat
+	kind      string // "tool", "todo", "changes", "terminal" or "browser": what to open again with the chat
 	chat      *conversation
 	index     int
 	title     string
 	icon      fyne.Resource
 	content   fyne.CanvasObject
+	browser   *browserPage
 	terminal  *panelTerminal
 	cancel    func()
 	todoChat  *conversation
@@ -60,6 +64,7 @@ func newToolPanel(u *desktopUI) *toolPanel {
 	add := newRow("", iconPlus, styleWindow, nil)
 	add.onTap = func() {
 		showMenu(u.window, add, []menuAction{
+			{label: "Browser", icon: iconBrowser, run: p.openBrowser},
 			{label: "Terminal", icon: toolGlyph("shell"), run: p.openTerminal},
 			{label: "Git changes", icon: toolGlyph("edit_file"), run: p.openChanges},
 		})
@@ -180,6 +185,7 @@ func (p *toolPanel) slide(to float32) {
 	}
 	from := p.shown
 	p.target, p.snap = to, false
+	p.syncBrowsers()
 	p.anim = fyne.NewAnimation(240*time.Millisecond, func(t float32) {
 		p.shown = from + (to-from)*t
 		started := time.Now()
@@ -255,6 +261,9 @@ func (p *toolPanel) close(i int) {
 }
 
 func (t panelTab) dispose() {
+	if t.browser != nil {
+		t.browser.close()
+	}
 	if t.terminal != nil {
 		t.terminal.close()
 	}
@@ -272,6 +281,9 @@ func (p *toolPanel) dispose() {
 	for _, chat := range p.u.chats {
 		chat.disposePanel()
 	}
+	if p.u.browser != nil {
+		p.u.browser.cancel()
+	}
 }
 
 // changed refreshes the panel when a call it shows gets its result.
@@ -281,12 +293,17 @@ func (p *toolPanel) changed(chat *conversation, index int) {
 	}
 }
 
-func (p *toolPanel) render() {
+func (p *toolPanel) renderStrip() {
 	p.strip.RemoveAll()
 	for i, tab := range p.tabs {
 		p.strip.Add(p.tabView(i, tab))
 	}
 	p.strip.Refresh()
+}
+
+func (p *toolPanel) render() {
+	p.renderStrip()
+	p.syncBrowsers()
 	p.texts = nil
 	if p.active >= 0 {
 		tab := p.tabs[p.active]
@@ -302,7 +319,7 @@ func (p *toolPanel) render() {
 			}
 		}
 	} else {
-		p.page.Objects = []fyne.CanvasObject{padded(28, 20, 20, 20, container.NewVBox(textLine("Side panel", 18, colText), note("Open a terminal or Git changes with the + button, or click a tool call in the conversation.")))}
+		p.page.Objects = []fyne.CanvasObject{padded(28, 20, 20, 20, container.NewVBox(textLine("Side panel", 18, colText), note("Open a browser, terminal or Git changes with the + button, or click a tool call in the conversation.")))}
 	}
 	p.page.Refresh()
 	p.body.Refresh()
@@ -457,6 +474,20 @@ func (p *toolPanel) details(item chatItem, state string) fyne.CanvasObject {
 	}
 	if item.Failed != "" && item.Failed != stoppedCall {
 		add("Error", item.Failed, "")
+	}
+	for _, part := range item.Images {
+		raw, err := base64.StdEncoding.DecodeString(part.Data)
+		if err != nil {
+			continue
+		}
+		img, _, err := image.Decode(bytes.NewReader(raw))
+		if err != nil {
+			continue
+		}
+		view := canvas.NewImageFromImage(img)
+		view.FillMode = canvas.ImageFillContain
+		view.SetMinSize(fyne.NewSize(320, 240))
+		sections.Add(padded(8, 8, 0, 0, view))
 	}
 	return sections
 }

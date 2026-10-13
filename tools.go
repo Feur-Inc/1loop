@@ -33,7 +33,8 @@ func toolDefinitions() []map[string]any {
 		}
 		result = append(result, map[string]any{"type": "function", "function": map[string]any{"name": d.name, "description": d.description, "parameters": map[string]any{"type": "object", "properties": properties, "required": d.fields, "additionalProperties": false}}})
 	}
-	return append(result, todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition())
+	result = append(result, todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition())
+	return append(result, browserToolDefinitions()...)
 }
 
 func workspacePath(root, path string) (string, error) {
@@ -124,6 +125,7 @@ func unifiedDiff(ctx context.Context, path, before, after string) (string, error
 // toolOutcome is what one tool call did, for the model and for the
 // transcript: the side panel shows the call, its output and its timing.
 type toolOutcome struct {
+	Images         []ImagePart
 	RecallID       string
 	ID, Name, Args string
 	Output         string
@@ -155,7 +157,18 @@ func (a *app) executeTool(ctx context.Context, root string, call toolCall, emit 
 			outcome.Elapsed = time.Since(started)
 		}
 	}()
-	outcome.Output, outcome.Diff, outcome.Err = a.runTool(ctx, root, call, begin, emit)
+	if strings.HasPrefix(call.Function.Name, "browser_") {
+		begin()
+		handler, _ := ctx.Value(browserContextKey{}).(browserHandler)
+		if handler == nil {
+			outcome.Err = fmt.Errorf("Browser tools are not attached to this conversation")
+		} else {
+			result, err := handler(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
+			outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
+		}
+	} else {
+		outcome.Output, outcome.Diff, outcome.Err = a.runTool(ctx, root, call, begin, emit)
+	}
 	devf("tool", "%s %s: %d bytes of output, error %v", outcome.Name, devText(outcome.Args, 120), len(outcome.Output), outcome.Err)
 	return outcome
 }

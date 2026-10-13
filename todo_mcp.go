@@ -11,11 +11,14 @@ import (
 )
 
 // Claude Code keeps its own harness. Its MCP transport exposes the same
-// TODO store and browser tabs used by 1loop's other providers.
-func startTodoMCP(ctx context.Context, state *todoState, emit emitter, browser ...browserHandler) (string, func(), error) {
-	var browserTools browserHandler
-	if len(browser) > 0 {
-		browserTools = browser[0]
+// TODO store, browser tabs and terminals used by 1loop's other providers.
+func startTodoMCP(ctx context.Context, state *todoState, emit emitter, handlers ...panelToolHandler) (string, func(), error) {
+	var browserTools, terminalTools panelToolHandler
+	if len(handlers) > 0 {
+		browserTools = handlers[0]
+	}
+	if len(handlers) > 1 {
+		terminalTools = handlers[1]
 	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -57,6 +60,9 @@ func startTodoMCP(ctx context.Context, state *todoState, emit emitter, browser .
 			if browserTools != nil {
 				definitions = append(definitions, browserToolDefinitions()...)
 			}
+			if terminalTools != nil {
+				definitions = append(definitions, terminalToolDefinitions()...)
+			}
 			tools := []any{}
 			for _, definition := range definitions {
 				f := definition["function"].(map[string]any)
@@ -77,13 +83,17 @@ func startTodoMCP(ctx context.Context, state *todoState, emit emitter, browser .
 				break
 			}
 			if call.Name != "update_todo" {
-				if browserTools == nil || !strings.HasPrefix(call.Name, "browser_") {
+				handler := browserTools
+				if strings.HasPrefix(call.Name, "terminal_") {
+					handler = terminalTools
+				}
+				if handler == nil || (!strings.HasPrefix(call.Name, "browser_") && !strings.HasPrefix(call.Name, "terminal_")) {
 					response["error"] = map[string]any{"code": -32602, "message": "Unknown 1loop tool"}
 					break
 				}
 				operation, cancel := context.WithCancel(ctx)
 				stop := context.AfterFunc(r.Context(), cancel)
-				result, err := browserTools(operation, call.Name, call.Arguments)
+				result, err := handler(operation, call.Name, call.Arguments)
 				stop()
 				cancel()
 				content := []any{map[string]any{"type": "text", "text": result.Text}}

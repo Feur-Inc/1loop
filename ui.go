@@ -1373,6 +1373,7 @@ func (t *tipLayer) show(anchor fyne.CanvasObject, text string) {
 }
 
 func (t *tipLayer) place(anchor fyne.CanvasObject, text string) {
+	t.bg.Move(fyne.NewPos(0, 0))
 	t.anchor = anchor
 	t.layer.Objects = []fyne.CanvasObject{t.bg}
 	t.lines = nil

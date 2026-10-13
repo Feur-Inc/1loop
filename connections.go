@@ -214,12 +214,13 @@ func systemInstructions(cfg config) string {
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
 		prompt += "\n\nAdditional instructions from the user:\n" + cfg.UserInstructions
 	}
-	return prompt + "\nWorkspace: " + cfg.Workspace + todoInstructions(cfg) + contextInstructions(cfg) + browserInstructions(cfg)
+	return prompt + "\nWorkspace: " + cfg.Workspace + todoInstructions(cfg) + contextInstructions(cfg) + browserInstructions(cfg) + terminalInstructions(cfg)
 }
 
 type approvalContextKey struct{}
 
 func toolContext(ctx context.Context, cfg config) context.Context {
+	ctx = context.WithValue(ctx, terminalContextKey{}, cfg.Terminal)
 	ctx = context.WithValue(ctx, browserContextKey{}, cfg.Browser)
 	ctx = context.WithValue(ctx, recallContextKey{}, cfg.Recall)
 	ctx = context.WithValue(ctx, todoContextKey{}, cfg.Todo)

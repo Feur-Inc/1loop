@@ -7,9 +7,9 @@ import (
 	"strings"
 )
 
-type browserHandler func(context.Context, string, json.RawMessage) (browserResult, error)
+type panelToolHandler func(context.Context, string, json.RawMessage) (panelToolResult, error)
 type browserContextKey struct{}
-type browserResult struct {
+type panelToolResult struct {
 	Text   string
 	Images []ImagePart
 }
@@ -46,8 +46,8 @@ func browserInstructions(cfg config) string {
 
 // Resolve tabs on the UI thread, but run Chromium work off that thread.
 // The returned handler captures one conversation, never the currently open chat.
-func (u *desktopUI) browserTools(chat *conversation) browserHandler {
-	return func(ctx context.Context, name string, raw json.RawMessage) (browserResult, error) {
+func (u *desktopUI) browserTools(chat *conversation) panelToolHandler {
+	return func(ctx context.Context, name string, raw json.RawMessage) (panelToolResult, error) {
 		var args struct {
 			Action                                string
 			TabID                                 string `json:"tab_id"`
@@ -62,7 +62,7 @@ func (u *desktopUI) browserTools(chat *conversation) browserHandler {
 		decoder := json.NewDecoder(strings.NewReader(string(raw)))
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&args); err != nil {
-			return browserResult{}, err
+			return panelToolResult{}, err
 		}
 		var b *browserPage
 		var infos []browserInfo
@@ -157,25 +157,25 @@ func (u *desktopUI) browserTools(chat *conversation) browserHandler {
 			update()
 		})
 		if ctx.Err() != nil {
-			return browserResult{}, ctx.Err()
+			return panelToolResult{}, ctx.Err()
 		}
 		if problem != nil {
-			return browserResult{}, problem
+			return panelToolResult{}, problem
 		}
 		encode := func(v any) string { data, _ := json.Marshal(v); return string(data) }
 		if name == "browser_tabs" {
 			if args.Action == "list" {
-				return browserResult{Text: encode(map[string]any{"tabs": infos})}, nil
+				return panelToolResult{Text: encode(map[string]any{"tabs": infos})}, nil
 			}
 			if args.Action == "close" {
-				return browserResult{Text: "Browser tab closed."}, nil
+				return panelToolResult{Text: "Browser tab closed."}, nil
 			}
 			if err := b.run(ctx); err != nil {
-				return browserResult{}, err
+				return panelToolResult{}, err
 			}
-			return browserResult{Text: encode(b.snapshot())}, nil
+			return panelToolResult{Text: encode(b.snapshot())}, nil
 		}
-		var result browserResult
+		var result panelToolResult
 		var err error
 		switch name {
 		case "browser_navigate":

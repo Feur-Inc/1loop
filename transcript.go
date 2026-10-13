@@ -76,6 +76,9 @@ func toolGlyph(tool string) fyne.Resource {
 	if strings.HasPrefix(tool, "browser_") {
 		return iconBrowser
 	}
+	if strings.HasPrefix(tool, "terminal_") {
+		return iconTerminal
+	}
 	switch tool {
 	case "shell":
 		return iconTerminal
@@ -96,6 +99,12 @@ func toolGlyph(tool string) fyne.Resource {
 // describeTool is the one-line summary of a call: "Ran go test ./..." or
 // "Editing main.go". The target is the command's first line or the path.
 func describeTool(item chatItem, running bool) (verb, target string, mono bool) {
+	if strings.HasPrefix(item.Tool, "terminal_") {
+		if running {
+			return "Using terminal:", strings.TrimPrefix(item.Tool, "terminal_"), false
+		}
+		return "Used terminal:", strings.TrimPrefix(item.Tool, "terminal_"), false
+	}
 	if strings.HasPrefix(item.Tool, "browser_") {
 		if running {
 			return "Using", strings.TrimPrefix(item.Tool, "browser_"), false

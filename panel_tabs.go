@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -18,11 +19,18 @@ type panelTerminal struct {
 	widget *terminal.Terminal
 	file   *os.File
 	cancel context.CancelFunc
+	id     string
+	dir    string
+	mu     sync.Mutex
+	output []byte
+	total  int64
+	exit   *int
+	done   chan struct{}
+	once   sync.Once
 }
 
 func (t *panelTerminal) close() {
-	_ = t.file.Close() // hanging up the PTY also stops its foreground job
-	t.cancel()
+	t.once.Do(func() { _ = t.file.Close(); t.cancel() })
 }
 
 func (p *toolPanel) openTerminal() {
@@ -54,7 +62,7 @@ func (p *toolPanel) terminalTab(dir string) (panelTab, error) {
 	w := terminal.New()
 	w.SetStartDir(cmd.Dir)
 	w.Resize(fyne.NewSize(600, 400))
-	t := &panelTerminal{widget: w, file: file, cancel: cancel}
+	t := &panelTerminal{widget: w, file: file, cancel: cancel, id: identifier()[:16], dir: dir, done: make(chan struct{})}
 	status := textLine(cmd.Dir, 11, colMuted)
 	configs := make(chan terminal.Config, 4)
 	w.AddListener(configs)
@@ -69,9 +77,14 @@ func (p *toolPanel) terminalTab(dir string) (panelTab, error) {
 			}
 		}
 	}()
-	go func() { _ = w.RunWithConnection(file, file) }()
+	go func() { _ = w.RunWithConnection(file, &terminalOutput{file: file, terminal: t}) }()
 	go func() {
 		err := cmd.Wait()
+		code := cmd.ProcessState.ExitCode()
+		t.mu.Lock()
+		t.exit = &code
+		t.mu.Unlock()
+		close(t.done)
 		fyne.Do(func() {
 			if ctx.Err() != nil {
 				return

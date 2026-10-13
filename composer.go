@@ -40,12 +40,16 @@ type chatEntry struct {
 	shortcut func(fyne.Shortcut) bool
 	paste    func() bool // image-aware paste (Ctrl+V), true when it handled the key
 	rows     int
+	measure  *widget.RichText
+	resized  func()
+	fitting  bool
 }
 
 const promptMaxRows = 10
 
 func newChatEntry() *chatEntry {
-	e := &chatEntry{rows: 1}
+	e := &chatEntry{rows: 1, measure: widget.NewRichTextWithText("")}
+	e.measure.Wrapping = fyne.TextWrapWord
 	e.MultiLine = true
 	e.Wrapping = fyne.TextWrapWord
 	e.ExtendBaseWidget(e)
@@ -57,19 +61,26 @@ func newChatEntry() *chatEntry {
 // fit sizes the entry to its wrapped text so the composer grows as the
 // prompt does, then scrolls past promptMaxRows.
 func (e *chatEntry) fit() {
-	width := e.Size().Width - 2*theme.InnerPadding() - 4
-	if width <= 0 {
+	if e.fitting || e.Size().Width <= 0 {
 		return
 	}
-	rows := 0
-	for _, line := range strings.Split(e.Text, "\n") {
-		measured := fyne.MeasureText(line, theme.TextSize(), fyne.TextStyle{}).Width
-		rows += int(math.Max(1, math.Ceil(float64(measured/width))))
-	}
-	rows = int(math.Min(math.Max(1, float64(rows)), promptMaxRows))
+	e.fitting = true
+	defer func() { e.fitting = false }()
+	th := e.Theme()
+	width := e.Size().Width - 2*th.Size(theme.SizeNameInputBorder)
+	segment := e.measure.Segments[0].(*widget.TextSegment)
+	segment.Text = e.Text
+	segment.Style.TextStyle = e.TextStyle
+	e.measure.Refresh()
+	e.measure.Resize(fyne.NewSize(width, 1))
+	line := fyne.MeasureText("M", th.Size(theme.SizeNameText), e.TextStyle).Height
+	rows := max(1, min(promptMaxRows, int(math.Round(float64((e.measure.MinSize().Height-2*th.Size(theme.SizeNameInnerPadding))/line)))))
 	if rows != e.rows {
 		e.rows = rows
 		e.SetMinRowsVisible(rows)
+		if e.resized != nil {
+			e.resized()
+		}
 	}
 }
 
@@ -309,6 +320,15 @@ func (u *desktopUI) attachImage(img *image.NRGBA) {
 
 func (u *desktopUI) renderAttachments() {
 	u.attachRow.RemoveAll()
+	for i, file := range u.fileAttachments {
+		i := i
+		remove := newRow("", iconClose, styleWindow, func() {
+			u.fileAttachments = append(u.fileAttachments[:i], u.fileAttachments[i+1:]...)
+			u.renderAttachments()
+		})
+		label := textLine(fitText(file.Name, 12.5, fyne.TextStyle{}, 180), 12.5, colText)
+		u.attachRow.Add(surface(container.NewHBox(label, remove), colCode, colBorderSoft, 8, 6))
+	}
 	for i, part := range u.attachments {
 		i := i
 		raw, err := base64.StdEncoding.DecodeString(part.Data)
@@ -573,6 +593,7 @@ type queueEdit struct {
 	original message
 	draft    string // what the prompt held before
 	images   []ImagePart
+	files    []fileAttachment
 }
 
 func (u *desktopUI) editQueued(steer bool, index int) {
@@ -584,7 +605,8 @@ func (u *desktopUI) editQueued(steer bool, index int) {
 	}
 	m := (*waiting)[index]
 	*waiting = append((*waiting)[:index], (*waiting)[index+1:]...)
-	u.editing = &queueEdit{chat: chat, steer: steer, index: index, original: m, draft: u.prompt.Text, images: u.attachments}
+	u.editing = &queueEdit{chat: chat, steer: steer, index: index, original: m, draft: u.prompt.Text, images: u.attachments, files: u.fileAttachments}
+	u.fileAttachments = nil
 	u.prompt.SetText(m.Content)
 	lines := strings.Split(m.Content, "\n")
 	u.prompt.CursorRow, u.prompt.CursorColumn = len(lines)-1, len([]rune(lines[len(lines)-1]))
@@ -600,6 +622,12 @@ func (u *desktopUI) editQueued(steer bool, index int) {
 // set (dropped if emptied), unchanged otherwise; the prompt gets its draft
 // back.
 func (u *desktopUI) finishEdit(commit bool) {
+	if commit {
+		if problem := u.attachmentProblem(); problem != "" {
+			u.notice("Attachments", problem)
+			return
+		}
+	}
 	e := u.editing
 	if e == nil {
 		return
@@ -607,7 +635,7 @@ func (u *desktopUI) finishEdit(commit bool) {
 	u.editing = nil
 	m := e.original
 	if commit {
-		m.Content, m.Images = strings.TrimSpace(u.prompt.Text), u.attachments
+		m.Content, m.Images = attachmentText(strings.TrimSpace(u.prompt.Text), u.fileAttachments), u.attachments
 	}
 	if m.Content != "" || len(m.Images) > 0 {
 		waiting := lane(e.chat, e.steer)
@@ -616,6 +644,7 @@ func (u *desktopUI) finishEdit(commit bool) {
 	}
 	u.prompt.SetText(e.draft)
 	u.attachments = e.images
+	u.fileAttachments = e.files
 	u.renderAttachments()
 	u.editBar.Hide()
 	u.renderQueue()
@@ -709,6 +738,9 @@ func (rr *contextRingRenderer) Destroy() {}
 // setContextUsage updates the ring for the open conversation.
 func (u *desktopUI) setContextUsage(used, window int) {
 	u.contextRing.set(used, window)
+	if u.panel != nil {
+		u.panel.refreshTodoStatus()
+	}
 }
 
 // refreshContextRing recomputes the usage of the open conversation from its

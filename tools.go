@@ -34,7 +34,8 @@ func toolDefinitions() []map[string]any {
 		result = append(result, map[string]any{"type": "function", "function": map[string]any{"name": d.name, "description": d.description, "parameters": map[string]any{"type": "object", "properties": properties, "required": d.fields, "additionalProperties": false}}})
 	}
 	result = append(result, todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition())
-	return append(result, browserToolDefinitions()...)
+	result = append(result, browserToolDefinitions()...)
+	return append(result, terminalToolDefinitions()...)
 }
 
 func workspacePath(root, path string) (string, error) {
@@ -157,9 +158,21 @@ func (a *app) executeTool(ctx context.Context, root string, call toolCall, emit 
 			outcome.Elapsed = time.Since(started)
 		}
 	}()
-	if strings.HasPrefix(call.Function.Name, "browser_") {
+	if strings.HasPrefix(call.Function.Name, "terminal_") {
+		handler, _ := ctx.Value(terminalContextKey{}).(panelToolHandler)
+		switch {
+		case handler == nil:
+			outcome.Err = fmt.Errorf("Terminal tools are not attached to this conversation")
+		case terminalNeedsApproval(call.Function.Name, json.RawMessage(call.Function.Arguments)) && !a.confirm(ctx, emit, "Use terminal", call.Function.Arguments):
+			outcome.Err = fmt.Errorf("The user denied this terminal action")
+		default:
+			begin()
+			result, err := handler(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
+			outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
+		}
+	} else if strings.HasPrefix(call.Function.Name, "browser_") {
 		begin()
-		handler, _ := ctx.Value(browserContextKey{}).(browserHandler)
+		handler, _ := ctx.Value(browserContextKey{}).(panelToolHandler)
 		if handler == nil {
 			outcome.Err = fmt.Errorf("Browser tools are not attached to this conversation")
 		} else {

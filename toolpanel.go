@@ -41,25 +41,44 @@ type toolPanel struct {
 }
 
 type panelTab struct {
-	kind      string // "tool", "todo", "changes", "terminal" or "browser": what to open again with the chat
-	chat      *conversation
-	index     int
-	title     string
-	icon      fyne.Resource
-	content   fyne.CanvasObject
-	browser   *browserPage
-	terminal  *panelTerminal
-	cancel    func()
-	todoChat  *conversation
-	todoView  *fyne.Container
-	todoMarks []*taskMark // the rings of the list as drawn, stopped when it is drawn again
-	workspace string      // manual tabs belong to a workspace, not a transcript item
+	kind            string // "tool", "todo", "changes", "terminal" or "browser": what to open again with the chat
+	chat            *conversation
+	index           int
+	title           string
+	icon            fyne.Resource
+	content         fyne.CanvasObject
+	browser         *browserPage
+	terminal        *panelTerminal
+	cancel          func()
+	todoChat        *conversation
+	todoView        *fyne.Container
+	todoContext     *fyne.Container
+	todoContextText string
+	todoTimes       map[string]*canvas.Text
+	todoMarks       []*taskMark // the rings of the list as drawn, stopped when it is drawn again
+	workspace       string      // manual tabs belong to a workspace, not a transcript item
 }
 
 const panelWidth = 840
 
 func newToolPanel(u *desktopUI) *toolPanel {
 	p := &toolPanel{u: u, active: -1}
+	go func() {
+		timer := time.NewTicker(time.Second)
+		defer timer.Stop()
+		for {
+			select {
+			case <-u.ctx.Done():
+				return
+			case <-timer.C:
+				fyne.Do(func() {
+					if u.ctx.Err() == nil {
+						p.refreshTodoStatus()
+					}
+				})
+			}
+		}
+	}()
 	p.strip = container.New(layout.NewCustomPaddedHBoxLayout(4))
 	add := newRow("", iconPlus, styleWindow, nil)
 	add.onTap = func() {

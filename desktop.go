@@ -100,6 +100,8 @@ type desktopUI struct {
 	attachRow       *fyne.Container
 	attachTray      fyne.CanvasObject // attachRow with its margins, hidden when empty
 	attachments     []ImagePart
+	fileAttachments []fileAttachment
+	filesAttaching  int
 	editing         *queueEdit // a queued message being edited in the prompt
 	editBar         *fyne.Container
 	queueTray       *fyne.Container
@@ -490,6 +492,11 @@ func (u *desktopUI) buildFooter() fyne.CanvasObject {
 	})
 	u.prompt.shortcut = u.shortcut
 	u.prompt.paste = u.pasteFromClipboard
+	u.prompt.resized = func() {
+		if u.split != nil {
+			relayout(u.split)
+		}
+	}
 
 	u.model = newPicker(u.window, "Loading models…", styleChip, func(label string) {
 		if choice, ok := u.choices[label]; ok {
@@ -519,11 +526,12 @@ func (u *desktopUI) buildFooter() fyne.CanvasObject {
 					u.notice("Paste", "No image in the clipboard.")
 				}
 			}},
+			{label: "Attach files…", detail: "Copy to the workspace tmp folder", icon: iconFolder, run: u.pickFiles},
 			{label: "Attach images…", detail: "Choose files on this computer", icon: iconFolder, run: u.pickImages},
 		})
 	}
 
-	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), u.model.row, u.contextRing, container.NewStack(u.send, u.stop))
+	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), u.contextRing, u.model.row, container.NewStack(u.send, u.stop))
 	u.controls = container.New(&composerControlsLayout{}, container.NewCenter(u.approvalControl), actions)
 	u.model.relayout = u.controls.Refresh
 
@@ -544,7 +552,7 @@ func (u *desktopUI) buildFooter() fyne.CanvasObject {
 	u.attachRow = container.New(layout.NewCustomPaddedHBoxLayout(8))
 	// The optional rows are hidden with their margins: a hidden child inside
 	// a visible padded box would still take its padding and the gap after it.
-	u.attachTray = padded(2, 4, 2, 0, u.attachRow)
+	u.attachTray = padded(2, 4, 2, 0, container.NewHScroll(u.attachRow))
 	u.attachTray.Hide()
 	input := container.NewThemeOverride(u.prompt, bareInputTheme{loopTheme{theme.DefaultTheme()}})
 	line := container.New(attachButtonLayout{}, input, u.attach)
@@ -770,11 +778,17 @@ func (u *desktopUI) runEnded(chat *conversation, ended string) {
 
 // promptMessage takes what the composer holds as a message.
 func (u *desktopUI) promptMessage() (message, bool) {
-	text := strings.TrimSpace(u.prompt.Text)
-	if text == "" && len(u.attachments) == 0 {
+	if problem := u.attachmentProblem(); problem != "" {
+		u.notice("Attachments", problem)
 		return message{}, false
 	}
-	m := message{Role: "user", Content: text, Images: u.takeAttachments()}
+	text := strings.TrimSpace(u.prompt.Text)
+	if text == "" && len(u.attachments) == 0 && len(u.fileAttachments) == 0 {
+		return message{}, false
+	}
+	m := message{Role: "user", Content: attachmentText(text, u.fileAttachments), Images: u.takeAttachments()}
+	u.fileAttachments = nil
+	u.renderAttachments()
 	u.prompt.SetText("")
 	return m, true
 }
@@ -794,7 +808,7 @@ func (u *desktopUI) submit() {
 		}
 		return
 	}
-	if text == "" && len(u.attachments) == 0 {
+	if text == "" && len(u.attachments) == 0 && len(u.fileAttachments) == 0 {
 		// An empty Enter resumes a queue left behind by a stopped task.
 		if chat != nil {
 			if next, ok := u.takeNext(chat); ok {
@@ -942,6 +956,7 @@ func (u *desktopUI) runConfig(chat *conversation) config {
 	cfg := chat.Config
 	cfg.Todo = chat.Todo
 	cfg.Browser = u.browserTools(chat)
+	cfg.Terminal = u.terminalTools(chat)
 	if chat.Cache == nil {
 		chat.Cache = &contextCache{}
 	}

@@ -41,10 +41,14 @@ func contextOverhead(cfg config) int {
 }
 
 func contextAt(cfg config, tokens int, fraction float64) bool {
+	return tokens >= contextThreshold(cfg, fraction)
+}
+
+func contextThreshold(cfg config, fraction float64) int {
 	window := modelContextWindow(cfg)
 	// Small windows still need space for one answer and its tool results.
 	reserve := min(8192, max(1024, window/8))
-	return tokens >= min(int(float64(window)*fraction), window-reserve)
+	return min(int(float64(window)*fraction), window-reserve)
 }
 
 func shortenedOutput(text, id string, budget int) string {

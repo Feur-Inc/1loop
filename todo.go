@@ -17,9 +17,11 @@ import (
 )
 
 type todoItem struct {
-	ID     string `json:"id"`
-	Text   string `json:"text"`
-	Status string `json:"status"`
+	ID          string     `json:"id"`
+	Text        string     `json:"text"`
+	Status      string     `json:"status"`
+	StartedAt   *time.Time `json:"startedAt,omitempty"`
+	CompletedAt *time.Time `json:"completedAt,omitempty"`
 }
 
 // The list lives outside message history. Compaction can replace messages,
@@ -90,6 +92,16 @@ func (t *todoState) update(raw json.RawMessage) ([]todoItem, error) {
 			}
 			if todoRank(change.Status) < todoRank(item.Status) {
 				return nil, fmt.Errorf("Task %s cannot be reset. Add a follow-up task if new work is needed", item.ID)
+			}
+			if change.Status != item.Status {
+				if change.Status == "in_progress" && next[i].StartedAt == nil {
+					now := time.Now()
+					next[i].StartedAt = &now
+				}
+				if change.Status == "completed" {
+					now := time.Now()
+					next[i].CompletedAt = &now
+				}
 			}
 			next[i].Status = change.Status
 			break
@@ -162,8 +174,9 @@ func (p *toolPanel) openTodo() {
 
 func (p *toolPanel) todoTab(chat *conversation) panelTab {
 	view := container.NewVBox()
-	return panelTab{kind: "todo", title: "Tasks", icon: iconCheck, todoChat: chat, todoView: view,
-		content: newKineticVScroll(padded(16, 18, 18, 18, view))}
+	footer := container.NewVBox()
+	return panelTab{kind: "todo", title: "Tasks", icon: iconCheck, todoChat: chat, todoView: view, todoContext: footer,
+		content: container.NewBorder(nil, padded(12, 14, 18, 18, footer), nil, nil, newKineticVScroll(padded(16, 18, 18, 18, view)))}
 }
 
 // todoChanged draws a chat's task list again in its tab, when the panel on
@@ -183,6 +196,7 @@ func (p *toolPanel) todoChanged(chat *conversation) {
 		}
 		tab.todoChat = chat
 		box := tab.todoView
+		tab.todoTimes = map[string]*canvas.Text{}
 		box.Objects = nil
 		for _, mark := range tab.todoMarks {
 			mark.stop()
@@ -204,6 +218,7 @@ func (p *toolPanel) todoChanged(chat *conversation) {
 			box.Add(title)
 			box.Add(padded(8, 0, 0, 0, plainFlow("No tasks yet. The agent lists them here when it plans your request, and ticks them off as it goes.", 13, colMuted)))
 			box.Refresh()
+			p.refreshTodoStatus()
 			continue
 		}
 		// The whole list at a glance: how many are done, and a line that fills.
@@ -228,10 +243,13 @@ func (p *toolPanel) todoChanged(chat *conversation) {
 			text.bold = style.Bold
 			mark := newTaskMark(item.Status, live)
 			tab.todoMarks = append(tab.todoMarks, mark)
-			box.Add(padded(7, 7, 0, 0, container.NewBorder(nil, nil, container.NewVBox(mark), nil, padded(1, 0, 12, 0, text))))
+			clock := textLine(taskElapsed(item, time.Now()), 11.5, colMuted)
+			tab.todoTimes[item.ID] = clock
+			box.Add(padded(7, 7, 0, 0, container.NewBorder(nil, nil, container.NewVBox(mark), container.NewVBox(clock), padded(1, 0, 12, 8, text))))
 		}
 		box.Refresh()
 	}
+	p.refreshTodoStatus()
 }
 
 // progressLayout draws a thin line filled up to a share of its width.
@@ -336,3 +354,84 @@ func (r *taskMarkRenderer) Layout(size fyne.Size) {
 func (r *taskMarkRenderer) Refresh()                     { r.m.draw() }
 func (r *taskMarkRenderer) Objects() []fyne.CanvasObject { return []fyne.CanvasObject{r.m.image} }
 func (r *taskMarkRenderer) Destroy()                     { r.m.stop() }
+
+func taskElapsed(item todoItem, now time.Time) string {
+	if item.StartedAt == nil {
+		return ""
+	}
+	end := now
+	if item.CompletedAt != nil {
+		end = *item.CompletedAt
+	}
+	seconds := max(0, int(end.Sub(*item.StartedAt).Seconds()))
+	if seconds >= 3600 {
+		return fmt.Sprintf("%d h %02d min", seconds/3600, (seconds%3600)/60)
+	}
+	return fmt.Sprintf("%d min %02d s", seconds/60, seconds%60)
+}
+
+func taskContextText(cfg config, used, window int, classic bool, activity string) string {
+	if window <= 0 {
+		return "Context usage is available once a model is selected."
+	}
+	text := fmt.Sprintf("Context · %d%% · %s / %s tokens", min(100, used*100/window), tokens(used), tokens(window))
+	if cfg.Provider == "claudecode" {
+		return text + "\nCompaction is managed by Claude Code."
+	}
+	if activity == "compact" {
+		return text + "\nCompacting context now…"
+	}
+	if classic {
+		return text + fmt.Sprintf("\nNext: classic compaction from %.0f%%.", float64(contextThreshold(cfg, .85))*100/float64(window))
+	}
+	level, condition, fraction := 1, "when this prompt finishes", .4
+	switch {
+	case contextAt(cfg, used, .9):
+		level, condition, fraction = 4, "at the next safe step boundary", .9
+	case contextAt(cfg, used, .8):
+		level, condition, fraction = 3, "at the model's next checkpoint", .8
+	case contextAt(cfg, used, .7):
+		level, condition, fraction = 2, "after the next completed task", .7
+	}
+	return text + fmt.Sprintf("\nNext eligible: level %d · %s (from %.0f%%).\nThe actual level depends on the next work boundary and available reduction.", level, condition, float64(contextThreshold(cfg, fraction))*100/float64(window))
+}
+func (p *toolPanel) refreshTodoStatus() {
+	if p.active < 0 || p.active >= len(p.tabs) || p.target == 0 {
+		return
+	}
+	tab := &p.tabs[p.active]
+	if tab.kind != "todo" || tab.todoContext == nil {
+		return
+	}
+	now := time.Now()
+	if p.owner != nil {
+		for _, item := range p.owner.Todo.snapshot() {
+			if clock := tab.todoTimes[item.ID]; clock != nil {
+				value := taskElapsed(item, now)
+				if value != clock.Text {
+					clock.Text = value
+					clock.Refresh()
+				}
+			}
+		}
+	}
+	cfg := p.u.cfg
+	state := ""
+	if p.owner != nil {
+		cfg = p.owner.Config
+		if p.owner.run != nil {
+			state = p.owner.run.turn.mark
+		}
+	}
+	text := taskContextText(cfg, p.u.contextRing.used, p.u.contextRing.window, p.u.classicCompaction, state)
+	if text != tab.todoContextText {
+		tab.todoContextText = text
+		rule := canvas.NewRectangle(colBorderSoft)
+		rule.SetMinSize(fyne.NewSize(0, 1))
+		tab.todoContext.Objects = []fyne.CanvasObject{rule}
+		for _, line := range strings.Split(text, "\n") {
+			tab.todoContext.Objects = append(tab.todoContext.Objects, plainFlow(line, 12, colMuted))
+		}
+		tab.todoContext.Refresh()
+	}
+}

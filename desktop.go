@@ -31,12 +31,14 @@ import (
 )
 
 type conversation struct {
-	ID      string     `json:"id,omitempty"` // stable, for the phone remote
-	Title   string     `json:"title"`
-	Config  config     `json:"config"`
-	History []message  `json:"history"`
-	Items   []chatItem `json:"items"`
-	Todo    *todoState `json:"todo,omitempty"`
+	ID       string        `json:"id,omitempty"` // stable, for the phone remote
+	Title    string        `json:"title"`
+	Config   config        `json:"config"`
+	History  []message     `json:"history"`
+	Items    []chatItem    `json:"items"`
+	Todo     *todoState    `json:"todo,omitempty"`
+	Version  string        `json:"version,omitempty"`
+	Versions []chatVersion `json:"versions,omitempty"`
 
 	run   *chatRun  // the agent loop working on this chat, if any
 	queue []message // Enter while it runs: the next turns
@@ -849,7 +851,9 @@ func (u *desktopUI) notReady() string {
 
 // start sends a message in the open chat (a new one if none is open) and
 // runs the agent loop for it in the background.
-func (u *desktopUI) start(m message) {
+func (u *desktopUI) start(m message) { u.startWithID(m, "") }
+
+func (u *desktopUI) startWithID(m message, id string) {
 	if !u.ready() {
 		if u.current != nil { // keep it rather than lose it
 			u.current.queue = append([]message{m}, u.current.queue...)
@@ -875,7 +879,7 @@ func (u *desktopUI) start(m message) {
 	chat.History = append(chat.History, m)
 	u.showTranscript(true)
 	u.followTail = true // Sending a message explicitly returns to the live answer.
-	u.addItem(chat, chatItem{Kind: "user", Text: m.Content, Images: m.Images})
+	u.addItem(chat, chatItem{ID: id, Kind: "user", Text: m.Content, Images: m.Images})
 	u.updateHeader()
 	// No deadline: a long task (long shell runs, many tool rounds) must not
 	// die on a timer. Only the Stop button or a dead network ends it.
@@ -1075,13 +1079,13 @@ func (u *desktopUI) refreshModels() {
 			selected := ""
 			for i, result := range results {
 				if result.err != nil {
-					problem := "Modèles indisponibles"
+					problem := "Models unavailable"
 					if connections[i].Provider == "vllm" {
-						problem = "Indispo"
+						problem = "Unavailable"
 					} else {
 						var timeout net.Error
 						if errors.As(result.err, &timeout) && timeout.Timeout() {
-							problem = "Délai réseau dépassé"
+							problem = "Network timeout"
 						}
 					}
 					u.modelUnavailable[connections[i].ID] = problem
@@ -1180,7 +1184,8 @@ func (u *desktopUI) persist(wait bool) {
 	chats := make([]*conversation, len(u.chats))
 	for i, chat := range u.chats { // messages are never edited in place: copying the lists is enough
 		chats[i] = &conversation{ID: chat.ID, Title: chat.Title, Config: chat.Config,
-			History: append([]message{}, chat.History...), Items: append([]chatItem{}, chat.Items...), Todo: chat.Todo.copy()}
+			History: append([]message{}, chat.History...), Items: append([]chatItem{}, chat.Items...), Todo: chat.Todo.copy(),
+			Version: chat.Version, Versions: copyVersions(chat.Versions)}
 	}
 	u.saveCount++
 	count, path := u.saveCount, u.statePath

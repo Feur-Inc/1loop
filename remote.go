@@ -540,6 +540,17 @@ func (r *remoteServer) metaChanged(chat *conversation) {
 	r.schedule()
 }
 
+func (r *remoteServer) replaceChat(chat *conversation) {
+	if r == nil {
+		return
+	}
+	delete(r.dirty, chat)
+	r.broadcast("replace", map[string]string{"chat": chat.ID})
+	r.chatsChanged()
+	r.metaChanged(chat)
+	r.settingsChanged()
+}
+
 func (r *remoteServer) settingsChanged() {
 	if r == nil {
 		return

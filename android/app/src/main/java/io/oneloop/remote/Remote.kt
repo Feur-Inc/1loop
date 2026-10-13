@@ -355,6 +355,9 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 }
             }
             "meta" -> applyMeta(Meta.from(data))
+            "replace" -> if (data.optString("chat") == current) {
+                current?.let { scope.launch { load(it) } }
+            }
             "settings" -> applySettings(data)
         }
     }

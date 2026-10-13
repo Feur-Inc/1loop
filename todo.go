@@ -176,16 +176,16 @@ func (p *toolPanel) todoChanged(chat *conversation) {
 			items = chat.Todo.snapshot()
 		}
 		if len(items) == 0 {
-			box.Add(note("Aucune tâche. Le modèle remplira cette liste lorsqu’il planifiera votre demande."))
+			box.Add(note("No tasks yet. The model will fill this list when it plans your request."))
 		}
 		for i, item := range items {
-			status, ink := "À faire", colMuted
+			status, ink := "Pending", colMuted
 			icon := iconDocument
 			if item.Status == "in_progress" {
-				status, ink, icon = "En cours", colAmber, iconDot
+				status, ink, icon = "In progress", colAmber, iconDot
 			}
 			if item.Status == "completed" {
-				status, ink, icon = "Terminée", colAdded, iconCheck
+				status, ink, icon = "Completed", colAdded, iconCheck
 			}
 			image := canvas.NewImageFromResource(tinted(icon, ink))
 			image.FillMode = canvas.ImageFillContain

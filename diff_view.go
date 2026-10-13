@@ -75,7 +75,7 @@ func parseDiff(patch string) []diffLine {
 			}
 			label := line
 			if skipped := next - previous; skipped > 0 {
-				label = fmt.Sprintf("%d lignes inchangées · %s", skipped, line)
+				label = fmt.Sprintf("%d unchanged lines · %s", skipped, line)
 			}
 			rows = append(rows, diffLine{kind: 'h', text: label})
 		case (oldLeft > 0 || newLeft > 0) && len(line) > 0 && strings.ContainsRune(" +-", rune(line[0])):
@@ -176,8 +176,8 @@ func newDiffView(patch string) fyne.CanvasObject {
 			list.SetItemHeight(i, 30)
 		}
 	}
-	copy := newRow("Copier le diff", iconCopy, styleChip, func() { fyne.CurrentApp().Clipboard().SetContent(patch) })
-	header := padded(6, 6, 12, 8, container.NewBorder(nil, nil, textLine(fmt.Sprintf("%d fichier(s)", files), 12, colMuted), copy))
+	copy := newRow("Copy diff", iconCopy, styleChip, func() { fyne.CurrentApp().Clipboard().SetContent(patch) })
+	header := padded(6, 6, 12, 8, container.NewBorder(nil, nil, textLine(fmt.Sprintf("%d file(s)", files), 12, colMuted), copy))
 	return container.NewBorder(header, nil, nil, nil, container.NewHScroll(list))
 }
 

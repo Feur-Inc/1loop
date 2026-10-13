@@ -885,16 +885,16 @@ func (u *desktopUI) connectionEditor(original connection) {
 			return
 		}
 		var warning *sheet
-		stay := newRow("Revenir", nil, styleOutline, func() { warning.dismiss() })
-		discard := newRow("Abandonner", nil, styleOutline, func() { warning.Hide(); next() })
+		stay := newRow("Go back", nil, styleOutline, func() { warning.dismiss() })
+		discard := newRow("Discard", nil, styleOutline, func() { warning.Hide(); next() })
 		discard.danger = true
-		keep := newRow("Enregistrer", nil, stylePrimary, func() {
+		keep := newRow("Save", nil, stylePrimary, func() {
 			warning.Hide()
 			if saveDraft() {
 				next()
 			}
 		})
-		warning = u.modal("Modifications non enregistrées", note("Enregistrez vos choix pour les conserver. Voulez-vous vraiment les abandonner ?"), 520, nil, stay, discard, keep)
+		warning = u.modal("Unsaved changes", note("Save your choices to keep them. Do you want to discard your changes?"), 520, nil, stay, discard, keep)
 	}
 	cancel := newRow("Cancel", nil, styleOutline, v.back)
 	v.push(settingsFrame{content: page, actions: []fyne.CanvasObject{container.NewCenter(sized(360, status)), cancel, save}, beforeLeave: beforeLeave, leave: func() {

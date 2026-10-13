@@ -35,15 +35,16 @@ type toolPanel struct {
 }
 
 type panelTab struct {
-	chat     *conversation
-	index    int
-	title    string
-	icon     fyne.Resource
-	content  fyne.CanvasObject
-	terminal *panelTerminal
-	cancel   func()
-	todoChat *conversation
-	todoView *fyne.Container
+	chat      *conversation
+	index     int
+	title     string
+	icon      fyne.Resource
+	content   fyne.CanvasObject
+	terminal  *panelTerminal
+	cancel    func()
+	todoChat  *conversation
+	todoView  *fyne.Container
+	workspace string // manual tabs belong to a workspace, not a transcript item
 }
 
 const panelWidth = 840
@@ -55,7 +56,7 @@ func newToolPanel(u *desktopUI) *toolPanel {
 	add.onTap = func() {
 		showMenu(u.window, add, []menuAction{
 			{label: "Terminal", icon: toolGlyph("shell"), run: p.openTerminal},
-			{label: "Modifications Git", icon: toolGlyph("edit_file"), run: p.openChanges},
+			{label: "Git changes", icon: toolGlyph("edit_file"), run: p.openChanges},
 		})
 	}
 	fold := newRow("", iconPanel, styleWindow, p.fold)
@@ -239,12 +240,30 @@ func (p *toolPanel) close(i int) {
 	p.render()
 }
 
-// reset forgets every tab (another chat was opened).
+// reset drops transcript details when another chat opens. Manual tabs in
+// the same workspace keep their processes and buffers.
 func (p *toolPanel) reset() {
-	p.dispose()
-	p.tabs, p.active = nil, -1
+	kept := []panelTab{}
+	active := -1
+	for i, tab := range p.tabs {
+		if tab.todoView != nil {
+			tab.todoChat = p.u.current
+		} else if tab.chat != nil || tab.workspace != p.u.cfg.Workspace {
+			tab.dispose()
+			continue
+		}
+		if i == p.active {
+			active = len(kept)
+		}
+		kept = append(kept, tab)
+	}
+	p.tabs, p.active = kept, active
+	if p.active < 0 && len(kept) > 0 {
+		p.active = 0
+	}
+	p.todoChanged(p.u.current)
 	p.render()
-	if p.shown > 0 {
+	if len(kept) == 0 && p.shown > 0 {
 		p.fold()
 	}
 }
@@ -292,7 +311,7 @@ func (p *toolPanel) render() {
 			}
 		}
 	} else {
-		p.page.Objects = []fyne.CanvasObject{padded(28, 20, 20, 20, container.NewVBox(textLine("Panneau latéral", 18, colText), note("Ouvrez un terminal ou les modifications Git avec le bouton +, ou cliquez sur un appel d’outil dans la conversation.")))}
+		p.page.Objects = []fyne.CanvasObject{padded(28, 20, 20, 20, container.NewVBox(textLine("Side panel", 18, colText), note("Open a terminal or Git changes with the + button, or click a tool call in the conversation.")))}
 	}
 	p.page.Refresh()
 	p.body.Refresh()

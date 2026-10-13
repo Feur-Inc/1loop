@@ -127,7 +127,7 @@ func (u *desktopUI) modelMenu() {
 				r.Disable()
 			}
 		}
-		values[account.ID] = accountLimits{note: "Chargement des limites…"}
+		values[account.ID] = accountLimits{note: "Loading limits…"}
 		if r.disabled {
 			values[account.ID] = accountLimits{note: r.detail}
 		}
@@ -148,7 +148,7 @@ func (u *desktopUI) modelMenu() {
 			}
 			scrolls[1].ScrollToTop()
 			if len(groups[1]) == 0 {
-				message := "Aucun modèle sélectionné dans les paramètres."
+				message := "No models selected in settings."
 				if problem := u.modelUnavailable[shown]; problem != "" {
 					message = problem
 				}
@@ -179,7 +179,7 @@ func (u *desktopUI) modelMenu() {
 		about := textLine(modelEffortAbout(efforts[index]), 12, colMuted)
 		about.Alignment = fyne.TextAlignCenter
 		if disabled {
-			title.Text, about.Text = "Aucun", "Sans raisonnement"
+			title.Text, about.Text = "None", "No reasoning"
 			title.Color, about.Color = colFaint, colFaint
 		}
 		reasoning = newStepSlider(len(efforts), index, func(index int) {

@@ -21,6 +21,7 @@ import (
 )
 
 type chatItem struct {
+	ID     string      `json:"id,omitempty"`    // stable prompt identity across edited versions
 	Kind   string      `json:"kind"`            // user, assistant, error, note or tool
 	Title  string      `json:"title,omitempty"` // tool rows saved by earlier versions
 	Text   string      `json:"text"`            // the message, or a tool's output
@@ -39,6 +40,9 @@ func upgradeItems(items []chatItem) []chatItem {
 	out := make([]chatItem, 0, len(items))
 	for i := 0; i < len(items); i++ {
 		item := items[i]
+		if item.Kind == "user" && item.ID == "" {
+			item.ID = identifier()[:16]
+		}
 		switch {
 		case item.Kind == "diff":
 			item = chatItem{Kind: "tool", Tool: "edit_file", Diff: item.Text}
@@ -389,7 +393,7 @@ func (u *desktopUI) appendItem(chat *conversation, index int) {
 	switch item.Kind {
 	case "assistant":
 		view := newMarkdownView(item.Text)
-		copyRow := container.NewHBox(copyChip(func() string { return answerText(chat, index) }))
+		copyRow := u.responseControls(chat, index)
 		copyRow.Hide() // see syncCopies
 		u.views[index] = view
 		u.copyRows[index] = copyRow
@@ -422,17 +426,14 @@ func (u *desktopUI) appendItem(chat *conversation, index int) {
 			content.Add(label)
 		}
 		bubble := container.New(bubbleLayout{text: item.Text, chrom: 2*theme.InnerPadding() + 4}, surface(content, colRaised, nil, 14, 2))
-		if item.Text == "" {
-			u.place(bubble)
-			break
-		}
-		copyRow := container.NewHBox(layout.NewSpacer(), copyChip(func() string { return item.Text }))
+		copyRow := container.NewHBox(layout.NewSpacer(), copyChip(func() string { return item.Text }),
+			newRow("Edit", iconPencil, styleChip, func() { u.editMessage(chat, index) }), u.versionControls(chat, item.ID))
 		u.place(container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, copyRow))
 	case "error":
 		label := widget.NewLabel(item.Text)
 		label.Wrapping = fyne.TextWrapWord
 		label.Importance = widget.DangerImportance
-		u.place(label)
+		u.place(container.NewVBox(label, u.responseControls(chat, index)))
 	case "note":
 		icon := canvas.NewImageFromResource(tinted(iconCompact, colFaint))
 		icon.SetMinSize(fyne.NewSquareSize(15))
@@ -621,6 +622,9 @@ func copyChip(text func() string) *tapRow {
 // addItem appends an item to a chat, and to the transcript when that chat
 // is the one on screen.
 func (u *desktopUI) addItem(chat *conversation, item chatItem) int {
+	if item.Kind == "user" && item.ID == "" {
+		item.ID = identifier()[:16]
+	}
 	chat.Items = append(chat.Items, item)
 	index := len(chat.Items) - 1
 	u.remote.itemChanged(chat, index)

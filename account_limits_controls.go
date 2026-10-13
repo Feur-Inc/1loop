@@ -52,7 +52,7 @@ func (l limitGaugeLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	objects[2].Move(objects[1].Position())
 	objects[2].Resize(fyne.NewSize(size.Width*float32(l.window.remaining())/100, 4))
 	reset := objects[4].(*canvas.Text)
-	text := "Remise non fournie"
+	text := "Reset not provided"
 	if !l.window.resetAt.IsZero() {
 		text = "↻ " + l.window.resetAt.Local().Format("02/01 15:04")
 	}
@@ -65,13 +65,13 @@ func modelLimitsStrip(c connection, limits accountLimits, problem string) fyne.C
 	icon.FillMode = canvas.ImageFillContain
 	name := textLine(c.Name, 12, colText)
 	name.TextStyle = fyne.TextStyle{Bold: true}
-	tag := "· compte sélectionné"
+	tag := "· selected account"
 	if problem != "" {
 		tag = "· " + problem
 	}
 	at := ""
 	if !limits.checked.IsZero() {
-		at = "Relevé à " + limits.checked.Local().Format("15:04")
+		at = "Checked at " + limits.checked.Local().Format("15:04")
 	}
 	header := container.New(limitStripHeaderLayout{c.Name, tag}, icon, name, textLine(tag, 11, colMuted), textLine(at, 11, colMuted))
 	var body fyne.CanvasObject = textLine(limits.note, 12, colMuted)

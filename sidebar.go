@@ -235,6 +235,10 @@ func (u *desktopUI) openChat(chat *conversation) {
 	if chat == u.current {
 		return
 	}
+	u.reloadChat(chat)
+}
+
+func (u *desktopUI) reloadChat(chat *conversation) {
 	devf("ui", "open chat %q [%s]: %d items, running %v", chat.Title, chat.ID, len(chat.Items), chat.run != nil)
 	defer devSlow("opening the chat", 30*time.Millisecond, time.Now())
 	u.finishEdit(false)

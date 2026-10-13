@@ -65,14 +65,14 @@ func (p *toolPanel) openTerminal() {
 			if ctx.Err() != nil {
 				return
 			}
-			status.Text = fmt.Sprintf("Terminal terminé · code %d", cmd.ProcessState.ExitCode())
+			status.Text = fmt.Sprintf("Terminal exited · code %d", cmd.ProcessState.ExitCode())
 			if err != nil {
 				status.Color = colDanger
 			}
 			status.Refresh()
 		})
 	}()
-	p.tabs = append(p.tabs, panelTab{title: "Terminal", icon: toolGlyph("shell"), terminal: t,
+	p.tabs = append(p.tabs, panelTab{title: "Terminal", icon: toolGlyph("shell"), terminal: t, workspace: cmd.Dir,
 		content: container.NewBorder(nil, padded(6, 6, 12, 12, status), nil, nil, padded(10, 4, 12, 12, w))})
 	p.choose(len(p.tabs) - 1)
 	p.unfold()
@@ -80,7 +80,7 @@ func (p *toolPanel) openTerminal() {
 
 func (p *toolPanel) openChanges() {
 	for i, tab := range p.tabs {
-		if tab.title == "Modifications" {
+		if tab.title == "Changes" {
 			p.choose(i)
 			p.unfold()
 			return
@@ -88,9 +88,9 @@ func (p *toolPanel) openChanges() {
 	}
 	ctx, cancel := context.WithCancel(p.u.ctx)
 	root := p.u.cfg.Workspace
-	body := container.NewStack(note("Chargement des modifications…"))
-	mode := newPicker(p.u.window, "Modifications", styleChip, nil)
-	mode.Options = []string{"Non indexées", "Indexées"}
+	body := container.NewStack(note("Loading changes…"))
+	mode := newPicker(p.u.window, "Changes", styleChip, nil)
+	mode.Options = []string{"Unstaged", "Staged"}
 	mode.SetSelected(mode.Options[0])
 	stats := textLine("", 12, colMuted)
 	var generation int
@@ -98,7 +98,7 @@ func (p *toolPanel) openChanges() {
 	load := func() {
 		generation++
 		current := generation
-		staged := mode.Selected == "Indexées"
+		staged := mode.Selected == "Staged"
 		refresh.Disable()
 		go func() {
 			diff, err := workspaceDiff(ctx, root, staged)
@@ -114,7 +114,7 @@ func (p *toolPanel) openChanges() {
 				case err != nil:
 					body.Objects = []fyne.CanvasObject{padded(20, 20, 18, 18, note(err.Error()))}
 				case strings.TrimSpace(diff) == "":
-					body.Objects = []fyne.CanvasObject{padded(20, 20, 18, 18, note("Aucune modification dans cette vue."))}
+					body.Objects = []fyne.CanvasObject{padded(20, 20, 18, 18, note("No changes in this view."))}
 				default:
 					body.Objects = []fyne.CanvasObject{newDiffView(diff)}
 				}
@@ -122,10 +122,10 @@ func (p *toolPanel) openChanges() {
 			})
 		}()
 	}
-	refresh = newRow("Actualiser", nil, styleOutline, load)
+	refresh = newRow("Refresh", nil, styleOutline, load)
 	mode.onChanged = func(string) { load() }
 	header := padded(10, 10, 12, 12, container.NewBorder(nil, nil, mode.row, refresh, container.NewCenter(stats)))
-	p.tabs = append(p.tabs, panelTab{title: "Modifications", icon: toolGlyph("edit_file"), cancel: cancel,
+	p.tabs = append(p.tabs, panelTab{title: "Changes", icon: toolGlyph("edit_file"), cancel: cancel, workspace: root,
 		content: container.NewBorder(header, nil, nil, nil, body)})
 	p.choose(len(p.tabs) - 1)
 	p.unfold()
@@ -143,14 +143,14 @@ func workspaceDiff(ctx context.Context, root string, staged bool) (string, error
 	cmd := exec.CommandContext(ctx, "git", args...)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		return "", fmt.Errorf("Impossible de lire les modifications Git : %w\n%s", err, strings.TrimSpace(string(out)))
+		return "", fmt.Errorf("Unable to read Git changes: %w\n%s", err, strings.TrimSpace(string(out)))
 	}
 	if staged {
 		return string(out), nil
 	}
 	names, err := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "--others", "--exclude-standard", "-z").Output()
 	if err != nil {
-		return "", fmt.Errorf("Impossible de lire les nouveaux fichiers Git : %w", err)
+		return "", fmt.Errorf("Unable to read new Git files: %w", err)
 	}
 	var result strings.Builder
 	result.Write(out)
@@ -165,7 +165,7 @@ func workspaceDiff(ctx context.Context, root string, staged bool) (string, error
 			text, err = fileText(path)
 		}
 		if err != nil {
-			result.WriteString("Nouveau fichier · aperçu indisponible\n")
+			result.WriteString("New file · preview unavailable\n")
 			continue
 		}
 		patch, err := unifiedDiff(ctx, name, "", text)

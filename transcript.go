@@ -878,7 +878,7 @@ func (t *turn) handle(e uiEvent) {
 	case "history":
 		t.chat.History = e.data.([]message)
 	case "todo":
-		u.panel.todoChanged(t.chat)
+		u.todoUpdated(t.chat)
 		u.save()
 	case "usage":
 		t.usage = e.data.(int)

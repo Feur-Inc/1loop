@@ -26,19 +26,30 @@ func (t *panelTerminal) close() {
 }
 
 func (p *toolPanel) openTerminal() {
+	tab, err := p.terminalTab(p.u.cfg.Workspace)
+	if err != nil {
+		p.u.notice("Terminal", err.Error())
+		return
+	}
+	p.tabs = append(p.tabs, tab)
+	p.choose(len(p.tabs) - 1)
+	p.unfold()
+}
+
+// terminalTab starts a shell in dir and returns its tab.
+func (p *toolPanel) terminalTab(dir string) (panelTab, error) {
 	ctx, cancel := context.WithCancel(p.u.ctx)
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/bash"
 	}
 	cmd := exec.CommandContext(ctx, shell, "-i")
-	cmd.Dir = p.u.cfg.Workspace
+	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
 	file, err := pty.Start(cmd)
 	if err != nil {
 		cancel()
-		p.u.notice("Terminal", err.Error())
-		return
+		return panelTab{}, err
 	}
 	w := terminal.New()
 	w.SetStartDir(cmd.Dir)
@@ -72,22 +83,26 @@ func (p *toolPanel) openTerminal() {
 			status.Refresh()
 		})
 	}()
-	p.tabs = append(p.tabs, panelTab{title: "Terminal", icon: toolGlyph("shell"), terminal: t, workspace: cmd.Dir,
-		content: container.NewBorder(nil, padded(6, 6, 12, 12, status), nil, nil, padded(10, 4, 12, 12, w))})
-	p.choose(len(p.tabs) - 1)
-	p.unfold()
+	return panelTab{kind: "terminal", title: "Terminal", icon: toolGlyph("shell"), terminal: t, workspace: cmd.Dir,
+		content: container.NewBorder(nil, padded(6, 6, 12, 12, status), nil, nil, padded(10, 4, 12, 12, w))}, nil
 }
 
 func (p *toolPanel) openChanges() {
 	for i, tab := range p.tabs {
-		if tab.title == "Changes" {
+		if tab.kind == "changes" {
 			p.choose(i)
 			p.unfold()
 			return
 		}
 	}
+	p.tabs = append(p.tabs, p.changesTab(p.u.cfg.Workspace))
+	p.choose(len(p.tabs) - 1)
+	p.unfold()
+}
+
+// changesTab returns the tab of the Git changes of root, already loading.
+func (p *toolPanel) changesTab(root string) panelTab {
 	ctx, cancel := context.WithCancel(p.u.ctx)
-	root := p.u.cfg.Workspace
 	body := container.NewStack(note("Loading changes…"))
 	mode := newPicker(p.u.window, "Changes", styleChip, nil)
 	mode.Options = []string{"Unstaged", "Staged"}
@@ -125,11 +140,9 @@ func (p *toolPanel) openChanges() {
 	refresh = newRow("Refresh", nil, styleOutline, load)
 	mode.onChanged = func(string) { load() }
 	header := padded(10, 10, 12, 12, container.NewBorder(nil, nil, mode.row, refresh, container.NewCenter(stats)))
-	p.tabs = append(p.tabs, panelTab{title: "Changes", icon: toolGlyph("edit_file"), cancel: cancel, workspace: root,
-		content: container.NewBorder(header, nil, nil, nil, body)})
-	p.choose(len(p.tabs) - 1)
-	p.unfold()
 	load()
+	return panelTab{kind: "changes", title: "Changes", icon: toolGlyph("edit_file"), cancel: cancel, workspace: root,
+		content: container.NewBorder(header, nil, nil, nil, body)}
 }
 
 func workspaceDiff(ctx context.Context, root string, staged bool) (string, error) {

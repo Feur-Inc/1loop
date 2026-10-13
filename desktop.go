@@ -37,8 +37,12 @@ type conversation struct {
 	History  []message     `json:"history"`
 	Items    []chatItem    `json:"items"`
 	Todo     *todoState    `json:"todo,omitempty"`
+	Panel    *savedPanel   `json:"panel,omitempty"` // its side panel, to open it again as it was
 	Version  string        `json:"version,omitempty"`
 	Versions []chatVersion `json:"versions,omitempty"`
+
+	panel     *panelState // its side panel while 1loop runs (live tabs, terminals included)
+	todoCount int         // tasks last seen in its list: the first ones open the panel
 
 	run   *chatRun  // the agent loop working on this chat, if any
 	queue []message // Enter while it runs: the next turns
@@ -596,7 +600,7 @@ func (u *desktopUI) startNew() {
 	u.transcript.RemoveAll()
 	u.items.reset()
 	u.views, u.copyRows = map[int]any{}, map[int]*fyne.Container{}
-	u.panel.reset()
+	u.panel.switchTo(nil)
 	u.showTranscript(false)
 	u.syncRun()
 	u.mark.intro()
@@ -874,6 +878,7 @@ func (u *desktopUI) startWithID(m message, id string) {
 		chat = &conversation{ID: identifier()[:16], Title: string(title), Config: u.cfg}
 		u.chats = append([]*conversation{chat}, u.chats...)
 		u.current = chat
+		u.panel.adopt(chat) // what was open on the start screen is now this chat's
 	}
 	u.panel.todoChanged(chat)
 	chat.History = append(chat.History, m)
@@ -1181,9 +1186,12 @@ func (u *desktopUI) persist(wait bool) {
 	if err == nil {
 		err = json.Unmarshal(head, &fields)
 	}
+	if u.panel != nil {
+		u.panel.stash() // the open chat's panel, as it is now
+	}
 	chats := make([]*conversation, len(u.chats))
 	for i, chat := range u.chats { // messages are never edited in place: copying the lists is enough
-		chats[i] = &conversation{ID: chat.ID, Title: chat.Title, Config: chat.Config,
+		chats[i] = &conversation{ID: chat.ID, Title: chat.Title, Config: chat.Config, Panel: chat.Panel,
 			History: append([]message{}, chat.History...), Items: append([]chatItem{}, chat.Items...), Todo: chat.Todo.copy(),
 			Version: chat.Version, Versions: copyVersions(chat.Versions)}
 	}
@@ -1278,6 +1286,7 @@ func (u *desktopUI) load() {
 		}
 		chat.Config.APIKey = ""
 		chat.Items = upgradeItems(chat.Items)
+		chat.todoCount = len(chat.Todo.snapshot())
 		u.chats = append(u.chats, chat)
 		u.ensureProject(chat.Config.Workspace)
 	}

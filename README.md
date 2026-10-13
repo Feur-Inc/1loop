@@ -88,6 +88,8 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - Les tâches tournent en arrière-plan : on peut ouvrir une autre conversation, en démarrer une nouvelle ou aller dans Settings pendant que l’agent travaille (un point ambre marque les conversations en cours). Les demandes d’approbation s’affichent où que l’on soit.
 - Le crayon d’un message en attente le remet dans le champ de saisie : Entrée l’enregistre à sa place, Échap annule.
 - Clic sur un appel d’outil : panneau latéral à onglets avec la commande ou le diff, la sortie complète et la durée d’exécution.
+- Le panneau latéral appartient à la conversation : chacune garde le sien (ouvert ou replié, sa largeur, ses onglets et celui qui est affiché) et le retrouve tel quel quand on y revient, y compris après un redémarrage (un terminal repart alors dans un nouveau shell). Les terminaux d’une conversation continuent de tourner pendant qu’on en regarde une autre.
+- Liste de tâches (onglet **Tasks**) : chaque tâche porte l’anneau de 1loop, gris tant qu’elle attend, en rotation pendant que l’agent y travaille, refermé autour d’une coche une fois faite. La première fois que l’agent y inscrit des tâches, le panneau s’ouvre sur la liste.
 - Ctrl + K : nouvelle conversation. Ctrl + B : replier ou déplier la barre latérale.
 - Ctrl + Maj + R : relance complète de l’application (interface et moteur).
 - Clic droit ou « ⋯ » sur une conversation ou un projet : renommer, supprimer, retirer.

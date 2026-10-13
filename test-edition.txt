@@ -1,0 +1,2 @@
+Fichier créé pour tester l’outil d’édition.
+Modification effectuée avec succès.

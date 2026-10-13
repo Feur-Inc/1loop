@@ -28,13 +28,17 @@ type toolPanel struct {
 	texts  []*outputView // the code wells of the call on display
 	tabs   []panelTab
 	active int
-	shown  float32 // 0 folded .. 1 open, eased by slide
-	target float32 // where the slide is going
-	snap   bool    // the conversation is too long to follow the slide frame by frame
+	owner  *conversation // the chat whose panel this is now; nil on the start screen
+	home   panelState    // the start screen's own panel
+	width  float32       // this chat's width, 0 for the default one
+	shown  float32       // 0 folded .. 1 open, eased by slide
+	target float32       // where the slide is going
+	snap   bool          // the conversation is too long to follow the slide frame by frame
 	anim   *fyne.Animation
 }
 
 type panelTab struct {
+	kind      string // "tool", "todo", "changes" or "terminal": what to open again with the chat
 	chat      *conversation
 	index     int
 	title     string
@@ -44,7 +48,8 @@ type panelTab struct {
 	cancel    func()
 	todoChat  *conversation
 	todoView  *fyne.Container
-	workspace string // manual tabs belong to a workspace, not a transcript item
+	todoMarks []*taskMark // the rings of the list as drawn, stopped when it is drawn again
+	workspace string      // manual tabs belong to a workspace, not a transcript item
 }
 
 const panelWidth = 840
@@ -60,7 +65,7 @@ func newToolPanel(u *desktopUI) *toolPanel {
 		})
 	}
 	fold := newRow("", iconPanel, styleWindow, p.fold)
-	todo := newRow("TODO", iconCheck, styleChip, p.openTodo)
+	todo := newRow("Tasks", iconCheck, styleChip, p.openTodo)
 	header := container.NewBorder(nil, nil, nil, container.NewHBox(todo, add, fold), container.NewHScroll(p.strip))
 	rule := canvas.NewRectangle(colBorderSoft)
 	rule.SetMinSize(fyne.NewSize(0, 1))
@@ -72,7 +77,9 @@ func newToolPanel(u *desktopUI) *toolPanel {
 	card.StrokeColor = colBorderSoft
 	card.StrokeWidth = 1
 	content := container.NewBorder(container.NewVBox(padded(8, 8, 8, 6, header), rule), nil, nil, nil, p.page)
-	p.view = padded(0, 14, 0, 14, container.NewStack(card, content))
+	// The panel goes nearly to the window's edges: only a thin margin, which
+	// also leaves the window's own resize border within reach.
+	p.view = padded(0, 6, 0, 6, container.NewStack(card, content))
 	p.render()
 	return p
 }
@@ -81,7 +88,10 @@ func newToolPanel(u *desktopUI) *toolPanel {
 type splitLayout struct{ p *toolPanel }
 
 func (l splitLayout) width(total float32) float32 {
-	width := l.p.u.panelWidth
+	width := l.p.width
+	if width <= 0 {
+		width = l.p.u.panelWidth // the last width chosen anywhere
+	}
 	if width <= 0 {
 		width = fyne.Min(panelWidth, total*0.58)
 	}
@@ -115,7 +125,7 @@ func (l splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	objects[1].Move(fyne.NewPos(size.Width-width, 0))
 	objects[1].Resize(fyne.NewSize(full, size.Height))
 	objects[2].Move(fyne.NewPos(size.Width-width-4, 0))
-	objects[2].Resize(fyne.NewSize(8, size.Height-14))
+	objects[2].Resize(fyne.NewSize(8, size.Height-6))
 	if l.p.target > 0 {
 		objects[2].Show()
 	} else {
@@ -158,7 +168,8 @@ func (h *panelResizeHandle) Dragged(e *fyne.DragEvent) {
 	}
 	p.shown, p.target, p.snap = 1, 1, false
 	total := p.u.split.Size().Width
-	p.u.panelWidth = panelWidthWithin((splitLayout{p}).width(total)-e.Dragged.DX, total)
+	p.width = panelWidthWithin((splitLayout{p}).width(total)-e.Dragged.DX, total)
+	p.u.panelWidth = p.width // what a chat without a width of its own takes
 	relayout(p.u.split)
 }
 func (h *panelResizeHandle) DragEnd() { h.panel.u.save() }
@@ -184,6 +195,7 @@ func (p *toolPanel) slide(to float32) {
 	p.anim.Start()
 	p.u.panelToggle.SetSelected(to > 0)
 	p.syncRows()
+	p.u.save() // open or folded is part of what the chat remembers
 }
 
 func (p *toolPanel) fold()   { p.slide(0) }
@@ -207,7 +219,7 @@ func (p *toolPanel) showing(chat *conversation, index int) bool {
 func (p *toolPanel) open(chat *conversation, index int) {
 	i := p.find(chat, index)
 	if i < 0 {
-		p.tabs = append(p.tabs, panelTab{chat: chat, index: index})
+		p.tabs = append(p.tabs, panelTab{kind: "tool", chat: chat, index: index})
 		i = len(p.tabs) - 1
 	}
 	p.choose(i)
@@ -223,6 +235,7 @@ func (p *toolPanel) choose(i int) {
 	if t := p.tabs[i].terminal; t != nil {
 		p.u.window.Canvas().Focus(t.widget)
 	}
+	p.u.save()
 }
 
 func (p *toolPanel) close(i int) {
@@ -238,34 +251,7 @@ func (p *toolPanel) close(i int) {
 		p.active--
 	}
 	p.render()
-}
-
-// reset drops transcript details when another chat opens. Manual tabs in
-// the same workspace keep their processes and buffers.
-func (p *toolPanel) reset() {
-	kept := []panelTab{}
-	active := -1
-	for i, tab := range p.tabs {
-		if tab.todoView != nil {
-			tab.todoChat = p.u.current
-		} else if tab.chat != nil || tab.workspace != p.u.cfg.Workspace {
-			tab.dispose()
-			continue
-		}
-		if i == p.active {
-			active = len(kept)
-		}
-		kept = append(kept, tab)
-	}
-	p.tabs, p.active = kept, active
-	if p.active < 0 && len(kept) > 0 {
-		p.active = 0
-	}
-	p.todoChanged(p.u.current)
-	p.render()
-	if len(kept) == 0 && p.shown > 0 {
-		p.fold()
-	}
+	p.u.save()
 }
 
 func (t panelTab) dispose() {
@@ -277,9 +263,14 @@ func (t panelTab) dispose() {
 	}
 }
 
+// dispose ends what every chat's panel runs (terminals, loads), on closing.
 func (p *toolPanel) dispose() {
-	for _, tab := range p.tabs {
+	p.stash()
+	for _, tab := range p.home.tabs {
 		tab.dispose()
+	}
+	for _, chat := range p.u.chats {
+		chat.disposePanel()
 	}
 }
 

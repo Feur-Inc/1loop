@@ -247,7 +247,7 @@ func (u *desktopUI) reloadChat(chat *conversation) {
 	u.current = chat
 	u.cfg = chat.Config
 	u.followTail = true
-	u.panel.reset()
+	u.panel.switchTo(chat)
 	u.transcript.RemoveAll()
 	u.items.reset()
 	u.views, u.copyRows = map[int]any{}, map[int]*fyne.Container{}
@@ -298,6 +298,9 @@ func (u *desktopUI) deleteChat(chat *conversation) {
 		u.chats = kept
 		if chat.run != nil {
 			chat.run.cancel()
+		}
+		if u.panel.owner != chat {
+			chat.disposePanel() // its terminals end with it
 		}
 		if u.current == chat {
 			u.current = nil

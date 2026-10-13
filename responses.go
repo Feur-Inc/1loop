@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 )
 
@@ -78,9 +79,23 @@ func responsesCompletion(ctx context.Context, cfg config, messages []message, to
 		return out, err
 	}
 	defer response.Body.Close()
-	scanner := bufio.NewScanner(response.Body)
+	return readResponses(response.Body, emit)
+}
+
+// readResponses reads one streamed answer of the Responses API.
+//
+// The answer's items (reasoning, text, tool calls) each end with their own
+// event, and the final event repeats them all. Some servers leave that
+// final list empty (ChatGPT's backend does at times): the items are
+// therefore kept as they arrive, and used when the final list has none.
+// Reading only the final list made such an answer look empty: the model's
+// tool call or text was dropped without a word.
+func readResponses(stream io.Reader, emit emitter) (message, error) {
+	out := message{Role: "assistant"}
+	scanner := bufio.NewScanner(stream)
 	scanner.Buffer(make([]byte, 4096), 8<<20)
 	var data []string
+	var arrived []json.RawMessage // the items, as each was completed
 	completed := false
 	status := &announcer{emit: emit}
 	calls := map[string]*struct{ name, args string }{} // function calls being streamed, by item id
@@ -91,15 +106,11 @@ func responsesCompletion(ctx context.Context, cfg config, messages []message, to
 		raw := strings.Join(data, "\n")
 		data = nil
 		var event struct {
-			Type   string `json:"type"`
-			Delta  string `json:"delta"`
-			ItemID string `json:"item_id"`
-			Item   struct {
-				ID   string `json:"id"`
-				Type string `json:"type"`
-				Name string `json:"name"`
-			} `json:"item"`
-			Error struct {
+			Type    string          `json:"type"`
+			Delta   string          `json:"delta"`
+			ItemID  string          `json:"item_id"`
+			RawItem json.RawMessage `json:"item"`
+			Error   struct {
 				Message string `json:"message"`
 			} `json:"error"`
 			Response struct {
@@ -116,14 +127,29 @@ func responsesCompletion(ctx context.Context, cfg config, messages []message, to
 		if err := json.Unmarshal([]byte(raw), &event); err != nil {
 			return fmt.Errorf("Invalid OpenAI event: %w", err)
 		}
+		if dev != nil && !strings.HasSuffix(event.Type, ".delta") {
+			devf("api", "responses event %s, %d bytes", event.Type, len(raw))
+		}
+		var item struct {
+			ID   string `json:"id"`
+			Type string `json:"type"`
+			Name string `json:"name"`
+		}
+		if len(event.RawItem) > 0 {
+			_ = json.Unmarshal(event.RawItem, &item)
+		}
 		switch event.Type {
 		case "response.output_item.added":
-			switch event.Item.Type {
+			switch item.Type {
 			case "reasoning":
 				status.set(activity{State: "think"})
 			case "function_call":
-				calls[event.Item.ID] = &struct{ name, args string }{name: event.Item.Name}
-				status.set(activity{State: "call", Tool: event.Item.Name})
+				calls[item.ID] = &struct{ name, args string }{name: item.Name}
+				status.set(activity{State: "call", Tool: item.Name})
+			}
+		case "response.output_item.done":
+			if len(event.RawItem) > 0 {
+				arrived = append(arrived, append(json.RawMessage(nil), event.RawItem...))
 			}
 		case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
 			status.set(activity{State: "think"})
@@ -145,9 +171,16 @@ func responsesCompletion(ctx context.Context, cfg config, messages []message, to
 				return fmt.Errorf("Incomplete OpenAI response")
 			}
 			completed = true
-			out.Responses = event.Response.Output
+			output := event.Response.Output
+			if len(output) == 0 {
+				if len(arrived) > 0 {
+					devf("api", "the final event lists no item: using the %d that arrived", len(arrived))
+				}
+				output = arrived
+			}
+			out.Responses = output
 			out.Usage = event.Response.Usage.InputTokens
-			for _, rawItem := range event.Response.Output {
+			for _, rawItem := range output {
 				var item struct {
 					Type      string `json:"type"`
 					CallID    string `json:"call_id"`
@@ -167,6 +200,11 @@ func responsesCompletion(ctx context.Context, cfg config, messages []message, to
 					out.ToolCalls = append(out.ToolCalls, call)
 				}
 			}
+			if out.Content == "" && len(out.ToolCalls) == 0 {
+				// Nothing to show and nothing to run: say so rather than
+				// end the turn in silence.
+				return fmt.Errorf("The model answered with nothing. Send your message again.")
+			}
 		}
 		return nil
 	}
@@ -183,10 +221,10 @@ func responsesCompletion(ctx context.Context, cfg config, messages []message, to
 			data = append(data, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
 		}
 	}
-	if err = scanner.Err(); err != nil {
+	if err := scanner.Err(); err != nil {
 		return out, err
 	}
-	if err = consume(); err != nil {
+	if err := consume(); err != nil {
 		return out, err
 	}
 	if !completed {

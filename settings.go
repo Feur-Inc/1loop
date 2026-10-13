@@ -453,6 +453,14 @@ func (u *desktopUI) generalSettings() fyne.CanvasObject {
 		card(settingRow("Tool permissions",
 			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto is Claude Code's own mode: it runs what it judges safe; with any other model it asks instead.",
 			sized(230, mode.row))),
+		sectionTitle("Context"),
+		card(settingRow("Dynamic compaction",
+			"On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way.",
+			newToggle(!u.classicCompaction, func(on bool) {
+				u.classicCompaction = !on
+				devf("ui", "dynamic compaction %v", on)
+				u.save()
+			}))),
 	)
 }
 

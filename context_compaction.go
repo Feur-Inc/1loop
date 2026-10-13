@@ -61,7 +61,8 @@ func shortenedOutput(text, id string, budget int) string {
 func inputToolOutput(cfg config, outcome toolOutcome) string {
 	// recall already enforces its own page cap; shortening its JSON would
 	// break pagination offsets and could lose the requested page.
-	if cfg.Recall == nil || outcome.Name == "recall" {
+	// Classic compaction keeps the tools' outputs as they come.
+	if cfg.Recall == nil || outcome.Name == "recall" || cfg.ClassicCompaction {
 		return outcome.modelText()
 	}
 	budget := min(8192, max(1024, modelContextWindow(cfg)/8))
@@ -238,6 +239,17 @@ func compactParts(messages []message, budget int) (head, tail []message, trace s
 }
 
 func compactHistory(ctx context.Context, cfg config, messages []message, usage int, focus string, force bool, emit emitter) ([]message, int, bool) {
+	return compactHistoryTo(ctx, cfg, messages, usage, focus, force, false, emit)
+}
+
+// compactHistoryTo compacts towards a budget. The strict budget is a deep
+// cut (15 % of the window, at most half of what is there): right at a quiet
+// moment, but it can be out of reach, when the user's own messages, kept
+// word for word, are already larger than it. relaxed is for when compacting
+// is no longer a choice (the window is nearly full, or the provider refused
+// the prompt): any real reduction is then accepted, rather than leaving the
+// context to overflow.
+func compactHistoryTo(ctx context.Context, cfg config, messages []message, usage int, focus string, force, relaxed bool, emit emitter) ([]message, int, bool) {
 	if cfg.Provider == "claudecode" {
 		return nil, 0, false
 	}
@@ -248,11 +260,17 @@ func compactHistory(ctx context.Context, cfg config, messages []message, usage i
 	overhead := contextOverhead(cfg)
 	before := historyEstimate(messages) + overhead
 	target := min(modelContextWindow(cfg)*15/100, before/2)
+	if relaxed {
+		target = before * 3 / 4
+	}
 	users := retainedRequests(messages)
 	available := target - overhead - historyEstimate(users)
 	if available < 256 {
-		emit("context_note", "Compaction skipped: fixed instructions and verbatim user requests cannot fit the reduction budget.")
-		return nil, 0, false
+		if !relaxed {
+			emit("context_note", "Compaction skipped: fixed instructions and verbatim user requests cannot fit the reduction budget.")
+			return nil, 0, false
+		}
+		available = 256 // a short handoff is still better than an overflow
 	}
 	// The recent trace and intact tail together stay below 8% of the window,
 	// with the rest reserved for the summary and unchanged user requests.
@@ -297,7 +315,11 @@ func compactHistory(ctx context.Context, cfg config, messages []message, usage i
 	}
 	kept = append(kept, tail...)
 	estimate := historyEstimate(kept) + overhead
-	if estimate > target || !sameRequests(messages, kept) {
+	tooLarge := estimate > target
+	if relaxed {
+		tooLarge = estimate >= before*9/10 // nearly nothing gained
+	}
+	if tooLarge || !sameRequests(messages, kept) {
 		devf("context", "candidate rejected: before=%d after=%d target=%d", before, estimate, target)
 		emit("context_note", "Compaction skipped: the result did not meet the reduction budget; the original context was kept.")
 		return nil, 0, false

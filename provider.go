@@ -636,6 +636,14 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 	inject := func(m message) { messages = append(messages, m); emit("injected", m) }
 	checkpointAsked, lastAttempt := false, 0
 	lastLevel := -1
+	// dynamic is the staged policy (levels 0 to 4, at the work's natural
+	// boundaries). Turned off in the settings, only the classic rule is
+	// left: one compaction when the window is nearly full.
+	dynamic := !cfg.ClassicCompaction
+	limit, limitReason := .9, "context safety limit"
+	if !dynamic {
+		limit, limitReason = .85, "context nearly full"
+	}
 	compact := func(level int, reason, note string, overflow bool) bool {
 		size := usage()
 		if !overflow && level <= lastLevel && lastAttempt > 0 && size < lastAttempt+max(1024, modelContextWindow(cfg)/10) {
@@ -643,7 +651,13 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 		}
 		lastAttempt, lastLevel = size, level
 		devf("context", "chat=%s level=%d reason=%s before=%d model=%s", cfg.ContextKey, level, reason, size, cfg.Model)
-		trimmed, estimate, ok := compactHistory(ctx, cfg, messages[1:], size, note, true, emit)
+		trimmed, estimate, ok := compactHistoryTo(ctx, cfg, messages[1:], size, note, true, !dynamic, emit)
+		if !ok && dynamic && level == 4 && ctx.Err() == nil {
+			// The deep cut was out of reach and the window is nearly full:
+			// take whatever reduction there is.
+			devf("context", "chat=%s level=4 strict budget not met: retrying with any real reduction", cfg.ContextKey)
+			trimmed, estimate, ok = compactHistoryTo(ctx, cfg, messages[1:], size, note, true, true, emit)
+		}
 		if !ok {
 			return false
 		}
@@ -676,7 +690,7 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 				return err
 			}
 		}
-		if reason := cacheStale(cfg, time.Now()); reason != "" && !coldChecked {
+		if reason := cacheStale(cfg, time.Now()); dynamic && reason != "" && !coldChecked {
 			coldChecked = true
 			devf("context", "cache check: %s, model=%s tokens=%d", reason, cfg.Model, usage())
 			if contextAt(cfg, usage(), .4) {
@@ -693,10 +707,10 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 				}
 			}
 		}
-		if contextAt(cfg, usage(), .9) {
-			compact(4, "context safety limit", "", false)
+		if contextAt(cfg, usage(), limit) {
+			compact(4, limitReason, "", false)
 		}
-		if contextAt(cfg, usage(), .8) && !checkpointAsked {
+		if dynamic && contextAt(cfg, usage(), .8) && !checkpointAsked {
 			checkpointAsked = true
 			messages = append(messages, message{Role: "user", Internal: true, Content: "[1loop context control] Context is near its limit. At the next natural stopping point, call checkpoint with a concise continuation note (current task, results, files and next action). Continue working after compaction; do not finish the user task just to compact."})
 			emit("context_note", "Context pressure is high; a checkpoint was requested at the next natural stopping point.")
@@ -747,7 +761,7 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 			}
 			// Compaction is still part of this run. The queued input only starts
 			// after it finishes; Done must not precede the compaction.
-			if contextAt(cfg, usage(), .4) {
+			if dynamic && contextAt(cfg, usage(), .4) {
 				compact(1, "prompt completed", "", false)
 			}
 			if ctx.Err() != nil {
@@ -788,6 +802,9 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 		publish()
 		// All sibling calls now have their results. No policy can split this
 		// batch, including when a TODO completion was its first call.
+		if !dynamic {
+			continue
+		}
 		if todoCompleted(before, cfg.Todo.snapshot()) && contextAt(cfg, usage(), .7) {
 			compact(2, "TODO task completed", checkpoint, false)
 		} else if checkpoint != "" && contextAt(cfg, usage(), .8) {

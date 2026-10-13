@@ -113,35 +113,36 @@ type desktopUI struct {
 	folder          *tapRow
 
 	// Conversation
-	transcript  *fyne.Container
-	column      *fyne.Container
-	scroll      *kineticScroll
-	followTail  bool
-	items       *transcriptLayout
-	frames      *frameHook
-	prefs       *settingsView     // the settings page
-	sideApp     fyne.CanvasObject // the sidebar's usual content, hidden while settings are open
-	selected    textSelection     // what holds the selected text, if anything does
-	building    bool              // openChat is adding a whole chat's items (see place)
-	welcome     fyne.CanvasObject
-	thinking    *fyne.Container
-	thinkLabel  *fitLabel
-	inlineRow   fyne.CanvasObject // the activity line's place under the last message
-	inlineSlot  *fyne.Container
-	dockRow     *fyne.Container // its place beside the composer (see dockActivity)
-	composer    fyne.CanvasObject
-	docked      bool
-	lineShown   bool
-	mark        *loopMark
-	workMark    *loopMark
-	views       map[int]any             // live widgets of the chat on screen, by item index
-	copyRows    map[int]*fyne.Container // Copy buttons under its answers, by item index
-	settled     *time.Timer
-	panel       *toolPanel
-	split       *fyne.Container
-	panelToggle *tapRow
-	panelWidth  float32 // last width chosen by dragging, independent of window size
-	tips        *tipLayer
+	transcript        *fyne.Container
+	column            *fyne.Container
+	scroll            *kineticScroll
+	followTail        bool
+	items             *transcriptLayout
+	frames            *frameHook
+	prefs             *settingsView     // the settings page
+	sideApp           fyne.CanvasObject // the sidebar's usual content, hidden while settings are open
+	selected          textSelection     // what holds the selected text, if anything does
+	building          bool              // openChat is adding a whole chat's items (see place)
+	welcome           fyne.CanvasObject
+	thinking          *fyne.Container
+	thinkLabel        *fitLabel
+	inlineRow         fyne.CanvasObject // the activity line's place under the last message
+	inlineSlot        *fyne.Container
+	dockRow           *fyne.Container // its place beside the composer (see dockActivity)
+	composer          fyne.CanvasObject
+	docked            bool
+	lineShown         bool
+	mark              *loopMark
+	workMark          *loopMark
+	views             map[int]any             // live widgets of the chat on screen, by item index
+	copyRows          map[int]*fyne.Container // Copy buttons under its answers, by item index
+	settled           *time.Timer
+	panel             *toolPanel
+	split             *fyne.Container
+	panelToggle       *tapRow
+	panelWidth        float32 // last width chosen by dragging, independent of window size
+	classicCompaction bool    // settings: dynamic context compaction turned off
+	tips              *tipLayer
 
 	// Window and sidebar
 	header      *fitLabel
@@ -952,6 +953,7 @@ func (u *desktopUI) runConfig(chat *conversation) config {
 	cfg.APIKey = u.keys[cfg.ConnectionID]
 	cfg.UserInstructions = u.userInstructions
 	cfg.ApprovalMode = approvalFor(u.approvalMode, cfg)
+	cfg.ClassicCompaction = u.classicCompaction
 	return cfg
 }
 
@@ -1166,6 +1168,8 @@ type savedState struct {
 	UserInstructions string          `json:"userInstructions"`
 	ApprovalMode     string          `json:"approvalMode"`
 	PanelWidth       float32         `json:"panelWidth,omitempty"`
+	// Saved as its opposite so that a state file without it means dynamic.
+	ClassicCompaction bool `json:"classicCompaction,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1193,7 +1197,7 @@ func (u *desktopUI) persist(wait bool) {
 	remote := u.remoteEnabled
 	// Everything but the chats is small, and holds maps the settings edit:
 	// it is encoded here, on the interface's thread.
-	head, err := json.Marshal(savedState{u.claudeOffered, &remote, u.devices, u.cfg, nil, u.projects, u.connectionsList, u.userInstructions, u.approvalMode, u.panelWidth})
+	head, err := json.Marshal(savedState{u.claudeOffered, &remote, u.devices, u.cfg, nil, u.projects, u.connectionsList, u.userInstructions, u.approvalMode, u.panelWidth, u.classicCompaction})
 	fields := map[string]json.RawMessage{}
 	if err == nil {
 		err = json.Unmarshal(head, &fields)
@@ -1289,6 +1293,7 @@ func (u *desktopUI) load() {
 	u.connectionsList = state.Connections
 	u.userInstructions = state.UserInstructions
 	u.approvalMode = state.ApprovalMode
+	u.classicCompaction = state.ClassicCompaction
 	for _, chat := range state.Chats {
 		if chat == nil {
 			continue

@@ -11,6 +11,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 )
@@ -79,7 +80,15 @@ func newToolPanel(u *desktopUI) *toolPanel {
 type splitLayout struct{ p *toolPanel }
 
 func (l splitLayout) width(total float32) float32 {
-	return fyne.Min(panelWidth, total*0.58)
+	width := l.p.u.panelWidth
+	if width <= 0 {
+		width = fyne.Min(panelWidth, total*0.58)
+	}
+	return panelWidthWithin(width, total)
+}
+
+func panelWidthWithin(width, total float32) float32 {
+	return fyne.Max(320, fyne.Min(width, total-360))
 }
 
 func (l splitLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
@@ -104,7 +113,54 @@ func (l splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	// Folded, the panel waits just past the right edge of the window.
 	objects[1].Move(fyne.NewPos(size.Width-width, 0))
 	objects[1].Resize(fyne.NewSize(full, size.Height))
+	objects[2].Move(fyne.NewPos(size.Width-width-4, 0))
+	objects[2].Resize(fyne.NewSize(8, size.Height-14))
+	if l.p.target > 0 {
+		objects[2].Show()
+	} else {
+		objects[2].Hide()
+	}
 }
+
+type panelResizeHandle struct {
+	widget.BaseWidget
+	panel *toolPanel
+	grip  *canvas.Rectangle
+}
+
+func newPanelResizeHandle(p *toolPanel) *panelResizeHandle {
+	h := &panelResizeHandle{panel: p, grip: canvas.NewRectangle(colBorderSoft)}
+	h.grip.CornerRadius = 1
+	h.grip.SetMinSize(fyne.NewSize(2, 40))
+	h.ExtendBaseWidget(h)
+	return h
+}
+
+func (h *panelResizeHandle) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(container.NewCenter(h.grip))
+}
+
+func (h *panelResizeHandle) Cursor() desktop.Cursor { return desktop.HResizeCursor }
+func (h *panelResizeHandle) MouseIn(*desktop.MouseEvent) {
+	h.grip.FillColor = colAmber
+	h.grip.Refresh()
+}
+func (h *panelResizeHandle) MouseMoved(*desktop.MouseEvent) {}
+func (h *panelResizeHandle) MouseOut() {
+	h.grip.FillColor = colBorderSoft
+	h.grip.Refresh()
+}
+func (h *panelResizeHandle) Dragged(e *fyne.DragEvent) {
+	p := h.panel
+	if p.anim != nil {
+		p.anim.Stop()
+	}
+	p.shown, p.target, p.snap = 1, 1, false
+	total := p.u.split.Size().Width
+	p.u.panelWidth = panelWidthWithin((splitLayout{p}).width(total)-e.Dragged.DX, total)
+	relayout(p.u.split)
+}
+func (h *panelResizeHandle) DragEnd() { h.panel.u.save() }
 
 func (p *toolPanel) slide(to float32) {
 	if p.anim != nil {

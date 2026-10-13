@@ -133,6 +133,7 @@ type desktopUI struct {
 	panel       *toolPanel
 	split       *fyne.Container
 	panelToggle *tapRow
+	panelWidth  float32 // last width chosen by dragging, independent of window size
 	tips        *tipLayer
 
 	// Window and sidebar
@@ -423,7 +424,7 @@ func (u *desktopUI) build() fyne.CanvasObject {
 	// dock layer floats over the conversation's bottom left corner.
 	conversation = container.New(dockLayout{u}, conversation, u.dockRow)
 	u.panel = newToolPanel(u)
-	u.split = container.New(splitLayout{u.panel}, conversation, u.panel.view)
+	u.split = container.New(splitLayout{u.panel}, conversation, u.panel.view, newPanelResizeHandle(u.panel))
 
 	// Title bar: conversation title, drag region and window controls.
 	u.header = newFitLabel("New chat", 14, colMuted)
@@ -1143,6 +1144,7 @@ type savedState struct {
 	Connections      []connection    `json:"connections"`
 	UserInstructions string          `json:"userInstructions"`
 	ApprovalMode     string          `json:"approvalMode"`
+	PanelWidth       float32         `json:"panelWidth,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1170,7 +1172,7 @@ func (u *desktopUI) persist(wait bool) {
 	remote := u.remoteEnabled
 	// Everything but the chats is small, and holds maps the settings edit:
 	// it is encoded here, on the interface's thread.
-	head, err := json.Marshal(savedState{u.claudeOffered, &remote, u.devices, u.cfg, nil, u.projects, u.connectionsList, u.userInstructions, u.approvalMode})
+	head, err := json.Marshal(savedState{u.claudeOffered, &remote, u.devices, u.cfg, nil, u.projects, u.connectionsList, u.userInstructions, u.approvalMode, u.panelWidth})
 	fields := map[string]json.RawMessage{}
 	if err == nil {
 		err = json.Unmarshal(head, &fields)
@@ -1244,6 +1246,7 @@ func (u *desktopUI) load() {
 		u.remoteEnabled = *state.RemoteEnabled
 	}
 	u.devices = state.Devices
+	u.panelWidth = state.PanelWidth
 	u.claudeOffered = state.ClaudeOffered
 	if state.Config.Provider == "codex" {
 		state.Config.Provider = "openai"

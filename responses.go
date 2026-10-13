@@ -42,11 +42,13 @@ func responsesInput(messages []message) []any {
 			}
 			item["content"] = parts
 		} else if m.Content != "" {
-			// Empty assistant content (pure tool call) is omitted: the API
-			// rejects empty string content on some models.
 			item["content"] = m.Content
 		}
-		input = append(input, item)
+		// A pure tool call becomes function_call items below, not a message
+		// without content (which the Responses API rejects).
+		if m.Content != "" || len(m.Images) > 0 {
+			input = append(input, item)
+		}
 		for _, call := range m.ToolCalls {
 			input = append(input, map[string]any{"type": "function_call", "call_id": call.ID, "name": call.Function.Name, "arguments": call.Function.Arguments})
 		}

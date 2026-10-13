@@ -150,6 +150,32 @@ func (e *chatEntry) FocusLost() {
 	}
 }
 
+// On narrow conversations, the two groups need separate lines when the
+// side panel is open. The split supplies the available width before sizing.
+type composerControlsLayout struct{ available float32 }
+
+func (l *composerControlsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
+	a, b := o[0].MinSize(), o[1].MinSize()
+	if l.available > 0 && a.Width+b.Width+8 > l.available {
+		return fyne.NewSize(fyne.Max(a.Width, b.Width), a.Height+b.Height+4)
+	}
+	return fyne.NewSize(a.Width+b.Width+8, fyne.Max(a.Height, b.Height))
+}
+
+func (l *composerControlsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
+	a, b := o[0].MinSize(), o[1].MinSize()
+	y := (size.Height - b.Height) / 2
+	if a.Width+b.Width+8 > size.Width {
+		o[0].Move(fyne.NewPos(0, 0))
+		y = a.Height + 4
+	} else {
+		o[0].Move(fyne.NewPos(0, (size.Height-a.Height)/2))
+	}
+	o[0].Resize(a)
+	o[1].Move(fyne.NewPos(fyne.Max(0, size.Width-b.Width), y))
+	o[1].Resize(b)
+}
+
 // attachButtonLayout puts the "+" button at the left of the prompt, centred
 // on its first line however many lines the prompt grows to.
 type attachButtonLayout struct{}

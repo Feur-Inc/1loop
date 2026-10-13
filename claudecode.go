@@ -357,14 +357,32 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 	if cfg.Session != "" {
 		args = append(args, "--resume", cfg.Session)
 	}
+	if cfg.Todo != nil {
+		config, close, err := startTodoMCP(ctx, cfg.Todo, emit)
+		if err != nil {
+			return err
+		}
+		defer close()
+		args = append(args, "--mcp-config", config)
+	}
+	appendPrompt := todoInstructions(cfg)
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
-		args = append(args, "--append-system-prompt", "Additional instructions from the user:\n"+cfg.UserInstructions)
+		appendPrompt = "Additional instructions from the user:\n" + cfg.UserInstructions + appendPrompt
+	}
+	if appendPrompt != "" {
+		args = append(args, "--append-system-prompt", appendPrompt)
 	}
 	cmd, err := claudeCommand(ctx, cfg.Workspace, args...)
 	if err != nil {
 		return err
 	}
-	devf("claude", "start in %s: %s", cfg.Workspace, strings.Join(cmd.Args, " "))
+	logged := append([]string(nil), cmd.Args...)
+	for i := 1; i < len(logged); i++ {
+		if logged[i-1] == "--mcp-config" {
+			logged[i] = "[1loop TODO MCP config]"
+		}
+	}
+	devf("claude", "start in %s: %s", cfg.Workspace, strings.Join(logged, " "))
 	defer func() { devf("claude", "process ended: %v", cmd.ProcessState) }()
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
@@ -626,7 +644,7 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 			}
 			title, preview := claudeApproval(cfg.Workspace, e.Request.ToolName, e.Request.Input)
 			response := map[string]any{"behavior": "deny", "message": "The user denied this action."}
-			if a.confirm(ctx, emit, title, preview) {
+			if e.Request.ToolName == "mcp__1loop_todo__update_todo" || a.confirm(ctx, emit, title, preview) {
 				response = map[string]any{"behavior": "allow", "updatedInput": e.Request.Input}
 				for _, p := range calls { // the approved call starts now
 					p.started = time.Now()

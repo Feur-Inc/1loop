@@ -24,6 +24,7 @@ type config struct {
 	Parameters       map[string]any `json:"parameters,omitempty"`
 	UserInstructions string         `json:"-"`
 	ApprovalMode     string         `json:"-"`
+	Todo             *todoState     `json:"-"`
 	Provider         string         `json:"provider"`
 	BaseURL          string         `json:"baseURL"`
 	APIKey           string         `json:"-"`

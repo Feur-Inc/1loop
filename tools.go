@@ -33,7 +33,7 @@ func toolDefinitions() []map[string]any {
 		}
 		result = append(result, map[string]any{"type": "function", "function": map[string]any{"name": d.name, "description": d.description, "parameters": map[string]any{"type": "object", "properties": properties, "required": d.fields, "additionalProperties": false}}})
 	}
-	return result
+	return append(result, todoToolDefinition())
 }
 
 func workspacePath(root, path string) (string, error) {
@@ -160,6 +160,20 @@ func (a *app) executeTool(ctx context.Context, root string, call toolCall, emit 
 }
 
 func (a *app) runTool(ctx context.Context, root string, call toolCall, begin func(), emit emitter) (output, diff string, err error) {
+	if call.Function.Name == "update_todo" {
+		state, _ := ctx.Value(todoContextKey{}).(*todoState)
+		if state == nil {
+			return "", "", fmt.Errorf("TODO is not attached to a conversation")
+		}
+		begin()
+		items, err := state.update(json.RawMessage(call.Function.Arguments))
+		if err != nil {
+			return "", "", err
+		}
+		emit("todo", nil)
+		data, _ := json.Marshal(items)
+		return string(data), "", nil
+	}
 	var args struct {
 		Path    string `json:"path"`
 		Command string `json:"command"`

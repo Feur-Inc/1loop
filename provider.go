@@ -754,6 +754,8 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 	}
 	overflows := 0
 	for {
+		system.Content = systemInstructions(cfg)
+		messages[0] = system
 		steered := false
 		for _, extra := range in.steer() {
 			inject(extra)

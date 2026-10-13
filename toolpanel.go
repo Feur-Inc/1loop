@@ -23,6 +23,7 @@ type toolPanel struct {
 	view   fyne.CanvasObject
 	strip  *fyne.Container
 	body   *kineticScroll
+	page   *fyne.Container
 	texts  []*outputView // the code wells of the call on display
 	tabs   []panelTab
 	active int
@@ -33,27 +34,44 @@ type toolPanel struct {
 }
 
 type panelTab struct {
-	chat  *conversation
-	index int
+	chat     *conversation
+	index    int
+	title    string
+	icon     fyne.Resource
+	content  fyne.CanvasObject
+	terminal *panelTerminal
+	cancel   func()
+	todoChat *conversation
+	todoView *fyne.Container
 }
 
-const panelWidth = 460
+const panelWidth = 840
 
 func newToolPanel(u *desktopUI) *toolPanel {
 	p := &toolPanel{u: u, active: -1}
 	p.strip = container.New(layout.NewCustomPaddedHBoxLayout(4))
+	add := newRow("", iconPlus, styleWindow, nil)
+	add.onTap = func() {
+		showMenu(u.window, add, []menuAction{
+			{label: "Terminal", icon: toolGlyph("shell"), run: p.openTerminal},
+			{label: "Modifications Git", icon: toolGlyph("edit_file"), run: p.openChanges},
+		})
+	}
 	fold := newRow("", iconPanel, styleWindow, p.fold)
-	header := container.NewBorder(nil, nil, nil, container.NewCenter(fold), container.NewHScroll(p.strip))
+	todo := newRow("TODO", iconCheck, styleChip, p.openTodo)
+	header := container.NewBorder(nil, nil, nil, container.NewHBox(todo, add, fold), container.NewHScroll(p.strip))
 	rule := canvas.NewRectangle(colBorderSoft)
 	rule.SetMinSize(fyne.NewSize(0, 1))
 	p.body = newKineticVScroll(spacer(0, 0))
 	p.body.OnScrolled = func(fyne.Position) { p.place() }
+	p.page = container.NewStack(p.body)
 	card := canvas.NewRectangle(colSurface)
 	card.CornerRadius = 12
 	card.StrokeColor = colBorderSoft
 	card.StrokeWidth = 1
-	content := container.NewBorder(container.NewVBox(padded(6, 6, 8, 6, header), rule), nil, nil, nil, p.body)
+	content := container.NewBorder(container.NewVBox(padded(8, 8, 8, 6, header), rule), nil, nil, nil, p.page)
 	p.view = padded(0, 14, 0, 14, container.NewStack(card, content))
+	p.render()
 	return p
 }
 
@@ -61,7 +79,7 @@ func newToolPanel(u *desktopUI) *toolPanel {
 type splitLayout struct{ p *toolPanel }
 
 func (l splitLayout) width(total float32) float32 {
-	return fyne.Min(panelWidth, total*0.5) * l.p.shown
+	return fyne.Min(panelWidth, total*0.58)
 }
 
 func (l splitLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
@@ -69,8 +87,13 @@ func (l splitLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 }
 
 func (l splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	width := l.width(size.Width)
-	full := fyne.Min(panelWidth, size.Width*0.5)
+	full := l.width(size.Width)
+	width := full * l.p.shown
+	conversationWidth := size.Width - width
+	if l.p.snap {
+		conversationWidth = size.Width - full*l.p.target
+	}
+	l.p.u.controls.Layout.(*composerControlsLayout).available = fyne.Min(760, conversationWidth-48) - 20
 	if l.p.snap {
 		// Wrapping a long conversation again on every frame is what made
 		// the slide stutter: it takes its final width at once instead.
@@ -102,11 +125,7 @@ func (p *toolPanel) slide(to float32) {
 	})
 	p.anim.Curve = easeOutQuint
 	p.anim.Start()
-	if to == 0 && len(p.tabs) > 0 {
-		p.u.panelToggle.Show()
-	} else {
-		p.u.panelToggle.Hide()
-	}
+	p.u.panelToggle.SetSelected(to > 0)
 	p.syncRows()
 }
 
@@ -131,10 +150,7 @@ func (p *toolPanel) showing(chat *conversation, index int) bool {
 func (p *toolPanel) open(chat *conversation, index int) {
 	i := p.find(chat, index)
 	if i < 0 {
-		if len(p.tabs) >= 8 { // keep the strip short: the oldest tab goes
-			p.tabs = p.tabs[1:]
-		}
-		p.tabs = append(p.tabs, panelTab{chat, index})
+		p.tabs = append(p.tabs, panelTab{chat: chat, index: index})
 		i = len(p.tabs) - 1
 	}
 	p.choose(i)
@@ -147,9 +163,13 @@ func (p *toolPanel) choose(i int) {
 	p.active = i
 	p.render()
 	p.body.ScrollToTop()
+	if t := p.tabs[i].terminal; t != nil {
+		p.u.window.Canvas().Focus(t.widget)
+	}
 }
 
 func (p *toolPanel) close(i int) {
+	p.tabs[i].dispose()
 	p.tabs = append(p.tabs[:i], p.tabs[i+1:]...)
 	switch {
 	case len(p.tabs) == 0:
@@ -165,10 +185,26 @@ func (p *toolPanel) close(i int) {
 
 // reset forgets every tab (another chat was opened).
 func (p *toolPanel) reset() {
+	p.dispose()
 	p.tabs, p.active = nil, -1
 	p.render()
 	if p.shown > 0 {
 		p.fold()
+	}
+}
+
+func (t panelTab) dispose() {
+	if t.terminal != nil {
+		t.terminal.close()
+	}
+	if t.cancel != nil {
+		t.cancel()
+	}
+}
+
+func (p *toolPanel) dispose() {
+	for _, tab := range p.tabs {
+		tab.dispose()
 	}
 }
 
@@ -188,10 +224,21 @@ func (p *toolPanel) render() {
 	p.texts = nil
 	if p.active >= 0 {
 		tab := p.tabs[p.active]
-		p.body.Content = padded(16, 20, 18, 18, p.details(tab.chat.Items[tab.index], runState(tab.chat, tab.index)))
+		if tab.content != nil {
+			p.page.Objects = []fyne.CanvasObject{tab.content}
+		} else {
+			item := tab.chat.Items[tab.index]
+			if item.Tool == "edit_file" && item.Diff != "" {
+				p.page.Objects = []fyne.CanvasObject{container.NewBorder(padded(12, 8, 12, 12, toolDetailHeading(item, runState(tab.chat, tab.index))), nil, nil, nil, newDiffView(item.Diff))}
+			} else {
+				p.body.Content = padded(16, 20, 18, 18, p.details(item, runState(tab.chat, tab.index)))
+				p.page.Objects = []fyne.CanvasObject{p.body}
+			}
+		}
 	} else {
-		p.body.Content = spacer(0, 0)
+		p.page.Objects = []fyne.CanvasObject{padded(28, 20, 20, 20, container.NewVBox(textLine("Panneau latéral", 18, colText), note("Ouvrez un terminal ou les modifications Git avec le bouton +, ou cliquez sur un appel d’outil dans la conversation.")))}
 	}
+	p.page.Refresh()
 	p.body.Refresh()
 	p.place()
 	p.syncRows()
@@ -249,29 +296,34 @@ func (p *toolPanel) syncRows() {
 }
 
 func (p *toolPanel) tabView(i int, tab panelTab) fyne.CanvasObject {
-	item := tab.chat.Items[tab.index]
-	_, target, _ := describeTool(item, false)
-	if item.Tool != "shell" {
-		target = filepath.Base(target)
+	target, icon := tab.title, tab.icon
+	if tab.chat != nil {
+		item := tab.chat.Items[tab.index]
+		_, target, _ = describeTool(item, false)
+		if item.Tool != "shell" {
+			target = filepath.Base(target)
+		}
+		icon = toolGlyph(item.Tool)
 	}
-	label := newRow(fitText(target, 13, fyne.TextStyle{}, 150), toolGlyph(item.Tool), styleChip, func() { p.choose(i) })
+	label := newRow(fitText(target, 13, fyne.TextStyle{}, 190), icon, styleChip, func() { p.choose(i) })
 	label.selected = i == p.active
+	label.ink = colText
 	closeTab := newIconButton(iconClose, color.NRGBA{}, color.NRGBA{}, func() { p.close(i) })
-	closeTab.iconPx, closeTab.padPx = 13, 4
+	closeTab.iconPx, closeTab.padPx = 14, 6
 	bg := canvas.NewRectangle(color.Transparent)
-	bg.CornerRadius = 8
+	bg.CornerRadius = 10
 	if i == p.active {
 		bg.FillColor = colRaised
+		bg.StrokeColor, bg.StrokeWidth = colBorder, 1
 	}
-	return container.NewStack(bg, container.New(layout.NewCustomPaddedHBoxLayout(0), label, container.NewCenter(closeTab), spacer(2, 0)))
+	return container.NewStack(bg, padded(4, 4, 5, 4, container.New(layout.NewCustomPaddedHBoxLayout(2), label, container.NewCenter(closeTab))))
 }
 
 // details lays out one call: a heading with its outcome, then the call and
 // what it returned.
-func (p *toolPanel) details(item chatItem, state string) fyne.CanvasObject {
+func toolDetailHeading(item chatItem, state string) fyne.CanvasObject {
 	running := state == "pending" || state == "running"
 	verb, target, _ := describeTool(item, running)
-	_, command, _ := toolArgs(item.Args)
 	icon := canvas.NewImageFromResource(tinted(toolGlyph(item.Tool), colText))
 	icon.SetMinSize(fyne.NewSquareSize(20))
 	title := widget.NewLabel(verb + " " + target)
@@ -310,7 +362,13 @@ func (p *toolPanel) details(item chatItem, state string) fyne.CanvasObject {
 	heading := container.NewBorder(nil, nil, container.NewVBox(padded(9, 0, 0, 0, icon)), nil,
 		container.NewVBox(title, padded(0, 0, 8, 0, line)))
 
-	sections := container.New(placedLayout{layout.NewVBoxLayout(), p.place}, heading)
+	return heading
+}
+
+func (p *toolPanel) details(item chatItem, state string) fyne.CanvasObject {
+	running := state == "pending" || state == "running"
+	_, command, _ := toolArgs(item.Args)
+	sections := container.New(placedLayout{layout.NewVBoxLayout(), p.place}, toolDetailHeading(item, state))
 	add := func(name, text, empty string) {
 		sections.Add(spacer(0, 10))
 		sections.Add(p.section(name, text, empty))

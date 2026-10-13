@@ -76,6 +76,8 @@ func toolGlyph(tool string) fyne.Resource {
 		return iconPencil
 	case "list_directory":
 		return iconFolder
+	case "update_todo", "TodoWrite", "mcp__1loop_todo__update_todo":
+		return iconCheck
 	}
 	return iconDocument
 }
@@ -132,7 +134,7 @@ func describeTool(item chatItem, running bool) (verb, target string, mono bool) 
 		return pick("Fetched", "Fetching"), target, false
 	case "Task", "Agent":
 		return pick("Ran an agent:", "Running an agent:"), target, false
-	case "TodoWrite":
+	case "TodoWrite", "update_todo", "mcp__1loop_todo__update_todo":
 		return pick("Updated", "Updating"), "the task list", false
 	}
 	if target == "" {
@@ -871,6 +873,9 @@ func (t *turn) handle(e uiEvent) {
 		u.save()
 	case "history":
 		t.chat.History = e.data.([]message)
+	case "todo":
+		u.panel.todoChanged(t.chat)
+		u.save()
 	case "usage":
 		t.usage = e.data.(int)
 		u.remote.metaChanged(t.chat)

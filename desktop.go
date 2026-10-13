@@ -36,6 +36,7 @@ type conversation struct {
 	Config  config     `json:"config"`
 	History []message  `json:"history"`
 	Items   []chatItem `json:"items"`
+	Todo    *todoState `json:"todo,omitempty"`
 
 	run   *chatRun  // the agent loop working on this chat, if any
 	queue []message // Enter while it runs: the next turns
@@ -310,6 +311,7 @@ func (u *desktopUI) shortcut(s fyne.Shortcut) bool {
 // release stops background work and saves, before closing or restarting.
 func (u *desktopUI) release() {
 	u.shutdown() // every run's context derives from it
+	u.panel.dispose()
 	u.remote.close()
 	u.mark.stop()
 	u.workMark.stop()
@@ -427,15 +429,20 @@ func (u *desktopUI) build() fyne.CanvasObject {
 	u.header = newFitLabel("New chat", 14, colMuted)
 	u.expand = newRow("", iconSidebar, styleWindow, u.toggleSidebar)
 	u.expand.Hide()
-	u.panelToggle = newRow("", iconPanel, styleWindow, u.panel.unfold)
+	u.panelToggle = newRow("", iconPanel, styleWindow, func() {
+		if u.panel.target > 0 {
+			u.panel.fold()
+		} else {
+			u.panel.unfold()
+		}
+	})
 	u.panelToggle.onHover = func(in bool) {
 		if in {
-			u.tips.show(u.panelToggle, "Show tool details")
+			u.tips.show(u.panelToggle, "Toggle side panel")
 		} else {
 			u.tips.hide()
 		}
 	}
-	u.panelToggle.Hide()
 	right := container.New(layout.NewCustomPaddedHBoxLayout(2), container.NewCenter(u.panelToggle))
 	if u.chrome {
 		right.Add(windowControls(u.window, u.quit))
@@ -507,7 +514,7 @@ func (u *desktopUI) buildFooter() fyne.CanvasObject {
 	}
 
 	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), u.model.row, u.contextRing, container.NewStack(u.send, u.stop))
-	u.controls = container.NewBorder(nil, nil, container.NewCenter(u.approvalControl), actions)
+	u.controls = container.New(&composerControlsLayout{}, container.NewCenter(u.approvalControl), actions)
 	u.model.relayout = u.controls.Refresh
 
 	card := canvas.NewRectangle(colSurface)
@@ -863,6 +870,7 @@ func (u *desktopUI) start(m message) {
 		u.chats = append([]*conversation{chat}, u.chats...)
 		u.current = chat
 	}
+	u.panel.todoChanged(chat)
 	chat.History = append(chat.History, m)
 	u.showTranscript(true)
 	u.followTail = true // Sending a message explicitly returns to the live answer.
@@ -914,7 +922,11 @@ func (u *desktopUI) start(m message) {
 // runConfig is the chat's configuration with this session's secrets and
 // preferences, for one run.
 func (u *desktopUI) runConfig(chat *conversation) config {
+	if chat.Todo == nil {
+		chat.Todo = &todoState{}
+	}
 	cfg := chat.Config
+	cfg.Todo = chat.Todo
 	cfg.APIKey = u.keys[cfg.ConnectionID]
 	cfg.UserInstructions = u.userInstructions
 	cfg.ApprovalMode = approvalFor(u.approvalMode, cfg)
@@ -1166,7 +1178,7 @@ func (u *desktopUI) persist(wait bool) {
 	chats := make([]*conversation, len(u.chats))
 	for i, chat := range u.chats { // messages are never edited in place: copying the lists is enough
 		chats[i] = &conversation{ID: chat.ID, Title: chat.Title, Config: chat.Config,
-			History: append([]message{}, chat.History...), Items: append([]chatItem{}, chat.Items...)}
+			History: append([]message{}, chat.History...), Items: append([]chatItem{}, chat.Items...), Todo: chat.Todo.copy()}
 	}
 	u.saveCount++
 	count, path := u.saveCount, u.statePath

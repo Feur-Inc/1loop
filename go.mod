@@ -4,7 +4,10 @@ go 1.23
 
 require (
 	fyne.io/fyne/v2 v2.7.4
+	github.com/alecthomas/chroma/v2 v2.15.0
+	github.com/creack/pty v1.1.21
 	github.com/fyne-io/oksvg v0.2.0
+	github.com/fyne-io/terminal v0.0.0-20251106165109-867da7c64268
 	github.com/go-gl/glfw/v3.3/glfw v0.0.0-20240506104042-037f3cc74f2a
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	golang.org/x/image v0.24.0
@@ -12,8 +15,11 @@ require (
 
 require (
 	fyne.io/systray v1.12.1 // indirect
+	github.com/ActiveState/termtest/conpty v0.5.0 // indirect
+	github.com/Azure/go-ansiterm v0.0.0-20170929234023-d6e3b3328b78 // indirect
 	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
+	github.com/dlclark/regexp2 v1.11.4 // indirect
 	github.com/fredbi/uri v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fyne-io/gl-js v0.2.0 // indirect

@@ -214,11 +214,12 @@ func systemInstructions(cfg config) string {
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
 		prompt += "\n\nAdditional instructions from the user:\n" + cfg.UserInstructions
 	}
-	return prompt + "\nWorkspace: " + cfg.Workspace
+	return prompt + "\nWorkspace: " + cfg.Workspace + todoInstructions(cfg)
 }
 
 type approvalContextKey struct{}
 
 func toolContext(ctx context.Context, cfg config) context.Context {
+	ctx = context.WithValue(ctx, todoContextKey{}, cfg.Todo)
 	return context.WithValue(ctx, approvalContextKey{}, cfg.ApprovalMode == "yolo")
 }

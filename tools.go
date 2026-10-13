@@ -33,7 +33,7 @@ func toolDefinitions() []map[string]any {
 		}
 		result = append(result, map[string]any{"type": "function", "function": map[string]any{"name": d.name, "description": d.description, "parameters": map[string]any{"type": "object", "properties": properties, "required": d.fields, "additionalProperties": false}}})
 	}
-	return append(result, todoToolDefinition())
+	return append(result, todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition())
 }
 
 func workspacePath(root, path string) (string, error) {
@@ -124,6 +124,7 @@ func unifiedDiff(ctx context.Context, path, before, after string) (string, error
 // toolOutcome is what one tool call did, for the model and for the
 // transcript: the side panel shows the call, its output and its timing.
 type toolOutcome struct {
+	RecallID       string
 	ID, Name, Args string
 	Output         string
 	Diff           string        // edit_file: the unified diff that was applied
@@ -142,7 +143,7 @@ func (o toolOutcome) modelText() string {
 // executeTool runs one call. It emits "tool" when the call starts (before
 // any approval) and "tool_exec" when it really begins to run.
 func (a *app) executeTool(ctx context.Context, root string, call toolCall, emit emitter) (outcome toolOutcome) {
-	outcome = toolOutcome{ID: call.ID, Name: call.Function.Name, Args: call.Function.Arguments}
+	outcome = toolOutcome{ID: call.ID, Name: call.Function.Name, Args: call.Function.Arguments, RecallID: identifier()[:16]}
 	emit("tool", outcome)
 	var started time.Time
 	begin := func() {
@@ -160,6 +161,24 @@ func (a *app) executeTool(ctx context.Context, root string, call toolCall, emit 
 }
 
 func (a *app) runTool(ctx context.Context, root string, call toolCall, begin func(), emit emitter) (output, diff string, err error) {
+	if call.Function.Name == "recall" {
+		begin()
+		output, err = recallConversation(ctx, json.RawMessage(call.Function.Arguments))
+		return
+	}
+	if call.Function.Name == "checkpoint" {
+		begin()
+		var args struct {
+			Note string `json:"note"`
+		}
+		if err = json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return
+		}
+		if strings.TrimSpace(args.Note) == "" || utf8.RuneCountInString(args.Note) > 2000 {
+			return "", "", fmt.Errorf("Provide a concise checkpoint note, between 1 and 2000 characters")
+		}
+		return "Checkpoint recorded. 1loop will compact after this tool batch if context pressure warrants it.", "", nil
+	}
 	if call.Function.Name == "update_todo" {
 		state, _ := ctx.Value(todoContextKey{}).(*todoState)
 		if state == nil {

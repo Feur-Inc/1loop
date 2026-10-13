@@ -40,9 +40,6 @@ func upgradeItems(items []chatItem) []chatItem {
 	out := make([]chatItem, 0, len(items))
 	for i := 0; i < len(items); i++ {
 		item := items[i]
-		if item.Kind == "user" && item.ID == "" {
-			item.ID = identifier()[:16]
-		}
 		switch {
 		case item.Kind == "diff":
 			item = chatItem{Kind: "tool", Tool: "edit_file", Diff: item.Text}
@@ -55,6 +52,9 @@ func upgradeItems(items []chatItem) []chatItem {
 		case item.Kind == "tool" && item.Tool == "":
 			item.Tool = strings.TrimSuffix(item.Title, " · result")
 			item.Title = ""
+		}
+		if item.ID == "" {
+			item.ID = identifier()[:16]
 		}
 		out = append(out, item)
 	}
@@ -82,6 +82,10 @@ func toolGlyph(tool string) fyne.Resource {
 		return iconFolder
 	case "update_todo", "TodoWrite", "mcp__1loop_todo__update_todo":
 		return iconCheck
+	case "recall":
+		return iconDocument
+	case "checkpoint":
+		return iconCompact
 	}
 	return iconDocument
 }
@@ -140,6 +144,10 @@ func describeTool(item chatItem, running bool) (verb, target string, mono bool) 
 		return pick("Ran an agent:", "Running an agent:"), target, false
 	case "TodoWrite", "update_todo", "mcp__1loop_todo__update_todo":
 		return pick("Updated", "Updating"), "the task list", false
+	case "recall":
+		return pick("Recalled", "Recalling"), "conversation history", false
+	case "checkpoint":
+		return pick("Recorded", "Recording"), "a context checkpoint", false
 	}
 	if target == "" {
 		return pick("Used", "Using"), item.Tool, false
@@ -437,7 +445,7 @@ func (u *desktopUI) appendItem(chat *conversation, index int) {
 	case "note":
 		icon := canvas.NewImageFromResource(tinted(iconCompact, colFaint))
 		icon.SetMinSize(fyne.NewSquareSize(15))
-		u.place(container.NewHBox(layout.NewSpacer(), icon, textLine(item.Text, 12.5, colFaint), layout.NewSpacer()))
+		u.place(container.NewBorder(nil, nil, container.NewCenter(icon), nil, newFlowText([]span{{text: item.Text}}, 12.5, colFaint)))
 	case "tool":
 		state := "done"
 		if t != nil && t.states[index] != "" {
@@ -622,7 +630,7 @@ func copyChip(text func() string) *tapRow {
 // addItem appends an item to a chat, and to the transcript when that chat
 // is the one on screen.
 func (u *desktopUI) addItem(chat *conversation, item chatItem) int {
-	if item.Kind == "user" && item.ID == "" {
+	if item.ID == "" {
 		item.ID = identifier()[:16]
 	}
 	chat.Items = append(chat.Items, item)
@@ -836,7 +844,7 @@ func (t *turn) handle(e uiEvent) {
 		t.show(e.data.(activity))
 	case "tool":
 		o := e.data.(toolOutcome)
-		index := u.addItem(t.chat, chatItem{Kind: "tool", Tool: o.Name, Args: o.Args})
+		index := u.addItem(t.chat, chatItem{ID: o.RecallID, Kind: "tool", Tool: o.Name, Args: o.Args})
 		t.calls[o.ID], t.lastCall = index, o.ID
 		t.setRow(index, "running")
 	case "approval":
@@ -877,6 +885,11 @@ func (t *turn) handle(e uiEvent) {
 		u.save()
 	case "history":
 		t.chat.History = e.data.([]message)
+	case "cache":
+		u.save()
+	case "context_note":
+		u.addItem(t.chat, chatItem{Kind: "note", Text: e.data.(string)})
+		u.save()
 	case "todo":
 		u.todoUpdated(t.chat)
 		u.save()

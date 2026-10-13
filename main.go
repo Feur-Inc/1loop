@@ -14,23 +14,26 @@ import (
 )
 
 type config struct {
-	ConnectionID     string         `json:"connectionId,omitempty"`
-	AccountID        string         `json:"-"`
-	Residency        string         `json:"-"`
-	AuthProfile      string         `json:"authProfile,omitempty"`
-	Effort           string         `json:"effort,omitempty"`
-	ReasoningMode    string         `json:"reasoningMode,omitempty"`
-	Routing          map[string]any `json:"routing,omitempty"`
-	Parameters       map[string]any `json:"parameters,omitempty"`
-	UserInstructions string         `json:"-"`
-	ApprovalMode     string         `json:"-"`
-	Todo             *todoState     `json:"-"`
-	Provider         string         `json:"provider"`
-	BaseURL          string         `json:"baseURL"`
-	APIKey           string         `json:"-"`
-	Model            string         `json:"model"`
-	Workspace        string         `json:"workspace"`
-	Session          string         `json:"session,omitempty"` // Claude Code connection: the chat's session there
+	ConnectionID     string                                    `json:"connectionId,omitempty"`
+	AccountID        string                                    `json:"-"`
+	Residency        string                                    `json:"-"`
+	AuthProfile      string                                    `json:"authProfile,omitempty"`
+	Effort           string                                    `json:"effort,omitempty"`
+	ReasoningMode    string                                    `json:"reasoningMode,omitempty"`
+	Routing          map[string]any                            `json:"routing,omitempty"`
+	Parameters       map[string]any                            `json:"parameters,omitempty"`
+	UserInstructions string                                    `json:"-"`
+	ApprovalMode     string                                    `json:"-"`
+	Cache            *contextCache                             `json:"-"`
+	ContextKey       string                                    `json:"-"`
+	Todo             *todoState                                `json:"-"`
+	Recall           func(context.Context) ([]chatItem, error) `json:"-"`
+	Provider         string                                    `json:"provider"`
+	BaseURL          string                                    `json:"baseURL"`
+	APIKey           string                                    `json:"-"`
+	Model            string                                    `json:"model"`
+	Workspace        string                                    `json:"workspace"`
+	Session          string                                    `json:"session,omitempty"` // Claude Code connection: the chat's session there
 }
 
 type emitter func(string, any)

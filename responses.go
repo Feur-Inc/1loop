@@ -121,6 +121,9 @@ func readResponses(stream io.Reader, emit emitter) (message, error) {
 				} `json:"error"`
 				Usage struct {
 					InputTokens int `json:"input_tokens"`
+					Details     struct {
+						CachedTokens *int `json:"cached_tokens"`
+					} `json:"input_tokens_details"`
 				} `json:"usage"`
 			} `json:"response"`
 		}
@@ -180,6 +183,7 @@ func readResponses(stream io.Reader, emit emitter) (message, error) {
 			}
 			out.Responses = output
 			out.Usage = event.Response.Usage.InputTokens
+			out.CachedTokens = event.Response.Usage.Details.CachedTokens
 			for _, rawItem := range output {
 				var item struct {
 					Type      string `json:"type"`

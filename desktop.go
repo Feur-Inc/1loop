@@ -36,6 +36,7 @@ type conversation struct {
 	Config   config        `json:"config"`
 	History  []message     `json:"history"`
 	Items    []chatItem    `json:"items"`
+	Cache    *contextCache `json:"contextCache,omitempty"`
 	Todo     *todoState    `json:"todo,omitempty"`
 	Panel    *savedPanel   `json:"panel,omitempty"` // its side panel, to open it again as it was
 	Version  string        `json:"version,omitempty"`
@@ -932,11 +933,22 @@ func (u *desktopUI) startWithID(m message, id string) {
 // runConfig is the chat's configuration with this session's secrets and
 // preferences, for one run.
 func (u *desktopUI) runConfig(chat *conversation) config {
+	chat.identifyMessages()
 	if chat.Todo == nil {
 		chat.Todo = &todoState{}
 	}
 	cfg := chat.Config
 	cfg.Todo = chat.Todo
+	if chat.Cache == nil {
+		chat.Cache = &contextCache{}
+	}
+	cfg.Cache = chat.Cache
+	cfg.ContextKey = chat.ID + ":" + chat.Version
+	cfg.Recall = func(ctx context.Context) ([]chatItem, error) {
+		var items []chatItem
+		u.onUI(ctx, func() { items = append([]chatItem{}, chat.Items...) })
+		return items, ctx.Err()
+	}
 	cfg.APIKey = u.keys[cfg.ConnectionID]
 	cfg.UserInstructions = u.userInstructions
 	cfg.ApprovalMode = approvalFor(u.approvalMode, cfg)
@@ -1192,7 +1204,7 @@ func (u *desktopUI) persist(wait bool) {
 	chats := make([]*conversation, len(u.chats))
 	for i, chat := range u.chats { // messages are never edited in place: copying the lists is enough
 		chats[i] = &conversation{ID: chat.ID, Title: chat.Title, Config: chat.Config, Panel: chat.Panel,
-			History: append([]message{}, chat.History...), Items: append([]chatItem{}, chat.Items...), Todo: chat.Todo.copy(),
+			History: append([]message{}, chat.History...), Items: append([]chatItem{}, chat.Items...), Todo: chat.Todo.copy(), Cache: chat.Cache.copy(),
 			Version: chat.Version, Versions: copyVersions(chat.Versions)}
 	}
 	u.saveCount++

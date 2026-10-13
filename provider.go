@@ -13,6 +13,7 @@ import (
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 )
 
 type toolCall struct {
@@ -32,6 +33,8 @@ type ImagePart struct {
 }
 
 type message struct {
+	RecallID         string            `json:"recallId,omitempty"`
+	Internal         bool              `json:"internal,omitempty"` // host control or handoff, never a user request
 	Responses        []json.RawMessage `json:"responses,omitempty"`
 	ReasoningContent string            `json:"reasoning_content,omitempty"`
 	ReasoningDetails []map[string]any  `json:"reasoning_details,omitempty"`
@@ -40,7 +43,9 @@ type message struct {
 	Images           []ImagePart       `json:"images,omitempty"`
 	ToolCalls        []toolCall        `json:"tool_calls,omitempty"`
 	ToolCallID       string            `json:"tool_call_id,omitempty"`
-	Usage            int               `json:"usage,omitempty"` // context tokens reported by the provider for this reply
+	CachedTokens     *int              `json:"cachedTokens,omitempty"`
+	UsageEstimated   bool              `json:"usageEstimated,omitempty"`
+	Usage            int               `json:"usage,omitempty"` // input tokens, or the whole context when UsageEstimated
 }
 
 // defaultVLLMURL is the local vLLM server a fresh install points at.
@@ -319,6 +324,9 @@ func completion(ctx context.Context, cfg config, messages []message, tools bool,
 			} `json:"error"`
 			Usage *struct {
 				PromptTokens int `json:"prompt_tokens"`
+				Details      struct {
+					CachedTokens *int `json:"cached_tokens"`
+				} `json:"prompt_tokens_details"`
 			} `json:"usage"`
 			Choices []struct {
 				FinishReason *string `json:"finish_reason"`
@@ -346,6 +354,7 @@ func completion(ctx context.Context, cfg config, messages []message, tools bool,
 		}
 		if chunk.Usage != nil {
 			out.Usage = chunk.Usage.PromptTokens
+			out.CachedTokens = chunk.Usage.Details.CachedTokens
 		}
 		if len(chunk.Choices) == 0 {
 			continue
@@ -455,10 +464,6 @@ func mergeReasoningDetail(details *[]map[string]any, part map[string]any) {
 // not say; generous on purpose — the provider refuses before we do damage.
 const contextWindowTokens = 200000
 
-// contextThreshold is the fraction of the window at which we compact, early
-// enough to leave room for the next reply and tool output.
-const contextThreshold = 0.75
-
 // learnedWindows remembers the real context size a server reported in an
 // overflow error, which beats any guess from the model name.
 var (
@@ -513,106 +518,21 @@ func modelContextWindow(cfg config) int {
 	return contextWindowTokens
 }
 
-// tokenEstimate is a coarse count (about 4 bytes per token) used to track
-// growth between provider usage reports.
-func tokenEstimate(m message) int {
-	text := m.Content
-	for _, call := range m.ToolCalls {
-		text += call.Function.Arguments
-	}
-	if len(m.Images) > 0 {
-		text += "image"
-	}
-	for _, raw := range m.Responses {
-		text += string(raw)
-	}
-	return (len(text) + 3) / 4
-}
-
-// compactTail is how many trailing messages survive a compaction verbatim,
-// so the model keeps the exact state of the step it was in the middle of.
-const compactTail = 8
-
-// compactHistory condenses the older rounds when the context approaches the
-// model's window (or at once when force is set, for /compact). The newest
-// user message and the last few messages stay verbatim — the model must
-// never lose the task it is working on, even when that task is a single
-// user turn with hundreds of tool calls. OpenAI models use the server-side
-// /responses/compact endpoint; everything else (and any failure there) falls
-// back to a summary written by the model itself. If compaction fails the
-// loop continues unchanged rather than blocking the work.
-func compactHistory(ctx context.Context, cfg config, messages []message, usage int, focus string, force bool, emit emitter) ([]message, int, bool) {
-	if !force {
-		if usage <= 0 || len(messages) < compactTail+2 {
-			return nil, 0, false
-		}
-		if float64(usage) < contextThreshold*float64(modelContextWindow(cfg)) {
-			return nil, 0, false
-		}
-	}
-	lastUser := -1
-	for i := len(messages) - 1; i >= 0; i-- {
-		if messages[i].Role == "user" {
-			lastUser = i
-			break
-		}
-	}
-	// Cut so the tail starts on a message that is not a tool result: a result
-	// must stay next to the call that produced it.
-	cut := len(messages) - compactTail
-	if force {
-		cut = len(messages)
-	}
-	for cut > 0 && cut < len(messages) && messages[cut].Role == "tool" {
-		cut--
-	}
-	if cut < 2 {
-		return nil, 0, false // not much to compact
-	}
-	head, tail := messages[:cut], messages[cut:]
-	emit("activity", activity{State: "compact"})
-	var kept []message
-	if cfg.Provider == "openai" {
-		if items, err := remoteCompact(ctx, cfg, head); err == nil && len(items) > 0 {
-			kept = append(kept, message{Role: "assistant", Responses: items})
-		}
-	}
-	if len(kept) == 0 {
-		digest, err := summarizeConversation(ctx, cfg, head, focus)
-		if err != nil || strings.TrimSpace(digest) == "" {
-			emit("notice", "Compaction failed, continuing without it")
-			return nil, 0, false // next attempt will retry
-		}
-		kept = append(kept, message{
-			Role: "user",
-			Content: "[Conversation summary — the context was compacted to keep working. " +
-				"The original project instructions and earlier exchanges were condensed into this note.]\n\n" + strings.TrimSpace(digest),
-		})
-		// The user's latest request is kept word for word when it fell in
-		// the summarized part.
-		if lastUser >= 0 && lastUser < cut {
-			u := messages[lastUser]
-			u.Usage = 0
-			kept = append(kept, message{Role: "assistant", Content: "Understood — continuing from the summary."}, u)
-		}
-	}
-	for _, m := range tail {
-		// The compacted prefix is replaced, so its usage figure no longer
-		// describes what the provider saw.
-		m.Usage = 0
-		kept = append(kept, m)
-	}
-	estimate := 0
-	for _, m := range kept {
-		estimate += tokenEstimate(m)
-	}
-	return kept, estimate, true
-}
-
 // remoteCompact asks the OpenAI Responses API to compress the given rounds
 // into opaque items that replace them in the input.
-func remoteCompact(ctx context.Context, cfg config, rounds []message) ([]json.RawMessage, error) {
-	body := map[string]any{"model": cfg.Model, "input": responsesInput(rounds), "instructions": systemInstructions(cfg)}
+func remoteCompact(ctx context.Context, cfg config, rounds []message, focus string) ([]json.RawMessage, error) {
+	input := make([]message, 0, len(rounds))
+	for _, m := range rounds {
+		if m.Internal && m.Role == "user" {
+			continue
+		}
+		input = append(input, m)
+	}
+	guidance := systemInstructions(cfg) + "\nCompaction handoff: retain user requests verbatim. Cover completed TODO tasks and results, current task, exact files and symbols, decisions, errors and next action. The persistent TODO remains authoritative; use recall for earlier details."
+	if focus != "" {
+		guidance += "\nContinuation focus: " + focus
+	}
+	body := map[string]any{"model": cfg.Model, "input": responsesInput(input), "instructions": guidance}
 	r, err := request(ctx, cfg, "POST", "/responses/compact", body)
 	if err != nil {
 		return nil, err
@@ -625,27 +545,6 @@ func remoteCompact(ctx context.Context, cfg config, rounds []message) ([]json.Ra
 		return nil, err
 	}
 	return result.Output, nil
-}
-
-// summarizeConversation asks the model for a dense handoff note covering the
-// given rounds: goal, decisions, files changed, open problems, exact state.
-func summarizeConversation(ctx context.Context, cfg config, rounds []message, focus string) (string, error) {
-	prompt := "You are compacting a coding session so it can continue inside the same context window. " +
-		"Write a concise but complete handoff note (max ~600 words) in the user's language. Include, as short sections: " +
-		"1) TASK — what the user asked for and the current goal; " +
-		"2) DECISIONS — architecture or approach choices made; " +
-		"3) FILES — paths read, created or edited and what each contains/does (keep exact paths); " +
-		"4) STATE — what is done, what is in progress, any errors or open problems; " +
-		"5) NEXT — the immediate next step. " +
-		"Keep exact file paths, symbols and code snippets verbatim; drop chat small talk and raw tool output. " +
-		"Do not answer the task itself, only summarize it."
-	if focus = strings.TrimSpace(focus); focus != "" {
-		prompt += " Pay particular attention to: " + focus + "."
-	}
-	// The transcript itself must fit the window with room to spare.
-	prompt += "\n\nConversation to compact:\n" + truncateText(conversationText(rounds), modelContextWindow(cfg)*2)
-	out, err := completion(ctx, cfg, []message{{Role: "user", Content: prompt}}, false, func(string, any) {})
-	return out.Content, err
 }
 
 // conversationText flattens rounds into plain text for the summarizer.
@@ -718,50 +617,56 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 	// and kept out of the stored history, so user instructions stay current.
 	system := message{Role: "system", Content: systemInstructions(cfg)}
 	messages := append([]message{system}, history...)
-	// reported is the last context size the provider measured, at the moment
-	// it measured it; what was added since is estimated.
-	// A reply's usage is the prompt that produced it, so the reply itself
-	// is part of the estimate.
-	reported, reportedAt := 0, 0
+	if cfg.Cache == nil {
+		cfg.Cache = &contextCache{}
+	}
+	// Provider usage includes system instructions and tools. Without a report,
+	// estimate those once, then add every message that was appended since.
+	reported, reportedAt := contextOverhead(cfg)-tokenEstimate(system), 0
 	for i, m := range messages {
 		if m.Usage > 0 {
 			reported, reportedAt = m.Usage, i
+			if m.UsageEstimated {
+				reportedAt++
+			}
 		}
 	}
-	usage := func() int {
-		total := reported
-		for _, m := range messages[reportedAt:] {
-			total += tokenEstimate(m)
-		}
-		return total
-	}
-	// publish hands the interface a copy: the loop keeps appending to its own.
+	usage := func() int { return reported + historyEstimate(messages[reportedAt:]) }
 	publish := func() { emit("history", append([]message(nil), messages[1:]...)) }
-	inject := func(m message) {
-		messages = append(messages, m)
-		emit("injected", m)
-	}
-	compact := func(size int) bool {
-		trimmed, estimate, ok := compactHistory(ctx, cfg, messages[1:], size, "", false, emit)
+	inject := func(m message) { messages = append(messages, m); emit("injected", m) }
+	checkpointAsked, lastAttempt := false, 0
+	lastLevel := -1
+	compact := func(level int, reason, note string, overflow bool) bool {
+		size := usage()
+		if !overflow && level <= lastLevel && lastAttempt > 0 && size < lastAttempt+max(1024, modelContextWindow(cfg)/10) {
+			return false
+		}
+		lastAttempt, lastLevel = size, level
+		devf("context", "chat=%s level=%d reason=%s before=%d model=%s", cfg.ContextKey, level, reason, size, cfg.Model)
+		trimmed, estimate, ok := compactHistory(ctx, cfg, messages[1:], size, note, true, emit)
 		if !ok {
 			return false
 		}
 		messages = append([]message{system}, trimmed...)
-		reported, reportedAt = estimate, len(messages) // rough size of the condensed conversation
+		reported, reportedAt = estimate, len(messages)
+		checkpointAsked, lastAttempt, lastLevel = false, 0, -1
 		emit("usage", estimate)
+		emit("context_note", fmt.Sprintf("Context compacted · level %d · %s · ~%d → ~%d tokens. Earlier details remain available through recall.", level, reason, size, estimate))
 		publish()
 		return true
 	}
 	overflows := 0
+	coldChecked := false
 	for {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		system.Content = systemInstructions(cfg)
 		messages[0] = system
-		steered := false
-		for _, extra := range in.steer() {
-			inject(extra)
-			steered = true
-		}
-		if steered {
+		if extras := in.steer(); len(extras) > 0 {
+			for _, extra := range extras {
+				inject(extra)
+			}
 			publish()
 		}
 		if cfg.Provider == "openai" {
@@ -771,19 +676,45 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 				return err
 			}
 		}
-		compact(usage())
+		if reason := cacheStale(cfg, time.Now()); reason != "" && !coldChecked {
+			coldChecked = true
+			devf("context", "cache check: %s, model=%s tokens=%d", reason, cfg.Model, usage())
+			if contextAt(cfg, usage(), .4) {
+				compact(0, reason, "", false)
+			} else if contextAt(cfg, usage(), .3) {
+				kept, removed := lightenHistory(ctx, cfg, messages[1:])
+				if removed > 0 {
+					messages = append([]message{system}, kept...)
+					reported, reportedAt = contextOverhead(cfg)+historyEstimate(kept), len(messages)
+					emit("usage", reported)
+					emit("context_note", "Context lightened · level 0 · "+reason+". Full tool outputs remain available through recall.")
+					devf("context", "level=0 removed_bytes=%d after=%d", removed, reported)
+					publish()
+				}
+			}
+		}
+		if contextAt(cfg, usage(), .9) {
+			compact(4, "context safety limit", "", false)
+		}
+		if contextAt(cfg, usage(), .8) && !checkpointAsked {
+			checkpointAsked = true
+			messages = append(messages, message{Role: "user", Internal: true, Content: "[1loop context control] Context is near its limit. At the next natural stopping point, call checkpoint with a concise continuation note (current task, results, files and next action). Continue working after compaction; do not finish the user task just to compact."})
+			emit("context_note", "Context pressure is high; a checkpoint was requested at the next natural stopping point.")
+			publish()
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
 		emit("activity", activity{State: "wait"})
 		out, err := completion(ctx, cfg, messages, true, emit)
 		if overflow, window := contextOverflow(err); overflow && overflows < 3 {
-			// The server refused the prompt: learn its real window, compact
-			// right away and retry instead of failing the whole task.
 			overflows++
 			if window > 0 {
 				learnedMu.Lock()
 				learnedWindows[cfg.ConnectionID+"|"+cfg.Model] = window
 				learnedMu.Unlock()
 			}
-			if compact(modelContextWindow(cfg)) {
+			if compact(4, "provider context overflow", "", true) {
 				continue
 			}
 		}
@@ -791,6 +722,14 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 			return err
 		}
 		overflows = 0
+		cfg.Cache.record(cfg, time.Now())
+		coldChecked = false
+		emit("cache", nil)
+		cached := "unavailable"
+		if out.CachedTokens != nil {
+			cached = fmt.Sprint(*out.CachedTokens)
+		}
+		devf("context", "chat=%s usage input=%d cached=%s model=%s", cfg.ContextKey, out.Usage, cached, cfg.Model)
 		messages = append(messages, out)
 		if out.Usage > 0 {
 			reported, reportedAt = out.Usage, len(messages)-1
@@ -798,8 +737,23 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 		}
 		emit("message_end", nil)
 		if len(out.ToolCalls) == 0 {
-			// The model has answered. Messages steered in meanwhile still
-			// belong to this task; otherwise the queue starts the next turn.
+			publish() // the final answer is saved before a potentially long compaction
+			if extras := in.steer(); len(extras) > 0 {
+				for _, extra := range extras {
+					inject(extra)
+				}
+				publish()
+				continue
+			}
+			// Compaction is still part of this run. The queued input only starts
+			// after it finishes; Done must not precede the compaction.
+			if contextAt(cfg, usage(), .4) {
+				compact(1, "prompt completed", "", false)
+			}
+			if ctx.Err() != nil {
+				publish()
+				return ctx.Err()
+			}
 			if extras := in.steer(); len(extras) > 0 {
 				for _, extra := range extras {
 					inject(extra)
@@ -815,16 +769,44 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 			publish()
 			return nil
 		}
+		before := cfg.Todo.snapshot()
+		checkpoint := ""
 		for _, call := range out.ToolCalls {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			outcome := a.executeTool(ctx, cfg.Workspace, call, emit)
 			emit("tool_result", outcome)
-			messages = append(messages, message{Role: "tool", Content: outcome.modelText(), ToolCallID: call.ID})
+			messages = append(messages, message{Role: "tool", Content: inputToolOutput(cfg, outcome), ToolCallID: call.ID, RecallID: outcome.RecallID})
+			if outcome.Err == nil && call.Function.Name == "checkpoint" {
+				var args struct{ Note string }
+				if json.Unmarshal([]byte(call.Function.Arguments), &args) == nil {
+					checkpoint = args.Note
+				}
+			}
 		}
 		publish()
+		// All sibling calls now have their results. No policy can split this
+		// batch, including when a TODO completion was its first call.
+		if todoCompleted(before, cfg.Todo.snapshot()) && contextAt(cfg, usage(), .7) {
+			compact(2, "TODO task completed", checkpoint, false)
+		} else if checkpoint != "" && contextAt(cfg, usage(), .8) {
+			compact(3, "model checkpoint", checkpoint, false)
+		}
 	}
+}
+
+func todoCompleted(before, after []todoItem) bool {
+	previous := make(map[string]string, len(before))
+	for _, item := range before {
+		previous[item.ID] = item.Status
+	}
+	for _, item := range after {
+		if item.Status == "completed" && previous[item.ID] != "" && previous[item.ID] != "completed" {
+			return true
+		}
+	}
+	return false
 }
 
 // compactNow is the manual /compact command: it condenses the whole stored

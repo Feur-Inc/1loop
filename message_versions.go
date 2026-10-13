@@ -29,7 +29,7 @@ type chatVersion struct {
 
 func (chat *conversation) identifyMessages() {
 	for i := range chat.Items {
-		if chat.Items[i].Kind == "user" && chat.Items[i].ID == "" {
+		if chat.Items[i].ID == "" {
 			chat.Items[i].ID = identifier()[:16]
 		}
 	}

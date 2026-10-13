@@ -7,7 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
-	_ "image/jpeg"
+	_ "image/png"
 	"net/url"
 	"os/exec"
 	"path/filepath"
@@ -28,14 +28,15 @@ import (
 )
 
 type browserInfo struct {
-	ID       string `json:"id"`
-	URL      string `json:"url"`
-	Title    string `json:"title"`
-	Width    int    `json:"width"`
-	Height   int    `json:"height"`
-	Adaptive bool   `json:"adaptive"`
-	Mobile   bool   `json:"mobile"`
-	Error    string `json:"error,omitempty"`
+	ID         string  `json:"id"`
+	URL        string  `json:"url"`
+	Title      string  `json:"title"`
+	Width      int     `json:"width"`
+	Height     int     `json:"height"`
+	PixelRatio float64 `json:"pixelRatio"`
+	Adaptive   bool    `json:"adaptive"`
+	Mobile     bool    `json:"mobile"`
+	Error      string  `json:"error,omitempty"`
 }
 
 type browserLog struct {
@@ -49,12 +50,14 @@ type browserLog struct {
 // One Chromium process serves the app. Each chat has a separate browser
 // context, so cookies and local storage are shared by its tabs only.
 type browserEngine struct {
-	ctx    context.Context
-	cancel func()
-	once   sync.Once
-	root   context.Context
-	err    error
-	pages  sync.Map
+	ctx       context.Context
+	cancel    func()
+	once      sync.Once
+	root      context.Context
+	err       error
+	pages     sync.Map
+	userAgent string
+	metadata  *emulation.UserAgentMetadata
 }
 
 func newBrowserEngine(parent context.Context) *browserEngine {
@@ -75,7 +78,24 @@ func (e *browserEngine) start() error {
 			e.err = fmt.Errorf("Install Chromium or Google Chrome to use browser tabs")
 			return
 		}
-		opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(executable), chromedp.Flag("headless", "new"), chromedp.Flag("disable-dev-shm-usage", true))
+		opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(executable), chromedp.Flag("headless", "new"), chromedp.Flag("disable-dev-shm-usage", true), chromedp.Flag("enable-automation", false), chromedp.Flag("disable-blink-features", "AutomationControlled"))
+		// Read native client hints before a process-wide UA override suppresses
+		// them. The process-wide UA also covers a popup's very first request.
+		profileAlloc, stopProfileAlloc := chromedp.NewExecAllocator(e.ctx, opts...)
+		profileRoot, stopProfileRoot := chromedp.NewContext(profileAlloc)
+		var native struct {
+			UserAgent string
+			Metadata  *emulation.UserAgentMetadata
+		}
+		e.err = chromedp.Run(profileRoot, chromedp.Navigate("chrome://version"), chromedp.Evaluate(`(async()=>({userAgent:navigator.userAgent,metadata:navigator.userAgentData?await navigator.userAgentData.getHighEntropyValues(['architecture','bitness','platformVersion','fullVersionList','model','wow64']):null}))()`, &native, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }))
+		stopProfileRoot()
+		stopProfileAlloc()
+		if e.err != nil {
+			return
+		}
+		e.userAgent = strings.ReplaceAll(native.UserAgent, "HeadlessChrome/", "Chrome/")
+		e.metadata = native.Metadata
+		opts = append(opts, chromedp.UserAgent(e.userAgent))
 		alloc, stopAlloc := chromedp.NewExecAllocator(e.ctx, opts...)
 		root, stopRoot := chromedp.NewContext(alloc, chromedp.WithErrorf(func(f string, a ...any) { devf("browser", f, a...) }))
 		context.AfterFunc(e.ctx, func() { stopRoot(); stopAlloc() })
@@ -177,6 +197,9 @@ func newBrowserPage(s *browserSession, info browserInfo) *browserPage {
 	if info.Height == 0 {
 		info.Height = 800
 	}
+	if info.PixelRatio <= 0 {
+		info.PixelRatio = 1
+	}
 	life, cancel := context.WithCancel(s.ctx)
 	b := &browserPage{session: s, life: life, cancel: cancel, ready: make(chan struct{}), gate: make(chan struct{}, 1), jobs: make(chan func(context.Context) error, 64), frames: make(chan *page.EventScreencastFrame, 1), info: info}
 	s.refs++
@@ -229,7 +252,10 @@ func (b *browserPage) start() {
 		b.ctx = ctx
 		chromedp.ListenTarget(ctx, b.event)
 		info := b.snapshot()
-		err = chromedp.Run(ctx, runtime.Enable(), log.Enable(), network.Enable(), emulation.SetDeviceMetricsOverride(int64(info.Width), int64(info.Height), 1, info.Mobile))
+		err = chromedp.Run(ctx,
+			runtime.Enable(), log.Enable(), network.Enable(),
+			emulation.SetUserAgentOverride(b.session.engine.userAgent).WithUserAgentMetadata(b.session.engine.metadata),
+			browserMetrics(info.Width, info.Height, info.PixelRatio, info.Mobile))
 	}
 	if err != nil {
 		b.change(func(i *browserInfo) { i.Error = err.Error() })
@@ -398,7 +424,10 @@ func (b *browserPage) stream() {
 		visible := b.visible
 		b.mu.Unlock()
 		if visible {
-			return page.StartScreencast().WithFormat(page.ScreencastFormatJpeg).WithQuality(80).WithMaxWidth(1920).WithMaxHeight(1080).WithEveryNthFrame(1).Do(ctx)
+			if err := page.BringToFront().Do(ctx); err != nil {
+				return err
+			}
+			return page.StartScreencast().WithFormat(page.ScreencastFormatPng).WithEveryNthFrame(1).Do(ctx)
 		}
 		return page.StopScreencast().Do(ctx)
 	}))
@@ -507,13 +536,29 @@ func (b *browserPage) evaluate(ctx context.Context, expression string) (json.Raw
 	return value, err
 }
 
-func (b *browserPage) resize(ctx context.Context, width, height int, mobile, adaptive bool) error {
+func browserMetrics(width, height int, ratio float64, mobile bool) *emulation.SetDeviceMetricsOverrideParams {
+	// A DPR override alone leaves the screencast surface at CSS resolution.
+	// Resize that surface as well, without changing the page's CSS viewport.
+	return emulation.SetDeviceMetricsOverride(int64(width), int64(height), ratio, mobile).WithViewport(&page.Viewport{Width: float64(width), Height: float64(height), Scale: 1})
+}
+
+func (b *browserPage) resize(ctx context.Context, width, height int, mobile, adaptive bool, pixelRatio ...float64) error {
 	if width < 240 || width > 3840 || height < 200 || height > 2160 {
 		return fmt.Errorf("Viewport must be 240–3840 × 200–2160 CSS pixels")
 	}
-	err := b.run(ctx, emulation.SetDeviceMetricsOverride(int64(width), int64(height), 1, mobile))
+	ratio := b.snapshot().PixelRatio
+	if len(pixelRatio) > 0 {
+		ratio = pixelRatio[0]
+	}
+	err := b.run(ctx, browserMetrics(width, height, ratio, mobile))
 	if err == nil {
-		b.change(func(i *browserInfo) { i.Width = width; i.Height = height; i.Mobile = mobile; i.Adaptive = adaptive })
+		b.change(func(i *browserInfo) {
+			i.Width = width
+			i.Height = height
+			i.Mobile = mobile
+			i.Adaptive = adaptive
+			i.PixelRatio = ratio
+		})
 	}
 	return err
 }

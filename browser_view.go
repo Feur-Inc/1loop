@@ -54,6 +54,7 @@ func (p *toolPanel) browserTab(chat *conversation, info browserInfo, tabs []pane
 	return p.browserTabAttached(chat, info, tabs, "")
 }
 func (p *toolPanel) browserTabAttached(chat *conversation, info browserInfo, tabs []panelTab, attach target.ID) panelTab {
+	info.PixelRatio = float64(p.u.window.Canvas().Scale())
 	if p.u.browser == nil {
 		p.u.browser = newBrowserEngine(p.u.ctx)
 	}
@@ -402,14 +403,19 @@ func (r *browserScreenRenderer) Layout(size fyne.Size) {
 	s.modelCursor.Move(s.position.Add(fyne.NewPos(float32(s.cursorX)*scale, float32(s.cursorY)*scale)))
 	s.modelCursor.Resize(fyne.NewSize(24, 28))
 	width, height := max(240, min(3840, int(size.Width))), max(200, min(2160, int(size.Height)))
-	if info.Adaptive && (width != info.Width || height != info.Height) {
+	ratio := float64(s.view.panel.u.window.Canvas().Scale())
+	if ratio != info.PixelRatio || (info.Adaptive && (width != info.Width || height != info.Height)) {
 		if s.resizeTimer != nil {
 			s.resizeTimer.Stop()
 		}
 		s.resizeTimer = time.AfterFunc(250*time.Millisecond, func() {
-			if s.view.page.life.Err() == nil && s.view.page.snapshot().Adaptive {
+			if s.view.page.life.Err() == nil {
 				s.view.page.async(func(ctx context.Context) error {
-					return s.view.page.resize(ctx, width, height, s.view.page.snapshot().Mobile, true)
+					latest := s.view.page.snapshot()
+					if !latest.Adaptive {
+						width, height = latest.Width, latest.Height
+					}
+					return s.view.page.resize(ctx, width, height, latest.Mobile, latest.Adaptive, ratio)
 				})
 			}
 		})

@@ -25,3 +25,9 @@ shows every change.
   an enlargement or a reduction under a quarter; the GPU's linear filter
   does as well. A browser frame a pixel off its place was resampled with
   CatmullRom at every frame (browser panel: 90 % → 39 % of a core).
+- `internal/cache/base.go`, `internal/driver/glfw/loop.go`: the caches'
+  clock is the time read once per turn of the driver's loop (cache.Tick),
+  not the system clock at every object stamped (microseconds a reading
+  where the kernel times with HPET: half of an idle window's CPU). This
+  replaces 1loop's former clock.go, which reached the same variable with
+  go:linkname.

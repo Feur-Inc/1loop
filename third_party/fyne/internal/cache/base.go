@@ -2,6 +2,7 @@ package cache
 
 import (
 	"os"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -14,11 +15,21 @@ var (
 	lastClean                     time.Time
 	skippedCleanWithCanvasRefresh = false
 
-	// testing purpose only
-	timeNow = time.Now
+	// timeNow is the caches' clock. 1loop: the time read once per turn of
+	// the driver's loop (Tick), not the system clock: every object walked
+	// is stamped at every frame, and on machines that time with HPET each
+	// reading costs microseconds (it was half of an idle window's CPU).
+	// The stamps serve one-minute expiries.
+	timeNow = func() time.Time { return time.Unix(0, coarseNow.Load()) }
+
+	coarseNow atomic.Int64
 )
 
+// Tick sets the caches' clock; the driver calls it at each turn of its loop.
+func Tick(now time.Time) { coarseNow.Store(now.UnixNano()) }
+
 func init() {
+	Tick(time.Now())
 	if t, err := time.ParseDuration(os.Getenv("FYNE_CACHE")); err == nil {
 		ValidDuration = t
 		cleanTaskInterval = ValidDuration / 2

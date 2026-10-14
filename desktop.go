@@ -191,7 +191,6 @@ func runDesktop(backend *app, root string) {
 			os.Setenv("FYNE_DISABLE_DPI_DETECTION", "1")
 		}
 	}
-	cheapCacheClock()
 	a := fyneapp.NewWithID("io.1loop.desktop")
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -327,6 +326,11 @@ func (ui *desktopUI) shortcut(s fyne.Shortcut) bool {
 
 // release stops background work and saves, before closing or restarting.
 func (ui *desktopUI) release() {
+	if ui.frames != nil {
+		// No more frame-hook redraws: once seen right before a window that
+		// was closing hung in GLFW's event poll.
+		ui.frames.anim.Stop()
+	}
 	ui.shutdown() // every run's context derives from it
 	ui.panel.dispose()
 	ui.remote.close()

@@ -147,11 +147,13 @@ func (d *gLDriver) runGL() {
 			funcQueue.Close()
 			return
 		case f := <-funcQueue.Out():
+			cache.Tick(time.Now())
 			f.f()
 			if f.done != nil {
 				f.done <- struct{}{}
 			}
 		case <-eventTick.C:
+			cache.Tick(time.Now())
 			d.pollEvents()
 			for i := 0; i < len(d.windows); i++ {
 				w := d.windows[i].(*window)

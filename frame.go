@@ -83,7 +83,6 @@ func (hook *frameHook) turn() {
 	gap := now.Sub(hook.at)
 	hook.at = now
 	frameBeat.Store(now.UnixNano())
-	coarseNow.Store(now.UnixNano()) // Fyne's cache clock (clock.go)
 
 	painted := false
 	if hook.walked != nil {

@@ -45,6 +45,7 @@ class DesktopSession:
         self.closed_signal = None
         self.remote_fd = None
         self.last_sample = None
+        self.pointer_uses_stream_pixels = False
 
     def request(self, interface, method, *arguments, **options):
         token = "one_loop_" + uuid.uuid4().hex
@@ -112,12 +113,30 @@ class DesktopSession:
         # A signal may not have been dispatched while stdin was idle.
         dbus.Interface(self.bus.get_object(SERVICE, self.session),
                        "org.freedesktop.DBus.Peer").Ping()
+        self.check_stream()
         return {"sharing": True}
+
+    def check_stream(self):
+        if self.pipeline is None:
+            return
+        message = self.pipeline.get_bus().pop_filtered(Gst.MessageType.ERROR | Gst.MessageType.EOS)
+        if message is not None:
+            reason = str(message.parse_error()[0]) if message.type == Gst.MessageType.ERROR else "Shared screen stream ended"
+            self.close()
+            raise RuntimeError(reason)
 
     def start(self):
         if self.session:
             return self.status()
         try:
+            try:
+                devices = dbus.Interface(self.portal, "org.freedesktop.DBus.Properties").Get(REMOTE, "AvailableDeviceTypes")
+            except dbus.DBusException as error:
+                if error.get_dbus_name() in ("org.freedesktop.DBus.Error.UnknownInterface", "org.freedesktop.DBus.Error.UnknownMethod", "org.freedesktop.DBus.Error.InvalidArgs"):
+                    raise RuntimeError("This desktop does not provide the XDG RemoteDesktop portal required for screen and keyboard/mouse control. X11 and capture-only portals are not supported by this integration.") from error
+                raise
+            if int(devices) & 3 != 3:
+                raise RuntimeError("This desktop portal does not support both keyboard and pointer control")
             created = self.request(REMOTE, "CreateSession", session_handle_token="one_loop_" + uuid.uuid4().hex)
             self.session = str(created["session_handle"])
             self.closed_signal = self.bus.add_signal_receiver(
@@ -132,6 +151,9 @@ class DesktopSession:
             if int(granted.get("devices", 0)) & 3 != 3 or not granted.get("streams"):
                 raise RuntimeError("Screen, keyboard and pointer access must all be granted")
             self.stream = granted["streams"][0]
+            # Mutter expects stream pixels, while KDE expects compositor
+            # coordinates. A missing logical_size alone cannot distinguish them.
+            self.pointer_uses_stream_pixels = self.bus.name_has_owner("org.gnome.Mutter.RemoteDesktop")
             remote = dbus.Interface(self.portal, SCREENCAST).OpenPipeWireRemote(
                 dbus.ObjectPath(self.session), dbus.Dictionary({}, signature="sv")
             )
@@ -159,9 +181,7 @@ class DesktopSession:
             raise ValueError("Coordinates must be finite and inside the selected monitor")
         if size and (x >= size[0] or y >= size[1]):
             raise ValueError("Coordinates are outside the selected monitor")
-        if "logical_size" not in properties:
-            # Older portals expose compositor size but expect stream pixels for
-            # absolute motion. They differ on fractionally scaled monitors.
+        if "logical_size" not in properties and self.pointer_uses_stream_pixels:
             caps = self.pipeline.get_by_name("frames").get_static_pad("sink").get_current_caps()
             if caps is None:
                 raise RuntimeError("Take a screenshot before coordinate input")
@@ -179,10 +199,10 @@ class DesktopSession:
         while sample is not None:
             self.last_sample = sample
             sample = sink.emit("try-pull-sample", 0)
+        self.check_stream()
         sample = self.last_sample
         if sample is None:
-            message = self.pipeline.get_bus().pop_filtered(Gst.MessageType.ERROR)
-            raise RuntimeError(str(message.parse_error()[0]) if message else "No frame received from the shared monitor")
+            raise RuntimeError("No frame received from the shared monitor")
         video = GstVideo.VideoInfo.new_from_caps(sample.get_caps())
         buffer = sample.get_buffer()
         ok, mapping = buffer.map(Gst.MapFlags.READ)
@@ -245,7 +265,7 @@ class DesktopSession:
                     self.notify("NotifyPointerButton", dbus.Int32(button), dbus.UInt32(0))
         elif name == "scroll":
             direction = arguments["direction"]
-            axis, sign = {"up":(0,1), "down":(0,-1), "left":(1,1), "right":(1,-1)}[direction]
+            axis, sign = {"up":(0,-1), "down":(0,1), "left":(1,-1), "right":(1,1)}[direction]
             steps = max(1, min(30, round(float(arguments.get("pages", 1))*5)))
             if "x" in arguments or "y" in arguments:
                 self.point(arguments)
@@ -275,29 +295,26 @@ class DesktopSession:
                        "pagedown":"Page_Down", "arrowleft":"Left", "arrowright":"Right",
                        "arrowup":"Up", "arrowdown":"Down"}
             keys = []
-            Gdk.init([])
-            keymap = Gdk.Keymap.get_for_display(Gdk.Display.get_default())
+            modifiers = {Gdk.KEY_Control_L:29, Gdk.KEY_Alt_L:56,
+                         Gdk.KEY_Shift_L:42, Gdk.KEY_Super_L:125}
             for token in arguments["key"].split("+"):
                 token = token.strip()
                 key = Gdk.keyval_from_name(aliases.get(token.lower(), token.lower() if len(token)==1 else token.title()))
                 if not key or key == Gdk.KEY_VoidSymbol:
                     raise ValueError("Unsupported key: " + token)
-                found, entries = keymap.get_entries_for_keyval(key)
-                base_keys = [entry for entry in entries if entry.level == 0] if found else []
-                if not base_keys:
-                    raise ValueError("No base key for " + token + "; use explicit modifiers or type_text for literal text")
-                # GDK reports XKB keycodes (evdev + 8). Chords need physical
-                # key events: keysym synthesis can discard held modifiers.
-                keys.append(min(base_keys, key=lambda entry: entry.group).keycode - 8)
+                # Hold modifiers as physical keys; let the compositor resolve
+                # the other symbols in its active layout, not the first GDK group.
+                keys.append(("NotifyKeyboardKeycode", modifiers[key]) if key in modifiers
+                            else ("NotifyKeyboardKeysym", key))
             pressed = []
             try:
-                for key in keys:
-                    self.notify("NotifyKeyboardKeycode", dbus.Int32(key), dbus.UInt32(1))
-                    pressed.append(key)
+                for method, key in keys:
+                    self.notify(method, dbus.Int32(key), dbus.UInt32(1))
+                    pressed.append((method, key))
                 time.sleep(.035)
             finally:
-                for key in reversed(pressed):
-                    self.notify("NotifyKeyboardKeycode", dbus.Int32(key), dbus.UInt32(0))
+                for method, key in reversed(pressed):
+                    self.notify(method, dbus.Int32(key), dbus.UInt32(0))
         return {"ok":True, "action":name}
 
 

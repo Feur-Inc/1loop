@@ -25,6 +25,9 @@ type computerContextKey struct{}
 // rather than creating a new permission dialog for each tool call or turn.
 type computerSession struct {
 	mu            sync.Mutex
+	operationMu   sync.Mutex
+	cancelAction  context.CancelFunc
+	stopping      int
 	lifetime      context.Context
 	portal        *computerProcess
 	accessibility *computerProcess
@@ -33,10 +36,11 @@ type computerSession struct {
 }
 
 type computerProcess struct {
-	input  io.WriteCloser
-	lines  chan []byte
-	cancel context.CancelFunc
-	nextID int
+	context context.Context
+	input   io.WriteCloser
+	lines   chan []byte
+	cancel  context.CancelFunc
+	nextID  int
 }
 
 func startComputerProcess(lifetime context.Context, executable string, arguments ...string) (*computerProcess, error) {
@@ -59,7 +63,7 @@ func startComputerProcess(lifetime context.Context, executable string, arguments
 		input.Close()
 		return nil, err
 	}
-	process := &computerProcess{input: input, lines: make(chan []byte, 8), cancel: cancel}
+	process := &computerProcess{context: processContext, input: input, lines: make(chan []byte, 8), cancel: cancel}
 	go func() {
 		defer close(process.lines)
 		scanner := bufio.NewScanner(output)
@@ -73,7 +77,10 @@ func startComputerProcess(lifetime context.Context, executable string, arguments
 			}
 		}
 	}()
-	go func() { _ = command.Wait() }()
+	go func() {
+		_ = command.Wait()
+		cancel()
+	}()
 	return process, nil
 }
 
@@ -83,6 +90,9 @@ func (process *computerProcess) close() {
 }
 
 func (process *computerProcess) request(ctx context.Context, method string, parameters any) (json.RawMessage, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	process.nextID++
 	request, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": process.nextID, "method": method, "params": parameters})
 	if _, err := process.input.Write(append(request, '\n')); err != nil {
@@ -96,6 +106,7 @@ func (process *computerProcess) request(ctx context.Context, method string, para
 			return nil, ctx.Err()
 		case line, ok := <-process.lines:
 			if !ok {
+				process.cancel()
 				return nil, fmt.Errorf("Computer Use helper exited")
 			}
 			var response struct {
@@ -168,6 +179,11 @@ func computerBackendPath() (string, error) {
 }
 
 func (session *computerSession) backend(ctx context.Context) (*computerProcess, error) {
+	if session.accessibility != nil && session.accessibility.context.Err() != nil {
+		session.accessibility.close()
+		session.accessibility = nil
+		session.stateChat = ""
+	}
 	if session.accessibility == nil {
 		path, err := computerBackendPath()
 		if err != nil {
@@ -187,8 +203,8 @@ func (session *computerSession) backend(ctx context.Context) (*computerProcess, 
 }
 
 const computerGuide = `Computer Use instructions
-Read these instructions before requesting control. Call start next: 1loop opens the desktop's screen-sharing and remote-control consent dialog. The user must choose a monitor and allow keyboard and pointer access. No capture or input is allowed before approval. The same live session is reused across calls and turns until stopped, revoked or 1loop exits. Never bypass a refusal using shell, browser, uinput or another helper.
-Begin every turn using the desktop with get_app_state, or screenshot if accessibility is unavailable. Inspect a fresh screenshot before coordinate input. Coordinates are logical pixels relative to the selected monitor; use the image's coordinate dimensions and origin to convert accessibility bounds. Returned image dimensions may be smaller than the coordinate space.
+Read these instructions before requesting control. Call start next: 1loop opens the desktop's screen-sharing and remote-control consent dialog. The user must allow screen, keyboard and pointer access, choosing a monitor when the desktop offers that choice. No capture or input is allowed before approval. The same live session is reused across calls and turns until stopped, revoked or 1loop exits. Never bypass a refusal using shell, browser, uinput or another helper.
+Begin every turn using the desktop with get_app_state, or screenshot if accessibility is unavailable. Inspect a fresh screenshot before coordinate input. Coordinates are logical pixels relative to the shared stream, which may cover one monitor or the desktop workspace; use the image's coordinate dimensions and origin to convert accessibility bounds. Returned image dimensions may be smaller than the coordinate space.
 For screenshot coordinates, pass x=image_x/scale_x and y=image_y/scale_y. click/move/scroll/drag do not accept window-relative coordinates, window selectors or element indices. For an accessibility button, prefer perform_action with element_index from the latest get_app_state (or role="button", name="Validate"); describe lists its exact parameters. Wayland accessibility bounds may be local to the application, so do not treat them as global screen coordinates.
 Use list_windows and focused_window before targeted keyboard input. Pass a window_id or title to activate_window, type_text or press_key when targeting a particular window. Do not type if focus cannot be verified. Accessibility element indices belong to the most recent get_app_state in this chat; refresh after UI changes or another chat's desktop use.
 Actions: screenshot {}; get_app_state {app_name_or_bundle_identifier?,max_nodes?}; click {x,y,button?:left/right/middle,click_count?}; move {x,y}; scroll {x?,y?,direction:up/down/left/right,pages?}; drag {start_x,start_y,end_x,end_y}; type_text {text,window_id?,title?}; press_key {key,window_id?,title?}. Key examples: Enter, Tab, Escape, Ctrl+L, Ctrl+Shift+T, ArrowDown, Super. For accessibility/window operations, describe returns the native backend's schemas. stop ends sharing immediately; a later start needs consent again.
@@ -229,6 +245,24 @@ func (ui *desktopUI) computerTools(chat *conversation) panelToolHandler {
 		if err := json.Unmarshal([]byte(request.Arguments), &arguments); err != nil || arguments == nil {
 			return panelToolResult{}, fmt.Errorf("arguments must encode a JSON object")
 		}
+		if err := ctx.Err(); err != nil {
+			return panelToolResult{}, err
+		}
+		if request.Action == "stop" {
+			// Stop must cancel an in-flight action before waiting for its lock.
+			// Pending stops also prevent another queued action from starting.
+			session.operationMu.Lock()
+			session.stopping++
+			if session.cancelAction != nil {
+				session.cancelAction()
+			}
+			session.operationMu.Unlock()
+			defer func() {
+				session.operationMu.Lock()
+				session.stopping--
+				session.operationMu.Unlock()
+			}()
+		}
 		session.mu.Lock()
 		defer session.mu.Unlock()
 		if ctx.Err() != nil {
@@ -249,7 +283,20 @@ func (ui *desktopUI) computerTools(chat *conversation) panelToolHandler {
 			return panelToolResult{}, fmt.Errorf("Read action=instructions before starting Computer Use")
 		}
 		operation, cancel := context.WithTimeout(ctx, 130*time.Second)
-		defer cancel()
+		session.operationMu.Lock()
+		if session.stopping > 0 {
+			session.operationMu.Unlock()
+			cancel()
+			return panelToolResult{}, fmt.Errorf("Computer Use sharing is being stopped")
+		}
+		session.cancelAction = cancel
+		session.operationMu.Unlock()
+		defer func() {
+			session.operationMu.Lock()
+			session.cancelAction = nil
+			session.operationMu.Unlock()
+			cancel()
+		}()
 		if request.Action == "start" {
 			if session.portal == nil {
 				process, err := startComputerProcess(session.lifetime, "/usr/bin/python3", "-u", "-c", computerPortalSource)
@@ -320,12 +367,12 @@ func (ui *desktopUI) computerTools(chat *conversation) panelToolHandler {
 			result.Images = screen.Images
 			return result, screenErr
 		case "describe", "doctor", "list_windows", "focused_window", "activate_window", "perform_action", "set_value", "move_window", "resize_window", "setup_accessibility":
-			if (request.Action == "perform_action" || request.Action == "set_value") && session.stateChat != chat.ID {
-				return panelToolResult{}, fmt.Errorf("Read get_app_state in this chat before using accessibility selectors")
-			}
 			backend, err := session.backend(operation)
 			if err != nil {
 				return panelToolResult{}, err
+			}
+			if (request.Action == "perform_action" || request.Action == "set_value") && session.stateChat != chat.ID {
+				return panelToolResult{}, fmt.Errorf("Read get_app_state in this chat before using accessibility selectors")
 			}
 			if request.Action == "describe" {
 				data, err := backend.request(operation, "tools/list", map[string]any{})

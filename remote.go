@@ -25,6 +25,7 @@ package main
 //   POST /api/approve    {id,allow}
 //   POST /api/model      {chat,label,effort}    model and reasoning effort
 //   POST /api/approval-mode {mode}              "approval" or "yolo"
+//   /api/chats/{id}/panel…                      the chat's side panel (remote_panel.go)
 
 import (
 	"crypto/rand"
@@ -120,6 +121,10 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/approve", server.authorized(server.approve))
 	mux.HandleFunc("POST /api/model", server.authorized(server.setModel))
 	mux.HandleFunc("POST /api/approval-mode", server.authorized(server.setApprovalMode))
+	mux.HandleFunc("GET /api/chats/{id}/panel", server.authorized(server.panelTabs))
+	mux.HandleFunc("GET /api/chats/{id}/panel/{key}", server.authorized(server.panelTab))
+	mux.HandleFunc("GET /api/chats/{id}/panel/{key}/screen", server.authorized(server.panelScreen))
+	mux.HandleFunc("POST /api/chats/{id}/panel/{key}/input", server.authorized(server.panelInput))
 	server.http = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go server.http.Serve(ln)
 	if udp, err := net.ListenUDP("udp4", &net.UDPAddr{Port: remoteDiscoveryPort}); err == nil {
@@ -341,10 +346,11 @@ type remoteMeta struct {
 	Items    int             `json:"items"`
 	Approval *remoteApproval `json:"approval,omitempty"`
 	// The chat's model, by its label in the model list, and context use.
-	Model  string `json:"model"`
-	Effort string `json:"effort"`
-	Used   int    `json:"used"`
-	Window int    `json:"window"`
+	Model  string       `json:"model"`
+	Effort string       `json:"effort"`
+	Used   int          `json:"used"`
+	Window int          `json:"window"`
+	Todo   []remoteTodo `json:"todo"` // the chat's task list
 }
 
 type remoteApproval struct {
@@ -404,6 +410,7 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteMeta {
 	}
 	remoteMetaValue.Model, remoteMetaValue.Effort = ui.choiceLabel(chat.Config), chat.Config.Effort
 	remoteMetaValue.Window = modelContextWindow(chat.Config)
+	remoteMetaValue.Todo = todoForPhone(chat)
 	for _, h := range chat.History {
 		remoteMetaValue.Used = max(remoteMetaValue.Used, h.Usage)
 	}

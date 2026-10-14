@@ -14,6 +14,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
@@ -36,6 +38,11 @@ data class Item(
     }
 }
 
+data class Task(val id: String, val text: String, val status: String, val started: Long, val completed: Long)
+
+/** A tab of the chat's side panel on the computer. */
+data class PanelTab(val key: String, val kind: String, val title: String, val url: String, val index: Int)
+
 data class Approval(val chat: String, val id: String, val title: String, val preview: String)
 
 data class Effort(val value: String, val label: String)
@@ -46,6 +53,7 @@ data class Meta(
     val chat: String, val title: String, val running: Boolean, val label: String, val mark: String,
     val queue: List<String>, val steer: List<String>, val approval: Approval?,
     val model: String, val effort: String, val used: Int, val window: Int,
+    val todo: List<Task>,
 ) {
     companion object {
         fun from(o: JSONObject) = Meta(
@@ -53,6 +61,11 @@ data class Meta(
             o.optString("label"), o.optString("mark"), strings(o.optJSONArray("queue")), strings(o.optJSONArray("steer")),
             o.optJSONObject("approval")?.let { Approval(it.optString("chat"), it.optString("id"), it.optString("title"), it.optString("preview")) },
             o.optString("model"), o.optString("effort"), o.optInt("used"), o.optInt("window"),
+            o.optJSONArray("todo").let { array ->
+                (0 until (array?.length() ?: 0)).map { i ->
+                    array!!.getJSONObject(i).let { Task(it.optString("id"), it.optString("text"), it.optString("status"), it.optLong("started"), it.optLong("completed")) }
+                }
+            },
         )
     }
 }
@@ -408,6 +421,48 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val target = server ?: return
         val id = current ?: return
         scope.launch { runCatching { withContext(Dispatchers.IO) { Api(target).post("/api/stop", JSONObject().put("chat", id)) } } }
+    }
+
+    // -- the chat's side panel ------------------------------------------------
+
+    /** The panel's tabs on the computer; null when it cannot be reached. */
+    suspend fun panelTabs(chat: String): List<PanelTab>? {
+        val target = server ?: return null
+        return runCatching {
+            val reply = withContext(Dispatchers.IO) { Api(target).get("/api/chats/$chat/panel") }
+            val array = reply.optJSONArray("tabs")
+            (0 until (array?.length() ?: 0)).map { i ->
+                array!!.getJSONObject(i).let { PanelTab(it.optString("key"), it.optString("kind"), it.optString("title"), it.optString("url"), it.optInt("index")) }
+            }
+        }.getOrNull()
+    }
+
+    suspend fun panelTab(chat: String, key: String): JSONObject? {
+        val target = server ?: return null
+        return runCatching { withContext(Dispatchers.IO) { Api(target).get("/api/chats/$chat/panel/$key") } }.getOrNull()
+    }
+
+    suspend fun panelScreen(chat: String, key: String): ByteArray? {
+        val target = server ?: return null
+        return runCatching { withContext(Dispatchers.IO) { Api(target).bytes("/api/chats/$chat/panel/$key/screen") } }.getOrNull()
+    }
+
+    /** Input for a browser or a terminal tab; see remote_panel.go. */
+    fun panelInput(chat: String, key: String, action: String, text: String = "", x: Float = 0f, y: Float = 0f, dy: Float = 0f) {
+        val target = server ?: return
+        scope.launch {
+            inputs.withLock { sendInput(target, chat, key, action, text, x, y, dy) }
+        }
+    }
+
+    // One at a time, in order: a tap then typing must reach the page so.
+    private val inputs = Mutex()
+
+    private suspend fun sendInput(target: Server, chat: String, key: String, action: String, text: String, x: Float, y: Float, dy: Float) {
+        runCatching {
+            val body = JSONObject().put("action", action).put("text", text).put("x", x.toDouble()).put("y", y.toDouble()).put("dy", dy.toDouble())
+            withContext(Dispatchers.IO) { Api(target).post("/api/chats/$chat/panel/$key/input", body) }
+        }.onFailure { problem = it.message }
     }
 
     fun answer(approval: Approval, allow: Boolean) {

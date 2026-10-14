@@ -274,6 +274,7 @@ func (panel *toolPanel) todoTab(chat *conversation) panelTab {
 // waits, the ring turning with its dot while the agent works on it, the
 // ring closed around a tick once it is done.
 func (panel *toolPanel) todoChanged(chat *conversation) {
+	panel.ui.remote.metaChanged(chat) // the phone shows the list too
 	if chat != panel.owner {
 		return // drawn when its chat comes back on screen
 	}

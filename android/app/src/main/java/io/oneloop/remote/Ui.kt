@@ -398,7 +398,9 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
     val meta = app.meta
     val running = meta?.running == true
     var tool by remember { mutableStateOf<Item?>(null) }
-    Column(modifier.background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
+    var panel by remember { mutableStateOf(false) }
+    Box(modifier) {
+    Column(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
         // Title bar
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             if (onMenu != null) RoundButton(Icons.sidebar, Color.Transparent, Palette.muted, description = "Chats", onClick = onMenu)
@@ -410,6 +412,13 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
                     style = Type.caption.copy(color = if (app.connected) Palette.faint else Palette.amber), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
+            if (app.current != null) Box {
+                RoundButton(Icons.panel, Color.Transparent, Palette.muted, description = "Panel: tasks, browser, terminal") { panel = true }
+                // A task in progress: the panel has news.
+                if (meta?.todo?.any { it.status == "in_progress" } == true) {
+                    Box(Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp).size(7.dp).clip(CircleShape).background(Palette.amber))
+                }
+            }
             RoundButton(Icons.plus, Color.Transparent, Palette.muted, description = "New chat") { app.open(null) }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -418,6 +427,9 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(18.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Palette.background))))
         }
         Composer(app, running)
+    }
+    val chat = app.current
+    if (panel && chat != null) PanelScreen(app, chat) { panel = false }
     }
     tool?.let { ToolSheet(it) { tool = null } }
 }

@@ -85,6 +85,25 @@ class Api(val server: Server) {
     private val base = "http://${server.host}:${server.port}"
 
     fun get(path: String): JSONObject = call("GET", path, null)
+
+    /** Raw bytes, as a browser tab's picture. */
+    fun bytes(path: String): ByteArray {
+        val connection = (URL(base + path).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 4000
+            readTimeout = 20000
+            if (server.token.isNotEmpty()) setRequestProperty("Authorization", "Bearer ${server.token}")
+        }
+        try {
+            if (connection.responseCode !in 200..299) throw ApiError("1loop answered ${connection.responseCode}", connection.responseCode)
+            return connection.inputStream.use { it.readBytes() }
+        } catch (e: ApiError) {
+            throw e
+        } catch (e: Exception) {
+            throw ApiError("Cannot reach ${server.name} (${server.host}).")
+        } finally {
+            connection.disconnect()
+        }
+    }
     fun post(path: String, body: JSONObject): JSONObject = call("POST", path, body)
 
     private fun call(method: String, path: String, body: JSONObject?): JSONObject {

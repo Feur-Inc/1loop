@@ -46,6 +46,12 @@ object Icons {
     val computer = lineIcon("computer", line("M3.5 3.5h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z"), line("M6 13.5h4"))
     val refresh = lineIcon("refresh", line("M12.8 7.2A4.9 4.9 0 1 0 11.4 11"), line("M13 3.6v3.6H9.4"))
 
+    val panel = lineIcon("panel", line("M4.5 3h7a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"), line("M9.5 3v10"))
+    val globe = lineIcon("globe", line("M8 2.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11z"), line("M2.5 8h11"),
+        line("M8 2.5c1.5 1.6 2.2 3.4 2.2 5.5S9.5 11.9 8 13.5C6.5 11.9 5.8 10.1 5.8 8S6.5 4.1 8 2.5z"))
+    val back = lineIcon("back", line("M9.5 4.5 6 8l3.5 3.5"))
+    val tasks = lineIcon("tasks", line("M2.8 4.6l1.3 1.3 2.3-2.4M8.5 4.7h4.7M2.8 10.6l1.3 1.3 2.3-2.4M8.5 10.7h4.7"))
+
     fun forTool(tool: String) = when (tool) {
         "shell" -> terminal
         "edit_file" -> pencil

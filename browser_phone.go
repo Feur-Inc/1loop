@@ -1,0 +1,239 @@
+package main
+
+// A browser tab watched from the phone. The phone gets the page as the
+// screencast paints it (the frames the window shows, made into JPEG at a
+// phone's width), its state (address, title, loading) and the agent's
+// cursor, as a stream: no picture is asked for and waited for, each one
+// arrives as soon as Chrome draws it.
+//
+// The stream is a sequence of messages: one byte for the kind, four for the
+// length (big endian), then the payload. 'F' is a JPEG frame, 'S' the state
+// as JSON (see phoneState).
+
+import (
+	"bytes"
+	"context"
+	"encoding/binary"
+	"encoding/json"
+	"image"
+	"image/jpeg"
+	"net/http"
+	"sync"
+	"time"
+
+	xdraw "golang.org/x/image/draw"
+)
+
+const (
+	phoneFrameWidth   = 1080 // wider frames are scaled down to this
+	phoneFrameQuality = 72
+)
+
+type phoneState struct {
+	URL     string       `json:"url"`
+	Title   string       `json:"title"`
+	Loading bool         `json:"loading"`
+	Width   int          `json:"width"`  // the page's viewport in CSS pixels,
+	Height  int          `json:"height"` // what the cursor's position is in
+	Cursor  *phoneCursor `json:"cursor,omitempty"`
+}
+
+type phoneCursor struct {
+	X float64 `json:"x"`
+	Y float64 `json:"y"`
+}
+
+// phoneWatcher keeps only the latest frame and state for a phone: a slow
+// network drops pictures, it never queues them.
+type phoneWatcher struct {
+	mu    sync.Mutex
+	frame []byte
+	state []byte
+	wake  chan struct{}
+}
+
+func (watcher *phoneWatcher) put(frame, state []byte) {
+	watcher.mu.Lock()
+	if frame != nil {
+		watcher.frame = frame
+	}
+	if state != nil {
+		watcher.state = state
+	}
+	watcher.mu.Unlock()
+	select {
+	case watcher.wake <- struct{}{}:
+	default:
+	}
+}
+
+func (watcher *phoneWatcher) take() (frame, state []byte) {
+	watcher.mu.Lock()
+	defer watcher.mu.Unlock()
+	frame, state = watcher.frame, watcher.state
+	watcher.frame, watcher.state = nil, nil
+	return
+}
+
+// phonesWatching tells whether any phone follows the page.
+func (browser *browserPage) phonesWatching() bool {
+	browser.mu.Lock()
+	defer browser.mu.Unlock()
+	return len(browser.phones) > 0
+}
+
+func (browser *browserPage) phoneStateJSON() []byte {
+	browser.mu.Lock()
+	state := phoneState{URL: browser.info.URL, Title: browser.info.Title, Loading: browser.loading, Width: browser.info.Width, Height: browser.info.Height}
+	if browser.cursorShown {
+		state.Cursor = &phoneCursor{browser.cursorX, browser.cursorY}
+	}
+	browser.mu.Unlock()
+	data, _ := json.Marshal(state)
+	return data
+}
+
+// toPhones sends the page's state, and a frame when there is one, to
+// every phone that follows it.
+func (browser *browserPage) toPhones(frame []byte) {
+	browser.mu.Lock()
+	watchers := make([]*phoneWatcher, 0, len(browser.phones))
+	for watcher := range browser.phones {
+		watchers = append(watchers, watcher)
+	}
+	if frame != nil {
+		browser.phoneFrame = frame
+	}
+	browser.mu.Unlock()
+	if len(watchers) == 0 {
+		return
+	}
+	state := browser.phoneStateJSON()
+	for _, watcher := range watchers {
+		watcher.put(frame, state)
+	}
+}
+
+// phoneJPEG makes a decoded frame into what a phone shows.
+func phoneJPEG(img image.Image) []byte {
+	bounds := img.Bounds()
+	if bounds.Dx() > phoneFrameWidth {
+		height := bounds.Dy() * phoneFrameWidth / bounds.Dx()
+		scaled := image.NewRGBA(image.Rect(0, 0, phoneFrameWidth, height))
+		xdraw.ApproxBiLinear.Scale(scaled, scaled.Bounds(), img, bounds, xdraw.Src, nil)
+		img = scaled
+	}
+	var out bytes.Buffer
+	if jpeg.Encode(&out, img, &jpeg.Options{Quality: phoneFrameQuality}) != nil {
+		return nil
+	}
+	return out.Bytes()
+}
+
+// watch adds a phone; the returned function removes it.
+func (browser *browserPage) watch() (*phoneWatcher, func()) {
+	watcher := &phoneWatcher{wake: make(chan struct{}, 1)}
+	browser.mu.Lock()
+	if browser.phones == nil {
+		browser.phones = map[*phoneWatcher]bool{}
+	}
+	first := len(browser.phones) == 0
+	browser.phones[watcher] = true
+	last := browser.phoneFrame
+	browser.mu.Unlock()
+	watcher.put(last, browser.phoneStateJSON())
+	if first {
+		browser.restream()
+	}
+	return watcher, func() {
+		browser.mu.Lock()
+		delete(browser.phones, watcher)
+		none := len(browser.phones) == 0
+		browser.mu.Unlock()
+		if none {
+			browser.restream()
+		}
+	}
+}
+
+// restream starts or stops the screencast for what now watches the page.
+func (browser *browserPage) restream() {
+	select {
+	case <-browser.ready:
+		if browser.ctx != nil {
+			go browser.stream()
+		}
+	default:
+	}
+}
+
+func (server *remoteServer) panelStream(writer http.ResponseWriter, req *http.Request) {
+	_, tab, ok := server.findTab(req)
+	if !ok || tab.browser == nil {
+		fail(writer, http.StatusNotFound, "This browser tab is closed")
+		return
+	}
+	flusher, ok := writer.(http.Flusher)
+	if !ok {
+		fail(writer, http.StatusInternalServerError, "Streaming unsupported")
+		return
+	}
+	browser := tab.browser
+	watcher, stop := browser.watch()
+	defer stop()
+	writer.Header().Set("Content-Type", "application/octet-stream")
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.WriteHeader(http.StatusOK)
+	flusher.Flush()
+	send := func(kind byte, payload []byte) error {
+		var head [5]byte
+		head[0] = kind
+		binary.BigEndian.PutUint32(head[1:], uint32(len(payload)))
+		if _, err := writer.Write(head[:]); err != nil {
+			return err
+		}
+		_, err := writer.Write(payload)
+		return err
+	}
+	ping := time.NewTicker(15 * time.Second) // the state again: keeps the stream alive
+	defer ping.Stop()
+	ctx := req.Context()
+	for {
+		select {
+		case <-ctx.Done():
+			return
+		case <-browser.life.Done():
+			return
+		case <-ping.C:
+			watcher.put(nil, browser.phoneStateJSON())
+			continue
+		case <-watcher.wake:
+		}
+		frame, state := watcher.take()
+		if state != nil && send('S', state) != nil {
+			return
+		}
+		if frame != nil && send('F', frame) != nil {
+			return
+		}
+		flusher.Flush()
+	}
+}
+
+// navigateSoon starts a navigation and returns at once: the phone sees the
+// page load through its stream, and its next touches do not wait for it.
+func (browser *browserPage) navigateSoon(action, address string) error {
+	if action == "navigate" {
+		if _, err := browserURL(address); err != nil {
+			return err
+		}
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(browser.life, 45*time.Second)
+		defer cancel()
+		if err := browser.navigate(ctx, action, address); err != nil && browser.life.Err() == nil {
+			browser.addLog("error", err.Error(), "1loop")
+		}
+	}()
+	return nil
+}

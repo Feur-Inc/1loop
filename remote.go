@@ -124,6 +124,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("GET /api/chats/{id}/panel", server.authorized(server.panelTabs))
 	mux.HandleFunc("GET /api/chats/{id}/panel/{key}", server.authorized(server.panelTab))
 	mux.HandleFunc("GET /api/chats/{id}/panel/{key}/screen", server.authorized(server.panelScreen))
+	mux.HandleFunc("GET /api/chats/{id}/panel/{key}/stream", server.authorized(server.panelStream))
 	mux.HandleFunc("POST /api/chats/{id}/panel/{key}/input", server.authorized(server.panelInput))
 	server.http = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	go server.http.Serve(ln)

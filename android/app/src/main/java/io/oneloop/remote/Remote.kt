@@ -455,6 +455,29 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         }
     }
 
+    /** Follows a browser tab: its frames and its state, until cancelled. */
+    suspend fun panelStream(chat: String, key: String, onMessage: suspend (Char, ByteArray) -> Unit) {
+        val target = server ?: return
+        Api(target).messages("/api/chats/$chat/panel/$key/stream", onMessage)
+    }
+
+    // Scrolling sends a wheel per few pixels of drag: while one waits for
+    // its turn, the next ones add to it instead of queuing behind it.
+    private val scrolls = mutableMapOf<String, FloatArray>()
+
+    fun panelScroll(chat: String, key: String, x: Float, y: Float, dy: Float) {
+        val target = server ?: return
+        val id = "$chat/$key"
+        scrolls[id]?.let { it[2] += dy; return }
+        scrolls[id] = floatArrayOf(x, y, dy)
+        scope.launch {
+            inputs.withLock {
+                val wheel = scrolls.remove(id) ?: return@withLock
+                sendInput(target, chat, key, "scroll", "", wheel[0], wheel[1], wheel[2])
+            }
+        }
+    }
+
     // One at a time, in order: a tap then typing must reach the page so.
     private val inputs = Mutex()
 

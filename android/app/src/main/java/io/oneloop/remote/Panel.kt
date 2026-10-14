@@ -2,6 +2,17 @@ package io.oneloop.remote
 
 import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.VectorConverter
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.layout.BoxWithConstraints
+import androidx.compose.runtime.mutableStateListOf
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.ui.platform.LocalFocusManager
+import kotlinx.coroutines.launch
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
@@ -67,6 +78,9 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.StrokeJoin
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.drawscope.translate
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -261,24 +275,58 @@ private fun span(ms: Long): String {
 // (this view is then disposed, and starts locked the next time).
 private const val RELOCK_MS = 15 * 60 * 1000L
 
+/** What the computer says about the page, with each change. */
+private data class PageState(val url: String, val title: String, val loading: Boolean, val width: Int, val height: Int, val cursor: Offset?)
+
+private fun pageState(json: JSONObject) = PageState(
+    json.optString("url"), json.optString("title"), json.optBoolean("loading"), json.optInt("width"), json.optInt("height"),
+    json.optJSONObject("cursor")?.let { Offset(it.optDouble("x").toFloat(), it.optDouble("y").toFloat()) },
+)
+
+/** A touch shown where it landed, at once: the page answers a moment later. */
+private class Touch(val at: Offset, val id: Long) {
+    val grow = Animatable(0f)
+}
+
 @Composable
 private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
     var picture by remember { mutableStateOf<ImageBitmap?>(null) }
+    var page by remember { mutableStateOf<PageState?>(null) }
+    var live by remember { mutableStateOf(false) }
     var address by remember { mutableStateOf(tab.url) }
-    var editing by remember { mutableStateOf(false) }
+    val addressFocus = remember { MutableInteractionSource() }
+    val addressFocused by addressFocus.collectIsFocusedAsState()
+    val focus = LocalFocusManager.current
     var typed by remember { mutableStateOf("") }
     var locked by remember { mutableStateOf(true) }
     var used by remember { mutableLongStateOf(0L) } // the last input, for the relock
     var nudge by remember { mutableIntStateOf(0) } // a touch while locked: the lock shakes
+    val touches = remember { mutableStateListOf<Touch>() }
+    val scope = rememberCoroutineScope()
+    // The page's frames and state, as the computer draws them.
     LaunchedEffect(tab.key) {
         while (true) {
-            val bytes = app.panelScreen(chat, tab.key)
-            if (bytes != null) {
-                val decoded = withContext(Dispatchers.Default) { BitmapFactory.decodeByteArray(bytes, 0, bytes.size)?.asImageBitmap() }
-                if (decoded != null) picture = decoded
+            runCatching {
+                app.panelStream(chat, tab.key) { kind, payload ->
+                    when (kind) {
+                        'F' -> BitmapFactory.decodeByteArray(payload, 0, payload.size)?.asImageBitmap()?.let { frame ->
+                            withContext(Dispatchers.Main) { picture = frame; live = true }
+                        }
+                        'S' -> runCatching { pageState(JSONObject(String(payload))) }.getOrNull()?.let { state ->
+                            withContext(Dispatchers.Main) { page = state; live = true }
+                        }
+                    }
+                }
             }
-            delay(if (bytes == null) 1500 else 250)
+            live = false
+            delay(800)
         }
+    }
+    var leaving by remember { mutableStateOf<String?>(null) } // the address left by a navigation not yet begun
+    LaunchedEffect(page?.url, addressFocused) {
+        val url = page?.url ?: return@LaunchedEffect
+        if (url != leaving) leaving = null
+        if (!addressFocused && leaving == null) address = url
     }
     LaunchedEffect(locked, used) {
         if (!locked) {
@@ -286,7 +334,6 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
             locked = true
         }
     }
-    LaunchedEffect(tab.url) { if (!editing) address = tab.url }
     // Every action on the page goes through here.
     val act = { action: () -> Unit ->
         if (locked) nudge++ else {
@@ -308,10 +355,14 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
             }
             Spacer(Modifier.width(4.dp))
             Input(
-                address, { address = it; editing = true }, "Address", KeyboardType.Uri, ImeAction.Go, Modifier.weight(1f).alpha(dim), enabled = !locked,
+                address, { address = it }, "Address", KeyboardType.Uri, ImeAction.Go, Modifier.weight(1f).alpha(dim),
+                enabled = !locked, interaction = addressFocus,
             ) {
-                act { app.panelInput(chat, tab.key, "navigate", address.trim()) }
-                editing = false
+                act {
+                    leaving = page?.url
+                    app.panelInput(chat, tab.key, "navigate", address.trim())
+                }
+                focus.clearFocus()
             }
             Spacer(Modifier.width(6.dp))
             val fill by animateColorAsState(if (locked) Palette.raised else Palette.amber, tween(200), label = "lock")
@@ -327,27 +378,58 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
         Box(Modifier.weight(1f).fillMaxWidth().background(Palette.code), contentAlignment = Alignment.TopCenter) {
             val shown = picture
             if (shown == null) WorkRing("wait", 34.dp, Modifier.align(Alignment.Center))
-            else {
+            else Box(Modifier.aspectRatio(shown.width / shown.height.toFloat())) {
                 var pending by remember { mutableFloatStateOf(0f) }
                 Image(
                     shown, "Page", contentScale = ContentScale.FillBounds,
-                    modifier = Modifier.aspectRatio(shown.width / shown.height.toFloat())
+                    modifier = Modifier.fillMaxSize()
                         .pointerInput(tab.key) {
-                            detectTapGestures { at -> act { app.panelInput(chat, tab.key, "tap", x = at.x / size.width, y = at.y / size.height) } }
+                            detectTapGestures { at ->
+                                act {
+                                    val touch = Touch(at, System.nanoTime())
+                                    touches.add(touch)
+                                    scope.launch {
+                                        touch.grow.animateTo(1f, tween(420, easing = CssEase))
+                                        touches.remove(touch)
+                                    }
+                                    app.panelInput(chat, tab.key, "tap", x = at.x / size.width, y = at.y / size.height)
+                                }
+                            }
                         }
                         .pointerInput(tab.key) {
                             var at = Offset.Zero
                             detectVerticalDragGestures(onDragStart = { at = it; pending = 0f }) { change, drag ->
                                 change.consume()
                                 pending -= drag
-                                if (kotlin.math.abs(pending) > 24f) {
+                                if (kotlin.math.abs(pending) > 6f) {
                                     val dy = pending / size.height
-                                    act { app.panelInput(chat, tab.key, "scroll", x = at.x / size.width, y = at.y / size.height, dy = dy) }
+                                    act { app.panelScroll(chat, tab.key, at.x / size.width, at.y / size.height, dy) }
                                     pending = 0f
                                 }
                             }
                         },
                 )
+                // The touches, as rings that open and fade.
+                Canvas(Modifier.fillMaxSize()) {
+                    for (touch in touches) {
+                        val t = touch.grow.value
+                        drawCircle(Palette.amber.copy(alpha = 0.28f * (1 - t)), radius = 6.dp.toPx() + 22.dp.toPx() * t, center = touch.at)
+                        drawCircle(Palette.amber.copy(alpha = 1 - t), radius = 6.dp.toPx() + 22.dp.toPx() * t, center = touch.at, style = Stroke(2.dp.toPx()))
+                    }
+                }
+                // The agent's cursor, gliding to where it acts.
+                val state = page
+                val cursor = state?.cursor
+                if (cursor != null && state.width > 0 && state.height > 0) {
+                    BoxWithConstraints(Modifier.fillMaxSize()) {
+                        val target = Offset(cursor.x / state.width * constraints.maxWidth, cursor.y / state.height * constraints.maxHeight)
+                        val moving = remember { Animatable(target, Offset.VectorConverter) }
+                        LaunchedEffect(target) { moving.animateTo(target, tween(260, easing = CssEase)) }
+                        AgentCursor(Modifier.graphicsLayer { translationX = moving.value.x; translationY = moving.value.y })
+                    }
+                }
+                // Loading: a thin line along the top, as in a browser.
+                if (state?.loading == true) LoadingLine(Modifier.align(Alignment.TopCenter))
             }
             androidx.compose.animation.AnimatedVisibility(
                 visible = locked && shown != null, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp),
@@ -363,6 +445,10 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
                     Text("View only · unlock to control", style = Type.small.copy(color = Palette.text))
                 }
             }
+            if (!live && shown != null) Text(
+                "Reconnecting…", style = Type.caption.copy(color = Palette.amber),
+                modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).background(Palette.popover, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 4.dp),
+            )
         }
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).alpha(dim), verticalAlignment = Alignment.CenterVertically) {
             Input(typed, { typed = it }, "Type into the page", KeyboardType.Text, ImeAction.Send, Modifier.weight(1f), enabled = !locked) {
@@ -376,12 +462,24 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
 }
 
 @Composable
+private fun LoadingLine(modifier: Modifier) {
+    val sweep = rememberInfiniteTransition(label = "loading")
+    val at by sweep.animateFloat(0f, 1f, infiniteRepeatable(tween(1100, easing = CssEaseInOut)), label = "sweep")
+    Canvas(modifier.fillMaxWidth().height(2.5.dp)) {
+        val span = size.width * 0.35f
+        val x = -span + (size.width + span) * at
+        drawRect(Palette.amber, topLeft = Offset(x, 0f), size = androidx.compose.ui.geometry.Size(span, size.height))
+    }
+}
+
+@Composable
 private fun Input(
     value: String, onChange: (String) -> Unit, placeholder: String, keyboard: KeyboardType, action: ImeAction,
-    modifier: Modifier = Modifier, mono: Boolean = false, enabled: Boolean = true, onDone: () -> Unit,
+    modifier: Modifier = Modifier, mono: Boolean = false, enabled: Boolean = true,
+    interaction: MutableInteractionSource = remember { MutableInteractionSource() }, onDone: () -> Unit,
 ) {
     BasicTextField(
-        value, onChange, modifier, enabled = enabled, singleLine = true, textStyle = if (mono) Type.mono else Type.body.copy(fontSize = 14.sp),
+        value, onChange, modifier, enabled = enabled, singleLine = true, interactionSource = interaction, textStyle = if (mono) Type.mono else Type.body.copy(fontSize = 14.sp),
         cursorBrush = SolidColor(Palette.amber),
         keyboardOptions = KeyboardOptions(
             keyboardType = keyboard, imeAction = action, autoCorrectEnabled = false,
@@ -493,5 +591,31 @@ private fun ToolView(item: Item?) {
         if (item.text.isNotEmpty()) CodeWell(item.text.trimEnd(), "Output")
         else if (item.diff.isEmpty()) Text(if (item.state == "done") "No output" else "Waiting for the result…", style = Type.small.copy(color = Palette.faint))
         if (item.failed.isNotEmpty() && item.failed != "Stopped") CodeWell(item.failed, "Error")
+    }
+}
+
+// The agent's cursor, in 1loop's colours: a rounded amber pointer with a
+// dark edge, and its name beside it, as a collaborator's cursor. The
+// pointer's tip is the composable's top left corner.
+private val pointer = androidx.compose.ui.graphics.vector.PathParser()
+    .parsePathString("M0 0 L15.6 7.3 Q16.9 7.9 15.5 8.5 L9.4 10.6 L6.7 16.6 Q6.1 17.9 5.6 16.5 Z").toPath()
+
+@Composable
+fun AgentCursor(modifier: Modifier = Modifier) {
+    Box(modifier) {
+        Canvas(Modifier.size(24.dp)) {
+            val unit = 1.25.dp.toPx()
+            scale(unit, unit, pivot = Offset.Zero) {
+                translate(1.6f, 2.4f) { drawPath(pointer, Color.Black.copy(alpha = 0.35f)) } // its shadow
+                translate(0.8f, 0.8f) {
+                    drawPath(pointer, Palette.amber)
+                    drawPath(pointer, Color(0xFF121212), style = Stroke(1.5f, join = StrokeJoin.Round))
+                }
+            }
+        }
+        Text(
+            "1loop", style = Type.caption.copy(fontSize = 9.5.sp, lineHeight = 11.sp, color = Palette.ink, fontWeight = FontWeight.SemiBold),
+            modifier = Modifier.padding(start = 17.dp, top = 21.dp).background(Palette.amber, RoundedCornerShape(50)).padding(horizontal = 6.dp, vertical = 1.5.dp),
+        )
     }
 }

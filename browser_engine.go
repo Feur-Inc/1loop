@@ -185,6 +185,12 @@ type browserPage struct {
 	onChange     func(browserInfo)
 	onLogs       func()
 	onCursor     func(float64, float64)
+	phones       map[*phoneWatcher]bool // phones following the page (browser_phone.go)
+	phoneFrame   []byte                 // the latest frame made for them
+	loading      bool                   // the main frame is loading
+	cursorX      float64                // the agent's cursor, as last placed
+	cursorY      float64
+	cursorShown  bool
 	attachTarget target.ID
 	closeOnce    sync.Once
 	onPopup      func(target.ID, string)
@@ -228,6 +234,7 @@ func (browser *browserPage) change(update func(*browserInfo)) {
 	if browser.onChange != nil {
 		browser.onChange(info)
 	}
+	browser.toPhones(nil)
 }
 func (browser *browserPage) addLog(level, text, source string) {
 	browser.mu.Lock()
@@ -332,6 +339,10 @@ func (browser *browserPage) event(event any) {
 		if e.Frame.ParentID == "" {
 			browser.change(func(info *browserInfo) { info.URL = e.Frame.URL; info.Error = "" })
 		}
+	case *page.EventFrameStartedLoading:
+		browser.mainLoading(string(e.FrameID), true)
+	case *page.EventFrameStoppedLoading:
+		browser.mainLoading(string(e.FrameID), false)
 	case *page.EventNavigatedWithinDocument:
 		browser.change(func(browserInfoValue *browserInfo) { browserInfoValue.URL = e.URL })
 	case *page.EventLoadEventFired:
@@ -376,7 +387,13 @@ func (browser *browserPage) frameLoop() {
 				continue
 			}
 			img, _, err := image.Decode(bytes.NewReader(data))
-			if err == nil && browser.onFrame != nil {
+			if err != nil {
+				continue
+			}
+			if browser.phonesWatching() {
+				browser.toPhones(phoneJPEG(img))
+			}
+			if browser.onFrame != nil && browser.isVisible() {
 				if _, ok := img.(*image.RGBA); !ok {
 					// Converted here rather than by the painter, on the UI thread.
 					rgba := image.NewRGBA(img.Bounds())
@@ -510,14 +527,22 @@ func (browser *browserPage) setVisible(visible bool) {
 		}
 	}
 }
+func (browser *browserPage) isVisible() bool {
+	browser.mu.Lock()
+	defer browser.mu.Unlock()
+	return browser.visible
+}
+
 func (browser *browserPage) stream() {
 	_ = browser.run(browser.life, chromedp.ActionFunc(func(ctx context.Context) error {
 		browser.mu.Lock()
-		visible := browser.visible
+		visible, watched := browser.visible, len(browser.phones) > 0
 		browser.mu.Unlock()
-		if visible {
-			if err := page.BringToFront().Do(ctx); err != nil {
-				return err
+		if visible || watched {
+			if visible {
+				if err := page.BringToFront().Do(ctx); err != nil {
+					return err
+				}
 			}
 			return page.StartScreencast().WithFormat(page.ScreencastFormatPng).WithEveryNthFrame(1).Do(ctx)
 		}
@@ -675,6 +700,10 @@ func (browser *browserPage) point(ctx context.Context, selector string, x, y flo
 	return x, y, nil
 }
 func (browser *browserPage) cursor(x, y float64) {
+	browser.mu.Lock()
+	browser.cursorX, browser.cursorY, browser.cursorShown = x, y, true
+	browser.mu.Unlock()
+	browser.toPhones(nil)
 	if browser.onCursor != nil {
 		browser.onCursor(x, y)
 	}
@@ -747,4 +776,16 @@ func browserKeyChord(text string) (string, []input.Modifier) {
 		key = strings.ToLower(key)
 	}
 	return key, mods
+}
+
+// mainLoading follows the loading of the page itself (not of its frames),
+// for the phone's progress bar.
+func (browser *browserPage) mainLoading(frame string, loading bool) {
+	if browser.ctx == nil || frame != string(chromedp.FromContext(browser.ctx).Target.TargetID) {
+		return
+	}
+	browser.mu.Lock()
+	browser.loading = loading
+	browser.mu.Unlock()
+	browser.toPhones(nil)
 }

@@ -301,9 +301,7 @@ func browserInputFromPhone(ctx context.Context, b *browserPage, action string, x
 		}
 		b.input(chromedp.KeyEvent(key))
 	case "navigate", "back", "forward", "reload":
-		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-		defer cancel()
-		return b.navigate(ctx, action, text)
+		return b.navigateSoon(action, text)
 	default:
 		return fmt.Errorf("Unknown browser action")
 	}

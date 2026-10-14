@@ -23,11 +23,15 @@ import (
 )
 
 var (
-	iconBrowser     = lineIcon("browser", `<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c3 3 3 8 0 11-3-3-3-8 0-11"/>`)
-	iconBack        = lineIcon("back", `<path d="m9.5 3.5-4.5 4.5 4.5 4.5"/>`)
-	iconForward     = lineIcon("forward", `<path d="m6.5 3.5 4.5 4.5-4.5 4.5"/>`)
-	iconReload      = lineIcon("reload", `<path d="M12.7 6A5 5 0 1 0 13 9M12.7 2.7V6H9.4"/>`)
-	iconModelCursor = fyne.NewStaticResource("model-browser-cursor.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 28"><path d="M2 2v20l6-5 5 9 4-2-5-9h9z" fill="#ffb700" stroke="#161616" stroke-width="2"/></svg>`))
+	iconBrowser = lineIcon("browser", `<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c3 3 3 8 0 11-3-3-3-8 0-11"/>`)
+	iconBack    = lineIcon("back", `<path d="m9.5 3.5-4.5 4.5 4.5 4.5"/>`)
+	iconForward = lineIcon("forward", `<path d="m6.5 3.5 4.5 4.5-4.5 4.5"/>`)
+	iconReload  = lineIcon("reload", `<path d="M12.7 6A5 5 0 1 0 13 9M12.7 2.7V6H9.4"/>`)
+	// The agent's pointer: rounded, amber, with a dark edge and a soft
+	// shadow; the phone draws the same (android Panel.kt, AgentCursor).
+	iconModelCursor = fyne.NewStaticResource("model-browser-cursor.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24">`+
+		`<path fill="#000000" fill-opacity="0.35" d="M2.00 3.00 L21.50 12.12 Q23.12 12.88 21.38 13.62 L13.75 16.25 L10.38 23.75 Q9.62 25.38 9.00 23.62 Z"/>`+
+		`<path fill="#FFB000" stroke="#121212" stroke-width="1.5" stroke-linejoin="round" d="M1.00 1.00 L20.50 10.12 Q22.12 10.88 20.38 11.62 L12.75 14.25 L9.38 21.75 Q8.62 23.38 8.00 21.62 Z"/></svg>`))
 )
 
 type browserView struct {
@@ -86,9 +90,7 @@ func (panel *toolPanel) browserTabAttached(chat *conversation, info browserInfo,
 			if browser.life.Err() != nil {
 				return
 			}
-			view.screen.cursorX, view.screen.cursorY = x, y
-			view.screen.modelCursor.Show()
-			view.screen.Refresh()
+			view.screen.glide(x, y)
 		})
 	}
 	browser.onPopup = func(id target.ID, url string) {
@@ -363,8 +365,9 @@ type browserScreen struct {
 	view             *browserView
 	image            *canvas.Image
 	background       *canvas.Rectangle
-	modelCursor      *canvas.Image
+	modelCursor      *fyne.Container // the agent's pointer and its name
 	cursorX, cursorY float64
+	cursorGlide      *fyne.Animation // the pointer on its way to where the agent acts
 	position         fyne.Position
 	rendered         fyne.Size
 	resizeTimer      *time.Timer
@@ -373,7 +376,7 @@ type browserScreen struct {
 }
 
 func newBrowserScreen(view *browserView) *browserScreen {
-	screen := &browserScreen{view: view, image: canvas.NewImageFromImage(nil), background: canvas.NewRectangle(color.NRGBA{R: 18, G: 18, B: 18, A: 255}), modelCursor: canvas.NewImageFromResource(iconModelCursor)}
+	screen := &browserScreen{view: view, image: canvas.NewImageFromImage(nil), background: canvas.NewRectangle(color.NRGBA{R: 18, G: 18, B: 18, A: 255}), modelCursor: newAgentCursor()}
 	screen.image.FillMode = canvas.ImageFillStretch
 	screen.modelCursor.Hide()
 	screen.ExtendBaseWidget(screen)
@@ -408,8 +411,9 @@ func (renderer *browserScreenRenderer) Layout(size fyne.Size) {
 	screen.position = fyne.NewPos((size.Width-screen.rendered.Width)/2, (size.Height-screen.rendered.Height)/2)
 	screen.image.Move(screen.position)
 	screen.image.Resize(screen.rendered)
-	screen.modelCursor.Move(screen.position.Add(fyne.NewPos(float32(screen.cursorX)*scale, float32(screen.cursorY)*scale)))
-	screen.modelCursor.Resize(fyne.NewSize(24, 28))
+	if screen.cursorGlide == nil {
+		screen.modelCursor.Move(screen.cursorTarget(scale))
+	}
 	width, height := max(240, min(3840, int(size.Width))), max(200, min(2160, int(size.Height)))
 	ratio := float64(screen.view.panel.ui.window.Canvas().Scale())
 	if ratio != info.PixelRatio || (info.Adaptive && (width != info.Width || height != info.Height)) {
@@ -624,4 +628,58 @@ func (screen *browserScreen) KeyUp(e *fyne.KeyEvent) {
 	case desktop.KeySuperLeft, desktop.KeySuperRight:
 		screen.modifiers &^= 4
 	}
+}
+
+// newAgentCursor builds the agent's pointer with its name tag beside it,
+// like a collaborator's cursor. Its tip is the container's origin.
+func newAgentCursor() *fyne.Container {
+	arrow := canvas.NewImageFromResource(iconModelCursor)
+	arrow.Move(fyne.NewPos(-1, -1))
+	arrow.Resize(fyne.NewSize(26, 26))
+	label := canvas.NewText("1loop", color.NRGBA{R: 0x11, G: 0x11, B: 0x11, A: 0xff})
+	label.TextSize, label.TextStyle = 9.5, fyne.TextStyle{Bold: true}
+	size := fyne.MeasureText(label.Text, label.TextSize, label.TextStyle)
+	pill := canvas.NewRectangle(colAmber)
+	pill.CornerRadius = (size.Height + 3) / 2
+	pill.Move(fyne.NewPos(17, 21))
+	pill.Resize(fyne.NewSize(size.Width+12, size.Height+3))
+	label.Move(fyne.NewPos(23, 22.5))
+	label.Resize(size)
+	cursor := container.NewWithoutLayout(arrow, pill, label)
+	cursor.Resize(fyne.NewSize(28+size.Width, 23+size.Height))
+	cursor.Hide()
+	return cursor
+}
+
+func (screen *browserScreen) cursorTarget(scale float32) fyne.Position {
+	return screen.position.Add(fyne.NewPos(float32(screen.cursorX)*scale, float32(screen.cursorY)*scale))
+}
+
+// glide moves the agent's pointer to a point of the page, smoothly, as a
+// hand would; the first time it appears there.
+func (screen *browserScreen) glide(x, y float64) {
+	screen.cursorX, screen.cursorY = x, y
+	info := screen.view.page.snapshot()
+	scale := fyne.Min(screen.Size().Width/float32(info.Width), screen.Size().Height/float32(info.Height))
+	to := screen.cursorTarget(scale)
+	if screen.cursorGlide != nil {
+		screen.cursorGlide.Stop()
+		screen.cursorGlide = nil
+	}
+	if !screen.modelCursor.Visible() {
+		screen.modelCursor.Move(to)
+		screen.modelCursor.Show()
+		return
+	}
+	from := screen.modelCursor.Position()
+	var glide *fyne.Animation
+	glide = fyne.NewAnimation(260*time.Millisecond, func(t float32) {
+		screen.modelCursor.Move(fyne.NewPos(from.X+(to.X-from.X)*t, from.Y+(to.Y-from.Y)*t))
+		if t == 1 && screen.cursorGlide == glide {
+			screen.cursorGlide = nil
+		}
+	})
+	glide.Curve = fyne.AnimationEaseOut
+	screen.cursorGlide = glide
+	glide.Start()
 }

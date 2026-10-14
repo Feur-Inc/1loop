@@ -135,6 +135,32 @@ class Api(val server: Server) {
     }
 
     /**
+     * Follows a binary stream of messages (a kind byte, a big-endian length,
+     * the payload) until it ends or fails; see browser_phone.go.
+     */
+    suspend fun messages(path: String, onMessage: suspend (Char, ByteArray) -> Unit) = withContext(Dispatchers.IO) {
+        val connection = (URL(base + path).openConnection() as HttpURLConnection).apply {
+            connectTimeout = 4000
+            readTimeout = 40000 // the computer sends the state every 15 s
+            if (server.token.isNotEmpty()) setRequestProperty("Authorization", "Bearer ${server.token}")
+        }
+        try {
+            if (connection.responseCode !in 200..299) throw ApiError("1loop answered ${connection.responseCode}", connection.responseCode)
+            java.io.DataInputStream(java.io.BufferedInputStream(connection.inputStream, 1 shl 16)).use { input ->
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val kind = input.readUnsignedByte().toChar()
+                    val payload = ByteArray(input.readInt())
+                    input.readFully(payload)
+                    onMessage(kind, payload)
+                }
+            }
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    /**
      * Follows the server-sent events until the stream ends or fails; each
      * event reaches onEvent with its name and JSON data.
      */

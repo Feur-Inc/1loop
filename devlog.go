@@ -7,6 +7,7 @@ package main
 //
 //	~/.cache/1loop/dev.log        this session
 //	~/.cache/1loop/dev.log.1      the one before
+//	~/.cache/1loop/cpu.pprof      a CPU profile, after kill -USR2
 //
 // Every line carries the time and an area: app (lifecycle), ui (what the
 // user did), run (an agent loop's events), claude (the Claude Code
@@ -27,6 +28,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"runtime/pprof"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -93,6 +95,34 @@ func startDevLog() {
 			devStacks("goroutines, on request (SIGUSR1)")
 		}
 	}()
+	go func() {
+		asked := make(chan os.Signal, 1)
+		signal.Notify(asked, syscall.SIGUSR2)
+		for range asked {
+			devProfile(10 * time.Second)
+		}
+	}()
+}
+
+// devProfile records where the CPU goes for a while, beside the log
+// (cpu.pprof; read it with go tool pprof). Asked with SIGUSR2.
+func devProfile(span time.Duration) {
+	if dev.path == "" {
+		return
+	}
+	path := filepath.Join(filepath.Dir(dev.path), "cpu.pprof")
+	file, err := os.Create(path)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	if pprof.StartCPUProfile(file) != nil {
+		return
+	}
+	devf("perf", "CPU profile for %s (SIGUSR2)", span)
+	time.Sleep(span)
+	pprof.StopCPUProfile()
+	devf("perf", "CPU profile written to %s", path)
 }
 
 // devf writes one line of the developer log.

@@ -601,10 +601,13 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 },
             )
             Row(verticalAlignment = Alignment.CenterVertically) {
-                ApprovalChip(app)
-                Spacer(Modifier.width(4.dp))
-                ModelChip(app, onClick = { models = true }, modifier = Modifier.weight(1f, fill = false))
-                Spacer(Modifier.weight(0.001f))
+                // The chips take what the buttons leave, and the buttons sit
+                // against the right edge: a long model name shrinks, not them.
+                Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    ApprovalChip(app)
+                    Spacer(Modifier.width(4.dp))
+                    ModelChip(app, onClick = { models = true }, modifier = Modifier.weight(1f, fill = false))
+                }
                 val meta = app.meta
                 ContextRing(meta?.used?.takeIf { app.current != null } ?: 0, meta?.window?.takeIf { app.current != null && it > 0 } ?: app.defaultWindow)
                 val send = { mode: String ->

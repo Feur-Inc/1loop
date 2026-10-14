@@ -26,7 +26,9 @@ type limitGaugeLayout struct {
 
 func newLimitGauge(window accountLimitWindow) fyne.CanvasObject {
 	label := textLine(strings.ReplaceAll(window.label, " · ", " "), 11, colMuted)
-	value := textLine(fmt.Sprintf("%.0f %%", window.remaining()), 11, colText)
+	// What is left, said so: providers show what is used (Claude's "40% used"
+	// is 60 % left here), and a bare figure read as a wrong one.
+	value := textLine(fmt.Sprintf("%.0f %% left", window.remaining()), 11, colText)
 	value.TextStyle = fyne.TextStyle{Bold: true}
 	track := canvas.NewRectangle(color.NRGBA{R: 0x33, G: 0x33, B: 0x33, A: 0xff})
 	fill := canvas.NewRectangle(colAmber)

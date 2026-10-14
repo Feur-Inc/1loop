@@ -2,6 +2,16 @@ package io.oneloop.remote
 
 import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInVertically
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.ui.draw.alpha
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -245,12 +255,21 @@ private fun span(ms: Long): String {
 // Browser: the page as the computer renders it, a few times a second. A tap
 // clicks where it lands, a vertical drag scrolls the page.
 
+// Control of the page is locked by default: a page watched on the phone is
+// easily touched by mistake. The lock opens it; it closes again after 15
+// minutes without input, and whenever the reader leaves the tab or panel
+// (this view is then disposed, and starts locked the next time).
+private const val RELOCK_MS = 15 * 60 * 1000L
+
 @Composable
 private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
     var picture by remember { mutableStateOf<ImageBitmap?>(null) }
     var address by remember { mutableStateOf(tab.url) }
     var editing by remember { mutableStateOf(false) }
     var typed by remember { mutableStateOf("") }
+    var locked by remember { mutableStateOf(true) }
+    var used by remember { mutableLongStateOf(0L) } // the last input, for the relock
+    var nudge by remember { mutableIntStateOf(0) } // a touch while locked: the lock shakes
     LaunchedEffect(tab.key) {
         while (true) {
             val bytes = app.panelScreen(chat, tab.key)
@@ -261,18 +280,48 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
             delay(if (bytes == null) 1500 else 250)
         }
     }
+    LaunchedEffect(locked, used) {
+        if (!locked) {
+            delay(RELOCK_MS)
+            locked = true
+        }
+    }
     LaunchedEffect(tab.url) { if (!editing) address = tab.url }
+    // Every action on the page goes through here.
+    val act = { action: () -> Unit ->
+        if (locked) nudge++ else {
+            used = System.currentTimeMillis()
+            action()
+        }
+    }
+    val shake = remember { Animatable(0f) }
+    LaunchedEffect(nudge) {
+        if (nudge > 0) for (to in listOf(-6f, 6f, -4f, 4f, 0f)) shake.animateTo(to, tween(55))
+    }
+    val dim by animateFloatAsState(if (locked) 0.4f else 1f, tween(200), label = "dim")
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            RoundButton(Icons.back, Color.Transparent, Palette.muted, size = 36.dp, iconSize = 18.dp, description = "Back") { app.panelInput(chat, tab.key, "back") }
-            RoundButton(Icons.chevronRight, Color.Transparent, Palette.muted, size = 36.dp, iconSize = 18.dp, description = "Forward") { app.panelInput(chat, tab.key, "forward") }
-            RoundButton(Icons.refresh, Color.Transparent, Palette.muted, size = 36.dp, iconSize = 17.dp, description = "Reload") { app.panelInput(chat, tab.key, "reload") }
+            Row(Modifier.alpha(dim), verticalAlignment = Alignment.CenterVertically) {
+                RoundButton(Icons.back, Color.Transparent, Palette.muted, size = 36.dp, iconSize = 18.dp, description = "Back") { act { app.panelInput(chat, tab.key, "back") } }
+                RoundButton(Icons.chevronRight, Color.Transparent, Palette.muted, size = 36.dp, iconSize = 18.dp, description = "Forward") { act { app.panelInput(chat, tab.key, "forward") } }
+                RoundButton(Icons.refresh, Color.Transparent, Palette.muted, size = 36.dp, iconSize = 17.dp, description = "Reload") { act { app.panelInput(chat, tab.key, "reload") } }
+            }
             Spacer(Modifier.width(4.dp))
             Input(
-                address, { address = it; editing = true }, "Address", KeyboardType.Uri, ImeAction.Go, Modifier.weight(1f),
+                address, { address = it; editing = true }, "Address", KeyboardType.Uri, ImeAction.Go, Modifier.weight(1f).alpha(dim), enabled = !locked,
             ) {
-                app.panelInput(chat, tab.key, "navigate", address.trim())
+                act { app.panelInput(chat, tab.key, "navigate", address.trim()) }
                 editing = false
+            }
+            Spacer(Modifier.width(6.dp))
+            val fill by animateColorAsState(if (locked) Palette.raised else Palette.amber, tween(200), label = "lock")
+            RoundButton(
+                if (locked) Icons.lock else Icons.unlock, fill, if (locked) Palette.text else Palette.ink, size = 38.dp, iconSize = 18.dp,
+                description = if (locked) "Unlock control of the page" else "Lock control of the page",
+                modifier = Modifier.graphicsLayer { translationX = shake.value.dp.toPx() },
+            ) {
+                locked = !locked
+                used = System.currentTimeMillis()
             }
         }
         Box(Modifier.weight(1f).fillMaxWidth().background(Palette.code), contentAlignment = Alignment.TopCenter) {
@@ -284,7 +333,7 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
                     shown, "Page", contentScale = ContentScale.FillBounds,
                     modifier = Modifier.aspectRatio(shown.width / shown.height.toFloat())
                         .pointerInput(tab.key) {
-                            detectTapGestures { at -> app.panelInput(chat, tab.key, "tap", x = at.x / size.width, y = at.y / size.height) }
+                            detectTapGestures { at -> act { app.panelInput(chat, tab.key, "tap", x = at.x / size.width, y = at.y / size.height) } }
                         }
                         .pointerInput(tab.key) {
                             var at = Offset.Zero
@@ -292,21 +341,36 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
                                 change.consume()
                                 pending -= drag
                                 if (kotlin.math.abs(pending) > 24f) {
-                                    app.panelInput(chat, tab.key, "scroll", x = at.x / size.width, y = at.y / size.height, dy = pending / size.height)
+                                    val dy = pending / size.height
+                                    act { app.panelInput(chat, tab.key, "scroll", x = at.x / size.width, y = at.y / size.height, dy = dy) }
                                     pending = 0f
                                 }
                             }
                         },
                 )
             }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = locked && shown != null, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp),
+                enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it / 2 }, exit = fadeOut(tween(160)),
+            ) {
+                Row(
+                    Modifier.clip(RoundedCornerShape(50)).background(Palette.popover.copy(alpha = 0.94f))
+                        .border(1.dp, Palette.border, RoundedCornerShape(50)).clickable { locked = false; used = System.currentTimeMillis() }
+                        .padding(horizontal = 14.dp, vertical = 9.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Icon(Icons.lock, null, tint = Palette.amber, modifier = Modifier.size(15.dp))
+                    Text("View only · unlock to control", style = Type.small.copy(color = Palette.text))
+                }
+            }
         }
-        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-            Input(typed, { typed = it }, "Type into the page", KeyboardType.Text, ImeAction.Send, Modifier.weight(1f)) {
-                app.panelInput(chat, tab.key, "line", typed)
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).alpha(dim), verticalAlignment = Alignment.CenterVertically) {
+            Input(typed, { typed = it }, "Type into the page", KeyboardType.Text, ImeAction.Send, Modifier.weight(1f), enabled = !locked) {
+                act { app.panelInput(chat, tab.key, "line", typed) }
                 typed = ""
             }
             Spacer(Modifier.width(8.dp))
-            RoundButton(Icons.close, Palette.raised, Palette.muted, size = 38.dp, iconSize = 16.dp, description = "Erase") { app.panelInput(chat, tab.key, "key", "Backspace") }
+            RoundButton(Icons.close, Palette.raised, Palette.muted, size = 38.dp, iconSize = 16.dp, description = "Erase") { act { app.panelInput(chat, tab.key, "key", "Backspace") } }
         }
     }
 }
@@ -314,10 +378,10 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
 @Composable
 private fun Input(
     value: String, onChange: (String) -> Unit, placeholder: String, keyboard: KeyboardType, action: ImeAction,
-    modifier: Modifier = Modifier, mono: Boolean = false, onDone: () -> Unit,
+    modifier: Modifier = Modifier, mono: Boolean = false, enabled: Boolean = true, onDone: () -> Unit,
 ) {
     BasicTextField(
-        value, onChange, modifier, singleLine = true, textStyle = if (mono) Type.mono else Type.body.copy(fontSize = 14.sp),
+        value, onChange, modifier, enabled = enabled, singleLine = true, textStyle = if (mono) Type.mono else Type.body.copy(fontSize = 14.sp),
         cursorBrush = SolidColor(Palette.amber),
         keyboardOptions = KeyboardOptions(
             keyboardType = keyboard, imeAction = action, autoCorrectEnabled = false,

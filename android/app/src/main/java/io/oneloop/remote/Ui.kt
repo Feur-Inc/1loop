@@ -109,9 +109,9 @@ fun Pill(text: String, primary: Boolean = false, enabled: Boolean = true, icon: 
 }
 
 @Composable
-fun RoundButton(icon: ImageVector, fill: Color, ink: Color, size: Dp = 40.dp, iconSize: Dp = 20.dp, description: String, onClick: () -> Unit) {
+fun RoundButton(icon: ImageVector, fill: Color, ink: Color, size: Dp = 40.dp, iconSize: Dp = 20.dp, description: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
     Box(
-        Modifier.size(size).clip(CircleShape).background(fill).clickable(onClick = onClick),
+        modifier.size(size).clip(CircleShape).background(fill).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, description, tint = ink, modifier = Modifier.size(iconSize)) }
 }

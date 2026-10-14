@@ -21,3 +21,7 @@ shows every change.
 - `internal/build/migrated_notfynedo.go`: thread checks off for every build
   (the `migrated_fynedo` behaviour); they read the goroutine's stack at
   every refresh.
+- `internal/painter/image.go` (scaleImage): no resampling on the CPU for
+  an enlargement or a reduction under a quarter; the GPU's linear filter
+  does as well. A browser frame a pixel off its place was resampled with
+  CatmullRom at every frame (browser panel: 90 % → 39 % of a core).

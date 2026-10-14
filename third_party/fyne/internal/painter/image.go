@@ -51,6 +51,13 @@ func scaleImage(pixels image.Image, scaledW, scaledH int, scale canvas.ImageScal
 	}
 
 	bounds := pixels.Bounds()
+	// 1loop: the GPU filters textures linearly. For an enlargement, or a
+	// reduction of less than a quarter, it does as well as a resampling on
+	// the CPU, which took tens of milliseconds for a browser frame one
+	// pixel off its place (and copied enlarged images whole for nothing).
+	if bounds.Dx()*4 <= scaledW*5 && bounds.Dy()*4 <= scaledH*5 {
+		return pixels
+	}
 	pixW := int(fyne.Min(float32(scaledW), float32(bounds.Dx()))) // don't push more pixels than we have to
 	pixH := int(fyne.Min(float32(scaledH), float32(bounds.Dy()))) // the GL calls will scale this up on GPU.
 	scaledBounds := image.Rect(0, 0, pixW, pixH)

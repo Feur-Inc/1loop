@@ -5,6 +5,7 @@ package main
 //
 //	ONELOOP_BENCH=scroll  scrolls the longest chat down and up for 10 s
 //	ONELOOP_BENCH=idle    waits 10 s with the composer focused (caret blinking)
+//	ONELOOP_BENCH=browser a browser tab in the panel, on a page that animates
 //
 // Then it writes how many frames were drawn, how long each part of a frame
 // took (sizes, paint, present) and the CPU used, to the developer log and
@@ -67,6 +68,16 @@ func (ui *desktopUI) bench(kind string) {
 		})
 	case "idle":
 		fyne.DoAndWait(func() { ui.window.Canvas().Focus(ui.prompt) })
+	case "browser":
+		fyne.DoAndWait(func() { ui.panel.openBrowser() })
+		time.Sleep(2 * time.Second)
+		page := `data:text/html,<body style="margin:0;font:28px sans-serif"><div id=b style="width:200px;height:200px;background:orange"></div><p>` +
+			strings.Repeat("Lorem ipsum dolor sit amet. ", 60) + `</p><script>let t=0;(function f(){t++;b.style.transform="translateX("+(200+180*Math.sin(t/20))+"px)";requestAnimationFrame(f)})()</script>`
+		fyne.DoAndWait(func() {
+			tab := ui.panel.tabs[len(ui.panel.tabs)-1]
+			tab.browser.view.address.SetText(page)
+			tab.browser.view.address.OnSubmitted(page)
+		})
 	}
 	time.Sleep(2 * time.Second)
 	driver.FrameTimes = func(sizes, paint, present time.Duration) {

@@ -10,6 +10,7 @@ import (
 	"image/draw"
 	_ "image/png"
 	"net/url"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"strconv"
@@ -60,7 +61,8 @@ type browserEngine struct {
 	pages     sync.Map
 	userAgent string
 	metadata  *emulation.UserAgentMetadata
-	scale     float64 // the window's scale when Chrome starts: its pages' native density
+	scale     float64       // the window's scale when Chrome starts: its pages' native density
+	closed    chan struct{} // closed once Chrome has exited, after the engine's context ends
 }
 
 func newBrowserEngine(parent context.Context) *browserEngine {
@@ -82,6 +84,18 @@ func (engine *browserEngine) start() error {
 			return
 		}
 		opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(executable), chromedp.Flag("headless", "new"), chromedp.Flag("disable-dev-shm-usage", true), chromedp.Flag("enable-automation", false), chromedp.Flag("disable-blink-features", "AutomationControlled"))
+		// One profile, kept between sessions: the agent's browser stays
+		// logged in, with its cookies and history, until the user clears
+		// it (Settings → General → Browser).
+		if dir := browserProfileDir(); dir != "" {
+			if _, err := os.Stat(dir + ".clear"); err == nil {
+				os.RemoveAll(dir)
+				os.Remove(dir + ".clear")
+			}
+			if os.MkdirAll(dir, 0700) == nil {
+				opts = append(opts, chromedp.UserDataDir(dir))
+			}
+		}
 		if engine.scale > 1 {
 			// Chrome draws its pages at the screen's density itself: frames
 			// are sharp without pinning the visible area (see browserMetrics).
@@ -104,10 +118,27 @@ func (engine *browserEngine) start() error {
 		engine.userAgent = strings.ReplaceAll(native.UserAgent, "HeadlessChrome/", "Chrome/")
 		engine.metadata = native.Metadata
 		opts = append(opts, chromedp.UserAgent(engine.userAgent))
-		alloc, stopAlloc := chromedp.NewExecAllocator(engine.ctx, opts...)
+		// Chrome outlives the engine's context by a moment: it is asked to
+		// close, which writes its cookies and history to the profile, and
+		// killed only if it does not. Killed at once, it lost the session.
+		alloc, stopAlloc := chromedp.NewExecAllocator(context.WithoutCancel(engine.ctx), opts...)
 		root, stopRoot := chromedp.NewContext(alloc, chromedp.WithErrorf(func(f string, a ...any) { devf("browser", f, a...) }))
-		context.AfterFunc(engine.ctx, func() { stopRoot(); stopAlloc() })
+		engine.closed = make(chan struct{})
+		context.AfterFunc(engine.ctx, func() {
+			defer close(engine.closed)
+			closed := make(chan struct{})
+			go func() { chromedp.Cancel(root); close(closed) }() // asks Chrome to close, waits for it
+			select {
+			case <-closed:
+			case <-time.After(3 * time.Second):
+			}
+			stopRoot()
+			stopAlloc()
+		})
 		engine.root = root
+		if engine.err = chromedp.Run(root); engine.err != nil { // Chrome starts here, owned by root
+			return
+		}
 		chromedp.ListenBrowser(root, func(event any) {
 			switch event := event.(type) {
 			case *target.EventTargetCreated:
@@ -162,7 +193,9 @@ func (session *browserSession) start() error {
 		if session.err = session.ctx.Err(); session.err != nil {
 			return
 		}
-		root, cancel := chromedp.NewContext(session.engine.root, chromedp.WithNewBrowserContext())
+		// The browser's own context, the one its profile keeps: a separate
+		// browser context is a private window, whose cookies never reach disk.
+		root, cancel := chromedp.NewContext(session.engine.root)
 		context.AfterFunc(session.ctx, cancel)
 		session.root = root
 		session.err = chromedp.Run(root)
@@ -799,4 +832,16 @@ func (browser *browserPage) mainLoading(frame string, loading bool) {
 	browser.loading = loading
 	browser.mu.Unlock()
 	browser.toPhones(nil)
+}
+
+// waitClosed waits, a few seconds at most, for Chrome to have exited after
+// the engine's context ended: 1loop quitting must not cut its last write.
+func (engine *browserEngine) waitClosed() {
+	if engine == nil || engine.closed == nil {
+		return
+	}
+	select {
+	case <-engine.closed:
+	case <-time.After(4 * time.Second):
+	}
 }

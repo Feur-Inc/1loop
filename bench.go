@@ -42,7 +42,9 @@ func percentiles(values []time.Duration) string {
 	}
 	sorted := append([]time.Duration{}, values...)
 	sort.Slice(sorted, func(i, j int) bool { return sorted[i] < sorted[j] })
-	at := func(p int) time.Duration { return sorted[min(len(sorted)-1, len(sorted)*p/100)].Round(10 * time.Microsecond) }
+	at := func(p int) time.Duration {
+		return sorted[min(len(sorted)-1, len(sorted)*p/100)].Round(10 * time.Microsecond)
+	}
 	return fmt.Sprintf("p50 %v p90 %v p99 %v max %v", at(50), at(90), at(99), sorted[len(sorted)-1].Round(10*time.Microsecond))
 }
 

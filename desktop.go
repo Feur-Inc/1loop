@@ -333,6 +333,7 @@ func (ui *desktopUI) release() {
 	ui.mark.stop()
 	ui.workMark.stop()
 	ui.persist(true)
+	ui.browser.waitClosed() // Chrome writes its profile as it closes
 }
 
 // fitLabel is a single line of text that ellipsises to the space it gets.

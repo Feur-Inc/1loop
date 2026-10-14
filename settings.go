@@ -455,6 +455,10 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		card(settingRow("Tool permissions",
 			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto is Claude Code's own mode: it runs what it judges safe; with any other model it asks instead.",
 			sized(230, mode.row))),
+		sectionTitle("Browser"),
+		card(settingRow("Browsing data",
+			"The agents' browser keeps its cookies and logins, cache, site data and history from one session to the next, in "+browserProfileDir()+". Clear erases all of it.",
+			ui.clearBrowserButton())),
 		sectionTitle("Context"),
 		card(settingRow("Dynamic compaction",
 			"On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way.",
@@ -464,6 +468,24 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 				ui.save()
 			}))),
 	)
+}
+
+func (ui *desktopUI) clearBrowserButton() fyne.CanvasObject {
+	var button *tapRow
+	button = newRow("Clear…", iconTrash, styleOutline, func() {
+		ui.confirm("Clear browsing data?", "Cookies and logins, cache, site data and history of the agents' browser will be erased. Sites will ask to log in again.", "Clear", func() {
+			button.Disable()
+			ui.clearBrowserData(func(err error) {
+				button.Enable()
+				if err != nil {
+					ui.notice("Browsing data", "Some data could not be cleared: "+err.Error())
+					return
+				}
+				ui.notice("Browsing data", "The browser's data is cleared.")
+			})
+		})
+	})
+	return button
 }
 
 // ---------------------------------------------------------------------------

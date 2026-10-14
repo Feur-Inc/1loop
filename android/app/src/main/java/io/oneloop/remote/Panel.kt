@@ -94,6 +94,8 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.input.KeyboardCapitalization
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -364,7 +366,7 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
             Spacer(Modifier.width(4.dp))
             Input(
                 address, { address = it }, "Address", KeyboardType.Uri, ImeAction.Go, Modifier.weight(1f).alpha(dim),
-                enabled = !locked, interaction = addressFocus,
+                enabled = !locked, interaction = addressFocus, selectAll = true,
             ) {
                 act {
                     leaving = page?.url
@@ -487,10 +489,21 @@ private fun LoadingLine(modifier: Modifier) {
 private fun Input(
     value: String, onChange: (String) -> Unit, placeholder: String, keyboard: KeyboardType, action: ImeAction,
     modifier: Modifier = Modifier, mono: Boolean = false, enabled: Boolean = true,
-    interaction: MutableInteractionSource = remember { MutableInteractionSource() }, onDone: () -> Unit,
+    interaction: MutableInteractionSource = remember { MutableInteractionSource() }, selectAll: Boolean = false, onDone: () -> Unit,
 ) {
+    // Kept with its selection: an address is selected whole when the field
+    // is touched, as in a browser, so typing replaces it.
+    var field by remember { mutableStateOf(TextFieldValue(value, TextRange(value.length))) }
+    if (field.text != value) field = TextFieldValue(value, TextRange(value.length))
+    val focused by interaction.collectIsFocusedAsState()
+    LaunchedEffect(focused) {
+        if (focused && selectAll) {
+            delay(30) // after the tap has placed the caret
+            field = field.copy(selection = TextRange(0, field.text.length))
+        }
+    }
     BasicTextField(
-        value, onChange, modifier, enabled = enabled, singleLine = true, interactionSource = interaction, textStyle = if (mono) Type.mono else Type.body.copy(fontSize = 14.sp),
+        field, { field = it; if (it.text != value) onChange(it.text) }, modifier, enabled = enabled, singleLine = true, interactionSource = interaction, textStyle = if (mono) Type.mono else Type.body.copy(fontSize = 14.sp),
         cursorBrush = SolidColor(Palette.amber),
         keyboardOptions = KeyboardOptions(
             keyboardType = keyboard, imeAction = action, autoCorrectEnabled = false,

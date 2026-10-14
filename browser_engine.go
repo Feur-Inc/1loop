@@ -316,9 +316,10 @@ func (browser *browserPage) start() {
 		}
 	}()
 	browser.mu.Lock()
-	visible := browser.visible
+	// A phone may have started following the page while it loaded.
+	wanted := browser.visible || len(browser.phones) > 0
 	browser.mu.Unlock()
-	if visible {
+	if wanted {
 		browser.stream()
 	}
 	go browser.refreshTitle()

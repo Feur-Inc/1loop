@@ -127,6 +127,7 @@ func (c *Canvas) EnsureMinSize() bool {
 				size := obj.Size()
 				expectedSize := minSize.Max(size)
 				if expectedSize != size && size != csize {
+					fyne.ForgetMinSizes()
 					obj.Resize(expectedSize)
 				} else {
 					c.updateLayout(obj)
@@ -138,7 +139,9 @@ func (c *Canvas) EnsureMinSize() bool {
 			theme.PopRenderingTheme()
 		}
 	}
+	fyne.BeginMinSizeMemo()
 	c.WalkTrees(setup, ensureMinSize)
+	fyne.EndMinSizeMemo()
 
 	shouldResize := windowNeedsMinSizeUpdate && (csize.Width < min.Width || csize.Height < min.Height)
 	if shouldResize {
@@ -420,20 +423,41 @@ func (c *Canvas) walkTree(
 	var node, parent, prev *RenderCacheNode
 	node = tree.root
 
+	// link makes n the next child of parent, after the last one walked.
+	link := func(n *RenderCacheNode) {
+		if prev != nil && prev.parent == parent {
+			prev.nextSibling = n
+		} else {
+			parent.firstChild = n
+		}
+	}
 	bc := func(obj fyne.CanvasObject, pos fyne.Position, _ fyne.Position, _ fyne.Size) bool {
+		// 1loop: when the visible children changed (one hidden, one shown),
+		// the nodes after the change are kept: Fyne made all of them anew,
+		// so scrolling a culled list rebuilt and laid out everything below
+		// the first item that left the view.
 		if node != nil && node.obj != obj {
-			if parent.firstChild == node {
-				parent.firstChild = nil
+			found := node.nextSibling
+			for found != nil && found.obj != obj {
+				found = found.nextSibling
 			}
-			node = nil
+			if found != nil { // the objects in between are hidden now
+				for n := node; n != found; {
+					next := n.nextSibling
+					tree.rest(n)
+					n = next
+				}
+				node = found
+			} else { // shown again, or new: before the nodes still to come
+				n := tree.wake(obj, parent)
+				n.nextSibling = node
+				node = n
+			}
+			link(node)
 		}
 		if node == nil {
-			node = &RenderCacheNode{parent: parent, obj: obj}
-			if parent.firstChild == nil {
-				parent.firstChild = node
-			} else {
-				prev.nextSibling = node
-			}
+			node = tree.wake(obj, parent)
+			link(node)
 		}
 		if prev != nil && prev.parent != parent {
 			prev = nil
@@ -451,6 +475,9 @@ func (c *Canvas) walkTree(
 		node = parent
 		parent = node.parent
 		if prev != nil && prev.parent != parent {
+			for n := prev.nextSibling; n != nil; n = n.nextSibling {
+				tree.rest(n) // children no longer visible at the end
+			}
 			prev.nextSibling = nil
 		}
 
@@ -469,6 +496,7 @@ type activatableMenu interface {
 }
 
 func (c *Canvas) updateLayout(objToLayout fyne.CanvasObject) {
+	fyne.ForgetMinSizes() // sizes change: what was measured may not hold
 	switch cont := objToLayout.(type) {
 	case *fyne.Container:
 		if cont.Layout != nil {

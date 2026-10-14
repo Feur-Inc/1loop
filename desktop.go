@@ -246,6 +246,9 @@ func runDesktop(backend *app, root string) {
 	// Shown, named, then run: the desktop learns which application this is
 	// before the window's first frame, when it picks its name and icon.
 	ui.window.Show()
+	if kind := os.Getenv("ONELOOP_BENCH"); kind != "" && dev != nil {
+		go ui.bench(kind)
+	}
 	windowIdentity(ui.window)
 	a.Run()
 }

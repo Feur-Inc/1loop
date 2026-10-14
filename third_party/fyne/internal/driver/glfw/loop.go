@@ -1,6 +1,7 @@
 package glfw
 
 import (
+	"fyne.io/fyne/v2/driver"
 	"runtime"
 	"sync/atomic"
 	"time"
@@ -204,19 +205,25 @@ func (d *gLDriver) destroyWindow(w *window, index int) {
 func (d *gLDriver) repaintWindow(w *window) bool {
 	canvas := w.canvas
 	freed := false
+	started := time.Now()
 	if canvas.EnsureMinSize() {
 		w.shouldExpand = true
 	}
 	freed = canvas.FreeDirtyTextures() > 0
+	sized := time.Now()
 
 	updateGLContext(w)
 	canvas.paint(canvas.Size())
+	painted := time.Now()
 
 	view := w.viewport
 	visible := w.visible
 
 	if view != nil && visible {
 		view.SwapBuffers()
+	}
+	if driver.FrameTimes != nil {
+		driver.FrameTimes(sized.Sub(started), painted.Sub(sized), time.Since(painted))
 	}
 
 	// mark that we have walked the window and don't

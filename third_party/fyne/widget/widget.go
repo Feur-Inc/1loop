@@ -76,7 +76,7 @@ func (w *BaseWidget) MinSize() fyne.Size {
 		return fyne.Size{}
 	}
 
-	return r.MinSize()
+	return fyne.MemoMinSize(impl, r.MinSize)
 }
 
 // Visible returns whether or not this widget should be visible.

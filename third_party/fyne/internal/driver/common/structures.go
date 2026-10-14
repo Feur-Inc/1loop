@@ -46,6 +46,28 @@ func (q *deduplicatedObjectQueue) Len() uint64 {
 
 type renderCacheTree struct {
 	root *RenderCacheNode
+	// 1loop: the nodes of objects that left the visible tree, by object,
+	// so an object shown again gets its node (and known minimum size)
+	// back instead of a new one that makes its parent lay out again.
+	resting map[fyne.CanvasObject]*RenderCacheNode
+}
+
+// rest keeps a node whose object is no longer visible.
+func (t *renderCacheTree) rest(node *RenderCacheNode) {
+	if t.resting == nil || len(t.resting) > 8192 {
+		t.resting = make(map[fyne.CanvasObject]*RenderCacheNode)
+	}
+	t.resting[node.obj] = node
+}
+
+// wake returns the node an object had when last visible, or a new one.
+func (t *renderCacheTree) wake(obj fyne.CanvasObject, parent *RenderCacheNode) *RenderCacheNode {
+	if node, ok := t.resting[obj]; ok {
+		delete(t.resting, obj)
+		node.parent, node.nextSibling = parent, nil
+		return node
+	}
+	return &RenderCacheNode{parent: parent, obj: obj}
 }
 
 // RenderCacheNode represents a node in a render cache tree.

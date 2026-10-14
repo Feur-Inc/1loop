@@ -81,6 +81,13 @@ func (c *Container) Hide() {
 // MinSize calculates the minimum size of c.
 // This is delegated to the [Container.Layout], if specified, otherwise it will be calculated.
 func (c *Container) MinSize() Size {
+	if minSizeMemo != nil {
+		return MemoMinSize(c, c.minSize)
+	}
+	return c.minSize()
+}
+
+func (c *Container) minSize() Size {
 	if c.Layout != nil {
 		return c.Layout.MinSize(c.Objects)
 	}

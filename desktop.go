@@ -191,6 +191,7 @@ func runDesktop(backend *app, root string) {
 			os.Setenv("FYNE_DISABLE_DPI_DETECTION", "1")
 		}
 	}
+	cheapCacheClock()
 	a := fyneapp.NewWithID("io.1loop.desktop")
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
@@ -363,7 +364,7 @@ func (renderer *fitLabelRenderer) Layout(size fyne.Size) {
 	renderer.fitLabel.label.Move(fyne.NewPos(0, (size.Height-renderer.fitLabel.label.MinSize().Height)/2))
 }
 func (renderer *fitLabelRenderer) MinSize() fyne.Size {
-	return fyne.NewSize(24, fyne.MeasureText("Ag", renderer.fitLabel.size, fyne.TextStyle{}).Height)
+	return fyne.NewSize(24, textSize("Ag", renderer.fitLabel.size, fyne.TextStyle{}).Height)
 }
 func (renderer *fitLabelRenderer) Refresh() {
 	renderer.fitLabel.label.Color = renderer.fitLabel.color
@@ -664,7 +665,7 @@ func codeBlock(text string, maxHeight float32) fyne.CanvasObject {
 	code := codeText(text)
 	scroll := container.NewScroll(code)
 	lines := float32(strings.Count(text, "\n") + 1)
-	line := fyne.MeasureText("Ag", theme.TextSize(), fyne.TextStyle{Monospace: true}).Height + theme.LineSpacing()
+	line := textSize("Ag", theme.TextSize(), fyne.TextStyle{Monospace: true}).Height + theme.LineSpacing()
 	scroll.SetMinSize(fyne.NewSize(0, fyne.Min(maxHeight, fyne.Max(48, lines*line+16))))
 	return surface(scroll, colCode, colBorderSoft, 10, 4)
 }

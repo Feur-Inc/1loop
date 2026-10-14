@@ -113,6 +113,14 @@ var (
 	measures   = map[measureKey]measured{}
 )
 
+// textSize is fyne.MeasureText through the same cache. Fyne's own cache
+// reads the clock at every lookup, which costs microseconds on machines
+// that time with HPET, and buttons measure their text at every frame.
+func textSize(text string, size float32, style fyne.TextStyle) fyne.Size {
+	width, height, _ := measureText(text, size, style)
+	return fyne.NewSize(width, height)
+}
+
 func measureText(text string, size float32, style fyne.TextStyle) (width, height, base float32) {
 	key := measureKey{text, size, style}
 	measuresMu.Lock()

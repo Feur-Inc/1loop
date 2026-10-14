@@ -573,7 +573,7 @@ func newOutputView(text string) *outputView {
 }
 
 func outputCell() fyne.Size {
-	return fyne.MeasureText("M", outputTextSize, fyne.TextStyle{Monospace: true})
+	return textSize("M", outputTextSize, fyne.TextStyle{Monospace: true})
 }
 
 func outputRowHeight() float32 { return outputCell().Height + 3 }

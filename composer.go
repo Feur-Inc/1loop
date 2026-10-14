@@ -73,7 +73,7 @@ func (entry *chatEntry) fit() {
 	segment.Style.TextStyle = entry.TextStyle
 	entry.measure.Refresh()
 	entry.measure.Resize(fyne.NewSize(width, 1))
-	line := fyne.MeasureText("M", th.Size(theme.SizeNameText), entry.TextStyle).Height
+	line := textSize("M", th.Size(theme.SizeNameText), entry.TextStyle).Height
 	rows := max(1, min(promptMaxRows, int(math.Round(float64((entry.measure.MinSize().Height-2*th.Size(theme.SizeNameInnerPadding))/line)))))
 	if rows != entry.rows {
 		entry.rows = rows
@@ -203,7 +203,7 @@ func (attachButtonLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	input, btn := objects[0], objects[1]
 	btnSize := btn.MinSize()
 	btn.Resize(btnSize)
-	line := fyne.MeasureText("Ag", theme.TextSize(), fyne.TextStyle{}).Height
+	line := textSize("Ag", theme.TextSize(), fyne.TextStyle{}).Height
 	btn.Move(fyne.NewPos(0, fyne.Max(0, theme.InnerPadding()+line/2-btnSize.Height/2)))
 	reserved := btnSize.Width + attachButtonGap
 	input.Resize(fyne.NewSize(size.Width-reserved, size.Height))

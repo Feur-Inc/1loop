@@ -294,7 +294,7 @@ type toolRowRenderer struct {
 const toolRowPadX, toolRowIcon = float32(8), float32(16)
 
 func (renderer *toolRowRenderer) MinSize() fyne.Size {
-	height := fyne.MeasureText("Ag", 13.5, fyne.TextStyle{}).Height + 12
+	height := textSize("Ag", 13.5, fyne.TextStyle{}).Height + 12
 	return fyne.NewSize(120, height)
 }
 

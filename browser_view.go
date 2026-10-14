@@ -639,7 +639,7 @@ func newAgentCursor() *fyne.Container {
 	arrow.Resize(fyne.NewSize(26, 26))
 	label := canvas.NewText("1loop", color.NRGBA{R: 0x11, G: 0x11, B: 0x11, A: 0xff})
 	label.TextSize, label.TextStyle = 9.5, fyne.TextStyle{Bold: true}
-	size := fyne.MeasureText(label.Text, label.TextSize, label.TextStyle)
+	size := textSize(label.Text, label.TextSize, label.TextStyle)
 	pill := canvas.NewRectangle(colAmber)
 	pill.CornerRadius = (size.Height + 3) / 2
 	pill.Move(fyne.NewPos(17, 21))

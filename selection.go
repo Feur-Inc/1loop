@@ -194,7 +194,7 @@ func (piece selPiece) width(n int) float32 {
 	if n >= len(piece.runes) || piece.solid {
 		return piece.size.Width
 	}
-	return fyne.MeasureText(string(piece.runes[:n]), piece.textSize, piece.style).Width
+	return textSize(string(piece.runes[:n]), piece.textSize, piece.style).Width
 }
 
 // locate is the text position nearest to a point of the layer: on the row

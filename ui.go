@@ -221,7 +221,7 @@ func surface(content fyne.CanvasObject, fill, stroke color.Color, radius, pad fl
 }
 
 func fitText(text string, size float32, style fyne.TextStyle, width float32) string {
-	if width <= 0 || (len(text) <= 600 && fyne.MeasureText(text, size, style).Width <= width) {
+	if width <= 0 || (len(text) <= 600 && textSize(text, size, style).Width <= width) {
 		return text
 	}
 	runes := []rune(text)
@@ -231,7 +231,7 @@ func fitText(text string, size float32, style fyne.TextStyle, width float32) str
 	low, high := 0, len(runes)
 	for low < high {
 		mid := (low + high + 1) / 2
-		if fyne.MeasureText(string(runes[:mid])+"…", size, style).Width <= width {
+		if textSize(string(runes[:mid])+"…", size, style).Width <= width {
 			low = mid
 		} else {
 			high = mid - 1
@@ -502,13 +502,13 @@ func (renderer *tapRowRenderer) metrics() (padX, padY, iconSize, gap float32) {
 
 func (renderer *tapRowRenderer) MinSize() fyne.Size {
 	padX, padY, iconSize, gap := renderer.metrics()
-	textHeight := fyne.MeasureText("Ag", renderer.row.size, fyne.TextStyle{}).Height
+	textHeight := textSize("Ag", renderer.row.size, fyne.TextStyle{}).Height
 	if renderer.row.style == styleIcon || renderer.row.style == styleWindow {
 		return fyne.NewSize(iconSize+2*padX, iconSize+2*padY)
 	}
 	height := fyne.Max(textHeight, iconSize) + 2*padY
 	if renderer.row.detail != "" {
-		height += fyne.MeasureText("Ag", 12, fyne.TextStyle{}).Height + 1
+		height += textSize("Ag", 12, fyne.TextStyle{}).Height + 1
 	}
 	width := 2 * padX
 	if renderer.row.icon != nil {
@@ -521,10 +521,10 @@ func (renderer *tapRowRenderer) MinSize() fyne.Size {
 		// Rows that fill a column truncate instead of forcing it wider.
 		return fyne.NewSize(width+40, height)
 	}
-	width += fyne.Max(fyne.MeasureText(renderer.row.text, renderer.row.size, fyne.TextStyle{}).Width,
-		fyne.MeasureText(renderer.row.detail, 12, fyne.TextStyle{}).Width) + 2
+	width += fyne.Max(textSize(renderer.row.text, renderer.row.size, fyne.TextStyle{}).Width,
+		textSize(renderer.row.detail, 12, fyne.TextStyle{}).Width) + 2
 	if renderer.row.trailing != "" {
-		width += gap + fyne.MeasureText(renderer.row.trailing, renderer.row.size-1, fyne.TextStyle{}).Width
+		width += gap + textSize(renderer.row.trailing, renderer.row.size-1, fyne.TextStyle{}).Width
 	}
 	if renderer.row.badge != nil {
 		width += gap + iconSize

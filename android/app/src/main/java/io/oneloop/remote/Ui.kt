@@ -7,6 +7,8 @@ import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -428,8 +430,18 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
         }
         Composer(app, running)
     }
+    // The panel slides in from the right, over the chat, as on the computer.
     val chat = app.current
-    if (panel && chat != null) PanelScreen(app, chat) { panel = false }
+    var shownChat by remember { mutableStateOf(chat) }
+    if (chat != null) shownChat = chat
+    AnimatedVisibility(
+        panel && chat != null,
+        // Opaque and only moved: no transparency to composite at each frame.
+        enter = slideInHorizontally(tween(300, easing = CssEase)) { it },
+        exit = slideOutHorizontally(tween(240, easing = CssEase)) { it },
+    ) {
+        shownChat?.let { PanelScreen(app, it) { panel = false } }
+    }
     }
     tool?.let { ToolSheet(it) { tool = null } }
 }
@@ -465,7 +477,7 @@ private fun Transcript(app: RemoteApp, running: Boolean, onTool: (Item) -> Unit)
         verticalArrangement = Arrangement.spacedBy(12.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        itemsIndexed(items) { index, item ->
+        itemsIndexed(items, contentType = { _, item -> item.kind }) { index, item ->
             Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
                 when (item.kind) {
                     "user" -> UserBubble(item)

@@ -2,6 +2,7 @@ package io.oneloop.remote
 
 import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
@@ -76,6 +77,9 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.unit.IntSize
+import androidx.compose.runtime.derivedStateOf
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
@@ -143,8 +147,9 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.borderSoft))
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            val tab = tabs.firstOrNull { it.key == selected }
-            key(tab?.key ?: "tasks") {
+            val shown = tabs.firstOrNull { it.key == selected }?.key ?: "tasks"
+            Crossfade(shown, animationSpec = tween(180), label = "tab") { key ->
+                val tab = tabs.firstOrNull { it.key == key }
                 when (tab?.kind) {
                     "browser" -> BrowserView(app, chat, tab)
                     "terminal" -> TerminalView(app, chat, tab)
@@ -288,6 +293,8 @@ private class Touch(val at: Offset, val id: Long) {
     val grow = Animatable(0f)
 }
 
+private val hardware = BitmapFactory.Options().apply { inPreferredConfig = android.graphics.Bitmap.Config.HARDWARE }
+
 @Composable
 private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
     var picture by remember { mutableStateOf<ImageBitmap?>(null) }
@@ -309,7 +316,8 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
             runCatching {
                 app.panelStream(chat, tab.key) { kind, payload ->
                     when (kind) {
-                        'F' -> BitmapFactory.decodeByteArray(payload, 0, payload.size)?.asImageBitmap()?.let { frame ->
+                        // Decoded straight into the GPU's memory: nothing to upload when drawn.
+                        'F' -> BitmapFactory.decodeByteArray(payload, 0, payload.size, hardware)?.asImageBitmap()?.let { frame ->
                             withContext(Dispatchers.Main) { picture = frame; live = true }
                         }
                         'S' -> runCatching { pageState(JSONObject(String(payload))) }.getOrNull()?.let { state ->
@@ -376,13 +384,16 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
             }
         }
         Box(Modifier.weight(1f).fillMaxWidth().background(Palette.code), contentAlignment = Alignment.TopCenter) {
-            val shown = picture
+            // Each new frame is read in the draw phase only: the view is not
+            // composed again for it, only its picture painted.
+            val ratio by remember { derivedStateOf { picture?.let { it.width / it.height.toFloat() } } }
+            val shown = ratio
             if (shown == null) WorkRing("wait", 34.dp, Modifier.align(Alignment.Center))
-            else Box(Modifier.aspectRatio(shown.width / shown.height.toFloat())) {
+            else Box(Modifier.aspectRatio(shown)) {
                 var pending by remember { mutableFloatStateOf(0f) }
-                Image(
-                    shown, "Page", contentScale = ContentScale.FillBounds,
-                    modifier = Modifier.fillMaxSize()
+                Box(
+                    Modifier.fillMaxSize()
+                        .drawBehind { picture?.let { drawImage(it, dstSize = IntSize(size.width.toInt(), size.height.toInt())) } }
                         .pointerInput(tab.key) {
                             detectTapGestures { at ->
                                 act {

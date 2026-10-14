@@ -29,4 +29,7 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.foundation:foundation")
     implementation("androidx.activity:activity-compose:1.13.0")
+    // Applies the compilation profiles Compose ships with at install time:
+    // the interface runs compiled from the first launch, without warming up.
+    implementation("androidx.profileinstaller:profileinstaller:1.4.1")
 }

@@ -139,16 +139,16 @@ fun Markdown(text: String, modifier: Modifier = Modifier) {
     SelectionContainer(modifier) {
         Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
             for (group in groups) Column(verticalArrangement = Arrangement.spacedBy(4.dp)) { for (block in group) when (block) {
-                is Block.Text -> Text(inline(block.text), style = Type.body)
+                is Block.Text -> Text(remember(block.text) { inline(block.text) }, style = Type.body)
                 is Block.Heading -> Text(
-                    inline(block.text), style = Type.body.copy(
+                    remember(block.text) { inline(block.text) }, style = Type.body.copy(
                         fontWeight = FontWeight.SemiBold,
                         fontSize = when (block.level) { 1 -> 20.sp; 2 -> 18.sp; else -> 16.sp },
                     ),
                 )
                 is Block.ListItem -> Row(Modifier.padding(start = (block.indent * 16).dp)) {
                     Text(block.marker, style = Type.body.copy(color = Palette.muted), modifier = Modifier.width(22.dp))
-                    Text(inline(block.text), style = Type.body)
+                    Text(remember(block.text) { inline(block.text) }, style = Type.body)
                 }
                 is Block.Code -> CodeWell(block.text, block.lang.ifEmpty { "code" })
                 is Block.Table -> Table(block.rows)
@@ -168,7 +168,7 @@ fun CodeWell(code: String, caption: String, diff: Boolean = false) {
             CopyChip { code }
         }
         Text(
-            if (diff) diffText(code) else AnnotatedString(code), style = Type.mono, softWrap = false,
+            remember(code, diff) { if (diff) diffText(code) else AnnotatedString(code) }, style = Type.mono, softWrap = false,
             modifier = Modifier.horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
         )
     }

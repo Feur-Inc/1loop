@@ -61,6 +61,7 @@ func (panel *toolPanel) browserTabAttached(chat *conversation, info browserInfo,
 	info.PixelRatio = float64(panel.ui.window.Canvas().Scale())
 	if panel.ui.browser == nil {
 		panel.ui.browser = newBrowserEngine(panel.ui.ctx)
+		panel.ui.browser.scale = float64(panel.ui.window.Canvas().Scale())
 	}
 	var session *browserSession
 	for _, tab := range tabs {

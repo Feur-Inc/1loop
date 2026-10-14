@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -59,6 +60,7 @@ type browserEngine struct {
 	pages     sync.Map
 	userAgent string
 	metadata  *emulation.UserAgentMetadata
+	scale     float64 // the window's scale when Chrome starts: its pages' native density
 }
 
 func newBrowserEngine(parent context.Context) *browserEngine {
@@ -80,6 +82,11 @@ func (engine *browserEngine) start() error {
 			return
 		}
 		opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(executable), chromedp.Flag("headless", "new"), chromedp.Flag("disable-dev-shm-usage", true), chromedp.Flag("enable-automation", false), chromedp.Flag("disable-blink-features", "AutomationControlled"))
+		if engine.scale > 1 {
+			// Chrome draws its pages at the screen's density itself: frames
+			// are sharp without pinning the visible area (see browserMetrics).
+			opts = append(opts, chromedp.Flag("force-device-scale-factor", strconv.FormatFloat(engine.scale, 'f', -1, 64)))
+		}
 		// Read native client hints before a process-wide UA override suppresses
 		// them. The process-wide UA also covers a popup's very first request.
 		profileAlloc, stopProfileAlloc := chromedp.NewExecAllocator(engine.ctx, opts...)
@@ -539,10 +546,10 @@ func (browser *browserPage) stream() {
 		visible, watched := browser.visible, len(browser.phones) > 0
 		browser.mu.Unlock()
 		if visible || watched {
-			if visible {
-				if err := page.BringToFront().Do(ctx); err != nil {
-					return err
-				}
+			// Chrome paints the tabs behind the front one lazily: a page
+			// watched there showed blank bands where it had not painted yet.
+			if err := page.BringToFront().Do(ctx); err != nil {
+				return err
 			}
 			return page.StartScreencast().WithFormat(page.ScreencastFormatPng).WithEveryNthFrame(1).Do(ctx)
 		}
@@ -656,7 +663,10 @@ func (browser *browserPage) evaluate(ctx context.Context, expression string) (js
 func browserMetrics(width, height int, ratio float64, mobile bool) *emulation.SetDeviceMetricsOverrideParams {
 	// A DPR override alone leaves the screencast surface at CSS resolution.
 	// Resize that surface as well, without changing the page's CSS viewport.
-	return emulation.SetDeviceMetricsOverride(int64(width), int64(height), ratio, mobile).WithViewport(&page.Viewport{Width: float64(width), Height: float64(height), Scale: 1})
+	// No Viewport here: it pins the visible area to a place in the
+	// document, so a scrolled page showed blank bands and shifted content.
+	// Sharp frames come from Chrome's own scale (browserEngine.scale).
+	return emulation.SetDeviceMetricsOverride(int64(width), int64(height), ratio, mobile)
 }
 
 func (browser *browserPage) resize(ctx context.Context, width, height int, mobile, adaptive bool, pixelRatio ...float64) error {

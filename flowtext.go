@@ -13,6 +13,7 @@ import (
 	"image/color"
 	"net/url"
 	"strings"
+	"sync"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -40,6 +41,7 @@ type flowText struct {
 	bold   bool    // a heading: everything is bold
 	mono   bool    // code: nothing wraps, spaces count
 	center bool    // a formula on its own line
+	tight  bool    // lines as close as a Fyne label's (user messages)
 	marker string  // a list item's bullet or number, drawn in the margin
 	hang   float32 // that margin
 	tail   string  // what follows the block in copied text
@@ -77,6 +79,7 @@ type atom struct {
 	height float32
 	base   float32 // from its top down to the baseline
 	lead   float32 // empty room before the text (a code chip's padding)
+	trail  float32 // and after it
 	space  bool
 	hard   bool
 	image  *mathPicture
@@ -95,9 +98,37 @@ func (f *flowText) look(s span) (fyne.TextStyle, float32, color.Color) {
 	return style, size, ink
 }
 
+type measureKey struct {
+	text  string
+	size  float32
+	style fyne.TextStyle
+}
+
+type measured struct{ width, height, base float32 }
+
+// measures keeps the size of every word drawn: shaping one is the costly
+// part of opening a chat, and the same words come back all the time.
+var (
+	measuresMu sync.Mutex
+	measures   = map[measureKey]measured{}
+)
+
 func measureText(text string, size float32, style fyne.TextStyle) (width, height, base float32) {
-	bounds, baseline := fyne.CurrentApp().Driver().RenderedTextSize(text, size, style, nil)
-	return bounds.Width, bounds.Height, baseline
+	key := measureKey{text, size, style}
+	measuresMu.Lock()
+	m, ok := measures[key]
+	measuresMu.Unlock()
+	if !ok {
+		bounds, baseline := fyne.CurrentApp().Driver().RenderedTextSize(text, size, style, nil)
+		m = measured{bounds.Width, bounds.Height, baseline}
+		measuresMu.Lock()
+		if len(measures) > 200000 {
+			clear(measures)
+		}
+		measures[key] = m
+		measuresMu.Unlock()
+	}
+	return m.width, m.height, m.base
 }
 
 // atoms cuts the spans into words and spaces, measured.
@@ -138,6 +169,8 @@ func (f *flowText) atoms() []atom {
 				out[first].lead = flowChipPad
 				out[first].width += flowChipPad
 				out[len(out)-1].width += flowChipPad
+				out[len(out)-1].trail = flowChipPad
+				out[len(out)-1].trail = flowChipPad
 			}
 			continue
 		}
@@ -218,10 +251,12 @@ func (f *flowText) lines(atoms []atom, width float32) []flowLine {
 			head.text = string(runes[:fit])
 			head.width, _, _ = measureText(head.text, a.size, a.style)
 			head.width += a.lead
+			head.trail = 0
 			line = append(line, head)
 			flush(false)
 			a.text, a.lead = string(runes[fit:]), 0
 			a.width, _, _ = measureText(a.text, a.size, a.style)
+			a.width += a.trail
 		}
 		line = append(line, a)
 		x += a.width
@@ -250,6 +285,9 @@ func (f *flowText) flow(width float32) {
 	leading := float32(int(f.size*flowLeading + 0.5))
 	if f.mono {
 		leading = 3
+	}
+	if f.tight {
+		leading = 0
 	}
 	room := fyne.Max(width-f.hang, 40)
 	lines := f.lines(atoms, room)
@@ -329,7 +367,9 @@ func (f *flowText) flow(width float32) {
 					drawn := canvas.NewText(text, first.ink)
 					drawn.TextSize, drawn.TextStyle = first.size, first.style
 					drawn.Move(at)
-					textWidth, _, _ = measureText(text, first.size, first.style)
+					// Its words are measured already: measuring the whole run
+					// again, at every width laid out, was most of the cost.
+					textWidth = runWidth - first.lead - line.atoms[j-1].trail
 					drawn.Resize(fyne.NewSize(textWidth, first.height))
 					texts = append(texts, drawn)
 				}

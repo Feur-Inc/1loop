@@ -383,28 +383,48 @@ func (rr *toolRowRenderer) Destroy() {}
 // Transcript
 
 // bubbleLayout sizes a user message to its text and pins it to the right.
+// The text's natural width is measured once: a long message made every
+// layout measure each of its lines again.
 type bubbleLayout struct {
-	text  string
-	chrom float32
+	text    *flowText // nil for a message of images only
+	chrom   float32
+	natural float32
+	known   bool
 }
 
-func (l bubbleLayout) width(available float32) float32 {
-	natural := float32(0)
-	for _, line := range strings.Split(l.text, "\n") {
-		natural = fyne.Max(natural, fyne.MeasureText(line, theme.TextSize(), fyne.TextStyle{}).Width)
+func (l *bubbleLayout) width(available float32) float32 {
+	if !l.known {
+		l.known = true
+		if l.text != nil {
+			l.natural, _ = l.text.extent()
+		}
 	}
-	return fyne.Min(natural+l.chrom+2, available*0.78)
+	return fyne.Min(l.natural+l.chrom+2, available*0.78)
 }
 
-func (l bubbleLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+func (l *bubbleLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	width := l.width(size.Width)
 	objects[0].Resize(fyne.NewSize(width, size.Height))
 	objects[0].Resize(fyne.NewSize(width, objects[0].MinSize().Height))
 	objects[0].Move(fyne.NewPos(size.Width-width, 0))
 }
 
-func (l bubbleLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+func (l *bubbleLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	return fyne.NewSize(0, objects[0].MinSize().Height)
+}
+
+// plainSpans is text as written: its line breaks kept, no Markdown read.
+func plainSpans(text string) []span {
+	var out []span
+	for i, line := range strings.Split(text, "\n") {
+		if i > 0 {
+			out = append(out, span{hard: true})
+		}
+		if line != "" {
+			out = append(out, span{text: line})
+		}
+	}
+	return out
 }
 
 // appendItem draws chat.Items[index] at the end of the transcript. Answers
@@ -445,21 +465,24 @@ func (u *desktopUI) appendItem(chat *conversation, index int) {
 		if len(pics) > 0 {
 			content.Add(container.New(layout.NewCustomPaddedHBoxLayout(6), pics...))
 		}
+		var text *flowText
 		if item.Text != "" {
-			label := widget.NewLabel(item.Text)
-			label.Wrapping = fyne.TextWrapWord
-			label.Selectable = true
-			content.Add(label)
+			// Fyne's wrapped label measured the text again for every
+			// break it tried: a chat full of messages took seconds to open.
+			text = newFlowText(plainSpans(item.Text), theme.TextSize(), colText)
+			text.tail, text.tight = "", true
+			content.Add(padded(theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(),
+				container.NewStack(text, newSelectLayer(u, text))))
 		}
-		bubble := container.New(bubbleLayout{text: item.Text, chrom: 2*theme.InnerPadding() + 4}, surface(content, colRaised, nil, 14, 2))
+		bubble := container.New(&bubbleLayout{text: text, chrom: 2*theme.InnerPadding() + 4}, surface(content, colRaised, nil, 14, 2))
 		copyRow := container.NewHBox(layout.NewSpacer(), copyChip(func() string { return item.Text }),
 			newRow("Edit", iconPencil, styleChip, func() { u.editMessage(chat, index) }), u.versionControls(chat, item.ID))
 		u.place(container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, copyRow))
 	case "error":
-		label := widget.NewLabel(item.Text)
-		label.Wrapping = fyne.TextWrapWord
-		label.Importance = widget.DangerImportance
-		u.place(container.NewVBox(label, u.responseControls(chat, index)))
+		text := newFlowText(plainSpans(item.Text), theme.TextSize(), colDanger)
+		text.tail, text.tight = "", true
+		u.place(container.NewVBox(padded(theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(),
+			container.NewStack(text, newSelectLayer(u, text))), u.responseControls(chat, index)))
 	case "note":
 		icon := canvas.NewImageFromResource(tinted(iconCompact, colFaint))
 		icon.SetMinSize(fyne.NewSquareSize(15))

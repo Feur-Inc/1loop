@@ -246,9 +246,12 @@ func (v *browserView) frame(img image.Image) {
 		if v.page.life.Err() != nil {
 			return
 		}
+		resized := v.screen.image.Image == nil || v.screen.image.Image.Bounds() != latest.Bounds()
 		v.screen.image.Image = latest
 		v.screen.image.Refresh()
-		v.screen.Refresh()
+		if resized {
+			v.screen.Refresh()
+		}
 	})
 }
 func (v *browserView) changed(info browserInfo) {
@@ -438,7 +441,7 @@ func (s *browserScreen) TypedRune(r rune) {
 		return
 	}
 	text := string(r)
-	s.view.page.async(func(ctx context.Context) error { return s.view.page.run(ctx, input.InsertText(text)) })
+	s.view.page.input(input.InsertText(text))
 }
 func browserKey(key fyne.KeyName) string {
 	switch key {
@@ -474,19 +477,16 @@ func browserKey(key fyne.KeyName) string {
 func (s *browserScreen) TypedKey(e *fyne.KeyEvent) {
 	if key := browserKey(e.Name); key != "" {
 		modifiers := s.modifiers
-		s.view.page.async(func(ctx context.Context) error {
-			return s.view.page.run(ctx, chromedp.KeyEvent(key, func(p *input.DispatchKeyEventParams) *input.DispatchKeyEventParams {
-				p.Modifiers = input.Modifier(modifiers)
-				return p
-			}))
-		})
+		s.view.page.input(chromedp.KeyEvent(key, func(p *input.DispatchKeyEventParams) *input.DispatchKeyEventParams {
+			p.Modifiers = input.Modifier(modifiers)
+			return p
+		}))
 	}
 }
 func (s *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 	switch shortcut.(type) {
 	case *fyne.ShortcutPaste:
-		text := s.view.panel.u.window.Clipboard().Content()
-		s.view.page.async(func(ctx context.Context) error { return s.view.page.run(ctx, input.InsertText(text)) })
+		s.view.page.input(input.InsertText(s.view.panel.u.window.Clipboard().Content()))
 	case *fyne.ShortcutCopy, *fyne.ShortcutCut:
 		_, cut := shortcut.(*fyne.ShortcutCut)
 		s.view.page.async(func(ctx context.Context) error {
@@ -505,9 +505,8 @@ func (s *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 			return err
 		})
 	case *fyne.ShortcutSelectAll:
-		s.view.page.async(func(ctx context.Context) error {
-			return s.view.page.run(ctx, input.DispatchKeyEvent(input.KeyDown).WithKey("a").WithModifiers(2).WithWindowsVirtualKeyCode(65), input.DispatchKeyEvent(input.KeyUp).WithKey("a").WithModifiers(2).WithWindowsVirtualKeyCode(65))
-		})
+		s.view.page.input(input.DispatchKeyEvent(input.KeyDown).WithKey("a").WithModifiers(2).WithWindowsVirtualKeyCode(65))
+		s.view.page.input(input.DispatchKeyEvent(input.KeyUp).WithKey("a").WithModifiers(2).WithWindowsVirtualKeyCode(65))
 	}
 }
 func (s *browserScreen) MouseIn(e *desktop.MouseEvent) { s.MouseMoved(e) }
@@ -517,13 +516,7 @@ func (s *browserScreen) MouseMoved(e *desktop.MouseEvent) {
 	if !ok {
 		return
 	}
-	buttons := s.buttons
-	select {
-	case s.view.page.jobs <- func(ctx context.Context) error {
-		return s.view.page.run(ctx, input.DispatchMouseEvent(input.MouseMoved, x, y).WithButtons(buttons))
-	}:
-	default:
-	}
+	s.view.page.pointer(x, y, s.buttons)
 }
 func (s *browserScreen) MouseDown(e *desktop.MouseEvent) {
 	s.view.panel.u.window.Canvas().Focus(s)
@@ -547,18 +540,14 @@ func (s *browserScreen) mouse(e *desktop.MouseEvent, kind input.MouseType) {
 	if e.Button == desktop.MouseButtonTertiary {
 		button = input.Middle
 	}
-	s.view.page.async(func(ctx context.Context) error {
-		return s.view.page.run(ctx, input.DispatchMouseEvent(kind, x, y).WithButton(button).WithClickCount(1))
-	})
+	s.view.page.input(input.DispatchMouseEvent(kind, x, y).WithButton(button).WithClickCount(1))
 }
 func (s *browserScreen) Scrolled(e *fyne.ScrollEvent) {
 	x, y, ok := s.coords(e.Position)
 	if !ok {
 		return
 	}
-	s.view.page.async(func(ctx context.Context) error {
-		return s.view.page.run(ctx, input.DispatchMouseEvent(input.MouseWheel, x, y).WithDeltaX(float64(-e.Scrolled.DX)*20).WithDeltaY(float64(-e.Scrolled.DY)*20))
-	})
+	s.view.page.input(input.DispatchMouseEvent(input.MouseWheel, x, y).WithDeltaX(float64(-e.Scrolled.DX) * 20).WithDeltaY(float64(-e.Scrolled.DY) * 20))
 }
 
 func (p *toolPanel) syncBrowsers() {

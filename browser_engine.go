@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
+	"image/draw"
 	_ "image/png"
 	"net/url"
 	"os/exec"
@@ -167,6 +168,10 @@ type browserPage struct {
 	ctx          context.Context // published when ready closes
 	gate         chan struct{}
 	jobs         chan func(context.Context) error
+	inputMu      sync.Mutex
+	inputs       []chromedp.Action               // clicks, keys and wheel, in order
+	move         *input.DispatchMouseEventParams // the latest pointer position not sent yet
+	inputWake    chan struct{}
 	frames       chan *page.EventScreencastFrame
 	mu           sync.Mutex
 	info         browserInfo
@@ -201,7 +206,7 @@ func newBrowserPage(s *browserSession, info browserInfo) *browserPage {
 		info.PixelRatio = 1
 	}
 	life, cancel := context.WithCancel(s.ctx)
-	b := &browserPage{session: s, life: life, cancel: cancel, ready: make(chan struct{}), gate: make(chan struct{}, 1), jobs: make(chan func(context.Context) error, 64), frames: make(chan *page.EventScreencastFrame, 1), info: info}
+	b := &browserPage{session: s, life: life, cancel: cancel, ready: make(chan struct{}), gate: make(chan struct{}, 1), jobs: make(chan func(context.Context) error, 64), frames: make(chan *page.EventScreencastFrame, 1), inputWake: make(chan struct{}, 1), info: info}
 	s.refs++
 	return b
 }
@@ -275,6 +280,7 @@ func (b *browserPage) start() {
 	}
 	close(b.ready)
 	go b.frameLoop()
+	go b.inputLoop()
 	go func() {
 		for {
 			select {
@@ -363,6 +369,12 @@ func (b *browserPage) frameLoop() {
 			}
 			img, _, err := image.Decode(bytes.NewReader(data))
 			if err == nil && b.onFrame != nil {
+				if _, ok := img.(*image.RGBA); !ok {
+					// Converted here rather than by the painter, on the UI thread.
+					rgba := image.NewRGBA(img.Bounds())
+					draw.Draw(rgba, rgba.Bounds(), img, img.Bounds().Min, draw.Src)
+					img = rgba
+				}
 				b.onFrame(img)
 			}
 		}
@@ -403,6 +415,77 @@ func (b *browserPage) async(job func(context.Context) error) {
 		b.addLog("warn", "Input queue busy; try again.", "1loop")
 	}
 }
+
+// pointer sends the pointer's position. Only the latest one waits: each
+// takes Chrome a few milliseconds, and queuing every position made clicks
+// and hovers wait behind a second of stale moves.
+func (b *browserPage) pointer(x, y float64, buttons int64) {
+	b.inputMu.Lock()
+	b.move = input.DispatchMouseEvent(input.MouseMoved, x, y).WithButtons(buttons)
+	b.inputMu.Unlock()
+	b.wakeInput()
+}
+
+// input sends a click, key or text in order, before any pending move: it
+// carries its own position, so the move would only come after it, stale.
+func (b *browserPage) input(action chromedp.Action) {
+	b.inputMu.Lock()
+	b.move = nil
+	if wheel, ok := action.(*input.DispatchMouseEventParams); ok && wheel.Type == input.MouseWheel && len(b.inputs) > 0 {
+		if last, ok := b.inputs[len(b.inputs)-1].(*input.DispatchMouseEventParams); ok && last.Type == input.MouseWheel && last.X == wheel.X && last.Y == wheel.Y {
+			last.DeltaX += wheel.DeltaX
+			last.DeltaY += wheel.DeltaY
+			b.inputMu.Unlock()
+			return
+		}
+	}
+	b.inputs = append(b.inputs, action)
+	b.inputMu.Unlock()
+	b.wakeInput()
+}
+
+func (b *browserPage) wakeInput() {
+	select {
+	case b.inputWake <- struct{}{}:
+	default:
+	}
+}
+
+// inputLoop sends the user's input outside the commands' gate, so a slow
+// navigation or script never holds a click back.
+func (b *browserPage) inputLoop() {
+	if b.ctx == nil {
+		return
+	}
+	for {
+		select {
+		case <-b.life.Done():
+			return
+		case <-b.inputWake:
+		}
+		for {
+			b.inputMu.Lock()
+			var action chromedp.Action
+			if len(b.inputs) > 0 {
+				action = b.inputs[0]
+				b.inputs = b.inputs[1:]
+			} else if b.move != nil {
+				action, b.move = b.move, nil
+			}
+			b.inputMu.Unlock()
+			if action == nil {
+				break
+			}
+			ctx, cancel := context.WithTimeout(b.ctx, 5*time.Second)
+			err := chromedp.Run(ctx, action)
+			cancel()
+			if err != nil && b.life.Err() == nil {
+				b.addLog("error", err.Error(), "1loop")
+			}
+		}
+	}
+}
+
 func (b *browserPage) setVisible(visible bool) {
 	b.mu.Lock()
 	changed := b.visible != visible

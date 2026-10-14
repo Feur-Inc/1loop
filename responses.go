@@ -12,45 +12,45 @@ import (
 // responsesInput converts stored messages into Responses API input items.
 func responsesInput(messages []message) []any {
 	var input []any
-	for _, m := range messages {
-		if m.Role == "system" {
+	for _, messageValue := range messages {
+		if messageValue.Role == "system" {
 			continue
 		}
-		if len(m.Responses) > 0 {
-			for _, item := range m.Responses {
+		if len(messageValue.Responses) > 0 {
+			for _, item := range messageValue.Responses {
 				input = append(input, item)
 			}
 			continue
 		}
-		if m.Role == "tool" {
-			input = append(input, map[string]any{"type": "function_call_output", "call_id": m.ToolCallID, "output": m.Content})
+		if messageValue.Role == "tool" {
+			input = append(input, map[string]any{"type": "function_call_output", "call_id": messageValue.ToolCallID, "output": messageValue.Content})
 			continue
 		}
-		if m.Role == "user" && m.Content == "" && len(m.Images) == 0 {
+		if messageValue.Role == "user" && messageValue.Content == "" && len(messageValue.Images) == 0 {
 			continue // the Responses API rejects empty input items
 		}
-		if m.Role == "assistant" && m.Content == "" && len(m.Images) == 0 && len(m.ToolCalls) == 0 {
+		if messageValue.Role == "assistant" && messageValue.Content == "" && len(messageValue.Images) == 0 && len(messageValue.ToolCalls) == 0 {
 			continue
 		}
-		item := map[string]any{"role": m.Role}
-		if len(m.Images) > 0 {
+		item := map[string]any{"role": messageValue.Role}
+		if len(messageValue.Images) > 0 {
 			var parts []any
-			if m.Content != "" {
-				parts = append(parts, map[string]any{"type": "input_text", "text": m.Content})
+			if messageValue.Content != "" {
+				parts = append(parts, map[string]any{"type": "input_text", "text": messageValue.Content})
 			}
-			for _, im := range m.Images {
-				parts = append(parts, map[string]any{"type": "input_image", "image_url": "data:" + im.Mime + ";base64," + im.Data})
+			for _, imagePart := range messageValue.Images {
+				parts = append(parts, map[string]any{"type": "input_image", "image_url": "data:" + imagePart.Mime + ";base64," + imagePart.Data})
 			}
 			item["content"] = parts
-		} else if m.Content != "" {
-			item["content"] = m.Content
+		} else if messageValue.Content != "" {
+			item["content"] = messageValue.Content
 		}
 		// A pure tool call becomes function_call items below, not a message
 		// without content (which the Responses API rejects).
-		if m.Content != "" || len(m.Images) > 0 {
+		if messageValue.Content != "" || len(messageValue.Images) > 0 {
 			input = append(input, item)
 		}
-		for _, call := range m.ToolCalls {
+		for _, call := range messageValue.ToolCalls {
 			input = append(input, map[string]any{"type": "function_call", "call_id": call.ID, "name": call.Function.Name, "arguments": call.Function.Arguments})
 		}
 	}

@@ -57,68 +57,68 @@ var kineticActive *kineticScroll
 
 // newKineticVScroll is container.NewVScroll with inertia.
 func newKineticVScroll(content fyne.CanvasObject) *kineticScroll {
-	k := &kineticScroll{}
-	k.Direction = container.ScrollVerticalOnly
-	k.Content = content
-	k.ExtendBaseWidget(k)
-	return k
+	scroll := &kineticScroll{}
+	scroll.Direction = container.ScrollVerticalOnly
+	scroll.Content = content
+	scroll.ExtendBaseWidget(scroll)
+	return scroll
 }
 
 // Scrolled is called by the driver for every wheel or touchpad event.
-func (k *kineticScroll) Scrolled(ev *fyne.ScrollEvent) {
-	if kineticActive != nil && kineticActive != k {
+func (scroll *kineticScroll) Scrolled(ev *fyne.ScrollEvent) {
+	if kineticActive != nil && kineticActive != scroll {
 		kineticActive.rest()
 	}
-	kineticActive = k
-	k.gliding = false // fingers on the pad again: the content follows them, nothing else
+	kineticActive = scroll
+	scroll.gliding = false // fingers on the pad again: the content follows them, nothing else
 	now := time.Now()
 	at := time.Duration(now.UnixNano())
 	if ms, ok := scrollEventTime(); ok {
 		at = time.Duration(ms) * time.Millisecond
 	}
-	if n := len(k.samples); n > 0 && now.Sub(k.samples[n-1].heard) > 2*kineticWindow {
-		k.samples = k.samples[:0] // a new gesture
+	if n := len(scroll.samples); n > 0 && now.Sub(scroll.samples[n-1].heard) > 2*kineticWindow {
+		scroll.samples = scroll.samples[:0] // a new gesture
 	}
-	k.samples = append(k.samples, kineticSample{at, now, float64(ev.Scrolled.DX), float64(ev.Scrolled.DY)})
-	for len(k.samples) > 1 && at-k.samples[0].at > kineticWindow {
-		k.samples = k.samples[1:]
+	scroll.samples = append(scroll.samples, kineticSample{at, now, float64(ev.Scrolled.DX), float64(ev.Scrolled.DY)})
+	for len(scroll.samples) > 1 && at-scroll.samples[0].at > kineticWindow {
+		scroll.samples = scroll.samples[1:]
 	}
-	k.Scroll.Scrolled(ev)
+	scroll.Scroll.Scrolled(ev)
 }
 
 // kineticFrame runs at each turn of the loop (frame hook), after the
 // events of that turn were handled.
 func kineticFrame(now time.Time, elapsed time.Duration) {
-	k := kineticActive
-	if k == nil {
+	scroll := kineticActive
+	if scroll == nil {
 		return
 	}
-	if k.gliding {
-		k.glide(math.Min(elapsed.Seconds(), kineticMaxFrame))
+	if scroll.gliding {
+		scroll.glide(math.Min(elapsed.Seconds(), kineticMaxFrame))
 		return
 	}
-	if len(k.samples) == 0 {
+	if len(scroll.samples) == 0 {
 		return
 	}
-	last := k.samples[len(k.samples)-1]
+	last := scroll.samples[len(scroll.samples)-1]
 	finger, released, told := scrollGesture()
 	switch {
 	case told && !finger:
-		k.samples = k.samples[:0] // a wheel: no inertia
+		scroll.samples = scroll.samples[:0] // a wheel: no inertia
 	case told && released:
-		k.release(now.Sub(last.heard) > kineticStale)
+		scroll.release(now.Sub(last.heard) > kineticStale)
 	case !told && now.Sub(last.heard) > kineticSilence:
 		// This display does not say when fingers lift: a gesture of several
 		// events that falls silent is taken as released.
-		k.release(len(k.samples) < 4)
+		scroll.release(len(scroll.samples) < 4)
 	}
 }
 
 // release starts the glide at the speed of the end of the gesture, unless
 // the fingers had already come to rest (still).
-func (k *kineticScroll) release(still bool) {
-	samples := k.samples
-	k.samples = k.samples[:0]
+func (scroll *kineticScroll) release(still bool) {
+	samples := scroll.samples
+	scroll.samples = scroll.samples[:0]
 	if still || len(samples) < 3 {
 		return
 	}
@@ -128,43 +128,43 @@ func (k *kineticScroll) release(still bool) {
 		return // too little of the gesture to tell a speed
 	}
 	var dx, dy float64
-	for _, s := range samples[1:] {
-		dx += s.dx
-		dy += s.dy
+	for _, kineticSample := range samples[1:] {
+		dx += kineticSample.dx
+		dy += kineticSample.dy
 	}
-	k.vx, k.vy = clampSpeed(dx/span), clampSpeed(dy/span)
-	if math.Hypot(k.vx, k.vy) < kineticMinStart {
-		k.rest()
+	scroll.vx, scroll.vy = clampSpeed(dx/span), clampSpeed(dy/span)
+	if math.Hypot(scroll.vx, scroll.vy) < kineticMinStart {
+		scroll.rest()
 		return
 	}
-	k.gliding = true
-	devf("ui", "scroll released at %.0f points/s (%d events over %.0f ms): gliding", math.Hypot(k.vx, k.vy), len(samples), span*1000)
+	scroll.gliding = true
+	devf("ui", "scroll released at %.0f points/s (%d events over %.0f ms): gliding", math.Hypot(scroll.vx, scroll.vy), len(samples), span*1000)
 }
 
 func clampSpeed(v float64) float64 {
 	return math.Max(-kineticMaxSpeed, math.Min(kineticMaxSpeed, v))
 }
 
-func (k *kineticScroll) rest() {
-	k.gliding = false
-	k.vx, k.vy = 0, 0
+func (scroll *kineticScroll) rest() {
+	scroll.gliding = false
+	scroll.vx, scroll.vy = 0, 0
 }
 
 // glide moves the content for one frame of dt seconds. The speed decays
 // exponentially; the distance is its exact integral over the frame, so the
 // motion is the same whatever the frame rate.
-func (k *kineticScroll) glide(dt float64) {
+func (scroll *kineticScroll) glide(dt float64) {
 	if dt <= 0 {
 		return
 	}
 	decay := math.Exp(-dt / kineticDecay)
 	reach := kineticDecay * (1 - decay) // seconds of travel at the frame's starting speed
-	mx, my := k.vx*reach, k.vy*reach
-	k.vx *= decay
-	k.vy *= decay
-	before := k.Offset
-	k.Scroll.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DX: float32(mx), DY: float32(my)}})
-	if k.Offset == before || math.Hypot(k.vx, k.vy) < kineticMinSpeed || !k.Visible() {
-		k.rest() // an edge, or slow enough to stop
+	mx, my := scroll.vx*reach, scroll.vy*reach
+	scroll.vx *= decay
+	scroll.vy *= decay
+	before := scroll.Offset
+	scroll.Scroll.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DX: float32(mx), DY: float32(my)}})
+	if scroll.Offset == before || math.Hypot(scroll.vx, scroll.vy) < kineticMinSpeed || !scroll.Visible() {
+		scroll.rest() // an edge, or slow enough to stop
 	}
 }

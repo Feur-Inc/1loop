@@ -10,9 +10,9 @@ import (
 	"fyne.io/fyne/v2/layout"
 )
 
-func (u *desktopUI) selectedChoice() (modelChoice, bool) {
-	for _, choice := range u.choices {
-		if choice.ID == u.cfg.Model && choice.Connection.ID == u.cfg.ConnectionID {
+func (ui *desktopUI) selectedChoice() (modelChoice, bool) {
+	for _, choice := range ui.choices {
+		if choice.ID == ui.cfg.Model && choice.Connection.ID == ui.cfg.ConnectionID {
 			return choice, true
 		}
 	}
@@ -21,27 +21,27 @@ func (u *desktopUI) selectedChoice() (modelChoice, bool) {
 
 // modelMenu follows the HTML's “1 · Colonnes”; selecting an account
 // updates its models while all three columns stay available.
-func (u *desktopUI) modelMenu() {
-	if u.modelsLoading {
+func (ui *desktopUI) modelMenu() {
+	if ui.modelsLoading {
 		return
 	}
-	if u.model.open != nil {
-		u.model.open.dismiss()
+	if ui.model.open != nil {
+		ui.model.open.dismiss()
 		return
 	}
 	var accounts []connection
 	catalog := map[string][]string{}
-	for _, label := range u.model.Options {
-		choice := u.choices[label]
+	for _, label := range ui.model.Options {
+		choice := ui.choices[label]
 		catalog[choice.Connection.ID] = append(catalog[choice.Connection.ID], label)
 	}
-	for _, account := range u.connectionsList {
+	for _, account := range ui.connectionsList {
 		if account.Enabled {
 			accounts = append(accounts, account)
 		}
 	}
 	if len(accounts) == 0 {
-		u.settings()
+		ui.settings()
 		return
 	}
 	lists := [3]*fyne.Container{}
@@ -67,16 +67,16 @@ func (u *desktopUI) modelMenu() {
 		}
 	}
 	strip := container.NewStack()
-	menu := newSheet(u.window.Canvas(), container.New(modelColumnsLayout{}, append(columns, strip)...), 674)
-	ctx, cancel := context.WithCancel(u.ctx)
-	menu.menu, menu.columns, menu.anchor = true, true, u.model.row
+	menu := newSheet(ui.window.Canvas(), container.New(modelColumnsLayout{}, append(columns, strip)...), 674)
+	ctx, cancel := context.WithCancel(ui.ctx)
+	menu.menu, menu.columns, menu.anchor = true, true, ui.model.row
 	shown := ""
 	groups := [3][]*tapRow{}
 	values := map[string]accountLimits{}
 	refreshStrip := func() {
 		for _, account := range accounts {
 			if account.ID == shown {
-				strip.Objects = []fyne.CanvasObject{modelLimitsStrip(account, values[account.ID], u.modelUnavailable[account.ID])}
+				strip.Objects = []fyne.CanvasObject{modelLimitsStrip(account, values[account.ID], ui.modelUnavailable[account.ID])}
 			}
 		}
 		strip.Refresh()
@@ -85,9 +85,9 @@ func (u *desktopUI) modelMenu() {
 	var update func(string)
 	var reasoning *stepSlider
 	row := func(title, detail string, icon fyne.Resource, run func()) *tapRow {
-		r := newRow(title, icon, styleModel, run)
-		r.detail, r.truncate, r.badge = detail, true, blankIcon
-		return r
+		tapRowValue := newRow(title, icon, styleModel, run)
+		tapRowValue.detail, tapRowValue.truncate, tapRowValue.badge = detail, true, blankIcon
+		return tapRowValue
 	}
 	mark := func(r *tapRow, selected bool) {
 		r.selected = selected
@@ -101,8 +101,8 @@ func (u *desktopUI) modelMenu() {
 		if menu.closing {
 			return
 		}
-		u.model.SetSelected(label)
-		update(u.cfg.ConnectionID)
+		ui.model.SetSelected(label)
+		update(ui.cfg.ConnectionID)
 	}
 	for _, account := range accounts {
 		account := account
@@ -114,14 +114,14 @@ func (u *desktopUI) modelMenu() {
 			}
 			selected := labels[0]
 			for _, label := range labels {
-				if u.choices[label].ID == u.cfg.Model {
+				if ui.choices[label].ID == ui.cfg.Model {
 					selected = label
 					break
 				}
 			}
 			choose(selected)
 		})
-		if problem := u.modelUnavailable[account.ID]; problem != "" {
+		if problem := ui.modelUnavailable[account.ID]; problem != "" {
 			r.detail = problem
 			if account.Provider == "vllm" {
 				r.Disable()
@@ -141,7 +141,7 @@ func (u *desktopUI) modelMenu() {
 			lists[1].RemoveAll()
 			for _, label := range catalog[shown] {
 				label := label
-				choice := u.choices[label]
+				choice := ui.choices[label]
 				r := row(choice.Name, choice.ID, nil, func() { choose(label) })
 				groups[1] = append(groups[1], r)
 				lists[1].Add(r)
@@ -149,7 +149,7 @@ func (u *desktopUI) modelMenu() {
 			scrolls[1].ScrollToTop()
 			if len(groups[1]) == 0 {
 				message := "No models selected in settings."
-				if problem := u.modelUnavailable[shown]; problem != "" {
+				if problem := ui.modelUnavailable[shown]; problem != "" {
 					message = problem
 				}
 				lists[1].Add(padded(7, 7, 9, 9, note(message)))
@@ -160,17 +160,17 @@ func (u *desktopUI) modelMenu() {
 			mark(r, !r.disabled && accounts[i].ID == shown)
 		}
 		for i, r := range groups[1] {
-			mark(r, u.choices[catalog[shown][i]].ID == u.cfg.Model)
+			mark(r, ui.choices[catalog[shown][i]].ID == ui.cfg.Model)
 		}
 		groups[2] = nil
 		lists[2].RemoveAll()
-		choice, ok := u.selectedChoice()
-		disabled := !ok || shown != u.cfg.ConnectionID || len(choice.Efforts) == 0
+		choice, ok := ui.selectedChoice()
+		disabled := !ok || shown != ui.cfg.ConnectionID || len(choice.Efforts) == 0
 		efforts := choice.Efforts
 		if len(efforts) == 0 {
 			efforts = effortOrder[2:]
 		}
-		index := slices.Index(efforts, u.cfg.Effort)
+		index := slices.Index(efforts, ui.cfg.Effort)
 		if disabled || index < 0 {
 			index = 0
 		}
@@ -186,9 +186,9 @@ func (u *desktopUI) modelMenu() {
 			if menu.closing {
 				return
 			}
-			u.cfg.Effort = efforts[index]
-			u.selectModel(choice)
-			title.Text, about.Text = effortLabel(u.cfg.Effort), modelEffortAbout(u.cfg.Effort)
+			ui.cfg.Effort = efforts[index]
+			ui.selectModel(choice)
+			title.Text, about.Text = effortLabel(ui.cfg.Effort), modelEffortAbout(ui.cfg.Effort)
 			title.Refresh()
 			about.Refresh()
 			for i, label := range groups[2] {
@@ -260,29 +260,29 @@ func (u *desktopUI) modelMenu() {
 	}
 	menu.onClosed = func() {
 		cancel()
-		if u.tips != nil {
-			u.tips.hide()
+		if ui.tips != nil {
+			ui.tips.hide()
 		}
-		if u.model.open == menu {
-			u.model.open = nil
-			u.model.setOpen(false)
+		if ui.model.open == menu {
+			ui.model.open = nil
+			ui.model.setOpen(false)
 		}
 	}
-	initial := u.cfg.ConnectionID
-	if !slices.ContainsFunc(accounts, func(c connection) bool { return c.ID == initial }) {
+	initial := ui.cfg.ConnectionID
+	if !slices.ContainsFunc(accounts, func(conn connection) bool { return conn.ID == initial }) {
 		initial = accounts[0].ID
 	}
 	update(initial)
-	u.model.open = menu
-	u.model.setOpen(true)
+	ui.model.open = menu
+	ui.model.setOpen(true)
 	menu.Show()
-	u.window.Canvas().Focus(menu)
+	ui.window.Canvas().Focus(menu)
 	for i, account := range accounts {
 		account := account
 		if groups[0][i].disabled {
 			continue
 		}
-		u.loadAccountLimits(ctx, menu, account, func(limits accountLimits) {
+		ui.loadAccountLimits(ctx, menu, account, func(limits accountLimits) {
 			values[account.ID] = limits
 			refreshStrip()
 		})
@@ -376,45 +376,45 @@ func approvalFor(mode string, cfg config) string {
 	return mode
 }
 
-func (u *desktopUI) updateApprovalControl() {
-	if u.approvalControl == nil {
+func (ui *desktopUI) updateApprovalControl() {
+	if ui.approvalControl == nil {
 		return
 	}
-	mode := approvalFor(u.approvalMode, u.cfg)
-	u.approvalControl.icon = iconShield
-	u.approvalControl.danger = mode == "yolo"
-	u.approvalControl.SetText("Approval required")
+	mode := approvalFor(ui.approvalMode, ui.cfg)
+	ui.approvalControl.icon = iconShield
+	ui.approvalControl.danger = mode == "yolo"
+	ui.approvalControl.SetText("Approval required")
 	switch mode {
 	case "yolo":
-		u.approvalControl.icon = iconBolt
-		u.approvalControl.SetText("YOLO mode")
+		ui.approvalControl.icon = iconBolt
+		ui.approvalControl.SetText("YOLO mode")
 	case "auto":
-		u.approvalControl.icon = iconShieldCheck
-		u.approvalControl.SetText("Auto mode")
+		ui.approvalControl.icon = iconShieldCheck
+		ui.approvalControl.SetText("Auto mode")
 	}
-	if u.controls != nil {
-		u.controls.Refresh()
+	if ui.controls != nil {
+		ui.controls.Refresh()
 	}
-	u.remote.settingsChanged()
+	ui.remote.settingsChanged()
 }
 
-func (u *desktopUI) approvalMenu() {
+func (ui *desktopUI) approvalMenu() {
 	set := func(mode string) func() {
 		return func() {
 			devf("ui", "approval mode %s", mode)
-			u.approvalMode = mode
-			u.updateApprovalControl()
-			u.save()
+			ui.approvalMode = mode
+			ui.updateApprovalControl()
+			ui.save()
 		}
 	}
-	mode := approvalFor(u.approvalMode, u.cfg)
+	mode := approvalFor(ui.approvalMode, ui.cfg)
 	actions := []menuAction{{label: "Approval required", detail: "Ask before each command and edit", icon: iconShield,
 		checked: mode == "approval", run: set("approval")}}
-	if u.cfg.Provider == "claudecode" { // only Claude Code's harness has this mode
+	if ui.cfg.Provider == "claudecode" { // only Claude Code's harness has this mode
 		actions = append(actions, menuAction{label: "Auto mode", detail: "Claude Code runs what it judges safe", icon: iconShieldCheck,
 			checked: mode == "auto", run: set("auto")})
 	}
 	actions = append(actions, menuAction{label: "YOLO mode", detail: "Run commands and edits automatically", icon: iconBolt,
 		checked: mode == "yolo", run: set("yolo")})
-	showMenu(u.window, u.approvalControl, actions)
+	showMenu(ui.window, ui.approvalControl, actions)
 }

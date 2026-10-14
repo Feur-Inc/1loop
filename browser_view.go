@@ -50,13 +50,13 @@ type browserView struct {
 	logPending     bool
 }
 
-func (p *toolPanel) browserTab(chat *conversation, info browserInfo, tabs []panelTab) panelTab {
-	return p.browserTabAttached(chat, info, tabs, "")
+func (panel *toolPanel) browserTab(chat *conversation, info browserInfo, tabs []panelTab) panelTab {
+	return panel.browserTabAttached(chat, info, tabs, "")
 }
-func (p *toolPanel) browserTabAttached(chat *conversation, info browserInfo, tabs []panelTab, attach target.ID) panelTab {
-	info.PixelRatio = float64(p.u.window.Canvas().Scale())
-	if p.u.browser == nil {
-		p.u.browser = newBrowserEngine(p.u.ctx)
+func (panel *toolPanel) browserTabAttached(chat *conversation, info browserInfo, tabs []panelTab, attach target.ID) panelTab {
+	info.PixelRatio = float64(panel.ui.window.Canvas().Scale())
+	if panel.ui.browser == nil {
+		panel.ui.browser = newBrowserEngine(panel.ui.ctx)
 	}
 	var session *browserSession
 	for _, tab := range tabs {
@@ -66,108 +66,108 @@ func (p *toolPanel) browserTabAttached(chat *conversation, info browserInfo, tab
 		}
 	}
 	if session == nil {
-		session = newBrowserSession(p.u.browser)
+		session = newBrowserSession(panel.ui.browser)
 	}
-	b := newBrowserPage(session, info)
-	b.attachTarget = attach
-	v := newBrowserView(p, chat, b)
-	b.view = v
-	b.onFrame = v.frame
-	b.onChange = func(info browserInfo) {
+	browser := newBrowserPage(session, info)
+	browser.attachTarget = attach
+	view := newBrowserView(panel, chat, browser)
+	browser.view = view
+	browser.onFrame = view.frame
+	browser.onChange = func(info browserInfo) {
 		fyne.Do(func() {
-			if b.life.Err() != nil {
+			if browser.life.Err() != nil {
 				return
 			}
-			v.changed(info)
+			view.changed(info)
 		})
 	}
-	b.onCursor = func(x, y float64) {
+	browser.onCursor = func(x, y float64) {
 		fyne.Do(func() {
-			if b.life.Err() != nil {
+			if browser.life.Err() != nil {
 				return
 			}
-			v.screen.cursorX, v.screen.cursorY = x, y
-			v.screen.modelCursor.Show()
-			v.screen.Refresh()
+			view.screen.cursorX, view.screen.cursorY = x, y
+			view.screen.modelCursor.Show()
+			view.screen.Refresh()
 		})
 	}
-	b.onPopup = func(id target.ID, url string) {
+	browser.onPopup = func(id target.ID, url string) {
 		fyne.Do(func() {
-			if b.life.Err() != nil {
+			if browser.life.Err() != nil {
 				return
 			}
-			state := p.stateOf(v.chat)
+			state := panel.stateOf(view.chat)
 			tabs := state.tabs
-			if v.chat == p.owner {
-				tabs = p.tabs
+			if view.chat == panel.owner {
+				tabs = panel.tabs
 			}
-			tab := p.browserTabAttached(v.chat, browserInfo{URL: url, Adaptive: true}, tabs, id)
+			tab := panel.browserTabAttached(view.chat, browserInfo{URL: url, Adaptive: true}, tabs, id)
 			tabs = append(tabs, tab)
 			state.tabs, state.active, state.open = tabs, len(tabs)-1, true
-			if v.chat == p.owner {
-				p.tabs, p.active = tabs, len(tabs)-1
-				p.render()
-				p.unfold()
+			if view.chat == panel.owner {
+				panel.tabs, panel.active = tabs, len(tabs)-1
+				panel.render()
+				panel.unfold()
 			}
-			p.u.save()
+			panel.ui.save()
 		})
 	}
-	b.onClosed = func() { fyne.Do(func() { p.removeBrowser(v.chat, b) }) }
-	b.onLogs = v.logsChanged
-	go b.start()
-	workspace := p.u.cfg.Workspace
+	browser.onClosed = func() { fyne.Do(func() { panel.removeBrowser(view.chat, browser) }) }
+	browser.onLogs = view.logsChanged
+	go browser.start()
+	workspace := panel.ui.cfg.Workspace
 	if chat != nil {
 		workspace = chat.Config.Workspace
 	}
-	return panelTab{kind: "browser", title: "Browser", icon: iconBrowser, browser: b, workspace: workspace, content: v}
+	return panelTab{kind: "browser", title: "Browser", icon: iconBrowser, browser: browser, workspace: workspace, content: view}
 }
 
-func (p *toolPanel) openBrowser() {
-	tab := p.browserTab(p.owner, browserInfo{URL: "about:blank", Adaptive: true}, p.tabs)
-	p.tabs = append(p.tabs, tab)
-	p.choose(len(p.tabs) - 1)
-	p.unfold()
-	p.u.window.Canvas().Focus(tab.browser.view.address)
+func (panel *toolPanel) openBrowser() {
+	tab := panel.browserTab(panel.owner, browserInfo{URL: "about:blank", Adaptive: true}, panel.tabs)
+	panel.tabs = append(panel.tabs, tab)
+	panel.choose(len(panel.tabs) - 1)
+	panel.unfold()
+	panel.ui.window.Canvas().Focus(tab.browser.view.address)
 }
 
-func newBrowserView(p *toolPanel, chat *conversation, b *browserPage) *browserView {
-	v := &browserView{page: b, panel: p, chat: chat, status: textLine("Starting browser…", 11, colMuted)}
-	v.ExtendBaseWidget(v)
-	v.screen = newBrowserScreen(v)
-	v.address = widget.NewEntry()
-	v.address.PlaceHolder = "Enter a URL"
-	v.address.SetText(b.snapshot().URL)
+func newBrowserView(panel *toolPanel, chat *conversation, browser *browserPage) *browserView {
+	view := &browserView{page: browser, panel: panel, chat: chat, status: textLine("Starting browser…", 11, colMuted)}
+	view.ExtendBaseWidget(view)
+	view.screen = newBrowserScreen(view)
+	view.address = widget.NewEntry()
+	view.address.PlaceHolder = "Enter a URL"
+	view.address.SetText(browser.snapshot().URL)
 	navigate := func(action, url string) {
-		b.async(func(ctx context.Context) error { return b.navigate(ctx, action, url) })
+		browser.async(func(ctx context.Context) error { return browser.navigate(ctx, action, url) })
 	}
-	v.address.OnSubmitted = func(url string) { navigate("navigate", url); p.u.window.Canvas().Focus(v.screen) }
+	view.address.OnSubmitted = func(url string) { navigate("navigate", url); panel.ui.window.Canvas().Focus(view.screen) }
 	back := newRow("", iconBack, styleWindow, func() { navigate("back", "") })
 	forward := newRow("", iconForward, styleWindow, func() { navigate("forward", "") })
 	reload := newRow("", iconReload, styleWindow, func() { navigate("reload", "") })
 	consoleToggle := newRow("Console", iconTerminal, styleChip, nil)
 	consoleToggle.onTap = func() {
-		v.consoleVisible = !v.consoleVisible
-		consoleToggle.SetSelected(v.consoleVisible)
-		if v.consoleVisible {
-			v.console.Show()
-			v.refreshLogs()
+		view.consoleVisible = !view.consoleVisible
+		consoleToggle.SetSelected(view.consoleVisible)
+		if view.consoleVisible {
+			view.console.Show()
+			view.refreshLogs()
 		} else {
-			v.console.Hide()
+			view.console.Hide()
 		}
-		v.Refresh()
+		view.Refresh()
 	}
-	nav := container.NewBorder(nil, nil, container.NewHBox(back, forward, reload), consoleToggle, v.address)
-	v.mode = newPicker(p.u.window, "Viewport", styleChip, nil)
-	v.mode.Options = []string{"Adaptive", "Desktop", "Tablet", "Mobile", "Custom"}
-	v.mode.Details = map[string]string{"Adaptive": "Follow the panel size", "Desktop": "1280 × 800", "Tablet": "768 × 1024", "Mobile": "390 × 844", "Custom": "Choose CSS viewport dimensions"}
-	v.dimensions = widget.NewEntry()
-	v.dimensions.SetPlaceHolder("width × height")
-	v.dimensions.SetText(fmt.Sprintf("%d × %d", b.snapshot().Width, b.snapshot().Height))
-	v.mode.onChanged = func(value string) {
+	nav := container.NewBorder(nil, nil, container.NewHBox(back, forward, reload), consoleToggle, view.address)
+	view.mode = newPicker(panel.ui.window, "Viewport", styleChip, nil)
+	view.mode.Options = []string{"Adaptive", "Desktop", "Tablet", "Mobile", "Custom"}
+	view.mode.Details = map[string]string{"Adaptive": "Follow the panel size", "Desktop": "1280 × 800", "Tablet": "768 × 1024", "Mobile": "390 × 844", "Custom": "Choose CSS viewport dimensions"}
+	view.dimensions = widget.NewEntry()
+	view.dimensions.SetPlaceHolder("width × height")
+	view.dimensions.SetText(fmt.Sprintf("%d × %d", browser.snapshot().Width, browser.snapshot().Height))
+	view.mode.onChanged = func(value string) {
 		width, height, mobile, adaptive := 1280, 800, false, false
 		switch value {
 		case "Adaptive":
-			width, height = int(v.screen.Size().Width), int(v.screen.Size().Height)
+			width, height = int(view.screen.Size().Width), int(view.screen.Size().Height)
 			adaptive = true
 		case "Tablet":
 			width, height = 768, 1024
@@ -178,28 +178,28 @@ func newBrowserView(p *toolPanel, chat *conversation, b *browserPage) *browserVi
 		}
 		width = max(240, min(3840, width))
 		height = max(200, min(2160, height))
-		b.async(func(ctx context.Context) error { return b.resize(ctx, width, height, mobile, adaptive) })
+		browser.async(func(ctx context.Context) error { return browser.resize(ctx, width, height, mobile, adaptive) })
 	}
 	apply := func() {
-		parts := strings.FieldsFunc(v.dimensions.Text, func(r rune) bool { return r == 'x' || r == '×' || r == ',' || r == ' ' })
+		parts := strings.FieldsFunc(view.dimensions.Text, func(r rune) bool { return r == 'x' || r == '×' || r == ',' || r == ' ' })
 		if len(parts) != 2 {
-			v.status.Text = "Use width × height"
-			v.status.Refresh()
+			view.status.Text = "Use width × height"
+			view.status.Refresh()
 			return
 		}
 		w, e1 := strconv.Atoi(parts[0])
 		h, e2 := strconv.Atoi(parts[1])
 		if e1 != nil || e2 != nil {
-			v.status.Text = "Use numeric dimensions"
-			v.status.Refresh()
+			view.status.Text = "Use numeric dimensions"
+			view.status.Refresh()
 			return
 		}
-		b.async(func(ctx context.Context) error { return b.resize(ctx, w, h, false, false) })
+		browser.async(func(ctx context.Context) error { return browser.resize(ctx, w, h, false, false) })
 	}
-	v.dimensions.OnSubmitted = func(string) { apply() }
-	viewport := container.NewBorder(nil, nil, v.mode.row, newRow("Apply", nil, styleOutline, apply), v.dimensions)
+	view.dimensions.OnSubmitted = func(string) { apply() }
+	viewport := container.NewBorder(nil, nil, view.mode.row, newRow("Apply", nil, styleOutline, apply), view.dimensions)
 	logs := container.NewVBox()
-	v.consoleScroll = container.NewVScroll(logs)
+	view.consoleScroll = container.NewVScroll(logs)
 	js := widget.NewMultiLineEntry()
 	js.SetMinRowsVisible(2)
 	js.SetPlaceHolder("JavaScript expression")
@@ -208,58 +208,58 @@ func newBrowserView(p *toolPanel, chat *conversation, b *browserPage) *browserVi
 		if expression == "" {
 			return
 		}
-		b.addLog("command", expression, "JavaScript")
-		b.async(func(ctx context.Context) error {
-			value, err := b.evaluate(ctx, expression)
+		browser.addLog("command", expression, "JavaScript")
+		browser.async(func(ctx context.Context) error {
+			value, err := browser.evaluate(ctx, expression)
 			if err == nil {
-				b.addLog("result", string(value), "JavaScript")
+				browser.addLog("result", string(value), "JavaScript")
 			}
 			return err
 		})
 	}
 	run := newRow("Run JS", iconSend, styleOutline, execute)
-	v.console = container.NewBorder(nil, container.NewBorder(nil, nil, nil, run, js), nil, nil, v.consoleScroll)
-	v.console.Hide()
-	v.content = container.NewBorder(padded(6, 6, 8, 8, container.NewVBox(nav, viewport)), padded(4, 5, 10, 10, v.status), nil, nil, container.New(browserBodyLayout{v}, v.screen, v.console))
-	v.changed(b.snapshot())
-	return v
+	view.console = container.NewBorder(nil, container.NewBorder(nil, nil, nil, run, js), nil, nil, view.consoleScroll)
+	view.console.Hide()
+	view.content = container.NewBorder(padded(6, 6, 8, 8, container.NewVBox(nav, viewport)), padded(4, 5, 10, 10, view.status), nil, nil, container.New(browserBodyLayout{view}, view.screen, view.console))
+	view.changed(browser.snapshot())
+	return view
 }
-func (v *browserView) MinSize() fyne.Size { return fyne.NewSize(240, 200) }
+func (view *browserView) MinSize() fyne.Size { return fyne.NewSize(240, 200) }
 
-func (v *browserView) CreateRenderer() fyne.WidgetRenderer {
-	return widget.NewSimpleRenderer(v.content)
+func (view *browserView) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(view.content)
 }
-func (v *browserView) frame(img image.Image) {
-	v.frameMu.Lock()
-	v.latest = img
-	if v.framePending {
-		v.frameMu.Unlock()
+func (view *browserView) frame(img image.Image) {
+	view.frameMu.Lock()
+	view.latest = img
+	if view.framePending {
+		view.frameMu.Unlock()
 		return
 	}
-	v.framePending = true
-	v.frameMu.Unlock()
+	view.framePending = true
+	view.frameMu.Unlock()
 	fyne.Do(func() {
-		v.frameMu.Lock()
-		latest := v.latest
-		v.framePending = false
-		v.frameMu.Unlock()
-		if v.page.life.Err() != nil {
+		view.frameMu.Lock()
+		latest := view.latest
+		view.framePending = false
+		view.frameMu.Unlock()
+		if view.page.life.Err() != nil {
 			return
 		}
-		resized := v.screen.image.Image == nil || v.screen.image.Image.Bounds() != latest.Bounds()
-		v.screen.image.Image = latest
-		v.screen.image.Refresh()
+		resized := view.screen.image.Image == nil || view.screen.image.Image.Bounds() != latest.Bounds()
+		view.screen.image.Image = latest
+		view.screen.image.Refresh()
 		if resized {
-			v.screen.Refresh()
+			view.screen.Refresh()
 		}
 	})
 }
-func (v *browserView) changed(info browserInfo) {
-	if v.panel.u.window.Canvas().Focused() != v.address {
-		v.address.SetText(info.URL)
+func (view *browserView) changed(info browserInfo) {
+	if view.panel.ui.window.Canvas().Focused() != view.address {
+		view.address.SetText(info.URL)
 	}
-	if v.panel.u.window.Canvas().Focused() != v.dimensions {
-		v.dimensions.SetText(fmt.Sprintf("%d × %d", info.Width, info.Height))
+	if view.panel.ui.window.Canvas().Focused() != view.dimensions {
+		view.dimensions.SetText(fmt.Sprintf("%d × %d", info.Width, info.Height))
 	}
 	selected := "Custom"
 	switch {
@@ -273,55 +273,55 @@ func (v *browserView) changed(info browserInfo) {
 		selected = "Desktop"
 	}
 	// Update the picker display without invoking a second resize.
-	v.mode.Selected = selected
-	v.mode.row.SetText(selected)
+	view.mode.Selected = selected
+	view.mode.row.SetText(selected)
 	if info.Error != "" {
-		v.status.Text = info.Error
-		v.status.Color = colDanger
+		view.status.Text = info.Error
+		view.status.Color = colDanger
 	} else {
-		v.status.Text = fmt.Sprintf("%d × %d CSS px", info.Width, info.Height)
-		v.status.Color = colMuted
+		view.status.Text = fmt.Sprintf("%d × %d CSS px", info.Width, info.Height)
+		view.status.Color = colMuted
 	}
-	v.status.Refresh()
-	v.screen.Refresh()
-	tabs := v.panel.tabs
-	if v.chat != v.panel.owner && v.chat != nil && v.chat.panel != nil {
-		tabs = v.chat.panel.tabs
+	view.status.Refresh()
+	view.screen.Refresh()
+	tabs := view.panel.tabs
+	if view.chat != view.panel.owner && view.chat != nil && view.chat.panel != nil {
+		tabs = view.chat.panel.tabs
 	}
 	for i := range tabs {
-		if tabs[i].browser == v.page {
+		if tabs[i].browser == view.page {
 			tabs[i].title = info.Title
 			if tabs[i].title == "" {
 				tabs[i].title = "Browser"
 			}
 		}
 	}
-	if v.chat == v.panel.owner {
-		v.panel.renderStrip()
+	if view.chat == view.panel.owner {
+		view.panel.renderStrip()
 	}
-	v.panel.u.save()
+	view.panel.ui.save()
 }
-func (v *browserView) logsChanged() {
-	v.frameMu.Lock()
-	if v.logPending {
-		v.frameMu.Unlock()
+func (view *browserView) logsChanged() {
+	view.frameMu.Lock()
+	if view.logPending {
+		view.frameMu.Unlock()
 		return
 	}
-	v.logPending = true
-	v.frameMu.Unlock()
+	view.logPending = true
+	view.frameMu.Unlock()
 	time.AfterFunc(100*time.Millisecond, func() {
 		fyne.Do(func() {
-			v.frameMu.Lock()
-			v.logPending = false
-			v.frameMu.Unlock()
-			if v.page.life.Err() == nil && v.consoleVisible {
-				v.refreshLogs()
+			view.frameMu.Lock()
+			view.logPending = false
+			view.frameMu.Unlock()
+			if view.page.life.Err() == nil && view.consoleVisible {
+				view.refreshLogs()
 			}
 		})
 	})
 }
-func (v *browserView) refreshLogs() {
-	entries := v.page.logSnapshot(0)
+func (view *browserView) refreshLogs() {
+	entries := view.page.logSnapshot(0)
 	rows := []fyne.CanvasObject{}
 	for _, entry := range entries {
 		ink := colMuted
@@ -337,17 +337,19 @@ func (v *browserView) refreshLogs() {
 	if len(rows) == 0 {
 		rows = append(rows, note("No browser logs yet."))
 	}
-	v.consoleScroll.Content = container.NewVBox(rows...)
-	v.consoleScroll.Refresh()
-	v.consoleScroll.ScrollToBottom()
+	view.consoleScroll.Content = container.NewVBox(rows...)
+	view.consoleScroll.Refresh()
+	view.consoleScroll.ScrollToBottom()
 }
 
 type browserBodyLayout struct{ view *browserView }
 
-func (l browserBodyLayout) MinSize([]fyne.CanvasObject) fyne.Size { return fyne.NewSize(240, 200) }
-func (l browserBodyLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+func (layoutSpec browserBodyLayout) MinSize([]fyne.CanvasObject) fyne.Size {
+	return fyne.NewSize(240, 200)
+}
+func (layoutSpec browserBodyLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	height := float32(0)
-	if l.view.consoleVisible {
+	if layoutSpec.view.consoleVisible {
 		height = fyne.Min(300, size.Height*.45)
 		objects[1].Move(fyne.NewPos(0, size.Height-height))
 		objects[1].Resize(fyne.NewSize(size.Width, height))
@@ -370,15 +372,15 @@ type browserScreen struct {
 	modifiers        int64
 }
 
-func newBrowserScreen(v *browserView) *browserScreen {
-	s := &browserScreen{view: v, image: canvas.NewImageFromImage(nil), background: canvas.NewRectangle(color.NRGBA{R: 18, G: 18, B: 18, A: 255}), modelCursor: canvas.NewImageFromResource(iconModelCursor)}
-	s.image.FillMode = canvas.ImageFillStretch
-	s.modelCursor.Hide()
-	s.ExtendBaseWidget(s)
-	return s
+func newBrowserScreen(view *browserView) *browserScreen {
+	screen := &browserScreen{view: view, image: canvas.NewImageFromImage(nil), background: canvas.NewRectangle(color.NRGBA{R: 18, G: 18, B: 18, A: 255}), modelCursor: canvas.NewImageFromResource(iconModelCursor)}
+	screen.image.FillMode = canvas.ImageFillStretch
+	screen.modelCursor.Hide()
+	screen.ExtendBaseWidget(screen)
+	return screen
 }
-func (s *browserScreen) CreateRenderer() fyne.WidgetRenderer {
-	return &browserScreenRenderer{screen: s, objects: []fyne.CanvasObject{s.background, s.image, s.modelCursor}}
+func (screen *browserScreen) CreateRenderer() fyne.WidgetRenderer {
+	return &browserScreenRenderer{screen: screen, objects: []fyne.CanvasObject{screen.background, screen.image, screen.modelCursor}}
 }
 
 type browserScreenRenderer struct {
@@ -386,62 +388,65 @@ type browserScreenRenderer struct {
 	objects []fyne.CanvasObject
 }
 
-func (r *browserScreenRenderer) MinSize() fyne.Size           { return fyne.NewSize(240, 200) }
-func (r *browserScreenRenderer) Objects() []fyne.CanvasObject { return r.objects }
-func (r *browserScreenRenderer) Destroy() {
-	if r.screen.resizeTimer != nil {
-		r.screen.resizeTimer.Stop()
+func (renderer *browserScreenRenderer) MinSize() fyne.Size           { return fyne.NewSize(240, 200) }
+func (renderer *browserScreenRenderer) Objects() []fyne.CanvasObject { return renderer.objects }
+func (renderer *browserScreenRenderer) Destroy() {
+	if renderer.screen.resizeTimer != nil {
+		renderer.screen.resizeTimer.Stop()
 	}
 }
-func (r *browserScreenRenderer) Refresh() { r.Layout(r.screen.Size()); canvas.Refresh(r.screen) }
-func (r *browserScreenRenderer) Layout(size fyne.Size) {
-	s := r.screen
-	info := s.view.page.snapshot()
-	s.background.Resize(size)
+func (renderer *browserScreenRenderer) Refresh() {
+	renderer.Layout(renderer.screen.Size())
+	canvas.Refresh(renderer.screen)
+}
+func (renderer *browserScreenRenderer) Layout(size fyne.Size) {
+	screen := renderer.screen
+	info := screen.view.page.snapshot()
+	screen.background.Resize(size)
 	scale := fyne.Min(size.Width/float32(info.Width), size.Height/float32(info.Height))
-	s.rendered = fyne.NewSize(float32(info.Width)*scale, float32(info.Height)*scale)
-	s.position = fyne.NewPos((size.Width-s.rendered.Width)/2, (size.Height-s.rendered.Height)/2)
-	s.image.Move(s.position)
-	s.image.Resize(s.rendered)
-	s.modelCursor.Move(s.position.Add(fyne.NewPos(float32(s.cursorX)*scale, float32(s.cursorY)*scale)))
-	s.modelCursor.Resize(fyne.NewSize(24, 28))
+	screen.rendered = fyne.NewSize(float32(info.Width)*scale, float32(info.Height)*scale)
+	screen.position = fyne.NewPos((size.Width-screen.rendered.Width)/2, (size.Height-screen.rendered.Height)/2)
+	screen.image.Move(screen.position)
+	screen.image.Resize(screen.rendered)
+	screen.modelCursor.Move(screen.position.Add(fyne.NewPos(float32(screen.cursorX)*scale, float32(screen.cursorY)*scale)))
+	screen.modelCursor.Resize(fyne.NewSize(24, 28))
 	width, height := max(240, min(3840, int(size.Width))), max(200, min(2160, int(size.Height)))
-	ratio := float64(s.view.panel.u.window.Canvas().Scale())
+	ratio := float64(screen.view.panel.ui.window.Canvas().Scale())
 	if ratio != info.PixelRatio || (info.Adaptive && (width != info.Width || height != info.Height)) {
-		if s.resizeTimer != nil {
-			s.resizeTimer.Stop()
+		if screen.resizeTimer != nil {
+			screen.resizeTimer.Stop()
 		}
-		s.resizeTimer = time.AfterFunc(250*time.Millisecond, func() {
-			if s.view.page.life.Err() == nil {
-				s.view.page.async(func(ctx context.Context) error {
-					latest := s.view.page.snapshot()
+		screen.resizeTimer = time.AfterFunc(250*time.Millisecond, func() {
+			if screen.view.page.life.Err() == nil {
+				screen.view.page.async(func(ctx context.Context) error {
+					latest := screen.view.page.snapshot()
 					if !latest.Adaptive {
 						width, height = latest.Width, latest.Height
 					}
-					return s.view.page.resize(ctx, width, height, latest.Mobile, latest.Adaptive, ratio)
+					return screen.view.page.resize(ctx, width, height, latest.Mobile, latest.Adaptive, ratio)
 				})
 			}
 		})
 	}
 }
-func (s *browserScreen) coords(pos fyne.Position) (float64, float64, bool) {
-	if s.rendered.Width <= 0 || s.rendered.Height <= 0 {
+func (screen *browserScreen) coords(pos fyne.Position) (float64, float64, bool) {
+	if screen.rendered.Width <= 0 || screen.rendered.Height <= 0 {
 		return 0, 0, false
 	}
-	info := s.view.page.snapshot()
-	x := float64((pos.X-s.position.X)/s.rendered.Width) * float64(info.Width)
-	y := float64((pos.Y-s.position.Y)/s.rendered.Height) * float64(info.Height)
+	info := screen.view.page.snapshot()
+	x := float64((pos.X-screen.position.X)/screen.rendered.Width) * float64(info.Width)
+	y := float64((pos.Y-screen.position.Y)/screen.rendered.Height) * float64(info.Height)
 	return x, y, x >= 0 && y >= 0 && x < float64(info.Width) && y < float64(info.Height)
 }
-func (s *browserScreen) FocusGained()     {}
-func (s *browserScreen) FocusLost()       { s.modifiers = 0 }
-func (s *browserScreen) AcceptsTab() bool { return true }
-func (s *browserScreen) TypedRune(r rune) {
-	if s.modifiers&7 != 0 {
+func (screen *browserScreen) FocusGained()     {}
+func (screen *browserScreen) FocusLost()       { screen.modifiers = 0 }
+func (screen *browserScreen) AcceptsTab() bool { return true }
+func (screen *browserScreen) TypedRune(r rune) {
+	if screen.modifiers&7 != 0 {
 		return
 	}
 	text := string(r)
-	s.view.page.input(input.InsertText(text))
+	screen.view.page.input(input.InsertText(text))
 }
 func browserKey(key fyne.KeyName) string {
 	switch key {
@@ -474,23 +479,23 @@ func browserKey(key fyne.KeyName) string {
 	}
 	return ""
 }
-func (s *browserScreen) TypedKey(e *fyne.KeyEvent) {
+func (screen *browserScreen) TypedKey(e *fyne.KeyEvent) {
 	if key := browserKey(e.Name); key != "" {
-		modifiers := s.modifiers
-		s.view.page.input(chromedp.KeyEvent(key, func(p *input.DispatchKeyEventParams) *input.DispatchKeyEventParams {
+		modifiers := screen.modifiers
+		screen.view.page.input(chromedp.KeyEvent(key, func(p *input.DispatchKeyEventParams) *input.DispatchKeyEventParams {
 			p.Modifiers = input.Modifier(modifiers)
 			return p
 		}))
 	}
 }
-func (s *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
+func (screen *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 	switch shortcut.(type) {
 	case *fyne.ShortcutPaste:
-		s.view.page.input(input.InsertText(s.view.panel.u.window.Clipboard().Content()))
+		screen.view.page.input(input.InsertText(screen.view.panel.ui.window.Clipboard().Content()))
 	case *fyne.ShortcutCopy, *fyne.ShortcutCut:
 		_, cut := shortcut.(*fyne.ShortcutCut)
-		s.view.page.async(func(ctx context.Context) error {
-			value, err := s.view.page.evaluate(ctx, `(()=>{const e=document.activeElement;if(e&&typeof e.selectionStart==='number')return e.value.slice(e.selectionStart,e.selectionEnd);return window.getSelection()?.toString()||''})()`)
+		screen.view.page.async(func(ctx context.Context) error {
+			value, err := screen.view.page.evaluate(ctx, `(()=>{const e=document.activeElement;if(e&&typeof e.selectionStart==='number')return e.value.slice(e.selectionStart,e.selectionEnd);return window.getSelection()?.toString()||''})()`)
 			if err != nil {
 				return err
 			}
@@ -498,38 +503,38 @@ func (s *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 			if json.Unmarshal(value, &text) != nil {
 				return nil
 			}
-			fyne.Do(func() { s.view.panel.u.window.Clipboard().SetContent(text) })
+			fyne.Do(func() { screen.view.panel.ui.window.Clipboard().SetContent(text) })
 			if cut {
-				_, err = s.view.page.evaluate(ctx, `(()=>{const e=document.activeElement;if(e&&typeof e.setRangeText==='function'){e.setRangeText('',e.selectionStart,e.selectionEnd,'end');e.dispatchEvent(new Event('input',{bubbles:true}))}})()`)
+				_, err = screen.view.page.evaluate(ctx, `(()=>{const e=document.activeElement;if(e&&typeof e.setRangeText==='function'){e.setRangeText('',e.selectionStart,e.selectionEnd,'end');e.dispatchEvent(new Event('input',{bubbles:true}))}})()`)
 			}
 			return err
 		})
 	case *fyne.ShortcutSelectAll:
-		s.view.page.input(input.DispatchKeyEvent(input.KeyDown).WithKey("a").WithModifiers(2).WithWindowsVirtualKeyCode(65))
-		s.view.page.input(input.DispatchKeyEvent(input.KeyUp).WithKey("a").WithModifiers(2).WithWindowsVirtualKeyCode(65))
+		screen.view.page.input(input.DispatchKeyEvent(input.KeyDown).WithKey("a").WithModifiers(2).WithWindowsVirtualKeyCode(65))
+		screen.view.page.input(input.DispatchKeyEvent(input.KeyUp).WithKey("a").WithModifiers(2).WithWindowsVirtualKeyCode(65))
 	}
 }
-func (s *browserScreen) MouseIn(e *desktop.MouseEvent) { s.MouseMoved(e) }
-func (s *browserScreen) MouseOut()                     {}
-func (s *browserScreen) MouseMoved(e *desktop.MouseEvent) {
-	x, y, ok := s.coords(e.Position)
+func (screen *browserScreen) MouseIn(e *desktop.MouseEvent) { screen.MouseMoved(e) }
+func (screen *browserScreen) MouseOut()                     {}
+func (screen *browserScreen) MouseMoved(e *desktop.MouseEvent) {
+	x, y, ok := screen.coords(e.Position)
 	if !ok {
 		return
 	}
-	s.view.page.pointer(x, y, s.buttons)
+	screen.view.page.pointer(x, y, screen.buttons)
 }
-func (s *browserScreen) MouseDown(e *desktop.MouseEvent) {
-	s.view.panel.u.window.Canvas().Focus(s)
-	s.modelCursor.Hide()
-	s.buttons = 1
-	s.mouse(e, input.MousePressed)
+func (screen *browserScreen) MouseDown(e *desktop.MouseEvent) {
+	screen.view.panel.ui.window.Canvas().Focus(screen)
+	screen.modelCursor.Hide()
+	screen.buttons = 1
+	screen.mouse(e, input.MousePressed)
 }
-func (s *browserScreen) MouseUp(e *desktop.MouseEvent) {
-	s.mouse(e, input.MouseReleased)
-	s.buttons = 0
+func (screen *browserScreen) MouseUp(e *desktop.MouseEvent) {
+	screen.mouse(e, input.MouseReleased)
+	screen.buttons = 0
 }
-func (s *browserScreen) mouse(e *desktop.MouseEvent, kind input.MouseType) {
-	x, y, ok := s.coords(e.Position)
+func (screen *browserScreen) mouse(e *desktop.MouseEvent, kind input.MouseType) {
+	x, y, ok := screen.coords(e.Position)
 	if !ok {
 		return
 	}
@@ -540,20 +545,20 @@ func (s *browserScreen) mouse(e *desktop.MouseEvent, kind input.MouseType) {
 	if e.Button == desktop.MouseButtonTertiary {
 		button = input.Middle
 	}
-	s.view.page.input(input.DispatchMouseEvent(kind, x, y).WithButton(button).WithClickCount(1))
+	screen.view.page.input(input.DispatchMouseEvent(kind, x, y).WithButton(button).WithClickCount(1))
 }
-func (s *browserScreen) Scrolled(e *fyne.ScrollEvent) {
-	x, y, ok := s.coords(e.Position)
+func (screen *browserScreen) Scrolled(e *fyne.ScrollEvent) {
+	x, y, ok := screen.coords(e.Position)
 	if !ok {
 		return
 	}
-	s.view.page.input(input.DispatchMouseEvent(input.MouseWheel, x, y).WithDeltaX(float64(-e.Scrolled.DX) * 20).WithDeltaY(float64(-e.Scrolled.DY) * 20))
+	screen.view.page.input(input.DispatchMouseEvent(input.MouseWheel, x, y).WithDeltaX(float64(-e.Scrolled.DX) * 20).WithDeltaY(float64(-e.Scrolled.DY) * 20))
 }
 
-func (p *toolPanel) syncBrowsers() {
+func (panel *toolPanel) syncBrowsers() {
 	var active *browserPage
-	if p.target > 0 && p.active >= 0 && p.active < len(p.tabs) {
-		active = p.tabs[p.active].browser
+	if panel.target > 0 && panel.active >= 0 && panel.active < len(panel.tabs) {
+		active = panel.tabs[panel.active].browser
 	}
 	visit := func(tabs []panelTab) {
 		for _, tab := range tabs {
@@ -562,61 +567,61 @@ func (p *toolPanel) syncBrowsers() {
 			}
 		}
 	}
-	visit(p.tabs)
-	visit(p.home.tabs)
-	for _, chat := range p.u.chats {
+	visit(panel.tabs)
+	visit(panel.home.tabs)
+	for _, chat := range panel.ui.chats {
 		if chat.panel != nil {
 			visit(chat.panel.tabs)
 		}
 	}
 }
 
-func (p *toolPanel) removeBrowser(chat *conversation, b *browserPage) {
-	if chat == p.owner {
-		for i, tab := range p.tabs {
-			if tab.browser == b {
-				p.close(i)
+func (panel *toolPanel) removeBrowser(chat *conversation, browser *browserPage) {
+	if chat == panel.owner {
+		for i, tab := range panel.tabs {
+			if tab.browser == browser {
+				panel.close(i)
 				return
 			}
 		}
 		return
 	}
-	state := p.stateOf(chat)
+	state := panel.stateOf(chat)
 	for i, tab := range state.tabs {
-		if tab.browser == b {
+		if tab.browser == browser {
 			tab.dispose()
 			state.tabs = append(state.tabs[:i], state.tabs[i+1:]...)
 			state.active = min(state.active, len(state.tabs)-1)
 			if chat != nil {
 				chat.Panel = state.saved()
 			}
-			p.u.save()
+			panel.ui.save()
 			return
 		}
 	}
 }
 
-func (s *browserScreen) KeyDown(e *fyne.KeyEvent) {
+func (screen *browserScreen) KeyDown(e *fyne.KeyEvent) {
 	switch e.Name {
 	case desktop.KeyControlLeft, desktop.KeyControlRight:
-		s.modifiers |= 2
+		screen.modifiers |= 2
 	case desktop.KeyAltLeft, desktop.KeyAltRight:
-		s.modifiers |= 1
+		screen.modifiers |= 1
 	case desktop.KeyShiftLeft, desktop.KeyShiftRight:
-		s.modifiers |= 8
+		screen.modifiers |= 8
 	case desktop.KeySuperLeft, desktop.KeySuperRight:
-		s.modifiers |= 4
+		screen.modifiers |= 4
 	}
 }
-func (s *browserScreen) KeyUp(e *fyne.KeyEvent) {
+func (screen *browserScreen) KeyUp(e *fyne.KeyEvent) {
 	switch e.Name {
 	case desktop.KeyControlLeft, desktop.KeyControlRight:
-		s.modifiers &^= 2
+		screen.modifiers &^= 2
 	case desktop.KeyAltLeft, desktop.KeyAltRight:
-		s.modifiers &^= 1
+		screen.modifiers &^= 1
 	case desktop.KeyShiftLeft, desktop.KeyShiftRight:
-		s.modifiers &^= 8
+		screen.modifiers &^= 8
 	case desktop.KeySuperLeft, desktop.KeySuperRight:
-		s.modifiers &^= 4
+		screen.modifiers &^= 4
 	}
 }

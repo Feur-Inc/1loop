@@ -33,53 +33,53 @@ type mdBlock struct {
 }
 
 func newMarkdownView(text string) *markdownView {
-	m := &markdownView{box: container.New(layout.NewCustomPaddedVBoxLayout(12))}
-	m.ParseMarkdown(text)
-	return m
+	view := &markdownView{box: container.New(layout.NewCustomPaddedVBoxLayout(12))}
+	view.ParseMarkdown(text)
+	return view
 }
 
 // ParseMarkdown re-renders the text. Unchanged blocks keep their widgets:
 // while an answer streams, only its last block is built again.
-func (m *markdownView) ParseMarkdown(text string) {
+func (view *markdownView) ParseMarkdown(text string) {
 	blocks := splitMarkdown(text)
 	objs := make([]fyne.CanvasObject, len(blocks))
-	reshaped := len(blocks) != len(m.blocks)
-	for i, b := range blocks {
-		if i < len(m.blocks) && m.blocks[i] == b {
-			objs[i] = m.objs[i]
+	reshaped := len(blocks) != len(view.blocks)
+	for i, mdBlock := range blocks {
+		if i < len(view.blocks) && view.blocks[i] == mdBlock {
+			objs[i] = view.objs[i]
 			continue
 		}
-		objs[i] = renderBlock(b)
+		objs[i] = renderBlock(mdBlock)
 		reshaped = true
 	}
-	m.blocks, m.objs = blocks, objs
+	view.blocks, view.objs = blocks, objs
 	if reshaped {
 		// New widgets are drawn on their own once placed: lay the box out,
 		// without the recursive refresh of Container.Refresh.
-		m.box.Objects = objs
-		m.box.Layout.Layout(objs, m.box.Size())
-		canvas.Refresh(m.box)
+		view.box.Objects = objs
+		view.box.Layout.Layout(objs, view.box.Size())
+		canvas.Refresh(view.box)
 	}
-	if m.layer != nil {
-		m.layer.changed()
+	if view.layer != nil {
+		view.layer.changed()
 	}
 }
 
-func renderBlock(b mdBlock) fyne.CanvasObject {
-	switch b.kind {
+func renderBlock(mdBlockValue mdBlock) fyne.CanvasObject {
+	switch mdBlockValue.kind {
 	case "code":
-		return markdownCode(b.lang, b.text)
+		return markdownCode(mdBlockValue.lang, mdBlockValue.text)
 	case "table":
-		return newMarkdownTable(b.text)
+		return newMarkdownTable(mdBlockValue.text)
 	case "math":
-		if b.lang == "open" { // still being written: not worth composing yet
-			return markdownCode("latex", b.text)
+		if mdBlockValue.lang == "open" { // still being written: not worth composing yet
+			return markdownCode("latex", mdBlockValue.text)
 		}
-		formula := newFlowText([]span{{math: b.text, text: b.text}}, theme.TextSize(), colText)
+		formula := newFlowText([]span{{math: mdBlockValue.text, text: mdBlockValue.text}}, theme.TextSize(), colText)
 		formula.center = true
 		return padded(4, 4, 0, 0, formula)
 	}
-	return renderText(b.text)
+	return renderText(mdBlockValue.text)
 }
 
 var tableRule = regexp.MustCompile(`^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$`)
@@ -329,20 +329,20 @@ func renderList(lines []string, size float32) fyne.CanvasObject {
 		items = append(items, item{level, marker, []string{content}})
 	}
 	box := container.New(layout.NewCustomPaddedVBoxLayout(6))
-	for n, it := range items {
-		text := strings.TrimSpace(strings.Join(it.text, "\n"))
+	for n, itemValue := range items {
+		text := strings.TrimSpace(strings.Join(itemValue.text, "\n"))
 		if text == "" {
 			continue // a bullet whose text is not written yet
 		}
 		entry := newFlowText(parseInline(text), size, colText)
-		entry.marker, entry.hang, entry.tail = it.marker, 24, "\n"
-		if w, _, _ := measureText(it.marker, size, fyne.TextStyle{}); w+10 > entry.hang {
+		entry.marker, entry.hang, entry.tail = itemValue.marker, 24, "\n"
+		if w, _, _ := measureText(itemValue.marker, size, fyne.TextStyle{}); w+10 > entry.hang {
 			entry.hang = w + 10 // a long number
 		}
 		if n == len(items)-1 {
 			entry.tail = "\n\n"
 		}
-		box.Add(padded(0, 0, float32(it.level)*20, 0, entry))
+		box.Add(padded(0, 0, float32(itemValue.level)*20, 0, entry))
 	}
 	return box
 }
@@ -399,9 +399,9 @@ func splitRow(line string) []string {
 
 // selPieces gives the selection layer the cells' text, row by row, as
 // tab-separated columns.
-func (t *markdownTable) selPieces() []selPiece {
+func (table *markdownTable) selPieces() []selPiece {
 	var pieces []selPiece
-	for _, row := range t.cells {
+	for _, row := range table.cells {
 		for _, cell := range row {
 			for _, piece := range cell.selPieces() {
 				piece.at = piece.at.Add(cell.Position())
@@ -413,8 +413,8 @@ func (t *markdownTable) selPieces() []selPiece {
 }
 
 // linkAt and Tapped pass on to the cell under the pointer.
-func (t *markdownTable) linkAt(at fyne.Position) string {
-	for _, row := range t.cells {
+func (table *markdownTable) linkAt(at fyne.Position) string {
+	for _, row := range table.cells {
 		for _, cell := range row {
 			if link := cell.linkAt(at.Subtract(cell.Position())); link != "" {
 				return link
@@ -424,14 +424,14 @@ func (t *markdownTable) linkAt(at fyne.Position) string {
 	return ""
 }
 
-func (t *markdownTable) Tapped(e *fyne.PointEvent) { openLink(t.linkAt(e.Position)) }
+func (table *markdownTable) Tapped(e *fyne.PointEvent) { openLink(table.linkAt(e.Position)) }
 
 func newMarkdownTable(text string) *markdownTable {
-	t := &markdownTable{width: 600}
+	table := &markdownTable{width: 600}
 	rows := strings.Split(text, "\n")
 	columns := len(splitRow(rows[0]))
-	t.weights = make([]float32, columns)
-	t.minimum = make([]float32, columns)
+	table.weights = make([]float32, columns)
+	table.minimum = make([]float32, columns)
 	for r, line := range rows {
 		cells := splitRow(line)
 		var row []*flowText
@@ -449,30 +449,30 @@ func newMarkdownTable(text string) *markdownTable {
 			row = append(row, flow)
 			// A little slack, so a word that fits is never pushed to a new line.
 			natural, widest := flow.extent()
-			t.weights[c] = fyne.Max(t.weights[c], fyne.Min(natural+4, 320))
-			t.minimum[c] = fyne.Max(t.minimum[c], fyne.Min(widest, 320)+4)
+			table.weights[c] = fyne.Max(table.weights[c], fyne.Min(natural+4, 320))
+			table.minimum[c] = fyne.Max(table.minimum[c], fyne.Min(widest, 320)+4)
 		}
-		t.cells = append(t.cells, row)
+		table.cells = append(table.cells, row)
 	}
-	t.ExtendBaseWidget(t)
-	return t
+	table.ExtendBaseWidget(table)
+	return table
 }
 
-func (t *markdownTable) CreateRenderer() fyne.WidgetRenderer {
-	r := &tableRenderer{t: t, frame: canvas.NewRectangle(colCode), head: canvas.NewRectangle(colRaised)}
-	r.frame.CornerRadius = 10
-	r.frame.StrokeColor = colBorder
-	r.frame.StrokeWidth = 1
-	r.head.CornerRadius = 9
-	for range t.cells[1:] {
+func (table *markdownTable) CreateRenderer() fyne.WidgetRenderer {
+	renderer := &tableRenderer{table: table, frame: canvas.NewRectangle(colCode), head: canvas.NewRectangle(colRaised)}
+	renderer.frame.CornerRadius = 10
+	renderer.frame.StrokeColor = colBorder
+	renderer.frame.StrokeWidth = 1
+	renderer.head.CornerRadius = 9
+	for range table.cells[1:] {
 		rule := canvas.NewRectangle(colBorderSoft)
-		r.rules = append(r.rules, rule)
+		renderer.rules = append(renderer.rules, rule)
 	}
-	return r
+	return renderer
 }
 
 type tableRenderer struct {
-	t     *markdownTable
+	table *markdownTable
 	frame *canvas.Rectangle
 	head  *canvas.Rectangle
 	rules []*canvas.Rectangle
@@ -484,28 +484,28 @@ type tableRenderer struct {
 
 const cellPadX, cellPadY = float32(12), float32(8)
 
-func (r *tableRenderer) columns(width float32) []float32 {
+func (renderer *tableRenderer) columns(width float32) []float32 {
 	total := float32(0)
-	for _, w := range r.t.weights {
+	for _, w := range renderer.table.weights {
 		total += w + 2*cellPadX
 	}
-	widths := make([]float32, len(r.t.weights))
+	widths := make([]float32, len(renderer.table.weights))
 	chrome := 2 * cellPadX
-	for i, w := range r.t.weights {
+	for i, w := range renderer.table.weights {
 		natural := w + chrome
 		if total <= width {
 			widths[i] = natural
 		} else {
-			widths[i] = fyne.Max(width*natural/total, r.t.minimum[i]+chrome)
+			widths[i] = fyne.Max(width*natural/total, renderer.table.minimum[i]+chrome)
 		}
 	}
 	return widths
 }
 
-func (r *tableRenderer) rowHeights(width float32) []float32 {
-	widths := r.columns(width)
-	heights := make([]float32, len(r.t.cells))
-	for i, row := range r.t.cells {
+func (renderer *tableRenderer) rowHeights(width float32) []float32 {
+	widths := renderer.columns(width)
+	heights := make([]float32, len(renderer.table.cells))
+	for i, row := range renderer.table.cells {
 		for c, cell := range row {
 			cell.Resize(fyne.NewSize(widths[c]-2*cellPadX, 10))
 			heights[i] = fyne.Max(heights[i], cell.MinSize().Height+2*cellPadY)
@@ -514,26 +514,26 @@ func (r *tableRenderer) rowHeights(width float32) []float32 {
 	return heights
 }
 
-func (r *tableRenderer) MinSize() fyne.Size {
-	if r.height == 0 || r.measuredAt != r.t.width {
-		r.measuredAt, r.height = r.t.width, 0
-		for _, h := range r.rowHeights(r.t.width) {
-			r.height += h
+func (renderer *tableRenderer) MinSize() fyne.Size {
+	if renderer.height == 0 || renderer.measuredAt != renderer.table.width {
+		renderer.measuredAt, renderer.height = renderer.table.width, 0
+		for _, h := range renderer.rowHeights(renderer.table.width) {
+			renderer.height += h
 		}
 	}
-	return fyne.NewSize(0, r.height)
+	return fyne.NewSize(0, renderer.height)
 }
 
-func (r *tableRenderer) Layout(size fyne.Size) {
-	r.t.width = size.Width
-	widths := r.columns(size.Width)
-	heights := r.rowHeights(size.Width)
+func (renderer *tableRenderer) Layout(size fyne.Size) {
+	renderer.table.width = size.Width
+	widths := renderer.columns(size.Width)
+	heights := renderer.rowHeights(size.Width)
 	tableWidth := float32(0)
 	for _, w := range widths {
 		tableWidth += w
 	}
 	y := float32(0)
-	for i, row := range r.t.cells {
+	for i, row := range renderer.table.cells {
 		x := float32(0)
 		for c, cell := range row {
 			cell.Move(fyne.NewPos(x+cellPadX, y+cellPadY))
@@ -541,33 +541,33 @@ func (r *tableRenderer) Layout(size fyne.Size) {
 			x += widths[c]
 		}
 		if i > 0 {
-			r.rules[i-1].Move(fyne.NewPos(0, y))
-			r.rules[i-1].Resize(fyne.NewSize(tableWidth, 1))
+			renderer.rules[i-1].Move(fyne.NewPos(0, y))
+			renderer.rules[i-1].Resize(fyne.NewSize(tableWidth, 1))
 		}
 		y += heights[i]
 	}
-	r.frame.Resize(fyne.NewSize(tableWidth, y))
-	r.head.Move(fyne.NewPos(1, 1))
-	r.head.Resize(fyne.NewSize(tableWidth-2, heights[0]-1))
+	renderer.frame.Resize(fyne.NewSize(tableWidth, y))
+	renderer.head.Move(fyne.NewPos(1, 1))
+	renderer.head.Resize(fyne.NewSize(tableWidth-2, heights[0]-1))
 }
 
-func (r *tableRenderer) Refresh() {
-	r.Layout(r.t.Size())
-	r.frame.Refresh()
-	r.head.Refresh()
-	for _, row := range r.t.cells {
+func (renderer *tableRenderer) Refresh() {
+	renderer.Layout(renderer.table.Size())
+	renderer.frame.Refresh()
+	renderer.head.Refresh()
+	for _, row := range renderer.table.cells {
 		for _, cell := range row {
 			cell.Refresh()
 		}
 	}
 }
 
-func (r *tableRenderer) Objects() []fyne.CanvasObject {
-	objects := []fyne.CanvasObject{r.frame, r.head}
-	for _, rule := range r.rules {
+func (renderer *tableRenderer) Objects() []fyne.CanvasObject {
+	objects := []fyne.CanvasObject{renderer.frame, renderer.head}
+	for _, rule := range renderer.rules {
 		objects = append(objects, rule)
 	}
-	for _, row := range r.t.cells {
+	for _, row := range renderer.table.cells {
 		for _, cell := range row {
 			objects = append(objects, cell)
 		}
@@ -575,4 +575,4 @@ func (r *tableRenderer) Objects() []fyne.CanvasObject {
 	return objects
 }
 
-func (r *tableRenderer) Destroy() {}
+func (renderer *tableRenderer) Destroy() {}

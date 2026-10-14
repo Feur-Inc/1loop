@@ -34,14 +34,14 @@ type modelChoice struct {
 	DefaultEffort, ReasoningMode, Source string
 }
 
-func (c connection) config(workspace string) config {
-	return config{ConnectionID: c.ID, AuthProfile: c.AuthProfile, Provider: c.Provider, BaseURL: c.BaseURL, Workspace: workspace, Routing: c.Routing, Parameters: c.Parameters}
+func (conn connection) config(workspace string) config {
+	return config{ConnectionID: conn.ID, AuthProfile: conn.AuthProfile, Provider: conn.Provider, BaseURL: conn.BaseURL, Workspace: workspace, Routing: conn.Routing, Parameters: conn.Parameters}
 }
-func (c connection) includes(id string) bool {
-	if c.AllModels {
+func (conn connection) includes(id string) bool {
+	if conn.AllModels {
 		return true
 	}
-	for _, selected := range c.Models {
+	for _, selected := range conn.Models {
 		if id == selected {
 			return true
 		}
@@ -80,48 +80,48 @@ func requestParameters(raw string) (map[string]any, error) {
 // offerClaudeCode adds a Claude Code connection the first time 1loop finds
 // Claude Code installed, with its current models; the user can edit or
 // remove it like any other connection, and it is never added again.
-func (u *desktopUI) offerClaudeCode() {
-	if u.claudeOffered {
+func (ui *desktopUI) offerClaudeCode() {
+	if ui.claudeOffered {
 		return
 	}
-	for _, c := range u.connectionsList {
-		if c.Provider == "claudecode" {
-			u.claudeOffered = true
+	for _, conn := range ui.connectionsList {
+		if conn.Provider == "claudecode" {
+			ui.claudeOffered = true
 			return
 		}
 	}
 	if _, err := exec.LookPath("claude"); err != nil {
 		return
 	}
-	u.claudeOffered = true
+	ui.claudeOffered = true
 	id := identifier()
-	u.connectionsList = append(u.connectionsList, connection{ID: id, AuthProfile: id, Name: "Claude Code", Provider: "claudecode",
+	ui.connectionsList = append(ui.connectionsList, connection{ID: id, AuthProfile: id, Name: "Claude Code", Provider: "claudecode",
 		Enabled: true, Models: []string{"opus", "sonnet", "fable", "haiku"}})
 }
 
-func (u *desktopUI) initializeConnections() {
-	defer u.offerClaudeCode()
-	if u.connectionsList == nil {
+func (ui *desktopUI) initializeConnections() {
+	defer ui.offerClaudeCode()
+	if ui.connectionsList == nil {
 		id := identifier()
-		u.connectionsList = []connection{{ID: id, Name: providerName(u.cfg.Provider), Provider: u.cfg.Provider, BaseURL: u.cfg.BaseURL, Enabled: true, AllModels: true}}
-		u.cfg.ConnectionID = id
-		for _, chat := range u.chats {
+		ui.connectionsList = []connection{{ID: id, Name: providerName(ui.cfg.Provider), Provider: ui.cfg.Provider, BaseURL: ui.cfg.BaseURL, Enabled: true, AllModels: true}}
+		ui.cfg.ConnectionID = id
+		for _, chat := range ui.chats {
 			found := ""
-			for _, c := range u.connectionsList {
-				if c.Provider == chat.Config.Provider && c.BaseURL == chat.Config.BaseURL {
-					found = c.ID
+			for _, conn := range ui.connectionsList {
+				if conn.Provider == chat.Config.Provider && conn.BaseURL == chat.Config.BaseURL {
+					found = conn.ID
 					break
 				}
 			}
 			if found == "" {
 				found = identifier()
-				u.connectionsList = append(u.connectionsList, connection{ID: found, Name: providerName(chat.Config.Provider), Provider: chat.Config.Provider, BaseURL: chat.Config.BaseURL, Enabled: true, AllModels: true})
+				ui.connectionsList = append(ui.connectionsList, connection{ID: found, Name: providerName(chat.Config.Provider), Provider: chat.Config.Provider, BaseURL: chat.Config.BaseURL, Enabled: true, AllModels: true})
 			}
 			chat.Config.ConnectionID = found
 		}
 	}
-	if u.approvalMode == "" {
-		u.approvalMode = "approval"
+	if ui.approvalMode == "" {
+		ui.approvalMode = "approval"
 	}
 }
 func providerName(id string) string {
@@ -142,14 +142,14 @@ func providerName(id string) string {
 
 // display is the model's name as the composer shows it. A Claude Code model
 // says so: there the work runs in Claude Code's harness, not in 1loop's.
-func (c modelChoice) display() string {
-	if c.Connection.Provider == "claudecode" {
-		return c.Name + " · Claude Code"
+func (choice modelChoice) display() string {
+	if choice.Connection.Provider == "claudecode" {
+		return choice.Name + " · Claude Code"
 	}
-	return c.Name
+	return choice.Name
 }
-func (u *desktopUI) selectModel(choice modelChoice) {
-	previous := u.cfg
+func (ui *desktopUI) selectModel(choice modelChoice) {
+	previous := ui.cfg
 	devf("ui", "model %s (%s)", choice.ID, choice.display())
 	cfg := choice.Connection.config(previous.Workspace)
 	cfg.Model = choice.ID
@@ -159,42 +159,42 @@ func (u *desktopUI) selectModel(choice modelChoice) {
 	cfg.Routing = mergeOptions(cfg.Routing, options.Provider)
 	cfg.Parameters = mergeOptions(cfg.Parameters, options.Parameters)
 	cfg.Session = previous.Session // the chat keeps its Claude Code session across model changes
-	u.cfg = cfg
+	ui.cfg = cfg
 	display := choice.display()
 	if runes := []rune(display); len(runes) > 32 {
 		display = string(runes[:32]) + "…"
 	}
-	u.model.row.SetText(display)
-	if u.current != nil {
-		u.current.Config = cfg
+	ui.model.row.SetText(display)
+	if ui.current != nil {
+		ui.current.Config = cfg
 	}
 	if len(choice.Efforts) > 0 {
-		u.model.row.SetTrailing(effortLabel(cfg.Effort))
+		ui.model.row.SetTrailing(effortLabel(cfg.Effort))
 	} else {
-		u.model.row.SetTrailing("")
+		ui.model.row.SetTrailing("")
 	}
-	u.updateApprovalControl() // Auto mode exists only with Claude Code
-	if u.model.relayout != nil {
-		u.model.relayout()
+	ui.updateApprovalControl() // Auto mode exists only with Claude Code
+	if ui.model.relayout != nil {
+		ui.model.relayout()
 	}
-	u.updateHeader()
-	u.save()
-	u.remote.settingsChanged()
-	u.remote.metaChanged(u.current)
+	ui.updateHeader()
+	ui.save()
+	ui.remote.settingsChanged()
+	ui.remote.metaChanged(ui.current)
 }
 
 // showChatModel puts the open chat's model in the picker, from the catalog
 // already loaded; it is fetched again only when the model is not in it.
-func (u *desktopUI) showChatModel() {
-	for label, choice := range u.choices {
-		if choice.Connection.ID == u.cfg.ConnectionID && choice.ID == u.cfg.Model {
-			u.model.Selected = label
-			u.selectModel(choice)
+func (ui *desktopUI) showChatModel() {
+	for label, choice := range ui.choices {
+		if choice.Connection.ID == ui.cfg.ConnectionID && choice.ID == ui.cfg.Model {
+			ui.model.Selected = label
+			ui.selectModel(choice)
 			return
 		}
 	}
-	if !u.modelsLoading {
-		u.refreshModels()
+	if !ui.modelsLoading {
+		ui.refreshModels()
 	}
 }
 
@@ -214,12 +214,13 @@ func systemInstructions(cfg config) string {
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
 		prompt += "\n\nAdditional instructions from the user:\n" + cfg.UserInstructions
 	}
-	return prompt + "\nWorkspace: " + cfg.Workspace + todoInstructions(cfg) + contextInstructions(cfg) + browserInstructions(cfg) + terminalInstructions(cfg)
+	return prompt + "\nWorkspace: " + cfg.Workspace + todoInstructions(cfg) + contextInstructions(cfg) + browserInstructions(cfg) + terminalInstructions(cfg) + computerInstructions(cfg)
 }
 
 type approvalContextKey struct{}
 
 func toolContext(ctx context.Context, cfg config) context.Context {
+	ctx = context.WithValue(ctx, computerContextKey{}, cfg.Computer)
 	ctx = context.WithValue(ctx, terminalContextKey{}, cfg.Terminal)
 	ctx = context.WithValue(ctx, browserContextKey{}, cfg.Browser)
 	ctx = context.WithValue(ctx, recallContextKey{}, cfg.Recall)

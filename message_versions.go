@@ -36,16 +36,16 @@ func (chat *conversation) identifyMessages() {
 }
 
 func (chat *conversation) versionIndex(id string) int {
-	return slices.IndexFunc(chat.Versions, func(v chatVersion) bool { return v.ID == id })
+	return slices.IndexFunc(chat.Versions, func(chatVersionValue chatVersion) bool { return chatVersionValue.ID == id })
 }
 
 // Edits of one prompt (or retries of its response) form a family. Later
 // forks at another message stay inside their chosen family's continuation.
 func (chat *conversation) versionFamily(anchor string) (family []int, selected int) {
 	edges := make([][]int, len(chat.Versions))
-	for i, v := range chat.Versions {
-		if v.Fork == anchor {
-			if parent := chat.versionIndex(v.Parent); parent >= 0 {
+	for i, chatVersion := range chat.Versions {
+		if chatVersion.Fork == anchor {
+			if parent := chat.versionIndex(chatVersion.Parent); parent >= 0 {
 				edges[i] = append(edges[i], parent)
 				edges[parent] = append(edges[parent], i)
 			}
@@ -86,9 +86,9 @@ func (chat *conversation) versionFamily(anchor string) (family []int, selected i
 
 func (chat *conversation) rememberVersion() {
 	anchors := map[string]bool{}
-	for _, v := range chat.Versions {
-		if v.Fork != "" {
-			anchors[v.Fork] = true
+	for _, chatVersion := range chat.Versions {
+		if chatVersion.Fork != "" {
+			anchors[chatVersion.Fork] = true
 		}
 	}
 	for anchor := range anchors {
@@ -98,11 +98,11 @@ func (chat *conversation) rememberVersion() {
 		}
 		family, selected := chat.versionFamily(anchor)
 		if len(family) > 1 {
-			v := &chat.Versions[family[selected]]
-			if v.Selected == nil {
-				v.Selected = map[string]string{}
+			chatVersionValue := &chat.Versions[family[selected]]
+			if chatVersionValue.Selected == nil {
+				chatVersionValue.Selected = map[string]string{}
 			}
-			v.Selected[anchor] = chat.Version
+			chatVersionValue.Selected[anchor] = chat.Version
 		}
 	}
 	chat.Versions[chat.versionIndex(chat.Version)].Snapshot = &chatSnapshot{
@@ -121,8 +121,8 @@ func (chat *conversation) historyBefore(index int) []message {
 		}
 		found := -1
 		for j := cursor - 1; j >= 0; j-- {
-			m := chat.History[j]
-			if m.Role == "user" && m.Content == item.Text && slices.Equal(m.Images, item.Images) {
+			messageValue := chat.History[j]
+			if messageValue.Role == "user" && messageValue.Content == item.Text && slices.Equal(messageValue.Images, item.Images) {
 				found = j
 				break
 			}
@@ -191,24 +191,24 @@ func (chat *conversation) selectVersion(anchor string, delta int) bool {
 	if leaf := chat.versionIndex(chat.Versions[target].Selected[anchor]); leaf >= 0 {
 		target = leaf
 	}
-	v := &chat.Versions[target]
-	if v.Snapshot == nil {
+	chatVersion := &chat.Versions[target]
+	if chatVersion.Snapshot == nil {
 		return false
 	}
-	chat.Version, chat.Config = v.ID, v.Snapshot.Config
-	chat.History = append([]message{}, v.Snapshot.History...)
-	chat.Items = append([]chatItem{}, v.Snapshot.Items...)
-	v.Snapshot = nil
+	chat.Version, chat.Config = chatVersion.ID, chatVersion.Snapshot.Config
+	chat.History = append([]message{}, chatVersion.Snapshot.History...)
+	chat.Items = append([]chatItem{}, chatVersion.Snapshot.Items...)
+	chatVersion.Snapshot = nil
 	chat.queue, chat.steer = nil, nil
 	return true
 }
 
 func copyVersions(versions []chatVersion) []chatVersion {
 	copy := append([]chatVersion{}, versions...)
-	for i, v := range copy {
-		if v.Selected != nil {
+	for i, chatVersionValue := range copy {
+		if chatVersionValue.Selected != nil {
 			copy[i].Selected = map[string]string{}
-			for anchor, id := range v.Selected {
+			for anchor, id := range chatVersionValue.Selected {
 				copy[i].Selected[anchor] = id
 			}
 		}
@@ -225,28 +225,28 @@ func userItemBefore(chat *conversation, index int) int {
 	return -1
 }
 
-func (u *desktopUI) versionReady(chat *conversation) bool {
-	if chat != u.current || chat.run != nil {
-		u.notice("Response in progress", "Stop the current response before editing or switching versions.")
+func (ui *desktopUI) versionReady(chat *conversation) bool {
+	if chat != ui.current || chat.run != nil {
+		ui.notice("Response in progress", "Stop the current response before editing or switching versions.")
 		return false
 	}
 	return true
 }
 
-func (u *desktopUI) startVersion(chat *conversation, index int, m message, response bool) bool {
-	if !u.versionReady(chat) || !u.ready() {
+func (ui *desktopUI) startVersion(chat *conversation, index int, messageValue message, response bool) bool {
+	if !ui.versionReady(chat) || !ui.ready() {
 		return false
 	}
-	u.finishEdit(false)
+	ui.finishEdit(false)
 	id := chat.forkMessage(index, response)
-	u.reloadChat(chat)
-	u.startWithID(m, id)
-	u.remote.replaceChat(chat)
+	ui.reloadChat(chat)
+	ui.startWithID(messageValue, id)
+	ui.remote.replaceChat(chat)
 	return true
 }
 
-func (u *desktopUI) editMessage(chat *conversation, index int) {
-	if !u.versionReady(chat) {
+func (ui *desktopUI) editMessage(chat *conversation, index int) {
+	if !ui.versionReady(chat) {
 		return
 	}
 	item := chat.Items[index]
@@ -261,35 +261,35 @@ func (u *desktopUI) editMessage(chat *conversation, index int) {
 		if text == "" && len(item.Images) == 0 {
 			return
 		}
-		if u.startVersion(chat, index, message{Role: "user", Content: text, Images: item.Images}, false) {
+		if ui.startVersion(chat, index, message{Role: "user", Content: text, Images: item.Images}, false) {
 			dialog.Hide()
 		}
 	})
-	dialog = u.modal("Edit message", container.NewVBox(entry, note("A new version will start here. The previous conversation remains available with the version arrows.")), 600, nil, cancel, send)
-	u.window.Canvas().Focus(entry)
+	dialog = ui.modal("Edit message", container.NewVBox(entry, note("A new version will start here. The previous conversation remains available with the version arrows.")), 600, nil, cancel, send)
+	ui.window.Canvas().Focus(entry)
 }
 
-func (u *desktopUI) retryMessage(chat *conversation, index int) {
+func (ui *desktopUI) retryMessage(chat *conversation, index int) {
 	if at := userItemBefore(chat, index); at >= 0 {
 		item := chat.Items[at]
-		u.startVersion(chat, at, message{Role: "user", Content: item.Text, Images: item.Images}, true)
+		ui.startVersion(chat, at, message{Role: "user", Content: item.Text, Images: item.Images}, true)
 	}
 }
 
-func (u *desktopUI) versionControls(chat *conversation, anchor string) fyne.CanvasObject {
+func (ui *desktopUI) versionControls(chat *conversation, anchor string) fyne.CanvasObject {
 	family, selected := chat.versionFamily(anchor)
 	if len(family) < 2 {
 		return spacer(0, 0)
 	}
 	move := func(delta int) {
-		if !u.versionReady(chat) {
+		if !ui.versionReady(chat) {
 			return
 		}
-		u.finishEdit(false)
+		ui.finishEdit(false)
 		if chat.selectVersion(anchor, delta) {
-			u.reloadChat(chat)
-			u.save()
-			u.remote.replaceChat(chat)
+			ui.reloadChat(chat)
+			ui.save()
+			ui.remote.replaceChat(chat)
 		}
 	}
 	previous := newRow("", iconChevronLeft, styleChip, func() { move(-1) })
@@ -304,7 +304,7 @@ func (u *desktopUI) versionControls(chat *conversation, anchor string) fyne.Canv
 		container.NewCenter(textLine(fmt.Sprintf("%d / %d", selected+1, len(family)), 12, colMuted)), next)
 }
 
-func (u *desktopUI) responseControls(chat *conversation, index int) *fyne.Container {
+func (ui *desktopUI) responseControls(chat *conversation, index int) *fyne.Container {
 	controls := container.NewHBox(copyChip(func() string {
 		if chat.Items[index].Kind == "error" {
 			return chat.Items[index].Text
@@ -312,8 +312,8 @@ func (u *desktopUI) responseControls(chat *conversation, index int) *fyne.Contai
 		return answerText(chat, index)
 	}))
 	if at := userItemBefore(chat, index); at >= 0 {
-		controls.Add(newRow("Retry", iconArrowTurn, styleChip, func() { u.retryMessage(chat, index) }))
-		controls.Add(u.versionControls(chat, chat.Items[at].ID+":reply"))
+		controls.Add(newRow("Retry", iconArrowTurn, styleChip, func() { ui.retryMessage(chat, index) }))
+		controls.Add(ui.versionControls(chat, chat.Items[at].ID+":reply"))
 	}
 	return controls
 }

@@ -21,24 +21,26 @@ type contextCache struct {
 	cacheRecord
 }
 
-func (c *contextCache) snapshot() cacheRecord {
-	if c == nil {
+func (cache *contextCache) snapshot() cacheRecord {
+	if cache == nil {
 		return cacheRecord{}
 	}
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	return c.cacheRecord
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	return cache.cacheRecord
 }
 
-func (c *contextCache) copy() *contextCache {
-	if c == nil {
+func (cache *contextCache) copy() *contextCache {
+	if cache == nil {
 		return nil
 	}
-	return &contextCache{cacheRecord: c.snapshot()}
+	return &contextCache{cacheRecord: cache.snapshot()}
 }
 
-func (c *contextCache) MarshalJSON() ([]byte, error)    { return json.Marshal(c.snapshot()) }
-func (c *contextCache) UnmarshalJSON(data []byte) error { return json.Unmarshal(data, &c.cacheRecord) }
+func (cache *contextCache) MarshalJSON() ([]byte, error) { return json.Marshal(cache.snapshot()) }
+func (cache *contextCache) UnmarshalJSON(data []byte) error {
+	return json.Unmarshal(data, &cache.cacheRecord)
+}
 
 func cacheIdentity(cfg config) string {
 	// No API key or access token is included in persisted metadata.
@@ -46,18 +48,18 @@ func cacheIdentity(cfg config) string {
 	return fmt.Sprintf("%x", sha256.Sum256([]byte(s)))
 }
 
-func (c *contextCache) record(cfg config, now time.Time) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.cacheRecord = cacheRecord{Identity: cacheIdentity(cfg), LastCall: now}
+func (cache *contextCache) record(cfg config, now time.Time) {
+	cache.mu.Lock()
+	defer cache.mu.Unlock()
+	cache.cacheRecord = cacheRecord{Identity: cacheIdentity(cfg), LastCall: now}
 }
 
 func cacheStale(cfg config, now time.Time) string {
-	r := cfg.Cache.snapshot()
-	if r.LastCall.IsZero() {
+	cacheRecord := cfg.Cache.snapshot()
+	if cacheRecord.LastCall.IsZero() {
 		return "no saved cache record"
 	}
-	if r.Identity != cacheIdentity(cfg) {
+	if cacheRecord.Identity != cacheIdentity(cfg) {
 		return "model, account or chat version changed"
 	}
 	if cfg.Provider == "vllm" {
@@ -75,7 +77,7 @@ func cacheStale(cfg config, now time.Time) string {
 			ttl = 24 * time.Hour
 		}
 	}
-	if now.Sub(r.LastCall) >= ttl {
+	if now.Sub(cacheRecord.LastCall) >= ttl {
 		return "cache estimated stale after inactivity"
 	}
 	return ""

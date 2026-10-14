@@ -31,16 +31,16 @@ var errNoNativePicker = errors.New("no native file chooser")
 
 // pick opens the chooser without blocking the interface and calls done on
 // the UI thread with the chosen paths (none when the user cancelled).
-func (u *desktopUI) pick(r pickRequest, done func([]string)) {
-	handle := portalHandle(u.window)
+func (ui *desktopUI) pick(pickRequestValue pickRequest, done func([]string)) {
+	handle := portalHandle(ui.window)
 	go func() {
-		paths, err := nativePick(handle, r)
+		paths, err := nativePick(handle, pickRequestValue)
 		fyne.Do(func() {
 			switch {
 			case errors.Is(err, errNoNativePicker):
-				u.fynePick(r, done)
+				ui.fynePick(pickRequestValue, done)
 			case err != nil:
-				u.notice(r.title, err.Error())
+				ui.notice(pickRequestValue.title, err.Error())
 			case len(paths) > 0:
 				done(paths)
 			}
@@ -51,9 +51,9 @@ func (u *desktopUI) pick(r pickRequest, done func([]string)) {
 // portalHandle names the parent window so the portal can keep its dialog
 // on top of it. Wayland needs an exported xdg_foreign handle, which GLFW
 // does not offer: the dialog is then simply centred by the compositor.
-func portalHandle(w fyne.Window) string {
+func portalHandle(window fyne.Window) string {
 	handle := ""
-	if native, ok := w.(driver.NativeWindow); ok {
+	if native, ok := window.(driver.NativeWindow); ok {
 		native.RunNative(func(context any) {
 			if x, ok := context.(driver.X11WindowContext); ok && x.WindowHandle != 0 {
 				handle = portal.FormatX11WindowHandle(x.WindowHandle)
@@ -63,22 +63,22 @@ func portalHandle(w fyne.Window) string {
 	return handle
 }
 
-func nativePick(handle string, r pickRequest) ([]string, error) {
-	options := &filechooser.OpenFileOptions{Directory: r.folder, Multiple: r.multiple, CurrentFolder: r.start}
-	if r.folder {
+func nativePick(handle string, pickRequestValue pickRequest) ([]string, error) {
+	options := &filechooser.OpenFileOptions{Directory: pickRequestValue.folder, Multiple: pickRequestValue.multiple, CurrentFolder: pickRequestValue.start}
+	if pickRequestValue.folder {
 		options.AcceptLabel = "Open"
 	}
-	if len(r.extensions) > 0 {
+	if len(pickRequestValue.extensions) > 0 {
 		var rules []filechooser.Rule
-		for _, ext := range r.extensions {
+		for _, ext := range pickRequestValue.extensions {
 			rules = append(rules,
 				filechooser.Rule{Type: filechooser.GlobPattern, Pattern: "*" + strings.ToLower(ext)},
 				filechooser.Rule{Type: filechooser.GlobPattern, Pattern: "*" + strings.ToUpper(ext)})
 		}
-		filter := &filechooser.Filter{Name: r.filterName, Rules: rules}
+		filter := &filechooser.Filter{Name: pickRequestValue.filterName, Rules: rules}
 		options.Filters, options.CurrentFilter = []*filechooser.Filter{filter}, filter
 	}
-	if uris, err := filechooser.OpenFile(handle, r.title, options); err == nil {
+	if uris, err := filechooser.OpenFile(handle, pickRequestValue.title, options); err == nil {
 		paths := make([]string, 0, len(uris))
 		for _, uri := range uris {
 			paths = append(paths, strings.TrimPrefix(uri, "file://"))
@@ -87,44 +87,44 @@ func nativePick(handle string, r pickRequest) ([]string, error) {
 	}
 	// No portal on this desktop: try the classic helpers.
 	if _, err := exec.LookPath("zenity"); err == nil {
-		return runChooser(zenityArgs(r))
+		return runChooser(zenityArgs(pickRequestValue))
 	}
 	if _, err := exec.LookPath("kdialog"); err == nil {
-		return runChooser(kdialogArgs(r))
+		return runChooser(kdialogArgs(pickRequestValue))
 	}
 	return nil, errNoNativePicker
 }
 
-func zenityArgs(r pickRequest) []string {
-	args := []string{"zenity", "--file-selection", "--title=" + r.title, "--separator=\n"}
-	if r.start != "" {
-		args = append(args, "--filename="+strings.TrimSuffix(r.start, "/")+"/")
+func zenityArgs(pickRequestValue pickRequest) []string {
+	args := []string{"zenity", "--file-selection", "--title=" + pickRequestValue.title, "--separator=\n"}
+	if pickRequestValue.start != "" {
+		args = append(args, "--filename="+strings.TrimSuffix(pickRequestValue.start, "/")+"/")
 	}
-	if r.folder {
+	if pickRequestValue.folder {
 		args = append(args, "--directory")
 	}
-	if r.multiple {
+	if pickRequestValue.multiple {
 		args = append(args, "--multiple")
 	}
-	if len(r.extensions) > 0 {
-		args = append(args, "--file-filter="+r.filterName+" | "+globs(r.extensions))
+	if len(pickRequestValue.extensions) > 0 {
+		args = append(args, "--file-filter="+pickRequestValue.filterName+" | "+globs(pickRequestValue.extensions))
 	}
 	return args
 }
 
-func kdialogArgs(r pickRequest) []string {
-	start := r.start
+func kdialogArgs(pickRequestValue pickRequest) []string {
+	start := pickRequestValue.start
 	if start == "" {
 		start = "."
 	}
-	if r.folder {
-		return []string{"kdialog", "--title", r.title, "--getexistingdirectory", start}
+	if pickRequestValue.folder {
+		return []string{"kdialog", "--title", pickRequestValue.title, "--getexistingdirectory", start}
 	}
-	args := []string{"kdialog", "--title", r.title, "--getopenfilename", start}
-	if len(r.extensions) > 0 {
-		args = append(args, globs(r.extensions)+"|"+r.filterName)
+	args := []string{"kdialog", "--title", pickRequestValue.title, "--getopenfilename", start}
+	if len(pickRequestValue.extensions) > 0 {
+		args = append(args, globs(pickRequestValue.extensions)+"|"+pickRequestValue.filterName)
 	}
-	if r.multiple {
+	if pickRequestValue.multiple {
 		args = append(args, "--multiple", "--separate-output")
 	}
 	return args
@@ -157,36 +157,36 @@ func runChooser(args []string) ([]string, error) {
 }
 
 // fynePick is the last resort, drawn by Fyne inside the window.
-func (u *desktopUI) fynePick(r pickRequest, done func([]string)) {
+func (ui *desktopUI) fynePick(pickRequestValue pickRequest, done func([]string)) {
 	var start fyne.ListableURI
-	if r.start != "" {
-		start, _ = storage.ListerForURI(storage.NewFileURI(r.start))
+	if pickRequestValue.start != "" {
+		start, _ = storage.ListerForURI(storage.NewFileURI(pickRequestValue.start))
 	}
-	if r.folder {
+	if pickRequestValue.folder {
 		d := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
 			if err != nil {
-				u.notice(r.title, err.Error())
+				ui.notice(pickRequestValue.title, err.Error())
 			} else if uri != nil {
 				done([]string{uri.Path()})
 			}
-		}, u.window)
+		}, ui.window)
 		d.SetLocation(start)
 		d.Show()
 		return
 	}
 	d := dialog.NewFileOpen(func(file fyne.URIReadCloser, err error) {
 		if err != nil {
-			u.notice(r.title, err.Error())
+			ui.notice(pickRequestValue.title, err.Error())
 			return
 		}
 		if file != nil {
 			file.Close()
 			done([]string{file.URI().Path()})
 		}
-	}, u.window)
+	}, ui.window)
 	d.SetLocation(start)
-	if len(r.extensions) > 0 {
-		d.SetFilter(storage.NewExtensionFileFilter(r.extensions))
+	if len(pickRequestValue.extensions) > 0 {
+		d.SetFilter(storage.NewExtensionFileFilter(pickRequestValue.extensions))
 	}
 	d.Show()
 }

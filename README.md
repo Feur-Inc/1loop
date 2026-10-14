@@ -66,6 +66,18 @@ Les lectures et éditions sont limitées au workspace, y compris la résolution 
 
 Les conversations, projets et réglages sont conservés dans `~/.config/1loop/state.json`, hors du projet (un ancien `.1loop/state.json` est migré automatiquement). Les clés saisies restent en mémoire et doivent être renseignées à nouveau après redémarrage. Les jetons OAuth sont enregistrés dans `~/.config/1loop/openai-<profil>.json` (ou `openai.json` pour le compte historique) avec des permissions 0600 et renouvelés par 1loop. Aucune conversation Codex n’est créée. Les anciens historiques locaux sont conservés ; une nouvelle autorisation OAuth est nécessaire pour OpenAI.
 
+## Computer Use
+
+The `computer_use` tool controls the real Linux desktop. It first returns its usage instructions, then `start` opens the native XDG RemoteDesktop permission dialog for screen sharing, keyboard and pointer control. One live portal session is reused between calls, prompts and chats until sharing is stopped, revoked, or 1loop exits. `stop` ends sharing; the desktop's sharing indicator can also revoke access. No unrestricted capture or input fallback is used after refusal or revocation.
+
+Screenshots come from the selected monitor's PipeWire stream. The model receives the image and its logical coordinate dimensions, origin and image scale. Coordinate actions support click, move, scroll and drag; keyboard actions support literal text and named key combinations. Desktop operations are serialized because all conversations share the same physical keyboard and pointer.
+
+Runtime requirements: `/usr/bin/python3`, PyGObject with GTK/Gdk 3 and GStreamer/GstVideo introspection, `python3-dbus`, Pillow, GStreamer's `pipewiresrc` plugin, and a desktop portal implementing RemoteDesktop and ScreenCast. On Debian/Ubuntu the relevant packages include `python3-gi`, `python3-dbus`, `python3-pil`, `gir1.2-gtk-3.0`, `gir1.2-gstreamer-1.0`, `gir1.2-gst-plugins-base-1.0` and `gstreamer1.0-pipewire`.
+
+AT-SPI accessibility and compositor window operations reuse the `codex-computer-use-linux` MCP backend examined in `~/codex-desktop-linux/computer-use-linux`. Set `ONELOOP_COMPUTER_BACKEND` to its executable, place it next to 1loop's binary, or install it on `PATH`. The Codex Desktop installation under `/opt/codex-desktop` is also detected. Coordinate input and shared-screen capture work without that optional backend. `describe` returns the backend's accessibility/window schemas. Extensions are never installed automatically.
+
+Claude Code receives the same tool through 1loop's existing MCP bridge. Screen-sharing permission remains a native desktop decision, including in YOLO mode; it cannot be granted by the model. A desktop that does not support persistent grants may request permission again after restarting 1loop.
+
 ## Télécommande Android
 
 `android/` contient l'application Android native (Kotlin + Jetpack Compose) qui pilote 1loop depuis un téléphone : même style, même logo, même animation de lancement et même roue de travail que l'application de bureau.

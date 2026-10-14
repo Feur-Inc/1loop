@@ -37,27 +37,27 @@ type textSelection interface {
 
 // selectIn makes s the holder of the selection: there is only one at a
 // time, as in any application.
-func (u *desktopUI) selectIn(s textSelection) {
-	if u.selected != nil && u.selected != s {
-		u.selected.clearSelection()
+func (ui *desktopUI) selectIn(textSelectionValue textSelection) {
+	if ui.selected != nil && ui.selected != textSelectionValue {
+		ui.selected.clearSelection()
 	}
-	u.selected = s
+	ui.selected = textSelectionValue
 }
 
-func (u *desktopUI) clearSelection() {
-	if u.selected != nil {
-		u.selected.clearSelection()
-		u.selected = nil
+func (ui *desktopUI) clearSelection() {
+	if ui.selected != nil {
+		ui.selected.clearSelection()
+		ui.selected = nil
 	}
 }
 
 // copySelection puts the selected text on the clipboard; false when
 // nothing is selected.
-func (u *desktopUI) copySelection() bool {
-	if u.selected == nil {
+func (ui *desktopUI) copySelection() bool {
+	if ui.selected == nil {
 		return false
 	}
-	text := u.selected.selectedText()
+	text := ui.selected.selectedText()
 	if text == "" {
 		return false
 	}
@@ -95,125 +95,125 @@ type selTap struct {
 // selPoint is a position in the text: before rune offset of piece index.
 type selPoint struct{ index, offset int }
 
-func (p selPoint) before(q selPoint) bool {
-	return p.index < q.index || (p.index == q.index && p.offset < q.offset)
+func (point selPoint) before(selPointValue selPoint) bool {
+	return point.index < selPointValue.index || (point.index == selPointValue.index && point.offset < selPointValue.offset)
 }
 
 type selectLayer struct {
 	widget.BaseWidget
-	u        *desktopUI
-	under    fyne.CanvasObject // what the layer covers
-	pieces   []selPiece
-	taps     []selTap // what can be clicked or hovered below, the topmost last
-	stale    bool     // what is below was laid out again since it was collected
-	from, to selPoint // where the selection began, and where the mouse is
-	active   bool
-	pressed  time.Time
-	pressAt  fyne.Position
-	dragged  bool
-	byWord   bool // the press was a double click
-	over     *selTap
-	hand     bool // the pointer is on a link
+	ui          *desktopUI
+	under       fyne.CanvasObject // what the layer covers
+	pieces      []selPiece
+	taps        []selTap // what can be clicked or hovered below, the topmost last
+	stale       bool     // what is below was laid out again since it was collected
+	from, point selPoint // where the selection began, and where the mouse is
+	active      bool
+	pressed     time.Time
+	pressAt     fyne.Position
+	dragged     bool
+	byWord      bool // the press was a double click
+	over        *selTap
+	hand        bool // the pointer is on a link
 }
 
-func newSelectLayer(u *desktopUI, under fyne.CanvasObject) *selectLayer {
-	l := &selectLayer{u: u, under: under, stale: true}
-	l.ExtendBaseWidget(l)
-	return l
+func newSelectLayer(ui *desktopUI, under fyne.CanvasObject) *selectLayer {
+	selection := &selectLayer{ui: ui, under: under, stale: true}
+	selection.ExtendBaseWidget(selection)
+	return selection
 }
 
 // gather collects the text drawn under the layer and what reacts to the
 // mouse there.
-func (l *selectLayer) gather() {
-	l.pieces, l.taps, l.stale, l.over = l.pieces[:0], l.taps[:0], false, nil
-	l.collect(l.under, fyne.Position{})
+func (selection *selectLayer) gather() {
+	selection.pieces, selection.taps, selection.stale, selection.over = selection.pieces[:0], selection.taps[:0], false, nil
+	selection.collect(selection.under, fyne.Position{})
 }
 
-func (l *selectLayer) collect(object fyne.CanvasObject, origin fyne.Position) {
+func (selection *selectLayer) collect(object fyne.CanvasObject, origin fyne.Position) {
 	if object == nil || !object.Visible() {
 		return
 	}
 	_, taps := object.(fyne.Tappable)
 	_, hovers := object.(desktop.Hoverable)
 	if taps || hovers {
-		l.taps = append(l.taps, selTap{object, origin})
+		selection.taps = append(selection.taps, selTap{object, origin})
 	}
 	if source, ok := object.(selSource); ok {
 		for _, piece := range source.selPieces() {
 			piece.at = piece.at.Add(origin)
-			l.pieces = append(l.pieces, piece)
+			selection.pieces = append(selection.pieces, piece)
 		}
 		return
 	}
 	switch o := object.(type) {
 	case *fyne.Container:
 		for _, child := range o.Objects {
-			l.collect(child, origin.Add(child.Position()))
+			selection.collect(child, origin.Add(child.Position()))
 		}
 	case *kineticScroll:
-		l.collect(o.Content, origin.Add(o.Content.Position()))
+		selection.collect(o.Content, origin.Add(o.Content.Position()))
 	case *container.Scroll:
-		l.collect(o.Content, origin.Add(o.Content.Position()))
+		selection.collect(o.Content, origin.Add(o.Content.Position()))
 	}
 }
 
 // offsetAt is the rune boundary of a piece nearest to x (from its left).
-func (p selPiece) offsetAt(x float32) int {
-	if p.solid {
-		if x > p.size.Width/2 {
-			return len(p.runes)
+func (piece selPiece) offsetAt(x float32) int {
+	if piece.solid {
+		if x > piece.size.Width/2 {
+			return len(piece.runes)
 		}
 		return 0
 	}
 	if x <= 0 {
 		return 0
 	}
-	if x >= p.size.Width {
-		return len(p.runes)
+	if x >= piece.size.Width {
+		return len(piece.runes)
 	}
-	low, high := 0, len(p.runes) // the boundary is in [low, high]
+	low, high := 0, len(piece.runes) // the boundary is in [low, high]
 	for high-low > 1 {
 		mid := (low + high) / 2
-		if p.width(mid) <= x {
+		if piece.width(mid) <= x {
 			low = mid
 		} else {
 			high = mid
 		}
 	}
-	if x-p.width(low) > p.width(high)-x {
+	if x-piece.width(low) > piece.width(high)-x {
 		return high
 	}
 	return low
 }
 
 // width is how wide the first n runes of the piece are.
-func (p selPiece) width(n int) float32 {
+func (piece selPiece) width(n int) float32 {
 	if n <= 0 {
 		return 0
 	}
-	if n >= len(p.runes) || p.solid {
-		return p.size.Width
+	if n >= len(piece.runes) || piece.solid {
+		return piece.size.Width
 	}
-	return fyne.MeasureText(string(p.runes[:n]), p.textSize, p.style).Width
+	return fyne.MeasureText(string(piece.runes[:n]), piece.textSize, piece.style).Width
 }
 
 // locate is the text position nearest to a point of the layer: on the row
 // the point is level with (else the closest one), the piece it is over or
 // the nearest end.
-func (l *selectLayer) locate(at fyne.Position) selPoint {
+func (selection *selectLayer) locate(at fyne.Position) selPoint {
 	best, bestY, bestX := -1, float32(math.MaxFloat32), float32(math.MaxFloat32)
-	for i, p := range l.pieces {
+	for i, piece := range selection.pieces {
 		dy := float32(0)
-		if at.Y < p.at.Y {
-			dy = p.at.Y - at.Y
-		} else if at.Y > p.at.Y+p.size.Height {
-			dy = at.Y - p.at.Y - p.size.Height
+		if at.Y < piece.at.Y {
+			dy = piece.at.Y - at.Y
+		} else if at.Y > piece.at.Y+piece.size.Height {
+			dy = at.Y - piece.at.Y - piece.size.Height
 		}
 		dx := float32(0)
-		if at.X < p.at.X {
-			dx = p.at.X - at.X
-		} else if at.X > p.at.X+p.size.Width {
-			dx = at.X - p.at.X - p.size.Width
+		if at.X < piece.at.X {
+			dx = piece.at.X - at.X
+		} else if at.X > piece.at.X+piece.size.Width {
+			dx = at.X - piece.at.X - piece.size.Width
 		}
 		if dy < bestY || (dy == bestY && dx < bestX) {
 			best, bestY, bestX = i, dy, dx
@@ -222,23 +222,23 @@ func (l *selectLayer) locate(at fyne.Position) selPoint {
 	if best < 0 {
 		return selPoint{}
 	}
-	return selPoint{best, l.pieces[best].offsetAt(at.X - l.pieces[best].at.X)}
+	return selPoint{best, selection.pieces[best].offsetAt(at.X - selection.pieces[best].at.X)}
 }
 
-func (l *selectLayer) span() (start, end selPoint) {
-	if l.to.before(l.from) {
-		return l.to, l.from
+func (selection *selectLayer) span() (start, end selPoint) {
+	if selection.point.before(selection.from) {
+		return selection.point, selection.from
 	}
-	return l.from, l.to
+	return selection.from, selection.point
 }
 
 // below is what reacts to the mouse under a point, the topmost first found.
-func (l *selectLayer) below(at fyne.Position) *selTap {
-	if l.stale {
-		l.gather()
+func (selection *selectLayer) below(at fyne.Position) *selTap {
+	if selection.stale {
+		selection.gather()
 	}
-	for i := len(l.taps) - 1; i >= 0; i-- { // the last drawn is on top
-		tap := &l.taps[i]
+	for i := len(selection.taps) - 1; i >= 0; i-- { // the last drawn is on top
+		tap := &selection.taps[i]
 		size := tap.object.Size()
 		if at.X >= tap.at.X && at.Y >= tap.at.Y && at.X < tap.at.X+size.Width && at.Y < tap.at.Y+size.Height {
 			return tap
@@ -249,158 +249,158 @@ func (l *selectLayer) below(at fyne.Position) *selTap {
 
 // Hovering is passed on to what is below, and decides the pointer: the
 // hand on a link or a button, the text cursor elsewhere.
-func (l *selectLayer) MouseIn(e *desktop.MouseEvent) {
-	l.stale = true
-	l.MouseMoved(e)
+func (selection *selectLayer) MouseIn(e *desktop.MouseEvent) {
+	selection.stale = true
+	selection.MouseMoved(e)
 }
 
-func (l *selectLayer) MouseMoved(e *desktop.MouseEvent) {
-	tap := l.below(e.Position)
-	if tap != l.over {
-		l.leave()
-		l.over = tap
+func (selection *selectLayer) MouseMoved(e *desktop.MouseEvent) {
+	tap := selection.below(e.Position)
+	if tap != selection.over {
+		selection.leave()
+		selection.over = tap
 		if tap != nil {
 			if hover, ok := tap.object.(desktop.Hoverable); ok {
-				hover.MouseIn(l.local(e, tap))
+				hover.MouseIn(selection.local(e, tap))
 			}
 		}
 	} else if tap != nil {
 		if hover, ok := tap.object.(desktop.Hoverable); ok {
-			hover.MouseMoved(l.local(e, tap))
+			hover.MouseMoved(selection.local(e, tap))
 		}
 	}
-	l.hand = false
+	selection.hand = false
 	if tap != nil {
 		if links, ok := tap.object.(linkSource); ok {
-			l.hand = links.linkAt(e.Position.Subtract(tap.at)) != ""
+			selection.hand = links.linkAt(e.Position.Subtract(tap.at)) != ""
 		} else if _, ok := tap.object.(fyne.Tappable); ok {
-			l.hand = true
+			selection.hand = true
 		}
 	}
 }
 
-func (l *selectLayer) MouseOut() { l.leave(); l.hand = false }
+func (selection *selectLayer) MouseOut() { selection.leave(); selection.hand = false }
 
-func (l *selectLayer) leave() {
-	if l.over != nil {
-		if hover, ok := l.over.object.(desktop.Hoverable); ok {
+func (selection *selectLayer) leave() {
+	if selection.over != nil {
+		if hover, ok := selection.over.object.(desktop.Hoverable); ok {
 			hover.MouseOut()
 		}
-		l.over = nil
+		selection.over = nil
 	}
 }
 
-func (l *selectLayer) local(e *desktop.MouseEvent, tap *selTap) *desktop.MouseEvent {
+func (selection *selectLayer) local(e *desktop.MouseEvent, tap *selTap) *desktop.MouseEvent {
 	local := *e
 	local.Position = e.Position.Subtract(tap.at)
 	return &local
 }
 
-func (l *selectLayer) Cursor() desktop.Cursor {
-	if l.hand {
+func (selection *selectLayer) Cursor() desktop.Cursor {
+	if selection.hand {
 		return desktop.PointerCursor
 	}
 	return desktop.TextCursor
 }
 
-func (l *selectLayer) MouseDown(e *desktop.MouseEvent) {
+func (selection *selectLayer) MouseDown(e *desktop.MouseEvent) {
 	if e.Button != desktop.MouseButtonPrimary {
 		return
 	}
-	l.u.selectIn(l)
-	l.gather()
+	selection.ui.selectIn(selection)
+	selection.gather()
 	now := time.Now()
-	again := now.Sub(l.pressed) < 400*time.Millisecond && distance(e.Position, l.pressAt) < 4
-	l.pressed, l.pressAt, l.dragged, l.byWord = now, e.Position, false, false
-	at := l.locate(e.Position)
-	l.from, l.to, l.active = at, at, len(l.pieces) > 0
-	if again && l.active { // double click: the word under the pointer
-		l.byWord = true
-		runes := l.pieces[at.index].runes
-		start, end := at.offset, at.offset
+	again := now.Sub(selection.pressed) < 400*time.Millisecond && distance(e.Position, selection.pressAt) < 4
+	selection.pressed, selection.pressAt, selection.dragged, selection.byWord = now, e.Position, false, false
+	point := selection.locate(e.Position)
+	selection.from, selection.point, selection.active = point, point, len(selection.pieces) > 0
+	if again && selection.active { // double click: the word under the pointer
+		selection.byWord = true
+		runes := selection.pieces[point.index].runes
+		start, end := point.offset, point.offset
 		for start > 0 && !isBreak(runes[start-1]) {
 			start--
 		}
 		for end < len(runes) && !isBreak(runes[end]) {
 			end++
 		}
-		l.from, l.to = selPoint{at.index, start}, selPoint{at.index, end}
+		selection.from, selection.point = selPoint{point.index, start}, selPoint{point.index, end}
 	}
-	l.Refresh()
+	selection.Refresh()
 }
 
 func isBreak(r rune) bool {
 	return r == ' ' || r == '\t' || strings.ContainsRune(`.,;:!?()[]{}"'«»`, r)
 }
 
-func distance(a, b fyne.Position) float64 {
-	return math.Hypot(float64(a.X-b.X), float64(a.Y-b.Y))
+func distance(position, positionValue fyne.Position) float64 {
+	return math.Hypot(float64(position.X-positionValue.X), float64(position.Y-positionValue.Y))
 }
 
 // MouseUp passes a plain click on to what is under the layer.
-func (l *selectLayer) MouseUp(e *desktop.MouseEvent) {
-	if e.Button != desktop.MouseButtonPrimary || l.dragged || l.byWord {
+func (selection *selectLayer) MouseUp(e *desktop.MouseEvent) {
+	if e.Button != desktop.MouseButtonPrimary || selection.dragged || selection.byWord {
 		return
 	}
-	if tap := l.below(e.Position); tap != nil {
+	if tap := selection.below(e.Position); tap != nil {
 		if target, ok := tap.object.(fyne.Tappable); ok {
 			target.Tapped(&fyne.PointEvent{Position: e.Position.Subtract(tap.at), AbsolutePosition: e.AbsolutePosition})
 		}
 	}
 }
 
-func (l *selectLayer) Dragged(d *fyne.DragEvent) {
-	if !l.active {
+func (selection *selectLayer) Dragged(d *fyne.DragEvent) {
+	if !selection.active {
 		return
 	}
-	l.dragged = true
-	l.to = l.locate(d.Position)
-	l.Refresh()
+	selection.dragged = true
+	selection.point = selection.locate(d.Position)
+	selection.Refresh()
 }
 
-func (l *selectLayer) DragEnd() {}
+func (selection *selectLayer) DragEnd() {}
 
 // changed is called when the text below was laid out again (an answer
 // still being written): the selection keeps its place in it.
-func (l *selectLayer) changed() {
-	l.stale = true
-	if !l.active {
+func (selection *selectLayer) changed() {
+	selection.stale = true
+	if !selection.active {
 		return
 	}
-	l.gather()
-	last := selPoint{len(l.pieces) - 1, 0}
-	if len(l.pieces) == 0 {
-		l.active = false
+	selection.gather()
+	last := selPoint{len(selection.pieces) - 1, 0}
+	if len(selection.pieces) == 0 {
+		selection.active = false
 	} else {
-		last.offset = len(l.pieces[last.index].runes)
-		for _, point := range []*selPoint{&l.from, &l.to} {
-			if last.before(*point) || point.offset > len(l.pieces[point.index].runes) {
+		last.offset = len(selection.pieces[last.index].runes)
+		for _, point := range []*selPoint{&selection.from, &selection.point} {
+			if last.before(*point) || point.offset > len(selection.pieces[point.index].runes) {
 				*point = last
 			}
 		}
 	}
-	l.Refresh()
+	selection.Refresh()
 }
 
-func (l *selectLayer) clearSelection() {
-	if l.active {
-		l.active = false
-		l.Refresh()
+func (selection *selectLayer) clearSelection() {
+	if selection.active {
+		selection.active = false
+		selection.Refresh()
 	}
 }
 
 // selectedText is the selection as text. Each piece says what separates it
 // from the next: nothing inside a row, a space where a line wraps, a line
 // break or a blank line at the end of a block.
-func (l *selectLayer) selectedText() string {
-	if !l.active {
+func (selection *selectLayer) selectedText() string {
+	if !selection.active {
 		return ""
 	}
-	start, end := l.span()
-	var b strings.Builder
-	for i := start.index; i <= end.index && i < len(l.pieces); i++ {
-		p := l.pieces[i]
-		a, z := 0, len(p.runes)
+	start, end := selection.span()
+	var builder strings.Builder
+	for i := start.index; i <= end.index && i < len(selection.pieces); i++ {
+		piece := selection.pieces[i]
+		a, z := 0, len(piece.runes)
 		if i == start.index {
 			a = start.offset
 		}
@@ -410,18 +410,18 @@ func (l *selectLayer) selectedText() string {
 		if a > z {
 			continue
 		}
-		b.WriteString(string(p.runes[a:z]))
+		builder.WriteString(string(piece.runes[a:z]))
 		// What follows a piece taken to its end, except when the selection
 		// only starts there.
-		if i < end.index && z == len(p.runes) && !(i == start.index && a == z && z > 0) {
-			b.WriteString(p.after)
+		if i < end.index && z == len(piece.runes) && !(i == start.index && a == z && z > 0) {
+			builder.WriteString(piece.after)
 		}
 	}
-	return strings.TrimRight(b.String(), "\n")
+	return strings.TrimRight(builder.String(), "\n")
 }
 
-func (l *selectLayer) CreateRenderer() fyne.WidgetRenderer {
-	return &selectRenderer{layer: l}
+func (selection *selectLayer) CreateRenderer() fyne.WidgetRenderer {
+	return &selectRenderer{layer: selection}
 }
 
 type selectRenderer struct {
@@ -430,28 +430,28 @@ type selectRenderer struct {
 	size  fyne.Size
 }
 
-func (r *selectRenderer) MinSize() fyne.Size { return fyne.Size{} }
+func (renderer *selectRenderer) MinSize() fyne.Size { return fyne.Size{} }
 
 // Layout: a new width wraps the text below differently, so what was
 // selected is no longer where the marks are.
-func (r *selectRenderer) Layout(size fyne.Size) {
-	r.layer.stale = true
-	if size.Width != r.size.Width && r.layer.active {
-		r.layer.active = false
-		r.Refresh()
+func (renderer *selectRenderer) Layout(size fyne.Size) {
+	renderer.layer.stale = true
+	if size.Width != renderer.size.Width && renderer.layer.active {
+		renderer.layer.active = false
+		renderer.Refresh()
 	}
-	r.size = size
+	renderer.size = size
 }
 
-func (r *selectRenderer) Refresh() {
-	l := r.layer
+func (renderer *selectRenderer) Refresh() {
+	selection := renderer.layer
 	used := 0
-	if l.active {
+	if selection.active {
 		ink := theme.Color(theme.ColorNameSelection)
-		start, end := l.span()
-		for i := start.index; i <= end.index && i < len(l.pieces); i++ {
-			p := l.pieces[i]
-			a, z := 0, len(p.runes)
+		start, end := selection.span()
+		for i := start.index; i <= end.index && i < len(selection.pieces); i++ {
+			piece := selection.pieces[i]
+			a, z := 0, len(piece.runes)
 			if i == start.index {
 				a = start.offset
 			}
@@ -461,31 +461,31 @@ func (r *selectRenderer) Refresh() {
 			if a >= z {
 				continue
 			}
-			if used == len(r.marks) {
-				r.marks = append(r.marks, canvas.NewRectangle(ink))
+			if used == len(renderer.marks) {
+				renderer.marks = append(renderer.marks, canvas.NewRectangle(ink))
 			}
-			mark := r.marks[used]
+			mark := renderer.marks[used]
 			used++
-			left, right := p.width(a), p.width(z)
+			left, right := piece.width(a), piece.width(z)
 			mark.FillColor = ink
-			mark.Move(fyne.NewPos(p.at.X+left, p.at.Y-1))
-			mark.Resize(fyne.NewSize(right-left, p.size.Height+2))
+			mark.Move(fyne.NewPos(piece.at.X+left, piece.at.Y-1))
+			mark.Resize(fyne.NewSize(right-left, piece.size.Height+2))
 			mark.Show()
 			mark.Refresh()
 		}
 	}
-	for _, mark := range r.marks[used:] {
+	for _, mark := range renderer.marks[used:] {
 		mark.Hide()
 	}
-	canvas.Refresh(l)
+	canvas.Refresh(selection)
 }
 
-func (r *selectRenderer) Objects() []fyne.CanvasObject {
-	objects := make([]fyne.CanvasObject, len(r.marks))
-	for i, mark := range r.marks {
+func (renderer *selectRenderer) Objects() []fyne.CanvasObject {
+	objects := make([]fyne.CanvasObject, len(renderer.marks))
+	for i, mark := range renderer.marks {
 		objects[i] = mark
 	}
 	return objects
 }
 
-func (r *selectRenderer) Destroy() {}
+func (renderer *selectRenderer) Destroy() {}

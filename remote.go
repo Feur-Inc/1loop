@@ -74,7 +74,7 @@ type remoteEvent struct {
 }
 
 type remoteServer struct {
-	u     *desktopUI
+	ui    *desktopUI
 	name  string
 	port  int
 	http  *http.Server
@@ -93,12 +93,12 @@ type remoteServer struct {
 
 // startRemote opens the server; when the port is taken (another 1loop),
 // it picks any free port and still answers discovery when it can.
-func (u *desktopUI) startRemote() {
-	if !u.remoteEnabled {
+func (ui *desktopUI) startRemote() {
+	if !ui.remoteEnabled {
 		return
 	}
 	host, _ := os.Hostname()
-	r := &remoteServer{u: u, name: host, subs: map[chan remoteEvent]bool{}, pairs: map[string]*pairing{},
+	server := &remoteServer{ui: ui, name: host, subs: map[chan remoteEvent]bool{}, pairs: map[string]*pairing{},
 		dirty: map[*conversation]map[int]bool{}, meta: map[*conversation]bool{}}
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", remoteHTTPPort))
 	if err != nil {
@@ -107,65 +107,65 @@ func (u *desktopUI) startRemote() {
 	if err != nil {
 		return // no network: the window works without its remote
 	}
-	r.port = ln.Addr().(*net.TCPAddr).Port
+	server.port = ln.Addr().(*net.TCPAddr).Port
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/info", r.info)
-	mux.HandleFunc("POST /api/pair", r.pair)
-	mux.HandleFunc("POST /api/pair/confirm", r.confirmPair)
-	mux.HandleFunc("GET /api/state", r.authorized(r.state))
-	mux.HandleFunc("GET /api/chats/{id}", r.authorized(r.chat))
-	mux.HandleFunc("GET /api/events", r.authorized(r.events))
-	mux.HandleFunc("POST /api/send", r.authorized(r.send))
-	mux.HandleFunc("POST /api/stop", r.authorized(r.stop))
-	mux.HandleFunc("POST /api/approve", r.authorized(r.approve))
-	mux.HandleFunc("POST /api/model", r.authorized(r.setModel))
-	mux.HandleFunc("POST /api/approval-mode", r.authorized(r.setApprovalMode))
-	r.http = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	go r.http.Serve(ln)
+	mux.HandleFunc("GET /api/info", server.info)
+	mux.HandleFunc("POST /api/pair", server.pair)
+	mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)
+	mux.HandleFunc("GET /api/state", server.authorized(server.state))
+	mux.HandleFunc("GET /api/chats/{id}", server.authorized(server.chat))
+	mux.HandleFunc("GET /api/events", server.authorized(server.events))
+	mux.HandleFunc("POST /api/send", server.authorized(server.send))
+	mux.HandleFunc("POST /api/stop", server.authorized(server.stop))
+	mux.HandleFunc("POST /api/approve", server.authorized(server.approve))
+	mux.HandleFunc("POST /api/model", server.authorized(server.setModel))
+	mux.HandleFunc("POST /api/approval-mode", server.authorized(server.setApprovalMode))
+	server.http = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	go server.http.Serve(ln)
 	if udp, err := net.ListenUDP("udp4", &net.UDPAddr{Port: remoteDiscoveryPort}); err == nil {
-		r.udp = udp
-		go r.answerDiscovery()
+		server.udp = udp
+		go server.answerDiscovery()
 	}
-	u.remote = r
+	ui.remote = server
 }
 
-func (r *remoteServer) close() {
-	if r == nil {
+func (server *remoteServer) close() {
+	if server == nil {
 		return
 	}
-	r.http.Close()
-	if r.udp != nil {
-		r.udp.Close()
+	server.http.Close()
+	if server.udp != nil {
+		server.udp.Close()
 	}
 }
 
 // answerDiscovery replies to every "1loop?" broadcast with where to connect.
-func (r *remoteServer) answerDiscovery() {
+func (server *remoteServer) answerDiscovery() {
 	buf := make([]byte, 512)
 	for {
-		n, from, err := r.udp.ReadFromUDP(buf)
+		n, from, err := server.udp.ReadFromUDP(buf)
 		if err != nil {
 			return
 		}
 		if strings.TrimSpace(string(buf[:n])) != "1loop?" {
 			continue
 		}
-		reply, _ := json.Marshal(map[string]any{"service": "1loop", "name": r.name, "port": r.port, "protocol": remoteProtocol})
-		r.udp.WriteToUDP(reply, from)
+		reply, _ := json.Marshal(map[string]any{"service": "1loop", "name": server.name, "port": server.port, "protocol": remoteProtocol})
+		server.udp.WriteToUDP(reply, from)
 	}
 }
 
 // ---------------------------------------------------------------------------
 // HTTP helpers
 
-func writeJSON(w http.ResponseWriter, status int, v any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.WriteHeader(status)
-	json.NewEncoder(w).Encode(v)
+func writeJSON(writer http.ResponseWriter, status int, v any) {
+	writer.Header().Set("Content-Type", "application/json")
+	writer.WriteHeader(status)
+	json.NewEncoder(writer).Encode(v)
 }
 
-func fail(w http.ResponseWriter, status int, message string) {
-	writeJSON(w, status, map[string]string{"error": message})
+func fail(writer http.ResponseWriter, status int, message string) {
+	writeJSON(writer, status, map[string]string{"error": message})
 }
 
 func readJSON(req *http.Request, v any) error {
@@ -178,32 +178,32 @@ func tokenHash(token string) string {
 }
 
 // authorized lets a request through only with a paired device's token.
-func (r *remoteServer) authorized(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, req *http.Request) {
+func (server *remoteServer) authorized(next http.HandlerFunc) http.HandlerFunc {
+	return func(writer http.ResponseWriter, req *http.Request) {
 		token := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
 		if token == "" {
 			token = req.URL.Query().Get("token") // event streams cannot always set headers
 		}
 		hash := tokenHash(token)
 		ok := false
-		r.onUI(func() {
-			for _, d := range r.u.devices {
-				if subtle.ConstantTimeCompare([]byte(d.TokenHash), []byte(hash)) == 1 {
+		server.onUI(func() {
+			for _, pairedDevice := range server.ui.devices {
+				if subtle.ConstantTimeCompare([]byte(pairedDevice.TokenHash), []byte(hash)) == 1 {
 					ok = true
 				}
 			}
 		})
 		if !ok {
-			fail(w, http.StatusUnauthorized, "This phone is not paired with 1loop")
+			fail(writer, http.StatusUnauthorized, "This phone is not paired with 1loop")
 			return
 		}
-		next(w, req)
+		next(writer, req)
 	}
 }
 
 // onUI runs f on the window's thread, where all chat state lives.
-func (r *remoteServer) onUI(f func()) {
-	if r.u.ctx.Err() == nil {
+func (server *remoteServer) onUI(f func()) {
+	if server.ui.ctx.Err() == nil {
 		fyne.DoAndWait(f)
 	}
 }
@@ -211,16 +211,16 @@ func (r *remoteServer) onUI(f func()) {
 // ---------------------------------------------------------------------------
 // Pairing
 
-func (r *remoteServer) info(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{"service": "1loop", "name": r.name, "protocol": remoteProtocol})
+func (server *remoteServer) info(writer http.ResponseWriter, _ *http.Request) {
+	writeJSON(writer, http.StatusOK, map[string]any{"service": "1loop", "name": server.name, "protocol": remoteProtocol})
 }
 
-func (r *remoteServer) pair(w http.ResponseWriter, req *http.Request) {
+func (server *remoteServer) pair(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
 		Device string `json:"device"`
 	}
 	if readJSON(req, &body) != nil {
-		fail(w, http.StatusBadRequest, "Invalid request")
+		fail(writer, http.StatusBadRequest, "Invalid request")
 		return
 	}
 	device := strings.TrimSpace(body.Device)
@@ -231,75 +231,75 @@ func (r *remoteServer) pair(w http.ResponseWriter, req *http.Request) {
 		device = string([]rune(device)[:40])
 	}
 	n, _ := rand.Int(rand.Reader, big.NewInt(1000000))
-	p := &pairing{device: device, code: fmt.Sprintf("%06d", n.Int64()), expires: time.Now().Add(2 * time.Minute)}
+	pairingValue := &pairing{device: device, code: fmt.Sprintf("%06d", n.Int64()), expires: time.Now().Add(2 * time.Minute)}
 	id := identifier()
-	r.onUI(func() {
-		for key, old := range r.pairs { // one pending pairing at a time
+	server.onUI(func() {
+		for key, old := range server.pairs { // one pending pairing at a time
 			if old.sheet != nil {
 				old.sheet.Hide()
 			}
-			delete(r.pairs, key)
+			delete(server.pairs, key)
 		}
-		r.pairs[id] = p
-		p.sheet = r.u.showPairing(p)
+		server.pairs[id] = pairingValue
+		pairingValue.sheet = server.ui.showPairing(pairingValue)
 	})
-	writeJSON(w, http.StatusOK, map[string]string{"pairing": id})
+	writeJSON(writer, http.StatusOK, map[string]string{"pairing": id})
 }
 
-func (r *remoteServer) confirmPair(w http.ResponseWriter, req *http.Request) {
+func (server *remoteServer) confirmPair(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
 		Pairing string `json:"pairing"`
 		Code    string `json:"code"`
 	}
 	if readJSON(req, &body) != nil {
-		fail(w, http.StatusBadRequest, "Invalid request")
+		fail(writer, http.StatusBadRequest, "Invalid request")
 		return
 	}
 	var token, problem string
-	r.onUI(func() {
-		p := r.pairs[body.Pairing]
+	server.onUI(func() {
+		pairing := server.pairs[body.Pairing]
 		switch {
-		case p == nil || time.Now().After(p.expires):
+		case pairing == nil || time.Now().After(pairing.expires):
 			problem = "This code has expired. Ask for a new one."
-		case subtle.ConstantTimeCompare([]byte(p.code), []byte(strings.TrimSpace(body.Code))) != 1:
-			p.tries++
+		case subtle.ConstantTimeCompare([]byte(pairing.code), []byte(strings.TrimSpace(body.Code))) != 1:
+			pairing.tries++
 			problem = "Wrong code."
-			if p.tries >= 5 { // a guessed code would give the shell away
+			if pairing.tries >= 5 { // a guessed code would give the shell away
 				problem = "Too many wrong codes. Ask for a new one."
-				p.expires = time.Time{}
+				pairing.expires = time.Time{}
 			}
 		default:
 			token = identifier()
-			r.u.devices = append(r.u.devices, pairedDevice{Name: p.device, TokenHash: tokenHash(token), Added: time.Now()})
-			r.u.save()
-			if p.sheet != nil {
-				p.sheet.Hide()
+			server.ui.devices = append(server.ui.devices, pairedDevice{Name: pairing.device, TokenHash: tokenHash(token), Added: time.Now()})
+			server.ui.save()
+			if pairing.sheet != nil {
+				pairing.sheet.Hide()
 			}
-			delete(r.pairs, body.Pairing)
+			delete(server.pairs, body.Pairing)
 		}
-		if problem != "" && p != nil && p.expires.IsZero() && p.sheet != nil {
-			p.sheet.Hide()
+		if problem != "" && pairing != nil && pairing.expires.IsZero() && pairing.sheet != nil {
+			pairing.sheet.Hide()
 		}
 	})
 	if problem != "" {
-		fail(w, http.StatusForbidden, problem)
+		fail(writer, http.StatusForbidden, problem)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"token": token, "name": r.name})
+	writeJSON(writer, http.StatusOK, map[string]string{"token": token, "name": server.name})
 }
 
 // showPairing shows the code a phone must type.
-func (u *desktopUI) showPairing(p *pairing) *sheet {
-	code := textLine(p.code[:3]+" "+p.code[3:], 40, colAmber)
+func (ui *desktopUI) showPairing(pairingValue *pairing) *sheet {
+	code := textLine(pairingValue.code[:3]+" "+pairingValue.code[3:], 40, colAmber)
 	code.TextStyle = fyne.TextStyle{Monospace: true, Bold: true}
-	intro := widget.NewLabel("“" + p.device + "” wants to control 1loop from the phone. Type this code in the app to allow it. It expires in two minutes.")
+	intro := widget.NewLabel("“" + pairingValue.device + "” wants to control 1loop from the phone. Type this code in the app to allow it. It expires in two minutes.")
 	intro.Wrapping = fyne.TextWrapWord
 	hint := note("A paired phone can send messages and approve commands. Remove it any time in Settings.")
 	body := container.NewVBox(intro, spacer(0, 6), container.NewCenter(code), spacer(0, 6), hint)
-	var s *sheet
-	cancel := newRow("Cancel", nil, styleOutline, func() { s.dismiss() })
-	s = u.modal("Pair a phone", body, 460, func() { p.expires = time.Time{} }, cancel)
-	return s
+	var dialog *sheet
+	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
+	dialog = ui.modal("Pair a phone", body, 460, func() { pairingValue.expires = time.Time{} }, cancel)
+	return dialog
 }
 
 // ---------------------------------------------------------------------------
@@ -354,8 +354,8 @@ type remoteApproval struct {
 	Preview string `json:"preview"`
 }
 
-func (u *desktopUI) chatByID(id string) *conversation {
-	for _, chat := range u.chats {
+func (ui *desktopUI) chatByID(id string) *conversation {
+	for _, chat := range ui.chats {
 		if chat.ID == id {
 			return chat
 		}
@@ -394,53 +394,53 @@ func itemForPhone(chat *conversation, index int) remoteItem {
 	return out
 }
 
-func (u *desktopUI) metaForPhone(chat *conversation) remoteMeta {
-	m := remoteMeta{Chat: chat.ID, Title: chat.Title, Running: chat.run != nil, Items: len(chat.Items), Queue: []string{}, Steer: []string{}}
-	for _, q := range chat.queue {
-		m.Queue = append(m.Queue, q.Content)
+func (ui *desktopUI) metaForPhone(chat *conversation) remoteMeta {
+	remoteMetaValue := remoteMeta{Chat: chat.ID, Title: chat.Title, Running: chat.run != nil, Items: len(chat.Items), Queue: []string{}, Steer: []string{}}
+	for _, message := range chat.queue {
+		remoteMetaValue.Queue = append(remoteMetaValue.Queue, message.Content)
 	}
-	for _, s := range chat.steer {
-		m.Steer = append(m.Steer, s.Content)
+	for _, messageValue := range chat.steer {
+		remoteMetaValue.Steer = append(remoteMetaValue.Steer, messageValue.Content)
 	}
-	m.Model, m.Effort = u.choiceLabel(chat.Config), chat.Config.Effort
-	m.Window = modelContextWindow(chat.Config)
+	remoteMetaValue.Model, remoteMetaValue.Effort = ui.choiceLabel(chat.Config), chat.Config.Effort
+	remoteMetaValue.Window = modelContextWindow(chat.Config)
 	for _, h := range chat.History {
-		m.Used = max(m.Used, h.Usage)
+		remoteMetaValue.Used = max(remoteMetaValue.Used, h.Usage)
 	}
 	if run := chat.run; run != nil {
 		if run.turn.usage > 0 {
-			m.Used = run.turn.usage
+			remoteMetaValue.Used = run.turn.usage
 		}
-		m.Label, m.Mark = run.turn.label, run.turn.mark
+		remoteMetaValue.Label, remoteMetaValue.Mark = run.turn.label, run.turn.mark
 		if run.approvalID != "" {
-			m.Approval = &remoteApproval{Chat: chat.ID, ID: run.approvalID, Title: run.approvalTitle, Preview: run.approvalPreview}
+			remoteMetaValue.Approval = &remoteApproval{Chat: chat.ID, ID: run.approvalID, Title: run.approvalTitle, Preview: run.approvalPreview}
 		}
 	}
-	return m
+	return remoteMetaValue
 }
 
-func (r *remoteServer) state(w http.ResponseWriter, _ *http.Request) {
+func (server *remoteServer) state(writer http.ResponseWriter, _ *http.Request) {
 	var out map[string]any
-	r.onUI(func() {
+	server.onUI(func() {
 		chats := []remoteChat{}
-		for _, chat := range r.u.chats {
+		for _, chat := range server.ui.chats {
 			chats = append(chats, chatSummary(chat))
 		}
 		current := ""
-		if r.u.current != nil {
-			current = r.u.current.ID
+		if server.ui.current != nil {
+			current = server.ui.current.ID
 		}
-		projects := append([]string{}, r.u.projects...)
-		out = map[string]any{"name": r.name, "projects": projects, "workspace": r.u.cfg.Workspace,
-			"chats": chats, "current": current, "settings": r.u.settingsForPhone()}
+		projects := append([]string{}, server.ui.projects...)
+		out = map[string]any{"name": server.name, "projects": projects, "workspace": server.ui.cfg.Workspace,
+			"chats": chats, "current": current, "settings": server.ui.settingsForPhone()}
 	})
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(writer, http.StatusOK, out)
 }
 
-func (r *remoteServer) chat(w http.ResponseWriter, req *http.Request) {
+func (server *remoteServer) chat(writer http.ResponseWriter, req *http.Request) {
 	var out map[string]any
-	r.onUI(func() {
-		chat := r.u.chatByID(req.PathValue("id"))
+	server.onUI(func() {
+		chat := server.ui.chatByID(req.PathValue("id"))
 		if chat == nil {
 			return
 		}
@@ -448,37 +448,37 @@ func (r *remoteServer) chat(w http.ResponseWriter, req *http.Request) {
 		for i := range chat.Items {
 			items[i] = itemForPhone(chat, i)
 		}
-		out = map[string]any{"chat": chatSummary(chat), "items": items, "meta": r.u.metaForPhone(chat)}
+		out = map[string]any{"chat": chatSummary(chat), "items": items, "meta": server.ui.metaForPhone(chat)}
 	})
 	if out == nil {
-		fail(w, http.StatusNotFound, "This chat no longer exists")
+		fail(writer, http.StatusNotFound, "This chat no longer exists")
 		return
 	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(writer, http.StatusOK, out)
 }
 
 // ---------------------------------------------------------------------------
 // Live events (server-sent events)
 
-func (r *remoteServer) events(w http.ResponseWriter, req *http.Request) {
-	flusher, ok := w.(http.Flusher)
+func (server *remoteServer) events(writer http.ResponseWriter, req *http.Request) {
+	flusher, ok := writer.(http.Flusher)
 	if !ok {
-		fail(w, http.StatusInternalServerError, "Streaming unsupported")
+		fail(writer, http.StatusInternalServerError, "Streaming unsupported")
 		return
 	}
-	w.Header().Set("Content-Type", "text/event-stream")
-	w.Header().Set("Cache-Control", "no-cache")
-	w.WriteHeader(http.StatusOK)
-	fmt.Fprint(w, ": 1loop\n\n")
+	writer.Header().Set("Content-Type", "text/event-stream")
+	writer.Header().Set("Cache-Control", "no-cache")
+	writer.WriteHeader(http.StatusOK)
+	fmt.Fprint(writer, ": 1loop\n\n")
 	flusher.Flush()
 	ch := make(chan remoteEvent, 256)
-	r.mu.Lock()
-	r.subs[ch] = true
-	r.mu.Unlock()
+	server.mu.Lock()
+	server.subs[ch] = true
+	server.mu.Unlock()
 	defer func() {
-		r.mu.Lock()
-		delete(r.subs, ch)
-		r.mu.Unlock()
+		server.mu.Lock()
+		delete(server.subs, ch)
+		server.mu.Unlock()
 	}()
 	ping := time.NewTicker(20 * time.Second) // keeps phones and routers from dropping an idle stream
 	defer ping.Stop()
@@ -487,12 +487,12 @@ func (r *remoteServer) events(w http.ResponseWriter, req *http.Request) {
 		case <-req.Context().Done():
 			return
 		case <-ping.C:
-			fmt.Fprint(w, ": ping\n\n")
-		case e, open := <-ch:
+			fmt.Fprint(writer, ": ping\n\n")
+		case remoteEventValue, open := <-ch:
 			if !open {
 				return
 			}
-			fmt.Fprintf(w, "event: %s\ndata: %s\n\n", e.kind, e.data)
+			fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", remoteEventValue.kind, remoteEventValue.data)
 		}
 		flusher.Flush()
 	}
@@ -500,19 +500,19 @@ func (r *remoteServer) events(w http.ResponseWriter, req *http.Request) {
 
 // broadcast hands an event to every phone; a phone too slow to keep up is
 // dropped and reconnects with a fresh state.
-func (r *remoteServer) broadcast(kind string, v any) {
+func (server *remoteServer) broadcast(kind string, v any) {
 	data, err := json.Marshal(v)
 	if err != nil {
 		return
 	}
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	for ch := range r.subs {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	for ch := range server.subs {
 		select {
 		case ch <- remoteEvent{kind, data}:
 		default:
 			close(ch)
-			delete(r.subs, ch)
+			delete(server.subs, ch)
 		}
 	}
 }
@@ -520,97 +520,97 @@ func (r *remoteServer) broadcast(kind string, v any) {
 // The window reports its changes here (UI thread); they reach the phones in
 // batches, at most ten times a second, so a streamed answer stays light.
 
-func (r *remoteServer) itemChanged(chat *conversation, index int) {
-	if r == nil || chat.ID == "" {
+func (server *remoteServer) itemChanged(chat *conversation, index int) {
+	if server == nil || chat.ID == "" {
 		return
 	}
-	if r.dirty[chat] == nil {
-		r.dirty[chat] = map[int]bool{}
+	if server.dirty[chat] == nil {
+		server.dirty[chat] = map[int]bool{}
 	}
-	r.dirty[chat][index] = true
-	r.meta[chat] = true
-	r.schedule()
+	server.dirty[chat][index] = true
+	server.meta[chat] = true
+	server.schedule()
 }
 
-func (r *remoteServer) metaChanged(chat *conversation) {
-	if r == nil || chat == nil || chat.ID == "" {
+func (server *remoteServer) metaChanged(chat *conversation) {
+	if server == nil || chat == nil || chat.ID == "" {
 		return
 	}
-	r.meta[chat] = true
-	r.schedule()
+	server.meta[chat] = true
+	server.schedule()
 }
 
-func (r *remoteServer) replaceChat(chat *conversation) {
-	if r == nil {
+func (server *remoteServer) replaceChat(chat *conversation) {
+	if server == nil {
 		return
 	}
-	delete(r.dirty, chat)
-	r.broadcast("replace", map[string]string{"chat": chat.ID})
-	r.chatsChanged()
-	r.metaChanged(chat)
-	r.settingsChanged()
+	delete(server.dirty, chat)
+	server.broadcast("replace", map[string]string{"chat": chat.ID})
+	server.chatsChanged()
+	server.metaChanged(chat)
+	server.settingsChanged()
 }
 
-func (r *remoteServer) settingsChanged() {
-	if r == nil {
+func (server *remoteServer) settingsChanged() {
+	if server == nil {
 		return
 	}
-	r.settings = true
-	r.schedule()
+	server.settings = true
+	server.schedule()
 }
 
-func (r *remoteServer) chatsChanged() {
-	if r == nil {
+func (server *remoteServer) chatsChanged() {
+	if server == nil {
 		return
 	}
-	r.chatsDirt = true
-	r.schedule()
+	server.chatsDirt = true
+	server.schedule()
 }
 
-func (r *remoteServer) schedule() {
-	if r.flushing {
+func (server *remoteServer) schedule() {
+	if server.flushing {
 		return
 	}
-	r.flushing = true
-	time.AfterFunc(100*time.Millisecond, func() { fyne.Do(r.flush) })
+	server.flushing = true
+	time.AfterFunc(100*time.Millisecond, func() { fyne.Do(server.flush) })
 }
 
-func (r *remoteServer) flush() {
-	r.flushing = false
-	r.mu.Lock()
-	listening := len(r.subs) > 0
-	r.mu.Unlock()
+func (server *remoteServer) flush() {
+	server.flushing = false
+	server.mu.Lock()
+	listening := len(server.subs) > 0
+	server.mu.Unlock()
 	if !listening {
-		r.dirty, r.meta, r.chatsDirt, r.settings = map[*conversation]map[int]bool{}, map[*conversation]bool{}, false, false
+		server.dirty, server.meta, server.chatsDirt, server.settings = map[*conversation]map[int]bool{}, map[*conversation]bool{}, false, false
 		return
 	}
-	if r.chatsDirt {
+	if server.chatsDirt {
 		chats := []remoteChat{}
-		for _, chat := range r.u.chats {
+		for _, chat := range server.ui.chats {
 			chats = append(chats, chatSummary(chat))
 		}
-		r.broadcast("chats", map[string]any{"chats": chats})
+		server.broadcast("chats", map[string]any{"chats": chats})
 	}
-	for chat, indexes := range r.dirty {
+	for chat, indexes := range server.dirty {
 		for index := range indexes {
 			if index < len(chat.Items) {
-				r.broadcast("item", map[string]any{"chat": chat.ID, "index": index, "item": itemForPhone(chat, index)})
+				server.broadcast("item", map[string]any{"chat": chat.ID, "index": index, "item": itemForPhone(chat, index)})
 			}
 		}
 	}
-	for chat := range r.meta {
-		r.broadcast("meta", r.u.metaForPhone(chat))
+	for chat := range server.meta {
+		server.broadcast("meta", server.ui.metaForPhone(chat))
 	}
-	if r.settings {
-		r.broadcast("settings", r.u.settingsForPhone())
+	if server.settings {
+		server.broadcast("settings", server.ui.settingsForPhone())
 	}
-	r.dirty, r.meta, r.chatsDirt, r.settings = map[*conversation]map[int]bool{}, map[*conversation]bool{}, false, false
+	server.dirty, server.meta, server.chatsDirt, server.settings = map[*conversation]map[int]bool{}, map[*conversation]bool{}, false, false
 }
 
 // ---------------------------------------------------------------------------
 // Actions
 
-func (r *remoteServer) send(w http.ResponseWriter, req *http.Request) {
+func (server *remoteServer) send(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
 		Chat      string `json:"chat"`
 		Text      string `json:"text"`
@@ -618,84 +618,84 @@ func (r *remoteServer) send(w http.ResponseWriter, req *http.Request) {
 		Workspace string `json:"workspace"`
 	}
 	if readJSON(req, &body) != nil || strings.TrimSpace(body.Text) == "" {
-		fail(w, http.StatusBadRequest, "Nothing to send")
+		fail(writer, http.StatusBadRequest, "Nothing to send")
 		return
 	}
 	var problem, chatID string
-	r.onUI(func() {
-		chatID, problem = r.u.remoteSend(body.Chat, strings.TrimSpace(body.Text), body.Mode, body.Workspace)
+	server.onUI(func() {
+		chatID, problem = server.ui.remoteSend(body.Chat, strings.TrimSpace(body.Text), body.Mode, body.Workspace)
 	})
 	if problem != "" {
-		fail(w, http.StatusConflict, problem)
+		fail(writer, http.StatusConflict, problem)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]string{"chat": chatID})
+	writeJSON(writer, http.StatusOK, map[string]string{"chat": chatID})
 }
 
 // remoteSend sends a phone's message as if it had been typed in the window:
 // the chat opens on the computer and the message is sent, queued or steered.
-func (u *desktopUI) remoteSend(chatID, text, mode, workspace string) (string, string) {
-	m := message{Role: "user", Content: text}
+func (ui *desktopUI) remoteSend(chatID, text, mode, workspace string) (string, string) {
+	messageValue := message{Role: "user", Content: text}
 	var chat *conversation
 	if chatID != "" {
-		if chat = u.chatByID(chatID); chat == nil {
+		if chat = ui.chatByID(chatID); chat == nil {
 			return "", "This chat no longer exists"
 		}
-		if chat.Config.Workspace != u.cfg.Workspace {
-			u.cfg.Workspace = chat.Config.Workspace
+		if chat.Config.Workspace != ui.cfg.Workspace {
+			ui.cfg.Workspace = chat.Config.Workspace
 		}
-		u.openChat(chat)
+		ui.openChat(chat)
 	} else {
-		if workspace != "" && workspace != u.cfg.Workspace {
+		if workspace != "" && workspace != ui.cfg.Workspace {
 			if root, err := resolveWorkspace(workspace); err == nil {
-				u.cfg.Workspace = root
-				u.ensureProject(root)
+				ui.cfg.Workspace = root
+				ui.ensureProject(root)
 			}
 		}
-		u.startNew()
+		ui.startNew()
 	}
 	if chat != nil && chat.run != nil {
 		if mode == "steer" {
-			chat.steer = append(chat.steer, m)
+			chat.steer = append(chat.steer, messageValue)
 		} else {
-			chat.queue = append(chat.queue, m)
+			chat.queue = append(chat.queue, messageValue)
 		}
-		u.renderQueue()
-		u.remote.metaChanged(chat)
+		ui.renderQueue()
+		ui.remote.metaChanged(chat)
 		return chat.ID, ""
 	}
-	if problem := u.notReady(); problem != "" {
+	if problem := ui.notReady(); problem != "" {
 		return "", problem
 	}
-	u.start(m)
-	return u.current.ID, ""
+	ui.start(messageValue)
+	return ui.current.ID, ""
 }
 
-func (r *remoteServer) stop(w http.ResponseWriter, req *http.Request) {
+func (server *remoteServer) stop(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
 		Chat string `json:"chat"`
 	}
 	readJSON(req, &body)
-	r.onUI(func() {
-		if chat := r.u.chatByID(body.Chat); chat != nil && chat.run != nil {
+	server.onUI(func() {
+		if chat := server.ui.chatByID(body.Chat); chat != nil && chat.run != nil {
 			chat.run.cancel()
 		}
 	})
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(writer, http.StatusOK, map[string]bool{"ok": true})
 }
 
-func (r *remoteServer) approve(w http.ResponseWriter, req *http.Request) {
+func (server *remoteServer) approve(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
 		ID    string `json:"id"`
 		Allow bool   `json:"allow"`
 	}
 	if readJSON(req, &body) != nil {
-		fail(w, http.StatusBadRequest, "Invalid request")
+		fail(writer, http.StatusBadRequest, "Invalid request")
 		return
 	}
 	found := false
-	r.onUI(func() {
-		for _, chat := range r.u.chats {
+	server.onUI(func() {
+		for _, chat := range server.ui.chats {
 			if run := chat.run; run != nil && run.approvalID == body.ID && run.answer != nil {
 				run.answer(body.Allow) // closes the dialog on the computer too
 				found = true
@@ -703,10 +703,10 @@ func (r *remoteServer) approve(w http.ResponseWriter, req *http.Request) {
 		}
 	})
 	if !found {
-		fail(w, http.StatusNotFound, "This request was already answered")
+		fail(writer, http.StatusNotFound, "This request was already answered")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(writer, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // ---------------------------------------------------------------------------
@@ -725,8 +725,8 @@ type remoteModel struct {
 }
 
 // choiceLabel finds the picker label of a configuration's model.
-func (u *desktopUI) choiceLabel(cfg config) string {
-	for label, choice := range u.choices {
+func (ui *desktopUI) choiceLabel(cfg config) string {
+	for label, choice := range ui.choices {
 		if choice.Connection.ID == cfg.ConnectionID && choice.ID == cfg.Model {
 			return label
 		}
@@ -734,137 +734,137 @@ func (u *desktopUI) choiceLabel(cfg config) string {
 	return ""
 }
 
-func (u *desktopUI) settingsForPhone() map[string]any {
+func (ui *desktopUI) settingsForPhone() map[string]any {
 	models := []remoteModel{}
-	for _, label := range u.model.Options {
-		choice := u.choices[label]
-		m := remoteModel{Label: label, Name: choice.display(), Detail: u.model.Details[label], Efforts: []remoteEffort{}}
+	for _, label := range ui.model.Options {
+		choice := ui.choices[label]
+		remoteModelValue := remoteModel{Label: label, Name: choice.display(), Detail: ui.model.Details[label], Efforts: []remoteEffort{}}
 		for _, e := range choice.Efforts {
-			m.Efforts = append(m.Efforts, remoteEffort{e, effortLabel(e)})
+			remoteModelValue.Efforts = append(remoteModelValue.Efforts, remoteEffort{e, effortLabel(e)})
 		}
-		models = append(models, m)
+		models = append(models, remoteModelValue)
 	}
-	return map[string]any{"models": models, "model": u.choiceLabel(u.cfg), "effort": u.cfg.Effort,
-		"approvalMode": approvalFor(u.approvalMode, u.cfg), "autoMode": u.cfg.Provider == "claudecode", "loading": u.modelsLoading, "window": modelContextWindow(u.cfg)}
+	return map[string]any{"models": models, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort,
+		"approvalMode": approvalFor(ui.approvalMode, ui.cfg), "autoMode": ui.cfg.Provider == "claudecode", "loading": ui.modelsLoading, "window": modelContextWindow(ui.cfg)}
 }
 
-func (r *remoteServer) setModel(w http.ResponseWriter, req *http.Request) {
+func (server *remoteServer) setModel(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
 		Chat   string `json:"chat"`
 		Label  string `json:"label"`
 		Effort string `json:"effort"`
 	}
 	if readJSON(req, &body) != nil {
-		fail(w, http.StatusBadRequest, "Invalid request")
+		fail(writer, http.StatusBadRequest, "Invalid request")
 		return
 	}
 	problem := ""
-	r.onUI(func() { problem = r.u.remoteModel(body.Chat, body.Label, body.Effort) })
+	server.onUI(func() { problem = server.ui.remoteModel(body.Chat, body.Label, body.Effort) })
 	if problem != "" {
-		fail(w, http.StatusConflict, problem)
+		fail(writer, http.StatusConflict, problem)
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(writer, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // remoteModel picks a chat's model and effort from the phone, through the
 // same picker as the window (the chat opens there to show it).
-func (u *desktopUI) remoteModel(chatID, label, effort string) string {
+func (ui *desktopUI) remoteModel(chatID, label, effort string) string {
 	if chatID != "" {
-		chat := u.chatByID(chatID)
+		chat := ui.chatByID(chatID)
 		if chat == nil {
 			return "This chat no longer exists"
 		}
-		if chat != u.current {
-			u.cfg.Workspace = chat.Config.Workspace
-			u.openChat(chat)
+		if chat != ui.current {
+			ui.cfg.Workspace = chat.Config.Workspace
+			ui.openChat(chat)
 		}
-	} else if u.current != nil {
-		u.startNew()
+	} else if ui.current != nil {
+		ui.startNew()
 	}
-	if label != "" && label != u.choiceLabel(u.cfg) {
-		choice, ok := u.choices[label]
+	if label != "" && label != ui.choiceLabel(ui.cfg) {
+		choice, ok := ui.choices[label]
 		if !ok {
 			return "This model is no longer available"
 		}
-		u.model.Selected = label
-		u.selectModel(choice)
+		ui.model.Selected = label
+		ui.selectModel(choice)
 	}
 	if effort != "" {
-		choice, ok := u.selectedChoice()
+		choice, ok := ui.selectedChoice()
 		if !ok || !contains(choice.Efforts, effort) {
 			return "This model has no such reasoning level"
 		}
-		u.cfg.Effort = effort
-		if u.current != nil {
-			u.current.Config.Effort = effort
+		ui.cfg.Effort = effort
+		if ui.current != nil {
+			ui.current.Config.Effort = effort
 		}
-		u.model.row.SetTrailing(effortLabel(effort))
-		if u.model.relayout != nil {
-			u.model.relayout()
+		ui.model.row.SetTrailing(effortLabel(effort))
+		if ui.model.relayout != nil {
+			ui.model.relayout()
 		}
-		u.save()
-		u.remote.settingsChanged()
-		u.remote.metaChanged(u.current)
+		ui.save()
+		ui.remote.settingsChanged()
+		ui.remote.metaChanged(ui.current)
 	}
 	return ""
 }
 
-func (r *remoteServer) setApprovalMode(w http.ResponseWriter, req *http.Request) {
+func (server *remoteServer) setApprovalMode(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
 		Mode string `json:"mode"`
 	}
 	if readJSON(req, &body) != nil || (body.Mode != "approval" && body.Mode != "yolo" && body.Mode != "auto") {
-		fail(w, http.StatusBadRequest, "Invalid mode")
+		fail(writer, http.StatusBadRequest, "Invalid mode")
 		return
 	}
-	r.onUI(func() {
-		r.u.approvalMode = body.Mode
-		r.u.updateApprovalControl()
-		r.u.save()
+	server.onUI(func() {
+		server.ui.approvalMode = body.Mode
+		server.ui.updateApprovalControl()
+		server.ui.save()
 	})
-	writeJSON(w, http.StatusOK, map[string]bool{"ok": true})
+	writeJSON(writer, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // ---------------------------------------------------------------------------
 // Settings: the remote switch and the paired phones.
 
-func (u *desktopUI) remoteSettings() fyne.CanvasObject {
+func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 	describe := func() string {
 		switch {
-		case u.remote != nil:
-			return fmt.Sprintf("Listening on port %d as “%s”. A phone must be paired with a code shown on this screen.", u.remote.port, u.remote.name)
-		case u.remoteEnabled:
+		case ui.remote != nil:
+			return fmt.Sprintf("Listening on port %d as “%s”. A phone must be paired with a code shown on this screen.", ui.remote.port, ui.remote.name)
+		case ui.remoteEnabled:
 			return "The remote could not start: the network is unavailable."
 		}
 		return "Off: phones can neither find nor reach this computer."
 	}
-	enabled := newToggle(u.remoteEnabled, func(on bool) {
-		u.remoteEnabled = on
-		if on && u.remote == nil {
-			u.startRemote()
-		} else if !on && u.remote != nil {
-			u.remote.close()
-			u.remote = nil
+	enabled := newToggle(ui.remoteEnabled, func(on bool) {
+		ui.remoteEnabled = on
+		if on && ui.remote == nil {
+			ui.startRemote()
+		} else if !on && ui.remote != nil {
+			ui.remote.close()
+			ui.remote = nil
 		}
-		u.save()
-		u.prefs.show("Phone remote") // the state line and the list follow
+		ui.save()
+		ui.prefs.show("Phone remote") // the state line and the list follow
 	})
 	var phones []fyne.CanvasObject
-	for i, d := range u.devices {
+	for i, pairedDevice := range ui.devices {
 		i := i
 		remove := newRow("Forget", iconTrash, styleChip, func() {
-			u.devices = append(u.devices[:i], u.devices[i+1:]...)
-			u.save()
-			u.prefs.show("Phone remote")
+			ui.devices = append(ui.devices[:i], ui.devices[i+1:]...)
+			ui.save()
+			ui.prefs.show("Phone remote")
 		})
-		phones = append(phones, settingRow(d.Name, "Paired "+d.Added.Format("2 Jan 2006 15:04"), remove))
+		phones = append(phones, settingRow(pairedDevice.Name, "Paired "+pairedDevice.Added.Format("2 Jan 2006 15:04"), remove))
 	}
 	if len(phones) == 0 {
 		phones = append(phones, settingRow("No paired phone yet", "Open the 1loop app on a phone connected to the same network.", nil))
 	}
 	return container.NewVBox(
-		u.prefs.pageTitle("Phone remote", "", nil),
+		ui.prefs.pageTitle("Phone remote", "", nil),
 		card(settingRow("Allow the 1loop phone app on this network", describe(), enabled)),
 		sectionTitle("Paired phones"),
 		card(phones...),
@@ -872,8 +872,8 @@ func (u *desktopUI) remoteSettings() fyne.CanvasObject {
 }
 
 // remoteDefaults gives conversations saved before the remote an id.
-func (u *desktopUI) remoteDefaults() {
-	for _, chat := range u.chats {
+func (ui *desktopUI) remoteDefaults() {
+	for _, chat := range ui.chats {
 		if chat.ID == "" {
 			chat.ID = identifier()[:16]
 		}

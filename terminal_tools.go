@@ -24,27 +24,29 @@ type terminalOutput struct {
 	terminal *panelTerminal
 }
 
-func (r *terminalOutput) Read(p []byte) (int, error) {
-	n, err := r.file.Read(p)
+// Keep raw ANSI output alongside the terminal renderer so a model can read
+// incremental output without rebuilding or scraping the visible screen.
+func (output *terminalOutput) Read(p []byte) (int, error) {
+	n, err := output.file.Read(p)
 	if n > 0 {
-		t := r.terminal
-		t.mu.Lock()
-		t.total += int64(n)
-		t.output = append(t.output, p[:n]...)
-		if len(t.output) > 256<<10 {
-			t.output = append([]byte(nil), t.output[len(t.output)-(256<<10):]...)
+		terminal := output.terminal
+		terminal.mu.Lock()
+		terminal.total += int64(n)
+		terminal.output = append(terminal.output, p[:n]...)
+		if len(terminal.output) > 256<<10 {
+			terminal.output = append([]byte(nil), terminal.output[len(terminal.output)-(256<<10):]...)
 		}
-		t.mu.Unlock()
+		terminal.mu.Unlock()
 	}
 	return n, err
 }
-func (t *panelTerminal) read(offset int64) string {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	first := t.total - int64(len(t.output))
-	offset = max(first, min(offset, t.total))
-	end := min(t.total, offset+8192)
-	data, _ := json.Marshal(map[string]any{"session_id": t.id, "cwd": t.dir, "output": string(t.output[offset-first : end-first]), "available_from": first, "next_offset": end, "total": t.total, "exit_code": t.exit})
+func (terminal *panelTerminal) read(offset int64) string {
+	terminal.mu.Lock()
+	defer terminal.mu.Unlock()
+	first := terminal.total - int64(len(terminal.output))
+	offset = max(first, min(offset, terminal.total))
+	end := min(terminal.total, offset+8192)
+	data, _ := json.Marshal(map[string]any{"session_id": terminal.id, "cwd": terminal.dir, "output": string(terminal.output[offset-first : end-first]), "available_from": first, "next_offset": end, "total": terminal.total, "exit_code": terminal.exit})
 	return string(data)
 }
 func terminalNeedsApproval(name string, args json.RawMessage) bool {
@@ -127,7 +129,7 @@ func terminalKey(name string) (string, error) {
 	}
 	return "", fmt.Errorf("Unsupported terminal key: %s", name)
 }
-func (u *desktopUI) terminalTools(chat *conversation) panelToolHandler {
+func (ui *desktopUI) terminalTools(chat *conversation) panelToolHandler {
 	return func(ctx context.Context, name string, raw json.RawMessage) (panelToolResult, error) {
 		var args struct {
 			Action             string
@@ -146,12 +148,12 @@ func (u *desktopUI) terminalTools(chat *conversation) panelToolHandler {
 		var problem error
 		var list []map[string]any
 		var screen image.Image
-		u.onUI(ctx, func() {
-			p := u.panel
-			state := p.stateOf(chat)
+		ui.onUI(ctx, func() {
+			panel := ui.panel
+			state := panel.stateOf(chat)
 			tabs, active := state.tabs, state.active
-			if chat == p.owner {
-				tabs, active = p.tabs, p.active
+			if chat == panel.owner {
+				tabs, active = panel.tabs, panel.active
 			}
 			at := -1
 			for i, tab := range tabs {
@@ -177,14 +179,14 @@ func (u *desktopUI) terminalTools(chat *conversation) panelToolHandler {
 			update := func() {
 				state.tabs, state.active, state.open = tabs, active, true
 				chat.Panel = state.saved()
-				if chat == p.owner {
-					p.tabs, p.active = tabs, active
-					p.render()
-					if p.target == 0 {
-						p.unfold()
+				if chat == panel.owner {
+					panel.tabs, panel.active = tabs, active
+					panel.render()
+					if panel.target == 0 {
+						panel.unfold()
 					}
 				}
-				u.save()
+				ui.save()
 			}
 			if name == "terminal_tabs" {
 				switch args.Action {
@@ -198,7 +200,7 @@ func (u *desktopUI) terminalTools(chat *conversation) panelToolHandler {
 							return
 						}
 					}
-					tab, err := p.terminalTab(dir)
+					tab, err := panel.terminalTab(dir)
 					if err != nil {
 						problem = err
 						return
@@ -229,12 +231,12 @@ func (u *desktopUI) terminalTools(chat *conversation) panelToolHandler {
 			active = at
 			update()
 			if name == "terminal_screen" {
-				if chat != p.owner {
+				if chat != panel.owner {
 					problem = fmt.Errorf("Open this chat to capture its terminal; terminal_read works in the background")
 					return
 				}
 				driver := fyne.CurrentApp().Driver()
-				canvas := u.window.Canvas()
+				canvas := ui.window.Canvas()
 				pos := driver.AbsolutePositionForObject(term.widget).Subtract(driver.AbsolutePositionForObject(tabs[at].content))
 				scale := canvas.Scale()
 				// Render this tab directly: reading the GL front buffer can yield

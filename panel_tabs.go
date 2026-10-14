@@ -29,24 +29,24 @@ type panelTerminal struct {
 	once   sync.Once
 }
 
-func (t *panelTerminal) close() {
-	t.once.Do(func() { _ = t.file.Close(); t.cancel() })
+func (terminal *panelTerminal) close() {
+	terminal.once.Do(func() { _ = terminal.file.Close(); terminal.cancel() })
 }
 
-func (p *toolPanel) openTerminal() {
-	tab, err := p.terminalTab(p.u.cfg.Workspace)
+func (panel *toolPanel) openTerminal() {
+	tab, err := panel.terminalTab(panel.ui.cfg.Workspace)
 	if err != nil {
-		p.u.notice("Terminal", err.Error())
+		panel.ui.notice("Terminal", err.Error())
 		return
 	}
-	p.tabs = append(p.tabs, tab)
-	p.choose(len(p.tabs) - 1)
-	p.unfold()
+	panel.tabs = append(panel.tabs, tab)
+	panel.choose(len(panel.tabs) - 1)
+	panel.unfold()
 }
 
 // terminalTab starts a shell in dir and returns its tab.
-func (p *toolPanel) terminalTab(dir string) (panelTab, error) {
-	ctx, cancel := context.WithCancel(p.u.ctx)
+func (panel *toolPanel) terminalTab(dir string) (panelTab, error) {
+	ctx, cancel := context.WithCancel(panel.ui.ctx)
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/bash"
@@ -62,7 +62,7 @@ func (p *toolPanel) terminalTab(dir string) (panelTab, error) {
 	w := terminal.New()
 	w.SetStartDir(cmd.Dir)
 	w.Resize(fyne.NewSize(600, 400))
-	t := &panelTerminal{widget: w, file: file, cancel: cancel, id: identifier()[:16], dir: dir, done: make(chan struct{})}
+	panelTerminalValue := &panelTerminal{widget: w, file: file, cancel: cancel, id: identifier()[:16], dir: dir, done: make(chan struct{})}
 	status := textLine(cmd.Dir, 11, colMuted)
 	configs := make(chan terminal.Config, 4)
 	w.AddListener(configs)
@@ -77,14 +77,14 @@ func (p *toolPanel) terminalTab(dir string) (panelTab, error) {
 			}
 		}
 	}()
-	go func() { _ = w.RunWithConnection(file, &terminalOutput{file: file, terminal: t}) }()
+	go func() { _ = w.RunWithConnection(file, &terminalOutput{file: file, terminal: panelTerminalValue}) }()
 	go func() {
 		err := cmd.Wait()
 		code := cmd.ProcessState.ExitCode()
-		t.mu.Lock()
-		t.exit = &code
-		t.mu.Unlock()
-		close(t.done)
+		panelTerminalValue.mu.Lock()
+		panelTerminalValue.exit = &code
+		panelTerminalValue.mu.Unlock()
+		close(panelTerminalValue.done)
 		fyne.Do(func() {
 			if ctx.Err() != nil {
 				return
@@ -96,28 +96,28 @@ func (p *toolPanel) terminalTab(dir string) (panelTab, error) {
 			status.Refresh()
 		})
 	}()
-	return panelTab{kind: "terminal", title: "Terminal", icon: toolGlyph("shell"), terminal: t, workspace: cmd.Dir,
+	return panelTab{kind: "terminal", title: "Terminal", icon: toolGlyph("shell"), terminal: panelTerminalValue, workspace: cmd.Dir,
 		content: container.NewBorder(nil, padded(6, 6, 12, 12, status), nil, nil, padded(10, 4, 12, 12, w))}, nil
 }
 
-func (p *toolPanel) openChanges() {
-	for i, tab := range p.tabs {
+func (panel *toolPanel) openChanges() {
+	for i, tab := range panel.tabs {
 		if tab.kind == "changes" {
-			p.choose(i)
-			p.unfold()
+			panel.choose(i)
+			panel.unfold()
 			return
 		}
 	}
-	p.tabs = append(p.tabs, p.changesTab(p.u.cfg.Workspace))
-	p.choose(len(p.tabs) - 1)
-	p.unfold()
+	panel.tabs = append(panel.tabs, panel.changesTab(panel.ui.cfg.Workspace))
+	panel.choose(len(panel.tabs) - 1)
+	panel.unfold()
 }
 
 // changesTab returns the tab of the Git changes of root, already loading.
-func (p *toolPanel) changesTab(root string) panelTab {
-	ctx, cancel := context.WithCancel(p.u.ctx)
+func (panel *toolPanel) changesTab(root string) panelTab {
+	ctx, cancel := context.WithCancel(panel.ui.ctx)
 	body := container.NewStack(note("Loading changes…"))
-	mode := newPicker(p.u.window, "Changes", styleChip, nil)
+	mode := newPicker(panel.ui.window, "Changes", styleChip, nil)
 	mode.Options = []string{"Unstaged", "Staged"}
 	mode.SetSelected(mode.Options[0])
 	stats := textLine("", 12, colMuted)

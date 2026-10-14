@@ -84,10 +84,10 @@ type announcer struct {
 	last activity
 }
 
-func (a *announcer) set(next activity) {
-	if next != a.last {
-		a.last = next
-		a.emit("activity", next)
+func (announcerState *announcer) set(next activity) {
+	if next != announcerState.last {
+		announcerState.last = next
+		announcerState.emit("activity", next)
 	}
 }
 
@@ -96,58 +96,58 @@ const instructions = `You are 1loop, a concise coding assistant. Work only on th
 // wireMessage converts one stored message into the shape each provider's
 // request body expects. Text stays a plain string; a message with images
 // becomes a content array of text and image_url parts.
-func wireMessage(m message) any {
-	switch m.Role {
+func wireMessage(messageValue message) any {
+	switch messageValue.Role {
 	case "tool":
-		return map[string]any{"role": "tool", "tool_call_id": m.ToolCallID, "content": m.Content}
+		return map[string]any{"role": "tool", "tool_call_id": messageValue.ToolCallID, "content": messageValue.Content}
 	case "assistant":
 		out := map[string]any{"role": "assistant"}
-		if len(m.Images) > 0 {
+		if len(messageValue.Images) > 0 {
 			var parts []any
-			if m.Content != "" {
-				parts = append(parts, map[string]any{"type": "text", "text": m.Content})
+			if messageValue.Content != "" {
+				parts = append(parts, map[string]any{"type": "text", "text": messageValue.Content})
 			}
-			for _, im := range m.Images {
-				parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:" + im.Mime + ";base64," + im.Data}})
+			for _, imagePart := range messageValue.Images {
+				parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:" + imagePart.Mime + ";base64," + imagePart.Data}})
 			}
 			out["content"] = parts
 		} else {
-			out["content"] = m.Content
+			out["content"] = messageValue.Content
 		}
 		// Signed reasoning blocks must travel back to the provider for the
 		// request following a tool result (already provider-filtered by the
 		// caller, so only what this provider expects is non-empty here).
-		if m.ReasoningContent != "" {
-			out["reasoning_content"] = m.ReasoningContent
+		if messageValue.ReasoningContent != "" {
+			out["reasoning_content"] = messageValue.ReasoningContent
 		}
-		if len(m.ReasoningDetails) > 0 {
-			out["reasoning_details"] = m.ReasoningDetails
+		if len(messageValue.ReasoningDetails) > 0 {
+			out["reasoning_details"] = messageValue.ReasoningDetails
 		}
-		if len(m.ToolCalls) > 0 {
-			calls := make([]any, 0, len(m.ToolCalls))
-			for _, call := range m.ToolCalls {
+		if len(messageValue.ToolCalls) > 0 {
+			calls := make([]any, 0, len(messageValue.ToolCalls))
+			for _, call := range messageValue.ToolCalls {
 				calls = append(calls, map[string]any{"id": call.ID, "type": "function", "function": map[string]any{"name": call.Function.Name, "arguments": call.Function.Arguments}})
 			}
 			out["tool_calls"] = calls
 		}
 		return out
 	default:
-		role := m.Role
+		role := messageValue.Role
 		if role != "system" {
 			role = "user"
 		}
 		out := map[string]any{"role": role}
-		if len(m.Images) > 0 {
+		if len(messageValue.Images) > 0 {
 			var parts []any
-			if m.Content != "" {
-				parts = append(parts, map[string]any{"type": "text", "text": m.Content})
+			if messageValue.Content != "" {
+				parts = append(parts, map[string]any{"type": "text", "text": messageValue.Content})
 			}
-			for _, im := range m.Images {
-				parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:" + im.Mime + ";base64," + im.Data}})
+			for _, imagePartValue := range messageValue.Images {
+				parts = append(parts, map[string]any{"type": "image_url", "image_url": map[string]any{"url": "data:" + imagePartValue.Mime + ";base64," + imagePartValue.Data}})
 			}
 			out["content"] = parts
 		} else {
-			out["content"] = m.Content
+			out["content"] = messageValue.Content
 		}
 		return out
 	}
@@ -200,35 +200,35 @@ func request(ctx context.Context, cfg config, method, path string, body any) (*h
 			return nil, err
 		}
 	}
-	r, err := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(data))
+	request, err := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(data))
 	if err != nil {
 		return nil, err
 	}
-	r.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Content-Type", "application/json")
 	if key != "" {
-		r.Header.Set("Authorization", "Bearer "+key)
+		request.Header.Set("Authorization", "Bearer "+key)
 	}
 	if cfg.Provider == "openai" {
-		r.Header.Set("originator", "1loop")
-		r.Header.Set("User-Agent", "1loop/"+openAIClientVersion)
+		request.Header.Set("originator", "1loop")
+		request.Header.Set("User-Agent", "1loop/"+openAIClientVersion)
 		if cfg.AccountID != "" {
-			r.Header.Set("ChatGPT-Account-Id", cfg.AccountID)
+			request.Header.Set("ChatGPT-Account-Id", cfg.AccountID)
 		}
 		if cfg.Residency != "" {
-			r.Header.Set("x-openai-internal-codex-residency", cfg.Residency)
+			request.Header.Set("x-openai-internal-codex-residency", cfg.Residency)
 		}
 		if method == "POST" {
-			r.Header.Set("Accept", "text/event-stream")
+			request.Header.Set("Accept", "text/event-stream")
 		}
 	}
 	if cfg.Provider == "openrouter" {
-		r.Header.Set("X-Title", "1loop")
+		request.Header.Set("X-Title", "1loop")
 	}
 	// No overall timeout: a streamed reply can run as long as the model
 	// works, and the Stop button (context cancellation) is the only way to
 	// end it. A timeout here was the source of "context deadline exceeded".
 	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(r)
+	response, err := client.Do(request)
 	if err != nil {
 		return nil, err
 	}
@@ -266,8 +266,8 @@ func completion(ctx context.Context, cfg config, messages []message, tools bool,
 		}
 	}
 	wire := make([]any, 0, len(wireMessages))
-	for _, m := range wireMessages {
-		wire = append(wire, wireMessage(m))
+	for _, messageValue := range wireMessages {
+		wire = append(wire, wireMessage(messageValue))
 	}
 	body := mergeOptions(cfg.Parameters, map[string]any{"model": cfg.Model, "messages": wire, "stream": true, "stream_options": map[string]any{"include_usage": true}})
 	if tools {
@@ -522,11 +522,11 @@ func modelContextWindow(cfg config) int {
 // into opaque items that replace them in the input.
 func remoteCompact(ctx context.Context, cfg config, rounds []message, focus string) ([]json.RawMessage, error) {
 	input := make([]message, 0, len(rounds))
-	for _, m := range rounds {
-		if m.Internal && m.Role == "user" {
+	for _, messageValue := range rounds {
+		if messageValue.Internal && messageValue.Role == "user" {
 			continue
 		}
-		input = append(input, m)
+		input = append(input, messageValue)
 	}
 	guidance := systemInstructions(cfg) + "\nCompaction handoff: retain user requests verbatim. Cover completed TODO tasks and results, current task, exact files and symbols, decisions, errors and next action. The persistent TODO remains authoritative; use recall for earlier details."
 	if focus != "" {
@@ -549,29 +549,29 @@ func remoteCompact(ctx context.Context, cfg config, rounds []message, focus stri
 
 // conversationText flattens rounds into plain text for the summarizer.
 func conversationText(rounds []message) string {
-	var b strings.Builder
-	for _, m := range rounds {
-		switch m.Role {
+	var builder strings.Builder
+	for _, messageValue := range rounds {
+		switch messageValue.Role {
 		case "user":
-			text := m.Content
-			if len(m.Images) > 0 {
-				text += fmt.Sprintf(" [+%d image(s) attached]", len(m.Images))
+			text := messageValue.Content
+			if len(messageValue.Images) > 0 {
+				text += fmt.Sprintf(" [+%d image(s) attached]", len(messageValue.Images))
 			}
-			b.WriteString("USER: " + truncateText(text, 4000) + "\n\n")
+			builder.WriteString("USER: " + truncateText(text, 4000) + "\n\n")
 		case "assistant":
-			if m.Content != "" {
-				b.WriteString("ASSISTANT: " + truncateText(m.Content, 2000) + "\n\n")
+			if messageValue.Content != "" {
+				builder.WriteString("ASSISTANT: " + truncateText(messageValue.Content, 2000) + "\n\n")
 			}
-			for _, call := range m.ToolCalls {
-				b.WriteString(fmt.Sprintf("TOOL %s(%s)\n\n", call.Function.Name, truncateText(call.Function.Arguments, 800)))
+			for _, call := range messageValue.ToolCalls {
+				builder.WriteString(fmt.Sprintf("TOOL %s(%s)\n\n", call.Function.Name, truncateText(call.Function.Arguments, 800)))
 			}
 		case "tool":
-			if m.Content != "" {
-				b.WriteString("RESULT: " + truncateText(m.Content, 1200) + "\n\n")
+			if messageValue.Content != "" {
+				builder.WriteString("RESULT: " + truncateText(messageValue.Content, 1200) + "\n\n")
 			}
 		}
 	}
-	return b.String()
+	return builder.String()
 }
 
 // truncateText cuts long strings, keeping both ends: the start holds the
@@ -597,18 +597,18 @@ type inbox struct {
 
 // run works on a chat with the connection's harness: Claude Code's own for
 // a Claude Code connection, 1loop's agent loop for every other provider.
-func (a *app) run(ctx context.Context, cfg config, history []message, in inbox, emit emitter) error {
+func (backend *app) run(ctx context.Context, cfg config, history []message, inboxValue inbox, emit emitter) error {
 	if cfg.Provider == "claudecode" {
-		return a.runClaudeCode(ctx, cfg, history, in, emit)
+		return backend.runClaudeCode(ctx, cfg, history, inboxValue, emit)
 	}
-	return a.runCompatible(ctx, cfg, history, in, emit)
+	return backend.runCompatible(ctx, cfg, history, inboxValue, emit)
 }
 
 // runCompatible drives the agent loop: no step limit and no overall
 // deadline — only the user's Stop button (or the network) can end it.
 // When the context approaches the model's window, the oldest rounds are
 // summarized into a handoff note so the work can continue.
-func (a *app) runCompatible(ctx context.Context, cfg config, history []message, in inbox, emit emitter) error {
+func (backend *app) runCompatible(ctx context.Context, cfg config, history []message, inboxValue inbox, emit emitter) error {
 	if cfg.Model == "" {
 		return fmt.Errorf("Choose a model")
 	}
@@ -623,10 +623,10 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 	// Provider usage includes system instructions and tools. Without a report,
 	// estimate those once, then add every message that was appended since.
 	reported, reportedAt := contextOverhead(cfg)-tokenEstimate(system), 0
-	for i, m := range messages {
-		if m.Usage > 0 {
-			reported, reportedAt = m.Usage, i
-			if m.UsageEstimated {
+	for i, messageValue := range messages {
+		if messageValue.Usage > 0 {
+			reported, reportedAt = messageValue.Usage, i
+			if messageValue.UsageEstimated {
 				reportedAt++
 			}
 		}
@@ -677,7 +677,7 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 		}
 		system.Content = systemInstructions(cfg)
 		messages[0] = system
-		if extras := in.steer(); len(extras) > 0 {
+		if extras := inboxValue.steer(); len(extras) > 0 {
 			for _, extra := range extras {
 				inject(extra)
 			}
@@ -685,7 +685,7 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 		}
 		if cfg.Provider == "openai" {
 			var err error
-			cfg, err = a.openAIConfig(ctx, cfg)
+			cfg, err = backend.openAIConfig(ctx, cfg)
 			if err != nil {
 				return err
 			}
@@ -752,7 +752,7 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 		emit("message_end", nil)
 		if len(out.ToolCalls) == 0 {
 			publish() // the final answer is saved before a potentially long compaction
-			if extras := in.steer(); len(extras) > 0 {
+			if extras := inboxValue.steer(); len(extras) > 0 {
 				for _, extra := range extras {
 					inject(extra)
 				}
@@ -768,14 +768,14 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 				publish()
 				return ctx.Err()
 			}
-			if extras := in.steer(); len(extras) > 0 {
+			if extras := inboxValue.steer(); len(extras) > 0 {
 				for _, extra := range extras {
 					inject(extra)
 				}
 				publish()
 				continue
 			}
-			if next, ok := in.next(); ok {
+			if next, ok := inboxValue.next(); ok {
 				inject(next)
 				publish()
 				continue
@@ -790,7 +790,7 @@ func (a *app) runCompatible(ctx context.Context, cfg config, history []message, 
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			outcome := a.executeTool(ctx, cfg.Workspace, call, emit)
+			outcome := backend.executeTool(ctx, cfg.Workspace, call, emit)
 			emit("tool_result", outcome)
 			toolImages = append(toolImages, outcome.Images...)
 			messages = append(messages, message{Role: "tool", Content: inputToolOutput(cfg, outcome), ToolCallID: call.ID, RecallID: outcome.RecallID})
@@ -833,13 +833,13 @@ func todoCompleted(before, after []todoItem) bool {
 
 // compactNow is the manual /compact command: it condenses the whole stored
 // conversation at once and returns the new history.
-func (a *app) compactNow(ctx context.Context, cfg config, history []message, focus string, emit emitter) ([]message, error) {
+func (backend *app) compactNow(ctx context.Context, cfg config, history []message, focus string, emit emitter) ([]message, error) {
 	if cfg.Model == "" {
 		return nil, fmt.Errorf("Choose a model")
 	}
 	if cfg.Provider == "openai" {
 		var err error
-		if cfg, err = a.openAIConfig(ctx, cfg); err != nil {
+		if cfg, err = backend.openAIConfig(ctx, cfg); err != nil {
 			return nil, err
 		}
 	}

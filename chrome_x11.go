@@ -134,8 +134,8 @@ func systemScale() float32 {
 
 // withX11 runs f with GLFW's own display connection and the window id; it is
 // only called from Fyne callbacks, which run on the main thread like GLFW.
-func withX11(w fyne.Window, f func(*C.Display, C.Window)) {
-	native, ok := w.(driver.NativeWindow)
+func withX11(window fyne.Window, f func(*C.Display, C.Window)) {
+	native, ok := window.(driver.NativeWindow)
 	if !ok {
 		return
 	}
@@ -151,8 +151,8 @@ func withX11(w fyne.Window, f func(*C.Display, C.Window)) {
 	})
 }
 
-func windowMoveResize(w fyne.Window, direction int) {
-	withX11(w, func(d *C.Display, x C.Window) { C.loop_moveresize(d, x, C.int(direction)) })
+func windowMoveResize(window fyne.Window, direction int) {
+	withX11(window, func(d *C.Display, x C.Window) { C.loop_moveresize(d, x, C.int(direction)) })
 }
 
 // X11 has no frame pacing of 1loop's own: the swap never waits for a
@@ -166,10 +166,10 @@ func scrollEventTime() (milliseconds uint32, ok bool) { return 0, false }
 // class after its title, which is the application id.
 func windowIdentity(fyne.Window) {}
 
-func windowToggleMaximize(w fyne.Window) {
-	withX11(w, func(d *C.Display, x C.Window) { C.loop_toggle_maximize(d, x) })
+func windowToggleMaximize(window fyne.Window) {
+	withX11(window, func(d *C.Display, x C.Window) { C.loop_toggle_maximize(d, x) })
 }
 
-func windowMinimize(w fyne.Window) {
-	withX11(w, func(d *C.Display, x C.Window) { C.loop_minimize(d, x) })
+func windowMinimize(window fyne.Window) {
+	withX11(window, func(d *C.Display, x C.Window) { C.loop_minimize(d, x) })
 }

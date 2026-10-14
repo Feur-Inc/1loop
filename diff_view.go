@@ -163,9 +163,9 @@ func newDiffView(patch string) fyne.CanvasObject {
 	list := widget.NewList(func() int { return len(rows) }, func() fyne.CanvasObject {
 		return newDiffRow(width)
 	}, func(i widget.ListItemID, object fyne.CanvasObject) {
-		r := object.(*diffRow)
-		r.line = rows[i]
-		r.Refresh()
+		diffRowValue := object.(*diffRow)
+		diffRowValue.line = rows[i]
+		diffRowValue.Refresh()
 	})
 	list.HideSeparators = true
 	for i, row := range rows {
@@ -188,9 +188,9 @@ type diffRow struct {
 }
 
 func newDiffRow(width float32) *diffRow {
-	r := &diffRow{width: width}
-	r.ExtendBaseWidget(r)
-	return r
+	row := &diffRow{width: width}
+	row.ExtendBaseWidget(row)
+	return row
 }
 
 type diffRowRenderer struct {
@@ -200,32 +200,32 @@ type diffRowRenderer struct {
 	code      []*canvas.Text
 }
 
-func (r *diffRow) CreateRenderer() fyne.WidgetRenderer {
+func (row *diffRow) CreateRenderer() fyne.WidgetRenderer {
 	old, next := textLine("", outputTextSize, colFaint), textLine("", outputTextSize, colFaint)
 	old.TextStyle.Monospace, next.TextStyle.Monospace = true, true
-	return &diffRowRenderer{row: r, bg: canvas.NewRectangle(colCode), mark: canvas.NewRectangle(color.Transparent), old: old, next: next}
+	return &diffRowRenderer{row: row, bg: canvas.NewRectangle(colCode), mark: canvas.NewRectangle(color.Transparent), old: old, next: next}
 }
 
-func (r *diffRowRenderer) MinSize() fyne.Size { return fyne.NewSize(r.row.width, 24) }
-func (r *diffRowRenderer) Destroy()           {}
-func (r *diffRowRenderer) Objects() []fyne.CanvasObject {
-	o := []fyne.CanvasObject{r.bg, r.mark, r.old, r.next}
-	for _, text := range r.code {
+func (renderer *diffRowRenderer) MinSize() fyne.Size { return fyne.NewSize(renderer.row.width, 24) }
+func (renderer *diffRowRenderer) Destroy()           {}
+func (renderer *diffRowRenderer) Objects() []fyne.CanvasObject {
+	o := []fyne.CanvasObject{renderer.bg, renderer.mark, renderer.old, renderer.next}
+	for _, text := range renderer.code {
 		o = append(o, text)
 	}
 	return o
 }
-func (r *diffRowRenderer) Layout(size fyne.Size) {
-	r.bg.Resize(size)
-	r.mark.Resize(fyne.NewSize(3, size.Height))
-	y := (size.Height - r.old.MinSize().Height) / 2
-	r.old.Move(fyne.NewPos(42-r.old.MinSize().Width, y))
-	r.next.Move(fyne.NewPos(86-r.next.MinSize().Width, y))
+func (renderer *diffRowRenderer) Layout(size fyne.Size) {
+	renderer.bg.Resize(size)
+	renderer.mark.Resize(fyne.NewSize(3, size.Height))
+	y := (size.Height - renderer.old.MinSize().Height) / 2
+	renderer.old.Move(fyne.NewPos(42-renderer.old.MinSize().Width, y))
+	renderer.next.Move(fyne.NewPos(86-renderer.next.MinSize().Width, y))
 	x := float32(102)
-	if r.row.line.kind == 'f' || r.row.line.kind == 'h' || r.row.line.kind == 'm' {
+	if renderer.row.line.kind == 'f' || renderer.row.line.kind == 'h' || renderer.row.line.kind == 'm' {
 		x = 14
 	}
-	for _, text := range r.code {
+	for _, text := range renderer.code {
 		if !text.Visible() {
 			continue
 		}
@@ -234,28 +234,28 @@ func (r *diffRowRenderer) Layout(size fyne.Size) {
 	}
 }
 
-func (r *diffRowRenderer) Refresh() {
-	line := r.row.line
-	r.bg.FillColor, r.mark.FillColor = colCode, color.Transparent
-	r.old.Text, r.next.Text = "", ""
-	r.old.Color, r.next.Color = colFaint, colFaint
+func (renderer *diffRowRenderer) Refresh() {
+	line := renderer.row.line
+	renderer.bg.FillColor, renderer.mark.FillColor = colCode, color.Transparent
+	renderer.old.Text, renderer.next.Text = "", ""
+	renderer.old.Color, renderer.next.Color = colFaint, colFaint
 	if line.old > 0 {
-		r.old.Text = strconv.Itoa(line.old)
+		renderer.old.Text = strconv.Itoa(line.old)
 	}
 	if line.next > 0 {
-		r.next.Text = strconv.Itoa(line.next)
+		renderer.next.Text = strconv.Itoa(line.next)
 	}
 	switch line.kind {
 	case '+':
-		r.bg.FillColor = color.NRGBA{R: 0x1c, G: 0x33, B: 0x23, A: 0xff}
-		r.mark.FillColor, r.next.Color = colAdded, colAdded
+		renderer.bg.FillColor = color.NRGBA{R: 0x1c, G: 0x33, B: 0x23, A: 0xff}
+		renderer.mark.FillColor, renderer.next.Color = colAdded, colAdded
 	case '-':
-		r.bg.FillColor = color.NRGBA{R: 0x40, G: 0x21, B: 0x1d, A: 0xff}
-		r.mark.FillColor, r.old.Color = colDanger, colDanger
+		renderer.bg.FillColor = color.NRGBA{R: 0x40, G: 0x21, B: 0x1d, A: 0xff}
+		renderer.mark.FillColor, renderer.old.Color = colDanger, colDanger
 	case 'f':
-		r.bg.FillColor = colSurface
+		renderer.bg.FillColor = colSurface
 	case 'h', 'm':
-		r.bg.FillColor = colRaised
+		renderer.bg.FillColor = colRaised
 	}
 	tokens := line.tokens
 	if len(tokens) == 0 {
@@ -266,11 +266,11 @@ func (r *diffRowRenderer) Refresh() {
 			{Type: chroma.GenericInserted, Value: fmt.Sprintf("+%d  ", line.added)},
 			{Type: chroma.GenericDeleted, Value: fmt.Sprintf("−%d", line.removed)}}
 	}
-	for len(r.code) < len(tokens) {
-		r.code = append(r.code, textLine("", outputTextSize, colText))
+	for len(renderer.code) < len(tokens) {
+		renderer.code = append(renderer.code, textLine("", outputTextSize, colText))
 	}
 	style := styles.Get("monokai")
-	for i, text := range r.code {
+	for i, text := range renderer.code {
 		if i >= len(tokens) {
 			text.Hide()
 			continue
@@ -290,9 +290,9 @@ func (r *diffRowRenderer) Refresh() {
 		text.Show()
 		text.Refresh()
 	}
-	r.bg.Refresh()
-	r.mark.Refresh()
-	r.old.Refresh()
-	r.next.Refresh()
-	r.Layout(r.row.Size())
+	renderer.bg.Refresh()
+	renderer.mark.Refresh()
+	renderer.old.Refresh()
+	renderer.next.Refresh()
+	renderer.Layout(renderer.row.Size())
 }

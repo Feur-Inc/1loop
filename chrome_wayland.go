@@ -43,10 +43,10 @@ static struct wl_seat* loop_seat;
 static struct wl_pointer* loop_pointer;
 static uint32_t loop_serial;
 
-static void p_enter(void* d, struct wl_pointer* p, uint32_t s, struct wl_surface* f, wl_fixed_t x, wl_fixed_t y) {}
-static void p_leave(void* d, struct wl_pointer* p, uint32_t s, struct wl_surface* f) {}
-static void p_motion(void* d, struct wl_pointer* p, uint32_t t, wl_fixed_t x, wl_fixed_t y) {}
-static void p_button(void* d, struct wl_pointer* p, uint32_t serial, uint32_t t, uint32_t b, uint32_t state) {
+static void p_enter(void* user_data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface, wl_fixed_t x, wl_fixed_t y) {}
+static void p_leave(void* user_data, struct wl_pointer* pointer, uint32_t serial, struct wl_surface* surface) {}
+static void p_motion(void* user_data, struct wl_pointer* pointer, uint32_t timestamp, wl_fixed_t x, wl_fixed_t y) {}
+static void p_button(void* user_data, struct wl_pointer* pointer, uint32_t serial, uint32_t timestamp, uint32_t button, uint32_t state) {
 	if (state == WL_POINTER_BUTTON_STATE_PRESSED) loop_serial = serial;
 }
 // Scroll gestures. GLFW 3.3 passes the distances on but drops what the
@@ -55,17 +55,17 @@ static void p_button(void* d, struct wl_pointer* p, uint32_t serial, uint32_t t,
 static uint32_t loop_axis_time;   // when the last scroll event happened (compositor clock, ms)
 static int loop_axis_finger;      // the gesture in progress comes from a touchpad
 static int loop_axis_released;    // the fingers have left the pad since the last look
-static void p_axis(void* d, struct wl_pointer* p, uint32_t t, uint32_t a, wl_fixed_t v) {
-	loop_axis_time = t;
+static void p_axis(void* user_data, struct wl_pointer* pointer, uint32_t timestamp, uint32_t axis, wl_fixed_t distance) {
+	loop_axis_time = timestamp;
 	loop_axis_released = 0;
 }
-static void p_frame(void* d, struct wl_pointer* p) {}
-static void p_axis_source(void* d, struct wl_pointer* p, uint32_t s) {
+static void p_frame(void* user_data, struct wl_pointer* pointer) {}
+static void p_axis_source(void* user_data, struct wl_pointer* pointer, uint32_t source) {
 	// Fingers on a touchpad, or another continuous device: not a wheel.
-	loop_axis_finger = s == WL_POINTER_AXIS_SOURCE_FINGER || s == WL_POINTER_AXIS_SOURCE_CONTINUOUS;
+	loop_axis_finger = source == WL_POINTER_AXIS_SOURCE_FINGER || source == WL_POINTER_AXIS_SOURCE_CONTINUOUS;
 }
-static void p_axis_stop(void* d, struct wl_pointer* p, uint32_t t, uint32_t a) {
-	loop_axis_time = t;
+static void p_axis_stop(void* user_data, struct wl_pointer* pointer, uint32_t timestamp, uint32_t axis) {
+	loop_axis_time = timestamp;
 	loop_axis_released = 1;
 }
 static int loop_take_release(void) {
@@ -76,16 +76,16 @@ static int loop_take_release(void) {
 static int loop_scroll_finger(void) { return loop_axis_finger; }
 static uint32_t loop_scroll_time(void) { return loop_axis_time; }
 static int loop_listening(void) { return loop_pointer != NULL; }
-static void p_axis_discrete(void* d, struct wl_pointer* p, uint32_t a, int32_t v) {}
+static void p_axis_discrete(void* user_data, struct wl_pointer* pointer, uint32_t axis, int32_t steps) {}
 static const struct wl_pointer_listener pointer_listener = {
 	p_enter, p_leave, p_motion, p_button, p_axis, p_frame, p_axis_source, p_axis_stop, p_axis_discrete,
 };
 
-static void r_global(void* data, struct wl_registry* r, uint32_t name, const char* iface, uint32_t version) {
-	if (!loop_seat && strcmp(iface, "wl_seat") == 0)
-		loop_seat = wl_registry_bind(r, name, &wl_seat_interface, version < 5 ? version : 5);
+static void r_global(void* user_data, struct wl_registry* registry, uint32_t name, const char* interface_name, uint32_t version) {
+	if (!loop_seat && strcmp(interface_name, "wl_seat") == 0)
+		loop_seat = wl_registry_bind(registry, name, &wl_seat_interface, version < 5 ? version : 5);
 }
-static void r_remove(void* data, struct wl_registry* r, uint32_t name) {}
+static void r_remove(void* user_data, struct wl_registry* registry, uint32_t name) {}
 static const struct wl_registry_listener registry_listener = { r_global, r_remove };
 
 static void loop_disable_libdecor(void) {
@@ -350,30 +350,30 @@ func useSystemCursor() {
 	}
 }
 
-func withSurface(w fyne.Window, f func(C.uintptr_t)) {
-	native, ok := w.(driver.NativeWindow)
+func withSurface(window fyne.Window, callback func(C.uintptr_t)) {
+	native, ok := window.(driver.NativeWindow)
 	if !ok {
 		return
 	}
 	native.RunNative(func(context any) {
 		if c, ok := context.(driver.WaylandWindowContext); ok && c.WaylandSurface != 0 {
-			f(C.uintptr_t(c.WaylandSurface))
+			callback(C.uintptr_t(c.WaylandSurface))
 		}
 	})
 }
 
 // The press that triggers a move is still being dispatched when Fyne calls
 // us; deferring by one loop turn lets our listener record its serial first.
-func windowMoveResize(w fyne.Window, direction int) {
+func windowMoveResize(window fyne.Window, direction int) {
 	go fyne.Do(func() {
-		withSurface(w, func(s C.uintptr_t) { C.loop_moveresize(s, C.int(direction)) })
+		withSurface(window, func(s C.uintptr_t) { C.loop_moveresize(s, C.int(direction)) })
 	})
 }
 
 // windowIdentity gives the window its application id, which the desktop
 // matches with the launcher entry of the same name (see installLauncher).
-func windowIdentity(w fyne.Window) {
-	withSurface(w, func(s C.uintptr_t) {
+func windowIdentity(window fyne.Window) {
+	withSurface(window, func(s C.uintptr_t) {
 		id := C.CString(appID)
 		defer C.free(unsafe.Pointer(id))
 		C.loop_set_app_id(s, id)
@@ -393,12 +393,12 @@ var pacing struct {
 // three frames of a 60 Hz screen. Past that the window is taken as hidden.
 const paceLimit = 50
 
-func framePaceSetup(w fyne.Window) {
+func framePaceSetup(window fyne.Window) {
 	if os.Getenv("ONELOOP_VSYNC") == "1" { // the GL driver's own waiting, as before
 		devf("frame", "pacing left to the GL driver (ONELOOP_VSYNC=1)")
 		return
 	}
-	withSurface(w, func(s C.uintptr_t) { pacing.on = C.loop_pace_setup(s) == 1 })
+	withSurface(window, func(s C.uintptr_t) { pacing.on = C.loop_pace_setup(s) == 1 })
 	devf("frame", "Wayland frame pacing by 1loop: %v", pacing.on)
 }
 
@@ -447,10 +447,10 @@ func scrollEventTime() (uint32, bool) {
 	return ms, ms != 0 && C.loop_listening() == 1
 }
 
-func windowToggleMaximize(w fyne.Window) {
-	withSurface(w, func(s C.uintptr_t) { C.loop_toggle_maximize(s) })
+func windowToggleMaximize(window fyne.Window) {
+	withSurface(window, func(s C.uintptr_t) { C.loop_toggle_maximize(s) })
 }
 
-func windowMinimize(w fyne.Window) {
-	withSurface(w, func(s C.uintptr_t) { C.loop_minimize(s) })
+func windowMinimize(window fyne.Window) {
+	withSurface(window, func(s C.uintptr_t) { C.loop_minimize(s) })
 }

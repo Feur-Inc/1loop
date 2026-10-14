@@ -30,6 +30,7 @@ type config struct {
 	Cache             *contextCache                             `json:"-"`
 	ContextKey        string                                    `json:"-"`
 	Todo              *todoState                                `json:"-"`
+	Computer          panelToolHandler                          `json:"-"`
 	Terminal          panelToolHandler                          `json:"-"`
 	Browser           panelToolHandler                          `json:"-"`
 	Recall            func(context.Context) ([]chatItem, error) `json:"-"`
@@ -94,13 +95,13 @@ func resolveWorkspace(path string) (string, error) {
 	return root, nil
 }
 
-func (a *app) models(ctx context.Context, cfg config) (map[string]any, error) {
+func (backend *app) models(ctx context.Context, cfg config) (map[string]any, error) {
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()
 	if cfg.Provider != "openai" {
 		return apiRequest(ctx, cfg, "GET", "/models", nil)
 	}
-	cfg, err := a.openAIConfig(ctx, cfg)
+	cfg, err := backend.openAIConfig(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -118,7 +119,7 @@ func (a *app) models(ctx context.Context, cfg config) (map[string]any, error) {
 			data = append(data, model)
 		}
 	}
-	auth, err := a.getOpenAI(cfg.AuthProfile)
+	auth, err := backend.getOpenAI(cfg.AuthProfile)
 	if err != nil {
 		return nil, err
 	}
@@ -128,7 +129,7 @@ func (a *app) models(ctx context.Context, cfg config) (map[string]any, error) {
 	return map[string]any{"data": data, "account": map[string]any{"email": email}}, nil
 }
 
-func (a *app) confirm(ctx context.Context, emit emitter, title, preview string) bool {
+func (backend *app) confirm(ctx context.Context, emit emitter, title, preview string) bool {
 	if ctx.Err() != nil {
 		return false
 	}
@@ -137,10 +138,10 @@ func (a *app) confirm(ctx context.Context, emit emitter, title, preview string) 
 	}
 	id := identifier()
 	ch := make(chan bool, 1)
-	a.mu.Lock()
-	a.approvals[id] = ch
-	a.mu.Unlock()
-	defer func() { a.mu.Lock(); delete(a.approvals, id); a.mu.Unlock() }()
+	backend.mu.Lock()
+	backend.approvals[id] = ch
+	backend.mu.Unlock()
+	defer func() { backend.mu.Lock(); delete(backend.approvals, id); backend.mu.Unlock() }()
 	emit("approval", map[string]any{"id": id, "title": title, "preview": preview})
 	select {
 	case allowed := <-ch:
@@ -150,10 +151,10 @@ func (a *app) confirm(ctx context.Context, emit emitter, title, preview string) 
 	}
 }
 
-func (a *app) approve(id string, allow bool) {
-	a.mu.Lock()
-	ch := a.approvals[id]
-	a.mu.Unlock()
+func (backend *app) approve(id string, allow bool) {
+	backend.mu.Lock()
+	ch := backend.approvals[id]
+	backend.mu.Unlock()
 	if ch != nil {
 		select {
 		case ch <- allow:

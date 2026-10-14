@@ -79,6 +79,9 @@ func toolGlyph(tool string) fyne.Resource {
 	if strings.HasPrefix(tool, "terminal_") {
 		return iconTerminal
 	}
+	if tool == "computer_use" {
+		return theme.ComputerIcon()
+	}
 	switch tool {
 	case "shell":
 		return iconTerminal
@@ -99,6 +102,14 @@ func toolGlyph(tool string) fyne.Resource {
 // describeTool is the one-line summary of a call: "Ran go test ./..." or
 // "Editing main.go". The target is the command's first line or the path.
 func describeTool(item chatItem, running bool) (verb, target string, mono bool) {
+	if item.Tool == "computer_use" {
+		var request struct{ Action string }
+		_ = json.Unmarshal([]byte(item.Args), &request)
+		if running {
+			return "Using desktop:", request.Action, false
+		}
+		return "Used desktop:", request.Action, false
+	}
 	if strings.HasPrefix(item.Tool, "terminal_") {
 		if running {
 			return "Using terminal:", strings.TrimPrefix(item.Tool, "terminal_"), false
@@ -224,51 +235,51 @@ type toolRow struct {
 }
 
 func newToolRow(item chatItem, state string, onTap func()) *toolRow {
-	r := &toolRow{item: item, state: state, onTap: onTap}
-	r.ExtendBaseWidget(r)
-	return r
+	row := &toolRow{item: item, state: state, onTap: onTap}
+	row.ExtendBaseWidget(row)
+	return row
 }
 
-func (r *toolRow) update(item chatItem, state string) {
-	r.item, r.state = item, state
-	r.Refresh()
+func (row *toolRow) update(item chatItem, state string) {
+	row.item, row.state = item, state
+	row.Refresh()
 }
 
-func (r *toolRow) Tapped(*fyne.PointEvent) {
-	if r.onTap != nil {
-		r.onTap()
+func (row *toolRow) Tapped(*fyne.PointEvent) {
+	if row.onTap != nil {
+		row.onTap()
 	}
 }
-func (r *toolRow) Cursor() desktop.Cursor         { return desktop.PointerCursor }
-func (r *toolRow) MouseIn(*desktop.MouseEvent)    { r.fade(1) }
-func (r *toolRow) MouseMoved(*desktop.MouseEvent) {}
-func (r *toolRow) MouseOut()                      { r.fade(0) }
+func (row *toolRow) Cursor() desktop.Cursor         { return desktop.PointerCursor }
+func (row *toolRow) MouseIn(*desktop.MouseEvent)    { row.fade(1) }
+func (row *toolRow) MouseMoved(*desktop.MouseEvent) {}
+func (row *toolRow) MouseOut()                      { row.fade(0) }
 
-func (r *toolRow) fade(to float32) {
-	if r.anim != nil {
-		r.anim.Stop()
+func (row *toolRow) fade(to float32) {
+	if row.anim != nil {
+		row.anim.Stop()
 	}
-	from := r.hover
-	r.anim = fyne.NewAnimation(130*time.Millisecond, func(p float32) {
-		r.hover = from + (to-from)*p
-		r.Refresh()
+	from := row.hover
+	row.anim = fyne.NewAnimation(130*time.Millisecond, func(p float32) {
+		row.hover = from + (to-from)*p
+		row.Refresh()
 	})
-	r.anim.Curve = fyne.AnimationEaseOut
-	r.anim.Start()
+	row.anim.Curve = fyne.AnimationEaseOut
+	row.anim.Start()
 }
 
-func (r *toolRow) CreateRenderer() fyne.WidgetRenderer {
-	rr := &toolRowRenderer{row: r, bg: canvas.NewRectangle(color.Transparent), icon: canvas.NewImageFromResource(nil),
+func (row *toolRow) CreateRenderer() fyne.WidgetRenderer {
+	renderer := &toolRowRenderer{row: row, bg: canvas.NewRectangle(color.Transparent), icon: canvas.NewImageFromResource(nil),
 		verb: canvas.NewText("", colMuted), target: canvas.NewText("", colText),
 		meta: canvas.NewText("", colFaint), minus: canvas.NewText("", colDanger)}
-	rr.bg.CornerRadius = 8
-	rr.icon.FillMode = canvas.ImageFillContain
-	for _, t := range []*canvas.Text{rr.verb, rr.target, rr.meta, rr.minus} {
+	renderer.bg.CornerRadius = 8
+	renderer.icon.FillMode = canvas.ImageFillContain
+	for _, t := range []*canvas.Text{renderer.verb, renderer.target, renderer.meta, renderer.minus} {
 		t.TextSize = 13.5
 	}
-	rr.meta.TextSize, rr.minus.TextSize = 12.5, 12.5
-	rr.Refresh()
-	return rr
+	renderer.meta.TextSize, renderer.minus.TextSize = 12.5, 12.5
+	renderer.Refresh()
+	return renderer
 }
 
 type toolRowRenderer struct {
@@ -282,79 +293,79 @@ type toolRowRenderer struct {
 
 const toolRowPadX, toolRowIcon = float32(8), float32(16)
 
-func (rr *toolRowRenderer) MinSize() fyne.Size {
+func (renderer *toolRowRenderer) MinSize() fyne.Size {
 	height := fyne.MeasureText("Ag", 13.5, fyne.TextStyle{}).Height + 12
 	return fyne.NewSize(120, height)
 }
 
-func (rr *toolRowRenderer) Layout(size fyne.Size) {
-	rr.bg.Resize(size)
+func (renderer *toolRowRenderer) Layout(size fyne.Size) {
+	renderer.bg.Resize(size)
 	middle := func(t *canvas.Text) float32 { return (size.Height - t.MinSize().Height) / 2 }
-	rr.icon.Resize(fyne.NewSquareSize(toolRowIcon))
-	rr.icon.Move(fyne.NewPos(toolRowPadX, (size.Height-toolRowIcon)/2))
+	renderer.icon.Resize(fyne.NewSquareSize(toolRowIcon))
+	renderer.icon.Move(fyne.NewPos(toolRowPadX, (size.Height-toolRowIcon)/2))
 	x := toolRowPadX + toolRowIcon + 8
-	rr.verb.Move(fyne.NewPos(x, middle(rr.verb)))
-	x += rr.verb.MinSize().Width + 6
+	renderer.verb.Move(fyne.NewPos(x, middle(renderer.verb)))
+	x += renderer.verb.MinSize().Width + 6
 	metaWidth := float32(0)
-	if rr.meta.Text != "" {
-		metaWidth = rr.meta.MinSize().Width + 10
+	if renderer.meta.Text != "" {
+		metaWidth = renderer.meta.MinSize().Width + 10
 	}
-	if rr.minus.Text != "" {
-		metaWidth += rr.minus.MinSize().Width + 5
+	if renderer.minus.Text != "" {
+		metaWidth += renderer.minus.MinSize().Width + 5
 	}
-	rr.target.Text = fitText(rr.full, rr.target.TextSize, rr.target.TextStyle, size.Width-x-metaWidth-toolRowPadX)
-	rr.target.Move(fyne.NewPos(x, middle(rr.target)))
-	x += rr.target.MinSize().Width + 10
-	rr.meta.Move(fyne.NewPos(x, middle(rr.meta)))
-	rr.minus.Move(fyne.NewPos(x+rr.meta.MinSize().Width+5, middle(rr.minus)))
+	renderer.target.Text = fitText(renderer.full, renderer.target.TextSize, renderer.target.TextStyle, size.Width-x-metaWidth-toolRowPadX)
+	renderer.target.Move(fyne.NewPos(x, middle(renderer.target)))
+	x += renderer.target.MinSize().Width + 10
+	renderer.meta.Move(fyne.NewPos(x, middle(renderer.meta)))
+	renderer.minus.Move(fyne.NewPos(x+renderer.meta.MinSize().Width+5, middle(renderer.minus)))
 }
 
-func (rr *toolRowRenderer) Refresh() {
-	r := rr.row
-	item := r.item
-	running := r.state == "pending" || r.state == "running"
+func (renderer *toolRowRenderer) Refresh() {
+	row := renderer.row
+	item := row.item
+	running := row.state == "pending" || row.state == "running"
 	verb, target, mono := describeTool(item, running)
-	rr.verb.Text = verb
-	rr.full = target
-	rr.target.TextStyle = fyne.TextStyle{Monospace: mono}
-	rr.target.TextSize = 13.5
+	renderer.verb.Text = verb
+	renderer.full = target
+	renderer.target.TextStyle = fyne.TextStyle{Monospace: mono}
+	renderer.target.TextSize = 13.5
 	if mono {
-		rr.target.TextSize = 12.5
+		renderer.target.TextSize = 12.5
 	}
-	rr.meta.Text, rr.minus.Text = "", ""
-	rr.meta.Color = colFaint
+	renderer.meta.Text, renderer.minus.Text = "", ""
+	renderer.meta.Color = colFaint
 	switch {
-	case r.state == "pending":
-		rr.meta.Text = "Awaiting approval"
-		rr.meta.Color = colAmber
+	case row.state == "pending":
+		renderer.meta.Text = "Awaiting approval"
+		renderer.meta.Color = colAmber
 	case running:
 	case item.Failed == stoppedCall:
-		rr.meta.Text = "Stopped"
+		renderer.meta.Text = "Stopped"
 	case item.Failed != "":
-		rr.meta.Text = shortError(item.Failed)
-		rr.meta.Color = colDanger
+		renderer.meta.Text = shortError(item.Failed)
+		renderer.meta.Color = colDanger
 	case item.Tool == "edit_file" && item.Diff != "":
 		added, removed := diffStat(item.Diff)
-		rr.meta.Text = fmt.Sprintf("+%d", added)
-		rr.meta.Color = colAdded
-		rr.minus.Text = fmt.Sprintf("−%d", removed)
+		renderer.meta.Text = fmt.Sprintf("+%d", added)
+		renderer.meta.Color = colAdded
+		renderer.minus.Text = fmt.Sprintf("−%d", removed)
 	case item.Tool == "shell" && item.Millis > 0:
-		rr.meta.Text = elapsed(item.Millis)
+		renderer.meta.Text = elapsed(item.Millis)
 	}
-	h := quantize(r.hover, 4)
-	rr.verb.Color = mix(colMuted, colText, h*0.5)
-	rr.bg.FillColor = mix(color.NRGBA{}, colHover, r.hover)
-	if r.selected {
-		rr.bg.FillColor = mix(colSelected, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x18}, r.hover)
+	h := quantize(row.hover, 4)
+	renderer.verb.Color = mix(colMuted, colText, h*0.5)
+	renderer.bg.FillColor = mix(color.NRGBA{}, colHover, row.hover)
+	if row.selected {
+		renderer.bg.FillColor = mix(colSelected, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x18}, row.hover)
 	}
-	if glyph := toolGlyph(item.Tool); glyph != rr.glyph {
-		rr.glyph = glyph
-		rr.icon.Resource = tinted(glyph, colMuted)
-		rr.icon.Refresh()
+	if glyph := toolGlyph(item.Tool); glyph != renderer.glyph {
+		renderer.glyph = glyph
+		renderer.icon.Resource = tinted(glyph, colMuted)
+		renderer.icon.Refresh()
 	}
-	rr.Layout(r.Size())
-	for _, o := range rr.Objects() {
-		o.Refresh()
+	renderer.Layout(row.Size())
+	for _, object := range renderer.Objects() {
+		object.Refresh()
 	}
 }
 
@@ -374,10 +385,10 @@ func shortError(text string) string {
 	return "Failed"
 }
 
-func (rr *toolRowRenderer) Objects() []fyne.CanvasObject {
-	return []fyne.CanvasObject{rr.bg, rr.icon, rr.verb, rr.target, rr.meta, rr.minus}
+func (renderer *toolRowRenderer) Objects() []fyne.CanvasObject {
+	return []fyne.CanvasObject{renderer.bg, renderer.icon, renderer.verb, renderer.target, renderer.meta, renderer.minus}
 }
-func (rr *toolRowRenderer) Destroy() {}
+func (renderer *toolRowRenderer) Destroy() {}
 
 // ---------------------------------------------------------------------------
 // Transcript
@@ -392,24 +403,24 @@ type bubbleLayout struct {
 	known   bool
 }
 
-func (l *bubbleLayout) width(available float32) float32 {
-	if !l.known {
-		l.known = true
-		if l.text != nil {
-			l.natural, _ = l.text.extent()
+func (layoutSpec *bubbleLayout) width(available float32) float32 {
+	if !layoutSpec.known {
+		layoutSpec.known = true
+		if layoutSpec.text != nil {
+			layoutSpec.natural, _ = layoutSpec.text.extent()
 		}
 	}
-	return fyne.Min(l.natural+l.chrom+2, available*0.78)
+	return fyne.Min(layoutSpec.natural+layoutSpec.chrom+2, available*0.78)
 }
 
-func (l *bubbleLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	width := l.width(size.Width)
+func (layoutSpec *bubbleLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	width := layoutSpec.width(size.Width)
 	objects[0].Resize(fyne.NewSize(width, size.Height))
 	objects[0].Resize(fyne.NewSize(width, objects[0].MinSize().Height))
 	objects[0].Move(fyne.NewPos(size.Width-width, 0))
 }
 
-func (l *bubbleLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+func (layoutSpec *bubbleLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	return fyne.NewSize(0, objects[0].MinSize().Height)
 }
 
@@ -430,21 +441,21 @@ func plainSpans(text string) []span {
 // appendItem draws chat.Items[index] at the end of the transcript. Answers
 // and tool rows are remembered in u.views, so a running task can update the
 // one it is working on while its chat is on screen.
-func (u *desktopUI) appendItem(chat *conversation, index int) {
+func (ui *desktopUI) appendItem(chat *conversation, index int) {
 	item := chat.Items[index]
-	var t *turn
+	var currentTurn *turn
 	if chat.run != nil {
-		t = chat.run.turn
+		currentTurn = chat.run.turn
 	}
 	switch item.Kind {
 	case "assistant":
 		view := newMarkdownView(item.Text)
-		copyRow := u.responseControls(chat, index)
+		copyRow := ui.responseControls(chat, index)
 		copyRow.Hide() // see syncCopies
-		u.views[index] = view
-		u.copyRows[index] = copyRow
-		view.layer = newSelectLayer(u, view.box)
-		u.place(container.NewVBox(container.NewStack(view.box, view.layer), copyRow))
+		ui.views[index] = view
+		ui.copyRows[index] = copyRow
+		view.layer = newSelectLayer(ui, view.box)
+		ui.place(container.NewVBox(container.NewStack(view.box, view.layer), copyRow))
 	case "user":
 		content := container.NewVBox()
 		var pics []fyne.CanvasObject
@@ -472,32 +483,32 @@ func (u *desktopUI) appendItem(chat *conversation, index int) {
 			text = newFlowText(plainSpans(item.Text), theme.TextSize(), colText)
 			text.tail, text.tight = "", true
 			content.Add(padded(theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(),
-				container.NewStack(text, newSelectLayer(u, text))))
+				container.NewStack(text, newSelectLayer(ui, text))))
 		}
 		bubble := container.New(&bubbleLayout{text: text, chrom: 2*theme.InnerPadding() + 4}, surface(content, colRaised, nil, 14, 2))
 		copyRow := container.NewHBox(layout.NewSpacer(), copyChip(func() string { return item.Text }),
-			newRow("Edit", iconPencil, styleChip, func() { u.editMessage(chat, index) }), u.versionControls(chat, item.ID))
-		u.place(container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, copyRow))
+			newRow("Edit", iconPencil, styleChip, func() { ui.editMessage(chat, index) }), ui.versionControls(chat, item.ID))
+		ui.place(container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, copyRow))
 	case "error":
 		text := newFlowText(plainSpans(item.Text), theme.TextSize(), colDanger)
 		text.tail, text.tight = "", true
-		u.place(container.NewVBox(padded(theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(),
-			container.NewStack(text, newSelectLayer(u, text))), u.responseControls(chat, index)))
+		ui.place(container.NewVBox(padded(theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(),
+			container.NewStack(text, newSelectLayer(ui, text))), ui.responseControls(chat, index)))
 	case "note":
 		icon := canvas.NewImageFromResource(tinted(iconCompact, colFaint))
 		icon.SetMinSize(fyne.NewSquareSize(15))
-		u.place(container.NewBorder(nil, nil, container.NewCenter(icon), nil, newFlowText([]span{{text: item.Text}}, 12.5, colFaint)))
+		ui.place(container.NewBorder(nil, nil, container.NewCenter(icon), nil, newFlowText([]span{{text: item.Text}}, 12.5, colFaint)))
 	case "tool":
 		state := "done"
-		if t != nil && t.states[index] != "" {
-			state = t.states[index]
+		if currentTurn != nil && currentTurn.states[index] != "" {
+			state = currentTurn.states[index]
 		}
 		row := newToolRow(item, state, nil)
 		row.chat, row.index = chat, index
-		row.onTap = func() { u.panel.open(chat, index) }
-		row.selected = u.panel.showing(chat, index)
-		u.views[index] = row
-		u.place(row)
+		row.onTap = func() { ui.panel.open(chat, index) }
+		row.selected = ui.panel.showing(chat, index)
+		ui.views[index] = row
+		ui.place(row)
 	}
 }
 
@@ -505,12 +516,12 @@ func (u *desktopUI) appendItem(chat *conversation, index int) {
 // being built (openChat) nothing is laid out before the last one:
 // Container.Add lays everything out each time, which made opening a chat
 // quadratic (0.7 s for 240 items).
-func (u *desktopUI) place(view fyne.CanvasObject) {
-	if u.building {
-		u.transcript.Objects = append(u.transcript.Objects, view)
+func (ui *desktopUI) place(view fyne.CanvasObject) {
+	if ui.building {
+		ui.transcript.Objects = append(ui.transcript.Objects, view)
 		return
 	}
-	u.transcript.Add(view)
+	ui.transcript.Add(view)
 }
 
 // transcriptLayout stacks the conversation's items like a VBox, but keeps
@@ -520,21 +531,21 @@ func (u *desktopUI) place(view fyne.CanvasObject) {
 // whole history. A hidden item costs nothing: it keeps its place with the
 // size it last measured, and is measured again when it comes back in view.
 type transcriptLayout struct {
-	u     *desktopUI
+	ui    *desktopUI
 	sizes map[fyne.CanvasObject]fyne.Size // each item's last measured minimum size
 	width float32                         // the width they were measured at
 }
 
 const transcriptGap = 14
 
-func (l *transcriptLayout) reset() { l.sizes = map[fyne.CanvasObject]fyne.Size{} }
+func (layoutSpec *transcriptLayout) reset() { layoutSpec.sizes = map[fyne.CanvasObject]fyne.Size{} }
 
 // changed forgets the size of the item that holds part: it changed while
 // perhaps out of sight, where nothing measures it.
-func (l *transcriptLayout) changed(part fyne.CanvasObject) {
-	for item := range l.sizes {
+func (layoutSpec *transcriptLayout) changed(part fyne.CanvasObject) {
+	for item := range layoutSpec.sizes {
 		if _, holds := offsetIn(item, part); holds {
-			delete(l.sizes, item)
+			delete(layoutSpec.sizes, item)
 			return
 		}
 	}
@@ -542,24 +553,24 @@ func (l *transcriptLayout) changed(part fyne.CanvasObject) {
 
 // measure sizes an item at the column's width: wrapped text only knows its
 // height once it has its width.
-func (l *transcriptLayout) measure(o fyne.CanvasObject, width float32) fyne.Size {
-	if o.Size().Width != width {
-		o.Resize(fyne.NewSize(width, o.Size().Height))
+func (layoutSpec *transcriptLayout) measure(object fyne.CanvasObject, width float32) fyne.Size {
+	if object.Size().Width != width {
+		object.Resize(fyne.NewSize(width, object.Size().Height))
 	}
-	min := o.MinSize()
-	l.sizes[o] = min
+	min := object.MinSize()
+	layoutSpec.sizes[object] = min
 	return min
 }
 
 // view is the band of the column worth keeping alive, in the transcript's
 // coordinates: the viewport and a screen on each side, so a scroll step
 // always lands on items that are already there.
-func (l *transcriptLayout) view() (top, bottom float32) {
-	scroll := l.u.scroll
+func (layoutSpec *transcriptLayout) view() (top, bottom float32) {
+	scroll := layoutSpec.ui.scroll
 	if scroll == nil {
 		return -1e9, 1e9
 	}
-	origin, found := offsetIn(scroll.Content, l.u.transcript)
+	origin, found := offsetIn(scroll.Content, layoutSpec.ui.transcript)
 	if !found {
 		return -1e9, 1e9
 	}
@@ -569,12 +580,12 @@ func (l *transcriptLayout) view() (top, bottom float32) {
 	return offset - margin, offset + height + margin
 }
 
-func (l *transcriptLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+func (layoutSpec *transcriptLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	size := fyne.NewSize(120, 0)
-	for i, o := range objects {
-		min, known := l.sizes[o]
-		if o.Visible() || !known {
-			min = o.MinSize()
+	for i, object := range objects {
+		min, known := layoutSpec.sizes[object]
+		if object.Visible() || !known {
+			min = object.MinSize()
 		}
 		size.Width = fyne.Max(size.Width, min.Width)
 		size.Height += min.Height
@@ -585,30 +596,30 @@ func (l *transcriptLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	return size
 }
 
-func (l *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+func (layoutSpec *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	if size.Width <= 0 {
 		return // not on screen yet: nothing can be measured
 	}
-	resized := size.Width != l.width
-	l.width = size.Width
-	top, bottom := l.view()
+	resized := size.Width != layoutSpec.width
+	layoutSpec.width = size.Width
+	top, bottom := layoutSpec.view()
 	y := float32(0)
-	for _, o := range objects {
-		min, known := l.sizes[o]
-		if o.Visible() || !known || resized {
-			min = l.measure(o, size.Width)
+	for _, object := range objects {
+		min, known := layoutSpec.sizes[object]
+		if object.Visible() || !known || resized {
+			min = layoutSpec.measure(object, size.Width)
 		}
 		near := y+min.Height >= top && y <= bottom
 		switch {
-		case near && !o.Visible():
-			o.Show()
-			min = l.measure(o, size.Width) // it may have changed while out of sight
-		case !near && o.Visible():
-			o.Hide()
+		case near && !object.Visible():
+			object.Show()
+			min = layoutSpec.measure(object, size.Width) // it may have changed while out of sight
+		case !near && object.Visible():
+			object.Hide()
 		}
-		o.Move(fyne.NewPos(0, y))
+		object.Move(fyne.NewPos(0, y))
 		if near {
-			o.Resize(fyne.NewSize(size.Width, min.Height))
+			object.Resize(fyne.NewSize(size.Width, min.Height))
 		}
 		y += min.Height + transcriptGap
 	}
@@ -617,8 +628,8 @@ func (l *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 // syncCopies shows one Copy button per finished answer: under the last
 // text of each turn, never between the texts and tool calls of a turn, and
 // not while the turn is still running.
-func (u *desktopUI) syncCopies() {
-	chat := u.current
+func (ui *desktopUI) syncCopies() {
+	chat := ui.current
 	if chat == nil {
 		return
 	}
@@ -629,7 +640,7 @@ func (u *desktopUI) syncCopies() {
 			break
 		}
 	}
-	for index, row := range u.copyRows {
+	for index, row := range ui.copyRows {
 		show := !(chat.run != nil && index > lastUser)
 		for next := index + 1; show && next < len(chat.Items) && chat.Items[next].Kind != "user"; next++ {
 			show = chat.Items[next].Kind != "assistant"
@@ -640,7 +651,7 @@ func (u *desktopUI) syncCopies() {
 			} else {
 				row.Hide()
 			}
-			u.items.changed(row)
+			ui.items.changed(row)
 		}
 	}
 }
@@ -670,26 +681,26 @@ func copyChip(text func() string) *tapRow {
 
 // addItem appends an item to a chat, and to the transcript when that chat
 // is the one on screen.
-func (u *desktopUI) addItem(chat *conversation, item chatItem) int {
+func (ui *desktopUI) addItem(chat *conversation, item chatItem) int {
 	if item.ID == "" {
 		item.ID = identifier()[:16]
 	}
 	chat.Items = append(chat.Items, item)
 	index := len(chat.Items) - 1
-	u.remote.itemChanged(chat, index)
-	if chat == u.current {
-		u.appendItem(chat, index)
-		u.relayoutColumn()
+	ui.remote.itemChanged(chat, index)
+	if chat == ui.current {
+		ui.appendItem(chat, index)
+		ui.relayoutColumn()
 	}
 	return index
 }
 
 // liveView is the widget showing chat.Items[index], if it is on screen.
-func (u *desktopUI) liveView(chat *conversation, index int) any {
-	if chat != u.current {
+func (ui *desktopUI) liveView(chat *conversation, index int) any {
+	if chat != ui.current {
 		return nil
 	}
-	return u.views[index]
+	return ui.views[index]
 }
 
 // relayoutColumn lays the conversation out again after messages were added
@@ -697,20 +708,20 @@ func (u *desktopUI) liveView(chat *conversation, index int) any {
 // Each level of the column is laid out on its own: Container.Refresh would
 // redraw every message, and a resize alone does nothing while the chat is
 // shorter than the window (the activity line then stayed over the answer).
-func (u *desktopUI) relayoutColumn() {
+func (ui *desktopUI) relayoutColumn() {
 	defer devSlow("laying the conversation out", 6*time.Millisecond, time.Now())
-	content := u.scroll.Content.(*fyne.Container)
-	relayout(u.transcript) // first: it measures the items the sizes below are made of
-	content.Resize(content.MinSize().Max(u.scroll.Size()))
-	for _, c := range []*fyne.Container{content, u.column, u.transcript} {
+	content := ui.scroll.Content.(*fyne.Container)
+	relayout(ui.transcript) // first: it measures the items the sizes below are made of
+	content.Resize(content.MinSize().Max(ui.scroll.Size()))
+	for _, c := range []*fyne.Container{content, ui.column, ui.transcript} {
 		c.Layout.Layout(c.Objects, c.Size())
 	}
-	if u.followTail {
-		u.scroll.ScrollToBottom()
+	if ui.followTail {
+		ui.scroll.ScrollToBottom()
 	} else {
-		u.scroll.ScrollToOffset(u.scroll.Offset) // the bars follow the new height
+		ui.scroll.ScrollToOffset(ui.scroll.Offset) // the bars follow the new height
 	}
-	relayout(u.transcript) // the view moved without a scroll event: bring its items in
+	relayout(ui.transcript) // the view moved without a scroll event: bring its items in
 }
 
 // ---------------------------------------------------------------------------
@@ -729,11 +740,11 @@ type eventPump struct {
 	handle    func(uiEvent)
 }
 
-func (p *eventPump) emit(kind string, data any) {
-	p.mu.Lock()
+func (pump *eventPump) emit(kind string, data any) {
+	pump.mu.Lock()
 	merged := false
-	if n := len(p.events); n > 0 {
-		last := &p.events[n-1]
+	if n := len(pump.events); n > 0 {
+		last := &pump.events[n-1]
 		switch {
 		case kind == "delta" && last.kind == "delta":
 			last.data = last.data.(string) + data.(string)
@@ -744,26 +755,26 @@ func (p *eventPump) emit(kind string, data any) {
 		}
 	}
 	if !merged {
-		p.events = append(p.events, uiEvent{kind, data})
+		pump.events = append(pump.events, uiEvent{kind, data})
 	}
-	schedule := !p.scheduled
-	p.scheduled = true
-	p.mu.Unlock()
+	schedule := !pump.scheduled
+	pump.scheduled = true
+	pump.mu.Unlock()
 	if schedule {
-		fyne.Do(p.flush)
+		fyne.Do(pump.flush)
 	}
 }
 
 // flush handles everything received so far, on the UI thread.
-func (p *eventPump) flush() {
-	p.mu.Lock()
-	events := p.events
-	p.events, p.scheduled = nil, false
-	p.mu.Unlock()
+func (pump *eventPump) flush() {
+	pump.mu.Lock()
+	events := pump.events
+	pump.events, pump.scheduled = nil, false
+	pump.mu.Unlock()
 	started := time.Now()
-	for _, e := range events {
-		devEvent(e)
-		p.handle(e)
+	for _, uiEvent := range events {
+		devEvent(uiEvent)
+		pump.handle(uiEvent)
 	}
 	if dev != nil {
 		if took := time.Since(started); took > 8*time.Millisecond {
@@ -773,16 +784,16 @@ func (p *eventPump) flush() {
 }
 
 // devEvent logs one event of an agent loop as the interface receives it.
-func devEvent(e uiEvent) {
+func devEvent(uiEventValue uiEvent) {
 	if dev == nil {
 		return
 	}
-	switch data := e.data.(type) {
+	switch data := uiEventValue.data.(type) {
 	case string:
-		if e.kind == "delta" {
+		if uiEventValue.kind == "delta" {
 			devf("run", "delta, %d characters", len(data))
 		} else {
-			devf("run", "%s %s", e.kind, devText(data, 120))
+			devf("run", "%s %s", uiEventValue.kind, devText(data, 120))
 		}
 	case activity:
 		devf("run", "activity %s %s %s", data.State, data.Tool, devText(data.Detail, 80))
@@ -791,15 +802,15 @@ func devEvent(e uiEvent) {
 		if data.Err != nil {
 			failure = ", error: " + devText(data.Err.Error(), 80)
 		}
-		devf("run", "%s %s %s, output %d bytes, %s%s", e.kind, data.Name, devText(data.Args, 100), len(data.Output), data.Elapsed.Round(time.Millisecond), failure)
+		devf("run", "%s %s %s, output %d bytes, %s%s", uiEventValue.kind, data.Name, devText(data.Args, 100), len(data.Output), data.Elapsed.Round(time.Millisecond), failure)
 	case message:
-		devf("run", "%s %s: %s", e.kind, data.Role, devText(data.Content, 100))
+		devf("run", "%s %s: %s", uiEventValue.kind, data.Role, devText(data.Content, 100))
 	case []message:
-		devf("run", "%s, %d messages", e.kind, len(data))
+		devf("run", "%s, %d messages", uiEventValue.kind, len(data))
 	case map[string]any:
-		devf("run", "%s %v", e.kind, devText(fmt.Sprint(data["title"]), 100))
+		devf("run", "%s %v", uiEventValue.kind, devText(fmt.Sprint(data["title"]), 100))
 	default:
-		devf("run", "%s %v", e.kind, data)
+		devf("run", "%s %v", uiEventValue.kind, data)
 	}
 }
 
@@ -807,7 +818,7 @@ func devEvent(e uiEvent) {
 // touches widgets only while that chat is on screen, so the user can go
 // elsewhere while the agent works.
 type turn struct {
-	u         *desktopUI
+	ui        *desktopUI
 	chat      *conversation
 	cfg       config
 	index     int // the streaming answer's item, -1 between answers
@@ -822,162 +833,162 @@ type turn struct {
 	mark      string         // what the ring shows
 }
 
-func (u *desktopUI) newTurn(chat *conversation, cfg config) *turn {
-	return &turn{u: u, chat: chat, cfg: cfg, index: -1, calls: map[string]int{}, states: map[int]string{}}
+func (ui *desktopUI) newTurn(chat *conversation, cfg config) *turn {
+	return &turn{ui: ui, chat: chat, cfg: cfg, index: -1, calls: map[string]int{}, states: map[int]string{}}
 }
 
 // render re-parses the streaming answer at most every 60 ms.
-func (t *turn) render(force bool) {
-	if t.index < 0 {
+func (currentTurn *turn) render(force bool) {
+	if currentTurn.index < 0 {
 		return
 	}
-	if !force && time.Since(t.lastParse) < 60*time.Millisecond {
-		if !t.parseDue {
-			t.parseDue = true
-			index := t.index
+	if !force && time.Since(currentTurn.lastParse) < 60*time.Millisecond {
+		if !currentTurn.parseDue {
+			currentTurn.parseDue = true
+			index := currentTurn.index
 			time.AfterFunc(60*time.Millisecond, func() {
 				fyne.Do(func() {
-					t.parseDue = false
-					if t.u.ctx.Err() == nil && t.index == index {
-						t.render(true)
+					currentTurn.parseDue = false
+					if currentTurn.ui.ctx.Err() == nil && currentTurn.index == index {
+						currentTurn.render(true)
 					}
 				})
 			})
 		}
 		return
 	}
-	t.lastParse = time.Now()
-	t.u.remote.itemChanged(t.chat, t.index)
-	if view, ok := t.u.liveView(t.chat, t.index).(*markdownView); ok {
-		view.ParseMarkdown(t.chat.Items[t.index].Text)
-		t.u.items.changed(view.box) // measured again even if the reader is elsewhere in the chat
-		t.u.relayoutColumn()
+	currentTurn.lastParse = time.Now()
+	currentTurn.ui.remote.itemChanged(currentTurn.chat, currentTurn.index)
+	if view, ok := currentTurn.ui.liveView(currentTurn.chat, currentTurn.index).(*markdownView); ok {
+		view.ParseMarkdown(currentTurn.chat.Items[currentTurn.index].Text)
+		currentTurn.ui.items.changed(view.box) // measured again even if the reader is elsewhere in the chat
+		currentTurn.ui.relayoutColumn()
 	}
 }
 
 // setRow changes a tool row's state, on screen too when it is shown.
-func (t *turn) setRow(index int, state string) {
-	t.states[index] = state
-	t.u.remote.itemChanged(t.chat, index)
-	if row, ok := t.u.liveView(t.chat, index).(*toolRow); ok {
-		row.update(t.chat.Items[index], state)
+func (currentTurn *turn) setRow(index int, state string) {
+	currentTurn.states[index] = state
+	currentTurn.ui.remote.itemChanged(currentTurn.chat, index)
+	if row, ok := currentTurn.ui.liveView(currentTurn.chat, index).(*toolRow); ok {
+		row.update(currentTurn.chat.Items[index], state)
 	}
 }
 
-func (t *turn) handle(e uiEvent) {
-	u := t.u
-	if u.ctx.Err() != nil {
+func (currentTurn *turn) handle(uiEventValue uiEvent) {
+	ui := currentTurn.ui
+	if ui.ctx.Err() != nil {
 		return
 	}
-	switch e.kind {
+	switch uiEventValue.kind {
 	case "delta":
-		if t.index < 0 {
-			t.index = len(t.chat.Items) // set first: the new view must know it streams
-			u.addItem(t.chat, chatItem{Kind: "assistant"})
+		if currentTurn.index < 0 {
+			currentTurn.index = len(currentTurn.chat.Items) // set first: the new view must know it streams
+			ui.addItem(currentTurn.chat, chatItem{Kind: "assistant"})
 		}
-		t.chat.Items[t.index].Text += e.data.(string)
-		t.render(false)
-		t.show(activity{State: "write"})
+		currentTurn.chat.Items[currentTurn.index].Text += uiEventValue.data.(string)
+		currentTurn.render(false)
+		currentTurn.show(activity{State: "write"})
 	case "message_end":
-		t.render(true)
-		t.index = -1
+		currentTurn.render(true)
+		currentTurn.index = -1
 	case "activity":
-		t.show(e.data.(activity))
+		currentTurn.show(uiEventValue.data.(activity))
 	case "tool":
-		o := e.data.(toolOutcome)
-		index := u.addItem(t.chat, chatItem{ID: o.RecallID, Kind: "tool", Tool: o.Name, Args: o.Args})
-		t.calls[o.ID], t.lastCall = index, o.ID
-		t.setRow(index, "running")
+		outcome := uiEventValue.data.(toolOutcome)
+		index := ui.addItem(currentTurn.chat, chatItem{ID: outcome.RecallID, Kind: "tool", Tool: outcome.Name, Args: outcome.Args})
+		currentTurn.calls[outcome.ID], currentTurn.lastCall = index, outcome.ID
+		currentTurn.setRow(index, "running")
 	case "approval":
-		p := e.data.(map[string]any)
-		if index, ok := t.calls[t.lastCall]; ok {
-			t.setRow(index, "pending")
+		p := uiEventValue.data.(map[string]any)
+		if index, ok := currentTurn.calls[currentTurn.lastCall]; ok {
+			currentTurn.setRow(index, "pending")
 		}
-		u.showApproval(t.chat, p)
-		t.show(activity{State: "approval", Detail: approvalSubject(p)})
+		ui.showApproval(currentTurn.chat, p)
+		currentTurn.show(activity{State: "approval", Detail: approvalSubject(p)})
 	case "tool_exec":
-		o := e.data.(toolOutcome)
-		if index, ok := t.calls[o.ID]; ok {
-			t.setRow(index, "running")
+		toolOutcomeValue := uiEventValue.data.(toolOutcome)
+		if index, ok := currentTurn.calls[toolOutcomeValue.ID]; ok {
+			currentTurn.setRow(index, "running")
 		}
-		t.showRun(o)
+		currentTurn.showRun(toolOutcomeValue)
 	case "tool_result":
-		o := e.data.(toolOutcome)
-		index, ok := t.calls[o.ID]
+		o := uiEventValue.data.(toolOutcome)
+		index, ok := currentTurn.calls[o.ID]
 		if !ok {
 			return
 		}
-		item := &t.chat.Items[index]
+		item := &currentTurn.chat.Items[index]
 		item.Text, item.Diff, item.Millis, item.Images = o.Output, o.Diff, o.Elapsed.Milliseconds(), o.Images
 		if o.Err != nil {
 			item.Failed = o.Err.Error()
 		}
-		t.setRow(index, "done")
-		delete(t.states, index)
-		u.panel.changed(t.chat, index)
-		t.show(activity{State: "wait"})
+		currentTurn.setRow(index, "done")
+		delete(currentTurn.states, index)
+		ui.panel.changed(currentTurn.chat, index)
+		currentTurn.show(activity{State: "wait"})
 	case "injected":
-		m := e.data.(message)
-		u.addItem(t.chat, chatItem{Kind: "user", Text: m.Content, Images: m.Images})
-		if t.chat == u.current { // the answer before it is now complete
-			u.syncCopies()
-			u.relayoutColumn()
+		messageValue := uiEventValue.data.(message)
+		ui.addItem(currentTurn.chat, chatItem{Kind: "user", Text: messageValue.Content, Images: messageValue.Images})
+		if currentTurn.chat == ui.current { // the answer before it is now complete
+			ui.syncCopies()
+			ui.relayoutColumn()
 		}
-		u.save()
+		ui.save()
 	case "history":
-		t.chat.History = e.data.([]message)
+		currentTurn.chat.History = uiEventValue.data.([]message)
 	case "cache":
-		u.save()
+		ui.save()
 	case "context_note":
-		u.addItem(t.chat, chatItem{Kind: "note", Text: e.data.(string)})
-		u.save()
+		ui.addItem(currentTurn.chat, chatItem{Kind: "note", Text: uiEventValue.data.(string)})
+		ui.save()
 	case "todo":
-		u.todoUpdated(t.chat)
-		u.save()
+		ui.todoUpdated(currentTurn.chat)
+		ui.save()
 	case "usage":
-		t.usage = e.data.(int)
-		u.remote.metaChanged(t.chat)
-		if t.chat == u.current {
-			u.setContextUsage(e.data.(int), modelContextWindow(t.cfg))
+		currentTurn.usage = uiEventValue.data.(int)
+		ui.remote.metaChanged(currentTurn.chat)
+		if currentTurn.chat == ui.current {
+			ui.setContextUsage(uiEventValue.data.(int), modelContextWindow(currentTurn.cfg))
 		}
 	case "notice":
-		t.label = e.data.(string)
-		u.applyActivity(t)
+		currentTurn.label = uiEventValue.data.(string)
+		ui.applyActivity(currentTurn)
 	case "session": // Claude Code named the chat's session: later turns resume it
-		t.chat.Config.Session = e.data.(string)
-		if t.chat == u.current {
-			u.cfg.Session = t.chat.Config.Session
+		currentTurn.chat.Config.Session = uiEventValue.data.(string)
+		if currentTurn.chat == ui.current {
+			ui.cfg.Session = currentTurn.chat.Config.Session
 		}
-		u.save()
+		ui.save()
 	case "plan":
-		u.plan = e.data.(planUsage)
-		if t.chat == u.current {
-			u.contextRing.plan = u.plan
+		ui.plan = uiEventValue.data.(planUsage)
+		if currentTurn.chat == ui.current {
+			ui.contextRing.plan = ui.plan
 		}
 	}
 }
 
 // finish closes the turn: calls left without a result were stopped.
-func (t *turn) finish() {
-	t.waiting++
-	t.render(true)
-	t.index = -1
-	for index, state := range t.states {
+func (currentTurn *turn) finish() {
+	currentTurn.waiting++
+	currentTurn.render(true)
+	currentTurn.index = -1
+	for index, state := range currentTurn.states {
 		if state != "done" {
-			t.chat.Items[index].Failed = stoppedCall
-			t.setRow(index, "done")
-			t.u.panel.changed(t.chat, index)
+			currentTurn.chat.Items[index].Failed = stoppedCall
+			currentTurn.setRow(index, "done")
+			currentTurn.ui.panel.changed(currentTurn.chat, index)
 		}
 	}
-	t.states = map[int]string{}
+	currentTurn.states = map[int]string{}
 }
 
 // state is how far a call of this turn has got, for the side panel.
-func (t *turn) state(chat *conversation, index int) string {
-	if t == nil || t.chat != chat || t.states[index] == "" {
+func (currentTurn *turn) state(chat *conversation, index int) string {
+	if currentTurn == nil || currentTurn.chat != chat || currentTurn.states[index] == "" {
 		return "done"
 	}
-	return t.states[index]
+	return currentTurn.states[index]
 }
 
 func approvalSubject(p map[string]any) string {
@@ -986,18 +997,18 @@ func approvalSubject(p map[string]any) string {
 }
 
 // show tells, under the conversation, what the agent is doing.
-func (t *turn) show(a activity) {
-	t.waiting++ // the command is over: no more counting
+func (currentTurn *turn) show(activityValue activity) {
+	currentTurn.waiting++ // the command is over: no more counting
 	label := map[string]string{
 		"wait":    "Waiting for the model",
 		"think":   "Thinking",
 		"write":   "Writing",
 		"compact": "Compacting the conversation",
-	}[a.State]
-	switch a.State {
+	}[activityValue.State]
+	switch activityValue.State {
 	case "call":
-		detail := firstLine(a.Detail)
-		switch a.Tool {
+		detail := firstLine(activityValue.Detail)
+		switch activityValue.Tool {
 		case "shell":
 			label = "Writing a command"
 		case "edit_file":
@@ -1013,60 +1024,60 @@ func (t *turn) show(a activity) {
 		case "list_directory":
 			label = "Preparing to list a directory"
 		default:
-			label = "Preparing " + a.Tool
+			label = "Preparing " + activityValue.Tool
 		}
 		if detail != "" {
 			label += ": " + detail
 		}
 	case "approval":
 		label = "Waiting for your approval"
-		if a.Detail != "" {
-			label += ": " + a.Detail
+		if activityValue.Detail != "" {
+			label += ": " + activityValue.Detail
 		}
 	case "background":
 		// The answer is written; the agent now waits for a task it left
 		// running (Claude Code's background commands and monitors).
 		what := "the background task"
-		if a.Detail != "" {
-			what += " “" + firstLine(a.Detail) + "”"
+		if activityValue.Detail != "" {
+			what += " “" + firstLine(activityValue.Detail) + "”"
 		}
-		if strings.HasSuffix(a.Detail, "background tasks") {
-			what = a.Detail
+		if strings.HasSuffix(activityValue.Detail, "background tasks") {
+			what = activityValue.Detail
 		}
-		t.countWait(what, 0)
+		currentTurn.countWait(what, 0)
 		return
 	}
-	t.label, t.mark = label+"…", a.State
-	t.u.applyActivity(t)
+	currentTurn.label, currentTurn.mark = label+"…", activityValue.State
+	currentTurn.ui.applyActivity(currentTurn)
 }
 
 // showRun reports a tool that has started to run.
-func (t *turn) showRun(o toolOutcome) {
-	path, command, _ := toolArgs(o.Args)
-	switch o.Name {
+func (currentTurn *turn) showRun(outcome toolOutcome) {
+	path, command, _ := toolArgs(outcome.Args)
+	switch outcome.Name {
 	case "shell":
-		t.label, t.mark = "Running "+firstLine(command)+"…", "bash"
-		t.countWait(firstLine(command), longCommand)
+		currentTurn.label, currentTurn.mark = "Running "+firstLine(command)+"…", "bash"
+		currentTurn.countWait(firstLine(command), longCommand)
 	case "read_file":
-		t.label, t.mark = "Reading "+path+"…", "read"
+		currentTurn.label, currentTurn.mark = "Reading "+path+"…", "read"
 	case "list_directory":
-		t.label, t.mark = "Listing "+path+"…", "list"
+		currentTurn.label, currentTurn.mark = "Listing "+path+"…", "list"
 	case "edit_file":
-		t.label, t.mark = "Applying the edit to "+path+"…", "edit"
+		currentTurn.label, currentTurn.mark = "Applying the edit to "+path+"…", "edit"
 	default: // a tool of another harness (Claude Code's Grep, WebFetch, Agent…)
-		t.label, t.mark = "Using "+o.Name+"…", "call"
+		currentTurn.label, currentTurn.mark = "Using "+outcome.Name+"…", "call"
 	}
-	t.u.applyActivity(t)
+	currentTurn.ui.applyActivity(currentTurn)
 }
 
 // applyActivity shows a turn's activity when its chat is on screen.
-func (u *desktopUI) applyActivity(t *turn) {
-	u.remote.metaChanged(t.chat)
-	if t.chat != u.current || t.mark == "" {
+func (ui *desktopUI) applyActivity(currentTurn *turn) {
+	ui.remote.metaChanged(currentTurn.chat)
+	if currentTurn.chat != ui.current || currentTurn.mark == "" {
 		return
 	}
-	u.thinkLabel.SetText(t.label)
-	u.workMark.setState(t.mark)
+	ui.thinkLabel.SetText(currentTurn.label)
+	ui.workMark.setState(currentTurn.mark)
 }
 
 func firstLine(text string) string {
@@ -1090,13 +1101,13 @@ const longCommand = 2 * time.Second
 // countWait shows the clock for something the agent waits for (a command
 // that lasts, a background task) from the given delay on, and counts the
 // time until any new activity.
-func (t *turn) countWait(what string, after time.Duration) {
-	t.waiting++
-	turn, started := t.waiting, time.Now()
+func (currentTurn *turn) countWait(what string, after time.Duration) {
+	currentTurn.waiting++
+	turn, started := currentTurn.waiting, time.Now()
 	var tick func()
 	tick = func() {
 		fyne.Do(func() {
-			if t.waiting != turn || t.u.ctx.Err() != nil {
+			if currentTurn.waiting != turn || currentTurn.ui.ctx.Err() != nil {
 				return
 			}
 			seconds := int(time.Since(started).Seconds())
@@ -1104,15 +1115,15 @@ func (t *turn) countWait(what string, after time.Duration) {
 			if seconds >= 60 {
 				spent = fmt.Sprintf("%d min %02d s", seconds/60, seconds%60)
 			}
-			t.label = fmt.Sprintf("Waiting for %s… %s", what, spent)
-			t.mark = "wait"
-			t.u.applyActivity(t)
+			currentTurn.label = fmt.Sprintf("Waiting for %s… %s", what, spent)
+			currentTurn.mark = "wait"
+			currentTurn.ui.applyActivity(currentTurn)
 			time.AfterFunc(time.Second, tick)
 		})
 	}
 	if after == 0 { // shown at once: the line must not keep saying "Writing"
-		t.label, t.mark = "Waiting for "+what+"…", "wait"
-		t.u.applyActivity(t)
+		currentTurn.label, currentTurn.mark = "Waiting for "+what+"…", "wait"
+		currentTurn.ui.applyActivity(currentTurn)
 		after = time.Second
 	}
 	time.AfterFunc(after, tick)

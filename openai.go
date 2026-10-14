@@ -61,107 +61,107 @@ func newOpenAIAuth(profiles ...string) (*openAIAuth, error) {
 		}
 		name = "openai-" + profiles[0] + ".json"
 	}
-	a := &openAIAuth{path: filepath.Join(dir, "1loop", name)}
-	data, err := os.ReadFile(a.path)
+	auth := &openAIAuth{path: filepath.Join(dir, "1loop", name)}
+	data, err := os.ReadFile(auth.path)
 	if err == nil {
-		if err = json.Unmarshal(data, a); err != nil {
+		if err = json.Unmarshal(data, auth); err != nil {
 			return nil, fmt.Errorf("Unable to read OpenAI credentials: %w", err)
 		}
 	} else if !os.IsNotExist(err) {
 		return nil, err
 	}
 
-	return a, nil
+	return auth, nil
 }
-func (a *openAIAuth) save() error {
-	data, err := json.MarshalIndent(a, "", "  ")
+func (auth *openAIAuth) save() error {
+	data, err := json.MarshalIndent(auth, "", "  ")
 	if err != nil {
 		return err
 	}
-	if err = os.MkdirAll(filepath.Dir(a.path), 0700); err != nil {
+	if err = os.MkdirAll(filepath.Dir(auth.path), 0700); err != nil {
 		return err
 	}
 	// Rename publishes the complete token set together, including a rotated refresh token.
-	f, err := os.CreateTemp(filepath.Dir(a.path), ".openai-*")
+	file, err := os.CreateTemp(filepath.Dir(auth.path), ".openai-*")
 	if err != nil {
 		return err
 	}
-	if _, err = f.Write(data); err != nil {
-		f.Close()
+	if _, err = file.Write(data); err != nil {
+		file.Close()
 		return err
 	}
-	if err = f.Close(); err != nil {
+	if err = file.Close(); err != nil {
 		return err
 	}
-	return os.Rename(f.Name(), a.path)
+	return os.Rename(file.Name(), auth.path)
 }
 func tokenExchange(ctx context.Context, form url.Values) (openAITokens, error) {
-	var t openAITokens
+	var openAITokensValue openAITokens
 	req, err := http.NewRequestWithContext(ctx, "POST", openAIIssuer+"/oauth/token", strings.NewReader(form.Encode()))
 	if err != nil {
-		return t, err
+		return openAITokensValue, err
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
 	if err != nil {
-		return t, err
+		return openAITokensValue, err
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != 200 {
-		return t, fmt.Errorf("OpenAI sign-in: HTTP %d; reconnect your account", resp.StatusCode)
+		return openAITokensValue, fmt.Errorf("OpenAI sign-in: HTTP %d; reconnect your account", resp.StatusCode)
 	}
-	err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&t)
-	if t.Type == "" {
-		t.Type = "Bearer"
+	err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&openAITokensValue)
+	if openAITokensValue.Type == "" {
+		openAITokensValue.Type = "Bearer"
 	}
-	if t.ExpiresIn == 0 {
-		t.ExpiresIn = 3600
+	if openAITokensValue.ExpiresIn == 0 {
+		openAITokensValue.ExpiresIn = 3600
 	}
-	if err == nil && (t.Access == "" || !strings.EqualFold(t.Type, "Bearer") || t.ExpiresIn <= 0) {
+	if err == nil && (openAITokensValue.Access == "" || !strings.EqualFold(openAITokensValue.Type, "Bearer") || openAITokensValue.ExpiresIn <= 0) {
 		err = fmt.Errorf("Incomplete OpenAI tokens")
 	}
-	return t, err
+	return openAITokensValue, err
 }
-func (a *openAIAuth) credential(ctx context.Context) (string, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	c := a.Account
-	if c.ClientID != openAIClientID {
+func (auth *openAIAuth) credential(ctx context.Context) (string, error) {
+	auth.mu.Lock()
+	defer auth.mu.Unlock()
+	openAIAccount := auth.Account
+	if openAIAccount.ClientID != openAIClientID {
 		return "", fmt.Errorf("Reconnect this ChatGPT account to use the subscription login")
 	}
-	if c.Tokens.Access == "" {
+	if openAIAccount.Tokens.Access == "" {
 		return "", fmt.Errorf("Connect your OpenAI account in Settings")
 	}
-	if time.Now().Add(time.Minute).After(c.Expires) {
-		if c.Tokens.Refresh == "" {
+	if time.Now().Add(time.Minute).After(openAIAccount.Expires) {
+		if openAIAccount.Tokens.Refresh == "" {
 			return "", fmt.Errorf("OpenAI session expired; reconnect your account")
 		}
-		t, err := tokenExchange(ctx, url.Values{"grant_type": {"refresh_token"}, "client_id": {c.ClientID}, "refresh_token": {c.Tokens.Refresh}})
+		openAITokens, err := tokenExchange(ctx, url.Values{"grant_type": {"refresh_token"}, "client_id": {openAIAccount.ClientID}, "refresh_token": {openAIAccount.Tokens.Refresh}})
 		if err != nil {
 			return "", err
 		}
-		if t.Refresh == "" {
+		if openAITokens.Refresh == "" {
 			return "", fmt.Errorf("Incomplete OpenAI token renewal; reconnect your account")
 		}
-		if t.ID == "" {
-			t.ID = c.Tokens.ID
+		if openAITokens.ID == "" {
+			openAITokens.ID = openAIAccount.Tokens.ID
 		}
-		if t.Scope == "" {
-			t.Scope = c.Tokens.Scope
+		if openAITokens.Scope == "" {
+			openAITokens.Scope = openAIAccount.Tokens.Scope
 		}
-		c.Tokens = t
-		c.Expires = time.Now().Add(time.Duration(t.ExpiresIn) * time.Second)
-		a.Account = c
-		if err = a.save(); err != nil {
+		openAIAccount.Tokens = openAITokens
+		openAIAccount.Expires = time.Now().Add(time.Duration(openAITokens.ExpiresIn) * time.Second)
+		auth.Account = openAIAccount
+		if err = auth.save(); err != nil {
 			return "", err
 		}
 	}
 
-	return a.Account.Tokens.Access, nil
+	return auth.Account.Tokens.Access, nil
 }
 
 // begin starts only a loopback callback. The user opens the authorization link.
-func (a *openAIAuth) begin(ctx context.Context) (string, <-chan error, error) {
+func (auth *openAIAuth) begin(ctx context.Context) (string, <-chan error, error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:1455")
 	if err != nil {
 		return "", nil, err
@@ -169,9 +169,9 @@ func (a *openAIAuth) begin(ctx context.Context) (string, <-chan error, error) {
 	state, verifier := identifier(), identifier()
 	digest := sha256.Sum256([]byte(verifier))
 	callback := "http://localhost:1455/auth/callback"
-	a.mu.Lock()
-	original := a.Account
-	a.mu.Unlock()
+	auth.mu.Lock()
+	original := auth.Account
+	auth.mu.Unlock()
 	clientID := openAIClientID
 	q := url.Values{"client_id": {clientID}, "response_type": {"code"}, "redirect_uri": {callback}, "scope": {"openid profile email offline_access"}, "state": {state}, "code_challenge_method": {"S256"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(digest[:])}, "id_token_add_organizations": {"true"}, "codex_cli_simplified_flow": {"true"}, "originator": {"1loop"}}
 
@@ -179,14 +179,14 @@ func (a *openAIAuth) begin(ctx context.Context) (string, <-chan error, error) {
 	var once sync.Once
 	finish := func(err error) { once.Do(func() { result <- err }) }
 	mux := http.NewServeMux()
-	mux.HandleFunc("/auth/callback", func(w http.ResponseWriter, r *http.Request) {
-		if r.Method != "GET" || r.URL.Query().Get("state") != state {
-			http.Error(w, "Invalid OAuth state", 400)
+	mux.HandleFunc("/auth/callback", func(writer http.ResponseWriter, request *http.Request) {
+		if request.Method != "GET" || request.URL.Query().Get("state") != state {
+			http.Error(writer, "Invalid OAuth state", 400)
 			return
 		}
 		var loginErr error
 		once.Do(func() {
-			returned := r.URL.Query()
+			returned := request.URL.Query()
 			if returned.Get("error") != "" {
 				loginErr = fmt.Errorf("OpenAI sign-in denied")
 			} else {
@@ -195,33 +195,33 @@ func (a *openAIAuth) begin(ctx context.Context) (string, <-chan error, error) {
 					loginErr = fmt.Errorf("Missing authorization code")
 				}
 				if loginErr == nil {
-					t, e := tokenExchange(ctx, url.Values{"grant_type": {"authorization_code"}, "client_id": {issued}, "code": {returned.Get("code")}, "code_verifier": {verifier}, "redirect_uri": {callback}})
-					loginErr = e
-					if e == nil {
-						sub, email, e := validateOpenAIID(ctx, t.ID, issued, "")
+					openAITokens, errorValue := tokenExchange(ctx, url.Values{"grant_type": {"authorization_code"}, "client_id": {issued}, "code": {returned.Get("code")}, "code_verifier": {verifier}, "redirect_uri": {callback}})
+					loginErr = errorValue
+					if errorValue == nil {
+						sub, email, e := validateOpenAIID(ctx, openAITokens.ID, issued, "")
 						loginErr = e
 						if e == nil && original.ClientID == issued && original.Subject != "" && sub != original.Subject {
 							loginErr = fmt.Errorf("The account does not match the selected session")
 						}
 
 						if loginErr == nil {
-							a.mu.Lock()
-							previous := a.Account
-							a.Account = openAIAccount{ClientID: issued, Subject: sub, Email: email, Tokens: t, Expires: time.Now().Add(time.Duration(t.ExpiresIn) * time.Second)}
-							loginErr = a.save()
+							auth.mu.Lock()
+							previous := auth.Account
+							auth.Account = openAIAccount{ClientID: issued, Subject: sub, Email: email, Tokens: openAITokens, Expires: time.Now().Add(time.Duration(openAITokens.ExpiresIn) * time.Second)}
+							loginErr = auth.save()
 							if loginErr != nil {
-								a.Account = previous
+								auth.Account = previous
 							}
-							a.mu.Unlock()
+							auth.mu.Unlock()
 						}
 					}
 				}
 			}
 			if loginErr != nil {
-				http.Error(w, "Sign-in failed. Check 1loop for details.", 400)
+				http.Error(writer, "Sign-in failed. Check 1loop for details.", 400)
 			} else {
-				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
-				fmt.Fprint(w, "Sign-in successful. You can return to 1loop.")
+				writer.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				fmt.Fprint(writer, "Sign-in successful. You can return to 1loop.")
 			}
 			result <- loginErr
 		})
@@ -253,9 +253,9 @@ func validateOpenAIID(ctx context.Context, token, clientID, nonce string) (strin
 		return "", "", fmt.Errorf("Invalid OpenAI ID token")
 	}
 	decode := func(s string, v any) error {
-		b, e := base64.RawURLEncoding.DecodeString(s)
-		if e != nil {
-			return e
+		b, errorValue := base64.RawURLEncoding.DecodeString(s)
+		if errorValue != nil {
+			return errorValue
 		}
 		return json.Unmarshal(b, v)
 	}
@@ -343,30 +343,30 @@ func validateOpenAIID(ctx context.Context, token, clientID, nonce string) (strin
 	return claims.Sub, claims.Email, nil
 }
 
-func (a *app) getOpenAI(profile string) (*openAIAuth, error) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	if profile == "" && a.openAI != nil {
-		return a.openAI, nil
+func (backend *app) getOpenAI(profile string) (*openAIAuth, error) {
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	if profile == "" && backend.openAI != nil {
+		return backend.openAI, nil
 	}
-	if a.openAIProfiles == nil {
-		a.openAIProfiles = map[string]*openAIAuth{}
+	if backend.openAIProfiles == nil {
+		backend.openAIProfiles = map[string]*openAIAuth{}
 	}
-	if auth := a.openAIProfiles[profile]; auth != nil {
+	if auth := backend.openAIProfiles[profile]; auth != nil {
 		return auth, nil
 	}
 	auth, err := newOpenAIAuth(profile)
 	if err != nil {
 		return nil, err
 	}
-	a.openAIProfiles[profile] = auth
+	backend.openAIProfiles[profile] = auth
 	if profile == "" {
-		a.openAI = auth
+		backend.openAI = auth
 	}
 	return auth, nil
 }
-func (a *app) openAIConfig(ctx context.Context, cfg config) (config, error) {
-	auth, err := a.getOpenAI(cfg.AuthProfile)
+func (backend *app) openAIConfig(ctx context.Context, cfg config) (config, error) {
+	auth, err := backend.getOpenAI(cfg.AuthProfile)
 	if err != nil {
 		return cfg, err
 	}
@@ -379,19 +379,19 @@ func (a *app) openAIConfig(ctx context.Context, cfg config) (config, error) {
 	auth.mu.Unlock()
 	return cfg, nil
 }
-func (a *app) beginOpenAI(ctx context.Context, profiles ...string) (string, <-chan error, error) {
+func (backend *app) beginOpenAI(ctx context.Context, profiles ...string) (string, <-chan error, error) {
 	profile := ""
 	if len(profiles) > 0 {
 		profile = profiles[0]
 	}
-	auth, err := a.getOpenAI(profile)
+	auth, err := backend.getOpenAI(profile)
 	if err != nil {
 		return "", nil, err
 	}
 	return auth.begin(ctx)
 }
-func (a *app) disconnectOpenAI(ctx context.Context, profile string) (string, error) {
-	auth, err := a.getOpenAI(profile)
+func (backend *app) disconnectOpenAI(ctx context.Context, profile string) (string, error) {
+	auth, err := backend.getOpenAI(profile)
 	if err != nil {
 		return "", err
 	}

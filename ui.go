@@ -47,7 +47,7 @@ var (
 // so 13 here renders like 13px text in a browser on the same screen.
 type loopTheme struct{ fyne.Theme }
 
-func (t loopTheme) Color(name fyne.ThemeColorName, _ fyne.ThemeVariant) color.Color {
+func (themeSpec loopTheme) Color(name fyne.ThemeColorName, _ fyne.ThemeVariant) color.Color {
 	if c, ok := tintColors[name]; ok {
 		return c
 	}
@@ -100,7 +100,7 @@ func (t loopTheme) Color(name fyne.ThemeColorName, _ fyne.ThemeVariant) color.Co
 	case theme.ColorNameShadow:
 		return color.NRGBA{A: 0x30} // scroll edge fades; dialog dims are drawn by our sheets
 	}
-	return t.Theme.Color(name, theme.VariantDark)
+	return themeSpec.Theme.Color(name, theme.VariantDark)
 }
 
 // Inter is the face Codex and GNOME use; it is read from the system when
@@ -119,11 +119,11 @@ var interFaces = func() map[string]fyne.Resource {
 	return faces
 }()
 
-func (t loopTheme) Font(style fyne.TextStyle) fyne.Resource {
+func (themeSpec loopTheme) Font(style fyne.TextStyle) fyne.Resource {
 	key := "regular"
 	switch {
 	case style.Monospace, style.Symbol:
-		return t.Theme.Font(style)
+		return themeSpec.Theme.Font(style)
 	case style.Bold && style.Italic:
 		key = "boldItalic"
 	case style.Bold:
@@ -134,10 +134,10 @@ func (t loopTheme) Font(style fyne.TextStyle) fyne.Resource {
 	if face, ok := interFaces[key]; ok {
 		return face
 	}
-	return t.Theme.Font(style)
+	return themeSpec.Theme.Font(style)
 }
 
-func (t loopTheme) Size(name fyne.ThemeSizeName) float32 {
+func (themeSpec loopTheme) Size(name fyne.ThemeSizeName) float32 {
 	switch name {
 	case theme.SizeNameText:
 		return 14
@@ -168,17 +168,17 @@ func (t loopTheme) Size(name fyne.ThemeSizeName) float32 {
 	case theme.SizeNameSeparatorThickness:
 		return 1
 	}
-	return t.Theme.Size(name)
+	return themeSpec.Theme.Size(name)
 }
 
 // The composer edits text directly on its surface, without a nested field box.
 type bareInputTheme struct{ fyne.Theme }
 
-func (t bareInputTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
+func (themeSpec bareInputTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
 	if name == theme.ColorNameInputBackground || name == theme.ColorNameInputBorder {
 		return color.Transparent
 	}
-	return t.Theme.Color(name, v)
+	return themeSpec.Theme.Color(name, v)
 }
 
 func mix(a, b color.NRGBA, f float32) color.NRGBA {
@@ -359,105 +359,105 @@ type tapRow struct {
 }
 
 func newRow(text string, icon fyne.Resource, style rowStyle, onTap func()) *tapRow {
-	r := &tapRow{text: text, icon: icon, style: style, onTap: onTap, size: 14, alpha: 1}
+	row := &tapRow{text: text, icon: icon, style: style, onTap: onTap, size: 14, alpha: 1}
 	switch style {
 	case styleOutline, stylePrimary:
-		r.center = true
+		row.center = true
 	case styleChip:
-		r.size = 13
+		row.size = 13
 	case styleField, styleMenu:
-		r.iconAfter = true
+		row.iconAfter = true
 	}
-	r.ExtendBaseWidget(r)
-	return r
+	row.ExtendBaseWidget(row)
+	return row
 }
 
 func newIconButton(icon fyne.Resource, fill, ink color.NRGBA, onTap func()) *tapRow {
-	r := newRow("", icon, styleIcon, onTap)
-	r.fill, r.ink = fill, ink
-	return r
+	row := newRow("", icon, styleIcon, onTap)
+	row.fill, row.ink = fill, ink
+	return row
 }
 
-func (r *tapRow) SetText(text string)       { r.text = text; r.Refresh() }
-func (r *tapRow) SetTrailing(text string)   { r.trailing = text; r.Refresh() }
-func (r *tapRow) SetSelected(selected bool) { r.selected = selected; r.Refresh() }
-func (r *tapRow) Disable()                  { r.disabled = true; r.setHover(0, false); r.Refresh() }
-func (r *tapRow) Enable()                   { r.disabled = false; r.Refresh() }
+func (row *tapRow) SetText(text string)       { row.text = text; row.Refresh() }
+func (row *tapRow) SetTrailing(text string)   { row.trailing = text; row.Refresh() }
+func (row *tapRow) SetSelected(selected bool) { row.selected = selected; row.Refresh() }
+func (row *tapRow) Disable()                  { row.disabled = true; row.setHover(0, false); row.Refresh() }
+func (row *tapRow) Enable()                   { row.disabled = false; row.Refresh() }
 
-func (r *tapRow) Tapped(*fyne.PointEvent) {
-	if !r.disabled && r.onTap != nil {
-		r.onTap()
+func (row *tapRow) Tapped(*fyne.PointEvent) {
+	if !row.disabled && row.onTap != nil {
+		row.onTap()
 	}
 }
 
 // Rows are mouse targets of their own, so a title bar behind them never
 // mistakes a click on a control for the start of a window move.
-func (r *tapRow) MouseDown(*desktop.MouseEvent) {}
-func (r *tapRow) MouseUp(*desktop.MouseEvent)   {}
+func (row *tapRow) MouseDown(*desktop.MouseEvent) {}
+func (row *tapRow) MouseUp(*desktop.MouseEvent)   {}
 
-func (r *tapRow) Cursor() desktop.Cursor {
-	if r.disabled || r.onTap == nil {
+func (row *tapRow) Cursor() desktop.Cursor {
+	if row.disabled || row.onTap == nil {
 		return desktop.DefaultCursor
 	}
 	return desktop.PointerCursor
 }
 
-func (r *tapRow) MouseIn(*desktop.MouseEvent) {
-	if !r.disabled && r.onTap != nil {
-		r.setHover(1, true)
+func (row *tapRow) MouseIn(*desktop.MouseEvent) {
+	if !row.disabled && row.onTap != nil {
+		row.setHover(1, true)
 	}
-	if r.onHover != nil {
-		r.onHover(true)
+	if row.onHover != nil {
+		row.onHover(true)
 	}
 }
-func (r *tapRow) MouseMoved(*desktop.MouseEvent) {}
-func (r *tapRow) MouseOut() {
-	r.setHover(0, true)
-	if r.onHover != nil {
-		r.onHover(false)
+func (row *tapRow) MouseMoved(*desktop.MouseEvent) {}
+func (row *tapRow) MouseOut() {
+	row.setHover(0, true)
+	if row.onHover != nil {
+		row.onHover(false)
 	}
 }
 
-func (r *tapRow) TappedSecondary(*fyne.PointEvent) {
-	if !r.disabled && r.onMenu != nil {
-		r.onMenu()
+func (row *tapRow) TappedSecondary(*fyne.PointEvent) {
+	if !row.disabled && row.onMenu != nil {
+		row.onMenu()
 	}
 }
 
 // setHover eases the hover factor so colours fade like CSS transitions.
-func (r *tapRow) setHover(target float32, animate bool) {
-	if r.anim != nil {
-		r.anim.Stop()
-		r.anim = nil
+func (row *tapRow) setHover(target float32, animate bool) {
+	if row.anim != nil {
+		row.anim.Stop()
+		row.anim = nil
 	}
 	if !animate {
-		r.hover = target
+		row.hover = target
 		return
 	}
-	from := r.hover
-	r.anim = fyne.NewAnimation(130*time.Millisecond, func(p float32) {
-		r.hover = from + (target-from)*p
-		r.Refresh()
+	from := row.hover
+	row.anim = fyne.NewAnimation(130*time.Millisecond, func(p float32) {
+		row.hover = from + (target-from)*p
+		row.Refresh()
 	})
-	r.anim.Curve = fyne.AnimationEaseOut
-	r.anim.Start()
+	row.anim.Curve = fyne.AnimationEaseOut
+	row.anim.Start()
 }
 
-func (r *tapRow) CreateRenderer() fyne.WidgetRenderer {
+func (row *tapRow) CreateRenderer() fyne.WidgetRenderer {
 	bg := canvas.NewRectangle(color.Transparent)
-	label := canvas.NewText(r.text, colText)
-	label.TextSize = r.size
+	label := canvas.NewText(row.text, colText)
+	label.TextSize = row.size
 	trailing := canvas.NewText("", colFaint)
-	trailing.TextSize = r.size - 1
+	trailing.TextSize = row.size - 1
 	icon := canvas.NewImageFromResource(nil)
 	icon.FillMode = canvas.ImageFillContain
 	detail := canvas.NewText("", colMuted)
 	detail.TextSize = 12
 	badge := canvas.NewImageFromResource(nil)
 	badge.FillMode = canvas.ImageFillContain
-	rr := &tapRowRenderer{row: r, bg: bg, label: label, trailing: trailing, icon: icon, detail: detail, badge: badge}
-	rr.Refresh()
-	return rr
+	renderer := &tapRowRenderer{row: row, bg: bg, label: label, trailing: trailing, icon: icon, detail: detail, badge: badge}
+	renderer.Refresh()
+	return renderer
 }
 
 type tapRowRenderer struct {
@@ -473,19 +473,19 @@ type tapRowRenderer struct {
 	marked   fyne.Resource
 }
 
-func (rr *tapRowRenderer) metrics() (padX, padY, iconSize, gap float32) {
-	switch rr.row.style {
+func (renderer *tapRowRenderer) metrics() (padX, padY, iconSize, gap float32) {
+	switch renderer.row.style {
 	case styleNav:
 		return 10, 7, 18, 10
 	case styleChip:
 		return 7, 4, 16, 7
 	case styleIcon:
 		icon, pad := float32(18), float32(7)
-		if rr.row.iconPx > 0 {
-			icon = rr.row.iconPx
+		if renderer.row.iconPx > 0 {
+			icon = renderer.row.iconPx
 		}
-		if rr.row.padPx > 0 {
-			pad = rr.row.padPx
+		if renderer.row.padPx > 0 {
+			pad = renderer.row.padPx
 		}
 		return pad, pad, icon, 0
 	case styleMenu:
@@ -500,131 +500,131 @@ func (rr *tapRowRenderer) metrics() (padX, padY, iconSize, gap float32) {
 	return 16, 7, 16, 8
 }
 
-func (rr *tapRowRenderer) MinSize() fyne.Size {
-	padX, padY, iconSize, gap := rr.metrics()
-	textHeight := fyne.MeasureText("Ag", rr.row.size, fyne.TextStyle{}).Height
-	if rr.row.style == styleIcon || rr.row.style == styleWindow {
+func (renderer *tapRowRenderer) MinSize() fyne.Size {
+	padX, padY, iconSize, gap := renderer.metrics()
+	textHeight := fyne.MeasureText("Ag", renderer.row.size, fyne.TextStyle{}).Height
+	if renderer.row.style == styleIcon || renderer.row.style == styleWindow {
 		return fyne.NewSize(iconSize+2*padX, iconSize+2*padY)
 	}
 	height := fyne.Max(textHeight, iconSize) + 2*padY
-	if rr.row.detail != "" {
+	if renderer.row.detail != "" {
 		height += fyne.MeasureText("Ag", 12, fyne.TextStyle{}).Height + 1
 	}
 	width := 2 * padX
-	if rr.row.icon != nil {
+	if renderer.row.icon != nil {
 		width += iconSize
-		if rr.row.text != "" {
+		if renderer.row.text != "" {
 			width += gap
 		}
 	}
-	if rr.row.style == styleNav || rr.row.style == styleField || rr.row.truncate {
+	if renderer.row.style == styleNav || renderer.row.style == styleField || renderer.row.truncate {
 		// Rows that fill a column truncate instead of forcing it wider.
 		return fyne.NewSize(width+40, height)
 	}
-	width += fyne.Max(fyne.MeasureText(rr.row.text, rr.row.size, fyne.TextStyle{}).Width,
-		fyne.MeasureText(rr.row.detail, 12, fyne.TextStyle{}).Width) + 2
-	if rr.row.trailing != "" {
-		width += gap + fyne.MeasureText(rr.row.trailing, rr.row.size-1, fyne.TextStyle{}).Width
+	width += fyne.Max(fyne.MeasureText(renderer.row.text, renderer.row.size, fyne.TextStyle{}).Width,
+		fyne.MeasureText(renderer.row.detail, 12, fyne.TextStyle{}).Width) + 2
+	if renderer.row.trailing != "" {
+		width += gap + fyne.MeasureText(renderer.row.trailing, renderer.row.size-1, fyne.TextStyle{}).Width
 	}
-	if rr.row.badge != nil {
+	if renderer.row.badge != nil {
 		width += gap + iconSize
 	}
 	return fyne.NewSize(width, height)
 }
 
-func (rr *tapRowRenderer) Layout(size fyne.Size) {
-	padX, _, iconSize, gap := rr.metrics()
-	rr.bg.Resize(size)
-	rr.bg.Move(fyne.NewPos(0, 0))
-	switch rr.row.style {
+func (renderer *tapRowRenderer) Layout(size fyne.Size) {
+	padX, _, iconSize, gap := renderer.metrics()
+	renderer.bg.Resize(size)
+	renderer.bg.Move(fyne.NewPos(0, 0))
+	switch renderer.row.style {
 	case styleOutline, styleIcon:
-		rr.bg.CornerRadius = size.Height / 2
+		renderer.bg.CornerRadius = size.Height / 2
 	case styleWindow:
-		rr.bg.CornerRadius = 6
+		renderer.bg.CornerRadius = 6
 	case stylePrimary, styleField:
-		rr.bg.CornerRadius = 8
+		renderer.bg.CornerRadius = 8
 	case styleModel:
-		rr.bg.CornerRadius = 9
+		renderer.bg.CornerRadius = 9
 	default:
-		rr.bg.CornerRadius = 6
+		renderer.bg.CornerRadius = 6
 	}
-	if rr.row.style == styleIcon || rr.row.style == styleWindow {
-		rr.icon.Resize(fyne.NewSquareSize(iconSize))
-		rr.icon.Move(fyne.NewPos((size.Width-iconSize)/2, (size.Height-iconSize)/2))
+	if renderer.row.style == styleIcon || renderer.row.style == styleWindow {
+		renderer.icon.Resize(fyne.NewSquareSize(iconSize))
+		renderer.icon.Move(fyne.NewPos((size.Width-iconSize)/2, (size.Height-iconSize)/2))
 		return
 	}
 	trailingWidth := float32(0)
-	if rr.row.badge != nil {
-		rr.badge.Resize(fyne.NewSquareSize(iconSize))
-		rr.badge.Move(fyne.NewPos(size.Width-padX-iconSize-rr.row.endInset, (size.Height-iconSize)/2))
+	if renderer.row.badge != nil {
+		renderer.badge.Resize(fyne.NewSquareSize(iconSize))
+		renderer.badge.Move(fyne.NewPos(size.Width-padX-iconSize-renderer.row.endInset, (size.Height-iconSize)/2))
 		trailingWidth = iconSize + gap
 	}
-	if rr.row.trailing != "" {
-		width := rr.trailing.MinSize().Width
-		rr.trailing.Move(fyne.NewPos(size.Width-padX-trailingWidth-width, (size.Height-rr.trailing.MinSize().Height)/2))
+	if renderer.row.trailing != "" {
+		width := renderer.trailing.MinSize().Width
+		renderer.trailing.Move(fyne.NewPos(size.Width-padX-trailingWidth-width, (size.Height-renderer.trailing.MinSize().Height)/2))
 		trailingWidth += width + gap
 	}
 	iconRoom := float32(0)
-	if rr.row.icon != nil {
+	if renderer.row.icon != nil {
 		iconRoom = iconSize
-		if rr.row.text != "" {
+		if renderer.row.text != "" {
 			iconRoom += gap
 		}
 	}
-	room := size.Width - 2*padX - iconRoom - trailingWidth - rr.row.endInset
-	rr.label.Text = fitText(rr.row.text, rr.row.size, fyne.TextStyle{}, room)
-	textWidth := rr.label.MinSize().Width
-	textY := (size.Height - rr.label.MinSize().Height) / 2
-	if rr.row.detail != "" {
-		detailHeight := rr.detail.MinSize().Height + 1
-		textY = (size.Height - rr.label.MinSize().Height - detailHeight) / 2
-		rr.detail.Text = fitText(rr.row.detail, 12, fyne.TextStyle{}, room)
+	room := size.Width - 2*padX - iconRoom - trailingWidth - renderer.row.endInset
+	renderer.label.Text = fitText(renderer.row.text, renderer.row.size, fyne.TextStyle{}, room)
+	textWidth := renderer.label.MinSize().Width
+	textY := (size.Height - renderer.label.MinSize().Height) / 2
+	if renderer.row.detail != "" {
+		detailHeight := renderer.detail.MinSize().Height + 1
+		textY = (size.Height - renderer.label.MinSize().Height - detailHeight) / 2
+		renderer.detail.Text = fitText(renderer.row.detail, 12, fyne.TextStyle{}, room)
 	}
 	iconY := (size.Height - iconSize) / 2
 	x := padX
-	if rr.row.center {
+	if renderer.row.center {
 		x = (size.Width - iconRoom - textWidth) / 2
 	}
-	if rr.row.icon != nil {
-		rr.icon.Resize(fyne.NewSquareSize(iconSize))
+	if renderer.row.icon != nil {
+		renderer.icon.Resize(fyne.NewSquareSize(iconSize))
 		switch {
-		case !rr.row.iconAfter:
-			rr.icon.Move(fyne.NewPos(x, iconY))
+		case !renderer.row.iconAfter:
+			renderer.icon.Move(fyne.NewPos(x, iconY))
 			x += iconRoom
-		case rr.row.style == styleField || rr.row.style == styleMenu:
-			rr.icon.Move(fyne.NewPos(size.Width-padX-iconSize, iconY)) // chevron and check sit on the far edge
+		case renderer.row.style == styleField || renderer.row.style == styleMenu:
+			renderer.icon.Move(fyne.NewPos(size.Width-padX-iconSize, iconY)) // chevron and check sit on the far edge
 		default:
-			rr.icon.Move(fyne.NewPos(x+textWidth+gap, iconY))
+			renderer.icon.Move(fyne.NewPos(x+textWidth+gap, iconY))
 		}
 	}
-	rr.label.Move(fyne.NewPos(x, textY))
+	renderer.label.Move(fyne.NewPos(x, textY))
 	// The second line starts under the label, past any leading icon.
-	rr.detail.Move(fyne.NewPos(x, textY+rr.label.MinSize().Height+1))
+	renderer.detail.Move(fyne.NewPos(x, textY+renderer.label.MinSize().Height+1))
 }
 
-func (rr *tapRowRenderer) colorsAt(h float32) (fill, stroke, ink color.NRGBA) {
-	r := rr.row
+func (renderer *tapRowRenderer) colorsAt(h float32) (fill, stroke, ink color.NRGBA) {
+	row := renderer.row
 	clear := color.NRGBA{}
-	switch r.style {
+	switch row.style {
 	case styleNav:
 		fill = mix(clear, colHover, h)
-		if r.selected {
+		if row.selected {
 			fill = mix(colSelected, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x18}, h)
 		}
 		ink = colText
-		if !r.selected && r.accent {
+		if !row.selected && row.accent {
 			ink = mix(color.NRGBA{R: 0xb4, G: 0xb4, B: 0xb4, A: 0xff}, colText, h)
 		}
 	case styleChip:
 		fill = mix(clear, colHover, h)
 		ink = mix(colMuted, colText, h)
-		if r.selected {
+		if row.selected {
 			ink = colText
 		}
-		if r.accent {
+		if row.accent {
 			ink = colAmber
 		}
-		if r.danger {
+		if row.danger {
 			ink = colDanger
 		}
 	case styleOutline:
@@ -633,63 +633,63 @@ func (rr *tapRowRenderer) colorsAt(h float32) (fill, stroke, ink color.NRGBA) {
 	case stylePrimary:
 		fill = mix(colAmber, colAmberHot, h)
 		ink = colInk
-		if r.danger {
+		if row.danger {
 			fill = mix(colClose, color.NRGBA{R: 0xd9, G: 0x3b, B: 0x2b, A: 0xff}, h)
 			ink = colText
 		}
 	case styleIcon:
-		hot := mix(r.fill, colText, 0.22)
-		if r.fill.A < 0xff { // a translucent wash only deepens
-			hot = r.fill
-			hot.A = uint8(fyne.Min(255, float32(r.fill.A)*2+10))
+		hot := mix(row.fill, colText, 0.22)
+		if row.fill.A < 0xff { // a translucent wash only deepens
+			hot = row.fill
+			hot.A = uint8(fyne.Min(255, float32(row.fill.A)*2+10))
 		}
-		fill = mix(r.fill, hot, h)
-		if r.fill.A == 0 {
+		fill = mix(row.fill, hot, h)
+		if row.fill.A == 0 {
 			fill = mix(clear, colHover, h)
 		}
 		// Controls without an ink of their own brighten on hover like the
 		// chips beside them; the others keep their fixed ink.
-		ink = r.ink
-		if r.ink == (color.NRGBA{}) {
+		ink = row.ink
+		if row.ink == (color.NRGBA{}) {
 			ink = mix(colMuted, colText, h)
 		}
 	case styleMenu:
 		base := clear
-		if r.selected {
+		if row.selected {
 			base = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x09}
 		}
 		fill = mix(base, colMenuHover, h)
 		ink = colText
-		if r.danger {
+		if row.danger {
 			ink = colDanger
 		}
 	case styleModel:
 		fill = mix(clear, colRaised, h)
 		ink = mix(colMuted, colText, h)
-		if r.selected {
+		if row.selected {
 			ink = colText
 		}
 	case styleField:
 		fill = colField
 		stroke = mix(colBorder, color.NRGBA{R: 0x3c, G: 0x3c, B: 0x3c, A: 0xff}, h)
-		if r.selected { // open: focus ring like a web select
+		if row.selected { // open: focus ring like a web select
 			stroke = color.NRGBA{R: 0xff, G: 0xb0, B: 0x00, A: 0x99}
 		}
 		ink = colText
 	case styleWindow:
 		target := colHover
-		if r.hoverFill.A != 0 {
-			target = r.hoverFill
+		if row.hoverFill.A != 0 {
+			target = row.hoverFill
 		}
 		fill = mix(clear, target, h)
 		ink = mix(colMuted, colText, h)
 	}
-	if r.disabled {
+	if row.disabled {
 		ink = colFaint
-		if r.style == styleModel {
+		if row.style == styleModel {
 			fill = clear
 		}
-		if r.style == stylePrimary || r.style == styleIcon && r.fill.A != 0 {
+		if row.style == stylePrimary || row.style == styleIcon && row.fill.A != 0 {
 			fill = colRaised
 		}
 	}
@@ -701,70 +701,70 @@ func quantize(v, steps float32) float32 { return float32(int(v*steps+0.5)) / ste
 // Refresh animates shapes continuously but moves text and icon colours in a
 // few steps: Fyne caches one text texture per colour, so a smooth colour
 // tween would rasterise new glyph textures on every frame.
-func (rr *tapRowRenderer) Refresh() {
-	r := rr.row
-	fill, stroke, _ := rr.colorsAt(r.hover)
-	_, _, ink := rr.colorsAt(quantize(r.hover, 4))
-	shape := func(c color.NRGBA) color.NRGBA { c.A = uint8(float32(c.A) * r.alpha); return c }
-	textAlpha := quantize(r.alpha, 5)
+func (renderer *tapRowRenderer) Refresh() {
+	row := renderer.row
+	fill, stroke, _ := renderer.colorsAt(row.hover)
+	_, _, ink := renderer.colorsAt(quantize(row.hover, 4))
+	shape := func(c color.NRGBA) color.NRGBA { c.A = uint8(float32(c.A) * row.alpha); return c }
+	textAlpha := quantize(row.alpha, 5)
 	text := func(c color.NRGBA) color.NRGBA { c.A = uint8(float32(c.A) * textAlpha); return c }
-	rr.bg.FillColor = shape(fill)
-	rr.bg.StrokeColor = shape(stroke)
-	rr.bg.StrokeWidth = 0
+	renderer.bg.FillColor = shape(fill)
+	renderer.bg.StrokeColor = shape(stroke)
+	renderer.bg.StrokeWidth = 0
 	if stroke.A != 0 {
-		rr.bg.StrokeWidth = 1
+		renderer.bg.StrokeWidth = 1
 	}
-	rr.label.TextSize = r.size
-	rr.trailing.Text = r.trailing
-	rr.trailing.TextSize = r.size - 1
-	rr.trailing.Color = text(colFaint)
-	rr.detail.Text = r.detail
-	rr.detail.Color = text(colMuted)
-	if r.style == styleModel {
-		rr.detail.Color = text(colFaint)
+	renderer.label.TextSize = row.size
+	renderer.trailing.Text = row.trailing
+	renderer.trailing.TextSize = row.size - 1
+	renderer.trailing.Color = text(colFaint)
+	renderer.detail.Text = row.detail
+	renderer.detail.Color = text(colMuted)
+	if row.style == styleModel {
+		renderer.detail.Color = text(colFaint)
 	}
-	rr.label.Color = text(ink)
+	renderer.label.Color = text(ink)
 	iconInk := ink
-	if r.style == styleField || r.style == styleChip && !r.accent && r.iconAfter {
+	if row.style == styleField || row.style == styleChip && !row.accent && row.iconAfter {
 		iconInk = colMuted
 	}
-	if r.icon != nil && (rr.source != r.icon || rr.tint != iconInk) {
-		rr.source, rr.tint = r.icon, iconInk
-		rr.icon.Resource = tinted(r.icon, iconInk)
-		rr.icon.Refresh()
+	if row.icon != nil && (renderer.source != row.icon || renderer.tint != iconInk) {
+		renderer.source, renderer.tint = row.icon, iconInk
+		renderer.icon.Resource = tinted(row.icon, iconInk)
+		renderer.icon.Refresh()
 	}
-	if r.badge != nil && rr.marked != r.badge {
-		rr.marked = r.badge
-		rr.badge.Resource = tinted(r.badge, colAmber)
-		rr.badge.Refresh()
+	if row.badge != nil && renderer.marked != row.badge {
+		renderer.marked = row.badge
+		renderer.badge.Resource = tinted(row.badge, colAmber)
+		renderer.badge.Refresh()
 	}
 	// Translucency is read at draw time; refreshing the image would only
 	// throw its texture away.
-	iconAlpha := r.alpha
-	if r.disabled && r.style == styleModel {
+	iconAlpha := row.alpha
+	if row.disabled && row.style == styleModel {
 		iconAlpha *= 0.4
 	}
-	rr.icon.Translucency = float64(1 - iconAlpha)
-	rr.badge.Translucency = rr.icon.Translucency
-	rr.Layout(r.Size())
-	rr.bg.Refresh()
-	rr.label.Refresh()
-	rr.trailing.Refresh()
-	rr.detail.Refresh()
+	renderer.icon.Translucency = float64(1 - iconAlpha)
+	renderer.badge.Translucency = renderer.icon.Translucency
+	renderer.Layout(row.Size())
+	renderer.bg.Refresh()
+	renderer.label.Refresh()
+	renderer.trailing.Refresh()
+	renderer.detail.Refresh()
 }
 
-func (rr *tapRowRenderer) Objects() []fyne.CanvasObject {
-	objects := []fyne.CanvasObject{rr.bg, rr.label, rr.trailing, rr.detail}
-	if rr.row.icon != nil {
-		objects = append(objects, rr.icon)
+func (renderer *tapRowRenderer) Objects() []fyne.CanvasObject {
+	objects := []fyne.CanvasObject{renderer.bg, renderer.label, renderer.trailing, renderer.detail}
+	if renderer.row.icon != nil {
+		objects = append(objects, renderer.icon)
 	}
-	if rr.row.badge != nil {
-		objects = append(objects, rr.badge)
+	if renderer.row.badge != nil {
+		objects = append(objects, renderer.badge)
 	}
 	return objects
 }
 
-func (rr *tapRowRenderer) Destroy() {}
+func (renderer *tapRowRenderer) Destroy() {}
 
 // ---------------------------------------------------------------------------
 // Soft drop shadow: stacked translucent rounded rectangles stand in for blur.
@@ -775,24 +775,24 @@ type shadow struct {
 }
 
 func newShadow(strength float32) *shadow {
-	s := &shadow{}
+	dropShadow := &shadow{}
 	for i, alpha := range []float32{0.10, 0.08, 0.06, 0.04} {
 		r := canvas.NewRectangle(color.NRGBA{A: uint8(255 * alpha * strength)})
 		r.CornerRadius = float32(12 + 3*i)
-		s.layers = append(s.layers, r)
-		s.alphas = append(s.alphas, alpha*strength)
+		dropShadow.layers = append(dropShadow.layers, r)
+		dropShadow.alphas = append(dropShadow.alphas, alpha*strength)
 	}
-	return s
+	return dropShadow
 }
 
-func (s *shadow) setOpacity(o float32) {
-	for i, r := range s.layers {
-		r.FillColor = color.NRGBA{A: uint8(255 * fyne.Min(1, s.alphas[i]) * o)}
+func (dropShadow *shadow) setOpacity(o float32) {
+	for i, r := range dropShadow.layers {
+		r.FillColor = color.NRGBA{A: uint8(255 * fyne.Min(1, dropShadow.alphas[i]) * o)}
 	}
 }
 
-func (s *shadow) layout(pos fyne.Position, size fyne.Size, radius float32) {
-	for i, r := range s.layers {
+func (dropShadow *shadow) layout(pos fyne.Position, size fyne.Size, radius float32) {
+	for i, r := range dropShadow.layers {
 		spread := float32(3 * (i + 1))
 		r.CornerRadius = radius + spread
 		r.Move(pos.AddXY(-spread, -spread+spread/2))
@@ -800,16 +800,16 @@ func (s *shadow) layout(pos fyne.Position, size fyne.Size, radius float32) {
 	}
 }
 
-func (s *shadow) objects() []fyne.CanvasObject {
-	objects := make([]fyne.CanvasObject, len(s.layers))
-	for i := range s.layers {
-		objects[len(s.layers)-1-i] = s.layers[i]
+func (dropShadow *shadow) objects() []fyne.CanvasObject {
+	objects := make([]fyne.CanvasObject, len(dropShadow.layers))
+	for i := range dropShadow.layers {
+		objects[len(dropShadow.layers)-1-i] = dropShadow.layers[i]
 	}
 	return objects
 }
 
-func (s *shadow) refresh() {
-	for _, r := range s.layers {
+func (dropShadow *shadow) refresh() {
+	for _, r := range dropShadow.layers {
 		r.Refresh()
 	}
 }
@@ -845,49 +845,49 @@ type sheet struct {
 	active     int
 }
 
-func newSheet(c fyne.Canvas, content fyne.CanvasObject, width float32) *sheet {
-	s := &sheet{canvas: c, content: content, width: width, active: -1}
-	s.ExtendBaseWidget(s)
-	return s
+func newSheet(canvas fyne.Canvas, content fyne.CanvasObject, width float32) *sheet {
+	dialog := &sheet{canvas: canvas, content: content, width: width, active: -1}
+	dialog.ExtendBaseWidget(dialog)
+	return dialog
 }
 
-func (s *sheet) animate(from, to float32, duration time.Duration, curve fyne.AnimationCurve, done func()) {
-	if s.anim != nil {
-		s.anim.Stop()
+func (dialog *sheet) animate(from, to float32, duration time.Duration, curve fyne.AnimationCurve, done func()) {
+	if dialog.anim != nil {
+		dialog.anim.Stop()
 	}
-	s.anim = fyne.NewAnimation(duration, func(p float32) {
-		s.progress = from + (to-from)*p
-		s.Refresh()
+	dialog.anim = fyne.NewAnimation(duration, func(p float32) {
+		dialog.progress = from + (to-from)*p
+		dialog.Refresh()
 		if p >= 1 && done != nil {
 			done()
 		}
 	})
-	s.anim.Curve = curve
-	s.anim.Start()
+	dialog.anim.Curve = curve
+	dialog.anim.Start()
 }
 
-func (s *sheet) Show() {
-	if s.open {
+func (dialog *sheet) Show() {
+	if dialog.open {
 		return
 	}
-	s.open, s.closing = true, false
-	s.progress = 0
-	if s.anchor != nil {
-		s.anchorAt = fyne.CurrentApp().Driver().AbsolutePositionForObject(s.anchor)
-		s.anchorSz = s.anchor.Size()
+	dialog.open, dialog.closing = true, false
+	dialog.progress = 0
+	if dialog.anchor != nil {
+		dialog.anchorAt = fyne.CurrentApp().Driver().AbsolutePositionForObject(dialog.anchor)
+		dialog.anchorSz = dialog.anchor.Size()
 	}
-	s.Resize(s.canvas.Size())
-	s.canvas.Overlays().Add(s)
-	s.Refresh()
+	dialog.Resize(dialog.canvas.Size())
+	dialog.canvas.Overlays().Add(dialog)
+	dialog.Refresh()
 	duration := 200 * time.Millisecond
-	if s.menu {
+	if dialog.menu {
 		duration = 170 * time.Millisecond
 	}
 	// Start on the next loop turn: the first frame of a new overlay builds its
 	// textures, and timing that frame would swallow the start of the motion.
 	go fyne.Do(func() {
-		if s.open && !s.closing {
-			s.animate(0, 1, duration, easeOutQuint, nil)
+		if dialog.open && !dialog.closing {
+			dialog.animate(0, 1, duration, easeOutQuint, nil)
 		}
 	})
 }
@@ -899,134 +899,134 @@ func easeOutQuint(x float32) float32 {
 }
 
 // Hide removes the sheet at once (dialogs whose content changes the view).
-func (s *sheet) Hide() {
-	if !s.open {
+func (dialog *sheet) Hide() {
+	if !dialog.open {
 		return
 	}
-	s.open = false
-	if s.anim != nil {
-		s.anim.Stop()
+	dialog.open = false
+	if dialog.anim != nil {
+		dialog.anim.Stop()
 	}
 	// Fyne's OverlayStack.Remove also drops every overlay above the removed
 	// one (a confirmation opened from a menu, say), so put those back.
-	stack := s.canvas.Overlays()
+	stack := dialog.canvas.Overlays()
 	var above []fyne.CanvasObject
 	found := false
-	for _, o := range stack.List() {
+	for _, object := range stack.List() {
 		if found {
-			above = append(above, o)
+			above = append(above, object)
 		}
-		found = found || o == s
+		found = found || object == dialog
 	}
-	stack.Remove(s)
-	for _, o := range above {
-		stack.Add(o)
+	stack.Remove(dialog)
+	for _, canvasObjectValue := range above {
+		stack.Add(canvasObjectValue)
 	}
-	if s.onClosed != nil {
-		s.onClosed()
+	if dialog.onClosed != nil {
+		dialog.onClosed()
 	}
-	if after := s.afterClose; after != nil {
-		s.afterClose = nil
+	if after := dialog.afterClose; after != nil {
+		dialog.afterClose = nil
 		after()
 	}
 }
 
 // close fades the sheet out before removing it, like a web popover.
-func (s *sheet) close() {
-	if !s.open || s.closing {
+func (dialog *sheet) close() {
+	if !dialog.open || dialog.closing {
 		return
 	}
-	s.closing = true
-	s.animate(s.progress, 0, 120*time.Millisecond, fyne.AnimationEaseIn, s.Hide)
+	dialog.closing = true
+	dialog.animate(dialog.progress, 0, 120*time.Millisecond, fyne.AnimationEaseIn, dialog.Hide)
 }
 
 // dismiss closes the sheet as a cancellation (outside tap or Escape).
-func (s *sheet) dismiss() {
-	if s.menu {
-		s.close()
+func (dialog *sheet) dismiss() {
+	if dialog.menu {
+		dialog.close()
 	} else {
-		s.Hide()
+		dialog.Hide()
 	}
-	if s.onDismiss != nil {
-		s.onDismiss()
-	}
-}
-
-func (s *sheet) Tapped(e *fyne.PointEvent) {
-	if s.menu && !s.panelRect().contains(e.Position) {
-		s.dismiss()
+	if dialog.onDismiss != nil {
+		dialog.onDismiss()
 	}
 }
 
-func (s *sheet) TappedSecondary(*fyne.PointEvent) {}
+func (dialog *sheet) Tapped(e *fyne.PointEvent) {
+	if dialog.menu && !dialog.panelRect().contains(e.Position) {
+		dialog.dismiss()
+	}
+}
 
-func (s *sheet) TypedKey(e *fyne.KeyEvent) {
-	if s.onKey != nil && s.onKey(e) {
+func (dialog *sheet) TappedSecondary(*fyne.PointEvent) {}
+
+func (dialog *sheet) TypedKey(e *fyne.KeyEvent) {
+	if dialog.onKey != nil && dialog.onKey(e) {
 		return
 	}
 	switch e.Name {
 	case fyne.KeyEscape:
-		s.dismiss()
+		dialog.dismiss()
 	case fyne.KeyDown, fyne.KeyUp:
-		if len(s.items) == 0 {
+		if len(dialog.items) == 0 {
 			return
 		}
 		step := 1
 		if e.Name == fyne.KeyUp {
 			step = -1
 		}
-		s.highlight((s.active + step + len(s.items)) % len(s.items))
+		dialog.highlight((dialog.active + step + len(dialog.items)) % len(dialog.items))
 	case fyne.KeyReturn, fyne.KeyEnter, fyne.KeySpace:
-		if s.active >= 0 && s.active < len(s.items) {
-			s.items[s.active].Tapped(nil)
+		if dialog.active >= 0 && dialog.active < len(dialog.items) {
+			dialog.items[dialog.active].Tapped(nil)
 		}
 	}
 }
 
-func (s *sheet) highlight(index int) {
-	for i, item := range s.items {
+func (dialog *sheet) highlight(index int) {
+	for i, item := range dialog.items {
 		if i == index {
 			item.setHover(1, true)
 		} else if item.hover > 0 {
 			item.setHover(0, true)
 		}
 	}
-	s.active = index
+	dialog.active = index
 }
 
 // Sheets take keyboard focus so Escape and arrows reach them.
-func (s *sheet) FocusGained()   {}
-func (s *sheet) FocusLost()     {}
-func (s *sheet) TypedRune(rune) {}
+func (dialog *sheet) FocusGained()   {}
+func (dialog *sheet) FocusLost()     {}
+func (dialog *sheet) TypedRune(rune) {}
 
 type rect struct{ pos, size fyne.Position }
 
-func (r rect) contains(p fyne.Position) bool {
-	return p.X >= r.pos.X && p.Y >= r.pos.Y && p.X <= r.pos.X+r.size.X && p.Y <= r.pos.Y+r.size.Y
+func (rectangle rect) contains(position fyne.Position) bool {
+	return position.X >= rectangle.pos.X && position.Y >= rectangle.pos.Y && position.X <= rectangle.pos.X+rectangle.size.X && position.Y <= rectangle.pos.Y+rectangle.size.Y
 }
 
-func (s *sheet) pad() float32 {
-	if s.menu {
+func (dialog *sheet) pad() float32 {
+	if dialog.menu {
 		return 5
 	}
 	return 20
 }
 
-func (s *sheet) panelRect() rect {
-	size := s.Size()
-	pad := s.pad()
-	min := s.content.MinSize()
-	width := s.width
+func (dialog *sheet) panelRect() rect {
+	size := dialog.Size()
+	pad := dialog.pad()
+	min := dialog.content.MinSize()
+	width := dialog.width
 	if width <= 0 {
 		width = min.Width + 2*pad
 	}
 	width = fyne.Min(fyne.Max(width, min.Width+2*pad), size.Width-32)
 	height := fyne.Min(min.Height+2*pad, size.Height-48)
-	if s.menu && s.anchor != nil {
-		shift := (1 - s.progress) * 6
-		at, anchor := s.anchorAt, s.anchorSz
+	if dialog.menu && dialog.anchor != nil {
+		shift := (1 - dialog.progress) * 6
+		at, anchor := dialog.anchorAt, dialog.anchorSz
 		x := at.X + anchor.Width - width
-		if s.alignLeft {
+		if dialog.alignLeft {
 			x = at.X
 		}
 		x = fyne.Max(8, fyne.Min(x, size.Width-width-8))
@@ -1034,102 +1034,102 @@ func (s *sheet) panelRect() rect {
 		if y+height > size.Height-8 {
 			y = at.Y - height - 6 + shift
 		}
-		if s.columns {
+		if dialog.columns {
 			y = fyne.Max(8, fyne.Min(y, size.Height-height-8))
 		}
 		return rect{fyne.NewPos(x, y), fyne.NewPos(width, height)}
 	}
-	shift := (1 - s.progress) * 12
+	shift := (1 - dialog.progress) * 12
 	return rect{fyne.NewPos((size.Width-width)/2, (size.Height-height)*0.42+shift), fyne.NewPos(width, height)}
 }
 
-func (s *sheet) CreateRenderer() fyne.WidgetRenderer {
-	s.dim = canvas.NewRectangle(color.Transparent)
-	s.panel = canvas.NewRectangle(colSurface)
-	s.panel.StrokeWidth = 1
-	s.shadow = newShadow(2.4)
-	return &sheetRenderer{s}
+func (dialog *sheet) CreateRenderer() fyne.WidgetRenderer {
+	dialog.dim = canvas.NewRectangle(color.Transparent)
+	dialog.panel = canvas.NewRectangle(colSurface)
+	dialog.panel.StrokeWidth = 1
+	dialog.shadow = newShadow(2.4)
+	return &sheetRenderer{dialog}
 }
 
-type sheetRenderer struct{ s *sheet }
+type sheetRenderer struct{ dialog *sheet }
 
-func (r *sheetRenderer) Layout(size fyne.Size) {
-	s := r.s
-	s.dim.Resize(size)
-	box := s.panelRect()
+func (renderer *sheetRenderer) Layout(size fyne.Size) {
+	sheet := renderer.dialog
+	sheet.dim.Resize(size)
+	box := sheet.panelRect()
 	panelPos, panelSize := box.pos, fyne.NewSize(box.size.X, box.size.Y)
-	if s.menu {
+	if sheet.menu {
 		// zoom-in-95 from the side facing the trigger, like web popovers
-		k := 0.95 + 0.05*s.progress
+		k := 0.95 + 0.05*sheet.progress
 		w, h := panelSize.Width*k, panelSize.Height*k
 		originY := box.pos.Y
-		if s.anchor != nil && box.pos.Y < s.anchorAt.Y {
+		if sheet.anchor != nil && box.pos.Y < sheet.anchorAt.Y {
 			originY = box.pos.Y + panelSize.Height // menu above its trigger grows upward
 		}
 		panelPos = fyne.NewPos(box.pos.X+(panelSize.Width-w)/2, originY+(box.pos.Y-originY)*k)
 		panelSize = fyne.NewSize(w, h)
 	}
-	s.panel.Move(panelPos)
-	s.panel.Resize(panelSize)
-	s.shadow.layout(panelPos.AddXY(0, 2), panelSize, s.panel.CornerRadius)
-	pad := s.pad()
-	s.content.Move(box.pos.AddXY(pad, pad))
-	s.content.Resize(fyne.NewSize(box.size.X-2*pad, box.size.Y-2*pad))
+	sheet.panel.Move(panelPos)
+	sheet.panel.Resize(panelSize)
+	sheet.shadow.layout(panelPos.AddXY(0, 2), panelSize, sheet.panel.CornerRadius)
+	pad := sheet.pad()
+	sheet.content.Move(box.pos.AddXY(pad, pad))
+	sheet.content.Resize(fyne.NewSize(box.size.X-2*pad, box.size.Y-2*pad))
 }
 
-func (r *sheetRenderer) MinSize() fyne.Size { return fyne.NewSize(0, 0) }
+func (renderer *sheetRenderer) MinSize() fyne.Size { return fyne.NewSize(0, 0) }
 
 func withAlpha(c color.NRGBA, o float32) color.NRGBA {
 	c.A = uint8(float32(c.A) * o)
 	return c
 }
 
-func (r *sheetRenderer) Refresh() {
-	s := r.s
-	o := s.progress
-	if s.menu {
+func (renderer *sheetRenderer) Refresh() {
+	sheet := renderer.dialog
+	o := sheet.progress
+	if sheet.menu {
 		// Menus fade as one surface: panel, shadow and every item.
-		s.dim.FillColor = color.Transparent
-		s.panel.FillColor = withAlpha(colPopover, o)
-		s.panel.StrokeColor = withAlpha(colPopBorder, o)
-		s.panel.CornerRadius = 10
-		if s.columns {
-			s.panel.FillColor = withAlpha(colSurface, o)
-			s.panel.StrokeColor = withAlpha(colBorder, o)
-			s.panel.CornerRadius = 14
+		sheet.dim.FillColor = color.Transparent
+		sheet.panel.FillColor = withAlpha(colPopover, o)
+		sheet.panel.StrokeColor = withAlpha(colPopBorder, o)
+		sheet.panel.CornerRadius = 10
+		if sheet.columns {
+			sheet.panel.FillColor = withAlpha(colSurface, o)
+			sheet.panel.StrokeColor = withAlpha(colBorder, o)
+			sheet.panel.CornerRadius = 14
 		}
-		s.shadow.setOpacity(o)
+		sheet.shadow.setOpacity(o)
 		// Items follow the surface slightly later, so the panel leads.
 		itemAlpha := fyne.Min(1, fyne.Max(0, (o-0.25)/0.75))
-		for _, item := range s.items {
+		for _, item := range sheet.items {
 			if item.alpha != itemAlpha {
 				item.alpha = itemAlpha
 				item.Refresh()
 			}
 		}
 	} else {
-		s.dim.FillColor = color.NRGBA{A: uint8(150 * o)}
-		s.panel.FillColor = colSurface
-		s.panel.StrokeColor = colBorder
-		s.panel.CornerRadius = 14
-		s.shadow.setOpacity(1)
+		sheet.dim.FillColor = color.NRGBA{A: uint8(150 * o)}
+		sheet.panel.FillColor = colSurface
+		sheet.panel.StrokeColor = colBorder
+		sheet.panel.CornerRadius = 14
+		sheet.shadow.setOpacity(1)
 	}
 	// Moving the content is enough to repaint it: refreshing the whole dialog
 	// tree on every animation frame is what made it heavy.
-	r.Layout(s.Size())
-	s.dim.Refresh()
-	s.shadow.refresh()
-	s.panel.Refresh()
+	renderer.Layout(sheet.Size())
+	sheet.dim.Refresh()
+	sheet.shadow.refresh()
+	sheet.panel.Refresh()
 }
 
-func (r *sheetRenderer) Objects() []fyne.CanvasObject {
-	objects := []fyne.CanvasObject{r.s.dim}
-	objects = append(objects, r.s.shadow.objects()...)
-	objects = append(objects, r.s.panel, r.s.content)
+func (renderer *sheetRenderer) Objects() []fyne.CanvasObject {
+	objects := []fyne.CanvasObject{renderer.dialog.dim}
+	objects = append(objects, renderer.dialog.shadow.objects()...)
+	objects = append(objects, renderer.dialog.panel, renderer.dialog.content)
 	return objects
 }
 
-func (r *sheetRenderer) Destroy() {}
+func (renderer *sheetRenderer) Destroy() {}
 
 // ---------------------------------------------------------------------------
 // picker: compact replacement for widget.Select with a web-style popover.
@@ -1147,40 +1147,40 @@ type picker struct {
 }
 
 func newPicker(window fyne.Window, placeholder string, style rowStyle, onChanged func(string)) *picker {
-	p := &picker{placeholder: placeholder, onChanged: onChanged, window: window}
-	p.row = newRow(placeholder, iconChevron, style, p.toggle)
-	p.row.iconAfter = true
-	return p
+	pickerControl := &picker{placeholder: placeholder, onChanged: onChanged, window: window}
+	pickerControl.row = newRow(placeholder, iconChevron, style, pickerControl.toggle)
+	pickerControl.row.iconAfter = true
+	return pickerControl
 }
 
-func (p *picker) toggle() {
-	if p.open != nil {
-		p.open.dismiss()
+func (pickerControl *picker) toggle() {
+	if pickerControl.open != nil {
+		pickerControl.open.dismiss()
 		return
 	}
-	p.show()
+	pickerControl.show()
 }
 
-func (p *picker) setOpen(open bool) {
-	p.row.selected = open
-	p.row.icon = iconChevron
+func (pickerControl *picker) setOpen(open bool) {
+	pickerControl.row.selected = open
+	pickerControl.row.icon = iconChevron
 	if open {
-		p.row.icon = iconChevronUp
+		pickerControl.row.icon = iconChevronUp
 	}
-	p.row.Refresh()
+	pickerControl.row.Refresh()
 }
 
-func (p *picker) show() {
-	if len(p.Options) == 0 {
+func (pickerControl *picker) show() {
+	if len(pickerControl.Options) == 0 {
 		return
 	}
 	list := container.New(layout.NewCustomPaddedVBoxLayout(2))
 	var menu *sheet
 	var items []*tapRow
-	for _, option := range p.Options {
+	for _, option := range pickerControl.Options {
 		option := option
 		var icon fyne.Resource = blankIcon
-		if option == p.Selected {
+		if option == pickerControl.Selected {
 			icon = iconCheck
 		}
 		item := newRow(option, icon, styleMenu, func() {
@@ -1188,69 +1188,69 @@ func (p *picker) show() {
 				return
 			}
 			menu.close()
-			p.SetSelected(option)
+			pickerControl.SetSelected(option)
 		})
-		item.selected = option == p.Selected
-		item.detail = p.Details[option]
+		item.selected = option == pickerControl.Selected
+		item.detail = pickerControl.Details[option]
 		item.alpha = 0
 		items = append(items, item)
 		list.Add(item)
 	}
 	var content fyne.CanvasObject = list
-	if len(p.Options) > 9 {
+	if len(pickerControl.Options) > 9 {
 		scroll := newKineticVScroll(list)
 		scroll.SetMinSize(fyne.NewSize(list.MinSize().Width, 9*list.Objects[0].MinSize().Height))
 		content = scroll
 	}
 	width := fyne.Max(content.MinSize().Width+10, 200)
-	menu = newSheet(p.window.Canvas(), content, width)
+	menu = newSheet(pickerControl.window.Canvas(), content, width)
 	menu.menu = true
-	menu.anchor = p.row
+	menu.anchor = pickerControl.row
 	menu.items = items
-	if p.row.style == styleField {
+	if pickerControl.row.style == styleField {
 		// A field opens a list as wide as itself, like a web <select>.
-		menu.width = fyne.Max(p.row.Size().Width, width)
+		menu.width = fyne.Max(pickerControl.row.Size().Width, width)
 		menu.alignLeft = true
 	}
-	for i, option := range p.Options {
-		if option == p.Selected {
+	for i, option := range pickerControl.Options {
+		if option == pickerControl.Selected {
 			menu.active = i
 		}
 	}
 	menu.onClosed = func() {
-		if p.open == menu {
-			p.open = nil
-			p.setOpen(false)
+		if pickerControl.open == menu {
+			pickerControl.open = nil
+			pickerControl.setOpen(false)
 		}
 	}
-	p.open = menu
-	p.setOpen(true)
+	pickerControl.open = menu
+	pickerControl.setOpen(true)
 	menu.Show()
-	p.window.Canvas().Focus(menu)
+	pickerControl.window.Canvas().Focus(menu)
 }
 
-func (p *picker) refresh() {
-	text := p.Selected
+func (pickerControl *picker) refresh() {
+	text := pickerControl.Selected
 	if text == "" {
-		text = p.placeholder
+		text = pickerControl.placeholder
 	}
-	p.row.SetText(text)
-	if p.relayout != nil {
-		p.relayout() // the label width changed, so the parent row must re-measure
-	}
-}
-
-func (p *picker) SetSelected(option string) {
-	p.Selected = option
-	p.refresh()
-	if p.onChanged != nil {
-		p.onChanged(option)
+	pickerControl.row.SetText(text)
+	if pickerControl.relayout != nil {
+		pickerControl.relayout() // the label width changed, so the parent row must re-measure
 	}
 }
 
-func (p *picker) ClearSelected() { p.Selected = ""; p.refresh() }
-func (p *picker) Disable()       { p.row.Disable() }
-func (p *picker) Enable()        { p.row.Enable() }
+func (pickerControl *picker) SetSelected(option string) {
+	pickerControl.Selected = option
+	pickerControl.refresh()
+	if pickerControl.onChanged != nil {
+		pickerControl.onChanged(option)
+	}
+}
+
+func (pickerControl *picker) ClearSelected() { pickerControl.Selected = ""; pickerControl.refresh() }
+func (pickerControl *picker) Disable()       { pickerControl.row.Disable() }
+func (pickerControl *picker) Enable()        { pickerControl.row.Enable() }
 
 // hoverArea reports when the pointer enters or leaves its content, like a CSS
 // :hover on a block; it does not take clicks.
@@ -1261,25 +1261,27 @@ type hoverArea struct {
 }
 
 func newHoverArea(content fyne.CanvasObject, onHover func(bool)) *hoverArea {
-	h := &hoverArea{content: content, onHover: onHover}
-	h.ExtendBaseWidget(h)
-	return h
+	area := &hoverArea{content: content, onHover: onHover}
+	area.ExtendBaseWidget(area)
+	return area
 }
 
-func (h *hoverArea) CreateRenderer() fyne.WidgetRenderer { return widget.NewSimpleRenderer(h.content) }
-func (h *hoverArea) MouseIn(*desktop.MouseEvent)         { h.onHover(true) }
-func (h *hoverArea) MouseMoved(*desktop.MouseEvent)      {}
-func (h *hoverArea) MouseOut()                           { h.onHover(false) }
+func (area *hoverArea) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(area.content)
+}
+func (area *hoverArea) MouseIn(*desktop.MouseEvent)    { area.onHover(true) }
+func (area *hoverArea) MouseMoved(*desktop.MouseEvent) {}
+func (area *hoverArea) MouseOut()                      { area.onHover(false) }
 
 // fadeRow animates a row's opacity (hover-revealed actions).
-func fadeRow(r *tapRow, to float32, anim **fyne.Animation) {
+func fadeRow(row *tapRow, to float32, anim **fyne.Animation) {
 	if *anim != nil {
 		(*anim).Stop()
 	}
-	from := r.alpha
+	from := row.alpha
 	*anim = fyne.NewAnimation(140*time.Millisecond, func(p float32) {
-		r.alpha = from + (to-from)*p
-		r.Refresh()
+		row.alpha = from + (to-from)*p
+		row.Refresh()
 	})
 	(*anim).Curve = fyne.AnimationEaseOut
 	(*anim).Start()
@@ -1352,88 +1354,88 @@ type tipLayer struct {
 }
 
 func newTipLayer() *tipLayer {
-	t := &tipLayer{bg: canvas.NewRectangle(colRaised)}
-	t.bg.CornerRadius = 8
-	t.bg.StrokeColor = colPopBorder
-	t.bg.StrokeWidth = 1
-	t.layer = container.NewWithoutLayout(t.bg)
-	t.layer.Hide()
-	return t
+	tooltip := &tipLayer{bg: canvas.NewRectangle(colRaised)}
+	tooltip.bg.CornerRadius = 8
+	tooltip.bg.StrokeColor = colPopBorder
+	tooltip.bg.StrokeWidth = 1
+	tooltip.layer = container.NewWithoutLayout(tooltip.bg)
+	tooltip.layer.Hide()
+	return tooltip
 }
 
 // show displays text (one hint per line) above anchor after a short delay,
 // like a web tooltip.
-func (t *tipLayer) show(anchor fyne.CanvasObject, text string) {
-	if t.delay != nil {
-		t.delay.Stop()
+func (tooltip *tipLayer) show(anchor fyne.CanvasObject, text string) {
+	if tooltip.delay != nil {
+		tooltip.delay.Stop()
 	}
-	t.delay = time.AfterFunc(220*time.Millisecond, func() {
-		fyne.Do(func() { t.place(anchor, text) })
+	tooltip.delay = time.AfterFunc(220*time.Millisecond, func() {
+		fyne.Do(func() { tooltip.place(anchor, text) })
 	})
 }
 
-func (t *tipLayer) place(anchor fyne.CanvasObject, text string) {
-	t.bg.Move(fyne.NewPos(0, 0))
-	t.anchor = anchor
-	t.layer.Objects = []fyne.CanvasObject{t.bg}
-	t.lines = nil
+func (tooltip *tipLayer) place(anchor fyne.CanvasObject, text string) {
+	tooltip.bg.Move(fyne.NewPos(0, 0))
+	tooltip.anchor = anchor
+	tooltip.layer.Objects = []fyne.CanvasObject{tooltip.bg}
+	tooltip.lines = nil
 	width, height := float32(0), float32(0)
 	for i, line := range strings.Split(text, "\n") {
 		ink := colText
 		if i > 0 {
 			ink = colMuted
 		}
-		label := textLine(line, 12.5, withAlpha(ink, quantize(t.alpha, 4))) // the fade brings it up
+		label := textLine(line, 12.5, withAlpha(ink, quantize(tooltip.alpha, 4))) // the fade brings it up
 		size := label.MinSize()
 		label.Move(fyne.NewPos(10, 6+height))
 		width = fyne.Max(width, size.Width)
 		height += size.Height
-		t.lines = append(t.lines, label)
-		t.layer.Objects = append(t.layer.Objects, label)
+		tooltip.lines = append(tooltip.lines, label)
+		tooltip.layer.Objects = append(tooltip.layer.Objects, label)
 	}
 	box := fyne.NewSize(width+20, height+12)
 	at := fyne.CurrentApp().Driver().AbsolutePositionForObject(anchor)
-	origin := fyne.CurrentApp().Driver().AbsolutePositionForObject(t.layer)
-	limit := t.layer.Size()
+	origin := fyne.CurrentApp().Driver().AbsolutePositionForObject(tooltip.layer)
+	limit := tooltip.layer.Size()
 	x := at.X - origin.X + (anchor.Size().Width-box.Width)/2
 	x = fyne.Max(8, fyne.Min(x, limit.Width-box.Width-8))
 	y := at.Y - origin.Y - box.Height - 8
 	if y < 8 {
 		y = at.Y - origin.Y + anchor.Size().Height + 8
 	}
-	t.bg.Resize(box)
-	for _, o := range t.layer.Objects {
-		o.Move(o.Position().AddXY(x, y))
+	tooltip.bg.Resize(box)
+	for _, object := range tooltip.layer.Objects {
+		object.Move(object.Position().AddXY(x, y))
 	}
-	t.layer.Show()
-	t.fade(1)
+	tooltip.layer.Show()
+	tooltip.fade(1)
 }
 
-func (t *tipLayer) hide() {
-	if t.delay != nil {
-		t.delay.Stop()
-		t.delay = nil
+func (tooltip *tipLayer) hide() {
+	if tooltip.delay != nil {
+		tooltip.delay.Stop()
+		tooltip.delay = nil
 	}
-	t.anchor = nil
-	if t.layer.Visible() {
-		t.fade(0)
+	tooltip.anchor = nil
+	if tooltip.layer.Visible() {
+		tooltip.fade(0)
 	}
 }
 
 // fade eases the hint in or out; text alpha moves in a few steps because
 // Fyne rasterises one glyph texture per colour.
-func (t *tipLayer) fade(to float32) {
-	if t.anim != nil {
-		t.anim.Stop()
+func (tooltip *tipLayer) fade(to float32) {
+	if tooltip.anim != nil {
+		tooltip.anim.Stop()
 	}
-	from := t.alpha
-	t.anim = fyne.NewAnimation(120*time.Millisecond, func(p float32) {
-		t.alpha = from + (to-from)*p
-		t.bg.FillColor = withAlpha(colRaised, t.alpha)
-		t.bg.StrokeColor = withAlpha(colPopBorder, t.alpha)
-		t.bg.Refresh()
-		step := quantize(t.alpha, 4)
-		for i, line := range t.lines {
+	from := tooltip.alpha
+	tooltip.anim = fyne.NewAnimation(120*time.Millisecond, func(p float32) {
+		tooltip.alpha = from + (to-from)*p
+		tooltip.bg.FillColor = withAlpha(colRaised, tooltip.alpha)
+		tooltip.bg.StrokeColor = withAlpha(colPopBorder, tooltip.alpha)
+		tooltip.bg.Refresh()
+		step := quantize(tooltip.alpha, 4)
+		for i, line := range tooltip.lines {
 			ink := colText
 			if i > 0 {
 				ink = colMuted
@@ -1444,11 +1446,11 @@ func (t *tipLayer) fade(to float32) {
 			}
 		}
 		if p >= 1 && to == 0 {
-			t.layer.Hide()
+			tooltip.layer.Hide()
 		}
 	})
-	t.anim.Curve = fyne.AnimationEaseOut
-	t.anim.Start()
+	tooltip.anim.Curve = fyne.AnimationEaseOut
+	tooltip.anim.Start()
 }
 
 // ---------------------------------------------------------------------------
@@ -1461,29 +1463,29 @@ type dragArea struct {
 	at     fyne.Position
 }
 
-func newDragArea(w fyne.Window) *dragArea {
-	d := &dragArea{window: w}
-	d.ExtendBaseWidget(d)
-	return d
+func newDragArea(window fyne.Window) *dragArea {
+	area := &dragArea{window: window}
+	area.ExtendBaseWidget(area)
+	return area
 }
 
-func (d *dragArea) MouseDown(e *desktop.MouseEvent) {
+func (area *dragArea) MouseDown(e *desktop.MouseEvent) {
 	if e.Button != desktop.MouseButtonPrimary {
 		return
 	}
-	near := e.AbsolutePosition.Subtract(d.at)
-	if time.Since(d.last) < 400*time.Millisecond && near.X*near.X+near.Y*near.Y < 36 {
-		d.last = time.Time{}
-		windowToggleMaximize(d.window)
+	near := e.AbsolutePosition.Subtract(area.at)
+	if time.Since(area.last) < 400*time.Millisecond && near.X*near.X+near.Y*near.Y < 36 {
+		area.last = time.Time{}
+		windowToggleMaximize(area.window)
 		return
 	}
-	d.last, d.at = time.Now(), e.AbsolutePosition
-	windowMoveResize(d.window, edgeMove)
+	area.last, area.at = time.Now(), e.AbsolutePosition
+	windowMoveResize(area.window, edgeMove)
 }
 
-func (d *dragArea) MouseUp(*desktop.MouseEvent) {}
+func (area *dragArea) MouseUp(*desktop.MouseEvent) {}
 
-func (d *dragArea) CreateRenderer() fyne.WidgetRenderer {
+func (area *dragArea) CreateRenderer() fyne.WidgetRenderer {
 	return widget.NewSimpleRenderer(canvas.NewRectangle(color.Transparent))
 }
 
@@ -1493,31 +1495,31 @@ type resizeEdge struct {
 	direction int
 }
 
-func (e *resizeEdge) MouseDown(m *desktop.MouseEvent) {
+func (edge *resizeEdge) MouseDown(m *desktop.MouseEvent) {
 	if m.Button == desktop.MouseButtonPrimary {
-		windowMoveResize(e.window, e.direction)
+		windowMoveResize(edge.window, edge.direction)
 	}
 }
-func (e *resizeEdge) MouseUp(*desktop.MouseEvent) {}
+func (edge *resizeEdge) MouseUp(*desktop.MouseEvent) {}
 
-func (e *resizeEdge) Cursor() desktop.Cursor {
-	switch e.direction {
+func (edge *resizeEdge) Cursor() desktop.Cursor {
+	switch edge.direction {
 	case edgeLeft, edgeRight:
 		return desktop.HResizeCursor
 	}
 	return desktop.VResizeCursor
 }
 
-func (e *resizeEdge) CreateRenderer() fyne.WidgetRenderer {
+func (edge *resizeEdge) CreateRenderer() fyne.WidgetRenderer {
 	return widget.NewSimpleRenderer(canvas.NewRectangle(color.Transparent))
 }
 
 type edgesLayout struct{ thickness float32 }
 
-func (l edgesLayout) MinSize([]fyne.CanvasObject) fyne.Size { return fyne.Size{} }
+func (layoutSpec edgesLayout) MinSize([]fyne.CanvasObject) fyne.Size { return fyne.Size{} }
 
-func (l edgesLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	t, c := l.thickness, l.thickness*2
+func (layoutSpec edgesLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	t, c := layoutSpec.thickness, layoutSpec.thickness*2
 	frames := map[int][2]fyne.Position{
 		edgeTop:         {fyne.NewPos(c, 0), fyne.NewPos(size.Width-2*c, t)},
 		edgeBottom:      {fyne.NewPos(c, size.Height-t), fyne.NewPos(size.Width-2*c, t)},
@@ -1535,19 +1537,19 @@ func (l edgesLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	}
 }
 
-func resizeEdges(w fyne.Window) fyne.CanvasObject {
+func resizeEdges(window fyne.Window) fyne.CanvasObject {
 	edges := container.New(edgesLayout{thickness: 4})
 	for _, direction := range []int{edgeTop, edgeBottom, edgeLeft, edgeRight, edgeTopLeft, edgeTopRight, edgeBottomLeft, edgeBottomRight} {
-		e := &resizeEdge{window: w, direction: direction}
-		e.ExtendBaseWidget(e)
-		edges.Add(e)
+		edge := &resizeEdge{window: window, direction: direction}
+		edge.ExtendBaseWidget(edge)
+		edges.Add(edge)
 	}
 	return edges
 }
 
-func windowControls(w fyne.Window, quit func()) fyne.CanvasObject {
-	minimize := newRow("", iconMinimize, styleWindow, func() { windowMinimize(w) })
-	maximize := newRow("", iconMaximize, styleWindow, func() { windowToggleMaximize(w) })
+func windowControls(window fyne.Window, quit func()) fyne.CanvasObject {
+	minimize := newRow("", iconMinimize, styleWindow, func() { windowMinimize(window) })
+	maximize := newRow("", iconMaximize, styleWindow, func() { windowToggleMaximize(window) })
 	closeButton := newRow("", iconClose, styleWindow, quit)
 	closeButton.hoverFill = colClose
 	return container.New(layout.NewCustomPaddedHBoxLayout(2), minimize, maximize, closeButton)

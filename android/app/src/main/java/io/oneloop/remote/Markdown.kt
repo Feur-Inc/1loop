@@ -79,9 +79,9 @@ private fun parse(markdown: String): List<Block> {
             }
             listMarker.matches(line) -> {
                 flush()
-                val m = listMarker.find(line)!!
-                val marker = m.groupValues[2].let { if (it in listOf("-", "*", "+")) "•" else it }
-                blocks.add(Block.ListItem(marker, m.groupValues[3], m.groupValues[1].length / 2))
+                val match = listMarker.find(line)!!
+                val marker = match.groupValues[2].let { if (it in listOf("-", "*", "+")) "•" else it }
+                blocks.add(Block.ListItem(marker, match.groupValues[3], match.groupValues[1].length / 2))
             }
             else -> paragraph.add(trimmed)
         }

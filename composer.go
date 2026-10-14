@@ -48,90 +48,90 @@ type chatEntry struct {
 const promptMaxRows = 10
 
 func newChatEntry() *chatEntry {
-	e := &chatEntry{rows: 1, measure: widget.NewRichTextWithText("")}
-	e.measure.Wrapping = fyne.TextWrapWord
-	e.MultiLine = true
-	e.Wrapping = fyne.TextWrapWord
-	e.ExtendBaseWidget(e)
-	e.SetMinRowsVisible(1)
-	e.OnChanged = func(string) { e.fit() }
-	return e
+	entry := &chatEntry{rows: 1, measure: widget.NewRichTextWithText("")}
+	entry.measure.Wrapping = fyne.TextWrapWord
+	entry.MultiLine = true
+	entry.Wrapping = fyne.TextWrapWord
+	entry.ExtendBaseWidget(entry)
+	entry.SetMinRowsVisible(1)
+	entry.OnChanged = func(string) { entry.fit() }
+	return entry
 }
 
 // fit sizes the entry to its wrapped text so the composer grows as the
 // prompt does, then scrolls past promptMaxRows.
-func (e *chatEntry) fit() {
-	if e.fitting || e.Size().Width <= 0 {
+func (entry *chatEntry) fit() {
+	if entry.fitting || entry.Size().Width <= 0 {
 		return
 	}
-	e.fitting = true
-	defer func() { e.fitting = false }()
-	th := e.Theme()
-	width := e.Size().Width - 2*th.Size(theme.SizeNameInputBorder)
-	segment := e.measure.Segments[0].(*widget.TextSegment)
-	segment.Text = e.Text
-	segment.Style.TextStyle = e.TextStyle
-	e.measure.Refresh()
-	e.measure.Resize(fyne.NewSize(width, 1))
-	line := fyne.MeasureText("M", th.Size(theme.SizeNameText), e.TextStyle).Height
-	rows := max(1, min(promptMaxRows, int(math.Round(float64((e.measure.MinSize().Height-2*th.Size(theme.SizeNameInnerPadding))/line)))))
-	if rows != e.rows {
-		e.rows = rows
-		e.SetMinRowsVisible(rows)
-		if e.resized != nil {
-			e.resized()
+	entry.fitting = true
+	defer func() { entry.fitting = false }()
+	th := entry.Theme()
+	width := entry.Size().Width - 2*th.Size(theme.SizeNameInputBorder)
+	segment := entry.measure.Segments[0].(*widget.TextSegment)
+	segment.Text = entry.Text
+	segment.Style.TextStyle = entry.TextStyle
+	entry.measure.Refresh()
+	entry.measure.Resize(fyne.NewSize(width, 1))
+	line := fyne.MeasureText("M", th.Size(theme.SizeNameText), entry.TextStyle).Height
+	rows := max(1, min(promptMaxRows, int(math.Round(float64((entry.measure.MinSize().Height-2*th.Size(theme.SizeNameInnerPadding))/line)))))
+	if rows != entry.rows {
+		entry.rows = rows
+		entry.SetMinRowsVisible(rows)
+		if entry.resized != nil {
+			entry.resized()
 		}
 	}
 }
 
-func (e *chatEntry) Resize(size fyne.Size) {
-	e.Entry.Resize(size)
-	e.fit()
+func (entry *chatEntry) Resize(size fyne.Size) {
+	entry.Entry.Resize(size)
+	entry.fit()
 }
 
 // The composer card shows focus itself, so the entry's own outline is hidden.
 // Its width cannot be themed to zero: Fyne sizes the text cursor with it.
-func (e *chatEntry) CreateRenderer() fyne.WidgetRenderer {
-	return &borderlessRenderer{WidgetRenderer: e.Entry.CreateRenderer()}
+func (entry *chatEntry) CreateRenderer() fyne.WidgetRenderer {
+	return &borderlessRenderer{WidgetRenderer: entry.Entry.CreateRenderer()}
 }
 
 type borderlessRenderer struct{ fyne.WidgetRenderer }
 
-func (r *borderlessRenderer) hide() {
-	for _, o := range r.WidgetRenderer.Objects() {
-		if rect, ok := o.(*canvas.Rectangle); ok && rect.StrokeWidth > 0 {
+func (renderer *borderlessRenderer) hide() {
+	for _, object := range renderer.WidgetRenderer.Objects() {
+		if rect, ok := object.(*canvas.Rectangle); ok && rect.StrokeWidth > 0 {
 			rect.StrokeColor = color.Transparent
 		}
 	}
 }
 
-func (r *borderlessRenderer) Refresh() { r.WidgetRenderer.Refresh(); r.hide() }
-func (r *borderlessRenderer) Layout(size fyne.Size) {
-	r.WidgetRenderer.Layout(size)
-	r.hide()
+func (renderer *borderlessRenderer) Refresh() { renderer.WidgetRenderer.Refresh(); renderer.hide() }
+func (renderer *borderlessRenderer) Layout(size fyne.Size) {
+	renderer.WidgetRenderer.Layout(size)
+	renderer.hide()
 }
 
 // App shortcuts must work while typing: Fyne hands every shortcut to the
 // focused entry, which ignores the ones it does not know. Ctrl+Enter also
 // arrives here, as a shortcut rather than a key.
-func (e *chatEntry) TypedShortcut(s fyne.Shortcut) {
+func (entry *chatEntry) TypedShortcut(s fyne.Shortcut) {
 	if c, ok := s.(*desktop.CustomShortcut); ok && c.Modifier == fyne.KeyModifierControl &&
 		(c.KeyName == fyne.KeyReturn || c.KeyName == fyne.KeyEnter) {
-		e.steer()
+		entry.steer()
 		return
 	}
-	if _, ok := s.(*fyne.ShortcutPaste); ok && e.paste != nil && e.paste() {
+	if _, ok := s.(*fyne.ShortcutPaste); ok && entry.paste != nil && entry.paste() {
 		return // an image was staged as an attachment
 	}
-	if e.shortcut != nil && e.shortcut(s) {
+	if entry.shortcut != nil && entry.shortcut(s) {
 		return
 	}
-	e.Entry.TypedShortcut(s)
+	entry.Entry.TypedShortcut(s)
 }
 
-func (e *chatEntry) TypedKey(key *fyne.KeyEvent) {
-	if key.Name == fyne.KeyEscape && e.escape != nil {
-		e.escape()
+func (entry *chatEntry) TypedKey(key *fyne.KeyEvent) {
+	if key.Name == fyne.KeyEscape && entry.escape != nil {
+		entry.escape()
 		return
 	}
 	if key.Name == fyne.KeyReturn || key.Name == fyne.KeyEnter {
@@ -140,24 +140,24 @@ func (e *chatEntry) TypedKey(key *fyne.KeyEvent) {
 			shift = driver.CurrentKeyModifiers()&fyne.KeyModifierShift != 0
 		}
 		if !shift {
-			e.send()
+			entry.send()
 			return
 		}
 	}
-	e.Entry.TypedKey(key) // Shift+Enter: a new line
+	entry.Entry.TypedKey(key) // Shift+Enter: a new line
 }
 
-func (e *chatEntry) FocusGained() {
-	e.Entry.FocusGained()
-	if e.onFocus != nil {
-		e.onFocus(true)
+func (entry *chatEntry) FocusGained() {
+	entry.Entry.FocusGained()
+	if entry.onFocus != nil {
+		entry.onFocus(true)
 	}
 }
 
-func (e *chatEntry) FocusLost() {
-	e.Entry.FocusLost()
-	if e.onFocus != nil {
-		e.onFocus(false)
+func (entry *chatEntry) FocusLost() {
+	entry.Entry.FocusLost()
+	if entry.onFocus != nil {
+		entry.onFocus(false)
 	}
 }
 
@@ -165,24 +165,24 @@ func (e *chatEntry) FocusLost() {
 // side panel is open. The split supplies the available width before sizing.
 type composerControlsLayout struct{ available float32 }
 
-func (l *composerControlsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
-	a, b := o[0].MinSize(), o[1].MinSize()
-	if l.available > 0 && a.Width+b.Width+8 > l.available {
-		return fyne.NewSize(fyne.Max(a.Width, b.Width), a.Height+b.Height+4)
+func (layoutSpec *composerControlsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
+	size, sizeValue := o[0].MinSize(), o[1].MinSize()
+	if layoutSpec.available > 0 && size.Width+sizeValue.Width+8 > layoutSpec.available {
+		return fyne.NewSize(fyne.Max(size.Width, sizeValue.Width), size.Height+sizeValue.Height+4)
 	}
-	return fyne.NewSize(a.Width+b.Width+8, fyne.Max(a.Height, b.Height))
+	return fyne.NewSize(size.Width+sizeValue.Width+8, fyne.Max(size.Height, sizeValue.Height))
 }
 
-func (l *composerControlsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
-	a, b := o[0].MinSize(), o[1].MinSize()
+func (layoutSpec *composerControlsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
+	sizeValue, b := o[0].MinSize(), o[1].MinSize()
 	y := (size.Height - b.Height) / 2
-	if a.Width+b.Width+8 > size.Width {
+	if sizeValue.Width+b.Width+8 > size.Width {
 		o[0].Move(fyne.NewPos(0, 0))
-		y = a.Height + 4
+		y = sizeValue.Height + 4
 	} else {
-		o[0].Move(fyne.NewPos(0, (size.Height-a.Height)/2))
+		o[0].Move(fyne.NewPos(0, (size.Height-sizeValue.Height)/2))
 	}
-	o[0].Resize(a)
+	o[0].Resize(sizeValue)
 	o[1].Move(fyne.NewPos(fyne.Max(0, size.Width-b.Width), y))
 	o[1].Resize(b)
 }
@@ -258,48 +258,48 @@ func decodeImage(raw []byte) (*image.NRGBA, error) {
 // pasteFromClipboard stages an image from the system clipboard as an
 // attachment. It reports true when it handled the key; a text-only
 // clipboard is left to the entry's own paste so Ctrl+V behaves normally.
-func (u *desktopUI) pasteFromClipboard() bool {
+func (ui *desktopUI) pasteFromClipboard() bool {
 	raw, err := imageClipboardData()
 	if err != nil {
 		return false
 	}
 	img, err := decodeImage(raw)
 	if err != nil {
-		u.notice("Paste", err.Error())
+		ui.notice("Paste", err.Error())
 		return true
 	}
-	u.attachImage(img)
+	ui.attachImage(img)
 	return true
 }
 
 // pickImages attaches pictures chosen in the desktop's file chooser.
-func (u *desktopUI) pickImages() {
-	u.pick(pickRequest{title: "Attach images", start: u.cfg.Workspace, multiple: true, filterName: "Images",
+func (ui *desktopUI) pickImages() {
+	ui.pick(pickRequest{title: "Attach images", start: ui.cfg.Workspace, multiple: true, filterName: "Images",
 		extensions: []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}}, func(paths []string) {
 		for _, path := range paths {
-			f, err := os.Open(path)
+			file, err := os.Open(path)
 			if err != nil {
-				u.notice("Image", err.Error())
+				ui.notice("Image", err.Error())
 				continue
 			}
-			raw, err := io.ReadAll(io.LimitReader(f, 25<<20))
-			f.Close()
+			raw, err := io.ReadAll(io.LimitReader(file, 25<<20))
+			file.Close()
 			if err != nil {
-				u.notice("Image", err.Error())
+				ui.notice("Image", err.Error())
 				continue
 			}
 			img, err := decodeImage(raw)
 			if err != nil {
-				u.notice("Image", path+": "+err.Error())
+				ui.notice("Image", path+": "+err.Error())
 				continue
 			}
-			u.attachImage(img)
+			ui.attachImage(img)
 		}
 	})
 }
 
 // attachImage keeps a picture, as PNG, until the next message.
-func (u *desktopUI) attachImage(img *image.NRGBA) {
+func (ui *desktopUI) attachImage(img *image.NRGBA) {
 	bounds := img.Bounds()
 	// Big pictures cost tokens: cap the longest side at 1536 px.
 	if side := fyne.Max(float32(bounds.Dx()), float32(bounds.Dy())); side > 1536 {
@@ -311,25 +311,25 @@ func (u *desktopUI) attachImage(img *image.NRGBA) {
 	}
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
-		u.notice("Image", err.Error())
+		ui.notice("Image", err.Error())
 		return
 	}
-	u.attachments = append(u.attachments, ImagePart{Mime: "image/png", Data: base64.StdEncoding.EncodeToString(buf.Bytes())})
-	u.renderAttachments()
+	ui.attachments = append(ui.attachments, ImagePart{Mime: "image/png", Data: base64.StdEncoding.EncodeToString(buf.Bytes())})
+	ui.renderAttachments()
 }
 
-func (u *desktopUI) renderAttachments() {
-	u.attachRow.RemoveAll()
-	for i, file := range u.fileAttachments {
+func (ui *desktopUI) renderAttachments() {
+	ui.attachRow.RemoveAll()
+	for i, file := range ui.fileAttachments {
 		i := i
 		remove := newRow("", iconClose, styleWindow, func() {
-			u.fileAttachments = append(u.fileAttachments[:i], u.fileAttachments[i+1:]...)
-			u.renderAttachments()
+			ui.fileAttachments = append(ui.fileAttachments[:i], ui.fileAttachments[i+1:]...)
+			ui.renderAttachments()
 		})
 		label := textLine(fitText(file.Name, 12.5, fyne.TextStyle{}, 180), 12.5, colText)
-		u.attachRow.Add(surface(container.NewHBox(label, remove), colCode, colBorderSoft, 8, 6))
+		ui.attachRow.Add(surface(container.NewHBox(label, remove), colCode, colBorderSoft, 8, 6))
 	}
-	for i, part := range u.attachments {
+	for i, part := range ui.attachments {
 		i := i
 		raw, err := base64.StdEncoding.DecodeString(part.Data)
 		if err != nil {
@@ -343,24 +343,24 @@ func (u *desktopUI) renderAttachments() {
 		view.FillMode = canvas.ImageFillContain
 		view.SetMinSize(fyne.NewSize(64, 64))
 		remove := newRow("", iconClose, styleWindow, func() {
-			u.attachments = append(u.attachments[:i], u.attachments[i+1:]...)
-			u.renderAttachments()
+			ui.attachments = append(ui.attachments[:i], ui.attachments[i+1:]...)
+			ui.renderAttachments()
 		})
-		u.attachRow.Add(container.NewStack(surface(view, colCode, colBorderSoft, 8, 0), container.NewBorder(nil, nil, nil, remove)))
+		ui.attachRow.Add(container.NewStack(surface(view, colCode, colBorderSoft, 8, 0), container.NewBorder(nil, nil, nil, remove)))
 	}
-	if len(u.attachRow.Objects) == 0 {
-		u.attachTray.Hide()
+	if len(ui.attachRow.Objects) == 0 {
+		ui.attachTray.Hide()
 	} else {
-		u.attachTray.Show()
+		ui.attachTray.Show()
 	}
 }
 
 // takeAttachments hands the staged pictures to a message and clears them.
-func (u *desktopUI) takeAttachments() []ImagePart {
-	images := u.attachments
-	u.attachments = nil
+func (ui *desktopUI) takeAttachments() []ImagePart {
+	images := ui.attachments
+	ui.attachments = nil
 	if len(images) > 0 {
-		u.renderAttachments()
+		ui.renderAttachments()
 	}
 	return images
 }
@@ -372,27 +372,27 @@ func (u *desktopUI) takeAttachments() []ImagePart {
 // tool calls). Both wait, per chat, in a tray above the composer, where they
 // can be reordered, edited in the prompt, sent at once or dropped.
 
-func (u *desktopUI) takeSteer(chat *conversation) []message {
+func (ui *desktopUI) takeSteer(chat *conversation) []message {
 	out := chat.steer
 	chat.steer = nil
 	if len(out) > 0 {
-		u.remote.metaChanged(chat)
+		ui.remote.metaChanged(chat)
 	}
-	if len(out) > 0 && chat == u.current {
-		u.renderQueue()
+	if len(out) > 0 && chat == ui.current {
+		ui.renderQueue()
 	}
 	return out
 }
 
-func (u *desktopUI) takeNext(chat *conversation) (message, bool) {
+func (ui *desktopUI) takeNext(chat *conversation) (message, bool) {
 	if len(chat.queue) == 0 {
 		return message{}, false
 	}
 	next := chat.queue[0]
 	chat.queue = chat.queue[1:]
-	u.remote.metaChanged(chat)
-	if chat == u.current {
-		u.renderQueue()
+	ui.remote.metaChanged(chat)
+	if chat == ui.current {
+		ui.renderQueue()
 	}
 	return next, true
 }
@@ -405,64 +405,64 @@ func lane(chat *conversation, steer bool) *[]message {
 	return &chat.queue
 }
 
-func (u *desktopUI) moveQueued(index, delta int) {
-	queue := u.current.queue
+func (ui *desktopUI) moveQueued(index, delta int) {
+	queue := ui.current.queue
 	to := index + delta
 	if index < 0 || to < 0 || to >= len(queue) {
 		return
 	}
 	queue[index], queue[to] = queue[to], queue[index]
-	u.renderQueue()
+	ui.renderQueue()
 }
 
-func (u *desktopUI) dropQueued(steer bool, index int) {
-	waiting := lane(u.current, steer)
+func (ui *desktopUI) dropQueued(steer bool, index int) {
+	waiting := lane(ui.current, steer)
 	if index < 0 || index >= len(*waiting) {
 		return
 	}
 	*waiting = append((*waiting)[:index], (*waiting)[index+1:]...)
-	u.renderQueue()
+	ui.renderQueue()
 }
 
 // sendQueuedNow steers a queued message into the running task, or sends it
 // right away when nothing runs.
-func (u *desktopUI) sendQueuedNow(index int) {
-	chat := u.current
+func (ui *desktopUI) sendQueuedNow(index int) {
+	chat := ui.current
 	if index < 0 || index >= len(chat.queue) {
 		return
 	}
-	m := chat.queue[index]
+	message := chat.queue[index]
 	chat.queue = append(chat.queue[:index], chat.queue[index+1:]...)
 	if chat.run != nil {
-		chat.steer = append(chat.steer, m)
-		u.renderQueue()
+		chat.steer = append(chat.steer, message)
+		ui.renderQueue()
 		return
 	}
-	u.renderQueue()
-	u.start(m)
+	ui.renderQueue()
+	ui.start(message)
 }
 
-func (u *desktopUI) clearQueue() {
-	if u.current != nil {
-		u.current.queue, u.current.steer = nil, nil
+func (ui *desktopUI) clearQueue() {
+	if ui.current != nil {
+		ui.current.queue, ui.current.steer = nil, nil
 	}
-	u.renderQueue()
+	ui.renderQueue()
 }
 
 // renderQueue shows the open chat's waiting messages.
-func (u *desktopUI) renderQueue() {
-	u.queueList.RemoveAll()
-	chat := u.current
-	u.remote.metaChanged(chat)
+func (ui *desktopUI) renderQueue() {
+	ui.queueList.RemoveAll()
+	chat := ui.current
+	ui.remote.metaChanged(chat)
 	if chat == nil || len(chat.steer)+len(chat.queue) == 0 {
-		u.queueTray.Hide()
+		ui.queueTray.Hide()
 		return
 	}
-	for i, m := range chat.steer {
-		u.queueList.Add(u.queueRow(true, i, m))
+	for i, message := range chat.steer {
+		ui.queueList.Add(ui.queueRow(true, i, message))
 	}
-	for i, m := range chat.queue {
-		u.queueList.Add(u.queueRow(false, i, m))
+	for i, messageValue := range chat.queue {
+		ui.queueList.Add(ui.queueRow(false, i, messageValue))
 	}
 	label := fmt.Sprintf("%d queued", len(chat.queue))
 	switch {
@@ -474,17 +474,17 @@ func (u *desktopUI) renderQueue() {
 	if chat.run == nil {
 		label += " · press Enter to send"
 	}
-	u.queueTitle.SetText(label)
-	u.queueTray.Show()
+	ui.queueTitle.SetText(label)
+	ui.queueTray.Show()
 }
 
 // queueRow shows one waiting message; its actions appear on hover.
-func (u *desktopUI) queueRow(steer bool, index int, m message) fyne.CanvasObject {
-	text := strings.Join(strings.Fields(m.Content), " ")
+func (ui *desktopUI) queueRow(steer bool, index int, messageValue message) fyne.CanvasObject {
+	text := strings.Join(strings.Fields(messageValue.Content), " ")
 	if text == "" {
 		text = "[image]"
-	} else if len(m.Images) > 0 {
-		text += fmt.Sprintf("  [+%d image]", len(m.Images))
+	} else if len(messageValue.Images) > 0 {
+		text += fmt.Sprintf("  [+%d image]", len(messageValue.Images))
 	}
 	var badge fyne.CanvasObject
 	if steer {
@@ -497,28 +497,28 @@ func (u *desktopUI) queueRow(steer bool, index int, m message) fyne.CanvasObject
 		number.Alignment = fyne.TextAlignCenter
 		badge = container.NewCenter(container.NewStack(container.NewGridWrap(fyne.NewSquareSize(20), dot), container.NewCenter(number)))
 	}
-	label := newRow(text, nil, styleChip, func() { u.editQueued(steer, index) })
+	label := newRow(text, nil, styleChip, func() { ui.editQueued(steer, index) })
 	label.size = 13.5
 	label.truncate = true
 	tips := map[*tapRow]string{}
 	var actions []*tapRow
 	action := func(icon fyne.Resource, tip string, run func()) {
-		a := newRow("", icon, styleWindow, run)
-		a.alpha = 0
-		tips[a] = tip
-		actions = append(actions, a)
+		tapRowValue := newRow("", icon, styleWindow, run)
+		tapRowValue.alpha = 0
+		tips[tapRowValue] = tip
+		actions = append(actions, tapRowValue)
 	}
 	if !steer {
 		if index > 0 {
-			action(iconChevronUp, "Move up", func() { u.moveQueued(index, -1) })
+			action(iconChevronUp, "Move up", func() { ui.moveQueued(index, -1) })
 		}
-		if index < len(u.current.queue)-1 {
-			action(iconChevron, "Move down", func() { u.moveQueued(index, +1) })
+		if index < len(ui.current.queue)-1 {
+			action(iconChevron, "Move down", func() { ui.moveQueued(index, +1) })
 		}
-		action(iconArrowTurn, "Send now, at the next step", func() { u.sendQueuedNow(index) })
+		action(iconArrowTurn, "Send now, at the next step", func() { ui.sendQueuedNow(index) })
 	}
-	action(iconRename, "Edit in the prompt", func() { u.editQueued(steer, index) })
-	action(iconClose, "Remove", func() { u.dropQueued(steer, index) })
+	action(iconRename, "Edit in the prompt", func() { ui.editQueued(steer, index) })
+	action(iconClose, "Remove", func() { ui.dropQueued(steer, index) })
 	bar := container.New(layout.NewCustomPaddedHBoxLayout(0))
 	for _, a := range actions {
 		bar.Add(a)
@@ -526,7 +526,7 @@ func (u *desktopUI) queueRow(steer bool, index int, m message) fyne.CanvasObject
 	hover := canvas.NewRectangle(color.Transparent)
 	hover.CornerRadius = 8
 	row := container.NewStack(hover, padded(0, 0, 4, 2, container.NewBorder(nil, nil, padded(0, 0, 0, 4, badge), bar, label)))
-	revealOnHover(label, hover, actions, tips, u.tips)
+	revealOnHover(label, hover, actions, tips, ui.tips)
 	return row
 }
 
@@ -557,8 +557,8 @@ func revealOnHover(label *tapRow, hover *canvas.Rectangle, actions []*tapRow, ti
 				hover.FillColor = colHover
 			}
 			hover.Refresh()
-			for i, a := range actions {
-				fadeRow(a, target, &anims[i])
+			for i, row := range actions {
+				fadeRow(row, target, &anims[i])
 			}
 		}
 		if in {
@@ -569,8 +569,8 @@ func revealOnHover(label *tapRow, hover *canvas.Rectangle, actions []*tapRow, ti
 		later = time.AfterFunc(80*time.Millisecond, func() { fyne.Do(apply) })
 	}
 	label.onHover = func(in bool) { inside[label] = in; update() }
-	for _, a := range actions {
-		a := a
+	for _, tapRowValue := range actions {
+		a := tapRowValue
 		a.onHover = func(in bool) {
 			inside[a] = in
 			update()
@@ -596,58 +596,58 @@ type queueEdit struct {
 	files    []fileAttachment
 }
 
-func (u *desktopUI) editQueued(steer bool, index int) {
-	u.finishEdit(false)
-	chat := u.current
+func (ui *desktopUI) editQueued(steer bool, index int) {
+	ui.finishEdit(false)
+	chat := ui.current
 	waiting := lane(chat, steer)
 	if index < 0 || index >= len(*waiting) {
 		return
 	}
-	m := (*waiting)[index]
+	message := (*waiting)[index]
 	*waiting = append((*waiting)[:index], (*waiting)[index+1:]...)
-	u.editing = &queueEdit{chat: chat, steer: steer, index: index, original: m, draft: u.prompt.Text, images: u.attachments, files: u.fileAttachments}
-	u.fileAttachments = nil
-	u.prompt.SetText(m.Content)
-	lines := strings.Split(m.Content, "\n")
-	u.prompt.CursorRow, u.prompt.CursorColumn = len(lines)-1, len([]rune(lines[len(lines)-1]))
-	u.prompt.Refresh()
-	u.attachments = append([]ImagePart(nil), m.Images...)
-	u.renderAttachments()
-	u.editBar.Show()
-	u.renderQueue()
-	u.window.Canvas().Focus(u.prompt)
+	ui.editing = &queueEdit{chat: chat, steer: steer, index: index, original: message, draft: ui.prompt.Text, images: ui.attachments, files: ui.fileAttachments}
+	ui.fileAttachments = nil
+	ui.prompt.SetText(message.Content)
+	lines := strings.Split(message.Content, "\n")
+	ui.prompt.CursorRow, ui.prompt.CursorColumn = len(lines)-1, len([]rune(lines[len(lines)-1]))
+	ui.prompt.Refresh()
+	ui.attachments = append([]ImagePart(nil), message.Images...)
+	ui.renderAttachments()
+	ui.editBar.Show()
+	ui.renderQueue()
+	ui.window.Canvas().Focus(ui.prompt)
 }
 
 // finishEdit puts the message back in its place: as edited when commit is
 // set (dropped if emptied), unchanged otherwise; the prompt gets its draft
 // back.
-func (u *desktopUI) finishEdit(commit bool) {
+func (ui *desktopUI) finishEdit(commit bool) {
 	if commit {
-		if problem := u.attachmentProblem(); problem != "" {
-			u.notice("Attachments", problem)
+		if problem := ui.attachmentProblem(); problem != "" {
+			ui.notice("Attachments", problem)
 			return
 		}
 	}
-	e := u.editing
-	if e == nil {
+	queueEdit := ui.editing
+	if queueEdit == nil {
 		return
 	}
-	u.editing = nil
-	m := e.original
+	ui.editing = nil
+	messageValue := queueEdit.original
 	if commit {
-		m.Content, m.Images = attachmentText(strings.TrimSpace(u.prompt.Text), u.fileAttachments), u.attachments
+		messageValue.Content, messageValue.Images = attachmentText(strings.TrimSpace(ui.prompt.Text), ui.fileAttachments), ui.attachments
 	}
-	if m.Content != "" || len(m.Images) > 0 {
-		waiting := lane(e.chat, e.steer)
-		at := min(e.index, len(*waiting))
-		*waiting = append((*waiting)[:at], append([]message{m}, (*waiting)[at:]...)...)
+	if messageValue.Content != "" || len(messageValue.Images) > 0 {
+		waiting := lane(queueEdit.chat, queueEdit.steer)
+		at := min(queueEdit.index, len(*waiting))
+		*waiting = append((*waiting)[:at], append([]message{messageValue}, (*waiting)[at:]...)...)
 	}
-	u.prompt.SetText(e.draft)
-	u.attachments = e.images
-	u.fileAttachments = e.files
-	u.renderAttachments()
-	u.editBar.Hide()
-	u.renderQueue()
+	ui.prompt.SetText(queueEdit.draft)
+	ui.attachments = queueEdit.images
+	ui.fileAttachments = queueEdit.files
+	ui.renderAttachments()
+	ui.editBar.Hide()
+	ui.renderQueue()
 }
 
 // ---------------------------------------------------------------------------
@@ -663,37 +663,37 @@ type contextRing struct {
 }
 
 func newContextRing(tips *tipLayer) *contextRing {
-	r := &contextRing{tips: tips}
-	r.track = canvas.NewArc(0, 360, 0.76, colText)
-	r.fill = canvas.NewArc(0, 0, 0.76, colAmber)
-	r.ExtendBaseWidget(r)
-	return r
+	ring := &contextRing{tips: tips}
+	ring.track = canvas.NewArc(0, 360, 0.76, colText)
+	ring.fill = canvas.NewArc(0, 0, 0.76, colAmber)
+	ring.ExtendBaseWidget(ring)
+	return ring
 }
 
-func (r *contextRing) set(used, window int) {
-	r.used, r.window = used, window
+func (ring *contextRing) set(used, window int) {
+	ring.used, ring.window = used, window
 	frac := float32(0)
 	if window > 0 {
 		frac = fyne.Min(1, float32(used)/float32(window))
 	}
-	r.fill.EndAngle = 360 * frac
-	r.fill.Refresh()
-	if r.tips.anchor == r {
-		r.tips.place(r, r.describe())
+	ring.fill.EndAngle = 360 * frac
+	ring.fill.Refresh()
+	if ring.tips.anchor == ring {
+		ring.tips.place(ring, ring.describe())
 	}
 }
 
-func (r *contextRing) describe() string {
-	if r.window <= 0 {
+func (ring *contextRing) describe() string {
+	if ring.window <= 0 {
 		return "Context usage\nAvailable once a model is selected"
 	}
-	percent := r.used * 100 / r.window
+	percent := ring.used * 100 / ring.window
 	if percent > 100 {
 		percent = 100
 	}
-	text := fmt.Sprintf("%d%% of the context used\n%s of %s tokens", percent, tokens(r.used), tokens(r.window))
-	if r.plan != (planUsage{}) {
-		text += fmt.Sprintf("\nClaude plan: %.0f%% of the 5 h window · %.0f%% of the week", r.plan.FiveHour*100, r.plan.Week*100)
+	text := fmt.Sprintf("%d%% of the context used\n%s of %s tokens", percent, tokens(ring.used), tokens(ring.window))
+	if ring.plan != (planUsage{}) {
+		text += fmt.Sprintf("\nClaude plan: %.0f%% of the 5 h window · %.0f%% of the week", ring.plan.FiveHour*100, ring.plan.Week*100)
 	}
 	return text
 }
@@ -708,57 +708,59 @@ func tokens(n int) string {
 	return fmt.Sprint(n)
 }
 
-func (r *contextRing) MouseIn(*desktop.MouseEvent)    { r.tips.show(r, r.describe()) }
-func (r *contextRing) MouseMoved(*desktop.MouseEvent) {}
-func (r *contextRing) MouseOut()                      { r.tips.hide() }
+func (ring *contextRing) MouseIn(*desktop.MouseEvent)    { ring.tips.show(ring, ring.describe()) }
+func (ring *contextRing) MouseMoved(*desktop.MouseEvent) {}
+func (ring *contextRing) MouseOut()                      { ring.tips.hide() }
 
-func (r *contextRing) CreateRenderer() fyne.WidgetRenderer { return &contextRingRenderer{r} }
+func (ring *contextRing) CreateRenderer() fyne.WidgetRenderer { return &contextRingRenderer{ring} }
 
-type contextRingRenderer struct{ r *contextRing }
+type contextRingRenderer struct{ ring *contextRing }
 
 const contextRingSize = 16
 
-func (rr *contextRingRenderer) MinSize() fyne.Size { return fyne.NewSquareSize(contextRingSize + 12) }
-func (rr *contextRingRenderer) Layout(size fyne.Size) {
+func (renderer *contextRingRenderer) MinSize() fyne.Size {
+	return fyne.NewSquareSize(contextRingSize + 12)
+}
+func (renderer *contextRingRenderer) Layout(size fyne.Size) {
 	at := fyne.NewPos((size.Width-contextRingSize)/2, (size.Height-contextRingSize)/2)
-	for _, arc := range []*canvas.Arc{rr.r.track, rr.r.fill} {
+	for _, arc := range []*canvas.Arc{renderer.ring.track, renderer.ring.fill} {
 		arc.Move(at)
 		arc.Resize(fyne.NewSquareSize(contextRingSize))
 	}
 }
-func (rr *contextRingRenderer) Refresh() {
-	rr.r.track.Refresh()
-	rr.r.fill.Refresh()
+func (renderer *contextRingRenderer) Refresh() {
+	renderer.ring.track.Refresh()
+	renderer.ring.fill.Refresh()
 }
-func (rr *contextRingRenderer) Objects() []fyne.CanvasObject {
-	return []fyne.CanvasObject{rr.r.track, rr.r.fill}
+func (renderer *contextRingRenderer) Objects() []fyne.CanvasObject {
+	return []fyne.CanvasObject{renderer.ring.track, renderer.ring.fill}
 }
-func (rr *contextRingRenderer) Destroy() {}
+func (renderer *contextRingRenderer) Destroy() {}
 
 // setContextUsage updates the ring for the open conversation.
-func (u *desktopUI) setContextUsage(used, window int) {
-	u.contextRing.set(used, window)
-	if u.panel != nil {
-		u.panel.refreshTodoStatus()
+func (ui *desktopUI) setContextUsage(used, window int) {
+	ui.contextRing.set(used, window)
+	if ui.panel != nil {
+		ui.panel.refreshTodoStatus()
 	}
 }
 
 // refreshContextRing recomputes the usage of the open conversation from its
 // history, so the ring is right after opening a chat or when nothing runs.
-func (u *desktopUI) refreshContextRing() {
-	u.contextRing.plan = planUsage{}
-	if u.cfg.Provider == "claudecode" {
-		u.contextRing.plan = u.plan
+func (ui *desktopUI) refreshContextRing() {
+	ui.contextRing.plan = planUsage{}
+	if ui.cfg.Provider == "claudecode" {
+		ui.contextRing.plan = ui.plan
 	}
-	if u.current == nil {
-		u.setContextUsage(0, modelContextWindow(u.cfg))
+	if ui.current == nil {
+		ui.setContextUsage(0, modelContextWindow(ui.cfg))
 		return
 	}
 	usage := 0
-	for _, m := range u.current.History {
-		if m.Usage > usage {
-			usage = m.Usage
+	for _, message := range ui.current.History {
+		if message.Usage > usage {
+			usage = message.Usage
 		}
 	}
-	u.setContextUsage(usage, modelContextWindow(u.current.Config))
+	ui.setContextUsage(usage, modelContextWindow(ui.current.Config))
 }

@@ -156,7 +156,7 @@ func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd,
 
 // claudeModels asks the installed Claude Code which models the account can
 // use. It only exchanges the protocol's handshake: no request reaches a model.
-func (a *app) claudeModels(ctx context.Context) ([]claudeModel, error) {
+func (backend *app) claudeModels(ctx context.Context) ([]claudeModel, error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd, err := claudeCommand(ctx, os.TempDir())
@@ -173,18 +173,18 @@ func (a *app) claudeModels(ctx context.Context) ([]claudeModel, error) {
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64<<10), 16<<20)
 	for scanner.Scan() {
-		var e claudeEvent
-		if json.Unmarshal(scanner.Bytes(), &e) != nil {
+		var claudeEventValue claudeEvent
+		if json.Unmarshal(scanner.Bytes(), &claudeEventValue) != nil {
 			continue
 		}
-		if e.Type == "control_response" && e.Response != nil {
-			if len(e.Response.Response.Models) == 0 {
+		if claudeEventValue.Type == "control_response" && claudeEventValue.Response != nil {
+			if len(claudeEventValue.Response.Response.Models) == 0 {
 				return nil, fmt.Errorf("Claude Code listed no model: check that it is signed in (run claude once)")
 			}
-			return e.Response.Response.Models, nil
+			return claudeEventValue.Response.Response.Models, nil
 		}
-		if e.Type == "result" && e.IsError {
-			return nil, errors.New(firstLine(e.Result))
+		if claudeEventValue.Type == "result" && claudeEventValue.IsError {
+			return nil, errors.New(firstLine(claudeEventValue.Result))
 		}
 	}
 	return nil, fmt.Errorf("Claude Code did not answer: run claude once in a terminal to check it works")
@@ -194,7 +194,7 @@ func (a *app) claudeModels(ctx context.Context) ([]claudeModel, error) {
 // commands, reads and edits use 1loop's own rows (and their detail panel);
 // every other tool keeps its name and arguments.
 func claudeTool(root, name string, input json.RawMessage) (tool, args string) {
-	if strings.HasPrefix(name, "mcp__1loop_todo__browser_") || strings.HasPrefix(name, "mcp__1loop_todo__terminal_") {
+	if strings.HasPrefix(name, "mcp__1loop_todo__browser_") || strings.HasPrefix(name, "mcp__1loop_todo__terminal_") || name == "mcp__1loop_todo__computer_use" {
 		return strings.TrimPrefix(name, "mcp__1loop_todo__"), string(input)
 	}
 	var in struct {
@@ -251,26 +251,26 @@ func claudeDiff(path string, result json.RawMessage) string {
 	if json.Unmarshal(result, &r) != nil {
 		return ""
 	}
-	var b strings.Builder
-	fmt.Fprintf(&b, "--- a/%s\n+++ b/%s\n", path, path)
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "--- a/%s\n+++ b/%s\n", path, path)
 	if len(r.Patch) == 0 {
 		if r.Type != "create" || r.Content == "" {
 			return ""
 		}
 		lines := strings.Split(strings.TrimRight(r.Content, "\n"), "\n")
-		fmt.Fprintf(&b, "@@ -0,0 +1,%d @@\n", len(lines))
+		fmt.Fprintf(&builder, "@@ -0,0 +1,%d @@\n", len(lines))
 		for _, line := range lines {
-			b.WriteString("+" + line + "\n")
+			builder.WriteString("+" + line + "\n")
 		}
-		return b.String()
+		return builder.String()
 	}
 	for _, hunk := range r.Patch {
-		fmt.Fprintf(&b, "@@ -%d,%d +%d,%d @@\n", hunk.OldStart, hunk.OldLines, hunk.NewStart, hunk.NewLines)
+		fmt.Fprintf(&builder, "@@ -%d,%d +%d,%d @@\n", hunk.OldStart, hunk.OldLines, hunk.NewStart, hunk.NewLines)
 		for _, line := range hunk.Lines {
-			b.WriteString(line + "\n")
+			builder.WriteString(line + "\n")
 		}
 	}
-	return b.String()
+	return builder.String()
 }
 
 // claudeText flattens a tool result's content: a string, or text blocks.
@@ -282,22 +282,22 @@ func claudeText(content json.RawMessage) string {
 	var blocks []claudeBlock
 	_ = json.Unmarshal(content, &blocks)
 	var parts []string
-	for _, b := range blocks {
-		if b.Type == "text" {
-			parts = append(parts, b.Text)
+	for _, claudeBlockValue := range blocks {
+		if claudeBlockValue.Type == "text" {
+			parts = append(parts, claudeBlockValue.Text)
 		}
 	}
 	return strings.Join(parts, "\n")
 }
 
 // claudePrompt is a user message in Claude Code's input format.
-func claudePrompt(m message, preface string) string {
+func claudePrompt(messageValue message, preface string) string {
 	content := []any{}
-	if text := preface + m.Content; text != "" {
+	if text := preface + messageValue.Content; text != "" {
 		content = append(content, map[string]any{"type": "text", "text": text})
 	}
-	for _, im := range m.Images {
-		content = append(content, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": im.Mime, "data": im.Data}})
+	for _, imagePart := range messageValue.Images {
+		content = append(content, map[string]any{"type": "image", "source": map[string]any{"type": "base64", "media_type": imagePart.Mime, "data": imagePart.Data}})
 	}
 	line, _ := json.Marshal(map[string]any{"type": "user", "message": map[string]any{"role": "user", "content": content}})
 	return string(line)
@@ -316,17 +316,17 @@ func claudeApproval(root, name string, input json.RawMessage) (title, preview st
 			New string `json:"new_text"`
 		}
 		_ = json.Unmarshal([]byte(args), &in)
-		var b strings.Builder
-		fmt.Fprintf(&b, "--- a/%s\n+++ b/%s\n", path, path)
+		var builder strings.Builder
+		fmt.Fprintf(&builder, "--- a/%s\n+++ b/%s\n", path, path)
 		for _, line := range strings.Split(in.Old, "\n") {
 			if in.Old != "" {
-				b.WriteString("-" + line + "\n")
+				builder.WriteString("-" + line + "\n")
 			}
 		}
 		for _, line := range strings.Split(in.New, "\n") {
-			b.WriteString("+" + line + "\n")
+			builder.WriteString("+" + line + "\n")
 		}
-		return "Apply changes to " + path + "?", b.String()
+		return "Apply changes to " + path + "?", builder.String()
 	}
 	var pretty map[string]any
 	_ = json.Unmarshal(input, &pretty)
@@ -337,7 +337,7 @@ func claudeApproval(root, name string, input json.RawMessage) (title, preview st
 // is the prompt, sent in the chat's Claude Code session (cfg.Session) when
 // it has one. Steered messages are written to Claude Code while it works,
 // which folds them into the turn; queued ones start the next turn.
-func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, in inbox, emit emitter) error {
+func (backend *app) runClaudeCode(ctx context.Context, cfg config, history []message, inboxValue inbox, emit emitter) error {
 	if len(history) == 0 {
 		return fmt.Errorf("Nothing to send")
 	}
@@ -361,14 +361,14 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 		args = append(args, "--resume", cfg.Session)
 	}
 	if cfg.Todo != nil {
-		config, close, err := startTodoMCP(ctx, cfg.Todo, emit, cfg.Browser, cfg.Terminal)
+		config, close, err := startTodoMCP(ctx, cfg.Todo, emit, cfg.Browser, cfg.Terminal, cfg.Computer)
 		if err != nil {
 			return err
 		}
 		defer close()
 		args = append(args, "--mcp-config", config)
 	}
-	appendPrompt := todoInstructions(cfg) + browserInstructions(cfg) + terminalInstructions(cfg)
+	appendPrompt := todoInstructions(cfg) + browserInstructions(cfg) + terminalInstructions(cfg) + computerInstructions(cfg)
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
 		appendPrompt = "Additional instructions from the user:\n" + cfg.UserInstructions + appendPrompt
 	}
@@ -459,12 +459,12 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 			status.set(activity{State: "background", Detail: fmt.Sprintf("%d background tasks", len(background))})
 		}
 	}
-	inject := func(m message) {
+	inject := func(messageValue message) {
 		idle = false
-		messages = append(messages, m)
-		emit("injected", m)
+		messages = append(messages, messageValue)
+		emit("injected", messageValue)
 		status.set(activity{State: "wait"})
-		send(claudePrompt(m, ""))
+		send(claudePrompt(messageValue, ""))
 	}
 
 	// The output is read apart, so the loop below can also watch the clock
@@ -508,11 +508,11 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 			if !idle {
 				continue
 			}
-			if extras := in.steer(); len(extras) > 0 {
+			if extras := inboxValue.steer(); len(extras) > 0 {
 				for _, extra := range extras {
 					inject(extra)
 				}
-			} else if next, ok := in.next(); ok {
+			} else if next, ok := inboxValue.next(); ok {
 				inject(next)
 			} else if len(background) == 0 && time.Since(idleSince) > 600*time.Millisecond {
 				idle = false
@@ -529,27 +529,36 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 		if lines == nil {
 			break
 		}
-		var e claudeEvent
-		if json.Unmarshal(line, &e) != nil {
+		var claudeEventValue claudeEvent
+		if json.Unmarshal(line, &claudeEventValue) != nil {
 			devf("claude", "unreadable line: %s", devText(string(line), 160))
 			continue
 		}
-		if dev != nil && e.Type != "stream_event" {
-			devf("claude", "%s %s, %d bytes, idle %v, background tasks %d", e.Type, e.Subtype, len(line), idle, len(background))
+		if dev != nil && claudeEventValue.Type != "stream_event" {
+			devf("claude", "%s %s, %d bytes, idle %v, background tasks %d", claudeEventValue.Type, claudeEventValue.Subtype, len(line), idle, len(background))
 		}
-		if e.Parent != nil && e.Type != "result" {
+		if claudeEventValue.Parent != nil && claudeEventValue.Type != "result" {
 			continue // a subagent's own stream: its outcome comes as the Agent tool's result
 		}
-		switch e.Type {
+		switch claudeEventValue.Type {
 		case "stream_event", "assistant", "user", "control_request":
 			idle = false // a turn is running
 		}
-		switch e.Type {
+		switch claudeEventValue.Type {
 		case "system":
-			switch e.Subtype {
+			switch claudeEventValue.Subtype {
+			case "compact_boundary":
+				// Claude owns compaction; send the live task position through its
+				// supported input stream without replacing its session context.
+				if reminder := todoResumeReminder(cfg); reminder != "" {
+					message := message{Role: "user", Internal: true, Content: reminder}
+					messages = append(messages, message)
+					send(claudePrompt(message, ""))
+					emit("context_note", "Context compacted · "+todoCurrentStep(cfg))
+				}
 			case "background_tasks_changed":
 				background = background[:0]
-				for _, task := range e.Tasks {
+				for _, task := range claudeEventValue.Tasks {
 					background = append(background, task.Description)
 				}
 				if idle {
@@ -557,14 +566,14 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 					waitBackground()
 				}
 			case "init":
-				if e.APIKeySource != "" && e.APIKeySource != "none" {
-					failure = fmt.Errorf("Claude Code is not using your subscription here (credentials: %s). 1loop stopped before anything was billed to an API key.", e.APIKeySource)
+				if claudeEventValue.APIKeySource != "" && claudeEventValue.APIKeySource != "none" {
+					failure = fmt.Errorf("Claude Code is not using your subscription here (credentials: %s). 1loop stopped before anything was billed to an API key.", claudeEventValue.APIKeySource)
 				}
-				if e.SessionID != "" {
-					emit("session", e.SessionID)
+				if claudeEventValue.SessionID != "" {
+					emit("session", claudeEventValue.SessionID)
 				}
 			case "status":
-				if e.Status == "requesting" {
+				if claudeEventValue.Status == "requesting" {
 					idle = false
 					status.set(activity{State: "wait"})
 				}
@@ -572,41 +581,41 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 				emit("notice", "Claude Code is retrying the request…")
 			}
 		case "rate_limit_event":
-			if e.RateLimit != nil {
-				if e.RateLimit.IsUsingOverage {
+			if claudeEventValue.RateLimit != nil {
+				if claudeEventValue.RateLimit.IsUsingOverage {
 					failure = fmt.Errorf("Claude Code started drawing on extra usage, beyond your plan's limits. 1loop stopped the task.")
 				}
-				emit("plan", planUsage{FiveHour: e.RateLimit.Windows["five_hour"].Utilization, Week: e.RateLimit.Windows["seven_day"].Utilization})
+				emit("plan", planUsage{FiveHour: claudeEventValue.RateLimit.Windows["five_hour"].Utilization, Week: claudeEventValue.RateLimit.Windows["seven_day"].Utilization})
 			}
 		case "stream_event":
-			if e.Event == nil {
+			if claudeEventValue.Event == nil {
 				break
 			}
-			switch e.Event.Type {
+			switch claudeEventValue.Event.Type {
 			case "content_block_start":
-				switch e.Event.ContentBlock.Type {
+				switch claudeEventValue.Event.ContentBlock.Type {
 				case "thinking":
 					status.set(activity{State: "think"})
 				case "tool_use":
-					call := &toolCall{ID: e.Event.ContentBlock.ID}
-					call.Function.Name = e.Event.ContentBlock.Name
-					streaming[e.Event.Index] = call
+					call := &toolCall{ID: claudeEventValue.Event.ContentBlock.ID}
+					call.Function.Name = claudeEventValue.Event.ContentBlock.Name
+					streaming[claudeEventValue.Event.Index] = call
 					tool, _ := claudeTool(cfg.Workspace, call.Function.Name, nil)
 					status.set(activity{State: "call", Tool: tool})
 				}
 			case "content_block_delta":
-				switch e.Event.Delta.Type {
+				switch claudeEventValue.Event.Delta.Type {
 				case "thinking_delta":
 					status.set(activity{State: "think"})
 				case "text_delta":
-					if e.Event.Delta.Text != "" {
+					if claudeEventValue.Event.Delta.Text != "" {
 						sawText = true
 						status.last = activity{State: "write"} // the delta itself tells the interface
-						emit("delta", e.Event.Delta.Text)
+						emit("delta", claudeEventValue.Event.Delta.Text)
 					}
 				case "input_json_delta":
-					if call := streaming[e.Event.Index]; call != nil && status.last.Detail == "" {
-						call.Function.Arguments += e.Event.Delta.PartialJSON
+					if call := streaming[claudeEventValue.Event.Index]; call != nil && status.last.Detail == "" {
+						call.Function.Arguments += claudeEventValue.Event.Delta.PartialJSON
 						tool, _ := claudeTool(cfg.Workspace, call.Function.Name, nil)
 						status.set(activity{State: "call", Tool: tool, Detail: claudeTarget(cfg.Workspace, call.Function.Arguments)})
 					}
@@ -615,54 +624,54 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 				streaming = map[int]*toolCall{}
 			}
 		case "assistant":
-			if e.Message == nil {
+			if claudeEventValue.Message == nil {
 				break
 			}
-			if n := e.Message.Usage.Input + e.Message.Usage.CacheCreation + e.Message.Usage.CacheRead; n > 0 {
+			if n := claudeEventValue.Message.Usage.Input + claudeEventValue.Message.Usage.CacheCreation + claudeEventValue.Message.Usage.CacheRead; n > 0 {
 				usage = n
 				emit("usage", n)
 			}
 			var blocks []claudeBlock
-			_ = json.Unmarshal(e.Message.Content, &blocks)
-			for _, b := range blocks {
-				switch b.Type {
+			_ = json.Unmarshal(claudeEventValue.Message.Content, &blocks)
+			for _, claudeBlockValue := range blocks {
+				switch claudeBlockValue.Type {
 				case "text":
-					if !sawText && b.Text != "" { // no partial messages: show it whole
-						emit("delta", b.Text)
+					if !sawText && claudeBlockValue.Text != "" { // no partial messages: show it whole
+						emit("delta", claudeBlockValue.Text)
 					}
 					sawText = false
-					messages = append(messages, message{Role: "assistant", Content: b.Text, Usage: usage})
+					messages = append(messages, message{Role: "assistant", Content: claudeBlockValue.Text, Usage: usage})
 					emit("message_end", nil)
 				case "tool_use":
-					tool, arguments := claudeTool(cfg.Workspace, b.Name, b.Input)
-					p := &pending{outcome: toolOutcome{ID: b.ID, Name: tool, Args: arguments}, started: time.Now()}
-					calls[b.ID] = p
-					emit("tool", p.outcome)
-					emit("tool_exec", p.outcome)
+					tool, arguments := claudeTool(cfg.Workspace, claudeBlockValue.Name, claudeBlockValue.Input)
+					pendingValue := &pending{outcome: toolOutcome{ID: claudeBlockValue.ID, Name: tool, Args: arguments}, started: time.Now()}
+					calls[claudeBlockValue.ID] = pendingValue
+					emit("tool", pendingValue.outcome)
+					emit("tool_exec", pendingValue.outcome)
 				}
 			}
 		case "control_request":
-			if e.Request == nil || e.Request.Subtype != "can_use_tool" {
+			if claudeEventValue.Request == nil || claudeEventValue.Request.Subtype != "can_use_tool" {
 				break
 			}
-			title, preview := claudeApproval(cfg.Workspace, e.Request.ToolName, e.Request.Input)
+			title, preview := claudeApproval(cfg.Workspace, claudeEventValue.Request.ToolName, claudeEventValue.Request.Input)
 			response := map[string]any{"behavior": "deny", "message": "The user denied this action."}
-			if e.Request.ToolName == "mcp__1loop_todo__update_todo" || strings.HasPrefix(e.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(e.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(e.Request.ToolName, "mcp__1loop_todo__"), e.Request.Input)) || a.confirm(ctx, emit, title, preview) {
-				response = map[string]any{"behavior": "allow", "updatedInput": e.Request.Input}
+			if claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || backend.confirm(ctx, emit, title, preview) {
+				response = map[string]any{"behavior": "allow", "updatedInput": claudeEventValue.Request.Input}
 				for _, p := range calls { // the approved call starts now
 					p.started = time.Now()
 					emit("tool_exec", p.outcome)
 				}
 			}
 			line, _ := json.Marshal(map[string]any{"type": "control_response", "response": map[string]any{
-				"subtype": "success", "request_id": e.RequestID, "response": response}})
+				"subtype": "success", "request_id": claudeEventValue.RequestID, "response": response}})
 			send(string(line))
 		case "user":
-			if e.Message == nil {
+			if claudeEventValue.Message == nil {
 				break
 			}
 			var blocks []claudeBlock
-			_ = json.Unmarshal(e.Message.Content, &blocks)
+			_ = json.Unmarshal(claudeEventValue.Message.Content, &blocks)
 			for _, b := range blocks {
 				p := calls[b.ToolUseID]
 				if b.Type != "tool_result" || p == nil {
@@ -670,7 +679,7 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 				}
 				delete(calls, b.ToolUseID)
 				p.outcome.Output = claudeText(b.Content)
-				if strings.HasPrefix(p.outcome.Name, "browser_") || strings.HasPrefix(p.outcome.Name, "terminal_") {
+				if strings.HasPrefix(p.outcome.Name, "browser_") || strings.HasPrefix(p.outcome.Name, "terminal_") || p.outcome.Name == "computer_use" {
 					p.outcome.Images = claudeBrowserImages(b.Content)
 				}
 				p.outcome.Elapsed = time.Since(p.started)
@@ -678,39 +687,39 @@ func (a *app) runClaudeCode(ctx context.Context, cfg config, history []message, 
 					p.outcome.Err = errors.New(firstLine(p.outcome.Output))
 				} else if p.outcome.Name == "edit_file" {
 					path, _, _ := toolArgs(p.outcome.Args)
-					p.outcome.Diff = claudeDiff(path, e.ToolUseResult)
+					p.outcome.Diff = claudeDiff(path, claudeEventValue.ToolUseResult)
 				}
 				emit("tool_result", p.outcome)
 			}
 			// The gap between two tool calls: steered messages go in now.
-			for _, extra := range in.steer() {
+			for _, extra := range inboxValue.steer() {
 				inject(extra)
 			}
 		case "result":
 			// Claude Code says how large the model's window really is.
-			for model, u := range e.ModelUsage {
-				if u.ContextWindow > 0 && (len(e.ModelUsage) == 1 || strings.Contains(model, cfg.Model)) {
+			for model, u := range claudeEventValue.ModelUsage {
+				if u.ContextWindow > 0 && (len(claudeEventValue.ModelUsage) == 1 || strings.Contains(model, cfg.Model)) {
 					learnedMu.Lock()
 					learnedWindows[cfg.ConnectionID+"|"+cfg.Model] = u.ContextWindow
 					learnedMu.Unlock()
 				}
 			}
-			if e.IsError && failure == nil {
-				text := e.Result
+			if claudeEventValue.IsError && failure == nil {
+				text := claudeEventValue.Result
 				if text == "" {
-					text = "Claude Code ended the turn with an error (" + e.Subtype + ")"
+					text = "Claude Code ended the turn with an error (" + claudeEventValue.Subtype + ")"
 				}
 				failure = errors.New(text)
 			}
 			emit("history", append([]message(nil), messages...))
-			if failure != nil || e.QueuedTurns > 0 {
+			if failure != nil || claudeEventValue.QueuedTurns > 0 {
 				break // more turns are already queued in Claude Code
 			}
-			if extras := in.steer(); len(extras) > 0 {
+			if extras := inboxValue.steer(); len(extras) > 0 {
 				for _, extra := range extras {
 					inject(extra)
 				}
-			} else if next, ok := in.next(); ok {
+			} else if next, ok := inboxValue.next(); ok {
 				inject(next)
 			} else {
 				idle, idleSince = true, time.Now()

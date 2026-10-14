@@ -137,12 +137,12 @@ func templateCapabilities(template string) ([]string, string, string) {
 	return efforts, def, "template"
 }
 
-func (a *app) localCapabilities(ctx context.Context, cfg config, row map[string]any) ([]string, string, string, string) {
+func (backend *app) localCapabilities(ctx context.Context, cfg config, row map[string]any) ([]string, string, string, string) {
 	repo, _ := row["root"].(string)
 	cacheKey := cfg.BaseURL + "/" + repo
-	a.mu.Lock()
-	cached, ok := a.capabilityCache[cacheKey]
-	a.mu.Unlock()
+	backend.mu.Lock()
+	cached, ok := backend.capabilityCache[cacheKey]
+	backend.mu.Unlock()
 	if ok {
 		return cached.Efforts, cached.DefaultEffort, cached.ReasoningMode, cached.Source
 	}
@@ -185,37 +185,37 @@ func (a *app) localCapabilities(ctx context.Context, cfg config, row map[string]
 	efforts, def, mode := templateCapabilities(template)
 	result := modelChoice{Efforts: efforts, DefaultEffort: def, ReasoningMode: mode, Source: source}
 	if len(efforts) > 0 {
-		a.mu.Lock()
-		if a.capabilityCache == nil {
-			a.capabilityCache = map[string]modelChoice{}
+		backend.mu.Lock()
+		if backend.capabilityCache == nil {
+			backend.capabilityCache = map[string]modelChoice{}
 		}
-		a.capabilityCache[cacheKey] = result
-		a.mu.Unlock()
+		backend.capabilityCache[cacheKey] = result
+		backend.mu.Unlock()
 	}
 	return efforts, def, mode, source
 }
 
-func (a *app) connectionModels(ctx context.Context, c connection, key string) ([]modelChoice, error) {
-	if c.Provider == "claudecode" {
-		models, err := a.claudeModels(ctx)
+func (backend *app) connectionModels(ctx context.Context, conn connection, key string) ([]modelChoice, error) {
+	if conn.Provider == "claudecode" {
+		models, err := backend.claudeModels(ctx)
 		if err != nil {
 			return nil, err
 		}
 		var choices []modelChoice
-		for _, m := range models {
-			efforts := sortedEfforts(m.Efforts)
+		for _, claudeModel := range models {
+			efforts := sortedEfforts(claudeModel.Efforts)
 			def := ""
 			if contains(efforts, "medium") {
 				def = "medium"
 			}
-			choices = append(choices, modelChoice{Connection: c, ID: m.Value, Name: m.DisplayName, Efforts: efforts,
+			choices = append(choices, modelChoice{Connection: conn, ID: claudeModel.Value, Name: claudeModel.DisplayName, Efforts: efforts,
 				DefaultEffort: def, ReasoningMode: "effort", Source: "Claude Code"})
 		}
 		return choices, nil
 	}
-	cfg := c.config("")
+	cfg := conn.config("")
 	cfg.APIKey = key
-	result, err := a.models(ctx, cfg)
+	result, err := backend.models(ctx, cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -242,18 +242,18 @@ func (a *app) connectionModels(ctx context.Context, c connection, key string) ([
 		}
 		efforts, def, mode := modelCapabilities(row)
 		source := "Provider model catalog"
-		if c.Provider != "openrouter" && contains(efforts, "enabled") {
+		if conn.Provider != "openrouter" && contains(efforts, "enabled") {
 			efforts, def, mode = nil, "", ""
 		}
-		if c.Provider == "vllm" && len(efforts) == 0 {
-			efforts, def, mode, source = a.localCapabilities(ctx, cfg, row)
+		if conn.Provider == "vllm" && len(efforts) == 0 {
+			efforts, def, mode, source = backend.localCapabilities(ctx, cfg, row)
 		}
-		choices = append(choices, modelChoice{Connection: c, ID: id, Name: name, Efforts: efforts, DefaultEffort: def, ReasoningMode: mode, Source: source})
+		choices = append(choices, modelChoice{Connection: conn, ID: id, Name: name, Efforts: efforts, DefaultEffort: def, ReasoningMode: mode, Source: source})
 	}
 	return choices, nil
 }
-func (a *app) upstreamProviders(ctx context.Context, c connection, key, model string) ([]string, error) {
-	cfg := c.config("")
+func (backend *app) upstreamProviders(ctx context.Context, conn connection, key, model string) ([]string, error) {
+	cfg := conn.config("")
 	cfg.APIKey = key
 	result, err := apiRequest(ctx, cfg, "GET", "/models/"+model+"/endpoints", nil)
 	if err != nil {

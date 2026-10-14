@@ -30,7 +30,7 @@ var bareURL = regexp.MustCompile(`^https?://[^\s<>"'` + "`" + `]+`)
 
 // parseInline parses one block's inline source.
 func parseInline(source string) []span {
-	p := &inlineParser{}
+	parser := &inlineParser{}
 	// A line ending with two spaces or a backslash breaks the line; any
 	// other line ending inside a paragraph is a space.
 	lines := strings.Split(source, "\n")
@@ -40,16 +40,16 @@ func parseInline(source string) []span {
 		if i > 0 {
 			line = strings.TrimLeft(line, " \t")
 		}
-		p.parse(line, span{})
+		parser.parse(line, span{})
 		if i < len(lines)-1 {
 			if hard {
-				p.out = append(p.out, span{hard: true})
+				parser.out = append(parser.out, span{hard: true})
 			} else {
-				p.text(" ", span{})
+				parser.text(" ", span{})
 			}
 		}
 	}
-	return p.out
+	return parser.out
 }
 
 type inlineParser struct {
@@ -58,13 +58,13 @@ type inlineParser struct {
 
 // text appends plain text in a style, joining it to the previous span when
 // that one has the same style.
-func (p *inlineParser) text(text string, style span) {
+func (parser *inlineParser) text(text string, style span) {
 	if text == "" {
 		return
 	}
 	style.text = text
-	if n := len(p.out); n > 0 {
-		last := &p.out[n-1]
+	if n := len(parser.out); n > 0 {
+		last := &parser.out[n-1]
 		same := *last
 		same.text = text
 		if same == style && !last.hard && last.math == "" {
@@ -72,14 +72,14 @@ func (p *inlineParser) text(text string, style span) {
 			return
 		}
 	}
-	p.out = append(p.out, style)
+	parser.out = append(parser.out, style)
 }
 
 // parse reads s in the given style (what the enclosing emphasis set).
-func (p *inlineParser) parse(s string, style span) {
+func (parser *inlineParser) parse(s string, style span) {
 	plain := 0 // start of the plain text not yet written
 	flush := func(end int) {
-		p.text(s[plain:end], style)
+		parser.text(s[plain:end], style)
 	}
 	for i := 0; i < len(s); {
 		c := s[i]
@@ -89,14 +89,14 @@ func (p *inlineParser) parse(s string, style span) {
 			if s[i+1] == '(' { // \( … \): inline math
 				if end := strings.Index(rest, `\)`); end > 2 {
 					flush(i)
-					p.out = append(p.out, span{math: strings.TrimSpace(rest[2:end]), text: rest[:end+2]})
+					parser.out = append(parser.out, span{math: strings.TrimSpace(rest[2:end]), text: rest[:end+2]})
 					i += end + 2
 					plain = i
 					continue
 				}
 			}
 			flush(i)
-			p.text(s[i+1:i+2], style)
+			parser.text(s[i+1:i+2], style)
 			i += 2
 			plain = i
 			continue
@@ -110,7 +110,7 @@ func (p *inlineParser) parse(s string, style span) {
 				flush(i)
 				code := style
 				code.code = true
-				p.text(strings.TrimSpace(rest[ticks:ticks+end]), code)
+				parser.text(strings.TrimSpace(rest[ticks:ticks+end]), code)
 				i += ticks + end + ticks
 				plain = i
 				continue
@@ -118,7 +118,7 @@ func (p *inlineParser) parse(s string, style span) {
 		case c == '$':
 			if end := mathEnd(rest); end > 0 {
 				flush(i)
-				p.out = append(p.out, span{math: strings.TrimSpace(rest[1:end]), text: rest[:end+1]})
+				parser.out = append(parser.out, span{math: strings.TrimSpace(rest[1:end]), text: rest[:end+1]})
 				i += end + 1
 				plain = i
 				continue
@@ -130,18 +130,18 @@ func (p *inlineParser) parse(s string, style span) {
 			}
 			if n, inner, ok := emphasis(s, i, run); ok {
 				flush(i)
-				in := style
+				spanValue := style
 				switch {
 				case c == '~':
-					in.strike = true
+					spanValue.strike = true
 				case n == 1:
-					in.italic = true
+					spanValue.italic = true
 				case n == 2:
-					in.bold = true
+					spanValue.bold = true
 				default:
-					in.bold, in.italic = true, true
+					spanValue.bold, spanValue.italic = true, true
 				}
-				p.parse(inner, in)
+				parser.parse(inner, spanValue)
 				i += n + len(inner) + n
 				plain = i
 				continue
@@ -156,7 +156,7 @@ func (p *inlineParser) parse(s string, style span) {
 				if label == "" {
 					label = url
 				}
-				p.text(label, in)
+				parser.text(label, in)
 				i += 1 + n
 				plain = i
 				continue
@@ -166,7 +166,7 @@ func (p *inlineParser) parse(s string, style span) {
 				flush(i)
 				in := style
 				in.link = url
-				p.parse(label, in)
+				parser.parse(label, in)
 				i += n
 				plain = i
 				continue
@@ -179,13 +179,13 @@ func (p *inlineParser) parse(s string, style span) {
 					flush(i)
 					in := style
 					in.link = inside
-					p.text(inside, in)
+					parser.text(inside, in)
 					i += end + 1
 					plain = i
 					continue
 				case strings.EqualFold(strings.TrimSuffix(strings.TrimSpace(inside), "/"), "br"):
 					flush(i)
-					p.out = append(p.out, span{hard: true})
+					parser.out = append(parser.out, span{hard: true})
 					i += end + 1
 					plain = i
 					continue
@@ -197,7 +197,7 @@ func (p *inlineParser) parse(s string, style span) {
 				flush(i)
 				in := style
 				in.link = url
-				p.text(url, in)
+				parser.text(url, in)
 				i += len(url)
 				plain = i
 				continue
@@ -377,13 +377,13 @@ func linkAt(s string) (label, url string, n int, ok bool) {
 
 // plainText is the text of spans without their styles.
 func plainText(spans []span) string {
-	var b strings.Builder
-	for _, s := range spans {
-		if s.hard {
-			b.WriteByte('\n')
+	var builder strings.Builder
+	for _, spanValue := range spans {
+		if spanValue.hard {
+			builder.WriteByte('\n')
 		} else {
-			b.WriteString(s.text)
+			builder.WriteString(spanValue.text)
 		}
 	}
-	return b.String()
+	return builder.String()
 }

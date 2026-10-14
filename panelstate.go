@@ -30,12 +30,12 @@ type savedTab struct {
 
 // saved describes a state for the chat's file. A new value each time: the
 // previous one may be being written.
-func (s *panelState) saved() *savedPanel {
-	if !s.open && len(s.tabs) == 0 && s.width == 0 {
+func (state *panelState) saved() *savedPanel {
+	if !state.open && len(state.tabs) == 0 && state.width == 0 {
 		return nil
 	}
-	out := &savedPanel{Open: s.open, Width: s.width, Active: s.active}
-	for _, tab := range s.tabs {
+	out := &savedPanel{Open: state.open, Width: state.width, Active: state.active}
+	for _, tab := range state.tabs {
 		saved := savedTab{Kind: tab.kind, Index: tab.index}
 		if tab.browser != nil {
 			info := tab.browser.snapshot()
@@ -48,9 +48,9 @@ func (s *panelState) saved() *savedPanel {
 
 // stateOf is a chat's panel; the first time, opened again from what was
 // saved with it. nil is the start screen.
-func (p *toolPanel) stateOf(chat *conversation) *panelState {
+func (panel *toolPanel) stateOf(chat *conversation) *panelState {
 	if chat == nil {
-		return &p.home
+		return &panel.home
 	}
 	if chat.panel != nil {
 		return chat.panel
@@ -68,17 +68,17 @@ func (p *toolPanel) stateOf(chat *conversation) *panelState {
 		case "tool":
 			opened = panelTab{kind: "tool", chat: chat, index: tab.Index}
 		case "todo":
-			opened = p.todoTab(chat)
+			opened = panel.todoTab(chat)
 		case "changes":
-			opened = p.changesTab(chat.Config.Workspace)
+			opened = panel.changesTab(chat.Config.Workspace)
 		case "browser":
 			info := browserInfo{Adaptive: true}
 			if tab.Browser != nil {
 				info = *tab.Browser
 			}
-			opened = p.browserTab(chat, info, state.tabs)
+			opened = panel.browserTab(chat, info, state.tabs)
 		case "terminal": // a new shell in the chat's folder: the old one ended with 1loop
-			terminal, err := p.terminalTab(chat.Config.Workspace)
+			terminal, err := panel.terminalTab(chat.Config.Workspace)
 			if err != nil {
 				continue
 			}
@@ -95,32 +95,32 @@ func (p *toolPanel) stateOf(chat *conversation) *panelState {
 }
 
 // stash puts the panel on screen back into its chat's state.
-func (p *toolPanel) stash() {
-	state := p.stateOf(p.owner)
-	state.tabs, state.active, state.open, state.width = p.tabs, p.active, p.target > 0, p.width
-	if p.owner != nil {
-		p.owner.Panel = state.saved()
+func (panel *toolPanel) stash() {
+	state := panel.stateOf(panel.owner)
+	state.tabs, state.active, state.open, state.width = panel.tabs, panel.active, panel.target > 0, panel.width
+	if panel.owner != nil {
+		panel.owner.Panel = state.saved()
 	}
 }
 
 // switchTo shows a chat's panel in place of the current one: same tabs,
 // same width, open if it was. Nothing slides: the panel is simply the
 // other chat's.
-func (p *toolPanel) switchTo(chat *conversation) {
-	p.stash()
+func (panel *toolPanel) switchTo(chat *conversation) {
+	panel.stash()
 	if chat == nil { // the start screen keeps what belongs to the folder it shows
-		kept := p.home.tabs[:0]
-		for _, tab := range p.home.tabs {
-			if tab.workspace != "" && tab.workspace != p.u.cfg.Workspace {
+		kept := panel.home.tabs[:0]
+		for _, tab := range panel.home.tabs {
+			if tab.workspace != "" && tab.workspace != panel.ui.cfg.Workspace {
 				tab.dispose()
 				continue
 			}
 			kept = append(kept, tab)
 		}
-		p.home.tabs = kept
+		panel.home.tabs = kept
 	}
-	p.owner = chat
-	state := p.stateOf(chat)
+	panel.owner = chat
+	state := panel.stateOf(chat)
 	// A call's tab only makes sense while its item is still that call.
 	kept, active := state.tabs[:0], -1
 	for i, tab := range state.tabs {
@@ -135,25 +135,25 @@ func (p *toolPanel) switchTo(chat *conversation) {
 	if active < 0 && len(kept) > 0 {
 		active = 0
 	}
-	p.tabs, p.active, p.width = kept, active, state.width
-	if p.anim != nil {
-		p.anim.Stop()
+	panel.tabs, panel.active, panel.width = kept, active, state.width
+	if panel.anim != nil {
+		panel.anim.Stop()
 	}
-	p.shown, p.target, p.snap = 0, 0, false
+	panel.shown, panel.target, panel.snap = 0, 0, false
 	if state.open {
-		p.shown, p.target = 1, 1
+		panel.shown, panel.target = 1, 1
 	}
-	p.u.panelToggle.SetSelected(state.open)
-	p.todoChanged(chat)
-	p.render()
-	relayout(p.u.split)
+	panel.ui.panelToggle.SetSelected(state.open)
+	panel.todoChanged(chat)
+	panel.render()
+	relayout(panel.ui.split)
 }
 
 // adopt gives the panel of the start screen to the chat just begun there.
-func (p *toolPanel) adopt(chat *conversation) {
-	p.stash()
-	state := p.home
-	p.home = panelState{active: -1}
+func (panel *toolPanel) adopt(chat *conversation) {
+	panel.stash()
+	state := panel.home
+	panel.home = panelState{active: -1}
 	for i := range state.tabs {
 		if state.tabs[i].browser != nil {
 			state.tabs[i].browser.view.chat = chat
@@ -163,24 +163,24 @@ func (p *toolPanel) adopt(chat *conversation) {
 		}
 	}
 	chat.panel = &state
-	p.owner, p.tabs = chat, state.tabs
+	panel.owner, panel.tabs = chat, state.tabs
 }
 
 // disposePanel ends what a chat's panel runs, when the chat goes.
-func (c *conversation) disposePanel() {
-	if c.panel != nil {
-		for _, tab := range c.panel.tabs {
+func (chat *conversation) disposePanel() {
+	if chat.panel != nil {
+		for _, tab := range chat.panel.tabs {
 			tab.dispose()
 		}
-		c.panel = nil
+		chat.panel = nil
 	}
 }
 
 // showTodo opens the panel of a chat on its task list. A chat that is not
 // on screen finds it that way when it is opened.
-func (p *toolPanel) showTodo(chat *conversation) {
-	if chat == p.owner {
-		p.openTodo()
+func (panel *toolPanel) showTodo(chat *conversation) {
+	if chat == panel.owner {
+		panel.openTodo()
 		return
 	}
 	if chat.panel == nil { // not opened since 1loop started: only what was saved changes
@@ -211,7 +211,7 @@ func (p *toolPanel) showTodo(chat *conversation) {
 		}
 	}
 	if at < 0 {
-		state.tabs = append(state.tabs, p.todoTab(chat))
+		state.tabs = append(state.tabs, panel.todoTab(chat))
 		at = len(state.tabs) - 1
 	}
 	state.open, state.active = true, at
@@ -220,14 +220,14 @@ func (p *toolPanel) showTodo(chat *conversation) {
 
 // todoUpdated follows a chat's task list. The first time the agent puts
 // tasks in it, the side panel opens on the list.
-func (u *desktopUI) todoUpdated(chat *conversation) {
+func (ui *desktopUI) todoUpdated(chat *conversation) {
 	count := len(chat.Todo.snapshot())
 	first := chat.todoCount == 0 && count > 0
 	chat.todoCount = count
 	if first {
 		devf("ui", "first tasks in %q: opening its task list", chat.Title)
-		u.panel.showTodo(chat)
-		u.save()
+		ui.panel.showTodo(chat)
+		ui.save()
 	}
-	u.panel.todoChanged(chat)
+	ui.panel.todoChanged(chat)
 }

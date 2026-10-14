@@ -13,26 +13,29 @@ import (
 // Claude Code keeps its own harness. Its MCP transport exposes the same
 // TODO store, browser tabs and terminals used by 1loop's other providers.
 func startTodoMCP(ctx context.Context, state *todoState, emit emitter, handlers ...panelToolHandler) (string, func(), error) {
-	var browserTools, terminalTools panelToolHandler
+	var browserTools, terminalTools, computerTools panelToolHandler
 	if len(handlers) > 0 {
 		browserTools = handlers[0]
 	}
 	if len(handlers) > 1 {
 		terminalTools = handlers[1]
 	}
+	if len(handlers) > 2 {
+		computerTools = handlers[2]
+	}
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", nil, err
 	}
 	token := identifier()
-	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.Header.Get("Authorization") != "Bearer "+token {
-			http.Error(w, "Unauthorized", http.StatusUnauthorized)
+	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(writer http.ResponseWriter, requestValue *http.Request) {
+		if requestValue.Header.Get("Authorization") != "Bearer "+token {
+			http.Error(writer, "Unauthorized", http.StatusUnauthorized)
 			return
 		}
-		if r.Method != http.MethodPost {
-			w.Header().Set("Allow", "POST")
-			w.WriteHeader(http.StatusMethodNotAllowed)
+		if requestValue.Method != http.MethodPost {
+			writer.Header().Set("Allow", "POST")
+			writer.WriteHeader(http.StatusMethodNotAllowed)
 			return
 		}
 		var request struct {
@@ -40,12 +43,12 @@ func startTodoMCP(ctx context.Context, state *todoState, emit emitter, handlers 
 			Method string          `json:"method"`
 			Params json.RawMessage `json:"params"`
 		}
-		if err := json.NewDecoder(io.LimitReader(r.Body, 1<<20)).Decode(&request); err != nil {
-			http.Error(w, "Invalid JSON-RPC request", http.StatusBadRequest)
+		if err := json.NewDecoder(io.LimitReader(requestValue.Body, 1<<20)).Decode(&request); err != nil {
+			http.Error(writer, "Invalid JSON-RPC request", http.StatusBadRequest)
 			return
 		}
 		if len(request.ID) == 0 {
-			w.WriteHeader(http.StatusAccepted)
+			writer.WriteHeader(http.StatusAccepted)
 			return
 		}
 		response := map[string]any{"jsonrpc": "2.0", "id": request.ID}
@@ -62,6 +65,9 @@ func startTodoMCP(ctx context.Context, state *todoState, emit emitter, handlers 
 			}
 			if terminalTools != nil {
 				definitions = append(definitions, terminalToolDefinitions()...)
+			}
+			if computerTools != nil {
+				definitions = append(definitions, computerToolDefinition())
 			}
 			tools := []any{}
 			for _, definition := range definitions {
@@ -87,12 +93,15 @@ func startTodoMCP(ctx context.Context, state *todoState, emit emitter, handlers 
 				if strings.HasPrefix(call.Name, "terminal_") {
 					handler = terminalTools
 				}
-				if handler == nil || (!strings.HasPrefix(call.Name, "browser_") && !strings.HasPrefix(call.Name, "terminal_")) {
+				if call.Name == "computer_use" {
+					handler = computerTools
+				}
+				if handler == nil || (!strings.HasPrefix(call.Name, "browser_") && !strings.HasPrefix(call.Name, "terminal_") && call.Name != "computer_use") {
 					response["error"] = map[string]any{"code": -32602, "message": "Unknown 1loop tool"}
 					break
 				}
 				operation, cancel := context.WithCancel(ctx)
-				stop := context.AfterFunc(r.Context(), cancel)
+				stop := context.AfterFunc(requestValue.Context(), cancel)
 				result, err := handler(operation, call.Name, call.Arguments)
 				stop()
 				cancel()
@@ -100,8 +109,8 @@ func startTodoMCP(ctx context.Context, state *todoState, emit emitter, handlers 
 				if err != nil {
 					content = []any{map[string]any{"type": "text", "text": err.Error()}}
 				}
-				for _, im := range result.Images {
-					content = append(content, map[string]any{"type": "image", "data": im.Data, "mimeType": im.Mime})
+				for _, imagePart := range result.Images {
+					content = append(content, map[string]any{"type": "image", "data": imagePart.Data, "mimeType": imagePart.Mime})
 				}
 				response["result"] = map[string]any{"isError": err != nil, "content": content}
 				break
@@ -118,8 +127,8 @@ func startTodoMCP(ctx context.Context, state *todoState, emit emitter, handlers 
 		default:
 			response["error"] = map[string]any{"code": -32601, "message": "Unknown method"}
 		}
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(response)
+		writer.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(writer).Encode(response)
 	})}
 	go func() { _ = server.Serve(listener) }()
 	config, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"1loop_todo": map[string]any{

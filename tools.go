@@ -33,7 +33,7 @@ func toolDefinitions() []map[string]any {
 		}
 		result = append(result, map[string]any{"type": "function", "function": map[string]any{"name": d.name, "description": d.description, "parameters": map[string]any{"type": "object", "properties": properties, "required": d.fields, "additionalProperties": false}}})
 	}
-	result = append(result, todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition())
+	result = append(result, todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition(), computerToolDefinition())
 	result = append(result, browserToolDefinitions()...)
 	return append(result, terminalToolDefinitions()...)
 }
@@ -64,13 +64,13 @@ func workspacePath(root, path string) (string, error) {
 
 type limitedBuffer struct{ bytes.Buffer }
 
-func (b *limitedBuffer) Write(p []byte) (int, error) {
+func (buffer *limitedBuffer) Write(p []byte) (int, error) {
 	n := len(p)
-	if remaining := (128 << 10) - b.Len(); remaining > 0 {
+	if remaining := (128 << 10) - buffer.Len(); remaining > 0 {
 		if len(p) > remaining {
 			p = p[:remaining]
 		}
-		b.Buffer.Write(p)
+		buffer.Buffer.Write(p)
 	}
 	return n, nil
 }
@@ -83,12 +83,12 @@ func fileText(path string) (string, error) {
 	if !info.Mode().IsRegular() {
 		return "", fmt.Errorf("Expected a regular text file")
 	}
-	f, err := os.Open(path)
+	file, err := os.Open(path)
 	if err != nil {
 		return "", err
 	}
-	defer f.Close()
-	data, err := io.ReadAll(io.LimitReader(f, (1<<20)+1))
+	defer file.Close()
+	data, err := io.ReadAll(io.LimitReader(file, (1<<20)+1))
 	if err != nil {
 		return "", err
 	}
@@ -136,16 +136,16 @@ type toolOutcome struct {
 }
 
 // modelText is the tool result the model receives.
-func (o toolOutcome) modelText() string {
-	if o.Err != nil {
-		return o.Output + "\nError: " + o.Err.Error()
+func (outcome toolOutcome) modelText() string {
+	if outcome.Err != nil {
+		return outcome.Output + "\nError: " + outcome.Err.Error()
 	}
-	return o.Output
+	return outcome.Output
 }
 
 // executeTool runs one call. It emits "tool" when the call starts (before
 // any approval) and "tool_exec" when it really begins to run.
-func (a *app) executeTool(ctx context.Context, root string, call toolCall, emit emitter) (outcome toolOutcome) {
+func (backend *app) executeTool(ctx context.Context, root string, call toolCall, emit emitter) (outcome toolOutcome) {
 	outcome = toolOutcome{ID: call.ID, Name: call.Function.Name, Args: call.Function.Arguments, RecallID: identifier()[:16]}
 	emit("tool", outcome)
 	var started time.Time
@@ -158,12 +158,24 @@ func (a *app) executeTool(ctx context.Context, root string, call toolCall, emit 
 			outcome.Elapsed = time.Since(started)
 		}
 	}()
-	if strings.HasPrefix(call.Function.Name, "terminal_") {
+	if call.Function.Name == "computer_use" {
+		handler, _ := ctx.Value(computerContextKey{}).(panelToolHandler)
+		switch {
+		case handler == nil:
+			outcome.Err = fmt.Errorf("Computer Use is not attached to this conversation")
+		case computerNeedsApproval(json.RawMessage(call.Function.Arguments)) && !backend.confirm(ctx, emit, "Configure desktop accessibility", call.Function.Arguments):
+			outcome.Err = fmt.Errorf("The user denied this desktop configuration change")
+		default:
+			begin()
+			result, err := handler(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
+			outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
+		}
+	} else if strings.HasPrefix(call.Function.Name, "terminal_") {
 		handler, _ := ctx.Value(terminalContextKey{}).(panelToolHandler)
 		switch {
 		case handler == nil:
 			outcome.Err = fmt.Errorf("Terminal tools are not attached to this conversation")
-		case terminalNeedsApproval(call.Function.Name, json.RawMessage(call.Function.Arguments)) && !a.confirm(ctx, emit, "Use terminal", call.Function.Arguments):
+		case terminalNeedsApproval(call.Function.Name, json.RawMessage(call.Function.Arguments)) && !backend.confirm(ctx, emit, "Use terminal", call.Function.Arguments):
 			outcome.Err = fmt.Errorf("The user denied this terminal action")
 		default:
 			begin()
@@ -180,13 +192,13 @@ func (a *app) executeTool(ctx context.Context, root string, call toolCall, emit 
 			outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
 		}
 	} else {
-		outcome.Output, outcome.Diff, outcome.Err = a.runTool(ctx, root, call, begin, emit)
+		outcome.Output, outcome.Diff, outcome.Err = backend.runTool(ctx, root, call, begin, emit)
 	}
 	devf("tool", "%s %s: %d bytes of output, error %v", outcome.Name, devText(outcome.Args, 120), len(outcome.Output), outcome.Err)
 	return outcome
 }
 
-func (a *app) runTool(ctx context.Context, root string, call toolCall, begin func(), emit emitter) (output, diff string, err error) {
+func (backend *app) runTool(ctx context.Context, root string, call toolCall, begin func(), emit emitter) (output, diff string, err error) {
 	if call.Function.Name == "recall" {
 		begin()
 		output, err = recallConversation(ctx, json.RawMessage(call.Function.Arguments))
@@ -233,7 +245,7 @@ func (a *app) runTool(ctx context.Context, root string, call toolCall, begin fun
 		if strings.TrimSpace(args.Command) == "" {
 			return "", "", fmt.Errorf("Empty command")
 		}
-		if !a.confirm(ctx, emit, "Run command?", root+"\n\n$ "+args.Command) {
+		if !backend.confirm(ctx, emit, "Run command?", root+"\n\n$ "+args.Command) {
 			return "", "", fmt.Errorf("Command denied")
 		}
 		begin()
@@ -312,7 +324,7 @@ func (a *app) runTool(ctx context.Context, root string, call toolCall, begin fun
 	if err != nil {
 		return "", "", err
 	}
-	if !a.confirm(ctx, emit, "Apply changes to "+rel+"?", diff) {
+	if !backend.confirm(ctx, emit, "Apply changes to "+rel+"?", diff) {
 		return "", diff, fmt.Errorf("Edit denied")
 	}
 	begin()
@@ -329,12 +341,12 @@ func (a *app) runTool(ctx context.Context, root string, call toolCall, begin fun
 	if create {
 		flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
 	}
-	f, err := os.OpenFile(path, flags, 0644)
+	file, err := os.OpenFile(path, flags, 0644)
 	if err != nil {
 		return "", diff, err
 	}
-	_, writeErr := io.WriteString(f, after)
-	closeErr := f.Close()
+	_, writeErr := io.WriteString(file, after)
+	closeErr := file.Close()
 	if writeErr != nil {
 		return "", diff, writeErr
 	}

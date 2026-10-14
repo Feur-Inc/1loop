@@ -27,32 +27,34 @@ type accountLimits struct {
 	checked time.Time
 }
 
-func (w accountLimitWindow) remaining() float64 { return math.Max(0, math.Min(100, 100-w.used)) }
+func (window accountLimitWindow) remaining() float64 {
+	return math.Max(0, math.Min(100, 100-window.used))
+}
 
-func (l accountLimits) summary() string {
-	if len(l.windows) == 0 {
-		return l.note
+func (limits accountLimits) summary() string {
+	if len(limits.windows) == 0 {
+		return limits.note
 	}
 	var parts []string
-	for _, w := range l.windows[:min(2, len(l.windows))] {
-		parts = append(parts, fmt.Sprintf("%s : %.0f%%", w.label, w.remaining()))
+	for _, window := range limits.windows[:min(2, len(limits.windows))] {
+		parts = append(parts, fmt.Sprintf("%s : %.0f%%", window.label, window.remaining()))
 	}
 	return strings.Join(parts, " · ")
 }
 
-func (l accountLimits) describe() string {
-	if len(l.windows) == 0 {
-		return l.note
+func (limits accountLimits) describe() string {
+	if len(limits.windows) == 0 {
+		return limits.note
 	}
 	lines := []string{"Remaining limits"}
-	for _, w := range l.windows {
-		line := fmt.Sprintf("%s : %.0f%%", w.label, w.remaining())
-		if !w.resetAt.IsZero() {
-			line += " · resets on " + w.resetAt.Local().Format("02/01 at 15:04")
+	for _, window := range limits.windows {
+		line := fmt.Sprintf("%s : %.0f%%", window.label, window.remaining())
+		if !window.resetAt.IsZero() {
+			line += " · resets on " + window.resetAt.Local().Format("02/01 at 15:04")
 		}
 		lines = append(lines, line)
 	}
-	lines = append(lines, "Updated at "+l.checked.Local().Format("15:04"))
+	lines = append(lines, "Updated at "+limits.checked.Local().Format("15:04"))
 	return strings.Join(lines, "\n")
 }
 
@@ -89,11 +91,11 @@ func readAccountLimits(ctx context.Context, url string, headers http.Header, tar
 	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(target)
 }
 
-func (a *app) connectionLimits(ctx context.Context, c connection, key string) (accountLimits, error) {
+func (backend *app) connectionLimits(ctx context.Context, conn connection, key string) (accountLimits, error) {
 	limits := accountLimits{note: "Limits not provided"}
-	switch c.Provider {
+	switch conn.Provider {
 	case "openai":
-		cfg, err := a.openAIConfig(ctx, c.config(""))
+		cfg, err := backend.openAIConfig(ctx, conn.config(""))
 		if err != nil {
 			return limits, err
 		}
@@ -124,20 +126,20 @@ func (a *app) connectionLimits(ctx context.Context, c connection, key string) (a
 		if err := readAccountLimits(ctx, "https://chatgpt.com/backend-api/wham/usage", headers, &data); err != nil {
 			return limits, err
 		}
-		appendWindows := func(name string, r rateLimit) {
-			for _, w := range []*window{r.Primary, r.Secondary} {
-				if w == nil || w.Used == nil {
+		appendWindows := func(name string, rateLimitValue rateLimit) {
+			for _, windowValue := range []*window{rateLimitValue.Primary, rateLimitValue.Secondary} {
+				if windowValue == nil || windowValue.Used == nil {
 					continue
 				}
-				label := limitPeriod(w.Seconds)
+				label := limitPeriod(windowValue.Seconds)
 				if name != "" {
 					label = name + " · " + label
 				}
 				reset := time.Time{}
-				if w.ResetAt > 0 {
-					reset = time.Unix(w.ResetAt, 0)
+				if windowValue.ResetAt > 0 {
+					reset = time.Unix(windowValue.ResetAt, 0)
 				}
-				limits.windows = append(limits.windows, accountLimitWindow{label, *w.Used, reset})
+				limits.windows = append(limits.windows, accountLimitWindow{label, *windowValue.Used, reset})
 			}
 		}
 		appendWindows("", data.RateLimit)
@@ -185,15 +187,15 @@ func (a *app) connectionLimits(ctx context.Context, c connection, key string) (a
 			return limits, err
 		}
 		for _, item := range []struct {
-			label string
-			w     *window
+			label       string
+			windowValue *window
 		}{{"5h", usage.FiveHour}, {"7d", usage.Week}, {"Sonnet · 7d", usage.Sonnet}, {"Opus · 7d", usage.Opus}} {
-			if item.w != nil && item.w.Used != nil {
-				limits.windows = append(limits.windows, accountLimitWindow{item.label, *item.w.Used, item.w.ResetAt})
+			if item.windowValue != nil && item.windowValue.Used != nil {
+				limits.windows = append(limits.windows, accountLimitWindow{item.label, *item.windowValue.Used, item.windowValue.ResetAt})
 			}
 		}
 	case "openrouter":
-		cfg := c.config("")
+		cfg := conn.config("")
 		cfg.APIKey = key
 		base, token, err := endpoint(cfg)
 		if err != nil {
@@ -217,31 +219,31 @@ func (a *app) connectionLimits(ctx context.Context, c connection, key string) (a
 	return limits, nil
 }
 
-func (u *desktopUI) loadAccountLimits(ctx context.Context, menu *sheet, c connection, show func(accountLimits)) {
-	if cached, ok := u.accountLimits[c.ID]; ok && time.Since(cached.checked) < time.Minute {
+func (ui *desktopUI) loadAccountLimits(ctx context.Context, menu *sheet, conn connection, show func(accountLimits)) {
+	if cached, ok := ui.accountLimits[conn.ID]; ok && time.Since(cached.checked) < time.Minute {
 		show(cached)
 		return
 	}
-	if c.Provider != "openai" && c.Provider != "claudecode" && c.Provider != "openrouter" {
+	if conn.Provider != "openai" && conn.Provider != "claudecode" && conn.Provider != "openrouter" {
 		show(accountLimits{note: "Limits not provided"})
 		return
 	}
 	show(accountLimits{note: "Loading limits…"})
-	key := u.keys[c.ID]
+	key := ui.keys[conn.ID]
 	go func() {
-		limits, err := u.backend.connectionLimits(ctx, c, key)
+		limits, err := ui.backend.connectionLimits(ctx, conn, key)
 		if err != nil {
 			limits = accountLimits{note: "Limits unavailable"}
 		}
 		limits.checked = time.Now()
 		fyne.Do(func() {
-			if ctx.Err() != nil || u.model.open != menu || menu.closing {
+			if ctx.Err() != nil || ui.model.open != menu || menu.closing {
 				return
 			}
-			if u.accountLimits == nil {
-				u.accountLimits = map[string]accountLimits{}
+			if ui.accountLimits == nil {
+				ui.accountLimits = map[string]accountLimits{}
 			}
-			u.accountLimits[c.ID] = limits
+			ui.accountLimits[conn.ID] = limits
 			show(limits)
 		})
 	}()

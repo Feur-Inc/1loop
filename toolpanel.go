@@ -23,7 +23,7 @@ import (
 // tool call opened from the transcript gets a tab showing the call itself
 // (command, path, diff), its full output and how long it ran.
 type toolPanel struct {
-	u      *desktopUI
+	ui     *desktopUI
 	view   fyne.CanvasObject
 	strip  *fyne.Container
 	body   *kineticScroll
@@ -61,60 +61,60 @@ type panelTab struct {
 
 const panelWidth = 840
 
-func newToolPanel(u *desktopUI) *toolPanel {
-	p := &toolPanel{u: u, active: -1}
+func newToolPanel(ui *desktopUI) *toolPanel {
+	panel := &toolPanel{ui: ui, active: -1}
 	go func() {
 		timer := time.NewTicker(time.Second)
 		defer timer.Stop()
 		for {
 			select {
-			case <-u.ctx.Done():
+			case <-ui.ctx.Done():
 				return
 			case <-timer.C:
 				fyne.Do(func() {
-					if u.ctx.Err() == nil {
-						p.refreshTodoStatus()
+					if ui.ctx.Err() == nil {
+						panel.refreshTodoStatus()
 					}
 				})
 			}
 		}
 	}()
-	p.strip = container.New(layout.NewCustomPaddedHBoxLayout(4))
+	panel.strip = container.New(layout.NewCustomPaddedHBoxLayout(4))
 	add := newRow("", iconPlus, styleWindow, nil)
 	add.onTap = func() {
-		showMenu(u.window, add, []menuAction{
-			{label: "Browser", icon: iconBrowser, run: p.openBrowser},
-			{label: "Terminal", icon: toolGlyph("shell"), run: p.openTerminal},
-			{label: "Git changes", icon: toolGlyph("edit_file"), run: p.openChanges},
+		showMenu(ui.window, add, []menuAction{
+			{label: "Browser", icon: iconBrowser, run: panel.openBrowser},
+			{label: "Terminal", icon: toolGlyph("shell"), run: panel.openTerminal},
+			{label: "Git changes", icon: toolGlyph("edit_file"), run: panel.openChanges},
 		})
 	}
-	fold := newRow("", iconPanel, styleWindow, p.fold)
-	todo := newRow("Tasks", iconCheck, styleChip, p.openTodo)
-	header := container.NewBorder(nil, nil, nil, container.NewHBox(todo, add, fold), container.NewHScroll(p.strip))
+	fold := newRow("", iconPanel, styleWindow, panel.fold)
+	todo := newRow("Tasks", iconCheck, styleChip, panel.openTodo)
+	header := container.NewBorder(nil, nil, nil, container.NewHBox(todo, add, fold), container.NewHScroll(panel.strip))
 	rule := canvas.NewRectangle(colBorderSoft)
 	rule.SetMinSize(fyne.NewSize(0, 1))
-	p.body = newKineticVScroll(spacer(0, 0))
-	p.body.OnScrolled = func(fyne.Position) { p.place() }
-	p.page = container.NewStack(p.body)
+	panel.body = newKineticVScroll(spacer(0, 0))
+	panel.body.OnScrolled = func(fyne.Position) { panel.place() }
+	panel.page = container.NewStack(panel.body)
 	card := canvas.NewRectangle(colSurface)
 	card.CornerRadius = 12
 	card.StrokeColor = colBorderSoft
 	card.StrokeWidth = 1
-	content := container.NewBorder(container.NewVBox(padded(8, 8, 8, 6, header), rule), nil, nil, nil, p.page)
+	content := container.NewBorder(container.NewVBox(padded(8, 8, 8, 6, header), rule), nil, nil, nil, panel.page)
 	// The panel goes nearly to the window's edges: only a thin margin, which
 	// also leaves the window's own resize border within reach.
-	p.view = padded(0, 6, 0, 6, container.NewStack(card, content))
-	p.render()
-	return p
+	panel.view = padded(0, 6, 0, 6, container.NewStack(card, content))
+	panel.render()
+	return panel
 }
 
 // splitLayout gives the panel its slice of the width as it slides in.
-type splitLayout struct{ p *toolPanel }
+type splitLayout struct{ toolPanel *toolPanel }
 
-func (l splitLayout) width(total float32) float32 {
-	width := l.p.width
+func (layoutSpec splitLayout) width(total float32) float32 {
+	width := layoutSpec.toolPanel.width
 	if width <= 0 {
-		width = l.p.u.panelWidth // the last width chosen anywhere
+		width = layoutSpec.toolPanel.ui.panelWidth // the last width chosen anywhere
 	}
 	if width <= 0 {
 		width = fyne.Min(panelWidth, total*0.58)
@@ -126,22 +126,22 @@ func panelWidthWithin(width, total float32) float32 {
 	return fyne.Max(320, fyne.Min(width, total-360))
 }
 
-func (l splitLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+func (layoutSpec splitLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	return objects[0].MinSize()
 }
 
-func (l splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	full := l.width(size.Width)
-	width := full * l.p.shown
+func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	full := layoutSpec.width(size.Width)
+	width := full * layoutSpec.toolPanel.shown
 	conversationWidth := size.Width - width
-	if l.p.snap {
-		conversationWidth = size.Width - full*l.p.target
+	if layoutSpec.toolPanel.snap {
+		conversationWidth = size.Width - full*layoutSpec.toolPanel.target
 	}
-	l.p.u.controls.Layout.(*composerControlsLayout).available = fyne.Min(760, conversationWidth-48) - 20
-	if l.p.snap {
+	layoutSpec.toolPanel.ui.controls.Layout.(*composerControlsLayout).available = fyne.Min(760, conversationWidth-48) - 20
+	if layoutSpec.toolPanel.snap {
 		// Wrapping a long conversation again on every frame is what made
 		// the slide stutter: it takes its final width at once instead.
-		objects[0].Resize(fyne.NewSize(size.Width-full*l.p.target, size.Height))
+		objects[0].Resize(fyne.NewSize(size.Width-full*layoutSpec.toolPanel.target, size.Height))
 	} else {
 		objects[0].Resize(fyne.NewSize(size.Width-width, size.Height))
 	}
@@ -150,7 +150,7 @@ func (l splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	objects[1].Resize(fyne.NewSize(full, size.Height))
 	objects[2].Move(fyne.NewPos(size.Width-width-4, 0))
 	objects[2].Resize(fyne.NewSize(8, size.Height-6))
-	if l.p.target > 0 {
+	if layoutSpec.toolPanel.target > 0 {
 		objects[2].Show()
 	} else {
 		objects[2].Hide()
@@ -163,71 +163,71 @@ type panelResizeHandle struct {
 	grip  *canvas.Rectangle
 }
 
-func newPanelResizeHandle(p *toolPanel) *panelResizeHandle {
-	h := &panelResizeHandle{panel: p, grip: canvas.NewRectangle(colBorderSoft)}
-	h.grip.CornerRadius = 1
-	h.grip.SetMinSize(fyne.NewSize(2, 40))
-	h.ExtendBaseWidget(h)
-	return h
+func newPanelResizeHandle(panel *toolPanel) *panelResizeHandle {
+	handle := &panelResizeHandle{panel: panel, grip: canvas.NewRectangle(colBorderSoft)}
+	handle.grip.CornerRadius = 1
+	handle.grip.SetMinSize(fyne.NewSize(2, 40))
+	handle.ExtendBaseWidget(handle)
+	return handle
 }
 
-func (h *panelResizeHandle) CreateRenderer() fyne.WidgetRenderer {
-	return widget.NewSimpleRenderer(container.NewCenter(h.grip))
+func (handle *panelResizeHandle) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(container.NewCenter(handle.grip))
 }
 
-func (h *panelResizeHandle) Cursor() desktop.Cursor { return desktop.HResizeCursor }
-func (h *panelResizeHandle) MouseIn(*desktop.MouseEvent) {
-	h.grip.FillColor = colAmber
-	h.grip.Refresh()
+func (handle *panelResizeHandle) Cursor() desktop.Cursor { return desktop.HResizeCursor }
+func (handle *panelResizeHandle) MouseIn(*desktop.MouseEvent) {
+	handle.grip.FillColor = colAmber
+	handle.grip.Refresh()
 }
-func (h *panelResizeHandle) MouseMoved(*desktop.MouseEvent) {}
-func (h *panelResizeHandle) MouseOut() {
-	h.grip.FillColor = colBorderSoft
-	h.grip.Refresh()
+func (handle *panelResizeHandle) MouseMoved(*desktop.MouseEvent) {}
+func (handle *panelResizeHandle) MouseOut() {
+	handle.grip.FillColor = colBorderSoft
+	handle.grip.Refresh()
 }
-func (h *panelResizeHandle) Dragged(e *fyne.DragEvent) {
-	p := h.panel
-	if p.anim != nil {
-		p.anim.Stop()
+func (handle *panelResizeHandle) Dragged(e *fyne.DragEvent) {
+	panel := handle.panel
+	if panel.anim != nil {
+		panel.anim.Stop()
 	}
-	p.shown, p.target, p.snap = 1, 1, false
-	total := p.u.split.Size().Width
-	p.width = panelWidthWithin((splitLayout{p}).width(total)-e.Dragged.DX, total)
-	p.u.panelWidth = p.width // what a chat without a width of its own takes
-	relayout(p.u.split)
+	panel.shown, panel.target, panel.snap = 1, 1, false
+	total := panel.ui.split.Size().Width
+	panel.width = panelWidthWithin((splitLayout{panel}).width(total)-e.Dragged.DX, total)
+	panel.ui.panelWidth = panel.width // what a chat without a width of its own takes
+	relayout(panel.ui.split)
 }
-func (h *panelResizeHandle) DragEnd() { h.panel.u.save() }
+func (handle *panelResizeHandle) DragEnd() { handle.panel.ui.save() }
 
-func (p *toolPanel) slide(to float32) {
-	if p.anim != nil {
-		p.anim.Stop()
+func (panel *toolPanel) slide(to float32) {
+	if panel.anim != nil {
+		panel.anim.Stop()
 	}
-	from := p.shown
-	p.target, p.snap = to, false
-	p.syncBrowsers()
-	p.anim = fyne.NewAnimation(240*time.Millisecond, func(t float32) {
-		p.shown = from + (to-from)*t
+	from := panel.shown
+	panel.target, panel.snap = to, false
+	panel.syncBrowsers()
+	panel.anim = fyne.NewAnimation(240*time.Millisecond, func(t float32) {
+		panel.shown = from + (to-from)*t
 		started := time.Now()
-		relayout(p.u.split) // never Refresh: it would redraw the whole conversation on every frame
+		relayout(panel.ui.split) // never Refresh: it would redraw the whole conversation on every frame
 		if time.Since(started) > 8*time.Millisecond {
-			p.snap = true
+			panel.snap = true
 		}
 		if t >= 1 {
-			p.snap = false
+			panel.snap = false
 		}
 	})
-	p.anim.Curve = easeOutQuint
-	p.anim.Start()
-	p.u.panelToggle.SetSelected(to > 0)
-	p.syncRows()
-	p.u.save() // open or folded is part of what the chat remembers
+	panel.anim.Curve = easeOutQuint
+	panel.anim.Start()
+	panel.ui.panelToggle.SetSelected(to > 0)
+	panel.syncRows()
+	panel.ui.save() // open or folded is part of what the chat remembers
 }
 
-func (p *toolPanel) fold()   { p.slide(0) }
-func (p *toolPanel) unfold() { p.slide(1) }
+func (panel *toolPanel) fold()   { panel.slide(0) }
+func (panel *toolPanel) unfold() { panel.slide(1) }
 
-func (p *toolPanel) find(chat *conversation, index int) int {
-	for i, tab := range p.tabs {
+func (panel *toolPanel) find(chat *conversation, index int) int {
+	for i, tab := range panel.tabs {
 		if tab.chat == chat && tab.index == index {
 			return i
 		}
@@ -236,122 +236,122 @@ func (p *toolPanel) find(chat *conversation, index int) int {
 }
 
 // showing reports whether a call is the one the panel shows.
-func (p *toolPanel) showing(chat *conversation, index int) bool {
-	return p.shown > 0 && p.active >= 0 && p.find(chat, index) == p.active
+func (panel *toolPanel) showing(chat *conversation, index int) bool {
+	return panel.shown > 0 && panel.active >= 0 && panel.find(chat, index) == panel.active
 }
 
 // open shows a call, in its existing tab or a new one.
-func (p *toolPanel) open(chat *conversation, index int) {
-	i := p.find(chat, index)
+func (panel *toolPanel) open(chat *conversation, index int) {
+	i := panel.find(chat, index)
 	if i < 0 {
-		p.tabs = append(p.tabs, panelTab{kind: "tool", chat: chat, index: index})
-		i = len(p.tabs) - 1
+		panel.tabs = append(panel.tabs, panelTab{kind: "tool", chat: chat, index: index})
+		i = len(panel.tabs) - 1
 	}
-	p.choose(i)
-	if p.shown < 1 {
-		p.unfold()
+	panel.choose(i)
+	if panel.shown < 1 {
+		panel.unfold()
 	}
 }
 
-func (p *toolPanel) choose(i int) {
-	p.active = i
-	p.render()
-	p.body.ScrollToTop()
-	if t := p.tabs[i].terminal; t != nil {
-		p.u.window.Canvas().Focus(t.widget)
+func (panel *toolPanel) choose(i int) {
+	panel.active = i
+	panel.render()
+	panel.body.ScrollToTop()
+	if terminal := panel.tabs[i].terminal; terminal != nil {
+		panel.ui.window.Canvas().Focus(terminal.widget)
 	}
-	p.u.save()
+	panel.ui.save()
 }
 
-func (p *toolPanel) close(i int) {
-	p.tabs[i].dispose()
-	p.tabs = append(p.tabs[:i], p.tabs[i+1:]...)
+func (panel *toolPanel) close(i int) {
+	panel.tabs[i].dispose()
+	panel.tabs = append(panel.tabs[:i], panel.tabs[i+1:]...)
 	switch {
-	case len(p.tabs) == 0:
-		p.active = -1
-		p.render()
-		p.fold()
+	case len(panel.tabs) == 0:
+		panel.active = -1
+		panel.render()
+		panel.fold()
 		return
-	case p.active >= len(p.tabs) || p.active > i:
-		p.active--
+	case panel.active >= len(panel.tabs) || panel.active > i:
+		panel.active--
 	}
-	p.render()
-	p.u.save()
+	panel.render()
+	panel.ui.save()
 }
 
-func (t panelTab) dispose() {
-	if t.browser != nil {
-		t.browser.close()
+func (tab panelTab) dispose() {
+	if tab.browser != nil {
+		tab.browser.close()
 	}
-	if t.terminal != nil {
-		t.terminal.close()
+	if tab.terminal != nil {
+		tab.terminal.close()
 	}
-	if t.cancel != nil {
-		t.cancel()
+	if tab.cancel != nil {
+		tab.cancel()
 	}
 }
 
 // dispose ends what every chat's panel runs (terminals, loads), on closing.
-func (p *toolPanel) dispose() {
-	p.stash()
-	for _, tab := range p.home.tabs {
+func (panel *toolPanel) dispose() {
+	panel.stash()
+	for _, tab := range panel.home.tabs {
 		tab.dispose()
 	}
-	for _, chat := range p.u.chats {
+	for _, chat := range panel.ui.chats {
 		chat.disposePanel()
 	}
-	if p.u.browser != nil {
-		p.u.browser.cancel()
+	if panel.ui.browser != nil {
+		panel.ui.browser.cancel()
 	}
 }
 
 // changed refreshes the panel when a call it shows gets its result.
-func (p *toolPanel) changed(chat *conversation, index int) {
-	if i := p.find(chat, index); i >= 0 {
-		p.render()
+func (panel *toolPanel) changed(chat *conversation, index int) {
+	if i := panel.find(chat, index); i >= 0 {
+		panel.render()
 	}
 }
 
-func (p *toolPanel) renderStrip() {
-	p.strip.RemoveAll()
-	for i, tab := range p.tabs {
-		p.strip.Add(p.tabView(i, tab))
+func (panel *toolPanel) renderStrip() {
+	panel.strip.RemoveAll()
+	for i, tab := range panel.tabs {
+		panel.strip.Add(panel.tabView(i, tab))
 	}
-	p.strip.Refresh()
+	panel.strip.Refresh()
 }
 
-func (p *toolPanel) render() {
-	p.renderStrip()
-	p.syncBrowsers()
-	p.texts = nil
-	if p.active >= 0 {
-		tab := p.tabs[p.active]
+func (panel *toolPanel) render() {
+	panel.renderStrip()
+	panel.syncBrowsers()
+	panel.texts = nil
+	if panel.active >= 0 {
+		tab := panel.tabs[panel.active]
 		if tab.content != nil {
-			p.page.Objects = []fyne.CanvasObject{tab.content}
+			panel.page.Objects = []fyne.CanvasObject{tab.content}
 		} else {
 			item := tab.chat.Items[tab.index]
 			if item.Tool == "edit_file" && item.Diff != "" {
-				p.page.Objects = []fyne.CanvasObject{container.NewBorder(padded(12, 8, 12, 12, toolDetailHeading(item, runState(tab.chat, tab.index))), nil, nil, nil, newDiffView(item.Diff))}
+				panel.page.Objects = []fyne.CanvasObject{container.NewBorder(padded(12, 8, 12, 12, toolDetailHeading(item, runState(tab.chat, tab.index))), nil, nil, nil, newDiffView(item.Diff))}
 			} else {
-				p.body.Content = padded(16, 20, 18, 18, p.details(item, runState(tab.chat, tab.index)))
-				p.page.Objects = []fyne.CanvasObject{p.body}
+				panel.body.Content = padded(16, 20, 18, 18, panel.details(item, runState(tab.chat, tab.index)))
+				panel.page.Objects = []fyne.CanvasObject{panel.body}
 			}
 		}
 	} else {
-		p.page.Objects = []fyne.CanvasObject{padded(28, 20, 20, 20, container.NewVBox(textLine("Side panel", 18, colText), note("Open a browser, terminal or Git changes with the + button, or click a tool call in the conversation.")))}
+		panel.page.Objects = []fyne.CanvasObject{padded(28, 20, 20, 20, container.NewVBox(textLine("Side panel", 18, colText), note("Open a browser, terminal or Git changes with the + button, or click a tool call in the conversation.")))}
 	}
-	p.page.Refresh()
-	p.body.Refresh()
-	p.place()
-	p.syncRows()
+	panel.page.Refresh()
+	panel.body.Refresh()
+	panel.place()
+	panel.syncRows()
 }
 
 // place tells each code well which of its rows the panel shows.
-func (p *toolPanel) place() {
-	for _, text := range p.texts {
-		if offset, ok := offsetIn(p.body.Content, text); ok {
-			top := p.body.Offset.Y - offset.Y
-			text.show(top, top+p.body.Size().Height)
+func (panel *toolPanel) place() {
+	for _, text := range panel.texts {
+		if offset, ok := offsetIn(panel.body.Content, text); ok {
+			top := panel.body.Offset.Y - offset.Y
+			text.show(top, top+panel.body.Size().Height)
 		}
 	}
 }
@@ -362,9 +362,9 @@ func offsetIn(root, target fyne.CanvasObject) (fyne.Position, bool) {
 		return fyne.Position{}, true
 	}
 	if c, ok := root.(*fyne.Container); ok {
-		for _, o := range c.Objects {
-			if pos, found := offsetIn(o, target); found {
-				return o.Position().Add(pos), true
+		for _, object := range c.Objects {
+			if pos, found := offsetIn(object, target); found {
+				return object.Position().Add(pos), true
 			}
 		}
 	}
@@ -378,18 +378,20 @@ type placedLayout struct {
 	after func()
 }
 
-func (l placedLayout) MinSize(objects []fyne.CanvasObject) fyne.Size { return l.inner.MinSize(objects) }
+func (layoutSpec placedLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	return layoutSpec.inner.MinSize(objects)
+}
 
-func (l placedLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	l.inner.Layout(objects, size)
-	l.after()
+func (layoutSpec placedLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	layoutSpec.inner.Layout(objects, size)
+	layoutSpec.after()
 }
 
 // syncRows highlights the transcript row of the call on display.
-func (p *toolPanel) syncRows() {
-	for _, o := range p.u.transcript.Objects {
-		if row, ok := o.(*toolRow); ok {
-			if selected := p.showing(row.chat, row.index); selected != row.selected {
+func (panel *toolPanel) syncRows() {
+	for _, object := range panel.ui.transcript.Objects {
+		if row, ok := object.(*toolRow); ok {
+			if selected := panel.showing(row.chat, row.index); selected != row.selected {
 				row.selected = selected
 				row.Refresh()
 			}
@@ -397,7 +399,7 @@ func (p *toolPanel) syncRows() {
 	}
 }
 
-func (p *toolPanel) tabView(i int, tab panelTab) fyne.CanvasObject {
+func (panel *toolPanel) tabView(i int, tab panelTab) fyne.CanvasObject {
 	target, icon := tab.title, tab.icon
 	if tab.chat != nil {
 		item := tab.chat.Items[tab.index]
@@ -407,14 +409,14 @@ func (p *toolPanel) tabView(i int, tab panelTab) fyne.CanvasObject {
 		}
 		icon = toolGlyph(item.Tool)
 	}
-	label := newRow(fitText(target, 13, fyne.TextStyle{}, 190), icon, styleChip, func() { p.choose(i) })
-	label.selected = i == p.active
+	label := newRow(fitText(target, 13, fyne.TextStyle{}, 190), icon, styleChip, func() { panel.choose(i) })
+	label.selected = i == panel.active
 	label.ink = colText
-	closeTab := newIconButton(iconClose, color.NRGBA{}, color.NRGBA{}, func() { p.close(i) })
+	closeTab := newIconButton(iconClose, color.NRGBA{}, color.NRGBA{}, func() { panel.close(i) })
 	closeTab.iconPx, closeTab.padPx = 14, 6
 	bg := canvas.NewRectangle(color.Transparent)
 	bg.CornerRadius = 10
-	if i == p.active {
+	if i == panel.active {
 		bg.FillColor = colRaised
 		bg.StrokeColor, bg.StrokeWidth = colBorder, 1
 	}
@@ -467,13 +469,13 @@ func toolDetailHeading(item chatItem, state string) fyne.CanvasObject {
 	return heading
 }
 
-func (p *toolPanel) details(item chatItem, state string) fyne.CanvasObject {
+func (panel *toolPanel) details(item chatItem, state string) fyne.CanvasObject {
 	running := state == "pending" || state == "running"
 	_, command, _ := toolArgs(item.Args)
-	sections := container.New(placedLayout{layout.NewVBoxLayout(), p.place}, toolDetailHeading(item, state))
+	sections := container.New(placedLayout{layout.NewVBoxLayout(), panel.place}, toolDetailHeading(item, state))
 	add := func(name, text, empty string) {
 		sections.Add(spacer(0, 10))
-		sections.Add(p.section(name, text, empty))
+		sections.Add(panel.section(name, text, empty))
 	}
 	switch item.Tool {
 	case "shell":
@@ -519,7 +521,7 @@ func outputPlaceholder(running bool, empty string) string {
 }
 
 // section is a captioned code well with its own copy button.
-func (p *toolPanel) section(name, text, empty string) fyne.CanvasObject {
+func (panel *toolPanel) section(name, text, empty string) fyne.CanvasObject {
 	caption := textLine(strings.ToUpper(name), 11.5, colFaint)
 	caption.TextStyle = fyne.TextStyle{Bold: true}
 	if text == "" {
@@ -533,7 +535,7 @@ func (p *toolPanel) section(name, text, empty string) fyne.CanvasObject {
 	})
 	header := container.NewBorder(nil, nil, container.NewCenter(caption), copyButton)
 	well := newOutputView(strings.TrimRight(text, "\n"))
-	p.texts = append(p.texts, well)
+	panel.texts = append(panel.texts, well)
 	return container.NewVBox(padded(0, 2, 2, 0, header), surface(well, colCode, colBorderSoft, 10, 12))
 }
 
@@ -563,11 +565,11 @@ var ansiCodes = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]`)
 
 func newOutputView(text string) *outputView {
 	text = ansiCodes.ReplaceAllString(strings.ReplaceAll(text, "\r", ""), "")
-	v := &outputView{lines: strings.Split(text, "\n"), bottom: 2000,
+	view := &outputView{lines: strings.Split(text, "\n"), bottom: 2000,
 		diff: strings.HasPrefix(text, "--- ") || strings.HasPrefix(text, "diff --git ")}
-	v.wrap(52) // about the panel's width, until the first layout says
-	v.ExtendBaseWidget(v)
-	return v
+	view.wrap(52) // about the panel's width, until the first layout says
+	view.ExtendBaseWidget(view)
+	return view
 }
 
 func outputCell() fyne.Size {
@@ -577,12 +579,12 @@ func outputCell() fyne.Size {
 func outputRowHeight() float32 { return outputCell().Height + 3 }
 
 // wrap cuts the lines into rows of at most cols characters.
-func (v *outputView) wrap(cols int) {
-	v.cols = cols
-	v.rows = v.rows[:0]
-	for _, line := range v.lines {
+func (view *outputView) wrap(cols int) {
+	view.cols = cols
+	view.rows = view.rows[:0]
+	for _, line := range view.lines {
 		var ink color.Color = colText
-		if v.diff {
+		if view.diff {
 			switch {
 			case strings.HasPrefix(line, "+"):
 				ink = colAdded
@@ -594,10 +596,10 @@ func (v *outputView) wrap(cols int) {
 		}
 		runes := []rune(expandTabs(line))
 		for len(runes) > cols {
-			v.rows = append(v.rows, outputRow{string(runes[:cols]), ink})
+			view.rows = append(view.rows, outputRow{string(runes[:cols]), ink})
 			runes = runes[cols:]
 		}
-		v.rows = append(v.rows, outputRow{string(runes), ink})
+		view.rows = append(view.rows, outputRow{string(runes), ink})
 	}
 }
 
@@ -605,33 +607,33 @@ func expandTabs(line string) string {
 	if !strings.ContainsRune(line, '\t') {
 		return line
 	}
-	var b strings.Builder
+	var builder strings.Builder
 	column := 0
 	for _, r := range line {
 		if r != '\t' {
-			b.WriteRune(r)
+			builder.WriteRune(r)
 			column++
 			continue
 		}
 		for n := 4 - column%4; n > 0; n-- {
-			b.WriteByte(' ')
+			builder.WriteByte(' ')
 			column++
 		}
 	}
-	return b.String()
+	return builder.String()
 }
 
 // show sets which part of the view is on screen (in its own coordinates).
-func (v *outputView) show(top, bottom float32) {
-	v.top, v.bottom = top, bottom
-	if v.render != nil {
-		v.render.place()
+func (view *outputView) show(top, bottom float32) {
+	view.top, view.bottom = top, bottom
+	if view.render != nil {
+		view.render.place()
 	}
 }
 
-func (v *outputView) CreateRenderer() fyne.WidgetRenderer {
-	v.render = &outputRenderer{view: v}
-	return v.render
+func (view *outputView) CreateRenderer() fyne.WidgetRenderer {
+	view.render = &outputRenderer{view: view}
+	return view.render
 }
 
 type outputRenderer struct {
@@ -640,75 +642,75 @@ type outputRenderer struct {
 	owner []int // the row each text shows, -1 when hidden
 }
 
-func (r *outputRenderer) MinSize() fyne.Size {
-	return fyne.NewSize(outputCell().Width*12, float32(len(r.view.rows))*outputRowHeight())
+func (renderer *outputRenderer) MinSize() fyne.Size {
+	return fyne.NewSize(outputCell().Width*12, float32(len(renderer.view.rows))*outputRowHeight())
 }
 
-func (r *outputRenderer) Layout(size fyne.Size) {
-	if cols := max(12, int(size.Width/outputCell().Width)); cols != r.view.cols {
-		r.view.wrap(cols)
-		r.clear()
+func (renderer *outputRenderer) Layout(size fyne.Size) {
+	if cols := max(12, int(size.Width/outputCell().Width)); cols != renderer.view.cols {
+		renderer.view.wrap(cols)
+		renderer.clear()
 	}
-	r.place()
+	renderer.place()
 }
 
 // clear takes every row off its text: they are all written again.
-func (r *outputRenderer) clear() {
-	for slot := range r.owner {
-		r.owner[slot] = -1
-		r.texts[slot].Hide()
+func (renderer *outputRenderer) clear() {
+	for slot := range renderer.owner {
+		renderer.owner[slot] = -1
+		renderer.texts[slot].Hide()
 	}
 }
 
 // place gives the rows on screen (and a few around) a text each. A text
 // keeps its row while that row stays in range, so scrolling only writes
 // the rows that come in.
-func (r *outputRenderer) place() {
-	v, height := r.view, outputRowHeight()
-	first := max(0, int(v.top/height)-6)
-	last := min(len(v.rows)-1, int(v.bottom/height)+6)
-	if need := last - first + 1; need > len(r.texts) {
-		for len(r.texts) < need+12 {
+func (renderer *outputRenderer) place() {
+	view, height := renderer.view, outputRowHeight()
+	first := max(0, int(view.top/height)-6)
+	last := min(len(view.rows)-1, int(view.bottom/height)+6)
+	if need := last - first + 1; need > len(renderer.texts) {
+		for len(renderer.texts) < need+12 {
 			text := canvas.NewText("", colText)
 			text.TextSize, text.TextStyle = outputTextSize, fyne.TextStyle{Monospace: true}
 			text.Hide()
-			r.texts = append(r.texts, text)
+			renderer.texts = append(renderer.texts, text)
 		}
-		r.owner = make([]int, len(r.texts))
-		r.clear()
+		renderer.owner = make([]int, len(renderer.texts))
+		renderer.clear()
 	}
-	for slot, row := range r.owner {
+	for slot, row := range renderer.owner {
 		if row >= 0 && (row < first || row > last) {
-			r.owner[slot] = -1
-			r.texts[slot].Hide()
+			renderer.owner[slot] = -1
+			renderer.texts[slot].Hide()
 		}
 	}
 	for row := first; row <= last; row++ {
-		slot := row % len(r.texts)
-		if r.owner[slot] == row {
+		slot := row % len(renderer.texts)
+		if renderer.owner[slot] == row {
 			continue
 		}
-		r.owner[slot] = row
-		text := r.texts[slot]
-		text.Text, text.Color = v.rows[row].text, v.rows[row].ink
+		renderer.owner[slot] = row
+		text := renderer.texts[slot]
+		text.Text, text.Color = view.rows[row].text, view.rows[row].ink
 		text.Move(fyne.NewPos(0, float32(row)*height))
-		text.Resize(fyne.NewSize(v.Size().Width, height))
+		text.Resize(fyne.NewSize(view.Size().Width, height))
 		text.Show()
 		text.Refresh()
 	}
 }
 
-func (r *outputRenderer) Refresh() {
-	r.clear()
-	r.place()
+func (renderer *outputRenderer) Refresh() {
+	renderer.clear()
+	renderer.place()
 }
 
-func (r *outputRenderer) Objects() []fyne.CanvasObject {
-	objects := make([]fyne.CanvasObject, len(r.texts))
-	for i, text := range r.texts {
+func (renderer *outputRenderer) Objects() []fyne.CanvasObject {
+	objects := make([]fyne.CanvasObject, len(renderer.texts))
+	for i, text := range renderer.texts {
 		objects[i] = text
 	}
 	return objects
 }
 
-func (r *outputRenderer) Destroy() {}
+func (renderer *outputRenderer) Destroy() {}

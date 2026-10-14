@@ -46,21 +46,21 @@ func contextInstructions(cfg config) string {
 }
 
 func recallText(item chatItem) string {
-	var b strings.Builder
+	var builder strings.Builder
 	if item.Tool != "" {
-		fmt.Fprintf(&b, "Tool: %s\nArguments: %s\nOutput:\n", item.Tool, item.Args)
+		fmt.Fprintf(&builder, "Tool: %s\nArguments: %s\nOutput:\n", item.Tool, item.Args)
 	}
-	b.WriteString(item.Text)
+	builder.WriteString(item.Text)
 	if item.Failed != "" {
-		b.WriteString("\nError: " + item.Failed)
+		builder.WriteString("\nError: " + item.Failed)
 	}
 	if item.Diff != "" {
-		b.WriteString("\nDiff:\n" + item.Diff)
+		builder.WriteString("\nDiff:\n" + item.Diff)
 	}
 	if len(item.Images) > 0 {
-		fmt.Fprintf(&b, "\n[%d image(s) attached]", len(item.Images))
+		fmt.Fprintf(&builder, "\n[%d image(s) attached]", len(item.Images))
 	}
-	return b.String()
+	return builder.String()
 }
 
 func utf8Boundary(text string, at int) int {

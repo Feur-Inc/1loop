@@ -23,51 +23,51 @@ type paneLayout struct {
 	shade float32
 }
 
-func (l *paneLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+func (layoutSpec *paneLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	main := objects[1].MinSize()
-	return fyne.NewSize(sidebarWidth*l.shown+main.Width, main.Height)
+	return fyne.NewSize(sidebarWidth*layoutSpec.shown+main.Width, main.Height)
 }
 
-func (l *paneLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	width := sidebarWidth * l.shown
+func (layoutSpec *paneLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	width := sidebarWidth * layoutSpec.shown
 	objects[0].Move(fyne.NewPos(width-sidebarWidth, 0))
 	objects[0].Resize(fyne.NewSize(sidebarWidth, size.Height))
 	objects[1].Move(fyne.NewPos(width, 0))
 	objects[1].Resize(fyne.NewSize(size.Width-width, size.Height))
 	objects[2].Move(fyne.NewPos(width, 0))
-	objects[2].Resize(fyne.NewSize(l.shade, size.Height))
+	objects[2].Resize(fyne.NewSize(layoutSpec.shade, size.Height))
 }
 
 // toggleSidebar folds or unfolds the sidebar with an eased slide (Ctrl+B).
-func (u *desktopUI) toggleSidebar() {
-	from := u.pane.shown
+func (ui *desktopUI) toggleSidebar() {
+	from := ui.pane.shown
 	to := float32(1)
 	if from > 0.5 {
 		to = 0
 	}
-	sidebar := u.root.Objects[0]
-	shade := u.root.Objects[2]
+	sidebar := ui.root.Objects[0]
+	shade := ui.root.Objects[2]
 	sidebar.Show()
 	shade.Show()
-	if u.paneAnim != nil {
-		u.paneAnim.Stop()
+	if ui.paneAnim != nil {
+		ui.paneAnim.Stop()
 	}
-	u.paneAnim = fyne.NewAnimation(240*time.Millisecond, func(p float32) {
-		u.pane.shown = from + (to-from)*p
-		relayout(u.root) // never Refresh: it would redraw the whole conversation on every frame
+	ui.paneAnim = fyne.NewAnimation(240*time.Millisecond, func(p float32) {
+		ui.pane.shown = from + (to-from)*p
+		relayout(ui.root) // never Refresh: it would redraw the whole conversation on every frame
 		if p >= 1 && to == 0 {
 			sidebar.Hide()
 			shade.Hide()
 		}
 	})
-	u.paneAnim.Curve = easeOutQuint
-	u.paneAnim.Start()
+	ui.paneAnim.Curve = easeOutQuint
+	ui.paneAnim.Start()
 	if to == 0 {
-		u.expand.Show()
+		ui.expand.Show()
 	} else {
-		u.expand.Hide()
+		ui.expand.Hide()
 	}
-	u.headerBar.Refresh()
+	ui.headerBar.Refresh()
 }
 
 func sectionHeader(text string, action fyne.CanvasObject) fyne.CanvasObject {
@@ -125,50 +125,50 @@ func withMore(row *tapRow, open func(anchor fyne.CanvasObject) *sheet) fyne.Canv
 // ---------------------------------------------------------------------------
 // Projects: the folders 1loop works in. Removing one only forgets it in 1loop.
 
-func (u *desktopUI) ensureProject(path string) {
+func (ui *desktopUI) ensureProject(path string) {
 	if path == "" {
 		return
 	}
-	for _, p := range u.projects {
+	for _, p := range ui.projects {
 		if p == path {
 			return
 		}
 	}
-	u.projects = append(u.projects, path)
+	ui.projects = append(ui.projects, path)
 }
 
-func (u *desktopUI) selectProject(path string) {
-	if path == u.cfg.Workspace {
+func (ui *desktopUI) selectProject(path string) {
+	if path == ui.cfg.Workspace {
 		return
 	}
 	devf("ui", "project %s", path)
-	u.cfg.Workspace = path
-	u.ensureProject(path)
-	u.current = nil
-	u.save()
-	u.startNew()
+	ui.cfg.Workspace = path
+	ui.ensureProject(path)
+	ui.current = nil
+	ui.save()
+	ui.startNew()
 }
 
-func (u *desktopUI) addProject() {
-	start := filepath.Dir(u.cfg.Workspace)
-	u.pick(pickRequest{title: "Add a project folder", start: start, folder: true}, func(paths []string) {
+func (ui *desktopUI) addProject() {
+	start := filepath.Dir(ui.cfg.Workspace)
+	ui.pick(pickRequest{title: "Add a project folder", start: start, folder: true}, func(paths []string) {
 		root, err := resolveWorkspace(paths[0])
 		if err != nil {
-			u.notice("Add project", err.Error())
+			ui.notice("Add project", err.Error())
 			return
 		}
-		u.ensureProject(root)
-		if root == u.cfg.Workspace {
-			u.renderChats()
+		ui.ensureProject(root)
+		if root == ui.cfg.Workspace {
+			ui.renderChats()
 			return
 		}
-		u.selectProject(root)
+		ui.selectProject(root)
 	})
 }
 
-func (u *desktopUI) chatsIn(path string) []*conversation {
+func (ui *desktopUI) chatsIn(path string) []*conversation {
 	var chats []*conversation
-	for _, chat := range u.chats {
+	for _, chat := range ui.chats {
 		if chat.Config.Workspace == path {
 			chats = append(chats, chat)
 		}
@@ -176,220 +176,220 @@ func (u *desktopUI) chatsIn(path string) []*conversation {
 	return chats
 }
 
-func (u *desktopUI) removeProject(path string) {
-	chats := u.chatsIn(path)
+func (ui *desktopUI) removeProject(path string) {
+	chats := ui.chatsIn(path)
 	text := fmt.Sprintf("“%s” will no longer be listed in 1loop.", filepath.Base(path))
 	if len(chats) > 0 {
 		text += fmt.Sprintf(" Its %d chat(s) will be removed from 1loop.", len(chats))
 	}
 	text += " No files in the directory will be changed."
-	u.confirm("Remove project?", text, "Remove", func() {
+	ui.confirm("Remove project?", text, "Remove", func() {
 		var kept []*conversation
-		for _, chat := range u.chats {
+		for _, chat := range ui.chats {
 			if chat.Config.Workspace != path {
 				kept = append(kept, chat)
 			} else if chat.run != nil {
 				chat.run.cancel()
 			}
 		}
-		u.chats = kept
+		ui.chats = kept
 		var projects []string
-		for _, p := range u.projects {
+		for _, p := range ui.projects {
 			if p != path {
 				projects = append(projects, p)
 			}
 		}
-		u.projects = projects
-		if u.cfg.Workspace == path {
+		ui.projects = projects
+		if ui.cfg.Workspace == path {
 			next := ""
 			if len(projects) > 0 {
 				next = projects[0]
 			}
-			u.cfg.Workspace = next
-			u.current = nil
-			u.startNew()
+			ui.cfg.Workspace = next
+			ui.current = nil
+			ui.startNew()
 		}
-		u.save()
-		u.renderChats()
+		ui.save()
+		ui.renderChats()
 	})
 }
 
-func (u *desktopUI) projectMenu(anchor fyne.CanvasObject) {
+func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
 	var actions []menuAction
-	for _, p := range u.projects {
+	for _, p := range ui.projects {
 		p := p
 		var icon fyne.Resource = blankIcon
-		if p == u.cfg.Workspace {
+		if p == ui.cfg.Workspace {
 			icon = iconCheck
 		}
-		actions = append(actions, menuAction{label: filepath.Base(p), icon: icon, run: func() { u.selectProject(p) }})
+		actions = append(actions, menuAction{label: filepath.Base(p), icon: icon, run: func() { ui.selectProject(p) }})
 	}
-	actions = append(actions, menuAction{label: "Add folder…", icon: iconPlus, run: u.addProject})
-	showMenu(u.window, anchor, actions)
+	actions = append(actions, menuAction{label: "Add folder…", icon: iconPlus, run: ui.addProject})
+	showMenu(ui.window, anchor, actions)
 }
 
 // ---------------------------------------------------------------------------
 // Conversations: open, rename, delete.
 
-func (u *desktopUI) openChat(chat *conversation) {
-	if chat == u.current {
+func (ui *desktopUI) openChat(chat *conversation) {
+	if chat == ui.current {
 		return
 	}
-	u.reloadChat(chat)
+	ui.reloadChat(chat)
 }
 
-func (u *desktopUI) reloadChat(chat *conversation) {
+func (ui *desktopUI) reloadChat(chat *conversation) {
 	devf("ui", "open chat %q [%s]: %d items, running %v", chat.Title, chat.ID, len(chat.Items), chat.run != nil)
 	defer devSlow("opening the chat", 30*time.Millisecond, time.Now())
-	u.finishEdit(false)
-	u.prefs.close()
-	u.clearSelection()
-	u.current = chat
-	u.cfg = chat.Config
-	u.followTail = true
-	u.panel.switchTo(chat)
-	u.transcript.RemoveAll()
-	u.items.reset()
-	u.views, u.copyRows = map[int]any{}, map[int]*fyne.Container{}
-	u.building = true
+	ui.finishEdit(false)
+	ui.prefs.close()
+	ui.clearSelection()
+	ui.current = chat
+	ui.cfg = chat.Config
+	ui.followTail = true
+	ui.panel.switchTo(chat)
+	ui.transcript.RemoveAll()
+	ui.items.reset()
+	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
+	ui.building = true
 	for i := range chat.Items {
-		u.appendItem(chat, i)
+		ui.appendItem(chat, i)
 	}
-	u.building = false
-	u.showTranscript(true)
-	u.syncRun()
-	u.updateHeader()
-	u.renderChats()
-	u.showChatModel()
-	u.refreshContextRing()
+	ui.building = false
+	ui.showTranscript(true)
+	ui.syncRun()
+	ui.updateHeader()
+	ui.renderChats()
+	ui.showChatModel()
+	ui.refreshContextRing()
 }
 
-func (u *desktopUI) renameChat(chat *conversation) {
+func (ui *desktopUI) renameChat(chat *conversation) {
 	entry := widget.NewEntry()
 	entry.SetText(chat.Title)
-	var s *sheet
+	var dialog *sheet
 	apply := func() {
 		if title := []rune(entry.Text); len(title) > 0 {
 			if len(title) > 80 {
 				title = title[:80]
 			}
 			chat.Title = string(title)
-			u.save()
-			u.updateHeader()
-			u.renderChats()
+			ui.save()
+			ui.updateHeader()
+			ui.renderChats()
 		}
-		s.Hide()
+		dialog.Hide()
 	}
 	entry.OnSubmitted = func(string) { apply() }
-	cancel := newRow("Cancel", nil, styleOutline, func() { s.dismiss() })
-	ok := newRow("Rename", nil, stylePrimary, apply)
-	s = u.modal("Rename chat", entry, 420, nil, cancel, ok)
-	u.window.Canvas().Focus(entry)
+	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
+	row := newRow("Rename", nil, stylePrimary, apply)
+	dialog = ui.modal("Rename chat", entry, 420, nil, cancel, row)
+	ui.window.Canvas().Focus(entry)
 }
 
-func (u *desktopUI) deleteChat(chat *conversation) {
-	u.confirm("Delete chat?", fmt.Sprintf("“%s” will be permanently deleted from 1loop.", chat.Title), "Delete", func() {
+func (ui *desktopUI) deleteChat(chat *conversation) {
+	ui.confirm("Delete chat?", fmt.Sprintf("“%s” will be permanently deleted from 1loop.", chat.Title), "Delete", func() {
 		var kept []*conversation
-		for _, c := range u.chats {
-			if c != chat {
-				kept = append(kept, c)
+		for _, conversationValue := range ui.chats {
+			if conversationValue != chat {
+				kept = append(kept, conversationValue)
 			}
 		}
-		u.chats = kept
+		ui.chats = kept
 		if chat.run != nil {
 			chat.run.cancel()
 		}
-		if u.panel.owner != chat {
+		if ui.panel.owner != chat {
 			chat.disposePanel() // its terminals end with it
 		}
-		if u.current == chat {
-			u.current = nil
-			u.startNew()
+		if ui.current == chat {
+			ui.current = nil
+			ui.startNew()
 		}
-		u.save()
-		u.renderChats()
+		ui.save()
+		ui.renderChats()
 	})
 }
 
-func (u *desktopUI) chatMenu(chat *conversation, anchor fyne.CanvasObject) *sheet {
-	return showMenu(u.window, anchor, []menuAction{
-		{label: "Rename", icon: iconRename, run: func() { u.renameChat(chat) }},
-		{label: "Delete", icon: iconTrash, danger: true, run: func() { u.deleteChat(chat) }},
+func (ui *desktopUI) chatMenu(chat *conversation, anchor fyne.CanvasObject) *sheet {
+	return showMenu(ui.window, anchor, []menuAction{
+		{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
+		{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
 	})
 }
 
 // confirm asks before a destructive action.
-func (u *desktopUI) confirm(title, text, verb string, run func()) {
+func (ui *desktopUI) confirm(title, text, verb string, run func()) {
 	label := widget.NewLabel(text)
 	label.Wrapping = fyne.TextWrapWord
-	var s *sheet
-	cancel := newRow("Cancel", nil, styleOutline, func() { s.dismiss() })
-	ok := newRow(verb, nil, stylePrimary, func() { s.Hide(); run() })
-	ok.danger = true
-	s = u.modal(title, label, 440, nil, cancel, ok)
+	var dialog *sheet
+	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
+	row := newRow(verb, nil, stylePrimary, func() { dialog.Hide(); run() })
+	row.danger = true
+	dialog = ui.modal(title, label, 440, nil, cancel, row)
 }
 
 // renderChats redraws the project list and the current project's conversations.
-func (u *desktopUI) renderChats() {
-	u.remote.chatsChanged()
-	u.ensureProject(u.cfg.Workspace)
-	u.projectList.RemoveAll()
-	for _, p := range u.projects {
+func (ui *desktopUI) renderChats() {
+	ui.remote.chatsChanged()
+	ui.ensureProject(ui.cfg.Workspace)
+	ui.projectList.RemoveAll()
+	for _, p := range ui.projects {
 		p := p
-		row := newRow(filepath.Base(p), iconFolder, styleNav, func() { u.selectProject(p) })
-		row.selected = p == u.cfg.Workspace
+		row := newRow(filepath.Base(p), iconFolder, styleNav, func() { ui.selectProject(p) })
+		row.selected = p == ui.cfg.Workspace
 		row.accent = true
-		u.projectList.Add(withMore(row, func(anchor fyne.CanvasObject) *sheet {
-			return showMenu(u.window, anchor, []menuAction{
-				{label: "New chat", icon: iconPlus, run: func() { u.selectProject(p); u.startNew() }},
-				{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { u.removeProject(p) }},
+		ui.projectList.Add(withMore(row, func(anchor fyne.CanvasObject) *sheet {
+			return showMenu(ui.window, anchor, []menuAction{
+				{label: "New chat", icon: iconPlus, run: func() { ui.selectProject(p); ui.startNew() }},
+				{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { ui.removeProject(p) }},
 			})
 		}))
 	}
-	u.chatList.RemoveAll()
-	chats := u.chatsIn(u.cfg.Workspace)
+	ui.chatList.RemoveAll()
+	chats := ui.chatsIn(ui.cfg.Workspace)
 	for _, chat := range chats {
 		chat := chat
-		row := newRow(chat.Title, nil, styleNav, func() { u.openChat(chat) })
+		row := newRow(chat.Title, nil, styleNav, func() { ui.openChat(chat) })
 		row.accent = true
-		row.selected = chat == u.current
+		row.selected = chat == ui.current
 		if chat.run != nil {
 			row.badge = iconDot // the agent works on it in the background
 		}
-		u.chatList.Add(withMore(row, func(anchor fyne.CanvasObject) *sheet { return u.chatMenu(chat, anchor) }))
+		ui.chatList.Add(withMore(row, func(anchor fyne.CanvasObject) *sheet { return ui.chatMenu(chat, anchor) }))
 	}
 	if len(chats) == 0 {
-		u.chatList.Add(padded(4, 0, 10, 0, textLine("No chats yet", 13, colFaint)))
+		ui.chatList.Add(padded(4, 0, 10, 0, textLine("No chats yet", 13, colFaint)))
 	}
-	if u.sideLists != nil {
-		u.sideLists.Refresh() // both lists changed height: lay the column out again
+	if ui.sideLists != nil {
+		ui.sideLists.Refresh() // both lists changed height: lay the column out again
 	}
 }
 
 // buildSidebar assembles the sidebar column.
-func (u *desktopUI) buildSidebar() fyne.CanvasObject {
-	u.newChat = newRow("New chat", theme.ContentAddIcon(), styleNav, u.startNew)
-	u.newChat.trailing = "Ctrl K"
-	u.connections = newRow("Settings", theme.SettingsIcon(), styleNav, u.settings)
-	u.projectList = container.New(layout.NewCustomPaddedVBoxLayout(1))
-	u.chatList = container.New(layout.NewCustomPaddedVBoxLayout(1))
+func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
+	ui.newChat = newRow("New chat", theme.ContentAddIcon(), styleNav, ui.startNew)
+	ui.newChat.trailing = "Ctrl K"
+	ui.connections = newRow("Settings", theme.SettingsIcon(), styleNav, ui.settings)
+	ui.projectList = container.New(layout.NewCustomPaddedVBoxLayout(1))
+	ui.chatList = container.New(layout.NewCustomPaddedVBoxLayout(1))
 
 	logo := brandImage("1loop-logo.png", 30*1483.0/512.0, 30)
-	collapse := newRow("", iconSidebar, styleWindow, u.toggleSidebar)
+	collapse := newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
 	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, logo, container.NewCenter(collapse)))
-	if u.chrome {
-		brand = container.NewStack(newDragArea(u.window), brand)
+	if ui.chrome {
+		brand = container.NewStack(newDragArea(ui.window), brand)
 	}
-	addProject := newRow("", iconPlus, styleWindow, u.addProject)
-	u.sideLists = container.NewVBox(
-		sectionHeader("Projects", addProject), u.projectList,
-		sectionHeader("Conversations", nil), u.chatList)
-	lists := u.sideLists
+	addProject := newRow("", iconPlus, styleWindow, ui.addProject)
+	ui.sideLists = container.NewVBox(
+		sectionHeader("Projects", addProject), ui.projectList,
+		sectionHeader("Conversations", nil), ui.chatList)
+	lists := ui.sideLists
 	divider := canvas.NewRectangle(colBorderSoft)
 	divider.SetMinSize(fyne.NewSize(0, 1))
-	bottom := container.NewVBox(divider, padded(6, 8, 0, 0, u.connections))
+	bottom := container.NewVBox(divider, padded(6, 8, 0, 0, ui.connections))
 	// Under the logo: the chats, or the settings' sections while they are open.
-	u.sideApp = container.NewBorder(u.newChat, bottom, nil, nil, newKineticVScroll(lists))
-	content := padded(0, 0, 12, 12, container.NewBorder(brand, nil, nil, nil, container.NewStack(u.sideApp, u.prefs.side)))
+	ui.sideApp = container.NewBorder(ui.newChat, bottom, nil, nil, newKineticVScroll(lists))
+	content := padded(0, 0, 12, 12, container.NewBorder(brand, nil, nil, nil, container.NewStack(ui.sideApp, ui.prefs.side)))
 	return container.NewStack(canvas.NewRectangle(colSidebar), content)
 }

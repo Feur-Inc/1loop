@@ -56,10 +56,10 @@ private val CssEaseOut = CubicBezierEasing(0f, 0f, 0.58f, 1f)
 private object Wordmark {
     // viewBox -16 65.6 293.41 132.8
     val one = svg("M28.896 160.0V92.128H26.88L16.352 116.992H1.344L17.36 81.6H43.232V160.0Z")
-    val l = svg("M52.864 160.0V81.6H66.976V160.0Z")
+    val letterL = svg("M52.864 160.0V81.6H66.976V160.0Z")
     // The <rect rx> as a path starting where the browser starts it.
     val loop = svg("M103.71 109.94 H166.2 A22.29 22.29 0 0 1 166.2 154.52 H103.71 A22.29 22.29 0 0 1 103.71 109.94 Z")
-    val p = svg("M202.944 182.4V104.448H216.832V111.168H218.848Q220.752 107.92 224.784 105.4Q228.816 102.88 236.32 102.88Q243.04 102.88 248.752 106.184Q254.464 109.488 257.936 115.872Q261.408 122.256 261.408 131.328V133.12Q261.408 142.192 257.936 148.576Q254.464 154.96 248.752 158.264Q243.04 161.568 236.32 161.568Q231.28 161.568 227.864 160.392Q224.448 159.216 222.376 157.368Q220.304 155.52 219.072 153.616H217.056V182.4ZM232.064 149.248Q238.672 149.248 242.984 145.048Q247.296 140.848 247.296 132.784V131.664Q247.296 123.6 242.928 119.4Q238.56 115.2 232.064 115.2Q225.568 115.2 221.2 119.4Q216.832 123.6 216.832 131.664V132.784Q216.832 140.848 221.2 145.048Q225.568 149.248 232.064 149.248Z")
+    val letterP = svg("M202.944 182.4V104.448H216.832V111.168H218.848Q220.752 107.92 224.784 105.4Q228.816 102.88 236.32 102.88Q243.04 102.88 248.752 106.184Q254.464 109.488 257.936 115.872Q261.408 122.256 261.408 131.328V133.12Q261.408 142.192 257.936 148.576Q254.464 154.96 248.752 158.264Q243.04 161.568 236.32 161.568Q231.28 161.568 227.864 160.392Q224.448 159.216 222.376 157.368Q220.304 155.52 219.072 153.616H217.056V182.4ZM232.064 149.248Q238.672 149.248 242.984 145.048Q247.296 140.848 247.296 132.784V131.664Q247.296 123.6 242.928 119.4Q238.56 115.2 232.064 115.2Q225.568 115.2 221.2 119.4Q216.832 123.6 216.832 131.664V132.784Q216.832 140.848 221.2 145.048Q225.568 149.248 232.064 149.248Z")
     const val left = -16f
     const val top = 65.6f
     const val width = 293.41f
@@ -79,32 +79,32 @@ fun LaunchScreen(onDone: () -> Unit) {
         }
         onDone()
     }
-    val t = elapsed.toFloat()
-    val fade = CssEaseOut.transform(progress(t, 1800f, 400f))
+    val elapsedMilliseconds = elapsed.toFloat()
+    val fade = CssEaseOut.transform(progress(elapsedMilliseconds, 1800f, 400f))
     Box(
         Modifier.fillMaxSize().background(Palette.background.copy(alpha = 1f - fade))
             .clickable(remember { MutableInteractionSource() }, indication = null, onClick = onDone),
         contentAlignment = Alignment.Center,
     ) {
         Canvas(Modifier.fillMaxSize()) {
-            val k = min(size.width * 0.8f, 640.dp.toPx()) / Wordmark.width
-            val settle = 0.96f + 0.04f * CssEaseOut.transform(progress(t, 0f, 1500f))
+            val wordmarkScale = min(size.width * 0.8f, 640.dp.toPx()) / Wordmark.width
+            val settle = 0.96f + 0.04f * CssEaseOut.transform(progress(elapsedMilliseconds, 0f, 1500f))
             val alpha = 1f - fade
             translate(size.width / 2, size.height / 2) {
-                scale(k * settle, k * settle, pivot = Offset.Zero) {
+                scale(wordmarkScale * settle, wordmarkScale * settle, pivot = Offset.Zero) {
                     translate(-(Wordmark.left + Wordmark.width / 2), -(Wordmark.top + Wordmark.height / 2)) {
-                        val one = progress(t, 0f, 520f)
+                        val one = progress(elapsedMilliseconds, 0f, 520f)
                         translate(0f, -40f * (1 - CssPop.transform(one))) {
                             drawPath(Wordmark.one, Palette.amber, alpha = one * alpha)
                         }
-                        val l = progress(t, 120f, 460f)
-                        translate(0f, 28f * (1 - CssPop.transform(l))) {
-                            drawPath(Wordmark.l, Palette.text, alpha = l * alpha)
+                        val letterLProgress = progress(elapsedMilliseconds, 120f, 460f)
+                        translate(0f, 28f * (1 - CssPop.transform(letterLProgress))) {
+                            drawPath(Wordmark.letterL, Palette.text, alpha = letterLProgress * alpha)
                         }
-                        drawPartial(Wordmark.loop, CssDraw.transform(progress(t, 280f, 700f)), Palette.text.copy(alpha = alpha), 14.11f)
-                        val p = progress(t, 760f, 480f)
-                        translate(28f * (1 - CssPop.transform(p)), 0f) {
-                            drawPath(Wordmark.p, Palette.text, alpha = p * alpha)
+                        drawPartial(Wordmark.loop, CssDraw.transform(progress(elapsedMilliseconds, 280f, 700f)), Palette.text.copy(alpha = alpha), 14.11f)
+                        val letterPProgress = progress(elapsedMilliseconds, 760f, 480f)
+                        translate(28f * (1 - CssPop.transform(letterPProgress)), 0f) {
+                            drawPath(Wordmark.letterP, Palette.text, alpha = letterPProgress * alpha)
                         }
                     }
                 }
@@ -133,15 +133,15 @@ fun RingMark(size: Dp, modifier: Modifier = Modifier, intro: Boolean = false) {
     val drawn = remember { Animatable(if (intro) 0f else 1f) }
     LaunchedEffect(intro) { if (intro) drawn.animateTo(1f, tween(1240, easing = { it })) }
     Canvas(modifier.size(size)) {
-        val t = drawn.value * 1240f
+        val elapsedMilliseconds = drawn.value * 1240f
         scale(size.toPx() / 120f, size.toPx() / 120f, pivot = Offset.Zero) {
-            val ring = CssDraw.transform(progress(t, 0f, 900f))
+            val ring = CssDraw.transform(progress(elapsedMilliseconds, 0f, 900f))
             rotate(-120f * (1 - ring), pivot = Offset(60f, 60f)) {
                 drawPartial(ringOpen, ring, Palette.amber, 12f, StrokeCap.Round)
             }
-            val dot = CssPop.transform(progress(t, 820f, 420f))
+            val dot = CssPop.transform(progress(elapsedMilliseconds, 820f, 420f))
             drawCircle(Palette.text, radius = 6f * dot, center = Offset(83f, 20.2f))
-            drawPartial(markOne, CssDraw.transform(progress(t, 480f, 520f)), Palette.text, 12f, StrokeCap.Round)
+            drawPartial(markOne, CssDraw.transform(progress(elapsedMilliseconds, 480f, 520f)), Palette.text, 12f, StrokeCap.Round)
         }
     }
 }
@@ -208,8 +208,8 @@ fun WorkRing(state: String, size: Dp, modifier: Modifier = Modifier) {
     val open by animateFloatAsState(if (closed) 0f else 1f, tween(250, easing = CssEase), label = "open")
     val full by animateFloatAsState(if (closed) 1f else 0f, tween(250, easing = CssEase), label = "full")
     Canvas(modifier.size(size)) {
-        val t = now.toFloat()
-        layers.removeAll { it.leaving >= 0 && t - it.leaving > 320f }
+        val elapsedMilliseconds = now.toFloat()
+        layers.removeAll { it.leaving >= 0 && elapsedMilliseconds - it.leaving > 320f }
         scale(this.size.width / 120f, this.size.width / 120f, pivot = Offset.Zero) {
             rotate(angle, pivot = Offset(60f, 60f)) {
                 drawPath(ringOpen, Palette.amber, alpha = open, style = Stroke(12f, cap = StrokeCap.Round))
@@ -218,7 +218,7 @@ fun WorkRing(state: String, size: Dp, modifier: Modifier = Modifier) {
             val fullColor = if (shown == "stopped") Color(0xFF5C5C5C) else Palette.amber
             drawCircle(fullColor, 46f, Offset(60f, 60f), alpha = full, style = Stroke(12f))
             for (layer in layers) {
-                val since = if (layer.leaving >= 0) t - layer.leaving else t - layer.at
+                val since = if (layer.leaving >= 0) elapsedMilliseconds - layer.leaving else elapsedMilliseconds - layer.at
                 var opacity = CssEase.transform((since / 220f).coerceIn(0f, 1f))
                 var scale = 0.7f + 0.3f * CssPop.transform((since / 320f).coerceIn(0f, 1f))
                 if (layer.leaving >= 0) {
@@ -228,13 +228,13 @@ fun WorkRing(state: String, size: Dp, modifier: Modifier = Modifier) {
                 scale(scale, scale, pivot = Offset(60f, 60f)) {
                     if (layer.state == "think") {
                         listOf(46f, 60f, 74f).forEachIndexed { i, x ->
-                            drawCircle(Palette.text, 5f, Offset(x, 60f), alpha = opacity * thinkOpacity(t / 1200f - 0.125f * i))
+                            drawCircle(Palette.text, 5f, Offset(x, 60f), alpha = opacity * thinkOpacity(elapsedMilliseconds / 1200f - 0.125f * i))
                         }
-                    } else glyphs[layer.state]?.let { g ->
-                        for ((path, width) in g.paths) {
-                            drawPath(path, g.color, alpha = opacity, style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round))
+                    } else glyphs[layer.state]?.let { glyph ->
+                        for ((path, width) in glyph.paths) {
+                            drawPath(path, glyph.color, alpha = opacity, style = Stroke(width, cap = StrokeCap.Round, join = StrokeJoin.Round))
                         }
-                        for ((center, radius) in g.dots) drawCircle(g.color, radius, center, alpha = opacity)
+                        for ((center, radius) in glyph.dots) drawCircle(glyph.color, radius, center, alpha = opacity)
                     }
                 }
             }

@@ -63,6 +63,7 @@ type chatRun struct {
 }
 
 type desktopUI struct {
+	computer         *computerSession
 	browser          *browserEngine
 	window           fyne.Window
 	backend          *app
@@ -193,58 +194,58 @@ func runDesktop(backend *app, root string) {
 	a := fyneapp.NewWithID("io.1loop.desktop")
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
-	u := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), statePath: statePath(root),
+	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), statePath: statePath(root),
 		cfg: config{Provider: "vllm", BaseURL: defaultVLLMURL, Workspace: root}}
-	u.load()
-	u.initializeConnections()
+	ui.load()
+	ui.initializeConnections()
 	// Our own title bar on X11 and native Wayland; the system bar elsewhere.
-	u.chrome = customChromeSupported() && os.Getenv("ONELOOP_SYSTEM_TITLEBAR") == ""
-	if drv, ok := a.Driver().(desktop.Driver); ok && u.chrome {
-		u.window = drv.CreateSplashWindow()
-		u.window.SetTitle("1loop")
-		u.window.SetMaster()
+	ui.chrome = customChromeSupported() && os.Getenv("ONELOOP_SYSTEM_TITLEBAR") == ""
+	if drv, ok := a.Driver().(desktop.Driver); ok && ui.chrome {
+		ui.window = drv.CreateSplashWindow()
+		ui.window.SetTitle("1loop")
+		ui.window.SetMaster()
 	} else {
-		u.chrome = false
-		u.window = a.NewWindow("1loop")
+		ui.chrome = false
+		ui.window = a.NewWindow("1loop")
 	}
-	u.window.SetPadded(false)
-	u.window.Resize(fyne.NewSize(1180, 760))
-	u.window.CenterOnScreen()
-	u.window.SetIcon(brandResource("1loop-anneau-fond-noir.png"))
-	u.window.SetContent(u.build())
-	u.window.SetCloseIntercept(u.quit)
+	ui.window.SetPadded(false)
+	ui.window.Resize(fyne.NewSize(1180, 760))
+	ui.window.CenterOnScreen()
+	ui.window.SetIcon(brandResource("1loop-anneau-fond-noir.png"))
+	ui.window.SetContent(ui.build())
+	ui.window.SetCloseIntercept(ui.quit)
 	for _, s := range []*desktop.CustomShortcut{
 		{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierControl},
 		{KeyName: fyne.KeyR, Modifier: fyne.KeyModifierControl | fyne.KeyModifierShift},
 		{KeyName: fyne.KeyB, Modifier: fyne.KeyModifierControl},
 	} {
-		u.window.Canvas().AddShortcut(s, func(s fyne.Shortcut) { u.shortcut(s) })
+		ui.window.Canvas().AddShortcut(s, func(s fyne.Shortcut) { ui.shortcut(s) })
 	}
-	u.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { u.copySelection() })
-	u.updateHeader()
-	u.renderChats()
-	u.refreshModels()
-	u.refreshContextRing()
-	u.startRemote()
-	u.window.Canvas().Focus(u.prompt)
+	ui.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { ui.copySelection() })
+	ui.updateHeader()
+	ui.renderChats()
+	ui.refreshModels()
+	ui.refreshContextRing()
+	ui.startRemote()
+	ui.window.Canvas().Focus(ui.prompt)
 	// The launch sequence covers the first frames and only starts once the
 	// window is really on screen, otherwise it would play unseen.
-	launch := newLaunchScreen(u.window.Canvas(), func() { u.window.Canvas().Focus(u.prompt) })
+	launch := newLaunchScreen(ui.window.Canvas(), func() { ui.window.Canvas().Focus(ui.prompt) })
 	launch.show()
 	a.Lifecycle().SetOnStarted(func() {
-		if u.chrome {
+		if ui.chrome {
 			chromeReady()
 		}
-		windowIdentity(u.window) // again, should the window not have existed yet below
-		u.startFrames()
-		size := u.window.Canvas().Size()
-		devf("app", "window %.0f x %.0f at scale %.2f, own title bar %v", size.Width, size.Height, u.window.Canvas().Scale(), u.chrome)
+		windowIdentity(ui.window) // again, should the window not have existed yet below
+		ui.startFrames()
+		size := ui.window.Canvas().Size()
+		devf("app", "window %.0f x %.0f at scale %.2f, own title bar %v", size.Width, size.Height, ui.window.Canvas().Scale(), ui.chrome)
 		time.AfterFunc(180*time.Millisecond, func() { fyne.Do(launch.play) })
 	})
 	// Shown, named, then run: the desktop learns which application this is
 	// before the window's first frame, when it picks its name and icon.
-	u.window.Show()
-	windowIdentity(u.window)
+	ui.window.Show()
+	windowIdentity(ui.window)
 	a.Run()
 }
 
@@ -269,23 +270,23 @@ func statePath(root string) string {
 	return path
 }
 
-func (u *desktopUI) quit() {
-	u.release()
-	u.window.SetCloseIntercept(nil)
-	u.window.Close()
+func (ui *desktopUI) quit() {
+	ui.release()
+	ui.window.SetCloseIntercept(nil)
+	ui.window.Close()
 }
 
 // restart (Ctrl+Shift+R) reloads everything: state is saved, the running
 // request is stopped, then the process replaces itself with a fresh copy,
 // so the interface, the engine and the launch animation all start again.
-func (u *desktopUI) restart() {
+func (ui *desktopUI) restart() {
 	exe, err := os.Executable()
 	if err != nil {
-		u.notice("Restart", err.Error())
+		ui.notice("Restart", err.Error())
 		return
 	}
 	devf("ui", "restart (Ctrl+Shift+R)")
-	u.release()
+	ui.release()
 	// The binary may be in the middle of being rebuilt: wait for it rather
 	// than fail, since after release this process cannot go on.
 	var failure error
@@ -297,11 +298,11 @@ func (u *desktopUI) restart() {
 	os.Exit(1)
 }
 
-func (u *desktopUI) shortcut(s fyne.Shortcut) bool {
+func (ui *desktopUI) shortcut(s fyne.Shortcut) bool {
 	if _, copies := s.(*fyne.ShortcutCopy); copies {
 		// Ctrl+C with the prompt focused but nothing selected in it: the
 		// text selected in the conversation is what is meant.
-		return (u.prompt == nil || u.prompt.SelectedText() == "") && u.copySelection()
+		return (ui.prompt == nil || ui.prompt.SelectedText() == "") && ui.copySelection()
 	}
 	c, ok := s.(*desktop.CustomShortcut)
 	if !ok {
@@ -309,11 +310,11 @@ func (u *desktopUI) shortcut(s fyne.Shortcut) bool {
 	}
 	switch {
 	case c.KeyName == fyne.KeyK && c.Modifier == fyne.KeyModifierControl:
-		u.startNew()
+		ui.startNew()
 	case c.KeyName == fyne.KeyR && c.Modifier == fyne.KeyModifierControl|fyne.KeyModifierShift:
-		u.restart()
+		ui.restart()
 	case c.KeyName == fyne.KeyB && c.Modifier == fyne.KeyModifierControl:
-		u.toggleSidebar()
+		ui.toggleSidebar()
 	default:
 		return false
 	}
@@ -321,13 +322,13 @@ func (u *desktopUI) shortcut(s fyne.Shortcut) bool {
 }
 
 // release stops background work and saves, before closing or restarting.
-func (u *desktopUI) release() {
-	u.shutdown() // every run's context derives from it
-	u.panel.dispose()
-	u.remote.close()
-	u.mark.stop()
-	u.workMark.stop()
-	u.persist(true)
+func (ui *desktopUI) release() {
+	ui.shutdown() // every run's context derives from it
+	ui.panel.dispose()
+	ui.remote.close()
+	ui.mark.stop()
+	ui.workMark.stop()
+	ui.persist(true)
 }
 
 // fitLabel is a single line of text that ellipsises to the space it gets.
@@ -340,206 +341,208 @@ type fitLabel struct {
 }
 
 func newFitLabel(text string, size float32, c color.Color) *fitLabel {
-	l := &fitLabel{text: text, size: size, color: c, label: textLine(text, size, c)}
-	l.ExtendBaseWidget(l)
-	return l
+	label := &fitLabel{text: text, size: size, color: c, label: textLine(text, size, c)}
+	label.ExtendBaseWidget(label)
+	return label
 }
 
-func (l *fitLabel) SetText(text string) {
-	if text == l.text {
+func (label *fitLabel) SetText(text string) {
+	if text == label.text {
 		return
 	}
-	l.text = text
-	l.Refresh()
+	label.text = text
+	label.Refresh()
 }
 
-func (l *fitLabel) CreateRenderer() fyne.WidgetRenderer { return &fitLabelRenderer{l} }
+func (label *fitLabel) CreateRenderer() fyne.WidgetRenderer { return &fitLabelRenderer{label} }
 
-type fitLabelRenderer struct{ l *fitLabel }
+type fitLabelRenderer struct{ fitLabel *fitLabel }
 
-func (r *fitLabelRenderer) Layout(size fyne.Size) {
-	r.l.label.Text = fitText(r.l.text, r.l.size, fyne.TextStyle{}, size.Width)
-	r.l.label.Move(fyne.NewPos(0, (size.Height-r.l.label.MinSize().Height)/2))
+func (renderer *fitLabelRenderer) Layout(size fyne.Size) {
+	renderer.fitLabel.label.Text = fitText(renderer.fitLabel.text, renderer.fitLabel.size, fyne.TextStyle{}, size.Width)
+	renderer.fitLabel.label.Move(fyne.NewPos(0, (size.Height-renderer.fitLabel.label.MinSize().Height)/2))
 }
-func (r *fitLabelRenderer) MinSize() fyne.Size {
-	return fyne.NewSize(24, fyne.MeasureText("Ag", r.l.size, fyne.TextStyle{}).Height)
+func (renderer *fitLabelRenderer) MinSize() fyne.Size {
+	return fyne.NewSize(24, fyne.MeasureText("Ag", renderer.fitLabel.size, fyne.TextStyle{}).Height)
 }
-func (r *fitLabelRenderer) Refresh() {
-	r.l.label.Color = r.l.color
-	r.Layout(r.l.Size())
-	r.l.label.Refresh()
+func (renderer *fitLabelRenderer) Refresh() {
+	renderer.fitLabel.label.Color = renderer.fitLabel.color
+	renderer.Layout(renderer.fitLabel.Size())
+	renderer.fitLabel.label.Refresh()
 }
-func (r *fitLabelRenderer) Objects() []fyne.CanvasObject { return []fyne.CanvasObject{r.l.label} }
-func (r *fitLabelRenderer) Destroy()                     {}
+func (renderer *fitLabelRenderer) Objects() []fyne.CanvasObject {
+	return []fyne.CanvasObject{renderer.fitLabel.label}
+}
+func (renderer *fitLabelRenderer) Destroy() {}
 
 // flatScrollTheme drops the scroll edge shadows: the conversation fades
 // under the composer instead of ending on a hard line.
 type flatScrollTheme struct{ fyne.Theme }
 
-func (t flatScrollTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
+func (themeSpec flatScrollTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
 	if name == theme.ColorNameShadow {
 		return color.Transparent
 	}
-	return t.Theme.Color(name, v)
+	return themeSpec.Theme.Color(name, v)
 }
 
-func (u *desktopUI) build() fyne.CanvasObject {
-	u.tips = newTipLayer()
-	u.buildSettings()
-	sidebar := u.buildSidebar()
+func (ui *desktopUI) build() fyne.CanvasObject {
+	ui.tips = newTipLayer()
+	ui.buildSettings()
+	sidebar := ui.buildSidebar()
 
 	// Conversation column. While the model works, the animated ring sits
 	// under the last message.
 	afterTypeset = func() {
-		if u.ctx.Err() == nil {
-			u.relayoutColumn()
+		if ui.ctx.Err() == nil {
+			ui.relayoutColumn()
 		}
 	}
-	u.items = &transcriptLayout{u: u}
-	u.items.reset()
-	u.transcript = container.New(u.items)
-	u.views, u.copyRows = map[int]any{}, map[int]*fyne.Container{}
-	u.workMark = newLoopMark(inlineMarkSize)
-	u.thinkLabel = newFitLabel("", 14, colMuted)
-	u.thinking = container.NewBorder(nil, nil, container.NewCenter(u.workMark.image), nil, padded(0, 0, 12, 0, u.thinkLabel))
-	u.inlineSlot = container.NewStack(u.thinking)
-	u.inlineRow = padded(6, 0, 4, 0, u.inlineSlot)
-	u.inlineRow.Hide()
-	u.dockRow = container.NewStack()
-	u.dockRow.Hide()
-	u.column = container.NewVBox(u.transcript, u.inlineRow)
-	u.scroll = newKineticVScroll(container.New(columnLayout{width: 760, inset: 24}, u.column))
-	u.followTail = true
-	u.scroll.OnScrolled = func(position fyne.Position) {
+	ui.items = &transcriptLayout{ui: ui}
+	ui.items.reset()
+	ui.transcript = container.New(ui.items)
+	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
+	ui.workMark = newLoopMark(inlineMarkSize)
+	ui.thinkLabel = newFitLabel("", 14, colMuted)
+	ui.thinking = container.NewBorder(nil, nil, container.NewCenter(ui.workMark.image), nil, padded(0, 0, 12, 0, ui.thinkLabel))
+	ui.inlineSlot = container.NewStack(ui.thinking)
+	ui.inlineRow = padded(6, 0, 4, 0, ui.inlineSlot)
+	ui.inlineRow.Hide()
+	ui.dockRow = container.NewStack()
+	ui.dockRow.Hide()
+	ui.column = container.NewVBox(ui.transcript, ui.inlineRow)
+	ui.scroll = newKineticVScroll(container.New(columnLayout{width: 760, inset: 24}, ui.column))
+	ui.followTail = true
+	ui.scroll.OnScrolled = func(position fyne.Position) {
 		// A small tolerance absorbs fractional pixel rounding at the bottom.
 		// Content.Size, not MinSize: MinSize walks the whole chat on every event.
-		bottom := fyne.Max(0, u.scroll.Content.Size().Height-u.scroll.Size().Height)
-		u.followTail = bottom-position.Y <= 2
-		relayout(u.transcript) // items entering the view come back, those leaving it rest
+		bottom := fyne.Max(0, ui.scroll.Content.Size().Height-ui.scroll.Size().Height)
+		ui.followTail = bottom-position.Y <= 2
+		relayout(ui.transcript) // items entering the view come back, those leaving it rest
 	}
-	u.mark = newLoopMark(60)
-	u.welcome = container.NewCenter(container.NewVBox(
-		container.NewCenter(u.mark.image), spacer(0, 18),
+	ui.mark = newLoopMark(60)
+	ui.welcome = container.NewCenter(container.NewVBox(
+		container.NewCenter(ui.mark.image), spacer(0, 18),
 		container.NewCenter(textLine("What shall we build today?", 24, colText)), spacer(0, 4),
 		container.NewCenter(textLine("Your project. Your model. One loop.", 14, colMuted)), spacer(0, 40)))
 	// Nothing is drawn between the conversation and the composer: no rule,
 	// no fade (a gradient of the background over itself showed as darker
 	// bands, 8 bits being too few for so dark a colour). The messages just
 	// end where the composer's block begins.
-	scroll := container.NewThemeOverride(u.scroll, flatScrollTheme{loopTheme{theme.DefaultTheme()}})
-	view := container.NewStack(u.welcome, scroll)
-	u.scroll.Hide()
+	scroll := container.NewThemeOverride(ui.scroll, flatScrollTheme{loopTheme{theme.DefaultTheme()}})
+	view := container.NewStack(ui.welcome, scroll)
+	ui.scroll.Hide()
 
-	conversation := container.NewBorder(nil, u.buildFooter(), nil, nil, view)
+	conversation := container.NewBorder(nil, ui.buildFooter(), nil, nil, view)
 	// The activity line may sit beside the composer (dockActivity): the
 	// dock layer floats over the conversation's bottom left corner.
-	conversation = container.New(dockLayout{u}, conversation, u.dockRow)
-	u.panel = newToolPanel(u)
-	u.split = container.New(splitLayout{u.panel}, conversation, u.panel.view, newPanelResizeHandle(u.panel))
+	conversation = container.New(dockLayout{ui}, conversation, ui.dockRow)
+	ui.panel = newToolPanel(ui)
+	ui.split = container.New(splitLayout{ui.panel}, conversation, ui.panel.view, newPanelResizeHandle(ui.panel))
 
 	// Title bar: conversation title, drag region and window controls.
-	u.header = newFitLabel("New chat", 14, colMuted)
-	u.expand = newRow("", iconSidebar, styleWindow, u.toggleSidebar)
-	u.expand.Hide()
-	u.panelToggle = newRow("", iconPanel, styleWindow, func() {
-		if u.panel.target > 0 {
-			u.panel.fold()
+	ui.header = newFitLabel("New chat", 14, colMuted)
+	ui.expand = newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
+	ui.expand.Hide()
+	ui.panelToggle = newRow("", iconPanel, styleWindow, func() {
+		if ui.panel.target > 0 {
+			ui.panel.fold()
 		} else {
-			u.panel.unfold()
+			ui.panel.unfold()
 		}
 	})
-	u.panelToggle.onHover = func(in bool) {
+	ui.panelToggle.onHover = func(in bool) {
 		if in {
-			u.tips.show(u.panelToggle, "Toggle side panel")
+			ui.tips.show(ui.panelToggle, "Toggle side panel")
 		} else {
-			u.tips.hide()
+			ui.tips.hide()
 		}
 	}
-	right := container.New(layout.NewCustomPaddedHBoxLayout(2), container.NewCenter(u.panelToggle))
-	if u.chrome {
-		right.Add(windowControls(u.window, u.quit))
+	right := container.New(layout.NewCustomPaddedHBoxLayout(2), container.NewCenter(ui.panelToggle))
+	if ui.chrome {
+		right.Add(windowControls(ui.window, ui.quit))
 	}
-	u.headerBar = container.NewBorder(nil, nil, padded(0, 0, 0, 8, container.NewCenter(u.expand)), right, u.header)
-	var header fyne.CanvasObject = padded(14, 8, 24, 24, u.headerBar)
-	if u.chrome {
-		header = container.NewStack(newDragArea(u.window), padded(8, 4, 20, 8, u.headerBar))
+	ui.headerBar = container.NewBorder(nil, nil, padded(0, 0, 0, 8, container.NewCenter(ui.expand)), right, ui.header)
+	var header fyne.CanvasObject = padded(14, 8, 24, 24, ui.headerBar)
+	if ui.chrome {
+		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, ui.headerBar))
 	}
 	// The settings page takes the conversation's place while it is open.
-	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(u.split, u.prefs.view)))
+	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view)))
 	// No rule between the panes: the sidebar only casts a faint shadow.
 	shade := canvas.NewHorizontalGradient(color.NRGBA{A: 0x2a}, color.NRGBA{})
-	u.pane = &paneLayout{shown: 1, shade: 14}
-	u.root = container.New(u.pane, sidebar, main, shade)
-	layers := []fyne.CanvasObject{u.root}
-	if u.chrome {
-		layers = append(layers, resizeEdges(u.window))
+	ui.pane = &paneLayout{shown: 1, shade: 14}
+	ui.root = container.New(ui.pane, sidebar, main, shade)
+	layers := []fyne.CanvasObject{ui.root}
+	if ui.chrome {
+		layers = append(layers, resizeEdges(ui.window))
 	}
-	return container.NewStack(append(layers, u.tips.layer)...)
+	return container.NewStack(append(layers, ui.tips.layer)...)
 }
 
 // buildFooter assembles the context line, the queue tray and the composer
 // card: the card's own outline is the only edge of the input area.
-func (u *desktopUI) buildFooter() fyne.CanvasObject {
-	u.prompt = newChatEntry()
-	u.prompt.SetPlaceHolder("Describe what you want to build…")
-	u.prompt.send = u.submit
-	u.prompt.steer = u.steerNow
-	u.prompt.escape = func() { u.finishEdit(false); u.clearSelection() }
-	u.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
-		if key.Name == fyne.KeyEscape && u.prefs.open { // Escape goes back a page, then to the conversation
-			u.prefs.back()
+func (ui *desktopUI) buildFooter() fyne.CanvasObject {
+	ui.prompt = newChatEntry()
+	ui.prompt.SetPlaceHolder("Describe what you want to build…")
+	ui.prompt.send = ui.submit
+	ui.prompt.steer = ui.steerNow
+	ui.prompt.escape = func() { ui.finishEdit(false); ui.clearSelection() }
+	ui.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
+		if key.Name == fyne.KeyEscape && ui.prefs.open { // Escape goes back a page, then to the conversation
+			ui.prefs.back()
 		}
 	})
-	u.prompt.shortcut = u.shortcut
-	u.prompt.paste = u.pasteFromClipboard
-	u.prompt.resized = func() {
-		if u.split != nil {
-			relayout(u.split)
+	ui.prompt.shortcut = ui.shortcut
+	ui.prompt.paste = ui.pasteFromClipboard
+	ui.prompt.resized = func() {
+		if ui.split != nil {
+			relayout(ui.split)
 		}
 	}
 
-	u.model = newPicker(u.window, "Loading models…", styleChip, func(label string) {
-		if choice, ok := u.choices[label]; ok {
-			u.selectModel(choice)
+	ui.model = newPicker(ui.window, "Loading models…", styleChip, func(label string) {
+		if choice, ok := ui.choices[label]; ok {
+			ui.selectModel(choice)
 		}
 	})
-	u.model.row.onTap = u.modelMenu
-	u.send = newIconButton(iconSend, colAmber, colInk, u.submit)
-	u.send.iconPx = 20
-	u.stop = newIconButton(iconStop, colText, colInk, func() {
-		if u.current != nil && u.current.run != nil {
-			devf("ui", "stop pressed for %q", u.current.Title)
-			u.current.run.cancel()
+	ui.model.row.onTap = ui.modelMenu
+	ui.send = newIconButton(iconSend, colAmber, colInk, ui.submit)
+	ui.send.iconPx = 20
+	ui.stop = newIconButton(iconStop, colText, colInk, func() {
+		if ui.current != nil && ui.current.run != nil {
+			devf("ui", "stop pressed for %q", ui.current.Title)
+			ui.current.run.cancel()
 		}
 	})
-	u.stop.iconPx = 20
-	u.stop.Hide()
-	u.approvalControl = newRow("", iconShield, styleChip, u.approvalMenu)
-	u.updateApprovalControl()
-	u.contextRing = newContextRing(u.tips)
-	u.attach = newIconButton(iconPlus, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x0d}, color.NRGBA{}, nil)
-	u.attach.iconPx, u.attach.padPx = 18, 6
-	u.attach.onTap = func() {
-		showMenu(u.window, u.attach, []menuAction{
+	ui.stop.iconPx = 20
+	ui.stop.Hide()
+	ui.approvalControl = newRow("", iconShield, styleChip, ui.approvalMenu)
+	ui.updateApprovalControl()
+	ui.contextRing = newContextRing(ui.tips)
+	ui.attach = newIconButton(iconPlus, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x0d}, color.NRGBA{}, nil)
+	ui.attach.iconPx, ui.attach.padPx = 18, 6
+	ui.attach.onTap = func() {
+		showMenu(ui.window, ui.attach, []menuAction{
 			{label: "Paste image", detail: "From the clipboard", icon: iconCopy, run: func() {
-				if !u.pasteFromClipboard() {
-					u.notice("Paste", "No image in the clipboard.")
+				if !ui.pasteFromClipboard() {
+					ui.notice("Paste", "No image in the clipboard.")
 				}
 			}},
-			{label: "Attach files…", detail: "Copy to the workspace tmp folder", icon: iconFolder, run: u.pickFiles},
-			{label: "Attach images…", detail: "Choose files on this computer", icon: iconFolder, run: u.pickImages},
+			{label: "Attach files…", detail: "Copy to the workspace tmp folder", icon: iconFolder, run: ui.pickFiles},
+			{label: "Attach images…", detail: "Choose files on this computer", icon: iconFolder, run: ui.pickImages},
 		})
 	}
 
-	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), u.contextRing, u.model.row, container.NewStack(u.send, u.stop))
-	u.controls = container.New(&composerControlsLayout{}, container.NewCenter(u.approvalControl), actions)
-	u.model.relayout = u.controls.Refresh
+	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), ui.contextRing, ui.model.row, container.NewStack(ui.send, ui.stop))
+	ui.controls = container.New(&composerControlsLayout{}, container.NewCenter(ui.approvalControl), actions)
+	ui.model.relayout = ui.controls.Refresh
 
 	card := canvas.NewRectangle(colSurface)
 	card.CornerRadius = 16
 	card.StrokeColor = colBorder
 	card.StrokeWidth = 1
-	u.prompt.onFocus = func(focused bool) {
+	ui.prompt.onFocus = func(focused bool) {
 		from, to := colBorder, colBorderHot
 		if !focused {
 			from, to = to, from
@@ -549,86 +552,86 @@ func (u *desktopUI) buildFooter() fyne.CanvasObject {
 			card.Refresh()
 		}).Start()
 	}
-	u.attachRow = container.New(layout.NewCustomPaddedHBoxLayout(8))
+	ui.attachRow = container.New(layout.NewCustomPaddedHBoxLayout(8))
 	// The optional rows are hidden with their margins: a hidden child inside
 	// a visible padded box would still take its padding and the gap after it.
-	u.attachTray = padded(2, 4, 2, 0, container.NewHScroll(u.attachRow))
-	u.attachTray.Hide()
-	input := container.NewThemeOverride(u.prompt, bareInputTheme{loopTheme{theme.DefaultTheme()}})
-	line := container.New(attachButtonLayout{}, input, u.attach)
+	ui.attachTray = padded(2, 4, 2, 0, container.NewHScroll(ui.attachRow))
+	ui.attachTray.Hide()
+	input := container.NewThemeOverride(ui.prompt, bareInputTheme{loopTheme{theme.DefaultTheme()}})
+	line := container.New(attachButtonLayout{}, input, ui.attach)
 	pencil := canvas.NewImageFromResource(tinted(iconPencil, colAmber))
 	pencil.SetMinSize(fyne.NewSquareSize(14))
-	cancelEdit := newRow("Cancel", nil, styleChip, func() { u.finishEdit(false) })
+	cancelEdit := newRow("Cancel", nil, styleChip, func() { ui.finishEdit(false) })
 	cancelEdit.size = 12.5
-	u.editBar = padded(0, 0, 4, 0, container.NewBorder(nil, nil,
+	ui.editBar = padded(0, 0, 4, 0, container.NewBorder(nil, nil,
 		container.NewHBox(container.NewCenter(pencil), textLine("Editing a queued message", 12.5, colAmber)),
 		container.NewHBox(container.NewCenter(textLine("Enter to save · Esc to cancel", 12, colFaint)), cancelEdit)))
-	u.editBar.Hide()
-	composer := container.NewStack(card, padded(8, 8, 10, 10, container.NewVBox(u.editBar, u.attachTray, line, u.controls)))
-	u.composer = composer
+	ui.editBar.Hide()
+	composer := container.NewStack(card, padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
+	ui.composer = composer
 
 	// Messages waiting for the running task sit in a tray on top of the card.
-	u.queueTitle = newFitLabel("", 12.5, colMuted)
-	clear := newRow("Clear", nil, styleChip, u.clearQueue)
+	ui.queueTitle = newFitLabel("", 12.5, colMuted)
+	clear := newRow("Clear", nil, styleChip, ui.clearQueue)
 	clear.size = 12.5
-	u.queueList = container.New(layout.NewCustomPaddedVBoxLayout(0))
+	ui.queueList = container.New(layout.NewCustomPaddedVBoxLayout(0))
 	trayBg := canvas.NewRectangle(colPopover)
 	trayBg.TopLeftCornerRadius, trayBg.TopRightCornerRadius = 12, 12
 	trayBg.StrokeColor = colBorderSoft
 	trayBg.StrokeWidth = 1
-	trayBody := container.NewVBox(container.NewBorder(nil, nil, nil, clear, padded(0, 0, 8, 0, u.queueTitle)), u.queueList)
-	u.queueTray = padded(0, 0, 16, 16, container.NewStack(trayBg, padded(4, 6, 4, 4, trayBody)))
-	u.queueTray.Hide()
+	trayBody := container.NewVBox(container.NewBorder(nil, nil, nil, clear, padded(0, 0, 8, 0, ui.queueTitle)), ui.queueList)
+	ui.queueTray = padded(0, 0, 16, 16, container.NewStack(trayBg, padded(4, 6, 4, 4, trayBody)))
+	ui.queueTray.Hide()
 
-	u.folder = newRow(filepath.Base(u.cfg.Workspace), theme.FolderIcon(), styleChip, nil)
-	u.folder.onTap = func() { u.projectMenu(u.folder) }
+	ui.folder = newRow(filepath.Base(ui.cfg.Workspace), theme.FolderIcon(), styleChip, nil)
+	ui.folder.onTap = func() { ui.projectMenu(ui.folder) }
 	machine := newRow("This computer", theme.ComputerIcon(), styleChip, nil)
-	contextRow := container.NewHBox(u.folder, machine)
-	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), u.queueTray, composer)
+	contextRow := container.NewHBox(ui.folder, machine)
+	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.queueTray, composer)
 	return padded(0, 0, 24, 24, container.New(columnLayout{width: 760, inset: 0}, padded(0, 18, 0, 0, stack)))
 }
 
-func (u *desktopUI) updateHeader() {
-	u.folder.SetText(filepath.Base(u.cfg.Workspace))
+func (ui *desktopUI) updateHeader() {
+	ui.folder.SetText(filepath.Base(ui.cfg.Workspace))
 	title := "New chat"
-	if u.current != nil {
-		title = u.current.Title
+	if ui.current != nil {
+		title = ui.current.Title
 	}
-	if u.prefs != nil && u.prefs.open {
+	if ui.prefs != nil && ui.prefs.open {
 		title = "Settings"
 	}
-	u.header.SetText(title)
+	ui.header.SetText(title)
 }
 
-func (u *desktopUI) startNew() {
-	devf("ui", "new chat screen (workspace %s)", u.cfg.Workspace)
-	u.prefs.close()
-	u.clearSelection()
-	u.finishEdit(false)
-	u.current = nil
-	u.cfg.Session = ""
-	u.followTail = true
-	u.transcript.RemoveAll()
-	u.items.reset()
-	u.views, u.copyRows = map[int]any{}, map[int]*fyne.Container{}
-	u.panel.switchTo(nil)
-	u.showTranscript(false)
-	u.syncRun()
-	u.mark.intro()
-	u.updateHeader()
-	u.renderChats()
-	u.refreshContextRing()
-	u.window.Canvas().Focus(u.prompt)
+func (ui *desktopUI) startNew() {
+	devf("ui", "new chat screen (workspace %s)", ui.cfg.Workspace)
+	ui.prefs.close()
+	ui.clearSelection()
+	ui.finishEdit(false)
+	ui.current = nil
+	ui.cfg.Session = ""
+	ui.followTail = true
+	ui.transcript.RemoveAll()
+	ui.items.reset()
+	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
+	ui.panel.switchTo(nil)
+	ui.showTranscript(false)
+	ui.syncRun()
+	ui.mark.intro()
+	ui.updateHeader()
+	ui.renderChats()
+	ui.refreshContextRing()
+	ui.window.Canvas().Focus(ui.prompt)
 }
 
 // showTranscript swaps the welcome screen and the conversation.
-func (u *desktopUI) showTranscript(show bool) {
+func (ui *desktopUI) showTranscript(show bool) {
 	if show {
-		u.welcome.Hide()
-		u.scroll.Show()
+		ui.welcome.Hide()
+		ui.scroll.Show()
 	} else {
-		u.scroll.Hide()
-		u.welcome.Show()
+		ui.scroll.Hide()
+		ui.welcome.Show()
 	}
 }
 
@@ -668,13 +671,13 @@ func codeBlock(text string, maxHeight float32) fyne.CanvasObject {
 
 // modal opens a themed sheet with a title, a body and right-aligned actions.
 // With no actions it shows a single "Close" button.
-func (u *desktopUI) modal(title string, body fyne.CanvasObject, width float32, onDismiss func(), actions ...*tapRow) *sheet {
-	var s *sheet
-	closeButton := newRow("", iconClose, styleWindow, func() { s.dismiss() })
+func (ui *desktopUI) modal(title string, body fyne.CanvasObject, width float32, onDismiss func(), actions ...*tapRow) *sheet {
+	var dialog *sheet
+	closeButton := newRow("", iconClose, styleWindow, func() { dialog.dismiss() })
 	heading := textLine(title, 16, colText)
 	heading.TextStyle = fyne.TextStyle{Bold: true}
 	if len(actions) == 0 {
-		actions = []*tapRow{newRow("Close", nil, styleOutline, func() { s.dismiss() })}
+		actions = []*tapRow{newRow("Close", nil, styleOutline, func() { dialog.dismiss() })}
 	}
 	buttons := container.New(layout.NewCustomPaddedHBoxLayout(8), layout.NewSpacer())
 	for _, action := range actions {
@@ -683,255 +686,255 @@ func (u *desktopUI) modal(title string, body fyne.CanvasObject, width float32, o
 	content := container.NewBorder(
 		padded(0, 12, 0, 0, container.NewBorder(nil, nil, nil, closeButton, container.NewHBox(heading))),
 		padded(16, 0, 0, 0, buttons), nil, nil, body)
-	s = newSheet(u.window.Canvas(), content, width)
-	s.onDismiss = onDismiss
-	s.Show()
-	u.window.Canvas().Focus(s)
-	return s
+	dialog = newSheet(ui.window.Canvas(), content, width)
+	dialog.onDismiss = onDismiss
+	dialog.Show()
+	ui.window.Canvas().Focus(dialog)
+	return dialog
 }
 
-func (u *desktopUI) notice(title, text string) {
+func (ui *desktopUI) notice(title, text string) {
 	label := widget.NewLabel(text)
 	label.Wrapping = fyne.TextWrapWord
-	u.modal(title, label, 420, nil)
+	ui.modal(title, label, 420, nil)
 }
 
 // syncRun shows the open chat's run state: the stop button, the activity
 // line under the conversation and the waiting messages.
-func (u *desktopUI) syncRun() {
-	if u.settled != nil {
-		u.settled.Stop()
-		u.settled = nil
+func (ui *desktopUI) syncRun() {
+	if ui.settled != nil {
+		ui.settled.Stop()
+		ui.settled = nil
 	}
-	var t *turn
-	if u.current != nil && u.current.run != nil {
-		t = u.current.run.turn
+	var currentTurn *turn
+	if ui.current != nil && ui.current.run != nil {
+		currentTurn = ui.current.run.turn
 	}
-	if t != nil {
-		u.mark.stop()
-		u.send.Hide()
-		u.stop.Show()
-		u.showActivityLine(true)
-		u.applyActivity(t)
+	if currentTurn != nil {
+		ui.mark.stop()
+		ui.send.Hide()
+		ui.stop.Show()
+		ui.showActivityLine(true)
+		ui.applyActivity(currentTurn)
 	} else {
-		u.send.Show()
-		u.stop.Hide()
-		u.showActivityLine(false)
-		u.workMark.setState("brand")
+		ui.send.Show()
+		ui.stop.Hide()
+		ui.showActivityLine(false)
+		ui.workMark.setState("brand")
 	}
-	u.controls.Refresh()
-	u.renderQueue()
-	u.syncCopies()
-	u.relayoutColumn()
+	ui.controls.Refresh()
+	ui.renderQueue()
+	ui.syncCopies()
+	ui.relayoutColumn()
 }
 
 // runStarted marks a chat as working.
-func (u *desktopUI) runStarted(chat *conversation, run *chatRun) {
+func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
 	devf("run", "start %q [%s]: %s %s, effort %q, approval %q, session %q, on screen %v",
-		chat.Title, chat.ID, chat.Config.Provider, chat.Config.Model, chat.Config.Effort, approvalFor(u.approvalMode, chat.Config), chat.Config.Session, chat == u.current)
+		chat.Title, chat.ID, chat.Config.Provider, chat.Config.Model, chat.Config.Effort, approvalFor(ui.approvalMode, chat.Config), chat.Config.Session, chat == ui.current)
 	run.started = time.Now()
 	chat.run = run
-	u.remote.metaChanged(chat)
-	if chat == u.current {
-		u.syncRun()
+	ui.remote.metaChanged(chat)
+	if chat == ui.current {
+		ui.syncRun()
 	}
-	u.renderChats()
+	ui.renderChats()
 }
 
 // runEnded closes a chat's run. ended is the ring shown briefly under the
 // answer when the chat is on screen: "done" or "stopped".
-func (u *desktopUI) runEnded(chat *conversation, ended string) {
+func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	run := chat.run
 	if run != nil {
-		devf("run", "end %q [%s]: %s after %s, on screen %v", chat.Title, chat.ID, ended, time.Since(run.started).Round(time.Millisecond), chat == u.current)
+		devf("run", "end %q [%s]: %s after %s, on screen %v", chat.Title, chat.ID, ended, time.Since(run.started).Round(time.Millisecond), chat == ui.current)
 	}
 	chat.run = nil
-	u.remote.metaChanged(chat)
+	ui.remote.metaChanged(chat)
 	if run != nil && run.approval != nil {
 		run.approval.dismiss()
 	}
-	u.renderChats()
-	u.save()
-	if chat != u.current {
+	ui.renderChats()
+	ui.save()
+	if chat != ui.current {
 		return
 	}
-	u.syncRun()
-	u.refreshContextRing()
+	ui.syncRun()
+	ui.refreshContextRing()
 	// The closed ring stays briefly under the answer, then goes away.
-	u.showActivityLine(true)
-	u.workMark.setState(ended)
-	u.thinkLabel.SetText(map[string]string{"done": "Done", "stopped": "Stopped"}[ended])
-	u.relayoutColumn()
-	u.settled = time.AfterFunc(1600*time.Millisecond, func() {
+	ui.showActivityLine(true)
+	ui.workMark.setState(ended)
+	ui.thinkLabel.SetText(map[string]string{"done": "Done", "stopped": "Stopped"}[ended])
+	ui.relayoutColumn()
+	ui.settled = time.AfterFunc(1600*time.Millisecond, func() {
 		fyne.Do(func() {
-			if chat == u.current && chat.run == nil {
-				u.showActivityLine(false)
-				u.workMark.setState("brand")
-				u.relayoutColumn()
+			if chat == ui.current && chat.run == nil {
+				ui.showActivityLine(false)
+				ui.workMark.setState("brand")
+				ui.relayoutColumn()
 			}
 		})
 	})
-	if u.window.Canvas().Overlays().Top() == nil { // never pull focus out of an open dialog
-		u.window.Canvas().Focus(u.prompt)
+	if ui.window.Canvas().Overlays().Top() == nil { // never pull focus out of an open dialog
+		ui.window.Canvas().Focus(ui.prompt)
 	}
 }
 
 // promptMessage takes what the composer holds as a message.
-func (u *desktopUI) promptMessage() (message, bool) {
-	if problem := u.attachmentProblem(); problem != "" {
-		u.notice("Attachments", problem)
+func (ui *desktopUI) promptMessage() (message, bool) {
+	if problem := ui.attachmentProblem(); problem != "" {
+		ui.notice("Attachments", problem)
 		return message{}, false
 	}
-	text := strings.TrimSpace(u.prompt.Text)
-	if text == "" && len(u.attachments) == 0 && len(u.fileAttachments) == 0 {
+	text := strings.TrimSpace(ui.prompt.Text)
+	if text == "" && len(ui.attachments) == 0 && len(ui.fileAttachments) == 0 {
 		return message{}, false
 	}
-	m := message{Role: "user", Content: attachmentText(text, u.fileAttachments), Images: u.takeAttachments()}
-	u.fileAttachments = nil
-	u.renderAttachments()
-	u.prompt.SetText("")
-	return m, true
+	messageValue := message{Role: "user", Content: attachmentText(text, ui.fileAttachments), Images: ui.takeAttachments()}
+	ui.fileAttachments = nil
+	ui.renderAttachments()
+	ui.prompt.SetText("")
+	return messageValue, true
 }
 
 // submit is Enter: send, or queue the message behind the running task.
-func (u *desktopUI) submit() {
-	if u.editing != nil {
-		u.finishEdit(true)
+func (ui *desktopUI) submit() {
+	if ui.editing != nil {
+		ui.finishEdit(true)
 		return
 	}
-	text := strings.TrimSpace(u.prompt.Text)
-	chat := u.current
+	text := strings.TrimSpace(ui.prompt.Text)
+	chat := ui.current
 	if chat != nil && chat.run != nil {
-		if m, ok := u.promptMessage(); ok {
-			chat.queue = append(chat.queue, m)
-			u.renderQueue()
+		if message, ok := ui.promptMessage(); ok {
+			chat.queue = append(chat.queue, message)
+			ui.renderQueue()
 		}
 		return
 	}
-	if text == "" && len(u.attachments) == 0 && len(u.fileAttachments) == 0 {
+	if text == "" && len(ui.attachments) == 0 && len(ui.fileAttachments) == 0 {
 		// An empty Enter resumes a queue left behind by a stopped task.
 		if chat != nil {
-			if next, ok := u.takeNext(chat); ok {
-				u.start(next)
+			if next, ok := ui.takeNext(chat); ok {
+				ui.start(next)
 			}
 		}
 		return
 	}
 	// Claude Code compacts its own session: there /compact is sent as it is.
-	if u.cfg.Provider != "claudecode" && (text == "/compact" || strings.HasPrefix(text, "/compact ")) {
-		u.prompt.SetText("")
-		u.compactChat(strings.TrimSpace(strings.TrimPrefix(text, "/compact")))
+	if ui.cfg.Provider != "claudecode" && (text == "/compact" || strings.HasPrefix(text, "/compact ")) {
+		ui.prompt.SetText("")
+		ui.compactChat(strings.TrimSpace(strings.TrimPrefix(text, "/compact")))
 		return
 	}
-	if !u.ready() {
+	if !ui.ready() {
 		return
 	}
-	if m, ok := u.promptMessage(); ok {
-		u.start(m)
+	if messageValue, ok := ui.promptMessage(); ok {
+		ui.start(messageValue)
 	}
 }
 
 // steerNow is Ctrl+Enter: the message joins the running task at its next
 // step, without waiting for the answer to end.
-func (u *desktopUI) steerNow() {
-	chat := u.current
-	if u.editing != nil || chat == nil || chat.run == nil {
-		u.submit()
+func (ui *desktopUI) steerNow() {
+	chat := ui.current
+	if ui.editing != nil || chat == nil || chat.run == nil {
+		ui.submit()
 		return
 	}
-	if m, ok := u.promptMessage(); ok {
-		chat.steer = append(chat.steer, m)
-		u.renderQueue()
+	if message, ok := ui.promptMessage(); ok {
+		chat.steer = append(chat.steer, message)
+		ui.renderQueue()
 	}
 }
 
 // ready checks that a message can be sent now, and says why not.
-func (u *desktopUI) ready() bool {
-	if problem := u.notReady(); problem != "" {
-		u.notice("Not ready", problem)
+func (ui *desktopUI) ready() bool {
+	if problem := ui.notReady(); problem != "" {
+		ui.notice("Not ready", problem)
 		return false
 	}
 	return true
 }
 
 // notReady is why a message cannot be sent now ("" when it can).
-func (u *desktopUI) notReady() string {
-	if u.modelsLoading {
+func (ui *desktopUI) notReady() string {
+	if ui.modelsLoading {
 		return "The models are still loading."
 	}
-	if u.cfg.Model == "" {
+	if ui.cfg.Model == "" {
 		return "Choose a connection and a model."
 	}
-	root, err := resolveWorkspace(u.cfg.Workspace)
+	root, err := resolveWorkspace(ui.cfg.Workspace)
 	if err != nil {
 		return err.Error()
 	}
-	u.cfg.Workspace = root
+	ui.cfg.Workspace = root
 	return ""
 }
 
 // start sends a message in the open chat (a new one if none is open) and
 // runs the agent loop for it in the background.
-func (u *desktopUI) start(m message) { u.startWithID(m, "") }
+func (ui *desktopUI) start(messageValue message) { ui.startWithID(messageValue, "") }
 
-func (u *desktopUI) startWithID(m message, id string) {
-	if !u.ready() {
-		if u.current != nil { // keep it rather than lose it
-			u.current.queue = append([]message{m}, u.current.queue...)
-			u.renderQueue()
+func (ui *desktopUI) startWithID(messageValue message, id string) {
+	if !ui.ready() {
+		if ui.current != nil { // keep it rather than lose it
+			ui.current.queue = append([]message{messageValue}, ui.current.queue...)
+			ui.renderQueue()
 		}
 		return
 	}
-	chat := u.current
+	chat := ui.current
 	if chat == nil {
-		title := []rune(strings.Join(strings.Fields(m.Content), " "))
+		title := []rune(strings.Join(strings.Fields(messageValue.Content), " "))
 		if len(title) > 36 {
 			title = title[:36]
 		}
 		if len(title) == 0 {
 			title = []rune("[image]")
 		}
-		u.cfg.Session = "" // a new chat starts its own Claude Code session
-		chat = &conversation{ID: identifier()[:16], Title: string(title), Config: u.cfg}
-		u.chats = append([]*conversation{chat}, u.chats...)
-		u.current = chat
-		u.panel.adopt(chat) // what was open on the start screen is now this chat's
+		ui.cfg.Session = "" // a new chat starts its own Claude Code session
+		chat = &conversation{ID: identifier()[:16], Title: string(title), Config: ui.cfg}
+		ui.chats = append([]*conversation{chat}, ui.chats...)
+		ui.current = chat
+		ui.panel.adopt(chat) // what was open on the start screen is now this chat's
 	}
-	u.panel.todoChanged(chat)
-	chat.History = append(chat.History, m)
-	u.showTranscript(true)
-	u.followTail = true // Sending a message explicitly returns to the live answer.
-	u.addItem(chat, chatItem{ID: id, Kind: "user", Text: m.Content, Images: m.Images})
-	u.updateHeader()
+	ui.panel.todoChanged(chat)
+	chat.History = append(chat.History, messageValue)
+	ui.showTranscript(true)
+	ui.followTail = true // Sending a message explicitly returns to the live answer.
+	ui.addItem(chat, chatItem{ID: id, Kind: "user", Text: messageValue.Content, Images: messageValue.Images})
+	ui.updateHeader()
 	// No deadline: a long task (long shell runs, many tool rounds) must not
 	// die on a timer. Only the Stop button or a dead network ends it.
-	ctx, cancel := context.WithCancel(u.ctx)
-	cfg := u.runConfig(chat)
+	ctx, cancel := context.WithCancel(ui.ctx)
+	cfg := ui.runConfig(chat)
 	history := append([]message(nil), chat.History...)
-	t := u.newTurn(chat, cfg)
-	t.show(activity{State: "wait"})
-	u.runStarted(chat, &chatRun{cancel: cancel, turn: t})
-	pump := &eventPump{handle: t.handle}
-	in := inbox{
+	turn := ui.newTurn(chat, cfg)
+	turn.show(activity{State: "wait"})
+	ui.runStarted(chat, &chatRun{cancel: cancel, turn: turn})
+	pump := &eventPump{handle: turn.handle}
+	inboxValue := inbox{
 		steer: func() (out []message) {
-			u.onUI(ctx, func() { out = u.takeSteer(chat) })
+			ui.onUI(ctx, func() { out = ui.takeSteer(chat) })
 			return out
 		},
 		next: func() (m message, ok bool) {
-			u.onUI(ctx, func() { m, ok = u.takeNext(chat) })
+			ui.onUI(ctx, func() { m, ok = ui.takeNext(chat) })
 			return m, ok
 		},
 	}
 	go func() {
 		defer cancel()
-		err := u.backend.run(ctx, cfg, history, in, pump.emit)
+		err := ui.backend.run(ctx, cfg, history, inboxValue, pump.emit)
 		canceled := ctx.Err() == context.Canceled
 		fyne.Do(func() {
 			pump.flush() // whatever the stream sent last comes first
-			if u.ctx.Err() != nil {
+			if ui.ctx.Err() != nil {
 				return
 			}
-			t.finish()
+			turn.finish()
 			ended := "done"
 			if err != nil {
 				ended = "stopped"
@@ -939,24 +942,25 @@ func (u *desktopUI) startWithID(m message, id string) {
 				if canceled {
 					text = "Response stopped."
 				}
-				u.addItem(chat, chatItem{Kind: "error", Text: text})
+				ui.addItem(chat, chatItem{Kind: "error", Text: text})
 			}
-			u.runEnded(chat, ended)
+			ui.runEnded(chat, ended)
 		})
 	}()
 }
 
 // runConfig is the chat's configuration with this session's secrets and
 // preferences, for one run.
-func (u *desktopUI) runConfig(chat *conversation) config {
+func (ui *desktopUI) runConfig(chat *conversation) config {
 	chat.identifyMessages()
 	if chat.Todo == nil {
 		chat.Todo = &todoState{}
 	}
 	cfg := chat.Config
 	cfg.Todo = chat.Todo
-	cfg.Browser = u.browserTools(chat)
-	cfg.Terminal = u.terminalTools(chat)
+	cfg.Browser = ui.browserTools(chat)
+	cfg.Terminal = ui.terminalTools(chat)
+	cfg.Computer = ui.computerTools(chat)
 	if chat.Cache == nil {
 		chat.Cache = &contextCache{}
 	}
@@ -964,18 +968,18 @@ func (u *desktopUI) runConfig(chat *conversation) config {
 	cfg.ContextKey = chat.ID + ":" + chat.Version
 	cfg.Recall = func(ctx context.Context) ([]chatItem, error) {
 		var items []chatItem
-		u.onUI(ctx, func() { items = append([]chatItem{}, chat.Items...) })
+		ui.onUI(ctx, func() { items = append([]chatItem{}, chat.Items...) })
 		return items, ctx.Err()
 	}
-	cfg.APIKey = u.keys[cfg.ConnectionID]
-	cfg.UserInstructions = u.userInstructions
-	cfg.ApprovalMode = approvalFor(u.approvalMode, cfg)
-	cfg.ClassicCompaction = u.classicCompaction
+	cfg.APIKey = ui.keys[cfg.ConnectionID]
+	cfg.UserInstructions = ui.userInstructions
+	cfg.ApprovalMode = approvalFor(ui.approvalMode, cfg)
+	cfg.ClassicCompaction = ui.classicCompaction
 	return cfg
 }
 
 // onUI runs f on the UI thread and waits, unless the run is over.
-func (u *desktopUI) onUI(ctx context.Context, f func()) {
+func (ui *desktopUI) onUI(ctx context.Context, f func()) {
 	if ctx.Err() == nil { // closing: never block the loop on the window
 		fyne.DoAndWait(f)
 	}
@@ -983,59 +987,59 @@ func (u *desktopUI) onUI(ctx context.Context, f func()) {
 
 // compactChat runs the manual /compact command, optionally steered by a
 // focus ("/compact keep the API design").
-func (u *desktopUI) compactChat(focus string) {
-	chat := u.current
+func (ui *desktopUI) compactChat(focus string) {
+	chat := ui.current
 	if chat == nil || len(chat.History) == 0 {
-		u.notice("Compact", "Nothing to compact yet.")
+		ui.notice("Compact", "Nothing to compact yet.")
 		return
 	}
-	if !u.ready() {
+	if !ui.ready() {
 		return
 	}
-	ctx, cancel := context.WithCancel(u.ctx)
-	cfg := u.runConfig(chat)
+	ctx, cancel := context.WithCancel(ui.ctx)
+	cfg := ui.runConfig(chat)
 	history := append([]message(nil), chat.History...)
-	t := u.newTurn(chat, cfg)
-	t.show(activity{State: "compact"})
-	u.runStarted(chat, &chatRun{cancel: cancel, turn: t})
-	pump := &eventPump{handle: t.handle}
+	turn := ui.newTurn(chat, cfg)
+	turn.show(activity{State: "compact"})
+	ui.runStarted(chat, &chatRun{cancel: cancel, turn: turn})
+	pump := &eventPump{handle: turn.handle}
 	go func() {
 		defer cancel()
-		kept, err := u.backend.compactNow(ctx, cfg, history, focus, pump.emit)
+		kept, err := ui.backend.compactNow(ctx, cfg, history, focus, pump.emit)
 		fyne.Do(func() {
 			pump.flush()
-			if u.ctx.Err() != nil {
+			if ui.ctx.Err() != nil {
 				return
 			}
 			ended := "done"
 			if err != nil {
 				ended = "stopped"
-				u.addItem(chat, chatItem{Kind: "error", Text: err.Error()})
+				ui.addItem(chat, chatItem{Kind: "error", Text: err.Error()})
 			} else {
 				chat.History = kept
-				u.addItem(chat, chatItem{Kind: "note", Text: "Context compacted: the earlier rounds were condensed"})
+				ui.addItem(chat, chatItem{Kind: "note", Text: "Context compacted: the earlier rounds were condensed"})
 			}
-			u.runEnded(chat, ended)
+			ui.runEnded(chat, ended)
 		})
 	}()
 }
 
 // showApproval asks before a command or an edit, whichever chat it comes
 // from: the run waits for the answer.
-func (u *desktopUI) showApproval(chat *conversation, p map[string]any) {
+func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) {
 	id, _ := p["id"].(string)
 	title, _ := p["title"].(string)
 	preview, _ := p["preview"].(string)
-	if chat != u.current {
+	if chat != ui.current {
 		title += " · " + chat.Title
 	}
 	resolved := false
-	var s *sheet
+	var dialog *sheet
 	forget := func() {
-		if chat.run != nil && chat.run.approval == s {
+		if chat.run != nil && chat.run.approval == dialog {
 			chat.run.approval = nil
 			chat.run.approvalID, chat.run.answer = "", nil
-			u.remote.metaChanged(chat)
+			ui.remote.metaChanged(chat)
 		}
 	}
 	answer := func(allow bool) {
@@ -1043,44 +1047,44 @@ func (u *desktopUI) showApproval(chat *conversation, p map[string]any) {
 			return
 		}
 		resolved = true
-		u.backend.approve(id, allow)
+		ui.backend.approve(id, allow)
 		forget()
-		s.Hide()
+		dialog.Hide()
 	}
 	refuse := newRow("Deny", nil, styleOutline, func() { answer(false) })
 	allow := newRow("Allow", nil, stylePrimary, func() { answer(true) })
 	intro := textLine("1loop needs your approval to perform this action.", 14, colMuted)
 	body := container.NewBorder(padded(0, 10, 0, 0, intro), nil, nil, nil, codeBlock(preview, 360))
-	s = u.modal(title, body, 680, func() {
+	dialog = ui.modal(title, body, 680, func() {
 		if !resolved {
 			resolved = true
-			u.backend.approve(id, false)
+			ui.backend.approve(id, false)
 			forget()
 		}
 	}, refuse, allow)
 	if chat.run != nil {
-		chat.run.approval = s
+		chat.run.approval = dialog
 		chat.run.approvalID, chat.run.approvalTitle, chat.run.approvalPreview = id, title, preview
 		chat.run.answer = answer
-		u.remote.metaChanged(chat)
+		ui.remote.metaChanged(chat)
 	}
 }
 
-func (u *desktopUI) refreshModels() {
-	u.modelLoad++
-	generation := u.modelLoad
-	previous := u.cfg
-	u.modelsLoading = true
-	connections := append([]connection(nil), u.connectionsList...)
-	keys := make(map[string]string, len(u.keys))
-	for id, key := range u.keys {
+func (ui *desktopUI) refreshModels() {
+	ui.modelLoad++
+	generation := ui.modelLoad
+	previous := ui.cfg
+	ui.modelsLoading = true
+	connections := append([]connection(nil), ui.connectionsList...)
+	keys := make(map[string]string, len(ui.keys))
+	for id, key := range ui.keys {
 		keys[id] = key
 	}
-	u.model.Disable()
-	u.model.placeholder = "Loading models…"
-	u.model.ClearSelected()
-	u.model.row.SetTrailing("")
-	u.send.Disable()
+	ui.model.Disable()
+	ui.model.placeholder = "Loading models…"
+	ui.model.ClearSelected()
+	ui.model.row.SetTrailing("")
+	ui.send.Disable()
 	go func() {
 		type result struct {
 			choices []modelChoice
@@ -1088,29 +1092,29 @@ func (u *desktopUI) refreshModels() {
 		}
 		results := make([]result, len(connections))
 		var wg sync.WaitGroup
-		for i, c := range connections {
-			if !c.Enabled {
+		for i, conn := range connections {
+			if !conn.Enabled {
 				continue
 			}
 			wg.Add(1)
-			go func(i int, c connection) {
+			go func(i int, connectionValue connection) {
 				defer wg.Done()
-				results[i].choices, results[i].err = u.backend.connectionModels(u.ctx, c, keys[c.ID])
+				results[i].choices, results[i].err = ui.backend.connectionModels(ui.ctx, connectionValue, keys[connectionValue.ID])
 				var timeout net.Error
-				if c.Provider == "openai" && errors.As(results[i].err, &timeout) && timeout.Timeout() && u.ctx.Err() == nil {
-					results[i].choices, results[i].err = u.backend.connectionModels(u.ctx, c, keys[c.ID])
+				if connectionValue.Provider == "openai" && errors.As(results[i].err, &timeout) && timeout.Timeout() && ui.ctx.Err() == nil {
+					results[i].choices, results[i].err = ui.backend.connectionModels(ui.ctx, connectionValue, keys[connectionValue.ID])
 				}
-			}(i, c)
+			}(i, conn)
 		}
 		wg.Wait()
 		fyne.Do(func() {
-			if u.ctx.Err() != nil || generation != u.modelLoad {
+			if ui.ctx.Err() != nil || generation != ui.modelLoad {
 				return
 			}
-			u.modelsLoading = false
-			u.choices = map[string]modelChoice{}
-			u.model.Details = map[string]string{}
-			u.modelUnavailable = map[string]string{}
+			ui.modelsLoading = false
+			ui.choices = map[string]modelChoice{}
+			ui.model.Details = map[string]string{}
+			ui.modelUnavailable = map[string]string{}
 			var options []string
 			selected := ""
 			for i, result := range results {
@@ -1124,7 +1128,7 @@ func (u *desktopUI) refreshModels() {
 							problem = "Network timeout"
 						}
 					}
-					u.modelUnavailable[connections[i].ID] = problem
+					ui.modelUnavailable[connections[i].ID] = problem
 					continue
 				}
 				for _, choice := range result.choices {
@@ -1136,35 +1140,35 @@ func (u *desktopUI) refreshModels() {
 						name = string(runes[:38]) + "…"
 					}
 					label := name + " · " + choice.Connection.Name
-					if _, exists := u.choices[label]; exists {
+					if _, exists := ui.choices[label]; exists {
 						label += fmt.Sprintf(" · %d", len(options)+1)
 					}
 					options = append(options, label)
-					u.choices[label] = choice
-					u.model.Details[label] = choice.Connection.Name + " · " + choice.ID
+					ui.choices[label] = choice
+					ui.model.Details[label] = choice.Connection.Name + " · " + choice.ID
 					if choice.Connection.Provider == "claudecode" {
-						u.model.Details[label] = "Runs in Claude Code's own harness · " + choice.ID
+						ui.model.Details[label] = "Runs in Claude Code's own harness · " + choice.ID
 					}
 					if choice.Connection.ID == previous.ConnectionID && choice.ID == previous.Model {
 						selected = label
 					}
 				}
 			}
-			u.model.Options = options
-			u.remote.settingsChanged()
-			u.model.Enable()
+			ui.model.Options = options
+			ui.remote.settingsChanged()
+			ui.model.Enable()
 			if len(options) == 0 {
-				u.cfg.Model = ""
-				u.model.placeholder = "No model available"
-				u.model.refresh()
+				ui.cfg.Model = ""
+				ui.model.placeholder = "No model available"
+				ui.model.refresh()
 				return
 			}
 			if selected == "" {
 				selected = options[0]
 			}
-			u.model.SetSelected(selected)
-			u.send.Enable()
-			u.refreshContextRing()
+			ui.model.SetSelected(selected)
+			ui.send.Enable()
+			ui.refreshContextRing()
 		})
 	}()
 }
@@ -1191,52 +1195,52 @@ type savedState struct {
 
 // save writes the state shortly after the last change, so bursts of
 // changes (a streamed turn, a slider drag) cost one write.
-func (u *desktopUI) save() {
-	if u.saveTimer != nil {
-		u.saveTimer.Stop()
+func (ui *desktopUI) save() {
+	if ui.saveTimer != nil {
+		ui.saveTimer.Stop()
 	}
-	u.saveTimer = time.AfterFunc(400*time.Millisecond, func() { fyne.Do(u.saveNow) })
+	ui.saveTimer = time.AfterFunc(400*time.Millisecond, func() { fyne.Do(ui.saveNow) })
 }
 
-func (u *desktopUI) saveNow() { u.persist(false) }
+func (ui *desktopUI) saveNow() { ui.persist(false) }
 
 // persist writes the state file. The conversations are nearly all of it
 // (megabytes once they hold tool outputs and images), so they are encoded
 // and written beside the interface, from copies taken here: a save used to
 // freeze the window for as long as it took. wait is for closing, when the
 // file must be on disk before the process ends.
-func (u *desktopUI) persist(wait bool) {
+func (ui *desktopUI) persist(wait bool) {
 	started := time.Now()
-	if u.saveTimer != nil {
-		u.saveTimer.Stop()
-		u.saveTimer = nil
+	if ui.saveTimer != nil {
+		ui.saveTimer.Stop()
+		ui.saveTimer = nil
 	}
-	remote := u.remoteEnabled
+	remote := ui.remoteEnabled
 	// Everything but the chats is small, and holds maps the settings edit:
 	// it is encoded here, on the interface's thread.
-	head, err := json.Marshal(savedState{u.claudeOffered, &remote, u.devices, u.cfg, nil, u.projects, u.connectionsList, u.userInstructions, u.approvalMode, u.panelWidth, u.classicCompaction})
+	head, err := json.Marshal(savedState{ui.claudeOffered, &remote, ui.devices, ui.cfg, nil, ui.projects, ui.connectionsList, ui.userInstructions, ui.approvalMode, ui.panelWidth, ui.classicCompaction})
 	fields := map[string]json.RawMessage{}
 	if err == nil {
 		err = json.Unmarshal(head, &fields)
 	}
-	if u.panel != nil {
-		u.panel.stash() // the open chat's panel, as it is now
+	if ui.panel != nil {
+		ui.panel.stash() // the open chat's panel, as it is now
 	}
-	chats := make([]*conversation, len(u.chats))
-	for i, chat := range u.chats { // messages are never edited in place: copying the lists is enough
+	chats := make([]*conversation, len(ui.chats))
+	for i, chat := range ui.chats { // messages are never edited in place: copying the lists is enough
 		chats[i] = &conversation{ID: chat.ID, Title: chat.Title, Config: chat.Config, Panel: chat.Panel,
 			History: append([]message{}, chat.History...), Items: append([]chatItem{}, chat.Items...), Todo: chat.Todo.copy(), Cache: chat.Cache.copy(),
 			Version: chat.Version, Versions: copyVersions(chat.Versions)}
 	}
-	u.saveCount++
-	count, path := u.saveCount, u.statePath
+	ui.saveCount++
+	count, path := ui.saveCount, ui.statePath
 	write := func() {
-		u.saveLock.Lock()
-		defer u.saveLock.Unlock()
-		if count < u.saveDone {
+		ui.saveLock.Lock()
+		defer ui.saveLock.Unlock()
+		if count < ui.saveDone {
 			return // a newer state is already on disk
 		}
-		u.saveDone = count
+		ui.saveDone = count
 		var data []byte
 		if err == nil {
 			fields["chats"], err = json.Marshal(chats)
@@ -1256,12 +1260,12 @@ func (u *desktopUI) persist(wait bool) {
 		}
 		devf("app", "state saved: %d chats, %d KiB, %s in all (error: %v)", len(chats), len(data)>>10, time.Since(started).Round(time.Millisecond), err)
 		report := func() {
-			if err != nil && err.Error() != u.saveError && u.ctx.Err() == nil {
-				u.notice("Unable to save", err.Error()) // once per distinct problem
+			if err != nil && err.Error() != ui.saveError && ui.ctx.Err() == nil {
+				ui.notice("Unable to save", err.Error()) // once per distinct problem
 			}
-			u.saveError = ""
+			ui.saveError = ""
 			if err != nil {
-				u.saveError = err.Error()
+				ui.saveError = err.Error()
 			}
 		}
 		if wait {
@@ -1277,10 +1281,10 @@ func (u *desktopUI) persist(wait bool) {
 	}
 }
 
-func (u *desktopUI) load() {
-	u.remoteEnabled = true // the remote is on until the user turns it off
-	defer u.remoteDefaults()
-	data, err := os.ReadFile(u.statePath)
+func (ui *desktopUI) load() {
+	ui.remoteEnabled = true // the remote is on until the user turns it off
+	defer ui.remoteDefaults()
+	data, err := os.ReadFile(ui.statePath)
 	if err != nil {
 		return
 	}
@@ -1289,11 +1293,11 @@ func (u *desktopUI) load() {
 		return
 	}
 	if state.RemoteEnabled != nil {
-		u.remoteEnabled = *state.RemoteEnabled
+		ui.remoteEnabled = *state.RemoteEnabled
 	}
-	u.devices = state.Devices
-	u.panelWidth = state.PanelWidth
-	u.claudeOffered = state.ClaudeOffered
+	ui.devices = state.Devices
+	ui.panelWidth = state.PanelWidth
+	ui.claudeOffered = state.ClaudeOffered
 	if state.Config.Provider == "codex" {
 		state.Config.Provider = "openai"
 		state.Config.Model = ""
@@ -1305,12 +1309,12 @@ func (u *desktopUI) load() {
 		return
 	}
 	state.Config.APIKey = ""
-	u.cfg = state.Config
-	u.projects = state.Projects
-	u.connectionsList = state.Connections
-	u.userInstructions = state.UserInstructions
-	u.approvalMode = state.ApprovalMode
-	u.classicCompaction = state.ClassicCompaction
+	ui.cfg = state.Config
+	ui.projects = state.Projects
+	ui.connectionsList = state.Connections
+	ui.userInstructions = state.UserInstructions
+	ui.approvalMode = state.ApprovalMode
+	ui.classicCompaction = state.ClassicCompaction
 	for _, chat := range state.Chats {
 		if chat == nil {
 			continue
@@ -1321,8 +1325,8 @@ func (u *desktopUI) load() {
 		chat.Config.APIKey = ""
 		chat.Items = upgradeItems(chat.Items)
 		chat.todoCount = len(chat.Todo.snapshot())
-		u.chats = append(u.chats, chat)
-		u.ensureProject(chat.Config.Workspace)
+		ui.chats = append(ui.chats, chat)
+		ui.ensureProject(chat.Config.Workspace)
 	}
 }
 
@@ -1344,53 +1348,55 @@ const (
 
 // dockLayout lays the conversation out and floats the dock beside the
 // composer, in the margin left of the conversation column.
-type dockLayout struct{ u *desktopUI }
+type dockLayout struct{ ui *desktopUI }
 
-func (l dockLayout) MinSize(objects []fyne.CanvasObject) fyne.Size { return objects[0].MinSize() }
+func (layoutSpec dockLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	return objects[0].MinSize()
+}
 
-func (l dockLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+func (layoutSpec dockLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	objects[0].Move(fyne.Position{})
 	objects[0].Resize(size)
 	// The footer centres a 760 wide column between 24 px margins (buildFooter).
 	column := fyne.Min(760, size.Width-48)
 	left := 24 + (size.Width-48-column)/2
 	width := left - 24 - 24 // a margin on each side of the dock
-	card := l.u.composer.Size().Height
+	card := layoutSpec.ui.composer.Size().Height
 	objects[1].Move(fyne.NewPos(24, size.Height-18-card))
 	objects[1].Resize(fyne.NewSize(fyne.Max(0, width), card))
-	if docked := dockActivity && width >= dockMinWidth; docked != l.u.docked {
-		fyne.Do(func() { l.u.setDocked(docked) }) // not while laying out
+	if docked := dockActivity && width >= dockMinWidth; docked != layoutSpec.ui.docked {
+		fyne.Do(func() { layoutSpec.ui.setDocked(docked) }) // not while laying out
 	}
 }
 
 // setDocked moves the activity line between its two places.
-func (u *desktopUI) setDocked(docked bool) {
-	if docked == u.docked {
+func (ui *desktopUI) setDocked(docked bool) {
+	if docked == ui.docked {
 		return
 	}
-	u.docked = docked
-	from, to, size := u.inlineSlot, u.dockRow, float32(dockMarkSize)
+	ui.docked = docked
+	from, to, size := ui.inlineSlot, ui.dockRow, float32(dockMarkSize)
 	if !docked {
-		from, to, size = u.dockRow, u.inlineSlot, inlineMarkSize
+		from, to, size = ui.dockRow, ui.inlineSlot, inlineMarkSize
 	}
-	from.Remove(u.thinking)
-	to.Add(u.thinking)
-	u.workMark.resize(size)
-	u.showActivityLine(u.lineShown)
+	from.Remove(ui.thinking)
+	to.Add(ui.thinking)
+	ui.workMark.resize(size)
+	ui.showActivityLine(ui.lineShown)
 }
 
 // showActivityLine shows or hides the activity line wherever it is.
-func (u *desktopUI) showActivityLine(show bool) {
-	u.lineShown = show
-	if show && u.docked {
-		u.dockRow.Show()
+func (ui *desktopUI) showActivityLine(show bool) {
+	ui.lineShown = show
+	if show && ui.docked {
+		ui.dockRow.Show()
 	} else {
-		u.dockRow.Hide()
+		ui.dockRow.Hide()
 	}
-	if show && !u.docked {
-		u.inlineRow.Show()
+	if show && !ui.docked {
+		ui.inlineRow.Show()
 	} else {
-		u.inlineRow.Hide()
+		ui.inlineRow.Hide()
 	}
-	u.relayoutColumn()
+	ui.relayoutColumn()
 }

@@ -121,8 +121,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     private fun upsert(server: Server) {
-        val i = servers.indexOfFirst { it.key == server.key || (it.name == server.name && it.port == server.port) }
-        if (i >= 0) servers[i] = server.copy(token = server.token.ifEmpty { servers[i].token }) else servers.add(server)
+        val serverIndex = servers.indexOfFirst { it.key == server.key || (it.name == server.name && it.port == server.port) }
+        if (serverIndex >= 0) servers[serverIndex] = server.copy(token = server.token.ifEmpty { servers[serverIndex].token }) else servers.add(server)
         store()
     }
 
@@ -309,23 +309,23 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         if (id != null) scope.launch { load(id) }
     }
 
-    private fun applySettings(o: JSONObject) {
-        val array = o.optJSONArray("models")
+    private fun applySettings(settings: JSONObject) {
+        val array = settings.optJSONArray("models")
         models.clear()
-        for (i in 0 until (array?.length() ?: 0)) {
-            val m = array!!.getJSONObject(i)
-            val efforts = m.optJSONArray("efforts")
+        for (modelIndex in 0 until (array?.length() ?: 0)) {
+            val model = array!!.getJSONObject(modelIndex)
+            val efforts = model.optJSONArray("efforts")
             models.add(ModelOption(
-                m.optString("label"), m.optString("name"), m.optString("detail"),
-                (0 until (efforts?.length() ?: 0)).map { efforts!!.getJSONObject(it).let { e -> Effort(e.optString("value"), e.optString("label")) } },
+                model.optString("label"), model.optString("name"), model.optString("detail"),
+                (0 until (efforts?.length() ?: 0)).map { efforts!!.getJSONObject(it).let { effort -> Effort(effort.optString("value"), effort.optString("label")) } },
             ))
         }
-        defaultModel = o.optString("model")
-        defaultEffort = o.optString("effort")
-        defaultWindow = o.optInt("window")
-        approvalMode = o.optString("approvalMode", "approval")
-        autoMode = o.optBoolean("autoMode")
-        modelsLoading = o.optBoolean("loading")
+        defaultModel = settings.optString("model")
+        defaultEffort = settings.optString("effort")
+        defaultWindow = settings.optInt("window")
+        approvalMode = settings.optString("approvalMode", "approval")
+        autoMode = settings.optBoolean("autoMode")
+        modelsLoading = settings.optBoolean("loading")
     }
 
     /** The model of the chat on screen (or of a new chat), with its effort. */

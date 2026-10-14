@@ -46,7 +46,7 @@ func browserInstructions(cfg config) string {
 
 // Resolve tabs on the UI thread, but run Chromium work off that thread.
 // The returned handler captures one conversation, never the currently open chat.
-func (u *desktopUI) browserTools(chat *conversation) panelToolHandler {
+func (ui *desktopUI) browserTools(chat *conversation) panelToolHandler {
 	return func(ctx context.Context, name string, raw json.RawMessage) (panelToolResult, error) {
 		var args struct {
 			Action                                string
@@ -64,15 +64,15 @@ func (u *desktopUI) browserTools(chat *conversation) panelToolHandler {
 		if err := decoder.Decode(&args); err != nil {
 			return panelToolResult{}, err
 		}
-		var b *browserPage
+		var browser *browserPage
 		var infos []browserInfo
 		var problem error
-		u.onUI(ctx, func() {
-			p := u.panel
-			state := p.stateOf(chat)
+		ui.onUI(ctx, func() {
+			panel := ui.panel
+			state := panel.stateOf(chat)
 			tabs, active := state.tabs, state.active
-			if chat == p.owner {
-				tabs, active = p.tabs, p.active
+			if chat == panel.owner {
+				tabs, active = panel.tabs, panel.active
 			}
 			at := -1
 			for i, tab := range tabs {
@@ -99,14 +99,14 @@ func (u *desktopUI) browserTools(chat *conversation) panelToolHandler {
 			update := func() {
 				state.tabs, state.active, state.open = tabs, active, true
 				chat.Panel = state.saved()
-				if chat == p.owner {
-					p.tabs, p.active = tabs, active
-					p.render()
-					if p.target == 0 {
-						p.unfold()
+				if chat == panel.owner {
+					panel.tabs, panel.active = tabs, active
+					panel.render()
+					if panel.target == 0 {
+						panel.unfold()
 					}
 				}
-				u.save()
+				ui.save()
 			}
 			if name == "browser_tabs" {
 				switch args.Action {
@@ -118,10 +118,10 @@ func (u *desktopUI) browserTools(chat *conversation) panelToolHandler {
 						problem = err
 						return
 					}
-					tab := p.browserTab(chat, browserInfo{URL: url, Adaptive: true}, tabs)
+					tab := panel.browserTab(chat, browserInfo{URL: url, Adaptive: true}, tabs)
 					tabs = append(tabs, tab)
 					active = len(tabs) - 1
-					b = tab.browser
+					browser = tab.browser
 					update()
 					return
 				case "close":
@@ -140,7 +140,7 @@ func (u *desktopUI) browserTools(chat *conversation) panelToolHandler {
 						return
 					}
 					active = at
-					b = tabs[at].browser
+					browser = tabs[at].browser
 					update()
 					return
 				default:
@@ -152,7 +152,7 @@ func (u *desktopUI) browserTools(chat *conversation) panelToolHandler {
 				problem = fmt.Errorf("No browser tab in this chat; open one with browser_tabs first")
 				return
 			}
-			b = tabs[at].browser
+			browser = tabs[at].browser
 			active = at
 			update()
 		})
@@ -170,40 +170,40 @@ func (u *desktopUI) browserTools(chat *conversation) panelToolHandler {
 			if args.Action == "close" {
 				return panelToolResult{Text: "Browser tab closed."}, nil
 			}
-			if err := b.run(ctx); err != nil {
+			if err := browser.run(ctx); err != nil {
 				return panelToolResult{}, err
 			}
-			return panelToolResult{Text: encode(b.snapshot())}, nil
+			return panelToolResult{Text: encode(browser.snapshot())}, nil
 		}
 		var result panelToolResult
 		var err error
 		switch name {
 		case "browser_navigate":
-			err = b.navigate(ctx, args.Action, args.URL)
-			result.Text = encode(b.snapshot())
+			err = browser.navigate(ctx, args.Action, args.URL)
+			result.Text = encode(browser.snapshot())
 		case "browser_resize":
 			if args.Mode != "fixed" && args.Mode != "adaptive" {
 				return result, fmt.Errorf("Use fixed or adaptive viewport mode")
 			}
-			err = b.resize(ctx, args.Width, args.Height, args.Mobile, args.Mode == "adaptive")
-			result.Text = encode(b.snapshot())
+			err = browser.resize(ctx, args.Width, args.Height, args.Mobile, args.Mode == "adaptive")
+			result.Text = encode(browser.snapshot())
 		case "browser_interact":
-			err = b.interact(ctx, args.Action, args.Selector, args.Text, args.X, args.Y, args.DeltaX, args.DeltaY)
-			result.Text = encode(b.snapshot())
+			err = browser.interact(ctx, args.Action, args.Selector, args.Text, args.X, args.Y, args.DeltaX, args.DeltaY)
+			result.Text = encode(browser.snapshot())
 		case "browser_evaluate":
-			b.addLog("command", args.Expression, "JavaScript")
+			browser.addLog("command", args.Expression, "JavaScript")
 			var value json.RawMessage
-			value, err = b.evaluate(ctx, args.Expression)
+			value, err = browser.evaluate(ctx, args.Expression)
 			result.Text = truncateText(string(value), 8192)
 			if err == nil {
-				b.addLog("result", result.Text, "JavaScript")
+				browser.addLog("result", result.Text, "JavaScript")
 			} else {
-				b.addLog("error", err.Error(), "JavaScript")
+				browser.addLog("error", err.Error(), "JavaScript")
 			}
 		case "browser_read":
 			switch args.Action {
 			case "logs":
-				entries := b.logSnapshot(args.After)
+				entries := browser.logSnapshot(args.After)
 				next := args.After
 				if len(entries) > 50 {
 					entries = entries[:50]
@@ -213,15 +213,15 @@ func (u *desktopUI) browserTools(chat *conversation) panelToolHandler {
 				}
 				result.Text = encode(map[string]any{"logs": entries, "next_after": next})
 			case "screenshot":
-				var im ImagePart
-				im, err = b.capture(ctx, args.FullPage)
+				var imagePart ImagePart
+				imagePart, err = browser.capture(ctx, args.FullPage)
 				if err == nil {
-					result.Images = []ImagePart{im}
-					result.Text = "Browser screenshot · " + encode(b.snapshot())
+					result.Images = []ImagePart{imagePart}
+					result.Text = "Browser screenshot · " + encode(browser.snapshot())
 				}
 			case "snapshot":
 				var value json.RawMessage
-				value, err = b.evaluate(ctx, browserSnapshotJS)
+				value, err = browser.evaluate(ctx, browserSnapshotJS)
 				result.Text = string(value)
 			default:
 				err = fmt.Errorf("Unknown browser read action")

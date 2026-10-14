@@ -42,7 +42,7 @@ const (
 )
 
 type frameHook struct {
-	u       *desktopUI
+	ui      *desktopUI
 	anim    *fyne.Animation
 	at      time.Time  // the previous turn
 	known   time.Time  // when the registry was last renewed
@@ -60,89 +60,89 @@ type frameHook struct {
 
 // startFrames installs the hook. A Fyne animation is ticked at every turn
 // of the loop; this one never ends and animates nothing.
-func (u *desktopUI) startFrames() {
-	h := &frameHook{u: u, at: time.Now(), since: time.Now()}
+func (ui *desktopUI) startFrames() {
+	hook := &frameHook{ui: ui, at: time.Now(), since: time.Now()}
 	// Fyne notes the time of each redraw in the window; reading it tells
 	// whether the last turn drew (the pacing waits for that frame only).
-	if w := reflect.ValueOf(u.window); w.Kind() == reflect.Pointer && w.Elem().Kind() == reflect.Struct {
+	if w := reflect.ValueOf(ui.window); w.Kind() == reflect.Pointer && w.Elem().Kind() == reflect.Struct {
 		if field := w.Elem().FieldByName("lastWalkedTime"); field.IsValid() && field.CanAddr() && field.Type() == reflect.TypeOf(time.Time{}) {
-			h.walked = (*time.Time)(unsafe.Pointer(field.UnsafeAddr()))
-			h.seen = *h.walked
+			hook.walked = (*time.Time)(unsafe.Pointer(field.UnsafeAddr()))
+			hook.seen = *hook.walked
 		}
 	}
-	devf("frame", "frame hook on, redraw record %v", h.walked != nil)
-	framePaceSetup(u.window)
-	h.anim = fyne.NewAnimation(time.Hour, func(float32) { h.turn() })
-	h.anim.RepeatCount = fyne.AnimationRepeatForever
-	h.anim.Start()
-	u.frames = h
+	devf("frame", "frame hook on, redraw record %v", hook.walked != nil)
+	framePaceSetup(ui.window)
+	hook.anim = fyne.NewAnimation(time.Hour, func(float32) { hook.turn() })
+	hook.anim.RepeatCount = fyne.AnimationRepeatForever
+	hook.anim.Start()
+	ui.frames = hook
 }
 
-func (h *frameHook) turn() {
-	u, now := h.u, time.Now()
-	gap := now.Sub(h.at)
-	h.at = now
+func (hook *frameHook) turn() {
+	ui, now := hook.ui, time.Now()
+	gap := now.Sub(hook.at)
+	hook.at = now
 	frameBeat.Store(now.UnixNano())
 
 	painted := false
-	if h.walked != nil {
-		painted = !h.walked.Equal(h.seen)
-		h.seen = *h.walked
+	if hook.walked != nil {
+		painted = !hook.walked.Equal(hook.seen)
+		hook.seen = *hook.walked
 	}
 	if dev != nil {
-		h.turns++
+		hook.turns++
 		if painted {
-			h.painted++
+			hook.painted++
 		}
-		if gap > h.worst {
-			h.worst = gap
+		if gap > hook.worst {
+			hook.worst = gap
 		}
 		if gap > stallLogged {
 			devf("perf", "the interface thread was busy for %s", gap.Round(time.Millisecond))
 		}
-		if span := now.Sub(h.since); span > framesLogged {
-			devf("perf", "%.0f s: %d turns, %d frames drawn, longest turn %s", span.Seconds(), h.turns, h.painted, h.worst.Round(100*time.Microsecond))
-			h.since, h.turns, h.painted, h.worst = now, 0, 0, 0
+		if span := now.Sub(hook.since); span > framesLogged {
+			devf("perf", "%.0f s: %d turns, %d frames drawn, longest turn %s", span.Seconds(), hook.turns, hook.painted, hook.worst.Round(100*time.Microsecond))
+			hook.since, hook.turns, hook.painted, hook.worst = now, 0, 0, 0
 		}
 	}
 
 	framePaceWait(painted)
 	kineticFrame(now, gap)
 
-	canvas := u.window.Canvas()
+	canvas := ui.window.Canvas()
 	driver := fyne.CurrentApp().Driver()
-	if now.Sub(h.known) > knownEvery {
-		h.known = now
+	if now.Sub(hook.known) > knownEvery {
+		hook.known = now
 		keepKnown(canvas)
 	}
-	lost := driver.CanvasForObject(u.root) == nil
+	lost := driver.CanvasForObject(ui.root) == nil
 	switch {
 	case lost:
 		devf("frame", "the window no longer knew its content: redrawing and refreshing everything")
-		h.heal()
+		hook.heal()
 	case gap > stallHealed:
 		devf("frame", "after a %s stall: redrawing and refreshing everything", gap.Round(time.Millisecond))
-		h.heal()
-	case now.Sub(h.redrawn) > redrawEvery:
-		h.redrawn = now
+		hook.heal()
+	case now.Sub(hook.redrawn) > redrawEvery:
+		hook.redrawn = now
 		setDirty(canvas)
 	}
-	if h.refresh > 0 {
-		if h.refresh--; h.refresh == 0 {
+	if hook.refresh > 0 {
+		if hook.refresh--; hook.refresh == 0 {
 			// The redraw asked by heal has registered every object again:
 			// now a refresh reaches them all, and drops what they had drawn
 			// from the state they were in when their refreshes were lost.
-			u.window.Content().Refresh()
+			ui.window.Content().Refresh()
 		}
 	}
 }
 
 // heal redraws now and refreshes everything two turns later.
-func (h *frameHook) heal() {
-	setDirty(h.u.window.Canvas())
-	h.redrawn = time.Now()
-	if h.refresh == 0 {
-		h.refresh = 2
+func (hook *frameHook) heal() {
+	setDirty(hook.ui.window.Canvas())
+	hook.redrawn = time.Now()
+	if hook.refresh == 0 {
+		hook.refresh = 2
 	}
 }
 
@@ -167,8 +167,8 @@ func keepKnown(canvas fyne.Canvas) {
 	driver := fyne.CurrentApp().Driver()
 	visit := reflect.MakeFunc(walk.Type().In(1), func(args []reflect.Value) []reflect.Value {
 		if object := args[0].MethodByName("Obj"); object.IsValid() {
-			if o, ok := object.Call(nil)[0].Interface().(fyne.CanvasObject); ok && o != nil {
-				driver.CanvasForObject(o)
+			if canvasObjectValue, ok := object.Call(nil)[0].Interface().(fyne.CanvasObject); ok && canvasObjectValue != nil {
+				driver.CanvasForObject(canvasObjectValue)
 			}
 		}
 		return nil

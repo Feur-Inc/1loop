@@ -63,9 +63,9 @@ type flowLink struct {
 }
 
 func newFlowText(spans []span, size float32, ink color.Color) *flowText {
-	f := &flowText{spans: spans, size: size, ink: ink, tail: "\n\n"}
-	f.ExtendBaseWidget(f)
-	return f
+	text := &flowText{spans: spans, size: size, ink: ink, tail: "\n\n"}
+	text.ExtendBaseWidget(text)
+	return text
 }
 
 // atom is the smallest thing a line is made of: a word, a space, a formula.
@@ -85,14 +85,14 @@ type atom struct {
 	image  *mathPicture
 }
 
-func (f *flowText) look(s span) (fyne.TextStyle, float32, color.Color) {
-	style := fyne.TextStyle{Bold: s.bold || f.bold, Italic: s.italic, Monospace: f.mono}
-	size, ink := f.size, f.ink
+func (flow *flowText) look(spanValue span) (fyne.TextStyle, float32, color.Color) {
+	style := fyne.TextStyle{Bold: spanValue.bold || flow.bold, Italic: spanValue.italic, Monospace: flow.mono}
+	size, ink := flow.size, flow.ink
 	switch {
-	case s.code:
+	case spanValue.code:
 		style.Monospace = true
-		size, ink = f.size*flowCodeScale, colCodeInk
-	case s.link != "":
+		size, ink = flow.size*flowCodeScale, colCodeInk
+	case spanValue.link != "":
 		ink = colLink
 	}
 	return style, size, ink
@@ -116,55 +116,55 @@ var (
 func measureText(text string, size float32, style fyne.TextStyle) (width, height, base float32) {
 	key := measureKey{text, size, style}
 	measuresMu.Lock()
-	m, ok := measures[key]
+	measuredValue, ok := measures[key]
 	measuresMu.Unlock()
 	if !ok {
 		bounds, baseline := fyne.CurrentApp().Driver().RenderedTextSize(text, size, style, nil)
-		m = measured{bounds.Width, bounds.Height, baseline}
+		measuredValue = measured{bounds.Width, bounds.Height, baseline}
 		measuresMu.Lock()
 		if len(measures) > 200000 {
 			clear(measures)
 		}
-		measures[key] = m
+		measures[key] = measuredValue
 		measuresMu.Unlock()
 	}
-	return m.width, m.height, m.base
+	return measuredValue.width, measuredValue.height, measuredValue.base
 }
 
 // atoms cuts the spans into words and spaces, measured.
-func (f *flowText) atoms() []atom {
+func (flow *flowText) atoms() []atom {
 	var out []atom
 	add := func(text string, i int, space bool) *atom {
-		style, size, ink := f.look(f.spans[i])
-		a := atom{text: text, span: i, style: style, size: size, ink: ink, space: space}
-		a.width, a.height, a.base = measureText(text, size, style)
-		out = append(out, a)
+		style, size, ink := flow.look(flow.spans[i])
+		atomValue := atom{text: text, span: i, style: style, size: size, ink: ink, space: space}
+		atomValue.width, atomValue.height, atomValue.base = measureText(text, size, style)
+		out = append(out, atomValue)
 		return &out[len(out)-1]
 	}
-	f.waiting = false
-	for i, s := range f.spans {
+	flow.waiting = false
+	for i, span := range flow.spans {
 		switch {
-		case s.hard:
+		case span.hard:
 			out = append(out, atom{hard: true, span: i})
 			continue
-		case s.math != "":
-			picture, pending := typeset(s.math, f.center, f.size)
+		case span.math != "":
+			picture, pending := typeset(span.math, flow.center, flow.size)
 			if picture != nil {
-				out = append(out, atom{text: s.text, span: i, image: picture, width: picture.width,
+				out = append(out, atom{text: span.text, span: i, image: picture, width: picture.width,
 					height: picture.height, base: picture.height - picture.depth})
 				continue
 			}
-			f.waiting = f.waiting || pending
+			flow.waiting = flow.waiting || pending
 			// No TeX here, or not ready yet: the source, set apart like code.
-			f.spans[i].code = true
+			flow.spans[i].code = true
 			first := len(out)
-			for n, word := range strings.Fields(s.text) {
+			for n, word := range strings.Fields(span.text) {
 				if n > 0 {
 					add(" ", i, true)
 				}
 				add(word, i, false)
 			}
-			f.spans[i].code = false
+			flow.spans[i].code = false
 			if len(out) > first {
 				out[first].lead = flowChipPad
 				out[first].width += flowChipPad
@@ -175,11 +175,11 @@ func (f *flowText) atoms() []atom {
 			continue
 		}
 		first := len(out)
-		if f.mono {
-			add(strings.ReplaceAll(s.text, "\t", "    "), i, false)
+		if flow.mono {
+			add(strings.ReplaceAll(span.text, "\t", "    "), i, false)
 		} else {
 			word := ""
-			for _, r := range s.text {
+			for _, r := range span.text {
 				if r == ' ' || r == '\t' || r == '\n' {
 					if word != "" {
 						add(word, i, false)
@@ -196,7 +196,7 @@ func (f *flowText) atoms() []atom {
 				add(word, i, false)
 			}
 		}
-		if s.code && len(out) > first { // room for the chip around the code
+		if span.code && len(out) > first { // room for the chip around the code
 			out[first].lead = flowChipPad
 			out[first].width += flowChipPad
 			out[len(out)-1].width += flowChipPad
@@ -211,7 +211,7 @@ type flowLine struct {
 }
 
 // lines breaks the atoms into lines no wider than width.
-func (f *flowText) lines(atoms []atom, width float32) []flowLine {
+func (flow *flowText) lines(atoms []atom, width float32) []flowLine {
 	var lines []flowLine
 	var line []atom
 	x := float32(0)
@@ -222,44 +222,44 @@ func (f *flowText) lines(atoms []atom, width float32) []flowLine {
 		lines = append(lines, flowLine{line, hard})
 		line, x = nil, 0
 	}
-	for _, a := range atoms {
-		if a.hard {
+	for _, atomValue := range atoms {
+		if atomValue.hard {
 			flush(true)
 			continue
 		}
-		if a.space && len(line) == 0 {
+		if atomValue.space && len(line) == 0 {
 			continue
 		}
-		if a.image != nil && a.width > width { // wider than the column: the whole formula, smaller
-			scale := width / a.width
-			a.width, a.height, a.base = a.width*scale, a.height*scale, a.base*scale
+		if atomValue.image != nil && atomValue.width > width { // wider than the column: the whole formula, smaller
+			scale := width / atomValue.width
+			atomValue.width, atomValue.height, atomValue.base = atomValue.width*scale, atomValue.height*scale, atomValue.base*scale
 		}
-		if !f.mono && !a.space && x+a.width > width && len(line) > 0 {
+		if !flow.mono && !atomValue.space && x+atomValue.width > width && len(line) > 0 {
 			flush(false)
 		}
 		// A word wider than the line (a long address) is cut where it must.
-		for !f.mono && a.image == nil && a.width > width && len([]rune(a.text)) > 1 {
-			runes := []rune(a.text)
+		for !flow.mono && atomValue.image == nil && atomValue.width > width && len([]rune(atomValue.text)) > 1 {
+			runes := []rune(atomValue.text)
 			fit := 1
 			for fit < len(runes) {
-				if w, _, _ := measureText(string(runes[:fit+1]), a.size, a.style); a.lead+w > width {
+				if w, _, _ := measureText(string(runes[:fit+1]), atomValue.size, atomValue.style); atomValue.lead+w > width {
 					break
 				}
 				fit++
 			}
-			head := a
+			head := atomValue
 			head.text = string(runes[:fit])
-			head.width, _, _ = measureText(head.text, a.size, a.style)
-			head.width += a.lead
+			head.width, _, _ = measureText(head.text, atomValue.size, atomValue.style)
+			head.width += atomValue.lead
 			head.trail = 0
 			line = append(line, head)
 			flush(false)
-			a.text, a.lead = string(runes[fit:]), 0
-			a.width, _, _ = measureText(a.text, a.size, a.style)
-			a.width += a.trail
+			atomValue.text, atomValue.lead = string(runes[fit:]), 0
+			atomValue.width, _, _ = measureText(atomValue.text, atomValue.size, atomValue.style)
+			atomValue.width += atomValue.trail
 		}
-		line = append(line, a)
-		x += a.width
+		line = append(line, atomValue)
+		x += atomValue.width
 	}
 	if len(line) > 0 || len(lines) == 0 {
 		flush(true)
@@ -268,48 +268,48 @@ func (f *flowText) lines(atoms []atom, width float32) []flowLine {
 }
 
 // flow lays the block out for a width and rebuilds what it draws.
-func (f *flowText) flow(width float32) {
-	f.width = width
-	f.objects, f.pieces, f.links = f.objects[:0], f.pieces[:0], f.links[:0]
-	if f.cut == nil { // measuring every word is the costly part: once is enough
-		f.cut = f.atoms()
+func (flow *flowText) flow(width float32) {
+	flow.width = width
+	flow.objects, flow.pieces, flow.links = flow.objects[:0], flow.pieces[:0], flow.links[:0]
+	if flow.cut == nil { // measuring every word is the costly part: once is enough
+		flow.cut = flow.atoms()
 	}
-	atoms := f.cut
-	f.natural, f.widest = 0, 0
-	for _, a := range atoms {
-		if !a.space {
-			f.widest = fyne.Max(f.widest, a.width)
+	atoms := flow.cut
+	flow.natural, flow.widest = 0, 0
+	for _, atom := range atoms {
+		if !atom.space {
+			flow.widest = fyne.Max(flow.widest, atom.width)
 		}
 	}
-	_, plainHeight, plainBase := measureText("Ag", f.size, fyne.TextStyle{Bold: f.bold, Monospace: f.mono})
-	leading := float32(int(f.size*flowLeading + 0.5))
-	if f.mono {
+	_, plainHeight, plainBase := measureText("Ag", flow.size, fyne.TextStyle{Bold: flow.bold, Monospace: flow.mono})
+	leading := float32(int(flow.size*flowLeading + 0.5))
+	if flow.mono {
 		leading = 3
 	}
-	if f.tight {
+	if flow.tight {
 		leading = 0
 	}
-	room := fyne.Max(width-f.hang, 40)
-	lines := f.lines(atoms, room)
+	room := fyne.Max(width-flow.hang, 40)
+	lines := flow.lines(atoms, room)
 	var chips, marks, texts, pictures []fyne.CanvasObject
-	if f.marker != "" {
-		mark := canvas.NewText(f.marker, colMuted)
-		mark.TextSize = f.size
-		w, h, _ := measureText(f.marker, f.size, fyne.TextStyle{})
-		mark.Move(fyne.NewPos(fyne.Max(0, f.hang-w-7), 0))
+	if flow.marker != "" {
+		mark := canvas.NewText(flow.marker, colMuted)
+		mark.TextSize = flow.size
+		w, h, _ := measureText(flow.marker, flow.size, fyne.TextStyle{})
+		mark.Move(fyne.NewPos(fyne.Max(0, flow.hang-w-7), 0))
 		mark.Resize(fyne.NewSize(w, h))
 		texts = append(texts, mark)
-		f.pieces = append(f.pieces, selPiece{runes: []rune(f.marker + " "), at: mark.Position(), size: fyne.NewSize(w, h),
-			textSize: f.size, solid: true})
+		flow.pieces = append(flow.pieces, selPiece{runes: []rune(flow.marker + " "), at: mark.Position(), size: fyne.NewSize(w, h),
+			textSize: flow.size, solid: true})
 	}
 	y := float32(0)
 	for n, line := range lines {
 		height, base, lineWidth := plainHeight, plainBase, float32(0)
-		for _, a := range line.atoms {
-			lineWidth += a.width
-			if a.base > base {
-				height += a.base - base
-				base = a.base
+		for _, atomValue := range line.atoms {
+			lineWidth += atomValue.width
+			if atomValue.base > base {
+				height += atomValue.base - base
+				base = atomValue.base
 			}
 		}
 		for _, a := range line.atoms {
@@ -317,9 +317,9 @@ func (f *flowText) flow(width float32) {
 				height = below
 			}
 		}
-		f.natural = fyne.Max(f.natural, f.hang+lineWidth)
-		x := f.hang
-		if f.center {
+		flow.natural = fyne.Max(flow.natural, flow.hang+lineWidth)
+		x := flow.hang
+		if flow.center {
 			x = fyne.Max(0, (width-lineWidth)/2)
 		}
 		// Atoms of one span that follow each other on the line are one run.
@@ -336,7 +336,7 @@ func (f *flowText) flow(width float32) {
 				runWidth += a.width
 				text += a.text
 			}
-			s := f.spans[first.span]
+			span := flow.spans[first.span]
 			top := y + base - first.base
 			at := fyne.NewPos(x+first.lead, top)
 			size := fyne.NewSize(runWidth, first.height)
@@ -345,7 +345,7 @@ func (f *flowText) flow(width float32) {
 			if last {
 				switch {
 				case n == len(lines)-1:
-					after = f.tail
+					after = flow.tail
 				case line.hard:
 					after = "\n"
 				default:
@@ -360,7 +360,7 @@ func (f *flowText) flow(width float32) {
 				picture.Move(fyne.NewPos(x, top))
 				picture.Resize(size)
 				pictures = append(pictures, picture)
-				f.pieces = append(f.pieces, selPiece{runes: []rune(first.text), at: fyne.NewPos(x, top), size: size, solid: true, after: after})
+				flow.pieces = append(flow.pieces, selPiece{runes: []rune(first.text), at: fyne.NewPos(x, top), size: size, solid: true, after: after})
 			default:
 				textWidth := float32(0)
 				if text != "" { // an empty line of code draws nothing but still counts
@@ -373,9 +373,9 @@ func (f *flowText) flow(width float32) {
 					drawn.Resize(fyne.NewSize(textWidth, first.height))
 					texts = append(texts, drawn)
 				}
-				f.pieces = append(f.pieces, selPiece{runes: []rune(text), at: at, size: fyne.NewSize(textWidth, first.height),
+				flow.pieces = append(flow.pieces, selPiece{runes: []rune(text), at: at, size: fyne.NewSize(textWidth, first.height),
 					textSize: first.size, style: first.style, after: after})
-				if s.code || (s.math != "" && first.image == nil) {
+				if span.code || (span.math != "" && first.image == nil) {
 					chip := canvas.NewRectangle(colCodeChip)
 					chip.CornerRadius = 4
 					chip.StrokeColor, chip.StrokeWidth = colCodeEdge, 1
@@ -383,14 +383,14 @@ func (f *flowText) flow(width float32) {
 					chip.Resize(fyne.NewSize(runWidth, first.height+2))
 					chips = append(chips, chip)
 				}
-				if s.link != "" {
+				if span.link != "" {
 					rule := canvas.NewRectangle(withAlpha(colLink, 0x70))
 					rule.Move(fyne.NewPos(at.X, top+first.base+2))
 					rule.Resize(fyne.NewSize(textWidth, 1))
 					marks = append(marks, rule)
-					f.links = append(f.links, flowLink{fyne.NewPos(x, top), size, s.link})
+					flow.links = append(flow.links, flowLink{fyne.NewPos(x, top), size, span.link})
 				}
-				if s.strike {
+				if span.strike {
 					rule := canvas.NewRectangle(first.ink)
 					rule.Move(fyne.NewPos(at.X, top+first.base*0.68))
 					rule.Resize(fyne.NewSize(textWidth, 1))
@@ -405,25 +405,25 @@ func (f *flowText) flow(width float32) {
 			y += leading
 		}
 	}
-	f.height = y
-	f.objects = append(append(append(append(f.objects, chips...), texts...), marks...), pictures...)
-	if f.waiting {
+	flow.height = y
+	flow.objects = append(append(append(append(flow.objects, chips...), texts...), marks...), pictures...)
+	if flow.waiting {
 		whenTypeset(func() {
-			if f.waiting {
-				f.cut = nil
-				f.flow(f.width)
-				f.Refresh()
+			if flow.waiting {
+				flow.cut = nil
+				flow.flow(flow.width)
+				flow.Refresh()
 			}
 		})
 	}
 }
 
 // selPieces gives the selection layer what is drawn and where.
-func (f *flowText) selPieces() []selPiece { return f.pieces }
+func (flow *flowText) selPieces() []selPiece { return flow.pieces }
 
 // linkAt is the address of the link at a point of the block, if any.
-func (f *flowText) linkAt(at fyne.Position) string {
-	for _, link := range f.links {
+func (flow *flowText) linkAt(at fyne.Position) string {
+	for _, link := range flow.links {
 		if at.X >= link.at.X && at.Y >= link.at.Y && at.X < link.at.X+link.size.Width && at.Y < link.at.Y+link.size.Height {
 			return link.url
 		}
@@ -432,8 +432,8 @@ func (f *flowText) linkAt(at fyne.Position) string {
 }
 
 // Tapped opens the link under the pointer.
-func (f *flowText) Tapped(e *fyne.PointEvent) {
-	openLink(f.linkAt(e.Position))
+func (flow *flowText) Tapped(e *fyne.PointEvent) {
+	openLink(flow.linkAt(e.Position))
 }
 
 // openLink opens a web or mail address with the desktop's application.
@@ -452,47 +452,47 @@ func openLink(address string) {
 	}
 }
 
-func (f *flowText) CreateRenderer() fyne.WidgetRenderer {
-	return &flowRenderer{f}
+func (flow *flowText) CreateRenderer() fyne.WidgetRenderer {
+	return &flowRenderer{flow}
 }
 
-type flowRenderer struct{ f *flowText }
+type flowRenderer struct{ flowText *flowText }
 
 // MinSize: the height is that of the last width laid out, like any wrapped
 // text; before any layout, that of a column of the conversation.
-func (r *flowRenderer) MinSize() fyne.Size {
-	f := r.f
-	if f.width == 0 {
-		f.flow(600)
-		f.width = 0 // still to be laid out for real
+func (renderer *flowRenderer) MinSize() fyne.Size {
+	text := renderer.flowText
+	if text.width == 0 {
+		text.flow(600)
+		text.width = 0 // still to be laid out for real
 	}
-	if f.mono {
-		return fyne.NewSize(f.natural, f.height) // code is never wrapped: it scrolls sideways
+	if text.mono {
+		return fyne.NewSize(text.natural, text.height) // code is never wrapped: it scrolls sideways
 	}
-	return fyne.NewSize(40, f.height)
+	return fyne.NewSize(40, text.height)
 }
 
 // extent measures the block when nothing limits its width: how wide it
 // then is, and its widest word. Tables size their columns with it.
-func (f *flowText) extent() (natural, widest float32) {
-	f.flow(100000)
-	natural, widest = f.natural, f.widest
-	f.width = 0
+func (flow *flowText) extent() (natural, widest float32) {
+	flow.flow(100000)
+	natural, widest = flow.natural, flow.widest
+	flow.width = 0
 	return natural, widest
 }
 
-func (r *flowRenderer) Layout(size fyne.Size) {
-	if size.Width != r.f.width && size.Width > 0 {
-		r.f.flow(size.Width)
+func (renderer *flowRenderer) Layout(size fyne.Size) {
+	if size.Width != renderer.flowText.width && size.Width > 0 {
+		renderer.flowText.flow(size.Width)
 	}
 }
 
-func (r *flowRenderer) Refresh() {
-	for _, o := range r.f.objects {
-		o.Refresh()
+func (renderer *flowRenderer) Refresh() {
+	for _, object := range renderer.flowText.objects {
+		object.Refresh()
 	}
-	canvas.Refresh(r.f)
+	canvas.Refresh(renderer.flowText)
 }
 
-func (r *flowRenderer) Objects() []fyne.CanvasObject { return r.f.objects }
-func (r *flowRenderer) Destroy()                     {}
+func (renderer *flowRenderer) Objects() []fyne.CanvasObject { return renderer.flowText.objects }
+func (renderer *flowRenderer) Destroy()                     {}

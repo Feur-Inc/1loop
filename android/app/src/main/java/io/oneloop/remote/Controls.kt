@@ -8,7 +8,6 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.gestures.detectTapGestures
-import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
@@ -52,6 +51,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
+import java.util.Locale
 
 // ---------------------------------------------------------------------------
 // Reasoning effort, like the desktop (effort_slider.go) and Codex: a pill
@@ -142,7 +142,7 @@ fun ContextRing(used: Int, window: Int) {
 }
 
 private fun tokens(n: Int) = when {
-    n >= 1_000_000 -> String.format("%.1fM", n / 1e6).replace(".0M", "M")
+    n >= 1_000_000 -> String.format(Locale.ROOT, "%.1fM", n / 1e6).replace(".0M", "M")
     n >= 1000 -> "${(n + 500) / 1000}k"
     else -> "$n"
 }

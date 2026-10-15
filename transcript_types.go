@@ -1,8 +1,10 @@
 package main
 
+// A conversation's items as stored, and how a tool call is described,
+// shared by the desktop and the headless server (the view is transcript.go).
+
 import (
 	"encoding/json"
-	"fmt"
 	"strings"
 )
 
@@ -119,30 +121,6 @@ func diffPath(diff string) string {
 		}
 	}
 	return "file"
-}
-
-// diffStat counts added and removed lines of a unified diff.
-func diffStat(diff string) (added, removed int) {
-	for _, line := range strings.Split(diff, "\n") {
-		switch {
-		case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "---"):
-		case strings.HasPrefix(line, "+"):
-			added++
-		case strings.HasPrefix(line, "-"):
-			removed++
-		}
-	}
-	return
-}
-
-func elapsed(ms int64) string {
-	switch {
-	case ms < 1000:
-		return fmt.Sprintf("%d ms", ms)
-	case ms < 60000:
-		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(ms)/1000), ".0") + " s"
-	}
-	return fmt.Sprintf("%dm %02ds", ms/60000, ms/1000%60)
 }
 
 func firstLine(text string) string {

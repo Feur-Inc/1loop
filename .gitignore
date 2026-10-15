@@ -7,3 +7,5 @@
 
 # Local secrets: never committed.
 /TOKEN
+# Release archives (make release).
+/dist/

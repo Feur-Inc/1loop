@@ -2,6 +2,9 @@
 
 package main
 
+// Terminal Use on the desktop: the model's terminal tools act on the chat's
+// terminal tabs in the side panel.
+
 import (
 	"bytes"
 	"context"
@@ -39,15 +42,25 @@ func (output *terminalOutput) Read(p []byte) (int, error) {
 	}
 	return n, err
 }
+
 func (terminal *panelTerminal) read(offset int64) string {
 	terminal.mu.Lock()
 	defer terminal.mu.Unlock()
 	first := terminal.total - int64(len(terminal.output))
 	offset = max(first, min(offset, terminal.total))
 	end := min(terminal.total, offset+8192)
-	data, _ := json.Marshal(map[string]any{"session_id": terminal.id, "cwd": terminal.dir, "output": string(terminal.output[offset-first : end-first]), "available_from": first, "next_offset": end, "total": terminal.total, "exit_code": terminal.exit})
+	data, _ := json.Marshal(map[string]any{
+		"session_id":     terminal.id,
+		"cwd":            terminal.dir,
+		"output":         string(terminal.output[offset-first : end-first]),
+		"available_from": first,
+		"next_offset":    end,
+		"total":          terminal.total,
+		"exit_code":      terminal.exit,
+	})
 	return string(data)
 }
+
 func (ui *desktopUI) terminalTools(chat *conversation) panelToolHandler {
 	return func(ctx context.Context, name string, raw json.RawMessage) (panelToolResult, error) {
 		var args struct {

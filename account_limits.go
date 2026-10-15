@@ -2,6 +2,9 @@
 
 package main
 
+// Account limits: how much of a subscription's usage windows (5 hours, a
+// week…) is left, read from the provider and shown beside the model picker.
+
 import (
 	"context"
 	"encoding/json"
@@ -11,7 +14,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -31,33 +33,6 @@ type accountLimits struct {
 
 func (window accountLimitWindow) remaining() float64 {
 	return math.Max(0, math.Min(100, 100-window.used))
-}
-
-func (limits accountLimits) summary() string {
-	if len(limits.windows) == 0 {
-		return limits.note
-	}
-	var parts []string
-	for _, window := range limits.windows[:min(2, len(limits.windows))] {
-		parts = append(parts, fmt.Sprintf("%s : %.0f%%", window.label, window.remaining()))
-	}
-	return strings.Join(parts, " · ")
-}
-
-func (limits accountLimits) describe() string {
-	if len(limits.windows) == 0 {
-		return limits.note
-	}
-	lines := []string{"Remaining limits"}
-	for _, window := range limits.windows {
-		line := fmt.Sprintf("%s : %.0f%%", window.label, window.remaining())
-		if !window.resetAt.IsZero() {
-			line += " · resets on " + window.resetAt.Local().Format("02/01 at 15:04")
-		}
-		lines = append(lines, line)
-	}
-	lines = append(lines, "Updated at "+limits.checked.Local().Format("15:04"))
-	return strings.Join(lines, "\n")
 }
 
 func limitPeriod(seconds int64) string {

@@ -2,6 +2,8 @@
 
 package main
 
+// The side panel's terminal and changes tabs on the desktop.
+
 import (
 	"context"
 	"fmt"

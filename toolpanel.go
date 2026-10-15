@@ -182,11 +182,13 @@ func (handle *panelResizeHandle) MouseIn(*desktop.MouseEvent) {
 	handle.grip.FillColor = colAmber
 	handle.grip.Refresh()
 }
+
 func (handle *panelResizeHandle) MouseMoved(*desktop.MouseEvent) {}
 func (handle *panelResizeHandle) MouseOut() {
 	handle.grip.FillColor = colBorderSoft
 	handle.grip.Refresh()
 }
+
 func (handle *panelResizeHandle) Dragged(e *fyne.DragEvent) {
 	panel := handle.panel
 	if panel.anim != nil {
@@ -198,6 +200,7 @@ func (handle *panelResizeHandle) Dragged(e *fyne.DragEvent) {
 	panel.ui.panelWidth = panel.width // what a chat without a width of its own takes
 	relayout(panel.ui.split)
 }
+
 func (handle *panelResizeHandle) DragEnd() { handle.panel.ui.save() }
 
 func (panel *toolPanel) slide(to float32) {

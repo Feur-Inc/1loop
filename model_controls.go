@@ -315,6 +315,7 @@ type modelReasoningLayout struct{}
 func (modelReasoningLayout) MinSize([]fyne.CanvasObject) fyne.Size {
 	return fyne.NewSize(130, 202)
 }
+
 func (modelReasoningLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	slider := objects[0].(*stepSlider)
 	width := fyne.Min(90, fyne.Max(0, size.Width-sliderWidth-18))
@@ -340,7 +341,16 @@ func modelAccountBadge(provider string) fyne.Resource {
 }
 
 func modelEffortAbout(effort string) string {
-	return map[string]string{"none": "No reasoning", "enabled": "Reasoning enabled", "minimal": "Answers at once", "low": "Quick, light checks", "medium": "Balanced", "high": "Thinks it through", "xhigh": "Slow and thorough", "max": "As deep as it goes"}[effort]
+	return map[string]string{
+		"none":    "No reasoning",
+		"enabled": "Reasoning enabled",
+		"minimal": "Answers at once",
+		"low":     "Quick, light checks",
+		"medium":  "Balanced",
+		"high":    "Thinks it through",
+		"xhigh":   "Slow and thorough",
+		"max":     "As deep as it goes",
+	}[effort]
 }
 
 func nearestModelEffort(choice modelChoice, wanted string) string {

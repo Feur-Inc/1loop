@@ -217,6 +217,7 @@ func (renderer *diffRowRenderer) Objects() []fyne.CanvasObject {
 	}
 	return o
 }
+
 func (renderer *diffRowRenderer) Layout(size fyne.Size) {
 	renderer.bg.Resize(size)
 	renderer.mark.Resize(fyne.NewSize(3, size.Height))

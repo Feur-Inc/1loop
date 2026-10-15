@@ -1,9 +1,11 @@
 package main
 
+// Connections and model choices, shared by the desktop and the headless
+// server: what a connection is, and how a chat's settings become a request.
+
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"strings"
 )
 
@@ -34,8 +36,17 @@ type modelChoice struct {
 }
 
 func (conn connection) config(workspace string) config {
-	return config{ConnectionID: conn.ID, AuthProfile: conn.AuthProfile, Provider: conn.Provider, BaseURL: conn.BaseURL, Workspace: workspace, Routing: conn.Routing, Parameters: conn.Parameters}
+	return config{
+		ConnectionID: conn.ID,
+		AuthProfile:  conn.AuthProfile,
+		Provider:     conn.Provider,
+		BaseURL:      conn.BaseURL,
+		Workspace:    workspace,
+		Routing:      conn.Routing,
+		Parameters:   conn.Parameters,
+	}
 }
+
 func (conn connection) includes(id string) bool {
 	if conn.AllModels {
 		return true
@@ -47,6 +58,7 @@ func (conn connection) includes(id string) bool {
 	}
 	return false
 }
+
 func mergeOptions(base, extra map[string]any) map[string]any {
 	out := make(map[string]any, len(base)+len(extra))
 	for k, v := range base {
@@ -56,24 +68,6 @@ func mergeOptions(base, extra map[string]any) map[string]any {
 		out[k] = v
 	}
 	return out
-}
-func requestParameters(raw string) (map[string]any, error) {
-	if strings.TrimSpace(raw) == "" {
-		return nil, nil
-	}
-	var params map[string]any
-	if err := json.Unmarshal([]byte(raw), &params); err != nil {
-		return nil, fmt.Errorf("Invalid JSON object: %w", err)
-	}
-	if params == nil {
-		return nil, fmt.Errorf("Expected a JSON object")
-	}
-	for _, key := range []string{"model", "messages", "input", "instructions", "tools", "tool_choice", "stream", "store", "reasoning", "reasoning_effort", "provider"} {
-		if _, ok := params[key]; ok {
-			return nil, fmt.Errorf("%s is managed by 1loop; use its dedicated setting", key)
-		}
-	}
-	return params, nil
 }
 
 func providerName(id string) string {
@@ -100,6 +94,7 @@ func (choice modelChoice) display() string {
 	}
 	return choice.Name
 }
+
 func contains(values []string, want string) bool {
 	for _, value := range values {
 		if value == want {
@@ -108,6 +103,7 @@ func contains(values []string, want string) bool {
 	}
 	return false
 }
+
 func systemInstructions(cfg config) string {
 	prompt := instructions
 	if cfg.ApprovalMode == "yolo" {

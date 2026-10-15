@@ -58,6 +58,7 @@ type browserView struct {
 func (panel *toolPanel) browserTab(chat *conversation, info browserInfo, tabs []panelTab) panelTab {
 	return panel.browserTabAttached(chat, info, tabs, "")
 }
+
 func (panel *toolPanel) browserTabAttached(chat *conversation, info browserInfo, tabs []panelTab, attach target.ID) panelTab {
 	info.PixelRatio = float64(panel.ui.window.Canvas().Scale())
 	if panel.ui.browser == nil {
@@ -163,7 +164,13 @@ func newBrowserView(panel *toolPanel, chat *conversation, browser *browserPage) 
 	nav := container.NewBorder(nil, nil, container.NewHBox(back, forward, reload), consoleToggle, view.address)
 	view.mode = newPicker(panel.ui.window, "Viewport", styleChip, nil)
 	view.mode.Options = []string{"Adaptive", "Desktop", "Tablet", "Mobile", "Custom"}
-	view.mode.Details = map[string]string{"Adaptive": "Follow the panel size", "Desktop": "1280 × 800", "Tablet": "768 × 1024", "Mobile": "390 × 844", "Custom": "Choose CSS viewport dimensions"}
+	view.mode.Details = map[string]string{
+		"Adaptive": "Follow the panel size",
+		"Desktop":  "1280 × 800",
+		"Tablet":   "768 × 1024",
+		"Mobile":   "390 × 844",
+		"Custom":   "Choose CSS viewport dimensions",
+	}
 	view.dimensions = widget.NewEntry()
 	view.dimensions.SetPlaceHolder("width × height")
 	view.dimensions.SetText(fmt.Sprintf("%d × %d", browser.snapshot().Width, browser.snapshot().Height))
@@ -228,11 +235,13 @@ func newBrowserView(panel *toolPanel, chat *conversation, browser *browserPage) 
 	view.changed(browser.snapshot())
 	return view
 }
+
 func (view *browserView) MinSize() fyne.Size { return fyne.NewSize(240, 200) }
 
 func (view *browserView) CreateRenderer() fyne.WidgetRenderer {
 	return widget.NewSimpleRenderer(view.content)
 }
+
 func (view *browserView) frame(img image.Image) {
 	view.frameMu.Lock()
 	view.latest = img
@@ -258,6 +267,7 @@ func (view *browserView) frame(img image.Image) {
 		}
 	})
 }
+
 func (view *browserView) changed(info browserInfo) {
 	if view.panel.ui.window.Canvas().Focused() != view.address {
 		view.address.SetText(info.URL)
@@ -305,6 +315,7 @@ func (view *browserView) changed(info browserInfo) {
 	}
 	view.panel.ui.save()
 }
+
 func (view *browserView) logsChanged() {
 	view.frameMu.Lock()
 	if view.logPending {
@@ -324,6 +335,7 @@ func (view *browserView) logsChanged() {
 		})
 	})
 }
+
 func (view *browserView) refreshLogs() {
 	entries := view.page.logSnapshot(0)
 	rows := []fyne.CanvasObject{}
@@ -351,6 +363,7 @@ type browserBodyLayout struct{ view *browserView }
 func (layoutSpec browserBodyLayout) MinSize([]fyne.CanvasObject) fyne.Size {
 	return fyne.NewSize(240, 200)
 }
+
 func (layoutSpec browserBodyLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	height := float32(0)
 	if layoutSpec.view.consoleVisible {
@@ -378,12 +391,18 @@ type browserScreen struct {
 }
 
 func newBrowserScreen(view *browserView) *browserScreen {
-	screen := &browserScreen{view: view, image: canvas.NewImageFromImage(nil), background: canvas.NewRectangle(color.NRGBA{R: 18, G: 18, B: 18, A: 255}), modelCursor: newAgentCursor()}
+	screen := &browserScreen{
+		view:        view,
+		image:       canvas.NewImageFromImage(nil),
+		background:  canvas.NewRectangle(color.NRGBA{R: 18, G: 18, B: 18, A: 255}),
+		modelCursor: newAgentCursor(),
+	}
 	screen.image.FillMode = canvas.ImageFillStretch
 	screen.modelCursor.Hide()
 	screen.ExtendBaseWidget(screen)
 	return screen
 }
+
 func (screen *browserScreen) CreateRenderer() fyne.WidgetRenderer {
 	return &browserScreenRenderer{screen: screen, objects: []fyne.CanvasObject{screen.background, screen.image, screen.modelCursor}}
 }
@@ -400,10 +419,12 @@ func (renderer *browserScreenRenderer) Destroy() {
 		renderer.screen.resizeTimer.Stop()
 	}
 }
+
 func (renderer *browserScreenRenderer) Refresh() {
 	renderer.Layout(renderer.screen.Size())
 	canvas.Refresh(renderer.screen)
 }
+
 func (renderer *browserScreenRenderer) Layout(size fyne.Size) {
 	screen := renderer.screen
 	info := screen.view.page.snapshot()
@@ -435,6 +456,7 @@ func (renderer *browserScreenRenderer) Layout(size fyne.Size) {
 		})
 	}
 }
+
 func (screen *browserScreen) coords(pos fyne.Position) (float64, float64, bool) {
 	if screen.rendered.Width <= 0 || screen.rendered.Height <= 0 {
 		return 0, 0, false
@@ -444,6 +466,7 @@ func (screen *browserScreen) coords(pos fyne.Position) (float64, float64, bool) 
 	y := float64((pos.Y-screen.position.Y)/screen.rendered.Height) * float64(info.Height)
 	return x, y, x >= 0 && y >= 0 && x < float64(info.Width) && y < float64(info.Height)
 }
+
 func (screen *browserScreen) FocusGained()     {}
 func (screen *browserScreen) FocusLost()       { screen.modifiers = 0 }
 func (screen *browserScreen) AcceptsTab() bool { return true }
@@ -454,6 +477,7 @@ func (screen *browserScreen) TypedRune(r rune) {
 	text := string(r)
 	screen.view.page.input(input.InsertText(text))
 }
+
 func browserKey(key fyne.KeyName) string { return browserNamedKey(string(key)) }
 func (screen *browserScreen) TypedKey(e *fyne.KeyEvent) {
 	if key := browserKey(e.Name); key != "" {
@@ -464,10 +488,11 @@ func (screen *browserScreen) TypedKey(e *fyne.KeyEvent) {
 		}))
 	}
 }
+
 func (screen *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 	switch shortcut.(type) {
 	case *fyne.ShortcutPaste:
-		screen.view.page.input(input.InsertText(screen.view.panel.ui.window.Clipboard().Content()))
+		screen.view.page.input(input.InsertText(fyne.CurrentApp().Clipboard().Content()))
 	case *fyne.ShortcutCopy, *fyne.ShortcutCut:
 		_, cut := shortcut.(*fyne.ShortcutCut)
 		screen.view.page.async(func(ctx context.Context) error {
@@ -479,7 +504,7 @@ func (screen *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 			if json.Unmarshal(value, &text) != nil {
 				return nil
 			}
-			fyne.Do(func() { screen.view.panel.ui.window.Clipboard().SetContent(text) })
+			fyne.Do(func() { fyne.CurrentApp().Clipboard().SetContent(text) })
 			if cut {
 				_, err = screen.view.page.evaluate(ctx, browserCutJS)
 			}
@@ -490,6 +515,7 @@ func (screen *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 		screen.view.page.input(input.DispatchKeyEvent(input.KeyUp).WithKey("a").WithModifiers(2).WithWindowsVirtualKeyCode(65))
 	}
 }
+
 func (screen *browserScreen) MouseIn(e *desktop.MouseEvent) { screen.MouseMoved(e) }
 func (screen *browserScreen) MouseOut()                     {}
 func (screen *browserScreen) MouseMoved(e *desktop.MouseEvent) {
@@ -499,16 +525,19 @@ func (screen *browserScreen) MouseMoved(e *desktop.MouseEvent) {
 	}
 	screen.view.page.pointer(x, y, screen.buttons)
 }
+
 func (screen *browserScreen) MouseDown(e *desktop.MouseEvent) {
 	screen.view.panel.ui.window.Canvas().Focus(screen)
 	screen.modelCursor.Hide()
 	screen.buttons = 1
 	screen.mouse(e, input.MousePressed)
 }
+
 func (screen *browserScreen) MouseUp(e *desktop.MouseEvent) {
 	screen.mouse(e, input.MouseReleased)
 	screen.buttons = 0
 }
+
 func (screen *browserScreen) mouse(e *desktop.MouseEvent, kind input.MouseType) {
 	x, y, ok := screen.coords(e.Position)
 	if !ok {
@@ -523,6 +552,7 @@ func (screen *browserScreen) mouse(e *desktop.MouseEvent, kind input.MouseType) 
 	}
 	screen.view.page.input(input.DispatchMouseEvent(kind, x, y).WithButton(button).WithClickCount(1))
 }
+
 func (screen *browserScreen) Scrolled(e *fyne.ScrollEvent) {
 	x, y, ok := screen.coords(e.Position)
 	if !ok {
@@ -589,6 +619,7 @@ func (screen *browserScreen) KeyDown(e *fyne.KeyEvent) {
 		screen.modifiers |= 4
 	}
 }
+
 func (screen *browserScreen) KeyUp(e *fyne.KeyEvent) {
 	switch e.Name {
 	case desktop.KeyControlLeft, desktop.KeyControlRight:
@@ -657,3 +688,8 @@ func (screen *browserScreen) glide(x, y float64) {
 }
 
 type browserPresentation struct{ view *browserView }
+
+// Copy and cut in a page: the selection of the focused field, or of the page.
+const browserSelectionJS = `(()=>{const e=document.activeElement;if(e&&typeof e.selectionStart==='number')return e.value.slice(e.selectionStart,e.selectionEnd);return window.getSelection()?.toString()||''})()`
+
+const browserCutJS = `(()=>{const e=document.activeElement;if(e&&typeof e.setRangeText==='function'){e.setRangeText('',e.selectionStart,e.selectionEnd,'end');e.dispatchEvent(new Event('input',{bubbles:true}))}})()`

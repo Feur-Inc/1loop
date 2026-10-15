@@ -373,17 +373,21 @@ func (renderer *fitLabelRenderer) Layout(size fyne.Size) {
 	renderer.fitLabel.label.Text = fitText(renderer.fitLabel.text, renderer.fitLabel.size, fyne.TextStyle{}, size.Width)
 	renderer.fitLabel.label.Move(fyne.NewPos(0, (size.Height-renderer.fitLabel.label.MinSize().Height)/2))
 }
+
 func (renderer *fitLabelRenderer) MinSize() fyne.Size {
 	return fyne.NewSize(24, textSize("Ag", renderer.fitLabel.size, fyne.TextStyle{}).Height)
 }
+
 func (renderer *fitLabelRenderer) Refresh() {
 	renderer.fitLabel.label.Color = renderer.fitLabel.color
 	renderer.Layout(renderer.fitLabel.Size())
 	renderer.fitLabel.label.Refresh()
 }
+
 func (renderer *fitLabelRenderer) Objects() []fyne.CanvasObject {
 	return []fyne.CanvasObject{renderer.fitLabel.label}
 }
+
 func (renderer *fitLabelRenderer) Destroy() {}
 
 // flatScrollTheme drops the scroll edge shadows: the conversation fades
@@ -658,7 +662,11 @@ func codeText(text string) fyne.CanvasObject {
 			} else if strings.HasPrefix(line, "@@") {
 				name = theme.ColorNamePlaceHolder
 			}
-			segments = append(segments, &widget.TextSegment{Text: line, Style: widget.RichTextStyle{Inline: true, ColorName: name, TextStyle: fyne.TextStyle{Monospace: true}}})
+			segments = append(segments, &widget.TextSegment{Text: line, Style: widget.RichTextStyle{
+				Inline:    true,
+				ColorName: name,
+				TextStyle: fyne.TextStyle{Monospace: true},
+			}})
 		}
 		rich := widget.NewRichText(segments...)
 		rich.Wrapping = fyne.TextWrapBreak
@@ -1184,11 +1192,6 @@ func (ui *desktopUI) refreshModels() {
 	}()
 }
 
-// field stacks a small caption above an input, like a web form.
-func field(caption string, input fyne.CanvasObject) fyne.CanvasObject {
-	return container.NewVBox(padded(4, 0, 2, 0, textLine(caption, 13, colMuted)), input)
-}
-
 type savedState struct {
 	ClaudeOffered    bool            `json:"claudeOffered,omitempty"`
 	RemoteEnabled    *bool           `json:"remoteEnabled,omitempty"`
@@ -1229,7 +1232,19 @@ func (ui *desktopUI) persist(wait bool) {
 	remote := ui.remoteEnabled
 	// Everything but the chats is small, and holds maps the settings edit:
 	// it is encoded here, on the interface's thread.
-	head, err := json.Marshal(savedState{ui.claudeOffered, &remote, ui.devices, ui.cfg, nil, ui.projects, ui.connectionsList, ui.userInstructions, ui.approvalMode, ui.panelWidth, ui.classicCompaction})
+	head, err := json.Marshal(savedState{
+		ui.claudeOffered,
+		&remote,
+		ui.devices,
+		ui.cfg,
+		nil,
+		ui.projects,
+		ui.connectionsList,
+		ui.userInstructions,
+		ui.approvalMode,
+		ui.panelWidth,
+		ui.classicCompaction,
+	})
 	fields := map[string]json.RawMessage{}
 	if err == nil {
 		err = json.Unmarshal(head, &fields)
@@ -1348,7 +1363,7 @@ func (ui *desktopUI) load() {
 // doing) in the empty space left of the composer, with a bigger ring, when
 // the window leaves room for it there; otherwise it stays under the last
 // message. Set it to false to always keep it under the last message, as
-// before (patches/dock-activity.patch removes the feature entirely).
+// before.
 const dockActivity = true
 
 const (

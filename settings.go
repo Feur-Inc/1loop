@@ -391,6 +391,7 @@ func (renderer *toggleRenderer) Layout(fyne.Size) {
 	renderer.knob.Resize(fyne.NewSquareSize(14))
 	renderer.knob.Move(fyne.NewPos(3+16*renderer.toggle.at, 3))
 }
+
 func (renderer *toggleRenderer) Refresh() {
 	renderer.track.FillColor = mix(colBorder, colAmber, renderer.toggle.at)
 	renderer.knob.FillColor = mix(colMuted, colInk, renderer.toggle.at)
@@ -398,9 +399,11 @@ func (renderer *toggleRenderer) Refresh() {
 	renderer.track.Refresh()
 	renderer.knob.Refresh()
 }
+
 func (renderer *toggleRenderer) Objects() []fyne.CanvasObject {
 	return []fyne.CanvasObject{renderer.track, renderer.knob}
 }
+
 func (renderer *toggleRenderer) Destroy() {}
 
 // ---------------------------------------------------------------------------
@@ -596,7 +599,13 @@ func (ui *desktopUI) connectionEditor(original connection) {
 	enabled := newToggle(draft.Enabled, func(on bool) { draft.Enabled = on })
 	typePicker := newPicker(ui.window, "Connection type", styleField, nil)
 	typePicker.Options = []string{"Local vLLM", "OpenRouter", "ChatGPT account", "OpenAI-compatible API", "Claude Code"}
-	ids := map[string]string{"Local vLLM": "vllm", "OpenRouter": "openrouter", "ChatGPT account": "openai", "OpenAI-compatible API": "compatible", "Claude Code": "claudecode"}
+	ids := map[string]string{
+		"Local vLLM":            "vllm",
+		"OpenRouter":            "openrouter",
+		"ChatGPT account":       "openai",
+		"OpenAI-compatible API": "compatible",
+		"Claude Code":           "claudecode",
+	}
 	status := plainFlow("", 13, colMuted)
 	say := func(text string) {
 		status.spans, status.cut = []span{{text: text}}, nil
@@ -925,7 +934,11 @@ func (ui *desktopUI) connectionEditor(original connection) {
 		warning = ui.modal("Unsaved changes", note("Save your choices to keep them. Do you want to discard your changes?"), 520, nil, stay, discard, keep)
 	}
 	cancel := newRow("Cancel", nil, styleOutline, settings.back)
-	settings.push(settingsFrame{content: page, actions: []fyne.CanvasObject{container.NewCenter(sized(360, status)), cancel, save}, beforeLeave: beforeLeave, leave: func() {
+	settings.push(settingsFrame{content: page, actions: []fyne.CanvasObject{
+		container.NewCenter(sized(360, status)),
+		cancel,
+		save,
+	}, beforeLeave: beforeLeave, leave: func() {
 		loadGeneration++
 		if cancelLogin != nil {
 			cancelLogin()
@@ -1025,5 +1038,40 @@ func (ui *desktopUI) modelPreferencesEditor(conn *connection, model modelChoice,
 		conn.ModelOptions[model.ID] = modelPreferences{Provider: route, Parameters: params}
 		settings.back()
 	})
-	settings.push(settingsFrame{content: page, actions: []fyne.CanvasObject{container.NewCenter(sized(360, status)), newRow("Cancel", nil, styleOutline, settings.back), save}})
+	settings.push(settingsFrame{content: page, actions: []fyne.CanvasObject{
+		container.NewCenter(sized(360, status)),
+		newRow("Cancel", nil, styleOutline, settings.back),
+		save,
+	}})
+}
+
+func requestParameters(raw string) (map[string]any, error) {
+	if strings.TrimSpace(raw) == "" {
+		return nil, nil
+	}
+	var params map[string]any
+	if err := json.Unmarshal([]byte(raw), &params); err != nil {
+		return nil, fmt.Errorf("Invalid JSON object: %w", err)
+	}
+	if params == nil {
+		return nil, fmt.Errorf("Expected a JSON object")
+	}
+	for _, key := range []string{
+		"model",
+		"messages",
+		"input",
+		"instructions",
+		"tools",
+		"tool_choice",
+		"stream",
+		"store",
+		"reasoning",
+		"reasoning_effort",
+		"provider",
+	} {
+		if _, ok := params[key]; ok {
+			return nil, fmt.Errorf("%s is managed by 1loop; use its dedicated setting", key)
+		}
+	}
+	return params, nil
 }

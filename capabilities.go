@@ -27,6 +27,7 @@ func effortLabel(value string) string {
 	}
 	return strings.ToUpper(value[:1]) + value[1:]
 }
+
 func stringsFrom(value any) []string {
 	var result []string
 	if list, ok := value.([]any); ok {
@@ -44,6 +45,7 @@ func stringsFrom(value any) []string {
 	}
 	return result
 }
+
 func sortedEfforts(values []string) []string {
 	var out []string
 	for _, effort := range effortOrder {
@@ -53,6 +55,7 @@ func sortedEfforts(values []string) []string {
 	}
 	return out
 }
+
 func modelCapabilities(row map[string]any) (efforts []string, defaultEffort, mode string) {
 	mandatory := false
 	if reasoning, ok := row["reasoning"].(map[string]any); ok {
@@ -252,6 +255,7 @@ func (backend *app) connectionModels(ctx context.Context, conn connection, key s
 	}
 	return choices, nil
 }
+
 func (backend *app) upstreamProviders(ctx context.Context, conn connection, key, model string) ([]string, error) {
 	cfg := conn.config("")
 	cfg.APIKey = key

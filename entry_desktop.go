@@ -2,6 +2,8 @@
 
 package main
 
+// The desktop program's entry point (the headless server's is entry_server.go).
+
 import (
 	"flag"
 	"log"

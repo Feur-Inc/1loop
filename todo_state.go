@@ -1,5 +1,8 @@
 package main
 
+// The chat's task list: its state and the update_todo tool, shared by the
+// desktop and the headless server (the list's view is todo.go).
+
 import (
 	"encoding/json"
 	"fmt"

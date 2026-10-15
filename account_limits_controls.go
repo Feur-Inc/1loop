@@ -2,6 +2,8 @@
 
 package main
 
+// The account limits' widgets: a gauge per usage window, in the model menu.
+
 import (
 	"fmt"
 	"image/color"
@@ -44,6 +46,7 @@ func newLimitGauge(window accountLimitWindow) fyne.CanvasObject {
 func (layoutSpec limitGaugeLayout) MinSize([]fyne.CanvasObject) fyne.Size {
 	return fyne.NewSize(98, 38)
 }
+
 func (layoutSpec limitGaugeLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	label, value := objects[0].(*canvas.Text), objects[3].(*canvas.Text)
 	width := fyne.Min(value.MinSize().Width, size.Width)
@@ -114,6 +117,7 @@ type limitStripCellsLayout struct{}
 func (limitStripCellsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
 	return fyne.NewSize(float32(len(o))*110-12, 38)
 }
+
 func (limitStripCellsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
 	for i, cell := range o {
 		cell.Move(fyne.NewPos(float32(i)*110, 0))
@@ -126,6 +130,7 @@ type limitStripLayout struct{}
 func (limitStripLayout) MinSize([]fyne.CanvasObject) fyne.Size {
 	return fyne.NewSize(0, modelLimitsStripHeight)
 }
+
 func (limitStripLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
 	o[0].Move(fyne.NewPos(0, 0))
 	o[0].Resize(fyne.NewSize(size.Width, 1))

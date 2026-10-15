@@ -412,6 +412,7 @@ func (row *tapRow) MouseIn(*desktop.MouseEvent) {
 		row.onHover(true)
 	}
 }
+
 func (row *tapRow) MouseMoved(*desktop.MouseEvent) {}
 func (row *tapRow) MouseOut() {
 	row.setHover(0, true)
@@ -1254,27 +1255,6 @@ func (pickerControl *picker) ClearSelected() { pickerControl.Selected = ""; pick
 func (pickerControl *picker) Disable()       { pickerControl.row.Disable() }
 func (pickerControl *picker) Enable()        { pickerControl.row.Enable() }
 
-// hoverArea reports when the pointer enters or leaves its content, like a CSS
-// :hover on a block; it does not take clicks.
-type hoverArea struct {
-	widget.BaseWidget
-	content fyne.CanvasObject
-	onHover func(bool)
-}
-
-func newHoverArea(content fyne.CanvasObject, onHover func(bool)) *hoverArea {
-	area := &hoverArea{content: content, onHover: onHover}
-	area.ExtendBaseWidget(area)
-	return area
-}
-
-func (area *hoverArea) CreateRenderer() fyne.WidgetRenderer {
-	return widget.NewSimpleRenderer(area.content)
-}
-func (area *hoverArea) MouseIn(*desktop.MouseEvent)    { area.onHover(true) }
-func (area *hoverArea) MouseMoved(*desktop.MouseEvent) {}
-func (area *hoverArea) MouseOut()                      { area.onHover(false) }
-
 // fadeRow animates a row's opacity (hover-revealed actions).
 func fadeRow(row *tapRow, to float32, anim **fyne.Animation) {
 	if *anim != nil {
@@ -1502,6 +1482,7 @@ func (edge *resizeEdge) MouseDown(m *desktop.MouseEvent) {
 		windowMoveResize(edge.window, edge.direction)
 	}
 }
+
 func (edge *resizeEdge) MouseUp(*desktop.MouseEvent) {}
 
 func (edge *resizeEdge) Cursor() desktop.Cursor {

@@ -13,9 +13,11 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/binary"
 	"encoding/json"
 	"image"
 	"image/jpeg"
+	"net/http"
 	"sync"
 	"time"
 
@@ -84,7 +86,14 @@ func (browser *browserPage) phonesWatching() bool {
 
 func (browser *browserPage) phoneStateJSON() []byte {
 	browser.mu.Lock()
-	state := phoneState{Adaptive: browser.info.Adaptive, URL: browser.info.URL, Title: browser.info.Title, Loading: browser.loading, Width: browser.info.Width, Height: browser.info.Height}
+	state := phoneState{
+		Adaptive: browser.info.Adaptive,
+		URL:      browser.info.URL,
+		Title:    browser.info.Title,
+		Loading:  browser.loading,
+		Width:    browser.info.Width,
+		Height:   browser.info.Height,
+	}
 	if browser.cursorShown {
 		state.Cursor = &phoneCursor{browser.cursorX, browser.cursorY}
 	}
@@ -204,4 +213,53 @@ func (browser *browserPage) needsPhoneJPEG() bool {
 		}
 	}
 	return false
+}
+
+func serveBrowserStream(writer http.ResponseWriter, req *http.Request, browser *browserPage, revoked <-chan struct{}) {
+	flusher, ok := writer.(http.Flusher)
+	if !ok {
+		fail(writer, http.StatusInternalServerError, "Streaming unsupported")
+		return
+	}
+	watcher, stop := browser.watch(req.URL.Query().Get("format") == "png")
+	defer stop()
+	writer.Header().Set("Content-Type", "application/octet-stream")
+	writer.Header().Set("Cache-Control", "no-store")
+	writer.WriteHeader(http.StatusOK)
+	flusher.Flush()
+	send := func(kind byte, payload []byte) error {
+		var head [5]byte
+		head[0] = kind
+		binary.BigEndian.PutUint32(head[1:], uint32(len(payload)))
+		if _, err := writer.Write(head[:]); err != nil {
+			return err
+		}
+		_, err := writer.Write(payload)
+		return err
+	}
+	ping := time.NewTicker(15 * time.Second) // the state again: keeps the stream alive
+	defer ping.Stop()
+	ctx := req.Context()
+	for {
+		select {
+		case <-revoked:
+			return
+		case <-ctx.Done():
+			return
+		case <-browser.life.Done():
+			return
+		case <-ping.C:
+			watcher.put(nil, browser.phoneStateJSON())
+			continue
+		case <-watcher.wake:
+		}
+		frame, state := watcher.take()
+		if state != nil && send('S', state) != nil {
+			return
+		}
+		if frame != nil && send('F', frame) != nil {
+			return
+		}
+		flusher.Flush()
+	}
 }

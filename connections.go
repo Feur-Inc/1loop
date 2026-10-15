@@ -32,7 +32,14 @@ func (ui *desktopUI) initializeConnections() {
 	defer ui.offerClaudeCode()
 	if ui.connectionsList == nil {
 		id := identifier()
-		ui.connectionsList = []connection{{ID: id, Name: providerName(ui.cfg.Provider), Provider: ui.cfg.Provider, BaseURL: ui.cfg.BaseURL, Enabled: true, AllModels: true}}
+		ui.connectionsList = []connection{{
+			ID:        id,
+			Name:      providerName(ui.cfg.Provider),
+			Provider:  ui.cfg.Provider,
+			BaseURL:   ui.cfg.BaseURL,
+			Enabled:   true,
+			AllModels: true,
+		}}
 		ui.cfg.ConnectionID = id
 		for _, chat := range ui.chats {
 			found := ""
@@ -44,7 +51,14 @@ func (ui *desktopUI) initializeConnections() {
 			}
 			if found == "" {
 				found = identifier()
-				ui.connectionsList = append(ui.connectionsList, connection{ID: found, Name: providerName(chat.Config.Provider), Provider: chat.Config.Provider, BaseURL: chat.Config.BaseURL, Enabled: true, AllModels: true})
+				ui.connectionsList = append(ui.connectionsList, connection{
+					ID:        found,
+					Name:      providerName(chat.Config.Provider),
+					Provider:  chat.Config.Provider,
+					BaseURL:   chat.Config.BaseURL,
+					Enabled:   true,
+					AllModels: true,
+				})
 			}
 			chat.Config.ConnectionID = found
 		}
@@ -53,6 +67,7 @@ func (ui *desktopUI) initializeConnections() {
 		ui.approvalMode = "approval"
 	}
 }
+
 func (ui *desktopUI) selectModel(choice modelChoice) {
 	previous := ui.cfg
 	devf("ui", "model %s (%s)", choice.ID, choice.display())

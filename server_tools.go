@@ -2,6 +2,9 @@
 
 package main
 
+// The headless server's panel tools: browser tabs and terminals that run on
+// the server, with no window to show them.
+
 import (
 	"bytes"
 	"context"
@@ -38,6 +41,7 @@ func (tab *serverTab) key() string {
 	}
 	return "terminal-" + tab.terminal.id
 }
+
 func (tab *serverTab) close() {
 	if tab.browser != nil {
 		tab.browser.close()
@@ -46,6 +50,7 @@ func (tab *serverTab) close() {
 		tab.terminal.close()
 	}
 }
+
 func (server *headlessServer) ensureTabsLocked(chat *serverChat) {
 	if chat.session != nil {
 		return
@@ -55,6 +60,7 @@ func (server *headlessServer) ensureTabsLocked(chat *serverChat) {
 		server.addBrowserLocked(chat, info)
 	}
 }
+
 func (server *headlessServer) addBrowserLocked(chat *serverChat, info browserInfo) *browserPage {
 	browser := newBrowserPage(chat.session, info)
 	chat.tabs = append(chat.tabs, &serverTab{browser: browser})
@@ -72,6 +78,7 @@ func (server *headlessServer) addBrowserLocked(chat *serverChat, info browserInf
 	browser.start()
 	return browser
 }
+
 func (server *headlessServer) browserTools(chat *serverChat) panelToolHandler {
 	return func(ctx context.Context, name string, raw json.RawMessage) (panelToolResult, error) {
 		var args browserToolArgs
@@ -167,7 +174,14 @@ func newServerTerminal(parent context.Context, dir string) (*serverTerminal, err
 		cancel()
 		return nil, err
 	}
-	terminal := &serverTerminal{id: identifier()[:16], dir: dir, file: file, cancel: cancel, done: make(chan struct{}), screen: vt10x.New(vt10x.WithSize(100, 30), vt10x.WithWriter(file))}
+	terminal := &serverTerminal{
+		id:     identifier()[:16],
+		dir:    dir,
+		file:   file,
+		cancel: cancel,
+		done:   make(chan struct{}),
+		screen: vt10x.New(vt10x.WithSize(100, 30), vt10x.WithWriter(file)),
+	}
 	go func() {
 		buffer := make([]byte, 8192)
 		for {
@@ -201,6 +215,7 @@ func newServerTerminal(parent context.Context, dir string) (*serverTerminal, err
 	}()
 	return terminal, nil
 }
+
 func (terminal *serverTerminal) close() { terminal.cancel(); terminal.file.Close() }
 func (terminal *serverTerminal) write(text string) error {
 	terminal.writeMu.Lock()
@@ -208,6 +223,7 @@ func (terminal *serverTerminal) write(text string) error {
 	_, err := io.WriteString(terminal.file, text)
 	return err
 }
+
 func (terminal *serverTerminal) read(offset int64) map[string]any {
 	terminal.mu.Lock()
 	defer terminal.mu.Unlock()
@@ -230,10 +246,36 @@ func (terminal *serverTerminal) read(offset int64) map[string]any {
 			end = start
 		}
 	}
-	return map[string]any{"session_id": terminal.id, "cwd": terminal.dir, "output": string(terminal.output[offset-first : end-first]), "available_from": first, "next_offset": end, "total": terminal.total, "exit_code": terminal.exit}
+	return map[string]any{
+		"session_id":     terminal.id,
+		"cwd":            terminal.dir,
+		"output":         string(terminal.output[offset-first : end-first]),
+		"available_from": first,
+		"next_offset":    end,
+		"total":          terminal.total,
+		"exit_code":      terminal.exit,
+	}
 }
+
 func terminalColor(value vt10x.Color, background bool) color.Color {
-	palette := []color.NRGBA{{30, 30, 30, 255}, {225, 95, 95, 255}, {120, 200, 135, 255}, {235, 195, 90, 255}, {105, 155, 235, 255}, {190, 130, 220, 255}, {100, 200, 210, 255}, {210, 210, 210, 255}, {110, 110, 110, 255}, {255, 135, 135, 255}, {155, 235, 165, 255}, {255, 225, 130, 255}, {145, 190, 255, 255}, {220, 170, 250, 255}, {145, 235, 245, 255}, {245, 245, 245, 255}}
+	palette := []color.NRGBA{
+		{30, 30, 30, 255},
+		{225, 95, 95, 255},
+		{120, 200, 135, 255},
+		{235, 195, 90, 255},
+		{105, 155, 235, 255},
+		{190, 130, 220, 255},
+		{100, 200, 210, 255},
+		{210, 210, 210, 255},
+		{110, 110, 110, 255},
+		{255, 135, 135, 255},
+		{155, 235, 165, 255},
+		{255, 225, 130, 255},
+		{145, 190, 255, 255},
+		{220, 170, 250, 255},
+		{145, 235, 245, 255},
+		{245, 245, 245, 255},
+	}
 	if value < 16 {
 		return palette[int(value)]
 	}
@@ -262,6 +304,7 @@ func terminalColor(value vt10x.Color, background bool) color.Color {
 	}
 	return color.NRGBA{uint8(value >> 16), uint8(value >> 8), uint8(value), 255}
 }
+
 func (terminal *serverTerminal) capture() []byte {
 	terminal.screen.Lock()
 	defer terminal.screen.Unlock()
@@ -289,6 +332,7 @@ func (terminal *serverTerminal) capture() []byte {
 	png.Encode(&output, img)
 	return output.Bytes()
 }
+
 func (server *headlessServer) terminalTools(chat *serverChat) panelToolHandler {
 	return func(ctx context.Context, name string, raw json.RawMessage) (panelToolResult, error) {
 		var args struct {

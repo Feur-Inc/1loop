@@ -2,6 +2,9 @@
 
 package main
 
+// The headless server's HTTP API: the same routes as the desktop's phone
+// remote (remote.go), served over HTTPS to paired devices only.
+
 import (
 	"encoding/json"
 	"fmt"
@@ -17,7 +20,22 @@ func (server *headlessServer) routes() http.Handler {
 	})
 	mux.HandleFunc("POST /api/pair", server.pair)
 	mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)
-	endpoints := map[string]http.HandlerFunc{"GET /api/state": server.state, "GET /api/chats/{id}": server.chat, "GET /api/events": server.events, "POST /api/send": server.send, "POST /api/stop": server.stop, "POST /api/approve": server.approve, "POST /api/model": server.setModel, "POST /api/approval-mode": server.setApprovalMode, "GET /api/chats/{id}/panel": server.panelTabs, "GET /api/chats/{id}/panel/{key}": server.panelTab, "GET /api/chats/{id}/panel/{key}/screen": server.panelScreen, "GET /api/chats/{id}/panel/{key}/stream": server.panelStream, "POST /api/chats/{id}/panel/{key}/input": server.panelInput, "POST /api/chats/{id}/panel": server.editPanel}
+	endpoints := map[string]http.HandlerFunc{
+		"GET /api/state":                         server.state,
+		"GET /api/chats/{id}":                    server.chat,
+		"GET /api/events":                        server.events,
+		"POST /api/send":                         server.send,
+		"POST /api/stop":                         server.stop,
+		"POST /api/approve":                      server.approve,
+		"POST /api/model":                        server.setModel,
+		"POST /api/approval-mode":                server.setApprovalMode,
+		"GET /api/chats/{id}/panel":              server.panelTabs,
+		"GET /api/chats/{id}/panel/{key}":        server.panelTab,
+		"GET /api/chats/{id}/panel/{key}/screen": server.panelScreen,
+		"GET /api/chats/{id}/panel/{key}/stream": server.panelStream,
+		"POST /api/chats/{id}/panel/{key}/input": server.panelInput,
+		"POST /api/chats/{id}/panel":             server.editPanel,
+	}
 	for path, handler := range endpoints {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
@@ -27,11 +45,19 @@ func (server *headlessServer) routes() http.Handler {
 		mux.ServeHTTP(w, r)
 	})
 }
+
 func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	writeJSON(w, 200, map[string]any{"name": server.name, "projects": []string{server.root}, "workspace": server.root, "chats": server.summariesLocked(), "settings": server.settingsLocked()})
+	writeJSON(w, 200, map[string]any{
+		"name":      server.name,
+		"projects":  []string{server.root},
+		"workspace": server.root,
+		"chats":     server.summariesLocked(),
+		"settings":  server.settingsLocked(),
+	})
 }
+
 func (server *headlessServer) chat(w http.ResponseWriter, r *http.Request) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
@@ -44,8 +70,13 @@ func (server *headlessServer) chat(w http.ResponseWriter, r *http.Request) {
 	for i := range items {
 		items[i] = server.itemLocked(chat, i)
 	}
-	writeJSON(w, 200, map[string]any{"chat": remoteChat{ID: chat.ID, Title: chat.Title, Workspace: server.root, Running: chat.run != nil, Items: len(items)}, "items": items, "meta": server.metaLocked(chat)})
+	writeJSON(w, 200, map[string]any{
+		"chat":  remoteChat{ID: chat.ID, Title: chat.Title, Workspace: server.root, Running: chat.run != nil, Items: len(items)},
+		"items": items,
+		"meta":  server.metaLocked(chat),
+	})
 }
+
 func (server *headlessServer) events(w http.ResponseWriter, r *http.Request) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
@@ -81,6 +112,7 @@ func (server *headlessServer) events(w http.ResponseWriter, r *http.Request) {
 		flusher.Flush()
 	}
 }
+
 func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 	var args struct {
 		Chat, Text, Mode, Workspace string
@@ -128,6 +160,7 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]string{"chat": chat.ID})
 }
+
 func (server *headlessServer) stop(w http.ResponseWriter, r *http.Request) {
 	var args struct{ Chat string }
 	if readJSON(r, &args) != nil {
@@ -143,6 +176,7 @@ func (server *headlessServer) stop(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
+
 func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 	var args struct {
 		ID    string
@@ -155,6 +189,7 @@ func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 	server.backend.approve(args.ID, args.Allow)
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
+
 func (server *headlessServer) setModel(w http.ResponseWriter, r *http.Request) {
 	var args struct{ Chat, Label, Effort string }
 	if readJSON(r, &args) != nil {
@@ -206,6 +241,7 @@ func (server *headlessServer) setModel(w http.ResponseWriter, r *http.Request) {
 	server.broadcastLocked("settings", server.settingsLocked())
 	writeJSON(w, 200, map[string]bool{"ok": true})
 }
+
 func (server *headlessServer) setApprovalMode(w http.ResponseWriter, r *http.Request) {
 	var args struct{ Mode string }
 	if readJSON(r, &args) != nil || !contains([]string{"approval", "yolo", "auto"}, args.Mode) {

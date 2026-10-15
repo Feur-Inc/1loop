@@ -2,6 +2,9 @@
 
 package main
 
+// The desktop as a client of a headless server (SERVER.md): connecting and
+// pairing, then the server's chats in a window of their own.
+
 import (
 	"bufio"
 	"context"
@@ -24,6 +27,7 @@ func remoteAddressPath() string {
 	dir, _ := os.UserConfigDir()
 	return filepath.Join(dir, "1loop", "remote-server.json")
 }
+
 func (ui *desktopUI) connectServer() {
 	var saved serverAddress
 	if data, err := os.ReadFile(remoteAddressPath()); err == nil {
@@ -80,6 +84,7 @@ func (ui *desktopUI) connectServer() {
 	}
 	sheet = ui.modal("Connect to a remote server", container.NewVBox(note("The server runs your model, browser and terminal on its machine. For a private certificate, copy its SHA-256 fingerprint from the VM console before connecting."), widget.NewLabel("HTTPS address"), address, widget.NewLabel("Certificate fingerprint"), pin), 620, nil, connect)
 }
+
 func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code string) {
 	var sheet *sheet
 	status := widget.NewLabel("")
@@ -117,12 +122,18 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 			})
 		}()
 	}
-	sheet = ui.modal("Approve this desktop on the server", container.NewVBox(note("Type this command in the VM's server console. The pairing expires after two minutes."), codeBlock(command, 80), newRow("Copy command", nil, styleChip, func() { ui.window.Clipboard().SetContent(command) }), status), 620, nil, confirm)
+	copyCommand := newRow("Copy command", nil, styleChip, func() { fyne.CurrentApp().Clipboard().SetContent(command) })
+	body := container.NewVBox(
+		note("Type this command in the VM's server console. The pairing expires after two minutes."),
+		codeBlock(command, 80),
+		copyCommand,
+		status,
+	)
+	sheet = ui.modal("Approve this desktop on the server", body, 620, nil, confirm)
 }
 
 type remoteDesktop struct {
 	renderedApproval        string
-	parent                  *desktopUI
 	client                  *remoteClient
 	ctx                     context.Context
 	cancel                  context.CancelFunc
@@ -154,7 +165,16 @@ type remoteDesktop struct {
 
 func openRemoteDesktop(parent *desktopUI, client *remoteClient) {
 	ctx, cancel := context.WithCancel(parent.ctx)
-	remote := &remoteDesktop{client: client, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), tabViews: map[string]fyne.CanvasObject{}, tabCancel: map[string]context.CancelFunc{}, tabActivate: map[string]func(bool){}, hiddenTabs: map[string]bool{}}
+	remote := &remoteDesktop{
+		client:      client,
+		ctx:         ctx,
+		cancel:      cancel,
+		wake:        make(chan struct{}, 1),
+		tabViews:    map[string]fyne.CanvasObject{},
+		tabCancel:   map[string]context.CancelFunc{},
+		tabActivate: map[string]func(bool){},
+		hiddenTabs:  map[string]bool{},
+	}
 	remote.window = fyne.CurrentApp().NewWindow("1loop · " + client.address.URL)
 	remote.window.Resize(fyne.NewSize(1500, 950))
 	remote.chatList = container.NewVBox()
@@ -186,7 +206,9 @@ func openRemoteDesktop(parent *desktopUI, client *remoteClient) {
 	stop := newRow("Stop", nil, styleOutline, func() { remote.action("/api/stop", map[string]string{"chat": remote.current}) })
 	controls := container.NewHBox(remote.approval, remote.model, remote.effort, stop, send)
 	composer := surface(container.NewVBox(remote.prompt, controls), colSurface, colBorderHot, 14, 12)
-	left := container.NewBorder(container.NewVBox(newRow("New chat", iconPlus, styleChip, func() { remote.selectChat("") }), newRow("Refresh", nil, styleChip, remote.notify)), nil, nil, nil, container.NewVScroll(remote.chatList))
+	newChat := newRow("New chat", iconPlus, styleChip, func() { remote.selectChat("") })
+	refresh := newRow("Refresh", nil, styleChip, remote.notify)
+	left := container.NewBorder(container.NewVBox(newChat, refresh), nil, nil, nil, container.NewVScroll(remote.chatList))
 	chat := container.NewBorder(nil, container.NewVBox(remote.status, composer), nil, nil, remote.scroll)
 	remote.tabs = container.NewDocTabs()
 	remote.tabs.OnSelected = func(selected *container.TabItem) {
@@ -211,7 +233,12 @@ func openRemoteDesktop(parent *desktopUI, client *remoteClient) {
 	}
 	add := newRow("+", nil, styleChip, nil)
 	add.onTap = func() {
-		showMenu(remote.window, add, []menuAction{{label: "Tasks", icon: iconCheck, run: func() { delete(remote.hiddenTabs, "todo"); remote.notify() }}, {label: "Git changes", icon: toolGlyph("edit_file"), run: func() { delete(remote.hiddenTabs, "changes"); remote.notify() }}, {label: "Browser", icon: iconBrowser, run: func() { remote.addTab("browser") }}, {label: "Terminal", icon: toolGlyph("shell"), run: func() { remote.addTab("terminal") }}})
+		showMenu(remote.window, add, []menuAction{
+			{label: "Tasks", icon: iconCheck, run: func() { delete(remote.hiddenTabs, "todo"); remote.notify() }},
+			{label: "Git changes", icon: toolGlyph("edit_file"), run: func() { delete(remote.hiddenTabs, "changes"); remote.notify() }},
+			{label: "Browser", icon: iconBrowser, run: func() { remote.addTab("browser") }},
+			{label: "Terminal", icon: toolGlyph("shell"), run: func() { remote.addTab("terminal") }},
+		})
 	}
 	panel := container.NewBorder(container.NewHBox(textLine("Server tools", 14, colMuted), layout.NewSpacer(), add), nil, nil, nil, remote.tabs)
 	main := container.NewHSplit(chat, panel)
@@ -246,12 +273,14 @@ func openRemoteDesktop(parent *desktopUI, client *remoteClient) {
 	remote.notify()
 	remote.window.Show()
 }
+
 func (remote *remoteDesktop) notify() {
 	select {
 	case remote.wake <- struct{}{}:
 	default:
 	}
 }
+
 func (remote *remoteDesktop) selectChat(id string) {
 	remote.current = id
 	for _, cancel := range remote.tabCancel {
@@ -268,6 +297,7 @@ func (remote *remoteDesktop) selectChat(id string) {
 	remote.renderedApproval = ""
 	remote.notify()
 }
+
 func (remote *remoteDesktop) action(path string, value any) {
 	go func() {
 		ctx, cancel := context.WithTimeout(remote.ctx, 15*time.Second)
@@ -279,6 +309,7 @@ func (remote *remoteDesktop) action(path string, value any) {
 		remote.notify()
 	}()
 }
+
 func (remote *remoteDesktop) send(mode string) {
 	text := strings.TrimSpace(remote.prompt.Text)
 	if text == "" {
@@ -304,6 +335,7 @@ func (remote *remoteDesktop) send(mode string) {
 		})
 	}()
 }
+
 func (remote *remoteDesktop) addTab(kind string) {
 	if remote.current == "" {
 		remote.status.SetText("Start a conversation before opening server tools.")
@@ -311,6 +343,7 @@ func (remote *remoteDesktop) addTab(kind string) {
 	}
 	remote.action("/api/chats/"+remote.current+"/panel", map[string]string{"action": "open", "kind": kind})
 }
+
 func (remote *remoteDesktop) events() {
 	for remote.ctx.Err() == nil {
 		response, err := remote.client.request(remote.ctx, "GET", "/api/events", nil)
@@ -332,6 +365,7 @@ func (remote *remoteDesktop) events() {
 		}
 	}
 }
+
 func (remote *remoteDesktop) refreshLoop() {
 	for {
 		select {
@@ -439,6 +473,7 @@ func (remote *remoteDesktop) refreshLoop() {
 		})
 	}
 }
+
 func (remote *remoteDesktop) renderTranscript(items []remoteItem) {
 	following := remote.scroll.Offset.Y+remote.scroll.Size().Height >= remote.transcript.MinSize().Height-40
 	changed := false
@@ -481,13 +516,19 @@ func (remote *remoteDesktop) renderTranscript(items []remoteItem) {
 		remote.renderedApproval = approvalID
 		remote.approvalBox.RemoveAll()
 		if approval := remote.meta.Approval; approval != nil {
-			remote.approvalBox.Add(surface(container.NewVBox(note(approval.Title), codeBlock(approval.Preview, 200), container.NewHBox(newRow("Deny", nil, styleOutline, func() { remote.action("/api/approve", map[string]any{"id": approval.ID, "allow": false}) }), newRow("Allow", nil, stylePrimary, func() { remote.action("/api/approve", map[string]any{"id": approval.ID, "allow": true}) }))), colSurface, colBorderHot, 12, 12))
+			answer := func(allow bool) func() {
+				return func() { remote.action("/api/approve", map[string]any{"id": approval.ID, "allow": allow}) }
+			}
+			buttons := container.NewHBox(newRow("Deny", nil, styleOutline, answer(false)), newRow("Allow", nil, stylePrimary, answer(true)))
+			body := container.NewVBox(note(approval.Title), codeBlock(approval.Preview, 200), buttons)
+			remote.approvalBox.Add(surface(body, colSurface, colBorderHot, 12, 12))
 		}
 	}
 	if changed && following {
 		remote.scroll.ScrollToBottom()
 	}
 }
+
 func (remote *remoteDesktop) showTool(item remoteItem) {
 	content := container.NewVScroll(container.NewVBox(note(item.Args), codeBlock(item.Text, 600)))
 	if item.Diff != "" {
@@ -497,6 +538,7 @@ func (remote *remoteDesktop) showTool(item remoteItem) {
 	remote.tabs.Append(tab)
 	remote.tabs.Select(tab)
 }
+
 func (remote *remoteDesktop) syncTabs(tabs []remoteTab) {
 	present := map[string]bool{}
 	for _, tab := range tabs {
@@ -531,6 +573,7 @@ func (remote *remoteDesktop) syncTabs(tabs []remoteTab) {
 	}
 	remote.renderTasks()
 }
+
 func (remote *remoteDesktop) renderTasks() {
 	if remote.tabViews["todo"] == nil || remote.todoTasks == nil {
 		return

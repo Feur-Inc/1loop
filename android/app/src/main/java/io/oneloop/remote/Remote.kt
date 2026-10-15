@@ -1,5 +1,6 @@
 package io.oneloop.remote
 
+import androidx.core.content.edit
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
@@ -130,7 +131,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         servers.filter { it.paired }.forEach {
             array.put(JSONObject().put("name", it.name).put("host", it.host).put("port", it.port).put("token", it.token).put("scheme", it.scheme).put("fingerprint", it.fingerprint))
         }
-        prefs.edit().putString("servers", array.toString()).apply()
+        prefs.edit { putString("servers", array.toString()) }
     }
 
     private fun upsert(server: Server) {
@@ -244,7 +245,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         meta = null
         current = null
         approvals.clear()
-        prefs.edit().putString("last", target.key).apply()
+        prefs.edit { putString("last", target.key) }
         screen = Screen.Chat
         events = scope.launch {
             var wait = 500L
@@ -282,7 +283,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         events?.cancel()
         events = null
         connected = false
-        prefs.edit().remove("last").apply()
+        prefs.edit { remove("last") }
         screen = Screen.Servers
         scan()
     }

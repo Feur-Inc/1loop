@@ -67,7 +67,14 @@ func responsesCompletion(ctx context.Context, cfg config, messages []message, to
 			tools = append(tools, map[string]any{"type": "function", "name": f["name"], "description": f["description"], "parameters": f["parameters"], "strict": true})
 		}
 	}
-	body := mergeOptions(cfg.Parameters, map[string]any{"model": cfg.Model, "instructions": systemInstructions(cfg), "input": input, "store": false, "stream": true, "include": []string{"reasoning.encrypted_content"}})
+	body := mergeOptions(cfg.Parameters, map[string]any{
+		"model":        cfg.Model,
+		"instructions": systemInstructions(cfg),
+		"input":        input,
+		"store":        false,
+		"stream":       true,
+		"include":      []string{"reasoning.encrypted_content"},
+	})
 	if toolsFlag {
 		body["tools"] = tools
 	}

@@ -1,5 +1,7 @@
 package main
 
+// The workspace's uncommitted changes, as one patch (new files included).
+
 import (
 	"context"
 	"fmt"

@@ -713,6 +713,7 @@ const contextRingSize = 16
 func (renderer *contextRingRenderer) MinSize() fyne.Size {
 	return fyne.NewSquareSize(contextRingSize + 12)
 }
+
 func (renderer *contextRingRenderer) Layout(size fyne.Size) {
 	at := fyne.NewPos((size.Width-contextRingSize)/2, (size.Height-contextRingSize)/2)
 	for _, arc := range []*canvas.Arc{renderer.ring.track, renderer.ring.fill} {
@@ -720,13 +721,16 @@ func (renderer *contextRingRenderer) Layout(size fyne.Size) {
 		arc.Resize(fyne.NewSquareSize(contextRingSize))
 	}
 }
+
 func (renderer *contextRingRenderer) Refresh() {
 	renderer.ring.track.Refresh()
 	renderer.ring.fill.Refresh()
 }
+
 func (renderer *contextRingRenderer) Objects() []fyne.CanvasObject {
 	return []fyne.CanvasObject{renderer.ring.track, renderer.ring.fill}
 }
+
 func (renderer *contextRingRenderer) Destroy() {}
 
 // setContextUsage updates the ring for the open conversation.

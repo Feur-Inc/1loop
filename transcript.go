@@ -112,6 +112,7 @@ func (row *toolRow) Tapped(*fyne.PointEvent) {
 		row.onTap()
 	}
 }
+
 func (row *toolRow) Cursor() desktop.Cursor         { return desktop.PointerCursor }
 func (row *toolRow) MouseIn(*desktop.MouseEvent)    { row.fade(1) }
 func (row *toolRow) MouseMoved(*desktop.MouseEvent) {}
@@ -250,6 +251,7 @@ func shortError(text string) string {
 func (renderer *toolRowRenderer) Objects() []fyne.CanvasObject {
 	return []fyne.CanvasObject{renderer.bg, renderer.icon, renderer.verb, renderer.target, renderer.meta, renderer.minus}
 }
+
 func (renderer *toolRowRenderer) Destroy() {}
 
 // ---------------------------------------------------------------------------
@@ -984,4 +986,28 @@ func (currentTurn *turn) countWait(what string, after time.Duration) {
 		after = time.Second
 	}
 	time.AfterFunc(after, tick)
+}
+
+// diffStat counts added and removed lines of a unified diff.
+func diffStat(diff string) (added, removed int) {
+	for _, line := range strings.Split(diff, "\n") {
+		switch {
+		case strings.HasPrefix(line, "+++"), strings.HasPrefix(line, "---"):
+		case strings.HasPrefix(line, "+"):
+			added++
+		case strings.HasPrefix(line, "-"):
+			removed++
+		}
+	}
+	return
+}
+
+func elapsed(ms int64) string {
+	switch {
+	case ms < 1000:
+		return fmt.Sprintf("%d ms", ms)
+	case ms < 60000:
+		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(ms)/1000), ".0") + " s"
+	}
+	return fmt.Sprintf("%dm %02ds", ms/60000, ms/1000%60)
 }

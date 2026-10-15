@@ -2,6 +2,9 @@
 
 package main
 
+// The headless server's state: chats, settings and paired devices, kept as
+// private JSON files in its data directory, and the runs of its agent loop.
+
 import (
 	"context"
 	"encoding/json"
@@ -27,6 +30,7 @@ type serverChat struct {
 	session      *browserSession
 	queue, steer []message
 }
+
 type serverRun struct {
 	cancel      context.CancelFunc
 	calls       map[string]int
@@ -36,6 +40,7 @@ type serverRun struct {
 	label, mark string
 	approval    *remoteApproval
 }
+
 type serverSettings struct {
 	Config            config            `json:"config"`
 	Connections       []connection      `json:"connections"`
@@ -44,6 +49,7 @@ type serverSettings struct {
 	ApprovalMode      string            `json:"approvalMode"`
 	ClassicCompaction bool              `json:"classicCompaction"`
 }
+
 type headlessServer struct {
 	mu                         sync.Mutex
 	ctx                        context.Context
@@ -64,6 +70,7 @@ type headlessServer struct {
 	loading                    bool
 	saveTimer                  *time.Timer
 }
+
 type serverEvent struct {
 	kind string
 	data []byte
@@ -71,7 +78,21 @@ type serverEvent struct {
 
 func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*headlessServer, error) {
 	host, _ := os.Hostname()
-	server := &headlessServer{ctx: ctx, name: host, root: root, dir: dir, backend: &app{approvals: map[string]chan bool{}}, keys: map[string]string{}, pairs: map[string]*serverPair{}, subs: map[chan serverEvent]bool{}, streams: map[chan struct{}]bool{}, choices: map[string]modelChoice{}, approvalMode: "approval", loading: true, cfg: config{Provider: "compatible", Workspace: root}}
+	server := &headlessServer{
+		ctx:          ctx,
+		name:         host,
+		root:         root,
+		dir:          dir,
+		backend:      &app{approvals: map[string]chan bool{}},
+		keys:         map[string]string{},
+		pairs:        map[string]*serverPair{},
+		subs:         map[chan serverEvent]bool{},
+		streams:      map[chan struct{}]bool{},
+		choices:      map[string]modelChoice{},
+		approvalMode: "approval",
+		loading:      true,
+		cfg:          config{Provider: "compatible", Workspace: root},
+	}
 	var saved struct {
 		Chats   []*serverChat
 		Devices []pairedDevice
@@ -110,7 +131,14 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 	}
 	server.cfg.Workspace = root
 	if len(server.connections) == 0 {
-		server.connections = []connection{{ID: identifier(), Name: providerName(server.cfg.Provider), Provider: server.cfg.Provider, BaseURL: server.cfg.BaseURL, Enabled: true, AllModels: true}}
+		server.connections = []connection{{
+			ID:        identifier(),
+			Name:      providerName(server.cfg.Provider),
+			Provider:  server.cfg.Provider,
+			BaseURL:   server.cfg.BaseURL,
+			Enabled:   true,
+			AllModels: true,
+		}}
 		server.cfg.ConnectionID = server.connections[0].ID
 	}
 	browserProfileOverride = filepath.Join(dir, "browser")
@@ -126,6 +154,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 	}
 	return server, nil
 }
+
 func (server *headlessServer) saveLocked() error {
 	for _, chat := range server.chats {
 		// Unopened chats still hold their saved tabs; no live session owns them yet.
@@ -144,6 +173,7 @@ func (server *headlessServer) saveLocked() error {
 		Devices []pairedDevice `json:"devices"`
 	}{server.chats, server.devices})
 }
+
 func (server *headlessServer) scheduleSaveLocked() {
 	if server.saveTimer != nil {
 		server.saveTimer.Stop()
@@ -156,6 +186,7 @@ func (server *headlessServer) scheduleSaveLocked() {
 		}
 	})
 }
+
 func (server *headlessServer) close() {
 	server.mu.Lock()
 	if server.saveTimer != nil {
@@ -179,6 +210,7 @@ func (server *headlessServer) close() {
 	server.engine.cancel()
 	server.engine.waitClosed()
 }
+
 func (server *headlessServer) chatLocked(id string) *serverChat {
 	for _, chat := range server.chats {
 		if chat.ID == id {
@@ -187,6 +219,7 @@ func (server *headlessServer) chatLocked(id string) *serverChat {
 	}
 	return nil
 }
+
 func (server *headlessServer) loadModels() {
 	choices := map[string]modelChoice{}
 	for _, connection := range server.connections {
@@ -216,6 +249,7 @@ func (server *headlessServer) loadModels() {
 	}
 	server.broadcastLocked("settings", server.settingsLocked())
 }
+
 func (server *headlessServer) configFor(choice modelChoice, previous config) config {
 	cfg := choice.Connection.config(server.root)
 	cfg.Model = choice.ID
@@ -230,6 +264,7 @@ func (server *headlessServer) configFor(choice modelChoice, previous config) con
 	cfg.Routing = mergeOptions(cfg.Routing, options.Provider)
 	return cfg
 }
+
 func (server *headlessServer) labelLocked(cfg config) string {
 	for label, choice := range server.choices {
 		if choice.ID == cfg.Model && choice.Connection.ID == cfg.ConnectionID {
@@ -238,6 +273,7 @@ func (server *headlessServer) labelLocked(cfg config) string {
 	}
 	return cfg.Model
 }
+
 func (server *headlessServer) settingsLocked() map[string]any {
 	models := []remoteModel{}
 	for label, choice := range server.choices {
@@ -247,8 +283,18 @@ func (server *headlessServer) settingsLocked() map[string]any {
 		}
 		models = append(models, model)
 	}
-	return map[string]any{"models": models, "model": server.labelLocked(server.cfg), "effort": server.cfg.Effort, "window": modelContextWindow(server.cfg), "approvalMode": server.approvalMode, "autoMode": server.cfg.Provider == "claudecode", "loading": server.loading, "computerUse": false}
+	return map[string]any{
+		"models":       models,
+		"model":        server.labelLocked(server.cfg),
+		"effort":       server.cfg.Effort,
+		"window":       modelContextWindow(server.cfg),
+		"approvalMode": server.approvalMode,
+		"autoMode":     server.cfg.Provider == "claudecode",
+		"loading":      server.loading,
+		"computerUse":  false,
+	}
 }
+
 func (server *headlessServer) summariesLocked() []remoteChat {
 	out := []remoteChat{}
 	for _, chat := range server.chats {
@@ -256,8 +302,20 @@ func (server *headlessServer) summariesLocked() []remoteChat {
 	}
 	return out
 }
+
 func (server *headlessServer) metaLocked(chat *serverChat) remoteMeta {
-	meta := remoteMeta{Chat: chat.ID, Title: chat.Title, Running: chat.run != nil, Items: len(chat.Items), Queue: []string{}, Steer: []string{}, Model: server.labelLocked(chat.Config), Effort: chat.Config.Effort, Window: modelContextWindow(chat.Config), Todo: []remoteTodo{}}
+	meta := remoteMeta{
+		Chat:    chat.ID,
+		Title:   chat.Title,
+		Running: chat.run != nil,
+		Items:   len(chat.Items),
+		Queue:   []string{},
+		Steer:   []string{},
+		Model:   server.labelLocked(chat.Config),
+		Effort:  chat.Config.Effort,
+		Window:  modelContextWindow(chat.Config),
+		Todo:    []remoteTodo{},
+	}
 	for _, m := range chat.queue {
 		meta.Queue = append(meta.Queue, m.Content)
 	}
@@ -284,9 +342,20 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteMeta {
 	meta.ContextStatus = taskContextText(chat.Config, meta.Used, meta.Window, server.classic, meta.Mark)
 	return meta
 }
+
 func (server *headlessServer) itemLocked(chat *serverChat, index int) remoteItem {
 	item := chat.Items[index]
-	out := remoteItem{Kind: item.Kind, Text: item.Text, Images: len(item.Images), Tool: item.Tool, Args: item.Args, Diff: item.Diff, Millis: item.Millis, Failed: item.Failed, State: "done"}
+	out := remoteItem{
+		Kind:   item.Kind,
+		Text:   item.Text,
+		Images: len(item.Images),
+		Tool:   item.Tool,
+		Args:   item.Args,
+		Diff:   item.Diff,
+		Millis: item.Millis,
+		Failed: item.Failed,
+		State:  "done",
+	}
 	if chat.run != nil {
 		if state := chat.run.states[index]; state != "" {
 			out.State = state
@@ -301,6 +370,7 @@ func (server *headlessServer) itemLocked(chat *serverChat, index int) remoteItem
 	}
 	return out
 }
+
 func (server *headlessServer) broadcastLocked(kind string, value any) {
 	data, err := json.Marshal(value)
 	if err != nil {
@@ -315,6 +385,7 @@ func (server *headlessServer) broadcastLocked(kind string, value any) {
 		}
 	}
 }
+
 func (server *headlessServer) disconnectStreamsLocked() {
 	for channel := range server.subs {
 		close(channel)
@@ -325,6 +396,7 @@ func (server *headlessServer) disconnectStreamsLocked() {
 		delete(server.streams, done)
 	}
 }
+
 func (server *headlessServer) changedLocked(chat *serverChat, index int) {
 	if index >= 0 {
 		server.broadcastLocked("item", map[string]any{"chat": chat.ID, "index": index, "item": server.itemLocked(chat, index)})
@@ -332,6 +404,7 @@ func (server *headlessServer) changedLocked(chat *serverChat, index int) {
 	server.broadcastLocked("meta", server.metaLocked(chat))
 	server.scheduleSaveLocked()
 }
+
 func (server *headlessServer) addLocked(chat *serverChat, item chatItem) int {
 	if item.ID == "" {
 		item.ID = identifier()[:16]
@@ -339,6 +412,7 @@ func (server *headlessServer) addLocked(chat *serverChat, item chatItem) int {
 	chat.Items = append(chat.Items, item)
 	return len(chat.Items) - 1
 }
+
 func (server *headlessServer) runLocked(chat *serverChat, m message) {
 	chat.History = append(chat.History, m)
 	index := server.addLocked(chat, chatItem{Kind: "user", Text: m.Content, Images: m.Images})
@@ -402,6 +476,7 @@ func (server *headlessServer) runLocked(chat *serverChat, m message) {
 		}
 	}()
 }
+
 func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string, value any) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
@@ -469,5 +544,12 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 }
 
 func (server *headlessServer) saveSettingsLocked() error {
-	return saveServerJSON(filepath.Join(server.dir, "config.json"), serverSettings{Config: server.cfg, Connections: server.connections, Keys: server.keys, UserInstructions: server.instructions, ApprovalMode: server.approvalMode, ClassicCompaction: server.classic})
+	return saveServerJSON(filepath.Join(server.dir, "config.json"), serverSettings{
+		Config:            server.cfg,
+		Connections:       server.connections,
+		Keys:              server.keys,
+		UserInstructions:  server.instructions,
+		ApprovalMode:      server.approvalMode,
+		ClassicCompaction: server.classic,
+	})
 }

@@ -376,16 +376,3 @@ func linkAt(s string) (label, url string, n int, ok bool) {
 	}
 	return "", "", 0, false
 }
-
-// plainText is the text of spans without their styles.
-func plainText(spans []span) string {
-	var builder strings.Builder
-	for _, spanValue := range spans {
-		if spanValue.hard {
-			builder.WriteByte('\n')
-		} else {
-			builder.WriteString(spanValue.text)
-		}
-	}
-	return builder.String()
-}

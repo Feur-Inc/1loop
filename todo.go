@@ -2,6 +2,8 @@
 
 package main
 
+// The task list's tab in the side panel, each task with its ring.
+
 import (
 	"fmt"
 	"image"
@@ -210,10 +212,12 @@ func (renderer *taskMarkRenderer) Layout(size fyne.Size) {
 		renderer.taskMark.draw() // now on a window: at its real density
 	}
 }
+
 func (renderer *taskMarkRenderer) Refresh() { renderer.taskMark.draw() }
 func (renderer *taskMarkRenderer) Objects() []fyne.CanvasObject {
 	return []fyne.CanvasObject{renderer.taskMark.image}
 }
+
 func (renderer *taskMarkRenderer) Destroy() { renderer.taskMark.stop() }
 
 func taskElapsed(item todoItem, now time.Time) string {

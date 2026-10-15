@@ -2,6 +2,9 @@
 
 package main
 
+// The headless server's side panel API: a chat's tabs, terminal screens,
+// browser streams and the input sent to them.
+
 import (
 	"context"
 	"encoding/base64"
@@ -28,6 +31,7 @@ func (server *headlessServer) findTab(req *http.Request) (*serverChat, *serverTa
 	}
 	return chat, nil
 }
+
 func (server *headlessServer) panelTabs(w http.ResponseWriter, r *http.Request) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
@@ -59,6 +63,7 @@ func (server *headlessServer) panelTabs(w http.ResponseWriter, r *http.Request) 
 	}
 	writeJSON(w, 200, map[string]any{"tabs": tabs})
 }
+
 func (server *headlessServer) panelTab(w http.ResponseWriter, r *http.Request) {
 	chat, tab := server.findTab(r)
 	if chat == nil {
@@ -107,6 +112,7 @@ func (server *headlessServer) panelTab(w http.ResponseWriter, r *http.Request) {
 	tab.terminal.mu.Unlock()
 	writeJSON(w, 200, map[string]any{"output": output, "cwd": tab.terminal.dir, "exited": exited})
 }
+
 func (server *headlessServer) panelScreen(w http.ResponseWriter, r *http.Request) {
 	_, tab := server.findTab(r)
 	if tab == nil {
@@ -127,6 +133,7 @@ func (server *headlessServer) panelScreen(w http.ResponseWriter, r *http.Request
 	w.Header().Set("Content-Type", "image/png")
 	w.Write(data)
 }
+
 func (server *headlessServer) panelStream(w http.ResponseWriter, r *http.Request) {
 	_, tab := server.findTab(r)
 	if tab == nil || tab.browser == nil {
@@ -140,6 +147,7 @@ func (server *headlessServer) panelStream(w http.ResponseWriter, r *http.Request
 	defer func() { server.mu.Lock(); delete(server.streams, revoked); server.mu.Unlock() }()
 	serveBrowserStream(w, r, tab.browser, revoked)
 }
+
 func (server *headlessServer) panelInput(w http.ResponseWriter, r *http.Request) {
 	_, tab := server.findTab(r)
 	if tab == nil {
@@ -179,7 +187,9 @@ func (server *headlessServer) panelInput(w http.ResponseWriter, r *http.Request)
 				err = tab.browser.resize(r.Context(), args.Width, args.Height, args.Mobile, args.Adaptive)
 			}
 		case "scroll":
-			err = tab.browser.interact(r.Context(), "scroll", "", "", args.X*float64(tab.browser.snapshot().Width), args.Y*float64(tab.browser.snapshot().Height), args.DX*float64(tab.browser.snapshot().Width), args.DY*float64(tab.browser.snapshot().Height))
+			view := tab.browser.snapshot()
+			width, height := float64(view.Width), float64(view.Height)
+			err = tab.browser.interact(r.Context(), "scroll", "", "", args.X*width, args.Y*height, args.DX*width, args.DY*height)
 		case "key":
 			err = tab.browser.interact(r.Context(), "key", "", args.Text, 0, 0, 0, 0)
 		default:

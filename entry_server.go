@@ -2,6 +2,9 @@
 
 package main
 
+// The headless server's entry point (make server; see SERVER.md). It serves
+// the phone and desktop clients over HTTPS and pairs them from its console.
+
 import (
 	"context"
 	"crypto/tls"
@@ -69,7 +72,14 @@ func main() {
 		if existing == "" {
 			existing = identifier()
 		}
-		server.connections = []connection{{ID: existing, Name: providerName(server.cfg.Provider), Provider: server.cfg.Provider, BaseURL: server.cfg.BaseURL, Enabled: true, AllModels: true}}
+		server.connections = []connection{{
+			ID:        existing,
+			Name:      providerName(server.cfg.Provider),
+			Provider:  server.cfg.Provider,
+			BaseURL:   server.cfg.BaseURL,
+			Enabled:   true,
+			AllModels: true,
+		}}
 		server.cfg.ConnectionID = existing
 	}
 	if err = server.saveSettingsLocked(); err != nil {
@@ -90,7 +100,13 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
-	httpServer := &http.Server{Handler: server.routes(), ReadHeaderTimeout: 10 * time.Second, IdleTimeout: 90 * time.Second, MaxHeaderBytes: 32 << 10, TLSConfig: &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}}}
+	httpServer := &http.Server{
+		Handler:           server.routes(),
+		ReadHeaderTimeout: 10 * time.Second,
+		IdleTimeout:       90 * time.Second,
+		MaxHeaderBytes:    32 << 10,
+		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}},
+	}
 	fmt.Fprintf(os.Stderr, "1loop server listening on https://%s\nCertificate SHA-256: %s\nWorkspace: %s\nCommands: pair <id> <code>, devices, revoke <number>\n", listener.Addr(), certificateFingerprint(certificate), root)
 	go server.console()
 	go server.loadModels()

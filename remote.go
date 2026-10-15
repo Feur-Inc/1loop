@@ -53,7 +53,7 @@ const (
 	remoteProtocol      = 1
 )
 
-// pairedDevice is a phone allowed to drive 1loop; only its token's hash is kept.
+// pairing is a phone waiting for the user to type the code shown on screen.
 type pairing struct {
 	device  string
 	code    string

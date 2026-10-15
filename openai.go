@@ -36,6 +36,7 @@ type openAITokens struct {
 	Type      string `json:"token_type"`
 	ExpiresIn int64  `json:"expires_in"`
 }
+
 type openAIAccount struct {
 	ClientID string       `json:"client_id"`
 	Subject  string       `json:"subject"`
@@ -43,6 +44,7 @@ type openAIAccount struct {
 	Expires  time.Time    `json:"expires_at"`
 	Tokens   openAITokens `json:"tokens"`
 }
+
 type openAIAuth struct {
 	mu      sync.Mutex
 	Account openAIAccount `json:"account"`
@@ -73,6 +75,7 @@ func newOpenAIAuth(profiles ...string) (*openAIAuth, error) {
 
 	return auth, nil
 }
+
 func (auth *openAIAuth) save() error {
 	data, err := json.MarshalIndent(auth, "", "  ")
 	if err != nil {
@@ -95,6 +98,7 @@ func (auth *openAIAuth) save() error {
 	}
 	return os.Rename(file.Name(), auth.path)
 }
+
 func tokenExchange(ctx context.Context, form url.Values) (openAITokens, error) {
 	var openAITokensValue openAITokens
 	req, err := http.NewRequestWithContext(ctx, "POST", openAIIssuer+"/oauth/token", strings.NewReader(form.Encode()))
@@ -122,6 +126,7 @@ func tokenExchange(ctx context.Context, form url.Values) (openAITokens, error) {
 	}
 	return openAITokensValue, err
 }
+
 func (auth *openAIAuth) credential(ctx context.Context) (string, error) {
 	auth.mu.Lock()
 	defer auth.mu.Unlock()
@@ -136,7 +141,11 @@ func (auth *openAIAuth) credential(ctx context.Context) (string, error) {
 		if openAIAccount.Tokens.Refresh == "" {
 			return "", fmt.Errorf("OpenAI session expired; reconnect your account")
 		}
-		openAITokens, err := tokenExchange(ctx, url.Values{"grant_type": {"refresh_token"}, "client_id": {openAIAccount.ClientID}, "refresh_token": {openAIAccount.Tokens.Refresh}})
+		openAITokens, err := tokenExchange(ctx, url.Values{
+			"grant_type":    {"refresh_token"},
+			"client_id":     {openAIAccount.ClientID},
+			"refresh_token": {openAIAccount.Tokens.Refresh},
+		})
 		if err != nil {
 			return "", err
 		}
@@ -173,7 +182,18 @@ func (auth *openAIAuth) begin(ctx context.Context) (string, <-chan error, error)
 	original := auth.Account
 	auth.mu.Unlock()
 	clientID := openAIClientID
-	q := url.Values{"client_id": {clientID}, "response_type": {"code"}, "redirect_uri": {callback}, "scope": {"openid profile email offline_access"}, "state": {state}, "code_challenge_method": {"S256"}, "code_challenge": {base64.RawURLEncoding.EncodeToString(digest[:])}, "id_token_add_organizations": {"true"}, "codex_cli_simplified_flow": {"true"}, "originator": {"1loop"}}
+	q := url.Values{
+		"client_id":                  {clientID},
+		"response_type":              {"code"},
+		"redirect_uri":               {callback},
+		"scope":                      {"openid profile email offline_access"},
+		"state":                      {state},
+		"code_challenge_method":      {"S256"},
+		"code_challenge":             {base64.RawURLEncoding.EncodeToString(digest[:])},
+		"id_token_add_organizations": {"true"},
+		"codex_cli_simplified_flow":  {"true"},
+		"originator":                 {"1loop"},
+	}
 
 	result := make(chan error, 1)
 	var once sync.Once
@@ -195,7 +215,13 @@ func (auth *openAIAuth) begin(ctx context.Context) (string, <-chan error, error)
 					loginErr = fmt.Errorf("Missing authorization code")
 				}
 				if loginErr == nil {
-					openAITokens, errorValue := tokenExchange(ctx, url.Values{"grant_type": {"authorization_code"}, "client_id": {issued}, "code": {returned.Get("code")}, "code_verifier": {verifier}, "redirect_uri": {callback}})
+					openAITokens, errorValue := tokenExchange(ctx, url.Values{
+						"grant_type":    {"authorization_code"},
+						"client_id":     {issued},
+						"code":          {returned.Get("code")},
+						"code_verifier": {verifier},
+						"redirect_uri":  {callback},
+					})
 					loginErr = errorValue
 					if errorValue == nil {
 						sub, email, e := validateOpenAIID(ctx, openAITokens.ID, issued, "")
@@ -207,7 +233,13 @@ func (auth *openAIAuth) begin(ctx context.Context) (string, <-chan error, error)
 						if loginErr == nil {
 							auth.mu.Lock()
 							previous := auth.Account
-							auth.Account = openAIAccount{ClientID: issued, Subject: sub, Email: email, Tokens: openAITokens, Expires: time.Now().Add(time.Duration(openAITokens.ExpiresIn) * time.Second)}
+							auth.Account = openAIAccount{
+								ClientID: issued,
+								Subject:  sub,
+								Email:    email,
+								Tokens:   openAITokens,
+								Expires:  time.Now().Add(time.Duration(openAITokens.ExpiresIn) * time.Second),
+							}
 							loginErr = auth.save()
 							if loginErr != nil {
 								auth.Account = previous
@@ -247,6 +279,7 @@ func (auth *openAIAuth) begin(ctx context.Context) (string, <-chan error, error)
 	}()
 	return openAIIssuer + "/oauth/authorize?" + q.Encode(), done, nil
 }
+
 func validateOpenAIID(ctx context.Context, token, clientID, nonce string) (string, string, error) {
 	parts := strings.Split(token, ".")
 	if len(parts) != 3 {
@@ -365,6 +398,7 @@ func (backend *app) getOpenAI(profile string) (*openAIAuth, error) {
 	}
 	return auth, nil
 }
+
 func (backend *app) openAIConfig(ctx context.Context, cfg config) (config, error) {
 	auth, err := backend.getOpenAI(cfg.AuthProfile)
 	if err != nil {
@@ -379,6 +413,7 @@ func (backend *app) openAIConfig(ctx context.Context, cfg config) (config, error
 	auth.mu.Unlock()
 	return cfg, nil
 }
+
 func (backend *app) beginOpenAI(ctx context.Context, profiles ...string) (string, <-chan error, error) {
 	profile := ""
 	if len(profiles) > 0 {
@@ -390,6 +425,7 @@ func (backend *app) beginOpenAI(ctx context.Context, profiles ...string) (string
 	}
 	return auth.begin(ctx)
 }
+
 func (backend *app) disconnectOpenAI(ctx context.Context, profile string) (string, error) {
 	auth, err := backend.getOpenAI(profile)
 	if err != nil {
@@ -407,6 +443,7 @@ func (backend *app) disconnectOpenAI(ctx context.Context, profile string) (strin
 	auth.Account.Tokens = openAITokens{}
 	return warning, auth.save()
 }
+
 func revokeOpenAI(ctx context.Context, account openAIAccount) error {
 	client := &http.Client{Timeout: 20 * time.Second, CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
 	discovery, err := http.NewRequestWithContext(ctx, "GET", openAIIssuer+"/.well-known/openid-configuration", nil)

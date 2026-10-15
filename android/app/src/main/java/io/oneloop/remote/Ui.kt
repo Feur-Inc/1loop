@@ -1,5 +1,6 @@
 package io.oneloop.remote
 
+import android.content.ClipData
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
@@ -35,7 +36,6 @@ import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.statusBarsPadding
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
@@ -63,7 +63,6 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -78,9 +77,9 @@ import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
-import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.ClipEntry
+import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextAlign
@@ -91,6 +90,7 @@ import androidx.compose.ui.unit.sp
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
+import java.util.Locale
 
 // ---------------------------------------------------------------------------
 // Shared controls, shaped like the desktop's (ui.go tapRow styles).
@@ -111,7 +111,7 @@ fun Pill(text: String, primary: Boolean = false, enabled: Boolean = true, icon: 
 }
 
 @Composable
-fun RoundButton(icon: ImageVector, fill: Color, ink: Color, size: Dp = 40.dp, iconSize: Dp = 20.dp, description: String, modifier: Modifier = Modifier, onClick: () -> Unit) {
+fun RoundButton(icon: ImageVector, fill: Color, ink: Color, description: String, modifier: Modifier = Modifier, size: Dp = 40.dp, iconSize: Dp = 20.dp, onClick: () -> Unit) {
     Box(
         modifier.size(size).clip(CircleShape).background(fill).clickable(onClick = onClick),
         contentAlignment = Alignment.Center,
@@ -120,11 +120,16 @@ fun RoundButton(icon: ImageVector, fill: Color, ink: Color, size: Dp = 40.dp, ic
 
 @Composable
 fun CopyChip(text: () -> String) {
-    val clipboard = LocalClipboardManager.current
+    val clipboard = LocalClipboard.current
+    val scope = rememberCoroutineScope()
     var copied by remember { mutableStateOf(false) }
     LaunchedEffect(copied) { if (copied) { delay(1400); copied = false } }
     Row(
-        Modifier.clip(RoundedCornerShape(6.dp)).clickable { clipboard.setText(AnnotatedString(text())); copied = true }
+        Modifier.clip(RoundedCornerShape(6.dp)).clickable {
+            val clip = ClipData.newPlainText("1loop", text())
+            scope.launch { clipboard.setClipEntry(ClipEntry(clip)) }
+            copied = true
+        }
             .padding(horizontal = 8.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {
@@ -745,7 +750,7 @@ private fun Section(name: String, text: String, empty: String) {
 
 private fun elapsed(ms: Long) = when {
     ms < 1000 -> "$ms ms"
-    ms < 60000 -> String.format("%.1f s", ms / 1000.0).replace(".0 s", " s")
+    ms < 60000 -> String.format(Locale.ROOT, "%.1f s", ms / 1000.0).replace(".0 s", " s")
     else -> "${ms / 60000}m ${(ms / 1000 % 60).toString().padStart(2, '0')}s"
 }
 

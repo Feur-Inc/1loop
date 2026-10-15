@@ -17,12 +17,14 @@ import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.net.URL
 import java.security.MessageDigest
+import java.security.cert.CertificateException
 import java.security.cert.X509Certificate
+import java.util.concurrent.ConcurrentHashMap
+import javax.net.ssl.HostnameVerifier
 import javax.net.ssl.HttpsURLConnection
 import javax.net.ssl.SSLContext
-import javax.net.ssl.X509TrustManager
 import javax.net.ssl.SSLSocketFactory
-import java.util.concurrent.ConcurrentHashMap
+import javax.net.ssl.X509TrustManager
 
 // The desktop side is remote.go: UDP discovery on 47100, HTTP on 47101.
 const val DISCOVERY_PORT = 47100
@@ -87,35 +89,47 @@ private fun subnetBroadcasts(context: Context): List<InetAddress> {
     }
 }
 
+// A headless server (SERVER.md) has a private certificate: the phone trusts
+// it by the SHA-256 fingerprint its console prints, and nothing else.
+
+private val pinnedFactories = ConcurrentHashMap<String, SSLSocketFactory>()
+
+private fun fingerprintOf(certificate: X509Certificate): String =
+    MessageDigest.getInstance("SHA-256").digest(certificate.encoded).joinToString("") { "%02x".format(it.toInt() and 255) }
+
+private fun pinnedSocketFactory(expected: String): SSLSocketFactory = pinnedFactories.computeIfAbsent(expected) {
+    val trust = object : X509TrustManager {
+        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {
+            throw CertificateException("Client certificates are not used")
+        }
+        override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+            if (chain.isEmpty() || fingerprintOf(chain[0]) != expected) {
+                throw CertificateException("Server certificate fingerprint changed. Verify it on the server console.")
+            }
+            chain[0].checkValidity()
+        }
+    }
+    SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }.socketFactory
+}
+
+private fun pin(connection: HttpsURLConnection, fingerprint: String) {
+    val expected = fingerprint.replace(":", "").lowercase()
+    require(expected.matches(Regex("[0-9a-f]{64}"))) { "Enter the SHA-256 fingerprint from the server console." }
+    connection.sslSocketFactory = pinnedSocketFactory(expected)
+    connection.hostnameVerifier = HostnameVerifier { _, session ->
+        (session.peerCertificates.firstOrNull() as? X509Certificate)?.let(::fingerprintOf) == expected
+    }
+}
+
 /** One computer's API. Every call is blocking: run it on Dispatchers.IO. */
 class Api(val server: Server) {
-    companion object { private val pinnedFactories = ConcurrentHashMap<String, SSLSocketFactory>() }
     private val base = server.baseURL
 
     private fun connection(path: String): HttpURLConnection {
         val connection = URL(base + path).openConnection() as HttpURLConnection
         connection.instanceFollowRedirects = false
-        if (connection is HttpsURLConnection && server.fingerprint.isNotEmpty()) {
-            val expected = server.fingerprint.replace(":", "").lowercase()
-            require(expected.matches(Regex("[0-9a-f]{64}"))) { "Enter the SHA-256 fingerprint from the server console." }
-            fun matches(certificate: X509Certificate): Boolean =
-                MessageDigest.getInstance("SHA-256").digest(certificate.encoded).joinToString("") { "%02x".format(it.toInt() and 255) } == expected
-            connection.sslSocketFactory = pinnedFactories.computeIfAbsent(expected) {
-                val trust = object : X509TrustManager {
-                    override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-                    override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) { throw java.security.cert.CertificateException("Client certificates are not used") }
-                    override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
-                        if (chain.isEmpty() || !matches(chain[0])) throw java.security.cert.CertificateException("Server certificate fingerprint changed. Verify it on the server console.")
-                        chain[0].checkValidity()
-                    }
-                }
-                val tls = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }
-                tls.socketFactory
-            }
-            connection.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, session ->
-                (session.peerCertificates.firstOrNull() as? X509Certificate)?.let(::matches) == true
-            }
-        }
+        if (connection is HttpsURLConnection && server.fingerprint.isNotEmpty()) pin(connection, server.fingerprint)
         if (server.token.isNotEmpty()) connection.setRequestProperty("Authorization", "Bearer ${server.token}")
         return connection
     }

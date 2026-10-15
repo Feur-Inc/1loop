@@ -128,7 +128,11 @@ func (process *computerProcess) request(ctx context.Context, method string, para
 }
 
 func (process *computerProcess) initialize(ctx context.Context) error {
-	_, err := process.request(ctx, "initialize", map[string]any{"protocolVersion": "2025-03-26", "capabilities": map[string]any{}, "clientInfo": map[string]string{"name": "1loop", "version": "1.0"}})
+	_, err := process.request(ctx, "initialize", map[string]any{
+		"protocolVersion": "2025-03-26",
+		"capabilities":    map[string]any{},
+		"clientInfo":      map[string]string{"name": "1loop", "version": "1.0"},
+	})
 	if err == nil {
 		_, err = io.WriteString(process.input, "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n")
 	}
@@ -221,8 +225,39 @@ func computerInstructions(cfg config) string {
 }
 
 func computerToolDefinition() map[string]any {
-	actions := []string{"instructions", "start", "stop", "screenshot", "get_app_state", "describe", "doctor", "list_windows", "focused_window", "activate_window", "click", "move", "scroll", "drag", "press_key", "type_text", "perform_action", "set_value", "move_window", "resize_window", "setup_accessibility"}
-	return map[string]any{"type": "function", "function": map[string]any{"name": "computer_use", "description": "Control the real desktop after reading instructions and obtaining the user's Wayland sharing permission. Session persists between calls. Screenshot images reach your vision input. Use arguments=\"{}\" when no parameters are needed.", "parameters": map[string]any{"type": "object", "properties": map[string]any{"action": map[string]any{"type": "string", "enum": actions}, "arguments": map[string]any{"type": "string", "description": "JSON object for this action. Read instructions for coordinate/key actions; describe provides accessibility/window schemas."}}, "required": []string{"action", "arguments"}, "additionalProperties": false}}}
+	actions := []string{
+		"instructions",
+		"start",
+		"stop",
+		"screenshot",
+		"get_app_state",
+		"describe",
+		"doctor",
+		"list_windows",
+		"focused_window",
+		"activate_window",
+		"click",
+		"move",
+		"scroll",
+		"drag",
+		"press_key",
+		"type_text",
+		"perform_action",
+		"set_value",
+		"move_window",
+		"resize_window",
+		"setup_accessibility",
+	}
+	return map[string]any{"type": "function", "function": map[string]any{
+		"name":        "computer_use",
+		"description": "Control the real desktop after reading instructions and obtaining the user's Wayland sharing permission. Session persists between calls. Screenshot images reach your vision input. Use arguments=\"{}\" when no parameters are needed.",
+		"parameters": map[string]any{
+			"type":                 "object",
+			"properties":           map[string]any{"action": map[string]any{"type": "string", "enum": actions}, "arguments": map[string]any{"type": "string", "description": "JSON object for this action. Read instructions for coordinate/key actions; describe provides accessibility/window schemas."}},
+			"required":             []string{"action", "arguments"},
+			"additionalProperties": false,
+		},
+	}}
 }
 
 func computerNeedsApproval(arguments json.RawMessage) bool {

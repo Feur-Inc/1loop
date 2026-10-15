@@ -23,7 +23,11 @@ func toolDefinitions() []map[string]any {
 		{"shell", "Run a Linux bash command in the workspace after user approval. Commands have a 60 second timeout.", []string{"command"}},
 		{"read_file", "Read a UTF-8 text file in the workspace (maximum 1 MiB).", []string{"path"}},
 		{"list_directory", "List entries of a directory in the workspace. Use . for the root.", []string{"path"}},
-		{"edit_file", "Replace exactly one occurrence of old_text with new_text in an existing file. To create a new file, use old_text empty. A unified diff is shown for approval before writing. Parent directories must exist.", []string{"path", "old_text", "new_text"}},
+		{
+			"edit_file",
+			"Replace exactly one occurrence of old_text with new_text in an existing file. To create a new file, use old_text empty. A unified diff is shown for approval before writing. Parent directories must exist.",
+			[]string{"path", "old_text", "new_text"},
+		},
 	}
 	result := make([]map[string]any, 0, len(definitions))
 	for _, d := range definitions {
@@ -31,7 +35,11 @@ func toolDefinitions() []map[string]any {
 		for _, field := range d.fields {
 			properties[field] = map[string]any{"type": "string"}
 		}
-		result = append(result, map[string]any{"type": "function", "function": map[string]any{"name": d.name, "description": d.description, "parameters": map[string]any{"type": "object", "properties": properties, "required": d.fields, "additionalProperties": false}}})
+		result = append(result, map[string]any{"type": "function", "function": map[string]any{
+			"name":        d.name,
+			"description": d.description,
+			"parameters":  map[string]any{"type": "object", "properties": properties, "required": d.fields, "additionalProperties": false},
+		}})
 	}
 	result = append(result, todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition())
 	if definition := computerToolDefinition(); definition != nil {

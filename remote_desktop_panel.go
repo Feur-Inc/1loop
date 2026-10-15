@@ -2,6 +2,9 @@
 
 package main
 
+// A headless server's side panel in the desktop client: its terminals and
+// browser tabs, streamed from the server.
+
 import (
 	"bytes"
 	"context"
@@ -40,7 +43,10 @@ func (remote *remoteDesktop) panelContent(tab remoteTab) (fyne.CanvasObject, con
 		address := widget.NewEntry()
 		address.SetText(tab.URL)
 		address.OnSubmitted = func(text string) { screen.input(map[string]any{"action": "navigate", "text": text}) }
-		nav := container.NewHBox(newRow("←", nil, styleChip, func() { screen.input(map[string]any{"action": "back"}) }), newRow("→", nil, styleChip, func() { screen.input(map[string]any{"action": "forward"}) }), newRow("Reload", nil, styleChip, func() { screen.input(map[string]any{"action": "reload"}) }))
+		navigate := func(label, action string) fyne.CanvasObject {
+			return newRow(label, nil, styleChip, func() { screen.input(map[string]any{"action": action}) })
+		}
+		nav := container.NewHBox(navigate("←", "back"), navigate("→", "forward"), navigate("Reload", "reload"))
 		viewport := widget.NewEntry()
 		viewport.SetText("1280 × 800")
 		screen.viewportEntry = viewport
@@ -92,7 +98,13 @@ func (remote *remoteDesktop) panelContent(tab remoteTab) (fyne.CanvasObject, con
 				console.Show()
 			}
 		})
-		toolbar := container.NewVBox(container.NewBorder(nil, nil, nav, toggle, address), container.NewBorder(nil, nil, textLine("Viewport", 12, colMuted), container.NewHBox(newRow("Adaptive", nil, styleChip, func() { screen.requestedSize = fyne.Size{}; screen.viewport.Adaptive = true; screen.adaptViewport() }), resize), viewport))
+		adaptive := newRow("Adaptive", nil, styleChip, func() {
+			screen.requestedSize = fyne.Size{}
+			screen.viewport.Adaptive = true
+			screen.adaptViewport()
+		})
+		sizeRow := container.NewBorder(nil, nil, textLine("Viewport", 12, colMuted), container.NewHBox(adaptive, resize), viewport)
+		toolbar := container.NewVBox(container.NewBorder(nil, nil, nav, toggle, address), sizeRow)
 		return container.NewBorder(toolbar, console, nil, nil, screen), cancel, func(active bool) { screen.setActive(active, address) }
 	case "terminal":
 		reader, writer := io.Pipe()
@@ -214,6 +226,7 @@ func newRemoteTerminalWriter(remote *remoteDesktop, ctx context.Context, path st
 	}()
 	return writer
 }
+
 func (writer *remoteTerminalWriter) enqueue(args map[string]any) error {
 	select {
 	case <-writer.ctx.Done():
@@ -224,12 +237,14 @@ func (writer *remoteTerminalWriter) enqueue(args map[string]any) error {
 		return fmt.Errorf("Terminal input queue is full")
 	}
 }
+
 func (writer *remoteTerminalWriter) Write(data []byte) (int, error) {
 	if err := writer.enqueue(map[string]any{"action": "write", "text": string(data)}); err != nil {
 		return 0, err
 	}
 	return len(data), nil
 }
+
 func (writer *remoteTerminalWriter) Close() error { return nil }
 
 type remoteBrowserScreen struct {
@@ -248,7 +263,14 @@ type remoteBrowserScreen struct {
 }
 
 func newRemoteBrowserScreen(remote *remoteDesktop, ctx context.Context, path string) *remoteBrowserScreen {
-	screen := &remoteBrowserScreen{remote: remote, ctx: ctx, path: path, image: canvas.NewImageFromImage(nil), cursor: canvas.NewCircle(colAmber), commands: make(chan map[string]any, 128)}
+	screen := &remoteBrowserScreen{
+		remote:   remote,
+		ctx:      ctx,
+		path:     path,
+		image:    canvas.NewImageFromImage(nil),
+		cursor:   canvas.NewCircle(colAmber),
+		commands: make(chan map[string]any, 128),
+	}
 	screen.image.FillMode = canvas.ImageFillContain
 	screen.cursor.Hide()
 	screen.ExtendBaseWidget(screen)
@@ -269,6 +291,7 @@ func newRemoteBrowserScreen(remote *remoteDesktop, ctx context.Context, path str
 	}()
 	return screen
 }
+
 func (screen *remoteBrowserScreen) input(args map[string]any) {
 	select {
 	case <-screen.ctx.Done():
@@ -277,6 +300,7 @@ func (screen *remoteBrowserScreen) input(args map[string]any) {
 		screen.remote.status.SetText("Browser input queue is full; wait for the server.")
 	}
 }
+
 func (screen *remoteBrowserScreen) setActive(active bool, address *widget.Entry) {
 	if screen.active != nil && !active {
 		screen.active()
@@ -289,6 +313,7 @@ func (screen *remoteBrowserScreen) setActive(active bool, address *widget.Entry)
 		go screen.stream(ctx, address)
 	}
 }
+
 func (screen *remoteBrowserScreen) stream(ctx context.Context, address *widget.Entry) {
 	for ctx.Err() == nil {
 		response, err := screen.remote.client.request(ctx, "GET", screen.path+"/stream?format=png", nil)
@@ -345,18 +370,27 @@ func (screen *remoteBrowserScreen) stream(ctx context.Context, address *widget.E
 		}
 	}
 }
+
 func (screen *remoteBrowserScreen) Resize(size fyne.Size) {
 	screen.BaseWidget.Resize(size)
 	screen.adaptViewport()
 }
+
 func (screen *remoteBrowserScreen) adaptViewport() {
 	size := screen.Size()
 	if !screen.viewport.Adaptive || screen.active == nil || size.Width < 160 || size.Height < 120 || screen.requestedSize == size {
 		return
 	}
 	screen.requestedSize = size
-	screen.input(map[string]any{"action": "resize", "width": max(240, min(3840, int(size.Width))), "height": max(200, min(2160, int(size.Height))), "adaptive": true, "pixelRatio": float64(screen.remote.window.Canvas().Scale())})
+	screen.input(map[string]any{
+		"action":     "resize",
+		"width":      max(240, min(3840, int(size.Width))),
+		"height":     max(200, min(2160, int(size.Height))),
+		"adaptive":   true,
+		"pixelRatio": float64(screen.remote.window.Canvas().Scale()),
+	})
 }
+
 func (screen *remoteBrowserScreen) frame() (x, y, width, height float32) {
 	size := screen.Size()
 	width, height = size.Width, size.Height
@@ -371,6 +405,7 @@ func (screen *remoteBrowserScreen) frame() (x, y, width, height float32) {
 	}
 	return (size.Width - width) / 2, (size.Height - height) / 2, width, height
 }
+
 func (screen *remoteBrowserScreen) coords(position fyne.Position) (float64, float64, bool) {
 	x, y, width, height := screen.frame()
 	if width <= 0 || height <= 0 {
@@ -379,6 +414,7 @@ func (screen *remoteBrowserScreen) coords(position fyne.Position) (float64, floa
 	px, py := float64((position.X-x)/width), float64((position.Y-y)/height)
 	return px, py, px >= 0 && px <= 1 && py >= 0 && py <= 1
 }
+
 func (screen *remoteBrowserScreen) Tapped(event *fyne.PointEvent) {
 	screen.remote.window.Canvas().Focus(screen)
 	x, y, ok := screen.coords(event.Position)
@@ -386,18 +422,21 @@ func (screen *remoteBrowserScreen) Tapped(event *fyne.PointEvent) {
 		screen.input(map[string]any{"action": "tap", "x": x, "y": y})
 	}
 }
+
 func (screen *remoteBrowserScreen) Scrolled(event *fyne.ScrollEvent) {
 	x, y, ok := screen.coords(event.Position)
 	if ok {
 		screen.input(map[string]any{"action": "scroll", "x": x, "y": y, "dy": -float64(event.Scrolled.DY) * .1, "dx": -float64(event.Scrolled.DX) * .1})
 	}
 }
+
 func (screen *remoteBrowserScreen) TypedRune(value rune) {
 	if screen.modifiers&(fyne.KeyModifierControl|fyne.KeyModifierAlt|fyne.KeyModifierSuper) != 0 {
 		return
 	}
 	screen.input(map[string]any{"action": "text", "text": string(value)})
 }
+
 func browserRemoteChord(key fyne.KeyName, modifiers fyne.KeyModifier) string {
 	parts := []string{}
 	for _, modifier := range []struct {
@@ -410,16 +449,18 @@ func browserRemoteChord(key fyne.KeyName, modifiers fyne.KeyModifier) string {
 	}
 	return strings.Join(append(parts, string(key)), "+")
 }
+
 func (screen *remoteBrowserScreen) TypedKey(event *fyne.KeyEvent) {
 	// Printable characters arrive through TypedRune; forwarding both doubles text.
 	if browserNamedKey(string(event.Name)) != "" {
 		screen.input(map[string]any{"action": "key", "text": browserRemoteChord(event.Name, screen.modifiers)})
 	}
 }
+
 func (screen *remoteBrowserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 	switch shortcut.(type) {
 	case *fyne.ShortcutPaste:
-		screen.input(map[string]any{"action": "text", "text": screen.remote.window.Clipboard().Content()})
+		screen.input(map[string]any{"action": "text", "text": fyne.CurrentApp().Clipboard().Content()})
 	case *fyne.ShortcutSelectAll:
 		screen.input(map[string]any{"action": "key", "text": "Control+A"})
 	case *fyne.ShortcutCopy, *fyne.ShortcutCut:
@@ -429,7 +470,7 @@ func (screen *remoteBrowserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 			err := screen.remote.client.json(screen.ctx, "POST", screen.path+"/input", map[string]string{"action": "evaluate", "text": browserSelectionJS}, &result)
 			if err == nil {
 				fyne.Do(func() {
-					screen.remote.window.Clipboard().SetContent(result.Result)
+					fyne.CurrentApp().Clipboard().SetContent(result.Result)
 					if cut {
 						screen.input(map[string]any{"action": "evaluate", "text": browserCutJS})
 					}
@@ -438,6 +479,7 @@ func (screen *remoteBrowserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 		}()
 	}
 }
+
 func browserModifier(key fyne.KeyName) fyne.KeyModifier {
 	switch key {
 	case desktop.KeyControlLeft, desktop.KeyControlRight:
@@ -451,12 +493,15 @@ func browserModifier(key fyne.KeyName) fyne.KeyModifier {
 	}
 	return 0
 }
+
 func (screen *remoteBrowserScreen) KeyDown(event *fyne.KeyEvent) {
 	screen.modifiers |= browserModifier(event.Name)
 }
+
 func (screen *remoteBrowserScreen) KeyUp(event *fyne.KeyEvent) {
 	screen.modifiers &^= browserModifier(event.Name)
 }
+
 func (screen *remoteBrowserScreen) FocusGained()           {}
 func (screen *remoteBrowserScreen) FocusLost()             { screen.modifiers = 0 }
 func (screen *remoteBrowserScreen) FocusChanged(bool)      {}
@@ -481,12 +526,15 @@ func (renderer *remoteBrowserRenderer) Layout(size fyne.Size) {
 		screen.cursor.Hide()
 	}
 }
+
 func (renderer *remoteBrowserRenderer) Refresh() {
 	renderer.Layout(renderer.screen.Size())
 	renderer.screen.image.Refresh()
 	renderer.screen.cursor.Refresh()
 }
+
 func (renderer *remoteBrowserRenderer) Objects() []fyne.CanvasObject {
 	return []fyne.CanvasObject{renderer.screen.image, renderer.screen.cursor}
 }
+
 func (renderer *remoteBrowserRenderer) Destroy() {}

@@ -2,6 +2,9 @@
 
 package main
 
+// Browser Use on the desktop: the model's browser tools act on the chat's
+// tabs in the side panel.
+
 import (
 	"context"
 	"encoding/json"

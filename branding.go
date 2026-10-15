@@ -322,7 +322,13 @@ type ringArt struct {
 const spinSteps = 72
 
 func newRingArt(px int) *ringArt {
-	return &ringArt{px: px, spin: make([]image.Image, spinSteps), dots: make([]image.Image, spinSteps), closed: map[string]image.Image{}, icons: map[string]image.Image{}}
+	return &ringArt{
+		px:     px,
+		spin:   make([]image.Image, spinSteps),
+		dots:   make([]image.Image, spinSteps),
+		closed: map[string]image.Image{},
+		icons:  map[string]image.Image{},
+	}
 }
 
 // open and dot draw the page's .spin group at a rotation.
@@ -544,6 +550,7 @@ func (layoutSpec columnLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	size.Height += 2 * layoutSpec.inset
 	return size
 }
+
 func (layoutSpec columnLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	width := fyne.Min(layoutSpec.width, fyne.Max(0, size.Width-2*layoutSpec.inset))
 	for _, object := range objects {
@@ -752,7 +759,13 @@ func (renderer *launchRenderer) Refresh() {
 }
 
 func (renderer *launchRenderer) Objects() []fyne.CanvasObject {
-	return []fyne.CanvasObject{renderer.launchScreen.bg, renderer.launchScreen.parts[0], renderer.launchScreen.parts[1], renderer.launchScreen.parts[2], renderer.launchScreen.parts[3]}
+	return []fyne.CanvasObject{
+		renderer.launchScreen.bg,
+		renderer.launchScreen.parts[0],
+		renderer.launchScreen.parts[1],
+		renderer.launchScreen.parts[2],
+		renderer.launchScreen.parts[3],
+	}
 }
 
 func (renderer *launchRenderer) Destroy() {}

@@ -115,11 +115,13 @@ func (slider *stepSlider) Cursor() desktop.Cursor {
 	}
 	return desktop.PointerCursor
 }
+
 func (slider *stepSlider) MouseIn(*desktop.MouseEvent) {
 	if !slider.disabled {
 		slider.fadeHover(1)
 	}
 }
+
 func (slider *stepSlider) MouseMoved(*desktop.MouseEvent) {}
 func (slider *stepSlider) MouseOut()                      { slider.fadeHover(0) }
 

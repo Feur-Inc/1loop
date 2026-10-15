@@ -10,6 +10,7 @@ Go 1.23+, un compilateur C, les bibliothèques de développement OpenGL, X11 et 
 make            # compile bin/1loop (X11) et bin/1loop-wayland (Wayland natif)
 make run        # compile puis ouvre 1loop sur le dossier courant
 make dev        # pareil, avec le journal développeur (option -dev)
+make release    # versions finales dans dist/ : archive Linux (bureau X11 + Wayland, serveur) et APK release
 ./bin/1loop -workspace /chemin/vers/projet
 ```
 
@@ -90,8 +91,8 @@ Claude Code receives the same tool through 1loop's existing MCP bridge. Screen-s
 - Le trafic circule en HTTP sur le réseau local : à réserver à un réseau de confiance.
 
 ```bash
-cd android && ./gradlew assembleDebug   # JDK 17+, SDK Android (compileSdk 37)
-adb install -r app/build/outputs/apk/debug/app-debug.apk
+cd android && ./gradlew assembleRelease   # JDK 17+, SDK Android (compileSdk 37)
+adb install -r app/build/outputs/apk/release/app-release.apk
 ```
 
 ## Raccourcis

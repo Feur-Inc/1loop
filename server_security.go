@@ -2,6 +2,9 @@
 
 package main
 
+// The headless server's security: its TLS certificate, device pairing
+// approved from the console, and the tokens paired devices carry.
+
 import (
 	"bufio"
 	"crypto/ecdsa"
@@ -48,7 +51,15 @@ func serverCertificate(dir, certPath, keyPath string) (tls.Certificate, error) {
 			if err != nil {
 				return tls.Certificate{}, err
 			}
-			template := &x509.Certificate{SerialNumber: serial, Subject: pkix.Name{CommonName: "1loop server"}, NotBefore: time.Now().Add(-time.Minute), NotAfter: time.Now().AddDate(1, 0, 0), KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, DNSNames: []string{"localhost"}}
+			template := &x509.Certificate{
+				SerialNumber: serial,
+				Subject:      pkix.Name{CommonName: "1loop server"},
+				NotBefore:    time.Now().Add(-time.Minute),
+				NotAfter:     time.Now().AddDate(1, 0, 0),
+				KeyUsage:     x509.KeyUsageDigitalSignature,
+				ExtKeyUsage:  []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
+				DNSNames:     []string{"localhost"},
+			}
 			raw, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
 			if err != nil {
 				return tls.Certificate{}, err
@@ -92,6 +103,7 @@ func (server *headlessServer) authorized(next http.HandlerFunc) http.HandlerFunc
 		next(writer, req)
 	}
 }
+
 func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request) {
 	var args struct{ Device string }
 	if readJSON(req, &args) != nil || strings.TrimSpace(args.Device) == "" || len(args.Device) > 120 {
@@ -120,6 +132,7 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 	fmt.Fprintf(os.Stderr, "\nPairing requested by %q. Type: pair %s <code shown on that device>\n", args.Device, id)
 	writeJSON(writer, 200, map[string]any{"pairing": id, "code": code, "console": true, "expiresIn": 120})
 }
+
 func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.Request) {
 	var args struct{ Pairing, Code string }
 	if readJSON(req, &args) != nil {
@@ -154,6 +167,7 @@ func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.
 	delete(server.pairs, args.Pairing)
 	writeJSON(writer, 200, map[string]string{"token": token})
 }
+
 func (server *headlessServer) console() {
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
@@ -211,10 +225,12 @@ func (server *headlessServer) console() {
 		server.mu.Unlock()
 	}
 }
+
 func certificateFingerprint(certificate tls.Certificate) string {
 	sum := sha256.Sum256(certificate.Certificate[0])
 	return hex.EncodeToString(sum[:])
 }
+
 func saveServerJSON(path string, value any) error {
 	data, err := json.MarshalIndent(value, "", "  ")
 	if err != nil {

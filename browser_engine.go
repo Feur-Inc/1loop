@@ -82,7 +82,13 @@ func (engine *browserEngine) start() error {
 			engine.err = fmt.Errorf("Install Chromium or Google Chrome to use browser tabs")
 			return
 		}
-		opts := append(chromedp.DefaultExecAllocatorOptions[:], chromedp.ExecPath(executable), chromedp.Flag("headless", "new"), chromedp.Flag("disable-dev-shm-usage", true), chromedp.Flag("enable-automation", false), chromedp.Flag("disable-blink-features", "AutomationControlled"))
+		opts := append(chromedp.DefaultExecAllocatorOptions[:],
+			chromedp.ExecPath(executable),
+			chromedp.Flag("headless", "new"),
+			chromedp.Flag("disable-dev-shm-usage", true),
+			chromedp.Flag("enable-automation", false),
+			chromedp.Flag("disable-blink-features", "AutomationControlled"),
+		)
 		// One profile, kept between sessions: the agent's browser stays
 		// logged in, with its cookies and history, until the user clears
 		// it (Settings → General → Browser).
@@ -255,7 +261,17 @@ func newBrowserPage(session *browserSession, info browserInfo) *browserPage {
 		info.PixelRatio = 1
 	}
 	life, cancel := context.WithCancel(session.ctx)
-	browser := &browserPage{session: session, life: life, cancel: cancel, ready: make(chan struct{}), gate: make(chan struct{}, 1), jobs: make(chan func(context.Context) error, 64), frames: make(chan *page.EventScreencastFrame, 1), inputWake: make(chan struct{}, 1), info: info}
+	browser := &browserPage{
+		session:   session,
+		life:      life,
+		cancel:    cancel,
+		ready:     make(chan struct{}),
+		gate:      make(chan struct{}, 1),
+		jobs:      make(chan func(context.Context) error, 64),
+		frames:    make(chan *page.EventScreencastFrame, 1),
+		inputWake: make(chan struct{}, 1),
+		info:      info,
+	}
 	session.refs++
 	return browser
 }
@@ -265,6 +281,7 @@ func (browser *browserPage) snapshot() browserInfo {
 	defer browser.mu.Unlock()
 	return browser.info
 }
+
 func (browser *browserPage) change(update func(*browserInfo)) {
 	browser.mu.Lock()
 	update(&browser.info)
@@ -276,6 +293,7 @@ func (browser *browserPage) change(update func(*browserInfo)) {
 	}
 	browser.toPhones(nil)
 }
+
 func (browser *browserPage) addLog(level, text, source string) {
 	browser.mu.Lock()
 	browser.logIndex++
@@ -288,6 +306,7 @@ func (browser *browserPage) addLog(level, text, source string) {
 		browser.onLogs()
 	}
 }
+
 func (browser *browserPage) logSnapshot(after int) []browserLog {
 	browser.mu.Lock()
 	defer browser.mu.Unlock()
@@ -572,6 +591,7 @@ func (browser *browserPage) setVisible(visible bool) {
 		}
 	}
 }
+
 func (browser *browserPage) isVisible() bool {
 	browser.mu.Lock()
 	defer browser.mu.Unlock()
@@ -604,6 +624,7 @@ func (browser *browserPage) close() {
 		}
 	})
 }
+
 func (browser *browserPage) refreshTitle() {
 	var title, location string
 	if browser.run(browser.life, chromedp.Title(&title), chromedp.Location(&location)) == nil {
@@ -747,6 +768,7 @@ func (browser *browserPage) point(ctx context.Context, selector string, x, y flo
 	}
 	return x, y, nil
 }
+
 func (browser *browserPage) cursor(x, y float64) {
 	browser.mu.Lock()
 	browser.cursorX, browser.cursorY, browser.cursorShown = x, y, true
@@ -756,6 +778,7 @@ func (browser *browserPage) cursor(x, y float64) {
 		browser.onCursor(x, y)
 	}
 }
+
 func (browser *browserPage) interact(ctx context.Context, action, selector, text string, x, y, dx, dy float64) error {
 	if action == "click" || action == "move" || action == "scroll" || (action == "type" && selector != "") {
 		var err error
@@ -817,7 +840,23 @@ func browserKeyChord(text string) (string, []input.Modifier) {
 	if special := browserNamedKey(key); special != "" {
 		return special, mods
 	}
-	aliases := map[string]string{"enter": kb.Enter, "return": kb.Enter, "tab": kb.Tab, "escape": kb.Escape, "backspace": kb.Backspace, "delete": kb.Delete, "arrowleft": kb.ArrowLeft, "arrowright": kb.ArrowRight, "arrowup": kb.ArrowUp, "arrowdown": kb.ArrowDown, "home": kb.Home, "end": kb.End, "pageup": kb.PageUp, "pagedown": kb.PageDown, "space": " "}
+	aliases := map[string]string{
+		"enter":      kb.Enter,
+		"return":     kb.Enter,
+		"tab":        kb.Tab,
+		"escape":     kb.Escape,
+		"backspace":  kb.Backspace,
+		"delete":     kb.Delete,
+		"arrowleft":  kb.ArrowLeft,
+		"arrowright": kb.ArrowRight,
+		"arrowup":    kb.ArrowUp,
+		"arrowdown":  kb.ArrowDown,
+		"home":       kb.Home,
+		"end":        kb.End,
+		"pageup":     kb.PageUp,
+		"pagedown":   kb.PageDown,
+		"space":      " ",
+	}
 	if special := aliases[strings.ToLower(key)]; special != "" {
 		key = special
 	} else if len(mods) > 0 {
@@ -848,4 +887,51 @@ func (engine *browserEngine) waitClosed() {
 	case <-engine.closed:
 	case <-time.After(4 * time.Second):
 	}
+}
+
+func browserNamedKey(key string) string {
+	switch key {
+	case "Return", "Enter", "KP_Enter":
+		return kb.Enter
+	case "Tab":
+		return kb.Tab
+	case "BackSpace":
+		return kb.Backspace
+	case "Delete":
+		return kb.Delete
+	case "Escape":
+		return kb.Escape
+	case "Left":
+		return kb.ArrowLeft
+	case "Right":
+		return kb.ArrowRight
+	case "Up":
+		return kb.ArrowUp
+	case "Down":
+		return kb.ArrowDown
+	case "Home":
+		return kb.Home
+	case "End":
+		return kb.End
+	case "Prior":
+		return kb.PageUp
+	case "Next":
+		return kb.PageDown
+	}
+	return ""
+}
+
+// browserProfileDir is the browser's profile, beside 1loop's state (so a
+// copy of 1loop run with another config folder has a browser of its own).
+var browserProfileOverride string
+
+func browserProfileDir() string {
+	if browserProfileOverride != "" {
+		return browserProfileOverride
+	}
+	dir, err := os.UserConfigDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "1loop", "browser")
 }

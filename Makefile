@@ -15,8 +15,8 @@ VERSION       := $(shell git describe --tags --always --dirty 2>/dev/null || ech
 .PHONY: build run dev server release clean
 
 build:
-	go build -o $(BIN)/1loop .
-	CGO_CFLAGS="$(WAYLAND_CFLAGS)" go build -tags wayland -o $(BIN)/1loop-wayland .
+	go build -o $(BIN)/1loop ./cmd/1loop
+	CGO_CFLAGS="$(WAYLAND_CFLAGS)" go build -tags wayland -o $(BIN)/1loop-wayland ./cmd/1loop
 
 run: build
 	./$(BIN)/1loop -workspace . $(ARGS)
@@ -26,19 +26,20 @@ run: build
 dev: build
 	./$(BIN)/1loop -dev -workspace . $(ARGS)
 
-# The server excludes Fyne, GLFW and desktop control. No display or CGO needed.
+# The server does not import the desktop (Fyne, GLFW, Computer Use): no
+# display or CGO needed.
 server:
-	CGO_ENABLED=0 go build -tags server -o $(BIN)/1loop-server .
+	CGO_ENABLED=0 go build -o $(BIN)/1loop-server ./cmd/1loop-server
 
 # Everything to hand out, in dist/: the Linux desktop (X11 and Wayland) and
 # the headless server in one archive, and the phone app's release APK.
 release:
-	go build $(RELEASE_FLAGS) -o $(BIN)/1loop .
-	CGO_CFLAGS="$(WAYLAND_CFLAGS)" go build $(RELEASE_FLAGS) -tags wayland -o $(BIN)/1loop-wayland .
-	CGO_ENABLED=0 go build $(RELEASE_FLAGS) -tags server -o $(BIN)/1loop-server .
+	go build $(RELEASE_FLAGS) -o $(BIN)/1loop ./cmd/1loop
+	CGO_CFLAGS="$(WAYLAND_CFLAGS)" go build $(RELEASE_FLAGS) -tags wayland -o $(BIN)/1loop-wayland ./cmd/1loop
+	CGO_ENABLED=0 go build $(RELEASE_FLAGS) -o $(BIN)/1loop-server ./cmd/1loop-server
 	cd android && ./gradlew -q assembleRelease
 	rm -rf $(DIST) && mkdir -p $(DIST)/1loop-$(VERSION)
-	cp $(BIN)/1loop $(BIN)/1loop-wayland $(BIN)/1loop-server README.md SERVER.md $(DIST)/1loop-$(VERSION)/
+	cp $(BIN)/1loop $(BIN)/1loop-wayland $(BIN)/1loop-server README.md docs/SERVER.md $(DIST)/1loop-$(VERSION)/
 	tar -C $(DIST) -czf $(DIST)/1loop-$(VERSION)-linux-x86_64.tar.gz 1loop-$(VERSION)
 	rm -rf $(DIST)/1loop-$(VERSION)
 	cp android/app/build/outputs/apk/release/app-release.apk $(DIST)/1loop-remote-$(VERSION).apk

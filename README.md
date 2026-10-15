@@ -15,7 +15,7 @@ The first Computer Use request opens a 1loop consent dialog to select a monitor 
 Build with Go 1.23+ and MinGW-w64 GCC on PATH:
 
 ```powershell
-go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe .
+go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe ./cmd/1loop
 ./bin/1loop.exe -workspace C:/Projects/my-project
 ```
 
@@ -53,7 +53,7 @@ Le panneau **Settings → Connections** permet d’ajouter, désactiver ou retir
 
 - **Claude Code** : 1loop pilote le Claude Code installé sur l’ordinateur, sans le modifier, dans son mode programmatique documenté (`claude -p` en `stream-json`). Ici le travail tourne dans le harness de Claude Code, pas dans celui de 1loop : sa connexion (l’abonnement Claude), ses outils, ses règles de permission, `CLAUDE.md` et ses serveurs MCP. 1loop envoie les messages, affiche le flux (texte, réflexion, appels d’outils, diffs) et relaie ses demandes de permission, sur l’ordinateur comme sur le téléphone. Les modèles et niveaux d’effort viennent de Claude Code lui-même ; chaque conversation garde sa session et la reprend. Le sélecteur les marque « · Claude Code ». Garde-fou : si un tour n’est pas sur la connexion de l’abonnement, ou commence à puiser dans l’« extra usage », 1loop l’arrête aussitôt. La connexion est proposée automatiquement au premier lancement si `claude` est installé.
 
-  Quand Claude Code laisse une tâche tourner en arrière-plan (commande lancée en arrière-plan, Monitor), le tour reste ouvert : la ligne d’activité indique la tâche attendue et le temps écoulé, et Claude Code reprend seul quand elle se termine. **Stop** arrête Claude Code et tout ce qu’il a lancé. Les sous-agents de Claude Code sont désactivés pour l’instant (`--disallowedTools`, voir `claudeDisabledTools` dans `claudecode.go`) : l’interface ne sait pas encore montrer leurs étapes.
+  Quand Claude Code laisse une tâche tourner en arrière-plan (commande lancée en arrière-plan, Monitor), le tour reste ouvert : la ligne d’activité indique la tâche attendue et le temps écoulé, et Claude Code reprend seul quand elle se termine. **Stop** arrête Claude Code et tout ce qu’il a lancé. Les sous-agents de Claude Code sont désactivés pour l’instant (`--disallowedTools`, voir `claudeDisabledTools` dans `internal/agent/claudecode.go`) : l’interface ne sait pas encore montrer leurs étapes.
 
 Pour OpenRouter, **Fetch providers** propose les fournisseurs du modèle. L’ordre, les fallbacks et les autres options de routage sont modifiables en JSON, globalement ou par modèle. Les paramètres de requête (température, limites de tokens, etc.) suivent le même principe ; les réglages du modèle remplacent les valeurs correspondantes de la connexion.
 
@@ -65,7 +65,7 @@ Les réglages s’ouvrent en pleine fenêtre : leurs sections remplacent la barr
 
 ## Réponses
 
-Les réponses sont mises en page par 1loop lui-même (`markdown.go`, `mdinline.go`, `flowtext.go`) : titres, paragraphes, listes à puces, numérotées et imbriquées, cases à cocher, citations, filets, tableaux, blocs de code avec leur bouton de copie, gras, italique, barré, code en ligne sur fond teinté, liens `[texte](adresse)` et adresses nues, cliquables (ouverts par l’application du bureau).
+Les réponses sont mises en page par 1loop lui-même (`internal/ui/markdown.go`, `mdinline.go`, `flowtext.go`) : titres, paragraphes, listes à puces, numérotées et imbriquées, cases à cocher, citations, filets, tableaux, blocs de code avec leur bouton de copie, gras, italique, barré, code en ligne sur fond teinté, liens `[texte](adresse)` et adresses nues, cliquables (ouverts par l’application du bureau).
 
 **Formules** : `$…$`, `\(…\)`, `$$…$$` et `\[…\]` sont composées par le TeX de l’ordinateur quand `latex` et `dvipng` sont installés (paquets `texlive-latex-extra` et `dvipng` sous Debian), avec `amsmath` et `amssymb`. Elles sont calculées à côté de l’interface puis gardées dans `~/.cache/1loop/math`. Sans TeX, ou si une formule ne compile pas, sa source reste affichée comme du code. TeX tourne sans accès au shell et sans lecture de fichiers hors de son dossier de travail.
 
@@ -134,4 +134,4 @@ Sources des intégrations : [implémentation OAuth OpenCode](https://github.com/
 
 ## Headless server
 
-Build `bin/1loop-server` with `make server` to run the 1loop engine on a Debian VM without a desktop. Desktop and Android clients connect over HTTPS with console-approved pairing. Browser Use and persistent terminal tabs run on the server; Computer Use is excluded. See [SERVER.md](SERVER.md) for setup, certificate verification, credentials and remote tools.
+Build `bin/1loop-server` with `make server` to run the 1loop engine on a Debian VM without a desktop. Desktop and Android clients connect over HTTPS with console-approved pairing. Browser Use and persistent terminal tabs run on the server; Computer Use is excluded. See [docs/SERVER.md](docs/SERVER.md) for setup, certificate verification, credentials and remote tools.

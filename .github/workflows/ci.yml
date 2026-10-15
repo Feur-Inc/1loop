@@ -63,7 +63,7 @@ jobs:
           go test ./...
       - name: Build desktop
         run: |
-          go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe .
+          go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe ./cmd/1loop
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Package optional software renderer
         run: ./.github/package-windows.ps1

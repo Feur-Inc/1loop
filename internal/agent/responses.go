@@ -85,6 +85,10 @@ func responsesCompletion(ctx context.Context, cfg Config, messages []Message, to
 	})
 	if toolsFlag {
 		body["tools"] = tools
+		body["parallel_tool_calls"] = true
+	}
+	if key := promptCacheKey(cfg); key != "" {
+		body["prompt_cache_key"] = key
 	}
 	if cfg.Effort != "" && cfg.Effort != "enabled" {
 		body["reasoning"] = map[string]any{"effort": cfg.Effort}

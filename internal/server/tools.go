@@ -216,7 +216,7 @@ func (terminal *serverTerminal) write(text string) error {
 	return err
 }
 
-func (terminal *serverTerminal) read(offset int64) map[string]any {
+func (terminal *serverTerminal) read(offset, limit int64) map[string]any {
 	terminal.mu.Lock()
 	defer terminal.mu.Unlock()
 	first := terminal.total - int64(len(terminal.output))
@@ -224,7 +224,7 @@ func (terminal *serverTerminal) read(offset int64) map[string]any {
 	for offset < terminal.total && !utf8.RuneStart(terminal.output[offset-first]) {
 		offset++
 	}
-	end := min(terminal.total, offset+8192)
+	end := min(terminal.total, offset+limit)
 	// JSON text must not split a multibyte character between offset pages.
 	for end < terminal.total && end > offset && !utf8.RuneStart(terminal.output[end-first]) {
 		end--
@@ -333,7 +333,8 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 			Cwd, Command, Text string
 			Keys               []string
 			Offset             int64
-			WaitMS             int `json:"wait_ms"`
+			MaxBytes           *int `json:"max_bytes"`
+			WaitMS             int  `json:"wait_ms"`
 		}
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.DisallowUnknownFields()
@@ -429,7 +430,7 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 			case <-terminal.done:
 			}
 		}
-		data, _ := json.Marshal(terminal.read(args.Offset))
+		data, _ := json.Marshal(terminal.read(args.Offset, agent.TerminalReadLimit(args.MaxBytes)))
 		return agent.PanelToolResult{Text: string(data)}, nil
 	}
 }

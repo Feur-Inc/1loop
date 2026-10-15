@@ -45,6 +45,7 @@ type chatEntry struct {
 	rows     int
 	measure  *widget.RichText
 	resized  func()
+	typing   func() // the text changed
 	fitting  bool
 }
 
@@ -57,7 +58,12 @@ func newChatEntry() *chatEntry {
 	entry.Wrapping = fyne.TextWrapWord
 	entry.ExtendBaseWidget(entry)
 	entry.SetMinRowsVisible(1)
-	entry.OnChanged = func(string) { entry.fit() }
+	entry.OnChanged = func(string) {
+		entry.fit()
+		if entry.typing != nil {
+			entry.typing()
+		}
+	}
 	return entry
 }
 

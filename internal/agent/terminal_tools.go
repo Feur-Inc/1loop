@@ -45,9 +45,18 @@ func terminalToolDefinitions() []map[string]any {
 		}, "session_id", "command", "wait_ms"),
 		def("terminal_write", "Write literal text without Enter into an integrated terminal, including a running interactive program.", map[string]any{"session_id": str, "text": str}, "session_id", "text"),
 		def("terminal_keys", "Send named keys or control chords to a terminal: Enter, Tab, Escape, ArrowUp, Home, PageDown, F1..F12, Ctrl+C, Ctrl+D, Ctrl+L, Shift+Tab or Alt+x.", map[string]any{"session_id": str, "keys": map[string]any{"type": "array", "items": str}}, "session_id", "keys"),
-		def("terminal_read", "Read up to 8 KiB of captured terminal output since byte offset. ANSI sequences may be present; use terminal_screen for full-screen TUI state. Continue with next_offset; available_from identifies output still retained in the 256 KiB buffer. exit_code is null while the shell runs.", map[string]any{"session_id": str, "offset": integer}, "session_id", "offset"),
+		def("terminal_read", "Read captured terminal output since byte offset, at most max_bytes (null: 8192; up to 65536). ANSI sequences may be present; use terminal_screen for full-screen TUI state. Continue with next_offset; available_from identifies output still retained in the 256 KiB buffer. exit_code is null while the shell runs.", map[string]any{"session_id": str, "offset": integer, "max_bytes": map[string]any{"type": []string{"integer", "null"}}}, "session_id", "offset", "max_bytes"),
 		def("terminal_screen", "Capture the selected terminal as a PNG image delivered to your vision input. "+TerminalScreenVisibility, map[string]any{"session_id": str}, "session_id"),
 	}
+}
+
+// TerminalReadLimit is how much terminal_read returns: max_bytes, within
+// bounds, or 8 KiB.
+func TerminalReadLimit(maxBytes *int) int64 {
+	if maxBytes == nil {
+		return 8192
+	}
+	return int64(min(65536, max(1024, *maxBytes)))
 }
 
 func terminalInstructions(cfg Config) string {

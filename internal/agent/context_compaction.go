@@ -386,7 +386,7 @@ func summarizeConversation(ctx context.Context, cfg Config, rounds []Message, fo
 				fmt.Fprintf(&builder, "TOOL %s(%s)\n", call.Function.Name, core.TruncateText(call.Function.Arguments, limit))
 			}
 		}
-		input = []Message{{Role: "user", Internal: true, Content: prompt + todoInstructions(cfg) + "\n\nSession history:\n" + builder.String()}}
+		input = []Message{{Role: "user", Internal: true, Content: prompt + todoInstructions(cfg) + todoSnapshot(cfg) + "\n\nSession history:\n" + builder.String()}}
 	}
 	summaryCfg := cfg
 	summaryCfg.Parameters = MergeOptions(cfg.Parameters, nil)

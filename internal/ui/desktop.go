@@ -506,6 +506,8 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.prompt.SetPlaceHolder("Describe what you want to build…")
 	ui.prompt.send = ui.submit
 	ui.prompt.steer = ui.steerNow
+	// The message being typed will go to the model: open the connection now.
+	ui.prompt.typing = func() { ui.backend.Prewarm(ui.cfg) }
 	ui.prompt.escape = func() { ui.finishEdit(false); ui.clearSelection() }
 	ui.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
 		if key.Name == fyne.KeyEscape && ui.prefs.open { // Escape goes back a page, then to the conversation

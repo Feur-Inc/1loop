@@ -21,8 +21,8 @@ func toolDefinitions() []map[string]any {
 		name, description string
 		fields            []string
 	}{
-		{"shell", "Run a " + platform.ShellDescription() + " command in the workspace after user approval. Commands have a 60 second timeout.", []string{"command"}},
-		{"read_file", "Read a UTF-8 text file in the workspace (maximum 1 MiB).", []string{"path"}},
+		{"shell", "Run a " + platform.ShellDescription() + " command in the workspace after user approval. Commands have a 60 second timeout. Output longer than max_output_tokens (null: 10000, up to 50000) keeps its start and its end; filter or page long output rather than raising the limit.", []string{"command", "max_output_tokens:int"}},
+		{"read_file", "Read a UTF-8 text file in the workspace (maximum 1 MiB): limit lines from line offset (1-based; null: from line 1, 2000 lines). The reply says which lines it holds and how many the file has; read further only when you need them.", []string{"path", "offset:int", "limit:int"}},
 		{"list_directory", "List entries of a directory in the workspace. Use . for the root.", []string{"path"}},
 		{
 			"edit_file",
@@ -33,13 +33,22 @@ func toolDefinitions() []map[string]any {
 	result := make([]map[string]any, 0, len(definitions))
 	for _, d := range definitions {
 		properties := map[string]any{}
+		var required []string
 		for _, field := range d.fields {
+			// "name:int" is an optional number: null takes the default (strict
+			// schemas require every field).
+			if name, ok := strings.CutSuffix(field, ":int"); ok {
+				properties[name] = map[string]any{"type": []string{"integer", "null"}}
+				required = append(required, name)
+				continue
+			}
 			properties[field] = map[string]any{"type": "string"}
+			required = append(required, field)
 		}
 		result = append(result, map[string]any{"type": "function", "function": map[string]any{
 			"name":        d.name,
 			"description": d.description,
-			"parameters":  map[string]any{"type": "object", "properties": properties, "required": d.fields, "additionalProperties": false},
+			"parameters":  map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false},
 		}})
 	}
 	result = append(result, todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition())
@@ -74,17 +83,73 @@ func WorkspacePath(root, path string) (string, error) {
 	return resolved, nil
 }
 
-type limitedBuffer struct{ bytes.Buffer }
+// outputBuffer keeps the start and the end of a command's output: the start
+// says what ran, the end holds the result or the error.
+type outputBuffer struct {
+	head, tail []byte
+	total      int
+}
 
-func (buffer *limitedBuffer) Write(p []byte) (int, error) {
+const outputKeep = 512 << 10
+
+func (buffer *outputBuffer) Write(p []byte) (int, error) {
 	n := len(p)
-	if remaining := (128 << 10) - buffer.Len(); remaining > 0 {
-		if len(p) > remaining {
-			p = p[:remaining]
+	buffer.total += n
+	if room := outputKeep - len(buffer.head); room > 0 {
+		k := min(room, len(p))
+		buffer.head = append(buffer.head, p[:k]...)
+		p = p[k:]
+	}
+	if len(p) > 0 {
+		buffer.tail = append(buffer.tail, p...)
+		if len(buffer.tail) > 2*outputKeep {
+			buffer.tail = append([]byte(nil), buffer.tail[len(buffer.tail)-outputKeep:]...)
 		}
-		buffer.Buffer.Write(p)
 	}
 	return n, nil
+}
+
+func (buffer *outputBuffer) String() string {
+	tail := buffer.tail[max(0, len(buffer.tail)-outputKeep):]
+	if skipped := buffer.total - len(buffer.head) - len(tail); skipped > 0 {
+		return strings.ToValidUTF8(string(buffer.head)+fmt.Sprintf("\n…[%d bytes not kept]…\n", skipped)+string(tail), "")
+	}
+	return string(buffer.head) + string(tail)
+}
+
+// headAndTail fits text in about tokens tokens (4 bytes each), keeping its
+// start and its end.
+func headAndTail(text string, tokens int) string {
+	budget := tokens * 4
+	if len(text) <= budget {
+		return text
+	}
+	half := budget / 2
+	cut := len(text) - 2*half
+	return strings.ToValidUTF8(text[:half], "") + fmt.Sprintf("\n…[%d bytes omitted; filter the output or raise max_output_tokens]…\n", cut) + strings.ToValidUTF8(text[len(text)-half:], "")
+}
+
+// readLines is the part of a file read_file returns: lines from offset
+// (1-based), at most limit, with where it stands in the file.
+func readLines(text string, offset, limit int) string {
+	lines := strings.SplitAfter(text, "\n")
+	if lines[len(lines)-1] == "" {
+		lines = lines[:len(lines)-1]
+	}
+	if offset < 1 {
+		offset = 1
+	}
+	if limit < 1 {
+		limit = 2000
+	}
+	if offset == 1 && len(lines) <= limit {
+		return text
+	}
+	if offset > len(lines) {
+		return fmt.Sprintf("[The file has %d lines; offset %d is past its end.]", len(lines), offset)
+	}
+	end := min(len(lines), offset-1+limit)
+	return fmt.Sprintf("[Lines %d-%d of %d.]\n", offset, end, len(lines)) + strings.Join(lines[offset-1:end], "")
 }
 
 func fileText(path string) (string, error) {
@@ -219,10 +284,13 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		return string(data), "", nil
 	}
 	var args struct {
-		Path    string `json:"path"`
-		Command string `json:"command"`
-		Old     string `json:"old_text"`
-		New     string `json:"new_text"`
+		Path      string `json:"path"`
+		Command   string `json:"command"`
+		Old       string `json:"old_text"`
+		New       string `json:"new_text"`
+		MaxTokens *int   `json:"max_output_tokens"`
+		Offset    *int   `json:"offset"`
+		Limit     *int   `json:"limit"`
 	}
 	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 		return "", "", err
@@ -243,14 +311,18 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		platform.PrepareProcess(cmd)
 		cmd.Cancel = func() error { return platform.KillProcessTree(cmd) }
 		cmd.WaitDelay = time.Second
-		var output limitedBuffer
+		var output outputBuffer
 		cmd.Stdout = &output
 		cmd.Stderr = &output
 		err := cmd.Run()
-		if timeout.Err() != nil {
-			return output.String(), "", timeout.Err()
+		tokens := 10000
+		if args.MaxTokens != nil {
+			tokens = min(50000, max(1000, *args.MaxTokens))
 		}
-		return output.String(), "", err
+		if timeout.Err() != nil {
+			return headAndTail(output.String(), tokens), "", timeout.Err()
+		}
+		return headAndTail(output.String(), tokens), "", err
 	}
 	if name != "read_file" && name != "list_directory" && name != "edit_file" {
 		return "", "", fmt.Errorf("Unknown tool: %s", name)
@@ -263,7 +335,17 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	case "read_file":
 		begin()
 		text, err := fileText(path)
-		return text, "", err
+		if err != nil {
+			return "", "", err
+		}
+		offset, limit := 1, 2000
+		if args.Offset != nil {
+			offset = *args.Offset
+		}
+		if args.Limit != nil {
+			limit = *args.Limit
+		}
+		return readLines(text, offset, limit), "", nil
 	case "list_directory":
 		begin()
 		entries, err := os.ReadDir(path)

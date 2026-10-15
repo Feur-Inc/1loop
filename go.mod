@@ -13,6 +13,7 @@ require (
 	github.com/fyne-io/terminal v0.0.0-20251106165109-867da7c64268
 	github.com/go-gl/glfw/v3.3/glfw v0.0.0-20240506104042-037f3cc74f2a
 	github.com/hinshun/vt10x v0.0.0-20220301184237-5011da428d02
+	github.com/klauspost/compress v1.18.0
 	github.com/pmezard/go-difflib v1.0.0
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	golang.org/x/image v0.24.0

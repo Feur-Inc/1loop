@@ -44,12 +44,12 @@ func (output *terminalOutput) Read(p []byte) (int, error) {
 	return n, err
 }
 
-func (terminal *panelTerminal) read(offset int64) string {
+func (terminal *panelTerminal) read(offset, limit int64) string {
 	terminal.mu.Lock()
 	defer terminal.mu.Unlock()
 	first := terminal.total - int64(len(terminal.output))
 	offset = max(first, min(offset, terminal.total))
-	end := min(terminal.total, offset+8192)
+	end := min(terminal.total, offset+limit)
 	data, _ := json.Marshal(map[string]any{
 		"session_id":     terminal.id,
 		"cwd":            terminal.dir,
@@ -71,6 +71,7 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 			Keys               []string
 			WaitMS             int `json:"wait_ms"`
 			Offset             int64
+			MaxBytes           *int `json:"max_bytes"`
 		}
 		decoder := json.NewDecoder(bytes.NewReader(raw))
 		decoder.DisallowUnknownFields()
@@ -214,7 +215,7 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 			return agent.PanelToolResult{Text: "Integrated terminal screenshot: " + term.id, Images: []core.ImagePart{{Mime: "image/png", Data: base64.StdEncoding.EncodeToString(data.Bytes())}}}, nil
 		}
 		if name == "terminal_read" {
-			return agent.PanelToolResult{Text: term.read(args.Offset)}, nil
+			return agent.PanelToolResult{Text: term.read(args.Offset, agent.TerminalReadLimit(args.MaxBytes))}, nil
 		}
 		var text string
 		switch name {
@@ -253,6 +254,6 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 				return agent.PanelToolResult{}, ctx.Err()
 			}
 		}
-		return agent.PanelToolResult{Text: term.read(offset)}, nil
+		return agent.PanelToolResult{Text: term.read(offset, 8192)}, nil
 	}
 }

@@ -106,7 +106,7 @@ func (server *headlessServer) panelTab(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Query().Get("raw") == "1" {
 		offset, _ := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
-		core.WriteJSON(w, 200, tab.terminal.read(offset))
+		core.WriteJSON(w, 200, tab.terminal.read(offset, 8192))
 		return
 	}
 	tab.terminal.mu.Lock()

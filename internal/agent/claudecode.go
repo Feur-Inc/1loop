@@ -370,7 +370,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		defer close()
 		args = append(args, "--mcp-config", config)
 	}
-	appendPrompt := todoInstructions(cfg) + browserInstructions(cfg) + terminalInstructions(cfg) + computerInstructions(cfg)
+	appendPrompt := todoInstructions(cfg) + todoSnapshot(cfg) + browserInstructions(cfg) + terminalInstructions(cfg) + computerInstructions(cfg)
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
 		appendPrompt = "Additional instructions from the user:\n" + cfg.UserInstructions + appendPrompt
 	}
@@ -391,7 +391,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	defer func() { platform.Devf("claude", "process ended: %v", cmd.ProcessState) }()
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
-	var stderr limitedBuffer
+	var stderr outputBuffer
 	cmd.Stderr = &stderr
 	if err := cmd.Start(); err != nil {
 		return err

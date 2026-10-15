@@ -112,6 +112,7 @@ func startTodoMCP(ctx context.Context, state *TodoState, emit emitter, handlers 
 					content = []any{map[string]any{"type": "text", "text": err.Error()}}
 				}
 				for _, imagePart := range result.Images {
+					imagePart = compactToolImage(imagePart)
 					content = append(content, map[string]any{"type": "image", "data": imagePart.Data, "mimeType": imagePart.Mime})
 				}
 				response["result"] = map[string]any{"isError": err != nil, "content": content}

@@ -218,7 +218,7 @@ func (attachButtonLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 
 var imageMime = regexp.MustCompile(`image/[a-z0-9.+-]+`)
 
-func imageClipboardData() ([]byte, error) {
+func linuxImageClipboardData() ([]byte, error) {
 	// Fyne's clipboard is text-only, so images are read from the native
 	// clipboard with wl-paste (Wayland) or xclip (X11).
 	missing := fmt.Errorf("No image in the clipboard")

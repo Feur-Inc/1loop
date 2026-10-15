@@ -11,7 +11,6 @@ import (
 	_ "image/png"
 	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -71,13 +70,7 @@ func newBrowserEngine(parent context.Context) *browserEngine {
 
 func (engine *browserEngine) start() error {
 	engine.once.Do(func() {
-		executable := ""
-		for _, name := range []string{"chromium", "chromium-browser", "google-chrome-stable", "google-chrome"} {
-			if path, err := exec.LookPath(name); err == nil {
-				executable = path
-				break
-			}
-		}
+		executable := browserExecutable()
 		if executable == "" {
 			engine.err = fmt.Errorf("Install Chromium or Google Chrome to use browser tabs")
 			return

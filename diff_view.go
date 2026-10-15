@@ -13,6 +13,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
@@ -170,6 +171,8 @@ func newDiffView(patch string) fyne.CanvasObject {
 		diffRowValue.Refresh()
 	})
 	list.HideSeparators = true
+	// Hiding list separators leaves the theme padding between rows.
+	content := container.NewThemeOverride(list, diffListTheme{fyne.CurrentApp().Settings().Theme()})
 	for i, row := range rows {
 		if row.kind == 'f' {
 			list.SetItemHeight(i, 42)
@@ -180,7 +183,16 @@ func newDiffView(patch string) fyne.CanvasObject {
 	}
 	copy := newRow("Copy diff", iconCopy, styleChip, func() { fyne.CurrentApp().Clipboard().SetContent(patch) })
 	header := padded(6, 6, 12, 8, container.NewBorder(nil, nil, textLine(fmt.Sprintf("%d file(s)", files), 12, colMuted), copy))
-	return container.NewBorder(header, nil, nil, nil, container.NewHScroll(list))
+	return container.NewBorder(header, nil, nil, nil, container.NewHScroll(content))
+}
+
+type diffListTheme struct{ fyne.Theme }
+
+func (themeSpec diffListTheme) Size(name fyne.ThemeSizeName) float32 {
+	if name == theme.SizeNamePadding {
+		return 0
+	}
+	return themeSpec.Theme.Size(name)
 }
 
 type diffRow struct {
@@ -219,8 +231,9 @@ func (renderer *diffRowRenderer) Objects() []fyne.CanvasObject {
 }
 
 func (renderer *diffRowRenderer) Layout(size fyne.Size) {
-	renderer.bg.Resize(size)
-	renderer.mark.Resize(fyne.NewSize(3, size.Height))
+	// Overlap adjacent backgrounds to cover pixel rounding at fractional scales.
+	renderer.bg.Resize(fyne.NewSize(size.Width, size.Height+1))
+	renderer.mark.Resize(fyne.NewSize(3, size.Height+1))
 	y := (size.Height - renderer.old.MinSize().Height) / 2
 	renderer.old.Move(fyne.NewPos(42-renderer.old.MinSize().Width, y))
 	renderer.next.Move(fyne.NewPos(86-renderer.next.MinSize().Width, y))

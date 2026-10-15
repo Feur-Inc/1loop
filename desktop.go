@@ -15,7 +15,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	_ "golang.org/x/image/bmp"
@@ -296,7 +295,7 @@ func (ui *desktopUI) restart() {
 	// than fail, since after release this process cannot go on.
 	var failure error
 	for attempt := 0; attempt < 50; attempt++ {
-		failure = syscall.Exec(exe, os.Args, os.Environ())
+		failure = restartProcess(exe)
 		time.Sleep(100 * time.Millisecond)
 	}
 	fmt.Fprintln(os.Stderr, "1loop: could not restart:", failure)

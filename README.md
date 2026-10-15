@@ -2,6 +2,25 @@
 
 Application de bureau en Go avec une fenêtre native Fyne, une interface sombre, des conversations et un sélecteur de modèles. Le moteur et l’interface sont écrits en Go ; l’interface ne nécessite aucun navigateur. La connexion OAuth utilise le navigateur et un callback HTTP temporaire sur `localhost:1455`, écouté uniquement sur 127.0.0.1.
 
+## Windows
+
+Windows 10 version 1809 or newer (64-bit) is required. Download the Windows archive from a release, extract it and run `1loop.exe`. The desktop uses PowerShell and native ConPTY terminals; Git is required for workspace diffs. Browser Use detects installed Chrome, Chromium or Microsoft Edge. Computer Use uses built-in Windows PowerShell/.NET, UI Automation and Win32 input/capture APIs, without Python or the Linux Codex helper.
+
+If the desktop stays blank because the graphics driver does not provide OpenGL, run `1loop-software.cmd` instead. This uses the bundled portable Mesa CPU renderer without changing system drivers. It needs the Microsoft Visual C++ 2015–2022 x64 runtime and can be slower than hardware rendering. The renderer is packaged from [mesa-dist-win](https://github.com/pal1000/mesa-dist-win); its licenses are included in `software/licenses`.
+
+The phone-sharing feature can trigger a Windows firewall prompt. Desktop-only use does not require allowing inbound network access; disable phone sharing in Settings when unused. Computer Use consent is separate from the firewall prompt.
+
+The first Computer Use request opens a 1loop consent dialog to select a monitor or the whole desktop. Remembering permission reuses that choice; Settings → General → Computer Use can change or forget it. Coordinates and screenshots use physical pixels, including display scaling and negative monitor origins. The Windows session must be unlocked and interactive. UAC secure desktops and applications with higher integrity remain protected; 1loop does not bypass these restrictions.
+
+Build with Go 1.23+ and MinGW-w64 GCC on PATH:
+
+```powershell
+go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe .
+./bin/1loop.exe -workspace C:/Projects/my-project
+```
+
+The Windows deliverable is the desktop application. It can connect to the existing remote server. Application state follows the Windows user configuration directory, and logs/helpers follow its cache directory.
+
 ## Lancer sous Linux
 
 Go 1.23+, un compilateur C, les bibliothèques de développement OpenGL, X11 et Wayland (`libwayland-dev`, `libxkbcommon-dev`), Bash et `diff` sont nécessaires. La première compilation télécharge Fyne et ses dépendances.

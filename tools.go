@@ -7,10 +7,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 	"time"
 	"unicode/utf8"
 )
@@ -20,7 +18,7 @@ func toolDefinitions() []map[string]any {
 		name, description string
 		fields            []string
 	}{
-		{"shell", "Run a Linux bash command in the workspace after user approval. Commands have a 60 second timeout.", []string{"command"}},
+		{"shell", "Run a " + shellDescription() + " command in the workspace after user approval. Commands have a 60 second timeout.", []string{"command"}},
 		{"read_file", "Read a UTF-8 text file in the workspace (maximum 1 MiB).", []string{"path"}},
 		{"list_directory", "List entries of a directory in the workspace. Use . for the root.", []string{"path"}},
 		{
@@ -107,31 +105,6 @@ func fileText(path string) (string, error) {
 		return "", fmt.Errorf("File is binary or larger than 1 MiB")
 	}
 	return string(data), nil
-}
-
-func unifiedDiff(ctx context.Context, path, before, after string) (string, error) {
-	oldReader, oldWriter, err := os.Pipe()
-	if err != nil {
-		return "", err
-	}
-	defer oldReader.Close()
-	newReader, newWriter, err := os.Pipe()
-	if err != nil {
-		oldWriter.Close()
-		return "", err
-	}
-	defer newReader.Close()
-	cmd := exec.CommandContext(ctx, "diff", "-u", "--label", "a/"+path, "--label", "b/"+path, "/dev/fd/3", "/dev/fd/4")
-	cmd.ExtraFiles = []*os.File{oldReader, newReader}
-	go func() { defer oldWriter.Close(); io.WriteString(oldWriter, before) }()
-	go func() { defer newWriter.Close(); io.WriteString(newWriter, after) }()
-	output, err := cmd.CombinedOutput()
-	if err != nil {
-		if exit, ok := err.(*exec.ExitError); !ok || exit.ExitCode() != 1 {
-			return "", fmt.Errorf("Creating diff: %w", err)
-		}
-	}
-	return string(output), nil
 }
 
 // toolOutcome is what one tool call did, for the model and for the
@@ -262,10 +235,10 @@ func (backend *app) runTool(ctx context.Context, root string, call toolCall, beg
 		begin()
 		timeout, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(timeout, "bash", "-c", args.Command)
+		cmd := shellCommand(timeout, args.Command)
 		cmd.Dir = root
-		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-		cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
+		prepareProcess(cmd)
+		cmd.Cancel = func() error { return killProcessTree(cmd) }
 		cmd.WaitDelay = time.Second
 		var output limitedBuffer
 		cmd.Stdout = &output

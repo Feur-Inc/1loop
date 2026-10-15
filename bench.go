@@ -21,7 +21,6 @@ import (
 	"sort"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -31,12 +30,6 @@ import (
 type benchFrames struct {
 	mu                    sync.Mutex
 	sizes, paint, present []time.Duration
-}
-
-func cpuTime() time.Duration {
-	var usage syscall.Rusage
-	syscall.Getrusage(syscall.RUSAGE_SELF, &usage)
-	return time.Duration(usage.Utime.Nano() + usage.Stime.Nano())
 }
 
 func percentiles(values []time.Duration) string {

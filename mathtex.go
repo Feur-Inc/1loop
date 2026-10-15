@@ -213,6 +213,7 @@ func composeFormula(source string, display bool, size float32) (*mathPicture, er
 	defer cancel()
 	env := append(os.Environ(), "openin_any=p", "openout_any=p", "shell_escape=f")
 	latex := exec.CommandContext(ctx, "latex", "-no-shell-escape", "-interaction=batchmode", "-halt-on-error", "f.tex")
+	prepareProcess(latex)
 	latex.Dir, latex.Env = work, env
 	if err := latex.Run(); err != nil {
 		return nil, fmt.Errorf("it does not compile")
@@ -224,6 +225,7 @@ func composeFormula(source string, display bool, size float32) (*mathPicture, er
 	var report bytes.Buffer
 	dvipng := exec.CommandContext(ctx, "dvipng", "-T", "tight", "-D", strconv.Itoa(density), "-bg", "Transparent", "-fg", ink,
 		"--depth", "-o", "f.png", "f.dvi")
+	prepareProcess(dvipng)
 	dvipng.Dir, dvipng.Env, dvipng.Stdout = work, env, &report
 	if err := dvipng.Run(); err != nil {
 		return nil, fmt.Errorf("no picture: %v", err)

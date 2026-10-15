@@ -13,6 +13,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"time"
@@ -50,6 +51,7 @@ type computerProcess struct {
 func startComputerProcess(lifetime context.Context, executable string, arguments ...string) (*computerProcess, error) {
 	processContext, cancel := context.WithCancel(lifetime)
 	command := exec.CommandContext(processContext, executable, arguments...)
+	prepareComputerProcess(command)
 	input, err := command.StdinPipe()
 	if err != nil {
 		cancel()
@@ -187,6 +189,12 @@ func computerBackendPath() (string, error) {
 }
 
 func (session *computerSession) backend(ctx context.Context) (*computerProcess, error) {
+	if runtime.GOOS == "windows" {
+		if session.portal == nil {
+			return nil, fmt.Errorf("Approve Computer Use sharing first")
+		}
+		return session.portal, nil
+	}
 	if session.accessibility != nil && session.accessibility.context.Err() != nil {
 		session.accessibility.close()
 		session.accessibility = nil
@@ -223,7 +231,7 @@ func computerInstructions(cfg config) string {
 	if cfg.Provider == "claudecode" {
 		name = "mcp__1loop_todo__" + name
 	}
-	return "\n\nComputer Use: " + name + " controls the real Linux desktop. First call action=instructions with arguments=\"{}\" to read its instructions, then action=start to request screen sharing and control. Reuse the approved session; never use another path to bypass denied or revoked permission. Tool arguments are a JSON object encoded as a string."
+	return "\n\nComputer Use: " + name + " controls the real " + runtime.GOOS + " desktop. First call action=instructions with arguments=\"{}\" to read its instructions, then action=start to request screen sharing and control. Reuse the approved session; never use another path to bypass denied or revoked permission. Tool arguments are a JSON object encoded as a string."
 }
 
 func computerToolDefinition() map[string]any {
@@ -252,7 +260,7 @@ func computerToolDefinition() map[string]any {
 	}
 	return map[string]any{"type": "function", "function": map[string]any{
 		"name":        "computer_use",
-		"description": "Control the real desktop after reading instructions and obtaining the user's Wayland sharing permission. Session persists between calls. Screenshot images reach your vision input. Use arguments=\"{}\" when no parameters are needed.",
+		"description": "Control the real desktop after reading instructions and obtaining the user's desktop sharing permission. Session persists between calls. Screenshot images reach your vision input. Use arguments=\"{}\" when no parameters are needed.",
 		"parameters": map[string]any{
 			"type":                 "object",
 			"properties":           map[string]any{"action": map[string]any{"type": "string", "enum": actions}, "arguments": map[string]any{"type": "string", "description": "JSON object for this action. Read instructions for coordinate/key actions; describe provides accessibility/window schemas."}},
@@ -314,7 +322,7 @@ func (ui *desktopUI) computerTools(chat *conversation) panelToolHandler {
 		}
 		if request.Action == "instructions" {
 			session.instructions[chat.ID] = true
-			return panelToolResult{Text: computerGuide}, nil
+			return panelToolResult{Text: computerGuideText()}, nil
 		}
 		if request.Action == "stop" {
 			if session.portal != nil {
@@ -466,7 +474,7 @@ func (session *computerSession) startLocked(ctx context.Context, choose bool) (p
 		session.portal = nil
 	}
 	if session.portal == nil {
-		process, err := startComputerProcess(session.lifetime, "/usr/bin/python3", "-u", "-c", computerPortalSource)
+		process, err := startNativeComputer(session.lifetime)
 		if err != nil {
 			return panelToolResult{}, err
 		}
@@ -534,7 +542,7 @@ func (ui *desktopUI) forgetComputerScreen() error {
 		session.portal.close()
 		session.portal = nil
 	}
-	if grant := loadComputerGrant(); grant.Token != "" {
+	if grant := loadComputerGrant(); grant.Token != "" && runtime.GOOS == "linux" {
 		// The portal's own record of the permission. Without the token it can
 		// no longer be used, so a failure here only leaves a dead entry.
 		exec.Command("gdbus", "call", "--session", "--dest", "org.freedesktop.impl.portal.PermissionStore",

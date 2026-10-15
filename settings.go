@@ -493,7 +493,7 @@ func (ui *desktopUI) clearBrowserButton() fyne.CanvasObject {
 // pick another one in the desktop's dialog or to forget the permission.
 func (ui *desktopUI) computerScreenRow() fyne.CanvasObject {
 	grant := loadComputerGrant()
-	detail := "The first use asks which screen to share. Tick \u201cRemember this choice\u201d in that dialog and 1loop will not ask again, even after a restart."
+	detail := "The first use asks which screen to share. Select \u201cRemember this permission\u201d or \u201cRemember this choice\u201d in that dialog and 1loop will not ask again, even after a restart."
 	if grant.Token != "" {
 		detail = fmt.Sprintf("Shared without asking, even after a restart: the screen of %d \u00d7 %d at %d, %d. Change screen opens the desktop's dialog to pick another; Forget stops sharing and asks next time.",
 			grant.Width, grant.Height, grant.X, grant.Y)

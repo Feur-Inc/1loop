@@ -28,7 +28,6 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
-	"syscall"
 	"time"
 )
 
@@ -148,8 +147,8 @@ func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd,
 	}
 	// Stop ends the turn the way Claude Code documents (SIGINT), then the
 	// whole process group if it lingers.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
-	cmd.Cancel = func() error { return cmd.Process.Signal(os.Interrupt) }
+	prepareProcess(cmd)
+	cmd.Cancel = func() error { return interruptProcess(cmd) }
 	cmd.WaitDelay = 3 * time.Second
 	return cmd, nil
 }
@@ -417,7 +416,7 @@ func (backend *app) runClaudeCode(ctx context.Context, cfg config, history []mes
 		if ctx.Err() != nil || failure != nil {
 			// Stopped: nothing Claude Code started may keep running (its
 			// commands and background tasks share its process group).
-			syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+			killProcessTree(cmd)
 		}
 		cmd.Wait()
 	}()

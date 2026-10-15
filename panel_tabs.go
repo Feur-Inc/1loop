@@ -7,20 +7,17 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 	"strings"
 	"sync"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	"github.com/creack/pty"
 	"github.com/fyne-io/terminal"
 )
 
 type panelTerminal struct {
 	widget *terminal.Terminal
-	file   *os.File
+	file   terminalProcess
 	cancel context.CancelFunc
 	id     string
 	dir    string
@@ -50,23 +47,16 @@ func (panel *toolPanel) openTerminal() {
 // terminalTab starts a shell in dir and returns its tab.
 func (panel *toolPanel) terminalTab(dir string) (panelTab, error) {
 	ctx, cancel := context.WithCancel(panel.ui.ctx)
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/bash"
-	}
-	cmd := exec.CommandContext(ctx, shell, "-i")
-	cmd.Dir = dir
-	cmd.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
-	file, err := pty.Start(cmd)
+	file, err := newTerminalProcess(ctx, dir)
 	if err != nil {
 		cancel()
 		return panelTab{}, err
 	}
 	w := terminal.New()
-	w.SetStartDir(cmd.Dir)
+	w.SetStartDir(dir)
 	w.Resize(fyne.NewSize(600, 400))
 	panelTerminalValue := &panelTerminal{widget: w, file: file, cancel: cancel, id: identifier()[:16], dir: dir, done: make(chan struct{})}
-	status := textLine(cmd.Dir, 11, colMuted)
+	status := textLine(dir, 11, colMuted)
 	configs := make(chan terminal.Config, 4)
 	w.AddListener(configs)
 	go func() {
@@ -76,14 +66,13 @@ func (panel *toolPanel) terminalTab(dir string) (panelTab, error) {
 			case <-ctx.Done():
 				return
 			case cfg := <-configs:
-				_ = pty.Setsize(file, &pty.Winsize{Rows: uint16(cfg.Rows), Cols: uint16(cfg.Columns)})
+				_ = file.resize(int(cfg.Columns), int(cfg.Rows))
 			}
 		}
 	}()
 	go func() { _ = w.RunWithConnection(file, &terminalOutput{file: file, terminal: panelTerminalValue}) }()
 	go func() {
-		err := cmd.Wait()
-		code := cmd.ProcessState.ExitCode()
+		code := file.wait()
 		panelTerminalValue.mu.Lock()
 		panelTerminalValue.exit = &code
 		panelTerminalValue.mu.Unlock()
@@ -92,14 +81,14 @@ func (panel *toolPanel) terminalTab(dir string) (panelTab, error) {
 			if ctx.Err() != nil {
 				return
 			}
-			status.Text = fmt.Sprintf("Terminal exited · code %d", cmd.ProcessState.ExitCode())
-			if err != nil {
+			status.Text = fmt.Sprintf("Terminal exited · code %d", code)
+			if code != 0 {
 				status.Color = colDanger
 			}
 			status.Refresh()
 		})
 	}()
-	return panelTab{kind: "terminal", title: "Terminal", icon: toolGlyph("shell"), terminal: panelTerminalValue, workspace: cmd.Dir,
+	return panelTab{kind: "terminal", title: "Terminal", icon: toolGlyph("shell"), terminal: panelTerminalValue, workspace: dir,
 		content: container.NewBorder(nil, padded(6, 6, 12, 12, status), nil, nil, padded(10, 4, 12, 12, w))}, nil
 }
 

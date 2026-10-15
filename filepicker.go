@@ -10,6 +10,7 @@ import (
 	"errors"
 	"fmt"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -66,6 +67,9 @@ func portalHandle(window fyne.Window) string {
 }
 
 func nativePick(handle string, pickRequestValue pickRequest) ([]string, error) {
+	if runtime.GOOS == "windows" {
+		return nil, errNoNativePicker
+	}
 	options := &filechooser.OpenFileOptions{Directory: pickRequestValue.folder, Multiple: pickRequestValue.multiple, CurrentFolder: pickRequestValue.start}
 	if pickRequestValue.folder {
 		options.AcceptLabel = "Open"

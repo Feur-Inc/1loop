@@ -24,7 +24,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/signal"
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
@@ -32,7 +31,6 @@ import (
 	"strings"
 	"sync"
 	"sync/atomic"
-	"syscall"
 	"time"
 )
 
@@ -88,20 +86,7 @@ func startDevLog() {
 	devf("app", "1loop %s%s, %s, pid %d, %s", revision, modified, runtime.Version(), os.Getpid(), exe)
 	devf("app", "session %s, display %q, log file %s", os.Getenv("XDG_SESSION_TYPE"), os.Getenv("WAYLAND_DISPLAY")+os.Getenv("DISPLAY"), path)
 	go watchInterface()
-	go func() {
-		asked := make(chan os.Signal, 1)
-		signal.Notify(asked, syscall.SIGUSR1)
-		for range asked {
-			devStacks("goroutines, on request (SIGUSR1)")
-		}
-	}()
-	go func() {
-		asked := make(chan os.Signal, 1)
-		signal.Notify(asked, syscall.SIGUSR2)
-		for range asked {
-			devProfile(10 * time.Second)
-		}
-	}()
+	watchDevSignals()
 }
 
 // devProfile records where the CPU goes for a while, beside the log

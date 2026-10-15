@@ -19,14 +19,21 @@ func workspaceDiff(ctx context.Context, root string, staged bool) (string, error
 	}
 	args = append(args, "--")
 	cmd := exec.CommandContext(ctx, "git", args...)
-	out, err := cmd.CombinedOutput()
+	prepareProcess(cmd)
+	out, err := cmd.Output()
 	if err != nil {
-		return "", fmt.Errorf("Unable to read Git changes: %w\n%s", err, strings.TrimSpace(string(out)))
+		var detail string
+		if failure, ok := err.(*exec.ExitError); ok {
+			detail = strings.TrimSpace(string(failure.Stderr))
+		}
+		return "", fmt.Errorf("Unable to read Git changes: %w\n%s", err, detail)
 	}
 	if staged {
 		return string(out), nil
 	}
-	names, err := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "--others", "--exclude-standard", "-z").Output()
+	list := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "--others", "--exclude-standard", "-z")
+	prepareProcess(list)
+	names, err := list.Output()
 	if err != nil {
 		return "", fmt.Errorf("Unable to read new Git files: %w", err)
 	}

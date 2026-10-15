@@ -115,7 +115,7 @@ func systemInstructions(cfg config) string {
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
 		prompt += "\n\nAdditional instructions from the user:\n" + cfg.UserInstructions
 	}
-	return prompt + "\nWorkspace: " + cfg.Workspace + todoInstructions(cfg) + contextInstructions(cfg) + browserInstructions(cfg) + terminalInstructions(cfg) + computerInstructions(cfg)
+	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + shellDescription() + "." + todoInstructions(cfg) + contextInstructions(cfg) + browserInstructions(cfg) + terminalInstructions(cfg) + computerInstructions(cfg)
 }
 
 type approvalContextKey struct{}

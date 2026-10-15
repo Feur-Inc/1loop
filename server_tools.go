@@ -16,14 +16,11 @@ import (
 	"image/draw"
 	"image/png"
 	"io"
-	"os"
-	"os/exec"
 	"sync"
 	"time"
 	"unicode/utf8"
 
 	"github.com/chromedp/cdproto/target"
-	"github.com/creack/pty"
 	"github.com/hinshun/vt10x"
 	"golang.org/x/image/font"
 	"golang.org/x/image/font/basicfont"
@@ -151,7 +148,7 @@ type serverTerminal struct {
 	mu      sync.Mutex
 	writeMu sync.Mutex
 	id, dir string
-	file    *os.File
+	file    terminalProcess
 	cancel  context.CancelFunc
 	done    chan struct{}
 	exit    *int
@@ -162,14 +159,7 @@ type serverTerminal struct {
 
 func newServerTerminal(parent context.Context, dir string) (*serverTerminal, error) {
 	ctx, cancel := context.WithCancel(parent)
-	shell := os.Getenv("SHELL")
-	if shell == "" {
-		shell = "/bin/bash"
-	}
-	command := exec.CommandContext(ctx, shell, "-i")
-	command.Dir = dir
-	command.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
-	file, err := pty.StartWithSize(command, &pty.Winsize{Rows: 30, Cols: 100})
+	file, err := newTerminalProcess(ctx, dir)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -206,8 +196,7 @@ func newServerTerminal(parent context.Context, dir string) (*serverTerminal, err
 		}
 	}()
 	go func() {
-		command.Wait()
-		code := command.ProcessState.ExitCode()
+		code := file.wait()
 		terminal.mu.Lock()
 		terminal.exit = &code
 		terminal.mu.Unlock()
@@ -443,7 +432,7 @@ func (server *headlessServer) terminalTools(chat *serverChat) panelToolHandler {
 }
 
 func (terminal *serverTerminal) resize(cols, rows int) error {
-	if err := pty.Setsize(terminal.file, &pty.Winsize{Cols: uint16(cols), Rows: uint16(rows)}); err != nil {
+	if err := terminal.file.resize(cols, rows); err != nil {
 		return err
 	}
 	terminal.screen.Resize(cols, rows)

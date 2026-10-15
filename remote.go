@@ -26,6 +26,7 @@ package main
 //   POST /api/stop       {chat}
 //   POST /api/approve    {id,allow}
 //   POST /api/model      {chat,label,effort}    model and reasoning effort
+//   GET  /api/limits                    every account's usage windows
 //   POST /api/approval-mode {mode}              "approval" or "yolo"
 //   /api/chats/{id}/panel…                      the chat's side panel (remote_panel.go)
 
@@ -113,6 +114,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/stop", server.authorized(server.stop))
 	mux.HandleFunc("POST /api/approve", server.authorized(server.approve))
 	mux.HandleFunc("POST /api/model", server.authorized(server.setModel))
+	mux.HandleFunc("GET /api/limits", server.authorized(server.limits))
 	mux.HandleFunc("POST /api/approval-mode", server.authorized(server.setApprovalMode))
 	mux.HandleFunc("GET /api/chats/{id}/panel", server.authorized(server.panelTabs))
 	mux.HandleFunc("GET /api/chats/{id}/panel/{key}", server.authorized(server.panelTab))
@@ -657,14 +659,79 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 	models := []remoteModel{}
 	for _, label := range ui.model.Options {
 		choice := ui.choices[label]
-		remoteModelValue := remoteModel{Label: label, Name: choice.display(), Detail: ui.model.Details[label], Efforts: []remoteEffort{}}
+		remoteModelValue := remoteModel{Label: label, Name: choice.display(), Detail: ui.model.Details[label],
+			Account: choice.Connection.ID, Efforts: []remoteEffort{}}
 		for _, e := range choice.Efforts {
-			remoteModelValue.Efforts = append(remoteModelValue.Efforts, remoteEffort{e, effortLabel(e)})
+			remoteModelValue.Efforts = append(remoteModelValue.Efforts, remoteEffort{e, effortLabel(e), modelEffortAbout(e)})
 		}
 		models = append(models, remoteModelValue)
 	}
-	return map[string]any{"models": models, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort,
+	accounts := []remoteAccount{}
+	for _, conn := range ui.connectionsList {
+		if conn.Enabled {
+			accounts = append(accounts, remoteAccount{conn.ID, conn.Name, conn.Provider, providerName(conn.Provider), ui.modelUnavailable[conn.ID]})
+		}
+	}
+	return map[string]any{"models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort,
 		"approvalMode": approvalFor(ui.approvalMode, ui.cfg), "autoMode": true, "loading": ui.modelsLoading, "window": modelContextWindow(ui.cfg)}
+}
+
+// limits reads every account's usage windows for the phone's model picker,
+// with the desktop menu's cache (a minute).
+func (server *remoteServer) limits(writer http.ResponseWriter, req *http.Request) {
+	var accounts []connection
+	keys := map[string]string{}
+	cached := map[string]accountLimits{}
+	server.onUI(func() {
+		for _, conn := range server.ui.connectionsList {
+			if !conn.Enabled {
+				continue
+			}
+			accounts = append(accounts, conn)
+			keys[conn.ID] = server.ui.keys[conn.ID]
+			if limits, ok := server.ui.accountLimits[conn.ID]; ok && time.Since(limits.checked) < time.Minute {
+				cached[conn.ID] = limits
+			}
+		}
+	})
+	results := make([]accountLimits, len(accounts))
+	var wg sync.WaitGroup
+	for i, conn := range accounts {
+		if limits, ok := cached[conn.ID]; ok {
+			results[i] = limits
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			limits, err := server.ui.backend.connectionLimits(req.Context(), conn, keys[conn.ID])
+			if err != nil {
+				limits = accountLimits{note: "Limits unavailable"}
+			}
+			limits.checked = time.Now()
+			results[i] = limits
+		}()
+	}
+	wg.Wait()
+	out := []remoteLimits{}
+	server.onUI(func() {
+		if server.ui.accountLimits == nil {
+			server.ui.accountLimits = map[string]accountLimits{}
+		}
+		for i, conn := range accounts {
+			server.ui.accountLimits[conn.ID] = results[i]
+			value := remoteLimits{Account: conn.ID, Note: results[i].note, Windows: []remoteLimitWindow{}}
+			for _, window := range results[i].windows {
+				reset := int64(0)
+				if !window.resetAt.IsZero() {
+					reset = window.resetAt.UnixMilli()
+				}
+				value.Windows = append(value.Windows, remoteLimitWindow{window.label, window.remaining(), reset})
+			}
+			out = append(out, value)
+		}
+	})
+	writeJSON(writer, http.StatusOK, map[string]any{"accounts": out})
 }
 
 func (server *remoteServer) setModel(writer http.ResponseWriter, req *http.Request) {

@@ -101,13 +101,38 @@ type remoteApproval struct {
 type remoteEffort struct {
 	Value string `json:"value"`
 	Label string `json:"label"`
+	About string `json:"about,omitempty"` // "Balanced", as under the desktop's slider
 }
 
 type remoteModel struct {
 	Label   string         `json:"label"` // unique key, as in the desktop picker
 	Name    string         `json:"name"`
 	Detail  string         `json:"detail"`
+	Account string         `json:"account,omitempty"` // its connection's ID
 	Efforts []remoteEffort `json:"efforts"`
+}
+
+// remoteAccount is a connection of the model picker; problem says why its
+// models could not be listed.
+type remoteAccount struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	Provider string `json:"provider"`
+	Kind     string `json:"kind"` // the provider's name, "ChatGPT account"
+	Problem  string `json:"problem,omitempty"`
+}
+
+// remoteLimits is how much of an account's usage windows is left.
+type remoteLimits struct {
+	Account string              `json:"account"`
+	Note    string              `json:"note,omitempty"`
+	Windows []remoteLimitWindow `json:"windows"`
+}
+
+type remoteLimitWindow struct {
+	Label string  `json:"label"`
+	Left  float64 `json:"left"`            // percent
+	Reset int64   `json:"reset,omitempty"` // Unix milliseconds
 }
 
 type remoteTab struct {

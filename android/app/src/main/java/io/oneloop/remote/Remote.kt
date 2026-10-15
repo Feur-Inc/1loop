@@ -46,9 +46,18 @@ data class PanelTab(val key: String, val kind: String, val title: String, val ur
 
 data class Approval(val chat: String, val id: String, val title: String, val preview: String)
 
-data class Effort(val value: String, val label: String)
+data class Effort(val value: String, val label: String, val about: String)
 
-data class ModelOption(val label: String, val name: String, val detail: String, val efforts: List<Effort>)
+/** account: the ID of its connection (empty from a computer older than this app). */
+data class ModelOption(val label: String, val name: String, val detail: String, val account: String, val efforts: List<Effort>)
+
+/** A connection of the model picker; problem says why its models are missing. */
+data class Account(val id: String, val name: String, val provider: String, val kind: String, val problem: String)
+
+/** How much of a usage window is left, in percent; reset in Unix milliseconds (0: unknown). */
+data class LimitWindow(val label: String, val left: Float, val reset: Long)
+
+data class AccountLimits(val note: String, val windows: List<LimitWindow>)
 
 data class Meta(
     val chat: String, val title: String, val running: Boolean, val label: String, val mark: String,
@@ -99,6 +108,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var projects by mutableStateOf(listOf<String>())
     var workspace by mutableStateOf("")
     val models = mutableStateListOf<ModelOption>()
+    val accounts = mutableStateListOf<Account>()
+    val limits = mutableStateMapOf<String, AccountLimits>() // by account
     var modelsLoading by mutableStateOf(false)
     var defaultModel by mutableStateOf("") // the model a new chat starts with
     var defaultEffort by mutableStateOf("")
@@ -330,10 +341,17 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             val model = array!!.getJSONObject(modelIndex)
             val efforts = model.optJSONArray("efforts")
             models.add(ModelOption(
-                model.optString("label"), model.optString("name"), model.optString("detail"),
-                (0 until (efforts?.length() ?: 0)).map { efforts!!.getJSONObject(it).let { effort -> Effort(effort.optString("value"), effort.optString("label")) } },
+                model.optString("label"), model.optString("name"), model.optString("detail"), model.optString("account"),
+                (0 until (efforts?.length() ?: 0)).map {
+                    efforts!!.getJSONObject(it).let { effort -> Effort(effort.optString("value"), effort.optString("label"), effort.optString("about")) }
+                },
             ))
         }
+        val accountArray = settings.optJSONArray("accounts")
+        accounts.clear()
+        accounts.addAll((0 until (accountArray?.length() ?: 0)).map { i ->
+            accountArray!!.getJSONObject(i).let { Account(it.optString("id"), it.optString("name"), it.optString("provider"), it.optString("kind"), it.optString("problem")) }
+        })
         defaultModel = settings.optString("model")
         defaultEffort = settings.optString("effort")
         defaultWindow = settings.optInt("window")
@@ -406,6 +424,22 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 val body = JSONObject().put("chat", current.orEmpty()).put("label", label.orEmpty()).put("effort", effort.orEmpty())
                 withContext(Dispatchers.IO) { Api(target).post("/api/model", body) }
             }.onFailure { problem = it.message }
+        }
+    }
+
+    /** Reads every account's usage windows; a computer older than this app has none to give. */
+    fun loadLimits() {
+        val target = server ?: return
+        scope.launch {
+            val reply = runCatching { withContext(Dispatchers.IO) { Api(target).get("/api/limits") } }.getOrNull() ?: return@launch
+            val array = reply.optJSONArray("accounts") ?: return@launch
+            for (i in 0 until array.length()) {
+                val account = array.getJSONObject(i)
+                val windows = account.optJSONArray("windows")
+                limits[account.optString("account")] = AccountLimits(account.optString("note"), (0 until (windows?.length() ?: 0)).map {
+                    windows!!.getJSONObject(it).let { w -> LimitWindow(w.optString("label"), w.optDouble("left").toFloat(), w.optLong("reset")) }
+                })
+            }
         }
     }
 

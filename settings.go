@@ -425,7 +425,7 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		})
 	})
 	mode := newPicker(ui.window, "Tool permissions", styleField, nil)
-	mode.Options = []string{"Approval required", "YOLO mode", "Auto mode (Claude Code)"}
+	mode.Options = []string{"Approval required", "YOLO mode", "Auto mode"}
 	modes := []string{"approval", "yolo", "auto"}
 	selected := mode.Options[0]
 	for i, name := range modes {
@@ -452,7 +452,7 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		card(settingRow("HTTPS server", "Work on a headless 1loop server with its own models, files, browser and terminals. Approve this device in the server console.", newRow("Connect…", nil, styleOutline, ui.connectServer))),
 		sectionTitle("Permissions"),
 		card(settingRow("Tool permissions",
-			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto is Claude Code's own mode: it runs what it judges safe; with any other model it asks instead.",
+			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto runs what is safe and asks for the rest: a reviewer (the chat's own model, with little reasoning) judges each action against your request; with Claude Code, its own Auto mode does it.",
 			sized(230, mode.row))),
 		sectionTitle("Browser"),
 		card(settingRow("Browsing data",

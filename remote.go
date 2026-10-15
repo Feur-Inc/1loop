@@ -664,7 +664,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 		models = append(models, remoteModelValue)
 	}
 	return map[string]any{"models": models, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort,
-		"approvalMode": approvalFor(ui.approvalMode, ui.cfg), "autoMode": ui.cfg.Provider == "claudecode", "loading": ui.modelsLoading, "window": modelContextWindow(ui.cfg)}
+		"approvalMode": approvalFor(ui.approvalMode, ui.cfg), "autoMode": true, "loading": ui.modelsLoading, "window": modelContextWindow(ui.cfg)}
 }
 
 func (server *remoteServer) setModel(writer http.ResponseWriter, req *http.Request) {

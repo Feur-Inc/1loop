@@ -118,8 +118,24 @@ func (backend *app) confirm(ctx context.Context, emit emitter, title, preview st
 	if ctx.Err() != nil {
 		return false
 	}
-	if automatic, _ := ctx.Value(approvalContextKey{}).(bool); automatic {
+	policy, _ := ctx.Value(approvalContextKey{}).(approvalPolicy)
+	if policy.yolo {
 		return true
+	}
+	if policy.review != nil {
+		allow, reason := policy.review(ctx, emit, title, preview)
+		if allow {
+			if reason != "" { // the reviewer's approval: kept in the chat
+				emit("note", "Auto-approved · "+actionSummary(title, preview)+" · "+reason)
+			}
+			return true
+		}
+		if ctx.Err() != nil {
+			return false
+		}
+		if reason != "" {
+			preview = "Auto-review asks you: " + reason + "\n\n" + preview
+		}
 	}
 	id := identifier()
 	ch := make(chan bool, 1)

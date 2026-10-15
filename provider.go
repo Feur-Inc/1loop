@@ -640,6 +640,12 @@ func (backend *app) runCompatible(ctx context.Context, cfg config, history []mes
 			}
 		}
 	}
+	if cfg.ApprovalMode == "auto" {
+		// The reviewer reads the requests as they are when an action comes:
+		// tools run between two turns of this loop, never during a change.
+		review := backend.autoReviewer(cfg, func() string { return recentRequests(messages) })
+		ctx = context.WithValue(ctx, approvalContextKey{}, approvalPolicy{review: review})
+	}
 	usage := func() int { return reported + historyEstimate(messages[reportedAt:]) }
 	publish := func() { emit("history", append([]message(nil), messages[1:]...)) }
 	inject := func(m message) { messages = append(messages, m); emit("injected", m) }

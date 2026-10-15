@@ -109,6 +109,9 @@ func systemInstructions(cfg config) string {
 	if cfg.ApprovalMode == "yolo" {
 		prompt = strings.Replace(prompt, "Shell commands and file edits require user approval; never bypass a refusal.", "The user enabled YOLO mode: shell commands (deletions included) and edits run without asking. Stay inside the workspace.", 1)
 	}
+	if cfg.ApprovalMode == "auto" {
+		prompt = strings.Replace(prompt, "Shell commands and file edits require user approval; never bypass a refusal.", "Shell commands and file edits go through an automatic review: safe ones run at once, risky ones wait for the user's approval. Never bypass a refusal or try to word an action so that it passes the review.", 1)
+	}
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
 		prompt += "\n\nAdditional instructions from the user:\n" + cfg.UserInstructions
 	}
@@ -123,13 +126,13 @@ func toolContext(ctx context.Context, cfg config) context.Context {
 	ctx = context.WithValue(ctx, browserContextKey{}, cfg.Browser)
 	ctx = context.WithValue(ctx, recallContextKey{}, cfg.Recall)
 	ctx = context.WithValue(ctx, todoContextKey{}, cfg.Todo)
-	return context.WithValue(ctx, approvalContextKey{}, cfg.ApprovalMode == "yolo")
+	return context.WithValue(ctx, approvalContextKey{}, approvalPolicy{yolo: cfg.ApprovalMode == "yolo"})
 }
 
+// approvalFor is the approval mode a run with this configuration uses:
+// the chosen one. "auto" is Claude Code's own mode for a Claude Code
+// connection, 1loop's reviewer for every other (see auto_review.go).
 func approvalFor(mode string, cfg config) string {
-	if mode == "auto" && cfg.Provider != "claudecode" {
-		return "approval"
-	}
 	return mode
 }
 

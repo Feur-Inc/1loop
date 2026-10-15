@@ -226,8 +226,8 @@ fun ApprovalChip(app: RemoteApp) {
         }
         DropdownMenu(open, { open = false }, containerColor = Palette.popover) {
             ModeItem(Icons.shield, "Approval required", "Ask before each command and edit", !yolo && !auto) { app.chooseApprovalMode("approval"); open = false }
-            if (app.autoMode) { // only Claude Code's harness has this mode
-                ModeItem(Icons.shieldCheck, "Auto mode", "Claude Code runs what it judges safe", auto) { app.chooseApprovalMode("auto"); open = false }
+            if (app.autoMode) { // a computer older than this app may not offer it
+                ModeItem(Icons.shieldCheck, "Auto mode", "Approves safe actions, asks you for risky ones", auto) { app.chooseApprovalMode("auto"); open = false }
             }
             ModeItem(Icons.bolt, "YOLO mode", "Run commands and edits automatically", yolo, danger = true) { app.chooseApprovalMode("yolo"); open = false }
         }

@@ -289,7 +289,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 		"effort":       server.cfg.Effort,
 		"window":       modelContextWindow(server.cfg),
 		"approvalMode": server.approvalMode,
-		"autoMode":     server.cfg.Provider == "claudecode",
+		"autoMode":     true,
 		"loading":      server.loading,
 		"computerUse":  false,
 	}
@@ -531,7 +531,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		data := value.(map[string]any)
 		run.approval = &remoteApproval{Chat: chat.ID, ID: fmt.Sprint(data["id"]), Title: fmt.Sprint(data["title"]), Preview: fmt.Sprint(data["preview"])}
 		run.mark, run.label = "approval", "Waiting for your approval"
-	case "context_note":
+	case "context_note", "note":
 		index = server.addLocked(chat, chatItem{Kind: "note", Text: value.(string)})
 	case "usage":
 		run.used = value.(int)

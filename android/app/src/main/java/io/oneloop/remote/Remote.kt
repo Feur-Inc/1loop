@@ -104,7 +104,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var defaultEffort by mutableStateOf("")
     var defaultWindow by mutableStateOf(0)
     var approvalMode by mutableStateOf("approval")
-    var autoMode by mutableStateOf(false) // Claude Code's Auto mode exists for the model in use
+    var autoMode by mutableStateOf(false) // the computer offers Auto mode
     var current by mutableStateOf<String?>(null) // null: a new chat
     val items = mutableStateListOf<Item>()
     var meta by mutableStateOf<Meta?>(null)

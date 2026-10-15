@@ -377,10 +377,7 @@ func nearestModelEffort(choice modelChoice, wanted string) string {
 	return best
 }
 
-// approvalFor is the approval mode a run with this configuration uses.
-// "auto" is Claude Code's own permission mode (it runs what it judges safe
-// and blocks or asks for the rest); 1loop's harness has no such judge, so
-// with any other model it falls back to asking.
+// updateApprovalControl shows the approval mode on the composer's button.
 func (ui *desktopUI) updateApprovalControl() {
 	if ui.approvalControl == nil {
 		return
@@ -415,10 +412,12 @@ func (ui *desktopUI) approvalMenu() {
 	mode := approvalFor(ui.approvalMode, ui.cfg)
 	actions := []menuAction{{label: "Approval required", detail: "Ask before each command and edit", icon: iconShield,
 		checked: mode == "approval", run: set("approval")}}
-	if ui.cfg.Provider == "claudecode" { // only Claude Code's harness has this mode
-		actions = append(actions, menuAction{label: "Auto mode", detail: "Claude Code runs what it judges safe", icon: iconShieldCheck,
-			checked: mode == "auto", run: set("auto")})
+	autoDetail := "Approves safe actions, asks you for risky ones"
+	if ui.cfg.Provider == "claudecode" {
+		autoDetail = "Claude Code runs what it judges safe"
 	}
+	actions = append(actions, menuAction{label: "Auto mode", detail: autoDetail, icon: iconShieldCheck,
+		checked: mode == "auto", run: set("auto")})
 	actions = append(actions, menuAction{label: "YOLO mode", detail: "Run commands and edits automatically", icon: iconBolt,
 		checked: mode == "yolo", run: set("yolo")})
 	showMenu(ui.window, ui.approvalControl, actions)

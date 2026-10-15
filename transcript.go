@@ -803,7 +803,7 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		currentTurn.chat.History = uiEventValue.data.([]message)
 	case "cache":
 		ui.save()
-	case "context_note":
+	case "context_note", "note":
 		ui.addItem(currentTurn.chat, chatItem{Kind: "note", Text: uiEventValue.data.(string)})
 		ui.save()
 	case "todo":

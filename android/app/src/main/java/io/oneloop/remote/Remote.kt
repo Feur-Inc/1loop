@@ -46,6 +46,29 @@ data class PanelTab(val key: String, val kind: String, val title: String, val ur
 
 data class Approval(val chat: String, val id: String, val title: String, val preview: String)
 
+data class QuestionOption(val label: String, val description: String)
+
+data class Question(val id: String, val header: String, val text: String, val options: List<QuestionOption>)
+
+/** The model's questions (request_user_input); answered with POST /api/answer. */
+data class Questions(val chat: String, val id: String, val questions: List<Question>) {
+    companion object {
+        /** Prefixes an answer written rather than picked, as the computer expects. */
+        const val OTHER = "Other: "
+
+        fun from(o: JSONObject) = Questions(o.optString("chat"), o.optString("id"), o.optJSONArray("questions").let { array ->
+            (0 until (array?.length() ?: 0)).map { i ->
+                array!!.getJSONObject(i).let { q ->
+                    val options = q.optJSONArray("options")
+                    Question(q.optString("id"), q.optString("header"), q.optString("question"), (0 until (options?.length() ?: 0)).map { j ->
+                        options!!.getJSONObject(j).let { QuestionOption(it.optString("label"), it.optString("description")) }
+                    })
+                }
+            }
+        })
+    }
+}
+
 data class Effort(val value: String, val label: String, val about: String)
 
 /** account: the ID of its connection (empty from a computer older than this app). */
@@ -61,7 +84,7 @@ data class AccountLimits(val note: String, val windows: List<LimitWindow>)
 
 data class Meta(
     val chat: String, val title: String, val running: Boolean, val label: String, val mark: String,
-    val queue: List<String>, val steer: List<String>, val approval: Approval?,
+    val queue: List<String>, val steer: List<String>, val approval: Approval?, val question: Questions?,
     val model: String, val effort: String, val used: Int, val window: Int,
     val todo: List<Task>,
 ) {
@@ -70,6 +93,7 @@ data class Meta(
             o.optString("chat"), o.optString("title"), o.optBoolean("running"),
             o.optString("label"), o.optString("mark"), strings(o.optJSONArray("queue")), strings(o.optJSONArray("steer")),
             o.optJSONObject("approval")?.let { Approval(it.optString("chat"), it.optString("id"), it.optString("title"), it.optString("preview")) },
+            o.optJSONObject("question")?.let { Questions.from(it) },
             o.optString("model"), o.optString("effort"), o.optInt("used"), o.optInt("window"),
             o.optJSONArray("todo").let { array ->
                 (0 until (array?.length() ?: 0)).map { i ->
@@ -120,6 +144,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     val items = mutableStateListOf<Item>()
     var meta by mutableStateOf<Meta?>(null)
     val approvals = mutableStateMapOf<String, Approval>() // by chat
+    val questions = mutableStateMapOf<String, Questions>() // by chat
     var busy by mutableStateOf(false)
 
     private var events: Job? = null
@@ -256,6 +281,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         meta = null
         current = null
         approvals.clear()
+        questions.clear()
         prefs.edit { putString("last", target.key) }
         screen = Screen.Chat
         events = scope.launch {
@@ -366,6 +392,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     private fun applyMeta(m: Meta) {
         if (m.approval != null) approvals[m.chat] = m.approval else approvals.remove(m.chat)
+        if (m.question != null) questions[m.chat] = m.question else questions.remove(m.chat)
         if (m.chat == current) meta = m
     }
 
@@ -521,6 +548,17 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             val body = JSONObject().put("action", action).put("text", text).put("x", x.toDouble()).put("y", y.toDouble()).put("dy", dy.toDouble())
             withContext(Dispatchers.IO) { Api(target).post("/api/chats/$chat/panel/$key/input", body) }
         }.onFailure { problem = it.message }
+    }
+
+    fun answer(request: Questions, answers: Map<String, String>) {
+        val target = server ?: return
+        questions.remove(request.chat)
+        scope.launch {
+            runCatching {
+                val body = JSONObject().put("id", request.id).put("answers", JSONObject(answers))
+                withContext(Dispatchers.IO) { Api(target).post("/api/answer", body) }
+            }.onFailure { problem = it.message }
+        }
     }
 
     fun answer(approval: Approval, allow: Boolean) {

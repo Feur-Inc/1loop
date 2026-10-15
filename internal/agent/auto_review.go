@@ -14,6 +14,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -76,7 +77,7 @@ func (backend *App) autoReview(ctx context.Context, cfg Config, requests, title,
 		cfg.Effort = "low"
 	}
 	prompt := "What the user asked for, most recent last:\n" + requests +
-		"\n\nWorkspace: " + cfg.Workspace +
+		"\n\nWorkspace: " + cfg.Workspace + " " + cfg.Grants.summary() +
 		"\n\nAction: " + title + "\n" + core.TruncateText(preview, 6000)
 	answer, err := completion(ctx, cfg, []Message{
 		{Role: "system", Content: autoReviewInstructions},
@@ -142,14 +143,19 @@ func actionSummary(title, preview string) string {
 	return strings.TrimSuffix(title, "?")
 }
 
-// obviouslySafe tells the actions that need no review: an edit inside the
-// workspace (its path is already confined to it), except in .git, and a
+// obviouslySafe tells the actions that need no review: edits inside the
+// workspace (relative paths: confined to it), except in .git, and a
 // shell command whose every part only reads, or builds and tests Go code.
 // Anything it cannot read with certainty goes to the reviewer.
 func obviouslySafe(title, preview string) bool {
 	if strings.HasPrefix(title, "Apply changes to ") {
-		path := strings.TrimSuffix(strings.TrimPrefix(title, "Apply changes to "), "?")
-		return path != ".git" && !strings.HasPrefix(path, ".git/")
+		for _, path := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(title, "Apply changes to "), "?"), ", ") {
+			// An absolute path is outside the workspace, in a granted folder.
+			if path == ".git" || strings.HasPrefix(path, ".git/") || filepath.IsAbs(path) {
+				return false
+			}
+		}
+		return true
 	}
 	if title != "Run command?" {
 		return false

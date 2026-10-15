@@ -16,7 +16,9 @@ import (
 	"1loop/internal/platform"
 )
 
-func toolDefinitions() []map[string]any {
+// coreToolDefinitions are the tools every request carries; the panel and
+// desktop tools load on demand (see tool_groups.go).
+func coreToolDefinitions() []map[string]any {
 	definitions := []struct {
 		name, description string
 		fields            []string
@@ -51,12 +53,16 @@ func toolDefinitions() []map[string]any {
 			"parameters":  map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false},
 		}})
 	}
-	result = append(result, todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition())
-	if definition := computerToolDefinition(); definition != nil {
-		result = append(result, definition)
+	return append(result, patchToolDefinition(), todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition())
+}
+
+// allToolDefinitions are every tool, loaded or not.
+func allToolDefinitions() []map[string]any {
+	result := coreToolDefinitions()
+	for _, group := range toolGroups() {
+		result = append(result, group.tools()...)
 	}
-	result = append(result, browserToolDefinitions()...)
-	return append(result, terminalToolDefinitions()...)
+	return result
 }
 
 func WorkspacePath(root, path string) (string, error) {
@@ -256,6 +262,26 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		output, err = recallConversation(ctx, json.RawMessage(call.Function.Arguments))
 		return
 	}
+	if call.Function.Name == "apply_patch" {
+		var args struct{ Patch string }
+		if err = json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
+			return
+		}
+		return backend.applyPatch(ctx, root, args.Patch, begin, emit)
+	}
+	if call.Function.Name == "request_user_input" {
+		output, err = backend.askUser(ctx, call.Function.Arguments, begin, emit)
+		return
+	}
+	if call.Function.Name == "request_permissions" {
+		output, err = backend.requestPermissions(ctx, call.Function.Arguments, begin, emit)
+		return
+	}
+	if call.Function.Name == "tool_search" {
+		begin()
+		output, err = searchTools(ctx.Value(configContextKey{}).(Config), call.Function.Arguments)
+		return
+	}
 	if call.Function.Name == "checkpoint" {
 		begin()
 		var args struct {
@@ -327,7 +353,7 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	if name != "read_file" && name != "list_directory" && name != "edit_file" {
 		return "", "", fmt.Errorf("Unknown tool: %s", name)
 	}
-	path, err := WorkspacePath(root, args.Path)
+	path, err := toolPath(ctx, root, args.Path)
 	if err != nil {
 		return "", "", err
 	}
@@ -388,7 +414,7 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	if before == after && !create {
 		return "No changes", "", nil
 	}
-	rel, _ := filepath.Rel(root, path)
+	rel := relPath(root, path)
 	diff, err = platform.UnifiedDiff(ctx, rel, before, after)
 	if err != nil {
 		return "", "", err
@@ -398,7 +424,7 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	}
 	begin()
 	// Recheck the target after approval: it may have changed while the user reviewed the diff.
-	currentPath, err := WorkspacePath(root, args.Path)
+	currentPath, err := toolPath(ctx, root, args.Path)
 	if err != nil || currentPath != path {
 		return "", diff, fmt.Errorf("The path has changed since the preview")
 	}

@@ -772,6 +772,10 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		}
 		ui.showApproval(currentTurn.chat, p)
 		currentTurn.show(agent.Activity{State: "approval", Detail: approvalSubject(p)})
+	case "question":
+		request := uiEventValue.data.(agent.QuestionRequest)
+		ui.showQuestions(currentTurn.chat, request)
+		currentTurn.show(agent.Activity{State: "question"})
 	case "tool_exec":
 		toolOutcomeValue := uiEventValue.data.(agent.ToolOutcome)
 		if index, ok := currentTurn.calls[toolOutcomeValue.ID]; ok {
@@ -889,12 +893,18 @@ func (currentTurn *turn) show(activityValue agent.Activity) {
 			}
 		case "list_directory":
 			label = "Preparing to list a directory"
+		case "web_search":
+			label = "Searching the web"
+		case "tool_search":
+			label = "Loading tools"
 		default:
 			label = "Preparing " + activityValue.Tool
 		}
 		if detail != "" {
 			label += ": " + detail
 		}
+	case "question":
+		label = "Waiting for your answer"
 	case "approval":
 		label = "Waiting for your approval"
 		if activityValue.Detail != "" {
@@ -914,6 +924,9 @@ func (currentTurn *turn) show(activityValue agent.Activity) {
 		return
 	}
 	currentTurn.label, currentTurn.mark = label+"…", activityValue.State
+	if activityValue.State == "question" {
+		currentTurn.mark = "approval" // the ring's waiting-for-you glyph
+	}
 	currentTurn.ui.applyActivity(currentTurn)
 }
 
@@ -930,6 +943,8 @@ func (currentTurn *turn) showRun(outcome agent.ToolOutcome) {
 		currentTurn.label, currentTurn.mark = "Listing "+path+"…", "list"
 	case "edit_file":
 		currentTurn.label, currentTurn.mark = "Applying the edit to "+path+"…", "edit"
+	case "apply_patch":
+		currentTurn.label, currentTurn.mark = "Applying the patch…", "edit"
 	default: // a tool of another harness (Claude Code's Grep, WebFetch, Agent…)
 		currentTurn.label, currentTurn.mark = "Using "+outcome.Name+"…", "call"
 	}

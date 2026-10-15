@@ -215,6 +215,11 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 			return agent.PanelToolResult{Text: "Integrated terminal screenshot: " + term.id, Images: []core.ImagePart{{Mime: "image/png", Data: base64.StdEncoding.EncodeToString(data.Bytes())}}}, nil
 		}
 		if name == "terminal_read" {
+			agent.WaitForOutput(ctx, args.WaitMS, func() bool {
+				term.mu.Lock()
+				defer term.mu.Unlock()
+				return term.total > args.Offset
+			}, term.done)
 			return agent.PanelToolResult{Text: term.read(args.Offset, agent.TerminalReadLimit(args.MaxBytes))}, nil
 		}
 		var text string

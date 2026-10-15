@@ -117,17 +117,22 @@ func systemInstructions(cfg Config) string {
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
 		prompt += "\n\nAdditional instructions from the user:\n" + cfg.UserInstructions
 	}
-	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + platform.ShellDescription() + "." + todoInstructions(cfg) + contextInstructions(cfg) + browserInstructions(cfg) + terminalInstructions(cfg) + computerInstructions(cfg)
+	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + platform.ShellDescription() + "." + todoInstructions(cfg) + contextInstructions(cfg) + toolSearchInstructions()
 }
 
 type approvalContextKey struct{}
 
+// configContextKey hands tools the run's configuration.
+type configContextKey struct{}
+
 func toolContext(ctx context.Context, cfg Config) context.Context {
+	ctx = context.WithValue(ctx, configContextKey{}, cfg)
 	ctx = context.WithValue(ctx, computerContextKey{}, cfg.Computer)
 	ctx = context.WithValue(ctx, terminalContextKey{}, cfg.Terminal)
 	ctx = context.WithValue(ctx, browserContextKey{}, cfg.Browser)
 	ctx = context.WithValue(ctx, recallContextKey{}, cfg.Recall)
 	ctx = context.WithValue(ctx, todoContextKey{}, cfg.Todo)
+	ctx = context.WithValue(ctx, grantsContextKey{}, cfg.Grants)
 	return context.WithValue(ctx, approvalContextKey{}, approvalPolicy{yolo: cfg.ApprovalMode == "yolo"})
 }
 

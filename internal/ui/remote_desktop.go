@@ -513,6 +513,9 @@ func (remote *remoteDesktop) renderTranscript(items []remoteapi.Item) {
 	if remote.meta.Approval != nil {
 		approvalID = remote.meta.Approval.ID
 	}
+	if remote.meta.Question != nil {
+		approvalID += "?" + remote.meta.Question.ID
+	}
 	if remote.renderedApproval != approvalID {
 		remote.renderedApproval = approvalID
 		remote.approvalBox.RemoveAll()
@@ -524,10 +527,48 @@ func (remote *remoteDesktop) renderTranscript(items []remoteapi.Item) {
 			body := container.NewVBox(note(approval.Title), codeBlock(approval.Preview, 200), buttons)
 			remote.approvalBox.Add(surface(body, colSurface, colBorderHot, 12, 12))
 		}
+		if question := remote.meta.Question; question != nil {
+			remote.approvalBox.Add(surface(remote.questionForm(question), colSurface, colBorderHot, 12, 12))
+		}
 	}
 	if changed && following {
 		remote.scroll.ScrollToBottom()
 	}
+}
+
+// questionForm answers the model's questions on the server: an option per
+// question, or the user's own words.
+func (remote *remoteDesktop) questionForm(question *remoteapi.Question) fyne.CanvasObject {
+	answers := map[string]string{}
+	form := container.NewVBox()
+	for _, q := range question.Questions {
+		q := q
+		var options []string
+		for _, option := range q.Options {
+			options = append(options, option.Label)
+		}
+		other := widget.NewEntry()
+		other.SetPlaceHolder("Other: your own answer")
+		choice := widget.NewRadioGroup(options, func(label string) {
+			if label != "" {
+				answers[q.ID] = label
+				other.SetText("")
+			}
+		})
+		other.OnChanged = func(text string) {
+			if strings.TrimSpace(text) != "" {
+				answers[q.ID] = agent.OtherAnswer + strings.TrimSpace(text)
+				choice.SetSelected("")
+			}
+		}
+		form.Add(note(q.Question))
+		form.Add(choice)
+		form.Add(other)
+	}
+	form.Add(newRow("Send answers", nil, stylePrimary, func() {
+		remote.action("/api/answer", map[string]any{"id": question.ID, "answers": answers})
+	}))
+	return form
 }
 
 func (remote *remoteDesktop) showTool(item remoteapi.Item) {

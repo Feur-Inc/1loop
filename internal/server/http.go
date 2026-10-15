@@ -29,6 +29,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/send":                         server.send,
 		"POST /api/stop":                         server.stop,
 		"POST /api/approve":                      server.approve,
+		"POST /api/answer":                       server.answer,
 		"POST /api/model":                        server.setModel,
 		"POST /api/approval-mode":                server.setApprovalMode,
 		"GET /api/chats/{id}/panel":              server.panelTabs,
@@ -175,6 +176,22 @@ func (server *headlessServer) stop(w http.ResponseWriter, r *http.Request) {
 		chat.run.cancel()
 		chat.queue = nil
 		chat.steer = nil
+	}
+	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (server *headlessServer) answer(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		ID      string
+		Answers map[string]string
+	}
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	if !server.backend.Answer(args.ID, args.Answers) {
+		core.Fail(w, 404, "These questions were already answered")
+		return
 	}
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }

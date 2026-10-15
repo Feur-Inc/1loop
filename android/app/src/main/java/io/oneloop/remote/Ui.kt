@@ -63,6 +63,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -359,6 +360,8 @@ fun ChatScreen(app: RemoteApp) {
     }
     val approval = app.approvals.values.firstOrNull()
     if (approval != null) ApprovalSheet(app, approval)
+    val question = app.questions.values.firstOrNull()
+    if (approval == null && question != null) QuestionSheet(app, question)
 }
 
 @Composable
@@ -752,6 +755,56 @@ private fun elapsed(ms: Long) = when {
     ms < 1000 -> "$ms ms"
     ms < 60000 -> String.format(Locale.ROOT, "%.1f s", ms / 1000.0).replace(".0 s", " s")
     else -> "${ms / 60000}m ${(ms / 1000 % 60).toString().padStart(2, '0')}s"
+}
+
+// The model's questions: an option per question, or the user's own words
+// on the "Other" line; sent once every question has an answer.
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun QuestionSheet(app: RemoteApp, request: Questions) {
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { true })
+    val title = app.chats.firstOrNull { it.id == request.chat }?.title.orEmpty()
+    val answers = remember(request.id) { mutableStateMapOf<String, String>() }
+    val others = remember(request.id) { mutableStateMapOf<String, String>() }
+    ModalBottomSheet(onDismissRequest = {}, sheetState = state, containerColor = Palette.surface) {
+        Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                WorkRing("approval", 34.dp)
+                Spacer(Modifier.width(12.dp))
+                Column {
+                    Text(if (request.questions.size > 1) "1loop has questions" else "1loop has a question", style = Type.title)
+                    Text(title, style = Type.caption.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                }
+            }
+            for (question in request.questions) {
+                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                    if (question.header.isNotEmpty()) Text(question.header.uppercase(), style = Type.caption.copy(color = Palette.faint, fontWeight = FontWeight.SemiBold))
+                    Text(question.text, style = Type.body)
+                    for (option in question.options) {
+                        val selected = answers[question.id] == option.label
+                        Row(
+                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (selected) Palette.selected else Color.Transparent)
+                                .clickable { answers[question.id] = option.label; others.remove(question.id) }.padding(horizontal = 12.dp, vertical = 10.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text(option.label, style = Type.body.copy(fontSize = 14.5.sp))
+                                if (option.description.isNotEmpty()) Text(option.description, style = Type.caption.copy(color = Palette.muted))
+                            }
+                            if (selected) Icon(Icons.check, null, tint = Palette.amber, modifier = Modifier.size(18.dp))
+                        }
+                    }
+                    Field(others[question.id].orEmpty(), { text ->
+                        others[question.id] = text
+                        if (text.isNotBlank()) answers[question.id] = Questions.OTHER + text.trim() else if (answers[question.id]?.startsWith(Questions.OTHER) == true) answers.remove(question.id)
+                    }, "Other: your own answer", KeyboardType.Text)
+                }
+            }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Pill("Send answers", primary = true, enabled = request.questions.all { answers.containsKey(it.id) }) { app.answer(request, answers.toMap()) }
+            }
+        }
+    }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

@@ -37,16 +37,17 @@ import (
 )
 
 type conversation struct {
-	ID       string              `json:"id,omitempty"` // stable, for the phone remote
-	Title    string              `json:"title"`
-	Config   agent.Config        `json:"config"`
-	History  []agent.Message     `json:"history"`
-	Items    []agent.ChatItem    `json:"items"`
-	Cache    *agent.ContextCache `json:"contextCache,omitempty"`
-	Todo     *agent.TodoState    `json:"todo,omitempty"`
-	Panel    *savedPanel         `json:"panel,omitempty"` // its side panel, to open it again as it was
-	Version  string              `json:"version,omitempty"`
-	Versions []chatVersion       `json:"versions,omitempty"`
+	ID       string                  `json:"id,omitempty"` // stable, for the phone remote
+	Title    string                  `json:"title"`
+	Config   agent.Config            `json:"config"`
+	History  []agent.Message         `json:"history"`
+	Items    []agent.ChatItem        `json:"items"`
+	Cache    *agent.ContextCache     `json:"contextCache,omitempty"`
+	grants   *agent.PermissionGrants // what request_permissions granted, until 1loop closes
+	Todo     *agent.TodoState        `json:"todo,omitempty"`
+	Panel    *savedPanel             `json:"panel,omitempty"` // its side panel, to open it again as it was
+	Version  string                  `json:"version,omitempty"`
+	Versions []chatVersion           `json:"versions,omitempty"`
 
 	panel     *panelState // its side panel while 1loop runs (live tabs, terminals included)
 	todoCount int         // tasks last seen in its list: the first ones open the panel
@@ -65,7 +66,12 @@ type chatRun struct {
 	// The pending approval, so the phone remote can show and answer it.
 	approvalID, approvalTitle, approvalPreview string
 	answer                                     func(allow bool)
-	started                                    time.Time
+	// The pending questions (request_user_input), for the phone as well.
+	questions       *sheet
+	questionID      string
+	questionList    []agent.Question
+	answerQuestions func(map[string]string)
+	started         time.Time
 }
 
 type desktopUI struct {
@@ -990,6 +996,10 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 		chat.Cache = &agent.ContextCache{}
 	}
 	cfg.Cache = chat.Cache
+	if chat.grants == nil {
+		chat.grants = &agent.PermissionGrants{}
+	}
+	cfg.Grants = chat.grants
 	cfg.ContextKey = chat.ID + ":" + chat.Version
 	cfg.Recall = func(ctx context.Context) ([]agent.ChatItem, error) {
 		var items []agent.ChatItem

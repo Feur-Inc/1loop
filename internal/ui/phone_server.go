@@ -23,6 +23,7 @@ package ui
 //   POST /api/send       {chat,text,mode,workspace}  mode: send, queue or steer
 //   POST /api/stop       {chat}
 //   POST /api/approve    {id,allow}
+//   POST /api/answer     {id,answers}         answers to the model's questions
 //   POST /api/model      {chat,label,effort}    model and reasoning effort
 //   GET  /api/limits                    every account's usage windows
 //   POST /api/approval-mode {mode}              "approval" or "yolo"
@@ -115,6 +116,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/send", server.authorized(server.send))
 	mux.HandleFunc("POST /api/stop", server.authorized(server.stop))
 	mux.HandleFunc("POST /api/approve", server.authorized(server.approve))
+	mux.HandleFunc("POST /api/answer", server.authorized(server.answer))
 	mux.HandleFunc("POST /api/model", server.authorized(server.setModel))
 	mux.HandleFunc("GET /api/limits", server.authorized(server.limits))
 	mux.HandleFunc("POST /api/approval-mode", server.authorized(server.setApprovalMode))
@@ -350,6 +352,9 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 		remoteMetaValue.Label, remoteMetaValue.Mark = run.turn.label, run.turn.mark
 		if run.approvalID != "" {
 			remoteMetaValue.Approval = &remoteapi.Approval{Chat: chat.ID, ID: run.approvalID, Title: run.approvalTitle, Preview: run.approvalPreview}
+		}
+		if run.questionID != "" {
+			remoteMetaValue.Question = &remoteapi.Question{Chat: chat.ID, ID: run.questionID, Questions: run.questionList}
 		}
 	}
 	return remoteMetaValue
@@ -617,6 +622,32 @@ func (server *remoteServer) stop(writer http.ResponseWriter, req *http.Request) 
 			chat.run.cancel()
 		}
 	})
+	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// answer takes the phone's answers to the model's questions.
+func (server *remoteServer) answer(writer http.ResponseWriter, req *http.Request) {
+	var body struct {
+		ID      string            `json:"id"`
+		Answers map[string]string `json:"answers"`
+	}
+	if core.ReadJSON(req, &body) != nil {
+		core.Fail(writer, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	found := false
+	server.onUI(func() {
+		for _, chat := range server.ui.chats {
+			if run := chat.run; run != nil && run.questionID == body.ID && run.answerQuestions != nil {
+				run.answerQuestions(body.Answers) // closes the questions on the computer too
+				found = true
+			}
+		}
+	})
+	if !found {
+		core.Fail(writer, http.StatusNotFound, "These questions were already answered")
+		return
+	}
 	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
 }
 

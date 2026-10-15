@@ -30,6 +30,7 @@ type Config struct {
 	Cache             *ContextCache                             `json:"-"`
 	ContextKey        string                                    `json:"-"`
 	Todo              *TodoState                                `json:"-"`
+	Grants            *PermissionGrants                         `json:"-"`
 	Computer          PanelToolHandler                          `json:"-"`
 	Terminal          PanelToolHandler                          `json:"-"`
 	Browser           PanelToolHandler                          `json:"-"`
@@ -50,6 +51,7 @@ type App struct {
 	openAI          *openAIAuth
 	openAIProfiles  map[string]*openAIAuth
 	capabilityCache map[string]ModelChoice
+	answers         map[string]chan map[string]string // request_user_input, by request
 }
 
 func ResolveWorkspace(path string) (string, error) {

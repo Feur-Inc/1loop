@@ -17,6 +17,7 @@ import (
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 
+	"1loop/internal/agent"
 	"1loop/internal/browser"
 )
 
@@ -68,12 +69,21 @@ type Meta struct {
 	Steer         []string  `json:"steer"`
 	Items         int       `json:"items"`
 	Approval      *Approval `json:"approval,omitempty"`
+	Question      *Question `json:"question,omitempty"` // request_user_input waiting for answers
 	// The chat's model, by its label in the model list, and context use.
 	Model  string `json:"model"`
 	Effort string `json:"effort"`
 	Used   int    `json:"used"`
 	Window int    `json:"window"`
 	Todo   []Todo `json:"todo"` // the chat's task list
+}
+
+// Question is the model's request_user_input; the answers go back with
+// POST /api/answer {id, answers: {question id: label or "Other: …"}}.
+type Question struct {
+	Chat      string           `json:"chat"`
+	ID        string           `json:"id"`
+	Questions []agent.Question `json:"questions"`
 }
 
 type Approval struct {

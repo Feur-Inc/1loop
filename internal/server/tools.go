@@ -420,7 +420,13 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 		if err != nil {
 			return agent.PanelToolResult{}, err
 		}
-		if args.WaitMS > 0 {
+		if name == "terminal_read" {
+			agent.WaitForOutput(ctx, args.WaitMS, func() bool {
+				terminal.mu.Lock()
+				defer terminal.mu.Unlock()
+				return terminal.total > args.Offset
+			}, terminal.done)
+		} else if args.WaitMS > 0 {
 			timer := time.NewTimer(time.Duration(min(5000, args.WaitMS)) * time.Millisecond)
 			defer timer.Stop()
 			select {

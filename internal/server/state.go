@@ -20,14 +20,15 @@ import (
 )
 
 type serverChat struct {
-	ID           string              `json:"id"`
-	Title        string              `json:"title"`
-	Config       agent.Config        `json:"config"`
-	History      []agent.Message     `json:"history"`
-	Items        []agent.ChatItem    `json:"items"`
-	Todo         *agent.TodoState    `json:"todo"`
-	Cache        *agent.ContextCache `json:"contextCache,omitempty"`
-	Browsers     []browser.Info      `json:"browsers,omitempty"`
+	ID           string                  `json:"id"`
+	Title        string                  `json:"title"`
+	Config       agent.Config            `json:"config"`
+	History      []agent.Message         `json:"history"`
+	Items        []agent.ChatItem        `json:"items"`
+	Todo         *agent.TodoState        `json:"todo"`
+	Cache        *agent.ContextCache     `json:"contextCache,omitempty"`
+	grants       *agent.PermissionGrants // what request_permissions granted, until the server stops
+	Browsers     []browser.Info          `json:"browsers,omitempty"`
 	run          *serverRun
 	tabs         []*serverTab
 	session      *browser.Session
@@ -42,6 +43,7 @@ type serverRun struct {
 	used        int
 	label, mark string
 	approval    *remoteapi.Approval
+	question    *remoteapi.Question
 }
 
 type serverSettings struct {
@@ -337,7 +339,7 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 	}
 	meta.Used = agent.HistoryEstimate(chat.History) + agent.ContextOverhead(chat.Config)
 	if chat.run != nil {
-		meta.Label, meta.Mark, meta.Approval = chat.run.label, chat.run.mark, chat.run.approval
+		meta.Label, meta.Mark, meta.Approval, meta.Question = chat.run.label, chat.run.mark, chat.run.approval, chat.run.question
 		if chat.run.used > 0 {
 			meta.Used = chat.run.used
 		}
@@ -429,6 +431,10 @@ func (server *headlessServer) runLocked(chat *serverChat, m agent.Message) {
 	cfg.ClassicCompaction = server.classic
 	cfg.Todo = chat.Todo
 	cfg.Cache = chat.Cache
+	if chat.grants == nil {
+		chat.grants = &agent.PermissionGrants{}
+	}
+	cfg.Grants = chat.grants
 	cfg.ContextKey = chat.ID
 	cfg.Browser = server.browserTools(chat)
 	cfg.Terminal = server.terminalTools(chat)
@@ -529,7 +535,11 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 			}
 			delete(run.states, index)
 		}
-		run.approval = nil
+		run.approval, run.question = nil, nil
+	case "question":
+		request := value.(agent.QuestionRequest)
+		run.question = &remoteapi.Question{Chat: chat.ID, ID: request.ID, Questions: request.Questions}
+		run.mark, run.label = "approval", "Waiting for your answer"
 	case "approval":
 		data := value.(map[string]any)
 		run.approval = &remoteapi.Approval{Chat: chat.ID, ID: fmt.Sprint(data["id"]), Title: fmt.Sprint(data["title"]), Preview: fmt.Sprint(data["preview"])}

@@ -53,7 +53,11 @@ func responsesInput(messages []Message) []any {
 			input = append(input, item)
 		}
 		for _, call := range messageValue.ToolCalls {
-			input = append(input, map[string]any{"type": "function_call", "call_id": call.ID, "name": call.Function.Name, "arguments": call.Function.Arguments})
+			item := map[string]any{"type": "function_call", "call_id": call.ID, "name": call.Function.Name, "arguments": call.Function.Arguments}
+			if group := groupOfTool(call.Function.Name); group != "" {
+				item["namespace"] = group // a deferred tool is called through its namespace
+			}
+			input = append(input, item)
 		}
 	}
 	return input
@@ -62,13 +66,6 @@ func responsesInput(messages []Message) []any {
 func responsesCompletion(ctx context.Context, cfg Config, messages []Message, toolsFlag bool, emit emitter) (Message, error) {
 	out := Message{Role: "assistant"}
 	input := responsesInput(messages)
-	tools := make([]map[string]any, 0, 4)
-	if toolsFlag {
-		for _, definition := range toolDefinitions() {
-			f := definition["function"].(map[string]any)
-			tools = append(tools, map[string]any{"type": "function", "name": f["name"], "description": f["description"], "parameters": f["parameters"], "strict": true})
-		}
-	}
 	// The instructions are the system message leading the conversation
 	// (the agent's, or a side call's own, as the auto-review's).
 	instructions := systemInstructions(cfg)
@@ -84,7 +81,7 @@ func responsesCompletion(ctx context.Context, cfg Config, messages []Message, to
 		"include":      []string{"reasoning.encrypted_content"},
 	})
 	if toolsFlag {
-		body["tools"] = tools
+		body["tools"] = responsesTools(cfg)
 		body["parallel_tool_calls"] = true
 	}
 	if key := promptCacheKey(cfg); key != "" {
@@ -168,10 +165,43 @@ func readResponses(stream io.Reader, emit emitter) (Message, error) {
 			case "function_call":
 				calls[item.ID] = &struct{ name, args string }{name: item.Name}
 				status.set(Activity{State: "call", Tool: item.Name})
+			case "web_search_call", "tool_search_call":
+				status.set(Activity{State: "call", Tool: strings.TrimSuffix(item.Type, "_call")})
 			}
 		case "response.output_item.done":
 			if len(event.RawItem) > 0 {
 				arrived = append(arrived, append(json.RawMessage(nil), event.RawItem...))
+			}
+			// OpenAI runs these itself: the chat keeps a line about them.
+			switch item.Type {
+			case "web_search_call":
+				var search struct {
+					Action struct {
+						Type, Query, URL string
+						Queries          []string
+					}
+				}
+				_ = json.Unmarshal(event.RawItem, &search)
+				what := search.Action.Query
+				if what == "" && len(search.Action.Queries) > 0 {
+					what = strings.Join(search.Action.Queries, " · ")
+				}
+				if what == "" {
+					what = search.Action.URL
+				}
+				emit("note", strings.TrimSpace("Searched the web · "+what))
+			case "tool_search_output":
+				var loaded struct {
+					Tools []struct{ Name string }
+				}
+				_ = json.Unmarshal(event.RawItem, &loaded)
+				var names []string
+				for _, tool := range loaded.Tools {
+					names = append(names, tool.Name)
+				}
+				if len(names) > 0 {
+					emit("note", "Loaded tools · "+strings.Join(names, ", "))
+				}
 			}
 		case "response.reasoning_summary_text.delta", "response.reasoning_text.delta":
 			status.set(Activity{State: "think"})
@@ -205,21 +235,25 @@ func readResponses(stream io.Reader, emit emitter) (Message, error) {
 			out.CachedTokens = event.Response.Usage.Details.CachedTokens
 			for _, rawItem := range output {
 				var item struct {
-					Type      string `json:"type"`
-					CallID    string `json:"call_id"`
-					Name      string `json:"name"`
-					Arguments string `json:"arguments"`
+					Type      string          `json:"type"`
+					CallID    string          `json:"call_id"`
+					Name      string          `json:"name"`
+					Arguments json.RawMessage `json:"arguments"` // a string for functions, an object for tool_search
 				}
 				if err := json.Unmarshal(rawItem, &item); err != nil {
 					return err
 				}
 				if item.Type == "function_call" {
-					if item.CallID == "" || item.Name == "" || !json.Valid([]byte(item.Arguments)) {
+					var arguments string
+					if json.Unmarshal(item.Arguments, &arguments) != nil {
+						return fmt.Errorf("Incomplete OpenAI tool call")
+					}
+					if item.CallID == "" || item.Name == "" || !json.Valid([]byte(arguments)) {
 						return fmt.Errorf("Incomplete OpenAI tool call")
 					}
 					call := ToolCall{ID: item.CallID, Type: "function"}
 					call.Function.Name = item.Name
-					call.Function.Arguments = item.Arguments
+					call.Function.Arguments = arguments
 					out.ToolCalls = append(out.ToolCalls, call)
 				}
 			}

@@ -1,4 +1,4 @@
-//go:build linux && !wayland && cgo
+//go:build linux && !wayland && cgo && !server
 
 package main
 

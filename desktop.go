@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 import (
@@ -594,7 +596,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 
 	ui.folder = newRow(filepath.Base(ui.cfg.Workspace), theme.FolderIcon(), styleChip, nil)
 	ui.folder.onTap = func() { ui.projectMenu(ui.folder) }
-	machine := newRow("This computer", theme.ComputerIcon(), styleChip, nil)
+	machine := newRow("This computer", theme.ComputerIcon(), styleChip, ui.connectServer)
 	contextRow := container.NewHBox(ui.folder, machine)
 	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.queueTray, composer)
 	return padded(0, 0, 24, 24, container.New(columnLayout{width: 760, inset: 0}, padded(0, 18, 0, 0, stack)))

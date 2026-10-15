@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 // flowText draws one block of styled text (a paragraph, a heading, a list

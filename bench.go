@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 // Benchmarks of the interface, run by the application itself so they

@@ -4,9 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/hex"
-	"flag"
 	"fmt"
-	"log"
 	"os"
 	"path/filepath"
 	"sync"
@@ -58,19 +56,6 @@ func identifier() string {
 		panic(err)
 	}
 	return hex.EncodeToString(b)
-}
-
-func main() {
-	workspace := flag.String("workspace", ".", "Workspace")
-	developer := flag.Bool("dev", false, "Write a detailed developer log (events, performance, stalls) to the terminal and to ~/.cache/1loop/dev.log")
-	flag.Parse()
-	devWanted = *developer || os.Getenv("ONELOOP_DEV") == "1"
-	root, err := resolveWorkspace(*workspace)
-	if err != nil {
-		log.Fatal(err)
-	}
-	backend := &app{approvals: make(map[string]chan bool)}
-	runDesktop(backend, root)
 }
 
 func resolveWorkspace(path string) (string, error) {

@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 // Inline Markdown: the styles inside a paragraph, a heading, a list item or

@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 // Folder and file choosers use the desktop's own dialog: the XDG desktop

@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 // Formulas. A model writes mathematics as LaTeX ($…$, \(…\), $$…$$, \[…\]).

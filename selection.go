@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 // Text selection in answers. Fyne's rich text (which draws the answers:

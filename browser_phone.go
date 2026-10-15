@@ -13,11 +13,9 @@ package main
 import (
 	"bytes"
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"image"
 	"image/jpeg"
-	"net/http"
 	"sync"
 	"time"
 
@@ -30,12 +28,13 @@ const (
 )
 
 type phoneState struct {
-	URL     string       `json:"url"`
-	Title   string       `json:"title"`
-	Loading bool         `json:"loading"`
-	Width   int          `json:"width"`  // the page's viewport in CSS pixels,
-	Height  int          `json:"height"` // what the cursor's position is in
-	Cursor  *phoneCursor `json:"cursor,omitempty"`
+	Adaptive bool         `json:"adaptive"`
+	URL      string       `json:"url"`
+	Title    string       `json:"title"`
+	Loading  bool         `json:"loading"`
+	Width    int          `json:"width"`  // the page's viewport in CSS pixels,
+	Height   int          `json:"height"` // what the cursor's position is in
+	Cursor   *phoneCursor `json:"cursor,omitempty"`
 }
 
 type phoneCursor struct {
@@ -46,10 +45,11 @@ type phoneCursor struct {
 // phoneWatcher keeps only the latest frame and state for a phone: a slow
 // network drops pictures, it never queues them.
 type phoneWatcher struct {
-	mu    sync.Mutex
-	frame []byte
-	state []byte
-	wake  chan struct{}
+	lossless bool
+	mu       sync.Mutex
+	frame    []byte
+	state    []byte
+	wake     chan struct{}
 }
 
 func (watcher *phoneWatcher) put(frame, state []byte) {
@@ -84,7 +84,7 @@ func (browser *browserPage) phonesWatching() bool {
 
 func (browser *browserPage) phoneStateJSON() []byte {
 	browser.mu.Lock()
-	state := phoneState{URL: browser.info.URL, Title: browser.info.Title, Loading: browser.loading, Width: browser.info.Width, Height: browser.info.Height}
+	state := phoneState{Adaptive: browser.info.Adaptive, URL: browser.info.URL, Title: browser.info.Title, Loading: browser.loading, Width: browser.info.Width, Height: browser.info.Height}
 	if browser.cursorShown {
 		state.Cursor = &phoneCursor{browser.cursorX, browser.cursorY}
 	}
@@ -95,7 +95,7 @@ func (browser *browserPage) phoneStateJSON() []byte {
 
 // toPhones sends the page's state, and a frame when there is one, to
 // every phone that follows it.
-func (browser *browserPage) toPhones(frame []byte) {
+func (browser *browserPage) toPhones(frame []byte, native ...[]byte) {
 	browser.mu.Lock()
 	watchers := make([]*phoneWatcher, 0, len(browser.phones))
 	for watcher := range browser.phones {
@@ -104,13 +104,20 @@ func (browser *browserPage) toPhones(frame []byte) {
 	if frame != nil {
 		browser.phoneFrame = frame
 	}
+	if len(native) > 0 {
+		browser.nativeFrame = native[0]
+	}
 	browser.mu.Unlock()
 	if len(watchers) == 0 {
 		return
 	}
 	state := browser.phoneStateJSON()
 	for _, watcher := range watchers {
-		watcher.put(frame, state)
+		if watcher.lossless && len(native) > 0 {
+			watcher.put(native[0], state)
+		} else {
+			watcher.put(frame, state)
+		}
 	}
 }
 
@@ -131,8 +138,8 @@ func phoneJPEG(img image.Image) []byte {
 }
 
 // watch adds a phone; the returned function removes it.
-func (browser *browserPage) watch() (*phoneWatcher, func()) {
-	watcher := &phoneWatcher{wake: make(chan struct{}, 1)}
+func (browser *browserPage) watch(lossless ...bool) (*phoneWatcher, func()) {
+	watcher := &phoneWatcher{lossless: len(lossless) > 0 && lossless[0], wake: make(chan struct{}, 1)}
 	browser.mu.Lock()
 	if browser.phones == nil {
 		browser.phones = map[*phoneWatcher]bool{}
@@ -140,6 +147,9 @@ func (browser *browserPage) watch() (*phoneWatcher, func()) {
 	first := len(browser.phones) == 0
 	browser.phones[watcher] = true
 	last := browser.phoneFrame
+	if watcher.lossless {
+		last = browser.nativeFrame
+	}
 	browser.mu.Unlock()
 	watcher.put(last, browser.phoneStateJSON())
 	if first {
@@ -167,59 +177,6 @@ func (browser *browserPage) restream() {
 	}
 }
 
-func (server *remoteServer) panelStream(writer http.ResponseWriter, req *http.Request) {
-	_, tab, ok := server.findTab(req)
-	if !ok || tab.browser == nil {
-		fail(writer, http.StatusNotFound, "This browser tab is closed")
-		return
-	}
-	flusher, ok := writer.(http.Flusher)
-	if !ok {
-		fail(writer, http.StatusInternalServerError, "Streaming unsupported")
-		return
-	}
-	browser := tab.browser
-	watcher, stop := browser.watch()
-	defer stop()
-	writer.Header().Set("Content-Type", "application/octet-stream")
-	writer.Header().Set("Cache-Control", "no-store")
-	writer.WriteHeader(http.StatusOK)
-	flusher.Flush()
-	send := func(kind byte, payload []byte) error {
-		var head [5]byte
-		head[0] = kind
-		binary.BigEndian.PutUint32(head[1:], uint32(len(payload)))
-		if _, err := writer.Write(head[:]); err != nil {
-			return err
-		}
-		_, err := writer.Write(payload)
-		return err
-	}
-	ping := time.NewTicker(15 * time.Second) // the state again: keeps the stream alive
-	defer ping.Stop()
-	ctx := req.Context()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-browser.life.Done():
-			return
-		case <-ping.C:
-			watcher.put(nil, browser.phoneStateJSON())
-			continue
-		case <-watcher.wake:
-		}
-		frame, state := watcher.take()
-		if state != nil && send('S', state) != nil {
-			return
-		}
-		if frame != nil && send('F', frame) != nil {
-			return
-		}
-		flusher.Flush()
-	}
-}
-
 // navigateSoon starts a navigation and returns at once: the phone sees the
 // page load through its stream, and its next touches do not wait for it.
 func (browser *browserPage) navigateSoon(action, address string) error {
@@ -236,4 +193,15 @@ func (browser *browserPage) navigateSoon(action, address string) error {
 		}
 	}()
 	return nil
+}
+
+func (browser *browserPage) needsPhoneJPEG() bool {
+	browser.mu.Lock()
+	defer browser.mu.Unlock()
+	for watcher := range browser.phones {
+		if !watcher.lossless {
+			return true
+		}
+	}
+	return false
 }

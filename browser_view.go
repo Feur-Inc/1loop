@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 import (
@@ -19,7 +21,6 @@ import (
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/target"
 	"github.com/chromedp/chromedp"
-	"github.com/chromedp/chromedp/kb"
 )
 
 var (
@@ -453,37 +454,7 @@ func (screen *browserScreen) TypedRune(r rune) {
 	text := string(r)
 	screen.view.page.input(input.InsertText(text))
 }
-func browserKey(key fyne.KeyName) string {
-	switch key {
-	case fyne.KeyReturn, fyne.KeyEnter:
-		return kb.Enter
-	case fyne.KeyTab:
-		return kb.Tab
-	case fyne.KeyBackspace:
-		return kb.Backspace
-	case fyne.KeyDelete:
-		return kb.Delete
-	case fyne.KeyEscape:
-		return kb.Escape
-	case fyne.KeyLeft:
-		return kb.ArrowLeft
-	case fyne.KeyRight:
-		return kb.ArrowRight
-	case fyne.KeyUp:
-		return kb.ArrowUp
-	case fyne.KeyDown:
-		return kb.ArrowDown
-	case fyne.KeyHome:
-		return kb.Home
-	case fyne.KeyEnd:
-		return kb.End
-	case fyne.KeyPageUp:
-		return kb.PageUp
-	case fyne.KeyPageDown:
-		return kb.PageDown
-	}
-	return ""
-}
+func browserKey(key fyne.KeyName) string { return browserNamedKey(string(key)) }
 func (screen *browserScreen) TypedKey(e *fyne.KeyEvent) {
 	if key := browserKey(e.Name); key != "" {
 		modifiers := screen.modifiers
@@ -500,7 +471,7 @@ func (screen *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 	case *fyne.ShortcutCopy, *fyne.ShortcutCut:
 		_, cut := shortcut.(*fyne.ShortcutCut)
 		screen.view.page.async(func(ctx context.Context) error {
-			value, err := screen.view.page.evaluate(ctx, `(()=>{const e=document.activeElement;if(e&&typeof e.selectionStart==='number')return e.value.slice(e.selectionStart,e.selectionEnd);return window.getSelection()?.toString()||''})()`)
+			value, err := screen.view.page.evaluate(ctx, browserSelectionJS)
 			if err != nil {
 				return err
 			}
@@ -510,7 +481,7 @@ func (screen *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 			}
 			fyne.Do(func() { screen.view.panel.ui.window.Clipboard().SetContent(text) })
 			if cut {
-				_, err = screen.view.page.evaluate(ctx, `(()=>{const e=document.activeElement;if(e&&typeof e.setRangeText==='function'){e.setRangeText('',e.selectionStart,e.selectionEnd,'end');e.dispatchEvent(new Event('input',{bubbles:true}))}})()`)
+				_, err = screen.view.page.evaluate(ctx, browserCutJS)
 			}
 			return err
 		})
@@ -684,3 +655,5 @@ func (screen *browserScreen) glide(x, y float64) {
 	screen.cursorGlide = glide
 	glide.Start()
 }
+
+type browserPresentation struct{ view *browserView }

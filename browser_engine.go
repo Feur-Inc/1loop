@@ -18,7 +18,6 @@ import (
 	"sync"
 	"time"
 
-	"fyne.io/fyne/v2"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/log"
@@ -204,6 +203,7 @@ func (session *browserSession) start() error {
 }
 
 type browserPage struct {
+	browserPresentation
 	session      *browserSession
 	life         context.Context
 	cancel       func()
@@ -226,16 +226,16 @@ type browserPage struct {
 	onLogs       func()
 	onCursor     func(float64, float64)
 	phones       map[*phoneWatcher]bool // phones following the page (browser_phone.go)
-	phoneFrame   []byte                 // the latest frame made for them
-	loading      bool                   // the main frame is loading
-	cursorX      float64                // the agent's cursor, as last placed
+	nativeFrame  []byte
+	phoneFrame   []byte  // the latest frame made for them
+	loading      bool    // the main frame is loading
+	cursorX      float64 // the agent's cursor, as last placed
 	cursorY      float64
 	cursorShown  bool
 	attachTarget target.ID
 	closeOnce    sync.Once
 	onPopup      func(target.ID, string)
 	onClosed     func()
-	view         *browserView // UI thread only
 }
 
 func newBrowserPage(session *browserSession, info browserInfo) *browserPage {
@@ -432,7 +432,11 @@ func (browser *browserPage) frameLoop() {
 				continue
 			}
 			if browser.phonesWatching() {
-				browser.toPhones(phoneJPEG(img))
+				var mobile []byte
+				if browser.needsPhoneJPEG() {
+					mobile = phoneJPEG(img)
+				}
+				browser.toPhones(mobile, data)
 			}
 			if browser.onFrame != nil && browser.isVisible() {
 				if _, ok := img.(*image.RGBA); !ok {
@@ -810,7 +814,7 @@ func browserKeyChord(text string) (string, []input.Modifier) {
 		}
 	}
 	key := parts[len(parts)-1]
-	if special := browserKey(fyne.KeyName(key)); special != "" {
+	if special := browserNamedKey(key); special != "" {
 		return special, mods
 	}
 	aliases := map[string]string{"enter": kb.Enter, "return": kb.Enter, "tab": kb.Tab, "escape": kb.Escape, "backspace": kb.Backspace, "delete": kb.Delete, "arrowleft": kb.ArrowLeft, "arrowright": kb.ArrowRight, "arrowup": kb.ArrowUp, "arrowdown": kb.ArrowDown, "home": kb.Home, "end": kb.End, "pageup": kb.PageUp, "pagedown": kb.PageDown, "space": " "}

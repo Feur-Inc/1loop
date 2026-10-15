@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 import (
@@ -369,13 +371,6 @@ func nearestModelEffort(choice modelChoice, wanted string) string {
 // "auto" is Claude Code's own permission mode (it runs what it judges safe
 // and blocks or asks for the rest); 1loop's harness has no such judge, so
 // with any other model it falls back to asking.
-func approvalFor(mode string, cfg config) string {
-	if mode == "auto" && cfg.Provider != "claudecode" {
-		return "approval"
-	}
-	return mode
-}
-
 func (ui *desktopUI) updateApprovalControl() {
 	if ui.approvalControl == nil {
 		return

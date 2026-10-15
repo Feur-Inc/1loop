@@ -166,9 +166,9 @@ fun ServersScreen(app: RemoteApp) {
         Spacer(Modifier.height(56.dp))
         RingMark(64.dp, intro = true)
         Spacer(Modifier.height(20.dp))
-        Text("Connect to your computer", style = Type.headline, textAlign = TextAlign.Center)
+        Text("Connect to 1loop", style = Type.headline, textAlign = TextAlign.Center)
         Spacer(Modifier.height(6.dp))
-        Text("Pick the 1loop running on this Wi-Fi network.", style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center)
+        Text("Pick a computer on this Wi-Fi or add an HTTPS server.", style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center)
         Spacer(Modifier.height(28.dp))
         Column(Modifier.widthIn(max = 520.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             for (server in app.servers) {
@@ -218,24 +218,27 @@ fun ServersScreen(app: RemoteApp) {
         }
         Spacer(Modifier.height(32.dp))
     }
-    if (adding) AddressSheet(onDone = { adding = false }) { app.addManually(it) }
+    if (adding) AddressSheet(onDone = { adding = false }) { app.addManually(it.first, it.second) }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun AddressSheet(onDone: () -> Unit, onAdd: (String) -> Unit) {
+private fun AddressSheet(onDone: () -> Unit, onAdd: (Pair<String, String>) -> Unit) {
     var address by remember { mutableStateOf("") }
+    var fingerprint by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
     ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp).imePadding()) {
             Text("Add by address", style = Type.title)
             Spacer(Modifier.height(6.dp))
-            Text("The computer's local address, as in 192.168.1.20 (port 47101 unless changed).", style = Type.small)
+            Text("HTTPS server address and the SHA-256 fingerprint printed in its console. Leave the fingerprint empty for a publicly trusted certificate. Existing local desktop connections can use http:// explicitly.", style = Type.small)
             Spacer(Modifier.height(16.dp))
-            Field(address, { address = it }, "192.168.1.20", KeyboardType.Uri, Modifier.focusRequester(focus))
+            Field(address, { address = it }, "https://192.168.1.20:47101", KeyboardType.Uri, Modifier.focusRequester(focus))
+            Spacer(Modifier.height(12.dp))
+            Field(fingerprint, { fingerprint = it }, "Certificate SHA-256 (private server)", KeyboardType.Ascii)
             Spacer(Modifier.height(16.dp))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                Pill("Connect", primary = true, enabled = address.isNotBlank()) { onAdd(address); onDone() }
+                Pill("Connect", primary = true, enabled = address.isNotBlank()) { onAdd(address to fingerprint); onDone() }
             }
         }
     }
@@ -282,9 +285,13 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
         Spacer(Modifier.height(20.dp))
         Text("Pair with ${pair.server.name}", style = Type.headline, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
-        Text("Type the code 1loop shows on your computer.", style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center)
+        Text(if (pair.consoleCode.isNotEmpty()) "Enter this command in the server console, then tap Connect:\npair ${pair.pairing} ${pair.consoleCode}" else "Type the code 1loop shows on your computer.", style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center)
         Spacer(Modifier.height(32.dp))
-        BasicTextField(
+        if (pair.consoleCode.isNotEmpty()) {
+            CopyChip { "pair ${pair.pairing} ${pair.consoleCode}" }
+            Spacer(Modifier.height(16.dp))
+            Pill("Connect after approval", primary = true, enabled = !app.busy) { app.confirm(pair, pair.consoleCode) }
+        } else BasicTextField(
             code, { new -> code = new.filter(Char::isDigit).take(6); if (code.length == 6) app.confirm(pair, code) },
             Modifier.focusRequester(focus), keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number, autoCorrectEnabled = false),
             cursorBrush = SolidColor(Color.Transparent),
@@ -314,7 +321,7 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
             style = Type.caption, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 320.dp),
         )
     }
-    LaunchedEffect(Unit) { focus.requestFocus() }
+    LaunchedEffect(Unit) { if (pair.consoleCode.isEmpty()) focus.requestFocus() }
     LaunchedEffect(app.problem) { if (app.problem != null) code = "" }
 }
 

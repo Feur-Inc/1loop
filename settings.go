@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 // Settings are a page, not a window: opening them replaces the sidebar with
@@ -34,14 +36,6 @@ func note(text string) *widget.Label {
 	label.Wrapping = fyne.TextWrapWord
 	label.Importance = widget.LowImportance
 	return label
-}
-
-func jsonText(value map[string]any) string {
-	if len(value) == 0 {
-		return "{}"
-	}
-	b, _ := json.MarshalIndent(value, "", "  ")
-	return string(b)
 }
 
 func cloneConnection(conn connection) connection {
@@ -451,6 +445,8 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		settings.pageTitle("General", "", nil),
 		sectionTitle("Workspace"),
 		card(settingRow("Project folder", ui.cfg.Workspace, change)),
+		sectionTitle("Remote server"),
+		card(settingRow("HTTPS server", "Work on a headless 1loop server with its own models, files, browser and terminals. Approve this device in the server console.", newRow("Connect…", nil, styleOutline, ui.connectServer))),
 		sectionTitle("Permissions"),
 		card(settingRow("Tool permissions",
 			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto is Claude Code's own mode: it runs what it judges safe; with any other model it asks instead.",

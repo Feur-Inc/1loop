@@ -1,4 +1,4 @@
-# 1loop builds two binaries: GLFW chooses X11 or Wayland at compile time.
+# The desktop builds two binaries: GLFW chooses X11 or Wayland at compile time.
 # bin/1loop starts bin/1loop-wayland by itself in a Wayland session.
 BIN := bin
 
@@ -23,3 +23,8 @@ dev: build
 
 clean:
 	rm -rf $(BIN)
+
+# The server excludes Fyne, GLFW and desktop control. No display or CGO needed.
+.PHONY: server
+server:
+	CGO_ENABLED=0 go build -tags server -o $(BIN)/1loop-server .

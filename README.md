@@ -109,3 +109,7 @@ adb install -r app/build/outputs/apk/debug/app-debug.apk
 - Clic droit ou « ⋯ » sur une conversation ou un projet : renommer, supprimer, retirer.
 
 Sources des intégrations : [implémentation OAuth OpenCode](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/plugin/openai/codex.ts), [vLLM](https://docs.vllm.ai/en/stable/serving/openai_compatible_server/), [OpenRouter](https://openrouter.ai/docs/guides/features/tool-calling).
+
+## Headless server
+
+Build `bin/1loop-server` with `make server` to run the 1loop engine on a Debian VM without a desktop. Desktop and Android clients connect over HTTPS with console-approved pairing. Browser Use and persistent terminal tabs run on the server; Computer Use is excluded. See [SERVER.md](SERVER.md) for setup, certificate verification, credentials and remote tools.

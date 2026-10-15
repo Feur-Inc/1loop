@@ -8,6 +8,7 @@ require (
 	github.com/chromedp/cdproto v0.0.0-20250403032234-65de8f5d025b
 	github.com/chromedp/chromedp v0.13.7
 	github.com/creack/pty v1.1.21
+	github.com/hinshun/vt10x v0.0.0-20220301184237-5011da428d02
 	github.com/fyne-io/oksvg v0.2.0
 	github.com/fyne-io/terminal v0.0.0-20251106165109-867da7c64268
 	github.com/go-gl/glfw/v3.3/glfw v0.0.0-20240506104042-037f3cc74f2a

@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 // The frame hook: one function that runs on the interface thread at every

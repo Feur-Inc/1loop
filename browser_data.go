@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 // The agent's browser profile: where it is kept, and how it is cleared.
@@ -5,7 +7,6 @@ package main
 import (
 	"context"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,16 +15,6 @@ import (
 	"github.com/chromedp/cdproto/storage"
 	"github.com/chromedp/chromedp"
 )
-
-// browserProfileDir is the browser's profile, beside 1loop's state (so a
-// copy of 1loop run with another config folder has a browser of its own).
-func browserProfileDir() string {
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return ""
-	}
-	return filepath.Join(dir, "1loop", "browser")
-}
 
 // clearBrowserData erases what the browser keeps: cookies and logins,
 // cache, site storage, history. A browser not running loses its profile at

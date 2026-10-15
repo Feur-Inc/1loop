@@ -75,7 +75,7 @@ private fun strings(array: JSONArray?) = (0 until (array?.length() ?: 0)).map { 
 sealed interface Screen {
     data object Launch : Screen
     data object Servers : Screen
-    data class Pair(val server: Server, val pairing: String) : Screen
+    data class Pair(val server: Server, val pairing: String, val consoleCode: String = "") : Screen
     data object Chat : Screen
 }
 
@@ -121,21 +121,21 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     private fun saved(): List<Server> = runCatching {
         val array = JSONArray(prefs.getString("servers", "[]"))
         (0 until array.length()).map { i ->
-            array.getJSONObject(i).let { Server(it.getString("name"), it.getString("host"), it.getInt("port"), it.optString("token")) }
+            array.getJSONObject(i).let { Server(it.getString("name"), it.getString("host"), it.getInt("port"), it.optString("token"), it.optString("scheme", "http"), it.optString("fingerprint")) }
         }
     }.getOrDefault(emptyList())
 
     private fun store() {
         val array = JSONArray()
         servers.filter { it.paired }.forEach {
-            array.put(JSONObject().put("name", it.name).put("host", it.host).put("port", it.port).put("token", it.token))
+            array.put(JSONObject().put("name", it.name).put("host", it.host).put("port", it.port).put("token", it.token).put("scheme", it.scheme).put("fingerprint", it.fingerprint))
         }
         prefs.edit().putString("servers", array.toString()).apply()
     }
 
     private fun upsert(server: Server) {
-        val serverIndex = servers.indexOfFirst { it.key == server.key || (it.name == server.name && it.port == server.port) }
-        if (serverIndex >= 0) servers[serverIndex] = server.copy(token = server.token.ifEmpty { servers[serverIndex].token }) else servers.add(server)
+        val serverIndex = servers.indexOfFirst { it.key == server.key }
+        if (serverIndex >= 0) servers[serverIndex] = server.copy(token = server.token.ifEmpty { if (server.fingerprint == servers[serverIndex].fingerprint) servers[serverIndex].token else "" }) else servers.add(server)
         store()
     }
 
@@ -162,7 +162,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             online.clear()
             for (s in found) {
                 // A known computer keeps its token when its address changed.
-                val known = servers.firstOrNull { it.key == s.key || (it.name == s.name && it.port == s.port) }
+                val known = servers.firstOrNull { it.key == s.key || (it.scheme == "http" && it.name == s.name && it.port == s.port) }
                 upsert(s.copy(token = known?.token.orEmpty()))
                 online.add(s.key)
             }
@@ -170,23 +170,23 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         }
     }
 
-    fun addManually(address: String) {
-        val text = address.trim().removePrefix("http://").trimEnd('/')
-        if (text.isEmpty()) return
-        val host = text.substringBefore(':')
-        val port = text.substringAfter(':', "").toIntOrNull() ?: DEFAULT_PORT
+    fun addManually(address: String, fingerprint: String = "") {
         scope.launch {
             problem = null
-            val probe = Server(host, host, port)
-            val info = runCatching { withContext(Dispatchers.IO) { Api(probe).get("/api/info") } }.getOrNull()
-            if (info == null) {
-                problem = "No 1loop answered at $host:$port."
-                return@launch
-            }
-            val server = probe.copy(name = info.optString("name", host))
-            upsert(server)
-            online.add(server.key)
-            choose(server)
+            try {
+                val text = address.trim().trimEnd('/').let { if (it.contains("://")) it else "https://$it" }
+                val url = java.net.URL(text)
+                require(url.protocol in listOf("http", "https") && url.userInfo == null && url.path.isEmpty() && url.query == null && url.ref == null) { "Enter a server address without a path." }
+                val pin = fingerprint.trim().replace(":", "").lowercase()
+                require(pin.isEmpty() || (url.protocol == "https" && pin.matches(Regex("[0-9a-f]{64}")))) { "Enter the complete SHA-256 fingerprint from the server console." }
+                val port = if (url.port > 0) url.port else if (address.trim().contains("://")) url.defaultPort else DEFAULT_PORT
+                val probe = Server(url.host, url.host, port, scheme = url.protocol, fingerprint = pin)
+                val info = withContext(Dispatchers.IO) { Api(probe).get("/api/info") }
+                val target = probe.copy(name = info.optString("name", url.host))
+                upsert(target)
+                online.add(target.key)
+                choose(servers.first { it.key == target.key })
+            } catch (e: Exception) { problem = e.message }
         }
     }
 
@@ -205,7 +205,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             busy = true
             try {
                 val reply = withContext(Dispatchers.IO) { Api(server).post("/api/pair", JSONObject().put("device", deviceName())) }
-                screen = Screen.Pair(server, reply.getString("pairing"))
+                screen = Screen.Pair(server, reply.getString("pairing"), reply.optString("code").takeIf { reply.optBoolean("console") }.orEmpty())
             } catch (e: Exception) {
                 problem = e.message
             } finally {

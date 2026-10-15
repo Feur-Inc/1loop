@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 // The side panel belongs to the chat. Each conversation keeps its own: open

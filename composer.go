@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 import (
@@ -696,16 +698,6 @@ func (ring *contextRing) describe() string {
 		text += fmt.Sprintf("\nClaude plan: %.0f%% of the 5 h window · %.0f%% of the week", ring.plan.FiveHour*100, ring.plan.Week*100)
 	}
 	return text
-}
-
-func tokens(n int) string {
-	switch {
-	case n >= 1000000:
-		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(n)/1e6), ".0") + "M"
-	case n >= 1000:
-		return fmt.Sprintf("%dk", (n+500)/1000)
-	}
-	return fmt.Sprint(n)
 }
 
 func (ring *contextRing) MouseIn(*desktop.MouseEvent)    { ring.tips.show(ring, ring.describe()) }

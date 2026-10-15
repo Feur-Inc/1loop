@@ -16,14 +16,21 @@ import java.net.Inet4Address
 import java.net.InetAddress
 import java.net.SocketTimeoutException
 import java.net.URL
-import java.net.URLEncoder
+import java.security.MessageDigest
+import java.security.cert.X509Certificate
+import javax.net.ssl.HttpsURLConnection
+import javax.net.ssl.SSLContext
+import javax.net.ssl.X509TrustManager
+import javax.net.ssl.SSLSocketFactory
+import java.util.concurrent.ConcurrentHashMap
 
 // The desktop side is remote.go: UDP discovery on 47100, HTTP on 47101.
 const val DISCOVERY_PORT = 47100
 const val DEFAULT_PORT = 47101
 
-data class Server(val name: String, val host: String, val port: Int, val token: String = "") {
-    val key get() = "$host:$port"
+data class Server(val name: String, val host: String, val port: Int, val token: String = "", val scheme: String = "http", val fingerprint: String = "") {
+    val key get() = if (scheme == "http") "$host:$port" else "$scheme://$host:$port"
+    val baseURL get() = "$scheme://${if (host.contains(':')) "[${host.trim('[', ']')}]" else host}:$port"
     val paired get() = token.isNotEmpty()
 }
 
@@ -82,16 +89,44 @@ private fun subnetBroadcasts(context: Context): List<InetAddress> {
 
 /** One computer's API. Every call is blocking: run it on Dispatchers.IO. */
 class Api(val server: Server) {
-    private val base = "http://${server.host}:${server.port}"
+    companion object { private val pinnedFactories = ConcurrentHashMap<String, SSLSocketFactory>() }
+    private val base = server.baseURL
+
+    private fun connection(path: String): HttpURLConnection {
+        val connection = URL(base + path).openConnection() as HttpURLConnection
+        connection.instanceFollowRedirects = false
+        if (connection is HttpsURLConnection && server.fingerprint.isNotEmpty()) {
+            val expected = server.fingerprint.replace(":", "").lowercase()
+            require(expected.matches(Regex("[0-9a-f]{64}"))) { "Enter the SHA-256 fingerprint from the server console." }
+            fun matches(certificate: X509Certificate): Boolean =
+                MessageDigest.getInstance("SHA-256").digest(certificate.encoded).joinToString("") { "%02x".format(it.toInt() and 255) } == expected
+            connection.sslSocketFactory = pinnedFactories.computeIfAbsent(expected) {
+                val trust = object : X509TrustManager {
+                    override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+                    override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) { throw java.security.cert.CertificateException("Client certificates are not used") }
+                    override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+                        if (chain.isEmpty() || !matches(chain[0])) throw java.security.cert.CertificateException("Server certificate fingerprint changed. Verify it on the server console.")
+                        chain[0].checkValidity()
+                    }
+                }
+                val tls = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }
+                tls.socketFactory
+            }
+            connection.hostnameVerifier = javax.net.ssl.HostnameVerifier { _, session ->
+                (session.peerCertificates.firstOrNull() as? X509Certificate)?.let(::matches) == true
+            }
+        }
+        if (server.token.isNotEmpty()) connection.setRequestProperty("Authorization", "Bearer ${server.token}")
+        return connection
+    }
 
     fun get(path: String): JSONObject = call("GET", path, null)
 
     /** Raw bytes, as a browser tab's picture. */
     fun bytes(path: String): ByteArray {
-        val connection = (URL(base + path).openConnection() as HttpURLConnection).apply {
+        val connection = connection(path).apply {
             connectTimeout = 4000
             readTimeout = 20000
-            if (server.token.isNotEmpty()) setRequestProperty("Authorization", "Bearer ${server.token}")
         }
         try {
             if (connection.responseCode !in 200..299) throw ApiError("1loop answered ${connection.responseCode}", connection.responseCode)
@@ -107,11 +142,10 @@ class Api(val server: Server) {
     fun post(path: String, body: JSONObject): JSONObject = call("POST", path, body)
 
     private fun call(method: String, path: String, body: JSONObject?): JSONObject {
-        val connection = (URL(base + path).openConnection() as HttpURLConnection).apply {
+        val connection = connection(path).apply {
             requestMethod = method
             connectTimeout = 4000
             readTimeout = 20000
-            if (server.token.isNotEmpty()) setRequestProperty("Authorization", "Bearer ${server.token}")
             if (body != null) {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")
@@ -139,10 +173,9 @@ class Api(val server: Server) {
      * the payload) until it ends or fails; see browser_phone.go.
      */
     suspend fun messages(path: String, onMessage: suspend (Char, ByteArray) -> Unit) = withContext(Dispatchers.IO) {
-        val connection = (URL(base + path).openConnection() as HttpURLConnection).apply {
+        val connection = connection(path).apply {
             connectTimeout = 4000
             readTimeout = 40000 // the computer sends the state every 15 s
-            if (server.token.isNotEmpty()) setRequestProperty("Authorization", "Bearer ${server.token}")
         }
         try {
             if (connection.responseCode !in 200..299) throw ApiError("1loop answered ${connection.responseCode}", connection.responseCode)
@@ -150,7 +183,9 @@ class Api(val server: Server) {
                 while (true) {
                     currentCoroutineContext().ensureActive()
                     val kind = input.readUnsignedByte().toChar()
-                    val payload = ByteArray(input.readInt())
+                    val length = input.readInt()
+                    require(length in 0..(32 shl 20)) { "Invalid browser frame size" }
+                    val payload = ByteArray(length)
                     input.readFully(payload)
                     onMessage(kind, payload)
                 }
@@ -165,8 +200,7 @@ class Api(val server: Server) {
      * event reaches onEvent with its name and JSON data.
      */
     suspend fun events(onOpen: () -> Unit, onEvent: (String, JSONObject) -> Unit) = withContext(Dispatchers.IO) {
-        val token = URLEncoder.encode(server.token, "UTF-8")
-        val connection = (URL("$base/api/events?token=$token").openConnection() as HttpURLConnection).apply {
+        val connection = connection("/api/events").apply {
             connectTimeout = 4000
             readTimeout = 45000 // the computer pings every 20 s
             setRequestProperty("Accept", "text/event-stream")

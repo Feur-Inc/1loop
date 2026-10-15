@@ -33,7 +33,10 @@ func toolDefinitions() []map[string]any {
 		}
 		result = append(result, map[string]any{"type": "function", "function": map[string]any{"name": d.name, "description": d.description, "parameters": map[string]any{"type": "object", "properties": properties, "required": d.fields, "additionalProperties": false}}})
 	}
-	result = append(result, todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition(), computerToolDefinition())
+	result = append(result, todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition())
+	if definition := computerToolDefinition(); definition != nil {
+		result = append(result, definition)
+	}
 	result = append(result, browserToolDefinitions()...)
 	return append(result, terminalToolDefinitions()...)
 }

@@ -1,3 +1,5 @@
+//go:build !server
+
 package main
 
 // Phone remote: 1loop serves its chats on the local network so the 1loop
@@ -29,12 +31,9 @@ package main
 
 import (
 	"crypto/rand"
-	"crypto/sha256"
 	"crypto/subtle"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
 	"math/big"
 	"net"
 	"net/http"
@@ -55,12 +54,6 @@ const (
 )
 
 // pairedDevice is a phone allowed to drive 1loop; only its token's hash is kept.
-type pairedDevice struct {
-	Name      string    `json:"name"`
-	TokenHash string    `json:"tokenHash"`
-	Added     time.Time `json:"added"`
-}
-
 type pairing struct {
 	device  string
 	code    string
@@ -163,25 +156,6 @@ func (server *remoteServer) answerDiscovery() {
 
 // ---------------------------------------------------------------------------
 // HTTP helpers
-
-func writeJSON(writer http.ResponseWriter, status int, v any) {
-	writer.Header().Set("Content-Type", "application/json")
-	writer.WriteHeader(status)
-	json.NewEncoder(writer).Encode(v)
-}
-
-func fail(writer http.ResponseWriter, status int, message string) {
-	writeJSON(writer, status, map[string]string{"error": message})
-}
-
-func readJSON(req *http.Request, v any) error {
-	return json.NewDecoder(io.LimitReader(req.Body, 1<<20)).Decode(v)
-}
-
-func tokenHash(token string) string {
-	sum := sha256.Sum256([]byte(token))
-	return hex.EncodeToString(sum[:])
-}
 
 // authorized lets a request through only with a paired device's token.
 func (server *remoteServer) authorized(next http.HandlerFunc) http.HandlerFunc {
@@ -310,56 +284,6 @@ func (ui *desktopUI) showPairing(pairingValue *pairing) *sheet {
 
 // ---------------------------------------------------------------------------
 // State as the phone sees it
-
-type remoteChat struct {
-	ID        string `json:"id"`
-	Title     string `json:"title"`
-	Workspace string `json:"workspace"`
-	Running   bool   `json:"running"`
-	Items     int    `json:"items"`
-}
-
-type remoteItem struct {
-	Kind   string `json:"kind"`
-	Text   string `json:"text,omitempty"`
-	Images int    `json:"images,omitempty"`
-	Tool   string `json:"tool,omitempty"`
-	Verb   string `json:"verb,omitempty"`
-	Target string `json:"target,omitempty"`
-	Mono   bool   `json:"mono,omitempty"`
-	Meta   string `json:"meta,omitempty"`
-	Tone   string `json:"tone,omitempty"` // of the meta: muted, added, danger, amber
-	State  string `json:"state,omitempty"`
-	Args   string `json:"args,omitempty"`
-	Diff   string `json:"diff,omitempty"`
-	Millis int64  `json:"millis,omitempty"`
-	Failed string `json:"failed,omitempty"`
-}
-
-type remoteMeta struct {
-	Chat     string          `json:"chat"`
-	Title    string          `json:"title"`
-	Running  bool            `json:"running"`
-	Label    string          `json:"label,omitempty"`
-	Mark     string          `json:"mark,omitempty"`
-	Queue    []string        `json:"queue"`
-	Steer    []string        `json:"steer"`
-	Items    int             `json:"items"`
-	Approval *remoteApproval `json:"approval,omitempty"`
-	// The chat's model, by its label in the model list, and context use.
-	Model  string       `json:"model"`
-	Effort string       `json:"effort"`
-	Used   int          `json:"used"`
-	Window int          `json:"window"`
-	Todo   []remoteTodo `json:"todo"` // the chat's task list
-}
-
-type remoteApproval struct {
-	Chat    string `json:"chat"`
-	ID      string `json:"id"`
-	Title   string `json:"title"`
-	Preview string `json:"preview"`
-}
 
 func (ui *desktopUI) chatByID(id string) *conversation {
 	for _, chat := range ui.chats {
@@ -720,19 +644,6 @@ func (server *remoteServer) approve(writer http.ResponseWriter, req *http.Reques
 // ---------------------------------------------------------------------------
 // Models, reasoning effort and approval mode, as the composer offers them.
 
-type remoteEffort struct {
-	Value string `json:"value"`
-	Label string `json:"label"`
-}
-
-type remoteModel struct {
-	Label   string         `json:"label"` // unique key, as in the desktop picker
-	Name    string         `json:"name"`
-	Detail  string         `json:"detail"`
-	Efforts []remoteEffort `json:"efforts"`
-}
-
-// choiceLabel finds the picker label of a configuration's model.
 func (ui *desktopUI) choiceLabel(cfg config) string {
 	for label, choice := range ui.choices {
 		if choice.Connection.ID == cfg.ConnectionID && choice.ID == cfg.Model {

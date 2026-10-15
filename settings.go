@@ -458,6 +458,8 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		card(settingRow("Browsing data",
 			"The agents' browser keeps its cookies and logins, cache, site data and history from one session to the next, in "+browserProfileDir()+". Clear erases all of it.",
 			ui.clearBrowserButton())),
+		sectionTitle("Computer Use"),
+		card(ui.computerScreenRow()),
 		sectionTitle("Context"),
 		card(settingRow("Dynamic compaction",
 			"On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way.",
@@ -485,6 +487,43 @@ func (ui *desktopUI) clearBrowserButton() fyne.CanvasObject {
 		})
 	})
 	return button
+}
+
+// computerScreenRow shows the screen Computer Use shares, with buttons to
+// pick another one in the desktop's dialog or to forget the permission.
+func (ui *desktopUI) computerScreenRow() fyne.CanvasObject {
+	grant := loadComputerGrant()
+	detail := "The first use asks which screen to share. Tick \u201cRemember this choice\u201d in that dialog and 1loop will not ask again, even after a restart."
+	if grant.Token != "" {
+		detail = fmt.Sprintf("Shared without asking, even after a restart: the screen of %d \u00d7 %d at %d, %d. Change screen opens the desktop's dialog to pick another; Forget stops sharing and asks next time.",
+			grant.Width, grant.Height, grant.X, grant.Y)
+	}
+	refresh := func() { // the page, if it is still the one on screen
+		if ui.prefs.open && ui.prefs.section == "General" {
+			ui.prefs.show("General")
+		}
+	}
+	var change *tapRow
+	change = newRow("Change screen…", nil, styleOutline, func() {
+		change.Disable()
+		ui.chooseComputerScreen(func(err error) {
+			change.Enable()
+			if err != nil {
+				ui.notice("Computer Use", "The screen did not change: "+err.Error())
+			}
+			refresh()
+		})
+	})
+	forget := newRow("Forget", iconTrash, styleOutline, func() {
+		if err := ui.forgetComputerScreen(); err != nil {
+			ui.notice("Computer Use", "The permission could not be forgotten: "+err.Error())
+		}
+		refresh()
+	})
+	if grant.Token == "" {
+		forget.Disable()
+	}
+	return settingRow("Shared screen", detail, container.NewHBox(change, forget))
 }
 
 // ---------------------------------------------------------------------------

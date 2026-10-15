@@ -125,7 +125,12 @@ class DesktopSession:
             self.close()
             raise RuntimeError(reason)
 
-    def start(self):
+    def start(self, arguments):
+        """Opens the sharing session. The permission is asked to persist: GNOME
+        then returns a restore token, and a later start given that token
+        resumes the same screen without its dialog. A token works once; each
+        start returns the next one. Without a token, the dialog lets the user
+        pick the screen."""
         if self.session:
             return self.status()
         try:
@@ -144,7 +149,10 @@ class DesktopSession:
                 path=self.session
             )
             # Request both devices together so typing never opens a second dialog.
-            self.request(REMOTE, "SelectDevices", dbus.ObjectPath(self.session), types=dbus.UInt32(3))
+            devices = {"types": dbus.UInt32(3), "persist_mode": dbus.UInt32(2)}
+            if arguments.get("restore_token"):
+                devices["restore_token"] = str(arguments["restore_token"])
+            self.request(REMOTE, "SelectDevices", dbus.ObjectPath(self.session), **devices)
             self.request(SCREENCAST, "SelectSources", dbus.ObjectPath(self.session),
                          types=dbus.UInt32(1), multiple=dbus.Boolean(False), cursor_mode=dbus.UInt32(2))
             granted = self.request(REMOTE, "Start", dbus.ObjectPath(self.session), "")
@@ -163,7 +171,16 @@ class DesktopSession:
                 "! videoconvert ! video/x-raw,format=RGB ! appsink name=frames max-buffers=1 drop=true sync=false"
             )
             self.pipeline.set_state(Gst.State.PLAYING)
-            return self.status()
+            result = self.status()
+            properties = self.stream[1]
+            size = properties.get("size", (0, 0))
+            position = properties.get("position", (0, 0))
+            result["started"] = True
+            result["screen"] = {"width": int(size[0]), "height": int(size[1]),
+                                "x": int(position[0]), "y": int(position[1])}
+            if granted.get("restore_token"):
+                result["restore_token"] = str(granted["restore_token"])
+            return result
         except Exception:
             self.close()
             raise
@@ -234,7 +251,7 @@ class DesktopSession:
 
     def action(self, name, arguments):
         if name == "start":
-            return self.start()
+            return self.start(arguments)
         fields = {
             "status": (), "screenshot": ("max_width", "max_height", "max_bytes"),
             "click": ("x", "y", "button", "click_count"), "move": ("x", "y"),

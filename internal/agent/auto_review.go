@@ -169,8 +169,11 @@ func (backend *App) autoReview(ctx context.Context, cfg Config, chat []Message, 
 			return allow, reason, err
 		}
 		for _, call := range answer.ToolCalls {
-			outcome := backend.executeTool(ctx, cfg.Workspace, call, func(string, any) {})
-			messages = append(messages, Message{Role: "tool", ToolCallID: call.ID, Content: core.TruncateText(outcome.modelText(), 8000)})
+			output, _, err := backend.runTool(ctx, cfg.Workspace, call, func() {}, func(string, any) {})
+			if err != nil {
+				output += "\nError: " + err.Error()
+			}
+			messages = append(messages, Message{Role: "tool", ToolCallID: call.ID, Content: core.TruncateText(output, 8000)})
 		}
 	}
 }

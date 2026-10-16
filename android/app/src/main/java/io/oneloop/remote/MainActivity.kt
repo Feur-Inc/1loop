@@ -1,5 +1,6 @@
 package io.oneloop.remote
 
+import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
 import androidx.activity.SystemBarStyle
@@ -15,5 +16,16 @@ class MainActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         app = RemoteApp(applicationContext, lifecycleScope)
         setContent { OneLoopTheme { Root(app) } }
+        if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+    }
+
+    override fun onStart() {
+        super.onStart()
+        app.foreground = true
+    }
+
+    override fun onStop() {
+        app.foreground = false
+        super.onStop()
     }
 }

@@ -713,7 +713,32 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 	}
 	usage := func() int { return reported + HistoryEstimate(messages[reportedAt:]) }
 	publish := func() { emit("history", append([]Message(nil), messages[1:]...)) }
-	inject := func(m Message) { messages = append(messages, m); emit("injected", m) }
+	// promptHooks runs the user's UserPromptSubmit hooks on a message about
+	// to be worked on: their output joins the context, exit 2 stops the run.
+	promptHooks := func(text string) error {
+		hooks := runHooks(ctx, "UserPromptSubmit", "", map[string]any{"session_id": cfg.ContextKey, "cwd": cfg.Workspace, "prompt": text})
+		reportHookProblems(emit, hooks)
+		if hooks.blocked {
+			return fmt.Errorf("Blocked by the user's hook: %s", hooks.feedback)
+		}
+		if hooks.output != "" {
+			messages = append(messages, Message{Role: "user", Internal: true, Content: "[Context from the user's hook]\n" + hooks.output})
+		}
+		return nil
+	}
+	inject := func(m Message) {
+		messages = append(messages, m)
+		emit("injected", m)
+		if m.Role == "user" && !m.Internal {
+			_ = promptHooks(m.Content)
+		}
+	}
+	if last := messages[len(messages)-1]; last.Role == "user" && !last.Internal {
+		if err := promptHooks(last.Content); err != nil {
+			return err
+		}
+	}
+	stopHooks := 0 // Stop hooks that sent the agent back to work, at most 3
 	checkpointAsked, lastAttempt := false, 0
 	lastLevel := -1
 	// dynamic is the staged policy (levels 0 to 4, at the work's natural
@@ -861,6 +886,17 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 			}
 			if next, ok := inboxValue.Next(); ok {
 				inject(next)
+				publish()
+				continue
+			}
+			// The user's Stop hooks: exit 2 sends the agent back to work with
+			// their words (3 times at most, as Claude Code allows).
+			hooks := runHooks(ctx, "Stop", "", map[string]any{"session_id": cfg.ContextKey, "cwd": cfg.Workspace, "last_assistant_message": out.Content, "stop_hook_active": stopHooks > 0})
+			reportHookProblems(emit, hooks)
+			if hooks.blocked && stopHooks < 3 && ctx.Err() == nil {
+				stopHooks++
+				messages = append(messages, Message{Role: "user", Internal: true, Content: "[The user's Stop hook asks you to continue]\n" + hooks.feedback})
+				emit("note", "Stop hook · "+hooks.feedback)
 				publish()
 				continue
 			}

@@ -216,6 +216,32 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 			outcome.Elapsed = time.Since(started)
 		}
 	}()
+	var input any
+	_ = json.Unmarshal([]byte(call.Function.Arguments), &input)
+	cfg, _ := ctx.Value(configContextKey{}).(Config)
+	payload := func() map[string]any {
+		return map[string]any{"session_id": cfg.ContextKey, "cwd": root, "tool_name": call.Function.Name, "tool_input": input}
+	}
+	if hooks := runHooks(ctx, "PreToolUse", call.Function.Name, payload()); hooks.blocked || len(hooks.problems) > 0 {
+		reportHookProblems(emit, hooks)
+		if hooks.blocked {
+			outcome.Err = fmt.Errorf("Blocked by the user's hook: %s", hooks.feedback)
+			return outcome
+		}
+	}
+	defer func() {
+		after := payload()
+		response := map[string]any{"output": outcome.Output, "error": nil}
+		if outcome.Err != nil {
+			response["error"] = outcome.Err.Error()
+		}
+		after["tool_response"] = response
+		hooks := runHooks(ctx, "PostToolUse", call.Function.Name, after)
+		reportHookProblems(emit, hooks)
+		if hooks.blocked {
+			outcome.Output += "\n[The user's hook says] " + hooks.feedback
+		}
+	}()
 	if call.Function.Name == "computer_use" {
 		handler, _ := ctx.Value(computerContextKey{}).(PanelToolHandler)
 		switch {

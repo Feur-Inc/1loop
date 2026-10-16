@@ -113,6 +113,7 @@ func (ui *desktopUI) showQuestions(chat *conversation, request agent.QuestionReq
 	scroll := container.NewVScroll(body)
 	scroll.SetMinSize(fyne.NewSize(0, min(520, body.MinSize().Height)))
 	dialog = ui.modal(title, scroll, 640, func() { finish(nil) }, send)
+	ui.notifyUser(chat, request.Questions[0].Question)
 	if chat.run != nil {
 		chat.run.questions, chat.run.questionID, chat.run.questionList = dialog, request.ID, request.Questions
 		chat.run.answerQuestions = finish

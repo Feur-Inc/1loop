@@ -16,6 +16,8 @@ import (
 	"fmt"
 	"image/color"
 	"net/url"
+	"os"
+	"path/filepath"
 	"reflect"
 	"strings"
 	"time"
@@ -456,8 +458,10 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		card(settingRow("HTTPS server", "Work on a headless 1loop server with its own models, files, browser and terminals. Approve this device in the server console.", newRow("Connect…", nil, styleOutline, ui.connectServer))),
 		sectionTitle("Permissions"),
 		card(settingRow("Tool permissions",
-			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto runs what is safe and asks for the rest: a reviewer (the chat's own model, with little reasoning) judges each action against your request; with Claude Code, its own Auto mode does it.",
+			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto runs what is safe and asks for the rest: a reviewer (OpenAI's review model with a ChatGPT account, the chat's own model otherwise) judges each action against the whole chat; with Claude Code, its own Auto mode does it.",
 			sized(230, mode.row))),
+		sectionTitle("Hooks"),
+		card(ui.hooksRow()),
 		sectionTitle("Browser"),
 		card(settingRow("Browsing data",
 			"The agents' browser keeps its cookies and logins, cache, site data and history from one session to the next, in "+browser.ProfileDir()+". Clear erases all of it.",
@@ -473,6 +477,23 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 				ui.save()
 			}))),
 	)
+}
+
+// hooksRow opens the user's hooks file (made with an empty list the first
+// time) in the system's editor.
+func (ui *desktopUI) hooksRow() fyne.CanvasObject {
+	path := agent.HooksPath()
+	count := agent.HookCount()
+	detail := fmt.Sprintf("Your commands around the agent's work, in Claude Code's format: PreToolUse (exit code 2 blocks the tool), PostToolUse, UserPromptSubmit and Stop. They apply to 1loop's own agent (Claude Code has its own hooks). %d configured, in %s.", count, path)
+	return settingRow("Hook commands", detail, newRow("Edit hooks.json", nil, styleOutline, func() {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			_ = os.MkdirAll(filepath.Dir(path), 0700)
+			_ = os.WriteFile(path, []byte("{\n  \"hooks\": {\n    \"PreToolUse\": [],\n    \"PostToolUse\": [],\n    \"UserPromptSubmit\": [],\n    \"Stop\": []\n  }\n}\n"), 0600)
+		}
+		if err := fyne.CurrentApp().OpenURL(&url.URL{Scheme: "file", Path: path}); err != nil {
+			ui.notice("Hooks", "The file could not be opened: "+err.Error()+"\n\n"+path)
+		}
+	}))
 }
 
 func (ui *desktopUI) clearBrowserButton() fyne.CanvasObject {

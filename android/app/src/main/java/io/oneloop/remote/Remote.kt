@@ -119,6 +119,10 @@ sealed interface Screen {
  */
 class RemoteApp(private val context: Context, private val scope: CoroutineScope) {
     private val prefs = context.getSharedPreferences("1loop", Context.MODE_PRIVATE)
+    private val notifier = Notifier(context)
+
+    /** The app is on screen; notifications are only for when it is not. */
+    var foreground = true
 
     var screen by mutableStateOf<Screen>(Screen.Launch)
     val servers = mutableStateListOf<Server>()
@@ -391,6 +395,10 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     val chatEffort: String get() = meta?.effort?.takeIf { current != null } ?: defaultEffort
 
     private fun applyMeta(m: Meta) {
+        if (!foreground) {
+            if (m.approval != null && approvals[m.chat]?.id != m.approval.id) notifier.show(m.chat, m.title, "Waiting for your approval: " + m.approval.title)
+            if (m.question != null && questions[m.chat]?.id != m.question.id) notifier.show(m.chat, m.title, m.question.questions.firstOrNull()?.text ?: "1loop has a question")
+        }
         if (m.approval != null) approvals[m.chat] = m.approval else approvals.remove(m.chat)
         if (m.question != null) questions[m.chat] = m.question else questions.remove(m.chat)
         if (m.chat == current) meta = m
@@ -400,6 +408,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         when (name) {
             "chats" -> {
                 val list = parseChats(data.optJSONArray("chats"))
+                if (!foreground) {
+                    for (chat in list) {
+                        if (!chat.running && chats.any { it.id == chat.id && it.running }) notifier.show(chat.id, chat.title, "Done.")
+                    }
+                }
                 chats.clear()
                 chats.addAll(list)
             }

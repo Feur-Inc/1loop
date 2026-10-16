@@ -88,6 +88,7 @@ type desktopUI struct {
 	accountLimits    map[string]agent.AccountLimits
 	userInstructions string
 	approvalMode     string
+	inForeground     bool // the window has the focus
 	chats            []*conversation
 	current          *conversation
 	projects         []string
@@ -245,6 +246,10 @@ func runDesktop(backend *agent.App, root string) {
 	// window is really on screen, otherwise it would play unseen.
 	launch := newLaunchScreen(ui.window.Canvas(), func() { ui.window.Canvas().Focus(ui.prompt) })
 	launch.show()
+	// Notifications are for chats the user is not looking at (notify.go).
+	ui.inForeground = true
+	a.Lifecycle().SetOnEnteredForeground(func() { ui.inForeground = true })
+	a.Lifecycle().SetOnExitedForeground(func() { ui.inForeground = false })
 	a.Lifecycle().SetOnStarted(func() {
 		if ui.chrome {
 			chromeReady()
@@ -785,6 +790,12 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	if run != nil && run.approval != nil {
 		run.approval.dismiss()
 	}
+	if run != nil && run.questions != nil {
+		run.questions.dismiss()
+	}
+	if run != nil && ended == "done" {
+		ui.notifyUser(chat, "Done.")
+	}
 	ui.renderChats()
 	ui.save()
 	if chat != ui.current {
@@ -1102,6 +1113,7 @@ func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) {
 			forget()
 		}
 	}, refuse, allow)
+	ui.notifyUser(chat, "Waiting for your approval: "+title)
 	if chat.run != nil {
 		chat.run.approval = dialog
 		chat.run.approvalID, chat.run.approvalTitle, chat.run.approvalPreview = id, title, preview

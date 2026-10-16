@@ -117,6 +117,7 @@ func systemInstructions(cfg Config) string {
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
 		prompt += "\n\nAdditional instructions from the user:\n" + cfg.UserInstructions
 	}
+	prompt += projectInstructions(cfg.Workspace)
 	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + platform.ShellDescription() + "." + todoInstructions(cfg) + contextInstructions(cfg) + toolSearchInstructions()
 }
 

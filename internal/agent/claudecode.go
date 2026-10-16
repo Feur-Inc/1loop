@@ -370,7 +370,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		defer close()
 		args = append(args, "--mcp-config", config)
 	}
-	appendPrompt := todoInstructions(cfg) + todoSnapshot(cfg) + browserInstructions(cfg) + terminalInstructions(cfg) + computerInstructions(cfg)
+	appendPrompt := projectInstructions(cfg.Workspace) + todoInstructions(cfg) + todoSnapshot(cfg) + browserInstructions(cfg) + terminalInstructions(cfg) + computerInstructions(cfg)
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
 		appendPrompt = "Additional instructions from the user:\n" + cfg.UserInstructions + appendPrompt
 	}

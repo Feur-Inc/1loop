@@ -132,6 +132,7 @@ private const val PAGE = 80 // items a chat opens with, and each earlier page
 class RemoteApp(private val context: Context, private val scope: CoroutineScope) {
     private val prefs = context.getSharedPreferences("1loop", Context.MODE_PRIVATE)
     private val notifier = Notifier(context)
+    private val running = mutableMapOf<String, Boolean>() // by chat, to tell when a run ends
 
     /** The app is on screen; notifications are only for when it is not. */
     var foreground = true
@@ -439,6 +440,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     val chatTier: String get() = meta?.tier?.takeIf { current != null } ?: defaultTier
 
     private fun applyMeta(m: Meta) {
+        val wasRunning = running.put(m.chat, m.running)
+        if (!foreground && wasRunning == true && !m.running) notifier.show(m.chat, m.title, "Done.")
         if (!foreground) {
             if (m.approval != null && approvals[m.chat]?.id != m.approval.id) notifier.show(m.chat, m.title, "Waiting for your approval: " + m.approval.title)
             if (m.question != null && questions[m.chat]?.id != m.question.id) notifier.show(m.chat, m.title, m.question.questions.firstOrNull()?.text ?: "1loop has a question")
@@ -452,11 +455,6 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         when (name) {
             "chats" -> {
                 val list = parseChats(data.optJSONArray("chats"))
-                if (!foreground) {
-                    for (chat in list) {
-                        if (!chat.running && chats.any { it.id == chat.id && it.running }) notifier.show(chat.id, chat.title, "Done.")
-                    }
-                }
                 chats.clear()
                 chats.addAll(list)
             }

@@ -431,8 +431,11 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		})
 	})
 	mode := newPicker(ui.window, "Tool permissions", styleField, nil)
-	mode.Options = []string{"Approval required", "YOLO mode", "Auto mode"}
-	modes := []string{"approval", "yolo", "auto"}
+	mode.Options = []string{"Approval required", "YOLO mode"}
+	modes := []string{"approval", "yolo"}
+	if agent.AutoModeOffered(ui.cfg) { // ChatGPT and Claude Code only
+		mode.Options, modes = append(mode.Options, "Auto mode"), append(modes, "auto")
+	}
 	selected := mode.Options[0]
 	for i, name := range modes {
 		if ui.approvalMode == name {
@@ -458,7 +461,7 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		card(settingRow("HTTPS server", "Work on a headless 1loop server with its own models, files, browser and terminals. Approve this device in the server console.", newRow("Connect…", nil, styleOutline, ui.connectServer))),
 		sectionTitle("Permissions"),
 		card(settingRow("Tool permissions",
-			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto runs what is safe and asks for the rest: a reviewer (OpenAI's review model with a ChatGPT account, the chat's own model otherwise) judges each action against the whole chat; with Claude Code, its own Auto mode does it.",
+			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto runs what is safe and asks for the rest, with a ChatGPT account (Codex's review: its prompt, OpenAI's review model) or Claude Code (its own Auto mode); other connections have no Auto mode and ask.",
 			sized(230, mode.row))),
 		sectionTitle("Hooks"),
 		card(ui.hooksRow()),

@@ -476,12 +476,14 @@ func (ui *desktopUI) approvalMenu() {
 	mode := agent.ApprovalFor(ui.approvalMode, ui.cfg)
 	actions := []menuAction{{label: "Approval required", detail: "Ask before each command and edit", icon: iconShield,
 		checked: mode == "approval", run: set("approval")}}
-	autoDetail := "Approves safe actions, asks you for risky ones"
+	autoDetail := "Codex's review approves safe actions, asks you for risky ones"
 	if ui.cfg.Provider == "claudecode" {
 		autoDetail = "Claude Code runs what it judges safe"
 	}
-	actions = append(actions, menuAction{label: "Auto mode", detail: autoDetail, icon: iconShieldCheck,
-		checked: mode == "auto", run: set("auto")})
+	if agent.AutoModeOffered(ui.cfg) {
+		actions = append(actions, menuAction{label: "Auto mode", detail: autoDetail, icon: iconShieldCheck,
+			checked: mode == "auto", run: set("auto")})
+	}
 	actions = append(actions, menuAction{label: "YOLO mode", detail: "Run commands and edits automatically", icon: iconBolt,
 		checked: mode == "yolo", run: set("yolo")})
 	showMenu(ui.window, ui.approvalControl, actions)

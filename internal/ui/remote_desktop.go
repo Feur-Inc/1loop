@@ -390,6 +390,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			Settings        struct {
 				Models                      []remoteapi.Model
 				Model, Effort, ApprovalMode string
+				AutoMode                    bool // the server's model has an Auto mode
 			}
 		}
 		err := remote.client.json(ctx, "GET", "/api/state", nil, &state)
@@ -460,6 +461,10 @@ func (remote *remoteDesktop) refreshLoop() {
 				remote.effort.Enable()
 			}
 			remote.effort.SetSelected(effort)
+			remote.approval.Options = []string{"approval", "yolo"}
+			if state.Settings.AutoMode {
+				remote.approval.Options = append(remote.approval.Options, "auto")
+			}
 			remote.approval.SetSelected(state.Settings.ApprovalMode)
 			remote.renderTranscript(chat.Items)
 			status := "Connected to " + state.Name + " · " + state.Workspace

@@ -297,7 +297,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 		"tier":         server.cfg.ServiceTier,
 		"window":       agent.ModelContextWindow(server.cfg),
 		"approvalMode": server.approvalMode,
-		"autoMode":     true,
+		"autoMode":     agent.AutoModeOffered(server.cfg),
 		"loading":      server.loading,
 		"computerUse":  false,
 	}

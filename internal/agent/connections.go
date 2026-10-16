@@ -179,10 +179,19 @@ func toolContext(ctx context.Context, cfg Config) context.Context {
 	return context.WithValue(ctx, approvalContextKey{}, approvalPolicy{yolo: cfg.ApprovalMode == "yolo"})
 }
 
-// ApprovalFor is the approval mode a run with this configuration uses:
-// the chosen one. "auto" is Claude Code's own mode for a Claude Code
-// connection, 1loop's reviewer for every other (see auto_review.go).
+// AutoModeOffered says whether a connection has an Auto mode: Claude Code's
+// own, or Codex's review with a ChatGPT account (auto_review.go). The other
+// connections (vLLM, OpenRouter, compatible APIs) have none.
+func AutoModeOffered(cfg Config) bool {
+	return cfg.Provider == "openai" || cfg.Provider == "claudecode"
+}
+
+// ApprovalFor is the approval mode a run with this configuration uses: the
+// chosen one, except Auto on a connection that has none, which asks.
 func ApprovalFor(mode string, cfg Config) string {
+	if mode == "auto" && !AutoModeOffered(cfg) {
+		return "approval"
+	}
 	return mode
 }
 

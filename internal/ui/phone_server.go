@@ -707,7 +707,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 		}
 	}
 	return map[string]any{"models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
-		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": true, "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.cfg)}
+		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": agent.AutoModeOffered(ui.cfg), "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.cfg)}
 }
 
 // limits reads every account's usage windows for the phone's model picker,

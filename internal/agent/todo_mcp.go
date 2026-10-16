@@ -6,6 +6,8 @@ import (
 	"io"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -14,6 +16,8 @@ import (
 
 // Claude Code keeps its own harness. Its MCP transport exposes the same
 // TODO store, browser tabs and terminals used by 1loop's other providers.
+// The server lives as long as one Claude Code run of 1loop and answers only
+// that run (a random token); it returns the path of its --mcp-config file.
 func startTodoMCP(ctx context.Context, state *TodoState, emit emitter, handlers ...PanelToolHandler) (string, func(), error) {
 	var browserTools, terminalTools, computerTools PanelToolHandler
 	if len(handlers) > 0 {
@@ -137,5 +141,20 @@ func startTodoMCP(ctx context.Context, state *TodoState, emit emitter, handlers 
 	config, _ := json.Marshal(map[string]any{"mcpServers": map[string]any{"1loop_todo": map[string]any{
 		"type": "http", "url": "http://" + listener.Addr().String() + "/mcp", "headers": map[string]string{"Authorization": "Bearer " + token},
 	}}})
-	return string(config), func() { _ = server.Close() }, nil
+	// The token reaches Claude Code in a file only its user can read, not on
+	// its command line (which every process of the user can read): only this
+	// Claude Code session can use the server. Never in the user's Claude
+	// settings, so the claude they run themselves does not see it.
+	dir, err := os.MkdirTemp("", "1loop-mcp-")
+	if err != nil {
+		_ = server.Close()
+		return "", nil, err
+	}
+	path := filepath.Join(dir, "mcp.json")
+	if err := os.WriteFile(path, config, 0600); err != nil {
+		_ = server.Close()
+		_ = os.RemoveAll(dir)
+		return "", nil, err
+	}
+	return path, func() { _ = server.Close(); _ = os.RemoveAll(dir) }, nil
 }

@@ -1441,6 +1441,7 @@ func (ui *desktopUI) setDocked(docked bool) {
 	from.Remove(ui.thinking)
 	to.Add(ui.thinking)
 	ui.workMark.resize(size)
+	ui.thinking.Refresh() // lays the line out again: the new ring size alone does not
 	ui.showActivityLine(ui.lineShown)
 }
 

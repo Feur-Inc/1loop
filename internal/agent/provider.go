@@ -351,6 +351,9 @@ func completion(ctx context.Context, cfg Config, messages []Message, tools bool,
 	})
 	if tools {
 		body["tools"] = chatTools(messages)
+		if cfg.toolSet != nil {
+			body["tools"] = cfg.toolSet
+		}
 		if cfg.Provider == "vllm" || cfg.Provider == "openrouter" {
 			body["parallel_tool_calls"] = true
 		}
@@ -705,7 +708,7 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 	if cfg.ApprovalMode == "auto" {
 		// The reviewer reads the requests as they are when an action comes:
 		// tools run between two turns of this loop, never during a change.
-		review := backend.autoReviewer(cfg, func() string { return recentRequests(messages) })
+		review := backend.autoReviewer(cfg, func() []Message { return messages[1:] })
 		ctx = context.WithValue(ctx, approvalContextKey{}, approvalPolicy{review: review})
 	}
 	usage := func() int { return reported + HistoryEstimate(messages[reportedAt:]) }

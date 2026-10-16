@@ -82,6 +82,9 @@ func responsesCompletion(ctx context.Context, cfg Config, messages []Message, to
 	})
 	if toolsFlag {
 		body["tools"] = responsesTools(cfg)
+		if cfg.toolSet != nil {
+			body["tools"] = responsesFunctions(cfg.toolSet)
+		}
 		body["parallel_tool_calls"] = true
 	}
 	if key := promptCacheKey(cfg); key != "" {

@@ -28,6 +28,7 @@ type serverChat struct {
 	Todo         *agent.TodoState        `json:"todo"`
 	Cache        *agent.ContextCache     `json:"contextCache,omitempty"`
 	grants       *agent.PermissionGrants // what request_permissions granted, until the server stops
+	review       *agent.ReviewSession    // the Auto mode reviewer's conversation, until the server stops
 	Browsers     []browser.Info          `json:"browsers,omitempty"`
 	run          *serverRun
 	tabs         []*serverTab
@@ -435,6 +436,10 @@ func (server *headlessServer) runLocked(chat *serverChat, m agent.Message) {
 		chat.grants = &agent.PermissionGrants{}
 	}
 	cfg.Grants = chat.grants
+	if chat.review == nil {
+		chat.review = &agent.ReviewSession{}
+	}
+	cfg.Review = chat.review
 	cfg.ContextKey = chat.ID
 	cfg.Browser = server.browserTools(chat)
 	cfg.Terminal = server.terminalTools(chat)

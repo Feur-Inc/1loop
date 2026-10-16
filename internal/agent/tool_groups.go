@@ -125,6 +125,16 @@ type errUnknownGroup string
 
 func (e errUnknownGroup) Error() string { return "No tool group named " + string(e) }
 
+// responsesFunctions are plain function definitions in the Responses shape.
+func responsesFunctions(definitions []map[string]any) []map[string]any {
+	var tools []map[string]any
+	for _, definition := range definitions {
+		f := definition["function"].(map[string]any)
+		tools = append(tools, map[string]any{"type": "function", "name": f["name"], "description": f["description"], "parameters": f["parameters"], "strict": true})
+	}
+	return tools
+}
+
 // responsesTools is the tool list for ChatGPT: the core functions, each
 // group as a namespace of deferred functions, OpenAI's tool search and its
 // web search.

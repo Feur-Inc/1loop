@@ -31,6 +31,8 @@ type Config struct {
 	ContextKey        string                                    `json:"-"`
 	Todo              *TodoState                                `json:"-"`
 	Grants            *PermissionGrants                         `json:"-"`
+	Review            *ReviewSession                            `json:"-"` // the Auto mode reviewer's conversation for the chat
+	toolSet           []map[string]any                          // replaces the agent's tools (the reviewer's)
 	Computer          PanelToolHandler                          `json:"-"`
 	Terminal          PanelToolHandler                          `json:"-"`
 	Browser           PanelToolHandler                          `json:"-"`

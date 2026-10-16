@@ -44,6 +44,7 @@ type conversation struct {
 	Items    []agent.ChatItem        `json:"items"`
 	Cache    *agent.ContextCache     `json:"contextCache,omitempty"`
 	grants   *agent.PermissionGrants // what request_permissions granted, until 1loop closes
+	review   *agent.ReviewSession    // the Auto mode reviewer's conversation, until 1loop closes
 	Todo     *agent.TodoState        `json:"todo,omitempty"`
 	Panel    *savedPanel             `json:"panel,omitempty"` // its side panel, to open it again as it was
 	Version  string                  `json:"version,omitempty"`
@@ -1000,6 +1001,10 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 		chat.grants = &agent.PermissionGrants{}
 	}
 	cfg.Grants = chat.grants
+	if chat.review == nil {
+		chat.review = &agent.ReviewSession{}
+	}
+	cfg.Review = chat.review
 	cfg.ContextKey = chat.ID + ":" + chat.Version
 	cfg.Recall = func(ctx context.Context) ([]agent.ChatItem, error) {
 		var items []agent.ChatItem

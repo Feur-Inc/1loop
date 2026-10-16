@@ -9,7 +9,9 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
+	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -73,9 +75,25 @@ type Meta struct {
 	// The chat's model, by its label in the model list, and context use.
 	Model  string `json:"model"`
 	Effort string `json:"effort"`
+	Tier   string `json:"tier,omitempty"` // its speed (see agent.TierFor)
 	Used   int    `json:"used"`
 	Window int    `json:"window"`
 	Todo   []Todo `json:"todo"` // the chat's task list
+}
+
+// Page is the part of a chat's items GET /api/chats/{id} returns: all of
+// them, or with ?limit=N the N before ?before= (the end by default), so a
+// long chat opens on its last messages and the rest loads on demand.
+func Page(req *http.Request, total int) (first, end int) {
+	end = total
+	if before, err := strconv.Atoi(req.URL.Query().Get("before")); err == nil && before >= 0 && before < total {
+		end = before
+	}
+	limit, err := strconv.Atoi(req.URL.Query().Get("limit"))
+	if err != nil || limit <= 0 {
+		return 0, end
+	}
+	return max(0, end-limit), end
 }
 
 // Question is the model's request_user_input; the answers go back with
@@ -105,6 +123,9 @@ type Model struct {
 	Detail  string   `json:"detail"`
 	Account string   `json:"account,omitempty"` // its connection's ID
 	Efforts []Effort `json:"efforts"`
+	// The speeds the plan offers (none on most), and the one used unless told.
+	ServiceTiers       []agent.ServiceTier `json:"serviceTiers,omitempty"`
+	DefaultServiceTier string              `json:"defaultServiceTier,omitempty"`
 }
 
 // Account is a connection of the model picker; problem says why its

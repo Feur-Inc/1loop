@@ -251,7 +251,24 @@ func (backend *App) ConnectionModels(ctx context.Context, conn Connection, key s
 		if conn.Provider == "vllm" && len(efforts) == 0 {
 			efforts, def, mode, source = backend.localCapabilities(ctx, cfg, row)
 		}
-		choices = append(choices, ModelChoice{Connection: conn, ID: id, Name: name, Efforts: efforts, DefaultEffort: def, ReasoningMode: mode, Source: source})
+		choice := ModelChoice{Connection: conn, ID: id, Name: name, Efforts: efforts, DefaultEffort: def, ReasoningMode: mode, Source: source}
+		if conn.Provider == "openai" {
+			// Only the speeds the account's plan offers are listed.
+			if tiers, ok := row["service_tiers"].([]any); ok {
+				for _, raw := range tiers {
+					if tier, ok := raw.(map[string]any); ok {
+						id, _ := tier["id"].(string)
+						name, _ := tier["name"].(string)
+						description, _ := tier["description"].(string)
+						if id != "" {
+							choice.ServiceTiers = append(choice.ServiceTiers, ServiceTier{id, name, description})
+						}
+					}
+				}
+			}
+			choice.DefaultServiceTier, _ = row["default_service_tier"].(string)
+		}
+		choices = append(choices, choice)
 	}
 	return choices, nil
 }

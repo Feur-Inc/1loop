@@ -482,6 +482,17 @@ private fun Transcript(app: RemoteApp, running: Boolean, onTool: (Item) -> Unit)
     LaunchedEffect(list) {
         snapshotFlow { list.isScrollInProgress }.collect { scrolling -> if (!scrolling) follow = !list.canScrollForward }
     }
+    // Scrolled near the top of a long chat: the page before it, the view kept
+    // on the same message.
+    LaunchedEffect(list) {
+        snapshotFlow { list.firstVisibleItemIndex }.collect { first ->
+            if (first <= 2 && app.firstItem > 0) {
+                val offset = list.firstVisibleItemScrollOffset
+                val added = app.loadEarlier()
+                if (added > 0) list.scrollToItem(first + added, offset)
+            }
+        }
+    }
     val tail by remember { derivedStateOf { items.size to (items.lastOrNull()?.text?.length ?: 0) } }
     LaunchedEffect(tail, running, app.meta?.label) {
         if (follow && items.isNotEmpty()) list.scrollToItem(items.size + 1, 0)

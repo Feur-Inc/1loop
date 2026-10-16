@@ -3,6 +3,7 @@ package ui
 import (
 	"context"
 	"slices"
+	"strings"
 
 	"1loop/assets"
 
@@ -215,6 +216,9 @@ func (ui *desktopUI) modelMenu() {
 		}
 		lists[2].Add(padded(10, 3, 6, 6, container.New(layout.NewCustomPaddedVBoxLayout(3), title, about)))
 		lists[2].Add(padded(14, 9, 5, 5, container.New(modelReasoningLayout{}, controls...)))
+		if ok && shown == ui.cfg.ConnectionID && len(choice.ServiceTiers) > 0 {
+			lists[2].Add(ui.speedChips(choice))
+		}
 		menu.items = groups[column]
 		menu.active = -1
 	}
@@ -292,6 +296,63 @@ func (ui *desktopUI) modelMenu() {
 			refreshStrip()
 		})
 	}
+}
+
+// speedChips are the speeds the ChatGPT plan offers for the model: Standard
+// and its tiers (Fast, Ultrafast…). Absent when the plan offers none.
+func (ui *desktopUI) speedChips(choice agent.ModelChoice) fyne.CanvasObject {
+	current := agent.TierFor(choice, ui.cfg.ServiceTier)
+	if current == "" {
+		current = choice.DefaultServiceTier
+	}
+	chips := container.New(layout.NewCustomPaddedHBoxLayout(4))
+	var rows []*tapRow
+	add := func(id, name, detail string) {
+		var row *tapRow
+		row = newRow(name, nil, styleChip, func() {
+			ui.cfg.ServiceTier = id
+			if ui.current != nil {
+				ui.current.Config.ServiceTier = id
+			}
+			for _, other := range rows {
+				other.accent = other == row
+				other.Refresh()
+			}
+			ui.model.row.SetTrailing(modelTrailing(choice, ui.cfg))
+			ui.save()
+			ui.remote.metaChanged(ui.current)
+		})
+		row.size, row.accent = 12, id == current || id == agent.StandardTier && current == ""
+		if detail != "" {
+			row.detail = detail
+		}
+		rows = append(rows, row)
+		chips.Add(row)
+	}
+	standard := ""
+	if choice.DefaultServiceTier != "" {
+		standard = agent.StandardTier
+	}
+	add(standard, "Standard", "")
+	for _, tier := range choice.ServiceTiers {
+		add(tier.ID, tier.Name, "")
+	}
+	caption := textLine("SPEED", 11, colFaint)
+	caption.TextStyle = fyne.TextStyle{Bold: true}
+	return padded(0, 6, 9, 9, container.NewVBox(caption, chips))
+}
+
+// modelTrailing is what follows the model's name in the composer: its
+// effort and, when not the standard, its speed.
+func modelTrailing(choice agent.ModelChoice, cfg agent.Config) string {
+	var parts []string
+	if len(choice.Efforts) > 0 {
+		parts = append(parts, agent.EffortLabel(cfg.Effort))
+	}
+	if name := agent.TierName(choice, cfg.ServiceTier); name != "" && cfg.ServiceTier != agent.StandardTier {
+		parts = append(parts, name)
+	}
+	return strings.Join(parts, " · ")
 }
 
 type modelColumnsLayout struct{}

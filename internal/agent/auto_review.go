@@ -119,6 +119,7 @@ func (backend *App) autoReview(ctx context.Context, cfg Config, chat []Message, 
 	review := cfg
 	review.ContextKey += ":review" // its own cache, apart from the chat's
 	review.Parameters = nil
+	review.ServiceTier = "" // the chat's speed is for the chat's model
 	review.toolSet = reviewTools()
 	if review.Effort != "" && review.Effort != "none" {
 		review.Effort = "low" // the review must not hold the work up

@@ -71,8 +71,17 @@ data class Questions(val chat: String, val id: String, val questions: List<Quest
 
 data class Effort(val value: String, val label: String, val about: String)
 
-/** account: the ID of its connection (empty from a computer older than this app). */
-data class ModelOption(val label: String, val name: String, val detail: String, val account: String, val efforts: List<Effort>)
+/** A speed the ChatGPT plan offers for a model (Fast, Ultrafast…). */
+data class ServiceTier(val id: String, val name: String, val description: String)
+
+/**
+ * account: the ID of its connection (empty from a computer older than this app).
+ * tiers: the plan's speeds for it, none on most plans; defaultTier is used unless told.
+ */
+data class ModelOption(
+    val label: String, val name: String, val detail: String, val account: String, val efforts: List<Effort>,
+    val tiers: List<ServiceTier> = emptyList(), val defaultTier: String = "",
+)
 
 /** A connection of the model picker; problem says why its models are missing. */
 data class Account(val id: String, val name: String, val provider: String, val kind: String, val problem: String)
@@ -86,7 +95,7 @@ data class Meta(
     val chat: String, val title: String, val running: Boolean, val label: String, val mark: String,
     val queue: List<String>, val steer: List<String>, val approval: Approval?, val question: Questions?,
     val model: String, val effort: String, val used: Int, val window: Int,
-    val todo: List<Task>,
+    val todo: List<Task>, val tier: String = "",
 ) {
     companion object {
         fun from(o: JSONObject) = Meta(
@@ -100,6 +109,7 @@ data class Meta(
                     array!!.getJSONObject(i).let { Task(it.optString("id"), it.optString("text"), it.optString("status"), it.optLong("started"), it.optLong("completed")) }
                 }
             },
+            o.optString("tier"),
         )
     }
 }
@@ -117,6 +127,8 @@ sealed interface Screen {
  * Everything the app shows. Network calls run on IO; state changes happen on
  * the main thread, in the order the computer sent them.
  */
+private const val PAGE = 80 // items a chat opens with, and each earlier page
+
 class RemoteApp(private val context: Context, private val scope: CoroutineScope) {
     private val prefs = context.getSharedPreferences("1loop", Context.MODE_PRIVATE)
     private val notifier = Notifier(context)
@@ -141,11 +153,15 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var modelsLoading by mutableStateOf(false)
     var defaultModel by mutableStateOf("") // the model a new chat starts with
     var defaultEffort by mutableStateOf("")
+    var defaultTier by mutableStateOf("")
     var defaultWindow by mutableStateOf(0)
     var approvalMode by mutableStateOf("approval")
     var autoMode by mutableStateOf(false) // the computer offers Auto mode
     var current by mutableStateOf<String?>(null) // null: a new chat
     val items = mutableStateListOf<Item>()
+    /** The index of items[0] in the chat: a long chat opens on its last page. */
+    var firstItem by mutableStateOf(0)
+    private var loadingEarlier = false
     var meta by mutableStateOf<Meta?>(null)
     val approvals = mutableStateMapOf<String, Approval>() // by chat
     val questions = mutableStateMapOf<String, Questions>() // by chat
@@ -349,17 +365,38 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     private suspend fun load(id: String) {
         val target = server ?: return
-        val chat = runCatching { withContext(Dispatchers.IO) { Api(target).get("/api/chats/$id") } }.getOrNull() ?: return
+        val chat = runCatching { withContext(Dispatchers.IO) { Api(target).get("/api/chats/$id?limit=$PAGE") } }.getOrNull() ?: return
         if (current != id) return
         val array = chat.optJSONArray("items")
         items.clear()
         items.addAll((0 until (array?.length() ?: 0)).map { Item.from(array!!.getJSONObject(it)) })
+        firstItem = chat.optInt("first", 0)
         chat.optJSONObject("meta")?.let { applyMeta(Meta.from(it)) }
+    }
+
+    /** Loads the page before the first item shown; returns how many came. */
+    suspend fun loadEarlier(): Int {
+        val target = server ?: return 0
+        val id = current ?: return 0
+        if (firstItem <= 0 || loadingEarlier) return 0
+        loadingEarlier = true
+        try {
+            val chat = runCatching { withContext(Dispatchers.IO) { Api(target).get("/api/chats/$id?limit=$PAGE&before=$firstItem") } }.getOrNull() ?: return 0
+            if (current != id) return 0
+            val array = chat.optJSONArray("items") ?: return 0
+            val earlier = (0 until array.length()).map { Item.from(array.getJSONObject(it)) }
+            items.addAll(0, earlier)
+            firstItem = chat.optInt("first", 0)
+            return earlier.size
+        } finally {
+            loadingEarlier = false
+        }
     }
 
     fun open(id: String?) {
         current = id
         items.clear()
+        firstItem = 0
         meta = null
         if (id != null) scope.launch { load(id) }
     }
@@ -370,11 +407,16 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         for (modelIndex in 0 until (array?.length() ?: 0)) {
             val model = array!!.getJSONObject(modelIndex)
             val efforts = model.optJSONArray("efforts")
+            val tiers = model.optJSONArray("serviceTiers")
             models.add(ModelOption(
                 model.optString("label"), model.optString("name"), model.optString("detail"), model.optString("account"),
                 (0 until (efforts?.length() ?: 0)).map {
                     efforts!!.getJSONObject(it).let { effort -> Effort(effort.optString("value"), effort.optString("label"), effort.optString("about")) }
                 },
+                (0 until (tiers?.length() ?: 0)).map {
+                    tiers!!.getJSONObject(it).let { tier -> ServiceTier(tier.optString("id"), tier.optString("name"), tier.optString("description")) }
+                },
+                model.optString("defaultServiceTier"),
             ))
         }
         val accountArray = settings.optJSONArray("accounts")
@@ -384,6 +426,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         })
         defaultModel = settings.optString("model")
         defaultEffort = settings.optString("effort")
+        defaultTier = settings.optString("tier")
         defaultWindow = settings.optInt("window")
         approvalMode = settings.optString("approvalMode", "approval")
         autoMode = settings.optBoolean("autoMode")
@@ -393,6 +436,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     /** The model of the chat on screen (or of a new chat), with its effort. */
     val chatModel: ModelOption? get() = models.firstOrNull { it.label == (meta?.model?.takeIf { current != null } ?: defaultModel) }
     val chatEffort: String get() = meta?.effort?.takeIf { current != null } ?: defaultEffort
+    val chatTier: String get() = meta?.tier?.takeIf { current != null } ?: defaultTier
 
     private fun applyMeta(m: Meta) {
         if (!foreground) {
@@ -418,9 +462,10 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             }
             "item" -> {
                 if (data.optString("chat") != current) return
-                val index = data.optInt("index")
+                val index = data.optInt("index") - firstItem
                 val item = Item.from(data.getJSONObject("item"))
                 when {
+                    index < 0 -> {} // an item above the loaded page
                     index < items.size -> items[index] = item
                     index == items.size -> items.add(item)
                     else -> current?.let { scope.launch { load(it) } } // missed some: reload
@@ -452,16 +497,18 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         }
     }
 
-    fun setModel(label: String? = null, effort: String? = null) {
+    fun setModel(label: String? = null, effort: String? = null, tier: String? = null) {
         val target = server ?: return
         // Shown at once; the computer confirms through its events.
         if (current == null) {
             label?.let { defaultModel = it }
             effort?.let { defaultEffort = it }
-        } else meta = meta?.let { it.copy(model = label ?: it.model, effort = effort ?: it.effort) }
+            tier?.let { defaultTier = it }
+        } else meta = meta?.let { it.copy(model = label ?: it.model, effort = effort ?: it.effort, tier = tier ?: it.tier) }
         scope.launch {
             runCatching {
                 val body = JSONObject().put("chat", current.orEmpty()).put("label", label.orEmpty()).put("effort", effort.orEmpty())
+                tier?.let { body.put("tier", it) }
                 withContext(Dispatchers.IO) { Api(target).post("/api/model", body) }
             }.onFailure { problem = it.message }
         }

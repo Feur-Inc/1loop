@@ -19,6 +19,7 @@ type Config struct {
 	Residency        string         `json:"-"`
 	AuthProfile      string         `json:"authProfile,omitempty"`
 	Effort           string         `json:"effort,omitempty"`
+	ServiceTier      string         `json:"serviceTier,omitempty"` // a ChatGPT speed (see TierFor); "" for the plan's default
 	ReasoningMode    string         `json:"reasoningMode,omitempty"`
 	Routing          map[string]any `json:"routing,omitempty"`
 	Parameters       map[string]any `json:"parameters,omitempty"`

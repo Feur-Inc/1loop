@@ -35,6 +35,48 @@ type ModelChoice struct {
 	ID, Name                             string
 	Efforts                              []string
 	DefaultEffort, ReasoningMode, Source string
+	// The speeds the ChatGPT plan offers for the model (Fast, Ultrafast…),
+	// none on most plans; DefaultServiceTier is the one used unless told.
+	ServiceTiers       []ServiceTier
+	DefaultServiceTier string
+}
+
+// ServiceTier is a speed of a ChatGPT model, as its catalog lists it.
+type ServiceTier struct {
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description"`
+}
+
+// StandardTier asks for the standard speed where the plan defaults to
+// another one.
+const StandardTier = "default"
+
+// TierFor is the speed a chat asks for with this model: its choice when the
+// model offers it, otherwise the model's default.
+func TierFor(choice ModelChoice, wanted string) string {
+	if wanted == StandardTier && choice.DefaultServiceTier != "" {
+		return StandardTier
+	}
+	for _, tier := range choice.ServiceTiers {
+		if tier.ID == wanted {
+			return wanted
+		}
+	}
+	return ""
+}
+
+// TierName is how a chat's speed reads in the composer, "" for the standard.
+func TierName(choice ModelChoice, tier string) string {
+	if tier == "" {
+		tier = choice.DefaultServiceTier
+	}
+	for _, t := range choice.ServiceTiers {
+		if t.ID == tier {
+			return t.Name
+		}
+	}
+	return ""
 }
 
 func (conn Connection) Config(workspace string) Config {

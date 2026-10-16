@@ -339,7 +339,7 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 	for _, messageValue := range chat.steer {
 		remoteMetaValue.Steer = append(remoteMetaValue.Steer, messageValue.Content)
 	}
-	remoteMetaValue.Model, remoteMetaValue.Effort = ui.choiceLabel(chat.Config), chat.Config.Effort
+	remoteMetaValue.Model, remoteMetaValue.Effort, remoteMetaValue.Tier = ui.choiceLabel(chat.Config), chat.Config.Effort, chat.Config.ServiceTier
 	remoteMetaValue.Window = agent.ModelContextWindow(chat.Config)
 	remoteMetaValue.Todo = todoForPhone(chat)
 	for _, h := range chat.History {
@@ -385,11 +385,12 @@ func (server *remoteServer) chat(writer http.ResponseWriter, req *http.Request) 
 		if chat == nil {
 			return
 		}
-		items := make([]remoteapi.Item, len(chat.Items))
-		for i := range chat.Items {
-			items[i] = itemForPhone(chat, i)
+		first, end := remoteapi.Page(req, len(chat.Items))
+		items := make([]remoteapi.Item, 0, end-first)
+		for i := first; i < end; i++ {
+			items = append(items, itemForPhone(chat, i))
 		}
-		out = map[string]any{"chat": chatSummary(chat), "items": items, "meta": server.ui.metaForPhone(chat)}
+		out = map[string]any{"chat": chatSummary(chat), "items": items, "first": first, "total": len(chat.Items), "meta": server.ui.metaForPhone(chat)}
 	})
 	if out == nil {
 		core.Fail(writer, http.StatusNotFound, "This chat no longer exists")
@@ -693,7 +694,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 	for _, label := range ui.model.Options {
 		choice := ui.choices[label]
 		remoteModelValue := remoteapi.Model{Label: label, Name: choice.Display(), Detail: ui.model.Details[label],
-			Account: choice.Connection.ID, Efforts: []remoteapi.Effort{}}
+			Account: choice.Connection.ID, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
 		for _, e := range choice.Efforts {
 			remoteModelValue.Efforts = append(remoteModelValue.Efforts, remoteapi.Effort{Value: e, Label: agent.EffortLabel(e), About: modelEffortAbout(e)})
 		}
@@ -705,7 +706,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 			accounts = append(accounts, remoteapi.Account{ID: conn.ID, Name: conn.Name, Provider: conn.Provider, Kind: agent.ProviderName(conn.Provider), Problem: ui.modelUnavailable[conn.ID]})
 		}
 	}
-	return map[string]any{"models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort,
+	return map[string]any{"models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
 		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": true, "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.cfg)}
 }
 
@@ -769,16 +770,17 @@ func (server *remoteServer) limits(writer http.ResponseWriter, req *http.Request
 
 func (server *remoteServer) setModel(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
-		Chat   string `json:"chat"`
-		Label  string `json:"label"`
-		Effort string `json:"effort"`
+		Chat   string  `json:"chat"`
+		Label  string  `json:"label"`
+		Effort string  `json:"effort"`
+		Tier   *string `json:"tier"` // a speed; "" for the plan's default
 	}
 	if core.ReadJSON(req, &body) != nil {
 		core.Fail(writer, http.StatusBadRequest, "Invalid request")
 		return
 	}
 	problem := ""
-	server.onUI(func() { problem = server.ui.remoteModel(body.Chat, body.Label, body.Effort) })
+	server.onUI(func() { problem = server.ui.remoteModel(body.Chat, body.Label, body.Effort, body.Tier) })
 	if problem != "" {
 		core.Fail(writer, http.StatusConflict, problem)
 		return
@@ -788,7 +790,7 @@ func (server *remoteServer) setModel(writer http.ResponseWriter, req *http.Reque
 
 // remoteModel picks a chat's model and effort from the phone, through the
 // same picker as the window (the chat opens there to show it).
-func (ui *desktopUI) remoteModel(chatID, label, effort string) string {
+func (ui *desktopUI) remoteModel(chatID, label, effort string, tier *string) string {
 	if chatID != "" {
 		chat := ui.chatByID(chatID)
 		if chat == nil {
@@ -818,10 +820,24 @@ func (ui *desktopUI) remoteModel(chatID, label, effort string) string {
 		if ui.current != nil {
 			ui.current.Config.Effort = effort
 		}
-		ui.model.row.SetTrailing(agent.EffortLabel(effort))
+		ui.model.row.SetTrailing(modelTrailing(choice, ui.cfg))
 		if ui.model.relayout != nil {
 			ui.model.relayout()
 		}
+		ui.save()
+		ui.remote.settingsChanged()
+		ui.remote.metaChanged(ui.current)
+	}
+	if tier != nil {
+		choice, ok := ui.selectedChoice()
+		if !ok || *tier != "" && agent.TierFor(choice, *tier) != *tier {
+			return "This model has no such speed"
+		}
+		ui.cfg.ServiceTier = *tier
+		if ui.current != nil {
+			ui.current.Config.ServiceTier = *tier
+		}
+		ui.model.row.SetTrailing(modelTrailing(choice, ui.cfg))
 		ui.save()
 		ui.remote.settingsChanged()
 		ui.remote.metaChanged(ui.current)

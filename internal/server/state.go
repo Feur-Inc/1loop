@@ -260,6 +260,7 @@ func (server *headlessServer) configFor(choice agent.ModelChoice, previous agent
 	cfg := choice.Connection.Config(server.root)
 	cfg.Model = choice.ID
 	cfg.Effort = previous.Effort
+	cfg.ServiceTier = agent.TierFor(choice, previous.ServiceTier)
 	cfg.ReasoningMode = choice.ReasoningMode
 	cfg.Session = previous.Session
 	if !agent.Contains(choice.Efforts, cfg.Effort) {
@@ -283,7 +284,7 @@ func (server *headlessServer) labelLocked(cfg agent.Config) string {
 func (server *headlessServer) settingsLocked() map[string]any {
 	models := []remoteapi.Model{}
 	for label, choice := range server.choices {
-		model := remoteapi.Model{Label: label, Name: choice.Display(), Detail: choice.Connection.Name, Efforts: []remoteapi.Effort{}}
+		model := remoteapi.Model{Label: label, Name: choice.Display(), Detail: choice.Connection.Name, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
 		for _, effort := range choice.Efforts {
 			model.Efforts = append(model.Efforts, remoteapi.Effort{Value: effort, Label: agent.EffortLabel(effort)})
 		}
@@ -293,6 +294,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 		"models":       models,
 		"model":        server.labelLocked(server.cfg),
 		"effort":       server.cfg.Effort,
+		"tier":         server.cfg.ServiceTier,
 		"window":       agent.ModelContextWindow(server.cfg),
 		"approvalMode": server.approvalMode,
 		"autoMode":     true,
@@ -319,6 +321,7 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		Steer:   []string{},
 		Model:   server.labelLocked(chat.Config),
 		Effort:  chat.Config.Effort,
+		Tier:    chat.Config.ServiceTier,
 		Window:  agent.ModelContextWindow(chat.Config),
 		Todo:    []remoteapi.Todo{},
 	}

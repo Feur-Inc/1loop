@@ -69,13 +69,16 @@ func (server *headlessServer) chat(w http.ResponseWriter, r *http.Request) {
 		core.Fail(w, 404, "Chat not found")
 		return
 	}
-	items := make([]remoteapi.Item, len(chat.Items))
-	for i := range items {
-		items[i] = server.itemLocked(chat, i)
+	first, end := remoteapi.Page(r, len(chat.Items))
+	items := make([]remoteapi.Item, 0, end-first)
+	for i := first; i < end; i++ {
+		items = append(items, server.itemLocked(chat, i))
 	}
 	core.WriteJSON(w, 200, map[string]any{
-		"chat":  remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: server.root, Running: chat.run != nil, Items: len(items)},
+		"chat":  remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: server.root, Running: chat.run != nil, Items: len(chat.Items)},
 		"items": items,
+		"first": first,
+		"total": len(chat.Items),
 		"meta":  server.metaLocked(chat),
 	})
 }
@@ -210,7 +213,10 @@ func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 }
 
 func (server *headlessServer) setModel(w http.ResponseWriter, r *http.Request) {
-	var args struct{ Chat, Label, Effort string }
+	var args struct {
+		Chat, Label, Effort string
+		Tier                *string
+	}
 	if core.ReadJSON(r, &args) != nil {
 		core.Fail(w, 400, "Invalid request")
 		return
@@ -246,6 +252,14 @@ func (server *headlessServer) setModel(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		next.Effort = args.Effort
+	}
+	if args.Tier != nil {
+		choice, ok := server.choices[server.labelLocked(next)]
+		if !ok || *args.Tier != "" && agent.TierFor(choice, *args.Tier) != *args.Tier {
+			core.Fail(w, 400, "Unsupported speed")
+			return
+		}
+		next.ServiceTier = *args.Tier
 	}
 	*target = next
 	if args.Chat == "" {

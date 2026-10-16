@@ -77,6 +77,7 @@ func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 	cfg.Model = choice.ID
 	cfg.ReasoningMode = choice.ReasoningMode
 	cfg.Effort = nearestModelEffort(choice, previous.Effort)
+	cfg.ServiceTier = agent.TierFor(choice, previous.ServiceTier)
 	options := choice.Connection.ModelOptions[choice.ID]
 	cfg.Routing = agent.MergeOptions(cfg.Routing, options.Provider)
 	cfg.Parameters = agent.MergeOptions(cfg.Parameters, options.Parameters)
@@ -90,11 +91,7 @@ func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 	if ui.current != nil {
 		ui.current.Config = cfg
 	}
-	if len(choice.Efforts) > 0 {
-		ui.model.row.SetTrailing(agent.EffortLabel(cfg.Effort))
-	} else {
-		ui.model.row.SetTrailing("")
-	}
+	ui.model.row.SetTrailing(modelTrailing(choice, cfg))
 	ui.updateApprovalControl() // Auto mode exists only with Claude Code
 	if ui.model.relayout != nil {
 		ui.model.relayout()

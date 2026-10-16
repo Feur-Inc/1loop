@@ -163,7 +163,10 @@ private fun tokens(n: Int) = when {
 @Composable
 fun ModelChip(app: RemoteApp, onClick: () -> Unit, modifier: Modifier = Modifier) {
     val model = app.chatModel
-    val effort = model?.efforts?.firstOrNull { it.value == app.chatEffort }?.label
+    val effort = listOfNotNull(
+        model?.efforts?.firstOrNull { it.value == app.chatEffort }?.label,
+        model?.tiers?.firstOrNull { it.id == app.chatTier.ifEmpty { model.defaultTier } }?.name,
+    ).joinToString(" · ").ifEmpty { null }
     Row(
         modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(horizontal = 6.dp, vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -235,6 +238,17 @@ fun ModelSheet(app: RemoteApp, onDone: () -> Unit) {
                     if (selected) Icon(Icons.check, null, tint = Palette.amber, modifier = Modifier.size(18.dp))
                 }
             }
+            // The plan's speeds, only when it offers some (Standard, Fast…).
+            if (model != null && model.tiers.isNotEmpty()) {
+                Spacer(Modifier.height(18.dp))
+                SheetCaption("Speed")
+                val standard = if (model.defaultTier.isNotEmpty()) "default" else ""
+                val chosen = app.chatTier.ifEmpty { model.defaultTier }.ifEmpty { standard }
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
+                    SpeedChip("Standard", chosen == standard || chosen == "default") { app.setModel(tier = standard) }
+                    for (tier in model.tiers) SpeedChip(tier.name, chosen == tier.id) { app.setModel(tier = tier.id) }
+                }
+            }
             // Effort last, within the thumb's reach, as in ChatGPT's app.
             if (model != null && model.efforts.size > 1) {
                 val index = model.efforts.indexOfFirst { it.value == app.chatEffort }.coerceAtLeast(0)
@@ -255,6 +269,15 @@ fun ModelSheet(app: RemoteApp, onDone: () -> Unit) {
             }
         }
     }
+}
+
+@Composable
+private fun SpeedChip(text: String, selected: Boolean, onClick: () -> Unit) {
+    Text(
+        text, style = Type.small.copy(color = if (selected) Palette.ink else Palette.text),
+        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (selected) Palette.amber else Palette.raised).clickable(onClick = onClick)
+            .padding(horizontal = 14.dp, vertical = 8.dp),
+    )
 }
 
 @Composable

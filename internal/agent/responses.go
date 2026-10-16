@@ -87,6 +87,9 @@ func responsesCompletion(ctx context.Context, cfg Config, messages []Message, to
 		}
 		body["parallel_tool_calls"] = true
 	}
+	if cfg.ServiceTier != "" {
+		body["service_tier"] = cfg.ServiceTier
+	}
 	if key := promptCacheKey(cfg); key != "" {
 		body["prompt_cache_key"] = key
 	}

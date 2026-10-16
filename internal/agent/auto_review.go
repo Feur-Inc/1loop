@@ -18,7 +18,9 @@ package agent
 //     deciding, and answers {"outcome":"allow"} alone for a low risk.
 //
 // Actions that cannot do harm skip the reviewer (no call, no wait): edits
-// inside the workspace, and shell commands made only of read-only programs.
+// inside the workspace, shell commands made only of read-only programs, and
+// creating files and folders in the workspace without overwriting any.
+// There is no sandbox: whatever else the agent does goes to the reviewer.
 // Claude Code has its own Auto mode and never comes here.
 
 import (
@@ -26,6 +28,7 @@ import (
 	_ "embed"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -44,17 +47,18 @@ type approvalPolicy struct {
 }
 
 // guardianPolicy is Codex's Guardian prompt, word for word (read from
-// Codex 26.1007's binary). Codex fills tenant_policy_config from the
-// organisation's settings (none for a personal ChatGPT account) and
-// extra_policy from the user's; 1loop states there the one difference that
-// matters to the judgment: there is no sandbox.
+// Codex 26.1007's binary), except its sentences about a sandbox, which
+// 1loop has not: they say instead what runs without review. Codex fills
+// tenant_policy_config from the organisation's settings (none for a
+// personal ChatGPT account) and extra_policy from the user's; 1loop states
+// there what matters to the judgment.
 //
 //go:embed guardian_policy.md
 var guardianPolicy string
 
 var autoReviewInstructions = strings.NewReplacer(
 	"{{ tenant_policy_config }}", "",
-	"{{ extra_policy }}", "In 1loop the coding agent has no sandbox: every action sent to you runs with the user's full rights on the user's own computer.",
+	"{{ extra_policy }}", "Every action sent to you runs with the user's full rights on the user's own computer.",
 ).Replace(guardianPolicy)
 
 // Codex's request texts around the transcript and the action, word for word.
@@ -94,7 +98,7 @@ func reviewTools() []map[string]any {
 // conversation as it stands when an action needs judging.
 func (backend *App) autoReviewer(cfg Config, chat func() []Message) func(context.Context, emitter, string, string) (bool, string) {
 	return func(ctx context.Context, emit emitter, title, preview string) (bool, string) {
-		if obviouslySafe(title, preview) {
+		if obviouslySafe(cfg.Workspace, title, preview) {
 			return true, ""
 		}
 		emit("notice", "Reviewing the action…")
@@ -294,9 +298,10 @@ func actionSummary(title, preview string) string {
 
 // obviouslySafe tells the actions that need no review: edits inside the
 // workspace (relative paths: confined to it), except in .git, and a
-// shell command whose every part only reads, or builds and tests Go code.
+// shell command whose every part only reads, builds and tests Go code, or
+// creates in the workspace (see createsInWorkspace).
 // Anything it cannot read with certainty goes to the reviewer.
-func obviouslySafe(title, preview string) bool {
+func obviouslySafe(root, title, preview string) bool {
 	if strings.HasPrefix(title, "Apply changes to ") {
 		for _, path := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(title, "Apply changes to "), "?"), ", ") {
 			// An absolute path is outside the workspace, in a granted folder.
@@ -348,7 +353,70 @@ func obviouslySafe(title, preview string) bool {
 			if len(words) < 2 || (words[1] != "build" && words[1] != "vet" && words[1] != "test" && words[1] != "version" && words[1] != "env") {
 				return false
 			}
+		case createOptions[program] != nil:
+			if !createsInWorkspace(root, words) {
+				return false
+			}
 		default:
+			return false
+		}
+	}
+	return true
+}
+
+// createOptions are the programs that create in the workspace without
+// review, with the options they may take: none that changes which file is
+// written (as cp's -t) or that would overwrite one.
+var createOptions = map[string]map[string]bool{
+	"mkdir": {"-p": true, "-v": true},
+	"touch": {"-c": true},
+	"cp":    {"-r": true, "-R": true, "-p": true, "-a": true, "-v": true, "-n": true},
+	"mv":    {"-v": true, "-n": true},
+}
+
+// createsInWorkspace says whether mkdir, touch, cp or mv stays inside the
+// workspace (every path relative, links resolved), out of .git, and, for cp
+// and mv, writes to a target that does not exist yet: nothing is overwritten.
+func createsInWorkspace(root string, words []string) bool {
+	var paths []string
+	for _, word := range words[1:] {
+		if strings.HasPrefix(word, "-") {
+			if !createOptions[words[0]][word] {
+				return false
+			}
+			continue
+		}
+		paths = append(paths, word)
+	}
+	if len(paths) == 0 || (words[0] == "cp" || words[0] == "mv") && len(paths) < 2 {
+		return false
+	}
+	for _, path := range paths {
+		clean := filepath.Clean(path)
+		if filepath.IsAbs(path) || strings.ContainsAny(path, "~$*?[]{}'\"\\") || clean == ".." || strings.HasPrefix(clean, ".."+string(filepath.Separator)) ||
+			clean == "." || clean == ".git" || strings.HasPrefix(clean, ".git"+string(filepath.Separator)) {
+			return false
+		}
+		// The deepest part that exists, links resolved, must be in the
+		// workspace; what does not exist yet is created under it.
+		existing := filepath.Join(root, clean)
+		for {
+			if _, err := os.Lstat(existing); err == nil || existing == root {
+				break
+			}
+			existing = filepath.Dir(existing)
+		}
+		// A dangling link must not pass for a file to create inside.
+		resolved, err := filepath.EvalSymlinks(existing)
+		if err != nil {
+			return false
+		}
+		if _, err := WorkspacePath(root, resolved); err != nil {
+			return false
+		}
+	}
+	if words[0] == "cp" || words[0] == "mv" {
+		if _, err := os.Lstat(filepath.Join(root, paths[len(paths)-1])); !os.IsNotExist(err) {
 			return false
 		}
 	}

@@ -154,7 +154,7 @@ func systemInstructions(cfg Config) string {
 		prompt = strings.Replace(prompt, "Shell commands and file edits require user approval; never bypass a refusal.", "The user enabled YOLO mode: shell commands (deletions included) and edits run without asking. Stay inside the workspace.", 1)
 	}
 	if cfg.ApprovalMode == "auto" {
-		prompt = strings.Replace(prompt, "Shell commands and file edits require user approval; never bypass a refusal.", "Shell commands and file edits go through an automatic review: safe ones run at once, risky ones wait for the user's approval. Never bypass a refusal or try to word an action so that it passes the review.", 1)
+		prompt = strings.Replace(prompt, "Shell commands and file edits require user approval; never bypass a refusal.", "Inside the workspace, file edits, creating files and folders, and commands that only read, build or test run at once; other shell commands and edits go through an automatic review, and what it refuses waits for the user's approval. Never bypass a refusal or try to word an action so that it passes the review.", 1)
 	}
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
 		prompt += "\n\nAdditional instructions from the user:\n" + cfg.UserInstructions

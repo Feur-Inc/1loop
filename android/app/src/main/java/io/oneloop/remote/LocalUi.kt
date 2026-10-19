@@ -1,5 +1,8 @@
 package io.oneloop.remote
 
+import android.content.Context
+import androidx.compose.ui.platform.LocalContext
+
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -230,7 +233,9 @@ private fun AdbGuide(paired: Boolean, busy: Boolean, onPair: (Int, String) -> Un
     // Held in memory only, and cleared once sent: the pairing code is never kept.
     var pairPort by remember { mutableStateOf("") }
     var code by remember { mutableStateOf("") }
-    var connectPort by remember { mutableStateOf("") }
+    val context = LocalContext.current
+    val preferences = remember(context) { context.getSharedPreferences("1loop-local-adb", Context.MODE_PRIVATE) }
+    var connectPort by remember { mutableStateOf(preferences.getString("connect-port", "").orEmpty()) }
     // Paired once: only connecting is needed, unless Android forgot this phone.
     var pairAgain by remember { mutableStateOf(false) }
     val pairing = !paired || pairAgain
@@ -251,7 +256,10 @@ private fun AdbGuide(paired: Boolean, busy: Boolean, onPair: (Int, String) -> Un
         }
         Spacer(Modifier.height(4.dp))
         GuideStep(if (pairing) "3" else "2", "Connect", "Enter the port shown under IP address & Port.")
-        Field(connectPort, { connectPort = it.filter(Char::isDigit).take(5) }, "Port", KeyboardType.Number)
+        Field(connectPort, {
+            connectPort = it.filter(Char::isDigit).take(5)
+            preferences.edit().putString("connect-port", connectPort).apply()
+        }, "Port", KeyboardType.Number)
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             Pill("Connect", enabled = !busy && port(connectPort) != null) { onConnect(port(connectPort)!!) }
             if (!pairing) Pill("Pair again", enabled = !busy) { pairAgain = true }

@@ -25,6 +25,12 @@ func (server *headlessServer) routes() http.Handler {
 		mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)
 	} else {
 		mux.HandleFunc("POST /api/local/capabilities", server.authorized(func(w http.ResponseWriter, r *http.Request) {
+			var state struct{ Phone bool }
+			if core.ReadJSON(r, &state) != nil {
+				core.Fail(w, 400, "Invalid capability state")
+				return
+			}
+			server.phoneAvailable.Store(state.Phone)
 			server.mu.Lock()
 			for _, chat := range server.chats {
 				if chat.run != nil {

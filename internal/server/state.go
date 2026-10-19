@@ -9,8 +9,10 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"1loop/internal/agent"
@@ -88,6 +90,7 @@ type headlessServer struct {
 	loading                    bool
 	local                      bool
 	bridge                     *mobileBridge
+	phoneAvailable             atomic.Bool
 	saveTimer                  *time.Timer
 }
 
@@ -337,6 +340,9 @@ func (server *headlessServer) settingsLocked() map[string]any {
 		}
 		models = append(models, model)
 	}
+	slices.SortFunc(models, func(left, right remoteapi.Model) int {
+		return strings.Compare(left.Label, right.Label)
+	})
 	accounts := []remoteapi.Account{}
 	for _, connection := range server.connections {
 		if connection.Enabled {
@@ -518,7 +524,9 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		cfg.ToolAllowed = func(name string) bool {
 			switch {
 			case name == "phone_use" || name == "adb_shell":
-				return server.bridge.available(server.ctx, "phone")
+				// Android publishes grant/connection changes; a slow bridge must
+				// not silently remove tools from a model request.
+				return server.phoneAvailable.Load()
 			case strings.HasPrefix(name, "browser_"):
 				return true // WebView is built in; only ADB needs an optional grant.
 			case name == "request_permissions":

@@ -91,7 +91,10 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
     }
 
     private suspend fun notifyCapabilities() {
-        mutableServer.value?.let { server -> runCatching { Api(server).post("/api/local/capabilities", JSONObject()) } }
+        mutableServer.value?.let { server ->
+            val state = adb.value
+            runCatching { Api(server).post("/api/local/capabilities", JSONObject().put("phone", state.allowed && state.connected)) }
+        }
     }
 
     private fun root(): File? = prefs.getString("root", null)?.takeIf {
@@ -318,6 +321,7 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
                             check(generation.get() == epoch && engine.get() === process) { "Local startup was stopped." }
                             mutableServer.value = server
                         }
+                        notifyCapabilities()
                         scope.launch {
                             runInterruptible { process.waitFor() }
                             synchronized(lifecycle) {

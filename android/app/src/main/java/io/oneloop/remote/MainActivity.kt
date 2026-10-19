@@ -22,10 +22,12 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         app.foreground = true
+        AndroidLocalRuntime.get(applicationContext).appForeground = true
     }
 
     override fun onStop() {
         app.foreground = false
+        AndroidLocalRuntime.get(applicationContext).appForeground = false
         super.onStop()
     }
 }

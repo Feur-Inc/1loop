@@ -350,7 +350,7 @@ func completion(ctx context.Context, cfg Config, messages []Message, tools bool,
 		"stream_options": map[string]any{"include_usage": true},
 	})
 	if tools {
-		body["tools"] = chatTools(messages)
+		body["tools"] = chatTools(cfg, messages)
 		if cfg.toolSet != nil {
 			body["tools"] = cfg.toolSet
 		}

@@ -81,6 +81,9 @@ jobs:
         working-directory: android
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -88,6 +91,12 @@ jobs:
       - name: Accept Android SDK licenses (SDK is preinstalled on the runner)
         working-directory: .
         run: yes | "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --licenses > /dev/null || true
+      - name: Local phone native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gcc cmake make gawk patch patchelf
+          "$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager" --install "ndk;30.0.16248370"
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
       - uses: gradle/actions/setup-gradle@v4
       - name: Build debug APK
         run: ./gradlew --no-daemon assembleDebug
@@ -95,6 +104,13 @@ jobs:
         with:
           name: android-apk
           path: android/app/build/outputs/apk/debug/*.apk
+          retention-days: 7
+      - name: Package native corresponding sources
+        run: python3 runtime/build.py --output app/build/local-runtime --source-bundle app/build/local-runtime/native-sources.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: android-native-sources
+          path: android/app/build/local-runtime/native-sources.zip
           retention-days: 7
 
   alpha-release:
@@ -120,6 +136,7 @@ jobs:
           tar -C dist/desktop-linux -czf "out/1loop-linux-$tag.tar.gz" .
           (cd dist/desktop-windows && zip -r "../../out/1loop-windows-$tag.zip" .)
           cp dist/android-apk/*.apk "out/1loop-remote-$tag.apk"
+          cp dist/android-native-sources/native-sources.zip "out/1loop-android-native-sources-$tag.zip"
       - name: Publish
         run: |
           gh release create "$TAG" out/* \

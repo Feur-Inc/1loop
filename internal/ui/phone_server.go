@@ -113,6 +113,9 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("GET /api/state", server.authorized(server.state))
 	mux.HandleFunc("GET /api/chats/{id}", server.authorized(server.chat))
 	mux.HandleFunc("GET /api/events", server.authorized(server.events))
+	mux.HandleFunc("POST /api/chats/{id}/message", server.authorized(server.editMessage))
+	mux.HandleFunc("POST /api/chats/{id}/version", server.authorized(server.selectVersion))
+	mux.HandleFunc("POST /api/attachments", server.authorized(server.uploadAttachment))
 	mux.HandleFunc("POST /api/send", server.authorized(server.send))
 	mux.HandleFunc("POST /api/stop", server.authorized(server.stop))
 	mux.HandleFunc("POST /api/approve", server.authorized(server.approve))
@@ -120,6 +123,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/model", server.authorized(server.setModel))
 	mux.HandleFunc("GET /api/limits", server.authorized(server.limits))
 	mux.HandleFunc("POST /api/approval-mode", server.authorized(server.setApprovalMode))
+	mux.HandleFunc("POST /api/chats/{id}/panel", server.authorized(server.editPanel))
 	mux.HandleFunc("GET /api/chats/{id}/panel", server.authorized(server.panelTabs))
 	mux.HandleFunc("GET /api/chats/{id}/panel/{key}", server.authorized(server.panelTab))
 	mux.HandleFunc("GET /api/chats/{id}/panel/{key}/screen", server.authorized(server.panelScreen))
@@ -305,8 +309,10 @@ func chatSummary(chat *conversation) remoteapi.Chat {
 }
 
 func itemForPhone(chat *conversation, index int) remoteapi.Item {
+	chat.identifyMessages()
+	versions := chat.branching()
 	item := chat.Items[index]
-	out := remoteapi.Item{Kind: item.Kind, Text: item.Text, Images: len(item.Images)}
+	out := remoteapi.Item{ID: item.ID, Versions: remoteapi.ItemVersions(&versions, index), Kind: item.Kind, Text: item.Text, Images: len(item.Images)}
 	if item.Kind != "tool" {
 		return out
 	}
@@ -554,18 +560,33 @@ func (server *remoteServer) flush() {
 
 func (server *remoteServer) send(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
-		Chat      string `json:"chat"`
-		Text      string `json:"text"`
-		Mode      string `json:"mode"`
-		Workspace string `json:"workspace"`
+		Chat        string                 `json:"chat"`
+		Text        string                 `json:"text"`
+		Mode        string                 `json:"mode"`
+		Workspace   string                 `json:"workspace"`
+		Attachments []agent.FileAttachment `json:"attachments"`
 	}
-	if core.ReadJSON(req, &body) != nil || strings.TrimSpace(body.Text) == "" {
+	if core.ReadJSON(req, &body) != nil || strings.TrimSpace(body.Text) == "" && len(body.Attachments) == 0 {
 		core.Fail(writer, http.StatusBadRequest, "Nothing to send")
+		return
+	}
+	root := body.Workspace
+	server.onUI(func() {
+		if chat := server.ui.chatByID(body.Chat); chat != nil {
+			root = chat.Config.Workspace
+		}
+		if root == "" {
+			root = server.ui.cfg.Workspace
+		}
+	})
+	message, err := remoteapi.AttachedMessage(root, strings.TrimSpace(body.Text), body.Attachments)
+	if err != nil {
+		core.Fail(writer, 400, err.Error())
 		return
 	}
 	var problem, chatID string
 	server.onUI(func() {
-		chatID, problem = server.ui.remoteSend(body.Chat, strings.TrimSpace(body.Text), body.Mode, body.Workspace)
+		chatID, problem = server.ui.remoteSend(body.Chat, body.Mode, root, message)
 	})
 	if problem != "" {
 		core.Fail(writer, http.StatusConflict, problem)
@@ -576,8 +597,7 @@ func (server *remoteServer) send(writer http.ResponseWriter, req *http.Request) 
 
 // remoteSend sends a phone's message as if it had been typed in the window:
 // the chat opens on the computer and the message is sent, queued or steered.
-func (ui *desktopUI) remoteSend(chatID, text, mode, workspace string) (string, string) {
-	messageValue := agent.Message{Role: "user", Content: text}
+func (ui *desktopUI) remoteSend(chatID, mode, workspace string, messageValue agent.Message) (string, string) {
 	var chat *conversation
 	if chatID != "" {
 		if chat = ui.chatByID(chatID); chat == nil {
@@ -706,7 +726,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 			accounts = append(accounts, remoteapi.Account{ID: conn.ID, Name: conn.Name, Provider: conn.Provider, Kind: agent.ProviderName(conn.Provider), Problem: ui.modelUnavailable[conn.ID]})
 		}
 	}
-	return map[string]any{"models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
+	return map[string]any{"messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
 		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": agent.AutoModeOffered(ui.cfg), "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.cfg)}
 }
 

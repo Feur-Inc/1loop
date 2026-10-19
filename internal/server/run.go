@@ -35,7 +35,34 @@ func Main() {
 	keyEnv := flag.String("api-key-env", "", "Environment variable containing the initial API key")
 	cert := flag.String("tls-cert", "", "PEM certificate (optional; default generates a private certificate)")
 	key := flag.String("tls-key", "", "PEM private key for -tls-cert")
+	localToken := flag.String("local-client-token-file", "", "Private local-phone client token; requires a loopback listen address")
+	localReady := flag.String("local-ready-file", "", "Private local-phone startup endpoint JSON")
+	localBridge := flag.String("local-bridge-config", "", "Private local-phone native bridge configuration")
+	installDebian := flag.String("install-mobile-debian", "", "Install the pinned mobile Debian filesystem into a new directory, then exit")
+	installClaude := flag.Bool("install-mobile-claude", false, "Install Claude Code from its signed Debian repository, then exit")
 	flag.Parse()
+	if *installClaude {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := installMobileClaude(ctx); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if *installDebian != "" {
+		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+		defer stop()
+		if err := installMobileDebian(ctx, *installDebian); err != nil {
+			log.Fatal(err)
+		}
+		return
+	}
+	if (*localToken == "") != (*localReady == "") {
+		log.Fatal("Local phone startup requires both -local-client-token-file and -local-ready-file")
+	}
+	if *localBridge != "" && *localToken == "" {
+		log.Fatal("The native phone bridge is only available in local phone mode")
+	}
 	root, err := agent.ResolveWorkspace(*workspace)
 	if err != nil {
 		log.Fatal(err)
@@ -55,6 +82,21 @@ func Main() {
 	server, err := newHeadlessServer(ctx, root, *dir, *settings)
 	if err != nil {
 		log.Fatal(err)
+	}
+	server.shutdown = stop
+	if *localToken != "" {
+		if err := server.authorizeLocalClient(*localToken, *listen); err != nil {
+			log.Fatal(err)
+		}
+	}
+	if *localBridge != "" {
+		server.bridge, err = loadMobileBridge(*localBridge)
+		if err != nil {
+			log.Fatal(err)
+		}
+	}
+	if server.bridge != nil {
+		server.engine.Native = &mobileBrowser{bridge: server.bridge}
 	}
 	if *provider != "" || *model != "" || *base != "" {
 		if *provider != "" {
@@ -112,7 +154,16 @@ func Main() {
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}},
 	}
 	fmt.Fprintf(os.Stderr, "1loop server listening on https://%s\nCertificate SHA-256: %s\nWorkspace: %s\nCommands: pair <id> <code>, devices, revoke <number>\n", listener.Addr(), certificateFingerprint(certificate), root)
-	go server.console()
+	if server.local {
+		if err := saveServerJSON(*localReady, map[string]any{
+			"port":        listener.Addr().(*net.TCPAddr).Port,
+			"fingerprint": certificateFingerprint(certificate),
+		}); err != nil {
+			log.Fatal(err)
+		}
+	} else {
+		go server.console()
+	}
 	go server.loadModels()
 	go func() {
 		<-ctx.Done()

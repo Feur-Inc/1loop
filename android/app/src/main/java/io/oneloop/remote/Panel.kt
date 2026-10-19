@@ -1,5 +1,16 @@
 package io.oneloop.remote
 
+import androidx.compose.ui.text.rememberTextMeasurer
+import kotlinx.coroutines.CancellationException
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.viewinterop.AndroidView
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.input.pointer.pointerInteropFilter
+import androidx.compose.ui.ExperimentalComposeUiApi
+import androidx.compose.ui.unit.Constraints
+import androidx.compose.ui.layout.onSizeChanged
 import android.graphics.BitmapFactory
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
@@ -113,6 +124,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
     var tabs by remember { mutableStateOf<List<PanelTab>>(emptyList()) }
     var selected by rememberSaveable(chat) { mutableStateOf("tasks") }
     var reachable by remember { mutableStateOf(true) }
+    val scope = rememberCoroutineScope()
     LaunchedEffect(chat) {
         while (true) {
             val list = app.panelTabs(chat)
@@ -135,6 +147,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
                     style = Type.caption.copy(color = if (reachable) Palette.faint else Palette.amber), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
+            LocalPanelAdd(app, chat)
         }
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 10.dp),
@@ -142,7 +155,15 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
         ) {
             val done = tasks.count { it.status == "completed" }
             TabChip(if (tasks.isEmpty()) "Tasks" else "Tasks $done/${tasks.size}", Icons.tasks, selected == "tasks") { selected = "tasks" }
-            for (tab in tabs) TabChip(tab.title, tabIcon(tab.kind), selected == tab.key) { selected = tab.key }
+            // The tab shown can be closed, as on the desktop.
+            for (tab in tabs) TabChip(
+                tab.title, tabIcon(tab.kind), selected == tab.key,
+                onClose = if (selected == tab.key && tab.kind in listOf("browser", "terminal")) ({
+                    scope.launch { closeLocalTab(app, chat, tab.key) }
+                    tabs = tabs.filter { it.key != tab.key }
+                    selected = "tasks"
+                }) else null,
+            ) { selected = tab.key }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.borderSoft))
         Box(Modifier.weight(1f).fillMaxWidth()) {
@@ -154,7 +175,10 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
                     "terminal" -> TerminalView(app, chat, tab)
                     "changes" -> ChangesView(app, chat, tab)
                     "tool" -> ToolView(app.items.getOrNull(tab.index))
-                    else -> TasksView(tasks)
+                    else -> Column {
+                        Box(Modifier.weight(1f)) { TasksView(tasks) }
+                        ContextFooter(app.meta)
+                    }
                 }
             }
         }
@@ -169,7 +193,7 @@ private fun tabIcon(kind: String) = when (kind) {
 }
 
 @Composable
-private fun TabChip(text: String, icon: ImageVector, selected: Boolean, onClick: () -> Unit) {
+private fun TabChip(text: String, icon: ImageVector, selected: Boolean, onClose: (() -> Unit)? = null, onClick: () -> Unit) {
     val shape = RoundedCornerShape(50)
     Row(
         Modifier.clip(shape).background(if (selected) Palette.raised else Color.Transparent)
@@ -182,6 +206,9 @@ private fun TabChip(text: String, icon: ImageVector, selected: Boolean, onClick:
             text, style = Type.small.copy(color = if (selected) Palette.text else Palette.muted, fontWeight = FontWeight.Medium),
             maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 180.dp),
         )
+        if (onClose != null) {
+            Icon(Icons.close, "Close tab", tint = Palette.muted, modifier = Modifier.size(22.dp).clip(RoundedCornerShape(50)).clickable(onClick = onClose).padding(4.dp))
+        }
     }
 }
 
@@ -309,6 +336,44 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
     var nudge by remember { mutableIntStateOf(0) } // a touch while locked: the lock shakes
     val touches = remember { mutableStateListOf<Touch>() }
     val scope = rememberCoroutineScope()
+    var viewport by remember { mutableStateOf<Viewport?>(null) } // null: an older 1loop, without viewport or console
+    var console by remember { mutableStateOf(false) }
+    val native = app.server?.localPhone == true && viewport?.native == true
+    val context = LocalContext.current
+    var nativeView by remember(tab.key) { mutableStateOf<android.webkit.WebView?>(null) }
+    LaunchedEffect(native, tab.key) {
+        nativeView = null
+        if (native) {
+            while (nativeView == null) {
+                nativeView = AndroidLocalRuntime.get(context).browser.view(tab.key.removePrefix("browser-"))
+                if (nativeView == null) delay(100)
+            }
+        }
+    }
+    var area by remember { mutableStateOf(IntSize.Zero) } // the page's view here, in pixels
+    val density = LocalDensity.current
+    LaunchedEffect(tab.key) { viewport = Viewport.from(app.panelTab(chat, tab.key)) }
+    val resize = { width: Int, height: Int, mobile: Boolean, adaptive: Boolean, ratio: Double ->
+        scope.launch {
+            try {
+                resizeBrowser(app, chat, tab.key, width, height, mobile, adaptive, ratio)
+                viewport = Viewport.from(app.panelTab(chat, tab.key))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                app.problem = e.message
+            }
+        }
+    }
+    // Adaptive: the page follows this view's size, in CSS pixels at the phone's density.
+    val adaptive = { with(density) { resize(area.width.toDp().value.toInt(), area.height.toDp().value.toInt(), false, true, density.density.toDouble()) } }
+    LaunchedEffect(area, viewport?.adaptive) {
+        val shown = viewport ?: return@LaunchedEffect
+        if (!shown.adaptive || area == IntSize.Zero) return@LaunchedEffect
+        delay(400) // once the view has settled
+        val (width, height) = with(density) { area.width.toDp().value.toInt() to area.height.toDp().value.toInt() }
+        if (width.coerceIn(240, 3840) != shown.width || height.coerceIn(200, 2160) != shown.height) adaptive()
+    }
     // The page's frames and state, as the computer draws them.
     LaunchedEffect(tab.key) {
         while (true) {
@@ -319,8 +384,12 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
                         'F' -> BitmapFactory.decodeByteArray(payload, 0, payload.size, hardware)?.asImageBitmap()?.let { frame ->
                             withContext(Dispatchers.Main) { picture = frame; live = true }
                         }
-                        'S' -> runCatching { pageState(JSONObject(String(payload))) }.getOrNull()?.let { state ->
-                            withContext(Dispatchers.Main) { page = state; live = true }
+                        'S' -> runCatching { JSONObject(String(payload)) }.getOrNull()?.let { state ->
+                            withContext(Dispatchers.Main) {
+                                page = pageState(state)
+                                Viewport.from(state)?.let { viewport = it }
+                                live = true
+                            }
                         }
                     }
                 }
@@ -382,14 +451,35 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
                 used = System.currentTimeMillis()
             }
         }
-        Box(Modifier.weight(1f).fillMaxWidth().background(Palette.code), contentAlignment = Alignment.TopCenter) {
+        viewport?.let { shown ->
+            BrowserToolbar(
+                shown, console, onConsole = { console = !console }, enabled = true,
+                onMode = { mode ->
+                    act {
+                        when (mode) {
+                            "Adaptive" -> adaptive()
+                            "Tablet" -> resize(768, 1024, false, false, 0.0)
+                            "Mobile" -> resize(390, 844, true, false, 0.0)
+                            else -> resize(1280, 800, false, false, 0.0)
+                        }
+                    }
+                },
+                onCustom = { width, height -> act { resize(width, height, false, false, 0.0) } },
+            )
+        }
+        Box(Modifier.weight(1f).fillMaxWidth().background(Palette.code).onSizeChanged { area = it }, contentAlignment = Alignment.TopCenter) {
             // Each new frame is read in the draw phase only: the view is not
             // composed again for it, only its picture painted.
             val ratio by remember { derivedStateOf { picture?.let { it.width / it.height.toFloat() } } }
-            val shown = ratio
+            val shown = if (native && nativeView != null) viewport?.let { it.width / it.height.toFloat() } else ratio
             if (shown == null) WorkRing("wait", 34.dp, Modifier.align(Alignment.Center))
             else Box(Modifier.aspectRatio(shown)) {
                 var pending by remember { mutableFloatStateOf(0f) }
+                if (native && nativeView != null) {
+                    NativeBrowserSurface(nativeView!!, viewport!!, locked) {
+                        if (locked) nudge++ else used = System.currentTimeMillis()
+                    }
+                } else {
                 Box(
                     Modifier.fillMaxSize()
                         .drawBehind { picture?.let { drawImage(it, dstSize = IntSize(size.width.toInt(), size.height.toInt())) } }
@@ -419,6 +509,7 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
                             }
                         },
                 )
+                }
                 // The touches, as rings that open and fade.
                 Canvas(Modifier.fillMaxSize()) {
                     for (touch in touches) {
@@ -460,6 +551,7 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
                 modifier = Modifier.align(Alignment.TopEnd).padding(8.dp).background(Palette.popover, RoundedCornerShape(6.dp)).padding(horizontal = 8.dp, vertical = 4.dp),
             )
         }
+        if (console && viewport != null) BrowserConsole(app, chat, tab.key, { action -> act(action) }, Modifier.height(220.dp))
         Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp).alpha(dim), verticalAlignment = Alignment.CenterVertically) {
             Input(typed, { typed = it }, "Type into the page", KeyboardType.Text, ImeAction.Send, Modifier.weight(1f), enabled = !locked) {
                 act { app.panelInput(chat, tab.key, "line", typed) }
@@ -467,6 +559,35 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
             }
             Spacer(Modifier.width(8.dp))
             RoundButton(Icons.close, Palette.raised, Palette.muted, size = 38.dp, iconSize = 16.dp, description = "Erase") { act { app.panelInput(chat, tab.key, "key", "Backspace") } }
+        }
+    }
+}
+
+@OptIn(ExperimentalComposeUiApi::class)
+@Composable
+private fun NativeBrowserSurface(view: android.webkit.WebView, viewport: Viewport, locked: Boolean, onTouch: () -> Unit) {
+    val density = LocalDensity.current.density
+    val width = kotlin.math.ceil(viewport.width * density.toDouble()).toInt()
+    val height = kotlin.math.ceil(viewport.height * density.toDouble()).toInt()
+    Layout(content = {
+        AndroidView(factory = {
+            (view.parent as? android.view.ViewGroup)?.removeView(view)
+            view
+        }, modifier = Modifier.pointerInteropFilter {
+            onTouch()
+            locked
+        }, onRelease = { released ->
+            (released.parent as? android.view.ViewGroup)?.removeView(released)
+        })
+    }, modifier = Modifier.fillMaxSize()) { children, constraints ->
+        val child = children.single().measure(Constraints.fixed(width, height))
+        val scale = minOf(constraints.maxWidth.toFloat() / width, constraints.maxHeight.toFloat() / height)
+        layout(constraints.maxWidth, constraints.maxHeight) {
+            child.placeWithLayer(0, 0) {
+                scaleX = scale
+                scaleY = scale
+                transformOrigin = TransformOrigin(0f, 0f)
+            }
         }
     }
 }
@@ -538,11 +659,27 @@ private fun TerminalView(app: RemoteApp, chat: String, tab: PanelTab) {
         }
     }
     LaunchedEffect(output) { scroll.scrollTo(scroll.maxValue) }
+    // The terminal's columns and rows follow this view, as the desktop's (an older 1loop ignores it).
+    val style = Type.mono.copy(fontSize = 12.sp, lineHeight = 17.sp)
+    val measurer = rememberTextMeasurer()
+    val cell = remember { measurer.measure("MMMMMMMMMM", style).size }
+    val padding = with(LocalDensity.current) { 24.dp.toPx() }
+    var grid by remember { mutableStateOf(0 to 0) }
+    LaunchedEffect(grid) {
+        val (columns, rows) = grid
+        if (columns == 0) return@LaunchedEffect
+        delay(300)
+        runCatching { app.panelCall(chat, tab.key, JSONObject().put("action", "resize").put("width", columns).put("height", rows)) }
+    }
     Column(Modifier.fillMaxSize()) {
-        Box(Modifier.weight(1f).fillMaxWidth().background(Palette.code)) {
+        Box(
+            Modifier.weight(1f).fillMaxWidth().background(Palette.code).onSizeChanged { size ->
+                grid = ((size.width - padding) / (cell.width / 10f)).toInt().coerceIn(20, 400) to ((size.height - padding) / cell.height).toInt().coerceIn(5, 150)
+            },
+        ) {
             if (output == null) WorkRing("wait", 34.dp, Modifier.align(Alignment.Center))
             else Text(
-                output.orEmpty().ifEmpty { " " }, style = Type.mono.copy(fontSize = 12.sp, lineHeight = 17.sp),
+                output.orEmpty().ifEmpty { " " }, style = style,
                 modifier = Modifier.fillMaxSize().verticalScroll(scroll).padding(12.dp),
             )
         }
@@ -638,5 +775,18 @@ fun AgentCursor(modifier: Modifier = Modifier) {
             "1loop", style = Type.caption.copy(fontSize = 9.5.sp, lineHeight = 11.sp, color = Palette.ink, fontWeight = FontWeight.SemiBold),
             modifier = Modifier.padding(start = 17.dp, top = 21.dp).background(Palette.amber, RoundedCornerShape(50)).padding(horizontal = 6.dp, vertical = 1.5.dp),
         )
+    }
+}
+
+// The desktop's footer under the task list: the context, and when it compacts.
+@Composable
+private fun ContextFooter(meta: Meta?) {
+    val text = meta?.contextStatus?.ifEmpty { null } ?: when {
+        meta == null || meta.window <= 0 -> "Context usage is available once a model is selected."
+        else -> "Context · ${minOf(100, meta.used * 100 / meta.window)}% · ${tokens(meta.used)} / ${tokens(meta.window)} tokens"
+    }
+    Column {
+        Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.borderSoft))
+        Text(text, style = Type.caption.copy(color = Palette.muted), modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp))
     }
 }

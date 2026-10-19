@@ -21,6 +21,7 @@ func WorkspaceDiff(ctx context.Context, root string, staged bool) (string, error
 	}
 	args = append(args, "--")
 	cmd := exec.CommandContext(ctx, "git", args...)
+	platform.WorkspaceCommand(cmd, root, platform.WorkspaceYOLO(ctx))
 	platform.PrepareProcess(cmd)
 	out, err := cmd.Output()
 	if err != nil {
@@ -34,6 +35,7 @@ func WorkspaceDiff(ctx context.Context, root string, staged bool) (string, error
 		return string(out), nil
 	}
 	list := exec.CommandContext(ctx, "git", "-C", root, "ls-files", "--others", "--exclude-standard", "-z")
+	platform.WorkspaceCommand(list, root, platform.WorkspaceYOLO(ctx))
 	platform.PrepareProcess(list)
 	names, err := list.Output()
 	if err != nil {

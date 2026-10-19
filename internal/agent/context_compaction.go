@@ -39,7 +39,7 @@ func HistoryEstimate(messages []Message) int {
 }
 
 func ContextOverhead(cfg Config) int {
-	tools, _ := json.Marshal(allToolDefinitions())
+	tools, _ := json.Marshal(allToolDefinitions(cfg))
 	return tokenEstimate(Message{Content: systemInstructions(cfg)}) + (len(tools)+3)/4
 }
 

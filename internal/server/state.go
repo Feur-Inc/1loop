@@ -25,6 +25,8 @@ type serverChat struct {
 	Config       agent.Config            `json:"config"`
 	History      []agent.Message         `json:"history"`
 	Items        []agent.ChatItem        `json:"items"`
+	Version      string                  `json:"version,omitempty"`
+	Versions     []agent.ChatVersion     `json:"versions,omitempty"`
 	Todo         *agent.TodoState        `json:"todo"`
 	Cache        *agent.ContextCache     `json:"contextCache,omitempty"`
 	grants       *agent.PermissionGrants // what request_permissions granted, until the server stops
@@ -37,14 +39,15 @@ type serverChat struct {
 }
 
 type serverRun struct {
-	cancel      context.CancelFunc
-	calls       map[string]int
-	states      map[int]string
-	index       int
-	used        int
-	label, mark string
-	approval    *remoteapi.Approval
-	question    *remoteapi.Question
+	capabilities chan struct{}
+	cancel       context.CancelFunc
+	calls        map[string]int
+	states       map[int]string
+	index        int
+	used         int
+	label, mark  string
+	approval     *remoteapi.Approval
+	question     *remoteapi.Question
 }
 
 type serverSettings struct {
@@ -58,7 +61,10 @@ type serverSettings struct {
 
 type headlessServer struct {
 	mu                         sync.Mutex
+	terminalRevision           uint64
+	closing                    bool
 	ctx                        context.Context
+	shutdown                   context.CancelFunc
 	backend                    *agent.App
 	engine                     *browser.Engine
 	name, root, dir            string
@@ -73,7 +79,15 @@ type headlessServer struct {
 	subs                       map[chan serverEvent]bool
 	streams                    map[chan struct{}]bool
 	choices                    map[string]agent.ModelChoice
+	modelReload                sync.Mutex
+	modelRevision              uint64
+	modelProblems              map[string]string
+	limitsCache                map[string]agent.AccountLimits
+	logins                     map[string]*mobileLogin
+	claudeLogin                *mobileLogin
 	loading                    bool
+	local                      bool
+	bridge                     *mobileBridge
 	saveTimer                  *time.Timer
 }
 
@@ -195,6 +209,7 @@ func (server *headlessServer) scheduleSaveLocked() {
 
 func (server *headlessServer) close() {
 	server.mu.Lock()
+	server.closing = true
 	if server.saveTimer != nil {
 		server.saveTimer.Stop()
 	}
@@ -206,13 +221,16 @@ func (server *headlessServer) close() {
 	if err := server.saveLocked(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
+	var tabs []*serverTab
 	for _, chat := range server.chats {
-		for _, tab := range chat.tabs {
-			tab.close()
-		}
+		tabs = append(tabs, chat.tabs...)
+		chat.tabs = nil
 	}
 	server.disconnectStreamsLocked()
 	server.mu.Unlock()
+	for _, tab := range tabs {
+		tab.close()
+	}
 	server.engine.Cancel()
 	server.engine.WaitClosed()
 }
@@ -227,14 +245,33 @@ func (server *headlessServer) chatLocked(id string) *serverChat {
 }
 
 func (server *headlessServer) loadModels() {
+	server.modelReload.Lock()
+	defer server.modelReload.Unlock()
+	server.mu.Lock()
+	connections := append([]agent.Connection(nil), server.connections...)
+	keys := make(map[string]string, len(server.keys))
+	for id, key := range server.keys {
+		keys[id] = key
+	}
+	revision := server.modelRevision
+	previous := server.choices
+	server.mu.Unlock()
 	choices := map[string]agent.ModelChoice{}
-	for _, connection := range server.connections {
+	problems := map[string]string{}
+	for _, connection := range connections {
 		if !connection.Enabled {
 			continue
 		}
-		rows, err := server.backend.ConnectionModels(server.ctx, connection, server.keys[connection.ID])
+		rows, err := server.backend.ConnectionModels(server.ctx, connection, keys[connection.ID])
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Models unavailable for %q: %v\n", connection.Name, err)
+			problems[connection.ID] = "Models unavailable"
+			for _, choice := range previous {
+				if choice.Connection.ID == connection.ID && connection.Includes(choice.ID) {
+					choice.Connection = connection
+					choices[choice.ID+" · "+connection.Name] = choice
+				}
+			}
 			continue
 		}
 		for _, choice := range rows {
@@ -245,7 +282,11 @@ func (server *headlessServer) loadModels() {
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
+	if server.modelRevision != revision {
+		return
+	}
 	server.choices = choices
+	server.modelProblems = problems
 	server.loading = false
 	if server.cfg.Model == "" {
 		for _, choice := range choices {
@@ -254,6 +295,12 @@ func (server *headlessServer) loadModels() {
 		}
 	}
 	server.broadcastLocked("settings", server.settingsLocked())
+	if server.bridge != nil {
+		// Local phone can open a saved chat before its accounts finish loading.
+		for _, chat := range server.chats {
+			server.broadcastLocked("meta", server.metaLocked(chat))
+		}
+	}
 }
 
 func (server *headlessServer) configFor(choice agent.ModelChoice, previous agent.Config) agent.Config {
@@ -284,22 +331,31 @@ func (server *headlessServer) labelLocked(cfg agent.Config) string {
 func (server *headlessServer) settingsLocked() map[string]any {
 	models := []remoteapi.Model{}
 	for label, choice := range server.choices {
-		model := remoteapi.Model{Label: label, Name: choice.Display(), Detail: choice.Connection.Name, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
+		model := remoteapi.Model{Label: label, Name: choice.Display(), Detail: choice.Connection.Name, Account: choice.Connection.ID, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
 		for _, effort := range choice.Efforts {
 			model.Efforts = append(model.Efforts, remoteapi.Effort{Value: effort, Label: agent.EffortLabel(effort)})
 		}
 		models = append(models, model)
 	}
+	accounts := []remoteapi.Account{}
+	for _, connection := range server.connections {
+		if connection.Enabled {
+			accounts = append(accounts, remoteapi.Account{ID: connection.ID, Name: connection.Name, Provider: connection.Provider, Kind: agent.ProviderName(connection.Provider), Problem: server.modelProblems[connection.ID]})
+		}
+	}
 	return map[string]any{
-		"models":       models,
-		"model":        server.labelLocked(server.cfg),
-		"effort":       server.cfg.Effort,
-		"tier":         server.cfg.ServiceTier,
-		"window":       agent.ModelContextWindow(server.cfg),
-		"approvalMode": server.approvalMode,
-		"autoMode":     agent.AutoModeOffered(server.cfg),
-		"loading":      server.loading,
-		"computerUse":  false,
+		"models":          models,
+		"accounts":        accounts,
+		"model":           server.labelLocked(server.cfg),
+		"effort":          server.cfg.Effort,
+		"tier":            server.cfg.ServiceTier,
+		"window":          agent.ModelContextWindow(server.cfg),
+		"approvalMode":    server.approvalMode,
+		"autoMode":        agent.AutoModeOffered(server.cfg),
+		"loading":         server.loading,
+		"computerUse":     false,
+		"messageVersions": true,
+		"attachments":     true,
 	}
 }
 
@@ -353,17 +409,22 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 }
 
 func (server *headlessServer) itemLocked(chat *serverChat, index int) remoteapi.Item {
+	state := chat.branching()
+	state.IdentifyMessages()
+	chat.applyBranch(state)
 	item := chat.Items[index]
 	out := remoteapi.Item{
-		Kind:   item.Kind,
-		Text:   item.Text,
-		Images: len(item.Images),
-		Tool:   item.Tool,
-		Args:   item.Args,
-		Diff:   item.Diff,
-		Millis: item.Millis,
-		Failed: item.Failed,
-		State:  "done",
+		ID:       item.ID,
+		Versions: remoteapi.ItemVersions(&state, index),
+		Kind:     item.Kind,
+		Text:     item.Text,
+		Images:   len(item.Images),
+		Tool:     item.Tool,
+		Args:     item.Args,
+		Diff:     item.Diff,
+		Millis:   item.Millis,
+		Failed:   item.Failed,
+		State:    "done",
 	}
 	if chat.run != nil {
 		if state := chat.run.states[index]; state != "" {
@@ -423,10 +484,14 @@ func (server *headlessServer) addLocked(chat *serverChat, item agent.ChatItem) i
 }
 
 func (server *headlessServer) runLocked(chat *serverChat, m agent.Message) {
+	server.runWithIDLocked(chat, m, "")
+}
+
+func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message, id string) {
 	chat.History = append(chat.History, m)
-	index := server.addLocked(chat, agent.ChatItem{Kind: "user", Text: m.Content, Images: m.Images})
+	index := server.addLocked(chat, agent.ChatItem{ID: id, Kind: "user", Text: m.Content, Images: m.Images})
 	ctx, cancel := context.WithCancel(server.ctx)
-	run := &serverRun{cancel: cancel, calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait"}
+	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait"}
 	chat.run = run
 	cfg := chat.Config
 	cfg.APIKey = server.keys[cfg.ConnectionID]
@@ -443,9 +508,26 @@ func (server *headlessServer) runLocked(chat *serverChat, m agent.Message) {
 		chat.review = &agent.ReviewSession{}
 	}
 	cfg.Review = chat.review
-	cfg.ContextKey = chat.ID
+	cfg.ContextKey = chat.ID + chat.Version
 	cfg.Browser = server.browserTools(chat)
 	cfg.Terminal = server.terminalTools(chat)
+	if server.bridge != nil {
+		cfg.CapabilitiesChanged = run.capabilities
+		cfg.Phone = server.bridge.phoneTools
+		cfg.Packages = server.bridge.packageTools
+		cfg.ToolAllowed = func(name string) bool {
+			switch {
+			case name == "phone_use" || name == "adb_shell":
+				return server.bridge.available(server.ctx, "phone")
+			case strings.HasPrefix(name, "browser_"):
+				return true // WebView is built in; only ADB needs an optional grant.
+			case name == "request_permissions":
+				return false // Phone mode does not expose filesystem grant expansion.
+			default:
+				return true
+			}
+		}
+	}
 	cfg.Recall = func(ctx context.Context) ([]agent.ChatItem, error) {
 		server.mu.Lock()
 		defer server.mu.Unlock()

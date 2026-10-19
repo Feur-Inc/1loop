@@ -1,0 +1,46 @@
+--- a/src/tracer.c
++++ b/src/tracer.c
+@@ -433,6 +433,13 @@
+     int rc = proc_link(pid, "fd", fd, host);
+     if (rc != 0) return rc;
+ 
++    /* Pipes and sockets have no filesystem path to resolve. Metadata queries
++     * on inherited stdio must work without granting any file-write capability. */
++    if (!strncmp(host, "pipe:[", 6) || !strncmp(host, "socket:[", 8)) {
++        *mode = ABW_MODE_RO;
++        return 0;
++    }
++
+     /* A proc-backed fd is read-only, with one exception: a descriptor that was
+      * deliberately reopened from an explicitly writable sandbox object keeps
+      * that object's mode. Which objects are writable -- including ephemeral
+@@ -537,12 +544,23 @@
+     bool protect_mp = (path_flags & ABW_PF_PROTECT_MOUNTPOINT) != 0;
+     int dirfd = dirfd_arg < 0 ? AT_FDCWD : (int)regs_arg(r, dirfd_arg);
+ 
+-    /* AT_EMPTY_PATH is only reachable from these syscalls when the pathname
+-     * pointer is NULL, and that case is a capability the tracee already holds:
+-     * only the fd's mode needs checking. Testing for the empty-string form
+-     * would cost a tracee memory read on every newfstatat, which is hot enough
+-     * for that to be measurable. */
+-    if ((path_flags & ABW_PF_EMPTY_PATH) && regs_arg(r, path_arg) == 0) {
++    /* Linux accepts an empty string as well as NULL for AT_EMPTY_PATH.
++     * glibc's dynamic loader uses fstatat(fd, "", ..., AT_EMPTY_PATH). */
++    bool empty_path = false;
++    if (path_flags & ABW_PF_EMPTY_PATH) {
++        int flags_arg = abw_syscall_flags_arg(path_flags);
++        if (flags_arg >= 0 && (regs_arg(r, flags_arg) & AT_EMPTY_PATH)) {
++            uintptr_t path_ptr = (uintptr_t)regs_arg(r, path_arg);
++            if (path_ptr == 0) empty_path = true;
++            else {
++                char value[PATH_MAX];
++                int read_rc = abw_remote_read_string(pid, path_ptr, value);
++                if (read_rc != 0) return read_rc;
++                empty_path = value[0] == '\0';
++            }
++        }
++    }
++    if (empty_path) {
+         abw_mode_t m = ABW_MODE_RO;
+         int frc = fd_mode(pid, dirfd, policy, &m);
+         if (frc != 0) return frc;

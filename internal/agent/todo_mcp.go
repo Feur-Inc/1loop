@@ -14,21 +14,25 @@ import (
 	"1loop/internal/core"
 )
 
+func projectMCPTools(cfg Config) []map[string]any {
+	var definitions []map[string]any
+	if cfg.ProjectTools != nil {
+		for _, definition := range availableCoreTools(cfg) {
+			if definition["function"].(map[string]any)["name"] != "checkpoint" {
+				definitions = append(definitions, definition)
+			}
+		}
+	}
+	return definitions
+}
+
 // Claude Code keeps its own harness. Its MCP transport exposes the same
 // TODO store, browser tabs and terminals used by 1loop's other providers.
 // The server lives as long as one Claude Code run of 1loop and answers only
 // that run (a random token); it returns the path of its --mcp-config file.
-func startTodoMCP(ctx context.Context, state *TodoState, emit emitter, handlers ...PanelToolHandler) (string, func(), error) {
-	var browserTools, terminalTools, computerTools PanelToolHandler
-	if len(handlers) > 0 {
-		browserTools = handlers[0]
-	}
-	if len(handlers) > 1 {
-		terminalTools = handlers[1]
-	}
-	if len(handlers) > 2 {
-		computerTools = handlers[2]
-	}
+func startTodoMCP(ctx context.Context, cfg Config, emit emitter) (string, func(), error) {
+	state := cfg.Todo
+	browserTools, terminalTools, computerTools := cfg.Browser, cfg.Terminal, cfg.Computer
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", nil, err
@@ -65,15 +69,12 @@ func startTodoMCP(ctx context.Context, state *TodoState, emit emitter, handlers 
 		case "ping":
 			response["result"] = map[string]any{}
 		case "tools/list":
-			definitions := []map[string]any{todoToolDefinition()}
-			if browserTools != nil {
-				definitions = append(definitions, browserToolDefinitions()...)
+			definitions := projectMCPTools(cfg)
+			if cfg.ProjectTools == nil && cfg.toolAvailable("update_todo") {
+				definitions = append(definitions, todoToolDefinition())
 			}
-			if terminalTools != nil {
-				definitions = append(definitions, terminalToolDefinitions()...)
-			}
-			if computerTools != nil {
-				definitions = append(definitions, computerToolDefinition())
+			for _, group := range availableToolGroups(cfg) {
+				definitions = append(definitions, group.tools()...)
 			}
 			tools := []any{}
 			for _, definition := range definitions {
@@ -94,15 +95,32 @@ func startTodoMCP(ctx context.Context, state *TodoState, emit emitter, handlers 
 				response["error"] = map[string]any{"code": -32603, "message": "This run has ended"}
 				break
 			}
+			if !cfg.toolAvailable(call.Name) {
+				response["error"] = map[string]any{"code": -32602, "message": "This tool is unavailable or its permission was revoked"}
+				break
+			}
 			if call.Name != "update_todo" {
-				handler := browserTools
-				if strings.HasPrefix(call.Name, "terminal_") {
+				var handler PanelToolHandler
+				switch {
+				case strings.HasPrefix(call.Name, "browser_"):
+					handler = browserTools
+				case strings.HasPrefix(call.Name, "terminal_"):
 					handler = terminalTools
-				}
-				if call.Name == "computer_use" {
+				case call.Name == "computer_use":
 					handler = computerTools
+				case isPhoneTool(call.Name):
+					handler = cfg.Phone
+				case call.Name == "install_packages":
+					handler = cfg.Packages
+				default:
+					for _, definition := range projectMCPTools(cfg) {
+						if definition["function"].(map[string]any)["name"] == call.Name {
+							handler = cfg.ProjectTools
+							break
+						}
+					}
 				}
-				if handler == nil || (!strings.HasPrefix(call.Name, "browser_") && !strings.HasPrefix(call.Name, "terminal_") && call.Name != "computer_use") {
+				if handler == nil {
 					response["error"] = map[string]any{"code": -32602, "message": "Unknown 1loop tool"}
 					break
 				}

@@ -138,6 +138,11 @@ func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd,
 		return nil, fmt.Errorf("Claude Code is not installed: no claude command was found")
 	}
 	args := append([]string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}, extra...)
+	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
+		// The API client retains its private login. All model-controlled
+		// project operations go through 1loop's MCP tools and launcher.
+		args = append(args, "--tools", "", "--setting-sources", "", "--strict-mcp-config", "--no-chrome", "--disable-slash-commands")
+	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = dir
 	for _, pair := range os.Environ() {
@@ -147,6 +152,9 @@ func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd,
 			continue
 		}
 		cmd.Env = append(cmd.Env, pair)
+	}
+	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
+		cmd.Env = append(cmd.Env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
 	}
 	// Stop ends the turn the way Claude Code documents (SIGINT), then the
 	// whole process group if it lingers.
@@ -196,7 +204,7 @@ func (backend *App) claudeModels(ctx context.Context) ([]claudeModel, error) {
 // commands, reads and edits use 1loop's own rows (and their detail panel);
 // every other tool keeps its name and arguments.
 func claudeTool(root, name string, input json.RawMessage) (tool, args string) {
-	if strings.HasPrefix(name, "mcp__1loop_todo__browser_") || strings.HasPrefix(name, "mcp__1loop_todo__terminal_") || name == "mcp__1loop_todo__computer_use" {
+	if strings.HasPrefix(name, "mcp__1loop_todo__") {
 		return strings.TrimPrefix(name, "mcp__1loop_todo__"), string(input)
 	}
 	var in struct {
@@ -344,6 +352,20 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		return fmt.Errorf("Nothing to send")
 	}
 	ctx = toolContext(ctx, cfg)
+	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
+		cfg.ProjectTools = func(operation context.Context, name string, raw json.RawMessage) (PanelToolResult, error) {
+			// Claude's permission handler has already approved this MCP call.
+			operation = context.WithValue(operation, approvalContextKey{}, approvalPolicy{yolo: true})
+			call := ToolCall{ID: core.Identifier()}
+			call.Function.Name, call.Function.Arguments = name, string(raw)
+			outcome := backend.executeTool(operation, cfg.Workspace, call, func(event string, value any) {
+				if event != "tool" && event != "tool_exec" {
+					emit(event, value)
+				}
+			})
+			return PanelToolResult{Text: outcome.Output, Images: outcome.Images}, outcome.Err
+		}
+	}
 	args := []string{"--include-partial-messages", "--permission-prompt-tool", "stdio"}
 	if cfg.ApprovalMode == "auto" {
 		// Claude Code's own judge decides; what it still asks reaches the
@@ -363,14 +385,20 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		args = append(args, "--resume", cfg.Session)
 	}
 	if cfg.Todo != nil {
-		config, close, err := startTodoMCP(ctx, cfg.Todo, emit, cfg.Browser, cfg.Terminal, cfg.Computer)
+		config, close, err := startTodoMCP(ctx, cfg, emit)
 		if err != nil {
 			return err
 		}
 		defer close()
 		args = append(args, "--mcp-config", config)
 	}
-	appendPrompt := projectInstructions(cfg.Workspace) + todoInstructions(cfg) + todoSnapshot(cfg) + browserInstructions(cfg) + terminalInstructions(cfg) + computerInstructions(cfg)
+	appendPrompt := mobileInstructions(cfg) + projectInstructions(cfg.Workspace) + todoInstructions(cfg) + todoSnapshot(cfg)
+	if cfg.ProjectTools != nil {
+		appendPrompt += "\n\nUse 1loop's MCP shell, read_file, list_directory, edit_file and apply_patch tools for project work. Follow the phone's selected execution policy and stay strictly inside the requested project. Use recall to retrieve older conversation details. Your own context compaction remains managed by Claude Code."
+	}
+	for _, group := range availableToolGroups(cfg) {
+		appendPrompt += group.instructions(cfg)
+	}
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
 		appendPrompt = "Additional instructions from the user:\n" + cfg.UserInstructions + appendPrompt
 	}
@@ -491,6 +519,10 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	for failure == nil {
 		var line []byte
 		select {
+		case <-cfg.CapabilitiesChanged:
+			request, _ := json.Marshal(map[string]any{"type": "control_request", "request_id": core.Identifier(), "request": map[string]string{"subtype": "mcp_reconnect", "serverName": "1loop_todo"}})
+			send(string(request))
+			continue
 		case <-ctx.Done():
 			platform.Devf("claude", "stop asked: interrupt sent, waiting for it to close its session")
 			// Stop: Claude Code got the interrupt it documents (SIGINT);
@@ -658,7 +690,9 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			}
 			title, preview := claudeApproval(cfg.Workspace, claudeEventValue.Request.ToolName, claudeEventValue.Request.Input)
 			response := map[string]any{"behavior": "deny", "message": "The user denied this action."}
-			if claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || backend.confirm(ctx, emit, title, preview) {
+			name := strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__")
+			projectRead := cfg.ProjectTools != nil && (name == "read_file" || name == "list_directory" || name == "recall" || name == "request_user_input")
+			if projectRead || name == "phone_use" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || backend.confirm(ctx, emit, title, preview) {
 				response = map[string]any{"behavior": "allow", "updatedInput": claudeEventValue.Request.Input}
 				for _, p := range calls { // the approved call starts now
 					p.started = time.Now()

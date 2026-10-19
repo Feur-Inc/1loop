@@ -17,6 +17,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/chromedp/cdproto/emulation"
@@ -40,6 +41,7 @@ type Info struct {
 	Width      int     `json:"width"`
 	Height     int     `json:"height"`
 	PixelRatio float64 `json:"pixelRatio"`
+	Native     bool    `json:"native,omitempty"`
 	Adaptive   bool    `json:"adaptive"`
 	Mobile     bool    `json:"mobile"`
 	Error      string  `json:"error,omitempty"`
@@ -53,11 +55,16 @@ type browserLog struct {
 	Source string `json:"source,omitempty"`
 }
 
-// One Chromium process serves the app. Each chat has a separate browser
-// context, so cookies and local storage are shared by its tabs only.
+// One engine serves the live tabs. Its process generation ends when the
+// final tab closes; another tab starts a fresh generation using the profile.
 type Engine struct {
+	Native    NativeHost
 	ctx       context.Context
 	Cancel    func()
+	mu        sync.Mutex
+	refs      atomic.Int64
+	runCtx    context.Context
+	runCancel context.CancelFunc
 	once      sync.Once
 	root      context.Context
 	err       error
@@ -65,16 +72,35 @@ type Engine struct {
 	userAgent string
 	metadata  *emulation.UserAgentMetadata
 	Scale     float64       // the window's scale when Chrome starts: its pages' native density
-	closed    chan struct{} // closed once Chrome has exited, after the engine's context ends
+	closed    chan struct{} // closed after the current Chrome generation exits
 }
 
 func NewBrowserEngine(parent context.Context) *Engine {
 	ctx, cancel := context.WithCancel(parent)
-	return &Engine{ctx: ctx, Cancel: cancel}
+	runCtx, runCancel := context.WithCancel(ctx)
+	return &Engine{ctx: ctx, Cancel: cancel, runCtx: runCtx, runCancel: runCancel}
 }
 
 func (engine *Engine) start() error {
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
 	engine.once.Do(func() {
+		if engine.Native != nil {
+			address, id, err := engine.Native.Connect(engine.runCtx)
+			if err != nil {
+				engine.err = err
+				return
+			}
+			alloc, stopAlloc := chromedp.NewRemoteAllocator(engine.runCtx, address, chromedp.NoModifyURL)
+			root, stopRoot := chromedp.NewContext(alloc, chromedp.WithTargetID(id))
+			context.AfterFunc(engine.runCtx, func() { stopRoot(); stopAlloc() })
+			engine.root = root
+			engine.err = chromedp.Run(root)
+			if engine.err == nil {
+				engine.listen(root)
+			}
+			return
+		}
 		executable := browserExecutable()
 		if executable == "" {
 			engine.err = fmt.Errorf("Install Chromium or Google Chrome to use browser tabs")
@@ -87,6 +113,7 @@ func (engine *Engine) start() error {
 			chromedp.Flag("enable-automation", false),
 			chromedp.Flag("disable-blink-features", "AutomationControlled"),
 		)
+		var contextOptions []chromedp.ContextOption
 		// One profile, kept between sessions: the agent's browser stays
 		// logged in, with its cookies and history, until the user clears
 		// it (Settings → General → Browser).
@@ -106,8 +133,8 @@ func (engine *Engine) start() error {
 		}
 		// Read native client hints before a process-wide UA override suppresses
 		// them. The process-wide UA also covers a popup's very first request.
-		profileAlloc, stopProfileAlloc := chromedp.NewExecAllocator(engine.ctx, opts...)
-		profileRoot, stopProfileRoot := chromedp.NewContext(profileAlloc)
+		profileAlloc, stopProfileAlloc := chromedp.NewExecAllocator(engine.runCtx, opts...)
+		profileRoot, stopProfileRoot := chromedp.NewContext(profileAlloc, contextOptions...)
 		var native struct {
 			UserAgent string
 			Metadata  *emulation.UserAgentMetadata
@@ -124,11 +151,13 @@ func (engine *Engine) start() error {
 		// Chrome outlives the engine's context by a moment: it is asked to
 		// close, which writes its cookies and history to the profile, and
 		// killed only if it does not. Killed at once, it lost the session.
-		alloc, stopAlloc := chromedp.NewExecAllocator(context.WithoutCancel(engine.ctx), opts...)
-		root, stopRoot := chromedp.NewContext(alloc, chromedp.WithErrorf(func(f string, a ...any) { platform.Devf("browser", f, a...) }))
-		engine.closed = make(chan struct{})
-		context.AfterFunc(engine.ctx, func() {
-			defer close(engine.closed)
+		alloc, stopAlloc := chromedp.NewExecAllocator(context.WithoutCancel(engine.runCtx), opts...)
+		contextOptions = append(contextOptions, chromedp.WithErrorf(func(f string, a ...any) { platform.Devf("browser", f, a...) }))
+		root, stopRoot := chromedp.NewContext(alloc, contextOptions...)
+		closedSignal := make(chan struct{})
+		engine.closed = closedSignal
+		context.AfterFunc(engine.runCtx, func() {
+			defer close(closedSignal)
 			closed := make(chan struct{})
 			go func() { chromedp.Cancel(root); close(closed) }() // asks Chrome to close, waits for it
 			select {
@@ -142,45 +171,43 @@ func (engine *Engine) start() error {
 		if engine.err = chromedp.Run(root); engine.err != nil { // Chrome starts here, owned by root
 			return
 		}
-		chromedp.ListenBrowser(root, func(event any) {
-			switch event := event.(type) {
-			case *target.EventTargetCreated:
-				if value, ok := engine.Pages.Load(event.TargetInfo.OpenerID); ok && event.TargetInfo.Type == "page" {
-					parent := value.(*Page)
-					if parent.OnPopup != nil {
-						parent.OnPopup(event.TargetInfo.TargetID, event.TargetInfo.URL)
-					}
-				}
-			case *target.EventTargetInfoChanged:
-				if value, ok := engine.Pages.Load(event.TargetInfo.TargetID); ok {
-					browser := value.(*Page)
-					browser.change(func(info *Info) {
-						info.Title = event.TargetInfo.Title
-						info.URL = event.TargetInfo.URL
-					})
-				}
-			case *target.EventTargetDestroyed:
-				if value, ok := engine.Pages.Load(event.TargetID); ok {
-					closedBrowser := value.(*Page)
-					if closedBrowser.Life.Err() == nil && closedBrowser.OnClosed != nil {
-						closedBrowser.OnClosed()
-					}
-				}
-			}
-		})
+		engine.listen(root)
 		engine.err = chromedp.Run(root)
 	})
 	return engine.err
 }
 
+func (engine *Engine) stopIfIdle() {
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	if engine.refs.Load() != 0 {
+		return
+	}
+	if engine.root == nil && engine.err == nil {
+		return
+	}
+	engine.runCancel()
+	if engine.Native != nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		_ = engine.Native.Stop(ctx)
+	}
+	waitBrowserClosed(engine.closed)
+	engine.once = sync.Once{}
+	engine.root, engine.err, engine.closed = nil, nil, nil
+	engine.runCtx, engine.runCancel = context.WithCancel(engine.ctx)
+}
+
 type Session struct {
-	engine *Engine
-	ctx    context.Context
-	cancel func()
-	once   sync.Once
-	root   context.Context
-	err    error
-	refs   int // UI thread owns references held by its tabs
+	engine    *Engine
+	ctx       context.Context
+	cancel    func()
+	once      sync.Once
+	root      context.Context
+	err       error
+	userAgent string
+	metadata  *emulation.UserAgentMetadata
+	refs      int // UI thread owns references held by its tabs
 }
 
 func NewBrowserSession(engine *Engine) *Session {
@@ -190,15 +217,27 @@ func NewBrowserSession(engine *Engine) *Session {
 
 func (session *Session) start() error {
 	session.once.Do(func() {
-		if session.err = session.engine.start(); session.err != nil {
-			return
-		}
 		if session.err = session.ctx.Err(); session.err != nil {
 			return
 		}
+		if session.err = session.engine.start(); session.err != nil {
+			return
+		}
+		session.engine.mu.Lock()
+		if session.err = session.ctx.Err(); session.err != nil {
+			session.engine.mu.Unlock()
+			return
+		}
+		engineRoot := session.engine.root
+		session.userAgent, session.metadata = session.engine.userAgent, session.engine.metadata
+		session.engine.mu.Unlock()
 		// The browser's own context, the one its profile keeps: a separate
 		// browser context is a private window, whose cookies never reach disk.
-		root, cancel := chromedp.NewContext(session.engine.root)
+		if session.engine.Native != nil {
+			session.root = engineRoot
+			return
+		}
+		root, cancel := chromedp.NewContext(engineRoot)
 		context.AfterFunc(session.ctx, cancel)
 		session.root = root
 		session.err = chromedp.Run(root)
@@ -255,6 +294,7 @@ func NewBrowserPage(session *Session, info Info) *Page {
 	if info.Height == 0 {
 		info.Height = 800
 	}
+	info.Native = session.engine.Native != nil
 	if info.PixelRatio <= 0 {
 		info.PixelRatio = 1
 	}
@@ -271,6 +311,7 @@ func NewBrowserPage(session *Session, info Info) *Page {
 		info:      info,
 	}
 	session.refs++
+	session.engine.refs.Add(1)
 	return browser
 }
 
@@ -319,6 +360,13 @@ func (browser *Page) LogSnapshot(after int) []browserLog {
 
 func (browser *Page) Start() {
 	err := browser.Session.start()
+	native := browser.Session.engine.Native
+	if err == nil && native != nil {
+		err = nativeURL(browser.Snapshot().URL)
+	}
+	if err == nil && native != nil {
+		browser.AttachTarget, err = native.Open(browser.Life, browser.Snapshot())
+	}
 	if err == nil {
 		options := []chromedp.ContextOption{}
 		if browser.AttachTarget != "" {
@@ -329,10 +377,11 @@ func (browser *Page) Start() {
 		browser.Ctx = ctx
 		chromedp.ListenTarget(ctx, browser.event)
 		info := browser.Snapshot()
-		err = chromedp.Run(ctx,
-			runtime.Enable(), log.Enable(), network.Enable(),
-			emulation.SetUserAgentOverride(browser.Session.engine.userAgent).WithUserAgentMetadata(browser.Session.engine.metadata),
-			browserMetrics(info.Width, info.Height, info.PixelRatio, info.Mobile))
+		actions := []chromedp.Action{runtime.Enable(), log.Enable(), network.Enable()}
+		if native == nil {
+			actions = append(actions, emulation.SetUserAgentOverride(browser.Session.userAgent).WithUserAgentMetadata(browser.Session.metadata), browserMetrics(info.Width, info.Height, info.PixelRatio, info.Mobile))
+		}
+		err = chromedp.Run(ctx, actions...)
 	}
 	if err != nil {
 		browser.change(func(info *Info) { info.Error = err.Error() })
@@ -342,7 +391,7 @@ func (browser *Page) Start() {
 	id := chromedp.FromContext(browser.Ctx).Target.TargetID
 	browser.Session.engine.Pages.Store(id, browser)
 	context.AfterFunc(browser.Life, func() { browser.Session.engine.Pages.Delete(id) })
-	if browser.AttachTarget == "" {
+	if browser.AttachTarget == "" || native != nil {
 		navigation, stop := context.WithTimeout(browser.Ctx, 30*time.Second)
 		err = chromedp.Run(navigation, chromedp.Navigate(browser.Snapshot().URL))
 		stop()
@@ -597,6 +646,10 @@ func (browser *Page) isVisible() bool {
 }
 
 func (browser *Page) stream() {
+	if browser.Session.engine.Native != nil {
+		return
+	}
+
 	_ = browser.Run(browser.Life, chromedp.ActionFunc(func(ctx context.Context) error {
 		browser.mu.Lock()
 		visible, watched := browser.visible, len(browser.phones) > 0
@@ -616,9 +669,17 @@ func (browser *Page) stream() {
 func (browser *Page) Close() {
 	browser.closeOnce.Do(func() {
 		browser.cancel()
+		if native := browser.Session.engine.Native; native != nil {
+			ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			defer cancel()
+			_ = native.Close(ctx, browser.Snapshot().ID)
+		}
 		browser.Session.refs--
 		if browser.Session.refs == 0 {
 			browser.Session.cancel()
+		}
+		if browser.Session.engine.refs.Add(-1) == 0 {
+			go browser.Session.engine.stopIfIdle()
 		}
 	})
 }
@@ -666,6 +727,9 @@ func (browser *Page) Navigate(ctx context.Context, action, raw string) error {
 	switch action {
 	case "navigate":
 		u, err := URL(raw)
+		if err == nil && browser.Session.engine.Native != nil {
+			err = nativeURL(u)
+		}
 		if err != nil {
 			return err
 		}
@@ -734,7 +798,14 @@ func (browser *Page) Resize(ctx context.Context, width, height int, mobile, adap
 	if len(pixelRatio) > 0 {
 		ratio = pixelRatio[0]
 	}
-	err := browser.Run(ctx, browserMetrics(width, height, ratio, mobile))
+	var err error
+	if native := browser.Session.engine.Native; native != nil {
+		info := browser.Snapshot()
+		info.Width, info.Height, info.Mobile, info.Adaptive = width, height, mobile, adaptive
+		err = native.Resize(ctx, info)
+	} else {
+		err = browser.Run(ctx, browserMetrics(width, height, ratio, mobile))
+	}
 	if err == nil {
 		browser.change(func(info *Info) {
 			info.Width = width
@@ -809,6 +880,9 @@ func (browser *Page) Interact(ctx context.Context, action, selector, text string
 }
 
 func (browser *Page) Capture(ctx context.Context, full bool) (core.ImagePart, error) {
+	if native := browser.Session.engine.Native; native != nil && !full {
+		return native.Capture(ctx, browser.Snapshot().ID, full)
+	}
 	var data []byte
 	action := chromedp.ActionFunc(func(ctx context.Context) error {
 		var err error
@@ -878,11 +952,21 @@ func (browser *Page) mainLoading(frame string, loading bool) {
 // WaitClosed waits, a few seconds at most, for Chrome to have exited after
 // the engine's context ended: 1loop quitting must not cut its last write.
 func (engine *Engine) WaitClosed() {
-	if engine == nil || engine.closed == nil {
+	if engine == nil {
+		return
+	}
+	engine.mu.Lock()
+	closed := engine.closed
+	engine.mu.Unlock()
+	waitBrowserClosed(closed)
+}
+
+func waitBrowserClosed(closed <-chan struct{}) {
+	if closed == nil {
 		return
 	}
 	select {
-	case <-engine.closed:
+	case <-closed:
 	case <-time.After(4 * time.Second):
 	}
 }
@@ -932,4 +1016,33 @@ func ProfileDir() string {
 		return ""
 	}
 	return filepath.Join(dir, "1loop", "browser")
+}
+
+func (engine *Engine) listen(root context.Context) {
+	chromedp.ListenBrowser(root, func(event any) {
+		switch event := event.(type) {
+		case *target.EventTargetCreated:
+			if value, ok := engine.Pages.Load(event.TargetInfo.OpenerID); ok && event.TargetInfo.Type == "page" {
+				parent := value.(*Page)
+				if parent.Life.Err() == nil && parent.OnPopup != nil {
+					parent.OnPopup(event.TargetInfo.TargetID, event.TargetInfo.URL)
+				}
+			}
+		case *target.EventTargetInfoChanged:
+			if value, ok := engine.Pages.Load(event.TargetInfo.TargetID); ok {
+				browser := value.(*Page)
+				browser.change(func(info *Info) {
+					info.Title = event.TargetInfo.Title
+					info.URL = event.TargetInfo.URL
+				})
+			}
+		case *target.EventTargetDestroyed:
+			if value, ok := engine.Pages.Load(event.TargetID); ok {
+				closedBrowser := value.(*Page)
+				if closedBrowser.Life.Err() == nil && closedBrowser.OnClosed != nil {
+					closedBrowser.OnClosed()
+				}
+			}
+		}
+	})
 }

@@ -18,14 +18,47 @@ import (
 func (server *headlessServer) routes() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/info", func(w http.ResponseWriter, r *http.Request) {
-		core.WriteJSON(w, 200, map[string]any{"name": server.name, "protocol": 1, "headless": true, "secure": true, "consolePairing": true})
+		core.WriteJSON(w, 200, map[string]any{"name": server.name, "protocol": 1, "headless": true, "secure": true, "consolePairing": !server.local})
 	})
-	mux.HandleFunc("POST /api/pair", server.pair)
-	mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)
+	if !server.local {
+		mux.HandleFunc("POST /api/pair", server.pair)
+		mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)
+	} else {
+		mux.HandleFunc("POST /api/local/capabilities", server.authorized(func(w http.ResponseWriter, r *http.Request) {
+			server.mu.Lock()
+			for _, chat := range server.chats {
+				if chat.run != nil {
+					select {
+					case chat.run.capabilities <- struct{}{}:
+					default:
+					}
+				}
+			}
+			server.mu.Unlock()
+			core.WriteJSON(w, 200, map[string]bool{"ok": true})
+		}))
+		mux.HandleFunc("GET /api/local/connections", server.authorized(server.localConnections))
+		mux.HandleFunc("POST /api/local/connections", server.authorized(server.saveLocalConnection))
+		mux.HandleFunc("POST /api/local/connections/models", server.authorized(server.draftLocalConnectionModels))
+		mux.HandleFunc("GET /api/local/connections/{id}/models", server.authorized(server.localConnectionModels))
+		mux.HandleFunc("POST /api/local/connections/{id}/login", server.authorized(server.localConnectionLogin))
+		mux.HandleFunc("POST /api/local/connections/{id}/disconnect", server.authorized(server.localConnectionDisconnect))
+		mux.HandleFunc("POST /api/local/connections/refresh", server.authorized(server.refreshLocalModels))
+		mux.HandleFunc("GET /api/local/claude/login", server.authorized(server.claudeLoginState))
+		mux.HandleFunc("POST /api/local/claude/login", server.authorized(server.beginClaudeLogin))
+		mux.HandleFunc("POST /api/local/shutdown", server.authorized(func(w http.ResponseWriter, r *http.Request) {
+			core.WriteJSON(w, 200, map[string]bool{"ok": true})
+			server.shutdown()
+		}))
+	}
 	endpoints := map[string]http.HandlerFunc{
 		"GET /api/state":                         server.state,
+		"GET /api/limits":                        server.limits,
 		"GET /api/chats/{id}":                    server.chat,
 		"GET /api/events":                        server.events,
+		"POST /api/chats/{id}/message":           server.editMessage,
+		"POST /api/chats/{id}/version":           server.selectVersion,
+		"POST /api/attachments":                  server.uploadAttachment,
 		"POST /api/send":                         server.send,
 		"POST /api/stop":                         server.stop,
 		"POST /api/approve":                      server.approve,
@@ -43,7 +76,9 @@ func (server *headlessServer) routes() http.Handler {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+		if r.URL.Path != "/api/attachments" {
+			r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
+		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		mux.ServeHTTP(w, r)
 	})
@@ -122,18 +157,25 @@ func (server *headlessServer) events(w http.ResponseWriter, r *http.Request) {
 func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 	var args struct {
 		Chat, Text, Mode, Workspace string
+		Attachments                 []agent.FileAttachment
 		Images                      []core.ImagePart
 	}
-	if core.ReadJSON(r, &args) != nil || strings.TrimSpace(args.Text) == "" {
+	if core.ReadJSON(r, &args) != nil || strings.TrimSpace(args.Text) == "" && len(args.Attachments) == 0 && len(args.Images) == 0 {
 		core.Fail(w, 400, "Nothing to send")
 		return
 	}
-	server.mu.Lock()
-	defer server.mu.Unlock()
 	if args.Workspace != "" && args.Workspace != server.root {
 		core.Fail(w, 403, "Choose the workspace configured on this server")
 		return
 	}
+	m, err := remoteapi.AttachedMessage(server.root, args.Text, args.Attachments)
+	if err != nil {
+		core.Fail(w, 400, err.Error())
+		return
+	}
+	m.Images = append(m.Images, args.Images...)
+	server.mu.Lock()
+	defer server.mu.Unlock()
 	chat := server.chatLocked(args.Chat)
 	if args.Chat != "" && chat == nil {
 		core.Fail(w, 404, "Chat not found")
@@ -144,7 +186,15 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 			core.Fail(w, 409, "Configure a provider and model on the server first")
 			return
 		}
-		title := []rune(strings.Join(strings.Fields(args.Text), " "))
+		titleText := args.Text
+		if strings.TrimSpace(titleText) == "" {
+			if len(args.Attachments) > 0 {
+				titleText = args.Attachments[0].Name
+			} else {
+				titleText = "Image"
+			}
+		}
+		title := []rune(strings.Join(strings.Fields(titleText), " "))
 		if len(title) > 50 {
 			title = title[:50]
 		}
@@ -153,7 +203,7 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		chat = &serverChat{ID: core.Identifier()[:16], Title: string(title), Config: cfg, Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}
 		server.chats = append([]*serverChat{chat}, server.chats...)
 	}
-	m := agent.Message{Role: "user", Content: args.Text, Images: args.Images}
+
 	if chat.run != nil {
 		if args.Mode == "steer" {
 			chat.steer = append(chat.steer, m)
@@ -282,13 +332,36 @@ func (server *headlessServer) setApprovalMode(w http.ResponseWriter, r *http.Req
 		return
 	}
 	server.mu.Lock()
-	defer server.mu.Unlock()
+	var closed []*serverTab
+	if args.Mode != server.approvalMode {
+		server.terminalRevision++
+	}
+	if server.bridge != nil && (server.approvalMode == "yolo") != (args.Mode == "yolo") {
+		for _, chat := range server.chats {
+			if chat.run != nil {
+				chat.run.cancel()
+			}
+			for i := len(chat.tabs) - 1; i >= 0; i-- {
+				if chat.tabs[i].terminal != nil {
+					closed = append(closed, server.detachTabLocked(chat, i))
+				}
+			}
+		}
+		server.scheduleSaveLocked()
+	}
 	server.approvalMode = args.Mode
-	if err := server.saveSettingsLocked(); err != nil {
+	err := server.saveSettingsLocked()
+	if err == nil {
+		server.broadcastLocked("settings", server.settingsLocked())
+	}
+	server.mu.Unlock()
+	for _, tab := range closed {
+		tab.close()
+	}
+	if err != nil {
 		core.Fail(w, 500, "Unable to save permissions")
 		return
 	}
-	server.broadcastLocked("settings", server.settingsLocked())
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -309,22 +382,29 @@ func (server *headlessServer) editPanel(w http.ResponseWriter, r *http.Request) 
 	var err error
 	switch {
 	case args.Action == "open" && args.Kind == "browser":
+		if server.bridge != nil && !server.bridge.available(r.Context(), "browser") {
+			core.Fail(w, 409, "Local browser is unavailable")
+			return
+		}
 		raw, _ := json.Marshal(map[string]string{"action": "open", "tab_id": "", "url": args.URL})
 		result, err = server.browserTools(chat)(r.Context(), "browser_tabs", raw)
 	case args.Action == "open" && args.Kind == "terminal":
 		raw, _ := json.Marshal(map[string]string{"action": "open", "session_id": "", "cwd": ""})
 		result, err = server.terminalTools(chat)(r.Context(), "terminal_tabs", raw)
 	case args.Action == "close":
+		var closed *serverTab
 		server.mu.Lock()
 		for index, tab := range chat.tabs {
 			if tab.key() == args.Key {
-				tab.close()
-				chat.tabs = append(chat.tabs[:index], chat.tabs[index+1:]...)
+				closed = server.detachTabLocked(chat, index)
 				break
 			}
 		}
 		server.scheduleSaveLocked()
 		server.mu.Unlock()
+		if closed != nil {
+			closed.close()
+		}
 	default:
 		core.Fail(w, 400, "Choose browser or terminal")
 		return
@@ -334,4 +414,12 @@ func (server *headlessServer) editPanel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	core.WriteJSON(w, 200, map[string]string{"result": result.Text})
+}
+
+func (server *headlessServer) uploadAttachment(w http.ResponseWriter, r *http.Request) {
+	if workspace := r.URL.Query().Get("workspace"); workspace != "" && workspace != server.root {
+		core.Fail(w, 403, "Choose the workspace configured on this server")
+		return
+	}
+	remoteapi.UploadAttachment(w, r, server.root)
 }

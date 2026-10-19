@@ -30,8 +30,8 @@ import javax.net.ssl.X509TrustManager
 const val DISCOVERY_PORT = 47100
 const val DEFAULT_PORT = 47101
 
-data class Server(val name: String, val host: String, val port: Int, val token: String = "", val scheme: String = "http", val fingerprint: String = "") {
-    val key get() = if (scheme == "http") "$host:$port" else "$scheme://$host:$port"
+data class Server(val name: String, val host: String, val port: Int, val token: String = "", val scheme: String = "http", val fingerprint: String = "", val localPhone: Boolean = false) {
+    val key get() = if (localPhone) "local-phone" else if (scheme == "http") "$host:$port" else "$scheme://$host:$port"
     val baseURL get() = "$scheme://${if (host.contains(':')) "[${host.trim('[', ']')}]" else host}:$port"
     val paired get() = token.isNotEmpty()
 }
@@ -153,13 +153,40 @@ class Api(val server: Server) {
             connection.disconnect()
         }
     }
-    fun post(path: String, body: JSONObject): JSONObject = call("POST", path, body)
+    /** readTimeout: 20 s by default; longer only for a call known to wait (a browser's first start). */
+    fun post(path: String, body: JSONObject, readTimeout: Int = 20000): JSONObject = call("POST", path, body, readTimeout)
 
-    private fun call(method: String, path: String, body: JSONObject?): JSONObject {
+    /** A file as the request body, streamed (attachments, up to 64 MiB). */
+    fun upload(path: String, input: java.io.InputStream, length: Long): JSONObject {
+        val connection = connection(path).apply {
+            requestMethod = "POST"
+            connectTimeout = 4000
+            readTimeout = 120000
+            doOutput = true
+            setRequestProperty("Content-Type", "application/octet-stream")
+            if (length >= 0) setFixedLengthStreamingMode(length) else setChunkedStreamingMode(1 shl 16)
+        }
+        try {
+            connection.outputStream.use { input.copyTo(it, 1 shl 16) }
+            val status = connection.responseCode
+            val stream = if (status in 200..299) connection.inputStream else connection.errorStream
+            val json = runCatching { JSONObject(stream?.bufferedReader()?.use { it.readText() }.orEmpty()) }.getOrDefault(JSONObject())
+            if (status !in 200..299) throw ApiError(json.optString("error", "1loop answered $status"), status)
+            return json
+        } catch (e: ApiError) {
+            throw e
+        } catch (e: Exception) {
+            throw ApiError("Cannot send the file to ${server.name}.")
+        } finally {
+            connection.disconnect()
+        }
+    }
+
+    private fun call(method: String, path: String, body: JSONObject?, timeout: Int = 20000): JSONObject {
         val connection = connection(path).apply {
             requestMethod = method
             connectTimeout = 4000
-            readTimeout = 20000
+            readTimeout = timeout
             if (body != null) {
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json")

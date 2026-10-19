@@ -2,7 +2,6 @@ package ui
 
 import (
 	"fmt"
-	"slices"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -11,213 +10,44 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/agent"
-	"1loop/internal/core"
 )
 
-// Only inactive versions hold snapshots. The active conversation remains
-// the source used by the runner, persistence and remote views.
-type chatSnapshot struct {
-	Config  agent.Config     `json:"config"`
-	History []agent.Message  `json:"history"`
-	Items   []agent.ChatItem `json:"items"`
-}
+type chatSnapshot = agent.VersionSnapshot
+type chatVersion = agent.ChatVersion
 
-type chatVersion struct {
-	ID       string            `json:"id"`
-	Parent   string            `json:"parent,omitempty"`
-	Fork     string            `json:"fork,omitempty"`
-	Snapshot *chatSnapshot     `json:"snapshot,omitempty"`
-	Selected map[string]string `json:"selected,omitempty"` // fork -> last continuation visited
+func (chat *conversation) branching() agent.VersionState {
+	return agent.VersionState{Config: chat.Config, History: chat.History, Items: chat.Items, Version: chat.Version, Versions: chat.Versions}
 }
-
+func (chat *conversation) applyBranch(state agent.VersionState) {
+	chat.Config, chat.History, chat.Items = state.Config, state.History, state.Items
+	chat.Version, chat.Versions = state.Version, state.Versions
+}
 func (chat *conversation) identifyMessages() {
-	for i := range chat.Items {
-		if chat.Items[i].ID == "" {
-			chat.Items[i].ID = core.Identifier()[:16]
-		}
-	}
+	state := chat.branching()
+	state.IdentifyMessages()
+	chat.applyBranch(state)
 }
-
-func (chat *conversation) versionIndex(id string) int {
-	return slices.IndexFunc(chat.Versions, func(chatVersionValue chatVersion) bool { return chatVersionValue.ID == id })
+func (chat *conversation) versionFamily(anchor string) ([]int, int) {
+	state := chat.branching()
+	return state.Family(anchor)
 }
-
-// Edits of one prompt (or retries of its response) form a family. Later
-// forks at another message stay inside their chosen family's continuation.
-func (chat *conversation) versionFamily(anchor string) (family []int, selected int) {
-	edges := make([][]int, len(chat.Versions))
-	for i, chatVersion := range chat.Versions {
-		if chatVersion.Fork == anchor {
-			if parent := chat.versionIndex(chatVersion.Parent); parent >= 0 {
-				edges[i] = append(edges[i], parent)
-				edges[parent] = append(edges[parent], i)
-			}
-		}
-	}
-	member := chat.versionIndex(chat.Version)
-	for member >= 0 && len(edges[member]) == 0 {
-		if strings.HasSuffix(anchor, ":reply") && chat.Versions[member].Fork == strings.TrimSuffix(anchor, ":reply") {
-			return nil, 0 // retries of another wording belong to that prompt's version
-		}
-		member = chat.versionIndex(chat.Versions[member].Parent)
-	}
-	if member < 0 {
-		return nil, 0
-	}
-	seen := map[int]bool{member: true}
-	queue := []int{member}
-	for len(queue) > 0 {
-		at := queue[0]
-		queue = queue[1:]
-		for _, next := range edges[at] {
-			if !seen[next] {
-				seen[next] = true
-				queue = append(queue, next)
-			}
-		}
-	}
-	for i := range chat.Versions {
-		if seen[i] {
-			if i == member {
-				selected = len(family)
-			}
-			family = append(family, i)
-		}
-	}
-	return family, selected
-}
-
-func (chat *conversation) rememberVersion() {
-	anchors := map[string]bool{}
-	for _, chatVersion := range chat.Versions {
-		if chatVersion.Fork != "" {
-			anchors[chatVersion.Fork] = true
-		}
-	}
-	for anchor := range anchors {
-		prompt := strings.TrimSuffix(anchor, ":reply")
-		if !slices.ContainsFunc(chat.Items, func(item agent.ChatItem) bool { return item.Kind == "user" && item.ID == prompt }) {
-			continue // an edit of an earlier prompt removed this later branch point
-		}
-		family, selected := chat.versionFamily(anchor)
-		if len(family) > 1 {
-			chatVersionValue := &chat.Versions[family[selected]]
-			if chatVersionValue.Selected == nil {
-				chatVersionValue.Selected = map[string]string{}
-			}
-			chatVersionValue.Selected[anchor] = chat.Version
-		}
-	}
-	chat.Versions[chat.versionIndex(chat.Version)].Snapshot = &chatSnapshot{
-		Config: chat.Config, History: append([]agent.Message{}, chat.History...), Items: append([]agent.ChatItem{}, chat.Items...),
-	}
-}
-
-// Match user messages backwards: this also works after compaction removes
-// an earlier prefix, and disambiguates repeated prompts such as "continue".
-func (chat *conversation) historyBefore(index int) []agent.Message {
-	cursor := len(chat.History)
-	for i := len(chat.Items) - 1; i >= index; i-- {
-		item := chat.Items[i]
-		if item.Kind != "user" {
-			continue
-		}
-		found := -1
-		for j := cursor - 1; j >= 0; j-- {
-			messageValue := chat.History[j]
-			if messageValue.Role == "user" && messageValue.Content == item.Text && slices.Equal(messageValue.Images, item.Images) {
-				found = j
-				break
-			}
-		}
-		if found < 0 {
-			break
-		}
-		cursor = found
-		if i == index {
-			return append([]agent.Message{}, chat.History[:cursor]...)
-		}
-	}
-	// Older messages may exist only in the transcript after compaction.
-	// Rebuild that visible prefix without pulling in the discarded future.
-	var history []agent.Message
-	for i, item := range chat.Items[:index] {
-		switch item.Kind {
-		case "user", "assistant":
-			history = append(history, agent.Message{Role: item.Kind, Content: item.Text, Images: item.Images})
-		case "tool":
-			call := agent.ToolCall{ID: fmt.Sprintf("earlier-%d", i), Type: "function"}
-			call.Function.Name, call.Function.Arguments = item.Tool, item.Args
-			if call.Function.Arguments == "" {
-				call.Function.Arguments = "{}"
-			}
-			history = append(history, agent.Message{Role: "assistant", ToolCalls: []agent.ToolCall{call}},
-				agent.Message{Role: "tool", ToolCallID: call.ID, Content: item.Text})
-		}
-	}
-	return history
-}
-
 func (chat *conversation) forkMessage(index int, response bool) string {
-	chat.identifyMessages()
-	if chat.Version == "" {
-		chat.Version = core.Identifier()[:16]
-		chat.Versions = []chatVersion{{ID: chat.Version}}
-	}
-	chat.rememberVersion()
-	anchor := chat.Items[index].ID
-	if response {
-		anchor += ":reply"
-	}
-	parent := chat.Version
-	if family, selected := chat.versionFamily(anchor); len(family) > 1 {
-		parent = chat.Versions[family[selected]].ID
-	}
-	chat.Version = core.Identifier()[:16]
-	chat.Versions = append(chat.Versions, chatVersion{ID: chat.Version, Parent: parent, Fork: anchor})
-	chat.History = chat.historyBefore(index)
-	id := chat.Items[index].ID
-	chat.Items = append([]agent.ChatItem{}, chat.Items[:index]...)
-	chat.Config.Session = "" // Claude must not resume a session containing the discarded future.
+	state := chat.branching()
+	id := state.ForkMessage(index, response)
+	chat.applyBranch(state)
 	chat.queue, chat.steer = nil, nil
 	return id
 }
-
 func (chat *conversation) selectVersion(anchor string, delta int) bool {
-	family, selected := chat.versionFamily(anchor)
-	to := selected + delta
-	if to < 0 || to >= len(family) {
+	state := chat.branching()
+	if !state.SelectVersion(anchor, delta) {
 		return false
 	}
-	chat.rememberVersion()
-	target := family[to]
-	if leaf := chat.versionIndex(chat.Versions[target].Selected[anchor]); leaf >= 0 {
-		target = leaf
-	}
-	chatVersion := &chat.Versions[target]
-	if chatVersion.Snapshot == nil {
-		return false
-	}
-	chat.Version, chat.Config = chatVersion.ID, chatVersion.Snapshot.Config
-	chat.History = append([]agent.Message{}, chatVersion.Snapshot.History...)
-	chat.Items = append([]agent.ChatItem{}, chatVersion.Snapshot.Items...)
-	chatVersion.Snapshot = nil
+	chat.applyBranch(state)
 	chat.queue, chat.steer = nil, nil
 	return true
 }
-
-func copyVersions(versions []chatVersion) []chatVersion {
-	copy := append([]chatVersion{}, versions...)
-	for i, chatVersionValue := range copy {
-		if chatVersionValue.Selected != nil {
-			copy[i].Selected = map[string]string{}
-			for anchor, id := range chatVersionValue.Selected {
-				copy[i].Selected[anchor] = id
-			}
-		}
-	}
-	return copy
-}
+func copyVersions(versions []chatVersion) []chatVersion { return agent.CopyVersions(versions) }
 
 func userItemBefore(chat *conversation, index int) int {
 	for i := index; i >= 0; i-- {

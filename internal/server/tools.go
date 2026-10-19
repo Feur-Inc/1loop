@@ -27,6 +27,7 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/browser"
 	"1loop/internal/core"
+	"1loop/internal/platform"
 	"1loop/internal/terminal"
 )
 
@@ -51,18 +52,37 @@ func (tab *serverTab) close() {
 	}
 }
 
+func (server *headlessServer) detachTabLocked(chat *serverChat, index int) *serverTab {
+	tab := chat.tabs[index]
+	wasBrowser := tab.browser != nil
+	chat.tabs = append(chat.tabs[:index], chat.tabs[index+1:]...)
+	if !wasBrowser {
+		return tab
+	}
+	for _, remaining := range chat.tabs {
+		if remaining.browser != nil {
+			return tab
+		}
+	}
+	// Closing the last browser tab cancels its session. The next tab needs
+	// a fresh session, without restoring the tabs the user just closed.
+	chat.session = browser.NewBrowserSession(server.engine)
+	return tab
+}
+
 func (server *headlessServer) ensureTabsLocked(chat *serverChat) {
 	if chat.session != nil {
 		return
 	}
 	chat.session = browser.NewBrowserSession(server.engine)
 	for _, info := range chat.Browsers {
-		server.addBrowserLocked(chat, info)
+		server.addBrowserLocked(chat, info, "")
 	}
 }
 
-func (server *headlessServer) addBrowserLocked(chat *serverChat, info browser.Info) *browser.Page {
+func (server *headlessServer) addBrowserLocked(chat *serverChat, info browser.Info, attachTarget target.ID) *browser.Page {
 	page := browser.NewBrowserPage(chat.session, info)
+	page.AttachTarget = attachTarget
 	chat.tabs = append(chat.tabs, &serverTab{browser: page})
 	page.OnPopup = func(id target.ID, address string) {
 		server.mu.Lock()
@@ -70,12 +90,11 @@ func (server *headlessServer) addBrowserLocked(chat *serverChat, info browser.In
 		if server.ctx.Err() != nil {
 			return
 		}
-		child := server.addBrowserLocked(chat, browser.Info{URL: address, Width: 1280, Height: 800, Adaptive: true})
-		child.AttachTarget = id
-		child.Start()
+		server.addBrowserLocked(chat, browser.Info{URL: address, Width: 1280, Height: 800, Adaptive: true}, id)
 		server.scheduleSaveLocked()
 	}
-	page.Start()
+	// Cold starts must not hold the server lock or Chromium's event callback.
+	go page.Start()
 	return page
 }
 
@@ -114,17 +133,17 @@ func (server *headlessServer) browserTools(chat *serverChat) agent.PanelToolHand
 					server.mu.Unlock()
 					return agent.PanelToolResult{}, err
 				}
-				page = server.addBrowserLocked(chat, browser.Info{URL: address, Adaptive: true})
+				page = server.addBrowserLocked(chat, browser.Info{URL: address, Adaptive: true}, "")
 			case "select":
 			case "close":
 				if page == nil {
 					server.mu.Unlock()
 					return agent.PanelToolResult{}, fmt.Errorf("Unknown browser tab")
 				}
-				page.Close()
-				chat.tabs = append(chat.tabs[:index], chat.tabs[index+1:]...)
+				closed := server.detachTabLocked(chat, index)
 				server.scheduleSaveLocked()
 				server.mu.Unlock()
+				closed.close()
 				return agent.PanelToolResult{Text: "Browser tab closed."}, nil
 			default:
 				server.mu.Unlock()
@@ -160,9 +179,9 @@ type serverTerminal struct {
 	screen  vt10x.Terminal
 }
 
-func newServerTerminal(parent context.Context, dir string) (*serverTerminal, error) {
+func newServerTerminal(parent context.Context, dir string, host terminal.NativeHost) (*serverTerminal, error) {
 	ctx, cancel := context.WithCancel(parent)
-	file, err := terminal.NewTerminalProcess(ctx, dir)
+	file, err := terminal.NewTerminalProcess(ctx, dir, host)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -361,17 +380,28 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 				data, _ := json.Marshal(map[string]any{"terminals": list})
 				return agent.PanelToolResult{Text: string(data)}, nil
 			case "open":
-				dir := server.root
+				dir, revision := server.root, server.terminalRevision
+				parent := platform.WithWorkspaceMode(server.ctx, server.approvalMode == "yolo")
+				host := mobileTerminalHost(server.bridge, ctx)
+				server.mu.Unlock()
 				var err error
 				if args.Cwd != "" {
-					dir, err = agent.WorkspacePath(server.root, args.Cwd)
+					dir, err = agent.WorkspacePath(dir, args.Cwd)
 				}
 				if err == nil {
-					terminal, err = newServerTerminal(server.ctx, dir)
+					err = ctx.Err()
+				}
+				if err == nil {
+					terminal, err = newServerTerminal(parent, dir, host)
 				}
 				if err != nil {
-					server.mu.Unlock()
 					return agent.PanelToolResult{}, err
+				}
+				server.mu.Lock()
+				if server.closing || server.ctx.Err() != nil || ctx.Err() != nil || revision != server.terminalRevision {
+					server.mu.Unlock()
+					terminal.close()
+					return agent.PanelToolResult{}, fmt.Errorf("Terminal startup was cancelled or permissions changed")
 				}
 				chat.tabs = append(chat.tabs, &serverTab{terminal: terminal})
 			case "select":
@@ -380,9 +410,9 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 					server.mu.Unlock()
 					return agent.PanelToolResult{}, fmt.Errorf("Unknown terminal")
 				}
-				terminal.close()
-				chat.tabs = append(chat.tabs[:index], chat.tabs[index+1:]...)
+				server.detachTabLocked(chat, index)
 				server.mu.Unlock()
+				terminal.close()
 				return agent.PanelToolResult{Text: "Terminal closed."}, nil
 			default:
 				server.mu.Unlock()

@@ -23,11 +23,29 @@ import org.json.JSONObject
 
 data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean)
 
+/** A file picked for the next message: sending, then the engine's copy (ready) or a problem. */
+data class Attachment(
+    val key: String, val uri: android.net.Uri, val name: String, val size: Long, val image: Boolean,
+    val folder: String, // the workspace it was sent to
+    val ready: JSONObject? = null, val problem: String? = null,
+) {
+    val sending get() = ready == null && problem == null
+
+    /** Whether a message to this workspace can carry it (the engine's resolved path counts too). */
+    fun belongsTo(workspace: String) = workspace == folder || workspace == ready?.optString("workspace")
+}
+
+private const val MAX_ATTACHMENT = 64L shl 20
+
+/** The versions of a message (its wordings) or of its reply (its retries); current is 1-based. */
+data class MessageVersions(val anchor: String, val current: Int, val total: Int)
+
 data class Item(
     val kind: String, val text: String, val images: Int,
     val tool: String, val verb: String, val target: String, val mono: Boolean,
     val meta: String, val tone: String, val state: String,
     val args: String, val diff: String, val millis: Long, val failed: String,
+    val id: String = "", val versions: MessageVersions? = null,
 ) {
     companion object {
         fun from(o: JSONObject) = Item(
@@ -35,6 +53,7 @@ data class Item(
             o.optString("tool"), o.optString("verb"), o.optString("target"), o.optBoolean("mono"),
             o.optString("meta"), o.optString("tone"), o.optString("state", "done"),
             o.optString("args"), o.optString("diff"), o.optLong("millis"), o.optString("failed"),
+            o.optString("id"), o.optJSONObject("versions")?.let { MessageVersions(it.optString("anchor"), it.optInt("current"), it.optInt("total")) },
         )
     }
 }
@@ -95,7 +114,7 @@ data class Meta(
     val chat: String, val title: String, val running: Boolean, val label: String, val mark: String,
     val queue: List<String>, val steer: List<String>, val approval: Approval?, val question: Questions?,
     val model: String, val effort: String, val used: Int, val window: Int,
-    val todo: List<Task>, val tier: String = "",
+    val todo: List<Task>, val tier: String = "", val contextStatus: String = "",
 ) {
     companion object {
         fun from(o: JSONObject) = Meta(
@@ -109,7 +128,7 @@ data class Meta(
                     array!!.getJSONObject(i).let { Task(it.optString("id"), it.optString("text"), it.optString("status"), it.optLong("started"), it.optLong("completed")) }
                 }
             },
-            o.optString("tier"),
+            o.optString("tier"), o.optString("contextStatus"),
         )
     }
 }
@@ -118,7 +137,9 @@ private fun strings(array: JSONArray?) = (0 until (array?.length() ?: 0)).map { 
 
 sealed interface Screen {
     data object Launch : Screen
+    data object Mode : Screen // where 1loop works: server, desktop or this phone
     data object Servers : Screen
+    data object LocalSetup : Screen
     data class Pair(val server: Server, val pairing: String, val consoleCode: String = "") : Screen
     data object Chat : Screen
 }
@@ -138,6 +159,15 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var foreground = true
 
     var screen by mutableStateOf<Screen>(Screen.Launch)
+    var target by mutableStateOf<ExecutionTarget?>(null)
+    val local = AndroidLocalRuntime.get(context)
+    var starting by mutableStateOf(false) // the local engine is starting
+    private var localStartGeneration = -1L
+    var messageVersions by mutableStateOf(false) // the computer can edit, retry and switch versions
+    var attachmentsEnabled by mutableStateOf(false) // the computer takes files with a message
+    val attachments = mutableStateListOf<Attachment>()
+    private val uploads = mutableMapOf<String, Job>()
+    var connectionsOpen by mutableStateOf(false) // this phone's connections (ConnectionsSheet)
     val servers = mutableStateListOf<Server>()
     val online = mutableStateListOf<String>() // keys of the servers that answered the last scan
     var scanning by mutableStateOf(false)
@@ -169,9 +199,31 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var busy by mutableStateOf(false)
 
     private var events: Job? = null
+    @Volatile private var connectionGeneration = 0L // Address equality cannot distinguish reconnects.
+
+    private suspend fun <T> onConnection(target: Server, generation: Long, call: (Api) -> T): T {
+        if (generation != connectionGeneration) throw CancellationException("Connection changed")
+        val result = withContext(Dispatchers.IO) { call(Api(target)) }
+        if (generation != connectionGeneration) throw CancellationException("Connection changed")
+        return result
+    }
+
+    private fun actionFailed(generation: Long, failure: Throwable) {
+        if (failure is CancellationException) throw failure
+        if (generation == connectionGeneration) problem = failure.message
+    }
 
     init {
         servers.addAll(saved())
+        // The local engine stopped (from its notification, or on its own): back to its setup.
+        scope.launch {
+            local.activeServer.collect { active ->
+                if (active == null && server?.localPhone == true && screen == Screen.Chat) {
+                    disconnect()
+                    screen = Screen.LocalSetup
+                }
+            }
+        }
     }
 
     // -- known computers --------------------------------------------------
@@ -202,14 +254,100 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         store()
     }
 
-    /** After the launch animation: back to the last computer, or the list. */
+    /** After the launch animation: back to the last place 1loop worked, or the choice. */
     fun started() {
         val last = prefs.getString("last", null)
         val known = servers.firstOrNull { it.key == last && it.paired }
+        // Before the choice existed, the last computer told it.
+        val saved = prefs.getString("target", null)?.let { name -> ExecutionTarget.entries.firstOrNull { it.name == name } }
+            ?: known?.let { if (it.scheme == "http") ExecutionTarget.RemoteDesktop else ExecutionTarget.RemoteServer }
+        if (saved == null) {
+            screen = Screen.Mode
+            return
+        }
+        target = saved
+        if (saved == ExecutionTarget.LocalPhone) {
+            local.activeServer.value?.let { connect(it) } ?: run { screen = Screen.Mode }
+            return
+        }
         if (known != null) connect(known) else {
             screen = Screen.Servers
             scan()
         }
+    }
+
+    // -- where 1loop works -----------------------------------------------------
+
+    fun chooseTarget(chosen: ExecutionTarget) {
+        connectionGeneration++
+        target = chosen
+        problem = null
+        prefs.edit { putString("target", chosen.name) }
+        when (chosen) {
+            ExecutionTarget.LocalPhone -> openLocal()
+            ExecutionTarget.RemoteDesktop -> { screen = Screen.Servers; scan() }
+            ExecutionTarget.RemoteServer -> screen = Screen.Servers
+        }
+    }
+
+    /** Back to the choice; a local engine keeps running until stopped from its notification. */
+    fun switchTarget() {
+        disconnect()
+        problem = null
+        screen = Screen.Mode
+    }
+
+    /** The running engine, or a start when nothing is missing, or the setup. */
+    private fun openLocal() {
+        local.activeServer.value?.let { return connect(it) }
+        screen = Screen.LocalSetup
+        val status = local.status.value
+        if (status.ready) startLocal()
+    }
+
+    fun startLocal() {
+        val generation = connectionGeneration
+        if (starting && localStartGeneration == generation) return
+        localStartGeneration = generation
+        starting = true
+        problem = null
+        scope.launch {
+            try {
+                val active = local.start()
+                if (generation == connectionGeneration) connect(active)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                actionFailed(generation, e)
+            } finally {
+                if (localStartGeneration == generation) starting = false
+            }
+        }
+    }
+
+    /** Ends a pending Claude sign-in; called when its editor is closed on purpose. */
+    fun cancelClaudeLogin() {
+        val target = server?.takeIf { it.localPhone } ?: return
+        scope.launch { runCatching { withContext(Dispatchers.IO) { Api(target).post("/api/local/claude/login", JSONObject().put("cancel", true)) } } }
+    }
+
+    fun prepareLocal(step: String) {
+        problem = null
+        // A failure shows on its step (LocalStatus); nothing else to report here.
+        scope.launch { try { local.prepare(step) } catch (e: CancellationException) { throw e } catch (_: Exception) {} }
+    }
+
+    // Local ADB: LocalAdbState carries the problem of a failed action.
+    fun setAdbAllowed(allowed: Boolean) {
+        scope.launch { try { local.setAdbAllowed(allowed) } catch (e: CancellationException) { throw e } catch (_: Exception) {} }
+    }
+
+    fun pairAdb(port: Int, code: String) {
+        scope.launch { try { local.pairAdb(port, code) } catch (e: CancellationException) { throw e } catch (_: Exception) {} }
+    }
+
+    fun connectAdb(port: Int) {
+        scope.launch { try { local.connectAdb(port) } catch (e: CancellationException) { throw e } catch (_: Exception) {} }
     }
 
     fun scan() {
@@ -229,7 +367,9 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     fun addManually(address: String, fingerprint: String = "") {
+        val generation = connectionGeneration
         scope.launch {
+            if (generation != connectionGeneration) return@launch
             problem = null
             try {
                 val text = address.trim().trimEnd('/').let { if (it.contains("://")) it else "https://$it" }
@@ -239,12 +379,12 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 require(pin.isEmpty() || (url.protocol == "https" && pin.matches(Regex("[0-9a-f]{64}")))) { "Enter the complete SHA-256 fingerprint from the server console." }
                 val port = if (url.port > 0) url.port else if (address.trim().contains("://")) url.defaultPort else DEFAULT_PORT
                 val probe = Server(url.host, url.host, port, scheme = url.protocol, fingerprint = pin)
-                val info = withContext(Dispatchers.IO) { Api(probe).get("/api/info") }
+                val info = onConnection(probe, generation) { it.get("/api/info") }
                 val target = probe.copy(name = info.optString("name", url.host))
                 upsert(target)
                 online.add(target.key)
                 choose(servers.first { it.key == target.key })
-            } catch (e: Exception) { problem = e.message }
+            } catch (e: Exception) { actionFailed(generation, e) }
         }
     }
 
@@ -259,34 +399,38 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         Settings.Global.getString(context.contentResolver, "device_name") ?: "${Build.MANUFACTURER} ${Build.MODEL}"
 
     fun pair(server: Server) {
+        val generation = connectionGeneration
         scope.launch {
+            if (generation != connectionGeneration) return@launch
             busy = true
             try {
-                val reply = withContext(Dispatchers.IO) { Api(server).post("/api/pair", JSONObject().put("device", deviceName())) }
+                val reply = onConnection(server, generation) { it.post("/api/pair", JSONObject().put("device", deviceName())) }
                 screen = Screen.Pair(server, reply.getString("pairing"), reply.optString("code").takeIf { reply.optBoolean("console") }.orEmpty())
             } catch (e: Exception) {
-                problem = e.message
+                actionFailed(generation, e)
             } finally {
-                busy = false
+                if (generation == connectionGeneration) busy = false
             }
         }
     }
 
     fun confirm(pair: Screen.Pair, code: String) {
+        val generation = connectionGeneration
         scope.launch {
+            if (generation != connectionGeneration) return@launch
             busy = true
             problem = null
             try {
-                val reply = withContext(Dispatchers.IO) {
-                    Api(pair.server).post("/api/pair/confirm", JSONObject().put("pairing", pair.pairing).put("code", code))
+                val reply = onConnection(pair.server, generation) {
+                    it.post("/api/pair/confirm", JSONObject().put("pairing", pair.pairing).put("code", code))
                 }
                 val server = pair.server.copy(token = reply.getString("token"))
                 upsert(server)
                 connect(server)
             } catch (e: Exception) {
-                problem = e.message
+                actionFailed(generation, e)
             } finally {
-                busy = false
+                if (generation == connectionGeneration) busy = false
             }
         }
     }
@@ -294,9 +438,29 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     // -- connection ----------------------------------------------------------
 
     fun connect(target: Server) {
+        clearAttachments() // picked for the previous target
+        connectionsOpen = false
         events?.cancel()
+        val generation = ++connectionGeneration
         server = target
         connected = false
+        busy = false
+        approvalMode = "approval"
+        autoMode = false
+        loadingEarlier = false
+        scrolls.clear()
+        projects = emptyList()
+        workspace = ""
+        models.clear()
+        accounts.clear()
+        limits.clear()
+        running.clear()
+        defaultModel = ""
+        defaultEffort = ""
+        defaultTier = ""
+        defaultWindow = 0
+        messageVersions = false
+        attachmentsEnabled = false
         chats.clear()
         items.clear()
         meta = null
@@ -306,19 +470,32 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         prefs.edit { putString("last", target.key) }
         screen = Screen.Chat
         events = scope.launch {
+            val eventScope = this
             var wait = 500L
             while (true) {
                 try {
                     Api(target).events(
                         onOpen = {
                             wait = 500L
-                            scope.launch { connected = true; refresh() }
+                            eventScope.launch(Dispatchers.Main) {
+                                if (generation == connectionGeneration) { connected = true; refresh(target, generation) }
+                            }
                         },
-                        onEvent = { name, data -> scope.launch { handle(name, data) } },
+                        onEvent = { name, data -> eventScope.launch(Dispatchers.Main) {
+                            if (generation == connectionGeneration) handle(name, data)
+                        } },
                     )
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: ApiError) {
+                    if (generation != connectionGeneration) return@launch
+                    if (e.status == 401 && target.localPhone) { // the local engine restarted with a new token
+                        withContext(Dispatchers.Main) {
+                            disconnect()
+                            openLocal()
+                        }
+                        return@launch
+                    }
                     if (e.status == 401) { // the computer removed this phone
                         withContext(Dispatchers.Main) {
                             forget(target)
@@ -330,6 +507,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                     }
                 } catch (_: Exception) {
                 }
+                if (generation != connectionGeneration) return@launch
                 connected = false
                 delay(wait)
                 wait = (wait * 2).coerceAtMost(8000)
@@ -338,35 +516,47 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     fun leave() {
-        events?.cancel()
-        events = null
-        connected = false
-        prefs.edit { remove("last") }
+        disconnect()
         screen = Screen.Servers
         scan()
     }
 
-    private suspend fun refresh() {
-        val target = server ?: return
-        runCatching {
-            val state = withContext(Dispatchers.IO) { Api(target).get("/api/state") }
+    private fun disconnect() {
+        connectionGeneration++
+        server = null
+        busy = false
+        scrolls.clear()
+        clearAttachments()
+        connectionsOpen = false // this target's sheet; also when the local engine stops
+        events?.cancel()
+        events = null
+        connected = false
+        prefs.edit { remove("last") }
+    }
+
+    private suspend fun refresh(target: Server, generation: Long) {
+        try {
+            val state = onConnection(target, generation) { it.get("/api/state") }
             chats.clear()
             chats.addAll(parseChats(state.optJSONArray("chats")))
             projects = strings(state.optJSONArray("projects"))
             workspace = state.optString("workspace")
             state.optJSONObject("settings")?.let { applySettings(it) }
             if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull()?.id
-            current?.let { load(it) }
-        }
+            current?.let { load(it, target, generation) }
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) { }
     }
 
     private fun parseChats(array: JSONArray?) = (0 until (array?.length() ?: 0)).map { i ->
         array!!.getJSONObject(i).let { ChatSummary(it.getString("id"), it.optString("title"), it.optString("workspace"), it.optBoolean("running")) }
     }
 
-    private suspend fun load(id: String) {
-        val target = server ?: return
-        val chat = runCatching { withContext(Dispatchers.IO) { Api(target).get("/api/chats/$id?limit=$PAGE") } }.getOrNull() ?: return
+    private suspend fun load(id: String, target: Server, generation: Long) {
+        val chat = try { onConnection(target, generation) { it.get("/api/chats/$id?limit=$PAGE") } }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (_: Exception) { return }
         if (current != id) return
         val array = chat.optJSONArray("items")
         items.clear()
@@ -378,19 +568,24 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     /** Loads the page before the first item shown; returns how many came. */
     suspend fun loadEarlier(): Int {
         val target = server ?: return 0
+        val generation = connectionGeneration
         val id = current ?: return 0
         if (firstItem <= 0 || loadingEarlier) return 0
         loadingEarlier = true
         try {
-            val chat = runCatching { withContext(Dispatchers.IO) { Api(target).get("/api/chats/$id?limit=$PAGE&before=$firstItem") } }.getOrNull() ?: return 0
+            val chat = onConnection(target, generation) { it.get("/api/chats/$id?limit=$PAGE&before=$firstItem") }
             if (current != id) return 0
             val array = chat.optJSONArray("items") ?: return 0
             val earlier = (0 until array.length()).map { Item.from(array.getJSONObject(it)) }
             items.addAll(0, earlier)
             firstItem = chat.optInt("first", 0)
             return earlier.size
+        } catch (cancelled: CancellationException) {
+            throw cancelled
+        } catch (_: Exception) {
+            return 0
         } finally {
-            loadingEarlier = false
+            if (generation == connectionGeneration) loadingEarlier = false
         }
     }
 
@@ -399,10 +594,14 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         items.clear()
         firstItem = 0
         meta = null
-        if (id != null) scope.launch { load(id) }
+        val target = server ?: return
+        val generation = connectionGeneration
+        if (id != null) scope.launch { load(id, target, generation) }
     }
 
     private fun applySettings(settings: JSONObject) {
+        messageVersions = settings.optBoolean("messageVersions")
+        attachmentsEnabled = settings.optBoolean("attachments")
         val array = settings.optJSONArray("models")
         models.clear()
         for (modelIndex in 0 until (array?.length() ?: 0)) {
@@ -441,8 +640,10 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     private fun applyMeta(m: Meta) {
         val wasRunning = running.put(m.chat, m.running)
-        if (!foreground && wasRunning == true && !m.running) notifier.show(m.chat, m.title, "Done.")
-        if (!foreground) {
+        // On this phone, LocalRuntimeService notifies: it runs even without the app.
+        val notify = !foreground && server?.localPhone != true
+        if (notify && wasRunning == true && !m.running) notifier.show(m.chat, m.title, "Done.")
+        if (notify) {
             if (m.approval != null && approvals[m.chat]?.id != m.approval.id) notifier.show(m.chat, m.title, "Waiting for your approval: " + m.approval.title)
             if (m.question != null && questions[m.chat]?.id != m.question.id) notifier.show(m.chat, m.title, m.question.questions.firstOrNull()?.text ?: "1loop has a question")
         }
@@ -452,6 +653,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     private fun handle(name: String, data: JSONObject) {
+        val target = server ?: return
+        val generation = connectionGeneration
         when (name) {
             "chats" -> {
                 val list = parseChats(data.optJSONArray("chats"))
@@ -466,12 +669,12 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                     index < 0 -> {} // an item above the loaded page
                     index < items.size -> items[index] = item
                     index == items.size -> items.add(item)
-                    else -> current?.let { scope.launch { load(it) } } // missed some: reload
+                    else -> current?.let { scope.launch { load(it, target, generation) } } // missed some: reload
                 }
             }
             "meta" -> applyMeta(Meta.from(data))
             "replace" -> if (data.optString("chat") == current) {
-                current?.let { scope.launch { load(it) } }
+                current?.let { scope.launch { load(it, target, generation) } }
             }
             "settings" -> applySettings(data)
         }
@@ -480,23 +683,34 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     // -- actions -------------------------------------------------------------
 
     fun send(text: String, mode: String = "send", project: String? = null) {
+        val generation = connectionGeneration
         val target = server ?: return
+        // What this message carries, as it is now: files added meanwhile stay for the next one.
+        val sent = attachments.filter { it.ready != null }
+        val body = JSONObject().put("chat", current.orEmpty()).put("text", text).put("mode", mode)
+            .put("workspace", project ?: workspace)
+        if (sent.isNotEmpty()) body.put("attachments", JSONArray(sent.map { it.ready }))
+        problem = null
         scope.launch {
-            problem = null
             try {
-                val body = JSONObject().put("chat", current.orEmpty()).put("text", text).put("mode", mode)
-                    .put("workspace", project ?: workspace)
-                val reply = withContext(Dispatchers.IO) { Api(target).post("/api/send", body) }
+                val reply = onConnection(target, generation) { it.post("/api/send", body) }
+                if (generation != connectionGeneration) return@launch // another target since: nothing of this one to touch
+                val keys = sent.map { it.key }.toSet()
+                attachments.removeAll { it.key in keys }
                 val id = reply.optString("chat")
                 if (current == null && id.isNotEmpty()) open(id)
+            } catch (e: CancellationException) {
+                throw e
             } catch (e: Exception) {
-                problem = e.message
+                actionFailed(generation, e)
             }
         }
     }
 
     fun setModel(label: String? = null, effort: String? = null, tier: String? = null) {
+        val generation = connectionGeneration
         val target = server ?: return
+        val chat = current.orEmpty()
         // Shown at once; the computer confirms through its events.
         if (current == null) {
             label?.let { defaultModel = it }
@@ -505,18 +719,19 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         } else meta = meta?.let { it.copy(model = label ?: it.model, effort = effort ?: it.effort, tier = tier ?: it.tier) }
         scope.launch {
             runCatching {
-                val body = JSONObject().put("chat", current.orEmpty()).put("label", label.orEmpty()).put("effort", effort.orEmpty())
+                val body = JSONObject().put("chat", chat).put("label", label.orEmpty()).put("effort", effort.orEmpty())
                 tier?.let { body.put("tier", it) }
-                withContext(Dispatchers.IO) { Api(target).post("/api/model", body) }
-            }.onFailure { problem = it.message }
+                onConnection(target, generation) { it.post("/api/model", body) }
+            }.onFailure { actionFailed(generation, it) }
         }
     }
 
     /** Reads every account's usage windows; a computer older than this app has none to give. */
     fun loadLimits() {
+        val generation = connectionGeneration
         val target = server ?: return
         scope.launch {
-            val reply = runCatching { withContext(Dispatchers.IO) { Api(target).get("/api/limits") } }.getOrNull() ?: return@launch
+            val reply = runCatching { onConnection(target, generation) { it.get("/api/limits") } }.onFailure { if (it is CancellationException) throw it }.getOrNull() ?: return@launch
             val array = reply.optJSONArray("accounts") ?: return@launch
             for (i in 0 until array.length()) {
                 val account = array.getJSONObject(i)
@@ -529,71 +744,178 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     fun chooseApprovalMode(mode: String) {
+        val generation = connectionGeneration
         val target = server ?: return
         approvalMode = mode
         scope.launch {
-            runCatching { withContext(Dispatchers.IO) { Api(target).post("/api/approval-mode", JSONObject().put("mode", mode)) } }
-                .onFailure { problem = it.message }
+            runCatching { onConnection(target, generation) { it.post("/api/approval-mode", JSONObject().put("mode", mode)) } }
+                .onFailure { actionFailed(generation, it) }
         }
     }
 
-    fun stop() {
+    // Versions of messages. An edit's index is taken when its sheet opens (firstItem + shown
+    // index): a page loaded above meanwhile must not move it to another message.
+    fun editMessage(absoluteIndex: Int, text: String) =
+        chatAction("/message", JSONObject().put("index", absoluteIndex).put("action", "edit").put("text", text))
+
+    fun retryMessage(index: Int) = chatAction("/message", JSONObject().put("index", firstItem + index).put("action", "retry"))
+
+    fun switchVersion(anchor: String, delta: Int) = chatAction("/version", JSONObject().put("anchor", anchor).put("delta", delta))
+
+    /** The chat reloads through the "replace" event; a refusal (a reply under way) shows. */
+    private fun chatAction(path: String, body: JSONObject) {
+        val generation = connectionGeneration
         val target = server ?: return
         val id = current ?: return
-        scope.launch { runCatching { withContext(Dispatchers.IO) { Api(target).post("/api/stop", JSONObject().put("chat", id)) } } }
+        problem = null
+        scope.launch {
+            try {
+                onConnection(target, generation) { it.post("/api/chats/$id$path", body) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                actionFailed(generation, e) // not on a target chosen since
+            }
+        }
+    }
+
+    // -- attachments: sent to the workspace as soon as picked ------------------
+
+    fun attach(uris: List<android.net.Uri>, project: String?) {
+        val generation = connectionGeneration
+        val target = server ?: return
+        // The open chat's project, or the one a new chat starts in.
+        val folder = project ?: chats.firstOrNull { it.id == current }?.workspace ?: workspace
+        for (uri in uris) {
+            var name = "file"
+            var size = -1L
+            runCatching {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = cursor.getString(it) ?: name }
+                        cursor.getColumnIndex(android.provider.OpenableColumns.SIZE).takeIf { it >= 0 && !cursor.isNull(it) }?.let { size = cursor.getLong(it) }
+                    }
+                }
+            }
+            val key = java.util.UUID.randomUUID().toString()
+            val image = context.contentResolver.getType(uri)?.startsWith("image/") == true
+            if (size > MAX_ATTACHMENT) {
+                attachments.add(Attachment(key, uri, name, size, image, folder, problem = "Larger than 64 MiB"))
+                continue
+            }
+            attachments.add(Attachment(key, uri, name, size, image, folder))
+            uploads[key] = scope.launch {
+                var reply: JSONObject? = null
+                var failure: String? = null
+                try {
+                    val path = "/api/attachments?workspace=" + java.net.URLEncoder.encode(folder, "UTF-8") + "&name=" + java.net.URLEncoder.encode(name, "UTF-8")
+                    reply = onConnection(target, generation) { api ->
+                        context.contentResolver.openInputStream(uri)?.use { api.upload(path, it, size) } ?: throw ApiError("Cannot read this file.")
+                    }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    failure = e.message ?: "Not sent"
+                }
+                uploads.remove(key)
+                val index = attachments.indexOfFirst { it.key == key }
+                if (index >= 0) attachments[index] = attachments[index].copy(ready = reply, problem = failure)
+            }
+        }
+    }
+
+    /** Takes it out of the next message; the copy already in the workspace stays. */
+    fun removeAttachment(key: String) {
+        uploads.remove(key)?.cancel()
+        attachments.removeAll { it.key == key }
+    }
+
+    /** Leaves out the files sent to another workspace than the message's: it would refuse them. */
+    fun retainAttachments(workspace: String) {
+        attachments.filter { !it.belongsTo(workspace) }.forEach { removeAttachment(it.key) }
+    }
+
+    fun clearAttachments() {
+        uploads.values.forEach { it.cancel() }
+        uploads.clear()
+        attachments.clear()
+    }
+
+    fun stop() {
+        val generation = connectionGeneration
+        val target = server ?: return
+        val id = current ?: return
+        scope.launch { runCatching { onConnection(target, generation) { it.post("/api/stop", JSONObject().put("chat", id)) } } }
     }
 
     // -- the chat's side panel ------------------------------------------------
 
     /** The panel's tabs on the computer; null when it cannot be reached. */
     suspend fun panelTabs(chat: String): List<PanelTab>? {
+        val generation = connectionGeneration
         val target = server ?: return null
         return runCatching {
-            val reply = withContext(Dispatchers.IO) { Api(target).get("/api/chats/$chat/panel") }
+            val reply = onConnection(target, generation) { it.get("/api/chats/$chat/panel") }
             val array = reply.optJSONArray("tabs")
             (0 until (array?.length() ?: 0)).map { i ->
                 array!!.getJSONObject(i).let { PanelTab(it.optString("key"), it.optString("kind"), it.optString("title"), it.optString("url"), it.optInt("index")) }
             }
-        }.getOrNull()
+        }.onFailure { if (it is CancellationException) throw it }.getOrNull()
     }
 
     suspend fun panelTab(chat: String, key: String): JSONObject? {
+        val generation = connectionGeneration
         val target = server ?: return null
-        return runCatching { withContext(Dispatchers.IO) { Api(target).get("/api/chats/$chat/panel/$key") } }.getOrNull()
+        return runCatching { onConnection(target, generation) { it.get("/api/chats/$chat/panel/$key") } }.onFailure { if (it is CancellationException) throw it }.getOrNull()
     }
 
     suspend fun panelScreen(chat: String, key: String): ByteArray? {
+        val generation = connectionGeneration
         val target = server ?: return null
-        return runCatching { withContext(Dispatchers.IO) { Api(target).bytes("/api/chats/$chat/panel/$key/screen") } }.getOrNull()
+        return runCatching { onConnection(target, generation) { it.bytes("/api/chats/$chat/panel/$key/screen") } }.onFailure { if (it is CancellationException) throw it }.getOrNull()
     }
 
     /** Input for a browser or a terminal tab; see remote_panel.go. */
     fun panelInput(chat: String, key: String, action: String, text: String = "", x: Float = 0f, y: Float = 0f, dy: Float = 0f) {
+        val generation = connectionGeneration
         val target = server ?: return
         scope.launch {
-            inputs.withLock { sendInput(target, chat, key, action, text, x, y, dy) }
+            inputs.withLock { sendInput(target, generation, chat, key, action, text, x, y, dy) }
         }
     }
 
     /** Follows a browser tab: its frames and its state, until cancelled. */
     suspend fun panelStream(chat: String, key: String, onMessage: suspend (Char, ByteArray) -> Unit) {
+        val generation = connectionGeneration
         val target = server ?: return
-        Api(target).messages("/api/chats/$chat/panel/$key/stream", onMessage)
+        Api(target).messages("/api/chats/$chat/panel/$key/stream") { kind, bytes ->
+            if (generation != connectionGeneration) throw CancellationException("Connection changed")
+            onMessage(kind, bytes)
+        }
     }
 
     // Scrolling sends a wheel per few pixels of drag: while one waits for
     // its turn, the next ones add to it instead of queuing behind it.
     private val scrolls = mutableMapOf<String, FloatArray>()
 
+    /** A panel input that answers (browser logs, JavaScript, a resize); throws when refused. */
+    suspend fun panelCall(chat: String, key: String, body: JSONObject): JSONObject {
+        val generation = connectionGeneration
+        val target = server ?: throw ApiError("Not connected.")
+        return onConnection(target, generation) { it.post("/api/chats/$chat/panel/$key/input", body) }
+    }
+
     fun panelScroll(chat: String, key: String, x: Float, y: Float, dy: Float) {
+        val generation = connectionGeneration
         val target = server ?: return
         val id = "$chat/$key"
         scrolls[id]?.let { it[2] += dy; return }
         scrolls[id] = floatArrayOf(x, y, dy)
         scope.launch {
             inputs.withLock {
+                if (generation != connectionGeneration) return@withLock
                 val wheel = scrolls.remove(id) ?: return@withLock
-                sendInput(target, chat, key, "scroll", "", wheel[0], wheel[1], wheel[2])
+                sendInput(target, generation, chat, key, "scroll", "", wheel[0], wheel[1], wheel[2])
             }
         }
     }
@@ -601,31 +923,33 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     // One at a time, in order: a tap then typing must reach the page so.
     private val inputs = Mutex()
 
-    private suspend fun sendInput(target: Server, chat: String, key: String, action: String, text: String, x: Float, y: Float, dy: Float) {
+    private suspend fun sendInput(target: Server, generation: Long, chat: String, key: String, action: String, text: String, x: Float, y: Float, dy: Float) {
         runCatching {
             val body = JSONObject().put("action", action).put("text", text).put("x", x.toDouble()).put("y", y.toDouble()).put("dy", dy.toDouble())
-            withContext(Dispatchers.IO) { Api(target).post("/api/chats/$chat/panel/$key/input", body) }
-        }.onFailure { problem = it.message }
+            onConnection(target, generation) { it.post("/api/chats/$chat/panel/$key/input", body) }
+        }.onFailure { actionFailed(generation, it) }
     }
 
     fun answer(request: Questions, answers: Map<String, String>) {
+        val generation = connectionGeneration
         val target = server ?: return
         questions.remove(request.chat)
         scope.launch {
             runCatching {
                 val body = JSONObject().put("id", request.id).put("answers", JSONObject(answers))
-                withContext(Dispatchers.IO) { Api(target).post("/api/answer", body) }
-            }.onFailure { problem = it.message }
+                onConnection(target, generation) { it.post("/api/answer", body) }
+            }.onFailure { actionFailed(generation, it) }
         }
     }
 
     fun answer(approval: Approval, allow: Boolean) {
+        val generation = connectionGeneration
         val target = server ?: return
         approvals.remove(approval.chat)
         scope.launch {
             runCatching {
-                withContext(Dispatchers.IO) { Api(target).post("/api/approve", JSONObject().put("id", approval.id).put("allow", allow)) }
-            }.onFailure { problem = it.message }
+                onConnection(target, generation) { it.post("/api/approve", JSONObject().put("id", approval.id).put("allow", allow)) }
+            }.onFailure { actionFailed(generation, it) }
         }
     }
 }

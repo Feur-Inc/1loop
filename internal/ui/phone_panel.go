@@ -14,6 +14,7 @@ package ui
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -145,7 +146,7 @@ func (server *remoteServer) panelTab(writer http.ResponseWriter, req *http.Reque
 		core.WriteJSON(writer, http.StatusOK, map[string]any{"output": text, "cwd": t.dir, "exited": exited})
 	case tab.browser != nil:
 		info := tab.browser.Snapshot()
-		core.WriteJSON(writer, http.StatusOK, map[string]any{"url": info.URL, "title": info.Title, "width": info.Width, "height": info.Height, "error": info.Error})
+		core.WriteJSON(writer, http.StatusOK, info)
 	case tab.kind == "changes":
 		root := tab.workspace
 		if root == "" {
@@ -187,11 +188,15 @@ func (server *remoteServer) panelScreen(writer http.ResponseWriter, req *http.Re
 
 func (server *remoteServer) panelInput(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
-		Action string  `json:"action"`
-		X      float64 `json:"x"`
-		Y      float64 `json:"y"`
-		DY     float64 `json:"dy"`
-		Text   string  `json:"text"`
+		Action           string  `json:"action"`
+		X                float64 `json:"x"`
+		Y                float64 `json:"y"`
+		DY               float64 `json:"dy"`
+		Text             string  `json:"text"`
+		Width, Height    int
+		Mobile, Adaptive bool
+		PixelRatio       float64
+		DX               float64
 	}
 	if err := core.ReadJSON(req, &body); err != nil {
 		core.Fail(writer, http.StatusBadRequest, "Invalid request")
@@ -205,9 +210,37 @@ func (server *remoteServer) panelInput(writer http.ResponseWriter, req *http.Req
 	var err error
 	switch {
 	case tab.terminal != nil:
-		err = terminalInput(tab.terminal, body.Action, body.Text)
+		if body.Action == "resize" {
+			if body.Width < 20 || body.Width > 400 || body.Height < 5 || body.Height > 150 {
+				core.Fail(writer, 400, "Terminal size must be 20..400 columns and 5..150 rows")
+				return
+			}
+			err = tab.terminal.file.Resize(body.Width, body.Height)
+		} else {
+			err = terminalInput(tab.terminal, body.Action, body.Text)
+		}
 	case tab.browser != nil:
-		err = remoteapi.BrowserInputFromPhone(req.Context(), tab.browser, body.Action, body.X, body.Y, body.DY, body.Text)
+		switch body.Action {
+		case "resize":
+			err = tab.browser.Resize(req.Context(), body.Width, body.Height, body.Mobile, body.Adaptive, body.PixelRatio)
+		case "logs":
+			core.WriteJSON(writer, 200, map[string]any{"logs": tab.browser.LogSnapshot(0)})
+			return
+		case "evaluate":
+			tab.browser.AddLog("command", body.Text, "JavaScript")
+			var value json.RawMessage
+			value, err = tab.browser.Evaluate(req.Context(), body.Text)
+			if err == nil {
+				tab.browser.AddLog("result", string(value), "JavaScript")
+				core.WriteJSON(writer, 200, map[string]any{"result": value})
+				return
+			}
+		case "scroll":
+			view := tab.browser.Snapshot()
+			err = tab.browser.Interact(req.Context(), "scroll", "", "", body.X*float64(view.Width), body.Y*float64(view.Height), body.DX*float64(view.Width), body.DY*float64(view.Height))
+		default:
+			err = remoteapi.BrowserInputFromPhone(req.Context(), tab.browser, body.Action, body.X, body.Y, body.DY, body.Text)
+		}
 	default:
 		err = fmt.Errorf("This tab takes no input")
 	}
@@ -240,6 +273,45 @@ func terminalInput(t *panelTerminal, action, text string) error {
 	}
 	_, err := t.file.Write([]byte(text))
 	return err
+}
+
+func (server *remoteServer) editPanel(w http.ResponseWriter, r *http.Request) {
+	var args struct{ Action, Kind, Key, URL string }
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	var chat *conversation
+	server.onUI(func() { chat = server.ui.chatByID(r.PathValue("id")) })
+	if chat == nil {
+		core.Fail(w, 404, "Chat not found")
+		return
+	}
+	kind, id := args.Kind, ""
+	if args.Action == "close" {
+		kind, id, _ = strings.Cut(args.Key, "-")
+	} else if args.Action != "open" {
+		core.Fail(w, 400, "Choose open or close")
+		return
+	}
+	var result agent.PanelToolResult
+	var err error
+	switch kind {
+	case "browser":
+		raw, _ := json.Marshal(map[string]string{"action": args.Action, "tab_id": id, "url": args.URL})
+		result, err = server.ui.browserTools(chat)(r.Context(), "browser_tabs", raw)
+	case "terminal":
+		raw, _ := json.Marshal(map[string]string{"action": args.Action, "session_id": id})
+		result, err = server.ui.terminalTools(chat)(r.Context(), "terminal_tabs", raw)
+	default:
+		core.Fail(w, 400, "Choose browser or terminal")
+		return
+	}
+	if err != nil {
+		core.Fail(w, 400, err.Error())
+		return
+	}
+	core.WriteJSON(w, 200, map[string]string{"result": result.Text})
 }
 
 func (server *remoteServer) panelStream(writer http.ResponseWriter, req *http.Request) {

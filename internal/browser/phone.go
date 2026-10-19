@@ -32,13 +32,16 @@ const (
 )
 
 type PhoneState struct {
-	Adaptive bool         `json:"adaptive"`
-	URL      string       `json:"url"`
-	Title    string       `json:"title"`
-	Loading  bool         `json:"loading"`
-	Width    int          `json:"width"`  // the page's viewport in CSS pixels,
-	Height   int          `json:"height"` // what the cursor's position is in
-	Cursor   *phoneCursor `json:"cursor,omitempty"`
+	Adaptive   bool         `json:"adaptive"`
+	Mobile     bool         `json:"mobile"`
+	Native     bool         `json:"native,omitempty"`
+	PixelRatio float64      `json:"pixelRatio"`
+	URL        string       `json:"url"`
+	Title      string       `json:"title"`
+	Loading    bool         `json:"loading"`
+	Width      int          `json:"width"`  // the page's viewport in CSS pixels,
+	Height     int          `json:"height"` // what the cursor's position is in
+	Cursor     *phoneCursor `json:"cursor,omitempty"`
 }
 
 type phoneCursor struct {
@@ -89,12 +92,15 @@ func (browser *Page) phonesWatching() bool {
 func (browser *Page) phoneStateJSON() []byte {
 	browser.mu.Lock()
 	state := PhoneState{
-		Adaptive: browser.info.Adaptive,
-		URL:      browser.info.URL,
-		Title:    browser.info.Title,
-		Loading:  browser.loading,
-		Width:    browser.info.Width,
-		Height:   browser.info.Height,
+		Adaptive:   browser.info.Adaptive,
+		Mobile:     browser.info.Mobile,
+		Native:     browser.info.Native,
+		PixelRatio: browser.info.PixelRatio,
+		URL:        browser.info.URL,
+		Title:      browser.info.Title,
+		Loading:    browser.loading,
+		Width:      browser.info.Width,
+		Height:     browser.info.Height,
 	}
 	if browser.cursorShown {
 		state.Cursor = &phoneCursor{browser.cursorX, browser.cursorY}

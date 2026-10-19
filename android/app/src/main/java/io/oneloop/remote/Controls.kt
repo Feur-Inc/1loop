@@ -149,7 +149,7 @@ fun ContextRing(used: Int, window: Int) {
     }
 }
 
-private fun tokens(n: Int) = when {
+internal fun tokens(n: Int) = when {
     n >= 1_000_000 -> String.format(Locale.ROOT, "%.1fM", n / 1e6).replace(".0M", "M")
     n >= 1000 -> "${(n + 500) / 1000}k"
     else -> "$n"

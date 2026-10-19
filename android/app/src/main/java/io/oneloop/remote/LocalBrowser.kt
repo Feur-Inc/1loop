@@ -1,0 +1,121 @@
+package io.oneloop.remote
+
+import android.annotation.SuppressLint
+import android.content.Context
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.os.Process
+import android.util.Base64
+import android.webkit.WebResourceRequest
+import android.webkit.WebView
+import android.webkit.WebViewClient
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import java.io.ByteArrayOutputStream
+import org.json.JSONObject
+
+/** Web content has no JavaScript interface to the agent, accounts, files or ADB. */
+class LocalBrowser(private val context: Context) {
+    private val pages = mutableMapOf<String, WebView>() // Main thread owns views.
+
+    suspend fun view(id: String): WebView? = withContext(Dispatchers.Main) { pages[id] }
+
+    @SuppressLint("SetJavaScriptEnabled")
+    suspend fun execute(arguments: JSONObject): JSONObject = withContext(Dispatchers.Main) {
+        val id = arguments.getString("id")
+        require(id.matches(Regex("[a-zA-Z0-9-]{1,80}"))) { "Invalid browser tab." }
+        when (arguments.getString("action")) {
+            "open" -> {
+                if (!pages.containsKey(id)) {
+                    WebView.setWebContentsDebuggingEnabled(true)
+                    val view = WebView(context)
+                    view.settings.apply {
+                        javaScriptEnabled = true
+                        domStorageEnabled = true
+                        allowFileAccess = false
+                        allowContentAccess = false
+                        mixedContentMode = android.webkit.WebSettings.MIXED_CONTENT_NEVER_ALLOW
+                        javaScriptCanOpenWindowsAutomatically = false
+                        setSupportMultipleWindows(false)
+                        setGeolocationEnabled(false)
+                        mediaPlaybackRequiresUserGesture = true
+                    }
+                    view.webViewClient = object : WebViewClient() {
+                        override fun shouldOverrideUrlLoading(webView: WebView, request: WebResourceRequest): Boolean =
+                            request.url.scheme !in listOf("https", "http", "about")
+                    }
+                    pages[id] = view
+                    size(view, arguments)
+                    view.loadUrl("about:blank#1loop-$id")
+                }
+                JSONObject().put("socket", "webview_devtools_remote_${Process.myPid()}")
+                    .put("marker", "about:blank#1loop-$id")
+            }
+            "resize" -> {
+                size(pages[id] ?: error("Browser tab is closed."), arguments)
+                JSONObject()
+            }
+            "capture" -> {
+                val view = pages[id] ?: error("Browser tab is closed.")
+                check(!arguments.optBoolean("full")) { "Full-page capture is not available in Android WebView; capture the viewport and scroll." }
+                check(view.width.toLong() * view.height <= 16_000_000) { "Viewport is too large to capture; choose smaller dimensions." }
+                val bitmap = Bitmap.createBitmap(view.width, view.height, Bitmap.Config.ARGB_8888)
+                val output = ByteArrayOutputStream()
+                try {
+                    view.draw(Canvas(bitmap))
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+                    JSONObject().put("mime", "image/png").put("data", Base64.encodeToString(output.toByteArray(), Base64.NO_WRAP))
+                } finally { bitmap.recycle() }
+            }
+            "close" -> {
+                pages.remove(id)?.let { view ->
+                    (view.parent as? android.view.ViewGroup)?.removeView(view)
+                    view.stopLoading()
+                    view.destroy()
+                }
+                JSONObject()
+            }
+            "close_all" -> {
+                close()
+                JSONObject()
+            }
+            else -> error("Unknown browser operation.")
+        }
+    }
+
+    private fun size(view: WebView, arguments: JSONObject) {
+        val width = arguments.optInt("width", 1280).coerceIn(240, 3840)
+        val height = arguments.optInt("height", 800).coerceIn(200, 2160)
+        val mobile = arguments.optBoolean("mobile")
+        val density = context.resources.displayMetrics.density
+        val pixelsWide = kotlin.math.ceil(width * density.toDouble()).toInt()
+        val pixelsHigh = kotlin.math.ceil(height * density.toDouble()).toInt()
+        view.settings.apply {
+            useWideViewPort = false
+            loadWithOverviewMode = false
+            val native = android.webkit.WebSettings.getDefaultUserAgent(context)
+            userAgentString = if (mobile) native else native
+                .replace(Regex("\\(Linux; Android[^)]*\\)"), "(X11; Linux x86_64)")
+                .replace("; wv", "").replace(" Mobile", "").replace(Regex("Version/[0-9.]+ "), "")
+        }
+        view.layoutParams = android.view.ViewGroup.LayoutParams(pixelsWide, pixelsHigh)
+        view.measure(android.view.View.MeasureSpec.makeMeasureSpec(pixelsWide, android.view.View.MeasureSpec.EXACTLY),
+            android.view.View.MeasureSpec.makeMeasureSpec(pixelsHigh, android.view.View.MeasureSpec.EXACTLY))
+        view.layout(0, 0, pixelsWide, pixelsHigh)
+    }
+
+    suspend fun close() = withContext(Dispatchers.Main) {
+        if (pages.isEmpty()) return@withContext
+        val renderers = pages.values.mapNotNull { view ->
+            if (android.os.Build.VERSION.SDK_INT >= 29) view.webViewRenderProcess else null
+        }.toSet()
+        android.webkit.CookieManager.getInstance().flush()
+        pages.values.toList().forEach { view ->
+            (view.parent as? android.view.ViewGroup)?.removeView(view)
+            view.destroy()
+        }
+        pages.clear()
+        if (android.os.Build.VERSION.SDK_INT >= 29) renderers.forEach { it.terminate() }
+        WebView.setWebContentsDebuggingEnabled(false)
+    }
+}

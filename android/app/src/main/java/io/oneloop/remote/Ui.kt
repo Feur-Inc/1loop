@@ -2,6 +2,8 @@ package io.oneloop.remote
 
 import android.content.ClipData
 import androidx.activity.compose.BackHandler
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.animateColorAsState
@@ -61,6 +63,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -83,6 +86,8 @@ import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.PasswordVisualTransformation
+import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -147,7 +152,12 @@ fun Root(app: RemoteApp) {
     Box(Modifier.fillMaxSize().background(Palette.background)) {
         Crossfade(app.screen::class, animationSpec = tween(220), label = "screen") { kind ->
             when (kind) {
+                Screen.Mode::class -> ModeScreen(app::chooseTarget)
                 Screen.Servers::class -> ServersScreen(app)
+                Screen.LocalSetup::class -> {
+                    val status by app.local.status.collectAsState()
+                    LocalSetupScreen(status, app::prepareLocal, app::startLocal, app::switchTarget, app.starting, app.problem)
+                }
                 Screen.Pair::class -> (app.screen as? Screen.Pair)?.let { PairScreen(app, it) }
                 Screen.Chat::class -> ChatScreen(app)
                 else -> Box(Modifier.fillMaxSize())
@@ -160,24 +170,35 @@ fun Root(app: RemoteApp) {
 // ---------------------------------------------------------------------------
 // Computers on the network
 
+// Remote desktop: the computers on this Wi-Fi (http); Remote server: the
+// HTTPS servers added by address.
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun ServersScreen(app: RemoteApp) {
     var adding by remember { mutableStateOf(false) }
+    val desktop = app.target != ExecutionTarget.RemoteServer
+    val shown = app.servers.filter { (it.scheme == "http") == desktop }
+    BackHandler { app.switchTarget() }
     Column(
         Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(Modifier.height(56.dp))
+        Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+            RoundButton(Icons.back, Color.Transparent, Palette.muted, description = "Back") { app.switchTarget() }
+        }
+        Spacer(Modifier.height(8.dp))
         RingMark(64.dp, intro = true)
         Spacer(Modifier.height(20.dp))
-        Text("Connect to 1loop", style = Type.headline, textAlign = TextAlign.Center)
+        Text(if (desktop) "Remote desktop" else "Remote server", style = Type.headline, textAlign = TextAlign.Center)
         Spacer(Modifier.height(6.dp))
-        Text("Pick a computer on this Wi-Fi or add an HTTPS server.", style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center)
+        Text(
+            if (desktop) "Pick a computer on this Wi-Fi." else "Add a 1loop server by its HTTPS address.",
+            style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center,
+        )
         Spacer(Modifier.height(28.dp))
         Column(Modifier.widthIn(max = 520.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            for (server in app.servers) {
+            for (server in shown) {
                 val online = server.key in app.online
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface)
@@ -186,7 +207,7 @@ fun ServersScreen(app: RemoteApp) {
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Icon(Icons.computer, null, tint = if (online) Palette.text else Palette.faint, modifier = Modifier.size(22.dp))
+                    Icon(if (desktop) Icons.computer else Icons.server, null, tint = if (online) Palette.text else Palette.faint, modifier = Modifier.size(22.dp))
                     Column(Modifier.weight(1f).padding(horizontal = 14.dp)) {
                         Text(server.name, style = Type.body.copy(fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis)
                         Text(
@@ -200,27 +221,28 @@ fun ServersScreen(app: RemoteApp) {
                     Icon(Icons.chevronRight, null, tint = Palette.faint, modifier = Modifier.size(18.dp))
                 }
             }
-            if (app.scanning) {
+            if (desktop && app.scanning) {
                 Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                     WorkRing("wait", 26.dp)
                     Spacer(Modifier.width(12.dp))
                     Text("Searching the network…", style = Type.small)
                 }
-            } else if (app.servers.isEmpty()) {
+            } else if (shown.isEmpty()) {
                 Text(
-                    "No 1loop found. Open 1loop on your computer, on the same Wi-Fi, and check Settings → Phone remote.",
+                    if (desktop) "No 1loop found. Open 1loop on your computer, on the same Wi-Fi, and check Settings → Phone remote."
+                    else "No server yet. Add one by its address.",
                     style = Type.small, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
                 )
             }
-            if (app.servers.any { it.paired }) {
-                Text("Long press a computer to forget it.", style = Type.caption, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+            if (shown.any { it.paired }) {
+                Text(if (desktop) "Long press a computer to forget it." else "Long press a server to forget it.", style = Type.caption, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
             }
         }
         app.problem?.let { Text(it, style = Type.small.copy(color = Palette.danger), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 14.dp)) }
         Spacer(Modifier.height(24.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Pill("Search again", icon = Icons.refresh, enabled = !app.scanning) { app.scan() }
-            Pill("Add by address", icon = Icons.plus) { adding = true }
+            if (desktop) Pill("Search again", icon = Icons.refresh, enabled = !app.scanning) { app.scan() }
+            Pill("Add by address", icon = Icons.plus, primary = !desktop) { adding = true }
         }
         Spacer(Modifier.height(32.dp))
     }
@@ -252,13 +274,14 @@ private fun AddressSheet(onDone: () -> Unit, onAdd: (Pair<String, String>) -> Un
 }
 
 @Composable
-private fun Field(value: String, onChange: (String) -> Unit, placeholder: String, keyboard: KeyboardType, modifier: Modifier = Modifier) {
+fun Field(value: String, onChange: (String) -> Unit, placeholder: String, keyboard: KeyboardType, modifier: Modifier = Modifier, password: Boolean = false) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val border by animateColorAsState(if (focused) Palette.borderHot.copy(alpha = 1f) else Palette.border, tween(160), label = "border")
     BasicTextField(
         value, onChange, modifier.fillMaxWidth(), singleLine = true, textStyle = Type.body,
         cursorBrush = SolidColor(Palette.amber), keyboardOptions = KeyboardOptions(keyboardType = keyboard), interactionSource = interaction,
+        visualTransformation = if (password) PasswordVisualTransformation() else VisualTransformation.None,
         decorationBox = { inner ->
             Box(
                 Modifier.background(Palette.code, RoundedCornerShape(10.dp)).border(1.dp, border, RoundedCornerShape(10.dp))
@@ -362,6 +385,7 @@ fun ChatScreen(app: RemoteApp) {
     if (approval != null) ApprovalSheet(app, approval)
     val question = app.questions.values.firstOrNull()
     if (approval == null && question != null) QuestionSheet(app, question)
+    if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
 }
 
 @Composable
@@ -378,19 +402,35 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                 }
             }
             if (app.chats.isEmpty()) Text("No chats yet", style = Type.small.copy(color = Palette.faint), modifier = Modifier.padding(10.dp))
+            // In the scrolled part: with its guide open or the keyboard up, it
+            // must not push the footer below (Switch execution target) off screen.
+            if (app.server?.localPhone == true) {
+                val adb by app.local.adb.collectAsState()
+                LocalAdbSection(
+                    adb, onAllowedChange = app::setAdbAllowed, onPair = app::pairAdb, onConnect = app::connectAdb,
+                    onOpenSettings = app.local::openWirelessDebuggingSettings, modifier = Modifier.padding(top = 18.dp, bottom = 8.dp),
+                )
+            }
         }
+        val localPhone = app.server?.localPhone == true
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.borderSoft))
         Row(
-            Modifier.fillMaxWidth().padding(vertical = 8.dp).clip(RoundedCornerShape(8.dp)).clickable { app.leave() }
+            Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(8.dp)).clickable { if (localPhone) app.switchTarget() else app.leave() }
                 .padding(horizontal = 10.dp, vertical = 10.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Icon(Icons.computer, null, tint = Palette.muted, modifier = Modifier.size(18.dp))
+            Icon(if (localPhone) Icons.phone else Icons.computer, null, tint = Palette.muted, modifier = Modifier.size(18.dp))
             Column(Modifier.weight(1f).padding(start = 10.dp)) {
                 Text(app.server?.name.orEmpty(), style = Type.body.copy(fontSize = 14.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(if (app.connected) "Connected · change computer" else "Reconnecting…", style = Type.caption.copy(color = if (app.connected) Palette.muted else Palette.amber))
+                Text(
+                    if (!app.connected) "Reconnecting…" else if (localPhone) "Connected" else "Connected · change computer",
+                    style = Type.caption.copy(color = if (app.connected) Palette.muted else Palette.amber),
+                )
             }
         }
+        if (localPhone) NavRow("Connections", Icons.globe, selected = false) { app.connectionsOpen = true }
+        NavRow("Switch execution target", Icons.refresh, selected = false) { app.switchTarget() }
+        Spacer(Modifier.height(8.dp))
     }
 }
 
@@ -478,6 +518,7 @@ private fun Transcript(app: RemoteApp, running: Boolean, onTool: (Item) -> Unit)
     var follow by remember { mutableStateOf(true) }
     val items = app.items
     val lastUser by remember { derivedStateOf { items.indexOfLast { it.kind == "user" } } }
+    var editing by remember { mutableStateOf<Pair<Int, String>?>(null) } // a user message being edited: its index in the whole chat
     // Following the newest line until the reader scrolls up, like the desktop.
     LaunchedEffect(list) {
         snapshotFlow { list.isScrollInProgress }.collect { scrolling -> if (!scrolling) follow = !list.canScrollForward }
@@ -506,17 +547,25 @@ private fun Transcript(app: RemoteApp, running: Boolean, onTool: (Item) -> Unit)
         itemsIndexed(items, contentType = { _, item -> item.kind }) { index, item ->
             Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
                 when (item.kind) {
-                    "user" -> UserBubble(item)
+                    "user" -> UserBubble(item) {
+                        MessageActions(app, item, running) { editing = app.firstItem + index to item.text }
+                    }
                     "assistant" -> Column {
                         Markdown(item.text)
                         // One Copy per finished answer: under its last text, not while it runs.
                         val endsTurn = (index + 1 until items.size).takeWhile { items[it].kind != "user" }.none { items[it].kind == "assistant" }
                         if (endsTurn && !(running && index > lastUser)) {
-                            CopyChip { answerText(items, index) }
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                CopyChip { answerText(items, index) }
+                                MessageActions(app, item, running) { app.retryMessage(index) }
+                            }
                         }
                     }
                     "tool" -> ToolRow(item) { onTool(item) }
-                    "error" -> Text(item.text, style = Type.body.copy(color = Palette.danger))
+                    "error" -> Column {
+                        Text(item.text, style = Type.body.copy(color = Palette.danger))
+                        if (!(running && index > lastUser)) MessageActions(app, item, running) { app.retryMessage(index) }
+                    }
                     "note" -> Text(item.text, style = Type.caption, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 }
             }
@@ -531,6 +580,7 @@ private fun Transcript(app: RemoteApp, running: Boolean, onTool: (Item) -> Unit)
             }
         }
     }
+    editing?.let { (index, text) -> EditSheet(text, onSend = { app.editMessage(index, it) }) { editing = null } }
 }
 
 private fun answerText(items: List<Item>, index: Int): String {
@@ -544,7 +594,7 @@ private fun answerText(items: List<Item>, index: Int): String {
 }
 
 @Composable
-private fun UserBubble(item: Item) {
+private fun UserBubble(item: Item, actions: @Composable () -> Unit) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
         Box(Modifier.widthIn(max = 560.dp).fillMaxWidth(0.85f), contentAlignment = Alignment.CenterEnd) {
             Text(
@@ -553,7 +603,10 @@ private fun UserBubble(item: Item) {
                 modifier = Modifier.background(Palette.raised, RoundedCornerShape(18.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
             )
         }
-        if (item.text.isNotEmpty()) CopyChip { item.text }
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (item.text.isNotEmpty()) CopyChip { item.text }
+            actions()
+        }
     }
 }
 
@@ -594,6 +647,19 @@ private fun Composer(app: RemoteApp, running: Boolean) {
     var text by remember { mutableStateOf("") }
     var project by remember { mutableStateOf<String?>(null) }
     var models by remember { mutableStateOf(false) }
+    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
+        if (uris.isNotEmpty()) app.attach(uris, project)
+    }
+    // Another chat may be in another project: keep only the files its message can carry.
+    // An open chat is judged by its own workspace, once known; a new one by the project chosen.
+    val chatWorkspace = app.current?.let { id -> app.chats.firstOrNull { it.id == id }?.workspace }
+    LaunchedEffect(app.current, chatWorkspace) {
+        when {
+            app.current == null -> app.retainAttachments(project ?: app.workspace)
+            chatWorkspace != null -> app.retainAttachments(chatWorkspace)
+            // Not listed yet: nothing is removed on a guess.
+        }
+    }
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
     val border by animateColorAsState(if (focused) Palette.borderHot else Palette.border, tween(160), label = "card")
@@ -606,7 +672,10 @@ private fun Composer(app: RemoteApp, running: Boolean) {
         app.problem?.let { Text(it, style = Type.small.copy(color = Palette.danger), modifier = Modifier.padding(bottom = 6.dp)) }
         // The desktop's context line: the project and the computer.
         Row(Modifier.widthIn(max = 760.dp).fillMaxWidth().padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
-            ProjectChip(app, project) { project = it }
+            ProjectChip(app, project) {
+                if (it != project) app.clearAttachments() // sent to the other project's folder
+                project = it
+            }
             Spacer(Modifier.width(4.dp))
             Icon(Icons.computer, null, tint = Palette.muted, modifier = Modifier.size(15.dp))
             Spacer(Modifier.width(6.dp))
@@ -616,6 +685,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
             Modifier.widthIn(max = 760.dp).fillMaxWidth().background(Palette.surface, RoundedCornerShape(18.dp))
                 .border(1.dp, border, RoundedCornerShape(18.dp)).padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
         ) {
+            if (app.attachments.isNotEmpty()) AttachmentTray(app)
             BasicTextField(
                 text, { text = it }, Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp, end = 6.dp),
                 textStyle = Type.body, cursorBrush = SolidColor(Palette.amber), maxLines = 8, interactionSource = interaction,
@@ -630,21 +700,26 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 // The chips take what the buttons leave, and the buttons sit
                 // against the right edge: a long model name shrinks, not them.
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
+                    if (app.attachmentsEnabled) {
+                        RoundButton(Icons.plus, Color.Transparent, Palette.muted, size = 32.dp, iconSize = 18.dp, description = "Attach files") { picker.launch(arrayOf("*/*")) }
+                    }
                     ApprovalChip(app)
                     Spacer(Modifier.width(4.dp))
                     ModelChip(app, onClick = { models = true }, modifier = Modifier.weight(1f, fill = false))
                 }
                 val meta = app.meta
                 ContextRing(meta?.used?.takeIf { app.current != null } ?: 0, meta?.window?.takeIf { app.current != null && it > 0 } ?: app.defaultWindow)
+                // Not while a file is still on its way, or one failed and is still listed.
+                val blocked = app.attachments.any { it.sending || it.problem != null }
+                val ready = !blocked && (text.isNotBlank() || app.attachments.isNotEmpty())
                 val send = { mode: String ->
-                    val message = text.trim()
-                    if (message.isNotEmpty()) {
-                        app.send(message, mode, project)
+                    if (ready) {
+                        app.send(text.trim(), mode, project)
                         text = ""
                     }
                 }
                 if (running) {
-                    if (text.isNotBlank()) {
+                    if (ready) {
                         RoundButton(Icons.arrowTurn, Palette.raised, Palette.amber, size = 36.dp, iconSize = 18.dp, description = "Steer now") { send("steer") }
                         Spacer(Modifier.width(8.dp))
                         RoundButton(Icons.send, Palette.amber, Palette.ink, size = 36.dp, description = "Queue") { send("queue") }
@@ -652,7 +727,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                     }
                     RoundButton(Icons.close, Palette.text, Palette.ink, size = 36.dp, iconSize = 18.dp, description = "Stop") { app.stop() }
                 } else {
-                    RoundButton(Icons.send, if (text.isBlank()) Palette.raised else Palette.amber, if (text.isBlank()) Palette.faint else Palette.ink, size = 36.dp, description = "Send") { send("send") }
+                    RoundButton(Icons.send, if (ready) Palette.amber else Palette.raised, if (ready) Palette.ink else Palette.faint, size = 36.dp, description = "Send") { send("send") }
                 }
             }
         }
@@ -841,4 +916,66 @@ private fun ApprovalSheet(app: RemoteApp, approval: Approval) {
             }
         }
     }
+}
+
+// Edit (a user message) or Retry (a reply), and the arrows between versions,
+// as on the desktop; only when the computer offers them and no reply runs.
+@Composable
+private fun MessageActions(app: RemoteApp, item: Item, running: Boolean, onAction: () -> Unit) {
+    if (!app.messageVersions || running) return
+    val user = item.kind == "user"
+    ActionChip(if (user) Icons.pencil else Icons.arrowTurn, if (user) "Edit" else "Retry", onAction)
+    item.versions?.takeIf { it.total > 1 }?.let { versions ->
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Icon(
+                Icons.back, "Previous version", tint = if (versions.current > 1) Palette.muted else Palette.faint,
+                modifier = Modifier.size(28.dp).clip(RoundedCornerShape(6.dp))
+                    .clickable(enabled = versions.current > 1) { app.switchVersion(versions.anchor, -1) }.padding(6.dp),
+            )
+            Text("${versions.current}/${versions.total}", style = Type.small)
+            Icon(
+                Icons.chevronRight, "Next version", tint = if (versions.current < versions.total) Palette.muted else Palette.faint,
+                modifier = Modifier.size(28.dp).clip(RoundedCornerShape(6.dp))
+                    .clickable(enabled = versions.current < versions.total) { app.switchVersion(versions.anchor, 1) }.padding(6.dp),
+            )
+        }
+    }
+}
+
+@Composable
+private fun ActionChip(icon: ImageVector, label: String, onClick: () -> Unit) {
+    Row(
+        Modifier.clip(RoundedCornerShape(6.dp)).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 6.dp),
+        verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Icon(icon, null, tint = Palette.muted, modifier = Modifier.size(15.dp))
+        Text(label, style = Type.small)
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun EditSheet(original: String, onSend: (String) -> Unit, onDone: () -> Unit) {
+    var text by remember { mutableStateOf(original) }
+    val focus = remember { FocusRequester() }
+    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+        Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp).imePadding()) {
+            Text("Edit message", style = Type.title)
+            Spacer(Modifier.height(6.dp))
+            Text("Sends it as a new version; the earlier one stays reachable with the arrows. Its attachments are kept.", style = Type.small)
+            Spacer(Modifier.height(16.dp))
+            BasicTextField(
+                text, { text = it }, Modifier.fillMaxWidth().focusRequester(focus).background(Palette.code, RoundedCornerShape(10.dp))
+                    .border(1.dp, Palette.border, RoundedCornerShape(10.dp)).padding(horizontal = 14.dp, vertical = 12.dp),
+                textStyle = Type.body, cursorBrush = SolidColor(Palette.amber), maxLines = 10,
+            )
+            Spacer(Modifier.height(16.dp))
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                Pill("Cancel", onClick = onDone)
+                Spacer(Modifier.width(10.dp))
+                Pill("Send", primary = true, enabled = text.isNotBlank() && text != original) { onSend(text.trim()); onDone() }
+            }
+        }
+    }
+    LaunchedEffect(Unit) { focus.requestFocus() }
 }

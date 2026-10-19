@@ -1,0 +1,38 @@
+--- a/src/tracee/tracee.c
++++ b/src/tracee/tracee.c
+@@ -105,6 +105,13 @@
+ 
+ 		/* Its tracees are now free.  */
+ 		if (relative->as_ptracee.ptracer == tracee) {
++			/* An emulated tracer must retain Linux EXITKILL semantics;
++			 * otherwise its sandboxed children resume without mediation. */
++			if (relative->as_ptracee.options & PTRACE_O_EXITKILL) {
++				kill(relative->pid, SIGKILL);
++				relative->as_ptracee.ptracer = NULL;
++				continue;
++			}
+ 			/* Release the pending event, if any.  */
+ 			relative->as_ptracee.ptracer = NULL;
+ 
+--- a/src/tracee/event.c
++++ b/src/tracee/event.c
+@@ -515,7 +515,8 @@
+ 				PTRACE_O_TRACEVFORKDONE	|
+ 				PTRACE_O_TRACEEXEC	|
+ 				PTRACE_O_TRACECLONE	|
+-				PTRACE_O_TRACEEXIT);
++				PTRACE_O_TRACEEXIT	|
++				PTRACE_O_EXITKILL);
+ 
+ 			/* Distinguish some events from others and
+ 			 * automatically trace each new process with
+--- a/src/extension/ashmem_memfd/ashmem_memfd.c
++++ b/src/extension/ashmem_memfd/ashmem_memfd.c
+@@ -1,6 +1,7 @@
+ #if defined(__ANDROID__) || defined(__BIONIC__)
+ 
+ #include <stdlib.h>
++#include <string.h>
+ #include <signal.h>
+ #include <unistd.h>
+ #include <sys/syscall.h>  /* __NR_memfd_create,  */

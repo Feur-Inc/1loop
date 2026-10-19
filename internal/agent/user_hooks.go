@@ -105,7 +105,7 @@ func runHooks(ctx context.Context, event, target string, payload map[string]any)
 			}
 			run, cancel := context.WithTimeout(ctx, timeout)
 			cmd := platform.ShellCommand(run, hook.Command)
-			cmd.Dir = cwd
+			platform.WorkspaceCommand(cmd, cwd, platform.WorkspaceYOLO(ctx))
 			cmd.Env = append(os.Environ(), "ONELOOP_WORKSPACE="+cwd, "ONELOOP_HOOK_EVENT="+event)
 			cmd.Stdin = bytes.NewReader(input)
 			var stdout, stderr bytes.Buffer

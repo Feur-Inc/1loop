@@ -1,0 +1,3 @@
+#!/bin/sh
+# The private client reports its authorization link; Android opens it for the user.
+printf '%s\n' "$*"

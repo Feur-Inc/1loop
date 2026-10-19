@@ -44,6 +44,8 @@ object Icons {
     val arrowTurn = lineIcon("arrow-turn", line("M4 3.5v3.7c0 1.1.9 2 2 2h6M9.6 6.8 12 9.2l-2.4 2.4"))
     val compact = lineIcon("compact", line("M8 2.5v4M5.8 4.6 8 6.6l2.2-2M8 13.5v-4M5.8 11.4 8 9.4l2.2 2M3 8h10"))
     val computer = lineIcon("computer", line("M3.5 3.5h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z"), line("M6 13.5h4"))
+    val server = lineIcon("server", line("M3.5 2.8h9a1 1 0 0 1 1 1v2.4a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V3.8a1 1 0 0 1 1-1zM3.5 8.8h9a1 1 0 0 1 1 1v2.4a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V9.8a1 1 0 0 1 1-1z"), line("M5 5h.01M5 11h.01", 2f))
+    val phone = lineIcon("phone", line("M5.2 1.8h5.6a1 1 0 0 1 1 1v10.4a1 1 0 0 1-1 1H5.2a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"), line("M7 12h2"))
     val refresh = lineIcon("refresh", line("M12.8 7.2A4.9 4.9 0 1 0 11.4 11"), line("M13 3.6v3.6H9.4"))
 
     val panel = lineIcon("panel", line("M4.5 3h7a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"), line("M9.5 3v10"))

@@ -44,20 +44,22 @@ type Chat struct {
 }
 
 type Item struct {
-	Kind   string `json:"kind"`
-	Text   string `json:"text,omitempty"`
-	Images int    `json:"images,omitempty"`
-	Tool   string `json:"tool,omitempty"`
-	Verb   string `json:"verb,omitempty"`
-	Target string `json:"target,omitempty"`
-	Mono   bool   `json:"mono,omitempty"`
-	Meta   string `json:"meta,omitempty"`
-	Tone   string `json:"tone,omitempty"` // of the meta: muted, added, danger, amber
-	State  string `json:"state,omitempty"`
-	Args   string `json:"args,omitempty"`
-	Diff   string `json:"diff,omitempty"`
-	Millis int64  `json:"millis,omitempty"`
-	Failed string `json:"failed,omitempty"`
+	ID       string    `json:"id,omitempty"`
+	Versions *Versions `json:"versions,omitempty"`
+	Kind     string    `json:"kind"`
+	Text     string    `json:"text,omitempty"`
+	Images   int       `json:"images,omitempty"`
+	Tool     string    `json:"tool,omitempty"`
+	Verb     string    `json:"verb,omitempty"`
+	Target   string    `json:"target,omitempty"`
+	Mono     bool      `json:"mono,omitempty"`
+	Meta     string    `json:"meta,omitempty"`
+	Tone     string    `json:"tone,omitempty"` // of the meta: muted, added, danger, amber
+	State    string    `json:"state,omitempty"`
+	Args     string    `json:"args,omitempty"`
+	Diff     string    `json:"diff,omitempty"`
+	Millis   int64     `json:"millis,omitempty"`
+	Failed   string    `json:"failed,omitempty"`
 }
 
 type Meta struct {
@@ -217,4 +219,31 @@ func BrowserInputFromPhone(ctx context.Context, b *browser.Page, action string, 
 		return fmt.Errorf("Unknown browser action")
 	}
 	return nil
+}
+
+// Versions identifies either prompt wordings or retries of their response.
+type Versions struct {
+	Anchor  string `json:"anchor"`
+	Current int    `json:"current"` // one-based
+	Total   int    `json:"total"`
+}
+
+func ItemVersions(state *agent.VersionState, index int) *Versions {
+	item := state.Items[index]
+	anchor := item.ID
+	if item.Kind == "assistant" || item.Kind == "error" {
+		for i := index - 1; i >= 0; i-- {
+			if state.Items[i].Kind == "user" {
+				anchor = state.Items[i].ID + ":reply"
+				break
+			}
+		}
+	} else if item.Kind != "user" {
+		return nil
+	}
+	family, selected := state.Family(anchor)
+	if len(family) < 2 {
+		return nil
+	}
+	return &Versions{Anchor: anchor, Current: selected + 1, Total: len(family)}
 }

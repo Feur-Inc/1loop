@@ -26,9 +26,50 @@ func toolGroups() []toolGroup {
 	groups := []toolGroup{
 		{"panel_browser", "Web browser tabs in this chat's side panel: open pages, read or screenshot them, click, type, run JavaScript, resize.", browserInstructions, browserToolDefinitions},
 		{"panel_terminal", "Persistent terminals in this chat's side panel: run commands, type into programs, send keys, read output, capture the screen.", terminalInstructions, terminalToolDefinitions},
+		{"local_phone", "Control the local Android phone through the user-authorized ADB connection: inspect the screen, take screenshots, tap, swipe, type, send keys or run Android shell commands.", phoneInstructions, phoneToolDefinitions},
+		{"local_debian", "Install Debian packages needed for work in the phone's project, through the trusted installer.", func(Config) string {
+			return "\n\nUse install_packages to add necessary Debian programs; project commands should only modify the selected project. Package installation uses the trusted installer and the current approval policy. It does not authorize Android or ADB access."
+		}, packageToolDefinitions},
 	}
 	if definition := computerToolDefinition(); definition != nil {
 		groups = append(groups, toolGroup{"desktop_computer", "Control the user's real desktop (screen, mouse, keyboard, windows) once the user shares it.", computerInstructions, func() []map[string]any { return []map[string]any{definition} }})
+	}
+	return groups
+}
+
+func (cfg Config) toolAvailable(name string) bool {
+	if cfg.ToolAllowed != nil && !cfg.ToolAllowed(name) {
+		return false
+	}
+	switch groupOfTool(name) {
+	case "panel_browser":
+		return cfg.Browser != nil
+	case "panel_terminal":
+		return cfg.Terminal != nil
+	case "desktop_computer":
+		return cfg.Computer != nil
+	case "local_phone":
+		return cfg.Phone != nil
+	case "local_debian":
+		return cfg.Packages != nil
+	}
+	return true
+}
+
+func availableToolGroups(cfg Config) []toolGroup {
+	var groups []toolGroup
+	for _, group := range toolGroups() {
+		var definitions []map[string]any
+		for _, definition := range group.tools() {
+			name := definition["function"].(map[string]any)["name"].(string)
+			if cfg.toolAvailable(name) {
+				definitions = append(definitions, definition)
+			}
+		}
+		if len(definitions) > 0 {
+			group.tools = func() []map[string]any { return definitions }
+			groups = append(groups, group)
+		}
 	}
 	return groups
 }
@@ -45,10 +86,13 @@ func groupOfTool(name string) string {
 	return ""
 }
 
-func toolSearchInstructions() string {
+func toolSearchInstructions(cfg Config) string {
 	var names []string
-	for _, group := range toolGroups() {
+	for _, group := range availableToolGroups(cfg) {
 		names = append(names, group.name+" ("+group.summary+")")
+	}
+	if len(names) == 0 {
+		return ""
 	}
 	return "\n\nMore tools load on demand with tool_search: " + strings.Join(names, "; ") + ". Load a group only when the task needs it; its instructions come with it."
 }
@@ -75,11 +119,12 @@ func loadedGroups(messages []Message) map[string]bool {
 // chatTools is the tool list for the chat completions providers: the core
 // tools, the loaded groups after them (a new group only appends), and
 // tool_search while a group is left to load.
-func chatTools(messages []Message) []map[string]any {
-	tools := coreToolDefinitions()
+func chatTools(cfg Config, messages []Message) []map[string]any {
+	tools := availableCoreTools(cfg)
 	loaded := loadedGroups(messages)
+	groups := availableToolGroups(cfg)
 	var left []string
-	for _, group := range toolGroups() {
+	for _, group := range groups {
 		if !loaded[group.name] {
 			left = append(left, group.name)
 		}
@@ -93,7 +138,7 @@ func chatTools(messages []Message) []map[string]any {
 			}, "required": []string{"group"}, "additionalProperties": false},
 		}})
 	}
-	for _, group := range toolGroups() {
+	for _, group := range groups {
 		if loaded[group.name] {
 			tools = append(tools, group.tools()...)
 		}
@@ -108,7 +153,7 @@ func searchTools(cfg Config, arguments string) (string, error) {
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		return "", err
 	}
-	for _, group := range toolGroups() {
+	for _, group := range availableToolGroups(cfg) {
 		if group.name != args.Group {
 			continue
 		}
@@ -148,15 +193,19 @@ func responsesTools(cfg Config) []map[string]any {
 		}
 		return tool
 	}
-	for _, definition := range coreToolDefinitions() {
+	for _, definition := range availableCoreTools(cfg) {
 		tools = append(tools, function(definition, false))
 	}
-	for _, group := range toolGroups() {
+	groups := availableToolGroups(cfg)
+	for _, group := range groups {
 		var members []map[string]any
 		for _, definition := range group.tools() {
 			members = append(members, function(definition, true))
 		}
 		tools = append(tools, map[string]any{"type": "namespace", "name": group.name, "description": group.summary + group.instructions(cfg), "tools": members})
 	}
-	return append(tools, map[string]any{"type": "tool_search"}, map[string]any{"type": "web_search"})
+	if len(groups) > 0 {
+		tools = append(tools, map[string]any{"type": "tool_search"})
+	}
+	return append(tools, map[string]any{"type": "web_search"})
 }

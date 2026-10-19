@@ -1,0 +1,29 @@
+#!/bin/sh
+set -eu
+
+unrestricted=no
+if [ "${1:-}" = --yolo ]; then unrestricted=yes; shift; fi
+workspace=$1
+shift
+case "$workspace" in
+    /projects/*) ;;
+    *) printf '%s\n' 'The project must be inside /projects.' >&2; exit 1 ;;
+esac
+
+if [ "$unrestricted" = yes ]; then
+    cd "$workspace"
+    mkdir -p "$workspace/.tmp"
+    exec /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+        HOME="$workspace/.home" TMPDIR="$workspace/.tmp" TERM="${TERM:-xterm-256color}" COLORTERM=truecolor "$@"
+fi
+
+# Keep supervisor state and login files outside the exposed project paths.
+# PRoot emulates nested ptrace; its seccomp-trace mode cannot enforce this layer.
+exec /oneloop/libabwrap.so --backend ptrace --die-with-parent \
+    --state-dir /var/lib/1loop/sandbox-state --log /var/lib/1loop/sandbox-state/actions.log \
+    --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib --ro-bind /etc /etc \
+    --ro-bind /dev/null /dev/null --ro-bind /dev/zero /dev/zero \
+    --ro-bind /dev/random /dev/random --ro-bind /dev/urandom /dev/urandom \
+    --bind "$workspace" "$workspace" --tmpfs /tmp --proc /proc --chdir "$workspace" \
+    -- /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
+    HOME="$workspace/.home" TMPDIR=/tmp TERM="${TERM:-xterm-256color}" COLORTERM=truecolor "$@"

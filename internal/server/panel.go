@@ -124,7 +124,7 @@ func (server *headlessServer) panelScreen(w http.ResponseWriter, r *http.Request
 	}
 	var data []byte
 	if tab.browser != nil {
-		capture, err := tab.browser.Capture(r.Context(), false)
+		capture, err := tab.browser.Capture(r.Context(), r.URL.Query().Get("full") == "1")
 		if err != nil {
 			core.Fail(w, 503, err.Error())
 			return

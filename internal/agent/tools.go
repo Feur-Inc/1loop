@@ -57,9 +57,20 @@ func coreToolDefinitions() []map[string]any {
 }
 
 // allToolDefinitions are every tool, loaded or not.
-func allToolDefinitions() []map[string]any {
-	result := coreToolDefinitions()
-	for _, group := range toolGroups() {
+func availableCoreTools(cfg Config) []map[string]any {
+	var definitions []map[string]any
+	for _, definition := range coreToolDefinitions() {
+		name := definition["function"].(map[string]any)["name"].(string)
+		if cfg.toolAvailable(name) {
+			definitions = append(definitions, definition)
+		}
+	}
+	return definitions
+}
+
+func allToolDefinitions(cfg Config) []map[string]any {
+	result := availableCoreTools(cfg)
+	for _, group := range availableToolGroups(cfg) {
 		result = append(result, group.tools()...)
 	}
 	return result
@@ -219,6 +230,10 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 	var input any
 	_ = json.Unmarshal([]byte(call.Function.Arguments), &input)
 	cfg, _ := ctx.Value(configContextKey{}).(Config)
+	if !cfg.toolAvailable(call.Function.Name) {
+		outcome.Err = fmt.Errorf("This tool is unavailable or its permission was revoked")
+		return outcome
+	}
 	payload := func() map[string]any {
 		return map[string]any{"session_id": cfg.ContextKey, "cwd": root, "tool_name": call.Function.Name, "tool_input": input}
 	}
@@ -242,7 +257,25 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 			outcome.Output += "\n[The user's hook says] " + hooks.feedback
 		}
 	}()
-	if call.Function.Name == "computer_use" {
+	if call.Function.Name == "install_packages" {
+		if !backend.confirm(ctx, emit, "Install Debian packages?", call.Function.Arguments) {
+			outcome.Err = fmt.Errorf("The user denied package installation")
+		} else {
+			begin()
+			result, err := cfg.Packages(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
+			outcome.Output, outcome.Err = result.Text, err
+		}
+	} else if isPhoneTool(call.Function.Name) {
+		if call.Function.Name == "adb_shell" && !backend.confirm(ctx, emit, "Use local Android shell?", call.Function.Arguments) {
+			outcome.Err = fmt.Errorf("The user denied this Android shell action")
+		} else if !cfg.toolAvailable(call.Function.Name) {
+			outcome.Err = fmt.Errorf("Local phone permission was revoked")
+		} else {
+			begin()
+			result, err := cfg.Phone(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
+			outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
+		}
+	} else if call.Function.Name == "computer_use" {
 		handler, _ := ctx.Value(computerContextKey{}).(PanelToolHandler)
 		switch {
 		case handler == nil:
@@ -359,7 +392,7 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		timeout, cancel := context.WithTimeout(ctx, 60*time.Second)
 		defer cancel()
 		cmd := platform.ShellCommand(timeout, args.Command)
-		cmd.Dir = root
+		platform.WorkspaceCommand(cmd, root, platform.WorkspaceYOLO(ctx))
 		platform.PrepareProcess(cmd)
 		cmd.Cancel = func() error { return platform.KillProcessTree(cmd) }
 		cmd.WaitDelay = time.Second

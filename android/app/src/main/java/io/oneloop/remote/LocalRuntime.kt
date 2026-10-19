@@ -1,0 +1,39 @@
+package io.oneloop.remote
+
+import kotlinx.coroutines.flow.StateFlow
+
+enum class ExecutionTarget { RemoteServer, RemoteDesktop, LocalPhone }
+
+enum class StepState { Missing, Running, Done, Failed }
+
+data class SetupStep(
+    val id: String,
+    val title: String,
+    val detail: String,
+    val state: StepState,
+    val required: Boolean,
+    val canPrepare: Boolean = true,
+)
+
+data class LocalStatus(val ready: Boolean, val steps: List<SetupStep>)
+
+data class LocalAdbState(
+    val allowed: Boolean = false,
+    val connected: Boolean = false,
+    val busy: Boolean = false,
+    val problem: String? = null,
+    val paired: Boolean = false,
+)
+
+/** The UI uses the existing authenticated HTTP API after start succeeds. */
+interface LocalRuntime {
+    val status: StateFlow<LocalStatus>
+    val adb: StateFlow<LocalAdbState>
+    suspend fun prepare(stepId: String)
+    suspend fun start(): Server
+    fun stop()
+    suspend fun setAdbAllowed(allowed: Boolean)
+    suspend fun pairAdb(port: Int, code: String)
+    suspend fun connectAdb(port: Int)
+    fun openWirelessDebuggingSettings()
+}

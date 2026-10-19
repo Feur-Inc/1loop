@@ -3,6 +3,33 @@ plugins {
     id("org.jetbrains.kotlin.plugin.compose")
 }
 
+abstract class LocalRuntimeBuild : Exec() {
+    @get:OutputDirectory
+    abstract val outputDirectory: DirectoryProperty
+}
+
+val localRuntimeDirectory = layout.buildDirectory.dir("local-runtime")
+val buildLocalNative = tasks.register<LocalRuntimeBuild>("buildLocalNative") {
+    outputDirectory.set(localRuntimeDirectory.map { it.dir("jniLibs") })
+    inputs.file(rootProject.file("runtime/build.py"))
+    inputs.file(rootProject.file("runtime/guard.c"))
+    inputs.dir(rootProject.file("runtime/patches"))
+    val sdk = providers.environmentVariable("ANDROID_HOME").orElse("${System.getProperty("user.home")}/Android/Sdk")
+    val ndk = providers.environmentVariable("ANDROID_NDK_HOME").orElse(sdk.map { "$it/ndk/30.0.16248370" })
+    commandLine("python3", rootProject.file("runtime/build.py"), "--ndk", ndk.get(), "--output", localRuntimeDirectory.get().asFile)
+}
+val buildLocalAgent = tasks.register<LocalRuntimeBuild>("buildLocalAgent") {
+    outputDirectory.set(localRuntimeDirectory.map { it.dir("assets") })
+    inputs.files(rootProject.file("../go.mod"), rootProject.file("../go.sum"))
+    inputs.files(fileTree(rootProject.file("../internal")) { include("**/*.go") })
+    inputs.files(fileTree(rootProject.file("../cmd/1loop-server")) { include("**/*.go") })
+    workingDir(rootProject.file(".."))
+    environment("CGO_ENABLED", "0")
+    environment("GOOS", "linux")
+    environment("GOARCH", "arm64")
+    commandLine("go", "build", "-trimpath", "-ldflags=-s -w", "-o", outputDirectory.get().file("local/1loop-server").asFile, "./cmd/1loop-server")
+}
+
 android {
     namespace = "io.oneloop.remote"
     compileSdk = 37
@@ -17,11 +44,20 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
             signingConfig = signingConfigs.getByName("debug") // sideloaded builds for now
         }
     }
     buildFeatures { compose = true }
+    packaging {
+        jniLibs.useLegacyPackaging = true
+        jniLibs.keepDebugSymbols += "**/*.so"
+    }
+}
+
+androidComponents.onVariants { variant ->
+    variant.sources.jniLibs?.addGeneratedSourceDirectory(buildLocalNative, LocalRuntimeBuild::outputDirectory)
+    variant.sources.assets?.addGeneratedSourceDirectory(buildLocalAgent, LocalRuntimeBuild::outputDirectory)
 }
 
 dependencies {
@@ -32,4 +68,6 @@ dependencies {
     // Applies the compilation profiles Compose ships with at install time:
     // the interface runs compiled from the first launch, without warming up.
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
+    implementation("com.github.MuntashirAkon:libadb-android:3.1.1")
+    implementation("org.conscrypt:conscrypt-android:2.5.3")
 }

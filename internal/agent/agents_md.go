@@ -19,7 +19,15 @@ func projectInstructions(workspace string) string {
 	if workspace == "" {
 		return ""
 	}
-	file, err := os.Open(filepath.Join(workspace, "AGENTS.md"))
+	path := filepath.Join(workspace, "AGENTS.md")
+	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
+		var err error
+		path, err = WorkspacePath(workspace, path)
+		if err != nil {
+			return ""
+		}
+	}
+	file, err := os.Open(path)
 	if err != nil {
 		return ""
 	}

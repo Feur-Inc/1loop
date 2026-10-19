@@ -21,7 +21,7 @@ type windowsTerminal struct {
 	exit    int
 }
 
-func NewTerminalProcess(ctx context.Context, dir string) (Process, error) {
+func NewTerminalProcess(ctx context.Context, dir string, hosts ...NativeHost) (Process, error) {
 	path, err := exec.LookPath("powershell.exe")
 	if err != nil {
 		return nil, err

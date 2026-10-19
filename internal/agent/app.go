@@ -37,6 +37,9 @@ type Config struct {
 	Computer          PanelToolHandler                          `json:"-"`
 	Terminal          PanelToolHandler                          `json:"-"`
 	Browser           PanelToolHandler                          `json:"-"`
+	Phone             PanelToolHandler                          `json:"-"`
+	Packages          PanelToolHandler                          `json:"-"`
+	ProjectTools      PanelToolHandler                          `json:"-"` // phone Claude Code uses 1loop's project-scoped tools
 	Recall            func(context.Context) ([]ChatItem, error) `json:"-"`
 	Provider          string                                    `json:"provider"`
 	BaseURL           string                                    `json:"baseURL"`
@@ -44,6 +47,10 @@ type Config struct {
 	Model             string                                    `json:"model"`
 	Workspace         string                                    `json:"workspace"`
 	Session           string                                    `json:"session,omitempty"` // Claude Code connection: the chat's session there
+	// ToolAllowed is checked again at execution so revoking a capability
+	// also blocks calls made from a model's earlier tool declarations.
+	ToolAllowed         func(string) bool `json:"-"`
+	CapabilitiesChanged <-chan struct{}   `json:"-"`
 }
 
 type emitter func(string, any)

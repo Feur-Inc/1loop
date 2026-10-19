@@ -158,7 +158,7 @@ fun Markdown(text: String, modifier: Modifier = Modifier) {
 }
 
 @Composable
-fun CodeWell(code: String, caption: String, diff: Boolean = false) {
+fun CodeWell(code: String, caption: String, diff: Boolean = false, wrap: Boolean = false) {
     Column(
         Modifier.fillMaxWidth().background(Palette.code, RoundedCornerShape(10.dp))
             .border(1.dp, Palette.borderSoft, RoundedCornerShape(10.dp)),
@@ -168,8 +168,8 @@ fun CodeWell(code: String, caption: String, diff: Boolean = false) {
             CopyChip { code }
         }
         Text(
-            remember(code, diff) { if (diff) diffText(code) else AnnotatedString(code) }, style = Type.mono, softWrap = false,
-            modifier = Modifier.horizontalScroll(rememberScrollState()).padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
+            remember(code, diff) { if (diff) diffText(code) else AnnotatedString(code) }, style = Type.mono, softWrap = wrap,
+            modifier = (if (wrap) Modifier.fillMaxWidth() else Modifier.horizontalScroll(rememberScrollState())).padding(start = 12.dp, end = 12.dp, bottom = 12.dp),
         )
     }
 }

@@ -10,15 +10,19 @@ import (
 )
 
 func (ui *desktopUI) loadAccountLimits(ctx context.Context, menu *sheet, conn agent.Connection, show func(agent.AccountLimits)) {
-	if cached, ok := ui.accountLimits[conn.ID]; ok && time.Since(cached.Checked) < time.Minute {
+	if cached, ok := ui.accountLimits[conn.ID]; ok {
 		show(cached)
-		return
+		if time.Since(cached.Checked) < time.Minute {
+			return
+		}
 	}
 	if conn.Provider != "openai" && conn.Provider != "claudecode" && conn.Provider != "openrouter" {
 		show(agent.AccountLimits{Note: "Limits not provided"})
 		return
 	}
-	show(agent.AccountLimits{Note: "Loading limits…"})
+	if _, ok := ui.accountLimits[conn.ID]; !ok {
+		show(agent.AccountLimits{Note: "Loading limits…"})
+	}
 	key := ui.keys[conn.ID]
 	go func() {
 		limits, err := ui.backend.ConnectionLimits(ctx, conn, key)
@@ -32,6 +36,10 @@ func (ui *desktopUI) loadAccountLimits(ctx context.Context, menu *sheet, conn ag
 			}
 			if ui.accountLimits == nil {
 				ui.accountLimits = map[string]agent.AccountLimits{}
+			}
+			if len(limits.Windows) == 0 && len(ui.accountLimits[conn.ID].Windows) > 0 {
+				show(ui.accountLimits[conn.ID])
+				return
 			}
 			ui.accountLimits[conn.ID] = limits
 			show(limits)

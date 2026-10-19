@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -188,7 +189,7 @@ fun ModelChip(app: RemoteApp, onClick: () -> Unit, modifier: Modifier = Modifier
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun ModelSheet(app: RemoteApp, onDone: () -> Unit) {
-    LaunchedEffect(Unit) { app.loadLimits() }
+    LaunchedEffect(app.server) { while (true) { app.loadLimits(); kotlinx.coroutines.delay(60_000) } }
     val model = app.chatModel
     // The account whose models show: the chosen model's, until another is tapped.
     var picked by remember { mutableStateOf<String?>(null) }
@@ -291,7 +292,7 @@ private fun SheetCaption(text: String) {
 private fun AccountRow(account: Account, limits: AccountLimits?, selected: Boolean, onClick: () -> Unit) {
     val enabled = !(account.provider == "vllm" && account.problem.isNotEmpty())
     Column(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(if (selected) Palette.selected else Color.Transparent)
+        Modifier.fillMaxWidth().heightIn(min = 112.dp).clip(RoundedCornerShape(12.dp)).background(if (selected) Palette.selected else Color.Transparent)
             .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

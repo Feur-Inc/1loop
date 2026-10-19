@@ -53,6 +53,7 @@ type serverRun struct {
 }
 
 type serverSettings struct {
+	Projects          []string           `json:"projects,omitempty"`
 	Config            agent.Config       `json:"config"`
 	Connections       []agent.Connection `json:"connections"`
 	Keys              map[string]string  `json:"keys"`
@@ -70,6 +71,7 @@ type headlessServer struct {
 	backend                    *agent.App
 	engine                     *browser.Engine
 	name, root, dir            string
+	projects                   []string
 	cfg                        agent.Config
 	connections                []agent.Connection
 	keys                       map[string]string
@@ -139,6 +141,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		if err = json.Unmarshal(data, &settings); err != nil {
 			return nil, err
 		}
+		server.projects = settings.Projects
 		server.cfg = settings.Config
 		server.connections = settings.Connections
 		if settings.Keys != nil {
@@ -153,7 +156,10 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		return nil, err
 	}
 	server.cfg.Workspace = root
-	if len(server.connections) == 0 {
+	if !slices.Contains(server.projects, root) {
+		server.projects = append([]string{root}, server.projects...)
+	}
+	if server.connections == nil && (server.cfg.Model != "" || server.cfg.BaseURL != "") {
 		server.connections = []agent.Connection{{
 			ID:        core.Identifier(),
 			Name:      agent.ProviderName(server.cfg.Provider),
@@ -167,7 +173,12 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 	browser.BrowserProfileOverride = filepath.Join(dir, "browser")
 	server.engine = browser.NewBrowserEngine(ctx)
 	for _, chat := range server.chats {
-		chat.Config.Workspace = root
+		if chat.Config.Workspace == "" {
+			chat.Config.Workspace = root
+		}
+		if !slices.Contains(server.projects, chat.Config.Workspace) {
+			server.projects = append(server.projects, chat.Config.Workspace)
+		}
 		if chat.Todo == nil {
 			chat.Todo = &agent.TodoState{}
 		}
@@ -307,7 +318,11 @@ func (server *headlessServer) loadModels() {
 }
 
 func (server *headlessServer) configFor(choice agent.ModelChoice, previous agent.Config) agent.Config {
-	cfg := choice.Connection.Config(server.root)
+	workspace := previous.Workspace
+	if workspace == "" {
+		workspace = server.root
+	}
+	cfg := choice.Connection.Config(workspace)
 	cfg.Model = choice.ID
 	cfg.Effort = previous.Effort
 	cfg.ServiceTier = agent.TierFor(choice, previous.ServiceTier)
@@ -350,25 +365,27 @@ func (server *headlessServer) settingsLocked() map[string]any {
 		}
 	}
 	return map[string]any{
-		"models":          models,
-		"accounts":        accounts,
-		"model":           server.labelLocked(server.cfg),
-		"effort":          server.cfg.Effort,
-		"tier":            server.cfg.ServiceTier,
-		"window":          agent.ModelContextWindow(server.cfg),
-		"approvalMode":    server.approvalMode,
-		"autoMode":        agent.AutoModeOffered(server.cfg),
-		"loading":         server.loading,
-		"computerUse":     false,
-		"messageVersions": true,
-		"attachments":     true,
+		"userPreferences":     server.instructions,
+		"preferencesEditable": true,
+		"models":              models,
+		"accounts":            accounts,
+		"model":               server.labelLocked(server.cfg),
+		"effort":              server.cfg.Effort,
+		"tier":                server.cfg.ServiceTier,
+		"window":              agent.ModelContextWindow(server.cfg),
+		"approvalMode":        server.approvalMode,
+		"autoMode":            agent.AutoModeOffered(server.cfg),
+		"loading":             server.loading,
+		"computerUse":         false,
+		"messageVersions":     true,
+		"attachments":         true,
 	}
 }
 
 func (server *headlessServer) summariesLocked() []remoteapi.Chat {
 	out := []remoteapi.Chat{}
 	for _, chat := range server.chats {
-		out = append(out, remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: server.root, Running: chat.run != nil, Items: len(chat.Items)})
+		out = append(out, remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Running: chat.run != nil, Items: len(chat.Items)})
 	}
 	return out
 }
@@ -657,6 +674,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 func (server *headlessServer) saveSettingsLocked() error {
 	return saveServerJSON(filepath.Join(server.dir, "config.json"), serverSettings{
 		Config:            server.cfg,
+		Projects:          server.projects,
 		Connections:       server.connections,
 		Keys:              server.keys,
 		UserInstructions:  server.instructions,

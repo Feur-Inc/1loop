@@ -149,6 +149,13 @@ func Contains(values []string, want string) bool {
 	return false
 }
 
+func userPreferenceInstructions(cfg Config) string {
+	if strings.TrimSpace(cfg.UserInstructions) == "" {
+		return ""
+	}
+	return "\n\nAdditional user preferences (supplement the base instructions; do not replace them):\n" + cfg.UserInstructions
+}
+
 func systemInstructions(cfg Config) string {
 	prompt := instructions
 	if cfg.ApprovalMode == "yolo" {
@@ -157,9 +164,7 @@ func systemInstructions(cfg Config) string {
 	if cfg.ApprovalMode == "auto" {
 		prompt = strings.Replace(prompt, "Shell commands and file edits require user approval; never bypass a refusal.", "Inside the workspace, file edits, creating files and folders, and commands that only read, build or test run at once; other shell commands and edits go through an automatic review, and what it refuses waits for the user's approval. Never bypass a refusal or try to word an action so that it passes the review.", 1)
 	}
-	if strings.TrimSpace(cfg.UserInstructions) != "" {
-		prompt += "\n\nAdditional instructions from the user:\n" + cfg.UserInstructions
-	}
+	prompt += userPreferenceInstructions(cfg)
 	prompt += mobileInstructions(cfg) + projectInstructions(cfg.Workspace)
 	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + platform.ShellDescription() + "." + todoInstructions(cfg) + contextInstructions(cfg) + toolSearchInstructions(cfg)
 }

@@ -120,6 +120,9 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/stop", server.authorized(server.stop))
 	mux.HandleFunc("POST /api/approve", server.authorized(server.approve))
 	mux.HandleFunc("POST /api/answer", server.authorized(server.answer))
+	mux.HandleFunc("POST /api/preferences", server.authorized(server.setPreferences))
+	mux.HandleFunc("GET /api/projects", server.authorized(server.projectFolders))
+	mux.HandleFunc("POST /api/projects", server.authorized(server.addProject))
 	mux.HandleFunc("POST /api/model", server.authorized(server.setModel))
 	mux.HandleFunc("GET /api/limits", server.authorized(server.limits))
 	mux.HandleFunc("POST /api/approval-mode", server.authorized(server.setApprovalMode))
@@ -379,7 +382,7 @@ func (server *remoteServer) state(writer http.ResponseWriter, _ *http.Request) {
 		}
 		projects := append([]string{}, server.ui.projects...)
 		out = map[string]any{"name": server.name, "projects": projects, "workspace": server.ui.cfg.Workspace,
-			"chats": chats, "current": current, "settings": server.ui.settingsForPhone()}
+			"projectManagement": true, "chats": chats, "current": current, "settings": server.ui.settingsForPhone()}
 	})
 	core.WriteJSON(writer, http.StatusOK, out)
 }
@@ -726,7 +729,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 			accounts = append(accounts, remoteapi.Account{ID: conn.ID, Name: conn.Name, Provider: conn.Provider, Kind: agent.ProviderName(conn.Provider), Problem: ui.modelUnavailable[conn.ID]})
 		}
 	}
-	return map[string]any{"messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
+	return map[string]any{"userPreferences": ui.userInstructions, "preferencesEditable": true, "messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
 		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": agent.AutoModeOffered(ui.cfg), "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.cfg)}
 }
 

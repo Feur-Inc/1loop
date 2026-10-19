@@ -400,7 +400,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		appendPrompt += group.instructions(cfg)
 	}
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
-		appendPrompt = "Additional instructions from the user:\n" + cfg.UserInstructions + appendPrompt
+		appendPrompt = userPreferenceInstructions(cfg) + appendPrompt
 	}
 	if appendPrompt != "" {
 		args = append(args, "--append-system-prompt", appendPrompt)

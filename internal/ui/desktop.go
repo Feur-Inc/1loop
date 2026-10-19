@@ -209,7 +209,7 @@ func runDesktop(backend *agent.App, root string) {
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
 	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), statePath: statePath(root),
-		cfg: agent.Config{Provider: "vllm", BaseURL: agent.DefaultVLLMURL, Workspace: root}}
+		cfg: agent.Config{Provider: "compatible", Workspace: root}}
 	ui.load()
 	ui.initializeConnections()
 	// Our own title bar on X11 and native Wayland; the system bar elsewhere.

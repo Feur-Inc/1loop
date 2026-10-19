@@ -130,7 +130,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
             val list = app.panelTabs(chat)
             reachable = list != null
             if (list != null) {
-                tabs = list.filter { it.kind != "todo" } // the task list is always first
+                tabs = list.filter { it.kind != "todo" && it.kind != "tool" } // the task list is always first
                 if (selected != "tasks" && tabs.none { it.key == selected }) selected = "tasks"
             }
             delay(2000)
@@ -744,11 +744,11 @@ private fun ToolView(item: Item?) {
             Text("${item.verb} ${item.target}", style = Type.body.copy(fontWeight = FontWeight.Medium), maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
         if (item.meta.isNotEmpty()) Text(item.meta, style = Type.small)
-        if (item.tool == "shell") CodeWell(args.optString("command"), "Command")
+        if (item.tool == "shell") CodeWell(args.optString("command"), "Command", wrap = true)
         if (item.diff.isNotEmpty()) CodeWell(item.diff, "Changes", diff = true)
-        if (item.text.isNotEmpty()) CodeWell(item.text.trimEnd(), "Output")
+        if (item.text.isNotEmpty()) CodeWell(toolPreviewText(item.text.trimEnd()), "Output", wrap = true)
         else if (item.diff.isEmpty()) Text(if (item.state == "done") "No output" else "Waiting for the result…", style = Type.small.copy(color = Palette.faint))
-        if (item.failed.isNotEmpty() && item.failed != "Stopped") CodeWell(item.failed, "Error")
+        if (item.failed.isNotEmpty() && item.failed != "Stopped") CodeWell(item.failed, "Error", wrap = true)
     }
 }
 

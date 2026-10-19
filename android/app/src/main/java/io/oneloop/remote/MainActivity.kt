@@ -23,6 +23,7 @@ class MainActivity : ComponentActivity() {
         super.onStart()
         app.foreground = true
         AndroidLocalRuntime.get(applicationContext).appForeground = true
+        AndroidLocalRuntime.get(applicationContext).refreshPhoneAccess()
     }
 
     override fun onStop() {

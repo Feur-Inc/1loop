@@ -380,7 +380,7 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 				data, _ := json.Marshal(map[string]any{"terminals": list})
 				return agent.PanelToolResult{Text: string(data)}, nil
 			case "open":
-				dir, revision := server.root, server.terminalRevision
+				dir, revision := chat.Config.Workspace, server.terminalRevision
 				parent := platform.WithWorkspaceMode(server.ctx, server.approvalMode == "yolo")
 				host := mobileTerminalHost(server.bridge, ctx)
 				server.mu.Unlock()

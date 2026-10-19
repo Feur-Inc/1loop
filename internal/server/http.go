@@ -58,6 +58,8 @@ func (server *headlessServer) routes() http.Handler {
 		}))
 	}
 	endpoints := map[string]http.HandlerFunc{
+		"GET /api/projects":                      server.projectFolders,
+		"POST /api/projects":                     server.addProject,
 		"GET /api/state":                         server.state,
 		"GET /api/limits":                        server.limits,
 		"GET /api/chats/{id}":                    server.chat,
@@ -69,6 +71,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/stop":                         server.stop,
 		"POST /api/approve":                      server.approve,
 		"POST /api/answer":                       server.answer,
+		"POST /api/preferences":                  server.setPreferences,
 		"POST /api/model":                        server.setModel,
 		"POST /api/approval-mode":                server.setApprovalMode,
 		"GET /api/chats/{id}/panel":              server.panelTabs,
@@ -94,11 +97,12 @@ func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	core.WriteJSON(w, 200, map[string]any{
-		"name":      server.name,
-		"projects":  []string{server.root},
-		"workspace": server.root,
-		"chats":     server.summariesLocked(),
-		"settings":  server.settingsLocked(),
+		"name":              server.name,
+		"projects":          server.projects,
+		"workspace":         server.root,
+		"projectManagement": true,
+		"chats":             server.summariesLocked(),
+		"settings":          server.settingsLocked(),
 	})
 }
 
@@ -116,7 +120,7 @@ func (server *headlessServer) chat(w http.ResponseWriter, r *http.Request) {
 		items = append(items, server.itemLocked(chat, i))
 	}
 	core.WriteJSON(w, 200, map[string]any{
-		"chat":  remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: server.root, Running: chat.run != nil, Items: len(chat.Items)},
+		"chat":  remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Running: chat.run != nil, Items: len(chat.Items)},
 		"items": items,
 		"first": first,
 		"total": len(chat.Items),
@@ -170,11 +174,29 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		core.Fail(w, 400, "Nothing to send")
 		return
 	}
-	if args.Workspace != "" && args.Workspace != server.root {
-		core.Fail(w, 403, "Choose the workspace configured on this server")
+	server.mu.Lock()
+	chat := server.chatLocked(args.Chat)
+	workspace := args.Workspace
+	if chat != nil {
+		if workspace != "" && workspace != chat.Config.Workspace {
+			server.mu.Unlock()
+			core.Fail(w, 400, "This chat belongs to another project")
+			return
+		}
+		workspace = chat.Config.Workspace
+	}
+	if args.Chat != "" && chat == nil {
+		server.mu.Unlock()
+		core.Fail(w, 404, "Chat not found")
 		return
 	}
-	m, err := remoteapi.AttachedMessage(server.root, args.Text, args.Attachments)
+	workspace, err := server.workspaceLocked(workspace)
+	server.mu.Unlock()
+	if err != nil {
+		core.Fail(w, 403, err.Error())
+		return
+	}
+	m, err := remoteapi.AttachedMessage(workspace, args.Text, args.Attachments)
 	if err != nil {
 		core.Fail(w, 400, err.Error())
 		return
@@ -182,11 +204,6 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 	m.Images = append(m.Images, args.Images...)
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	chat := server.chatLocked(args.Chat)
-	if args.Chat != "" && chat == nil {
-		core.Fail(w, 404, "Chat not found")
-		return
-	}
 	if chat == nil {
 		if server.cfg.Model == "" {
 			core.Fail(w, 409, "Configure a provider and model on the server first")
@@ -205,6 +222,7 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 			title = title[:50]
 		}
 		cfg := server.cfg
+		cfg.Workspace = workspace
 		cfg.Session = ""
 		chat = &serverChat{ID: core.Identifier()[:16], Title: string(title), Config: cfg, Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}
 		server.chats = append([]*serverChat{chat}, server.chats...)
@@ -423,9 +441,12 @@ func (server *headlessServer) editPanel(w http.ResponseWriter, r *http.Request) 
 }
 
 func (server *headlessServer) uploadAttachment(w http.ResponseWriter, r *http.Request) {
-	if workspace := r.URL.Query().Get("workspace"); workspace != "" && workspace != server.root {
-		core.Fail(w, 403, "Choose the workspace configured on this server")
+	server.mu.Lock()
+	workspace, err := server.workspaceLocked(r.URL.Query().Get("workspace"))
+	server.mu.Unlock()
+	if err != nil {
+		core.Fail(w, 403, err.Error())
 		return
 	}
-	remoteapi.UploadAttachment(w, r, server.root)
+	remoteapi.UploadAttachment(w, r, workspace)
 }

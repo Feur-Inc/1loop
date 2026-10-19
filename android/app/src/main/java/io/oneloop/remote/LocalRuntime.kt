@@ -22,7 +22,8 @@ data class LocalAdbState(
     val connected: Boolean = false,
     val busy: Boolean = false,
     val problem: String? = null,
-    val paired: Boolean = false,
+    val installed: Boolean = false,
+    val serviceRunning: Boolean = false,
 )
 
 /** The UI uses the existing authenticated HTTP API after start succeeds. */
@@ -33,7 +34,5 @@ interface LocalRuntime {
     suspend fun start(): Server
     fun stop()
     suspend fun setAdbAllowed(allowed: Boolean)
-    suspend fun pairAdb(port: Int, code: String)
-    suspend fun connectAdb(port: Int)
-    fun openWirelessDebuggingSettings()
+    fun openShizuku()
 }

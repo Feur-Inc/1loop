@@ -178,6 +178,12 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     val chats = mutableStateListOf<ChatSummary>()
     var projects by mutableStateOf(listOf<String>())
     var workspace by mutableStateOf("")
+    var selectedProject by mutableStateOf<String?>(null)
+    var projectManagement by mutableStateOf(false)
+    var projectsOpen by mutableStateOf(false)
+    var settingsOpen by mutableStateOf(false)
+    var userPreferences by mutableStateOf("")
+    var preferencesEditable by mutableStateOf(false)
     val models = mutableStateListOf<ModelOption>()
     val accounts = mutableStateListOf<Account>()
     val limits = mutableStateMapOf<String, AccountLimits>() // by account
@@ -342,14 +348,6 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         scope.launch { try { local.setAdbAllowed(allowed) } catch (e: CancellationException) { throw e } catch (_: Exception) {} }
     }
 
-    fun pairAdb(port: Int, code: String) {
-        scope.launch { try { local.pairAdb(port, code) } catch (e: CancellationException) { throw e } catch (_: Exception) {} }
-    }
-
-    fun connectAdb(port: Int) {
-        scope.launch { try { local.connectAdb(port) } catch (e: CancellationException) { throw e } catch (_: Exception) {} }
-    }
-
     fun scan() {
         if (scanning) return
         scanning = true
@@ -440,6 +438,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     fun connect(target: Server) {
         clearAttachments() // picked for the previous target
         connectionsOpen = false
+        settingsOpen = false
+        projectsOpen = false
         events?.cancel()
         val generation = ++connectionGeneration
         server = target
@@ -453,7 +453,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         workspace = ""
         models.clear()
         accounts.clear()
+        limitsLoading = false
         limits.clear()
+        runCatching { JSONArray(prefs.getString("limits:${target.key}", "[]")) }.getOrNull()?.let { restoreLimits(it) }
+        selectedProject = prefs.getString("project:${target.key}", null)
+        projectManagement = false
+        preferencesEditable = false
+        userPreferences = ""
         running.clear()
         defaultModel = ""
         defaultEffort = ""
@@ -541,8 +547,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             chats.addAll(parseChats(state.optJSONArray("chats")))
             projects = strings(state.optJSONArray("projects"))
             workspace = state.optString("workspace")
+            projectManagement = state.optBoolean("projectManagement")
+            if (selectedProject !in projects) selectedProject = workspace
             state.optJSONObject("settings")?.let { applySettings(it) }
-            if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull()?.id
+            if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull { it.workspace == selectedProject }?.id
+            chats.firstOrNull { it.id == current }?.workspace?.let { selectedProject = it }
             current?.let { load(it, target, generation) }
         } catch (cancelled: CancellationException) {
             throw cancelled
@@ -591,6 +600,10 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     fun open(id: String?) {
         current = id
+        chats.firstOrNull { it.id == id }?.workspace?.let {
+            selectedProject = it
+            server?.let { target -> prefs.edit { putString("project:${target.key}", it) } }
+        }
         items.clear()
         firstItem = 0
         meta = null
@@ -600,6 +613,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     private fun applySettings(settings: JSONObject) {
+        userPreferences = settings.optString("userPreferences")
+        preferencesEditable = settings.optBoolean("preferencesEditable")
         messageVersions = settings.optBoolean("messageVersions")
         attachmentsEnabled = settings.optBoolean("attachments")
         val array = settings.optJSONArray("models")
@@ -656,6 +671,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val target = server ?: return
         val generation = connectionGeneration
         when (name) {
+            "projects" -> { projects = strings(data.optJSONArray("projects")) }
             "chats" -> {
                 val list = parseChats(data.optJSONArray("chats"))
                 chats.clear()
@@ -688,7 +704,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         // What this message carries, as it is now: files added meanwhile stay for the next one.
         val sent = attachments.filter { it.ready != null }
         val body = JSONObject().put("chat", current.orEmpty()).put("text", text).put("mode", mode)
-            .put("workspace", project ?: workspace)
+            .put("workspace", project ?: chats.firstOrNull { it.id == current }?.workspace ?: selectedProject ?: workspace)
         if (sent.isNotEmpty()) body.put("attachments", JSONArray(sent.map { it.ready }))
         problem = null
         scope.launch {
@@ -726,21 +742,67 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         }
     }
 
-    /** Reads every account's usage windows; a computer older than this app has none to give. */
+    private var limitsLoading = false
+
+    private fun restoreLimits(array: JSONArray) {
+        for (i in 0 until array.length()) {
+            val account = array.getJSONObject(i)
+            val windows = account.optJSONArray("windows")
+            val next = AccountLimits(account.optString("note"), (0 until (windows?.length() ?: 0)).map {
+                windows!!.getJSONObject(it).let { w -> LimitWindow(w.optString("label"), w.optDouble("left").toFloat(), w.optLong("reset")) }
+            })
+            val id = account.optString("account")
+            if (next.windows.isNotEmpty() || limits[id]?.windows.isNullOrEmpty()) limits[id] = next
+        }
+    }
+
     fun loadLimits() {
         val generation = connectionGeneration
         val target = server ?: return
+        if (limitsLoading) return
+        limitsLoading = true
         scope.launch {
-            val reply = runCatching { onConnection(target, generation) { it.get("/api/limits") } }.onFailure { if (it is CancellationException) throw it }.getOrNull() ?: return@launch
-            val array = reply.optJSONArray("accounts") ?: return@launch
-            for (i in 0 until array.length()) {
-                val account = array.getJSONObject(i)
-                val windows = account.optJSONArray("windows")
-                limits[account.optString("account")] = AccountLimits(account.optString("note"), (0 until (windows?.length() ?: 0)).map {
-                    windows!!.getJSONObject(it).let { w -> LimitWindow(w.optString("label"), w.optDouble("left").toFloat(), w.optLong("reset")) }
-                })
-            }
+            try {
+                val reply = onConnection(target, generation) { it.get("/api/limits") }
+                val array = reply.optJSONArray("accounts") ?: return@launch
+                restoreLimits(array)
+                val cached = JSONArray()
+                for ((id, value) in limits) cached.put(JSONObject().put("account", id).put("note", value.note).put("windows", JSONArray(value.windows.map {
+                    JSONObject().put("label", it.label).put("left", it.left).put("reset", it.reset)
+                })))
+                prefs.edit { putString("limits:${target.key}", cached.toString()) }
+            } catch (cancelled: CancellationException) { throw cancelled }
+            catch (_: Exception) { /* Keep the last known usage during an outage. */ }
+            finally { if (generation == connectionGeneration) limitsLoading = false }
         }
+    }
+
+    fun selectProject(path: String) {
+        if (path !in projects) return
+        selectedProject = path
+        server?.let { target -> prefs.edit { putString("project:${target.key}", path) } }
+        open(null)
+    }
+
+    suspend fun projectFolders(path: String): JSONObject {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        return onConnection(target, generation) { it.get("/api/projects?path=" + java.net.URLEncoder.encode(path, "UTF-8")) }
+    }
+
+    suspend fun addProject(path: String, create: Boolean) {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        val reply = onConnection(target, generation) { it.post("/api/projects", JSONObject().put("path", path).put("create", create)) }
+        projects = strings(reply.optJSONArray("projects"))
+        selectProject(reply.getString("workspace"))
+    }
+
+    suspend fun savePreferences(text: String) {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        val reply = onConnection(target, generation) { it.post("/api/preferences", JSONObject().put("userPreferences", text)) }
+        userPreferences = reply.optString("userPreferences")
     }
 
     fun chooseApprovalMode(mode: String) {
@@ -785,7 +847,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val target = server ?: return
         // The open chat's project, or the one a new chat starts in.
-        val folder = project ?: chats.firstOrNull { it.id == current }?.workspace ?: workspace
+        val folder = project ?: chats.firstOrNull { it.id == current }?.workspace ?: selectedProject ?: workspace
         for (uri in uris) {
             var name = "file"
             var size = -1L

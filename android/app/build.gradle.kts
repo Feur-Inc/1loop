@@ -44,11 +44,11 @@ android {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
-            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
+            proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
             signingConfig = signingConfigs.getByName("debug") // sideloaded builds for now
         }
     }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; aidl = true }
     packaging {
         jniLibs.useLegacyPackaging = true
         jniLibs.keepDebugSymbols += "**/*.so"
@@ -68,6 +68,6 @@ dependencies {
     // Applies the compilation profiles Compose ships with at install time:
     // the interface runs compiled from the first launch, without warming up.
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
-    implementation("com.github.MuntashirAkon:libadb-android:3.1.1")
-    implementation("org.conscrypt:conscrypt-android:2.5.3")
+    implementation("dev.rikka.shizuku:api:13.1.5")
+    implementation("dev.rikka.shizuku:provider:13.1.5")
 }

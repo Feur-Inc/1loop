@@ -58,12 +58,6 @@ func (server *headlessServer) panelTabs(w http.ResponseWriter, r *http.Request) 
 		}
 		tabs = append(tabs, item)
 	}
-	for index, item := range chat.Items {
-		if item.Kind == "tool" {
-			verb, target, _ := agent.DescribeTool(item, false)
-			tabs = append(tabs, remoteapi.Tab{Key: fmt.Sprintf("tool-%d", index), Kind: "tool", Title: verb + " " + target, Index: index})
-		}
-	}
 	core.WriteJSON(w, 200, map[string]any{"tabs": tabs})
 }
 
@@ -77,7 +71,7 @@ func (server *headlessServer) panelTab(w http.ResponseWriter, r *http.Request) {
 	if key == "changes" {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
-		output, err := agent.WorkspaceDiff(ctx, server.root, r.URL.Query().Get("staged") == "1")
+		output, err := agent.WorkspaceDiff(ctx, chat.Config.Workspace, r.URL.Query().Get("staged") == "1")
 		if err != nil {
 			core.Fail(w, 400, err.Error())
 			return

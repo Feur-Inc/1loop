@@ -2,194 +2,157 @@ package io.oneloop.remote
 
 import android.content.ClipData
 import android.content.ClipboardManager
+import android.content.ComponentName
 import android.content.Context
+import android.content.ServiceConnection
+import android.content.pm.PackageManager
 import android.graphics.BitmapFactory
-import android.os.Build
-import android.security.keystore.KeyGenParameterSpec
-import android.security.keystore.KeyProperties
+import android.os.IBinder
+import android.os.ParcelFileDescriptor
 import android.util.Base64
 import android.view.KeyEvent
-import io.github.muntashirakon.adb.AbsAdbConnectionManager
-import io.github.muntashirakon.adb.AdbConnection
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
-import kotlinx.coroutines.flow.MutableStateFlow
-import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
 import org.json.JSONArray
 import org.json.JSONObject
-import java.io.ByteArrayOutputStream
-import java.io.EOFException
-import java.nio.ByteBuffer
-import java.nio.ByteOrder
-import java.math.BigInteger
-import java.security.KeyPairGenerator
-import java.security.KeyStore
-import java.security.PrivateKey
-import java.security.cert.Certificate
-import java.util.Calendar
-import java.util.concurrent.TimeUnit
+import rikka.shizuku.Shizuku
+import java.io.DataInputStream
 import java.util.concurrent.atomic.AtomicLong
-import java.util.concurrent.atomic.AtomicReference
-import javax.security.auth.x500.X500Principal
 
-/** Local loopback ADB only; its authorization is independent of agent approvals. */
+/** Shizuku owns the local shell connection; 1loop's grant is independent. */
 class LocalAdb(private val context: Context, private val scope: CoroutineScope) {
-    private val prefs = context.getSharedPreferences("1loop-local-adb", Context.MODE_PRIVATE)
-    private val mutableState = MutableStateFlow(LocalAdbState(paired = prefs.getBoolean("paired", false)))
+    private val mutableState = MutableStateFlow(LocalAdbState())
     val state = mutableState.asStateFlow()
     private val generation = AtomicLong()
-    private val connection = AtomicReference<AdbConnection?>()
-    private val setup = Mutex()
     private val commands = Mutex()
+    @Volatile private var shell: IPhoneShell? = null
+    @Volatile private var binding: ServiceConnection? = null
     private var width = 0
     private var height = 0
+    private val serviceArgs = Shizuku.UserServiceArgs(ComponentName(context, PhoneShellService::class.java))
+        .tag("1loop-phone-shell").version(1).daemon(false).processNameSuffix("phone")
+
+    init {
+        Shizuku.addBinderReceivedListenerSticky {
+            refresh()
+            if (state.value.allowed) scope.launch { connectService() }
+        }
+        Shizuku.addBinderDeadListener {
+            generation.incrementAndGet()
+            shell = null
+            binding = null
+            refresh()
+        }
+        Shizuku.addRequestPermissionResultListener { request, result ->
+            if (request == 4101) {
+                if (result == PackageManager.PERMISSION_GRANTED && state.value.allowed) scope.launch { connectService() }
+                else revoke()
+            }
+        }
+        refresh()
+    }
+
+    fun refresh() {
+        val installed = runCatching { context.packageManager.getPackageInfo("moe.shizuku.privileged.api", 0) }.isSuccess
+        val running = Shizuku.pingBinder()
+        val connected = running && runCatching { Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED }.getOrDefault(false) && shell?.asBinder()?.isBinderAlive == true
+        mutableState.update { it.copy(installed = installed, serviceRunning = running, connected = it.allowed && connected, busy = if (running) it.busy else false) }
+    }
 
     suspend fun setAllowed(allowed: Boolean) {
-        if (!allowed) {
-            revoke()
-        } else {
-            generation.incrementAndGet()
-            check(Build.VERSION.SDK_INT >= 30) { "Local ADB requires Android 11 or later." }
+        if (!allowed) { revoke(); return }
+        withContext(Dispatchers.Main) {
             mutableState.update { it.copy(allowed = true, problem = null) }
+            refresh()
+            if (!state.value.serviceRunning) {
+                mutableState.update { it.copy(problem = "Install and start Shizuku first, then return to 1loop.") }
+            } else if (Shizuku.checkSelfPermission() == PackageManager.PERMISSION_GRANTED) {
+                connectService()
+            } else {
+                Shizuku.requestPermission(4101)
+            }
+        }
+    }
+
+    private suspend fun connectService() = withContext(Dispatchers.Main) {
+        if (!state.value.allowed || !Shizuku.pingBinder()) return@withContext
+        if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) return@withContext
+        if (shell != null || binding != null) return@withContext
+        val epoch = generation.incrementAndGet()
+        val connection = object : ServiceConnection {
+            override fun onServiceConnected(name: ComponentName, binder: IBinder) {
+                if (epoch != generation.get() || !state.value.allowed) return
+                shell = IPhoneShell.Stub.asInterface(binder)
+                mutableState.update { it.copy(busy = false, problem = null) }
+                refresh()
+            }
+            override fun onServiceDisconnected(name: ComponentName) {
+                if (epoch != generation.get()) return
+                shell = null
+                binding = null
+                mutableState.update { it.copy(connected = false, busy = false) }
+            }
+        }
+        binding = connection
+        mutableState.update { it.copy(busy = true) }
+        try { Shizuku.bindUserService(serviceArgs, connection) }
+        catch (failure: Exception) {
+            binding = null
+            mutableState.update { it.copy(busy = false, problem = failure.message ?: "Shizuku could not start the phone service.") }
         }
     }
 
     fun revoke() {
-        // Publish revocation before closing sockets or waiting on any work.
         generation.incrementAndGet()
-        mutableState.value = LocalAdbState(paired = prefs.getBoolean("paired", false))
-        val previous = connection.getAndSet(null)
-        scope.launch(Dispatchers.IO) { runCatching { previous?.close() } }
-    }
-
-    fun available(): Boolean {
-        val connected = state.value.allowed && connection.get()?.let {
-            it.isConnected && it.isConnectionEstablished
-        } == true
-        if (state.value.connected != connected) mutableState.update { it.copy(connected = connected) }
-        return connected
-    }
-
-    suspend fun pair(port: Int, code: String) {
-        configure {
-            require(port in 1..65535 && code.matches(Regex("[0-9]{6}"))) { "Enter the pairing port and six-digit code." }
-            check(it.pair("127.0.0.1", port, code)) { "ADB pairing failed." }
+        mutableState.update { it.copy(allowed = false, connected = false, busy = false, problem = null) }
+        shell = null
+        binding?.let { connection ->
+            // Detach the client's cached connection before killing the service:
+            // an immediate rebind must not reuse the dying Binder callback.
+            runCatching { Shizuku.unbindUserService(serviceArgs, connection, false) }
+            runCatching { Shizuku.unbindUserService(serviceArgs, null, true) }
         }
-        prefs.edit().putBoolean("paired", true).apply()
-        mutableState.update { it.copy(paired = true) }
+        binding = null
     }
 
-    suspend fun connect(port: Int) = configure { manager ->
-        require(port in 1..65535) { "Enter a port between 1 and 65535." }
-        check(manager.connect("127.0.0.1", port)) { "ADB did not connect. Check the Wireless debugging port." }
+    fun available(): Boolean { refresh(); return state.value.allowed && state.value.connected }
+
+    private fun requireAccess(): IPhoneShell {
+        check(available()) { "Phone Use is disabled or Shizuku is unavailable." }
+        return shell ?: error("Shizuku is disconnected.")
     }
 
-    private suspend fun configure(action: (AbsAdbConnectionManager) -> Unit) = setup.withLock {
-        check(state.value.allowed) { "Allow local ADB first." }
-        val epoch = generation.get()
-        mutableState.update { it.copy(busy = true, problem = null) }
-        var manager: AbsAdbConnectionManager? = null
-        try {
-            withTimeout(20_000) {
-                runInterruptible(Dispatchers.IO) {
-                    manager = newManager()
-                    action(manager!!)
-                }
-            }
-            if (generation.get() == epoch && state.value.allowed) {
-                manager!!.adbConnection?.let { next ->
-                    val previous = connection.getAndSet(next)
-                    withContext(Dispatchers.IO) { previous?.close() }
-                }
-                mutableState.update { it.copy(connected = available()) }
-            } else {
-                withContext(NonCancellable + Dispatchers.IO) { manager?.disconnect() }
-            }
-        } catch (failure: Exception) {
-            withContext(NonCancellable + Dispatchers.IO) { runCatching { manager?.disconnect() } }
-            if (generation.get() == epoch) mutableState.update {
-                it.copy(connected = available(), problem = failure.message ?: "Local ADB setup failed.")
-            }
-            throw failure
-        } finally {
-            if (generation.get() == epoch) mutableState.update { it.copy(busy = false) }
-        }
-    }
-
-    private fun newManager(): AbsAdbConnectionManager {
-        val store = KeyStore.getInstance("AndroidKeyStore").apply { load(null) }
-        val alias = "1loop-local-adb"
-        if (!store.containsAlias(alias)) {
-            val expiry = Calendar.getInstance().apply { add(Calendar.YEAR, 10) }.time
-            KeyPairGenerator.getInstance(KeyProperties.KEY_ALGORITHM_RSA, "AndroidKeyStore").apply {
-                initialize(
-                    KeyGenParameterSpec.Builder(alias, KeyProperties.PURPOSE_SIGN or KeyProperties.PURPOSE_DECRYPT)
-                        .setKeySize(2048)
-                        .setDigests(KeyProperties.DIGEST_NONE, KeyProperties.DIGEST_SHA1, KeyProperties.DIGEST_SHA256, KeyProperties.DIGEST_SHA512)
-                        .setSignaturePaddings(KeyProperties.SIGNATURE_PADDING_RSA_PKCS1, KeyProperties.SIGNATURE_PADDING_RSA_PSS)
-                        .setEncryptionPaddings(KeyProperties.ENCRYPTION_PADDING_NONE)
-                        .setCertificateSubject(X500Principal("CN=1loop local ADB"))
-                        .setCertificateSerialNumber(BigInteger.ONE)
-                        .setCertificateNotAfter(expiry)
-                        .build(),
-                )
-                generateKeyPair()
-            }
-        }
-        val key = store.getKey(alias, null) as PrivateKey
-        val certificate = store.getCertificate(alias)
-        return object : AbsAdbConnectionManager() {
-            override fun getPrivateKey(): PrivateKey = key
-            override fun getCertificate(): Certificate = certificate
-            override fun getDeviceName(): String = "1loop local phone"
-        }.apply {
-            setApi(Build.VERSION.SDK_INT)
-            setHostAddress("127.0.0.1")
-            setTimeout(10, TimeUnit.SECONDS)
-            setThrowOnUnauthorised(true)
-        }
-    }
-
-    private fun requireConnection(): AdbConnection {
-        check(available()) { "Local ADB is disabled or disconnected." }
-        return connection.get() ?: error("Local ADB is disconnected.")
-    }
-
-    private suspend fun command(command: String, limit: Int = 256 * 1024): AdbShellResult = withTimeout(60_000) {
+    private suspend fun command(command: String, limit: Int = 256 * 1024): PhoneShellResult = withTimeout(60_000) {
         runInterruptible(Dispatchers.IO) {
-            val current = requireConnection()
-            current.open("shell,v2,raw:$command").use { stream ->
-                // Shell v2 has an explicit exit packet. This avoids the ADB
-                // library's close/read race and keeps screenshots binary-safe.
-                fun readFully(bytes: ByteArray) {
-                    var offset = 0
-                    while (offset < bytes.size) {
-                        val count = stream.read(bytes, offset, bytes.size - offset)
-                        if (count <= 0) throw EOFException("ADB ended before the command completed.")
-                        offset += count
-                    }
+            val epoch = generation.get()
+            val descriptor = requireAccess().execute(command, limit)
+            DataInputStream(ParcelFileDescriptor.AutoCloseInputStream(descriptor)).use { input ->
+                val status = input.readInt()
+                fun readBytes(maximum: Int): ByteArray {
+                    val count = input.readInt()
+                    check(count in 0..maximum) { "Invalid Shizuku command output." }
+                    return ByteArray(count).also { input.readFully(it) }
                 }
-                val result = readAdbShellResult(limit, ::readFully)
-                check(state.value.allowed) { "Local ADB permission was revoked." }
-                if (result.exitCode != 0) {
-                    val diagnostic = (result.stderr.toString(Charsets.UTF_8) + result.stdout.toString(Charsets.UTF_8)).take(4096)
-                    error("ADB command exited with status ${result.exitCode}." + if (diagnostic.isBlank()) "" else "\n$diagnostic")
-                }
-                result
+                val stdout = readBytes(limit)
+                val stderr = readBytes(limit - stdout.size)
+                check(epoch == generation.get() && available()) { "Phone Use permission was revoked." }
+                check(status == 0) { "Android command exited with status $status.\n" + (stderr.toString(Charsets.UTF_8) + stdout.toString(Charsets.UTF_8)).take(4096) }
+                PhoneShellResult(stdout, stderr)
             }
         }
     }
 
     suspend fun execute(name: String, arguments: JSONObject): JSONObject = commands.withLock {
-        requireConnection()
+        requireAccess()
         if (name == "adb_shell") {
             val command = arguments.getString("command")
             require(command.isNotBlank() && command.length <= 32_768) { "Provide an Android shell command up to 32768 characters." }
@@ -226,7 +189,7 @@ class LocalAdb(private val context: Context, private val scope: CoroutineScope) 
                 // Clipboard paste preserves Unicode and newlines; `input text`
                 // silently changes some characters and cannot type Unicode.
                 withContext(Dispatchers.Main) {
-                    requireConnection()
+                    requireAccess()
                     context.getSystemService(ClipboardManager::class.java).setPrimaryClip(ClipData.newPlainText("1loop", text))
                 }
                 command("input keyevent ${KeyEvent.KEYCODE_PASTE}")
@@ -250,29 +213,4 @@ class LocalAdb(private val context: Context, private val scope: CoroutineScope) 
     }
 }
 
-internal data class AdbShellResult(val stdout: ByteArray, val stderr: ByteArray, val exitCode: Int)
-
-// Shell-v2 separates binary stdout from diagnostics and sends one unsigned exit byte.
-internal fun readAdbShellResult(limit: Int, readFully: (ByteArray) -> Unit): AdbShellResult {
-    val stdout = ByteArrayOutputStream()
-    val stderr = ByteArrayOutputStream()
-    while (true) {
-        val header = ByteArray(5)
-        readFully(header)
-        val length = ByteBuffer.wrap(header, 1, 4).order(ByteOrder.LITTLE_ENDIAN).int
-        val kind = header[0].toInt() and 0xff
-        if (kind == 3) {
-            check(length == 1) { "Invalid ADB exit status packet." }
-            val status = ByteArray(1)
-            readFully(status)
-            return AdbShellResult(stdout.toByteArray(), stderr.toByteArray(), status[0].toInt() and 0xff)
-        }
-        check(kind == 1 || kind == 2) { "Unexpected ADB shell packet." }
-        check(length >= 0 && length <= limit - stdout.size() - stderr.size()) {
-            "ADB output exceeds the limit. Filter or page the command output."
-        }
-        val payload = ByteArray(length)
-        readFully(payload)
-        (if (kind == 1) stdout else stderr).write(payload)
-    }
-}
+internal data class PhoneShellResult(val stdout: ByteArray, val stderr: ByteArray)

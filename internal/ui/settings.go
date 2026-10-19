@@ -568,9 +568,9 @@ func (ui *desktopUI) instructionSettings() fyne.CanvasObject {
 		ui.save()
 	}
 	return container.NewVBox(
-		ui.prefs.pageTitle("Instructions", "", nil),
-		card(settingStack("Your instructions",
-			"Added to 1loop's own system prompt, whose workspace and tool rules stay in place. Saved as you type; they apply from the next request, in every chat.",
+		ui.prefs.pageTitle("User preferences", "", nil),
+		card(settingStack("Your preferences",
+			"Added to 1loop's own system prompt, whose workspace and tool rules stay in place. Saved as you type; they apply to subsequent turns in every chat.",
 			entry)),
 	)
 }

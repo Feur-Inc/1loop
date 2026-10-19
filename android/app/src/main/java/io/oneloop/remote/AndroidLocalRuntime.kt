@@ -4,7 +4,6 @@ import android.content.Context
 import android.content.Intent
 import android.net.ConnectivityManager
 import android.os.Build
-import android.provider.Settings
 import android.system.Os
 import android.util.Base64
 import android.util.Log
@@ -103,6 +102,8 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
 
     private fun supported() = Build.VERSION.SDK_INT >= 31 && File(libraries, "libproot.so").isFile
 
+    private fun baseToolsReady() = root()?.let { File(it, "var/lib/1loop/base-tools.ready").isFile } == true
+
     private fun claudeInstalled() = root()?.let {
         File(it, "var/lib/1loop/claude.ready").isFile && File(it, "usr/bin/claude").isFile
     } == true
@@ -115,10 +116,10 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
             return
         }
         val steps = mutableListOf<SetupStep>()
-        if (root() == null) steps += step("debian", "Install Debian", "Download the 28 MB Debian base. It stays in 1loop's private storage; root access and Termux are not required.", true)
+        if (!baseToolsReady()) steps += step("debian", "Prepare Debian and tools", "Download the 28 MB Debian base, update and upgrade its packages, then install Python 3, pip, venv, Git, curl and Claude Code. This needs additional downloads and may take several minutes. Root and Termux are not required.", true)
         if (requested == "claudecode" && !claudeInstalled()) steps += step("claudecode", "Install Claude Code", "Download Claude Code from Anthropic's signed Debian repository, then sign in on this phone.", false)
         progress?.takeIf { active -> steps.none { it.id == active.id } }?.let { steps += it }
-        mutableStatus.value = LocalStatus(root() != null, steps)
+        mutableStatus.value = LocalStatus(baseToolsReady(), steps)
     }
 
     private fun step(id: String, title: String, detail: String, required: Boolean) =
@@ -158,8 +159,10 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
                             check(generation.get() == epoch) { "Local setup was stopped." }
                             val installed = File(roots, name)
                             check(File(installed, "usr/bin/bash").isFile) { "Debian did not install correctly." }
-                            seed(installed)
+                            prepareBaseTools(installed, epoch)
                             check(prefs.edit().putString("root", name).remove("pending-root").commit()) { "Unable to save the local installation." }
+                        } else if (stepId == "debian" && !baseToolsReady()) {
+                            prepareBaseTools(root() ?: error("Install Debian first."), epoch)
                         } else if (stepId == "claudecode" && !claudeInstalled()) {
                             val root = root() ?: error("Install Debian first.")
                             runSetup(root, listOf(agent(root), "-install-mobile-claude"), epoch)
@@ -178,6 +181,18 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
                 }
             } finally { LocalRuntimeService.releaseIfIdle(context) }
         }.await()
+    }
+
+    private suspend fun prepareBaseTools(root: File, epoch: Long) {
+        seed(root)
+        runSetup(root, listOf("/usr/bin/dpkg", "--configure", "-a"), epoch)
+        runSetup(root, listOf("/usr/bin/apt-get", "update", "--error-on=any"), epoch)
+        runSetup(root, listOf("/usr/bin/apt-get", "upgrade", "-y", "-o", "Dpkg::Options::=--force-confold"), epoch)
+        runSetup(root, listOf("/usr/bin/apt-get", "install", "-y", "--no-install-recommends", "ca-certificates", "python3", "python3-pip", "python3-venv", "git", "curl"), epoch)
+        runSetup(root, listOf(agent(root), "-install-mobile-claude"), epoch)
+        check(generation.get() == epoch) { "Local setup was stopped." }
+        privateText(File(root, "var/lib/1loop/claude.ready"), "ready\n")
+        privateText(File(root, "var/lib/1loop/base-tools.ready"), "ready\n")
     }
 
     private fun cleanupPendingInstallation() {
@@ -523,11 +538,13 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
     }
 
     override suspend fun setAdbAllowed(allowed: Boolean) = phone.setAllowed(allowed)
-    override suspend fun pairAdb(port: Int, code: String) { phone.pair(port, code) }
-    override suspend fun connectAdb(port: Int) { phone.connect(port) }
-    override fun openWirelessDebuggingSettings() {
-        context.startActivity(Intent(Settings.ACTION_APPLICATION_DEVELOPMENT_SETTINGS).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+    override fun openShizuku() {
+        val intent = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
+            ?: Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://shizuku.rikka.app/download/"))
+        context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
+
+    fun refreshPhoneAccess() { phone.refresh() }
 
     companion object {
         @Volatile private var instance: AndroidLocalRuntime? = null

@@ -359,11 +359,17 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
 
 @Composable
 fun ChatScreen(app: RemoteApp) {
+    if (app.settingsOpen) {
+        MobileSettings(app) { app.settingsOpen = false }
+        if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
+        return
+    }
+    var panel by remember(app.current) { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 720.dp) {
             Row(Modifier.fillMaxSize()) {
                 ChatsPane(app, Modifier.width(300.dp).fillMaxHeight()) {}
-                Conversation(app, null, Modifier.weight(1f))
+                Conversation(app, null, Modifier.weight(1f), panel) { panel = it }
             }
         } else {
             val drawer = rememberDrawerState(DrawerValue.Closed)
@@ -371,13 +377,14 @@ fun ChatScreen(app: RemoteApp) {
             BackHandler(drawer.isOpen) { scope.launch { drawer.close() } }
             ModalNavigationDrawer(
                 drawerState = drawer,
+                gesturesEnabled = drawer.isOpen || !panel,
                 drawerContent = {
                     ModalDrawerSheet(drawerContainerColor = Palette.sidebar, drawerShape = RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp)) {
                         ChatsPane(app, Modifier.fillMaxHeight()) { scope.launch { drawer.close() } }
                     }
                 },
             ) {
-                Conversation(app, onMenu = { scope.launch { drawer.open() } }, Modifier.fillMaxSize())
+                Conversation(app, onMenu = { scope.launch { drawer.open() } }, Modifier.fillMaxSize(), panel) { panel = it }
             }
         }
     }
@@ -386,6 +393,7 @@ fun ChatScreen(app: RemoteApp) {
     val question = app.questions.values.firstOrNull()
     if (approval == null && question != null) QuestionSheet(app, question)
     if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
+    if (app.projectsOpen) ProjectsSheet(app) { app.projectsOpen = false }
 }
 
 @Composable
@@ -394,22 +402,20 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
         Image(painterResource(R.drawable.logo), "1loop", modifier = Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp))
         NavRow("New chat", Icons.plus, selected = app.current == null) { app.open(null); onPicked() }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            val groups = app.chats.groupBy { it.workspace }
-            for ((workspace, chats) in groups) {
-                Text(workspace.substringAfterLast('/'), style = Type.small.copy(color = Palette.faint), modifier = Modifier.padding(start = 10.dp, top = 18.dp, bottom = 6.dp))
-                for (chat in chats) {
-                    NavRow(chat.title, null, selected = chat.id == app.current, running = chat.running) { app.open(chat.id); onPicked() }
-                }
+            Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Projects", style = Type.small.copy(color = Palette.faint), modifier = Modifier.weight(1f).padding(start = 10.dp))
+                if (app.projectManagement) RoundButton(Icons.plus, Color.Transparent, Palette.muted, description = "Add project") { app.projectsOpen = true }
             }
-            if (app.chats.isEmpty()) Text("No chats yet", style = Type.small.copy(color = Palette.faint), modifier = Modifier.padding(10.dp))
-            // In the scrolled part: with its guide open or the keyboard up, it
-            // must not push the footer below (Switch execution target) off screen.
-            if (app.server?.localPhone == true) {
-                val adb by app.local.adb.collectAsState()
-                LocalAdbSection(
-                    adb, onAllowedChange = app::setAdbAllowed, onPair = app::pairAdb, onConnect = app::connectAdb,
-                    onOpenSettings = app.local::openWirelessDebuggingSettings, modifier = Modifier.padding(top = 18.dp, bottom = 8.dp),
-                )
+            for (workspace in (app.projects + app.chats.map { it.workspace }).distinct()) {
+                val selected = workspace == app.selectedProject
+                NavRow(projectName(workspace), Icons.folder, selected = selected) { app.selectProject(workspace) }
+                if (selected) {
+                    val chats = app.chats.filter { it.workspace == workspace }
+                    Column(Modifier.padding(start = 16.dp)) {
+                        for (chat in chats) NavRow(chat.title, null, selected = chat.id == app.current, running = chat.running) { app.open(chat.id); onPicked() }
+                        if (chats.isEmpty()) Text("No chats in this project", style = Type.caption, modifier = Modifier.padding(10.dp))
+                    }
+                }
             }
         }
         val localPhone = app.server?.localPhone == true
@@ -428,7 +434,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                 )
             }
         }
-        if (localPhone) NavRow("Connections", Icons.globe, selected = false) { app.connectionsOpen = true }
+        NavRow("Settings", Icons.document, selected = false) { app.settingsOpen = true; onPicked() }
         NavRow("Switch execution target", Icons.refresh, selected = false) { app.switchTarget() }
         Spacer(Modifier.height(8.dp))
     }
@@ -451,11 +457,10 @@ private fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running:
 }
 
 @Composable
-private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifier) {
+private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifier, panel: Boolean, onPanelChange: (Boolean) -> Unit) {
     val meta = app.meta
     val running = meta?.running == true
     var tool by remember { mutableStateOf<Item?>(null) }
-    var panel by remember { mutableStateOf(false) }
     Box(modifier) {
     Column(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
         // Title bar
@@ -470,7 +475,7 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
                 )
             }
             if (app.current != null) Box {
-                RoundButton(Icons.panel, Color.Transparent, Palette.muted, description = "Panel: tasks, browser, terminal") { panel = true }
+                RoundButton(Icons.panel, Color.Transparent, Palette.muted, description = "Panel: tasks, browser, terminal") { onPanelChange(true) }
                 // A task in progress: the panel has news.
                 if (meta?.todo?.any { it.status == "in_progress" } == true) {
                     Box(Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp).size(7.dp).clip(CircleShape).background(Palette.amber))
@@ -495,7 +500,7 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
         enter = slideInHorizontally(tween(300, easing = CssEase)) { it },
         exit = slideOutHorizontally(tween(240, easing = CssEase)) { it },
     ) {
-        shownChat?.let { PanelScreen(app, it) { panel = false } }
+        shownChat?.let { PanelScreen(app, it) { onPanelChange(false) } }
     }
     }
     tool?.let { ToolSheet(it) { tool = null } }
@@ -645,7 +650,7 @@ private fun toneColor(tone: String) = when (tone) {
 @Composable
 private fun Composer(app: RemoteApp, running: Boolean) {
     var text by remember { mutableStateOf("") }
-    var project by remember { mutableStateOf<String?>(null) }
+    val project = app.selectedProject
     var models by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) app.attach(uris, project)
@@ -653,7 +658,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
     // Another chat may be in another project: keep only the files its message can carry.
     // An open chat is judged by its own workspace, once known; a new one by the project chosen.
     val chatWorkspace = app.current?.let { id -> app.chats.firstOrNull { it.id == id }?.workspace }
-    LaunchedEffect(app.current, chatWorkspace) {
+    LaunchedEffect(app.current, chatWorkspace, project) {
         when {
             app.current == null -> app.retainAttachments(project ?: app.workspace)
             chatWorkspace != null -> app.retainAttachments(chatWorkspace)
@@ -674,7 +679,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
         Row(Modifier.widthIn(max = 760.dp).fillMaxWidth().padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             ProjectChip(app, project) {
                 if (it != project) app.clearAttachments() // sent to the other project's folder
-                project = it
+                app.selectProject(it)
             }
             Spacer(Modifier.width(4.dp))
             Icon(Icons.computer, null, tint = Palette.muted, modifier = Modifier.size(15.dp))
@@ -740,23 +745,24 @@ private fun Composer(app: RemoteApp, running: Boolean) {
 private fun ProjectChip(app: RemoteApp, chosen: String?, onChoose: (String) -> Unit) {
     var open by remember { mutableStateOf(false) }
     val chat = app.chats.firstOrNull { it.id == app.current }
-    val path = chat?.workspace ?: chosen ?: app.workspace
+    val path = chat?.workspace ?: chosen ?: app.selectedProject ?: app.workspace
     Box {
         Row(
-            Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = chat == null && app.projects.size > 1) { open = true }
+            Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = chat == null && (app.projects.isNotEmpty() || app.projectManagement)) { open = true }
                 .padding(horizontal = 6.dp, vertical = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             Icon(Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
-            Text(path.substringAfterLast('/'), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
+            Text(projectName(path), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
         }
         DropdownMenu(open, { open = false }, containerColor = Palette.popover) {
             for (p in app.projects) DropdownMenuItem(
-                text = { Text(p.substringAfterLast('/'), style = Type.body) },
+                text = { Text(projectName(p), style = Type.body) },
                 onClick = { onChoose(p); open = false },
                 leadingIcon = { Icon(if (p == path) Icons.check else Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp)) },
             )
+            if (app.projectManagement) DropdownMenuItem(text = { Text("Add project…", style = Type.body) }, onClick = { open = false; app.projectsOpen = true })
         }
     }
 }
@@ -816,10 +822,11 @@ private fun ToolSheet(item: Item, onDone: () -> Unit) {
                 if (item.tool == "edit_file" && item.meta.isNotEmpty()) Text(item.meta, style = Type.small.copy(color = Palette.added))
                 if (item.millis > 0) Text(elapsed(item.millis), style = Type.small)
             }
+            if (item.tool != "shell" && item.args.isNotBlank()) CodeWell(toolPreviewText(item.args), "Arguments", wrap = true)
             val running = item.state != "done"
             when (item.tool) {
                 "shell" -> {
-                    CodeWell(args.optString("command"), "Command")
+                    CodeWell(args.optString("command"), "Command", wrap = true)
                     Section("Output", item.text, if (running) "Waiting for the result…" else "No output")
                 }
                 "edit_file" -> if (item.diff.isNotEmpty()) CodeWell(item.diff, "Changes", diff = true) else Text("No diff recorded", style = Type.small)
@@ -827,14 +834,14 @@ private fun ToolSheet(item: Item, onDone: () -> Unit) {
                 "list_directory" -> Section("Entries", item.text, if (running) "Waiting for the result…" else "Empty directory")
                 else -> Section("Output", item.text, "No output")
             }
-            if (item.failed.isNotEmpty() && item.failed != "Stopped") CodeWell(item.failed, "Error")
+            if (item.failed.isNotEmpty() && item.failed != "Stopped") CodeWell(item.failed, "Error", wrap = true)
         }
     }
 }
 
 @Composable
 private fun Section(name: String, text: String, empty: String) {
-    if (text.isEmpty()) Text(empty, style = Type.small.copy(color = Palette.faint)) else CodeWell(text.trimEnd(), name)
+    if (text.isEmpty()) Text(empty, style = Type.small.copy(color = Palette.faint)) else CodeWell(toolPreviewText(text.trimEnd()), name, wrap = true)
 }
 
 private fun elapsed(ms: Long) = when {
@@ -979,3 +986,11 @@ private fun EditSheet(original: String, onSend: (String) -> Unit, onDone: () -> 
     }
     LaunchedEffect(Unit) { focus.requestFocus() }
 }
+
+internal fun toolPreviewText(text: String): String = runCatching {
+    when {
+        text.trimStart().startsWith("{") -> JSONObject(text).toString(2)
+        text.trimStart().startsWith("[") -> org.json.JSONArray(text).toString(2)
+        else -> text
+    }
+}.getOrDefault(text)

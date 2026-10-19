@@ -4,6 +4,7 @@ import (
 	"context"
 	"slices"
 	"strings"
+	"time"
 
 	"1loop/assets"
 
@@ -133,7 +134,10 @@ func (ui *desktopUI) modelMenu() {
 				r.Disable()
 			}
 		}
-		values[account.ID] = agent.AccountLimits{Note: "Loading limits…"}
+		values[account.ID] = ui.accountLimits[account.ID]
+		if values[account.ID].Checked.IsZero() {
+			values[account.ID] = agent.AccountLimits{Note: "Loading limits…"}
+		}
 		if r.disabled {
 			values[account.ID] = agent.AccountLimits{Note: r.detail}
 		}
@@ -296,6 +300,29 @@ func (ui *desktopUI) modelMenu() {
 			refreshStrip()
 		})
 	}
+	go func() {
+		ticker := time.NewTicker(time.Minute)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case <-ticker.C:
+				fyne.Do(func() {
+					if ctx.Err() != nil || ui.model.open != menu || menu.closing {
+						return
+					}
+					for _, account := range accounts {
+						ui.loadAccountLimits(ctx, menu, account, func(limits agent.AccountLimits) {
+							values[account.ID] = limits
+							refreshStrip()
+						})
+					}
+				})
+			}
+		}
+	}()
+
 }
 
 // speedChips are the speeds the ChatGPT plan offers for the model: Standard

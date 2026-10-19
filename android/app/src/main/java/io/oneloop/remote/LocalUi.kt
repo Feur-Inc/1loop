@@ -1,8 +1,5 @@
 package io.oneloop.remote
 
-import android.content.Context
-import androidx.compose.ui.platform.LocalContext
-
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
@@ -192,9 +189,7 @@ internal fun StepCard(step: SetupStep, onPrepare: () -> Unit) {
 fun LocalAdbSection(
     state: LocalAdbState,
     onAllowedChange: (Boolean) -> Unit,
-    onPair: (port: Int, code: String) -> Unit,
-    onConnect: (port: Int) -> Unit,
-    onOpenSettings: () -> Unit,
+    onOpenShizuku: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -209,8 +204,8 @@ fun LocalAdbSection(
                     when {
                         state.busy -> "Working…"
                         !state.allowed -> "Off. 1loop cannot use this phone."
-                        state.connected -> "Connected. Phone Use is available."
-                        else -> "Allowed, not connected yet."
+                        state.connected -> "Connected through Shizuku. Phone Use is available."
+                        else -> "Allowed. Waiting for Shizuku."
                     },
                     style = Type.caption.copy(color = if (state.allowed && state.connected) Palette.added else Palette.muted),
                 )
@@ -219,58 +214,26 @@ fun LocalAdbSection(
             Toggle(state.allowed, enabled = state.allowed || !state.busy, onChange = onAllowedChange)
         }
         Text(
-            "When on, the agent can see this phone's screen, tap, type and run adb commands. " +
+            "When on, the agent can see this phone's screen, tap, type and run Android shell commands through Shizuku. " +
                 "Typing replaces your clipboard. Turning it off blocks new actions at once; it cannot undo what was already done.",
             style = Type.caption, modifier = Modifier.padding(top = 10.dp),
         )
         state.problem?.let { Text(it, style = Type.small.copy(color = Palette.danger), modifier = Modifier.padding(top = 10.dp)) }
-        if (state.allowed && !state.connected) AdbGuide(state.paired, state.busy, onPair, onConnect, onOpenSettings)
-    }
-}
-
-@Composable
-private fun AdbGuide(paired: Boolean, busy: Boolean, onPair: (Int, String) -> Unit, onConnect: (Int) -> Unit, onOpenSettings: () -> Unit) {
-    // Held in memory only, and cleared once sent: the pairing code is never kept.
-    var pairPort by remember { mutableStateOf("") }
-    var code by remember { mutableStateOf("") }
-    val context = LocalContext.current
-    val preferences = remember(context) { context.getSharedPreferences("1loop-local-adb", Context.MODE_PRIVATE) }
-    var connectPort by remember { mutableStateOf(preferences.getString("connect-port", "").orEmpty()) }
-    // Paired once: only connecting is needed, unless Android forgot this phone.
-    var pairAgain by remember { mutableStateOf(false) }
-    val pairing = !paired || pairAgain
-    Column(Modifier.padding(top = 16.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        GuideStep("1", "Turn on Wireless debugging", "In Developer options. Android 11 or later.")
-        Pill("Open Wireless debugging", enabled = !busy, onClick = onOpenSettings)
-        if (pairing) {
-            Spacer(Modifier.height(4.dp))
-            GuideStep("2", "Pair this phone", "Tap Pair device with pairing code, then enter its port and code.")
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                Field(pairPort, { pairPort = it.filter(Char::isDigit).take(5) }, "Port", KeyboardType.Number, Modifier.weight(1f))
-                Field(code, { code = it.filter(Char::isDigit).take(6) }, "Pairing code", KeyboardType.Number, Modifier.weight(1f))
+        if (state.allowed && !state.connected) {
+            Column(Modifier.padding(top = 12.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (!state.installed) GuideStep("1", "Install Shizuku", "Use the official download. It is a separate app and does not require root.")
+                if (!state.serviceRunning) GuideStep("2", "Start Shizuku", "Open Shizuku. On Android 11+, follow Start via Wireless debugging: enable Wireless debugging in Developer options, pair with the code shown by Android, then tap Start. You can also use Shizuku's USB computer command. Repeat the start after rebooting the phone.")
+                GuideStep("3", "Authorize 1loop", "Return here and tap Authorize 1loop, then allow the Shizuku permission. If previously denied, use Shizuku → Authorized applications.")
+                GuideStep("4", "Keep control", "Connected means Phone Use and Android shell tools are available. Turn Allow local ADB off at any time to block new actions.")
             }
-            Pill("Pair", enabled = !busy && port(pairPort) != null && code.isNotEmpty()) {
-                onPair(port(pairPort)!!, code)
-                code = ""
-            }
-        }
-        Spacer(Modifier.height(4.dp))
-        GuideStep(if (pairing) "3" else "2", "Connect", "Enter the port shown under IP address & Port.")
-        Field(connectPort, {
-            connectPort = it.filter(Char::isDigit).take(5)
-            preferences.edit().putString("connect-port", connectPort).apply()
-        }, "Port", KeyboardType.Number)
-        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Pill("Connect", enabled = !busy && port(connectPort) != null) { onConnect(port(connectPort)!!) }
-            if (!pairing) Pill("Pair again", enabled = !busy) { pairAgain = true }
+            Pill(if (state.installed) "Open Shizuku" else "Get Shizuku", onClick = onOpenShizuku)
+            if (state.serviceRunning) Pill("Authorize 1loop", enabled = !state.busy) { onAllowedChange(true) }
         }
     }
 }
 
-private fun port(text: String) = text.toIntOrNull()?.takeIf { it in 1..65535 }
-
 @Composable
-private fun GuideStep(number: String, title: String, detail: String) {
+internal fun GuideStep(number: String, title: String, detail: String) {
     Row {
         Box(Modifier.size(22.dp).clip(CircleShape).background(Palette.raised), contentAlignment = Alignment.Center) {
             Text(number, style = Type.caption.copy(color = Palette.text, fontWeight = FontWeight.SemiBold))

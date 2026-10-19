@@ -31,8 +31,10 @@ func (ui *desktopUI) offerClaudeCode() {
 }
 
 func (ui *desktopUI) initializeConnections() {
-	defer ui.offerClaudeCode()
-	if ui.connectionsList == nil {
+	if len(ui.connectionsList) > 0 || ui.cfg.Model != "" || ui.cfg.BaseURL != "" {
+		defer ui.offerClaudeCode()
+	}
+	if ui.connectionsList == nil && (ui.cfg.Model != "" || ui.cfg.BaseURL != "") {
 		id := core.Identifier()
 		ui.connectionsList = []agent.Connection{{
 			ID:        id,

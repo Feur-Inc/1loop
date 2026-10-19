@@ -63,6 +63,7 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/state":                         server.state,
 		"GET /api/limits":                        server.limits,
 		"GET /api/chats/{id}":                    server.chat,
+		"POST /api/chats/{id}/delete":            server.deleteChat,
 		"GET /api/events":                        server.events,
 		"POST /api/chats/{id}/message":           server.editMessage,
 		"POST /api/chats/{id}/version":           server.selectVersion,
@@ -126,6 +127,43 @@ func (server *headlessServer) chat(w http.ResponseWriter, r *http.Request) {
 		"total": len(chat.Items),
 		"meta":  server.metaLocked(chat),
 	})
+}
+
+func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request) {
+	server.mu.Lock()
+	chat := server.chatLocked(r.PathValue("id"))
+	if chat == nil {
+		server.mu.Unlock()
+		core.Fail(w, 404, "Chat not found")
+		return
+	}
+	previous := server.chats
+	kept := make([]*serverChat, 0, len(previous)-1)
+	for _, candidate := range previous {
+		if candidate != chat {
+			kept = append(kept, candidate)
+		}
+	}
+	server.chats = kept
+	if err := server.saveLocked(); err != nil {
+		server.chats = previous
+		server.mu.Unlock()
+		core.Fail(w, 500, err.Error())
+		return
+	}
+	if chat.run != nil {
+		chat.run.cancel()
+		chat.run = nil
+	}
+	chat.queue, chat.steer = nil, nil
+	tabs := chat.tabs
+	chat.tabs = nil
+	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.mu.Unlock()
+	for _, tab := range tabs {
+		tab.close()
+	}
+	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }
 
 func (server *headlessServer) events(w http.ResponseWriter, r *http.Request) {

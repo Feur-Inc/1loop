@@ -598,6 +598,26 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         }
     }
 
+    fun deleteChat(id: String) {
+        val generation = connectionGeneration
+        val target = server ?: return
+        problem = null
+        scope.launch {
+            try {
+                onConnection(target, generation) { it.post("/api/chats/$id/delete", JSONObject()) }
+                if (generation != connectionGeneration) return@launch
+                chats.removeAll { it.id == id }
+                approvals.remove(id)
+                questions.remove(id)
+                if (current == id) open(null)
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                actionFailed(generation, e)
+            }
+        }
+    }
+
     fun open(id: String?) {
         current = id
         chats.firstOrNull { it.id == id }?.workspace?.let {
@@ -676,6 +696,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 val list = parseChats(data.optJSONArray("chats"))
                 chats.clear()
                 chats.addAll(list)
+                if (current != null && chats.none { it.id == current }) open(null)
             }
             "item" -> {
                 if (data.optString("chat") != current) return

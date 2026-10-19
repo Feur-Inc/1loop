@@ -396,8 +396,10 @@ fun ChatScreen(app: RemoteApp) {
     if (app.projectsOpen) ProjectsSheet(app) { app.projectsOpen = false }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) {
+    var deleting by remember(app.server) { mutableStateOf<ChatSummary?>(null) }
     Column(modifier.background(Palette.sidebar).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
         Image(painterResource(R.drawable.logo), "1loop", modifier = Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp))
         NavRow("New chat", Icons.plus, selected = app.current == null) { app.open(null); onPicked() }
@@ -412,7 +414,10 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                 if (selected) {
                     val chats = app.chats.filter { it.workspace == workspace }
                     Column(Modifier.padding(start = 16.dp)) {
-                        for (chat in chats) NavRow(chat.title, null, selected = chat.id == app.current, running = chat.running) { app.open(chat.id); onPicked() }
+                        for (chat in chats) NavRow(
+                            chat.title, null, selected = chat.id == app.current, running = chat.running,
+                            onLongClick = { deleting = chat },
+                        ) { app.open(chat.id); onPicked() }
                         if (chats.isEmpty()) Text("No chats in this project", style = Type.caption, modifier = Modifier.padding(10.dp))
                     }
                 }
@@ -438,13 +443,35 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
         NavRow("Switch execution target", Icons.refresh, selected = false) { app.switchTarget() }
         Spacer(Modifier.height(8.dp))
     }
+    deleting?.let { chat ->
+        ModalBottomSheet(
+            onDismissRequest = { deleting = null },
+            containerColor = Palette.surface,
+            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+        ) {
+            Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
+                Text("Delete chat?", style = Type.title)
+                Spacer(Modifier.height(12.dp))
+                Text("“${chat.title}” will be permanently deleted. Its running tasks and tabs will stop. Project files are kept.", style = Type.body)
+                Spacer(Modifier.height(20.dp))
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+                    Pill("Cancel") { deleting = null }
+                    Spacer(Modifier.width(10.dp))
+                    Pill("Delete", primary = true) {
+                        app.deleteChat(chat.id)
+                        deleting = null
+                    }
+                }
+            }
+        }
+    }
 }
 
 @Composable
-private fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onClick: () -> Unit) {
+private fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (selected) Palette.selected else Color.Transparent)
-            .clickable(onClick = onClick).padding(horizontal = 10.dp, vertical = 10.dp),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "Delete chat").padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) {

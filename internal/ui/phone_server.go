@@ -112,6 +112,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)
 	mux.HandleFunc("GET /api/state", server.authorized(server.state))
 	mux.HandleFunc("GET /api/chats/{id}", server.authorized(server.chat))
+	mux.HandleFunc("POST /api/chats/{id}/delete", server.authorized(server.deleteChat))
 	mux.HandleFunc("GET /api/events", server.authorized(server.events))
 	mux.HandleFunc("POST /api/chats/{id}/message", server.authorized(server.editMessage))
 	mux.HandleFunc("POST /api/chats/{id}/version", server.authorized(server.selectVersion))
@@ -406,6 +407,25 @@ func (server *remoteServer) chat(writer http.ResponseWriter, req *http.Request) 
 		return
 	}
 	core.WriteJSON(writer, http.StatusOK, out)
+}
+
+func (server *remoteServer) deleteChat(writer http.ResponseWriter, req *http.Request) {
+	found := false
+	server.onUI(func() {
+		chat := server.ui.chatByID(req.PathValue("id"))
+		if chat == nil {
+			return
+		}
+		found = true
+		server.ui.removeChat(chat)
+		delete(server.dirty, chat)
+		delete(server.meta, chat)
+	})
+	if !found {
+		core.Fail(writer, http.StatusNotFound, "This chat no longer exists")
+		return
+	}
+	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
 }
 
 // ---------------------------------------------------------------------------

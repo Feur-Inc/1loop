@@ -292,26 +292,29 @@ func (ui *desktopUI) renameChat(chat *conversation) {
 
 func (ui *desktopUI) deleteChat(chat *conversation) {
 	ui.confirm("Delete chat?", fmt.Sprintf("“%s” will be permanently deleted from 1loop.", chat.Title), "Delete", func() {
-		var kept []*conversation
-		for _, conversationValue := range ui.chats {
-			if conversationValue != chat {
-				kept = append(kept, conversationValue)
-			}
-		}
-		ui.chats = kept
-		if chat.run != nil {
-			chat.run.cancel()
-		}
-		if ui.panel.owner != chat {
-			chat.disposePanel() // its terminals end with it
-		}
-		if ui.current == chat {
-			ui.current = nil
-			ui.startNew()
-		}
-		ui.save()
-		ui.renderChats()
+		ui.removeChat(chat)
 	})
+}
+
+func (ui *desktopUI) removeChat(chat *conversation) {
+	var kept []*conversation
+	for _, conversationValue := range ui.chats {
+		if conversationValue != chat {
+			kept = append(kept, conversationValue)
+		}
+	}
+	ui.chats = kept
+	if chat.run != nil {
+		chat.run.cancel()
+	}
+	chat.queue, chat.steer = nil, nil
+	if ui.current == chat {
+		ui.current = nil
+		ui.startNew()
+	}
+	chat.disposePanel()
+	ui.save()
+	ui.renderChats()
 }
 
 func (ui *desktopUI) chatMenu(chat *conversation, anchor fyne.CanvasObject) *sheet {

@@ -87,7 +87,7 @@ func (server *headlessServer) addBrowserLocked(chat *serverChat, info browser.In
 	page.OnPopup = func(id target.ID, address string) {
 		server.mu.Lock()
 		defer server.mu.Unlock()
-		if server.ctx.Err() != nil {
+		if server.ctx.Err() != nil || server.chatLocked(chat.ID) != chat {
 			return
 		}
 		server.addBrowserLocked(chat, browser.Info{URL: address, Width: 1280, Height: 800, Adaptive: true}, id)
@@ -107,6 +107,10 @@ func (server *headlessServer) browserTools(chat *serverChat) agent.PanelToolHand
 			return agent.PanelToolResult{}, err
 		}
 		server.mu.Lock()
+		if server.chatLocked(chat.ID) != chat {
+			server.mu.Unlock()
+			return agent.PanelToolResult{}, fmt.Errorf("Chat not found")
+		}
 		server.ensureTabsLocked(chat)
 		var page *browser.Page
 		infos := []browser.Info{}
@@ -361,6 +365,10 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 			return agent.PanelToolResult{}, err
 		}
 		server.mu.Lock()
+		if server.chatLocked(chat.ID) != chat {
+			server.mu.Unlock()
+			return agent.PanelToolResult{}, fmt.Errorf("Chat not found")
+		}
 		var terminal *serverTerminal
 		list := []map[string]string{}
 		index := -1
@@ -398,7 +406,7 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 					return agent.PanelToolResult{}, err
 				}
 				server.mu.Lock()
-				if server.closing || server.ctx.Err() != nil || ctx.Err() != nil || revision != server.terminalRevision {
+				if server.closing || server.ctx.Err() != nil || ctx.Err() != nil || revision != server.terminalRevision || server.chatLocked(chat.ID) != chat {
 					server.mu.Unlock()
 					terminal.close()
 					return agent.PanelToolResult{}, fmt.Errorf("Terminal startup was cancelled or permissions changed")

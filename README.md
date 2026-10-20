@@ -38,7 +38,9 @@ make release    # versions finales dans dist/ : archive Linux (bureau X11 + Wayl
 un JDK 21 et le SDK Android (`platforms;android-37.0`, `build-tools;37.0.0` ;
 NDK `30.0.16248370` pour reconstruire les composants natifs). Il n'installe
 aucun paquet système et s'arrête à la première vérification échouée. Les
-builds restent sur la machine ; Windows est laissé en TODO dans le script.
+builds restent sur la machine. La version Windows (`bin/windows/` : bureau,
+serveur et rendu logiciel Mesa) est compilée dans Docker avec MinGW ; ses tests
+Go se lancent sur Windows lui-même.
 
 Lancez toujours `bin/1loop` : dans une session Wayland il passe la main à `bin/1loop-wayland` (texte net, sans mise à l’échelle XWayland), sinon il reste en X11. `ONELOOP_BACKEND=x11` force X11 ; `ONELOOP_SYSTEM_TITLEBAR=1` remet la barre de titre du système.
 

@@ -6,9 +6,13 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.os.Process
 import android.util.Base64
+import android.webkit.CookieManager
 import android.webkit.WebResourceRequest
+import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.WebViewDatabase
+import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
@@ -19,6 +23,21 @@ class LocalBrowser(private val context: Context) {
     private val pages = mutableMapOf<String, WebView>() // Main thread owns views.
 
     suspend fun view(id: String): WebView? = withContext(Dispatchers.Main) { pages[id] }
+
+    /** Erases what WebView keeps: cookies and logins, site storage, cache, form data, the open tabs' history. */
+    suspend fun clearData() = withContext(Dispatchers.Main) {
+        val cookies = CompletableDeferred<Unit>()
+        CookieManager.getInstance().removeAllCookies { cookies.complete(Unit) }
+        cookies.await()
+        CookieManager.getInstance().flush()
+        WebStorage.getInstance().deleteAllData()
+        WebViewDatabase.getInstance(context).clearHttpAuthUsernamePassword()
+        // The cache is the app's, shared by every WebView: any view clears it.
+        val spare = if (pages.isEmpty()) WebView(context) else null
+        (pages.values.firstOrNull() ?: spare!!).apply { clearCache(true); clearFormData() }
+        pages.values.forEach { it.clearHistory() }
+        spare?.destroy()
+    }
 
     @SuppressLint("SetJavaScriptEnabled")
     suspend fun execute(arguments: JSONObject): JSONObject = withContext(Dispatchers.Main) {

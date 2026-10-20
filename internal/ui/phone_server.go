@@ -138,6 +138,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("GET /api/chats/{id}", server.authorized(server.chat))
 	mux.HandleFunc("POST /api/chats/{id}/delete", server.authorized(server.deleteChat))
 	mux.HandleFunc("POST /api/chats/{id}/tasks/{task}/stop", server.authorized(server.stopTask))
+	mux.HandleFunc("POST /api/browser/clear", server.authorized(server.clearBrowser))
 	mux.HandleFunc("GET /api/hooks", server.authorized(remoteapi.GetHooks))
 	mux.HandleFunc("POST /api/hooks", server.authorized(remoteapi.SaveHooks))
 	mux.HandleFunc("GET /api/chats/{id}/items/{index}/images/{n}", server.authorized(server.itemImage))
@@ -552,6 +553,23 @@ func (server *remoteServer) deleteChat(writer http.ResponseWriter, req *http.Req
 	})
 	if !found {
 		core.Fail(writer, http.StatusNotFound, "This chat no longer exists")
+		return
+	}
+	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// clearBrowser is Settings → Browser → Clear, asked from the phone.
+func (server *remoteServer) clearBrowser(writer http.ResponseWriter, _ *http.Request) {
+	result := make(chan error, 1)
+	server.onUI(func() { server.ui.clearBrowserData(func(err error) { result <- err }) })
+	var err error
+	select {
+	case err = <-result:
+	case <-time.After(30 * time.Second): // 1loop closing, or Chrome not answering
+		err = fmt.Errorf("no answer from the browser")
+	}
+	if err != nil {
+		core.Fail(writer, http.StatusInternalServerError, "Some data could not be cleared: "+err.Error())
 		return
 	}
 	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})

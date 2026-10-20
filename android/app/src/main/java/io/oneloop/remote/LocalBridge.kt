@@ -56,6 +56,7 @@ class LocalBridge(
                     "state" -> JSONObject().put("phone", phone.available()).put("browser", true)
                     "phone_use", "adb_shell" -> phone.execute(method, request.getJSONObject("arguments"))
                     "browser_native" -> browser.execute(request.getJSONObject("arguments"))
+                    "browser_clear" -> { browser.clearData(); JSONObject().put("ok", true) }
                     "terminal_native" -> terminal(request.getJSONObject("arguments"))
                     "install_packages" -> installPackages(request.getJSONObject("arguments"))
                     else -> error("Unknown local bridge method.")

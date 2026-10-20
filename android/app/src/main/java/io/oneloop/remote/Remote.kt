@@ -157,7 +157,7 @@ sealed interface Screen {
     data object Mode : Screen // where 1loop works: server, desktop or this phone
     data object Servers : Screen
     data object LocalSetup : Screen
-    data class Pair(val server: Server, val pairing: String, val consoleCode: String = "") : Screen
+    data class Pair(val server: Server, val pairing: String, val consoleCode: String = "", val phone: Boolean = false) : Screen
     data object Chat : Screen
 }
 
@@ -220,6 +220,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     val approvals = mutableStateMapOf<String, Approval>() // by chat
     val questions = mutableStateMapOf<String, Questions>() // by chat
     var busy by mutableStateOf(false)
+    var sharing by mutableStateOf<SharingState?>(null) // local mode: this phone shared on the network
 
     private var events: Job? = null
     @Volatile private var connectionGeneration = 0L // Address equality cannot distinguish reconnects.
@@ -430,7 +431,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             busy = true
             try {
                 val reply = onConnection(server, generation) { it.post("/api/pair", JSONObject().put("device", deviceName())) }
-                screen = Screen.Pair(server, reply.getString("pairing"), reply.optString("code").takeIf { reply.optBoolean("console") }.orEmpty())
+                screen = Screen.Pair(server, reply.getString("pairing"), reply.optString("code").takeIf { reply.optBoolean("console") }.orEmpty(), reply.optBoolean("phone"))
             } catch (e: Exception) {
                 actionFailed(generation, e)
             } finally {
@@ -496,6 +497,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         clearAttachments() // picked for the previous target
         connectionsOpen = false
         settingsOpen = false
+        sharing = null
         projectsOpen = false
         events?.cancel()
         val generation = ++connectionGeneration
@@ -587,6 +589,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     private fun disconnect() {
         connectionGeneration++
         server = null
+        sharing = null
         busy = false
         scrolls.clear()
         clearAttachments()
@@ -610,6 +613,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull { it.workspace == selectedProject }?.id
             chats.firstOrNull { it.id == current }?.workspace?.let { selectedProject = it }
             current?.let { load(it, target, generation) }
+            if (target.localPhone) refreshSharing()
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) { }
@@ -772,6 +776,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 current?.let { scope.launch { load(it, target, generation) } }
             }
             "settings" -> applySettings(data)
+            "sharing" -> if (target.localPhone) scope.launch {
+                try {
+                    refreshSharing(true)
+                } catch (failure: Exception) {
+                    actionFailed(generation, failure)
+                }
+            }
         }
     }
 
@@ -882,6 +893,45 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val reply = onConnection(target, generation) { it.post("/api/preferences", JSONObject().put("userPreferences", text)) }
         userPreferences = reply.optString("userPreferences")
+    }
+
+    /** Local mode: whether this phone is shared, its devices and the pairings waiting. */
+    suspend fun refreshSharing(notify: Boolean = false) {
+        val target = server?.takeIf { it.localPhone } ?: return
+        val state = SharingState.from(onConnection(target, connectionGeneration) { it.get("/api/local/sharing") })
+        val asked = state.pending.firstOrNull()
+        if (notify && !foreground && asked != null && sharing?.pending?.none { it.id == asked.id } != false) {
+            notifier.show("sharing", "1loop", "“${asked.device}” asks to use this phone. Open 1loop to type its code.")
+        }
+        sharing = state
+    }
+
+    suspend fun setSharing(enabled: Boolean) {
+        val target = server?.takeIf { it.localPhone } ?: error("Only on this phone's engine.")
+        onConnection(target, connectionGeneration) { it.post("/api/local/sharing", JSONObject().put("enabled", enabled)) }
+        refreshSharing()
+    }
+
+    suspend fun answerPairing(id: String, code: String, approve: Boolean) {
+        val target = server?.takeIf { it.localPhone } ?: return
+        try {
+            onConnection(target, connectionGeneration) { it.post("/api/local/pairings/$id", JSONObject().put("code", code).put("approve", approve)) }
+        } finally {
+            refreshSharing()
+        }
+    }
+
+    suspend fun revokeDevice(index: Int) {
+        val target = server?.takeIf { it.localPhone } ?: return
+        onConnection(target, connectionGeneration) { it.post("/api/local/devices/$index/revoke", JSONObject()) }
+        refreshSharing()
+    }
+
+    /** Erases the agent's browser data where it runs: this phone's WebView, or the computer's browser. */
+    suspend fun clearBrowser() {
+        val target = server ?: error("Connect first.")
+        if (target.localPhone) local.browser.clearData()
+        else onConnection(target, connectionGeneration) { it.post("/api/browser/clear", JSONObject()) }
     }
 
     /** The hooks file of the machine the agent runs on, as text. */

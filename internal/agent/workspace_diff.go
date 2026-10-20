@@ -29,6 +29,13 @@ func WorkspaceDiff(ctx context.Context, root string, staged bool) (string, error
 		if failure, ok := err.(*exec.ExitError); ok {
 			detail = strings.TrimSpace(string(failure.Stderr))
 		}
+		// Outside a repository git prints its whole usage, in the user's language.
+		check := exec.CommandContext(ctx, "git", "-C", root, "rev-parse", "--git-dir")
+		platform.WorkspaceCommand(check, root, platform.WorkspaceYOLO(ctx))
+		platform.PrepareProcess(check)
+		if check.Run() != nil {
+			return "", fmt.Errorf("This folder is not a Git repository")
+		}
 		return "", fmt.Errorf("Unable to read Git changes: %w\n%s", err, detail)
 	}
 	if staged {

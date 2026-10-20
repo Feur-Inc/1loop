@@ -147,13 +147,16 @@ func Main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	server.handler = server.routes()
+	server.fingerprint = remoteapi.Fingerprint(certificate)
 	httpServer := &http.Server{
-		Handler:           server.routes(),
+		Handler:           server.handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       90 * time.Second,
 		MaxHeaderBytes:    32 << 10,
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}},
 	}
+	server.tlsConfig = httpServer.TLSConfig
 	fmt.Fprintf(os.Stderr, "1loop server listening on https://%s\nCertificate SHA-256: %s\nWorkspace: %s\nCommands: pair <id> <code>, devices, revoke <number>\n", listener.Addr(), remoteapi.Fingerprint(certificate), root)
 	if server.local {
 		if err := saveServerJSON(*localReady, map[string]any{

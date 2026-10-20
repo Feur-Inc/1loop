@@ -29,9 +29,16 @@ Go 1.23+, un compilateur C, les bibliothèques de développement OpenGL, X11 et 
 make            # compile bin/1loop (X11) et bin/1loop-wayland (Wayland natif)
 make run        # compile puis ouvre 1loop sur le dossier courant
 make dev        # pareil, avec le journal développeur (option -dev)
+bash ci.sh      # vérifications locales Go/Linux/Android, tests, builds et lint
 make release    # versions finales dans dist/ : archive Linux (bureau X11 + Wayland, serveur) et APK release
 ./bin/1loop -workspace /chemin/vers/projet
 ```
+
+`ci.sh` remplace GitHub Actions. Il nécessite les outils Go/Linux ci-dessus,
+un JDK 21 et le SDK Android (`platforms;android-37.0`, `build-tools;37.0.0` ;
+NDK `30.0.16248370` pour reconstruire les composants natifs). Il n'installe
+aucun paquet système et s'arrête à la première vérification échouée. Les
+builds restent sur la machine ; Windows est laissé en TODO dans le script.
 
 Lancez toujours `bin/1loop` : dans une session Wayland il passe la main à `bin/1loop-wayland` (texte net, sans mise à l’échelle XWayland), sinon il reste en X11. `ONELOOP_BACKEND=x11` force X11 ; `ONELOOP_SYSTEM_TITLEBAR=1` remet la barre de titre du système.
 

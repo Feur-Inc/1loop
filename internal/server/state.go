@@ -5,8 +5,10 @@ package server
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -95,6 +97,14 @@ type headlessServer struct {
 	bridge                     *mobileBridge
 	phoneAvailable             atomic.Bool
 	saveTimer                  *time.Timer
+	// Local phone mode: the phone app's token hash, apart from the paired
+	// network devices, and the network listener while the phone is shared.
+	localHash   string
+	sharing     *http.Server
+	sharingPort int
+	fingerprint string
+	handler     http.Handler
+	tlsConfig   *tls.Config
 	// Changes waiting for the next flush to the clients: a streamed answer
 	// reaches them at most ten times a second, as the desktop sends it.
 	pending  map[*serverChat]map[int]bool
@@ -229,6 +239,8 @@ func (server *headlessServer) scheduleSaveLocked() {
 func (server *headlessServer) close() {
 	server.mu.Lock()
 	server.closing = true
+	shared := server.sharing
+	server.sharing = nil
 	if server.saveTimer != nil {
 		server.saveTimer.Stop()
 	}
@@ -248,6 +260,9 @@ func (server *headlessServer) close() {
 	}
 	server.disconnectStreamsLocked()
 	server.mu.Unlock()
+	if shared != nil {
+		shared.Close()
+	}
 	for _, tab := range tabs {
 		tab.close()
 	}

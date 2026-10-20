@@ -36,7 +36,7 @@ func (server *headlessServer) authorized(next http.HandlerFunc) http.HandlerFunc
 		}
 		hash := remoteapi.TokenHash(token)
 		server.mu.Lock()
-		allowed := false
+		allowed := server.localHash != "" && subtle.ConstantTimeCompare([]byte(server.localHash), []byte(hash)) == 1
 		for _, device := range server.devices {
 			if subtle.ConstantTimeCompare([]byte(device.TokenHash), []byte(hash)) == 1 {
 				allowed = true
@@ -78,7 +78,10 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 	code := fmt.Sprintf("%06d", number)
 	server.pairs[id] = &serverPair{Device: args.Device, Code: remoteapi.TokenHash(code), Expires: time.Now().Add(2 * time.Minute)}
 	fmt.Fprintf(os.Stderr, "\nPairing requested by %q. Type: pair %s <code shown on that device>\n", args.Device, id)
-	core.WriteJSON(writer, 200, map[string]any{"pairing": id, "code": code, "console": true, "expiresIn": 120})
+	if server.local { // the phone's app shows it, to type the code
+		server.broadcastLocked("sharing", map[string]bool{"enabled": server.sharing != nil})
+	}
+	core.WriteJSON(writer, 200, map[string]any{"pairing": id, "code": code, "console": true, "phone": server.local, "expiresIn": 120})
 }
 
 func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.Request) {
@@ -113,6 +116,9 @@ func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.
 		return
 	}
 	delete(server.pairs, args.Pairing)
+	if server.local {
+		server.broadcastLocked("sharing", map[string]bool{"enabled": server.sharing != nil})
+	}
 	core.WriteJSON(writer, 200, map[string]string{"token": token})
 }
 

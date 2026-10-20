@@ -186,7 +186,7 @@ func (remote *remoteDesktop) panelContent(tab remoteapi.Tab) (fyne.CanvasObject,
 						return
 					}
 					if err != nil {
-						body.Objects = []fyne.CanvasObject{note(err.Error())}
+						body.Objects = []fyne.CanvasObject{container.NewVScroll(note(err.Error()))} // a long error must not grow the window
 					} else {
 						body.Objects = []fyne.CanvasObject{container.NewVScroll(newDiffView(result.Diff))}
 					}

@@ -13,6 +13,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
+import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -51,6 +52,8 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                 val adb by app.local.adb.collectAsState()
                 LocalAdbSection(adb, app::setAdbAllowed, app.local::openShizuku, manualApproval = app.approvalMode == "approval")
                 BackgroundExecutionSection(adb.installed)
+                LaunchedEffect(Unit) { runCatching { app.refreshSharing() } }
+                SharingSection(app)
             }
             Text("Personalization", style = Type.headline)
             Text("Your preferences are added to 1loop's base instructions. They never replace its system prompt or tool rules. They apply to subsequent turns on this execution target.", style = Type.small)
@@ -75,9 +78,47 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                 }
             } else Text("Update the connected desktop or server to edit preferences here.", style = Type.small)
             notice?.let { Text(it, style = Type.small) }
+            BrowserDataSection(app)
             HooksSection(app)
         }
     }
+}
+
+// The agent's browser keeps its logins between sessions: this erases them,
+// on this phone's WebView or on the computer the agent runs on.
+@Composable
+private fun BrowserDataSection(app: RemoteApp) {
+    val scope = rememberCoroutineScope()
+    var asking by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var status by remember(app.server) { mutableStateOf<String?>(null) }
+    Text("Browser", style = Type.headline)
+    Text(
+        if (app.server?.localPhone == true) "The agent's browser on this phone keeps its cookies and logins, cache and site data. Clear erases all of it."
+        else "The agent's browser on ${app.server?.name ?: "the computer"} keeps its cookies and logins, cache, site data and history. Clear erases all of it.",
+        style = Type.small,
+    )
+    Pill(if (busy) "Clearing…" else "Clear browsing data", enabled = app.connected && !busy) { asking = true }
+    status?.let { Text(it, style = Type.small.copy(color = if (it.startsWith("Cleared")) Palette.added else Palette.danger)) }
+    if (asking) AlertDialog(
+        onDismissRequest = { asking = false },
+        containerColor = Palette.surface,
+        title = { Text("Clear browsing data?", style = Type.title) },
+        text = { Text("Cookies and logins, cache and site data of the agent's browser will be erased. Sites will ask to log in again.", style = Type.small) },
+        confirmButton = {
+            Pill("Clear", primary = true) {
+                asking = false
+                busy = true
+                scope.launch {
+                    try { app.clearBrowser(); status = "Cleared." }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { status = failure.message ?: "Could not clear the browser." }
+                    finally { busy = false }
+                }
+            }
+        },
+        dismissButton = { Pill("Cancel") { asking = false } },
+    )
 }
 
 // The hooks of the machine the agent runs on (computer, server or this

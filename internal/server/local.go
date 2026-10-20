@@ -6,7 +6,6 @@ import (
 	"net"
 	"os"
 	"strings"
-	"time"
 
 	"1loop/internal/remoteapi"
 )
@@ -36,6 +35,15 @@ func (server *headlessServer) authorizeLocalClient(tokenPath, listen string) err
 	}
 	server.local = true
 	server.name = "This phone"
-	server.devices = []remoteapi.PairedDevice{{Name: "Local phone", TokenHash: remoteapi.TokenHash(token), Added: time.Now()}}
+	server.localHash = remoteapi.TokenHash(token)
+	// Devices paired while the phone was shared stay; the phone app's own
+	// token, new at every start, was once kept among them.
+	kept := server.devices[:0]
+	for _, device := range server.devices {
+		if device.Name != "Local phone" {
+			kept = append(kept, device)
+		}
+	}
+	server.devices = kept
 	return nil
 }

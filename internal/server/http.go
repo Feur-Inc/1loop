@@ -4,6 +4,7 @@ package server
 // remote (internal/ui/phone_server.go), served over HTTPS to paired devices only.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"1loop/internal/agent"
+	"1loop/internal/browser"
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
 )
@@ -24,7 +26,7 @@ func (server *headlessServer) routes() http.Handler {
 		mux.HandleFunc("POST /api/pair", server.pair)
 		mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)
 	} else {
-		mux.HandleFunc("POST /api/local/capabilities", server.authorized(func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("POST /api/local/capabilities", server.localOnly(func(w http.ResponseWriter, r *http.Request) {
 			var state struct{ Phone bool }
 			if core.ReadJSON(r, &state) != nil {
 				core.Fail(w, 400, "Invalid capability state")
@@ -43,16 +45,20 @@ func (server *headlessServer) routes() http.Handler {
 			server.mu.Unlock()
 			core.WriteJSON(w, 200, map[string]bool{"ok": true})
 		}))
-		mux.HandleFunc("GET /api/local/connections", server.authorized(server.localConnections))
-		mux.HandleFunc("POST /api/local/connections", server.authorized(server.saveLocalConnection))
-		mux.HandleFunc("POST /api/local/connections/models", server.authorized(server.draftLocalConnectionModels))
-		mux.HandleFunc("GET /api/local/connections/{id}/models", server.authorized(server.localConnectionModels))
-		mux.HandleFunc("POST /api/local/connections/{id}/login", server.authorized(server.localConnectionLogin))
-		mux.HandleFunc("POST /api/local/connections/{id}/disconnect", server.authorized(server.localConnectionDisconnect))
-		mux.HandleFunc("POST /api/local/connections/refresh", server.authorized(server.refreshLocalModels))
-		mux.HandleFunc("GET /api/local/claude/login", server.authorized(server.claudeLoginState))
-		mux.HandleFunc("POST /api/local/claude/login", server.authorized(server.beginClaudeLogin))
-		mux.HandleFunc("POST /api/local/shutdown", server.authorized(func(w http.ResponseWriter, r *http.Request) {
+		mux.HandleFunc("GET /api/local/connections", server.localOnly(server.localConnections))
+		mux.HandleFunc("POST /api/local/connections", server.localOnly(server.saveLocalConnection))
+		mux.HandleFunc("POST /api/local/connections/models", server.localOnly(server.draftLocalConnectionModels))
+		mux.HandleFunc("GET /api/local/connections/{id}/models", server.localOnly(server.localConnectionModels))
+		mux.HandleFunc("POST /api/local/connections/{id}/login", server.localOnly(server.localConnectionLogin))
+		mux.HandleFunc("POST /api/local/connections/{id}/disconnect", server.localOnly(server.localConnectionDisconnect))
+		mux.HandleFunc("POST /api/local/connections/refresh", server.localOnly(server.refreshLocalModels))
+		mux.HandleFunc("GET /api/local/claude/login", server.localOnly(server.claudeLoginState))
+		mux.HandleFunc("POST /api/local/claude/login", server.localOnly(server.beginClaudeLogin))
+		mux.HandleFunc("GET /api/local/sharing", server.localOnly(server.sharingState))
+		mux.HandleFunc("POST /api/local/sharing", server.localOnly(server.setSharing))
+		mux.HandleFunc("POST /api/local/pairings/{id}", server.localOnly(server.answerPairing))
+		mux.HandleFunc("POST /api/local/devices/{index}/revoke", server.localOnly(server.revokeDevice))
+		mux.HandleFunc("POST /api/local/shutdown", server.localOnly(func(w http.ResponseWriter, r *http.Request) {
 			core.WriteJSON(w, 200, map[string]bool{"ok": true})
 			server.shutdown()
 		}))
@@ -65,8 +71,7 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/chats/{id}":                          server.chat,
 		"POST /api/chats/{id}/delete":                  server.deleteChat,
 		"POST /api/chats/{id}/tasks/{task}/stop":       server.stopTask,
-		"GET /api/hooks":                               remoteapi.GetHooks,
-		"POST /api/hooks":                              remoteapi.SaveHooks,
+		"POST /api/browser/clear":                      server.clearBrowser,
 		"GET /api/events":                              server.events,
 		"POST /api/chats/{id}/message":                 server.editMessage,
 		"POST /api/chats/{id}/version":                 server.selectVersion,
@@ -84,6 +89,8 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/chats/{id}/panel/{key}/stream":       server.panelStream,
 		"POST /api/chats/{id}/panel/{key}/input":       server.panelInput,
 		"POST /api/chats/{id}/panel":                   server.editPanel,
+		"GET /api/hooks":                               remoteapi.GetHooks,
+		"POST /api/hooks":                              remoteapi.SaveHooks,
 		"GET /api/chats/{id}/items/{index}/images/{n}": server.itemImage,
 	}
 	for path, handler := range endpoints {
@@ -167,6 +174,28 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 	server.mu.Unlock()
 	for _, tab := range tabs {
 		tab.close()
+	}
+	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// clearBrowser erases what the agent's browser keeps: cookies and logins,
+// cache, site data, history. On the phone the browser is Android's
+// WebView: the app clears it, over its bridge.
+func (server *headlessServer) clearBrowser(w http.ResponseWriter, r *http.Request) {
+	if server.bridge != nil { // the phone's WebView, for a device paired with it
+		ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
+		defer cancel()
+		var reply map[string]any
+		if err := server.bridge.call(ctx, "browser_clear", nil, &reply); err != nil {
+			core.Fail(w, 500, "Some data could not be cleared: "+err.Error())
+			return
+		}
+		core.WriteJSON(w, 200, map[string]bool{"ok": true})
+		return
+	}
+	if err := browser.ClearData(server.engine); err != nil {
+		core.Fail(w, 500, "Some data could not be cleared: "+err.Error())
+		return
 	}
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }

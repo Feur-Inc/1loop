@@ -327,14 +327,14 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
         Spacer(Modifier.height(20.dp))
         Text("Pair with ${pair.server.name}", style = Type.headline, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
-        Text(if (pair.consoleCode.isNotEmpty()) "Enter this command in the server console, then tap Connect:\npair ${pair.pairing} ${pair.consoleCode}" else "Type the code 1loop shows on your computer.", style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center)
+        Text(if (pair.phone) "On that phone, type this code in 1loop's request and tap Allow, then tap Connect:\n${pair.consoleCode}" else if (pair.consoleCode.isNotEmpty()) "Enter this command in the server console, then tap Connect:\npair ${pair.pairing} ${pair.consoleCode}" else "Type the code 1loop shows on your computer.", style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center)
         if (pair.server.desktop && pair.server.fingerprint.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             Text("The computer must show the same check:\n${fingerprintCheck(pair.server.fingerprint)}", style = Type.small.copy(fontFamily = Type.mono.fontFamily), textAlign = TextAlign.Center)
         }
         Spacer(Modifier.height(32.dp))
         if (pair.consoleCode.isNotEmpty()) {
-            CopyChip { "pair ${pair.pairing} ${pair.consoleCode}" }
+            if (!pair.phone) CopyChip { "pair ${pair.pairing} ${pair.consoleCode}" }
             Spacer(Modifier.height(16.dp))
             Pill("Connect after approval", primary = true, enabled = !app.busy) { app.confirm(pair, pair.consoleCode) }
         } else BasicTextField(
@@ -376,6 +376,7 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
 
 @Composable
 fun ChatScreen(app: RemoteApp) {
+    if (app.server?.localPhone == true) PairingRequestDialog(app) // a device asking to use this phone
     if (app.settingsOpen) {
         MobileSettings(app) { app.settingsOpen = false }
         if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }

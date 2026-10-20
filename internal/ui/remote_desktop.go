@@ -69,8 +69,8 @@ func (ui *desktopUI) connectServer() {
 				}
 			}
 			var reply struct {
-				Pairing, Code string
-				Console       bool
+				Pairing, Code  string
+				Console, Phone bool
 			}
 			err = client.json(ctx, "POST", "/api/pair", map[string]string{"device": "1loop desktop"}, &reply)
 			fyne.Do(func() {
@@ -84,14 +84,14 @@ func (ui *desktopUI) connectServer() {
 					return
 				}
 				sheet.dismiss()
-				ui.confirmServerPair(client, reply.Pairing, reply.Code)
+				ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone)
 			})
 		}()
 	}
 	sheet = ui.modal("Connect to a remote server", container.NewVBox(note("The server runs your model, browser and terminal on its machine. For a private certificate, copy its SHA-256 fingerprint from the VM console before connecting."), widget.NewLabel("HTTPS address"), address, widget.NewLabel("Certificate fingerprint"), pin), 620, nil, connect)
 }
 
-func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code string) {
+func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code string, phone bool) {
 	var sheet *sheet
 	status := widget.NewLabel("")
 	status.Wrapping = fyne.TextWrapWord
@@ -135,6 +135,9 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 		copyCommand,
 		status,
 	)
+	if phone { // a phone shared on the network: its user types the code in 1loop's request
+		body = container.NewVBox(note("On the phone, type this code in 1loop's request, then tap Allow. The pairing expires after two minutes."), codeBlock(code, 80), status)
+	}
 	sheet = ui.modal("Approve this desktop on the server", body, 620, nil, confirm)
 }
 

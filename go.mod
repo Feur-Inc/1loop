@@ -19,6 +19,7 @@ require (
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
 	golang.org/x/image v0.24.0
 	golang.org/x/sys v0.30.0
+	mvdan.cc/sh/v3 v3.9.0
 )
 
 require (

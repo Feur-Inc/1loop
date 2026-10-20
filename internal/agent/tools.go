@@ -23,7 +23,7 @@ func coreToolDefinitions() []map[string]any {
 		name, description string
 		fields            []string
 	}{
-		{"shell", "Run a " + platform.ShellDescription() + " command in the workspace after user approval. Commands have a 60 second timeout. Output longer than max_output_tokens (null: 10000, up to 50000) keeps its start and its end; filter or page long output rather than raising the limit.", []string{"command", "max_output_tokens:int"}},
+		{"shell", "Run a " + platform.ShellDescription() + " command in the workspace after user approval. Commands have a 60 second timeout. Output longer than max_output_tokens (null: 10000, up to 50000) keeps its start and its end; filter or page long output rather than raising the limit. In Auto mode commands may run in a workspace sandbox: set escalate to true, with a justification, only to rerun a command that must write outside it (null otherwise).", []string{"command", "max_output_tokens:int", "escalate:bool", "justification:string?"}},
 		{"read_file", "Read a UTF-8 text file in the workspace (maximum 1 MiB): limit lines from line offset (1-based; null: from line 1, 2000 lines). The reply says which lines it holds and how many the file has; read further only when you need them.", []string{"path", "offset:int", "limit:int"}},
 		{"list_directory", "List entries of a directory in the workspace. Use . for the root.", []string{"path"}},
 		{
@@ -41,6 +41,16 @@ func coreToolDefinitions() []map[string]any {
 			// schemas require every field).
 			if name, ok := strings.CutSuffix(field, ":int"); ok {
 				properties[name] = map[string]any{"type": []string{"integer", "null"}}
+				required = append(required, name)
+				continue
+			}
+			if name, ok := strings.CutSuffix(field, ":bool"); ok {
+				properties[name] = map[string]any{"type": []string{"boolean", "null"}}
+				required = append(required, name)
+				continue
+			}
+			if name, ok := strings.CutSuffix(field, ":string?"); ok {
+				properties[name] = map[string]any{"type": []string{"string", "null"}}
 				required = append(required, name)
 				continue
 			}
@@ -266,10 +276,16 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 			outcome.Output, outcome.Err = result.Text, err
 		}
 	} else if isPhoneTool(call.Function.Name) {
-		if call.Function.Name == "adb_shell" && !backend.confirm(ctx, emit, "Use local Android shell?", call.Function.Arguments) {
-			outcome.Err = fmt.Errorf("The user denied this Android shell action")
-		} else if !cfg.toolAvailable(call.Function.Name) {
+		// Every phone action is approved, by the reviewer in Auto mode, except
+		// in YOLO; in Approval mode the tools are not offered at all.
+		title := "Use the phone?"
+		if call.Function.Name == "adb_shell" {
+			title = "Use local Android shell?"
+		}
+		if !cfg.toolAvailable(call.Function.Name) {
 			outcome.Err = fmt.Errorf("Local phone permission was revoked")
+		} else if !backend.confirm(ctx, emit, title, call.Function.Arguments) {
+			outcome.Err = fmt.Errorf("The user denied this phone action")
 		} else {
 			begin()
 			result, err := cfg.Phone(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
@@ -292,7 +308,7 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 		switch {
 		case handler == nil:
 			outcome.Err = fmt.Errorf("Terminal tools are not attached to this conversation")
-		case terminalNeedsApproval(call.Function.Name, json.RawMessage(call.Function.Arguments)) && !backend.confirm(ctx, emit, "Use terminal", call.Function.Arguments):
+		case terminalNeedsApproval(call.Function.Name, json.RawMessage(call.Function.Arguments)) && !terminalRead(ctx, call) && !backend.confirm(ctx, emit, "Use terminal", call.Function.Arguments):
 			outcome.Err = fmt.Errorf("The user denied this terminal action")
 		default:
 			begin()
@@ -376,6 +392,8 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		MaxTokens *int   `json:"max_output_tokens"`
 		Offset    *int   `json:"offset"`
 		Limit     *int   `json:"limit"`
+		Escalate  *bool  `json:"escalate"`
+		Reason    string `json:"justification"`
 	}
 	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 		return "", "", err
@@ -385,7 +403,11 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		if strings.TrimSpace(args.Command) == "" {
 			return "", "", fmt.Errorf("Empty command")
 		}
-		if !backend.confirm(ctx, emit, "Run command?", root+"\n\n$ "+args.Command) {
+		review, sandboxed, title, preview, problem := shellApproval(ctx, root, args.Command, args.Escalate != nil && *args.Escalate, args.Reason)
+		if problem != nil {
+			return "", "", problem
+		}
+		if review && !backend.confirm(ctx, emit, title, preview) {
 			return "", "", fmt.Errorf("Command denied")
 		}
 		begin()
@@ -393,6 +415,11 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		defer cancel()
 		cmd := platform.ShellCommand(timeout, args.Command)
 		platform.WorkspaceCommand(cmd, root, platform.WorkspaceYOLO(ctx))
+		if sandboxed {
+			if err := platform.SandboxCommand(cmd, root); err != nil {
+				return "", "", err
+			}
+		}
 		platform.PrepareProcess(cmd)
 		cmd.Cancel = func() error { return platform.KillProcessTree(cmd) }
 		cmd.WaitDelay = time.Second
@@ -404,10 +431,14 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		if args.MaxTokens != nil {
 			tokens = min(50000, max(1000, *args.MaxTokens))
 		}
-		if timeout.Err() != nil {
-			return headAndTail(output.String(), tokens), "", timeout.Err()
+		text := output.String()
+		if sandboxed && err != nil && sandboxRefusal(text) {
+			text += "\n[1loop: this command ran in the workspace sandbox, which writes only in the workspace, the temporary folders and the build caches. If it must write elsewhere, run it again with escalate: true and a justification.]"
 		}
-		return headAndTail(output.String(), tokens), "", err
+		if timeout.Err() != nil {
+			return headAndTail(text, tokens), "", timeout.Err()
+		}
+		return headAndTail(text, tokens), "", err
 	}
 	if name != "read_file" && name != "list_directory" && name != "edit_file" {
 		return "", "", fmt.Errorf("Unknown tool: %s", name)

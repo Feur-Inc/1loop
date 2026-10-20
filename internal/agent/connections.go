@@ -162,7 +162,11 @@ func systemInstructions(cfg Config) string {
 		prompt = strings.Replace(prompt, "Shell commands and file edits require user approval; never bypass a refusal.", "The user enabled YOLO mode: shell commands (deletions included) and edits run without asking. Stay inside the workspace.", 1)
 	}
 	if cfg.ApprovalMode == "auto" {
-		prompt = strings.Replace(prompt, "Shell commands and file edits require user approval; never bypass a refusal.", "Inside the workspace, file edits, creating files and folders, and commands that only read, build or test run at once; other shell commands and edits go through an automatic review, and what it refuses waits for the user's approval. Never bypass a refusal or try to word an action so that it passes the review.", 1)
+		auto := "Inside the workspace, file edits, creating files and folders, and commands that only read run at once; other shell commands and edits go through an automatic review, and what it refuses waits for the user's approval. Never bypass a refusal or try to word an action so that it passes the review."
+		if platform.SandboxAvailable() {
+			auto = "File edits inside the workspace run at once. Shell commands run at once in a sandbox: they read everything and write only the workspace, the temporary folders and the build caches. Destructive commands (deletions, git reset/clean/push, sudo, kill…) go through an automatic review, and what it refuses waits for the user's approval. When a command must write outside the sandbox, run it again with escalate: true and a justification; that goes through the review too. Never bypass a refusal or try to word an action so that it passes the review."
+		}
+		prompt = strings.Replace(prompt, "Shell commands and file edits require user approval; never bypass a refusal.", auto, 1)
 	}
 	prompt += userPreferenceInstructions(cfg)
 	prompt += mobileInstructions(cfg) + projectInstructions(cfg.Workspace)

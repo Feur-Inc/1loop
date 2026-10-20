@@ -191,6 +191,7 @@ fun LocalAdbSection(
     onAllowedChange: (Boolean) -> Unit,
     onOpenShizuku: () -> Unit,
     modifier: Modifier = Modifier,
+    manualApproval: Boolean = false, // each tap would wait for the user: ADB stays off
 ) {
     Column(
         modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface)
@@ -203,6 +204,7 @@ fun LocalAdbSection(
                 Text(
                     when {
                         state.busy -> "Working…"
+                        !state.allowed && manualApproval -> "Unavailable in Approval mode. Choose Auto or YOLO to let 1loop use this phone."
                         !state.allowed -> "Off. 1loop cannot use this phone."
                         state.connected -> "Connected through Shizuku. Phone Use is available."
                         else -> "Allowed. Waiting for Shizuku."
@@ -211,7 +213,7 @@ fun LocalAdbSection(
                 )
             }
             // Turning it on waits for the current work; turning it off never does.
-            Toggle(state.allowed, enabled = state.allowed || !state.busy, onChange = onAllowedChange)
+            Toggle(state.allowed, enabled = state.allowed || (!state.busy && !manualApproval), onChange = onAllowedChange)
         }
         Text(
             "When on, the agent can see this phone's screen, tap, type and run Android shell commands through Shizuku. " +

@@ -542,8 +542,9 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			switch {
 			case name == "phone_use" || name == "adb_shell":
 				// Android publishes grant/connection changes; a slow bridge must
-				// not silently remove tools from a model request.
-				return server.phoneAvailable.Load()
+				// not silently remove tools from a model request. In Approval
+				// mode the phone is not offered: each tap would wait for the user.
+				return server.phoneAvailable.Load() && cfg.ApprovalMode != "approval"
 			case strings.HasPrefix(name, "browser_"):
 				return true // WebView is built in; only ADB needs an optional grant.
 			case name == "request_permissions":

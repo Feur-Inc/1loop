@@ -49,7 +49,7 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                 Pill("Accounts and models", onClick = { app.connectionsOpen = true })
                 Text("Phone access · Shizuku", style = Type.headline)
                 val adb by app.local.adb.collectAsState()
-                LocalAdbSection(adb, app::setAdbAllowed, app.local::openShizuku)
+                LocalAdbSection(adb, app::setAdbAllowed, app.local::openShizuku, manualApproval = app.approvalMode == "approval")
                 BackgroundExecutionSection(adb.installed)
             }
             Text("Personalization", style = Type.headline)

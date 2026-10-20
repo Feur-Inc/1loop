@@ -344,6 +344,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         scope.launch { try { local.prepare(step) } catch (e: CancellationException) { throw e } catch (_: Exception) {} }
     }
 
+    // In Approval mode every phone action would wait for the user: ADB is turned off.
+    private fun revokeAdbInApprovalMode() {
+        if (approvalMode == "approval" && server?.localPhone == true && local.adb.value.allowed) setAdbAllowed(false)
+    }
+
     // Local ADB: LocalAdbState carries the problem of a failed action.
     fun setAdbAllowed(allowed: Boolean) {
         scope.launch { try { local.setAdbAllowed(allowed) } catch (e: CancellationException) { throw e } catch (_: Exception) {} }
@@ -699,6 +704,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         defaultTier = settings.optString("tier")
         defaultWindow = settings.optInt("window")
         approvalMode = settings.optString("approvalMode", "approval")
+        revokeAdbInApprovalMode()
         autoMode = settings.optBoolean("autoMode")
         modelsLoading = settings.optBoolean("loading")
     }
@@ -865,6 +871,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val target = server ?: return
         approvalMode = mode
+        revokeAdbInApprovalMode()
         scope.launch {
             runCatching { onConnection(target, generation) { it.post("/api/approval-mode", JSONObject().put("mode", mode)) } }
                 .onFailure { actionFailed(generation, it) }

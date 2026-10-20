@@ -461,7 +461,7 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		card(settingRow("HTTPS server", "Work on a headless 1loop server with its own models, files, browser and terminals. Approve this device in the server console.", newRow("Connect…", nil, styleOutline, ui.connectServer))),
 		sectionTitle("Permissions"),
 		card(settingRow("Tool permissions",
-			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto runs what is safe and asks for the rest, with a ChatGPT account (Codex's review: its prompt, OpenAI's review model) or Claude Code (its own Auto mode); other connections have no Auto mode and ask.",
+			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto works as Codex: reads run at once, other commands run in a sandbox that writes only the workspace, and destructive ones go to Codex's review (ChatGPT account) or Claude Code's own Auto mode; other connections have no Auto mode and ask.",
 			sized(230, mode.row))),
 		sectionTitle("Hooks"),
 		card(ui.hooksRow()),

@@ -56,10 +56,19 @@ type approvalPolicy struct {
 //go:embed guardian_policy.md
 var guardianPolicy string
 
-var autoReviewInstructions = strings.NewReplacer(
-	"{{ tenant_policy_config }}", "",
-	"{{ extra_policy }}", "Every action sent to you runs with the user's full rights on the user's own computer.",
-).Replace(guardianPolicy)
+// autoReviewInstructions says what ran without review: with a sandbox, Codex's
+// own setting; without, only reads and creations in the workspace.
+func autoReviewInstructions() string {
+	unreviewed := "- The coding-agent can read everywhere. Inside its workspace, file edits and creating files and folders run without review; shell commands that only read run without review; other actions are sent to you."
+	if platform.SandboxAvailable() {
+		unreviewed = "- The coding-agent can read everywhere. File edits inside its workspace run without review. Shell commands run without review in a sandbox that can write only the workspace, the temporary folders and the build caches. Destructive commands (deletions, git reset/clean/push, sudo, kill…) and commands asked to run outside the sandbox, with the agent's justification, are sent to you."
+	}
+	return strings.NewReplacer(
+		"{{ tenant_policy_config }}", "",
+		"{{ extra_policy }}", "Every action sent to you runs with the user's full rights on the user's own computer.",
+		"- The coding-agent can read everywhere. Inside its workspace, file edits, creating files and folders, and commands that only read, build or test run without review; other actions are sent to you.", unreviewed,
+	).Replace(guardianPolicy)
+}
 
 // Codex's request texts around the transcript and the action, word for word.
 const (
@@ -146,7 +155,7 @@ func (backend *App) autoReview(ctx context.Context, cfg Config, chat []Message, 
 	// compaction, or when its own history grew too long.
 	excerpt, fresh := session.update(chat)
 	if fresh {
-		session.messages = []Message{{Role: "system", Content: autoReviewInstructions}}
+		session.messages = []Message{{Role: "system", Content: autoReviewInstructions()}}
 	}
 	var prompt strings.Builder
 	next := "action"
@@ -215,7 +224,7 @@ func (session *ReviewSession) update(chat []Message) (string, bool) {
 // plannedAction is the action as JSON, as Codex hands it to its reviewer.
 func plannedAction(cfg Config, title, preview string) string {
 	action := map[string]any{"cwd": cfg.Workspace}
-	if _, command, ok := strings.Cut(preview, "\n\n$ "); ok && title == "Run command?" {
+	if _, command, ok := strings.Cut(preview, "\n\n$ "); ok && (title == "Run command?" || title == "Run outside the sandbox?") {
 		action["tool"], action["command"] = "shell", command
 	} else {
 		action["tool"], action["request"], action["details"] = "edit", strings.TrimSuffix(title, "?"), core.TruncateText(preview, 6000)
@@ -273,91 +282,25 @@ func parseReview(text string) (bool, string, error) {
 	return outcome == "allow", reason, nil
 }
 
-// readOnlyCommands are programs that only read, with the options that
-// would make them write left out (see obviouslySafe).
-var readOnlyCommands = map[string]bool{
-	"ls": true, "cat": true, "head": true, "tail": true, "wc": true, "grep": true, "rg": true,
-	"pwd": true, "echo": true, "which": true, "file": true, "stat": true, "du": true, "df": true,
-	"tree": true, "sort": true, "cut": true, "diff": true, "nl": true, "true": true,
-	"basename": true, "dirname": true, "realpath": true, "date": true, "uname": true, "whoami": true,
-}
-
-// readOnlyGit are git's subcommands that only read the repository.
-var readOnlyGit = map[string]bool{
-	"status": true, "diff": true, "log": true, "show": true, "rev-parse": true, "ls-files": true,
-	"blame": true, "grep": true, "describe": true, "shortlog": true,
-}
-
 // actionSummary is an action in one line, for the chat's trace.
 func actionSummary(title, preview string) string {
-	if _, command, ok := strings.Cut(preview, "\n\n$ "); ok && title == "Run command?" {
+	if _, command, ok := strings.Cut(preview, "\n\n$ "); ok && (title == "Run command?" || title == "Run outside the sandbox?") {
+		command, _, _ = strings.Cut(command, "\n\nWhy: ")
 		return "$ " + core.TruncateText(strings.TrimSpace(command), 160)
 	}
 	return strings.TrimSuffix(title, "?")
 }
 
-// obviouslySafe tells the actions that need no review: edits inside the
-// workspace (relative paths: confined to it), except in .git, and a
-// shell command whose every part only reads, builds and tests Go code, or
-// creates in the workspace (see createsInWorkspace).
-// Anything it cannot read with certainty goes to the reviewer.
+// obviouslySafe tells the edits that need no review: inside the workspace
+// (relative paths: confined to it), except in .git. Shell commands are
+// sorted before they reach the review (shellApproval).
 func obviouslySafe(root, title, preview string) bool {
-	if strings.HasPrefix(title, "Apply changes to ") {
-		for _, path := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(title, "Apply changes to "), "?"), ", ") {
-			// An absolute path is outside the workspace, in a granted folder.
-			if path == ".git" || strings.HasPrefix(path, ".git/") || filepath.IsAbs(path) {
-				return false
-			}
-		}
-		return true
-	}
-	if title != "Run command?" {
+	if !strings.HasPrefix(title, "Apply changes to ") {
 		return false
 	}
-	_, command, ok := strings.Cut(preview, "\n\n$ ")
-	if !ok || strings.ContainsAny(command, "`<\n") || strings.Contains(command, "$(") {
-		return false
-	}
-	// Writing to a file is the one redirection refused; merging streams is fine.
-	if strings.Contains(strings.ReplaceAll(command, "2>&1", ""), ">") {
-		return false
-	}
-	replacer := strings.NewReplacer("&&", "\x00", "||", "\x00", "|", "\x00", ";", "\x00")
-	for _, part := range strings.Split(replacer.Replace(command), "\x00") {
-		words := strings.Fields(part)
-		if len(words) == 0 || strings.Contains(part, "&") {
-			return false
-		}
-		for _, word := range words[1:] { // options that write a file or run a program
-			if word == "-o" || strings.HasPrefix(word, "--output") || strings.HasPrefix(word, "--pre") {
-				return false
-			}
-		}
-		switch program := words[0]; {
-		case readOnlyCommands[program]:
-		case program == "find":
-			for _, word := range words[1:] {
-				if word == "-delete" || strings.HasPrefix(word, "-exec") || strings.HasPrefix(word, "-ok") || strings.HasPrefix(word, "-fprint") {
-					return false
-				}
-			}
-		case program == "sed":
-			if len(words) < 2 || words[1] != "-n" || strings.Contains(part, " -i") {
-				return false
-			}
-		case program == "git":
-			if len(words) < 2 || !readOnlyGit[words[1]] {
-				return false
-			}
-		case program == "go":
-			if len(words) < 2 || (words[1] != "build" && words[1] != "vet" && words[1] != "test" && words[1] != "version" && words[1] != "env") {
-				return false
-			}
-		case createOptions[program] != nil:
-			if !createsInWorkspace(root, words) {
-				return false
-			}
-		default:
+	for _, path := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(title, "Apply changes to "), "?"), ", ") {
+		// An absolute path is outside the workspace, in a granted folder.
+		if path == ".git" || strings.HasPrefix(path, ".git/") || filepath.IsAbs(path) {
 			return false
 		}
 	}

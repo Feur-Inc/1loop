@@ -692,7 +692,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			response := map[string]any{"behavior": "deny", "message": "The user denied this action."}
 			name := strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__")
 			projectRead := cfg.ProjectTools != nil && (name == "read_file" || name == "list_directory" || name == "recall" || name == "request_user_input")
-			if projectRead || name == "phone_use" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || backend.confirm(ctx, emit, title, preview) {
+			if projectRead || claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || backend.confirm(ctx, emit, title, preview) {
 				response = map[string]any{"behavior": "allow", "updatedInput": claudeEventValue.Request.Input}
 				for _, p := range calls { // the approved call starts now
 					p.started = time.Now()

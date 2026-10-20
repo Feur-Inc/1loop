@@ -24,6 +24,18 @@ func terminalNeedsApproval(name string, args json.RawMessage) bool {
 	return name == "terminal_tabs" && request.Action == "close"
 }
 
+// terminalRead is a terminal command that only reads, in Auto mode: it runs
+// without review, as in the shell tool. Terminals have no sandbox, so
+// anything else is reviewed.
+func terminalRead(ctx context.Context, call ToolCall) bool {
+	policy, _ := ctx.Value(approvalContextKey{}).(approvalPolicy)
+	if policy.review == nil || call.Function.Name != "terminal_command" {
+		return false
+	}
+	var args struct{ Command string }
+	return json.Unmarshal([]byte(call.Function.Arguments), &args) == nil && strings.TrimSpace(args.Command) != "" && classifyCommand(args.Command) == commandSafe
+}
+
 func terminalToolDefinitions() []map[string]any {
 	str := map[string]any{"type": "string"}
 	integer := map[string]any{"type": "integer"}

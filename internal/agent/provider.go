@@ -7,6 +7,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -210,10 +211,36 @@ func request(ctx context.Context, cfg Config, method, path string, body any) (*h
 	if compressed {
 		data = zstdEncoder.EncodeAll(data, nil)
 	}
-	request, err := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(data))
+	build := func() (*http.Request, error) {
+		request, err := http.NewRequestWithContext(ctx, method, base+path, bytes.NewReader(data))
+		if err != nil {
+			return nil, err
+		}
+		setHeaders(request, cfg, key, method, compressed)
+		return request, nil
+	}
+	// No overall timeout: a streamed reply can run as long as the model
+	// works, and the Stop button (context cancellation) is the only way to
+	// end it. A timeout here was the source of "context deadline exceeded".
+	// A silent stream is cut instead (watchIdle).
+	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
+	response, err := send(ctx, client, build)
 	if err != nil {
+		var failure requestFailed
+		if errors.As(err, &failure) {
+			return nil, requestFailed{fmt.Errorf("%s : %w", cfg.Provider, failure.err)}
+		}
 		return nil, err
 	}
+	if method == "POST" {
+		response.Body = watchIdle(response.Body)
+	}
+	return response, nil
+}
+
+// setHeaders are a model request's headers: its key, and for a ChatGPT
+// account the ones Codex sends.
+func setHeaders(request *http.Request, cfg Config, key, method string, compressed bool) {
 	request.Header.Set("Content-Type", "application/json")
 	if compressed {
 		request.Header.Set("Content-Encoding", "zstd")
@@ -242,20 +269,6 @@ func request(ctx context.Context, cfg Config, method, path string, body any) (*h
 	if cfg.Provider == "openrouter" {
 		request.Header.Set("X-Title", "1loop")
 	}
-	// No overall timeout: a streamed reply can run as long as the model
-	// works, and the Stop button (context cancellation) is the only way to
-	// end it. A timeout here was the source of "context deadline exceeded".
-	client := &http.Client{CheckRedirect: func(_ *http.Request, _ []*http.Request) error { return http.ErrUseLastResponse }}
-	response, err := client.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	if response.StatusCode < 200 || response.StatusCode >= 300 {
-		defer response.Body.Close()
-		text, _ := io.ReadAll(io.LimitReader(response.Body, 8192))
-		return nil, fmt.Errorf("%s : HTTP %d · %s", cfg.Provider, response.StatusCode, text)
-	}
-	return response, nil
 }
 
 var zstdEncoder, _ = zstd.NewWriter(nil, zstd.WithEncoderLevel(zstd.SpeedDefault))
@@ -326,6 +339,12 @@ func apiRequest(ctx context.Context, cfg Config, method, path string, body any) 
 }
 
 func completion(ctx context.Context, cfg Config, messages []Message, tools bool, emit emitter) (Message, error) {
+	return withStreamRetries(ctx, emit, func(ctx context.Context, emit emitter) (Message, error) {
+		return completionOnce(ctx, cfg, messages, tools, emit)
+	})
+}
+
+func completionOnce(ctx context.Context, cfg Config, messages []Message, tools bool, emit emitter) (Message, error) {
 	if cfg.Provider == "openai" {
 		return responsesCompletion(ctx, cfg, messages, tools, emit)
 	}

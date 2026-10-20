@@ -8,6 +8,8 @@ import (
 	"flag"
 	"log"
 	"os"
+	"os/signal"
+	"syscall"
 
 	"1loop/internal/agent"
 	"1loop/internal/platform"
@@ -24,6 +26,15 @@ func Main() {
 		log.Fatal(err)
 	}
 	agent.TerminalScreenVisibility = "This chat must be visible; text output remains readable in background chats."
+	// Killed or interrupted (Ctrl+C), 1loop still ends the background
+	// commands it started: they run in their own process groups.
+	go func() {
+		stop := make(chan os.Signal, 1)
+		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
+		<-stop
+		agent.StopEveryTask()
+		os.Exit(130)
+	}()
 	backend := &agent.App{Approvals: make(map[string]chan bool)}
 	runDesktop(backend, root)
 }

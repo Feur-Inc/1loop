@@ -64,6 +64,7 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/limits":                        server.limits,
 		"GET /api/chats/{id}":                    server.chat,
 		"POST /api/chats/{id}/delete":            server.deleteChat,
+		"POST /api/chats/{id}/tasks/{task}/stop": server.stopTask,
 		"GET /api/events":                        server.events,
 		"POST /api/chats/{id}/message":           server.editMessage,
 		"POST /api/chats/{id}/version":           server.selectVersion,
@@ -156,12 +157,25 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 		chat.run = nil
 	}
 	chat.queue, chat.steer = nil, nil
+	chat.tasks.StopAll()
 	tabs := chat.tabs
 	chat.tabs = nil
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
 	server.mu.Unlock()
 	for _, tab := range tabs {
 		tab.close()
+	}
+	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// stopTask is a background task's own Stop.
+func (server *headlessServer) stopTask(w http.ResponseWriter, r *http.Request) {
+	server.mu.Lock()
+	chat := server.chatLocked(r.PathValue("id"))
+	server.mu.Unlock()
+	if chat == nil || !chat.tasks.Stop(r.PathValue("task")) {
+		core.Fail(w, 404, "This task is not running")
+		return
 	}
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }

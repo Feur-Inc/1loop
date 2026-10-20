@@ -799,7 +799,11 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		currentTurn.show(agent.Activity{State: "wait"})
 	case "injected":
 		messageValue := uiEventValue.data.(agent.Message)
-		ui.addItem(currentTurn.chat, agent.ChatItem{Kind: "user", Text: messageValue.Content, Images: messageValue.Images})
+		if messageValue.Internal {
+			ui.addItem(currentTurn.chat, agent.ChatItem{Kind: "note", Text: agent.WakeSummary(messageValue)})
+		} else {
+			ui.addItem(currentTurn.chat, agent.ChatItem{Kind: "user", Text: messageValue.Content, Images: messageValue.Images})
+		}
 		if currentTurn.chat == ui.current { // the answer before it is now complete
 			ui.syncCopies()
 			ui.relayoutColumn()

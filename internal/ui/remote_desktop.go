@@ -625,7 +625,7 @@ func (remote *remoteDesktop) renderTasks() {
 	if remote.tabViews["todo"] == nil || remote.todoTasks == nil {
 		return
 	}
-	signature, _ := json.Marshal(remote.meta.Todo)
+	signature, _ := json.Marshal([]any{remote.meta.Todo, remote.meta.Tasks})
 	if string(signature) != remote.todoSignature {
 		remote.todoSignature = string(signature)
 		remote.todoTasks.RemoveAll()
@@ -637,6 +637,29 @@ func (remote *remoteDesktop) renderTasks() {
 			label := note("")
 			remote.todoRows[task.ID] = label
 			remote.todoTasks.Add(label)
+		}
+		// The server's background commands, newest first, each with its own Stop.
+		if len(remote.meta.Tasks) > 0 {
+			remote.todoTasks.Add(sectionTitle("Background"))
+		}
+		for i := len(remote.meta.Tasks) - 1; i >= 0; i-- {
+			task := remote.meta.Tasks[i]
+			state := "running since " + task.Started.Format("15:04")
+			switch {
+			case task.Running:
+			case task.Stopped:
+				state = "stopped"
+			case task.ExitCode == 0:
+				state = "done in " + task.Ended.Sub(task.Started).Round(time.Second).String()
+			default:
+				state = fmt.Sprintf("failed with code %d", task.ExitCode)
+			}
+			var stop fyne.CanvasObject = layout.NewSpacer()
+			if task.Running {
+				path := "/api/chats/" + remote.meta.Chat + "/tasks/" + task.ID + "/stop"
+				stop = newRow("Stop", iconStop, styleChip, func() { remote.action(path, map[string]any{}) })
+			}
+			remote.todoTasks.Add(container.NewBorder(nil, nil, nil, stop, note("$ "+task.Command+" · "+state)))
 		}
 	}
 	for _, task := range remote.meta.Todo {

@@ -175,6 +175,9 @@ func systemInstructions(cfg Config) string {
 
 type approvalContextKey struct{}
 
+// tasksContextKey hands the shell and background_task tools the chat's background tasks.
+type tasksContextKey struct{}
+
 // configContextKey hands tools the run's configuration.
 type configContextKey struct{}
 
@@ -186,6 +189,7 @@ func toolContext(ctx context.Context, cfg Config) context.Context {
 	ctx = context.WithValue(ctx, browserContextKey{}, cfg.Browser)
 	ctx = context.WithValue(ctx, recallContextKey{}, cfg.Recall)
 	ctx = context.WithValue(ctx, todoContextKey{}, cfg.Todo)
+	ctx = context.WithValue(ctx, tasksContextKey{}, cfg.Tasks)
 	ctx = context.WithValue(ctx, grantsContextKey{}, cfg.Grants)
 	return context.WithValue(ctx, approvalContextKey{}, approvalPolicy{yolo: cfg.ApprovalMode == "yolo"})
 }

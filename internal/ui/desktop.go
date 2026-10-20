@@ -45,6 +45,7 @@ type conversation struct {
 	Cache    *agent.ContextCache     `json:"contextCache,omitempty"`
 	grants   *agent.PermissionGrants // what request_permissions granted, until 1loop closes
 	review   *agent.ReviewSession    // the Auto mode reviewer's conversation, until 1loop closes
+	tasks    *agent.BackgroundTasks  // shell commands run in the background, until 1loop closes
 	Todo     *agent.TodoState        `json:"todo,omitempty"`
 	Panel    *savedPanel             `json:"panel,omitempty"` // its side panel, to open it again as it was
 	Version  string                  `json:"version,omitempty"`
@@ -52,6 +53,7 @@ type conversation struct {
 
 	panel     *panelState // its side panel while 1loop runs (live tabs, terminals included)
 	todoCount int         // tasks last seen in its list: the first ones open the panel
+	taskCount int         // background tasks last seen: a new one opens the panel on them
 
 	run   *chatRun        // the agent loop working on this chat, if any
 	queue []agent.Message // Enter while it runs: the next turns
@@ -350,6 +352,9 @@ func (ui *desktopUI) release() {
 		ui.frames.anim.Stop()
 	}
 	ui.shutdown() // every run's context derives from it
+	for _, chat := range ui.chats {
+		chat.tasks.StopAll() // a background server must not outlive 1loop
+	}
 	ui.panel.dispose()
 	ui.remote.close()
 	ui.mark.stop()
@@ -928,7 +933,50 @@ func (ui *desktopUI) startWithID(messageValue agent.Message, id string) {
 		}
 		return
 	}
-	chat := ui.current
+	ui.startIn(ui.current, messageValue, id)
+}
+
+// wake tells a chat's agent that one of its background tasks ended: the
+// message joins the running turn, or starts one, without opening the chat.
+func (ui *desktopUI) wake(chat *conversation, message agent.Message) {
+	if ui.chatByID(chat.ID) != chat || ui.ctx.Err() != nil {
+		return // deleted meanwhile, or 1loop is closing
+	}
+	if chat.run != nil {
+		chat.steer = append(chat.steer, message)
+		ui.remote.metaChanged(chat)
+		return
+	}
+	if ui.modelsLoading {
+		chat.queue = append(chat.queue, message)
+		return
+	}
+	ui.startIn(chat, message, "")
+}
+
+// chatTasks are the chat's background tasks, made on first use: their end
+// wakes the agent, any change redraws the panel's task tab.
+func (ui *desktopUI) chatTasks(chat *conversation) *agent.BackgroundTasks {
+	if chat.tasks == nil {
+		chat.tasks = &agent.BackgroundTasks{
+			OnFinish: func(_ agent.BackgroundTaskInfo, message agent.Message) { fyne.Do(func() { ui.wake(chat, message) }) },
+			OnChange: func() {
+				fyne.Do(func() {
+					// A new task shows in the panel's task tab, as the first planned tasks do.
+					if count := len(chat.tasks.Snapshot()); count > chat.taskCount {
+						chat.taskCount = count
+						ui.panel.showTodo(chat)
+					}
+					ui.panel.todoChanged(chat)
+				})
+			},
+		}
+	}
+	return chat.tasks
+}
+
+// startIn runs the agent loop for a message in chat (a new chat when nil).
+func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id string) {
 	if chat == nil {
 		title := []rune(strings.Join(strings.Fields(messageValue.Content), " "))
 		if len(title) > 36 {
@@ -945,9 +993,15 @@ func (ui *desktopUI) startWithID(messageValue agent.Message, id string) {
 	}
 	ui.panel.todoChanged(chat)
 	chat.History = append(chat.History, messageValue)
-	ui.showTranscript(true)
-	ui.followTail = true // Sending a message explicitly returns to the live answer.
-	ui.addItem(chat, agent.ChatItem{ID: id, Kind: "user", Text: messageValue.Content, Images: messageValue.Images})
+	if chat == ui.current {
+		ui.showTranscript(true)
+		ui.followTail = true // Sending a message explicitly returns to the live answer.
+	}
+	if messageValue.Internal { // a background task's end: a note, not the user's words
+		ui.addItem(chat, agent.ChatItem{ID: id, Kind: "note", Text: agent.WakeSummary(messageValue)})
+	} else {
+		ui.addItem(chat, agent.ChatItem{ID: id, Kind: "user", Text: messageValue.Content, Images: messageValue.Images})
+	}
 	ui.updateHeader()
 	// No deadline: a long task (long shell runs, many tool rounds) must not
 	// die on a timer. Only the Stop button or a dead network ends it.
@@ -1001,6 +1055,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	}
 	cfg := chat.Config
 	cfg.Todo = chat.Todo
+	cfg.Tasks = ui.chatTasks(chat)
 	cfg.Browser = ui.browserTools(chat)
 	cfg.Terminal = ui.terminalTools(chat)
 	cfg.Computer = ui.computerTools(chat)

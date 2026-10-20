@@ -137,6 +137,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("GET /api/state", server.authorized(server.state))
 	mux.HandleFunc("GET /api/chats/{id}", server.authorized(server.chat))
 	mux.HandleFunc("POST /api/chats/{id}/delete", server.authorized(server.deleteChat))
+	mux.HandleFunc("POST /api/chats/{id}/tasks/{task}/stop", server.authorized(server.stopTask))
 	mux.HandleFunc("GET /api/events", server.authorized(server.events))
 	mux.HandleFunc("POST /api/chats/{id}/message", server.authorized(server.editMessage))
 	mux.HandleFunc("POST /api/chats/{id}/version", server.authorized(server.selectVersion))
@@ -476,6 +477,7 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 	remoteMetaValue.Model, remoteMetaValue.Effort, remoteMetaValue.Tier = ui.choiceLabel(chat.Config), chat.Config.Effort, chat.Config.ServiceTier
 	remoteMetaValue.Window = agent.ModelContextWindow(chat.Config)
 	remoteMetaValue.Todo = todoForPhone(chat)
+	remoteMetaValue.Tasks = append([]agent.BackgroundTaskInfo{}, chat.tasks.Snapshot()...)
 	for _, h := range chat.History {
 		remoteMetaValue.Used = max(remoteMetaValue.Used, h.Usage)
 	}
@@ -547,6 +549,21 @@ func (server *remoteServer) deleteChat(writer http.ResponseWriter, req *http.Req
 	})
 	if !found {
 		core.Fail(writer, http.StatusNotFound, "This chat no longer exists")
+		return
+	}
+	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
+}
+
+// stopTask is a background task's own Stop.
+func (server *remoteServer) stopTask(writer http.ResponseWriter, req *http.Request) {
+	found := false
+	server.onUI(func() {
+		if chat := server.ui.chatByID(req.PathValue("id")); chat != nil {
+			found = chat.tasks.Stop(req.PathValue("task"))
+		}
+	})
+	if !found {
+		core.Fail(writer, http.StatusNotFound, "This task is not running")
 		return
 	}
 	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})

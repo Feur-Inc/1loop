@@ -176,7 +176,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
                     "changes" -> ChangesView(app, chat, tab)
                     "tool" -> ToolView(app.items.getOrNull(tab.index))
                     else -> Column {
-                        Box(Modifier.weight(1f)) { TasksView(tasks) }
+                        Box(Modifier.weight(1f)) { TasksView(tasks, app.meta?.background.orEmpty(), app::stopTask) }
                         ContextFooter(app.meta)
                     }
                 }
@@ -225,8 +225,8 @@ private fun Empty(title: String, detail: String) {
 // Task list
 
 @Composable
-private fun TasksView(tasks: List<Task>) {
-    if (tasks.isEmpty()) {
+private fun TasksView(tasks: List<Task>, background: List<BackgroundTask> = emptyList(), onStop: (String) -> Unit = {}) {
+    if (tasks.isEmpty() && background.isEmpty()) {
         Empty("No tasks yet", "When the agent plans its work, its task list shows here and follows its progress.")
         return
     }
@@ -234,7 +234,7 @@ private fun TasksView(tasks: List<Task>) {
     LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
     val done = tasks.count { it.status == "completed" }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
-        item {
+        if (tasks.isNotEmpty()) item {
             Column(Modifier.padding(bottom = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text("$done of ${tasks.size} done", style = Type.body.copy(fontWeight = FontWeight.Medium), modifier = Modifier.weight(1f))
@@ -266,6 +266,31 @@ private fun TasksView(tasks: List<Task>) {
                     else -> ""
                 }
                 if (time.isNotEmpty()) Text(time, style = Type.caption.copy(color = if (task.status == "in_progress") Palette.amber else Palette.faint), modifier = Modifier.padding(start = 10.dp, top = 3.dp))
+            }
+        }
+        // The agent's background commands, newest first, each with its own Stop.
+        if (background.isNotEmpty()) item {
+            Text("Background", style = Type.body.copy(fontWeight = FontWeight.Medium), modifier = Modifier.padding(top = if (tasks.isEmpty()) 0.dp else 18.dp, bottom = 6.dp))
+        }
+        items(background.reversed(), key = { "bg-" + it.id }) { task ->
+            Row(Modifier.fillMaxWidth().padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
+                    if (task.running) WorkRing("think", 22.dp) else TaskMark(!task.stopped && task.exitCode == 0)
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("$ " + task.command, style = Type.mono, maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    Text(
+                        when {
+                            task.running -> "Running · " + span(now - task.started)
+                            task.stopped -> "Stopped"
+                            task.exitCode == 0 -> "Done in " + span(task.ended - task.started)
+                            else -> "Failed with code ${task.exitCode}"
+                        },
+                        style = Type.caption.copy(color = if (task.running) Palette.amber else Palette.faint),
+                    )
+                }
+                if (task.running) Pill("Stop") { onStop(task.id) }
             }
         }
     }

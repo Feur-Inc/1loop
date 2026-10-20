@@ -81,6 +81,8 @@ type Meta struct {
 	Used   int    `json:"used"`
 	Window int    `json:"window"`
 	Todo   []Todo `json:"todo"` // the chat's task list
+	// Its background commands; POST /api/chats/{id}/tasks/{task}/stop ends one.
+	Tasks []agent.BackgroundTaskInfo `json:"tasks"`
 }
 
 // Page is the part of a chat's items GET /api/chats/{id} returns: all of

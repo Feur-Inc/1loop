@@ -31,6 +31,7 @@ type Config struct {
 	Cache             *ContextCache                             `json:"-"`
 	ContextKey        string                                    `json:"-"`
 	Todo              *TodoState                                `json:"-"`
+	Tasks             *BackgroundTasks                          `json:"-"` // shell commands run in the background
 	Grants            *PermissionGrants                         `json:"-"`
 	Review            *ReviewSession                            `json:"-"` // the Auto mode reviewer's conversation for the chat
 	toolSet           []map[string]any                          // replaces the agent's tools (the reviewer's)

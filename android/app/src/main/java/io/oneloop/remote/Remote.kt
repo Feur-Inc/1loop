@@ -115,6 +115,7 @@ data class Meta(
     val queue: List<String>, val steer: List<String>, val approval: Approval?, val question: Questions?,
     val model: String, val effort: String, val used: Int, val window: Int,
     val todo: List<Task>, val tier: String = "", val contextStatus: String = "",
+    val background: List<BackgroundTask> = emptyList(),
 ) {
     companion object {
         fun from(o: JSONObject) = Meta(
@@ -129,6 +130,22 @@ data class Meta(
                 }
             },
             o.optString("tier"), o.optString("contextStatus"),
+            o.optJSONArray("tasks").let { array ->
+                (0 until (array?.length() ?: 0)).map { i -> BackgroundTask.from(array!!.getJSONObject(i)) }
+            },
+        )
+    }
+}
+
+/** A shell command the agent runs in the background; times in Unix milliseconds (0: none). */
+data class BackgroundTask(val id: String, val command: String, val running: Boolean, val stopped: Boolean, val exitCode: Int, val started: Long, val ended: Long) {
+    companion object {
+        private fun millis(text: String): Long =
+            runCatching { java.time.OffsetDateTime.parse(text).toInstant().toEpochMilli() }.getOrDefault(0L).coerceAtLeast(0L)
+
+        fun from(o: JSONObject) = BackgroundTask(
+            o.optString("id"), o.optString("command"), o.optBoolean("running"), o.optBoolean("stopped"),
+            o.optInt("exitCode"), millis(o.optString("started")), millis(o.optString("ended")),
         )
     }
 }
@@ -886,6 +903,9 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     fun retryMessage(index: Int) = chatAction("/message", JSONObject().put("index", firstItem + index).put("action", "retry"))
 
     fun switchVersion(anchor: String, delta: Int) = chatAction("/version", JSONObject().put("anchor", anchor).put("delta", delta))
+
+    /** A background task's own Stop; the list follows through the "meta" event. */
+    fun stopTask(id: String) = chatAction("/tasks/$id/stop", JSONObject())
 
     /** The chat reloads through the "replace" event; a refusal (a reply under way) shows. */
     private fun chatAction(path: String, body: JSONObject) {

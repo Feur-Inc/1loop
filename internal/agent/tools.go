@@ -23,7 +23,7 @@ func coreToolDefinitions() []map[string]any {
 		name, description string
 		fields            []string
 	}{
-		{"shell", "Run a " + platform.ShellDescription() + " command in the workspace after user approval. Commands have a 60 second timeout. Output longer than max_output_tokens (null: 10000, up to 50000) keeps its start and its end; filter or page long output rather than raising the limit. In Auto mode commands may run in a workspace sandbox: set escalate to true, with a justification, only to rerun a command that must write outside it (null otherwise).", []string{"command", "max_output_tokens:int", "escalate:bool", "justification:string?"}},
+		{"shell", "Run a " + platform.ShellDescription() + " command in the workspace after user approval. A command stops after timeout_ms (null: 60000, up to 600000). For longer work, a server or a watcher, set run_in_background to true: the command starts and this call returns at once, with no time limit; you are told when it ends, with the end of its output, and can follow it with background_task. Output longer than max_output_tokens (null: 10000, up to 50000) keeps its start and its end; filter or page long output rather than raising the limit. In Auto mode commands may run in a workspace sandbox: set escalate to true, with a justification, only to rerun a command that must write outside it (null otherwise).", []string{"command", "max_output_tokens:int", "timeout_ms:int", "run_in_background:bool", "escalate:bool", "justification:string?"}},
 		{"read_file", "Read a UTF-8 text file in the workspace (maximum 1 MiB): limit lines from line offset (1-based; null: from line 1, 2000 lines). The reply says which lines it holds and how many the file has; read further only when you need them.", []string{"path", "offset:int", "limit:int"}},
 		{"list_directory", "List entries of a directory in the workspace. Use . for the root.", []string{"path"}},
 		{
@@ -63,7 +63,7 @@ func coreToolDefinitions() []map[string]any {
 			"parameters":  map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false},
 		}})
 	}
-	return append(result, patchToolDefinition(), todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition())
+	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition())
 }
 
 // allToolDefinitions are every tool, loaded or not.
@@ -370,6 +370,12 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		}
 		return "Checkpoint recorded. 1loop will compact after this tool batch if context pressure warrants it.", "", nil
 	}
+	if call.Function.Name == "background_task" {
+		begin()
+		tasks, _ := ctx.Value(tasksContextKey{}).(*BackgroundTasks)
+		output, err = backgroundTool(tasks, call.Function.Arguments)
+		return
+	}
 	if call.Function.Name == "update_todo" {
 		state, _ := ctx.Value(todoContextKey{}).(*TodoState)
 		if state == nil {
@@ -394,6 +400,8 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		Limit     *int   `json:"limit"`
 		Escalate  *bool  `json:"escalate"`
 		Reason    string `json:"justification"`
+		Timeout   *int   `json:"timeout_ms"`
+		Detach    *bool  `json:"run_in_background"`
 	}
 	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 		return "", "", err
@@ -411,7 +419,12 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 			return "", "", fmt.Errorf("Command denied")
 		}
 		begin()
-		timeout, cancel := context.WithTimeout(ctx, 60*time.Second)
+		if args.Detach != nil && *args.Detach {
+			tasks, _ := ctx.Value(tasksContextKey{}).(*BackgroundTasks)
+			output, err := startBackground(ctx, tasks, root, args.Command, sandboxed)
+			return output, "", err
+		}
+		timeout, cancel := context.WithTimeout(ctx, shellTimeout(args.Timeout))
 		defer cancel()
 		cmd := platform.ShellCommand(timeout, args.Command)
 		platform.WorkspaceCommand(cmd, root, platform.WorkspaceYOLO(ctx))

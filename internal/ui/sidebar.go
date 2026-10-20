@@ -308,6 +308,7 @@ func (ui *desktopUI) removeChat(chat *conversation) {
 		chat.run.cancel()
 	}
 	chat.queue, chat.steer = nil, nil
+	chat.tasks.StopAll()
 	if ui.current == chat {
 		ui.current = nil
 		ui.startNew()

@@ -13,6 +13,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/agent"
@@ -78,6 +79,7 @@ func (panel *toolPanel) todoChanged(chat *conversation) {
 		if len(items) == 0 {
 			box.Add(title)
 			box.Add(padded(8, 0, 0, 0, plainFlow("No tasks yet. The agent lists them here when it plans your request, and ticks them off as it goes.", 13, colMuted)))
+			panel.addBackgroundTasks(box, chat)
 			box.Refresh()
 			panel.refreshTodoStatus()
 			continue
@@ -108,9 +110,47 @@ func (panel *toolPanel) todoChanged(chat *conversation) {
 			tab.todoTimes[item.ID] = clock
 			box.Add(padded(7, 7, 0, 0, container.NewBorder(nil, nil, container.NewVBox(mark), container.NewVBox(clock), padded(1, 0, 12, 8, text))))
 		}
+		panel.addBackgroundTasks(box, chat)
 		box.Refresh()
 	}
 	panel.refreshTodoStatus()
+}
+
+// addBackgroundTasks lists the chat's background commands under its tasks,
+// each with its own Stop (the chat's Stop leaves them running).
+func (panel *toolPanel) addBackgroundTasks(box *fyne.Container, chat *conversation) {
+	if chat == nil {
+		return
+	}
+	tasks := chat.tasks.Snapshot()
+	if len(tasks) == 0 {
+		return
+	}
+	title := textLine("Background", 16, colText)
+	title.TextStyle = fyne.TextStyle{Bold: true}
+	box.Add(padded(22, 6, 0, 0, title))
+	for i := len(tasks) - 1; i >= 0; i-- { // the newest first
+		task := tasks[i]
+		status, state := "in_progress", "Running since "+task.Started.Format("15:04")
+		switch {
+		case task.Running:
+		case task.Stopped:
+			status, state = "pending", "Stopped"
+		case task.ExitCode == 0:
+			status, state = "completed", "Done in "+task.Ended.Sub(task.Started).Round(time.Second).String()
+		default:
+			status, state = "pending", fmt.Sprintf("Failed with code %d", task.ExitCode)
+		}
+		mark := newTaskMark(status, func() bool { return false })
+		command := plainFlow("$ "+task.Command, 13, colText)
+		var action fyne.CanvasObject = layout.NewSpacer()
+		if task.Running {
+			id := task.ID
+			action = newRow("Stop", iconStop, styleChip, func() { chat.tasks.Stop(id) })
+		}
+		box.Add(padded(7, 7, 0, 0, container.NewBorder(nil, nil, container.NewVBox(mark), container.NewVBox(action),
+			padded(1, 0, 12, 8, container.NewVBox(command, textLine(state, 11.5, colMuted))))))
+	}
 }
 
 // progressLayout draws a thin line filled up to a share of its width.

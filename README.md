@@ -77,7 +77,7 @@ Les connexions utilisent quatre outils exécutés par le backend Go :
 
 - `read_file` : lecture d’un fichier texte, jusqu’à 1 MiB.
 - `list_directory` : liste des fichiers d’un dossier.
-- `shell` : commande Bash, avec aperçu et validation, délai de 60 secondes et sortie limitée à 128 KiB.
+- `shell` : commande Bash, avec aperçu et validation, et sortie limitée à 128 KiB. Elle s’arrête après 60 secondes, ou après `timeout_ms` choisi par le modèle (10 minutes au plus). Avec `run_in_background`, la commande démarre et l’outil répond aussitôt, sans limite de durée (serveur, build long, surveillance) : sa sortie est gardée, le modèle la suit avec `background_task` (liste, sortie, arrêt) et il est réveillé quand elle se termine (nouveau tour, ou message ajouté au tour en cours). Ces tâches apparaissent dans l’onglet **Tasks** du panneau latéral, sous la liste, chacune avec son bouton **Stop**, distinct du Stop du chat ; elles s’arrêtent quand le chat est supprimé ou que 1loop se ferme, et ne survivent pas à un redémarrage. Bureau, serveur et téléphone.
 - `edit_file` : remplacement exact unique ou création d’un fichier, avec diff unifié avant validation. Les suppressions passent par `shell` (`rm`, `mv`…), limitées au workspace par le prompt, avec validation hors mode YOLO.
 
 Le menu **Approval required** du compositeur demande une validation avant chaque commande ou édition. **YOLO mode** les approuve automatiquement, sans bac à sable ; ce réglage est également accessible dans Settings. **Auto mode** (compte ChatGPT ; Claude Code utilise son propre mode « auto ») suit la méthode de Codex :

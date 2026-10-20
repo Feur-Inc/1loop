@@ -33,6 +33,7 @@ type serverChat struct {
 	Cache        *agent.ContextCache     `json:"contextCache,omitempty"`
 	grants       *agent.PermissionGrants // what request_permissions granted, until the server stops
 	review       *agent.ReviewSession    // the Auto mode reviewer's conversation, until the server stops
+	tasks        *agent.BackgroundTasks  // shell commands run in the background, until the server stops
 	Browsers     []browser.Info          `json:"browsers,omitempty"`
 	run          *serverRun
 	tabs         []*serverTab
@@ -231,6 +232,7 @@ func (server *headlessServer) close() {
 		if chat.run != nil {
 			chat.run.cancel()
 		}
+		chat.tasks.StopAll() // a background server must not outlive this one
 	}
 	if err := server.saveLocked(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -403,6 +405,7 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		Tier:    chat.Config.ServiceTier,
 		Window:  agent.ModelContextWindow(chat.Config),
 		Todo:    []remoteapi.Todo{},
+		Tasks:   append([]agent.BackgroundTaskInfo{}, chat.tasks.Snapshot()...),
 	}
 	for _, m := range chat.queue {
 		meta.Queue = append(meta.Queue, m.Content)
@@ -510,9 +513,44 @@ func (server *headlessServer) runLocked(chat *serverChat, m agent.Message) {
 	server.runWithIDLocked(chat, m, "")
 }
 
+// chatTasksLocked are the chat's background tasks, made on first use: their
+// end wakes the agent (joining its turn, or starting one), any change
+// reaches the clients.
+func (server *headlessServer) chatTasksLocked(chat *serverChat) *agent.BackgroundTasks {
+	if chat.tasks == nil {
+		chat.tasks = &agent.BackgroundTasks{
+			OnFinish: func(_ agent.BackgroundTaskInfo, message agent.Message) {
+				server.mu.Lock()
+				defer server.mu.Unlock()
+				if server.chatLocked(chat.ID) != chat || server.closing || server.ctx.Err() != nil {
+					return
+				}
+				if chat.run != nil {
+					chat.steer = append(chat.steer, message)
+					server.changedLocked(chat, -1)
+					return
+				}
+				server.runLocked(chat, message)
+			},
+			OnChange: func() {
+				server.mu.Lock()
+				defer server.mu.Unlock()
+				if server.chatLocked(chat.ID) == chat {
+					server.broadcastLocked("meta", server.metaLocked(chat))
+				}
+			},
+		}
+	}
+	return chat.tasks
+}
+
 func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message, id string) {
 	chat.History = append(chat.History, m)
-	index := server.addLocked(chat, agent.ChatItem{ID: id, Kind: "user", Text: m.Content, Images: m.Images})
+	item := agent.ChatItem{ID: id, Kind: "user", Text: m.Content, Images: m.Images}
+	if m.Internal { // a background task's end: a note, not the user's words
+		item = agent.ChatItem{ID: id, Kind: "note", Text: agent.WakeSummary(m)}
+	}
+	index := server.addLocked(chat, item)
 	ctx, cancel := context.WithCancel(server.ctx)
 	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait"}
 	chat.run = run
@@ -522,6 +560,7 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 	cfg.ApprovalMode = agent.ApprovalFor(server.approvalMode, cfg)
 	cfg.ClassicCompaction = server.classic
 	cfg.Todo = chat.Todo
+	cfg.Tasks = server.chatTasksLocked(chat)
 	cfg.Cache = chat.Cache
 	if chat.grants == nil {
 		chat.grants = &agent.PermissionGrants{}
@@ -623,7 +662,11 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		chat.History = value.([]agent.Message)
 	case "injected":
 		m := value.(agent.Message)
-		index = server.addLocked(chat, agent.ChatItem{Kind: "user", Text: m.Content, Images: m.Images})
+		if m.Internal {
+			index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: agent.WakeSummary(m)})
+		} else {
+			index = server.addLocked(chat, agent.ChatItem{Kind: "user", Text: m.Content, Images: m.Images})
+		}
 	case "activity":
 		status := value.(agent.Activity)
 		run.mark = status.State

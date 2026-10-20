@@ -95,6 +95,10 @@ type headlessServer struct {
 	bridge                     *mobileBridge
 	phoneAvailable             atomic.Bool
 	saveTimer                  *time.Timer
+	// Changes waiting for the next flush to the clients: a streamed answer
+	// reaches them at most ten times a second, as the desktop sends it.
+	pending  map[*serverChat]map[int]bool
+	flushing bool
 }
 
 type serverEvent struct {
@@ -493,12 +497,49 @@ func (server *headlessServer) disconnectStreamsLocked() {
 	}
 }
 
+// changedLocked queues a chat's change (an item, or only its meta when
+// index is -1) for the clients.
 func (server *headlessServer) changedLocked(chat *serverChat, index int) {
-	if index >= 0 {
-		server.broadcastLocked("item", map[string]any{"chat": chat.ID, "index": index, "item": server.itemLocked(chat, index)})
+	if server.pending == nil {
+		server.pending = map[*serverChat]map[int]bool{}
 	}
-	server.broadcastLocked("meta", server.metaLocked(chat))
+	if server.pending[chat] == nil {
+		server.pending[chat] = map[int]bool{}
+	}
+	if index >= 0 {
+		server.pending[chat][index] = true
+	}
+	if !server.flushing {
+		server.flushing = true
+		time.AfterFunc(100*time.Millisecond, server.flushChanges)
+	}
 	server.scheduleSaveLocked()
+}
+
+// flushChanges sends the queued changes as they stand now: one item event
+// per changed item, however many pieces of text it got meanwhile.
+func (server *headlessServer) flushChanges() {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	server.flushing = false
+	pending := server.pending
+	server.pending = nil
+	for chat, indexes := range pending {
+		if server.chatLocked(chat.ID) != chat {
+			continue // deleted meanwhile
+		}
+		changed := make([]int, 0, len(indexes))
+		for index := range indexes {
+			changed = append(changed, index)
+		}
+		slices.Sort(changed)
+		for _, index := range changed {
+			if index < len(chat.Items) {
+				server.broadcastLocked("item", map[string]any{"chat": chat.ID, "index": index, "item": server.itemLocked(chat, index)})
+			}
+		}
+		server.broadcastLocked("meta", server.metaLocked(chat))
+	}
 }
 
 func (server *headlessServer) addLocked(chat *serverChat, item agent.ChatItem) int {

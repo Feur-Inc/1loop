@@ -5,18 +5,25 @@ package ui
 // through the same functions as the window, so it shows on the computer.
 //
 // Discovery: the phone broadcasts "1loop?" on UDP remoteDiscoveryPort and
-// every 1loop on the network answers with its name and HTTP port.
+// every 1loop on the network answers with its name, HTTPS port and
+// certificate fingerprint (a hint only: anyone can answer a broadcast).
 //
-// Pairing: a phone first asks to pair; 1loop shows a six digit code on the
-// computer, the user types it on the phone, which then gets a token. Only a
-// hash of the token is kept. Every other request carries the token: the
-// agent runs commands on this computer, so nobody on the network may drive
-// it without the user's consent.
+// Transport: HTTPS with this computer's own certificate (remote/server.crt in
+// the config folder), which phones pin by its SHA-256 fingerprint.
 //
-// API (JSON over HTTP):
+// Pairing (remoteapi.PairingBook): the user opens a QR code on the computer
+// (Settings → Phone remote), which gives the phone the address, the
+// fingerprint and a secret; or a phone asks and the user types the six
+// digits the computer shows, after checking the fingerprint's start shown
+// on both. The phone then gets a token; only its hash is kept. Every other
+// request carries the token in its Authorization header: the agent runs
+// commands on this computer, so nobody on the network may drive it without
+// the user's consent.
+//
+// API (JSON over HTTPS):
 //   GET  /api/info                      name and version, no token needed
 //   POST /api/pair       {device}       → {pairing}   (the code shows on screen)
-//   POST /api/pair/confirm {pairing,code} → {token}
+//   POST /api/pair/confirm {pairing,code,device} → {token}
 //   GET  /api/state                     projects, chats, settings
 //   GET  /api/chats/{id}                one chat with its items
 //   GET  /api/events                    server-sent events (see remoteEvent)
@@ -30,41 +37,42 @@ package ui
 //   /api/chats/{id}/panel…                      the chat's side panel (phone_panel.go)
 
 import (
-	"crypto/rand"
+	"bytes"
 	"crypto/subtle"
+	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
-	"math/big"
+	"image"
+	_ "image/png"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
+	"github.com/skip2/go-qrcode"
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
+	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 )
 
 const (
 	remoteDiscoveryPort = 47100
 	remoteHTTPPort      = 47101
-	remoteProtocol      = 1
+	remoteProtocol      = 2 // 2: HTTPS with a pinned certificate
 )
-
-// pairing is a phone waiting for the user to type the code shown on screen.
-type pairing struct {
-	device  string
-	code    string
-	tries   int
-	expires time.Time
-	sheet   *sheet
-}
 
 type remoteEvent struct {
 	kind string
@@ -72,14 +80,20 @@ type remoteEvent struct {
 }
 
 type remoteServer struct {
-	ui    *desktopUI
-	name  string
-	port  int
-	http  *http.Server
-	udp   *net.UDPConn
-	mu    sync.Mutex
-	subs  map[chan remoteEvent]bool
-	pairs map[string]*pairing
+	ui   *desktopUI
+	name string
+	port int
+	http *http.Server
+	udp  *net.UDPConn
+	mu   sync.Mutex
+	subs map[chan remoteEvent]bool
+	// Browser streams, closed with the event streams when a phone is forgotten.
+	streams     map[chan struct{}]bool
+	fingerprint string
+
+	// The pending pairing and its sheet (UI thread only).
+	book      remoteapi.PairingBook
+	pairSheet *sheet
 
 	// Changes waiting for the next flush (UI thread only).
 	dirty     map[*conversation]map[int]bool
@@ -96,8 +110,17 @@ func (ui *desktopUI) startRemote() {
 		return
 	}
 	host, _ := os.Hostname()
-	server := &remoteServer{ui: ui, name: host, subs: map[chan remoteEvent]bool{}, pairs: map[string]*pairing{},
-		dirty: map[*conversation]map[int]bool{}, meta: map[*conversation]bool{}}
+	config, err := os.UserConfigDir()
+	if err != nil {
+		return // no private folder for the certificate: the window works without its remote
+	}
+	certificate, err := remoteapi.Certificate(filepath.Join(config, "1loop", "remote"), "", "")
+	if err != nil {
+		platform.Devf("remote", "certificate: %v", err)
+		return
+	}
+	server := &remoteServer{ui: ui, name: host, subs: map[chan remoteEvent]bool{}, streams: map[chan struct{}]bool{},
+		fingerprint: remoteapi.Fingerprint(certificate), dirty: map[*conversation]map[int]bool{}, meta: map[*conversation]bool{}}
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", remoteHTTPPort))
 	if err != nil {
 		ln, err = net.Listen("tcp", ":0")
@@ -106,6 +129,7 @@ func (ui *desktopUI) startRemote() {
 		return // no network: the window works without its remote
 	}
 	server.port = ln.Addr().(*net.TCPAddr).Port
+	ln = tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12})
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /api/info", server.info)
 	mux.HandleFunc("POST /api/pair", server.pair)
@@ -163,7 +187,7 @@ func (server *remoteServer) answerDiscovery() {
 		if strings.TrimSpace(string(buf[:n])) != "1loop?" {
 			continue
 		}
-		reply, _ := json.Marshal(map[string]any{"service": "1loop", "name": server.name, "port": server.port, "protocol": remoteProtocol})
+		reply, _ := json.Marshal(map[string]any{"service": "1loop", "name": server.name, "port": server.port, "protocol": remoteProtocol, "scheme": "https", "fingerprint": server.fingerprint})
 		server.udp.WriteToUDP(reply, from)
 	}
 }
@@ -175,8 +199,9 @@ func (server *remoteServer) answerDiscovery() {
 func (server *remoteServer) authorized(next http.HandlerFunc) http.HandlerFunc {
 	return func(writer http.ResponseWriter, req *http.Request) {
 		token := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
-		if token == "" {
-			token = req.URL.Query().Get("token") // event streams cannot always set headers
+		if token == "" || token == req.Header.Get("Authorization") {
+			core.Fail(writer, http.StatusUnauthorized, "This phone is not paired with 1loop")
+			return
 		}
 		hash := remoteapi.TokenHash(token)
 		ok := false
@@ -217,83 +242,182 @@ func (server *remoteServer) pair(writer http.ResponseWriter, req *http.Request) 
 		core.Fail(writer, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	device := strings.TrimSpace(body.Device)
-	if device == "" {
-		device = "Phone"
-	}
-	if len([]rune(device)) > 40 {
-		device = string([]rune(device)[:40])
-	}
-	n, _ := rand.Int(rand.Reader, big.NewInt(1000000))
-	pairingValue := &pairing{device: device, code: fmt.Sprintf("%06d", n.Int64()), expires: time.Now().Add(2 * time.Minute)}
-	id := core.Identifier()
+	var id string
+	var err error
 	server.onUI(func() {
-		for key, old := range server.pairs { // one pending pairing at a time
-			if old.sheet != nil {
-				old.sheet.Hide()
-			}
-			delete(server.pairs, key)
+		var pending *remoteapi.Pairing
+		if pending, err = server.book.Request(body.Device); err == nil {
+			id = pending.ID
+			server.showPairSheet(server.ui.showPairing(pending, server.fingerprint))
 		}
-		server.pairs[id] = pairingValue
-		pairingValue.sheet = server.ui.showPairing(pairingValue)
 	})
+	if err != nil {
+		core.Fail(writer, http.StatusTooManyRequests, err.Error())
+		return
+	}
 	core.WriteJSON(writer, http.StatusOK, map[string]string{"pairing": id})
+}
+
+// showPairSheet replaces the sheet of an earlier pairing.
+func (server *remoteServer) showPairSheet(next *sheet) {
+	if server.pairSheet != nil {
+		server.pairSheet.Hide()
+	}
+	server.pairSheet = next
 }
 
 func (server *remoteServer) confirmPair(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
 		Pairing string `json:"pairing"`
 		Code    string `json:"code"`
+		Device  string `json:"device"`
 	}
 	if core.ReadJSON(req, &body) != nil {
 		core.Fail(writer, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	var token, problem string
+	var token string
+	var err error
 	server.onUI(func() {
-		pairing := server.pairs[body.Pairing]
-		switch {
-		case pairing == nil || time.Now().After(pairing.expires):
-			problem = "This code has expired. Ask for a new one."
-		case subtle.ConstantTimeCompare([]byte(pairing.code), []byte(strings.TrimSpace(body.Code))) != 1:
-			pairing.tries++
-			problem = "Wrong code."
-			if pairing.tries >= 5 { // a guessed code would give the shell away
-				problem = "Too many wrong codes. Ask for a new one."
-				pairing.expires = time.Time{}
-			}
-		default:
-			token = core.Identifier()
-			server.ui.devices = append(server.ui.devices, remoteapi.PairedDevice{Name: pairing.device, TokenHash: remoteapi.TokenHash(token), Added: time.Now()})
-			server.ui.save()
-			if pairing.sheet != nil {
-				pairing.sheet.Hide()
-			}
-			delete(server.pairs, body.Pairing)
+		var paired *remoteapi.Pairing
+		paired, err = server.book.Confirm(body.Pairing, body.Code, body.Device)
+		if server.book.Pending == nil {
+			server.showPairSheet(nil)
 		}
-		if problem != "" && pairing != nil && pairing.expires.IsZero() && pairing.sheet != nil {
-			pairing.sheet.Hide()
+		if errors.Is(err, remoteapi.ErrPairingLocked) {
+			server.ui.notice("Phone pairing paused", "Too many wrong pairing codes were typed. To pair a phone, open Settings → Phone remote and choose Pair a phone.")
+		}
+		if err != nil {
+			return
+		}
+		token = core.Identifier()
+		server.ui.devices = append(server.ui.devices, remoteapi.PairedDevice{Name: paired.Device, TokenHash: remoteapi.TokenHash(token), Added: time.Now()})
+		server.ui.save()
+		if server.ui.prefs.open && server.ui.prefs.section == "Phone remote" {
+			server.ui.prefs.show("Phone remote")
 		}
 	})
-	if problem != "" {
-		core.Fail(writer, http.StatusForbidden, problem)
+	if err != nil {
+		core.Fail(writer, http.StatusForbidden, err.Error())
 		return
 	}
 	core.WriteJSON(writer, http.StatusOK, map[string]string{"token": token, "name": server.name})
 }
 
+// disconnectAll closes every phone's streams: a forgotten phone's requests
+// fail from now on, the others reconnect with their token.
+func (server *remoteServer) disconnectAll() {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	for ch := range server.subs {
+		close(ch)
+		delete(server.subs, ch)
+	}
+	for done := range server.streams {
+		close(done)
+		delete(server.streams, done)
+	}
+}
+
+// fingerprintCheck is the start of the certificate fingerprint, shown on the
+// computer and on the phone so the user can tell they talk to each other.
+func fingerprintCheck(fingerprint string) string {
+	short := strings.ToUpper(fingerprint[:min(16, len(fingerprint))])
+	var groups []string
+	for len(short) > 4 {
+		groups, short = append(groups, short[:4]), short[4:]
+	}
+	return strings.Join(append(groups, short), " ")
+}
+
 // showPairing shows the code a phone must type.
-func (ui *desktopUI) showPairing(pairingValue *pairing) *sheet {
-	code := textLine(pairingValue.code[:3]+" "+pairingValue.code[3:], 40, colAmber)
+func (ui *desktopUI) showPairing(pending *remoteapi.Pairing, fingerprint string) *sheet {
+	code := textLine(pending.Code[:3]+" "+pending.Code[3:], 40, colAmber)
 	code.TextStyle = fyne.TextStyle{Monospace: true, Bold: true}
-	intro := widget.NewLabel("“" + pairingValue.device + "” wants to control 1loop from the phone. Type this code in the app to allow it. It expires in two minutes.")
+	intro := widget.NewLabel("“" + pending.Device + "” wants to control 1loop from the phone. Type this code in the app to allow it. It expires in two minutes.")
 	intro.Wrapping = fyne.TextWrapWord
+	check := note("The phone must show the same check: " + fingerprintCheck(fingerprint))
 	hint := note("A paired phone can send messages and approve commands. Remove it any time in Settings.")
-	body := container.NewVBox(intro, spacer(0, 6), container.NewCenter(code), spacer(0, 6), hint)
+	body := container.NewVBox(intro, spacer(0, 6), container.NewCenter(code), spacer(0, 6), check, hint)
+	server := ui.remote
 	var dialog *sheet
 	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
-	dialog = ui.modal("Pair a phone", body, 460, func() { pairingValue.expires = time.Time{} }, cancel)
+	dialog = ui.modal("Pair a phone", body, 460, func() { server.book.Cancel(pending.ID) }, cancel)
 	return dialog
+}
+
+// showPairingQR is the user pairing a phone from the computer: a QR code with
+// this computer's addresses, its fingerprint and a one-time secret.
+func (ui *desktopUI) showPairingQR() {
+	server := ui.remote
+	if server == nil {
+		return
+	}
+	pending, err := server.book.Offer()
+	if err != nil {
+		ui.notice("Pair a phone", err.Error())
+		return
+	}
+	link := url.URL{Scheme: "oneloop", Host: "pair", RawQuery: url.Values{
+		"v": {"1"}, "n": {server.name}, "p": {fmt.Sprint(server.port)}, "f": {server.fingerprint},
+		"i": {pending.ID}, "s": {pending.Code}, "h": {strings.Join(localAddresses(), ",")},
+	}.Encode()}
+	png, err := qrcode.Encode(link.String(), qrcode.Medium, 512)
+	if err != nil {
+		ui.notice("Pair a phone", err.Error())
+		return
+	}
+	picture, _, err := image.Decode(bytes.NewReader(png))
+	if err != nil {
+		ui.notice("Pair a phone", err.Error())
+		return
+	}
+	view := canvas.NewImageFromImage(picture)
+	view.FillMode = canvas.ImageFillContain
+	view.ScaleMode = canvas.ImageScalePixels
+	view.SetMinSize(fyne.NewSize(240, 240))
+	intro := widget.NewLabel("In the 1loop app on the phone, choose Remote desktop, then Scan QR code. The code works once, for two minutes.")
+	intro.Wrapping = fyne.TextWrapWord
+	hint := note("No camera? Pick this computer in the app's list and type the six digits it then shows here.")
+	var dialog *sheet
+	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
+	dialog = ui.modal("Pair a phone", container.NewVBox(intro, spacer(0, 6), container.NewCenter(view), spacer(0, 6), hint), 460,
+		func() { server.book.Cancel(pending.ID) }, cancel)
+	server.showPairSheet(dialog)
+}
+
+// localAddresses are where a phone may reach this computer, for it to try
+// in turn: first the address of the default route, then the other real
+// networks; container and VM bridges are left out.
+func localAddresses() []string {
+	var out []string
+	add := func(ip net.IP) {
+		if ip4 := ip.To4(); ip4 != nil && !ip4.IsLoopback() && !ip4.IsLinkLocalUnicast() && !slices.Contains(out, ip4.String()) && len(out) < 4 {
+			out = append(out, ip4.String())
+		}
+	}
+	// No packet is sent: connecting a UDP socket only picks the route.
+	if probe, err := net.Dial("udp4", "192.0.2.1:9"); err == nil {
+		add(probe.LocalAddr().(*net.UDPAddr).IP)
+		probe.Close()
+	}
+	interfaces, _ := net.Interfaces()
+	for _, iface := range interfaces {
+		virtual := false
+		for _, prefix := range []string{"docker", "br-", "veth", "virbr", "vmnet", "vboxnet", "cni", "podman", "lxc", "lxd"} {
+			virtual = virtual || strings.HasPrefix(iface.Name, prefix)
+		}
+		if virtual || iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+			continue
+		}
+		addresses, _ := iface.Addrs()
+		for _, address := range addresses {
+			if ip, ok := address.(*net.IPNet); ok {
+				add(ip.IP)
+			}
+		}
+	}
+	return out
 }
 
 // ---------------------------------------------------------------------------
@@ -911,7 +1035,7 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 	describe := func() string {
 		switch {
 		case ui.remote != nil:
-			return fmt.Sprintf("Listening on port %d as “%s”. A phone must be paired with a code shown on this screen.", ui.remote.port, ui.remote.name)
+			return fmt.Sprintf("Listening on port %d as “%s” (HTTPS). A phone must be paired with a QR code or a code shown on this screen.", ui.remote.port, ui.remote.name)
 		case ui.remoteEnabled:
 			return "The remote could not start: the network is unavailable."
 		}
@@ -934,6 +1058,9 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 		remove := newRow("Forget", iconTrash, styleChip, func() {
 			ui.devices = append(ui.devices[:i], ui.devices[i+1:]...)
 			ui.save()
+			if ui.remote != nil {
+				ui.remote.disconnectAll()
+			}
 			ui.prefs.show("Phone remote")
 		})
 		phones = append(phones, settingRow(pairedDevice.Name, "Paired "+pairedDevice.Added.Format("2 Jan 2006 15:04"), remove))
@@ -941,9 +1068,14 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 	if len(phones) == 0 {
 		phones = append(phones, settingRow("No paired phone yet", "Open the 1loop app on a phone connected to the same network.", nil))
 	}
+	var pairing fyne.CanvasObject = layout.NewSpacer()
+	if ui.remote != nil {
+		pairing = card(settingRow("Pair a phone", "Shows a QR code to scan with the 1loop app.", newRow("Pair a phone", iconPhone, styleChip, ui.showPairingQR)))
+	}
 	return container.NewVBox(
 		ui.prefs.pageTitle("Phone remote", "", nil),
 		card(settingRow("Allow the 1loop phone app on this network", describe(), enabled)),
+		pairing,
 		sectionTitle("Paired phones"),
 		card(phones...),
 	)

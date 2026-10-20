@@ -93,6 +93,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.journeyapps.barcodescanner.ScanContract
+import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -170,14 +172,15 @@ fun Root(app: RemoteApp) {
 // ---------------------------------------------------------------------------
 // Computers on the network
 
-// Remote desktop: the computers on this Wi-Fi (http); Remote server: the
-// HTTPS servers added by address.
+// Remote desktop: the computers on this Wi-Fi, found or scanned from their
+// QR code; Remote server: the HTTPS servers added by address.
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
 @Composable
 fun ServersScreen(app: RemoteApp) {
     var adding by remember { mutableStateOf(false) }
     val desktop = app.target != ExecutionTarget.RemoteServer
-    val shown = app.servers.filter { (it.scheme == "http") == desktop }
+    val shown = app.servers.filter { it.desktop == desktop }
+    val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> result.contents?.let(app::pairFromLink) }
     BackHandler { app.switchTarget() }
     Column(
         Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState())
@@ -244,6 +247,16 @@ fun ServersScreen(app: RemoteApp) {
             if (desktop) Pill("Search again", icon = Icons.refresh, enabled = !app.scanning) { app.scan() }
             Pill("Add by address", icon = Icons.plus, primary = !desktop) { adding = true }
         }
+        if (desktop) {
+            Spacer(Modifier.height(10.dp))
+            Pill("Scan QR code", primary = true, enabled = !app.busy) {
+                scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the code shown in 1loop on the computer: Settings → Phone remote → Pair a phone").setBeepEnabled(false).setOrientationLocked(false))
+            }
+            if (app.busy) {
+                Spacer(Modifier.height(12.dp))
+                WorkRing("wait", 26.dp)
+            }
+        }
         Spacer(Modifier.height(32.dp))
     }
     if (adding) AddressSheet(onDone = { adding = false }) { app.addManually(it.first, it.second) }
@@ -259,7 +272,7 @@ private fun AddressSheet(onDone: () -> Unit, onAdd: (Pair<String, String>) -> Un
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp).imePadding()) {
             Text("Add by address", style = Type.title)
             Spacer(Modifier.height(6.dp))
-            Text("HTTPS server address and the SHA-256 fingerprint printed in its console. Leave the fingerprint empty for a publicly trusted certificate. Existing local desktop connections can use http:// explicitly.", style = Type.small)
+            Text("HTTPS address and the SHA-256 fingerprint printed in the server console. Leave the fingerprint empty for a publicly trusted certificate, or for a computer: you then check its fingerprint while pairing.", style = Type.small)
             Spacer(Modifier.height(16.dp))
             Field(address, { address = it }, "https://192.168.1.20:47101", KeyboardType.Uri, Modifier.focusRequester(focus))
             Spacer(Modifier.height(12.dp))
@@ -315,6 +328,10 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
         Text("Pair with ${pair.server.name}", style = Type.headline, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
         Text(if (pair.consoleCode.isNotEmpty()) "Enter this command in the server console, then tap Connect:\npair ${pair.pairing} ${pair.consoleCode}" else "Type the code 1loop shows on your computer.", style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center)
+        if (pair.server.desktop && pair.server.fingerprint.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text("The computer must show the same check:\n${fingerprintCheck(pair.server.fingerprint)}", style = Type.small.copy(fontFamily = Type.mono.fontFamily), textAlign = TextAlign.Center)
+        }
         Spacer(Modifier.height(32.dp))
         if (pair.consoleCode.isNotEmpty()) {
             CopyChip { "pair ${pair.pairing} ${pair.consoleCode}" }

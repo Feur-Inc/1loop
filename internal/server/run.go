@@ -21,6 +21,7 @@ import (
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
+	"1loop/internal/remoteapi"
 )
 
 // Main runs the headless server.
@@ -138,7 +139,7 @@ func Main() {
 		}
 		server.keys[server.cfg.ConnectionID] = value
 	}
-	certificate, err := serverCertificate(*dir, *cert, *key)
+	certificate, err := remoteapi.Certificate(*dir, *cert, *key)
 	if err != nil {
 		log.Fatal(err)
 	}
@@ -153,11 +154,11 @@ func Main() {
 		MaxHeaderBytes:    32 << 10,
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}},
 	}
-	fmt.Fprintf(os.Stderr, "1loop server listening on https://%s\nCertificate SHA-256: %s\nWorkspace: %s\nCommands: pair <id> <code>, devices, revoke <number>\n", listener.Addr(), certificateFingerprint(certificate), root)
+	fmt.Fprintf(os.Stderr, "1loop server listening on https://%s\nCertificate SHA-256: %s\nWorkspace: %s\nCommands: pair <id> <code>, devices, revoke <number>\n", listener.Addr(), remoteapi.Fingerprint(certificate), root)
 	if server.local {
 		if err := saveServerJSON(*localReady, map[string]any{
 			"port":        listener.Addr().(*net.TCPAddr).Port,
-			"fingerprint": certificateFingerprint(certificate),
+			"fingerprint": remoteapi.Fingerprint(certificate),
 		}); err != nil {
 			log.Fatal(err)
 		}

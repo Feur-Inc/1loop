@@ -26,11 +26,12 @@ import javax.net.ssl.SSLContext
 import javax.net.ssl.SSLSocketFactory
 import javax.net.ssl.X509TrustManager
 
-// The desktop side is remote.go: UDP discovery on 47100, HTTP on 47101.
+// The desktop side is phone_server.go: UDP discovery on 47100, HTTPS on 47101.
 const val DISCOVERY_PORT = 47100
 const val DEFAULT_PORT = 47101
 
-data class Server(val name: String, val host: String, val port: Int, val token: String = "", val scheme: String = "http", val fingerprint: String = "", val localPhone: Boolean = false) {
+/** desktop: a 1loop window found on the network or by its QR code (else a headless server). */
+data class Server(val name: String, val host: String, val port: Int, val token: String = "", val scheme: String = "https", val fingerprint: String = "", val localPhone: Boolean = false, val desktop: Boolean = false) {
     val key get() = if (localPhone) "local-phone" else if (scheme == "http") "$host:$port" else "$scheme://$host:$port"
     val baseURL get() = "$scheme://${if (host.contains(':')) "[${host.trim('[', ']')}]" else host}:$port"
     val paired get() = token.isNotEmpty()
@@ -64,8 +65,10 @@ suspend fun discover(context: Context, listenMs: Int = 1600): List<Server> = wit
             }
             runCatching {
                 val reply = JSONObject(String(packet.data, 0, packet.length))
-                if (reply.optString("service") == "1loop") {
-                    val server = Server(reply.optString("name", "1loop"), packet.address.hostAddress ?: return@runCatching, reply.optInt("port", DEFAULT_PORT))
+                // Older desktops answer over plain HTTP: they are not listed until updated.
+                val fingerprint = reply.optString("fingerprint").lowercase()
+                if (reply.optString("service") == "1loop" && reply.optString("scheme") == "https" && fingerprint.matches(FINGERPRINT)) {
+                    val server = Server(reply.optString("name", "1loop"), packet.address.hostAddress ?: return@runCatching, reply.optInt("port", DEFAULT_PORT), fingerprint = fingerprint, desktop = true)
                     found[server.key] = server
                 }
             }
@@ -89,8 +92,55 @@ private fun subnetBroadcasts(context: Context): List<InetAddress> {
     }
 }
 
-// A headless server (SERVER.md) has a private certificate: the phone trusts
-// it by the SHA-256 fingerprint its console prints, and nothing else.
+private val FINGERPRINT = Regex("[0-9a-f]{64}")
+
+/**
+ * The token a computer found on the network keeps: the one of the known
+ * computer with the same certificate. A broadcast answer proves nothing, so
+ * a name or an address alone never gets a token.
+ */
+fun carriedToken(known: List<Server>, found: Server): Server? =
+    known.firstOrNull { it.desktop && it.paired && it.fingerprint.isNotEmpty() && it.fingerprint == found.fingerprint }
+
+/** The start of a fingerprint, as the computer shows it during pairing. */
+fun fingerprintCheck(fingerprint: String): String = fingerprint.take(16).uppercase().chunked(4).joinToString(" ")
+
+/** What a desktop's pairing QR code carries (phone_server.go, showPairingQR). */
+data class PairingLink(val name: String, val hosts: List<String>, val port: Int, val fingerprint: String, val pairing: String, val secret: String)
+
+fun parsePairingLink(text: String): PairingLink? = runCatching {
+    val uri = java.net.URI(text.trim())
+    if (uri.scheme != "oneloop" || uri.host != "pair") return null
+    val query = uri.rawQuery.orEmpty().split('&').filter { '=' in it }.associate {
+        val (key, value) = it.split('=', limit = 2)
+        java.net.URLDecoder.decode(key, "UTF-8") to java.net.URLDecoder.decode(value, "UTF-8")
+    }
+    val fingerprint = query["f"].orEmpty().lowercase()
+    val hosts = query["h"].orEmpty().split(',').map { it.trim() }.filter { it.isNotEmpty() }
+    val port = query["p"]?.toIntOrNull() ?: return null
+    if (query["v"] != "1" || !fingerprint.matches(FINGERPRINT) || hosts.isEmpty() || port !in 1..65535 ||
+        query["i"].isNullOrEmpty() || query["s"].orEmpty().length != 32) return null
+    PairingLink(query["n"].orEmpty().ifEmpty { "1loop" }, hosts, port, fingerprint, query["i"]!!, query["s"]!!)
+}.getOrNull()
+
+/** The certificate fingerprint a computer presents, read without trusting it: the user checks it while pairing. */
+fun presentedFingerprint(host: String, port: Int): String {
+    val trustAll = object : X509TrustManager {
+        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+        override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) = throw CertificateException("Client certificates are not used")
+        override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {}
+    }
+    val factory = SSLContext.getInstance("TLS").apply { init(null, arrayOf(trustAll), null) }.socketFactory
+    (factory.createSocket() as javax.net.ssl.SSLSocket).use { socket ->
+        socket.connect(java.net.InetSocketAddress(host, port), 4000)
+        socket.soTimeout = 4000
+        socket.startHandshake()
+        return fingerprintOf(socket.session.peerCertificates.first() as X509Certificate)
+    }
+}
+
+// A headless server (SERVER.md) and a desktop have private certificates:
+// the phone trusts them by their SHA-256 fingerprint, and nothing else.
 
 private val pinnedFactories = ConcurrentHashMap<String, SSLSocketFactory>()
 
@@ -127,6 +177,8 @@ class Api(val server: Server) {
     private val base = server.baseURL
 
     private fun connection(path: String): HttpURLConnection {
+        // The token never travels in clear text: plain HTTP only to this phone itself.
+        if (server.scheme != "https" && server.host !in listOf("127.0.0.1", "localhost", "::1")) throw ApiError("${server.name} needs a secure connection. Pair it again.")
         val connection = URL(base + path).openConnection() as HttpURLConnection
         connection.instanceFollowRedirects = false
         if (connection is HttpsURLConnection && server.fingerprint.isNotEmpty()) pin(connection, server.fingerprint)

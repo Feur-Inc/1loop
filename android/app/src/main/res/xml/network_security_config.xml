@@ -1,6 +1,8 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 1loop runs on the user's own computer, reached by its local address:
-     plain HTTP on the local network (pairing tokens guard every request). -->
+<!-- Only the agent's browser (WebView) may open plain HTTP pages, such as a
+     project served on the local network. The app's own API calls refuse plain
+     HTTP except to this phone itself (Api in Net.kt): tokens only travel over
+     HTTPS with a pinned certificate. -->
 <network-security-config>
     <base-config cleartextTrafficPermitted="true" />
 </network-security-config>

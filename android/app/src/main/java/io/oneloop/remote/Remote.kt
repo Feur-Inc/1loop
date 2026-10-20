@@ -234,17 +234,18 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     // -- known computers --------------------------------------------------
 
+    // Desktops paired over plain HTTP before HTTPS are dropped: they pair again.
     private fun saved(): List<Server> = runCatching {
         val array = JSONArray(prefs.getString("servers", "[]"))
         (0 until array.length()).map { i ->
-            array.getJSONObject(i).let { Server(it.getString("name"), it.getString("host"), it.getInt("port"), it.optString("token"), it.optString("scheme", "http"), it.optString("fingerprint")) }
-        }
+            array.getJSONObject(i).let { Server(it.getString("name"), it.getString("host"), it.getInt("port"), it.optString("token"), it.optString("scheme", "http"), it.optString("fingerprint"), desktop = it.optBoolean("desktop")) }
+        }.filter { it.scheme == "https" }
     }.getOrDefault(emptyList())
 
     private fun store() {
         val array = JSONArray()
         servers.filter { it.paired }.forEach {
-            array.put(JSONObject().put("name", it.name).put("host", it.host).put("port", it.port).put("token", it.token).put("scheme", it.scheme).put("fingerprint", it.fingerprint))
+            array.put(JSONObject().put("name", it.name).put("host", it.host).put("port", it.port).put("token", it.token).put("scheme", it.scheme).put("fingerprint", it.fingerprint).put("desktop", it.desktop))
         }
         prefs.edit { putString("servers", array.toString()) }
     }
@@ -266,7 +267,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val known = servers.firstOrNull { it.key == last && it.paired }
         // Before the choice existed, the last computer told it.
         val saved = prefs.getString("target", null)?.let { name -> ExecutionTarget.entries.firstOrNull { it.name == name } }
-            ?: known?.let { if (it.scheme == "http") ExecutionTarget.RemoteDesktop else ExecutionTarget.RemoteServer }
+            ?: known?.let { if (it.desktop) ExecutionTarget.RemoteDesktop else ExecutionTarget.RemoteServer }
         if (saved == null) {
             screen = Screen.Mode
             return
@@ -355,8 +356,9 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             val found = runCatching { discover(context) }.getOrDefault(emptyList())
             online.clear()
             for (s in found) {
-                // A known computer keeps its token when its address changed.
-                val known = servers.firstOrNull { it.key == s.key || (it.scheme == "http" && it.name == s.name && it.port == s.port) }
+                // A known computer keeps its token when its address changed, by its certificate only.
+                val known = carriedToken(servers, s)
+                if (known != null && known.key != s.key) servers.removeAll { it.key == known.key }
                 upsert(s.copy(token = known?.token.orEmpty()))
                 online.add(s.key)
             }
@@ -372,11 +374,14 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             try {
                 val text = address.trim().trimEnd('/').let { if (it.contains("://")) it else "https://$it" }
                 val url = java.net.URL(text)
-                require(url.protocol in listOf("http", "https") && url.userInfo == null && url.path.isEmpty() && url.query == null && url.ref == null) { "Enter a server address without a path." }
-                val pin = fingerprint.trim().replace(":", "").lowercase()
-                require(pin.isEmpty() || (url.protocol == "https" && pin.matches(Regex("[0-9a-f]{64}")))) { "Enter the complete SHA-256 fingerprint from the server console." }
+                require(url.protocol == "https" && url.userInfo == null && url.path.isEmpty() && url.query == null && url.ref == null) { "Enter an https:// address without a path." }
+                var pin = fingerprint.trim().replace(":", "").lowercase()
+                require(pin.isEmpty() || pin.matches(Regex("[0-9a-f]{64}"))) { "Enter the complete SHA-256 fingerprint from the server console." }
                 val port = if (url.port > 0) url.port else if (address.trim().contains("://")) url.defaultPort else DEFAULT_PORT
-                val probe = Server(url.host, url.host, port, scheme = url.protocol, fingerprint = pin)
+                // A desktop has its own certificate: the user checks its start on both screens while pairing.
+                val desktop = target == ExecutionTarget.RemoteDesktop
+                if (desktop && pin.isEmpty()) pin = withContext(Dispatchers.IO) { presentedFingerprint(url.host, port) }
+                val probe = Server(url.host, url.host, port, scheme = url.protocol, fingerprint = pin, desktop = desktop)
                 val info = onConnection(probe, generation) { it.get("/api/info") }
                 val target = probe.copy(name = info.optString("name", url.host))
                 upsert(target)
@@ -420,11 +425,41 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             problem = null
             try {
                 val reply = onConnection(pair.server, generation) {
-                    it.post("/api/pair/confirm", JSONObject().put("pairing", pair.pairing).put("code", code))
+                    it.post("/api/pair/confirm", JSONObject().put("pairing", pair.pairing).put("code", code).put("device", deviceName()))
                 }
                 val server = pair.server.copy(token = reply.getString("token"))
                 upsert(server)
                 connect(server)
+            } catch (e: Exception) {
+                actionFailed(generation, e)
+            } finally {
+                if (generation == connectionGeneration) busy = false
+            }
+        }
+    }
+
+    /** A desktop's pairing QR code: its addresses are tried in turn, its certificate pinned. */
+    fun pairFromLink(text: String) {
+        val generation = connectionGeneration
+        val link = parsePairingLink(text) ?: run { problem = "This is not a 1loop pairing code."; return }
+        scope.launch {
+            if (generation != connectionGeneration) return@launch
+            busy = true
+            problem = null
+            try {
+                var reached: Server? = null
+                for (host in link.hosts) {
+                    val probe = Server(link.name, host, link.port, fingerprint = link.fingerprint, desktop = true)
+                    if (runCatching { onConnection(probe, generation) { it.get("/api/info") } }.isSuccess) { reached = probe; break }
+                }
+                val found = reached ?: throw ApiError("Cannot reach ${link.name}. Check that the phone is on the same network.")
+                val reply = onConnection(found, generation) {
+                    it.post("/api/pair/confirm", JSONObject().put("pairing", link.pairing).put("code", link.secret).put("device", deviceName()))
+                }
+                val paired = found.copy(token = reply.getString("token"))
+                servers.removeAll { it.desktop && it.fingerprint == paired.fingerprint }
+                upsert(paired)
+                connect(paired)
             } catch (e: Exception) {
                 actionFailed(generation, e)
             } finally {

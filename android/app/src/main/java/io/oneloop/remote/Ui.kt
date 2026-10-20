@@ -547,7 +547,7 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
         shownChat?.let { PanelScreen(app, it) { onPanelChange(false) } }
     }
     }
-    tool?.let { ToolSheet(it) { tool = null } }
+    tool?.let { ToolSheet(app, it) { tool = null } }
 }
 
 @Composable
@@ -596,7 +596,7 @@ private fun Transcript(app: RemoteApp, running: Boolean, onTool: (Item) -> Unit)
         itemsIndexed(items, contentType = { _, item -> item.kind }) { index, item ->
             Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
                 when (item.kind) {
-                    "user" -> UserBubble(item) {
+                    "user" -> UserBubble(item, images = { if (item.images > 0) ItemImages(app, app.firstItem + index, item.images) }) {
                         MessageActions(app, item, running) { editing = app.firstItem + index to item.text }
                     }
                     "assistant" -> Column {
@@ -610,7 +610,11 @@ private fun Transcript(app: RemoteApp, running: Boolean, onTool: (Item) -> Unit)
                             }
                         }
                     }
-                    "tool" -> ToolRow(item) { onTool(item) }
+                    "tool" -> Column {
+                        ToolRow(item) { onTool(item) }
+                        // What the tool showed the model (a screenshot), as Codex shows it.
+                        if (item.images > 0) ItemImages(app, app.firstItem + index, item.images, Modifier.padding(start = 32.dp, top = 2.dp))
+                    }
                     "error" -> Column {
                         Text(item.text, style = Type.body.copy(color = Palette.danger))
                         if (!(running && index > lastUser)) MessageActions(app, item, running) { app.retryMessage(index) }
@@ -643,11 +647,12 @@ private fun answerText(items: List<Item>, index: Int): String {
 }
 
 @Composable
-private fun UserBubble(item: Item, actions: @Composable () -> Unit) {
+private fun UserBubble(item: Item, images: @Composable () -> Unit = {}, actions: @Composable () -> Unit) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
-        Box(Modifier.widthIn(max = 560.dp).fillMaxWidth(0.85f), contentAlignment = Alignment.CenterEnd) {
+        images()
+        if (item.text.isNotEmpty()) Box(Modifier.widthIn(max = 560.dp).fillMaxWidth(0.85f).padding(top = if (item.images > 0) 6.dp else 0.dp), contentAlignment = Alignment.CenterEnd) {
             Text(
-                item.text.ifEmpty { "[image]" } + if (item.images > 0 && item.text.isNotEmpty()) "  [+${item.images} image]" else "",
+                item.text,
                 style = Type.body,
                 modifier = Modifier.background(Palette.raised, RoundedCornerShape(18.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
             )
@@ -844,7 +849,7 @@ private fun QueueLine(text: String, number: Int?) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ToolSheet(item: Item, onDone: () -> Unit) {
+private fun ToolSheet(app: RemoteApp, item: Item, onDone: () -> Unit) {
     val args = remember(item.args) { runCatching { JSONObject(item.args) }.getOrDefault(JSONObject()) }
     ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
@@ -867,6 +872,8 @@ private fun ToolSheet(item: Item, onDone: () -> Unit) {
                 if (item.millis > 0) Text(elapsed(item.millis), style = Type.small)
             }
             if (item.tool != "shell" && item.args.isNotBlank()) CodeWell(toolPreviewText(item.args), "Arguments", wrap = true)
+            val at = app.items.indexOf(item)
+            if (item.images > 0 && at >= 0) ItemImages(app, app.firstItem + at, item.images)
             val running = item.state != "done"
             when (item.tool) {
                 "shell" -> {

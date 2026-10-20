@@ -8,6 +8,10 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	_ "image/png"
+	"io"
 	"os"
 	"path/filepath"
 	"slices"
@@ -16,6 +20,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
@@ -502,6 +507,9 @@ func (remote *remoteDesktop) renderTranscript(items []remoteapi.Item) {
 		default:
 			view = newMarkdownView(item.Text).box
 		}
+		if item.Images > 0 { // what the model saw, or what the user attached
+			view = container.NewVBox(view, remote.itemImages(index, item.Images))
+		}
 		if index < len(remote.messageBox.Objects) {
 			remote.messageBox.Objects[index] = view
 			remote.renderedItems[index] = item
@@ -619,6 +627,55 @@ func (remote *remoteDesktop) syncTabs(tabs []remoteapi.Tab) {
 		remote.tabs.Append(container.NewTabItem(tab.Title, content))
 	}
 	remote.renderTasks()
+}
+
+// itemImages are an item's pictures as the server serves them; a click
+// shows one large.
+func (remote *remoteDesktop) itemImages(index, count int) fyne.CanvasObject {
+	row := container.NewHBox()
+	for n := 0; n < count; n++ {
+		view := canvas.NewImageFromImage(nil)
+		view.FillMode = canvas.ImageFillContain
+		view.SetMinSize(fyne.NewSize(200, 130))
+		var picture image.Image
+		row.Add(surface(container.NewStack(view, newTapArea(func() {
+			if picture != nil {
+				remote.showImage(picture)
+			}
+		})), colCode, colBorderSoft, 8, 0))
+		path := fmt.Sprintf("/api/chats/%s/items/%d/images/%d", remote.current, index, n)
+		go func() {
+			ctx, cancel := context.WithTimeout(remote.ctx, 30*time.Second)
+			defer cancel()
+			response, err := remote.client.request(ctx, "GET", path, nil)
+			if err != nil {
+				return
+			}
+			defer response.Body.Close()
+			decoded, _, err := image.Decode(io.LimitReader(response.Body, 32<<20))
+			if err != nil {
+				return
+			}
+			fyne.Do(func() {
+				picture = decoded
+				view.Image = decoded
+				view.Refresh()
+			})
+		}()
+	}
+	return row
+}
+
+func (remote *remoteDesktop) showImage(picture image.Image) {
+	view := canvas.NewImageFromImage(picture)
+	view.FillMode = canvas.ImageFillContain
+	size := remote.window.Canvas().Size()
+	// The sheet adds its own padding around the picture and its button.
+	view.SetMinSize(fyne.NewSize(size.Width*0.66, size.Height*0.62))
+	var dialog *sheet
+	closeButton := newRow("Close", nil, styleOutline, func() { dialog.Hide() })
+	dialog = newSheet(remote.window.Canvas(), container.NewBorder(nil, padded(10, 0, 0, 0, container.NewHBox(layout.NewSpacer(), closeButton)), nil, nil, view), size.Width*0.72)
+	dialog.Show()
 }
 
 func (remote *remoteDesktop) renderTasks() {

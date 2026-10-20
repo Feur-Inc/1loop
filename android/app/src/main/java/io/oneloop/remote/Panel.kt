@@ -174,7 +174,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
                     "browser" -> BrowserView(app, chat, tab)
                     "terminal" -> TerminalView(app, chat, tab)
                     "changes" -> ChangesView(app, chat, tab)
-                    "tool" -> ToolView(app.items.getOrNull(tab.index))
+                    "tool" -> ToolView(app, app.items.getOrNull(tab.index))
                     else -> Column {
                         Box(Modifier.weight(1f)) { TasksView(tasks, app.meta?.background.orEmpty(), app::stopTask) }
                         ContextFooter(app.meta)
@@ -756,7 +756,7 @@ private fun ChangesView(app: RemoteApp, chat: String, tab: PanelTab) {
 }
 
 @Composable
-private fun ToolView(item: Item?) {
+private fun ToolView(app: RemoteApp, item: Item?) {
     if (item == null || item.kind != "tool") {
         Empty("Not available", "This call is no longer in the conversation.")
         return
@@ -774,6 +774,8 @@ private fun ToolView(item: Item?) {
         if (item.text.isNotEmpty()) CodeWell(toolPreviewText(item.text.trimEnd()), "Output", wrap = true)
         else if (item.diff.isEmpty()) Text(if (item.state == "done") "No output" else "Waiting for the result…", style = Type.small.copy(color = Palette.faint))
         if (item.failed.isNotEmpty() && item.failed != "Stopped") CodeWell(item.failed, "Error", wrap = true)
+        val at = app.items.indexOf(item)
+        if (item.images > 0 && at >= 0) ItemImages(app, app.firstItem + at, item.images)
     }
 }
 

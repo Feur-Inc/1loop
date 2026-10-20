@@ -7,6 +7,7 @@ package remoteapi
 import (
 	"context"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"fmt"
 	"net/http"
@@ -21,6 +22,7 @@ import (
 
 	"1loop/internal/agent"
 	"1loop/internal/browser"
+	"1loop/internal/core"
 )
 
 func TokenHash(token string) string {
@@ -248,4 +250,25 @@ func ItemVersions(state *agent.VersionState, index int) *Versions {
 		return nil
 	}
 	return &Versions{Anchor: anchor, Current: selected + 1, Total: len(family)}
+}
+
+// ItemImage is GET /api/chats/{id}/items/{index}/images/{n}: picture n of an
+// item (a screenshot a tool returned, or one attached to a message), so a
+// client shows what the model saw. images gives the item's pictures.
+func ItemImage(w http.ResponseWriter, r *http.Request, images func(index int) ([]core.ImagePart, bool)) {
+	index, err1 := strconv.Atoi(r.PathValue("index"))
+	n, err2 := strconv.Atoi(r.PathValue("n"))
+	parts, ok := images(index)
+	if err1 != nil || err2 != nil || !ok || n < 0 || n >= len(parts) {
+		core.Fail(w, http.StatusNotFound, "No such image")
+		return
+	}
+	data, err := base64.StdEncoding.DecodeString(parts[n].Data)
+	if err != nil || !strings.HasPrefix(parts[n].Mime, "image/") {
+		core.Fail(w, http.StatusNotFound, "Unreadable image")
+		return
+	}
+	w.Header().Set("Content-Type", parts[n].Mime)
+	w.Header().Set("Cache-Control", "private, max-age=86400") // an item's pictures never change
+	w.Write(data)
 }

@@ -1535,3 +1535,21 @@ func windowControls(window fyne.Window, quit func()) fyne.CanvasObject {
 	closeButton.hoverFill = colClose
 	return container.New(layout.NewCustomPaddedHBoxLayout(2), minimize, maximize, closeButton)
 }
+
+// tapArea makes what is under it clickable, without drawing anything.
+type tapArea struct {
+	widget.BaseWidget
+	onTap func()
+}
+
+func newTapArea(onTap func()) *tapArea {
+	area := &tapArea{onTap: onTap}
+	area.ExtendBaseWidget(area)
+	return area
+}
+
+func (area *tapArea) Tapped(*fyne.PointEvent) { area.onTap() }
+
+func (area *tapArea) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(canvas.NewRectangle(color.Transparent))
+}

@@ -58,30 +58,31 @@ func (server *headlessServer) routes() http.Handler {
 		}))
 	}
 	endpoints := map[string]http.HandlerFunc{
-		"GET /api/projects":                      server.projectFolders,
-		"POST /api/projects":                     server.addProject,
-		"GET /api/state":                         server.state,
-		"GET /api/limits":                        server.limits,
-		"GET /api/chats/{id}":                    server.chat,
-		"POST /api/chats/{id}/delete":            server.deleteChat,
-		"POST /api/chats/{id}/tasks/{task}/stop": server.stopTask,
-		"GET /api/events":                        server.events,
-		"POST /api/chats/{id}/message":           server.editMessage,
-		"POST /api/chats/{id}/version":           server.selectVersion,
-		"POST /api/attachments":                  server.uploadAttachment,
-		"POST /api/send":                         server.send,
-		"POST /api/stop":                         server.stop,
-		"POST /api/approve":                      server.approve,
-		"POST /api/answer":                       server.answer,
-		"POST /api/preferences":                  server.setPreferences,
-		"POST /api/model":                        server.setModel,
-		"POST /api/approval-mode":                server.setApprovalMode,
-		"GET /api/chats/{id}/panel":              server.panelTabs,
-		"GET /api/chats/{id}/panel/{key}":        server.panelTab,
-		"GET /api/chats/{id}/panel/{key}/screen": server.panelScreen,
-		"GET /api/chats/{id}/panel/{key}/stream": server.panelStream,
-		"POST /api/chats/{id}/panel/{key}/input": server.panelInput,
-		"POST /api/chats/{id}/panel":             server.editPanel,
+		"GET /api/projects":                            server.projectFolders,
+		"POST /api/projects":                           server.addProject,
+		"GET /api/state":                               server.state,
+		"GET /api/limits":                              server.limits,
+		"GET /api/chats/{id}":                          server.chat,
+		"POST /api/chats/{id}/delete":                  server.deleteChat,
+		"POST /api/chats/{id}/tasks/{task}/stop":       server.stopTask,
+		"GET /api/chats/{id}/items/{index}/images/{n}": server.itemImage,
+		"GET /api/events":                              server.events,
+		"POST /api/chats/{id}/message":                 server.editMessage,
+		"POST /api/chats/{id}/version":                 server.selectVersion,
+		"POST /api/attachments":                        server.uploadAttachment,
+		"POST /api/send":                               server.send,
+		"POST /api/stop":                               server.stop,
+		"POST /api/approve":                            server.approve,
+		"POST /api/answer":                             server.answer,
+		"POST /api/preferences":                        server.setPreferences,
+		"POST /api/model":                              server.setModel,
+		"POST /api/approval-mode":                      server.setApprovalMode,
+		"GET /api/chats/{id}/panel":                    server.panelTabs,
+		"GET /api/chats/{id}/panel/{key}":              server.panelTab,
+		"GET /api/chats/{id}/panel/{key}/screen":       server.panelScreen,
+		"GET /api/chats/{id}/panel/{key}/stream":       server.panelStream,
+		"POST /api/chats/{id}/panel/{key}/input":       server.panelInput,
+		"POST /api/chats/{id}/panel":                   server.editPanel,
 	}
 	for path, handler := range endpoints {
 		mux.HandleFunc(path, server.authorized(handler))
@@ -166,6 +167,19 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 		tab.close()
 	}
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// itemImage serves a picture of an item: what the model saw.
+func (server *headlessServer) itemImage(w http.ResponseWriter, r *http.Request) {
+	remoteapi.ItemImage(w, r, func(index int) ([]core.ImagePart, bool) {
+		server.mu.Lock()
+		defer server.mu.Unlock()
+		chat := server.chatLocked(r.PathValue("id"))
+		if chat == nil || index < 0 || index >= len(chat.Items) {
+			return nil, false
+		}
+		return chat.Items[index].Images, true
+	})
 }
 
 // stopTask is a background task's own Stop.

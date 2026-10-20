@@ -884,6 +884,18 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         userPreferences = reply.optString("userPreferences")
     }
 
+    /** The hooks file of the machine the agent runs on, as text. */
+    suspend fun loadHooks(): String {
+        val target = server ?: error("Connect first.")
+        return onConnection(target, connectionGeneration) { it.get("/api/hooks") }.optString("content")
+    }
+
+    /** Checked by the computer, which says what is wrong when it refuses. */
+    suspend fun saveHooks(content: String) {
+        val target = server ?: error("Connect first.")
+        onConnection(target, connectionGeneration) { it.post("/api/hooks", JSONObject().put("content", content)) }
+    }
+
     fun chooseApprovalMode(mode: String) {
         val generation = connectionGeneration
         val target = server ?: return

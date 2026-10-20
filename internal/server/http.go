@@ -65,7 +65,8 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/chats/{id}":                          server.chat,
 		"POST /api/chats/{id}/delete":                  server.deleteChat,
 		"POST /api/chats/{id}/tasks/{task}/stop":       server.stopTask,
-		"GET /api/chats/{id}/items/{index}/images/{n}": server.itemImage,
+		"GET /api/hooks":                               remoteapi.GetHooks,
+		"POST /api/hooks":                              remoteapi.SaveHooks,
 		"GET /api/events":                              server.events,
 		"POST /api/chats/{id}/message":                 server.editMessage,
 		"POST /api/chats/{id}/version":                 server.selectVersion,
@@ -83,6 +84,7 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/chats/{id}/panel/{key}/stream":       server.panelStream,
 		"POST /api/chats/{id}/panel/{key}/input":       server.panelInput,
 		"POST /api/chats/{id}/panel":                   server.editPanel,
+		"GET /api/chats/{id}/items/{index}/images/{n}": server.itemImage,
 	}
 	for path, handler := range endpoints {
 		mux.HandleFunc(path, server.authorized(handler))

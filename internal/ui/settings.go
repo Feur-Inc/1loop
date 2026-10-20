@@ -482,13 +482,14 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 	)
 }
 
-// hooksRow opens the user's hooks file (made with an empty list the first
-// time) in the system's editor.
+// hooksRow edits the user's hooks file in 1loop, or opens it (made with an
+// empty list the first time) in the system's editor.
 func (ui *desktopUI) hooksRow() fyne.CanvasObject {
 	path := agent.HooksPath()
 	count := agent.HookCount()
 	detail := fmt.Sprintf("Your commands around the agent's work, in Claude Code's format: PreToolUse (exit code 2 blocks the tool), PostToolUse, UserPromptSubmit and Stop. They apply to 1loop's own agent (Claude Code has its own hooks). %d configured, in %s.", count, path)
-	return settingRow("Hook commands", detail, newRow("Edit hooks.json", nil, styleOutline, func() {
+	edit := newRow("Edit", nil, styleOutline, ui.editHooks)
+	return settingRow("Hook commands", detail, container.NewHBox(edit, newRow("Open file", nil, styleChip, func() {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			_ = os.MkdirAll(filepath.Dir(path), 0700)
 			_ = os.WriteFile(path, []byte("{\n  \"hooks\": {\n    \"PreToolUse\": [],\n    \"PostToolUse\": [],\n    \"UserPromptSubmit\": [],\n    \"Stop\": []\n  }\n}\n"), 0600)
@@ -496,7 +497,38 @@ func (ui *desktopUI) hooksRow() fyne.CanvasObject {
 		if err := fyne.CurrentApp().OpenURL(&url.URL{Scheme: "file", Path: path}); err != nil {
 			ui.notice("Hooks", "The file could not be opened: "+err.Error()+"\n\n"+path)
 		}
-	}))
+	})))
+}
+
+// editHooks is the hooks file in an editor in the window: saved only when
+// it is valid, with the reason when it is not.
+func (ui *desktopUI) editHooks() {
+	content, err := agent.ReadHooks()
+	if err != nil {
+		ui.notice("Hooks", err.Error())
+		return
+	}
+	editor := widget.NewMultiLineEntry()
+	editor.TextStyle = fyne.TextStyle{Monospace: true}
+	editor.Wrapping = fyne.TextWrapOff
+	editor.SetText(content)
+	problem := note("")
+	scroll := container.NewScroll(editor)
+	scroll.SetMinSize(fyne.NewSize(0, 360))
+	body := container.NewBorder(note("Example: {\"hooks\": {\"PostToolUse\": [{\"matcher\": \"edit_file|apply_patch\", \"hooks\": [{\"type\": \"command\", \"command\": \"gofmt -w .\"}]}]}}"), problem, nil, nil, scroll)
+	var dialog *sheet
+	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
+	save := newRow("Save", nil, stylePrimary, func() {
+		if err := agent.SaveHooks(editor.Text); err != nil {
+			problem.SetText(err.Error())
+			return
+		}
+		dialog.dismiss()
+		if ui.prefs.open && ui.prefs.section == "General" {
+			ui.prefs.show("General") // the count follows
+		}
+	})
+	dialog = ui.modal("Hooks", body, 640, nil, cancel, save)
 }
 
 func (ui *desktopUI) clearBrowserButton() fyne.CanvasObject {

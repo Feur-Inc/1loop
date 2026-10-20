@@ -171,3 +171,71 @@ func reportHookProblems(emit emitter, result hookResult) {
 		emit("note", problem)
 	}
 }
+
+// hookEvents are the events a hook can follow.
+var hookEvents = []string{"PreToolUse", "PostToolUse", "UserPromptSubmit", "Stop"}
+
+// hooksTemplate is what an editor starts from when there is no file yet.
+const hooksTemplate = "{\n  \"hooks\": {\n    \"PreToolUse\": [],\n    \"PostToolUse\": [],\n    \"UserPromptSubmit\": [],\n    \"Stop\": []\n  }\n}\n"
+
+// ReadHooks is the hooks file as text, for an editor (the template when it
+// does not exist yet).
+func ReadHooks() (string, error) {
+	data, err := os.ReadFile(HooksPath())
+	if errors.Is(err, os.ErrNotExist) {
+		return hooksTemplate, nil
+	}
+	return string(data), err
+}
+
+// SaveHooks checks an edited hooks file and writes it: valid JSON in
+// Claude Code's shape, known events, each hook a command. An edit applies
+// at the next event.
+func SaveHooks(content string) error {
+	var file hooksFile
+	decoder := json.NewDecoder(strings.NewReader(content))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&file); err != nil {
+		return fmt.Errorf("Not valid hooks JSON: %w", err)
+	}
+	for event, matchers := range file.Hooks {
+		if !Contains(hookEvents, event) {
+			return fmt.Errorf("Unknown event %q: use %s", event, strings.Join(hookEvents, ", "))
+		}
+		for _, matcher := range matchers {
+			if matcher.Matcher != "" {
+				if _, err := regexp.Compile(matcher.Matcher); err != nil {
+					return fmt.Errorf("%s: matcher %q is not a valid pattern", event, matcher.Matcher)
+				}
+			}
+			for _, hook := range matcher.Hooks {
+				if hook.Type != "" && hook.Type != "command" || strings.TrimSpace(hook.Command) == "" {
+					return fmt.Errorf("%s: each hook needs \"type\": \"command\" and a command", event)
+				}
+			}
+		}
+	}
+	path := HooksPath()
+	if path == "" {
+		return fmt.Errorf("No configuration folder")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
+		return err
+	}
+	temp, err := os.CreateTemp(filepath.Dir(path), ".hooks-*")
+	if err != nil {
+		return err
+	}
+	_, err = temp.WriteString(content)
+	if closeErr := temp.Close(); err == nil {
+		err = closeErr
+	}
+	if err == nil {
+		err = os.Chmod(temp.Name(), 0600)
+	}
+	if err != nil {
+		os.Remove(temp.Name())
+		return err
+	}
+	return os.Rename(temp.Name(), path)
+}

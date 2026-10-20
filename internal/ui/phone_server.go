@@ -138,6 +138,8 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("GET /api/chats/{id}", server.authorized(server.chat))
 	mux.HandleFunc("POST /api/chats/{id}/delete", server.authorized(server.deleteChat))
 	mux.HandleFunc("POST /api/chats/{id}/tasks/{task}/stop", server.authorized(server.stopTask))
+	mux.HandleFunc("GET /api/hooks", server.authorized(remoteapi.GetHooks))
+	mux.HandleFunc("POST /api/hooks", server.authorized(remoteapi.SaveHooks))
 	mux.HandleFunc("GET /api/chats/{id}/items/{index}/images/{n}", server.authorized(server.itemImage))
 	mux.HandleFunc("GET /api/events", server.authorized(server.events))
 	mux.HandleFunc("POST /api/chats/{id}/message", server.authorized(server.editMessage))

@@ -252,6 +252,32 @@ func ItemVersions(state *agent.VersionState, index int) *Versions {
 	return &Versions{Anchor: anchor, Current: selected + 1, Total: len(family)}
 }
 
+// GetHooks is GET /api/hooks: the hooks file of the machine the agent runs
+// on, as text, with how many hooks it holds.
+func GetHooks(w http.ResponseWriter, _ *http.Request) {
+	content, err := agent.ReadHooks()
+	if err != nil {
+		core.Fail(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+	core.WriteJSON(w, http.StatusOK, map[string]any{"content": content, "path": agent.HooksPath(), "count": agent.HookCount()})
+}
+
+// SaveHooks is POST /api/hooks {content}: checked, then written. A paired
+// device already drives the agent; hooks are commands like its others.
+func SaveHooks(w http.ResponseWriter, r *http.Request) {
+	var args struct{ Content string }
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	if err := agent.SaveHooks(args.Content); err != nil {
+		core.Fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	core.WriteJSON(w, http.StatusOK, map[string]any{"ok": true, "count": agent.HookCount()})
+}
+
 // ItemImage is GET /api/chats/{id}/items/{index}/images/{n}: picture n of an
 // item (a screenshot a tool returned, or one attached to a message), so a
 // client shows what the model saw. images gives the item's pictures.

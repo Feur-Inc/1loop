@@ -75,8 +75,53 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                 }
             } else Text("Update the connected desktop or server to edit preferences here.", style = Type.small)
             notice?.let { Text(it, style = Type.small) }
+            HooksSection(app)
         }
     }
+}
+
+// The hooks of the machine the agent runs on (computer, server or this
+// phone's engine): commands around its work, in Claude Code's format.
+@Composable
+private fun HooksSection(app: RemoteApp) {
+    val scope = rememberCoroutineScope()
+    var hooks by remember(app.server) { mutableStateOf<String?>(null) }
+    var status by remember(app.server) { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    Text("Hooks", style = Type.headline)
+    Text("Commands run before or after the agent's tools (PreToolUse, PostToolUse), when you send a message (UserPromptSubmit) or when it stops (Stop). Exit code 2 from a PreToolUse blocks the tool.", style = Type.small)
+    val text = hooks
+    if (text == null) {
+        Pill(if (busy) "Loading…" else "Edit hooks", enabled = app.connected && !busy) {
+            busy = true
+            scope.launch {
+                try { hooks = app.loadHooks(); status = null }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) { status = failure.message ?: "Could not load the hooks." }
+                finally { busy = false }
+            }
+        }
+    } else {
+        BasicTextField(
+            text, { hooks = it; status = null },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 220.dp).background(Palette.code, RoundedCornerShape(12.dp))
+                .border(1.dp, Palette.borderSoft, RoundedCornerShape(12.dp)).padding(14.dp),
+            textStyle = Type.mono, minLines = 10,
+        )
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Pill(if (busy) "Saving…" else "Save hooks", primary = true, enabled = app.connected && !busy) {
+                busy = true
+                scope.launch {
+                    try { app.saveHooks(text); status = "Saved" }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { status = failure.message ?: "Could not save the hooks." }
+                    finally { busy = false }
+                }
+            }
+            Pill("Close") { hooks = null; status = null }
+        }
+    }
+    status?.let { Text(it, style = Type.small.copy(color = if (it == "Saved") Palette.added else Palette.danger)) }
 }
 
 @Composable

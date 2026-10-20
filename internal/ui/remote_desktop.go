@@ -214,7 +214,8 @@ func openRemoteDesktop(parent *desktopUI, client *remoteClient) {
 	composer := surface(container.NewVBox(remote.prompt, controls), colSurface, colBorderHot, 14, 12)
 	newChat := newRow("New chat", iconPlus, styleChip, func() { remote.selectChat("") })
 	refresh := newRow("Refresh", nil, styleChip, remote.notify)
-	left := container.NewBorder(container.NewVBox(newChat, refresh), nil, nil, nil, container.NewVScroll(remote.chatList))
+	hooks := newRow("Hooks", nil, styleChip, remote.editHooks)
+	left := container.NewBorder(container.NewVBox(newChat, refresh, hooks), nil, nil, nil, container.NewVScroll(remote.chatList))
 	chat := container.NewBorder(nil, container.NewVBox(remote.status, composer), nil, nil, remote.scroll)
 	remote.tabs = container.NewDocTabs()
 	remote.tabs.OnSelected = func(selected *container.TabItem) {
@@ -627,6 +628,54 @@ func (remote *remoteDesktop) syncTabs(tabs []remoteapi.Tab) {
 		remote.tabs.Append(container.NewTabItem(tab.Title, content))
 	}
 	remote.renderTasks()
+}
+
+// editHooks edits the server's hooks file: the commands around its agent's
+// work. The server checks it and says what is wrong.
+func (remote *remoteDesktop) editHooks() {
+	go func() {
+		ctx, cancel := context.WithTimeout(remote.ctx, 15*time.Second)
+		defer cancel()
+		var reply struct{ Content string }
+		err := remote.client.json(ctx, "GET", "/api/hooks", nil, &reply)
+		fyne.Do(func() {
+			if err != nil {
+				remote.status.SetText("Hooks: " + err.Error())
+				return
+			}
+			editor := widget.NewMultiLineEntry()
+			editor.TextStyle = fyne.TextStyle{Monospace: true}
+			editor.Wrapping = fyne.TextWrapOff
+			editor.SetText(reply.Content)
+			problem := note("")
+			scroll := container.NewScroll(editor)
+			scroll.SetMinSize(fyne.NewSize(560, 360))
+			var dialog *sheet
+			cancelButton := newRow("Cancel", nil, styleOutline, func() { dialog.Hide() })
+			save := newRow("Save", nil, stylePrimary, nil)
+			save.onTap = func() {
+				save.Disable()
+				content := editor.Text
+				go func() {
+					ctx, cancel := context.WithTimeout(remote.ctx, 15*time.Second)
+					defer cancel()
+					err := remote.client.json(ctx, "POST", "/api/hooks", map[string]string{"content": content}, nil)
+					fyne.Do(func() {
+						save.Enable()
+						if err != nil {
+							problem.SetText(err.Error())
+							return
+						}
+						dialog.Hide()
+					})
+				}()
+			}
+			buttons := container.NewHBox(layout.NewSpacer(), cancelButton, save)
+			body := container.NewBorder(note("Hooks of the server: commands before or after its tools, when a message is sent, or when its agent stops."), container.NewVBox(problem, buttons), nil, nil, scroll)
+			dialog = newSheet(remote.window.Canvas(), body, 640)
+			dialog.Show()
+		})
+	}()
 }
 
 // itemImages are an item's pictures as the server serves them; a click

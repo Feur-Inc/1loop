@@ -9,6 +9,17 @@ import (
 )
 
 func (server *remoteServer) uploadAttachment(w http.ResponseWriter, r *http.Request) {
+	server.projectFiles(remoteapi.UploadAttachment)(w, r)
+}
+
+// projectFiles runs handler in one of the desktop's projects.
+func (server *remoteServer) projectFiles(handler func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		server.inProject(w, r, handler)
+	}
+}
+
+func (server *remoteServer) inProject(w http.ResponseWriter, r *http.Request, handler func(http.ResponseWriter, *http.Request, string)) {
 	workspace := r.URL.Query().Get("workspace")
 	allowed := false
 	server.onUI(func() {
@@ -21,5 +32,5 @@ func (server *remoteServer) uploadAttachment(w http.ResponseWriter, r *http.Requ
 		core.Fail(w, 403, "Choose an existing project")
 		return
 	}
-	remoteapi.UploadAttachment(w, r, workspace)
+	handler(w, r, workspace)
 }

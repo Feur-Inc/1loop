@@ -47,6 +47,12 @@ type chatEntry struct {
 	resized  func()
 	typing   func() // the text changed
 	fitting  bool
+	// Drafts (prompt_drafts.go): the conversation whose draft is shown, its
+	// undo history, and the last text seen.
+	drafts                *promptDrafts
+	histories             map[string]*promptHistory
+	draftKey, previous    string
+	draftBound, restoring bool
 }
 
 const promptMaxRows = 10
@@ -58,7 +64,8 @@ func newChatEntry() *chatEntry {
 	entry.Wrapping = fyne.TextWrapWord
 	entry.ExtendBaseWidget(entry)
 	entry.SetMinRowsVisible(1)
-	entry.OnChanged = func(string) {
+	entry.OnChanged = func(text string) {
+		entry.changed(text)
 		entry.fit()
 		if entry.typing != nil {
 			entry.typing()
@@ -127,6 +134,9 @@ func (entry *chatEntry) TypedShortcut(s fyne.Shortcut) {
 	if c, ok := s.(*desktop.CustomShortcut); ok && c.Modifier == fyne.KeyModifierControl &&
 		(c.KeyName == fyne.KeyReturn || c.KeyName == fyne.KeyEnter) {
 		entry.steer()
+		return
+	}
+	if entry.historyShortcut(s) {
 		return
 	}
 	if _, ok := s.(*fyne.ShortcutPaste); ok && entry.paste != nil && entry.paste() {

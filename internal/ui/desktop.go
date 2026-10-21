@@ -55,9 +55,10 @@ type conversation struct {
 	todoCount int         // tasks last seen in its list: the first ones open the panel
 	taskCount int         // background tasks last seen: a new one opens the panel on them
 
-	run   *chatRun        // the agent loop working on this chat, if any
-	queue []agent.Message // Enter while it runs: the next turns
-	steer []agent.Message // Ctrl+Enter while it runs: joins at the next step
+	run     *chatRun        // the agent loop working on this chat, if any
+	handoff *pendingHandoff // how the next turn's new model receives the chat
+	queue   []agent.Message // Enter while it runs: the next turns
+	steer   []agent.Message // Ctrl+Enter while it runs: joins at the next step
 }
 
 // chatRun is an agent loop at work. Each chat has its own, so the user can
@@ -229,6 +230,16 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.CenterOnScreen()
 	ui.window.SetIcon(brandResource("1loop-anneau-fond-noir.png"))
 	ui.window.SetContent(ui.build())
+	ui.window.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
+		var files []string
+		for _, uri := range uris {
+			if uri.Scheme() == "file" {
+				files = append(files, uri.Path())
+			}
+		}
+		ui.attachFiles(files)
+	})
+	ui.prompt.switchDraft(ui.draftKey())
 	ui.window.SetCloseIntercept(ui.quit)
 	for _, s := range []*desktop.CustomShortcut{
 		{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierControl},
@@ -360,6 +371,7 @@ func (ui *desktopUI) release() {
 	ui.mark.stop()
 	ui.workMark.stop()
 	ui.persist(true)
+	ui.prompt.drafts.flush()
 	ui.browser.WaitClosed() // Chrome writes its profile as it closes
 }
 
@@ -533,6 +545,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	})
 	ui.prompt.shortcut = ui.shortcut
 	ui.prompt.paste = ui.pasteFromClipboard
+	ui.prompt.bindDrafts(loadPromptDrafts(filepath.Join(filepath.Dir(ui.statePath), "drafts.json")))
 	ui.prompt.resized = func() {
 		if ui.split != nil {
 			relayout(ui.split)
@@ -641,13 +654,23 @@ func (ui *desktopUI) updateHeader() {
 	ui.header.SetText(title)
 }
 
+// draftKey names the draft the prompt shows: the open chat's, or the start
+// screen's for the current project.
+func (ui *desktopUI) draftKey() string {
+	if ui.current != nil {
+		return ui.current.ID
+	}
+	return newChatDraft + ui.cfg.Workspace
+}
+
 func (ui *desktopUI) startNew() {
 	platform.Devf("ui", "new chat screen (workspace %s)", ui.cfg.Workspace)
 	ui.prefs.close()
 	ui.clearSelection()
 	ui.finishEdit(false)
 	ui.current = nil
-	ui.cfg.Session = ""
+	ui.cfg.Session, ui.cfg.RanWith = "", nil
+	ui.prompt.switchDraft(ui.draftKey())
 	ui.followTail = true
 	ui.transcript.RemoveAll()
 	ui.items.reset()
@@ -714,6 +737,11 @@ func codeBlock(text string, maxHeight float32) fyne.CanvasObject {
 // modal opens a themed sheet with a title, a body and right-aligned actions.
 // With no actions it shows a single "Close" button.
 func (ui *desktopUI) modal(title string, body fyne.CanvasObject, width float32, onDismiss func(), actions ...*tapRow) *sheet {
+	return showModal(ui.window.Canvas(), title, body, width, onDismiss, actions...)
+}
+
+// showModal is a titled sheet over a window's content, with its buttons.
+func showModal(canvas fyne.Canvas, title string, body fyne.CanvasObject, width float32, onDismiss func(), actions ...*tapRow) *sheet {
 	var dialog *sheet
 	closeButton := newRow("", iconClose, styleWindow, func() { dialog.dismiss() })
 	heading := textLine(title, 16, colText)
@@ -728,10 +756,10 @@ func (ui *desktopUI) modal(title string, body fyne.CanvasObject, width float32, 
 	content := container.NewBorder(
 		padded(0, 12, 0, 0, container.NewBorder(nil, nil, nil, closeButton, container.NewHBox(heading))),
 		padded(16, 0, 0, 0, buttons), nil, nil, body)
-	dialog = newSheet(ui.window.Canvas(), content, width)
+	dialog = newSheet(canvas, content, width)
 	dialog.onDismiss = onDismiss
 	dialog.Show()
-	ui.window.Canvas().Focus(dialog)
+	canvas.Focus(dialog)
 	return dialog
 }
 
@@ -833,14 +861,14 @@ func (ui *desktopUI) promptMessage() (agent.Message, bool) {
 		ui.notice("Attachments", problem)
 		return agent.Message{}, false
 	}
-	text := strings.TrimSpace(ui.prompt.Text)
-	if text == "" && len(ui.attachments) == 0 && len(ui.fileAttachments) == 0 {
+	text := ui.prompt.Text
+	if strings.TrimSpace(text) == "" && len(ui.attachments) == 0 && len(ui.fileAttachments) == 0 {
 		return agent.Message{}, false
 	}
 	messageValue := agent.Message{Role: "user", Content: attachmentText(text, ui.fileAttachments), Images: ui.takeAttachments()}
 	ui.fileAttachments = nil
 	ui.renderAttachments()
-	ui.prompt.SetText("")
+	ui.prompt.clearSent()
 	return messageValue, true
 }
 
@@ -852,6 +880,10 @@ func (ui *desktopUI) submit() {
 	}
 	text := strings.TrimSpace(ui.prompt.Text)
 	chat := ui.current
+	if chat != nil && chat.handoff == nil && agent.HandoffNeeded(ui.runConfig(chat), chat.History) && (text != "" || len(ui.attachments)+len(ui.fileAttachments)+len(chat.queue) > 0) {
+		ui.askHandoff(chat, ui.submit)
+		return
+	}
 	if chat != nil && chat.run != nil {
 		if message, ok := ui.promptMessage(); ok {
 			chat.queue = append(chat.queue, message)
@@ -870,7 +902,7 @@ func (ui *desktopUI) submit() {
 	}
 	// Claude Code compacts its own session: there /compact is sent as it is.
 	if ui.cfg.Provider != "claudecode" && (text == "/compact" || strings.HasPrefix(text, "/compact ")) {
-		ui.prompt.SetText("")
+		ui.prompt.clearSent()
 		ui.compactChat(strings.TrimSpace(strings.TrimPrefix(text, "/compact")))
 		return
 	}
@@ -985,10 +1017,11 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		if len(title) == 0 {
 			title = []rune("[image]")
 		}
-		ui.cfg.Session = "" // a new chat starts its own Claude Code session
+		ui.cfg.Session, ui.cfg.RanWith = "", nil // a new chat starts its own Claude Code session
 		chat = &conversation{ID: core.Identifier()[:16], Title: string(title), Config: ui.cfg}
 		ui.chats = append([]*conversation{chat}, ui.chats...)
 		ui.current = chat
+		ui.prompt.renameDraft(chat.ID)
 		ui.panel.adopt(chat) // what was open on the start screen is now this chat's
 	}
 	ui.panel.todoChanged(chat)
@@ -1008,6 +1041,15 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 	ctx, cancel := context.WithCancel(ui.ctx)
 	cfg := ui.runConfig(chat)
 	history := append([]agent.Message(nil), chat.History...)
+	// A handoff to apply first: the one chosen, or the recommended one for a
+	// turn that did not come from the prompt (a queued message, a wake-up).
+	handoff := chat.handoff
+	chat.handoff = nil
+	if handoff == nil && agent.HandoffNeeded(cfg, history[:len(history)-1]) {
+		previous := ui.previousConfig(chat)
+		plan := agent.PlanHandoff(previous, cfg, history[:len(history)-1], chat.Items, ui.previousName(chat), ui.modelName(cfg))
+		handoff = &pendingHandoff{choice: plan.Recommended, plan: plan, previous: previous}
+	}
 	turn := ui.newTurn(chat, cfg)
 	turn.show(agent.Activity{State: "wait"})
 	ui.runStarted(chat, &chatRun{cancel: cancel, turn: turn})
@@ -1024,7 +1066,25 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 	}
 	go func() {
 		defer cancel()
-		err := ui.backend.Run(ctx, cfg, history, inboxValue, pump.emit)
+		var err error
+		if handoff != nil {
+			prompt := history[len(history)-1]
+			var result agent.HandoffResult
+			result, err = ui.backend.ApplyHandoff(ctx, handoff.previous, cfg, history[:len(history)-1], handoff.choice, handoff.plan, pump.emit)
+			if err == nil {
+				history = append(result.History, prompt)
+				cfg.HandoffSummary = result.Summary
+				cfg.HandoffApplied = true
+				kept := append([]agent.Message(nil), history...)
+				ui.onUI(ctx, func() { chat.History = kept })
+				pump.emit("context_note", result.Note)
+			}
+		}
+		if err == nil {
+			identity := agent.IdentityOf(cfg)
+			ui.onUI(ctx, func() { chat.Config.RanWith = &identity })
+			err = ui.backend.Run(ctx, cfg, history, inboxValue, pump.emit)
+		}
 		canceled := ctx.Err() == context.Canceled
 		fyne.Do(func() {
 			pump.flush() // whatever the stream sent last comes first

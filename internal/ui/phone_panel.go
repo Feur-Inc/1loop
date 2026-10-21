@@ -115,6 +115,9 @@ func (server *remoteServer) panelTabs(writer http.ResponseWriter, req *http.Requ
 		}
 		tabs := []remoteapi.Tab{}
 		for _, tab := range server.ui.panel.tabsOf(chat) {
+			if tab.kind == "files" {
+				continue // the phone browses files with its own explorer
+			}
 			tabs = append(tabs, remoteTabOf(chat, tab))
 		}
 		out = map[string]any{"tabs": tabs}

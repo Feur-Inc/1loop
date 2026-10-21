@@ -249,6 +249,7 @@ func (ui *desktopUI) reloadChat(chat *conversation) {
 	ui.clearSelection()
 	ui.current = chat
 	ui.cfg = chat.Config
+	ui.prompt.switchDraft(chat.ID)
 	ui.followTail = true
 	ui.panel.switchTo(chat)
 	ui.transcript.RemoveAll()
@@ -309,6 +310,7 @@ func (ui *desktopUI) removeChat(chat *conversation) {
 	}
 	chat.queue, chat.steer = nil, nil
 	chat.tasks.StopAll()
+	ui.prompt.drafts.set(chat.ID, "")
 	if ui.current == chat {
 		ui.current = nil
 		ui.startNew()

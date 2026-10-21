@@ -48,6 +48,16 @@ type Config struct {
 	Model             string                                    `json:"model"`
 	Workspace         string                                    `json:"workspace"`
 	Session           string                                    `json:"session,omitempty"` // Claude Code connection: the chat's session there
+	// SessionMark is how many of the chat's items that session has seen:
+	// what other models did after it is sent when Claude Code resumes.
+	SessionMark int `json:"sessionMark,omitempty"`
+	// RanWith is who the chat's last turn ran with: another provider,
+	// account or model first goes through a handoff (handoff.go).
+	RanWith *RunIdentity `json:"ranWith,omitempty"`
+	// HandoffSummary is read by Claude Code resuming its session instead of
+	// the whole gap, when the user had it summarized.
+	HandoffSummary string `json:"-"`
+	HandoffApplied bool   `json:"-"`
 	// ToolAllowed is checked again at execution so revoking a capability
 	// also blocks calls made from a model's earlier tool declarations.
 	ToolAllowed         func(string) bool `json:"-"`

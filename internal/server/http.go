@@ -54,6 +54,7 @@ func (server *headlessServer) routes() http.Handler {
 		mux.HandleFunc("POST /api/local/connections/refresh", server.localOnly(server.refreshLocalModels))
 		mux.HandleFunc("GET /api/local/claude/login", server.localOnly(server.claudeLoginState))
 		mux.HandleFunc("POST /api/local/claude/login", server.localOnly(server.beginClaudeLogin))
+		mux.HandleFunc("POST /api/local/sync", server.localOnly(server.localSync))
 		mux.HandleFunc("GET /api/local/sharing", server.localOnly(server.sharingState))
 		mux.HandleFunc("POST /api/local/sharing", server.localOnly(server.setSharing))
 		mux.HandleFunc("POST /api/local/pairings/{id}", server.localOnly(server.answerPairing))
@@ -76,6 +77,10 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/chats/{id}/message":                 server.editMessage,
 		"POST /api/chats/{id}/version":                 server.selectVersion,
 		"POST /api/attachments":                        server.uploadAttachment,
+		"GET /api/files":                               server.projectFiles(remoteapi.ListFiles),
+		"GET /api/files/content":                       server.projectFiles(remoteapi.FileContent),
+		"GET /api/files/download":                      server.projectFiles(remoteapi.DownloadFile),
+		"POST /api/files/upload":                       server.projectFiles(remoteapi.UploadFile),
 		"POST /api/send":                               server.send,
 		"POST /api/stop":                               server.stop,
 		"POST /api/approve":                            server.approve,
@@ -93,11 +98,23 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/hooks":                              remoteapi.SaveHooks,
 		"GET /api/chats/{id}/items/{index}/images/{n}": server.itemImage,
 	}
+	syncEngine := server.syncEngine()
+	syncManifest, syncExport, syncImport := syncEngine.Routes()
+	endpoints["GET /api/sync/base"] = syncEngine.BaseRoute
+	endpoints["POST /api/sync/base"] = syncEngine.BaseRoute
+	endpoints["GET /api/sync/manifest"] = syncManifest
+	endpoints["POST /api/sync/export"] = syncExport
+	endpoints["POST /api/sync/import"] = syncImport
 	for path, handler := range endpoints {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/attachments" {
+		switch r.URL.Path {
+		case "/api/attachments", "/api/files/upload", "/api/sync/import":
+			// Files: their handlers set their own limits.
+		case "/api/sync/export":
+			r.Body = http.MaxBytesReader(w, r.Body, 64<<20) // the list of a large project's files
+		default:
 			r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
@@ -266,6 +283,7 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		Chat, Text, Mode, Workspace string
 		Attachments                 []agent.FileAttachment
 		Images                      []core.ImagePart
+		Handoff                     *agent.HandoffChoice // the answer to a handoff the server asked for
 	}
 	if core.ReadJSON(r, &args) != nil || strings.TrimSpace(args.Text) == "" && len(args.Attachments) == 0 && len(args.Images) == 0 {
 		core.Fail(w, 400, "Nothing to send")
@@ -320,9 +338,26 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg := server.cfg
 		cfg.Workspace = workspace
-		cfg.Session = ""
+		cfg.Session, cfg.RanWith = "", nil
 		chat = &serverChat{ID: core.Identifier()[:16], Title: string(title), Config: cfg, Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}
 		server.chats = append([]*serverChat{chat}, server.chats...)
+	}
+
+	if chat.handoff == nil && !(chat.run != nil && args.Mode == "steer") {
+		// Another provider, account or model than the chat's last turn: the
+		// client first asks the user how the new one receives the chat.
+		if cfg := server.runConfigLocked(chat, nil); agent.HandoffNeeded(cfg, chat.History) {
+			plan, previous := server.handoffPlanLocked(chat, cfg, chat.History)
+			if args.Handoff == nil || args.Handoff.Target != nil && *args.Handoff.Target != agent.IdentityOf(cfg) {
+				core.WriteJSON(w, 409, map[string]any{"error": "Choose how " + plan.To + " receives this conversation", "handoff": plan})
+				return
+			}
+			if problem := plan.Problem(*args.Handoff); problem != "" {
+				core.Fail(w, 400, problem)
+				return
+			}
+			chat.handoff = &pendingHandoff{choice: *args.Handoff, plan: plan, previous: previous}
+		}
 	}
 
 	if chat.run != nil {
@@ -333,6 +368,7 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		}
 		server.changedLocked(chat, -1)
 	} else {
+
 		server.runLocked(chat, m)
 	}
 	core.WriteJSON(w, 200, map[string]string{"chat": chat.ID})
@@ -535,6 +571,20 @@ func (server *headlessServer) editPanel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	core.WriteJSON(w, 200, map[string]string{"result": result.Text})
+}
+
+// projectFiles serves the file browser in a registered project.
+func (server *headlessServer) projectFiles(handler func(http.ResponseWriter, *http.Request, string)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		server.mu.Lock()
+		workspace, err := server.workspaceLocked(r.URL.Query().Get("workspace"))
+		server.mu.Unlock()
+		if err != nil {
+			core.Fail(w, 403, err.Error())
+			return
+		}
+		handler(w, r, workspace)
+	}
 }
 
 func (server *headlessServer) uploadAttachment(w http.ResponseWriter, r *http.Request) {

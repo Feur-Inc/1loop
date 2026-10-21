@@ -598,6 +598,7 @@ func contextOverflow(err error) (bool, int) {
 }
 
 func ModelContextWindow(cfg Config) int {
+	loadWindows.Do(readWindows)
 	learnedMu.Lock()
 	n := learnedWindows[cfg.ConnectionID+"|"+cfg.Model]
 	learnedMu.Unlock()
@@ -794,7 +795,7 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 		return true
 	}
 	overflows := 0
-	coldChecked := false
+	coldChecked := cfg.HandoffApplied
 	for {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -851,11 +852,7 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 		out, err := completion(ctx, cfg, withTurnContext(cfg, messages), true, emit)
 		if overflow, window := contextOverflow(err); overflow && overflows < 3 {
 			overflows++
-			if window > 0 {
-				learnedMu.Lock()
-				learnedWindows[cfg.ConnectionID+"|"+cfg.Model] = window
-				learnedMu.Unlock()
-			}
+			learnWindow(cfg.ConnectionID, cfg.Model, window)
 			if compact(4, "provider context overflow", "", true) {
 				continue
 			}

@@ -18,6 +18,8 @@ import (
 	"net/url"
 	"strings"
 	"time"
+
+	"1loop/internal/agent"
 )
 
 type serverAddress struct {
@@ -42,7 +44,10 @@ func newRemoteClient(address serverAddress) (*remoteClient, error) {
 
 func (client *remoteClient) request(ctx context.Context, method, path string, body any) (*http.Response, error) {
 	var reader io.Reader
-	if body != nil {
+	kind := "application/json"
+	if raw, ok := body.(io.Reader); ok { // a file sent as it is
+		reader, kind = raw, "application/octet-stream"
+	} else if body != nil {
 		data, err := json.Marshal(body)
 		if err != nil {
 			return nil, err
@@ -53,7 +58,7 @@ func (client *remoteClient) request(ctx context.Context, method, path string, bo
 	if err != nil {
 		return nil, err
 	}
-	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Content-Type", kind)
 	if client.address.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+client.address.Token)
 	}
@@ -63,10 +68,16 @@ func (client *remoteClient) request(ctx context.Context, method, path string, bo
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
-		var problem struct{ Error string }
-		json.NewDecoder(io.LimitReader(response.Body, 8192)).Decode(&problem)
+		var problem struct {
+			Error   string
+			Handoff *agent.HandoffPlan
+		}
+		json.NewDecoder(io.LimitReader(response.Body, 64<<10)).Decode(&problem)
 		if problem.Error == "" {
 			problem.Error = response.Status
+		}
+		if problem.Handoff != nil {
+			return nil, handoffRequired{problem.Error, *problem.Handoff}
 		}
 		return nil, fmt.Errorf("%s", problem.Error)
 	}
@@ -122,3 +133,12 @@ func secureRemoteClient(address, fingerprint string) (*http.Client, string, erro
 	transport.TLSClientConfig = settings
 	return &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, parsed.String(), nil
 }
+
+// handoffRequired is the server asking how the chat's new model receives
+// the conversation, before it sends the message.
+type handoffRequired struct {
+	text string
+	plan agent.HandoffPlan
+}
+
+func (required handoffRequired) Error() string { return required.text }

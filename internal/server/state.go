@@ -41,6 +41,7 @@ type serverChat struct {
 	tabs         []*serverTab
 	session      *browser.Session
 	queue, steer []agent.Message
+	handoff      *pendingHandoff // how the next turn's new model receives the chat
 }
 
 type serverRun struct {
@@ -348,7 +349,13 @@ func (server *headlessServer) configFor(choice agent.ModelChoice, previous agent
 	cfg.Effort = previous.Effort
 	cfg.ServiceTier = agent.TierFor(choice, previous.ServiceTier)
 	cfg.ReasoningMode = choice.ReasoningMode
-	cfg.Session = previous.Session
+	cfg.Session, cfg.SessionMark = previous.Session, previous.SessionMark
+	cfg.RanWith = previous.RanWith // its next turn knows the model changed
+	if cfg.RanWith == nil && previous.Provider != "" && previous.Model != "" {
+		identity := agent.IdentityOf(previous)
+		cfg.RanWith = &identity
+	}
+
 	if !agent.Contains(choice.Efforts, cfg.Effort) {
 		cfg.Effort = choice.DefaultEffort
 	}
@@ -600,16 +607,9 @@ func (server *headlessServer) chatTasksLocked(chat *serverChat) *agent.Backgroun
 	return chat.tasks
 }
 
-func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message, id string) {
-	chat.History = append(chat.History, m)
-	item := agent.ChatItem{ID: id, Kind: "user", Text: m.Content, Images: m.Images}
-	if m.Internal { // a background task's end: a note, not the user's words
-		item = agent.ChatItem{ID: id, Kind: "note", Text: agent.WakeSummary(m)}
-	}
-	index := server.addLocked(chat, item)
-	ctx, cancel := context.WithCancel(server.ctx)
-	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait"}
-	chat.run = run
+// runConfigLocked is the chat's configuration for a turn, with the server's
+// secrets, preferences and tools.
+func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities chan struct{}) agent.Config {
 	cfg := chat.Config
 	cfg.APIKey = server.keys[cfg.ConnectionID]
 	cfg.UserInstructions = server.instructions
@@ -630,7 +630,7 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 	cfg.Browser = server.browserTools(chat)
 	cfg.Terminal = server.terminalTools(chat)
 	if server.bridge != nil {
-		cfg.CapabilitiesChanged = run.capabilities
+		cfg.CapabilitiesChanged = capabilities
 		cfg.Phone = server.bridge.phoneTools
 		cfg.Packages = server.bridge.packageTools
 		cfg.ToolAllowed = func(name string) bool {
@@ -654,6 +654,20 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		defer server.mu.Unlock()
 		return append([]agent.ChatItem{}, chat.Items...), ctx.Err()
 	}
+	return cfg
+}
+
+func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message, id string) {
+	chat.History = append(chat.History, m)
+	item := agent.ChatItem{ID: id, Kind: "user", Text: m.Content, Images: m.Images}
+	if m.Internal { // a background task's end: a note, not the user's words
+		item = agent.ChatItem{ID: id, Kind: "note", Text: agent.WakeSummary(m)}
+	}
+	index := server.addLocked(chat, item)
+	ctx, cancel := context.WithCancel(server.ctx)
+	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait"}
+	chat.run = run
+	cfg := server.runConfigLocked(chat, run.capabilities)
 	history := append([]agent.Message{}, chat.History...)
 	server.changedLocked(chat, index)
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
@@ -673,9 +687,39 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		chat.queue = chat.queue[1:]
 		return out, true
 	}}
+	// A handoff to apply first: the one chosen, or the recommended one for a
+	// turn that did not come from the prompt (a queued message, a wake-up).
+	handoff := chat.handoff
+	chat.handoff = nil
+	if handoff == nil && agent.HandoffNeeded(cfg, history[:len(history)-1]) {
+		plan, previous := server.handoffPlanLocked(chat, cfg, history[:len(history)-1])
+		handoff = &pendingHandoff{choice: plan.Recommended, plan: plan, previous: previous}
+	}
 	go func() {
 		defer cancel()
-		err := server.backend.Run(ctx, cfg, history, inboxValue, func(kind string, value any) { server.emit(chat, run, kind, value) })
+		emit := func(kind string, value any) { server.emit(chat, run, kind, value) }
+		var err error
+		if handoff != nil {
+			prompt := history[len(history)-1]
+			var result agent.HandoffResult
+			result, err = server.backend.ApplyHandoff(ctx, handoff.previous, cfg, history[:len(history)-1], handoff.choice, handoff.plan, emit)
+			if err == nil {
+				history = append(result.History, prompt)
+				cfg.HandoffSummary = result.Summary
+				cfg.HandoffApplied = true
+				emit("history", append([]agent.Message(nil), history...))
+				emit("context_note", result.Note)
+			}
+		}
+		if err == nil {
+			identity := agent.IdentityOf(cfg)
+			server.mu.Lock()
+			if chat.run == run {
+				chat.Config.RanWith = &identity
+			}
+			server.mu.Unlock()
+			err = server.backend.Run(ctx, cfg, history, inboxValue, emit)
+		}
 		server.mu.Lock()
 		defer server.mu.Unlock()
 		if chat.run != run {
@@ -765,6 +809,10 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		run.used = value.(int)
 	case "session":
 		chat.Config.Session = value.(string)
+	case "session_synced": // the session has seen everything shown so far
+		if chat.Config.Session != "" {
+			chat.Config.SessionMark = len(chat.Items)
+		}
 	case "notice":
 		run.label = value.(string)
 	}

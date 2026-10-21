@@ -26,8 +26,9 @@ func UploadAttachment(w http.ResponseWriter, r *http.Request, workspace string) 
 	core.WriteJSON(w, 200, file)
 }
 
-// Only copied files from this project's tmp directory may be submitted;
-// paths supplied by a remote client must not expose runtime credentials.
+// Attachments are files of the project: copied ones (in its tmp folder) or
+// ones the file browser attaches. A path the client sent never leaves the
+// project, where the agent can already read.
 func AttachedMessage(workspace, text string, files []agent.FileAttachment) (agent.Message, error) {
 	message := agent.Message{Role: "user", Content: text}
 	if len(files) > 20 {
@@ -42,10 +43,6 @@ func AttachedMessage(workspace, text string, files []agent.FileAttachment) (agen
 		path, err := agent.WorkspacePath(workspace, file.Path)
 		if err != nil {
 			return message, err
-		}
-		relative, err := filepath.Rel(filepath.Join(workspace, "tmp"), path)
-		if err != nil || relative == ".." || strings.HasPrefix(relative, ".."+string(filepath.Separator)) {
-			return message, fmt.Errorf("Choose a copied attachment")
 		}
 		info, err := os.Stat(path)
 		if err != nil {

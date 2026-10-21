@@ -5,6 +5,7 @@ import android.content.Context
 import android.os.Build
 import android.provider.Settings
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
@@ -170,6 +171,9 @@ private const val PAGE = 80 // items a chat opens with, and each earlier page
 class RemoteApp(private val context: Context, private val scope: CoroutineScope) {
     private val prefs = context.getSharedPreferences("1loop", Context.MODE_PRIVATE)
     private val notifier = Notifier(context)
+    val drafts = PromptDrafts(context)
+    var draftRevision by mutableIntStateOf(0) // a draft changed outside the prompt (a failed send)
+        private set
     private val running = mutableMapOf<String, Boolean>() // by chat, to tell when a run ends
 
     /** The app is on screen; notifications are only for when it is not. */
@@ -587,6 +591,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     private fun disconnect() {
+        handoffAsk?.cancel?.invoke()
         connectionGeneration++
         server = null
         sharing = null
@@ -788,26 +793,67 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     // -- actions -------------------------------------------------------------
 
-    fun send(text: String, mode: String = "send", project: String? = null) {
+    /** The prompt's draft: the open chat's, or the start screen's for a project, on this target. */
+    fun draftKey(project: String?): String =
+        "${server?.key.orEmpty()}|${current ?: "new:" + (project ?: selectedProject ?: workspace)}"
+
+    /** The server asks how the chat's new model receives the conversation (Handoff.kt). */
+    class HandoffAsk(val plan: JSONObject, val choose: (JSONObject) -> Unit, val cancel: () -> Unit)
+    var handoffAsk by mutableStateOf<HandoffAsk?>(null)
+
+    fun send(text: String, mode: String = "send", project: String? = null, handoff: JSONObject? = null) {
         val generation = connectionGeneration
         val target = server ?: return
+        val draft = draftKey(project)
         // What this message carries, as it is now: files added meanwhile stay for the next one.
         val sent = attachments.filter { it.ready != null }
         val body = JSONObject().put("chat", current.orEmpty()).put("text", text).put("mode", mode)
             .put("workspace", project ?: chats.firstOrNull { it.id == current }?.workspace ?: selectedProject ?: workspace)
         if (sent.isNotEmpty()) body.put("attachments", JSONArray(sent.map { it.ready }))
+        handoff?.let { body.put("handoff", it) }
+        val pending = "sending:${java.util.UUID.randomUUID()}|$draft"
+        drafts.save(pending, text)
         problem = null
+        sendRequest(target, generation, draft, text, body, sent, pending)
+    }
+
+    private fun sendRequest(target: Server, generation: Long, draft: String, text: String, body: JSONObject, sent: List<Attachment>, pending: String) {
+        fun restore() {
+            drafts.restore(draft, text)
+            drafts.save(pending, "")
+            draftRevision++
+        }
         scope.launch {
             try {
                 val reply = onConnection(target, generation) { it.post("/api/send", body) }
                 if (generation != connectionGeneration) return@launch // another target since: nothing of this one to touch
+                drafts.save(pending, "")
                 val keys = sent.map { it.key }.toSet()
                 attachments.removeAll { it.key in keys }
                 val id = reply.optString("chat")
-                if (current == null && id.isNotEmpty()) open(id)
+                if (current == null && body.optString("chat").isEmpty() && id.isNotEmpty()) open(id)
             } catch (e: CancellationException) {
+                restore()
                 throw e
+            } catch (e: ApiError) {
+                val plan = e.body?.optJSONObject("handoff")
+                if (plan != null && e.status == 409 && generation == connectionGeneration) {
+                    handoffAsk = HandoffAsk(plan, choose = { choice ->
+                        handoffAsk = null
+                        if (generation == connectionGeneration) {
+                            body.put("handoff", choice)
+                            sendRequest(target, generation, draft, text, body, sent, pending)
+                        } else restore()
+                    }, cancel = {
+                        handoffAsk = null
+                        restore()
+                    })
+                    return@launch
+                }
+                restore()
+                actionFailed(generation, e)
             } catch (e: Exception) {
+                restore()
                 actionFailed(generation, e)
             }
         }
@@ -1030,6 +1076,120 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             }
         }
     }
+
+    // -- the file browser (Files.kt) ---------------------------------------------
+
+    private fun fileQuery(workspace: String, path: String) =
+        "workspace=" + java.net.URLEncoder.encode(workspace, "UTF-8") + "&path=" + java.net.URLEncoder.encode(path, "UTF-8")
+
+    suspend fun listFiles(workspace: String, folder: String): List<ProjectFile> {
+        val target = server ?: throw ApiError("Connect first.")
+        val reply = onConnection(target, connectionGeneration) { it.get("/api/files?" + fileQuery(workspace, folder)) }
+        val entries = reply.optJSONArray("entries")
+        return (0 until (entries?.length() ?: 0)).map { i ->
+            entries!!.getJSONObject(i).let { ProjectFile(it.optString("name"), it.optString("path"), it.optBoolean("dir"), it.optLong("size")) }
+        }
+    }
+
+    suspend fun filePreview(workspace: String, path: String): JSONObject {
+        val target = server ?: throw ApiError("Connect first.")
+        return onConnection(target, connectionGeneration) { it.get("/api/files/content?" + fileQuery(workspace, path)) }
+    }
+
+    suspend fun fileBytes(workspace: String, path: String): ByteArray {
+        val target = server ?: throw ApiError("Connect first.")
+        return onConnection(target, connectionGeneration) { it.bytes("/api/files/download?" + fileQuery(workspace, path)) }
+    }
+
+    /** Saves a project file in the phone's Downloads; returns where. */
+    suspend fun downloadFile(workspace: String, file: ProjectFile): String {
+        val target = server ?: throw ApiError("Connect first.")
+        val path = "/api/files/download?" + fileQuery(workspace, file.path)
+        return onConnection(target, connectionGeneration) { api ->
+            if (android.os.Build.VERSION.SDK_INT >= 29) {
+                val values = android.content.ContentValues().apply {
+                    put(android.provider.MediaStore.Downloads.DISPLAY_NAME, file.name)
+                    put(android.provider.MediaStore.Downloads.IS_PENDING, 1)
+                }
+                val resolver = context.contentResolver
+                val uri = resolver.insert(android.provider.MediaStore.Downloads.EXTERNAL_CONTENT_URI, values) ?: throw ApiError("Cannot write in Downloads.")
+                try {
+                    resolver.openOutputStream(uri)?.use { api.download(path, it) } ?: throw ApiError("Cannot write in Downloads.")
+                    values.clear()
+                    values.put(android.provider.MediaStore.Downloads.IS_PENDING, 0)
+                    resolver.update(uri, values, null, null)
+                } catch (e: Exception) {
+                    resolver.delete(uri, null, null) // no half file in Downloads
+                    throw e
+                }
+                "Downloads/${file.name}"
+            } else {
+                val dir = context.getExternalFilesDir(android.os.Environment.DIRECTORY_DOWNLOADS) ?: throw ApiError("Cannot write in Downloads.")
+                val out = java.io.File(dir, file.name)
+                out.outputStream().use { api.download(path, it) }
+                out.path
+            }
+        }
+    }
+
+    /** Copies a file of the phone (picked, or shared to 1loop) into a folder of the project. */
+    suspend fun addToProject(uri: android.net.Uri, workspace: String, folder: String): String {
+        val target = server ?: throw ApiError("Connect first.")
+        var name = "file"
+        var size = -1L
+        runCatching {
+            context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                if (cursor.moveToFirst()) {
+                    cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = cursor.getString(it) ?: name }
+                    cursor.getColumnIndex(android.provider.OpenableColumns.SIZE).takeIf { it >= 0 && !cursor.isNull(it) }?.let { size = cursor.getLong(it) }
+                }
+            }
+        }
+        val path = "/api/files/upload?" + fileQuery(workspace, folder) + "&name=" + java.net.URLEncoder.encode(name, "UTF-8")
+        val reply = onConnection(target, connectionGeneration) { api ->
+            context.contentResolver.openInputStream(uri)?.use { api.upload(path, it, size) } ?: throw ApiError("Cannot read this file.")
+        }
+        return reply.optString("path", name)
+    }
+
+    /** A project file joins the next message, as an attached file does. */
+    fun attachProjectFile(workspace: String, file: ProjectFile) {
+        val ready = JSONObject().put("name", file.name).put("path", file.path).put("workspace", workspace)
+        attachments.add(Attachment(java.util.UUID.randomUUID().toString(), android.net.Uri.EMPTY, file.name, file.size, false, workspace, ready = ready))
+    }
+
+    suspend fun sendProjectFile(workspace: String, file: ProjectFile, peer: Server, destination: String): String =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val target = server ?: throw ApiError("Connect first.")
+            val generation = connectionGeneration
+            val temporary = java.io.File.createTempFile("shared-file-", ".tmp", context.cacheDir)
+            try {
+                onConnection(target, generation) { api ->
+                    temporary.outputStream().use { api.download("/api/files/download?" + fileQuery(workspace, file.path), it) }
+                }
+                val path = "/api/files/upload?" + fileQuery(destination, "") + "&name=" + java.net.URLEncoder.encode(file.name, "UTF-8")
+                val reply = temporary.inputStream().use { Api(peer).upload(path, it, temporary.length()) }
+                reply.optString("path", file.name)
+            } finally {
+                temporary.delete()
+            }
+        }
+
+    /**
+     * Copies a project with its chats between this phone's engine and a paired
+     * desktop or server, either way; with planOnly, only says what it would do.
+     */
+    suspend fun copyProject(peer: Server, pull: Boolean, local: String, remote: String, planOnly: Boolean): JSONObject =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val engine = this@RemoteApp.local.activeServer.value ?: throw ApiError("Start the agent on this phone first (Local phone).")
+            val body = JSONObject()
+                .put("peer", JSONObject().put("url", "https://${peer.host}:${peer.port}").put("token", peer.token).put("fingerprint", peer.fingerprint))
+                .put("direction", if (pull) "pull" else "push").put("local", local).put("remote", remote).put("plan", planOnly)
+            Api(engine).post("/api/local/sync", body, readTimeout = 3_600_000)
+        }
+
+    /** Files shared to 1loop from another app, waiting for the user to place them (Files.kt). */
+    val shared = mutableStateListOf<android.net.Uri>()
 
     /** Takes it out of the next message; the copy already in the workspace stays. */
     fun removeAttachment(key: String) {

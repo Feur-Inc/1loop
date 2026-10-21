@@ -455,11 +455,35 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	messages := append([]Message(nil), history...)
 	prompt := messages[len(messages)-1]
 	preface := ""
+	// The recap takes at most ~40% of Claude's window (about 4 characters a
+	// token): a 1M window receives nearly the whole conversation.
+	budget := ModelContextWindow(cfg) * 4 * 40 / 100
 	if cfg.Session == "" && len(messages) > 1 {
 		// A chat begun with another model: Claude Code starts a session
 		// of its own, so it is told what was said before.
-		preface = "[Earlier conversation in this chat, for context]\n" + core.TruncateText(conversationText(messages[:len(messages)-1]), 24000) + "\n[End of the earlier conversation]\n\n"
+		preface = "[Earlier conversation in this chat, for context]\n" + core.TruncateText(levelText(messages[:len(messages)-1], LevelEverything, ModelContextWindow(cfg)), budget) + "\n[End of the earlier conversation]\n\n"
+	} else if cfg.Session != "" && cfg.HandoffSummary != "" {
+		// Back after another model, the gap summarized as the user chose.
+		preface = "[Since your last turn in this chat, the user continued with another model. Summary of what happened meanwhile]\n" + cfg.HandoffSummary + "\n[End of the summary]\n\n"
+	} else if cfg.Session != "" && cfg.SessionMark > 0 && cfg.Recall != nil {
+		// Back to Claude Code after another model: its session misses
+		// what happened meanwhile, which it now reads before the prompt.
+		if items, err := cfg.Recall(ctx); err == nil {
+			end := len(items)
+			if end > 0 && items[end-1].Kind == "user" {
+				end-- // the prompt itself
+			}
+			if cfg.SessionMark < end {
+				preface = "[Since your last turn in this chat, the user continued with another model. What happened meanwhile]\n" + itemsText(items[cfg.SessionMark:end]) + "\n[End of what happened meanwhile]\n\n"
+			}
+		}
 	}
+	// The host then records how many of the chat's items the session has seen.
+	defer func() {
+		if failure == nil && ctx.Err() == nil {
+			emit("session_synced", nil)
+		}
+	}()
 	emit("activity", Activity{State: "wait"})
 	send(claudePrompt(prompt, preface))
 
@@ -725,6 +749,12 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 					path, _, _ := ToolArgs(p.outcome.Args)
 					p.outcome.Diff = claudeDiff(path, claudeEventValue.ToolUseResult)
 				}
+				// Kept in the chat's history as a call and its result, so a
+				// model that takes over knows what Claude Code did.
+				call := ToolCall{ID: b.ToolUseID, Type: "function"}
+				call.Function.Name, call.Function.Arguments = p.outcome.Name, p.outcome.Args
+				messages = append(messages, Message{Role: "assistant", ToolCalls: []ToolCall{call}},
+					Message{Role: "tool", ToolCallID: b.ToolUseID, Content: p.outcome.modelText(), Images: p.outcome.Images})
 				emit("tool_result", p.outcome)
 			}
 			// The gap between two tool calls: steered messages go in now.
@@ -735,9 +765,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			// Claude Code says how large the model's window really is.
 			for model, u := range claudeEventValue.ModelUsage {
 				if u.ContextWindow > 0 && (len(claudeEventValue.ModelUsage) == 1 || strings.Contains(model, cfg.Model)) {
-					learnedMu.Lock()
-					learnedWindows[cfg.ConnectionID+"|"+cfg.Model] = u.ContextWindow
-					learnedMu.Unlock()
+					learnWindow(cfg.ConnectionID, cfg.Model, u.ContextWindow)
 				}
 			}
 			if claudeEventValue.IsError && failure == nil {
@@ -803,4 +831,34 @@ func claudeBrowserImages(raw json.RawMessage) []core.ImagePart {
 		}
 	}
 	return images
+}
+
+// itemsText is what a chat shows, as text for a model: what Claude Code
+// reads of the turns other models took while it was away.
+func itemsText(items []ChatItem) string {
+	var builder strings.Builder
+	for _, item := range items {
+		switch item.Kind {
+		case "user":
+			text := item.Text
+			if len(item.Images) > 0 {
+				text += fmt.Sprintf(" [+%d image(s) attached]", len(item.Images))
+			}
+			builder.WriteString("USER: " + text + "\n\n")
+		case "assistant":
+			if item.Text != "" {
+				builder.WriteString("ASSISTANT: " + item.Text + "\n\n")
+			}
+		case "tool":
+			builder.WriteString(fmt.Sprintf("TOOL %s(%s)\n", item.Tool, item.Args))
+			if item.Failed != "" {
+				builder.WriteString("FAILED: " + item.Failed + "\n\n")
+			} else {
+				builder.WriteString("RESULT: " + item.Text + "\n\n")
+			}
+		case "note":
+			builder.WriteString("NOTE: " + item.Text + "\n\n")
+		}
+	}
+	return builder.String()
 }

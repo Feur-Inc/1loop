@@ -26,6 +26,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/agent"
+	"1loop/internal/core"
 	"1loop/internal/remoteapi"
 )
 
@@ -142,6 +143,9 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 }
 
 type remoteDesktop struct {
+	defaultWorkspace        string
+	fileAttachments         []agent.FileAttachment
+	parent                  *desktopUI
 	renderedApproval        string
 	client                  *remoteClient
 	ctx                     context.Context
@@ -175,6 +179,7 @@ type remoteDesktop struct {
 func openRemoteDesktop(parent *desktopUI, client *remoteClient) {
 	ctx, cancel := context.WithCancel(parent.ctx)
 	remote := &remoteDesktop{
+		parent:      parent,
 		client:      client,
 		ctx:         ctx,
 		cancel:      cancel,
@@ -196,6 +201,9 @@ func openRemoteDesktop(parent *desktopUI, client *remoteClient) {
 	remote.prompt.SetPlaceHolder("Describe what you want to build on the server…")
 	remote.prompt.send = func() { remote.send("send") }
 	remote.prompt.steer = func() { remote.send("steer") }
+	// The server's drafts live with the desktop's, under its address.
+	remote.prompt.bindDrafts(parent.prompt.drafts)
+	remote.prompt.switchDraft(remote.draftKey(""))
 	remote.model = widget.NewSelect(nil, func(label string) {
 		if !remote.rebuilding {
 			remote.action("/api/model", map[string]string{"chat": remote.current, "label": label})
@@ -218,7 +226,8 @@ func openRemoteDesktop(parent *desktopUI, client *remoteClient) {
 	newChat := newRow("New chat", iconPlus, styleChip, func() { remote.selectChat("") })
 	refresh := newRow("Refresh", nil, styleChip, remote.notify)
 	hooks := newRow("Hooks", nil, styleChip, remote.editHooks)
-	left := container.NewBorder(container.NewVBox(newChat, refresh, hooks), nil, nil, nil, container.NewVScroll(remote.chatList))
+	copyProject := newRow("Copy project", nil, styleChip, remote.copyProject)
+	left := container.NewBorder(container.NewVBox(newChat, refresh, hooks, copyProject), nil, nil, nil, container.NewVScroll(remote.chatList))
 	chat := container.NewBorder(nil, container.NewVBox(remote.status, composer), nil, nil, remote.scroll)
 	remote.tabs = container.NewDocTabs()
 	remote.tabs.OnSelected = func(selected *container.TabItem) {
@@ -248,6 +257,7 @@ func openRemoteDesktop(parent *desktopUI, client *remoteClient) {
 			{label: "Git changes", icon: toolGlyph("edit_file"), run: func() { delete(remote.hiddenTabs, "changes"); remote.notify() }},
 			{label: "Browser", icon: iconBrowser, run: func() { remote.addTab("browser") }},
 			{label: "Terminal", icon: toolGlyph("shell"), run: func() { remote.addTab("terminal") }},
+			{label: "Files", icon: iconFolder, run: remote.openFiles},
 		})
 	}
 	panel := container.NewBorder(container.NewHBox(textLine("Server tools", 14, colMuted), layout.NewSpacer(), add), nil, nil, nil, remote.tabs)
@@ -291,8 +301,17 @@ func (remote *remoteDesktop) notify() {
 	}
 }
 
+func (remote *remoteDesktop) draftKey(chat string) string {
+	if chat == "" {
+		return "server:" + remote.client.address.URL + "|" + newChatDraft
+	}
+	return "server:" + remote.client.address.URL + "|" + chat
+}
+
 func (remote *remoteDesktop) selectChat(id string) {
 	remote.current = id
+	remote.fileAttachments = nil
+	remote.prompt.switchDraft(remote.draftKey(id))
 	for _, cancel := range remote.tabCancel {
 		cancel()
 	}
@@ -321,24 +340,60 @@ func (remote *remoteDesktop) action(path string, value any) {
 }
 
 func (remote *remoteDesktop) send(mode string) {
-	text := strings.TrimSpace(remote.prompt.Text)
-	if text == "" {
+	text := remote.prompt.Text
+	if strings.TrimSpace(text) == "" && len(remote.fileAttachments) == 0 {
 		return
 	}
-	remote.prompt.SetText("")
-	chat := remote.current
+	pending := "sending:" + core.Identifier() + "|" + remote.draftKey(remote.current)
+	remote.prompt.drafts.set(pending, text)
+	remote.prompt.clearSent()
+	files := append([]agent.FileAttachment(nil), remote.fileAttachments...)
+	remote.fileAttachments = nil
+	remote.post(remote.current, text, mode, nil, files, pending)
+}
+
+// post sends a message; a handoff the server asks for is answered first.
+func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.HandoffChoice, files []agent.FileAttachment, pending string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(remote.ctx, 15*time.Second)
 		defer cancel()
 		var reply struct{ Chat string }
-		err := remote.client.json(ctx, "POST", "/api/send", map[string]string{"chat": chat, "text": text, "mode": mode}, &reply)
+		body := map[string]any{"chat": chat, "text": text, "mode": mode, "attachments": files}
+		if handoff != nil {
+			body["handoff"] = handoff
+		}
+		err := remote.client.json(ctx, "POST", "/api/send", body, &reply)
 		fyne.Do(func() {
-			if err != nil {
-				remote.status.SetText(err.Error())
-				remote.prompt.SetText(text)
+			restore := func() {
+				key := remote.draftKey(chat)
+				if remote.current == chat {
+					remote.prompt.restoreDraft(text)
+				} else {
+					current := remote.prompt.drafts.get(key)
+					if current != "" && current != text {
+						text = current + "\n\n" + text
+					}
+					remote.prompt.drafts.set(key, text)
+				}
+				remote.prompt.drafts.set(pending, "")
+				if remote.current == chat {
+					remote.fileAttachments = append(files, remote.fileAttachments...)
+				}
+			}
+			if required, ok := err.(handoffRequired); ok {
+				showHandoffDialog(remote.window, required.plan, func(choice agent.HandoffChoice) {
+					remote.post(chat, text, mode, &choice, files, pending)
+				}, restore)
 				return
 			}
+			if err != nil {
+				remote.status.SetText(err.Error())
+				restore()
+				return
+			}
+			remote.prompt.drafts.set(pending, "")
 			if remote.current == chat && reply.Chat != "" && chat == "" {
+				remote.prompt.renameDraft(remote.draftKey(reply.Chat))
 				remote.selectChat(reply.Chat)
 			}
 			remote.notify()
@@ -428,6 +483,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			}
 			remote.rebuilding = true
 			defer func() { remote.rebuilding = false }()
+			remote.defaultWorkspace = state.Workspace
 			remote.models = state.Settings.Models
 
 			remote.meta = chat.Meta
@@ -599,7 +655,7 @@ func (remote *remoteDesktop) showTool(item remoteapi.Item) {
 }
 
 func (remote *remoteDesktop) syncTabs(tabs []remoteapi.Tab) {
-	present := map[string]bool{}
+	present := map[string]bool{"files": true} // the Files tab is this window's own
 	for _, tab := range tabs {
 		present[tab.Key] = true
 	}

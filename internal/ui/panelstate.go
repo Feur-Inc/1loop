@@ -76,6 +76,8 @@ func (panel *toolPanel) stateOf(chat *conversation) *panelState {
 			opened = panel.todoTab(chat)
 		case "changes":
 			opened = panel.changesTab(chat.Config.Workspace)
+		case "files":
+			opened = panel.filesTab(chat.Config.Workspace)
 		case "browser":
 			info := browser.Info{Adaptive: true}
 			if tab.Browser != nil {

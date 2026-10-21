@@ -1,10 +1,14 @@
 package ui
 
-// The side panel's terminal and changes tabs on the desktop.
+// The side panel's terminal, changes and files tabs on the desktop.
 
 import (
 	"context"
 	"fmt"
+	"image"
+	"net/url"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -14,6 +18,7 @@ import (
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
+	"1loop/internal/remoteapi"
 	"1loop/internal/terminal"
 )
 
@@ -150,4 +155,101 @@ func (panel *toolPanel) changesTab(root string) panelTab {
 	load()
 	return panelTab{kind: "changes", title: "Changes", icon: toolGlyph("edit_file"), cancel: cancel, workspace: root,
 		content: container.NewBorder(header, nil, nil, nil, body)}
+}
+
+func (panel *toolPanel) openFiles() {
+	for i, tab := range panel.tabs {
+		if tab.kind == "files" {
+			panel.choose(i)
+			panel.unfold()
+			return
+		}
+	}
+	panel.tabs = append(panel.tabs, panel.filesTab(panel.ui.cfg.Workspace))
+	panel.choose(len(panel.tabs) - 1)
+	panel.unfold()
+}
+
+// filesTab browses the project's files on this computer.
+func (panel *toolPanel) filesTab(root string) panelTab {
+	ui := panel.ui
+	ctx, cancel := context.WithCancel(ui.ctx)
+	source := fileSource{
+		name: filepath.Base(root),
+		list: func(_ context.Context, folder string) ([]remoteapi.FileEntry, error) {
+			_, entries, err := remoteapi.ListDir(root, folder)
+			return entries, err
+		},
+		preview: func(_ context.Context, file string) (remoteapi.FilePreview, error) {
+			return remoteapi.ReadPreview(root, file)
+		},
+		picture: func(_ context.Context, file string) (image.Image, error) {
+			path, err := agent.WorkspacePath(root, file)
+			if err != nil {
+				return nil, err
+			}
+			in, err := os.Open(path)
+			if err != nil {
+				return nil, err
+			}
+			defer in.Close()
+			picture, _, err := image.Decode(in)
+			return picture, err
+		},
+		add: func(_ context.Context, folder string, paths []string) error {
+			for _, source := range paths {
+				in, err := os.Open(source)
+				if err != nil {
+					return err
+				}
+				_, err = remoteapi.SaveFile(root, folder, filepath.Base(source), in)
+				in.Close()
+				if err != nil {
+					return fmt.Errorf("%s: %w", filepath.Base(source), err)
+				}
+			}
+			return nil
+		},
+	}
+	actions := []fileAction{
+		{label: "Download", icon: iconDocument, run: func(file remoteapi.FileEntry) {
+			home, _ := os.UserHomeDir()
+			ui.pick(pickRequest{title: "Save a copy in this folder", start: filepath.Join(home, "Downloads"), folder: true}, func(paths []string) {
+				if len(paths) == 0 {
+					return
+				}
+				go func() {
+					input, err := os.Open(filepath.Join(root, filepath.FromSlash(file.Path)))
+					if err == nil {
+						defer input.Close()
+						_, err = remoteapi.SaveFile(paths[0], "", file.Name, input)
+					}
+					fyne.Do(func() {
+						if err != nil {
+							ui.notice("Download", err.Error())
+						} else {
+							ui.notice("Download", "Saved a copy in "+paths[0])
+						}
+					})
+				}()
+			})
+		}},
+		{label: "Send to…", run: func(file remoteapi.FileEntry) { ui.sendProjectFile(root, file) }},
+		{label: "Attach", icon: iconPlus, run: func(file remoteapi.FileEntry) {
+			ui.fileAttachments = append(ui.fileAttachments, fileAttachment{Name: file.Name, Path: filepath.Join(root, filepath.FromSlash(file.Path)), Workspace: root})
+			ui.renderAttachments()
+		}},
+		{label: "Open", icon: iconDocument, run: func(file remoteapi.FileEntry) {
+			if err := fyne.CurrentApp().OpenURL(&url.URL{Scheme: "file", Path: filepath.Join(root, filepath.FromSlash(file.Path))}); err != nil {
+				ui.notice("Open file", err.Error())
+			}
+		}},
+		{label: "Copy path", icon: iconCopy, run: func(file remoteapi.FileEntry) { fyne.CurrentApp().Clipboard().SetContent(file.Path) }},
+	}
+	pick := func(done func([]string)) {
+		home, _ := os.UserHomeDir()
+		ui.pick(pickRequest{title: "Add files to the project", start: home, multiple: true}, done)
+	}
+	return panelTab{kind: "files", title: "Files", icon: iconFolder, cancel: cancel, workspace: root,
+		content: newFileBrowser(ctx, ui.window, source, actions, pick)}
 }

@@ -37,7 +37,7 @@ data class Server(val name: String, val host: String, val port: Int, val token: 
     val paired get() = token.isNotEmpty()
 }
 
-class ApiError(message: String, val status: Int = 0) : Exception(message)
+class ApiError(message: String, val status: Int = 0, val body: JSONObject? = null) : Exception(message)
 
 /**
  * Finds the 1loop computers on the network: a "1loop?" broadcast, to the
@@ -205,6 +205,24 @@ class Api(val server: Server) {
             connection.disconnect()
         }
     }
+    /** A file streamed into out (the file browser's downloads, whatever their size). */
+    fun download(path: String, out: java.io.OutputStream) {
+        val connection = connection(path).apply {
+            connectTimeout = 4000
+            readTimeout = 60000
+        }
+        try {
+            if (connection.responseCode !in 200..299) throw ApiError("1loop answered ${connection.responseCode}", connection.responseCode)
+            connection.inputStream.use { it.copyTo(out, 1 shl 16) }
+        } catch (e: ApiError) {
+            throw e
+        } catch (e: Exception) {
+            throw ApiError("Cannot download the file from ${server.name}.")
+        } finally {
+            connection.disconnect()
+        }
+    }
+
     /** readTimeout: 20 s by default; longer only for a call known to wait (a browser's first start). */
     fun post(path: String, body: JSONObject, readTimeout: Int = 20000): JSONObject = call("POST", path, body, readTimeout)
 
@@ -250,7 +268,7 @@ class Api(val server: Server) {
             val stream = if (status in 200..299) connection.inputStream else connection.errorStream
             val text = stream?.bufferedReader()?.use { it.readText() }.orEmpty()
             val json = runCatching { JSONObject(text) }.getOrDefault(JSONObject())
-            if (status !in 200..299) throw ApiError(json.optString("error", "1loop answered $status"), status)
+            if (status !in 200..299) throw ApiError(json.optString("error", "1loop answered $status"), status, json)
             return json
         } catch (e: ApiError) {
             throw e

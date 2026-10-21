@@ -66,6 +66,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -85,7 +86,16 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isCtrlPressed
+import androidx.compose.ui.input.key.isShiftPressed
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
+import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
 import androidx.compose.ui.text.style.TextAlign
@@ -377,6 +387,8 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
 @Composable
 fun ChatScreen(app: RemoteApp) {
     if (app.server?.localPhone == true) PairingRequestDialog(app) // a device asking to use this phone
+    app.handoffAsk?.let { HandoffDialog(it) } // the chat continues with another model
+    SharedFilesDialog(app) // files shared to 1loop from another app
     if (app.settingsOpen) {
         MobileSettings(app) { app.settingsOpen = false }
         if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
@@ -699,8 +711,25 @@ private fun toneColor(tone: String) = when (tone) {
 
 @Composable
 private fun Composer(app: RemoteApp, running: Boolean) {
-    var text by remember { mutableStateOf("") }
     val project = app.selectedProject
+    // Each conversation has its own draft, saved as it is typed, and its undo history.
+    val draft = app.draftKey(project)
+    var value by remember(draft, app.draftRevision) { mutableStateOf(app.drafts.get(draft).let { TextFieldValue(it, TextRange(it.length)) }) }
+    var steps by remember(draft) { mutableIntStateOf(0) } // recomposes the undo and redo buttons
+    val text = value.text
+    fun edit(next: TextFieldValue) {
+        if (next.text != value.text) {
+            app.drafts.history(draft).record(value.text)
+            app.drafts.save(draft, next.text)
+            steps++
+        }
+        value = next
+    }
+    fun walk(back: Boolean) {
+        val restored = (if (back) app.drafts.undo(draft, value.text) else app.drafts.redo(draft, value.text)) ?: return
+        value = TextFieldValue(restored, TextRange(restored.length))
+        steps++
+    }
     var models by remember { mutableStateOf(false) }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) app.attach(uris, project)
@@ -742,7 +771,16 @@ private fun Composer(app: RemoteApp, running: Boolean) {
         ) {
             if (app.attachments.isNotEmpty()) AttachmentTray(app)
             BasicTextField(
-                text, { text = it }, Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp, end = 6.dp),
+                value, ::edit,
+                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp, end = 6.dp).onPreviewKeyEvent { event ->
+                    // A hardware keyboard: Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, as on the desktop.
+                    if (event.type != KeyEventType.KeyDown || !event.isCtrlPressed) false
+                    else when {
+                        event.key == Key.Z && !event.isShiftPressed -> { walk(true); true }
+                        event.key == Key.Y || (event.key == Key.Z && event.isShiftPressed) -> { walk(false); true }
+                        else -> false
+                    }
+                },
                 textStyle = Type.body, cursorBrush = SolidColor(Palette.amber), maxLines = 8, interactionSource = interaction,
                 decorationBox = { inner ->
                     Box {
@@ -762,6 +800,11 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                     Spacer(Modifier.width(4.dp))
                     ModelChip(app, onClick = { models = true }, modifier = Modifier.weight(1f, fill = false))
                 }
+                run {
+                    val history = steps.let { app.drafts.history(draft) } // read again at each step
+                    if (history.undo.isNotEmpty()) RoundButton(Icons.undo, Color.Transparent, Palette.muted, size = 32.dp, iconSize = 17.dp, description = "Undo") { walk(true) }
+                    if (history.redo.isNotEmpty()) RoundButton(Icons.redo, Color.Transparent, Palette.muted, size = 32.dp, iconSize = 17.dp, description = "Redo") { walk(false) }
+                }
                 val meta = app.meta
                 ContextRing(meta?.used?.takeIf { app.current != null } ?: 0, meta?.window?.takeIf { app.current != null && it > 0 } ?: app.defaultWindow)
                 // Not while a file is still on its way, or one failed and is still listed.
@@ -769,8 +812,12 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 val ready = !blocked && (text.isNotBlank() || app.attachments.isNotEmpty())
                 val send = { mode: String ->
                     if (ready) {
-                        app.send(text.trim(), mode, project)
-                        text = ""
+                        app.send(text, mode, project)
+                        // Sent: the draft empties, Undo still brings the text back.
+                        app.drafts.history(draft).record(text, merge = false)
+                        app.drafts.save(draft, "")
+                        value = TextFieldValue("")
+                        steps++
                     }
                 }
                 if (running) {

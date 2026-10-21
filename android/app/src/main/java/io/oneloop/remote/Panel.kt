@@ -131,7 +131,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
             reachable = list != null
             if (list != null) {
                 tabs = list.filter { it.kind != "todo" && it.kind != "tool" } // the task list is always first
-                if (selected != "tasks" && tabs.none { it.key == selected }) selected = "tasks"
+                if (selected != "tasks" && selected != "files" && tabs.none { it.key == selected }) selected = "tasks"
             }
             delay(2000)
         }
@@ -155,6 +155,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
         ) {
             val done = tasks.count { it.status == "completed" }
             TabChip(if (tasks.isEmpty()) "Tasks" else "Tasks $done/${tasks.size}", Icons.tasks, selected == "tasks") { selected = "tasks" }
+            TabChip("Files", Icons.folder, selected == "files") { selected = "files" }
             // The tab shown can be closed, as on the desktop.
             for (tab in tabs) TabChip(
                 tab.title, tabIcon(tab.kind), selected == tab.key,
@@ -167,9 +168,13 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.borderSoft))
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            val shown = tabs.firstOrNull { it.key == selected }?.key ?: "tasks"
+            val shown = if (selected == "files") "files" else tabs.firstOrNull { it.key == selected }?.key ?: "tasks"
             Crossfade(shown, animationSpec = tween(180), label = "tab") { key ->
                 val tab = tabs.firstOrNull { it.key == key }
+                if (key == "files") {
+                    FilesView(app, app.chats.firstOrNull { it.id == chat }?.workspace ?: app.selectedProject ?: app.workspace)
+                    return@Crossfade
+                }
                 when (tab?.kind) {
                     "browser" -> BrowserView(app, chat, tab)
                     "terminal" -> TerminalView(app, chat, tab)

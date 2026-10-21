@@ -44,7 +44,7 @@ type toolPanel struct {
 }
 
 type panelTab struct {
-	kind            string // "tool", "todo", "changes", "terminal" or "browser": what to open again with the chat
+	kind            string // "tool", "todo", "changes", "files", "terminal" or "browser": what to open again with the chat
 	chat            *conversation
 	index           int
 	title           string
@@ -89,6 +89,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 			{label: "Browser", icon: iconBrowser, run: panel.openBrowser},
 			{label: "Terminal", icon: toolGlyph("shell"), run: panel.openTerminal},
 			{label: "Git changes", icon: toolGlyph("edit_file"), run: panel.openChanges},
+			{label: "Files", icon: iconFolder, run: panel.openFiles},
 		})
 	}
 	fold := newRow("", iconPanel, styleWindow, panel.fold)

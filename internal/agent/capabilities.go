@@ -252,6 +252,7 @@ func (backend *App) ConnectionModels(ctx context.Context, conn Connection, key s
 			efforts, def, mode, source = backend.localCapabilities(ctx, cfg, row)
 		}
 		choice := ModelChoice{Connection: conn, ID: id, Name: name, Efforts: efforts, DefaultEffort: def, ReasoningMode: mode, Source: source}
+		learnWindow(conn.ID, id, catalogWindow(row))
 		if conn.Provider == "openai" {
 			// Only the speeds the account's plan offers are listed.
 			if tiers, ok := row["service_tiers"].([]any); ok {

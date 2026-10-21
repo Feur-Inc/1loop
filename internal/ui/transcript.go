@@ -834,6 +834,14 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 			ui.cfg.Session = currentTurn.chat.Config.Session
 		}
 		ui.save()
+	case "session_synced": // the session has seen everything shown so far
+		if currentTurn.chat.Config.Session != "" {
+			currentTurn.chat.Config.SessionMark = len(currentTurn.chat.Items)
+			if currentTurn.chat == ui.current {
+				ui.cfg.SessionMark = currentTurn.chat.Config.SessionMark
+			}
+			ui.save()
+		}
 	case "plan":
 		ui.plan = uiEventValue.data.(agent.PlanUsage)
 		if currentTurn.chat == ui.current {

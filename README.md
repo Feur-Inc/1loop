@@ -151,3 +151,11 @@ Sources des intégrations : [implémentation OAuth OpenCode](https://github.com/
 ## Headless server
 
 Build `bin/1loop-server` with `make server` to run the 1loop engine on a Debian VM without a desktop. Desktop and Android clients connect over HTTPS with console-approved pairing. Browser Use and persistent terminal tabs run on the server; Computer Use is excluded. See [docs/SERVER.md](docs/SERVER.md) for setup, certificate verification, credentials and remote tools.
+
+### Drafts, Files and moving between engines
+
+Each conversation keeps a local prompt draft, including multiline text and an undo/redo history while the app runs. Unacknowledged remote sends are retained for recovery. Before the next message after a provider, account or model change, 1loop asks whether to continue with the existing history or summarize it, shows the expected context size and recommends a choice. Claude Code model changes within its own session are exempt.
+
+The **Files** tab browses the current project, previews text/code and images, imports files and attaches them to a message. Mobile also accepts Android Share intents. **Copy project** transfers files, conversations, their images, versions and TODO over the existing paired HTTPS connection. Later copies compare file hashes and shared checkpoints, so either device can initiate the return. Conflicts keep both versions; propagated file deletions go to a local recovery folder. Stop active conversations in the project before copying.
+
+Copies exclude generated caches, local account/runtime folders, `.env` files and common private-key files. Symlinks are not copied; individual files are limited to 512 MiB. These exclusions are not a general secret scanner. Review the comparison before confirming a transfer. After an interrupted transfer, compare and retry: complete matching files are not resent. Each destination uses its own model connections; provider credentials and Claude Code sessions are not migrated.

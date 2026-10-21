@@ -31,29 +31,33 @@ func copyAttachment(workspace, source string) (fileAttachment, error) {
 
 func (ui *desktopUI) pickFiles() {
 	ui.pick(pickRequest{title: "Attach files", start: ui.cfg.Workspace, multiple: true}, func(paths []string) {
-		workspace := ui.cfg.Workspace
-		ui.filesAttaching++
-		go func() {
-			var files []fileAttachment
-			var problems []string
-			for _, source := range paths {
-				file, err := copyAttachment(workspace, source)
-				if err != nil {
-					problems = append(problems, filepath.Base(source)+": "+err.Error())
-					continue
-				}
-				files = append(files, file)
-			}
-			fyne.Do(func() {
-				ui.filesAttaching--
-				ui.fileAttachments = append(ui.fileAttachments, files...)
-				ui.renderAttachments()
-				if len(problems) > 0 {
-					ui.notice("Attach files", strings.Join(problems, "\n"))
-				}
-			})
-		}()
+		ui.attachFiles(paths)
 	})
+}
+
+func (ui *desktopUI) attachFiles(paths []string) {
+	workspace := ui.cfg.Workspace
+	ui.filesAttaching++
+	go func() {
+		var files []fileAttachment
+		var problems []string
+		for _, source := range paths {
+			file, err := copyAttachment(workspace, source)
+			if err != nil {
+				problems = append(problems, filepath.Base(source)+": "+err.Error())
+				continue
+			}
+			files = append(files, file)
+		}
+		fyne.Do(func() {
+			ui.filesAttaching--
+			ui.fileAttachments = append(ui.fileAttachments, files...)
+			ui.renderAttachments()
+			if len(problems) > 0 {
+				ui.notice("Attach files", strings.Join(problems, "\n"))
+			}
+		})
+	}()
 }
 
 func attachmentText(text string, files []fileAttachment) string {

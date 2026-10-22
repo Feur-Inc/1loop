@@ -476,8 +476,22 @@ func (plan *HandoffPlan) RecommendAvailable() {
 	}
 }
 
-// AddSummarizer adds another configured model without exposing its credentials to clients.
+// otherSummarizers is how many models besides the previous and the new one
+// the dialog offers: one per account, so a catalog of hundreds stays usable.
+const otherSummarizers = 6
+
+// AddSummarizer adds another configured model without exposing its
+// credentials to clients. It ignores a second model of the same account
+// and any beyond otherSummarizers.
 func (plan *HandoffPlan) AddSummarizer(id, name string, cfg Config, problem string) {
+	if len(plan.configs) >= otherSummarizers {
+		return
+	}
+	for _, offered := range plan.configs {
+		if offered.ConnectionID == cfg.ConnectionID {
+			return
+		}
+	}
 	if plan.configs == nil {
 		plan.configs = map[string]Config{}
 	}

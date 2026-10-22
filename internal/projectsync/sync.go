@@ -158,7 +158,7 @@ var heavy = map[string]bool{"node_modules": true, ".venv": true, "venv": true, "
 func excluded(relative string) bool {
 	for _, component := range strings.Split(filepath.ToSlash(relative), "/") {
 		lower := strings.ToLower(component)
-		if component == ".home" || heavy[component] || lower == ".ssh" || lower == ".claude" || lower == ".codex" || lower == ".aws" {
+		if component == ".home" || heavy[component] || lower == ".ssh" || lower == ".aws" {
 			return true
 		}
 		if lower == ".env" || strings.HasPrefix(lower, ".env.") && !strings.HasSuffix(lower, ".example") && !strings.HasSuffix(lower, ".sample") {

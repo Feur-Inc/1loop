@@ -3,6 +3,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -156,5 +157,21 @@ func TestApplyHandoffSummary(t *testing.T) {
 	}
 	if !strings.Contains(result.Note, "summary by New") {
 		t.Fatalf("the note says who summarized: %s", result.Note)
+	}
+}
+
+// Other models are offered one per account: a catalog of hundreds of
+// models stays a short list.
+func TestAddSummarizerOnePerAccount(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	plan := HandoffPlan{}
+	for i := 0; i < 300; i++ {
+		plan.AddSummarizer(fmt.Sprintf("model:router|m%d", i), fmt.Sprintf("m%d", i), Config{Provider: "openrouter", ConnectionID: "router", Model: fmt.Sprintf("m%d", i)}, "")
+	}
+	for i := 0; i < 20; i++ {
+		plan.AddSummarizer(fmt.Sprintf("model:c%d|x", i), "x", Config{Provider: "compatible", ConnectionID: fmt.Sprintf("c%d", i), Model: "x"}, "")
+	}
+	if len(plan.Summarizers) != otherSummarizers || plan.Summarizers[0].ID != "model:router|m0" {
+		t.Fatalf("one per account, %d at most: %d offered", otherSummarizers, len(plan.Summarizers))
 	}
 }

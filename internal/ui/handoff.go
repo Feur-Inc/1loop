@@ -94,6 +94,7 @@ func (ui *desktopUI) askHandoff(chat *conversation, proceed func()) {
 		choice := ui.choices[label]
 		candidate := choice.Connection.Config(chat.Config.Workspace)
 		candidate.Model, candidate.APIKey = choice.ID, ui.keys[choice.Connection.ID]
+		candidate.Effort, candidate.ReasoningMode = choice.DefaultEffort, choice.ReasoningMode
 		if agent.IdentityOf(candidate) == agent.IdentityOf(next) || previous != nil && agent.IdentityOf(candidate) == agent.IdentityOf(*previous) {
 			continue
 		}

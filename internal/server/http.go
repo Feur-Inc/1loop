@@ -368,7 +368,6 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		}
 		server.changedLocked(chat, -1)
 	} else {
-
 		server.runLocked(chat, m)
 	}
 	core.WriteJSON(w, 200, map[string]string{"chat": chat.ID})

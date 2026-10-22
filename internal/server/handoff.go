@@ -5,8 +5,9 @@ package server
 // sends the user's choice.
 
 import (
-	"1loop/internal/agent"
 	"sort"
+
+	"1loop/internal/agent"
 )
 
 type pendingHandoff struct {

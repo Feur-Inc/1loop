@@ -202,3 +202,26 @@ func TestCopyOverHTTPS(t *testing.T) {
 		t.Fatal("another certificate is refused")
 	}
 }
+
+// A project's own tool settings travel with it; credentials never do.
+func TestScanKeepsProjectSettings(t *testing.T) {
+	root := t.TempDir()
+	write(t, root, ".claude/settings.json", "{}")
+	write(t, root, ".claude/hooks/check.sh", "exit 0")
+	write(t, root, ".claude/.credentials.json", "secret")
+	write(t, root, ".env", "KEY=secret")
+	files, err := ScanFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, kept := range []string{".claude/settings.json", ".claude/hooks/check.sh"} {
+		if _, ok := files[kept]; !ok {
+			t.Fatalf("%s is the project's and travels: %v", kept, files)
+		}
+	}
+	for _, left := range []string{".claude/.credentials.json", ".env"} {
+		if _, ok := files[left]; ok {
+			t.Fatalf("%s stays on its device", left)
+		}
+	}
+}

@@ -176,6 +176,26 @@ fun Root(app: RemoteApp) {
             }
         }
         if (app.screen == Screen.Launch) LaunchScreen { app.started() }
+        // Without a connection Settings is out of reach: a new version shows here.
+        if (app.screen != Screen.Launch && app.screen != Screen.Chat && app.updates.available && !app.updateLater) {
+            UpdateCard(app, Modifier.align(Alignment.BottomCenter))
+        }
+        if (app.updateAsked) UpdateDialog(app) { app.updateAsked = false }
+    }
+}
+
+@Composable
+private fun UpdateCard(app: RemoteApp, modifier: Modifier) {
+    Row(
+        modifier.windowInsetsPadding(WindowInsets.safeDrawing).padding(16.dp).fillMaxWidth()
+            .clip(RoundedCornerShape(14.dp)).background(Palette.surface).border(1.dp, Palette.borderSoft, RoundedCornerShape(14.dp))
+            .padding(horizontal = 14.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text("1loop ${app.updates.latest?.version} is available", style = Type.body, modifier = Modifier.weight(1f))
+        Pill("Later") { app.updateLater = true }
+        Pill("Update", primary = true) { app.updateAsked = true }
     }
 }
 

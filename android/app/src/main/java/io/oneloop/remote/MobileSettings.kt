@@ -277,38 +277,10 @@ private fun BackgroundExecutionSection(shizukuInstalled: Boolean) {
 @Composable
 private fun UpdatesSection(app: RemoteApp) {
     val scope = rememberCoroutineScope()
-    val updates = app.updates
-    var checking by remember { mutableStateOf(false) }
     var serverStatus by remember(app.server) { mutableStateOf<String?>(null) }
     var serverBusy by remember { mutableStateOf(false) }
     Text("Updates", style = Type.headline)
-    val latest = updates.latest
-    Text(
-        when {
-            checking -> "1loop ${updates.currentVersion}. Checking the release page…"
-            updates.available && latest != null -> "1loop ${updates.currentVersion}. Version ${latest.version} is available."
-            latest != null -> "1loop ${updates.currentVersion} is up to date."
-            else -> "1loop ${updates.currentVersion}."
-        },
-        style = Type.body,
-    )
-    if (updates.available && latest != null && latest.notes.isNotBlank()) Markdown(latest.notes)
-    Text("1loop checks its release page every six hours and notifies you of a new version. Updating keeps your chats and settings: Android installs the new version over this one after you confirm.", style = Type.small)
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-        Pill(if (checking) "Checking…" else "Check now", enabled = !checking && !updates.busy) {
-            checking = true
-            scope.launch { try { updates.check() } finally { checking = false } }
-        }
-        if (updates.available && latest != null) {
-            Pill(if (updates.busy) "Downloading…" else "Update to ${latest.version}", primary = true, enabled = !updates.busy) {
-                if (!updates.mayInstall()) {
-                    updates.problem = "Allow 1loop to install apps (its updates) on the page that opens, then come back and tap Update again."
-                    updates.openInstallPermission()
-                } else scope.launch { updates.install(latest) }
-            }
-        }
-    }
-    updates.problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }
+    UpdateActions(app)
     app.serverUpdate?.let { status ->
         val name = app.server?.name ?: "The server"
         Text("$name runs ${status.optString("current")}; ${status.optString("latest")} is out.", style = Type.body)
@@ -325,4 +297,49 @@ private fun UpdatesSection(app: RemoteApp) {
         } else Text(status.optString("problem"), style = Type.small)
     }
     serverStatus?.let { Text(it, style = Type.small) }
+}
+
+/** This app's version, the release page's, and the buttons to check and update: Settings, the update card and dialog. */
+@Composable
+fun UpdateActions(app: RemoteApp) {
+    val scope = rememberCoroutineScope()
+    val updates = app.updates
+    var checking by remember { mutableStateOf(false) }
+    val latest = updates.latest
+    Text(
+        when {
+            checking -> "1loop ${updates.currentVersion}. Checking the release page…"
+            updates.available && latest != null -> "1loop ${updates.currentVersion}. Version ${latest.version} is available."
+            latest != null -> "1loop ${updates.currentVersion} is up to date."
+            else -> "1loop ${updates.currentVersion}."
+        },
+        style = Type.body,
+    )
+    if (updates.available && latest != null && latest.notes.isNotBlank()) Markdown(latest.notes)
+    Text("1loop checks its release page every six hours and notifies you of a new version. Updating keeps your chats and settings: Android's installer replaces this version after you confirm.", style = Type.small)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Pill(if (checking) "Checking…" else "Check now", enabled = !checking && !updates.busy) {
+            checking = true
+            scope.launch { try { updates.check() } finally { checking = false } }
+        }
+        if (updates.available && latest != null) {
+            Pill(if (updates.busy) "Downloading…" else "Update to ${latest.version}", primary = true, enabled = !updates.busy) {
+                scope.launch { updates.install(latest) }
+            }
+        }
+    }
+    updates.problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }
+}
+
+/** The update notification was tapped: the update, whatever the screen. */
+@Composable
+fun UpdateDialog(app: RemoteApp, onDismiss: () -> Unit) {
+    LaunchedEffect(Unit) { if (app.updates.latest == null) app.updates.check() }
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        containerColor = Palette.surface,
+        title = { Text("Update 1loop", style = Type.title) },
+        text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) { UpdateActions(app) } },
+        confirmButton = { Pill("Close") { onDismiss() } },
+    )
 }

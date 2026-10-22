@@ -20,12 +20,20 @@ class MainActivity : ComponentActivity() {
         app = RemoteApp(applicationContext, lifecycleScope)
         setContent { OneLoopTheme { Root(app) } }
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
+        UpdateCheckJob.schedule(applicationContext)
         receiveShared(intent)
+        showUpdate(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         receiveShared(intent)
+        showUpdate(intent)
+    }
+
+    /** The update notification was tapped. */
+    private fun showUpdate(intent: Intent?) {
+        if (intent?.getBooleanExtra(Notifier.SHOW_UPDATE, false) == true) app.updateAsked = true
     }
 
     /** Files shared to 1loop from another app (Share → 1loop). */
@@ -47,6 +55,7 @@ class MainActivity : ComponentActivity() {
         app.foreground = true
         AndroidLocalRuntime.get(applicationContext).appForeground = true
         AndroidLocalRuntime.get(applicationContext).refreshPhoneAccess()
+        app.updates.resume() // back from the "install unknown apps" page
         lifecycleScope.launch { app.checkUpdates() }
     }
 

@@ -1,19 +1,14 @@
 package io.oneloop.remote
 
-import android.app.PendingIntent
-import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
-import android.content.IntentFilter
-import android.content.pm.PackageInstaller
 import android.net.Uri
-import android.os.Build
 import android.provider.Settings
 import android.util.Base64
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
-import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.content.pm.PackageInfoCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -28,15 +23,16 @@ import java.security.spec.X509EncodedKeySpec
 
 // The phone app's updates (the desktop's internal/update): the release
 // page's signed manifest says what the latest version is; the APK is
-// downloaded, checked, and handed to Android's installer, which asks the
-// user to confirm the update. Data stays: the same app, the same signature.
+// downloaded, checked against it, and opened in Android's own installer,
+// which asks the user to confirm and runs Play Protect's checks itself.
+// Data stays: the same app, the same signature (Android refuses another).
+// An in-app PackageInstaller session stalled there: Play Protect's dialog
+// outlives the install verification timeout and its answer is ignored.
 
 private const val MANIFEST_URL = "https://tpm28.github.io/1loop/updates/latest.json"
 
 // The release key's public half (internal/update/update.go has the same).
 private const val PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAET3kQmwcR+o8F/efaAYkwc78WcTV1tO/sbBPxLH32uNqtzGn3WqfliMODCiLFoCT2dL0IrHJdBAiXQ+BXn5eSTw=="
-
-private const val INSTALL_STATUS = "io.oneloop.remote.UPDATE_STATUS"
 
 data class Release(val version: String, val code: Int, val notes: String, val url: String, val sha256: String, val size: Long)
 
@@ -55,6 +51,14 @@ class Updates(private val context: Context) {
     private val currentCode: Long = PackageInfoCompat.getLongVersionCode(context.packageManager.getPackageInfo(context.packageName, 0))
 
     val available get() = latest?.let { it.code > currentCode } == true
+
+    /** A checked APK waiting for the "install unknown apps" permission. */
+    private var pending: File? = null
+
+    init {
+        // Sessions left by 0.2 and 0.3, whose in-app install could stall.
+        runCatching { context.packageManager.packageInstaller.let { installer -> installer.mySessions.forEach { installer.abandonSession(it.sessionId) } } }
+    }
 
     /** Reads the release page; returns the release when it is newer than this app. */
     suspend fun check(): Release? = withContext(Dispatchers.IO) {
@@ -88,7 +92,7 @@ class Updates(private val context: Context) {
         val release = check() ?: return
         if (prefs.getString("notified", null) == release.version) return
         prefs.edit().putString("notified", release.version).apply()
-        notifier.show("update", "1loop ${release.version} is available", "Open 1loop → Settings → Updates to install it.")
+        notifier.showUpdate("1loop ${release.version} is available", "Tap to install it. Your chats and settings stay.")
     }
 
     private fun verify(text: String): Release {
@@ -110,13 +114,17 @@ class Updates(private val context: Context) {
         context.startActivity(Intent(Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES, Uri.parse("package:${context.packageName}")).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
     }
 
-    /** Downloads the APK, checks it, and starts Android's update screen. */
+    /** Downloads the APK, checks it, and opens Android's installer on it. */
     suspend fun install(release: Release) {
         busy = true
         problem = null
         try {
             val apk = withContext(Dispatchers.IO) { download(release) }
-            withContext(Dispatchers.IO) { commit(apk) }
+            if (mayInstall()) openInstaller(apk) else {
+                pending = apk
+                problem = "Allow 1loop to install apps (its updates) on the page that opens: the update continues when you come back."
+                openInstallPermission()
+            }
         } catch (e: Exception) {
             problem = e.message ?: "The update could not be installed."
         } finally {
@@ -124,9 +132,28 @@ class Updates(private val context: Context) {
         }
     }
 
+    /** Back from the permission page: the waiting update goes on. */
+    fun resume() {
+        val apk = pending ?: return
+        if (!mayInstall()) return
+        pending = null
+        problem = null
+        runCatching { openInstaller(apk) }.onFailure { problem = it.message ?: "The update could not be installed." }
+    }
+
+    private fun openInstaller(apk: File) {
+        val uri = FileProvider.getUriForFile(context, "${context.packageName}.updates", apk)
+        context.startActivity(
+            Intent(Intent.ACTION_VIEW).setDataAndType(uri, "application/vnd.android.package-archive")
+                .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION or Intent.FLAG_ACTIVITY_NEW_TASK),
+        )
+    }
+
     private fun download(release: Release): File {
         val dir = File(context.cacheDir, "updates").apply { mkdirs() }
         val apk = File(dir, "1loop-${release.version}.apk")
+        dir.listFiles()?.filter { it != apk }?.forEach { it.delete() } // earlier versions' downloads
+        if (apk.length() == release.size && sha256(apk) == release.sha256.lowercase()) return apk // checked before the permission page
         val connection = (URL(release.url).openConnection() as HttpURLConnection).apply {
             connectTimeout = 10000
             readTimeout = 60000
@@ -148,7 +175,7 @@ class Updates(private val context: Context) {
                     }
                 }
             }
-            val hash = digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
+            val hash = hex(digest.digest())
             if (size != release.size || hash != release.sha256.lowercase()) throw SecurityException("The download does not match the release: it was not installed.")
             return apk
         } catch (e: Exception) {
@@ -159,42 +186,18 @@ class Updates(private val context: Context) {
         }
     }
 
-    private fun commit(apk: File) {
-        val installer = context.packageManager.packageInstaller
-        val params = PackageInstaller.SessionParams(PackageInstaller.SessionParams.MODE_FULL_INSTALL).apply {
-            setAppPackageName(context.packageName)
-        }
-        val id = installer.createSession(params)
-        installer.openSession(id).use { session ->
-            session.openWrite("1loop.apk", 0, apk.length()).use { output ->
-                apk.inputStream().use { it.copyTo(output) }
-                session.fsync(output)
+    private fun sha256(file: File): String {
+        val digest = MessageDigest.getInstance("SHA-256")
+        file.inputStream().use { input ->
+            val buffer = ByteArray(1 shl 16)
+            while (true) {
+                val read = input.read(buffer)
+                if (read < 0) break
+                digest.update(buffer, 0, read)
             }
-            listenForStatus()
-            val intent = Intent(INSTALL_STATUS).setPackage(context.packageName)
-            val flags = PendingIntent.FLAG_UPDATE_CURRENT or (if (Build.VERSION.SDK_INT >= 31) PendingIntent.FLAG_MUTABLE else 0)
-            session.commit(PendingIntent.getBroadcast(context, id, intent, flags).intentSender)
         }
+        return hex(digest.digest())
     }
 
-    private var listening = false
-
-    /** Android answers the session: the user must confirm the update, or it failed. */
-    private fun listenForStatus() {
-        if (listening) return
-        listening = true
-        ContextCompat.registerReceiver(context, object : BroadcastReceiver() {
-            override fun onReceive(receiver: Context, intent: Intent) {
-                when (intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)) {
-                    PackageInstaller.STATUS_PENDING_USER_ACTION -> {
-                        val confirm = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
-                            else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_INTENT)
-                        confirm?.let { context.startActivity(it.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-                    }
-                    PackageInstaller.STATUS_SUCCESS -> Unit // Android restarts 1loop in its new version
-                    else -> problem = intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE) ?: "The update was not installed."
-                }
-            }
-        }, IntentFilter(INSTALL_STATUS), ContextCompat.RECEIVER_NOT_EXPORTED)
-    }
+    private fun hex(bytes: ByteArray) = bytes.joinToString("") { "%02x".format(it.toInt() and 255) }
 }

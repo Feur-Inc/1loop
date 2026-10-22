@@ -334,7 +334,7 @@ fun UpdateActions(app: RemoteApp) {
 /** The update notification was tapped: the update, whatever the screen. */
 @Composable
 fun UpdateDialog(app: RemoteApp, onDismiss: () -> Unit) {
-    LaunchedEffect(Unit) { if (app.updates.latest == null) app.updates.check() }
+    LaunchedEffect(Unit) { app.updates.check() }
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Palette.surface,

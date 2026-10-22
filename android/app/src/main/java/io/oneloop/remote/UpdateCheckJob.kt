@@ -17,7 +17,7 @@ class UpdateCheckJob : JobService() {
 
     override fun onStartJob(params: JobParameters): Boolean {
         work = CoroutineScope(Dispatchers.IO).launch {
-            Updates(applicationContext).checkInBackground(Notifier(applicationContext))
+            Updates(applicationContext).checkInBackground(Notifier(applicationContext), always = true)
             jobFinished(params, false)
         }
         return true

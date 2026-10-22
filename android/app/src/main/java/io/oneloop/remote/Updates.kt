@@ -86,13 +86,18 @@ class Updates(private val context: Context) {
         }
     }
 
-    /** At most every six hours: a notification once per new version. */
-    suspend fun checkInBackground(notifier: Notifier) {
-        if (System.currentTimeMillis() - checkedAt < 6 * 3600_000L) return
+    /**
+     * When the app opens, at most every six hours once the latest version is
+     * known (the update card needs it); from UpdateCheckJob, every time: it
+     * only runs every six hours. A notification once per new version.
+     */
+    suspend fun checkInBackground(notifier: Notifier, always: Boolean = false) {
+        if (!always && latest != null && System.currentTimeMillis() - checkedAt < 6 * 3600_000L) return
         val release = check() ?: return
         if (prefs.getString("notified", null) == release.version) return
-        prefs.edit().putString("notified", release.version).apply()
-        notifier.showUpdate("1loop ${release.version} is available", "Tap to install it. Your chats and settings stay.")
+        if (notifier.showUpdate("1loop ${release.version} is available", "Tap to install it. Your chats and settings stay.")) {
+            prefs.edit().putString("notified", release.version).apply()
+        }
     }
 
     private fun verify(text: String): Release {

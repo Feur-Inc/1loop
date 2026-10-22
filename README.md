@@ -41,6 +41,7 @@ server from anywhere on your network.
 - [Getting started](#getting-started)
 - [Using 1loop](#using-1loop)
 - [Updates](#updates)
+- [Publishing an update](#publishing-an-update)
 - [Building from source](#building-from-source)
 - [Security and privacy](#security-and-privacy)
 
@@ -145,20 +146,70 @@ sharing.
 
 ## Updates
 
-1loop checks its [release page](https://tpm28.github.io/1loop/) when it starts
-and every six hours, and tells you when a new version is out:
+1loop reads the signed manifest at
+[`updates/latest.json`](https://tpm28.github.io/1loop/updates/latest.json)
+on GitHub Pages. Desktop checks shortly after startup and every six hours
+while running. Android checks when the app opens and schedules background
+checks every six hours; Android may delay these to save battery.
 
-- **Desktop**: a notification and *Update available* in the sidebar.
+- **Desktop**: a notification, an automatic proposal and *Update available* in the sidebar.
   **Settings → Updates → Update and restart** replaces 1loop's files (the
   previous ones stay beside them as `.old`) and restarts.
-- **Android**: a notification; **Settings → Updates** downloads the new APK
-  and opens Android's update screen. Your chats and settings stay. Android asks
+- **Android**: an automatic proposal in the app and a notification when
+  notifications are allowed. **Settings → Updates → Check now** also checks
+  manually. The update button downloads the APK and opens Android's installer;
+  confirm the installation there. Your chats and settings stay. Android asks
   once to allow 1loop to install its updates.
 - **Server**: a device connected to an outdated server shows *Update server*;
   the server downloads its new version, replaces itself and restarts.
 
 Each release's manifest is signed with the maintainer's release key, and every
 download is checked against it before anything is installed.
+
+## Publishing an update
+
+This is the maintainer's procedure. Publishing the signed manifest and files
+on GitHub Pages makes a new version available to installed apps; it does not
+silently install it on users' devices.
+
+1. **Check Pages once.** In the repository's **Settings → Pages**, select
+   **Deploy from a branch**, branch **gh-pages**, folder **/ (root)**.
+   The site is <https://tpm28.github.io/1loop/>. This uses GitHub's Pages
+   deployment; no custom GitHub Actions CI workflow is required.
+2. **Prepare the release.** Increase `VERSION` (for example, `0.3.2` to
+   `0.3.3`) and write `docs/releases/0.3.3.md` with the release notes.
+   Commit, review and merge the changes, then publish from the intended clean
+   source commit. Use the build requirements below and a GitHub account with
+   repository, release and Pages publishing access.
+3. **Keep the existing signing keys.** Use the same private manifest key that
+   matches the public key embedded in installed apps, and the same Android
+   APK signing keystore. Android rejects an update signed by another APK key.
+   Never commit either private key or an access token.
+4. **Run the publisher from the repository root:**
+
+   ```bash
+   gh auth login                 # once, if not already authenticated
+   GH_TOKEN="$(gh auth token)" \
+     RELEASE_KEY=/path/to/existing/release-key.pem \
+     bash release.sh
+   ```
+
+   `release.sh` runs `ci.sh`, builds and packages all five downloads, signs
+   the manifest, pushes the files to `gh-pages`, and creates the matching
+   GitHub release. The results are also kept locally in `dist/VERSION/`.
+   Do not reuse a version already published. If `ci.sh` has just passed for
+   exactly the source and build outputs being published, `SKIP_CI=1` can
+   reuse those outputs; otherwise leave the checks enabled.
+5. **Wait for Pages to deploy, then verify.** Open the release page and
+   `updates/latest.json` above. The manifest is a signed envelope, rather
+   than plain release notes; let an installed app verify it with
+   **Settings → Updates → Check now**. Confirm the offered version and try
+   the update. On Android, complete the system install confirmation yourself.
+
+The published files live at `updates/VERSION/`; `updates/latest.json` selects
+the release offered to apps. Creating only a GitHub release, or uploading an
+APK without updating that signed manifest, does not publish an in-app update.
+Do not edit the manifest by hand: its signature must match its contents.
 
 ## Building from source
 

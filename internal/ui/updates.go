@@ -64,6 +64,14 @@ func (ui *desktopUI) checkUpdates(done func()) {
 			if status.Available && ui.updates.notified != status.Latest {
 				ui.updates.notified = status.Latest
 				fyne.CurrentApp().SendNotification(fyne.NewNotification("1loop "+status.Latest+" is available", "Settings → Updates installs it and restarts 1loop."))
+				var prompt *sheet
+				later := newRow("Later", nil, styleOutline, func() { prompt.dismiss() })
+				view := newRow("View update", nil, stylePrimary, func() {
+					prompt.dismiss()
+					ui.settings()
+					ui.prefs.show("Updates")
+				})
+				prompt = ui.modal("1loop "+status.Latest+" is available", note("Review the release notes and install the update when you are ready. Your chats and settings stay."), 520, nil, later, view)
 			}
 			ui.showUpdateRow()
 			if done != nil {

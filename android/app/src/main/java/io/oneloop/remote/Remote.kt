@@ -231,6 +231,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var projectsOpen by mutableStateOf(false)
     var settingsOpen by mutableStateOf(false)
     var updateAsked by mutableStateOf(false) // the update dialog, over any screen
+    var updateOffered: Int? = null // one automatic dialog per release while this app instance runs
     var updateLater by mutableStateOf(false) // the update card was put away until the next start
     var userPreferences by mutableStateOf("")
     var preferencesEditable by mutableStateOf(false)

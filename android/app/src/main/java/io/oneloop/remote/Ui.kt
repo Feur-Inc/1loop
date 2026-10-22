@@ -161,6 +161,13 @@ fun CopyChip(text: () -> String) {
 
 @Composable
 fun Root(app: RemoteApp) {
+    LaunchedEffect(app.updates.latest?.code, app.screen == Screen.Launch) {
+        val release = app.updates.latest
+        if (app.screen != Screen.Launch && app.updates.available && release != null && app.updateOffered != release.code) {
+            app.updateOffered = release.code
+            app.updateAsked = true
+        }
+    }
     Box(Modifier.fillMaxSize().background(Palette.background)) {
         Crossfade(app.screen::class, animationSpec = tween(220), label = "screen") { kind ->
             when (kind) {

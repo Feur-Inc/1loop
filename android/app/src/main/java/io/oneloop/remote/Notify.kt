@@ -42,8 +42,10 @@ class Notifier(private val context: Context) {
     }
 
     /** A new version: tapping opens 1loop on its update (MainActivity). */
-    fun showUpdate(title: String, text: String) {
-        if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
+    fun showUpdate(title: String, text: String): Boolean {
+        if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return false
+        val manager = NotificationManagerCompat.from(context)
+        if (!manager.areNotificationsEnabled() || manager.getNotificationChannel(UPDATES)?.importance == NotificationManager.IMPORTANCE_NONE) return false
         val open = PendingIntent.getActivity(
             context, 1, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra(SHOW_UPDATE, true),
             PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
@@ -55,7 +57,8 @@ class Notifier(private val context: Context) {
             .setContentIntent(open)
             .setAutoCancel(true)
             .build()
-        NotificationManagerCompat.from(context).notify(UPDATES.hashCode(), notification)
+        manager.notify(UPDATES.hashCode(), notification)
+        return true
     }
 
     companion object {

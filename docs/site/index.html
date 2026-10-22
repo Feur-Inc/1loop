@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>1loop · Download</title>
+<link rel="icon" href="1loop-ring-on-black.png">
+<style>
+  :root { --bg: #111; --surface: #1a1a1a; --border: #2a2a2a; --text: #f2f2f2; --muted: #9a9a9a; --amber: #ffb000; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text); font: 16px/1.55 Inter, system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 860px; margin: 0 auto; padding: 48px 20px 64px; }
+  header { text-align: center; margin-bottom: 40px; }
+  header img { width: min(320px, 70%); }
+  header p { color: var(--muted); margin: 8px 0 0; }
+  .version { display: inline-block; margin-top: 14px; padding: 4px 12px; border: 1px solid var(--border); border-radius: 999px; color: var(--muted); font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 14px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 18px; display: flex; flex-direction: column; gap: 10px; }
+  .card h2 { margin: 0; font-size: 18px; }
+  .card p { margin: 0; color: var(--muted); font-size: 14px; flex: 1; }
+  a.button { display: inline-block; text-align: center; background: var(--amber); color: #111; text-decoration: none; font-weight: 600; padding: 10px 14px; border-radius: 10px; }
+  a.secondary { color: var(--text); font-size: 14px; }
+  .warning { margin-top: 28px; background: #2a2210; border: 1px solid #5a4410; border-radius: 14px; padding: 16px 18px; font-size: 15px; }
+  .warning b { color: var(--amber); }
+  h3 { margin: 36px 0 8px; font-size: 18px; }
+  ol { padding-left: 22px; color: #d0d0d0; }
+  code { background: #222; padding: 1px 6px; border-radius: 6px; font-size: 14px; }
+  footer { margin-top: 40px; color: var(--muted); font-size: 14px; text-align: center; }
+  footer a { color: var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <header>
+    <img src="1loop-logo.png" alt="1loop">
+    <p>Your project. Your model. One loop.</p>
+    <span class="version">Version {{VERSION}} · {{DATE}}</span>
+  </header>
+
+  <div class="grid">
+    <div class="card">
+      <h2>Linux</h2>
+      <p>Desktop app for x86-64, X11 and Wayland. Extract and run <code>./1loop</code>.</p>
+      <a class="button" href="updates/{{VERSION}}/1loop-{{VERSION}}-linux-amd64.tar.gz">Download for Linux</a>
+    </div>
+    <div class="card">
+      <h2>Windows</h2>
+      <p>Windows 10 1809 or newer, x64. Extract and run <code>1loop.exe</code>.</p>
+      <a class="button" href="updates/{{VERSION}}/1loop-{{VERSION}}-windows-amd64.zip">Download for Windows</a>
+    </div>
+    <div class="card">
+      <h2>Android</h2>
+      <p>Android 8 or newer. Drive your desktop or server, or run the agent on the phone.</p>
+      <a class="button" href="updates/{{VERSION}}/1loop-{{VERSION}}.apk">Download the APK</a>
+    </div>
+    <div class="card">
+      <h2>Server</h2>
+      <p>Headless engine for a VM or a home server, used from the desktop and the phone.</p>
+      <a class="button" href="updates/{{VERSION}}/1loop-server-{{VERSION}}-linux-amd64">Linux server</a>
+      <a class="secondary" href="updates/{{VERSION}}/1loop-server-{{VERSION}}-windows-amd64.exe">Windows server</a>
+    </div>
+  </div>
+
+  <div class="warning">
+    <b>Android may say 1loop is harmful.</b> 1loop is installed from outside the Play Store and can run a Debian
+    environment, run commands and control the phone when you allow it, which Google Play Protect treats as risky.
+    Its code is open. To install it, choose <i>Install anyway</i> (or <i>More details → Install anyway</i>).
+    Windows SmartScreen may also ask: choose <i>More info → Run anyway</i>.
+  </div>
+
+  <h3>Install</h3>
+  <ol>
+    <li><b>Linux:</b> <code>tar -xzf 1loop-{{VERSION}}-linux-amd64.tar.gz -C ~/Applications/1loop</code>, then run <code>~/Applications/1loop/1loop</code>. Keep the folder writable so updates can install.</li>
+    <li><b>Windows:</b> extract the zip to a folder you own and run <code>1loop.exe</code>. Without an OpenGL driver, run <code>1loop-software.cmd</code>.</li>
+    <li><b>Android:</b> open the APK on the phone and allow the install. Then pair with your desktop (QR code in <i>Settings → Phone remote</i>), add a server, or choose <i>Local phone</i>.</li>
+    <li><b>Server:</b> make the file executable and follow the server guide.</li>
+  </ol>
+
+  <h3>Updates</h3>
+  <p style="color:#d0d0d0">Installed apps check this page and offer new versions themselves: <i>Settings → Updates</i>. Every release is signed, and each download is checked before it is installed.</p>
+
+  <footer>
+    <a href="updates/latest.json">Update manifest</a> ·
+    <a href="https://github.com/tpm28/1loop">Source code</a>
+  </footer>
+</main>
+</body>
+</html>

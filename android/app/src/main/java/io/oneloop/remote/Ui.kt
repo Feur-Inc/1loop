@@ -586,10 +586,12 @@ private fun Transcript(app: RemoteApp, running: Boolean, onTool: (Item) -> Unit)
         snapshotFlow { list.isScrollInProgress }.collect { scrolling -> if (!scrolling) follow = !list.canScrollForward }
     }
     // Scrolled near the top of a long chat: the page before it, the view kept
-    // on the same message.
+    // on the same message. Not while following the end: a chat shown again
+    // (back from sleep, reconnected) starts at the top for a moment, and
+    // loading the earlier page then would leave the view on an old message.
     LaunchedEffect(list) {
         snapshotFlow { list.firstVisibleItemIndex }.collect { first ->
-            if (first <= 2 && app.firstItem > 0) {
+            if (first <= 2 && app.firstItem > 0 && !follow) {
                 val offset = list.firstVisibleItemScrollOffset
                 val added = app.loadEarlier()
                 if (added > 0) list.scrollToItem(first + added, offset)

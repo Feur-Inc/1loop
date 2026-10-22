@@ -8,15 +8,17 @@ DIST := dist
 # compiles its C without warnings. The X11 build keeps them all.
 WAYLAND_CFLAGS := $(shell go env CGO_CFLAGS) -w
 
+# The version every binary reports and updates from (internal/update).
+VERSION       := $(shell cat VERSION)
+VERSION_FLAG  := -X 1loop/internal/update.Version=$(VERSION)
 # Release builds: no local paths and no debug symbols in the binaries.
-RELEASE_FLAGS := -trimpath -ldflags="-s -w"
-VERSION       := $(shell git describe --tags --always --dirty 2>/dev/null || echo dev)
+RELEASE_FLAGS := -trimpath -ldflags="-s -w $(VERSION_FLAG)"
 
 .PHONY: build run dev server release clean
 
 build:
-	go build -o $(BIN)/1loop ./cmd/1loop
-	CGO_CFLAGS="$(WAYLAND_CFLAGS)" go build -tags wayland -o $(BIN)/1loop-wayland ./cmd/1loop
+	go build -ldflags="$(VERSION_FLAG)" -o $(BIN)/1loop ./cmd/1loop
+	CGO_CFLAGS="$(WAYLAND_CFLAGS)" go build -ldflags="$(VERSION_FLAG)" -tags wayland -o $(BIN)/1loop-wayland ./cmd/1loop
 
 run: build
 	./$(BIN)/1loop -workspace . $(ARGS)
@@ -29,7 +31,7 @@ dev: build
 # The server does not import the desktop (Fyne, GLFW, Computer Use): no
 # display or CGO needed.
 server:
-	CGO_ENABLED=0 go build -o $(BIN)/1loop-server ./cmd/1loop-server
+	CGO_ENABLED=0 go build -ldflags="$(VERSION_FLAG)" -o $(BIN)/1loop-server ./cmd/1loop-server
 
 # Everything to hand out, in dist/: the Linux desktop (X11 and Wayland) and
 # the headless server in one archive, and the phone app's release APK.

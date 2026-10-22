@@ -396,7 +396,10 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	lists := ui.sideLists
 	divider := canvas.NewRectangle(colBorderSoft)
 	divider.SetMinSize(fyne.NewSize(0, 1))
-	bottom := container.NewVBox(divider, padded(6, 8, 0, 0, ui.connections))
+	// A new version shows above Settings until it is installed.
+	ui.updateRow = newRow("", iconArrowTurn, styleNav, func() { ui.settings(); ui.prefs.show("Updates") })
+	ui.updateRow.Hide()
+	bottom := container.NewVBox(divider, padded(6, 0, 0, 0, ui.updateRow), padded(0, 8, 0, 0, ui.connections))
 	// Under the logo: the chats, or the settings' sections while they are open.
 	ui.sideApp = container.NewBorder(ui.newChat, bottom, nil, nil, newKineticVScroll(lists))
 	content := padded(0, 0, 12, 12, container.NewBorder(brand, nil, nil, nil, container.NewStack(ui.sideApp, ui.prefs.side)))

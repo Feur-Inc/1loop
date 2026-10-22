@@ -78,6 +78,7 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                 }
             } else Text("Update the connected desktop or server to edit preferences here.", style = Type.small)
             notice?.let { Text(it, style = Type.small) }
+            UpdatesSection(app)
             BrowserDataSection(app)
             HooksSection(app)
         }
@@ -208,21 +209,22 @@ private fun BackgroundExecutionSection(shizukuInstalled: Boolean) {
         },
         style = Type.body,
     )
-    Text(
+    if (!exempt) Text(
         "For long Local phone tasks, open 1loop's battery settings and choose Unrestricted, " +
             "or exclude 1loop from battery optimization. This can increase battery use. " +
             "Android and the phone manufacturer may still stop background work.",
         style = Type.small,
     )
-    Pill("1loop battery settings") {
-        open(
-            Intent(
-                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
-                Uri.parse("package:${context.packageName}"),
-            ),
-        )
-    }
+    // Both buttons lead to granting the exemption: once it is granted, neither shows.
     if (!exempt) {
+        Pill("1loop battery settings") {
+            open(
+                Intent(
+                    Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                    Uri.parse("package:${context.packageName}"),
+                ),
+            )
+        }
         Pill("Battery optimization list") {
             open(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
         }
@@ -268,4 +270,59 @@ private fun BackgroundExecutionSection(shizukuInstalled: Boolean) {
     problem?.let {
         Text(it, style = Type.small.copy(color = Palette.danger))
     }
+}
+
+// Settings → Updates: this app's version and the release page's, the update
+// of the app, and of the server it is connected to (Updates.kt).
+@Composable
+private fun UpdatesSection(app: RemoteApp) {
+    val scope = rememberCoroutineScope()
+    val updates = app.updates
+    var checking by remember { mutableStateOf(false) }
+    var serverStatus by remember(app.server) { mutableStateOf<String?>(null) }
+    var serverBusy by remember { mutableStateOf(false) }
+    Text("Updates", style = Type.headline)
+    val latest = updates.latest
+    Text(
+        when {
+            checking -> "1loop ${updates.currentVersion}. Checking the release page…"
+            updates.available && latest != null -> "1loop ${updates.currentVersion}. Version ${latest.version} is available."
+            latest != null -> "1loop ${updates.currentVersion} is up to date."
+            else -> "1loop ${updates.currentVersion}."
+        },
+        style = Type.body,
+    )
+    if (updates.available && latest != null && latest.notes.isNotBlank()) Markdown(latest.notes)
+    Text("1loop checks its release page every six hours and notifies you of a new version. Updating keeps your chats and settings: Android installs the new version over this one after you confirm.", style = Type.small)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Pill(if (checking) "Checking…" else "Check now", enabled = !checking && !updates.busy) {
+            checking = true
+            scope.launch { try { updates.check() } finally { checking = false } }
+        }
+        if (updates.available && latest != null) {
+            Pill(if (updates.busy) "Downloading…" else "Update to ${latest.version}", primary = true, enabled = !updates.busy) {
+                if (!updates.mayInstall()) {
+                    updates.problem = "Allow 1loop to install apps (its updates) on the page that opens, then come back and tap Update again."
+                    updates.openInstallPermission()
+                } else scope.launch { updates.install(latest) }
+            }
+        }
+    }
+    updates.problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }
+    app.serverUpdate?.let { status ->
+        val name = app.server?.name ?: "The server"
+        Text("$name runs ${status.optString("current")}; ${status.optString("latest")} is out.", style = Type.body)
+        if (status.optBoolean("canUpdate")) {
+            Pill(if (serverBusy) "Updating the server…" else "Update the server", primary = true, enabled = !serverBusy && app.connected) {
+                serverBusy = true
+                scope.launch {
+                    serverStatus = try { "The server restarts with " + app.updateServer() + "; the app reconnects by itself." }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { failure.message }
+                    finally { serverBusy = false }
+                }
+            }
+        } else Text(status.optString("problem"), style = Type.small)
+    }
+    serverStatus?.let { Text(it, style = Type.small) }
 }

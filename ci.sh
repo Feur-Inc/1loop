@@ -49,8 +49,9 @@ docker run --rm --platform linux/amd64 -u "$(id -u):$(id -g)" \
   1loop-windows-build bash -euo pipefail -c '
 export PATH=/usr/local/go/bin:$PATH
 go vet ./...
-go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o /out/1loop.exe ./cmd/1loop
-go build -trimpath -ldflags="-s -w" -o /out/1loop-server.exe ./cmd/1loop-server
+version="-X 1loop/internal/update.Version=$(cat VERSION)"
+go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static $version" -o /out/1loop.exe ./cmd/1loop
+go build -trimpath -ldflags="-s -w $version" -o /out/1loop-server.exe ./cmd/1loop-server
 # Mesa llvmpipe for PCs without a working OpenGL driver, as package-windows.ps1 does.
 archive=/cache/mesa3d-26.2.4-release-msvc.7z
 [ -f "$archive" ] || curl -fsSL -o "$archive" https://github.com/pal1000/mesa-dist-win/releases/download/26.2.4/mesa3d-26.2.4-release-msvc.7z

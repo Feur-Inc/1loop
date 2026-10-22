@@ -8,6 +8,11 @@ abstract class LocalRuntimeBuild : Exec() {
     abstract val outputDirectory: DirectoryProperty
 }
 
+// One version for every part of 1loop (the repository's VERSION file):
+// versionCode follows internal/update.Code, "1.2.3" being 10203.
+val oneloopVersion = rootProject.file("../VERSION").readText().trim()
+val oneloopVersionCode = oneloopVersion.split(".").fold(0) { code, part -> code * 100 + part.toInt() }
+
 val localRuntimeDirectory = layout.buildDirectory.dir("local-runtime")
 val buildLocalNative = tasks.register<LocalRuntimeBuild>("buildLocalNative") {
     outputDirectory.set(localRuntimeDirectory.map { it.dir("jniLibs") })
@@ -20,14 +25,14 @@ val buildLocalNative = tasks.register<LocalRuntimeBuild>("buildLocalNative") {
 }
 val buildLocalAgent = tasks.register<LocalRuntimeBuild>("buildLocalAgent") {
     outputDirectory.set(localRuntimeDirectory.map { it.dir("assets") })
-    inputs.files(rootProject.file("../go.mod"), rootProject.file("../go.sum"))
+    inputs.files(rootProject.file("../go.mod"), rootProject.file("../go.sum"), rootProject.file("../VERSION"))
     inputs.files(fileTree(rootProject.file("../internal")) { include("**/*.go") })
     inputs.files(fileTree(rootProject.file("../cmd/1loop-server")) { include("**/*.go") })
     workingDir(rootProject.file(".."))
     environment("CGO_ENABLED", "0")
     environment("GOOS", "linux")
     environment("GOARCH", "arm64")
-    commandLine("go", "build", "-trimpath", "-ldflags=-s -w", "-o", outputDirectory.get().file("local/1loop-server").asFile, "./cmd/1loop-server")
+    commandLine("go", "build", "-trimpath", "-ldflags=-s -w -X 1loop/internal/update.Version=$oneloopVersion", "-o", outputDirectory.get().file("local/1loop-server").asFile, "./cmd/1loop-server")
 }
 
 android {
@@ -37,8 +42,8 @@ android {
         applicationId = "io.oneloop.remote"
         minSdk = 26
         targetSdk = 37
-        versionCode = 1
-        versionName = "0.1"
+        versionCode = oneloopVersionCode
+        versionName = oneloopVersion
     }
     buildTypes {
         release {

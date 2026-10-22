@@ -108,7 +108,9 @@ func (panel *toolPanel) todoChanged(chat *conversation) {
 			tab.todoMarks = append(tab.todoMarks, mark)
 			clock := textLine(taskElapsed(item, time.Now()), 11.5, colMuted)
 			tab.todoTimes[item.ID] = clock
-			box.Add(padded(7, 7, 0, 0, container.NewBorder(nil, nil, container.NewVBox(mark), container.NewVBox(clock), padded(1, 0, 12, 8, text))))
+			// The clock keeps one width while it counts: the text's line breaks stay put.
+			slot := container.NewStack(spacer(56, 0), container.NewHBox(layout.NewSpacer(), clock))
+			box.Add(padded(7, 7, 0, 0, container.NewBorder(nil, nil, container.NewVBox(mark), container.NewVBox(slot), padded(1, 0, 12, 8, text))))
 		}
 		panel.addBackgroundTasks(box, chat)
 		box.Refresh()

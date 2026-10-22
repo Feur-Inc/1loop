@@ -49,7 +49,7 @@ val CssDraw = CubicBezierEasing(0.65f, 0f, 0.35f, 1f)
 private val CssEaseOut = CubicBezierEasing(0f, 0f, 0.58f, 1f)
 
 // ---------------------------------------------------------------------------
-// Launch: DA/1loop-lancement.html. "1" drops in, "l" rises, the loop is drawn
+// Launch animation: "1" drops in, "l" rises, the loop is drawn
 // left to right, "p" slides in while the whole word settles from 96 %; the
 // layer then fades to the app, like the desktop launch. A tap skips it.
 
@@ -123,7 +123,7 @@ private fun DrawScope.drawPartial(path: Path, fraction: Float, color: Color, wid
 }
 
 // ---------------------------------------------------------------------------
-// The ring mark (DA/1loop-anneau.svg), and its intro (1loop-anneau-intro.html).
+// The ring mark (DA/1loop-ring.svg), and its intro.
 
 private val ringOpen = svg("M95.24 30.43 A46 46 0 1 1 67.99 14.70")
 private val markOne = svg("M49 46 L62 38 L62 80")
@@ -147,7 +147,7 @@ fun RingMark(size: Dp, modifier: Modifier = Modifier, intro: Boolean = false) {
 }
 
 // ---------------------------------------------------------------------------
-// Work ring: DA/1loop-anneau-travail.html, with the desktop's added states.
+// Work ring: the work ring design, with the desktop's added states.
 // Same layers and transitions: the open ring turns once per 1.1 s across
 // states, icons fade (220 ms ease) and pop from 70 % (320 ms), done and
 // stopped close the ring (250 ms), the thinking dots breathe over 1.2 s.

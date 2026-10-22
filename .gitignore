@@ -5,7 +5,20 @@
 # A stray build from before the Makefile wrote to bin/.
 /1loop
 
-# Local secrets: never committed.
+# Local secrets: never committed. release-key.pem signs the updates: keep a
+# copy somewhere safe, installed apps only trust updates signed with it.
 /TOKEN
+/release-key.pem
 # Release archives (make release).
 /dist/
+
+# The maintainer's own notes, design drafts and AI agent settings: kept
+# locally only.
+/AGENTS.md
+/CLAUDE.md
+/MEMORY.md
+/TODO.md
+/AFAIRE.md
+/LIS-MOI-SI-TU-ES-CLAUDE.md
+/.claude/
+/DA/*.html

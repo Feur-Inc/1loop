@@ -143,6 +143,8 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 }
 
 type remoteDesktop struct {
+	serverUpdate            *tapRow // the server runs an older version (remote_desktop_update.go)
+	left                    *fyne.Container
 	defaultWorkspace        string
 	fileAttachments         []agent.FileAttachment
 	parent                  *desktopUI
@@ -227,7 +229,10 @@ func openRemoteDesktop(parent *desktopUI, client *remoteClient) {
 	refresh := newRow("Refresh", nil, styleChip, remote.notify)
 	hooks := newRow("Hooks", nil, styleChip, remote.editHooks)
 	copyProject := newRow("Copy project", nil, styleChip, remote.copyProject)
-	left := container.NewBorder(container.NewVBox(newChat, refresh, hooks, copyProject), nil, nil, nil, container.NewVScroll(remote.chatList))
+	remote.serverUpdate = newRow("", iconArrowTurn, styleChip, nil)
+	remote.serverUpdate.Hide()
+	left := container.NewBorder(container.NewVBox(newChat, refresh, hooks, copyProject, remote.serverUpdate), nil, nil, nil, container.NewVScroll(remote.chatList))
+	remote.left = left
 	chat := container.NewBorder(nil, container.NewVBox(remote.status, composer), nil, nil, remote.scroll)
 	remote.tabs = container.NewDocTabs()
 	remote.tabs.OnSelected = func(selected *container.TabItem) {
@@ -290,6 +295,7 @@ func openRemoteDesktop(parent *desktopUI, client *remoteClient) {
 	}()
 	go remote.refreshLoop()
 	go remote.events()
+	remote.checkServerUpdate()
 	remote.notify()
 	remote.window.Show()
 }

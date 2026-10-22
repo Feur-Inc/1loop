@@ -112,6 +112,9 @@ type desktopUI struct {
 	modelsLoading    bool
 	chrome           bool
 
+	updates   updateState // the release page's latest version (updates.go)
+	updateRow *tapRow     // the sidebar's "Update available" row
+
 	// Composer
 	prompt          *chatEntry
 	attach          *tapRow
@@ -228,7 +231,7 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.SetPadded(false)
 	ui.window.Resize(fyne.NewSize(1180, 760))
 	ui.window.CenterOnScreen()
-	ui.window.SetIcon(brandResource("1loop-anneau-fond-noir.png"))
+	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
 	ui.window.SetContent(ui.build())
 	ui.window.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
 		var files []string
@@ -254,6 +257,7 @@ func runDesktop(backend *agent.App, root string) {
 	ui.refreshModels()
 	ui.refreshContextRing()
 	ui.startRemote()
+	ui.watchUpdates()
 	ui.window.Canvas().Focus(ui.prompt)
 	// The launch sequence covers the first frames and only starts once the
 	// window is really on screen, otherwise it would play unseen.
@@ -319,6 +323,11 @@ func (ui *desktopUI) restart() {
 		ui.notice("Restart", err.Error())
 		return
 	}
+	ui.restartInto(exe)
+}
+
+// restartInto replaces this process with exe, with the same arguments.
+func (ui *desktopUI) restartInto(exe string) {
 	platform.Devf("ui", "restart (Ctrl+Shift+R)")
 	ui.release()
 	// The binary may be in the middle of being rebuilt: wait for it rather

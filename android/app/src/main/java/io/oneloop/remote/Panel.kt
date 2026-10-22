@@ -270,7 +270,13 @@ private fun TasksView(tasks: List<Task>, background: List<BackgroundTask> = empt
                     task.status == "in_progress" && task.started > 0 -> span(now - task.started)
                     else -> ""
                 }
-                if (time.isNotEmpty()) Text(time, style = Type.caption.copy(color = if (task.status == "in_progress") Palette.amber else Palette.faint), modifier = Modifier.padding(start = 10.dp, top = 3.dp))
+                // A fixed width with tabular digits: the counting time never
+                // reflows the task's text.
+                if (time.isNotEmpty()) Text(
+                    time, textAlign = TextAlign.End, maxLines = 1,
+                    style = Type.caption.copy(color = if (task.status == "in_progress") Palette.amber else Palette.faint, fontFeatureSettings = "tnum"),
+                    modifier = Modifier.padding(start = 10.dp, top = 3.dp).width(58.dp),
+                )
             }
         }
         // The agent's background commands, newest first, each with its own Stop.

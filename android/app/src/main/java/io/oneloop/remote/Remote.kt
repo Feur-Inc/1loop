@@ -172,6 +172,33 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     private val prefs = context.getSharedPreferences("1loop", Context.MODE_PRIVATE)
     private val notifier = Notifier(context)
     val drafts = PromptDrafts(context)
+    val updates = Updates(context)
+
+    /** The release page, checked at most every six hours; a notification for a new version. */
+    suspend fun checkUpdates() = updates.checkInBackground(notifier)
+
+    /** The connected server runs an older version than the release page's (GET /api/update). */
+    var serverUpdate by mutableStateOf<JSONObject?>(null)
+        private set
+
+    private suspend fun refreshServerUpdate(target: Server, generation: Long) {
+        val status = runCatching { onConnection(target, generation) { it.get("/api/update") } }.getOrNull() ?: return // an older server
+        if (generation != connectionGeneration) return
+        serverUpdate = status.takeIf { it.optBoolean("available") }
+        val latest = status.optString("latest")
+        if (status.optBoolean("available") && prefs.getString("server-update:${target.key}", null) != latest) {
+            prefs.edit { putString("server-update:${target.key}", latest) }
+            notifier.show("server-update", "${target.name} can update to $latest", "Open 1loop → Settings → Updates to update the server.")
+        }
+    }
+
+    /** Has the connected server update itself and restart; the app reconnects by itself. */
+    suspend fun updateServer(): String {
+        val target = server ?: throw ApiError("Connect first.")
+        val reply = onConnection(target, connectionGeneration) { it.post("/api/update", JSONObject(), readTimeout = 30 * 60_000) }
+        serverUpdate = null
+        return reply.optString("version")
+    }
     var draftRevision by mutableIntStateOf(0) // a draft changed outside the prompt (a failed send)
         private set
     private val running = mutableMapOf<String, Boolean>() // by chat, to tell when a run ends
@@ -618,7 +645,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull { it.workspace == selectedProject }?.id
             chats.firstOrNull { it.id == current }?.workspace?.let { selectedProject = it }
             current?.let { load(it, target, generation) }
-            if (target.localPhone) refreshSharing()
+            if (target.localPhone) refreshSharing() else scope.launch { refreshServerUpdate(target, generation) }
         } catch (cancelled: CancellationException) {
             throw cancelled
         } catch (_: Exception) { }

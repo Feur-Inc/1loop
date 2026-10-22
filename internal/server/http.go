@@ -77,6 +77,8 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/chats/{id}/message":                 server.editMessage,
 		"POST /api/chats/{id}/version":                 server.selectVersion,
 		"POST /api/attachments":                        server.uploadAttachment,
+		"GET /api/update":                              server.updateStatus,
+		"POST /api/update":                             server.installUpdate,
 		"GET /api/files":                               server.projectFiles(remoteapi.ListFiles),
 		"GET /api/files/content":                       server.projectFiles(remoteapi.FileContent),
 		"GET /api/files/download":                      server.projectFiles(remoteapi.DownloadFile),

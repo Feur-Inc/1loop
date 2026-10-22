@@ -85,7 +85,7 @@ func launcherIcon() []byte {
 	}
 	const ring = 330
 	at := image.Pt((size-ring)/2, (size-ring)/2)
-	data, _ := assets.Artwork.ReadFile("1loop-anneau.png") // decoded here: this runs beside the interface
+	data, _ := assets.Artwork.ReadFile("1loop-ring.png") // decoded here: this runs beside the interface
 	art, err := png.Decode(bytes.NewReader(data))
 	if err != nil {
 		return nil

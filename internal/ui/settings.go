@@ -70,6 +70,7 @@ var settingsSections = []struct {
 	{"Connections", iconPlug},
 	{"Instructions", iconDocument},
 	{"Phone remote", iconPhone},
+	{"Updates", iconArrowTurn},
 }
 
 // settingsFrame is one page of the settings: a section, or what was opened
@@ -191,6 +192,8 @@ func (settings *settingsView) showNow(section string) {
 		page = settings.ui.instructionSettings()
 	case "Phone remote":
 		page = settings.ui.remoteSettings()
+	case "Updates":
+		page = settings.ui.updateSettings()
 	default:
 		page = settings.ui.generalSettings()
 	}

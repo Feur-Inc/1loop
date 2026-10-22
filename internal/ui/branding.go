@@ -70,7 +70,7 @@ var brandRingImage image.Image
 
 func brandRing() image.Image {
 	if brandRingImage == nil {
-		data, _ := assets.Artwork.ReadFile("1loop-anneau.png")
+		data, _ := assets.Artwork.ReadFile("1loop-ring.png")
 		img, err := png.Decode(bytes.NewReader(data))
 		if err != nil {
 			panic(err)
@@ -100,7 +100,7 @@ func devicePixels(canvas fyne.Canvas, length float32) int {
 
 // loopMark is the 1loop ring. On the welcome screen it plays the intro sheet
 // and rests on the brand artwork; under a working chat it is the work ring
-// of DA/1loop-anneau-travail.html, with the same layers and transitions.
+// of the design draft, with the same layers and transitions.
 type loopMark struct {
 	image   *canvas.Image
 	size    float32
@@ -114,7 +114,7 @@ type loopMark struct {
 }
 
 func newLoopMark(size float32) *loopMark {
-	return &loopMark{image: brandImage("1loop-anneau.png", size, size), state: "brand", size: size}
+	return &loopMark{image: brandImage("1loop-ring.png", size, size), state: "brand", size: size}
 }
 
 // pixels is the mark's size on screen; before it is attached to a window,
@@ -251,7 +251,7 @@ var workGlyphs = map[string]bool{
 
 const glyphStyle = `stroke="#F4F4F4" stroke-linecap="round" stroke-linejoin="round" fill="none"`
 
-// glyphMarkup is each icon of DA/1loop-anneau-travail.html, path for path.
+// glyphMarkup is each icon of the work ring design, path for path.
 func glyphMarkup(state string) string {
 	switch state {
 	case "think": // drawn dot by dot, see thinkDot
@@ -556,7 +556,7 @@ func (layoutSpec columnLayout) Layout(objects []fyne.CanvasObject, size fyne.Siz
 	}
 }
 
-// launchScreen plays DA/1loop-lancement.html with the original wordmark PNG.
+// launchScreen plays the launch animation with the original wordmark PNG.
 // The PNG is only cut into its four separate glyphs (viewBox columns), never
 // redrawn: "1" drops in, "l" rises, the loop is revealed left to right as if
 // drawn, "p" slides in; then the layer fades to the app. Click skips.
@@ -581,7 +581,7 @@ const (
 
 func newLaunchScreen(canvasValue fyne.Canvas, done func()) *launchScreen {
 	screen := &launchScreen{canvas: canvasValue, done: done, bg: canvas.NewRectangle(colBackground)}
-	data, _ := assets.Artwork.ReadFile("1loop-une-seule-boucle.png")
+	data, _ := assets.Artwork.ReadFile("1loop-wordmark.png")
 	sheet, err := png.Decode(bytes.NewReader(data))
 	if err != nil {
 		panic(err)

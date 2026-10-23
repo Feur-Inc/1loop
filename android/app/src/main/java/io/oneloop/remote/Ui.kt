@@ -457,6 +457,7 @@ fun ChatScreen(app: RemoteApp) {
 @Composable
 private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) {
     var deleting by remember(app.server) { mutableStateOf<ChatSummary?>(null) }
+    var projectActions by remember(app.server) { mutableStateOf<String?>(null) }
     Column(modifier.background(Palette.sidebar).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
         Image(painterResource(R.drawable.logo), "1loop", modifier = Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp))
         NavRow("New chat", Icons.plus, selected = app.current == null) { app.open(null); onPicked() }
@@ -467,7 +468,11 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
             }
             for (workspace in (app.projects + app.chats.map { it.workspace }).distinct()) {
                 val selected = workspace == app.selectedProject
-                NavRow(projectName(workspace), Icons.folder, selected = selected) { app.selectProject(workspace) }
+                NavRow(
+                    projectName(workspace), Icons.folder, selected = selected,
+                    onLongClick = if (app.projectActions) ({ projectActions = workspace }) else null,
+                    longClickLabel = "Project actions",
+                ) { app.selectProject(workspace) }
                 if (selected) {
                     val chats = app.chats.filter { it.workspace == workspace }
                     Column(Modifier.padding(start = 16.dp)) {
@@ -500,6 +505,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
         NavRow("Switch execution target", Icons.refresh, selected = false) { app.switchTarget() }
         Spacer(Modifier.height(8.dp))
     }
+    projectActions?.let { path -> ProjectActionsSheet(app, path) { projectActions = null } }
     deleting?.let { chat ->
         ModalBottomSheet(
             onDismissRequest = { deleting = null },
@@ -525,10 +531,10 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
 }
 
 @Composable
-private fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
+private fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (selected) Palette.selected else Color.Transparent)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "Delete chat").padding(horizontal = 10.dp, vertical = 10.dp),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = longClickLabel).padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) {

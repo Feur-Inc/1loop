@@ -57,7 +57,7 @@ type serverRun struct {
 }
 
 type serverSettings struct {
-	Projects          []string           `json:"projects,omitempty"`
+	Projects          []string           `json:"projects"`
 	Config            agent.Config       `json:"config"`
 	Connections       []agent.Connection `json:"connections"`
 	Keys              map[string]string  `json:"keys"`
@@ -171,9 +171,14 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 	} else if customConfig || !os.IsNotExist(err) {
 		return nil, err
 	}
-	server.cfg.Workspace = root
-	if !slices.Contains(server.projects, root) {
-		server.projects = append([]string{root}, server.projects...)
+	if server.projects == nil {
+		server.projects = []string{root}
+	}
+	if !slices.Contains(server.projects, server.cfg.Workspace) {
+		server.cfg.Workspace = ""
+		if len(server.projects) > 0 {
+			server.cfg.Workspace = server.projects[0]
+		}
 	}
 	if server.connections == nil && (server.cfg.Model != "" || server.cfg.BaseURL != "") {
 		server.connections = []agent.Connection{{

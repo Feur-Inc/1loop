@@ -4,6 +4,8 @@ import (
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
 	"net/http"
+	"path/filepath"
+	"slices"
 	"strings"
 )
 
@@ -66,4 +68,84 @@ func (server *remoteServer) addProject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	core.Fail(w, 403, "Choose a folder within a project authorized on the desktop")
+}
+
+func (server *remoteServer) changeProject(w http.ResponseWriter, r *http.Request) {
+	var args remoteapi.ProjectChange
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Choose a project folder")
+		return
+	}
+	var problem string
+	var reply map[string]any
+	server.onUI(func() {
+		ui := server.ui
+		for _, chat := range ui.chats {
+			if !remoteapi.ProjectWithin(args.Path, chat.Config.Workspace) {
+				continue
+			}
+			busy := chat.run != nil
+			for _, task := range chat.tasks.Snapshot() {
+				busy = busy || task.Running
+			}
+			if chat.panel != nil {
+				for _, tab := range chat.panel.tabs {
+					busy = busy || tab.kind == "terminal"
+				}
+			}
+			if busy {
+				problem = "Stop this project's agents and background tasks and close its terminals first"
+				return
+			}
+		}
+		destination, err := remoteapi.ChangeProject(ui.projects, filepath.Dir(ui.statePath), r.PathValue("action"), args)
+		if err != nil {
+			problem = err.Error()
+			return
+		}
+		projects := []string{}
+		for _, project := range ui.projects {
+			if !remoteapi.ProjectWithin(args.Path, project) {
+				projects = append(projects, project)
+			} else if destination != "" {
+				projects = append(projects, remoteapi.MovedProject(args.Path, destination, project))
+			}
+		}
+		ui.projects = projects
+		// Copy before removing chats: removeChat updates the live slice and panel.
+		for _, chat := range append([]*conversation{}, ui.chats...) {
+			if !remoteapi.ProjectWithin(args.Path, chat.Config.Workspace) {
+				continue
+			}
+			if destination != "" {
+				chat.Config.Workspace = remoteapi.MovedProject(args.Path, destination, chat.Config.Workspace)
+				for _, version := range chat.Versions {
+					if version.Snapshot != nil {
+						version.Snapshot.Config.Workspace = remoteapi.MovedProject(args.Path, destination, version.Snapshot.Config.Workspace)
+					}
+				}
+			} else {
+				ui.removeChat(chat)
+				delete(server.dirty, chat)
+				delete(server.meta, chat)
+			}
+		}
+		ui.cfg.Workspace = remoteapi.MovedProject(args.Path, destination, ui.cfg.Workspace)
+		if !slices.Contains(projects, ui.cfg.Workspace) {
+			ui.cfg.Workspace = ""
+			if len(projects) > 0 {
+				ui.cfg.Workspace = projects[0]
+			}
+		}
+		ui.saveNow()
+		ui.renderChats()
+		server.chatsChanged()
+		reply = map[string]any{"workspace": destination, "previous": args.Path, "projects": projects}
+	})
+	if problem != "" {
+		core.Fail(w, 400, problem)
+		return
+	}
+	server.broadcast("projects", reply)
+	core.WriteJSON(w, 200, reply)
 }

@@ -14,6 +14,7 @@ import (
 
 	"1loop/internal/agent"
 	"1loop/internal/platform"
+	"1loop/internal/remoteapi"
 )
 
 const sidebarWidth = 280
@@ -177,6 +178,27 @@ func (ui *desktopUI) chatsIn(path string) []*conversation {
 		}
 	}
 	return chats
+}
+
+func (ui *desktopUI) renameProject(path string) {
+	entry := widget.NewEntry()
+	entry.SetText(filepath.Base(path))
+	problem := widget.NewLabel("")
+	problem.Wrapping = fyne.TextWrapWord
+	var dialog *sheet
+	apply := func() {
+		if _, err := ui.changeProject("rename", remoteapi.ProjectChange{Path: path, Name: entry.Text}); err != nil {
+			problem.SetText(err.Error())
+			return
+		}
+		dialog.Hide()
+	}
+	entry.OnSubmitted = func(string) { apply() }
+	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
+	rename := newRow("Rename", nil, stylePrimary, apply)
+	body := container.NewVBox(note("This also renames the project folder. Its files and subfolders are preserved."), entry, problem)
+	dialog = ui.modal("Rename project", body, 480, nil, cancel, rename)
+	ui.window.Canvas().Focus(entry)
 }
 
 func (ui *desktopUI) removeProject(path string) {
@@ -351,6 +373,7 @@ func (ui *desktopUI) renderChats() {
 		ui.projectList.Add(withMore(row, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, []menuAction{
 				{label: "New chat", icon: iconPlus, run: func() { ui.selectProject(p); ui.startNew() }},
+				{label: "Rename", icon: iconRename, run: func() { ui.renameProject(p) }},
 				{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { ui.removeProject(p) }},
 			})
 		}))

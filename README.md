@@ -54,6 +54,7 @@ The [install guide](docs/INSTALL.md) has every step; in short:
 |---|---|---|
 | Linux (x86-64) | `1loop-VERSION-linux-amd64.tar.gz` | extract, then `./1loop` (`./install.sh` adds it to the menu) |
 | Debian, Ubuntu (x86-64) | `1loop-VERSION-amd64.deb` | `sudo apt install ./1loop-VERSION-amd64.deb` |
+| Linux, other formats | AppImage, Flatpak, Nix flake | built from this repository: see the [install guide](docs/INSTALL.md#linux-desktop-x86-64) |
 | Windows 10 1809+ (x64) | `1loop-VERSION-windows-amd64.zip` | extract, then `1loop.exe` |
 | Android 8+ | `1loop-VERSION.apk` | open the APK on the phone |
 | Server (Linux or Windows) | `1loop-server-VERSION-…` | see [docs/SERVER.md](docs/SERVER.md) |
@@ -230,7 +231,8 @@ Always start `bin/1loop`: in a Wayland session it hands over to
 `bin/1loop-wayland`. `ONELOOP_BACKEND=x11` or `wayland` forces a backend (see
 [X11, Wayland and XWayland](docs/INSTALL.md#x11-wayland-and-xwayland)).
 `make tarball deb` builds the Linux downloads in `dist/`, against Debian 12 in
-Docker (`packaging/linux/build.sh`).
+Docker (`packaging/linux/build.sh`); `make appimage` (needs `appimagetool`),
+`make flatpak` and `make nix` build the other formats.
 
 - **Android**: JDK 21 and the Android SDK (`platforms;android-37.0`,
   `build-tools;37.0.0`, NDK `30.0.16248370` for the native helpers), then

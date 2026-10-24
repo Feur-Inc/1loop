@@ -11,6 +11,8 @@
 /release-key.pem
 # Release archives (make release).
 /dist/
+# nix build (make nix).
+/result
 
 # The maintainer's own notes, design drafts and AI agent settings: kept
 # locally only.

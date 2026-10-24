@@ -1,0 +1,8 @@
+#!/bin/sh
+# The Flatpak's command. The host's tools come first on PATH (see host-run),
+# and ONELOOP_FLATPAK tells 1loop its own command sandbox cannot follow them.
+export PATH=/app/lib/1loop/host:$PATH
+export SHELL=/app/lib/1loop/host/host-shell
+export ONELOOP_FLATPAK=1
+export ONELOOP_COMPUTER_PYTHON=/app/lib/1loop/host/python3
+exec /app/lib/1loop/1loop "$@"

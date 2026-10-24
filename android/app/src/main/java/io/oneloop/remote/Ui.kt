@@ -67,8 +67,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -449,7 +449,8 @@ fun ChatScreen(app: RemoteApp) {
     val approval = app.approvals.values.firstOrNull()
     if (approval != null) ApprovalSheet(app, approval)
     val question = app.questions.values.firstOrNull { it.id !in app.questionsAside }
-    if (approval == null && question != null) QuestionSheet(app, question)
+    // A sheet per request: closing one shows the next with its own state, not the last one's Hidden.
+    if (approval == null && question != null) key(question.id) { QuestionSheet(app, question) }
     if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
     if (app.projectsOpen) ProjectsSheet(app) { app.projectsOpen = false }
 }
@@ -1006,8 +1007,9 @@ private fun elapsed(ms: Long) = when {
 private fun QuestionSheet(app: RemoteApp, request: Questions) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { true })
     val title = app.chats.firstOrNull { it.id == request.chat }?.title.orEmpty()
-    val answers = remember(request.id) { mutableStateMapOf<String, String>() }
-    val others = remember(request.id) { mutableStateMapOf<String, String>() }
+    val draft = app.questionDraft(request) // survives the sheet being set aside
+    val answers = draft.answers
+    val others = draft.others
     // Closing (swipe, back, outside tap) sets the questions aside, to answer
     // from the composer: the run keeps waiting for them.
     ModalBottomSheet(onDismissRequest = { app.questionsAside.add(request.id) }, sheetState = state, containerColor = Palette.surface) {

@@ -53,6 +53,9 @@ func installDir(exe string) string {
 // replaces the running one. It returns the binary to restart: the new
 // version, at the running one's path.
 func Install(ctx context.Context, manifest Manifest, kind string) (string, error) {
+	if Packaged != "" {
+		return "", fmt.Errorf("%s", packagedProblem())
+	}
 	file, ok := manifest.Files[Platform(kind)]
 	if !ok {
 		return "", fmt.Errorf("No download for %s in this release", Platform(kind))

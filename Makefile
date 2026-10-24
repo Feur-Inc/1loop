@@ -14,7 +14,7 @@ VERSION_FLAG  := -X 1loop/internal/update.Version=$(VERSION)
 # Release builds: no local paths and no debug symbols in the binaries.
 RELEASE_FLAGS := -trimpath -ldflags="-s -w $(VERSION_FLAG)"
 
-.PHONY: build run dev server release clean
+.PHONY: build run dev server release clean linux-binaries tarball deb
 
 build:
 	go build -ldflags="$(VERSION_FLAG)" -o $(BIN)/1loop ./cmd/1loop
@@ -45,6 +45,15 @@ release:
 	tar -C $(DIST) -czf $(DIST)/1loop-$(VERSION)-linux-x86_64.tar.gz 1loop-$(VERSION)
 	rm -rf $(DIST)/1loop-$(VERSION)
 	cp android/app/build/outputs/apk/release/app-release.apk $(DIST)/1loop-remote-$(VERSION).apk
+
+# The Linux downloads, in dist/ (packaging/linux/build.sh): binaries built
+# against Debian 12's glibc in Docker, then the archive and the .deb, each
+# with the launcher entry and the icons.
+linux-binaries:
+	packaging/linux/build.sh binaries
+
+tarball deb: linux-binaries
+	packaging/linux/build.sh $@
 
 clean:
 	rm -rf $(BIN) $(DIST)

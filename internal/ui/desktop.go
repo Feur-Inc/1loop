@@ -201,7 +201,6 @@ func runDesktop(backend *agent.App, root string) {
 	if platform.DevWanted {
 		platform.StartDevLog()
 	}
-	go installLauncher()
 	// Follow the desktop's own scale (Xft.dpi) instead of Fyne's guess from
 	// the panel's physical DPI, which made everything ~40 % larger than other
 	// apps. An explicit FYNE_SCALE from the user still wins.

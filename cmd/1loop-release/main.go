@@ -5,6 +5,9 @@
 //	    internal/update and the phone app.
 //	1loop-release manifest -key KEY.pem -version 1.2.3 -base URL -page URL -notes FILE platform=FILE...
 //	    prints the signed latest.json for those files, served under URL.
+//	1loop-release icons DIR [NAME]
+//	    renders the launcher icon in DIR/hicolor/NxN/apps/NAME.png (NAME is
+//	    1loop by default), for the Linux packages.
 package main
 
 import (
@@ -34,7 +37,7 @@ const inAppEnd = "<!-- end of the in-app notes -->"
 
 func main() {
 	if len(os.Args) < 2 {
-		fail("usage: 1loop-release keygen KEY.pem | manifest …")
+		fail("usage: 1loop-release keygen KEY.pem | manifest … | icons DIR [NAME]")
 	}
 	switch os.Args[1] {
 	case "keygen":
@@ -44,6 +47,8 @@ func main() {
 		keygen(os.Args[2])
 	case "manifest":
 		manifest(os.Args[2:])
+	case "icons":
+		icons(os.Args[2:])
 	default:
 		fail("unknown command " + os.Args[1])
 	}

@@ -1027,11 +1027,19 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 			title = []rune("[image]")
 		}
 		ui.cfg.Session, ui.cfg.RanWith = "", nil // a new chat starts its own Claude Code session
-		chat = &conversation{ID: core.Identifier()[:16], Title: string(title), Config: ui.cfg}
+		chat = ui.remote.takePanelHome(ui.cfg.Workspace)
+		if chat == nil {
+			chat = &conversation{}
+		}
+		chat.ID, chat.Title, chat.Config = core.Identifier()[:16], string(title), ui.cfg
 		ui.chats = append([]*conversation{chat}, ui.chats...)
 		ui.current = chat
 		ui.prompt.renameDraft(chat.ID)
-		ui.panel.adopt(chat) // what was open on the start screen is now this chat's
+		if chat.panel != nil {
+			ui.panel.switchTo(chat)
+		} else {
+			ui.panel.adopt(chat) // what was open on the start screen is now this chat's
+		}
 	}
 	ui.panel.todoChanged(chat)
 	chat.History = append(chat.History, messageValue)

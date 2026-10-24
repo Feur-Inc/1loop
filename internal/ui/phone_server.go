@@ -88,6 +88,7 @@ type remoteServer struct {
 	mu   sync.Mutex
 	subs map[chan remoteEvent]bool
 	// Browser streams, closed with the event streams when a phone is forgotten.
+	panelHomes  map[string]*conversation // project panels before the first prompt; not persisted
 	streams     map[chan struct{}]bool
 	fingerprint string
 
@@ -186,6 +187,9 @@ func (ui *desktopUI) startRemote() {
 func (server *remoteServer) close() {
 	if server == nil {
 		return
+	}
+	for _, home := range server.panelHomes {
+		home.disposePanel()
 	}
 	server.http.Close()
 	if server.udp != nil {

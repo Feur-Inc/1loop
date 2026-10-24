@@ -121,8 +121,10 @@ import org.json.JSONObject
 @Composable
 fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
     BackHandler(onBack = onClose)
-    var tabs by remember { mutableStateOf<List<PanelTab>>(emptyList()) }
-    var selected by rememberSaveable(chat) { mutableStateOf("tasks") }
+    val home = chat.startsWith("home:")
+    val initialTab = if (home) "files" else "tasks"
+    var tabs by remember(chat) { mutableStateOf<List<PanelTab>>(emptyList()) }
+    var selected by rememberSaveable(chat) { mutableStateOf(initialTab) }
     var reachable by remember { mutableStateOf(true) }
     val scope = rememberCoroutineScope()
     LaunchedEffect(chat) {
@@ -131,7 +133,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
             reachable = list != null
             if (list != null) {
                 tabs = list.filter { it.kind != "todo" && it.kind != "tool" } // the task list is always first
-                if (selected != "tasks" && selected != "files" && tabs.none { it.key == selected }) selected = "tasks"
+                if (selected != "tasks" && selected != "files" && tabs.none { it.key == selected }) selected = initialTab
             }
             delay(2000)
         }
@@ -143,7 +145,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
             Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                 Text("Panel", style = Type.body.copy(fontWeight = FontWeight.Medium))
                 Text(
-                    if (reachable) app.chats.firstOrNull { it.id == chat }?.title.orEmpty() else "Reconnecting…",
+                    if (!reachable) "Reconnecting…" else if (home) "New chat" else app.chats.firstOrNull { it.id == chat }?.title.orEmpty(),
                     style = Type.caption.copy(color = if (reachable) Palette.faint else Palette.amber), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
@@ -154,7 +156,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             val done = tasks.count { it.status == "completed" }
-            TabChip(if (tasks.isEmpty()) "Tasks" else "Tasks $done/${tasks.size}", Icons.tasks, selected == "tasks") { selected = "tasks" }
+            if (!home) TabChip(if (tasks.isEmpty()) "Tasks" else "Tasks $done/${tasks.size}", Icons.tasks, selected == "tasks") { selected = "tasks" }
             TabChip("Files", Icons.folder, selected == "files") { selected = "files" }
             // The tab shown can be closed, as on the desktop.
             for (tab in tabs) TabChip(
@@ -162,13 +164,13 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
                 onClose = if (selected == tab.key && tab.kind in listOf("browser", "terminal")) ({
                     scope.launch { closeLocalTab(app, chat, tab.key) }
                     tabs = tabs.filter { it.key != tab.key }
-                    selected = "tasks"
+                    selected = initialTab
                 }) else null,
             ) { selected = tab.key }
         }
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.borderSoft))
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            val shown = if (selected == "files") "files" else tabs.firstOrNull { it.key == selected }?.key ?: "tasks"
+            val shown = if (selected == "files") "files" else tabs.firstOrNull { it.key == selected }?.key ?: initialTab
             Crossfade(shown, animationSpec = tween(180), label = "tab") { key ->
                 val tab = tabs.firstOrNull { it.key == key }
                 if (key == "files") {

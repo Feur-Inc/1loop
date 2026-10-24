@@ -19,10 +19,40 @@ import (
 	"1loop/internal/remoteapi"
 )
 
+// Home panels are scoped to an authorized project, without creating a conversation.
+func (server *headlessServer) panelChatLocked(id string) *serverChat {
+	if !strings.HasPrefix(id, "home:") {
+		return server.chatLocked(id)
+	}
+	workspace, err := server.workspaceLocked(strings.TrimPrefix(id, "home:"))
+	if err != nil || server.closing {
+		return nil
+	}
+	if home := server.panelHomes[id]; home != nil {
+		return home
+	}
+	if server.panelHomes == nil {
+		server.panelHomes = map[string]*serverChat{}
+	}
+	config := server.cfg
+	config.Workspace, config.Session, config.RanWith = workspace, "", nil
+	home := &serverChat{ID: id, Config: config, Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}
+	server.panelHomes[id] = home
+	return home
+}
+
+func (server *headlessServer) panelContextsLocked() []*serverChat {
+	contexts := append([]*serverChat{}, server.chats...)
+	for _, home := range server.panelHomes {
+		contexts = append(contexts, home)
+	}
+	return contexts
+}
+
 func (server *headlessServer) findTab(req *http.Request) (*serverChat, *serverTab) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	chat := server.chatLocked(req.PathValue("id"))
+	chat := server.panelChatLocked(req.PathValue("id"))
 	if chat == nil {
 		return nil, nil
 	}
@@ -38,13 +68,17 @@ func (server *headlessServer) findTab(req *http.Request) (*serverChat, *serverTa
 func (server *headlessServer) panelTabs(w http.ResponseWriter, r *http.Request) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	chat := server.chatLocked(r.PathValue("id"))
+	chat := server.panelChatLocked(r.PathValue("id"))
 	if chat == nil {
 		core.Fail(w, 404, "Chat not found")
 		return
 	}
 	server.ensureTabsLocked(chat)
-	tabs := []remoteapi.Tab{{Key: "todo", Kind: "todo", Title: "Tasks"}, {Key: "changes", Kind: "changes", Title: "Changes"}}
+	tabs := []remoteapi.Tab{}
+	if !strings.HasPrefix(chat.ID, "home:") {
+		tabs = append(tabs, remoteapi.Tab{Key: "todo", Kind: "todo", Title: "Tasks"})
+	}
+	tabs = append(tabs, remoteapi.Tab{Key: "changes", Kind: "changes", Title: "Changes"})
 	for _, tab := range chat.tabs {
 		item := remoteapi.Tab{Key: tab.key()}
 		if tab.browser != nil {

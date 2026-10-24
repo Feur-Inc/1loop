@@ -421,7 +421,7 @@ fun ChatScreen(app: RemoteApp) {
         if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
         return
     }
-    var panel by remember(app.current) { mutableStateOf(false) }
+    var panel by remember(app.current, app.selectedProject, app.server?.key) { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 720.dp) {
             Row(Modifier.fillMaxSize()) {
@@ -558,7 +558,7 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
                     style = Type.caption.copy(color = if (app.connected) Palette.faint else Palette.amber), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (app.current != null) Box {
+            Box {
                 RoundButton(Icons.panel, Color.Transparent, Palette.muted, description = "Panel: tasks, browser, terminal") { onPanelChange(true) }
                 // A task in progress: the panel has news.
                 if (meta?.todo?.any { it.status == "in_progress" } == true) {
@@ -575,16 +575,16 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
         Composer(app, running)
     }
     // The panel slides in from the right, over the chat, as on the computer.
-    val chat = app.current
-    var shownChat by remember { mutableStateOf(chat) }
-    if (chat != null) shownChat = chat
+    val panelContext = app.current ?: "home:" + (app.selectedProject ?: app.workspace)
+    var shownContext by remember { mutableStateOf(panelContext) }
+    if (panel) shownContext = panelContext
     AnimatedVisibility(
-        panel && chat != null,
+        panel,
         // Opaque and only moved: no transparency to composite at each frame.
         enter = slideInHorizontally(tween(300, easing = CssEase)) { it },
         exit = slideOutHorizontally(tween(240, easing = CssEase)) { it },
     ) {
-        shownChat?.let { PanelScreen(app, it) { onPanelChange(false) } }
+        PanelScreen(app, shownContext) { onPanelChange(false) }
     }
     }
     tool?.let { ToolSheet(app, it) { tool = null } }

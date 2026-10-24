@@ -81,6 +81,7 @@ type headlessServer struct {
 	keys                       map[string]string
 	instructions, approvalMode string
 	classic                    bool
+	panelHomes                 map[string]*serverChat // project panels before the first prompt; not persisted
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
 	pairs                      map[string]*serverPair
@@ -255,7 +256,7 @@ func (server *headlessServer) close() {
 		fmt.Fprintln(os.Stderr, err)
 	}
 	var tabs []*serverTab
-	for _, chat := range server.chats {
+	for _, chat := range server.panelContextsLocked() {
 		tabs = append(tabs, chat.tabs...)
 		chat.tabs = nil
 	}

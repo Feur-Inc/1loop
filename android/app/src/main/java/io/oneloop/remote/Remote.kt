@@ -1247,12 +1247,15 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     // -- the chat's side panel ------------------------------------------------
 
+    internal fun panelPath(context: String, suffix: String = ""): String =
+        "/api/chats/${android.net.Uri.encode(context)}/panel$suffix"
+
     /** The panel's tabs on the computer; null when it cannot be reached. */
     suspend fun panelTabs(chat: String): List<PanelTab>? {
         val generation = connectionGeneration
         val target = server ?: return null
         return runCatching {
-            val reply = onConnection(target, generation) { it.get("/api/chats/$chat/panel") }
+            val reply = onConnection(target, generation) { it.get(panelPath(chat)) }
             val array = reply.optJSONArray("tabs")
             (0 until (array?.length() ?: 0)).map { i ->
                 array!!.getJSONObject(i).let { PanelTab(it.optString("key"), it.optString("kind"), it.optString("title"), it.optString("url"), it.optInt("index")) }
@@ -1263,13 +1266,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     suspend fun panelTab(chat: String, key: String): JSONObject? {
         val generation = connectionGeneration
         val target = server ?: return null
-        return runCatching { onConnection(target, generation) { it.get("/api/chats/$chat/panel/$key") } }.onFailure { if (it is CancellationException) throw it }.getOrNull()
+        return runCatching { onConnection(target, generation) { it.get(panelPath(chat, "/$key")) } }.onFailure { if (it is CancellationException) throw it }.getOrNull()
     }
 
     suspend fun panelScreen(chat: String, key: String): ByteArray? {
         val generation = connectionGeneration
         val target = server ?: return null
-        return runCatching { onConnection(target, generation) { it.bytes("/api/chats/$chat/panel/$key/screen") } }.onFailure { if (it is CancellationException) throw it }.getOrNull()
+        return runCatching { onConnection(target, generation) { it.bytes(panelPath(chat, "/$key/screen")) } }.onFailure { if (it is CancellationException) throw it }.getOrNull()
     }
 
     /** Input for a browser or a terminal tab; see remote_panel.go. */
@@ -1285,7 +1288,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     suspend fun panelStream(chat: String, key: String, onMessage: suspend (Char, ByteArray) -> Unit) {
         val generation = connectionGeneration
         val target = server ?: return
-        Api(target).messages("/api/chats/$chat/panel/$key/stream") { kind, bytes ->
+        Api(target).messages(panelPath(chat, "/$key/stream")) { kind, bytes ->
             if (generation != connectionGeneration) throw CancellationException("Connection changed")
             onMessage(kind, bytes)
         }
@@ -1299,7 +1302,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     suspend fun panelCall(chat: String, key: String, body: JSONObject): JSONObject {
         val generation = connectionGeneration
         val target = server ?: throw ApiError("Not connected.")
-        return onConnection(target, generation) { it.post("/api/chats/$chat/panel/$key/input", body) }
+        return onConnection(target, generation) { it.post(panelPath(chat, "/$key/input"), body) }
     }
 
     fun panelScroll(chat: String, key: String, x: Float, y: Float, dy: Float) {
@@ -1323,7 +1326,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     private suspend fun sendInput(target: Server, generation: Long, chat: String, key: String, action: String, text: String, x: Float, y: Float, dy: Float) {
         runCatching {
             val body = JSONObject().put("action", action).put("text", text).put("x", x.toDouble()).put("y", y.toDouble()).put("dy", dy.toDouble())
-            onConnection(target, generation) { it.post("/api/chats/$chat/panel/$key/input", body) }
+            onConnection(target, generation) { it.post(panelPath(chat, "/$key/input"), body) }
         }.onFailure { actionFailed(generation, it) }
     }
 

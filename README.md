@@ -184,7 +184,12 @@ silently install it on users' devices.
 3. **Keep the existing signing keys.** Use the same private manifest key that
    matches the public key embedded in installed apps, and the same Android
    APK signing keystore. Android rejects an update signed by another APK key.
-   Never commit either private key or an access token.
+   Never commit either private key or an access token. Release APKs now require
+   the private signing configuration described in [Android release signing](docs/ANDROID_SIGNING.md).
+   Set `ONELOOP_ANDROID_SIGNING_PROPERTIES` when the credentials are outside
+   `android/signing/release.properties`, including builds from Git worktrees.
+   Switching existing debug-signed installations to a new publication key requires
+   a migration; do not publish that APK as a compatible update before preparing it.
 4. **Run the publisher from the repository root:**
 
    ```bash

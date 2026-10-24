@@ -3,3 +3,6 @@ build/
 app/build/
 local.properties
 *.apk
+
+# Private APK signing key and credentials.
+/signing/

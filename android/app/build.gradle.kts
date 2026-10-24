@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -12,6 +14,15 @@ abstract class LocalRuntimeBuild : Exec() {
 // versionCode follows internal/update.Code, "1.2.3" being 10203.
 val oneloopVersion = rootProject.file("../VERSION").readText().trim()
 val oneloopVersionCode = oneloopVersion.split(".").fold(0) { code, part -> code * 100 + part.toInt() }
+
+// Credentials stay outside Git; the override also supports builds from a worktree.
+val releaseSigningFile = rootProject.file(
+    providers.environmentVariable("ONELOOP_ANDROID_SIGNING_PROPERTIES")
+        .orElse("signing/release.properties").get()
+)
+val releaseSigning = Properties().apply {
+    if (releaseSigningFile.isFile) releaseSigningFile.inputStream().use { load(it) }
+}
 
 val localRuntimeDirectory = layout.buildDirectory.dir("local-runtime")
 val buildLocalNative = tasks.register<LocalRuntimeBuild>("buildLocalNative") {
@@ -45,12 +56,22 @@ android {
         versionCode = oneloopVersionCode
         versionName = oneloopVersion
     }
+    signingConfigs {
+        create("release") {
+            releaseSigning.getProperty("storeFile")?.let {
+                storeFile = releaseSigningFile.parentFile.resolve(it)
+            }
+            storePassword = releaseSigning.getProperty("storePassword")
+            keyAlias = releaseSigning.getProperty("keyAlias")
+            keyPassword = releaseSigning.getProperty("keyPassword")
+        }
+    }
     buildTypes {
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
-            signingConfig = signingConfigs.getByName("debug") // sideloaded builds for now
+            signingConfig = signingConfigs.getByName("release")
         }
     }
     buildFeatures { compose = true; aidl = true }

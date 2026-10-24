@@ -17,6 +17,10 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.combinedClickable
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
+import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
+import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
@@ -73,6 +77,7 @@ import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -96,6 +101,8 @@ import androidx.compose.ui.input.key.isShiftPressed
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.input.pointer.positionChange
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
@@ -437,7 +444,7 @@ fun ChatScreen(app: RemoteApp) {
         if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
         return
     }
-    var panel by remember(app.current) { mutableStateOf(false) }
+    var panel by remember(app.current, app.selectedProject, app.server?.key) { mutableStateOf(false) }
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 720.dp) {
             Row(Modifier.fillMaxSize()) {
@@ -569,11 +576,39 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
     val meta = app.meta
     val running = meta?.running == true
     var tool by remember { mutableStateOf<Item?>(null) }
-    Box(modifier) {
+    val changePanel by rememberUpdatedState(onPanelChange)
+    Box(modifier.pointerInput(panel) {
+        if (!panel) {
+            val edge = 24.dp.toPx()
+            val threshold = 48.dp.toPx()
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                // Only claim a leftward edge swipe; leave scrolling and text selection alone.
+                if (down.position.x < size.width - edge) return@awaitEachGesture
+                var distance = 0f
+                val drag = awaitHorizontalTouchSlopOrCancellation(down.id) { change, overSlop ->
+                    if (overSlop < 0) {
+                        distance = -overSlop
+                        change.consume()
+                    }
+                }
+                if (drag != null) {
+                    val released = horizontalDrag(drag.id) { change ->
+                        distance -= change.positionChange().x
+                        change.consume()
+                    }
+                    if (released && distance >= threshold) {
+                        focus.clearFocus()
+                        changePanel(true)
+                    }
+                }
+            }
+        }
+    }) {
     Column(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
         // Title bar
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
-            if (onMenu != null) RoundButton(Icons.sidebar, Color.Transparent, Palette.muted, description = "Chats", onClick = onMenu)
+            if (onMenu != null) RoundButton(Icons.chats, Color.Transparent, Palette.muted, description = "Chats", onClick = onMenu)
             Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                 val title = app.chats.firstOrNull { it.id == app.current }?.title ?: "New chat"
                 Text(title, style = Type.body.copy(fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis)
@@ -582,7 +617,7 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
                     style = Type.caption.copy(color = if (app.connected) Palette.faint else Palette.amber), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
-            if (app.current != null) Box {
+            Box {
                 RoundButton(Icons.panel, Color.Transparent, Palette.muted, description = "Panel: tasks, browser, terminal") {
                     focus.clearFocus(force = true)
                     onPanelChange(true)
@@ -602,16 +637,16 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
         Composer(app, running)
     }
     // The panel slides in from the right, over the chat, as on the computer.
-    val chat = app.current
-    var shownChat by remember { mutableStateOf(chat) }
-    if (chat != null) shownChat = chat
+    val panelContext = app.current ?: "home:" + (app.selectedProject ?: app.workspace)
+    var shownContext by remember { mutableStateOf(panelContext) }
+    if (panel) shownContext = panelContext
     AnimatedVisibility(
-        panel && chat != null,
+        panel,
         // Opaque and only moved: no transparency to composite at each frame.
         enter = slideInHorizontally(tween(300, easing = CssEase)) { it },
         exit = slideOutHorizontally(tween(240, easing = CssEase)) { it },
     ) {
-        shownChat?.let { PanelScreen(app, it) { onPanelChange(false) } }
+        PanelScreen(app, shownContext) { onPanelChange(false) }
     }
     }
     tool?.let { ToolSheet(app, it) { tool = null } }

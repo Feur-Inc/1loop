@@ -29,7 +29,7 @@ object Icons {
     val chevronRight = lineIcon("chevron-right", line("M6.5 4.5 10 8l-3.5 3.5"))
     val check = lineIcon("check", line("M3.5 8.4 6.6 11.4 12.5 4.8"))
     val close = lineIcon("close", line("M4.5 4.5l7 7M11.5 4.5l-7 7"))
-    val sidebar = lineIcon("sidebar", line("M4.5 3h7a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"), line("M6.5 3v10"))
+    val chats = lineIcon("chats", line("M4 3h8a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 12 12H7l-3.5 2v-2A1.5 1.5 0 0 1 2 10.5v-6A1.5 1.5 0 0 1 4 3z"), line("M5 6h6M5 9h4"))
     val plus = lineIcon("plus", line("M8 3v10M3 8h10", 1.8f))
     val copy = lineIcon("copy", line("M7.1 5.5h4.3a1.6 1.6 0 0 1 1.6 1.6v4.3a1.6 1.6 0 0 1-1.6 1.6H7.1a1.6 1.6 0 0 1-1.6-1.6V7.1a1.6 1.6 0 0 1 1.6-1.6z"),
         line("M10.5 5.5V4.2c0-.7-.5-1.2-1.2-1.2H4.2C3.5 3 3 3.5 3 4.2v5.1c0 .7.5 1.2 1.2 1.2h1.3"))
@@ -50,7 +50,7 @@ object Icons {
     val redo = lineIcon("redo", line("M10.5 4 13 6.5 10.5 9"), line("M13 6.5H6.5a3.5 3.5 0 0 0 0 7H9"))
     val refresh = lineIcon("refresh", line("M12.8 7.2A4.9 4.9 0 1 0 11.4 11"), line("M13 3.6v3.6H9.4"))
 
-    val panel = lineIcon("panel", line("M4.5 3h7a2 2 0 0 1 2 2v6a2 2 0 0 1-2 2h-7a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z"), line("M9.5 3v10"))
+    val panel = lineIcon("panel", line("M2.5 2.5h4v4h-4zM9.5 2.5h4v4h-4zM2.5 9.5h4v4h-4zM9.5 9.5h4v4h-4z"))
     val globe = lineIcon("globe", line("M8 2.5a5.5 5.5 0 1 0 0 11a5.5 5.5 0 1 0 0-11z"), line("M2.5 8h11"),
         line("M8 2.5c1.5 1.6 2.2 3.4 2.2 5.5S9.5 11.9 8 13.5C6.5 11.9 5.8 10.1 5.8 8S6.5 4.1 8 2.5z"))
     val back = lineIcon("back", line("M9.5 4.5 6 8l3.5 3.5"))

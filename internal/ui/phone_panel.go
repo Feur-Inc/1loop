@@ -89,10 +89,52 @@ func remoteTabOf(chat *conversation, tab panelTab) remoteapi.Tab {
 	return out
 }
 
+// Home panels keep remote tools usable before the first prompt, without a saved chat.
+// Called on the UI thread, like the other panel lookups.
+func (server *remoteServer) panelChat(id string) *conversation {
+	workspace, home := strings.CutPrefix(id, "home:")
+	if !home {
+		return server.ui.chatByID(id)
+	}
+	ui := server.ui
+	authorized := false
+	for _, root := range ui.projects {
+		if folder, err := remoteapi.ProjectFolder(root, workspace, false); err == nil && folder == workspace {
+			authorized = true
+			break
+		}
+	}
+	if !authorized {
+		return nil
+	}
+	if chat := server.panelHomes[id]; chat != nil {
+		return chat
+	}
+	if server.panelHomes == nil {
+		server.panelHomes = map[string]*conversation{}
+	}
+	config := ui.cfg
+	config.Workspace, config.Session, config.RanWith = workspace, "", nil
+	chat := &conversation{ID: id, Config: config, panel: &panelState{active: -1}}
+	chat.panel.tabs = []panelTab{ui.panel.changesTab(workspace)}
+	server.panelHomes[id] = chat
+	return chat
+}
+
+func (server *remoteServer) takePanelHome(workspace string) *conversation {
+	if server == nil {
+		return nil
+	}
+	id := "home:" + workspace
+	chat := server.panelHomes[id]
+	delete(server.panelHomes, id)
+	return chat
+}
+
 // findTab looks a chat's tab up by its key, on the window's thread.
 func (server *remoteServer) findTab(req *http.Request) (chat *conversation, tab panelTab, ok bool) {
 	server.onUI(func() {
-		chat = server.ui.chatByID(req.PathValue("id"))
+		chat = server.panelChat(req.PathValue("id"))
 		if chat == nil || server.ui.panel == nil {
 			return
 		}
@@ -109,7 +151,7 @@ func (server *remoteServer) findTab(req *http.Request) (chat *conversation, tab 
 func (server *remoteServer) panelTabs(writer http.ResponseWriter, req *http.Request) {
 	var out map[string]any
 	server.onUI(func() {
-		chat := server.ui.chatByID(req.PathValue("id"))
+		chat := server.panelChat(req.PathValue("id"))
 		if chat == nil || server.ui.panel == nil {
 			return
 		}
@@ -285,7 +327,7 @@ func (server *remoteServer) editPanel(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var chat *conversation
-	server.onUI(func() { chat = server.ui.chatByID(r.PathValue("id")) })
+	server.onUI(func() { chat = server.panelChat(r.PathValue("id")) })
 	if chat == nil {
 		core.Fail(w, 404, "Chat not found")
 		return

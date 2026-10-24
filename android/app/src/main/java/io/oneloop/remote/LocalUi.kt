@@ -321,7 +321,7 @@ fun LocalPanelAdd(app: RemoteApp, chat: String) {
 /** Opens or closes a tab of a chat's panel (POST /api/chats/{id}/panel); an older 1loop refuses it. */
 private suspend fun localPanel(app: RemoteApp, chat: String, body: JSONObject, timeout: Int = 20_000) {
     val target = app.server ?: error("The local agent is not running.")
-    withContext(Dispatchers.IO) { Api(target).post("/api/chats/$chat/panel", body, timeout) }
+    withContext(Dispatchers.IO) { Api(target).post(app.panelPath(chat), body, timeout) }
 }
 
 suspend fun closeLocalTab(app: RemoteApp, chat: String, key: String) {

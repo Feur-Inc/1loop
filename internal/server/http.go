@@ -343,7 +343,12 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		cfg := server.cfg
 		cfg.Workspace = workspace
 		cfg.Session, cfg.RanWith = "", nil
-		chat = &serverChat{ID: core.Identifier()[:16], Title: string(title), Config: cfg, Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}
+		chat = server.panelHomes["home:"+workspace]
+		if chat == nil {
+			chat = &serverChat{Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}
+		}
+		delete(server.panelHomes, "home:"+workspace)
+		chat.ID, chat.Title, chat.Config = core.Identifier()[:16], string(title), cfg
 		server.chats = append([]*serverChat{chat}, server.chats...)
 	}
 
@@ -497,7 +502,7 @@ func (server *headlessServer) setApprovalMode(w http.ResponseWriter, r *http.Req
 		server.terminalRevision++
 	}
 	if server.bridge != nil && (server.approvalMode == "yolo") != (args.Mode == "yolo") {
-		for _, chat := range server.chats {
+		for _, chat := range server.panelContextsLocked() {
 			if chat.run != nil {
 				chat.run.cancel()
 			}
@@ -532,7 +537,7 @@ func (server *headlessServer) editPanel(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	server.mu.Lock()
-	chat := server.chatLocked(r.PathValue("id"))
+	chat := server.panelChatLocked(r.PathValue("id"))
 	server.mu.Unlock()
 	if chat == nil {
 		core.Fail(w, 404, "Chat not found")

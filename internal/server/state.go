@@ -619,6 +619,7 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	cfg := chat.Config
 	cfg.APIKey = server.keys[cfg.ConnectionID]
 	cfg.UserInstructions = server.instructions
+	cfg.Preferences = server.updatePreferences
 	cfg.ApprovalMode = agent.ApprovalFor(server.approvalMode, cfg)
 	cfg.ClassicCompaction = server.classic
 	cfg.Todo = chat.Todo

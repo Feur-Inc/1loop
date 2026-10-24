@@ -63,7 +63,7 @@ func coreToolDefinitions() []map[string]any {
 			"parameters":  map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false},
 		}})
 	}
-	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), recallToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition())
+	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), recallToolDefinition(), memoryToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition())
 }
 
 // allToolDefinitions are every tool, loaded or not.
@@ -336,6 +336,9 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		begin()
 		output, err = recallConversation(ctx, json.RawMessage(call.Function.Arguments))
 		return
+	}
+	if call.Function.Name == "memory" {
+		return backend.editMemory(ctx, root, call.Function.Arguments, begin, emit)
 	}
 	if call.Function.Name == "apply_patch" {
 		var args struct{ Patch string }

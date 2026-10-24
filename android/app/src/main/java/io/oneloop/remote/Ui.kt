@@ -1084,6 +1084,7 @@ private fun ToolSheet(app: RemoteApp, item: Item, onDone: () -> Unit) {
                 "edit_file", "apply_patch" -> if (item.diff.isNotEmpty()) CodeWell(item.diff, "Changes", diff = true) else Text("No diff recorded", style = Type.small)
                 "read_file" -> Section("Content", item.text, if (running) "Waiting for the result…" else "Empty file")
                 "list_directory" -> Section("Entries", item.text, if (running) "Waiting for the result…" else "Empty directory")
+                "memory" -> if (item.diff.isNotEmpty()) CodeWell(item.diff, "Changes", diff = true) else Section("Memory", item.text, if (running) "Waiting for the result…" else "Nothing saved")
                 else -> Section("Output", item.text, "No output")
             }
             if (item.failed.isNotEmpty() && item.failed != "Stopped") CodeWell(item.failed, "Error", wrap = true)

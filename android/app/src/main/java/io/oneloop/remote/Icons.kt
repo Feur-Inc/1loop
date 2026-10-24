@@ -42,6 +42,7 @@ object Icons {
     val document = lineIcon("document", line("M4 2.8h5l3 3v7.4H4z"), line("M9 2.8v3h3M6 8.6h4M6 10.9h4"))
     val pencil = lineIcon("pencil", line("M3.2 12.8l.7-3 6.6-6.6 2.3 2.3-6.6 6.6zM9.2 4.5l2.3 2.3"))
     val arrowTurn = lineIcon("arrow-turn", line("M4 3.5v3.7c0 1.1.9 2 2 2h6M9.6 6.8 12 9.2l-2.4 2.4"))
+    val bookmark = lineIcon("bookmark", line("M4.5 2.5h7v11L8 10.8l-3.5 2.7z"))
     val compact = lineIcon("compact", line("M8 2.5v4M5.8 4.6 8 6.6l2.2-2M8 13.5v-4M5.8 11.4 8 9.4l2.2 2M3 8h10"))
     val computer = lineIcon("computer", line("M3.5 3.5h9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1v-6a1 1 0 0 1 1-1z"), line("M6 13.5h4"))
     val server = lineIcon("server", line("M3.5 2.8h9a1 1 0 0 1 1 1v2.4a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V3.8a1 1 0 0 1 1-1zM3.5 8.8h9a1 1 0 0 1 1 1v2.4a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V9.8a1 1 0 0 1 1-1z"), line("M5 5h.01M5 11h.01", 2f))
@@ -62,6 +63,7 @@ object Icons {
         "shell" -> terminal
         "edit_file", "apply_patch" -> pencil
         "list_directory" -> folder
+        "memory" -> bookmark
         else -> document
     }
 }

@@ -54,7 +54,7 @@ func (server *headlessServer) handoffPlanLocked(chat *serverChat, cfg agent.Conf
 		prior.APIKey = server.keys[prior.ConnectionID]
 		prior.Session, prior.SessionMark = chat.Config.Session, chat.Config.SessionMark
 		prior.Cache, prior.ContextKey, prior.Todo, prior.Recall = cfg.Cache, cfg.ContextKey, cfg.Todo, cfg.Recall
-		prior.UserInstructions, prior.ApprovalMode = cfg.UserInstructions, agent.ApprovalFor(server.approvalMode, prior)
+		prior.UserInstructions, prior.Preferences, prior.ApprovalMode = cfg.UserInstructions, cfg.Preferences, agent.ApprovalFor(server.approvalMode, prior)
 		prior.Browser, prior.Terminal, prior.Tasks, prior.Phone, prior.ToolAllowed = cfg.Browser, cfg.Terminal, cfg.Tasks, cfg.Phone, cfg.ToolAllowed
 		prior.Computer, prior.Packages, prior.ProjectTools = cfg.Computer, cfg.Packages, cfg.ProjectTools
 		prior.Grants, prior.ClassicCompaction = cfg.Grants, cfg.ClassicCompaction

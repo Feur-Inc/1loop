@@ -1159,6 +1159,24 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	}
 	cfg.APIKey = ui.keys[cfg.ConnectionID]
 	cfg.UserInstructions = ui.userInstructions
+	cfg.Preferences = func(ctx context.Context, update func(string) (string, error)) (err error) {
+		ui.onUI(ctx, func() {
+			var next string
+			if next, err = update(ui.userInstructions); err != nil || next == ui.userInstructions {
+				return
+			}
+			ui.userInstructions = next
+			ui.save()
+			ui.remote.settingsChanged()
+			if ui.prefs != nil && ui.prefs.open && ui.prefs.section == "Instructions" {
+				ui.prefs.showNow("Instructions") // an open page would save its old text over it
+			}
+		})
+		if err == nil {
+			err = ctx.Err()
+		}
+		return err
+	}
 	cfg.ApprovalMode = agent.ApprovalFor(ui.approvalMode, cfg)
 	cfg.ClassicCompaction = ui.classicCompaction
 	return cfg

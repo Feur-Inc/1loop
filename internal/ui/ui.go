@@ -279,6 +279,7 @@ var (
 	iconPencil       = lineIcon("pencil", `<path d="M3.2 12.8l.7-3 6.6-6.6 2.3 2.3-6.6 6.6zM9.2 4.5l2.3 2.3"/>`)
 	iconArrowTurn    = lineIcon("arrow-turn", `<path d="M4 3.5v3.7c0 1.1.9 2 2 2h6M9.6 6.8 12 9.2l-2.4 2.4"/>`)
 	iconDot          = lineIcon("dot", `<circle cx="8" cy="8" r="3.2" fill="currentColor" stroke="none"/>`)
+	iconBookmark     = lineIcon("bookmark", `<path d="M4.5 2.5h7v11L8 10.8l-3.5 2.7z"/>`)
 	iconCompact      = lineIcon("compact", `<path d="M8 2.5v4M5.8 4.6 8 6.6l2.2-2M8 13.5v-4M5.8 11.4 8 9.4l2.2 2M3 8h10"/>`)
 )
 

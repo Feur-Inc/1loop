@@ -89,6 +89,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.input.key.Key
@@ -553,6 +554,7 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
     val running = meta?.running == true
     var tool by remember { mutableStateOf<Item?>(null) }
     val changePanel by rememberUpdatedState(onPanelChange)
+    val focus = LocalFocusManager.current
     Box(modifier.pointerInput(panel) {
         if (!panel) {
             val edge = 24.dp.toPx()
@@ -573,7 +575,10 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
                         distance -= change.positionChange().x
                         change.consume()
                     }
-                    if (released && distance >= threshold) changePanel(true)
+                    if (released && distance >= threshold) {
+                        focus.clearFocus()
+                        changePanel(true)
+                    }
                 }
             }
         }

@@ -1027,7 +1027,7 @@ private fun ToolSheet(app: RemoteApp, item: Item, onDone: () -> Unit) {
                     else -> "Done" to Palette.added
                 }
                 Text(status, style = Type.small.copy(color = color))
-                if (item.tool == "edit_file" && item.meta.isNotEmpty()) Text(item.meta, style = Type.small.copy(color = Palette.added))
+                if (item.diff.isNotEmpty() && item.failed.isEmpty() && item.meta.isNotEmpty()) Text(item.meta, style = Type.small.copy(color = Palette.added))
                 if (item.millis > 0) Text(elapsed(item.millis), style = Type.small)
             }
             if (item.tool != "shell" && item.args.isNotBlank()) CodeWell(toolPreviewText(item.args), "Arguments", wrap = true)
@@ -1039,7 +1039,7 @@ private fun ToolSheet(app: RemoteApp, item: Item, onDone: () -> Unit) {
                     CodeWell(args.optString("command"), "Command", wrap = true)
                     Section("Output", item.text, if (running) "Waiting for the result…" else "No output")
                 }
-                "edit_file" -> if (item.diff.isNotEmpty()) CodeWell(item.diff, "Changes", diff = true) else Text("No diff recorded", style = Type.small)
+                "edit_file", "apply_patch" -> if (item.diff.isNotEmpty()) CodeWell(item.diff, "Changes", diff = true) else Text("No diff recorded", style = Type.small)
                 "read_file" -> Section("Content", item.text, if (running) "Waiting for the result…" else "Empty file")
                 "list_directory" -> Section("Entries", item.text, if (running) "Waiting for the result…" else "Empty directory")
                 else -> Section("Output", item.text, "No output")

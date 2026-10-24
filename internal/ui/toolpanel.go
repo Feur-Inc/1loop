@@ -337,7 +337,7 @@ func (panel *toolPanel) render() {
 			panel.page.Objects = []fyne.CanvasObject{tab.content}
 		} else {
 			item := tab.chat.Items[tab.index]
-			if item.Tool == "edit_file" && item.Diff != "" {
+			if item.Diff != "" {
 				panel.page.Objects = []fyne.CanvasObject{container.NewBorder(padded(12, 8, 12, 12, toolDetailHeading(item, runState(tab.chat, tab.index))), nil, nil, nil, newDiffView(item.Diff))}
 			} else {
 				panel.body.Content = padded(16, 20, 18, 18, panel.details(item, runState(tab.chat, tab.index)))
@@ -461,7 +461,7 @@ func toolDetailHeading(item agent.ChatItem, state string) fyne.CanvasObject {
 	default:
 		fact("Done", colAdded)
 	}
-	if item.Tool == "edit_file" && item.Diff != "" {
+	if item.Diff != "" {
 		added, removed := diffStat(item.Diff)
 		fact(fmt.Sprintf("+%d", added), colAdded)
 		fact(fmt.Sprintf("−%d", removed), colDanger)
@@ -488,7 +488,7 @@ func (panel *toolPanel) details(item agent.ChatItem, state string) fyne.CanvasOb
 	case "shell":
 		add("Command", command, "")
 		add("Output", item.Text, outputPlaceholder(running, "No output"))
-	case "edit_file":
+	case "edit_file", "apply_patch":
 		add("Changes", item.Diff, outputPlaceholder(running, "No diff recorded"))
 	case "read_file":
 		add("Content", item.Text, outputPlaceholder(running, "Empty file"))

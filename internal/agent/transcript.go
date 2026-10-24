@@ -5,6 +5,7 @@ package agent
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 
 	"1loop/internal/core"
@@ -83,6 +84,24 @@ func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) 
 			return pick("Created", "Creating"), path, false
 		}
 		return pick("Edited", "Editing"), path, false
+	case "apply_patch":
+		var args struct{ Patch string }
+		_ = json.Unmarshal([]byte(item.Args), &args)
+		var paths []string
+		for _, line := range strings.Split(args.Patch, "\n") {
+			for _, prefix := range []string{"*** Add File: ", "*** Update File: ", "*** Delete File: "} {
+				if name, ok := strings.CutPrefix(line, prefix); ok {
+					paths = append(paths, strings.TrimSpace(name))
+				}
+			}
+		}
+		switch len(paths) {
+		case 0:
+			return pick("Edited", "Editing"), diffPath(item.Diff), false
+		case 1:
+			return pick("Edited", "Editing"), paths[0], false
+		}
+		return pick("Edited", "Editing"), fmt.Sprintf("%s and %d more", paths[0], len(paths)-1), false
 	}
 	// A tool of another harness (Claude Code's Grep, WebFetch, Agent…):
 	// its name and the argument that says what it is about.

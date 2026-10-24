@@ -478,7 +478,7 @@ func itemForPhone(chat *conversation, index int) remoteapi.Item {
 		out.Meta, out.Tone = "Stopped", "muted"
 	case item.Failed != "":
 		out.Meta, out.Tone = shortError(item.Failed), "danger"
-	case item.Tool == "edit_file" && item.Diff != "":
+	case item.Diff != "": // edit_file and apply_patch
 		added, removed := diffStat(item.Diff)
 		out.Meta, out.Tone = fmt.Sprintf("+%d −%d", added, removed), "added"
 	case item.Tool == "shell" && item.Millis > 0:

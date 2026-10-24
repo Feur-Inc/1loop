@@ -109,12 +109,11 @@ func withMore(row *tapRow, open func(anchor fyne.CanvasObject) *sheet) fyne.Canv
 	}
 	row.onHover = func(in bool) { rowIn = in; sync() }
 	more.onHover = func(in bool) { moreIn = in; sync() }
-	// The button stays visible while its menu is open, so the menu keeps a
-	// stable anchor even when the pointer leaves the row to reach it.
+	// Anchor to the always-visible row: the hidden button may not have been laid out yet.
 	show := func() {
 		menuOpen = true
 		more.Show()
-		if menu := open(more); menu != nil {
+		if menu := open(row); menu != nil {
 			menu.onClosed = func() { menuOpen = false; sync() }
 		} else {
 			menuOpen = false

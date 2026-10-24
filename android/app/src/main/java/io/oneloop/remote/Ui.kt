@@ -1,6 +1,11 @@
 package io.oneloop.remote
 
 import android.content.ClipData
+import android.content.Context
+import android.content.Intent
+import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -91,6 +96,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
@@ -115,6 +121,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
@@ -232,6 +239,11 @@ private fun UpdateCard(app: RemoteApp, modifier: Modifier) {
 // ---------------------------------------------------------------------------
 // Computers on the network
 
+// From Android 17, an app that targets it reaches the devices on the local
+// network (a computer on this Wi-Fi, its discovery) only once allowed to.
+private fun localNetworkAllowed(context: Context) =
+    Build.VERSION.SDK_INT < 37 || context.checkSelfPermission(android.Manifest.permission.ACCESS_LOCAL_NETWORK) == PackageManager.PERMISSION_GRANTED
+
 // Remote desktop: the computers on this Wi-Fi, found or scanned from their
 // QR code; Remote server: the HTTPS servers added by address.
 @OptIn(androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -241,6 +253,28 @@ fun ServersScreen(app: RemoteApp) {
     val desktop = app.target != ExecutionTarget.RemoteServer
     val shown = app.servers.filter { it.desktop == desktop }
     val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> result.contents?.let(app::pairFromLink) }
+    val context = LocalContext.current
+    var lanAllowed by remember { mutableStateOf(localNetworkAllowed(context)) }
+    var lanAsked by remember { mutableStateOf(0) }
+    val askLan = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        lanAllowed = granted
+        if (granted) app.scan()
+    }
+    val allowLan = {
+        // Android stops asking after two refusals: the setting is then in the app's details.
+        if (lanAsked < 2) {
+            lanAsked++
+            askLan.launch(android.Manifest.permission.ACCESS_LOCAL_NETWORK)
+        } else {
+            context.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))
+        }
+    }
+    LaunchedEffect(desktop) { if (desktop && !lanAllowed) allowLan() }
+    // Back from the app's settings: allowed there.
+    LifecycleResumeEffect(Unit) {
+        if (!lanAllowed && localNetworkAllowed(context)) { lanAllowed = true; app.scan() }
+        onPauseOrDispose {}
+    }
     BackHandler { app.switchTarget() }
     Column(
         Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState())
@@ -284,7 +318,15 @@ fun ServersScreen(app: RemoteApp) {
                     Icon(Icons.chevronRight, null, tint = Palette.faint, modifier = Modifier.size(18.dp))
                 }
             }
-            if (desktop && app.scanning) {
+            if (desktop && !lanAllowed) {
+                Text(
+                    "1loop needs access to devices on your local network to find and reach your computer on this Wi-Fi.",
+                    style = Type.small, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
+                )
+                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.Center) {
+                    Pill("Allow local network access", primary = true) { allowLan() }
+                }
+            } else if (desktop && app.scanning) {
                 Row(Modifier.fillMaxWidth().padding(vertical = 14.dp), horizontalArrangement = Arrangement.Center, verticalAlignment = Alignment.CenterVertically) {
                     WorkRing("wait", 26.dp)
                     Spacer(Modifier.width(12.dp))

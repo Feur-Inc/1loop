@@ -6,6 +6,10 @@ Rules for every pull request:
 2. When the change is visible (desktop or phone interface, the site,
    anything a screenshot can show), add a before and an after screenshot,
    taken on the same screen.
+3. Always include an "Assisted-by:" footer with the exact model and version
+   actually used, plus its reasoning effort when applicable, for example:
+   "Assisted-by: GPT-6.1 medium". A tool name alone (Codex, Claude Code, etc.)
+   is not a precise model attribution.
 
 `gh pr create --body` skips this template: follow these rules anyway. `gh`
 cannot upload images, so never commit screenshots to the repository; say in
@@ -25,3 +29,5 @@ Closes #
 | Before | After |
 | ------ | ----- |
 |        |       |
+
+Assisted-by: <exact model, version and reasoning effort used>

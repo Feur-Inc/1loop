@@ -65,7 +65,7 @@ func toolGlyph(tool string) fyne.Resource {
 	switch tool {
 	case "shell":
 		return iconTerminal
-	case "edit_file":
+	case "edit_file", "apply_patch":
 		return iconPencil
 	case "list_directory":
 		return iconFolder
@@ -209,7 +209,7 @@ func (renderer *toolRowRenderer) Refresh() {
 	case item.Failed != "":
 		renderer.meta.Text = shortError(item.Failed)
 		renderer.meta.Color = colDanger
-	case item.Tool == "edit_file" && item.Diff != "":
+	case item.Diff != "": // edit_file and apply_patch
 		added, removed := diffStat(item.Diff)
 		renderer.meta.Text = fmt.Sprintf("+%d", added)
 		renderer.meta.Color = colAdded

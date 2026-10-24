@@ -60,7 +60,7 @@ object Icons {
 
     fun forTool(tool: String) = when (tool) {
         "shell" -> terminal
-        "edit_file" -> pencil
+        "edit_file", "apply_patch" -> pencil
         "list_directory" -> folder
         else -> document
     }

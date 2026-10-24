@@ -461,7 +461,10 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
 	ui.workMark = newLoopMark(inlineMarkSize)
 	ui.thinkLabel = newFitLabel("", 14, colMuted)
-	ui.thinking = container.NewBorder(nil, nil, container.NewCenter(ui.workMark.image), nil, padded(0, 0, 12, 0, ui.thinkLabel))
+	// A tap on the line brings back questions closed without an answer.
+	ui.thinking = container.NewStack(
+		container.NewBorder(nil, nil, container.NewCenter(ui.workMark.image), nil, padded(0, 0, 12, 0, ui.thinkLabel)),
+		newTapArea(ui.reopenQuestions))
 	ui.inlineSlot = container.NewStack(ui.thinking)
 	ui.inlineRow = padded(6, 0, 4, 0, ui.inlineSlot)
 	ui.inlineRow.Hide()

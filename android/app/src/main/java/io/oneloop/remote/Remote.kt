@@ -253,6 +253,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var meta by mutableStateOf<Meta?>(null)
     val approvals = mutableStateMapOf<String, Approval>() // by chat
     val questions = mutableStateMapOf<String, Questions>() // by chat
+    val questionsAside = mutableStateListOf<String>() // closed unanswered: reopened from the composer
     var busy by mutableStateOf(false)
     var sharing by mutableStateOf<SharingState?>(null) // local mode: this phone shared on the network
 
@@ -566,6 +567,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         current = null
         approvals.clear()
         questions.clear()
+        questionsAside.clear()
         prefs.edit { putString("last", target.key) }
         screen = Screen.Chat
         events = scope.launch {
@@ -1331,6 +1333,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val target = server ?: return
         questions.remove(request.chat)
+        questionsAside.remove(request.id)
         scope.launch {
             runCatching {
                 val body = JSONObject().put("id", request.id).put("answers", JSONObject(answers))

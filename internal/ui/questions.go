@@ -2,7 +2,8 @@ package ui
 
 // The model's questions (request_user_input): each with its options and an
 // "Other" line to answer in one's own words. The run waits for the answers;
-// the phone can answer them too (see phone_server.go).
+// the phone can answer them too (see phone_server.go). Closing the sheet
+// only sets the questions aside: a tap on the activity line brings them back.
 
 import (
 	"strings"
@@ -112,11 +113,29 @@ func (ui *desktopUI) showQuestions(chat *conversation, request agent.QuestionReq
 	}
 	scroll := container.NewVScroll(body)
 	scroll.SetMinSize(fyne.NewSize(0, min(520, body.MinSize().Height)))
-	dialog = ui.modal(title, scroll, 640, func() { finish(nil) }, send)
+	dialog = ui.modal(title, scroll, 640, func() {
+		if !resolved && chat.run != nil && chat.run.questions == dialog && chat.run.turn != nil {
+			ui.applyActivity(chat.run.turn) // the line now says how to reopen them
+		}
+	}, send)
 	ui.notifyUser(chat, request.Questions[0].Question)
 	if chat.run != nil {
 		chat.run.questions, chat.run.questionID, chat.run.questionList = dialog, request.ID, request.Questions
 		chat.run.answerQuestions = finish
 		ui.remote.metaChanged(chat)
 	}
+}
+
+// reopenQuestions shows the open chat's questions again after they were
+// closed without an answer.
+func (ui *desktopUI) reopenQuestions() {
+	if ui.current == nil || ui.current.run == nil {
+		return
+	}
+	run := ui.current.run
+	if run.questions == nil || run.questions.open {
+		return
+	}
+	run.questions.Show()
+	ui.window.Canvas().Focus(run.questions)
 }

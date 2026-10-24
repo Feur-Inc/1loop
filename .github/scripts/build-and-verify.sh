@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
+cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
 
 # Keep Go compilation and Gradle workers bounded on the development machine.
 export GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=1"
@@ -19,6 +19,7 @@ echo 'Running Go tests'
 go test ./...
 
 echo 'Building Linux desktop (X11 and Wayland) and headless server'
+mkdir -p bin
 make build server
 
 echo 'Building Android APKs, running unit tests and lint'

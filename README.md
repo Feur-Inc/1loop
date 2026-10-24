@@ -175,7 +175,9 @@ silently install it on users' devices.
 1. **Check Pages once.** In the repository's **Settings → Pages**, select
    **Deploy from a branch**, branch **gh-pages**, folder **/ (root)**.
    The site is <https://tpm28.github.io/1loop/>. This uses GitHub's Pages
-   deployment; no custom GitHub Actions CI workflow is required.
+   deployment. Stable releases still publish this site through `release.sh`;
+   the GitHub Actions workflow below runs CI and publishes test alpha releases
+   from `dev` without changing the stable Pages manifest.
 2. **Prepare the release.** Increase `VERSION` (for example, `0.3.2` to
    `0.3.3`) and write `docs/releases/0.3.3.md` with the release notes.
    Commit, review and merge the changes, then publish from the intended clean
@@ -184,6 +186,9 @@ silently install it on users' devices.
 3. **Keep the existing signing keys.** Use the same private manifest key that
    matches the public key embedded in installed apps, and the same Android
    APK signing keystore. Android rejects an update signed by another APK key.
+   The ignored local `release-key.pem` is also stored in the repository's
+   Actions secret `RELEASE_KEY` so CI can sign alpha build checksums; configure
+   it with `gh secret set RELEASE_KEY --repo Feur-Inc/1loop < release-key.pem`.
    Never commit either private key or an access token.
 4. **Run the publisher from the repository root:**
 
@@ -194,12 +199,14 @@ silently install it on users' devices.
      bash release.sh
    ```
 
-   `release.sh` runs `ci.sh`, builds and packages all five downloads, signs
-   the manifest, pushes the files to `gh-pages`, and creates the matching
-   GitHub release. The results are also kept locally in `dist/VERSION/`.
-   Do not reuse a version already published. If `ci.sh` has just passed for
-   exactly the source and build outputs being published, `SKIP_CI=1` can
-   reuse those outputs; otherwise leave the checks enabled.
+   `release.sh` runs `.github/scripts/build-and-verify.sh`, builds and packages
+   all five downloads, signs the manifest, pushes the files to `gh-pages`, and
+   creates the matching GitHub release. The results are also kept locally in
+   `dist/VERSION/`.
+   Do not reuse a version already published. If
+   `.github/scripts/build-and-verify.sh` has just passed for exactly the source
+   and build outputs being published, `SKIP_CI=1` can reuse those outputs;
+   otherwise leave the checks enabled.
 5. **Wait for Pages to deploy, then verify.** Open the release page and
    `updates/latest.json` above. The manifest is a signed envelope, rather
    than plain release notes; let an installed app verify it with
@@ -222,8 +229,26 @@ make            # bin/1loop (X11) and bin/1loop-wayland (native Wayland)
 make server     # bin/1loop-server, static, no CGO
 make run        # build, then open 1loop on the current folder
 make dev        # same, with the developer log (~/.cache/1loop/dev.log)
-bash ci.sh      # all checks and builds: Go, Linux, Android, Windows (Docker)
+bash .github/scripts/build-and-verify.sh
+# all checks and builds: Go, Linux, Android, Windows (Docker)
 ```
+
+The GitHub Actions workflow runs these checks for pull requests and pushes to
+`dev` and `main`. After read-only checks succeed, a trusted push to `dev`
+rebuilds the same commit in a write-scoped publisher job and publishes a signed
+alpha prerelease directly on GitHub Releases; no Actions artifacts are used.
+Tags continue the existing `alpha-N` sequence. The workflow retains only the
+three newest `alpha-` prereleases and never removes stable releases. The release
+assets include signed `SHA256SUMS`; verify the checksum signature first, then
+the downloads:
+
+```bash
+openssl dgst -sha256 -verify release-key.pub -signature SHA256SUMS.sig SHA256SUMS
+sha256sum --check SHA256SUMS
+```
+
+Before trusting the included `release-key.pub`, compare it with
+`.github/release-key.pub` at the source commit linked by the release notes.
 
 Always start `bin/1loop`: in a Wayland session it hands over to
 `bin/1loop-wayland`. `ONELOOP_BACKEND=x11` forces X11.
@@ -231,8 +256,8 @@ Always start `bin/1loop`: in a Wayland session it hands over to
 - **Android**: JDK 21 and the Android SDK (`platforms;android-37.0`,
   `build-tools;37.0.0`, NDK `30.0.16248370` for the native helpers), then
   `cd android && ./gradlew assembleRelease`.
-- **Windows**: `ci.sh` cross-builds `bin/windows/` from Linux with MinGW in
-  Docker. Natively: MinGW-w64 GCC on `PATH`, then
+- **Windows**: `.github/scripts/build-and-verify.sh` cross-builds `bin/windows/`
+  from Linux with MinGW in Docker. Natively: MinGW-w64 GCC on `PATH`, then
   `go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe ./cmd/1loop`.
 - **Releases**: `bash release.sh` builds everything, signs the update manifest
   with `release-key.pem` (never committed), publishes the files on the release

@@ -1,0 +1,54 @@
+name: Build and verify 1loop
+
+description: Set up all build toolchains and run the repository's Go, Linux, Android and Windows checks.
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Go
+      uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+      with:
+        go-version-file: go.mod
+        cache: true
+
+    - name: Set up Java 21
+      uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+      with:
+        distribution: temurin
+        java-version: '21'
+
+    - name: Set up Android SDK tools
+      uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+
+    - name: Install Linux build dependencies
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        sudo apt-get update
+        sudo apt-get install --no-install-recommends --yes \
+          build-essential \
+          cmake \
+          libgl-dev \
+          libwayland-dev \
+          libxkbcommon-dev \
+          patchelf \
+          pkg-config \
+          xorg-dev \
+          zip
+
+    - name: Install Android platform and NDK
+      shell: bash
+      run: |
+        set -Eeuo pipefail
+        sdkmanager --sdk_root="$ANDROID_HOME" --install \
+          'platforms;android-37.0' \
+          'build-tools;37.0.0' \
+          'ndk;30.0.16248370'
+
+    - name: Verify Docker runner support
+      shell: bash
+      run: docker version
+
+    - name: Run Go, Linux, Android and Windows build checks
+      shell: bash
+      run: bash .github/scripts/build-and-verify.sh

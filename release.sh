@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Publishes the version written in VERSION:
-#   1. builds and checks everything (ci.sh);
+#   1. builds and checks everything (.github/scripts/build-and-verify.sh);
 #   2. packages the downloads in dist/VERSION/;
 #   3. signs the update manifest with release-key.pem (never committed);
 #   4. publishes the files and the manifest on the release page, GitHub Pages
@@ -8,7 +8,8 @@
 #   5. creates the GitHub release with the same files.
 # Installed apps find the new version through that manifest.
 #
-# Usage: bash release.sh     (SKIP_CI=1 reuses the outputs of a ci.sh run)
+# Usage: bash release.sh
+#        (SKIP_CI=1 reuses outputs from .github/scripts/build-and-verify.sh)
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
@@ -34,7 +35,7 @@ if gh release view "v$version" --repo "$repo" >/dev/null 2>&1; then
   exit 1
 fi
 
-[ "${SKIP_CI:-}" = 1 ] || bash ci.sh
+[ "${SKIP_CI:-}" = 1 ] || bash .github/scripts/build-and-verify.sh
 
 echo "Packaging $version"
 mkdir -p "$out"

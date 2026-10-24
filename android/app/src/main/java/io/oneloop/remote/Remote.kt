@@ -234,6 +234,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var workspace by mutableStateOf("")
     var selectedProject by mutableStateOf<String?>(null)
     var projectManagement by mutableStateOf(false)
+    var projectActions by mutableStateOf(false)
     var projectsOpen by mutableStateOf(false)
     var settingsOpen by mutableStateOf(false)
     var updateAsked by mutableStateOf(false) // the update dialog, over any screen
@@ -567,6 +568,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         runCatching { JSONArray(prefs.getString("limits:${target.key}", "[]")) }.getOrNull()?.let { restoreLimits(it) }
         selectedProject = prefs.getString("project:${target.key}", null)
         projectManagement = false
+        projectActions = false
         preferencesEditable = false
         userPreferences = ""
         running.clear()
@@ -661,6 +663,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             projects = strings(state.optJSONArray("projects"))
             workspace = state.optString("workspace")
             projectManagement = state.optBoolean("projectManagement")
+            projectActions = state.optBoolean("projectActions")
             if (selectedProject !in projects) selectedProject = workspace
             state.optJSONObject("settings")?.let { applySettings(it) }
             if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull { it.workspace == selectedProject }?.id
@@ -807,7 +810,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val target = server ?: return
         val generation = connectionGeneration
         when (name) {
-            "projects" -> { projects = strings(data.optJSONArray("projects")) }
+            "projects" -> applyProjects(data)
             "chats" -> {
                 val list = parseChats(data.optJSONArray("chats"))
                 chats.clear()
@@ -981,6 +984,35 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val reply = onConnection(target, generation) { it.post("/api/projects", JSONObject().put("path", path).put("create", create)) }
         projects = strings(reply.optJSONArray("projects"))
         selectProject(reply.getString("workspace"))
+    }
+
+    suspend fun changeProject(path: String, name: String? = null) {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        val body = JSONObject().put("path", path)
+        if (name == null) body.put("confirm", path) else body.put("name", name)
+        val action = if (name == null) "delete" else "rename"
+        val reply = onConnection(target, generation) { it.post("/api/projects/$action", body) }
+        applyProjects(reply)
+        val destination = reply.optString("workspace")
+        if (name != null) {
+            val oldDraft = "${target.key}|new:$path"
+            drafts.restore("${target.key}|new:$destination", drafts.get(oldDraft))
+        }
+        refresh(target, generation)
+        if (current != null && chats.none { it.id == current }) open(null)
+    }
+
+    private fun applyProjects(data: JSONObject) {
+        projects = strings(data.optJSONArray("projects"))
+        val previous = data.optString("previous")
+        val destination = data.optString("workspace")
+        val selected = selectedProject.orEmpty()
+        if (previous.isNotEmpty() && (selected == previous || selected.startsWith("$previous/") || selected.startsWith("$previous\\"))) {
+            selectedProject = if (destination.isEmpty()) null else destination + selected.removePrefix(previous)
+        }
+        if (selectedProject !in projects) selectedProject = projects.firstOrNull()
+        server?.let { target -> prefs.edit { putString("project:${target.key}", selectedProject) } }
     }
 
     suspend fun savePreferences(text: String) {

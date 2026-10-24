@@ -63,6 +63,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -85,6 +86,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.input.key.Key
@@ -104,6 +106,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.delay
@@ -162,6 +167,16 @@ fun CopyChip(text: () -> String) {
 
 @Composable
 fun Root(app: RemoteApp) {
+    val focus = LocalFocusManager.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle, focus) {
+        val observer = LifecycleEventObserver { _, event ->
+            // A retained text field must not reopen the IME when the app returns.
+            if (event == Lifecycle.Event.ON_STOP) focus.clearFocus(force = true)
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
     LaunchedEffect(app.updates.latest?.code, app.screen == Screen.Launch) {
         val release = app.updates.latest
         if (app.screen != Screen.Launch && app.updates.available && release != null && app.updateOffered != release.code) {
@@ -459,6 +474,7 @@ fun ChatScreen(app: RemoteApp) {
 @Composable
 private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) {
     var deleting by remember(app.server) { mutableStateOf<ChatSummary?>(null) }
+    var projectActions by remember(app.server) { mutableStateOf<String?>(null) }
     Column(modifier.background(Palette.sidebar).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
         Image(painterResource(R.drawable.logo), "1loop", modifier = Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp))
         NavRow("New chat", Icons.plus, selected = app.current == null) { app.open(null); onPicked() }
@@ -469,7 +485,11 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
             }
             for (workspace in (app.projects + app.chats.map { it.workspace }).distinct()) {
                 val selected = workspace == app.selectedProject
-                NavRow(projectName(workspace), Icons.folder, selected = selected) { app.selectProject(workspace) }
+                NavRow(
+                    projectName(workspace), Icons.folder, selected = selected,
+                    onLongClick = if (app.projectActions) ({ projectActions = workspace }) else null,
+                    longClickLabel = "Project actions",
+                ) { app.selectProject(workspace) }
                 if (selected) {
                     val chats = app.chats.filter { it.workspace == workspace }
                     Column(Modifier.padding(start = 16.dp)) {
@@ -502,6 +522,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
         NavRow("Switch execution target", Icons.refresh, selected = false) { app.switchTarget() }
         Spacer(Modifier.height(8.dp))
     }
+    projectActions?.let { path -> ProjectActionsSheet(app, path) { projectActions = null } }
     deleting?.let { chat ->
         ModalBottomSheet(
             onDismissRequest = { deleting = null },
@@ -527,10 +548,10 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
 }
 
 @Composable
-private fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, onClick: () -> Unit) {
+private fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (selected) Palette.selected else Color.Transparent)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = "Delete chat").padding(horizontal = 10.dp, vertical = 10.dp),
+            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = longClickLabel).padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) {
@@ -544,6 +565,7 @@ private fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running:
 
 @Composable
 private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifier, panel: Boolean, onPanelChange: (Boolean) -> Unit) {
+    val focus = LocalFocusManager.current
     val meta = app.meta
     val running = meta?.running == true
     var tool by remember { mutableStateOf<Item?>(null) }
@@ -561,7 +583,10 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
                 )
             }
             if (app.current != null) Box {
-                RoundButton(Icons.panel, Color.Transparent, Palette.muted, description = "Panel: tasks, browser, terminal") { onPanelChange(true) }
+                RoundButton(Icons.panel, Color.Transparent, Palette.muted, description = "Panel: tasks, browser, terminal") {
+                    focus.clearFocus(force = true)
+                    onPanelChange(true)
+                }
                 // A task in progress: the panel has news.
                 if (meta?.todo?.any { it.status == "in_progress" } == true) {
                     Box(Modifier.align(Alignment.TopEnd).padding(top = 8.dp, end = 8.dp).size(7.dp).clip(CircleShape).background(Palette.amber))

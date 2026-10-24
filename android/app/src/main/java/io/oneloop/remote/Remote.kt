@@ -89,6 +89,12 @@ data class Questions(val chat: String, val id: String, val questions: List<Quest
     }
 }
 
+/** What the user has picked or written for a request's questions, kept while its sheet is set aside. */
+class QuestionDraft {
+    val answers = mutableStateMapOf<String, String>()
+    val others = mutableStateMapOf<String, String>() // the "Other" lines, by question
+}
+
 data class Effort(val value: String, val label: String, val about: String)
 
 /** A speed the ChatGPT plan offers for a model (Fast, Ultrafast…). */
@@ -254,6 +260,16 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var meta by mutableStateOf<Meta?>(null)
     val approvals = mutableStateMapOf<String, Approval>() // by chat
     val questions = mutableStateMapOf<String, Questions>() // by chat
+    val questionsAside = mutableStateListOf<String>() // closed unanswered: reopened from the composer
+    private val questionDrafts = mutableMapOf<String, QuestionDraft>() // by request
+
+    fun questionDraft(request: Questions) = questionDrafts.getOrPut(request.id) { QuestionDraft() }
+
+    private fun forgetQuestion(request: Questions?) {
+        if (request == null) return
+        questionsAside.remove(request.id)
+        questionDrafts.remove(request.id)
+    }
     var busy by mutableStateOf(false)
     var sharing by mutableStateOf<SharingState?>(null) // local mode: this phone shared on the network
 
@@ -568,6 +584,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         current = null
         approvals.clear()
         questions.clear()
+        questionsAside.clear()
+        questionDrafts.clear()
         prefs.edit { putString("last", target.key) }
         screen = Screen.Chat
         events = scope.launch {
@@ -707,7 +725,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 if (generation != connectionGeneration) return@launch
                 chats.removeAll { it.id == id }
                 approvals.remove(id)
-                questions.remove(id)
+                forgetQuestion(questions.remove(id))
                 if (current == id) open(null)
             } catch (e: CancellationException) {
                 throw e
@@ -783,7 +801,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             if (m.question != null && questions[m.chat]?.id != m.question.id) notifier.show(m.chat, m.title, m.question.questions.firstOrNull()?.text ?: "1loop has a question")
         }
         if (m.approval != null) approvals[m.chat] = m.approval else approvals.remove(m.chat)
-        if (m.question != null) questions[m.chat] = m.question else questions.remove(m.chat)
+        val previous = if (m.question != null) questions.put(m.chat, m.question) else questions.remove(m.chat)
+        if (previous?.id != m.question?.id) forgetQuestion(previous)
         if (m.chat == current) meta = m
     }
 
@@ -1363,6 +1382,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val target = server ?: return
         questions.remove(request.chat)
+        forgetQuestion(request)
         scope.launch {
             runCatching {
                 val body = JSONObject().put("id", request.id).put("answers", JSONObject(answers))

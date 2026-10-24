@@ -969,7 +969,11 @@ func (ui *desktopUI) applyActivity(currentTurn *turn) {
 	if currentTurn.chat != ui.current || currentTurn.mark == "" {
 		return
 	}
-	ui.thinkLabel.SetText(currentTurn.label)
+	label := currentTurn.label
+	if run := currentTurn.chat.run; run != nil && run.questions != nil && !run.questions.open {
+		label = "Waiting for your answer: click here to see the questions"
+	}
+	ui.thinkLabel.SetText(label)
 	ui.workMark.setState(currentTurn.mark)
 }
 

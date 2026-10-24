@@ -58,6 +58,7 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.ModalBottomSheet
 import androidx.compose.material3.ModalDrawerSheet
 import androidx.compose.material3.ModalNavigationDrawer
+import androidx.compose.material3.SheetValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
@@ -67,8 +68,8 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableIntStateOf
-import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
@@ -462,8 +463,9 @@ fun ChatScreen(app: RemoteApp) {
     }
     val approval = app.approvals.values.firstOrNull()
     if (approval != null) ApprovalSheet(app, approval)
-    val question = app.questions.values.firstOrNull()
-    if (approval == null && question != null) QuestionSheet(app, question)
+    val question = app.questions.values.firstOrNull { it.id !in app.questionsAside }
+    // A sheet per request: closing one shows the next with its own state, not the last one's Hidden.
+    if (approval == null && question != null) key(question.id) { QuestionSheet(app, question) }
     if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
     if (app.projectsOpen) ProjectsSheet(app) { app.projectsOpen = false }
 }
@@ -807,6 +809,10 @@ private fun Composer(app: RemoteApp, running: Boolean) {
     ) {
         val meta = app.meta
         if (meta != null && (meta.queue.isNotEmpty() || meta.steer.isNotEmpty())) QueueTray(meta)
+        // Questions closed without an answer: the run still waits for them.
+        app.current?.let { app.questions[it] }?.takeIf { it.id in app.questionsAside }?.let { request ->
+            QuestionTray(request) { app.questionsAside.remove(request.id) }
+        }
         app.problem?.let { Text(it, style = Type.small.copy(color = Palette.danger), modifier = Modifier.padding(bottom = 6.dp)) }
         // The desktop's context line: the project and the computer.
         Row(Modifier.widthIn(max = 760.dp).fillMaxWidth().padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -935,6 +941,22 @@ private fun QueueTray(meta: Meta) {
 }
 
 @Composable
+private fun QuestionTray(request: Questions, onOpen: () -> Unit) {
+    Row(
+        Modifier.widthIn(max = 728.dp).fillMaxWidth().background(Palette.popover, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
+            .border(1.dp, Palette.borderHot, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)).padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Text(
+            request.questions.firstOrNull()?.text ?: "1loop has a question", style = Type.body.copy(fontSize = 14.sp, color = Palette.muted),
+            maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f),
+        )
+        Spacer(Modifier.width(8.dp))
+        Pill("Answer", primary = true, onClick = onOpen)
+    }
+}
+
+@Composable
 private fun QueueLine(text: String, number: Int?) {
     Row(verticalAlignment = Alignment.CenterVertically) {
         Box(Modifier.size(20.dp).clip(CircleShape).background(if (number == null) Color.Transparent else Palette.border), contentAlignment = Alignment.Center) {
@@ -1010,9 +1032,12 @@ private fun elapsed(ms: Long) = when {
 private fun QuestionSheet(app: RemoteApp, request: Questions) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { true })
     val title = app.chats.firstOrNull { it.id == request.chat }?.title.orEmpty()
-    val answers = remember(request.id) { mutableStateMapOf<String, String>() }
-    val others = remember(request.id) { mutableStateMapOf<String, String>() }
-    ModalBottomSheet(onDismissRequest = {}, sheetState = state, containerColor = Palette.surface) {
+    val draft = app.questionDraft(request) // survives the sheet being set aside
+    val answers = draft.answers
+    val others = draft.others
+    // Closing (swipe, back, outside tap) sets the questions aside, to answer
+    // from the composer: the run keeps waiting for them.
+    ModalBottomSheet(onDismissRequest = { app.questionsAside.add(request.id) }, sheetState = state, containerColor = Palette.surface) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 WorkRing("approval", 34.dp)
@@ -1056,7 +1081,8 @@ private fun QuestionSheet(app: RemoteApp, request: Questions) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ApprovalSheet(app: RemoteApp, approval: Approval) {
-    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { true })
+    // Only Deny or Allow close it: a hidden sheet left in place would block every touch.
+    val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { it != SheetValue.Hidden })
     val title = app.chats.firstOrNull { it.id == approval.chat }?.title.orEmpty()
     ModalBottomSheet(onDismissRequest = {}, sheetState = state, containerColor = Palette.surface) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {

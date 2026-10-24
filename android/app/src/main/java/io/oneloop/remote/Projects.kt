@@ -68,3 +68,68 @@ fun ProjectsSheet(app: RemoteApp, onDone: () -> Unit) {
         }
     }
 }
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ProjectActionsSheet(app: RemoteApp, path: String, onDone: () -> Unit) {
+    var action by remember(path) { mutableStateOf("") }
+    var name by remember(path) { mutableStateOf(projectName(path)) }
+    var busy by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    fun apply() {
+        busy = true
+        problem = null
+        scope.launch {
+            try {
+                app.changeProject(path, if (action == "rename") name.trim() else null)
+                onDone()
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                problem = failure.message ?: "Could not change the project."
+            } finally {
+                busy = false
+            }
+        }
+    }
+    ModalBottomSheet(
+        onDismissRequest = { if (!busy) onDone() },
+        containerColor = Palette.surface,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(
+            Modifier.verticalScroll(rememberScrollState()).padding(24.dp).padding(bottom = 24.dp),
+            verticalArrangement = Arrangement.spacedBy(14.dp),
+        ) {
+            Text(when (action) {
+                "rename" -> "Rename project"
+                "delete" -> "Delete project?"
+                else -> projectName(path)
+            }, style = Type.title)
+            Text(path, style = Type.small)
+            when (action) {
+                "rename" -> {
+                    Text("Renames this folder and keeps its contents and chats. Stop its agents and close its terminals first.", style = Type.body)
+                    Field(name, { name = it }, "Folder name", KeyboardType.Text)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Pill("Cancel", enabled = !busy, onClick = onDone)
+                        Pill("Rename", primary = true, enabled = !busy && name.isNotBlank() && name.trim() != projectName(path) && name.trim() !in listOf(".", "..") && name.none { it == '/' || it == '\\' }) { apply() }
+                    }
+                }
+                "delete" -> {
+                    Text("Permanently deletes this folder, ALL its files and subfolders, and its chats. This cannot be undone. Stop its agents and close its terminals first.", style = Type.body)
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        Pill("Cancel", enabled = !busy, onClick = onDone)
+                        Pill(if (busy) "Deleting…" else "Delete project and files", primary = true, enabled = !busy) { apply() }
+                    }
+                }
+                else -> {
+                    Pill("Rename") { action = "rename" }
+                    Pill("Delete project") { action = "delete" }
+                }
+            }
+            problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }
+        }
+    }
+}

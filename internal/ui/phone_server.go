@@ -166,6 +166,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/preferences", server.authorized(server.setPreferences))
 	mux.HandleFunc("GET /api/projects", server.authorized(server.projectFolders))
 	mux.HandleFunc("POST /api/projects", server.authorized(server.addProject))
+	mux.HandleFunc("POST /api/projects/{action}", server.authorized(server.changeProject))
 	mux.HandleFunc("POST /api/model", server.authorized(server.setModel))
 	mux.HandleFunc("GET /api/limits", server.authorized(server.limits))
 	mux.HandleFunc("POST /api/approval-mode", server.authorized(server.setApprovalMode))
@@ -529,7 +530,7 @@ func (server *remoteServer) state(writer http.ResponseWriter, _ *http.Request) {
 		}
 		projects := append([]string{}, server.ui.projects...)
 		out = map[string]any{"name": server.name, "projects": projects, "workspace": server.ui.cfg.Workspace,
-			"projectManagement": true, "chats": chats, "current": current, "settings": server.ui.settingsForPhone()}
+			"projectManagement": true, "projectActions": true, "chats": chats, "current": current, "settings": server.ui.settingsForPhone()}
 	})
 	core.WriteJSON(writer, http.StatusOK, out)
 }

@@ -67,6 +67,7 @@ func (server *headlessServer) routes() http.Handler {
 	endpoints := map[string]http.HandlerFunc{
 		"GET /api/projects":                            server.projectFolders,
 		"POST /api/projects":                           server.addProject,
+		"POST /api/projects/{action}":                  server.changeProject,
 		"GET /api/state":                               server.state,
 		"GET /api/limits":                              server.limits,
 		"GET /api/chats/{id}":                          server.chat,
@@ -130,8 +131,9 @@ func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 	core.WriteJSON(w, 200, map[string]any{
 		"name":              server.name,
 		"projects":          server.projects,
-		"workspace":         server.root,
+		"workspace":         server.cfg.Workspace,
 		"projectManagement": true,
+		"projectActions":    true,
 		"chats":             server.summariesLocked(),
 		"settings":          server.settingsLocked(),
 	})

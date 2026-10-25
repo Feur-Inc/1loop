@@ -141,8 +141,10 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
             // Hardware accelerated: a window added from a service is drawn in software
             // otherwise, and the working ring animates every frame.
+            // Not touch modal: touches beside the badge reach the app below, even while it
+            // takes the keyboard (typing an answer).
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.END
@@ -153,6 +155,7 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         val passThrough = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
         params.flags = if (status.phoneUse) params.flags or passThrough else params.flags and passThrough.inv()
         params.alpha = if (status.phoneUse) 0.4f else 1f
+        params.flags = focusable(params.flags)
         val view = badge
         if (view == null) {
             badge = ComposeView(this).apply {
@@ -163,6 +166,8 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
                     OneLoopTheme {
                         StatusBadge(
                             onStop = AgentStatus::stop,
+                            onAnswer = AgentStatus::answer,
+                            onTyping = ::setTyping,
                             onTalk = { chat -> startActivity(openIntent(this@AgentStatusService, chat).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
                             onDrag = { dy -> moveBadge(dy) },
                         )
@@ -171,6 +176,24 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
             }
             manager.addView(badge, params)
         } else manager.updateViewLayout(view, params)
+    }
+
+    // The badge takes the keyboard only while an answer is typed: otherwise it would
+    // take it from the app the user is in.
+    private var typing = false
+
+    private fun focusable(flags: Int): Int {
+        val notFocusable = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+        return if (typing) flags and notFocusable.inv() else flags or notFocusable
+    }
+
+    private fun setTyping(value: Boolean) {
+        if (typing == value) return
+        typing = value
+        val view = badge ?: return
+        val params = badgeParams ?: return
+        params.flags = focusable(params.flags)
+        getSystemService(WindowManager::class.java).updateViewLayout(view, params)
     }
 
     private fun moveBadge(dy: Float) {

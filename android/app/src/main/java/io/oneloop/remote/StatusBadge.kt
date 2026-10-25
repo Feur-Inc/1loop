@@ -9,41 +9,56 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.delay
 
 /**
  * The floating badge over other apps while a model runs (AgentStatusService):
  * 1loop's working ring; tapped, a pill with Stop, Talk to the agent (opens
  * the chat) and the mini preview of what it does and its tasks. Small by
  * design: it never covers the screen, and it moves up and down by dragging.
+ * A question from the agent opens it on the question, answered there.
  */
 @Composable
-fun StatusBadge(onStop: (String) -> Unit, onTalk: (String) -> Unit, onDrag: (Float) -> Unit) {
+fun StatusBadge(
+    onStop: (String) -> Unit, onTalk: (String) -> Unit, onDrag: (Float) -> Unit,
+    onAnswer: (Questions, Map<String, String>) -> Unit, onTyping: (Boolean) -> Unit,
+) {
     val status by AgentStatus.status.collectAsState()
     val run = status ?: return
     var open by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf(false) }
+    LaunchedEffect(run.question?.id) { if (run.question != null) open = true }
     val drag = Modifier.pointerInput(Unit) { detectVerticalDragGestures { change, dy -> change.consume(); onDrag(dy) } }
     // No size animations: the overlay window wraps its content, so each frame
     // of one would resize the window through the window manager.
@@ -54,7 +69,11 @@ fun StatusBadge(onStop: (String) -> Unit, onTalk: (String) -> Unit, onDrag: (Flo
                 drag.size(52.dp).clip(CircleShape).background(Palette.surface).border(1.dp, Palette.borderSoft, CircleShape)
                     .clickable { open = true }.semantics { contentDescription = "1loop is working: ${run.label}" },
                 contentAlignment = Alignment.Center,
-            ) { WorkRing(run.mark, 32.dp) }
+            ) {
+                // Driving the phone: says so, rather than the working ring.
+                if (run.phoneUse) Icon(Icons.phone, null, tint = Palette.amber, modifier = Modifier.size(26.dp))
+                else WorkRing(run.mark, 32.dp)
+            }
         } else {
             Row(
                 drag.clip(RoundedCornerShape(26.dp)).background(Palette.surface).border(1.dp, Palette.borderSoft, RoundedCornerShape(26.dp))
@@ -72,7 +91,67 @@ fun StatusBadge(onStop: (String) -> Unit, onTalk: (String) -> Unit, onDrag: (Flo
                 RoundButton(Icons.chats, Color.Transparent, Palette.muted, description = "Talk to the agent", size = 46.dp, iconSize = 24.dp) { onTalk(run.chat) }
                 RoundButton(Icons.tasks, if (preview) Palette.code else Color.Transparent, Palette.muted, description = if (preview) "Hide preview" else "Show preview", size = 46.dp, iconSize = 24.dp) { preview = !preview }
             }
-            if (preview) Preview(run)
+            val question = run.question
+            if (question != null) QuestionCard(question, onAnswer, onTyping)
+            else if (preview) Preview(run)
+        }
+    }
+}
+
+/**
+ * The agent's questions, one after the other: an option, or an answer written
+ * under Other (the keyboard comes up for it only), sent once all are answered.
+ */
+@Composable
+private fun QuestionCard(request: Questions, onAnswer: (Questions, Map<String, String>) -> Unit, onTyping: (Boolean) -> Unit) {
+    var index by remember(request.id) { mutableStateOf(0) }
+    val answers = remember(request.id) { mutableStateMapOf<String, String>() }
+    var other by remember(request.id, index) { mutableStateOf<String?>(null) } // null: not writing one
+    val question = request.questions.getOrNull(index) ?: return
+    DisposableEffect(request.id) { onDispose { onTyping(false) } }
+    fun choose(value: String) {
+        answers[question.id] = value
+        other = null
+        onTyping(false)
+        if (index + 1 < request.questions.size) index++ else onAnswer(request, answers.toMap())
+    }
+    Column(
+        Modifier.padding(top = 6.dp).widthIn(max = 300.dp).clip(RoundedCornerShape(14.dp)).background(Palette.surface)
+            .border(1.dp, Palette.borderSoft, RoundedCornerShape(14.dp)).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        val header = listOfNotNull(
+            question.header.ifEmpty { null },
+            if (request.questions.size > 1) "${index + 1}/${request.questions.size}" else null,
+        ).joinToString(" · ")
+        if (header.isNotEmpty()) Text(header, style = Type.caption.copy(color = Palette.amber))
+        Text(question.text, style = Type.body)
+        for (option in question.options) {
+            Column(
+                Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Palette.code)
+                    .clickable { choose(option.label) }.padding(horizontal = 12.dp, vertical = 10.dp),
+            ) {
+                Text(option.label, style = Type.body)
+                if (option.description.isNotEmpty()) Text(option.description, style = Type.small, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+        }
+        val written = other
+        if (written == null) {
+            Pill("Other…") { other = ""; onTyping(true) }
+        } else {
+            val focus = remember { FocusRequester() }
+            val keyboard = LocalSoftwareKeyboardController.current
+            Field(written, { other = it }, "Your answer", KeyboardType.Text, Modifier.focusRequester(focus))
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Pill("Cancel") { other = null; onTyping(false) }
+                Pill("Send", primary = true, enabled = written.isNotBlank()) { choose(Questions.OTHER + written.trim()) }
+            }
+            // The window takes the keyboard once focusable (onTyping): then focus the field.
+            LaunchedEffect(Unit) {
+                delay(150)
+                focus.requestFocus()
+                keyboard?.show()
+            }
         }
     }
 }

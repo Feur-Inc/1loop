@@ -12,6 +12,7 @@ data class RunStatus(
     val chat: String, val title: String, val label: String, val mark: String, val todo: List<Task>,
     // phone_use or adb_shell drives the phone: the badge must not hide or catch what it touches.
     val phoneUse: Boolean,
+    val question: Questions? = null, // the agent waits for answers: the badge takes them
 ) {
     val done get() = todo.count { it.status == "completed" }
 }
@@ -61,7 +62,7 @@ object AgentStatus {
         if (meta.running) {
             val phoneUse = meta.label.contains("phone_use") || meta.label.contains("adb_shell")
             runs.remove(meta.chat)
-            runs[meta.chat] = RunStatus(meta.chat, meta.title, meta.label, meta.mark, meta.todo, phoneUse)
+            runs[meta.chat] = RunStatus(meta.chat, meta.title, meta.label, meta.mark, meta.todo, phoneUse, meta.question)
         } else if (runs.remove(meta.chat) == null) return
         refresh(context)
     }
@@ -78,6 +79,8 @@ object AgentStatus {
     }
 
     fun stop(chat: String) { app.get()?.stop(chat) }
+
+    fun answer(request: Questions, answers: Map<String, String>) { app.get()?.answer(request, answers) }
 
     private fun refresh(context: Context) {
         status.value = runs.values.lastOrNull()

@@ -8,9 +8,9 @@
 #
 # Several steps can be given at once, in that order. DIST sets the output
 # folder (dist by default).
-# The binaries are built in a Debian 12 container (Docker), against its
-# glibc 2.36: built on a newer system they would not start on Debian 12 or
-# Ubuntu 22.04. Go and the module cache come from the host, as in ci.sh.
+# The binaries are compiled directly on the build host. Use a Debian 12
+# runner to retain compatibility with Debian 12 and Ubuntu 22.04; the build
+# rejects binaries requiring a newer glibc than the packages advertise.
 # Each format gets its own link, naming it in internal/update.Packaged:
 # packaged builds leave updates to the way they were installed.
 #
@@ -33,32 +33,22 @@ packaged() {
 }
 
 binaries() {
-  docker build -q --platform linux/amd64 -t 1loop-linux-build - >/dev/null <<'EOF'
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev pkg-config git ca-certificates \
-      libgl1-mesa-dev libx11-dev libxrandr-dev libxxf86vm-dev libxi-dev libxcursor-dev libxinerama-dev \
-      libwayland-dev libxkbcommon-dev && rm -rf /var/lib/apt/lists/*
-EOF
-  local cache="${XDG_CACHE_HOME:-$HOME/.cache}/1loop-linux-build" list=""
-  mkdir -p "$cache/go" bin/linux
-  for format in "${formats[@]}"; do list+="$format=$(packaged "$format") "; done
-  docker run --rm --platform linux/amd64 -u "$(id -u):$(id -g)" \
-    -v "$(go env GOROOT)":/usr/local/go:ro -v "$(go env GOMODCACHE)":/gomod \
-    -v "$PWD":/src:ro -v "$PWD/bin/linux":/out -v "$cache":/cache -w /src \
-    -e HOME=/tmp -e GOMODCACHE=/gomod -e GOCACHE=/cache/go -e GOFLAGS="${GOFLAGS:-}" -e GOTOOLCHAIN=local \
-    -e CGO_ENABLED=1 -e FORMATS="$list" \
-    1loop-linux-build bash -euo pipefail -c '
-export PATH=/usr/local/go/bin:$PATH
-for entry in $FORMATS; do
-  format=${entry%%=*} packaged=${entry#*=}
-  flags="-s -w -X 1loop/internal/update.Version=$(cat VERSION) -X 1loop/internal/update.Packaged=$packaged"
-  mkdir -p /out/$format
-  go build -trimpath -buildmode=pie -ldflags="$flags" -o /out/$format/1loop ./cmd/1loop
-  # See WAYLAND_CFLAGS in the Makefile.
-  CGO_CFLAGS="$(go env CGO_CFLAGS) -w" go build -trimpath -buildmode=pie -ldflags="$flags" -tags wayland -o /out/$format/1loop-wayland ./cmd/1loop
-done'
+  local format flags
+  for format in "${formats[@]}"; do
+    flags="-s -w -X 1loop/internal/update.Version=$version -X 1loop/internal/update.Packaged=$(packaged "$format")"
+    mkdir -p "bin/linux/$format"
+    CGO_ENABLED=1 go build -trimpath -buildmode=pie -ldflags="$flags" \
+      -o "bin/linux/$format/1loop" ./cmd/1loop
+    # See WAYLAND_CFLAGS in the Makefile.
+    CGO_ENABLED=1 CGO_CFLAGS="$(go env CGO_CFLAGS) -w" go build -trimpath -buildmode=pie \
+      -ldflags="$flags" -tags wayland -o "bin/linux/$format/1loop-wayland" ./cmd/1loop
+  done
   local glibc
   glibc=$(objdump -T bin/linux/tarball/1loop bin/linux/tarball/1loop-wayland | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
+  if [[ $(printf '%s\n' GLIBC_2.34 "$glibc" | sort -uV | tail -1) != GLIBC_2.34 ]]; then
+    echo "Built binaries require $glibc. Use a Debian 12 runner to preserve Debian 12 / Ubuntu 22.04 compatibility." >&2
+    exit 1
+  fi
   echo "Built bin/linux/{${formats[*]}}/ (needs $glibc)"
 }
 

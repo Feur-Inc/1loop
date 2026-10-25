@@ -233,7 +233,7 @@ make server     # bin/1loop-server, static, no CGO
 make run        # build, then open 1loop on the current folder
 make dev        # same, with the developer log (~/.cache/1loop/dev.log)
 bash .github/scripts/build-and-verify.sh
-# all checks and builds: Go, Linux, Android, Windows (Docker)
+# all checks and builds: Go, Linux, Android, Windows (MinGW)
 ```
 
 ### Self-hosted CI
@@ -244,20 +244,22 @@ schedules up to two jobs concurrently when both runners are idle; with one
 available runner the same jobs run sequentially. The runner group must share
 its runners with this repository. No Actions artifact or cache storage is used.
 
-Preinstall these packages on **each** Debian/Ubuntu runner (the workflow does
-not invoke sudo):
+Use **Debian 12 images** for the runners to preserve the Linux packages’
+Debian 12 / Ubuntu 22.04 compatibility. Builds run directly inside the runner;
+no Docker daemon, socket, privileged container or nested container is needed.
+Preinstall these packages in **each** runner image (the workflow does not invoke sudo):
 
 ```sh
 apt-get install build-essential cmake patch patchelf pkg-config libgl-dev \
   xorg-dev libwayland-dev libxkbcommon-dev binutils zip unzip dpkg-dev \
-  python3 curl ca-certificates git gh jq openssl docker.io
+  python3 curl ca-certificates git gh jq openssl gcc-mingw-w64-x86-64 p7zip-full
 ```
 
-The runner user needs access to Docker. Actions set up Go, Java 21 and the
+Actions set up Go, Java 21 and the
 Android SDK/NDK. `bash ci.sh linux`, `bash ci.sh windows` and
 `bash ci.sh android` run the same checks locally; `bash ci.sh` runs all three.
-Windows is cross-compiled using MinGW in Docker; this does not run Windows tests.
-Linux packages use `packaging/linux/build.sh` from #57/#59: Debian 12 builds,
+Windows is cross-compiled directly using MinGW; this does not run Windows tests.
+Linux packages use `packaging/linux/build.sh` from #57/#59: native builds on the Debian 12 runner,
 the launcher and icons in the tarball, `.deb` and AppImage. Flatpak and Nix
 remain separate `make flatpak` / `make nix` targets, as in the packaging PRs.
 
@@ -330,14 +332,14 @@ Always start `bin/1loop`: in a Wayland session it hands over to
 `bin/1loop-wayland`. `ONELOOP_BACKEND=x11` or `wayland` forces a backend (see
 [X11, Wayland and XWayland](docs/INSTALL.md#x11-wayland-and-xwayland)).
 `make tarball deb` builds the Linux downloads in `dist/`, against Debian 12 in
-Docker (`packaging/linux/build.sh`); `make appimage`, `make flatpak` and
+the build runner (`packaging/linux/build.sh`); `make appimage`, `make flatpak` and
 `make nix` build the other formats.
 
 - **Android**: JDK 21 and the Android SDK (`platforms;android-37.0`,
   `build-tools;37.0.0`, NDK `30.0.16248370` for the native helpers), then
   `cd android && ./gradlew assembleRelease`.
 - **Windows**: `.github/scripts/build-and-verify.sh` cross-builds `bin/windows/`
-  from Linux with MinGW in Docker. Natively: MinGW-w64 GCC on `PATH`, then
+  directly from Linux with MinGW. Natively: MinGW-w64 GCC on `PATH`, then
   `go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe ./cmd/1loop`.
 - **Releases**: `bash release.sh` builds everything, signs the update manifest
   with `release-key.pem` (never committed), publishes the files on the release

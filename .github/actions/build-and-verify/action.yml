@@ -38,12 +38,11 @@ runs:
         commands=(python3)
         if [[ $PLATFORM == android ]]; then
           commands+=(make cmake patch patchelf dpkg-deb)
-        else
-          commands+=(docker zip)
-          docker version
+        elif [[ $PLATFORM == windows ]]; then
+          commands+=(x86_64-w64-mingw32-gcc 7z zip curl)
         fi
         if [[ $PLATFORM == linux ]]; then
-          commands+=(gcc make pkg-config dpkg-deb objdump)
+          commands+=(gcc make pkg-config dpkg-deb objdump curl)
           if ! pkg-config --exists gl x11 xrandr xxf86vm xi xcursor xinerama wayland-client xkbcommon; then
             echo 'Install Linux headers on this runner: apt-get install build-essential libgl-dev xorg-dev libwayland-dev libxkbcommon-dev' >&2
             exit 1

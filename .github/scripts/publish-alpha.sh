@@ -43,7 +43,7 @@ Test build of 1loop $version from commit $GITHUB_SHA.
 Includes the Linux tarball, Debian package and AppImage (built against Debian 12),
 Windows desktop with software renderer, both headless servers, and the Android APK
 plus its native corresponding sources. All platform checks passed before publication.
-Windows is cross-compiled on Linux; Windows runtime tests are not executed here.
+Windows is cross-compiled directly with MinGW on Linux; Windows runtime tests are not executed here.
 
 Verify the downloads with the public key from this source commit:
 https://github.com/$GH_REPO/blob/$GITHUB_SHA/.github/release-key.pub

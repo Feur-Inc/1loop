@@ -10,6 +10,9 @@ on:
 permissions:
   contents: read
 
+env:
+  GOFLAGS: -p=2
+
 # A dev publication and its retention cleanup must finish before the next one.
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
@@ -96,7 +99,7 @@ jobs:
           umask 077
           signing="$RUNNER_TEMP/android-signing-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
           mkdir -p "$signing"
-          printf '%s' "$ANDROID_SIGNING_BUNDLE" | base64 --decode | tar -xz -C "$signing"
+          printf '%s' "$ANDROID_SIGNING_BUNDLE" | base64 --decode | tar -xz -C "$signing" -- 1loop-release.p12 release.properties
           printf 'ONELOOP_ANDROID_SIGNING_PROPERTIES=%s/release.properties\n' "$signing" >> "$GITHUB_ENV"
       - name: Build and verify
         uses: ./.github/actions/build-and-verify
@@ -113,9 +116,10 @@ jobs:
         if: always() && matrix.platform == 'android'
         shell: bash
         run: |
-          if [[ -n ${ONELOOP_ANDROID_SIGNING_PROPERTIES:-} ]]; then
-            rm -f -- "$(dirname -- "$ONELOOP_ANDROID_SIGNING_PROPERTIES")/1loop-release.p12" "$ONELOOP_ANDROID_SIGNING_PROPERTIES"
-            rmdir -- "$(dirname -- "$ONELOOP_ANDROID_SIGNING_PROPERTIES")"
+          signing="$RUNNER_TEMP/android-signing-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          if [[ -d $signing ]]; then
+            rm -f -- "$signing/1loop-release.p12" "$signing/release.properties"
+            rmdir -- "$signing"
           fi
 
   publish-alpha:
@@ -137,4 +141,74 @@ jobs:
           GH_REPO: ${{ github.repository }}
           RELEASE_TAG: ${{ needs.prepare-alpha.outputs.tag }}
           RELEASE_KEY_PEM: ${{ secrets.RELEASE_KEY }}
-        run: bash .github/scripts/publish-alpha.sh
+        run: |
+          set -euo pipefail
+
+          : "${GH_REPO:?}" "${RELEASE_TAG:?}" "${RELEASE_KEY_PEM:?}"
+          version=$(cat VERSION)
+          work=$(mktemp -d "$RUNNER_TEMP/1loop-alpha.XXXXXX")
+          key=$work/release-key.pem
+          trap 'rm -f -- "$key"' EXIT
+          umask 077
+          printf '%s\n' "$RELEASE_KEY_PEM" > "$key"
+          openssl pkey -in "$key" -pubout -out "$work/release-key.pub"
+          cmp .github/release-key.pub "$work/release-key.pub"
+
+          assets=(
+            "1loop-$version-linux-amd64.tar.gz"
+            "1loop-$version-amd64.deb"
+            "1loop-$version-x86_64.AppImage"
+            "1loop-server-$version-linux-amd64"
+            "1loop-$version-windows-amd64.zip"
+            "1loop-server-$version-windows-amd64.exe"
+            "1loop-$version.apk"
+            "1loop-$version-android-native-sources.zip"
+          )
+          release=$(gh release view "$RELEASE_TAG" --json isDraft,targetCommitish,assets)
+          test "$(jq -r .isDraft <<< "$release")" = true
+          test "$(jq -r .targetCommitish <<< "$release")" = "$GITHUB_SHA"
+          unexpected=$(jq -r --args '.assets[] | .name as $name |
+            select($ARGS.positional | index($name) | not) | $name' \
+            "${assets[@]}" SHA256SUMS SHA256SUMS.sig release-key.pub <<< "$release")
+          if [[ -n $unexpected ]]; then
+            printf 'Unexpected release assets; refusing publication:\n%s\n' "$unexpected" >&2
+            exit 1
+          fi
+          gh release download "$RELEASE_TAG" --dir "$work"
+          for asset in "${assets[@]}"; do test -s "$work/$asset"; done
+          (
+            cd "$work"
+            sha256sum "${assets[@]}" > SHA256SUMS
+          )
+          openssl dgst -sha256 -sign "$key" -out "$work/SHA256SUMS.sig" "$work/SHA256SUMS"
+          openssl dgst -sha256 -verify .github/release-key.pub \
+            -signature "$work/SHA256SUMS.sig" "$work/SHA256SUMS"
+          gh release upload "$RELEASE_TAG" "$work/SHA256SUMS" "$work/SHA256SUMS.sig" \
+            "$work/release-key.pub" --clobber
+          cat > "$work/notes.md" <<NOTES
+          Test build of 1loop $version from commit $GITHUB_SHA.
+
+          Includes the Linux tarball, Debian package and AppImage (using the runner’s system libraries),
+          Windows desktop with software renderer, both headless servers, and the Android APK
+          plus its native corresponding sources. All platform checks passed before publication.
+          Windows is cross-compiled directly with MinGW on Linux; Windows runtime tests are not executed here.
+
+          Verify the downloads with the public key from this source commit:
+          https://github.com/$GH_REPO/blob/$GITHUB_SHA/.github/release-key.pub
+
+          \`\`\`sh
+          openssl dgst -sha256 -verify release-key.pub -signature SHA256SUMS.sig SHA256SUMS
+          sha256sum --check SHA256SUMS
+          \`\`\`
+          NOTES
+          gh release edit "$RELEASE_TAG" --draft=false --prerelease --latest=false --notes-file "$work/notes.md"
+
+          # Match only our published alpha-N prereleases; stable and other releases stay intact.
+          releases=$(gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100")
+          stale=$(jq -r '[.[][] | select(.draft == false and .prerelease == true
+            and (.tag_name | test("^alpha-[0-9]+$")))]
+            | sort_by(.published_at, .id) | reverse | .[3:][] | .tag_name' <<< "$releases")
+          while IFS= read -r tag; do
+            [[ -n $tag ]] || continue
+            gh release delete "$tag" --cleanup-tag --yes
+          done <<< "$stale"

@@ -96,7 +96,7 @@ buildGoModule {
     runHook postBuild
   '';
 
-  # The tests need a display and a sandbox-free shell: ci.sh runs them.
+  # The tests need a display and a sandbox-free shell: CI runs them with its native toolchain.
   doCheck = false;
 
   installPhase = ''

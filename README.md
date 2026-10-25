@@ -199,17 +199,15 @@ silently install it on users' devices.
    gh auth login                 # once, if not already authenticated
    GH_TOKEN="$(gh auth token)" \
      RELEASE_KEY=/path/to/existing/release-key.pem \
-     bash release.sh
+     SKIP_CI=1 bash release.sh
    ```
 
-   `release.sh` runs `.github/scripts/build-and-verify.sh`, builds and packages
-   all five downloads, signs the manifest, pushes the files to `gh-pages`, and
+   `release.sh` consumes the downloads already built and checked following
+   [docs/BUILD.md](docs/BUILD.md), signs the manifest, pushes files to `gh-pages`, and
    creates the matching GitHub release. The results are also kept locally in
    `dist/VERSION/`.
-   Do not reuse a version already published. If
-   `.github/scripts/build-and-verify.sh` has just passed for exactly the source
-   and build outputs being published, `SKIP_CI=1` can reuse those outputs;
-   otherwise leave the checks enabled.
+   Do not reuse a version already published. `SKIP_CI=1` confirms the documented
+   build checks passed for exactly the source commit and downloads being published.
 5. **Wait for Pages to deploy, then verify.** Open the release page and
    `updates/latest.json` above. The manifest is a signed envelope, rather
    than plain release notes; let an installed app verify it with
@@ -223,18 +221,10 @@ Do not edit the manifest by hand: its signature must match its contents.
 
 ## Building from source
 
-Requirements: Go 1.23+, a C compiler, and the OpenGL, X11 and Wayland
-development libraries (`libgl-dev`, `xorg-dev`, `libwayland-dev`,
-`libxkbcommon-dev`) for the desktop.
-
-```bash
-make            # bin/1loop (X11) and bin/1loop-wayland (native Wayland)
-make server     # bin/1loop-server, static, no CGO
-make run        # build, then open 1loop on the current folder
-make dev        # same, with the developer log (~/.cache/1loop/dev.log)
-bash .github/scripts/build-and-verify.sh
-# all checks and builds: Go, Linux, Android, Windows (MinGW)
-```
+See [docs/BUILD.md](docs/BUILD.md) for prerequisites and the commands to build
+and check Linux, Windows and Android manually with Go parallelism set to two.
+The CI executes its build and packaging commands directly in its YAML files;
+there is no local build wrapper.
 
 ### Self-hosted CI
 
@@ -245,34 +235,31 @@ temporarily excluded until its build dependencies are prepared; remove the
 `TPM28_RUNNER` selector from each job to enable both runners again. The runner
 group must share its runners with this repository. No Actions artifact or cache storage is used.
 
-Builds run directly on the runner, including Debian 13. The Linux packaging
-script downloads Debian 12 development packages into `bin/linux/sysroot`,
-using a separate APT state and the Debian archive keyring to verify downloads.
-Packages are only extracted: nothing is installed on the runner and no package
-maintainer script is executed. GCC and pkg-config use this sysroot so the
-result retains the GLIBC_2.34 baseline of #57/#59. The resulting binaries are
-checked before packaging. No Docker daemon, socket, privileged container or
-nested container is needed.
+Builds use the runner's installed compiler and system libraries directly.
+There is no Docker build, sysroot or older-distribution compatibility layer.
+The `.deb` records the minimum glibc version required by its executables;
+older distributions may need to build from source instead.
 Preinstall these packages in the runner image (the workflow does not invoke sudo):
 
 ```sh
 apt-get install build-essential cmake patch patchelf pkg-config libgl-dev \
   xorg-dev libwayland-dev libxkbcommon-dev binutils zip unzip dpkg-dev \
-  python3 curl ca-certificates git gh jq openssl debian-archive-keyring gcc-mingw-w64-x86-64 p7zip-full
+  python3 curl ca-certificates git gh jq openssl gcc-mingw-w64-x86-64 p7zip-full
 ```
 
-Actions set up Go, Java 21 and the
-Android SDK/NDK. `bash ci.sh linux`, `bash ci.sh windows` and
-`bash ci.sh android` run the same checks locally; `bash ci.sh` runs all three.
+Actions set up Go, Java 21 and the Android SDK/NDK. Go uses `-p=2` in CI
+and in the manual commands documented in [docs/BUILD.md](docs/BUILD.md).
 Windows is cross-compiled directly using MinGW; this does not run Windows tests.
-Linux packages use `packaging/linux/build.sh` from #57/#59: native builds targeting the Debian 12 sysroot,
-the launcher and icons in the tarball, `.deb` and AppImage. Flatpak and Nix
-remain separate `make flatpak` / `make nix` targets, as in the packaging PRs.
+Linux packages retain the launcher, icons and per-format settings from #57/#59;
+the packaging commands are now inline in the CI. Flatpak and Nix definitions
+remain available with manual commands in the build documentation.
 
 Pull requests from this repository and builds of `main` run verification only.
-Fork PRs do not automatically execute on persistent self-hosted runners:
+Use a dedicated runner isolated from personal files and unrelated workloads;
+contributors with branch push access can execute code on it. Fork PRs do not
+automatically execute on persistent self-hosted runners:
 review them before testing their code on an isolated runner. PR verification
-receives no signing secrets and builds unsigned Android variants.
+receives no signing secrets: debug uses a local debug key and release is unsigned.
 
 On a trusted push to `dev`, each platform builds and verifies once, then uploads
 its outputs to this run's **draft** prerelease (`alpha-RUN_ID`). Only after
@@ -305,7 +292,9 @@ keyPassword=YOUR_KEY_PASSWORD
 
 `storeFile` is relative to this properties file. For another worktree, set
 `ONELOOP_ANDROID_SIGNING_PROPERTIES` to its absolute path. Without that file,
-both variants build unsigned; no machine-generated debug key is substituted.
+debug uses Android's local debug keystore so contributors can install it;
+release remains unsigned. When publication credentials are present, both
+variants use the publication certificate.
 An existing app signed with the old debug key cannot be updated directly with
 the publication key. Do not uninstall an existing app without preserving its
 data and agreeing on migration first.
@@ -334,23 +323,10 @@ The Android key is restored only for trusted `dev` publication and removed
 from the runner after use. The build verifies both APK signatures and compares
 their certificate SHA-256 digests before uploading the release APK.
 
-Always start `bin/1loop`: in a Wayland session it hands over to
-`bin/1loop-wayland`. `ONELOOP_BACKEND=x11` or `wayland` forces a backend (see
+For local development, use the commands in [docs/BUILD.md](docs/BUILD.md).
+Start the `1loop` executable: it hands over to `1loop-wayland` when appropriate.
+`ONELOOP_BACKEND=x11` or `wayland` forces a backend (see
 [X11, Wayland and XWayland](docs/INSTALL.md#x11-wayland-and-xwayland)).
-`make tarball deb` builds the Linux downloads in `dist/`, using the Debian 12
-sysroot on the build runner (`packaging/linux/build.sh`); `make appimage`, `make flatpak` and
-`make nix` build the other formats.
-
-- **Android**: JDK 21 and the Android SDK (`platforms;android-37.0`,
-  `build-tools;37.0.0`, NDK `30.0.16248370` for the native helpers), then
-  `cd android && ./gradlew assembleRelease`.
-- **Windows**: `.github/scripts/build-and-verify.sh` cross-builds `bin/windows/`
-  directly from Linux with MinGW. Natively: MinGW-w64 GCC on `PATH`, then
-  `go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe ./cmd/1loop`.
-- **Releases**: `bash release.sh` builds everything, signs the update manifest
-  with `release-key.pem` (never committed), publishes the files on the release
-  page (the `gh-pages` branch) and creates the GitHub release. The version
-  comes from the `VERSION` file.
 
 ## Security and privacy
 

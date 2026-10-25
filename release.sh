@@ -1,15 +1,12 @@
 #!/usr/bin/env bash
 # Publishes the version written in VERSION:
-#   1. builds and checks everything (.github/scripts/build-and-verify.sh);
-#   2. packages the downloads in dist/VERSION/;
-#   3. signs the update manifest with release-key.pem (never committed);
-#   4. publishes the files and the manifest on the release page, GitHub Pages
-#      served from the gh-pages branch: https://feur-inc.github.io/1loop/;
-#   5. creates the GitHub release with the same files.
+#   1. consumes the checked downloads prepared with docs/BUILD.md;
+#   2. signs the update manifest with release-key.pem (never committed);
+#   3. publishes downloads and the manifest on GitHub Pages;
+#   4. creates the GitHub release with the same files.
 # Installed apps find the new version through that manifest.
 #
-# Usage: bash release.sh
-#        (SKIP_CI=1 reuses outputs from .github/scripts/build-and-verify.sh)
+# Usage: SKIP_CI=1 bash release.sh (after the documented build checks passed)
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
@@ -35,15 +32,23 @@ if gh release view "v$version" --repo "$repo" >/dev/null 2>&1; then
   exit 1
 fi
 
-[ "${SKIP_CI:-}" = 1 ] || bash .github/scripts/build-and-verify.sh
-
-echo "Packaging $version"
+[ "${SKIP_CI:-}" = 1 ] || {
+  echo "First build and verify the downloads using docs/BUILD.md, then set SKIP_CI=1."
+  exit 1
+}
+assets=(
+  "1loop-$version-linux-amd64.tar.gz"
+  "1loop-$version-amd64.deb"
+  "1loop-$version-x86_64.AppImage"
+  "1loop-server-$version-linux-amd64"
+  "1loop-$version-windows-amd64.zip"
+  "1loop-server-$version-windows-amd64.exe"
+  "1loop-$version.apk"
+  "1loop-$version-android-native-sources.zip"
+)
+for asset in "${assets[@]}"; do test -s "dist/ci/$asset"; done
 mkdir -p "$out"
-DIST=$out packaging/linux/build.sh binaries tarball deb appimage
-cp bin/1loop-server "$out/1loop-server-$version-linux-amd64"
-(cd bin/windows && zip -qr "../../$out/1loop-$version-windows-amd64.zip" .)
-cp bin/windows/1loop-server.exe "$out/1loop-server-$version-windows-amd64.exe"
-cp android/app/build/outputs/apk/release/app-release.apk "$out/1loop-$version.apk"
+for asset in "${assets[@]}"; do cp "dist/ci/$asset" "$out/"; done
 
 echo "Signing the update manifest"
 go run ./cmd/1loop-release manifest -key "$key" -version "$version" \

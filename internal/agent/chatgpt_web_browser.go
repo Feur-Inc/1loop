@@ -13,6 +13,7 @@ import (
 	"fmt"
 	"github.com/chromedp/cdproto/input"
 	"net/url"
+	"regexp"
 	"slices"
 	"strings"
 	"sync"
@@ -264,6 +265,7 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 				return // a replayed response must not append its text again
 			}
 			texts[message] = text
+			text = webMarkdown(text)
 			if message != activeID {
 				endText()
 				activeID = message
@@ -327,6 +329,11 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 		}
 		prompt = webSystemInstructions(cfg, bridge.phone) + "\n\n" + prompt
 	} else {
+		// Turns with another model, or a stopped turn, since this chat's
+		// last reply: the website conversation has not seen them.
+		if unseen := history[previous.Seen : len(history)-1]; len(unseen) > 0 {
+			prompt = "[Messages since your last reply in this chat, transferred by 1loop]\n" + conversationText(unseen) + "\n[Current request]\n" + prompt
+		}
 		prompt = "[1loop response format]\n" + webResponseInstructions + "\n\n" + prompt
 	}
 	if turn.pairing != "" {
@@ -398,6 +405,7 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 	// The website may announce its final answer before all connector work
 	// is delivered. Publish it only after the stream and tool calls end.
 	if finalID != "" {
+		finalText = webMarkdown(finalText)
 		messages = append(messages, Message{Role: "assistant", Content: finalText})
 		emit("delta", finalText)
 		emit("message_end", nil)
@@ -440,6 +448,35 @@ func webUpload(ctx context.Context, tab *browser.Page, root string, images []cor
 		return fmt.Errorf("ChatGPT did not accept the images: %w", err)
 	}
 	return nil
+}
+
+// webTag is a self-closing interface tag (<icon name="…" />): ChatGPT's
+// Declarative Interface Language, which models still write despite the
+// instructions and 1loop's Markdown cannot show.
+var webTag = regexp.MustCompile(`<[A-Za-z][A-Za-z0-9-]*(?:\s[^<>]*)?/> ?`)
+
+// webMarkdown removes those tags outside code blocks and code spans.
+func webMarkdown(text string) string {
+	if !strings.Contains(text, "/>") {
+		return text
+	}
+	lines := strings.Split(text, "\n")
+	fenced := false
+	for i, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), "```") {
+			fenced = !fenced
+			continue
+		}
+		if fenced {
+			continue
+		}
+		parts := strings.Split(line, "`")
+		for j := 0; j < len(parts); j += 2 { // outside code spans
+			parts[j] = webTag.ReplaceAllString(parts[j], "")
+		}
+		lines[i] = strings.Join(parts, "`")
+	}
+	return strings.Join(lines, "\n")
 }
 
 const webResponseInstructions = "Write all user-facing answers in standard Markdown only. Do not emit Declarative Interface Language (DIL), XML/HTML UI tags, or components such as <Link>, <row>, <box>, <title> or <icon>. Use Markdown links, lists, tables and fenced code blocks instead. Finish all required tool calls and wait for their results before writing the final answer."

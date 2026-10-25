@@ -104,6 +104,9 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
             // Its own group: otherwise Android groups it with "Done." and the other chats'
             // notifications, and a grouped notification is no Live Update (Samsung's Now Bar).
             .setGroup(GROUP)
+            // One UI shows a live notification (Now Bar) only when its content may show
+            // on the lock screen: what the agent does, like a timer or a delivery.
+            .setVisibility(Notification.VISIBILITY_PUBLIC)
         if (status != null) {
             val stop = PendingIntent.getService(
                 this, 3, Intent(this, AgentStatusService::class.java).setAction(ACTION_STOP).putExtra(EXTRA_CHAT, status.chat),

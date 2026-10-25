@@ -127,7 +127,13 @@ private fun RunStatusSection() {
     // user decides per app, and Samsung shows it in the Now Bar only once "Live notifications"
     // is on for 1loop, in its notification settings, where this page leads on One UI.
     if (Build.VERSION.SDK_INT >= 36 && style != StatusStyle.Off) {
-        Text("Live Update in the status bar and the Now Bar: in 1loop's notification settings, allow live notifications.", style = Type.small)
+        Text(
+            if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) {
+                // One UI lists only its own and partner apps there: the rest needs this option.
+                "Live Update in the status bar and the Now Bar: on Samsung, turn on Developer options → Live notifications for all apps, and keep 1loop's notifications allowed on the lock screen."
+            } else "Live Update in the status bar: in 1loop's notification settings, allow live notifications.",
+            style = Type.small,
+        )
         Pill("Live notifications settings") {
             runCatching {
                 context.startActivity(

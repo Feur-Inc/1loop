@@ -43,10 +43,11 @@ runs:
         fi
         if [[ $PLATFORM == linux ]]; then
           commands+=(gcc make pkg-config dpkg-deb objdump curl)
-          if ! pkg-config --exists gl x11 xrandr xxf86vm xi xcursor xinerama wayland-client xkbcommon; then
-            echo 'Install Linux headers on this runner: apt-get install build-essential libgl-dev xorg-dev libwayland-dev libxkbcommon-dev' >&2
+          commands+=(apt-get)
+          test -f /usr/share/keyrings/debian-archive-keyring.gpg || {
+            echo 'Install debian-archive-keyring for the authenticated Debian 12 sysroot downloads.' >&2
             exit 1
-          fi
+          }
         fi
         for command in "${commands[@]}"; do
           command -v "$command" >/dev/null || {

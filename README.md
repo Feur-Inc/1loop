@@ -245,22 +245,27 @@ temporarily excluded until its build dependencies are prepared; remove the
 `TPM28_RUNNER` selector from each job to enable both runners again. The runner
 group must share its runners with this repository. No Actions artifact or cache storage is used.
 
-Use **Debian 12 images** for the runners to preserve the Linux packages’
-Debian 12 / Ubuntu 22.04 compatibility. Builds run directly inside the runner;
-no Docker daemon, socket, privileged container or nested container is needed.
-Preinstall these packages in **each** runner image (the workflow does not invoke sudo):
+Builds run directly on the runner, including Debian 13. The Linux packaging
+script downloads Debian 12 development packages into `bin/linux/sysroot`,
+using a separate APT state and the Debian archive keyring to verify downloads.
+Packages are only extracted: nothing is installed on the runner and no package
+maintainer script is executed. GCC and pkg-config use this sysroot so the
+result retains the GLIBC_2.34 baseline of #57/#59. The resulting binaries are
+checked before packaging. No Docker daemon, socket, privileged container or
+nested container is needed.
+Preinstall these packages in the runner image (the workflow does not invoke sudo):
 
 ```sh
 apt-get install build-essential cmake patch patchelf pkg-config libgl-dev \
   xorg-dev libwayland-dev libxkbcommon-dev binutils zip unzip dpkg-dev \
-  python3 curl ca-certificates git gh jq openssl gcc-mingw-w64-x86-64 p7zip-full
+  python3 curl ca-certificates git gh jq openssl debian-archive-keyring gcc-mingw-w64-x86-64 p7zip-full
 ```
 
 Actions set up Go, Java 21 and the
 Android SDK/NDK. `bash ci.sh linux`, `bash ci.sh windows` and
 `bash ci.sh android` run the same checks locally; `bash ci.sh` runs all three.
 Windows is cross-compiled directly using MinGW; this does not run Windows tests.
-Linux packages use `packaging/linux/build.sh` from #57/#59: native builds on the Debian 12 runner,
+Linux packages use `packaging/linux/build.sh` from #57/#59: native builds targeting the Debian 12 sysroot,
 the launcher and icons in the tarball, `.deb` and AppImage. Flatpak and Nix
 remain separate `make flatpak` / `make nix` targets, as in the packaging PRs.
 
@@ -332,8 +337,8 @@ their certificate SHA-256 digests before uploading the release APK.
 Always start `bin/1loop`: in a Wayland session it hands over to
 `bin/1loop-wayland`. `ONELOOP_BACKEND=x11` or `wayland` forces a backend (see
 [X11, Wayland and XWayland](docs/INSTALL.md#x11-wayland-and-xwayland)).
-`make tarball deb` builds the Linux downloads in `dist/`, against Debian 12 in
-the build runner (`packaging/linux/build.sh`); `make appimage`, `make flatpak` and
+`make tarball deb` builds the Linux downloads in `dist/`, using the Debian 12
+sysroot on the build runner (`packaging/linux/build.sh`); `make appimage`, `make flatpak` and
 `make nix` build the other formats.
 
 - **Android**: JDK 21 and the Android SDK (`platforms;android-37.0`,

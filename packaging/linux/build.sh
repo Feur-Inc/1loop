@@ -8,9 +8,8 @@
 #
 # Several steps can be given at once, in that order. DIST sets the output
 # folder (dist by default).
-# The binaries are compiled directly on the build host. Use a Debian 12
-# runner to retain compatibility with Debian 12 and Ubuntu 22.04; the build
-# rejects binaries requiring a newer glibc than the packages advertise.
+# The host compiler uses Debian 12 headers/libraries from a downloaded sysroot,
+# preserving Debian 12 / Ubuntu 22.04 compatibility on newer Linux runners.
 # Each format gets its own link, naming it in internal/update.Packaged:
 # packaged builds leave updates to the way they were installed.
 #
@@ -32,7 +31,13 @@ packaged() {
   esac
 }
 
-binaries() {
+binaries() (
+  export ONELOOP_LINUX_SYSROOT
+  ONELOOP_LINUX_SYSROOT=$(bash packaging/linux/sysroot.sh)
+  export CC="$PWD/packaging/linux/cc-sysroot.sh"
+  export PKG_CONFIG_SYSROOT_DIR="$ONELOOP_LINUX_SYSROOT"
+  export PKG_CONFIG_LIBDIR="$ONELOOP_LINUX_SYSROOT/usr/lib/x86_64-linux-gnu/pkgconfig:$ONELOOP_LINUX_SYSROOT/usr/share/pkgconfig"
+  export PKG_CONFIG_PATH=
   local format flags
   for format in "${formats[@]}"; do
     flags="-s -w -X 1loop/internal/update.Version=$version -X 1loop/internal/update.Packaged=$(packaged "$format")"
@@ -46,11 +51,11 @@ binaries() {
   local glibc
   glibc=$(objdump -T bin/linux/tarball/1loop bin/linux/tarball/1loop-wayland | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
   if [[ $(printf '%s\n' GLIBC_2.34 "$glibc" | sort -uV | tail -1) != GLIBC_2.34 ]]; then
-    echo "Built binaries require $glibc. Use a Debian 12 runner to preserve Debian 12 / Ubuntu 22.04 compatibility." >&2
+    echo "Built binaries require $glibc. The Debian 12 sysroot build must preserve the declared GLIBC_2.34 compatibility." >&2
     exit 1
   fi
   echo "Built bin/linux/{${formats[*]}}/ (needs $glibc)"
-}
+)
 
 # share STAGE: the desktop entry and the icons in STAGE/applications and
 # STAGE/icons, as under /usr/share.

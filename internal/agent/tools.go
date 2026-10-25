@@ -338,7 +338,7 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		return
 	}
 	if call.Function.Name == "memory" {
-		return backend.editMemory(ctx, root, call.Function.Arguments, begin, emit)
+		return backend.editMemory(ctx, call.Function.Arguments, begin, emit)
 	}
 	if call.Function.Name == "apply_patch" {
 		var args struct{ Patch string }

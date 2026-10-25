@@ -6,6 +6,7 @@ package agent
 // --append-system-prompt argument.
 
 import (
+	"fmt"
 	"io"
 	"os"
 	"path/filepath"
@@ -41,4 +42,43 @@ func projectInstructions(workspace string) string {
 		text += "\n[AGENTS.md is longer than 32 KiB; the rest was left out.]"
 	}
 	return "\n\nProject instructions from AGENTS.md (the user's rules for this workspace):\n" + text
+}
+
+// ProjectMemory is the workspace's AGENTS.md, "" when it has none, for the
+// settings to show and edit: the agent writes it with its file tools.
+func ProjectMemory(workspace string) (string, error) {
+	path, err := WorkspacePath(workspace, "AGENTS.md")
+	if err != nil {
+		return "", err
+	}
+	text, err := fileText(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	return text, err
+}
+
+// SaveProjectMemory writes the workspace's AGENTS.md, refused when it
+// changed since before was read.
+func SaveProjectMemory(workspace, before, after string) error {
+	path, err := WorkspacePath(workspace, "AGENTS.md")
+	if err != nil {
+		return err
+	}
+	if current, err := ProjectMemory(workspace); err != nil || current != before {
+		return fmt.Errorf("AGENTS.md changed since it was read; read it again")
+	}
+	flags := os.O_WRONLY | os.O_TRUNC
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	}
+	file, err := os.OpenFile(path, flags, 0644)
+	if err != nil {
+		return err
+	}
+	_, writeErr := file.WriteString(after)
+	if closeErr := file.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	return writeErr
 }

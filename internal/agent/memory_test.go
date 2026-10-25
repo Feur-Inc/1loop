@@ -3,8 +3,6 @@ package agent
 import (
 	"context"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -34,48 +32,36 @@ func runMemory(t *testing.T, cfg Config, workspace string, during func(), argume
 	return output, diff, err, reviewed
 }
 
-func TestMemoryProject(t *testing.T) {
+// Project facts go in AGENTS.md with the file tools; the settings edit it
+// without overwriting a change made since they read it.
+func TestProjectMemory(t *testing.T) {
 	workspace := t.TempDir()
-	agents := filepath.Join(workspace, "AGENTS.md")
-	read := func() string { data, _ := os.ReadFile(agents); return string(data) }
-
-	output, _, err, _ := runMemory(t, Config{}, workspace, nil, map[string]string{"action": "view", "scope": "project"})
-	if err != nil || !strings.Contains(output, "Nothing is saved") {
-		t.Fatalf("view of a missing AGENTS.md = %q, %v", output, err)
+	if text, err := ProjectMemory(workspace); text != "" || err != nil {
+		t.Fatalf("ProjectMemory of a missing AGENTS.md = %q, %v", text, err)
 	}
-	// The first entry creates the file, after the reviewer saw the diff.
-	_, diff, err, reviewed := runMemory(t, Config{}, workspace, nil, map[string]string{"action": "add", "scope": "project", "text": "- Run tests with go test ./..."})
-	if err != nil || read() != "- Run tests with go test ./...\n" {
-		t.Fatalf("add = %q, %v", read(), err)
-	}
-	if len(reviewed) != 1 || !strings.HasPrefix(reviewed[0], "Save to AGENTS.md?\n") || !strings.Contains(diff, "+- Run tests with go test ./...") {
-		t.Fatalf("add was reviewed as %q with diff %q", reviewed, diff)
-	}
-	if _, _, err, _ = runMemory(t, Config{}, workspace, nil, map[string]string{"action": "add", "scope": "project", "text": "- Format with gofmt"}); err != nil {
+	if err := SaveProjectMemory(workspace, "", "- Run ./ci.sh\n"); err != nil {
 		t.Fatal(err)
 	}
-	if _, _, err, _ = runMemory(t, Config{}, workspace, nil, map[string]string{"action": "replace", "scope": "project", "old_text": "go test ./...", "text": "./ci.sh"}); err != nil {
-		t.Fatal(err)
+	if err := SaveProjectMemory(workspace, "", "late\n"); err == nil {
+		t.Fatal("a stale AGENTS.md was overwritten")
 	}
-	if _, _, err, _ = runMemory(t, Config{}, workspace, nil, map[string]string{"action": "remove", "scope": "project", "old_text": "- Format with gofmt"}); err != nil {
-		t.Fatal(err)
+	if text, _ := ProjectMemory(workspace); text != "- Run ./ci.sh\n" {
+		t.Fatalf("AGENTS.md = %q", text)
 	}
-	if read() != "- Run tests with ./ci.sh\n" {
-		t.Fatalf("AGENTS.md after replace and remove = %q", read())
-	}
-	if _, _, err, _ = runMemory(t, Config{}, workspace, nil, map[string]string{"action": "remove", "scope": "project", "old_text": "absent"}); err == nil {
-		t.Fatal("removing text that is not saved succeeded")
-	}
-	// A change made while the user reads the diff is never overwritten.
-	edit := func() { _ = os.WriteFile(agents, []byte("Edited by hand\n"), 0o644) }
-	if _, _, err, _ = runMemory(t, Config{}, workspace, edit, map[string]string{"action": "add", "scope": "project", "text": "late"}); err == nil || read() != "Edited by hand\n" {
-		t.Fatalf("a stale change was written: %q, %v", read(), err)
+	// In Auto mode, writing AGENTS.md goes to the reviewer like a command.
+	for title, safe := range map[string]bool{"Apply changes to main.go?": true, "Apply changes to AGENTS.md?": false, "Apply changes to main.go, docs/AGENTS.md?": false} {
+		if obviouslySafe(workspace, title, "") != safe {
+			t.Errorf("obviouslySafe(%q) = %v", title, !safe)
+		}
 	}
 }
 
 func TestMemoryPreferences(t *testing.T) {
-	if _, _, err, _ := runMemory(t, Config{}, t.TempDir(), nil, map[string]string{"action": "view", "scope": "user"}); err == nil {
+	if _, _, err, _ := runMemory(t, Config{}, t.TempDir(), nil, map[string]string{"action": "view"}); err == nil {
 		t.Fatal("the preferences were read without a store")
+	}
+	if (Config{}).toolAvailable("memory") {
+		t.Fatal("memory is offered while it is turned off")
 	}
 	saved := "Answer in French."
 	cfg := Config{Preferences: func(_ context.Context, update func(string) (string, error)) error {
@@ -85,40 +71,36 @@ func TestMemoryPreferences(t *testing.T) {
 		}
 		return err
 	}}
-	output, _, err, reviewed := runMemory(t, cfg, t.TempDir(), nil, map[string]string{"action": "add", "scope": "user", "text": "Call me Mopi.\n\n"})
+	output, _, err, reviewed := runMemory(t, cfg, t.TempDir(), nil, map[string]string{"action": "add", "text": "Call me Mopi.\n\n"})
 	if err != nil || saved != "Answer in French.\nCall me Mopi." {
 		t.Fatalf("add = %q, %v", saved, err)
 	}
 	if len(reviewed) != 1 || !strings.HasPrefix(reviewed[0], "Save to your preferences?\n") || !strings.HasPrefix(output, "Saved to your preferences") || strings.Contains(reviewed[0], "No newline") {
 		t.Fatalf("add was reviewed as %q and answered %q", reviewed, output)
 	}
-	if output, _, _, _ = runMemory(t, cfg, t.TempDir(), nil, map[string]string{"action": "view", "scope": "user"}); output != saved {
+	if output, _, _, _ = runMemory(t, cfg, t.TempDir(), nil, map[string]string{"action": "view"}); output != saved {
 		t.Fatalf("view = %q", output)
 	}
 	change := func() { saved = "Changed in Settings." }
-	if _, _, err, _ = runMemory(t, cfg, t.TempDir(), change, map[string]string{"action": "remove", "scope": "user", "old_text": "Call me Mopi."}); err == nil || saved != "Changed in Settings." {
+	if _, _, err, _ = runMemory(t, cfg, t.TempDir(), change, map[string]string{"action": "remove", "old_text": "Call me Mopi."}); err == nil || saved != "Changed in Settings." {
 		t.Fatalf("a stale change was saved: %q, %v", saved, err)
 	}
 	big := strings.Repeat("x", preferencesLimit)
-	if _, _, err, _ = runMemory(t, cfg, t.TempDir(), nil, map[string]string{"action": "add", "scope": "user", "text": big}); err == nil {
+	if _, _, err, _ = runMemory(t, cfg, t.TempDir(), nil, map[string]string{"action": "add", "text": big}); err == nil {
 		t.Fatal("the preferences grew past their limit")
 	}
 }
 
 func TestEditedMemory(t *testing.T) {
-	for _, test := range []struct {
-		text, action, add, old string
-		trimmed                bool
-		want                   string
-	}{
-		{"", "add", "a", "", false, "a\n"},
-		{"a", "add", "b", "", false, "a\nb\n"},
-		{"a\n\n", "add", "\nb\n", "", true, "a\nb"},
-		{"a\nb\nc\n", "remove", "", "b", false, "a\nc\n"},
-		{"a b c", "remove", "", " b", true, "a c"},
-		{"a\nb\n", "replace", "B", "b", false, "a\nB\n"},
+	for _, test := range []struct{ text, action, add, old, want string }{
+		{"", "add", "a", "", "a"},
+		{"a", "add", "b", "", "a\nb"},
+		{"a\n\n", "add", "\nb\n", "", "a\nb"},
+		{"a\nb\nc", "remove", "", "b", "a\nc"},
+		{"a b c", "remove", "", " b", "a c"},
+		{"a\nb", "replace", "B", "b", "a\nB"},
 	} {
-		got, err := editedMemory(test.text, test.action, test.add, test.old, test.trimmed)
+		got, err := editedMemory(test.text, test.action, test.add, test.old)
 		if err != nil || got != test.want {
 			t.Errorf("editedMemory(%q, %s %q %q) = %q, %v, want %q", test.text, test.action, test.add, test.old, got, err, test.want)
 		}
@@ -129,7 +111,7 @@ func TestEditedMemory(t *testing.T) {
 		{"a", "remove", "", ""},
 		{"a", "forget", "", ""},
 	} {
-		if _, err := editedMemory(test.text, test.action, test.add, test.old, false); err == nil {
+		if _, err := editedMemory(test.text, test.action, test.add, test.old); err == nil {
 			t.Errorf("editedMemory(%q, %s %q %q) succeeded", test.text, test.action, test.add, test.old)
 		}
 	}
@@ -141,10 +123,10 @@ func TestDescribeMemory(t *testing.T) {
 		running      bool
 		verb, target string
 	}{
-		{`{"action":"view","scope":"user"}`, false, "Read", "your preferences"},
-		{`{"action":"add","scope":"project"}`, true, "Saving a memory to", "the project's AGENTS.md"},
-		{`{"action":"replace","scope":"user"}`, false, "Saved a memory to", "your preferences"},
-		{`{"action":"remove","scope":"project"}`, false, "Removed a memory from", "the project's AGENTS.md"},
+		{`{"action":"view"}`, false, "Read", "your preferences"},
+		{`{"action":"add"}`, true, "Saving a memory to", "your preferences"},
+		{`{"action":"replace"}`, false, "Saved a memory to", "your preferences"},
+		{`{"action":"remove"}`, false, "Removed a memory from", "your preferences"},
 	} {
 		verb, target, _ := DescribeTool(ChatItem{Tool: "memory", Args: test.args}, test.running)
 		if verb != test.verb || target != test.target {

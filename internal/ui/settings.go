@@ -609,8 +609,15 @@ func (ui *desktopUI) instructionSettings() fyne.CanvasObject {
 	page := container.NewVBox(
 		ui.prefs.pageTitle("Instructions", "", nil),
 		card(settingStack("Your preferences",
-			"Added to 1loop's own system prompt, whose workspace and tool rules stay in place, in every chat. The agent can add what it learns about you, after you approve the change. Saved as you type; they apply from the next turn.",
-			entry)),
+			"Added to 1loop's own system prompt, whose workspace and tool rules stay in place, in every chat. Saved as you type; they apply from the next turn.",
+			entry),
+			settingRow("Memory",
+				"The agent adds what it learns about you to these preferences, each change shown to you for approval. Off: it is not offered the memory tool.",
+				newToggle(!ui.memoryOff, func(on bool) {
+					ui.memoryOff = !on
+					ui.save()
+					ui.remote.settingsChanged()
+				}))),
 		sectionTitle("Project memory"),
 	)
 	if len(ui.projects) == 0 {

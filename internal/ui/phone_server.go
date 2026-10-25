@@ -164,6 +164,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/approve", server.authorized(server.approve))
 	mux.HandleFunc("POST /api/answer", server.authorized(server.answer))
 	mux.HandleFunc("POST /api/preferences", server.authorized(server.setPreferences))
+	mux.HandleFunc("POST /api/memory", server.authorized(server.setMemory))
 	mux.HandleFunc("GET /api/projects", server.authorized(server.projectFolders))
 	mux.HandleFunc("POST /api/projects", server.authorized(server.addProject))
 	mux.HandleFunc("POST /api/projects/{action}", server.authorized(server.changeProject))
@@ -940,7 +941,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 			accounts = append(accounts, remoteapi.Account{ID: conn.ID, Name: conn.Name, Provider: conn.Provider, Kind: agent.ProviderName(conn.Provider), Problem: ui.modelUnavailable[conn.ID]})
 		}
 	}
-	return map[string]any{"userPreferences": ui.userInstructions, "preferencesEditable": true, "messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
+	return map[string]any{"userPreferences": ui.userInstructions, "preferencesEditable": true, "memory": !ui.memoryOff, "messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
 		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": agent.AutoModeOffered(ui.cfg), "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.cfg)}
 }
 

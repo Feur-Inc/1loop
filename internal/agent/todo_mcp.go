@@ -108,7 +108,7 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 				// with the change as a diff.
 				operation, cancel := context.WithCancel(ctx)
 				stop := context.AfterFunc(requestValue.Context(), cancel)
-				text, _, err := backend.editMemory(operation, cfg.Workspace, string(call.Arguments), func() {}, emit)
+				text, _, err := backend.editMemory(operation, string(call.Arguments), func() {}, emit)
 				stop()
 				cancel()
 				if err != nil {

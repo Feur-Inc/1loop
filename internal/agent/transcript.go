@@ -129,12 +129,9 @@ func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) 
 	case "checkpoint":
 		return pick("Recorded", "Recording"), "a context checkpoint", false
 	case "memory":
-		var memory struct{ Action, Scope string }
+		var memory struct{ Action string }
 		_ = json.Unmarshal([]byte(item.Args), &memory)
 		target = "your preferences"
-		if memory.Scope == "project" {
-			target = "the project's AGENTS.md"
-		}
 		switch memory.Action {
 		case "view":
 			return pick("Read", "Reading"), target, false

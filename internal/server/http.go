@@ -89,6 +89,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/approve":                            server.approve,
 		"POST /api/answer":                             server.answer,
 		"POST /api/preferences":                        server.setPreferences,
+		"POST /api/memory":                             server.setMemory,
 		"POST /api/model":                              server.setModel,
 		"POST /api/approval-mode":                      server.setApprovalMode,
 		"GET /api/chats/{id}/panel":                    server.panelTabs,

@@ -31,7 +31,7 @@ echo "$dist/1loop-$version-android-native-sources.zip"
 
 # certificate APK: the SHA-256 of its signing certificate, empty if unsigned.
 certificate() {
-  "$apksigner" verify --print-certs "$1" 2>/dev/null | sed -n 's/^.*certificate SHA-256 digest: //p' | sort -u
+  { "$apksigner" verify --print-certs "$1" 2>/dev/null || true; } | sed -n 's/^.*certificate SHA-256 digest: //p' | sort -u
 }
 release=$(certificate "$apks/release/app-release.apk")
 if [ -z "$release" ]; then

@@ -191,6 +191,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     val drafts = PromptDrafts(context)
     val updates = Updates(context)
 
+    init { AgentStatus.attach(this) } // Stop from the badge or the Live Update
+
     /** The release page, checked at most every six hours; a notification for a new version. */
     suspend fun checkUpdates() = updates.checkInBackground(notifier)
 
@@ -583,6 +585,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         preferencesEditable = false
         userPreferences = ""
         running.clear()
+        AgentStatus.clear(context)
         defaultModel = ""
         defaultEffort = ""
         defaultTier = ""
@@ -804,6 +807,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     private fun applyMeta(m: Meta) {
         val wasRunning = running.put(m.chat, m.running)
+        AgentStatus.update(context, m)
         // On this phone, LocalRuntimeService notifies: it runs even without the app.
         val notify = !foreground && server?.localPhone != true
         if (notify && wasRunning == true && !m.running) notifier.show(m.chat, m.title, "Done.")
@@ -1300,10 +1304,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         attachments.clear()
     }
 
-    fun stop() {
+    /** Stops the chat on screen, or another one (from the badge or the Live Update). */
+    fun stop(chat: String? = current) {
         val generation = connectionGeneration
         val target = server ?: return
-        val id = current ?: return
+        val id = chat ?: return
         scope.launch { runCatching { onConnection(target, generation) { it.post("/api/stop", JSONObject().put("chat", id)) } } }
     }
 

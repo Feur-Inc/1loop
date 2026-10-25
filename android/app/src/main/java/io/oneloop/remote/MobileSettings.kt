@@ -20,6 +20,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.net.toUri
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -55,6 +56,7 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                 LaunchedEffect(Unit) { runCatching { app.refreshSharing() } }
                 SharingSection(app)
             }
+            RunStatusSection()
             Text("Personalization", style = Type.headline)
             Text("Your preferences are added to 1loop's base instructions. They never replace its system prompt or tool rules. They apply to subsequent turns on this execution target.", style = Type.small)
             if (app.preferencesEditable) {
@@ -81,6 +83,37 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
             UpdatesSection(app)
             BrowserDataSection(app)
             HooksSection(app)
+        }
+    }
+}
+
+// While a model runs and 1loop is not on screen: the floating badge (it needs
+// "Display over other apps"), the Live Update in the status bar, or nothing.
+@Composable
+private fun RunStatusSection() {
+    val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var style by remember { mutableStateOf(AgentStatus.style(context)) }
+    var overlay by remember { mutableStateOf(AgentStatus.canDrawOverlays(context)) }
+    DisposableEffect(lifecycle) {
+        // Back from the "Display over other apps" page.
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) overlay = AgentStatus.canDrawOverlays(context) }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    Text("While a model runs", style = Type.headline)
+    Text("Shows what the agent does over your other apps, with a button to stop it. It stays small and never covers the screen.", style = Type.small)
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (option in StatusStyle.entries) {
+            Pill(option.title, primary = style == option) { style = option; AgentStatus.setStyle(context, option) }
+        }
+    }
+    if (style == StatusStyle.Badge && !overlay) {
+        Text("The badge needs “Display over other apps”. Until you allow it, the status shows in the status bar instead.", style = Type.small)
+        Pill("Allow display over other apps") {
+            runCatching {
+                context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri()))
+            }
         }
     }
 }

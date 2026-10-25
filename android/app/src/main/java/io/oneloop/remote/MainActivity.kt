@@ -23,12 +23,19 @@ class MainActivity : ComponentActivity() {
         UpdateCheckJob.schedule(applicationContext)
         receiveShared(intent)
         showUpdate(intent)
+        openChat(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         receiveShared(intent)
         showUpdate(intent)
+        openChat(intent)
+    }
+
+    /** Talk to the agent (the badge) or Open (the Live Update): its chat. */
+    private fun openChat(intent: Intent?) {
+        intent?.getStringExtra(AgentStatusService.EXTRA_CHAT)?.let { if (app.server != null) app.open(it) }
     }
 
     /** The update notification was tapped. */
@@ -53,6 +60,7 @@ class MainActivity : ComponentActivity() {
     override fun onStart() {
         super.onStart()
         app.foreground = true
+        AgentStatus.setForeground(applicationContext, true)
         AndroidLocalRuntime.get(applicationContext).appForeground = true
         AndroidLocalRuntime.get(applicationContext).refreshPhoneAccess()
         app.updates.resume() // back from the "install unknown apps" page
@@ -61,6 +69,7 @@ class MainActivity : ComponentActivity() {
 
     override fun onStop() {
         app.foreground = false
+        AgentStatus.setForeground(applicationContext, false)
         AndroidLocalRuntime.get(applicationContext).appForeground = false
         super.onStop()
     }

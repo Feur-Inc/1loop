@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -142,6 +143,62 @@ func (buffer *outputBuffer) String() string {
 		return strings.ToValidUTF8(string(buffer.head)+fmt.Sprintf("\n…[%d bytes not kept]…\n", skipped)+string(tail), "")
 	}
 	return string(buffer.head) + string(tail)
+}
+
+// liveOutput is a shell command's output, also shown while it runs: the
+// model only gets it at the end, but the user can follow it in the tool
+// call's details ("tool_output", the end of the output so far).
+type liveOutput struct {
+	mu     sync.Mutex
+	buffer outputBuffer
+}
+
+const (
+	liveOutputEvery = 250 * time.Millisecond
+	liveOutputKeep  = 16 << 10 // enough for a screen; light to send to the phone
+)
+
+func (live *liveOutput) Write(p []byte) (int, error) {
+	live.mu.Lock()
+	defer live.mu.Unlock()
+	return live.buffer.Write(p)
+}
+
+// stream sends the output when it grew, until stop returns: no
+// tool_output comes after it, so the final result is never overwritten.
+func (live *liveOutput) stream(id string, emit emitter) (stop func()) {
+	done, finished := make(chan struct{}), make(chan struct{})
+	go func() {
+		defer close(finished)
+		ticker := time.NewTicker(liveOutputEvery)
+		defer ticker.Stop()
+		shown := 0
+		for {
+			select {
+			case <-done:
+				return
+			case <-ticker.C:
+			}
+			live.mu.Lock()
+			total, text := live.buffer.total, ""
+			if total != shown {
+				text = live.buffer.String()
+			}
+			live.mu.Unlock()
+			if total == shown {
+				continue
+			}
+			shown = total
+			if len(text) > liveOutputKeep {
+				text = "…\n" + strings.ToValidUTF8(text[len(text)-liveOutputKeep:], "")
+			}
+			emit("tool_output", ToolOutcome{ID: id, Name: "shell", Output: text})
+		}
+	}()
+	return func() {
+		close(done)
+		<-finished
+	}
 }
 
 // headAndTail fits text in about tokens tokens (4 bytes each), keeping its
@@ -436,15 +493,17 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		platform.PrepareProcess(cmd)
 		cmd.Cancel = func() error { return platform.KillProcessTree(cmd) }
 		cmd.WaitDelay = time.Second
-		var output outputBuffer
-		cmd.Stdout = &output
-		cmd.Stderr = &output
+		output := &liveOutput{}
+		cmd.Stdout = output
+		cmd.Stderr = output
+		stop := output.stream(call.ID, emit)
 		err := cmd.Run()
+		stop()
 		tokens := 10000
 		if args.MaxTokens != nil {
 			tokens = min(50000, max(1000, *args.MaxTokens))
 		}
-		text := output.String()
+		text := output.buffer.String()
 		if sandboxed && err != nil && sandboxRefusal(text) {
 			text += "\n[1loop: this command ran in the workspace sandbox, which writes only in the workspace, the temporary folders and the build caches. If it must write elsewhere, run it again with escalate: true and a justification.]"
 		}

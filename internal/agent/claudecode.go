@@ -360,7 +360,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			call := ToolCall{ID: core.Identifier()}
 			call.Function.Name, call.Function.Arguments = name, string(raw)
 			outcome := backend.executeTool(operation, cfg.Workspace, call, func(event string, value any) {
-				if event != "tool" && event != "tool_exec" {
+				if event != "tool" && event != "tool_exec" && event != "tool_output" {
 					emit(event, value)
 				}
 			})

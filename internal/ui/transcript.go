@@ -782,6 +782,13 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 			currentTurn.setRow(index, "running")
 		}
 		currentTurn.showRun(toolOutcomeValue)
+	case "tool_output": // a running command's output so far
+		o := uiEventValue.data.(agent.ToolOutcome)
+		if index, ok := currentTurn.calls[o.ID]; ok {
+			currentTurn.chat.Items[index].Text = o.Output
+			ui.remote.itemChanged(currentTurn.chat, index)
+			ui.panel.changed(currentTurn.chat, index)
+		}
 	case "tool_result":
 		o := uiEventValue.data.(agent.ToolOutcome)
 		index, ok := currentTurn.calls[o.ID]

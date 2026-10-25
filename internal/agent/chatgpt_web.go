@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"1loop/internal/browser"
@@ -68,6 +69,36 @@ func (backend *App) WebAccount(cfg Config) (*ChatGPTWeb, error) {
 	account.engine.Profile = filepath.Join(dir, "1loop", name)
 	backend.webAccounts[profile] = account
 	return account, nil
+}
+
+// Retain keeps this account's browser and tunnel available for one user.
+// Releasing the final user closes its pages; the existing browser engine
+// stops its process and can restart later with the same persistent profile.
+func (bridge *ChatGPTWeb) Retain() func() {
+	bridge.mu.Lock()
+	bridge.users++
+	bridge.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			bridge.mu.Lock()
+			defer bridge.mu.Unlock()
+			bridge.users--
+			if bridge.users != 0 {
+				return
+			}
+			for key, tab := range bridge.pages {
+				tab.Close()
+				delete(bridge.pages, key)
+			}
+			bridge.pageStreams, bridge.chosen = nil, nil
+			if bridge.stopTunnel != nil {
+				bridge.stopTunnel()
+				bridge.stopTunnel = nil
+			}
+			bridge.tunnelReady, bridge.tunnelError = false, nil
+		})
+	}
 }
 
 func (bridge *ChatGPTWeb) Page(key, address string) *browser.Page {
@@ -201,6 +232,8 @@ func (bridge *ChatGPTWeb) CachedModels(ctx context.Context, conn Connection) ([]
 }
 
 func (bridge *ChatGPTWeb) Models(ctx context.Context, conn Connection) ([]ModelChoice, error) {
+	release := bridge.Retain()
+	defer release()
 	select {
 	case bridge.service <- struct{}{}:
 		defer func() { <-bridge.service }()

@@ -34,6 +34,7 @@ type WebTurn struct {
 type ChatGPTWeb struct {
 	backend        *App
 	mu             sync.Mutex
+	users          int // screens, active turns and setup/model operations
 	turns          map[*WebTurn]bool
 	service        chan struct{} // serializes operations on the hidden service page
 	engine         *browser.Engine

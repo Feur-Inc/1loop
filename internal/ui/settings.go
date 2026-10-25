@@ -788,7 +788,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		container.NewVBox(account, container.NewHBox(login), loginLink)))
 	claudeFields := card(settingRow("Claude Code on this computer",
 		"Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it.", nil))
-	webFields := ui.chatGPTWebSettings(&draft, say)
+	webFields, releaseWebSetup := ui.chatGPTWebSettings(&draft, say)
 	access := container.NewStack(apiFields, oauthFields, claudeFields, webFields)
 
 	routing := jsonEntry(draft.Routing)
@@ -901,6 +901,9 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	typePicker.onChanged = func(label string) {
 		previous := draft.Provider
 		draft.Provider = ids[label]
+		if draft.Provider != "chatgptweb" {
+			releaseWebSetup()
+		}
 		apiFields.Hide()
 		oauthFields.Hide()
 		claudeFields.Hide()
@@ -1013,6 +1016,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		platform.Devf("ui", "connection %q saved", draft.Name)
 		ui.save()
 		ui.refreshModels()
+		releaseWebSetup()
 		return true
 	}
 	save := newRow("Save connection", nil, stylePrimary, func() {
@@ -1046,6 +1050,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		cancel,
 		save,
 	}, beforeLeave: beforeLeave, leave: func() {
+		releaseWebSetup()
 		loadGeneration++
 		if cancelLogin != nil {
 			cancelLogin()

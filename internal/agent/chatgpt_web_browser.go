@@ -109,6 +109,8 @@ func webConversationInProject(address, project string) bool {
 }
 
 func (bridge *ChatGPTWeb) PrepareProject(ctx context.Context) (string, error) {
+	release := bridge.Retain()
+	defer release()
 	select {
 	case bridge.service <- struct{}{}:
 		defer func() { <-bridge.service }()
@@ -163,6 +165,8 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 	if err != nil {
 		return err
 	}
+	release := bridge.Retain()
+	defer release()
 	if cfg.WebSettings == nil {
 		return fmt.Errorf("Finish ChatGPT (Web) setup in Settings → Connections")
 	}

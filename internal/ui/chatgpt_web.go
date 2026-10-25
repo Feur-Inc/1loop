@@ -14,7 +14,8 @@ import (
 	"1loop/internal/agent"
 )
 
-func (ui *desktopUI) chatGPTWebSettings(draft *agent.Connection, say func(string)) fyne.CanvasObject {
+func (ui *desktopUI) chatGPTWebSettings(draft *agent.Connection, say func(string)) (fyne.CanvasObject, func()) {
+	var releaseTunnel func()
 	if draft.WebSettings == nil {
 		draft.WebSettings = &agent.WebSettings{}
 	}
@@ -63,19 +64,34 @@ func (ui *desktopUI) chatGPTWebSettings(draft *agent.Connection, say func(string
 			window.RequestFocus()
 			return
 		}
+		release := bridge.Retain()
 		window := fyne.CurrentApp().NewWindow("ChatGPT sign-in · 1loop")
 		ui.webSetupWindows[bridge] = window
+		tab := bridge.Page("setup", "https://chatgpt.com/")
 		view := ui.webBrowserWindow(bridge, "setup", "https://chatgpt.com/", window, true)
 		window.SetContent(view)
 		window.Resize(fyne.NewSize(1100, 800))
-		window.SetOnClosed(func() { bridge.Page("setup", "").SetVisible(false); delete(ui.webSetupWindows, bridge) })
+		window.SetOnClosed(func() {
+			tab.SetVisible(false)
+			delete(ui.webSetupWindows, bridge)
+			release()
+		})
 		window.Show()
 
 	})
 	start := newRow("Start tunnel", iconPlug, styleOutline, func() {
 		bridge, err := account()
 		if err == nil {
+			release := bridge.Retain()
 			err = bridge.StartTunnel(*settings)
+			if err != nil {
+				release()
+			} else {
+				if releaseTunnel != nil {
+					releaseTunnel()
+				}
+				releaseTunnel = release
+			}
 		}
 		if err != nil {
 			say(err.Error())
@@ -125,14 +141,19 @@ func (ui *desktopUI) chatGPTWebSettings(draft *agent.Connection, say func(string
 		return widget.NewHyperlink(label, u)
 	}
 	return card(
-		settingStack("ChatGPT (Web) setup", "Desktop only. Uses the ChatGPT website in a separate browser. This is unofficial and can break when ChatGPT changes. ChatGPT's normal usage limits still apply.", container.NewVBox(
-			note("1. Sign in to ChatGPT using the dedicated browser. Browser Use and your normal browser keep separate cookies."), open,
-			note("2. Create a Secure MCP Tunnel in your OpenAI organization, associated with this ChatGPT workspace."), link("Open tunnel settings", "https://platform.openai.com/settings/organization/tunnels"), tunnel,
-			note("3. Create a restricted key with Tunnels Read + Use. Save it in a private file (chmod 600). Enter only its file path here. The key is never saved in chats or sent to the model."), link("Open API key settings", "https://platform.openai.com/settings/organization/api-keys"), keyFile, start, status,
-			note("4. With the tunnel started, open ChatGPT Plugins in the sign-in window, then Add → Add custom MCP server. Name: 1loop. Connection: Tunnel, with the ID above. Authentication: No authentication. Tick \"I understand and want to continue\", choose Create as a plugin, then Connect 1loop."), link("Open ChatGPT Plugins", "https://chatgpt.com/plugins"),
-			note("5. Every chat 1loop opens goes in the ChatGPT project named 1loop. It is found, or created, on the first message; prepare it now if you like. The models come from your account."), project, prepare,
-		)),
-	)
+			settingStack("ChatGPT (Web) setup", "Desktop only. Uses the ChatGPT website in a separate browser. This is unofficial and can break when ChatGPT changes. ChatGPT's normal usage limits still apply.", container.NewVBox(
+				note("1. Sign in to ChatGPT using the dedicated browser. Browser Use and your normal browser keep separate cookies."), open,
+				note("2. Create a Secure MCP Tunnel in your OpenAI organization, associated with this ChatGPT workspace."), link("Open tunnel settings", "https://platform.openai.com/settings/organization/tunnels"), tunnel,
+				note("3. Create a restricted key with Tunnels Read + Use. Save it in a private file (chmod 600). Enter only its file path here. The key is never saved in chats or sent to the model."), link("Open API key settings", "https://platform.openai.com/settings/organization/api-keys"), keyFile, start, status,
+				note("4. With the tunnel started, open ChatGPT Plugins in the sign-in window, then Add → Add custom MCP server. Name: 1loop. Connection: Tunnel, with the ID above. Authentication: No authentication. Tick \"I understand and want to continue\", choose Create as a plugin, then Connect 1loop."), link("Open ChatGPT Plugins", "https://chatgpt.com/plugins"),
+				note("5. Every chat 1loop opens goes in the ChatGPT project named 1loop. It is found, or created, on the first message; prepare it now if you like. The models come from your account."), project, prepare,
+			)),
+		), func() {
+			if releaseTunnel != nil {
+				releaseTunnel()
+				releaseTunnel = nil
+			}
+		}
 }
 
 // webBrowser reuses the existing page renderer, without Browser Use's
@@ -184,18 +205,54 @@ func (ui *desktopUI) ensureWebTab() {
 			address = web.URL
 		}
 	}
+	release := bridge.Retain()
+	page := bridge.Page(key, address)
+	stopView := func() {
+		page.SetVisible(false)
+		release()
+	}
 	for i, tab := range ui.panel.tabs {
 		if tab.web {
-			if tab.webKey != key {
-				ui.panel.tabs[i].content, ui.panel.tabs[i].webKey = ui.webBrowser(bridge, key, address), key
-				if i == ui.panel.active {
-					ui.panel.render()
-				}
+			if tab.webKey == key && tab.webAccount == bridge {
+				release()
+				return
+			}
+			tab.dispose()
+			ui.panel.tabs[i].content, ui.panel.tabs[i].webKey = ui.webBrowser(bridge, key, address), key
+			ui.panel.tabs[i].webAccount, ui.panel.tabs[i].cancel = bridge, stopView
+			if i == ui.panel.active {
+				ui.panel.render()
 			}
 			return
 		}
 	}
-	ui.panel.tabs = append(ui.panel.tabs, panelTab{kind: "chatgptweb", title: "ChatGPT", icon: iconPlug, web: true, webKey: key, content: ui.webBrowser(bridge, key, address)})
+	ui.panel.tabs = append(ui.panel.tabs, panelTab{kind: "chatgptweb", title: "ChatGPT", icon: iconPlug, web: true, webKey: key, webAccount: bridge, cancel: stopView, content: ui.webBrowser(bridge, key, address)})
 	ui.panel.active = len(ui.panel.tabs) - 1
 	ui.panel.render()
+}
+
+// A hidden chat's saved panel does not need to keep its Web browser alive.
+// Active turns retain the account separately until their tools finish.
+func (ui *desktopUI) releaseWebTabs() bool {
+	kept, active := ui.panel.tabs[:0], -1
+	removed := false
+	for i, tab := range ui.panel.tabs {
+		if tab.web {
+			tab.dispose()
+			removed = true
+			continue
+		}
+		if i == ui.panel.active {
+			active = len(kept)
+		}
+		kept = append(kept, tab)
+	}
+	if !removed {
+		return false
+	}
+	if active < 0 && len(kept) > 0 {
+		active = 0
+	}
+	ui.panel.tabs, ui.panel.active = kept, active
+	return true
 }

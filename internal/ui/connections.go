@@ -108,6 +108,8 @@ func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 	ui.updateHeader()
 	if cfg.Provider == "chatgptweb" {
 		ui.ensureWebTab()
+	} else if ui.releaseWebTabs() {
+		ui.panel.render()
 	}
 	ui.save()
 	ui.remote.settingsChanged()

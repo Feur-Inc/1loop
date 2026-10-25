@@ -7,6 +7,24 @@ Once installed, 1loop updates itself from that page: see
 
 ## Linux desktop (x86-64)
 
+Pick one format. Every one of them puts 1loop in your applications menu; 1loop
+itself never writes a launcher entry. The binaries need glibc 2.34 or newer
+(Debian 12, Ubuntu 22.04, Fedora 35, RHEL 9 and later).
+
+### Debian, Ubuntu and derivatives (`.deb`)
+
+```bash
+sudo apt install ./1loop-VERSION-amd64.deb
+```
+
+1loop goes to `/usr/lib/1loop`, with `1loop` on your `PATH`, the launcher
+entry in `/usr/share/applications` and the icons in `/usr/share/icons/hicolor`.
+Updates come from the release page as a new `.deb`: Settings → Updates tells
+you when one is out but does not replace a packaged 1loop. Remove it with
+`sudo apt remove 1loop`.
+
+### Any distribution (`.tar.gz`)
+
 1. Download `1loop-VERSION-linux-amd64.tar.gz`.
 2. Extract it in a folder you own, for example `~/Applications/1loop`:
 
@@ -16,16 +34,133 @@ Once installed, 1loop updates itself from that page: see
    ~/Applications/1loop/1loop
    ```
 
-3. 1loop adds itself to your applications menu on first start
-   (`~/.local/share/applications/1loop.desktop`).
+3. Optional: add it to your applications menu.
 
-Keep both files, `1loop` and `1loop-wayland`, together: in a Wayland session
-`1loop` hands over to `1loop-wayland`. The folder must stay writable by you for
-updates to install.
+   ```bash
+   ~/Applications/1loop/install.sh
+   ```
 
-Runtime needs: Bash, Git (for the *Git changes* tab), and Chrome or Chromium
-for the agent's browser. Optional: `latex` and `dvipng` to render formulas,
-and the Computer Use packages below.
+   This writes `~/.local/share/applications/1loop.desktop` (pointing at this
+   folder) and the icons in `~/.local/share/icons/hicolor`. Run it again if
+   you move the folder; `install.sh --uninstall` removes both.
+
+Keep `1loop` and `1loop-wayland` together, and the folder writable by you:
+1loop updates itself there (Settings → Updates).
+
+Versions before this one wrote `~/.local/share/applications/1loop.desktop`
+themselves on every start. If you switch to a package, delete that file (or
+run `install.sh --uninstall` from the old folder): it would hide the
+package's own entry.
+
+### AppImage
+
+Download `1loop-VERSION-x86_64.AppImage`, then:
+
+```bash
+chmod +x 1loop-VERSION-x86_64.AppImage
+./1loop-VERSION-x86_64.AppImage
+```
+
+It needs FUSE (`fuse3`/`fusermount3`); without it, run it with
+`--appimage-extract-and-run`. The AppImage carries the launcher entry and the
+icons; to add them to your menu, use an AppImage integration tool such as
+Gear Lever or AppImageLauncher. It contains only 1loop: OpenGL, X11/Wayland,
+Git, the browser and Python come from the system, as for the `.tar.gz`, so
+Browser Use, Terminal Use and Computer Use work the same way. Update it by
+downloading the new AppImage.
+
+### Flatpak
+
+Built from this repository (there is no Flathub listing yet):
+
+```bash
+flatpak install --user flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08 \
+  org.freedesktop.Sdk.Extension.golang//25.08
+make flatpak                       # dist/1loop-VERSION.flatpak
+flatpak install --user dist/1loop-VERSION.flatpak
+flatpak run io.github.Feur_Inc.OneLoop
+```
+
+A coding agent works on your real system, so this Flatpak is **not a tight
+sandbox**: it can read and write all your files (`--filesystem=host`), and
+it runs its commands, its terminal, Git, Chromium/Chrome and Computer Use's
+helper **on the host** through `flatpak-spawn --host`
+(`--talk-name=org.freedesktop.Flatpak`, see `packaging/flatpak/host-run`).
+What that changes:
+
+- **Auto mode's workspace sandbox (Landlock) is off.** Commands run on the
+  host, outside the process Landlock restricts, so every command that is not
+  plainly safe asks for your approval, as on systems without Landlock.
+- **Browser Use** needs Chromium or Google Chrome installed on the host
+  system, not as a Flatpak.
+- **Computer Use** needs the Python packages listed below on the host, as
+  for the other formats.
+- **Terminal Use** opens your login shell on the host. The environment the
+  sandbox sets for itself (`PATH`, `XDG_*_HOME`, `LD_*`…) is not passed on.
+- Stopping a command ends it on the host too (`flatpak-spawn --watch-bus`).
+- In a Wayland session the Flatpak has no X11 socket
+  (`--socket=fallback-x11`), so `ONELOOP_BACKEND=x11` does not work there.
+- The window keeps the app id `1loop`; the entry,
+  `io.github.Feur_Inc.OneLoop.desktop`, matches it through
+  `StartupWMClass=1loop`.
+- Updates: rebuild and reinstall.
+
+### Nix and NixOS
+
+The repository is a flake:
+
+```bash
+nix run github:Feur-Inc/1loop     # try it
+nix profile install github:Feur-Inc/1loop
+```
+
+On NixOS, add the flake as an input and the package to your configuration:
+
+```nix
+# flake.nix
+inputs.oneloop.url = "github:Feur-Inc/1loop";
+# configuration.nix
+environment.systemPackages = [ inputs.oneloop.packages.x86_64-linux.default ];
+```
+
+The package installs `1loop` with its launcher entry (`makeDesktopItem`) and
+icons, and brings its own Python for Computer Use (`ONELOOP_COMPUTER_PYTHON`,
+with PyGObject, dbus-python, Pillow, GTK, GStreamer and its PipeWire
+plugin). It needs `hardware.graphics.enable = true;` (on by default with any
+desktop). Git and Chromium/Chrome come from your system: add `git` and
+`chromium` to your packages for the *Git changes* tab and Browser Use. On
+another distribution, the Nix build cannot find your GPU driver: run it
+through [nixGL](https://github.com/nix-community/nixGL)
+(`nixGL 1loop`), or use the `.tar.gz`. Updates come with `nix flake update`
+or `nix profile upgrade`.
+
+### X11, Wayland and XWayland
+
+1loop is built twice, because its window toolkit (GLFW) chooses X11 or
+Wayland when it is compiled: `1loop` (X11) and `1loop-wayland` (native
+Wayland). Always start `1loop`; it picks the backend when it starts:
+
+| Session | Backend used |
+|---|---|
+| Wayland (`WAYLAND_DISPLAY` set and the compositor answers) | native Wayland, `1loop-wayland`: sharp text at any scale |
+| X11 (`DISPLAY` set) | X11 |
+| Wayland with a stale `WAYLAND_DISPLAY` (for example after an ssh or tmux reattach) and `DISPLAY` set | X11, through XWayland |
+| No display at all | 1loop stops with a message |
+
+`ONELOOP_BACKEND=x11` forces X11 (XWayland in a Wayland session), and
+`ONELOOP_BACKEND=wayland` forces native Wayland. XWayland needs an X server
+in the session: GNOME and KDE start one by themselves, niri uses
+`xwayland-satellite`. Under XWayland with fractional scaling, text may be
+blurry: that is XWayland upscaling, and the native backend avoids it.
+`ONELOOP_SYSTEM_TITLEBAR=1` keeps the desktop's own title bar instead of
+1loop's.
+
+### What 1loop uses from the system
+
+Runtime needs, for every format: OpenGL, X11 or Wayland libraries (the `.deb`
+pulls them in), Bash, Git (for the *Git changes* tab), and Chrome or Chromium
+for the agent's browser (Browser Use). Optional: `latex` and `dvipng` to
+render formulas, and the Computer Use packages below.
 
 <details>
 <summary>Computer Use on Linux (optional)</summary>
@@ -95,5 +230,11 @@ when it can update, and updates it on request.
 | Logs, caches | `~/.cache/1loop/` | `%LocalAppData%\1loop\` |
 | Server | `~/.config/1loop-server/` | `%AppData%\1loop-server\` |
 
-Uninstalling: delete the folder you extracted, and these folders if you want
-to remove your data too.
+The Flatpak keeps its conversations, settings and caches in
+`~/.var/app/io.github.Feur_Inc.OneLoop/` (`config/1loop`, `cache/1loop`)
+instead.
+
+Uninstalling: remove the package (`apt remove 1loop`, `flatpak uninstall
+io.github.Feur_Inc.OneLoop`, `nix profile remove`, or delete the AppImage),
+or run `install.sh --uninstall` and delete the folder you extracted. Delete
+these folders too if you want to remove your data.

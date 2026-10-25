@@ -40,8 +40,10 @@
   <div class="grid">
     <div class="card">
       <h2>Linux</h2>
-      <p>Desktop app for x86-64, X11 and Wayland. Extract and run <code>./1loop</code>.</p>
+      <p>Desktop app for x86-64, X11 and Wayland. Extract and run <code>./1loop</code>, or install the <code>.deb</code>.</p>
       <a class="button" href="updates/{{VERSION}}/1loop-{{VERSION}}-linux-amd64.tar.gz">Download for Linux</a>
+      <a class="secondary" href="updates/{{VERSION}}/1loop-{{VERSION}}-amd64.deb">Debian / Ubuntu (.deb)</a>
+      <a class="secondary" href="updates/{{VERSION}}/1loop-{{VERSION}}-x86_64.AppImage">AppImage</a>
     </div>
     <div class="card">
       <h2>Windows</h2>
@@ -70,7 +72,7 @@
 
   <h3>Install</h3>
   <ol>
-    <li><b>Linux:</b> <code>tar -xzf 1loop-{{VERSION}}-linux-amd64.tar.gz -C ~/Applications/1loop</code>, then run <code>~/Applications/1loop/1loop</code>. Keep the folder writable so updates can install.</li>
+    <li><b>Linux:</b> <code>tar -xzf 1loop-{{VERSION}}-linux-amd64.tar.gz -C ~/Applications/1loop</code>, then run <code>~/Applications/1loop/1loop</code> (<code>install.sh</code> beside it adds it to the applications menu). Keep the folder writable so updates can install. On Debian or Ubuntu: <code>sudo apt install ./1loop-{{VERSION}}-amd64.deb</code>.</li>
     <li><b>Windows:</b> extract the zip to a folder you own and run <code>1loop.exe</code>. Without an OpenGL driver, run <code>1loop-software.cmd</code>.</li>
     <li><b>Android:</b> open the APK on the phone and allow the install. Then pair with your desktop (QR code in <i>Settings → Phone remote</i>), add a server, or choose <i>Local phone</i>.</li>
     <li><b>Server:</b> make the file executable and follow the server guide.</li>

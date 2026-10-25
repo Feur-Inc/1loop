@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component type="desktop-application">
+  <id>io.github.Feur_Inc.OneLoop</id>
+  <name>1loop</name>
+  <summary>Coding agent for your project, with your model</summary>
+  <metadata_license>CC0-1.0</metadata_license>
+  <url type="homepage">https://github.com/Feur-Inc/1loop</url>
+  <url type="bugtracker">https://github.com/Feur-Inc/1loop/issues</url>
+  <developer>
+    <name>Feur Inc</name>
+  </developer>
+  <description>
+    <p>
+      1loop runs an AI agent on your project with the model you choose. It reads and edits files,
+      runs commands in a terminal, drives a browser and, on desktops whose portal allows it, the
+      desktop itself.
+    </p>
+    <p>
+      This Flatpak runs the agent's commands, its terminal, Git, the browser and Computer Use on
+      the host system through flatpak-spawn: it needs full access to your files and to the host.
+    </p>
+  </description>
+  <launchable type="desktop-id">io.github.Feur_Inc.OneLoop.desktop</launchable>
+  <content_rating type="oars-1.1"/>
+  <categories>
+    <category>Development</category>
+  </categories>
+</component>

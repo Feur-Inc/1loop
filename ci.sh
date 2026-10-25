@@ -21,6 +21,10 @@ go test ./...
 echo 'Building Linux desktop (X11 and Wayland) and headless server'
 make build server
 
+echo 'Packaging the Linux desktop (.tar.gz, .deb, AppImage) against Debian 12 in Docker'
+packaging/linux/build.sh binaries tarball deb appimage
+dpkg-deb --info "dist/1loop-$(cat VERSION)-amd64.deb" >/dev/null
+
 echo 'Building Android APKs, running unit tests and lint'
 ./android/gradlew -p android --no-daemon --no-parallel --max-workers=1 \
   -Dorg.gradle.jvmargs=-Xmx1536m -Pkotlin.compiler.execution.strategy=in-process \
@@ -65,6 +69,7 @@ printf "@echo off\r\nsetlocal\r\nrem Use the portable CPU renderer on systems wi
 
 printf '\nLocal checks passed. Outputs:\n'
 printf '%s\n' 'bin/1loop' 'bin/1loop-wayland' 'bin/1loop-server' \
+  "dist/1loop-$(cat VERSION)-linux-amd64.tar.gz" "dist/1loop-$(cat VERSION)-amd64.deb" "dist/1loop-$(cat VERSION)-x86_64.AppImage" \
   'bin/windows/1loop.exe' 'bin/windows/1loop-server.exe' 'bin/windows/1loop-software.cmd' \
   'android/app/build/outputs/apk/debug/app-debug.apk' \
   'android/app/build/outputs/apk/release/app-release.apk' \

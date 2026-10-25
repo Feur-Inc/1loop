@@ -1,0 +1,12 @@
+[Desktop Entry]
+Type=Application
+Name=1loop
+GenericName=Coding agent
+Comment=Your project. Your model. One loop.
+Exec=1loop
+Icon=1loop
+Terminal=false
+Categories=Development;
+Keywords=AI;agent;LLM;code;assistant;
+StartupWMClass=1loop
+StartupNotify=true

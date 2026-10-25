@@ -38,7 +38,7 @@ fi
 
 echo "Packaging $version"
 mkdir -p "$out"
-tar -C bin -czf "$out/1loop-$version-linux-amd64.tar.gz" 1loop 1loop-wayland
+DIST=$out packaging/linux/build.sh binaries tarball deb appimage
 cp bin/1loop-server "$out/1loop-server-$version-linux-amd64"
 (cd bin/windows && zip -qr "../../$out/1loop-$version-windows-amd64.zip" .)
 cp bin/windows/1loop-server.exe "$out/1loop-server-$version-windows-amd64.exe"

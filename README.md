@@ -239,10 +239,11 @@ bash .github/scripts/build-and-verify.sh
 ### Self-hosted CI
 
 `.github/workflows/ci.yml` runs Linux, Windows and Android as separate jobs
-on organization runners with labels `self-hosted`, `Linux`, `X64`. GitHub
-schedules up to two jobs concurrently when both runners are idle; with one
-available runner the same jobs run sequentially. The runner group must share
-its runners with this repository. No Actions artifact or cache storage is used.
+on the organization runner labeled `self-hosted`, `Linux`, `X64`,
+`TPM28_RUNNER`. The jobs currently run sequentially on that runner. `mopi` is
+temporarily excluded until its build dependencies are prepared; remove the
+`TPM28_RUNNER` selector from each job to enable both runners again. The runner
+group must share its runners with this repository. No Actions artifact or cache storage is used.
 
 Use **Debian 12 images** for the runners to preserve the Linux packages’
 Debian 12 / Ubuntu 22.04 compatibility. Builds run directly inside the runner;

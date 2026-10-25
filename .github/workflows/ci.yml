@@ -15,6 +15,8 @@ concurrency:
   group: ci-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: false
 
+# mopi is temporarily excluded until its build dependencies are prepared.
+# To share work with mopi again, remove TPM28_RUNNER from each runs-on list.
 jobs:
   verify:
     name: Verify ${{ matrix.platform }}
@@ -22,7 +24,7 @@ jobs:
       (github.event_name == 'pull_request' &&
        github.event.pull_request.head.repo.full_name == github.repository) ||
       (github.event_name != 'pull_request' && github.ref != 'refs/heads/dev')
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, TPM28_RUNNER]
     timeout-minutes: 180
     strategy:
       fail-fast: false
@@ -42,7 +44,7 @@ jobs:
     name: Prepare private draft for dev builds
     if: >-
       github.ref == 'refs/heads/dev' && github.event_name != 'pull_request'
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, TPM28_RUNNER]
     timeout-minutes: 5
     permissions:
       contents: write
@@ -70,7 +72,7 @@ jobs:
   build-alpha:
     name: Build alpha ${{ matrix.platform }}
     needs: prepare-alpha
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, TPM28_RUNNER]
     timeout-minutes: 180
     permissions:
       contents: write
@@ -119,7 +121,7 @@ jobs:
   publish-alpha:
     name: Sign and publish complete alpha
     needs: [prepare-alpha, build-alpha]
-    runs-on: [self-hosted, Linux, X64]
+    runs-on: [self-hosted, Linux, X64, TPM28_RUNNER]
     timeout-minutes: 15
     permissions:
       contents: write

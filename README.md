@@ -178,9 +178,7 @@ silently install it on users' devices.
 1. **Check Pages once.** In the repository's **Settings → Pages**, select
    **Deploy from a branch**, branch **gh-pages**, folder **/ (root)**.
    The site is <https://tpm28.github.io/1loop/>. This uses GitHub's Pages
-   deployment. Stable releases still publish this site through `release.sh`;
-   the GitHub Actions workflow below runs CI and publishes test alpha releases
-   from `dev` without changing the stable Pages manifest.
+   deployment; no custom GitHub Actions CI workflow is required.
 2. **Prepare the release.** Increase `VERSION` (for example, `0.3.2` to
    `0.3.3`) and write `docs/releases/0.3.3.md` with the release notes.
    Commit, review and merge the changes, then publish from the intended clean
@@ -189,9 +187,6 @@ silently install it on users' devices.
 3. **Keep the existing signing keys.** Use the same private manifest key that
    matches the public key embedded in installed apps, and the same Android
    APK signing keystore. Android rejects an update signed by another APK key.
-   The ignored local `release-key.pem` is also stored in the repository's
-   Actions secret `RELEASE_KEY` so CI can sign alpha build checksums; configure
-   it with `gh secret set RELEASE_KEY --repo Feur-Inc/1loop < release-key.pem`.
    Never commit either private key or an access token.
 4. **Run the publisher from the repository root:**
 
@@ -199,15 +194,15 @@ silently install it on users' devices.
    gh auth login                 # once, if not already authenticated
    GH_TOKEN="$(gh auth token)" \
      RELEASE_KEY=/path/to/existing/release-key.pem \
-     SKIP_CI=1 bash release.sh
+     bash release.sh
    ```
 
-   `release.sh` consumes the downloads already built and checked following
-   [docs/BUILD.md](docs/BUILD.md), signs the manifest, pushes files to `gh-pages`, and
-   creates the matching GitHub release. The results are also kept locally in
-   `dist/VERSION/`.
-   Do not reuse a version already published. `SKIP_CI=1` confirms the documented
-   build checks passed for exactly the source commit and downloads being published.
+   `release.sh` builds and packages all five downloads, signs
+   the manifest, pushes the files to `gh-pages`, and creates the matching
+   GitHub release. The results are also kept locally in `dist/VERSION/`.
+   Do not reuse a version already published. If the builds of
+   [docs/BUILD.md](docs/BUILD.md) were just made from exactly this source,
+   `SKIP_CI=1` reuses them; otherwise leave the builds enabled.
 5. **Wait for Pages to deploy, then verify.** Open the release page and
    `updates/latest.json` above. The manifest is a signed envelope, rather
    than plain release notes; let an installed app verify it with
@@ -221,112 +216,35 @@ Do not edit the manifest by hand: its signature must match its contents.
 
 ## Building from source
 
-See [docs/BUILD.md](docs/BUILD.md) for prerequisites and the commands to build
-and check Linux, Windows and Android manually with Go parallelism set to two.
-The CI executes its build and packaging commands directly in its YAML files;
-there is no local build wrapper.
+Requirements: Go 1.23+, a C compiler, and the OpenGL, X11 and Wayland
+development libraries (`libgl-dev`, `xorg-dev`, `libwayland-dev`,
+`libxkbcommon-dev`) for the desktop.
 
-### Self-hosted CI
-
-`.github/workflows/ci.yml` runs Linux, Windows and Android as separate jobs
-on the organization runner labeled `self-hosted`, `Linux`, `X64`,
-`TPM28_RUNNER`. The jobs currently run sequentially on that runner. `mopi` is
-temporarily excluded until its build dependencies are prepared; remove the
-`TPM28_RUNNER` selector from each job to enable both runners again. The runner
-group must share its runners with this repository. No Actions artifact or cache storage is used.
-
-Builds use the runner's installed compiler and system libraries directly.
-There is no Docker build, sysroot or older-distribution compatibility layer.
-The `.deb` records the minimum glibc version required by its executables;
-older distributions may need to build from source instead.
-Preinstall these packages in the runner image (the workflow does not invoke sudo):
-
-```sh
-apt-get install build-essential cmake patch patchelf pkg-config libgl-dev \
-  xorg-dev libwayland-dev libxkbcommon-dev binutils zip unzip dpkg-dev \
-  python3 curl ca-certificates git gh jq openssl gcc-mingw-w64-x86-64 p7zip-full
+```bash
+make            # bin/1loop (X11) and bin/1loop-wayland (native Wayland)
+make server     # bin/1loop-server, static, no CGO
+make run        # build, then open 1loop on the current folder
+make dev        # same, with the developer log (~/.cache/1loop/dev.log)
 ```
 
-Actions set up Go, Java 21 and the Android SDK/NDK. Go uses `-p=2` in CI
-and in the manual commands documented in [docs/BUILD.md](docs/BUILD.md).
-Windows is cross-compiled directly using MinGW; this does not run Windows tests.
-Linux packages retain the launcher, icons and per-format settings from #57/#59;
-the packaging commands are now inline in the CI. Flatpak and Nix definitions
-remain available with manual commands in the build documentation.
-
-Pull requests from this repository and builds of `main` run verification only.
-Use a dedicated runner isolated from personal files and unrelated workloads;
-contributors with branch push access can execute code on it. Fork PRs do not
-automatically execute on persistent self-hosted runners:
-review them before testing their code on an isolated runner. PR verification
-receives no signing secrets: debug uses a local debug key and release is unsigned.
-
-On a trusted push to `dev`, each platform builds and verifies once, then uploads
-its outputs to this run's **draft** prerelease (`alpha-RUN_ID`). Only after
-all three jobs succeed does the publisher download the complete set, sign
-`SHA256SUMS`, and publish the alpha. Failed builds leave an unpublished draft
-for inspection; rerunning failed jobs reuses that draft. A completed run is not
-republished on rerun. Only the three most recently published `alpha-N`
-prereleases are retained; stable releases and other tags are excluded. These
-alpha builds do not change the stable Pages update manifest.
-
-Verify the downloads with the trusted `.github/release-key.pub` from the source
-commit linked in the release notes:
-
-```sh
-openssl dgst -sha256 -verify release-key.pub -signature SHA256SUMS.sig SHA256SUMS
-sha256sum --check SHA256SUMS
-```
-
-### Android signing
-
-Debug and release use the **same publication certificate**, loaded from the
-ignored `android/signing/release.properties` (Java properties format):
-
-```properties
-storeFile=1loop-release.p12
-storePassword=YOUR_STORE_PASSWORD
-keyAlias=1loop-release
-keyPassword=YOUR_KEY_PASSWORD
-```
-
-`storeFile` is relative to this properties file. For another worktree, set
-`ONELOOP_ANDROID_SIGNING_PROPERTIES` to its absolute path. Without that file,
-debug uses Android's local debug keystore so contributors can install it;
-release remains unsigned. When publication credentials are present, both
-variants use the publication certificate.
-An existing app signed with the old debug key cannot be updated directly with
-the publication key. Do not uninstall an existing app without preserving its
-data and agreeing on migration first.
-
-Keep encrypted backups of `android/signing/` and `release-key.pem`; the latter
-signs update manifests/checksums and is a different key from the Android
-certificate. Never commit private keys or passwords. `.pem`, `.key`, `.p12`,
-`.jks`, `.keystore` and `android/signing/` are ignored by Git.
-
-CI requires two repository Actions secrets:
-
-- `RELEASE_KEY`: the existing PEM contents of `release-key.pem`, matching
-  `.github/release-key.pub`.
-- `ANDROID_SIGNING_BUNDLE`: base64 of a gzip tar archive containing only
-  `1loop-release.p12` and `release.properties`, with those exact archive names.
-
-Set them without placing credentials in command arguments:
-
-```sh
-gh secret set RELEASE_KEY --repo Feur-Inc/1loop < release-key.pem
-tar -C android/signing -czf - 1loop-release.p12 release.properties | base64 -w0 | \
-  gh secret set ANDROID_SIGNING_BUNDLE --repo Feur-Inc/1loop
-```
-
-The Android key is restored only for trusted `dev` publication and removed
-from the runner after use. The build verifies both APK signatures and compares
-their certificate SHA-256 digests before uploading the release APK.
-
-For local development, use the commands in [docs/BUILD.md](docs/BUILD.md).
-Start the `1loop` executable: it hands over to `1loop-wayland` when appropriate.
-`ONELOOP_BACKEND=x11` or `wayland` forces a backend (see
+Always start `bin/1loop`: in a Wayland session it hands over to
+`bin/1loop-wayland`. `ONELOOP_BACKEND=x11` or `wayland` forces a backend (see
 [X11, Wayland and XWayland](docs/INSTALL.md#x11-wayland-and-xwayland)).
+`make tarball deb` builds the Linux downloads in `dist/`
+(`packaging/linux/build.sh`); `make appimage`, `make flatpak` and
+`make nix` build the other formats. Every build and check the CI runs is in
+[docs/BUILD.md](docs/BUILD.md).
+
+- **Android**: JDK 21 and the Android SDK (`platforms;android-37.0`,
+  `build-tools;37.0.0`, NDK `30.0.16248370` for the native helpers), then
+  `cd android && ./gradlew assembleRelease`.
+- **Windows**: `packaging/windows/build.sh` cross-builds `bin/windows/` from
+  Linux with MinGW. Natively: MinGW-w64 GCC on `PATH`, then
+  `go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe ./cmd/1loop`.
+- **Releases**: `bash release.sh` builds everything, signs the update manifest
+  with `release-key.pem` (never committed), publishes the files on the release
+  page (the `gh-pages` branch) and creates the GitHub release. The version
+  comes from the `VERSION` file.
 
 ## Security and privacy
 

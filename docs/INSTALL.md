@@ -8,11 +8,8 @@ Once installed, 1loop updates itself from that page: see
 ## Linux desktop (x86-64)
 
 Pick one format. Every one of them puts 1loop in your applications menu; 1loop
-itself never writes a launcher entry. The binaries use the build runner's
-system libraries. The `.deb` declares
-its actual minimum glibc version; older distributions are not guaranteed to
-run these builds. The tarball and AppImage have the same system-library
-requirements.
+itself never writes a launcher entry. The binaries need glibc 2.34 or newer
+(Debian 12, Ubuntu 22.04, Fedora 35, RHEL 9 and later).
 
 ### Debian, Ubuntu and derivatives (`.deb`)
 

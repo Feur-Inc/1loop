@@ -14,7 +14,7 @@ VERSION_FLAG  := -X 1loop/internal/update.Version=$(VERSION)
 # Release builds: no local paths and no debug symbols in the binaries.
 RELEASE_FLAGS := -trimpath -ldflags="-s -w $(VERSION_FLAG)"
 
-.PHONY: build run dev server release clean flatpak nix
+.PHONY: build run dev server release clean linux-binaries tarball deb appimage flatpak nix
 
 build:
 	go build -ldflags="$(VERSION_FLAG)" -o $(BIN)/1loop ./cmd/1loop
@@ -46,7 +46,15 @@ release:
 	rm -rf $(DIST)/1loop-$(VERSION)
 	cp android/app/build/outputs/apk/release/app-release.apk $(DIST)/1loop-remote-$(VERSION).apk
 
-# Manual package build commands are documented in docs/BUILD.md.
+# The Linux downloads, in dist/ (packaging/linux/build.sh): binaries built
+# with this machine's libraries, then the archive, the .deb and the
+# AppImage (with a pinned appimagetool it downloads), each with the launcher
+# entry and the icons.
+linux-binaries:
+	packaging/linux/build.sh binaries
+
+tarball deb appimage: linux-binaries
+	packaging/linux/build.sh $@
 
 # The Flatpak, built from the sources by flatpak-builder (with the
 # org.freedesktop.Sdk.Extension.golang//25.08 extension), as a bundle.

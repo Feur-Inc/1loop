@@ -225,18 +225,26 @@ fun ModelSheet(app: RemoteApp, onDone: () -> Unit) {
                     style = Type.small, modifier = Modifier.padding(start = 4.dp),
                 )
             }
-            for (option in options) {
-                val selected = option.label == model?.label
-                Row(
-                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (selected) Palette.selected else Color.Transparent)
-                        .clickable { app.setModel(label = option.label) }.padding(horizontal = 12.dp, vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically,
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(option.name, style = Type.body.copy(fontSize = 14.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        Text(option.detail, style = Type.caption.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            for ((family, members) in modelFamilies(options)) {
+                if (family.isNotEmpty()) {
+                    Text(
+                        family, style = Type.caption.copy(fontWeight = FontWeight.SemiBold),
+                        modifier = Modifier.padding(start = 12.dp, top = 12.dp, bottom = 2.dp),
+                    )
+                }
+                for (option in members) {
+                    val selected = option.label == model?.label
+                    Row(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (selected) Palette.selected else Color.Transparent)
+                            .clickable { app.setModel(label = option.label) }.padding(horizontal = 12.dp, vertical = 10.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text(option.name, style = Type.body.copy(fontSize = 14.5.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(option.detail, style = Type.caption.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis)
+                        }
+                        if (selected) Icon(Icons.check, null, tint = Palette.amber, modifier = Modifier.size(18.dp))
                     }
-                    if (selected) Icon(Icons.check, null, tint = Palette.amber, modifier = Modifier.size(18.dp))
                 }
             }
             // The plan's speeds, only when it offers some (Standard, Fast…).

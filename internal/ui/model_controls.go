@@ -149,9 +149,20 @@ func (ui *desktopUI) modelMenu() {
 			shown = accountID
 			groups[1] = nil
 			lists[1].RemoveAll()
-			for _, label := range catalog[shown] {
+			// Models come sorted by family, newest first; each family gets a
+			// caption once the account has more than one.
+			labels := catalog[shown]
+			grouped := slices.ContainsFunc(labels, func(label string) bool {
+				return agent.FamilyOf(ui.choices[label]).Name != agent.FamilyOf(ui.choices[labels[0]]).Name
+			})
+			family := ""
+			for _, label := range labels {
 				label := label
 				choice := ui.choices[label]
+				if name := agent.FamilyOf(choice).Name; grouped && name != family {
+					family = name
+					lists[1].Add(modelFamilyCaption(name, len(groups[1]) == 0))
+				}
 				r := row(choice.Name, choice.ID, nil, func() { choose(label) })
 				groups[1] = append(groups[1], r)
 				lists[1].Add(r)
@@ -419,6 +430,17 @@ func (modelReasoningLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) 
 		label.Move(fyne.NewPos(x+sliderWidth+18, y+slider.stopY(float32(i))-height/2))
 		label.Resize(fyne.NewSize(width, height))
 	}
+}
+
+// modelFamilyCaption heads a family's models in the picker (GPT, Claude Opus…).
+func modelFamilyCaption(name string, first bool) fyne.CanvasObject {
+	caption := textLine(name, 11, colMuted)
+	caption.TextStyle = fyne.TextStyle{Bold: true}
+	top := float32(8)
+	if first {
+		top = 0
+	}
+	return padded(top, 0, 9, 9, caption)
 }
 
 func modelAccountBadge(provider string) fyne.Resource {

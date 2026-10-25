@@ -1317,6 +1317,7 @@ func (ui *desktopUI) refreshModels() {
 					ui.modelUnavailable[connections[i].ID] = problem
 					continue
 				}
+				agent.SortModels(result.choices)
 				for _, choice := range result.choices {
 					if !choice.Connection.Includes(choice.ID) {
 						continue

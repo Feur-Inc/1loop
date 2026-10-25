@@ -85,7 +85,7 @@ jobs:
           set -euo pipefail
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends \
-            libgl-dev xorg-dev libwayland-dev libxkbcommon-dev xvfb
+            libgl-dev libegl-dev xorg-dev libwayland-dev libxkbcommon-dev xvfb
           unformatted=$(git ls-files -z -- '*.go' | xargs -0 -r gofmt -l)
           if [ -n "$unformatted" ]; then printf 'Not formatted:\n%s\n' "$unformatted"; exit 1; fi
           go vet ./...
@@ -124,7 +124,7 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends patchelf
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
-          yes | "$sdkmanager" --licenses >/dev/null
+          { yes || true; } | "$sdkmanager" --licenses >/dev/null
           "$sdkmanager" --install 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;30.0.16248370' >/dev/null
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
 

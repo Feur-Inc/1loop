@@ -7,7 +7,7 @@ from the repository root, on Debian or Ubuntu (x86-64). Go comes from
 ## Linux: checks, desktop and server
 
 ```bash
-sudo apt-get install libgl-dev xorg-dev libwayland-dev libxkbcommon-dev xvfb
+sudo apt-get install libgl-dev libegl-dev xorg-dev libwayland-dev libxkbcommon-dev xvfb
 test -z "$(git ls-files -z -- '*.go' | xargs -0 -r gofmt -l)"
 go vet ./...
 xvfb-run -a go test ./...     # the tests need a display

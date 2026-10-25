@@ -252,11 +252,12 @@ func (streams *webStreams) event(ev any) {
 			streams.mu.Unlock()
 			return
 		}
-		if streams.watching[streams.following] != nil {
+		if previous := streams.watching[streams.following]; previous != nil && !previous.stream.finished {
 			streams.mu.Unlock()
 			platform.Devf("chatgpt-web", "response %s ignored: %s is still followed", e.RequestID, streams.following)
 			return
 		}
+		delete(streams.watching, streams.following) // a completed SSE response may keep its connection open
 		watch := &webWatch{stream: &webStream{sink: *streams.sink}}
 		streams.watching[e.RequestID] = watch
 		streams.following = e.RequestID

@@ -180,16 +180,19 @@ func (bridge *ChatGPTWeb) CachedModels(ctx context.Context, conn Connection) ([]
 		return choices, err
 	}
 	var list []saved
+	info, statErr := os.Stat(path)
 	if data, err := os.ReadFile(path); err != nil || json.Unmarshal(data, &list) != nil || len(list) == 0 {
 		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 		defer cancel()
 		return read(ctx)
 	}
-	go func() {
-		ctx, cancel := context.WithTimeout(bridge.parent, 60*time.Second)
-		defer cancel()
-		_, _ = read(ctx)
-	}()
+	if statErr == nil && time.Since(info.ModTime()) > 24*time.Hour { // plans change rarely
+		go func() {
+			ctx, cancel := context.WithTimeout(bridge.parent, 60*time.Second)
+			defer cancel()
+			_, _ = read(ctx)
+		}()
+	}
 	var choices []ModelChoice
 	for _, model := range list {
 		choices = append(choices, ModelChoice{Connection: conn, ID: model.Name, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.Default, ReasoningMode: "effort", Source: "ChatGPT browser model picker"})
@@ -198,7 +201,16 @@ func (bridge *ChatGPTWeb) CachedModels(ctx context.Context, conn Connection) ([]
 }
 
 func (bridge *ChatGPTWeb) Models(ctx context.Context, conn Connection) ([]ModelChoice, error) {
-	tab := bridge.Page("setup", "https://chatgpt.com/")
+	select {
+	case bridge.service <- struct{}{}:
+		defer func() { <-bridge.service }()
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+	tab := bridge.Page(webServicePage, "https://chatgpt.com/")
+	if err := tab.Navigate(ctx, "navigate", "https://chatgpt.com/"); err != nil {
+		return nil, err
+	}
 	if err := webModelMenu(ctx, tab, true); err != nil {
 		return nil, err
 	}
@@ -259,6 +271,12 @@ func (backend *App) CloseChatGPTWeb() {
 // changed since it last did (ChatGPT keeps the list it read): the plugin's
 // settings page has a "Refresh tools" button. The tunnel must be running.
 func (bridge *ChatGPTWeb) refreshTools(ctx context.Context) error {
+	select {
+	case bridge.service <- struct{}{}:
+		defer func() { <-bridge.service }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 	tools, _ := json.Marshal(webMCPTools())
 	sum := sha256.Sum256(tools)
 	hash := hex.EncodeToString(sum[:])
@@ -266,7 +284,7 @@ func (bridge *ChatGPTWeb) refreshTools(ctx context.Context) error {
 	if saved, err := os.ReadFile(stamp); err == nil && strings.TrimSpace(string(saved)) == hash {
 		return nil
 	}
-	tab := bridge.Page("setup", "https://chatgpt.com/")
+	tab := bridge.Page(webServicePage, "https://chatgpt.com/")
 	if err := tab.Navigate(ctx, "navigate", "https://chatgpt.com/plugins"); err != nil {
 		return err
 	}
@@ -288,11 +306,20 @@ func (bridge *ChatGPTWeb) refreshTools(ctx context.Context) error {
 	if err := tab.Navigate(ctx, "navigate", "https://chatgpt.com/settings/plugins-settings/"+plugin); err != nil {
 		return err
 	}
-	if err := webClickVisibleText(ctx, tab, "button", "Refresh tools"); err != nil {
+	if err := webWait(ctx, tab, `[...document.querySelectorAll('button')].some(b=>b.innerText.trim()==='Refresh tools'&&b.getBoundingClientRect().width>0&&!b.disabled)`); err != nil {
 		return err
 	}
-	if err := sleepContext(ctx, 5*time.Second); err != nil { // ChatGPT reads the list through the tunnel
+	before := bridge.toolLists.Load()
+	if err := webClickText(ctx, tab, "button", "Refresh tools"); err != nil {
 		return err
 	}
-	return os.WriteFile(stamp, []byte(hash+"\n"), 0600)
+	for wait := 0; wait < 100; wait++ {
+		if bridge.toolLists.Load() > before {
+			return os.WriteFile(stamp, []byte(hash+"\n"), 0600)
+		}
+		if err := sleepContext(ctx, 200*time.Millisecond); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("ChatGPT did not refresh 1loop's tools: check the tunnel connection in Settings")
 }

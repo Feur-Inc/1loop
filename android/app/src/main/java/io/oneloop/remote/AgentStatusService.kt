@@ -133,7 +133,10 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         val params = badgeParams ?: WindowManager.LayoutParams(
             WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
             WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS,
+            // Hardware accelerated: a window added from a service is drawn in software
+            // otherwise, and the working ring animates every frame.
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
+                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED,
             PixelFormat.TRANSLUCENT,
         ).apply {
             gravity = Gravity.TOP or Gravity.END

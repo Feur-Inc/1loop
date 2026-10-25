@@ -1,8 +1,5 @@
 package io.oneloop.remote
 
-import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.animateContentSize
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -48,10 +45,9 @@ fun StatusBadge(onStop: (String) -> Unit, onTalk: (String) -> Unit, onDrag: (Flo
     var open by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf(false) }
     val drag = Modifier.pointerInput(Unit) { detectVerticalDragGestures { change, dy -> change.consume(); onDrag(dy) } }
-    Column(
-        Modifier.padding(8.dp).animateContentSize(tween(220, easing = CssEase)),
-        horizontalAlignment = Alignment.End,
-    ) {
+    // No size animations: the overlay window wraps its content, so each frame
+    // of one would resize the window through the window manager.
+    Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.End) {
         if (!open || run.phoneUse) {
             // Collapsed, and always during phone use (click-through then).
             Box(
@@ -76,7 +72,7 @@ fun StatusBadge(onStop: (String) -> Unit, onTalk: (String) -> Unit, onDrag: (Flo
                 RoundButton(Icons.chats, Color.Transparent, Palette.muted, description = "Talk to the agent", size = 40.dp, iconSize = 18.dp) { onTalk(run.chat) }
                 RoundButton(Icons.tasks, if (preview) Palette.code else Color.Transparent, Palette.muted, description = if (preview) "Hide preview" else "Show preview", size = 40.dp, iconSize = 18.dp) { preview = !preview }
             }
-            AnimatedVisibility(preview) { Preview(run) }
+            if (preview) Preview(run)
         }
     }
 }

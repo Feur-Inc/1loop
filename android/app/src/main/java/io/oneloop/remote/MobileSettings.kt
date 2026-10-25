@@ -89,6 +89,7 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
 
 // While a model runs and 1loop is not on screen: the floating badge (it needs
 // "Display over other apps"), the Live Update in the status bar, or nothing.
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun RunStatusSection() {
     val context = LocalContext.current
@@ -103,17 +104,23 @@ private fun RunStatusSection() {
     }
     Text("While a model runs", style = Type.headline)
     Text("Shows what the agent does over your other apps, with a button to stop it. It stays small and never covers the screen.", style = Type.small)
-    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    // Wraps: the three choices are wider than a phone.
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
         for (option in StatusStyle.entries) {
             Pill(option.title, primary = style == option) { style = option; AgentStatus.setStyle(context, option) }
         }
     }
+    // Always there: to allow it, or to take it back.
+    Text(
+        if (overlay) "Display over other apps: allowed." else "Display over other apps: not allowed.",
+        style = Type.body,
+    )
     if (style == StatusStyle.Badge && !overlay) {
-        Text("The badge needs “Display over other apps”. Until you allow it, the status shows in the status bar instead.", style = Type.small)
-        Pill("Allow display over other apps") {
-            runCatching {
-                context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri()))
-            }
+        Text("The badge needs it. Until you allow it, the status shows in the status bar instead.", style = Type.small)
+    }
+    Pill(if (overlay) "Display over other apps settings" else "Allow display over other apps", primary = style == StatusStyle.Badge && !overlay) {
+        runCatching {
+            context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri()))
         }
     }
 }

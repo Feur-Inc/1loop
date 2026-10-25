@@ -20,6 +20,9 @@ deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] https://deb.debia
 deb [signed-by=/usr/share/keyrings/debian-archive-keyring.gpg] https://security.debian.org/debian-security bookworm-security main
 SOURCES
   options=(
+    -o "Dir::State=$apt"
+    -o "Dir::Cache=$apt"
+    -o "Dir::Log=$apt"
     -o "Dir::Etc::sourcelist=$apt/sources.list"
     -o Dir::Etc::sourceparts=-
     -o "Dir::State::status=$apt/status"

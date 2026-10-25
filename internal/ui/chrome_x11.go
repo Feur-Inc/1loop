@@ -83,8 +83,6 @@ static int loop_xft_dpi(void) {
 import "C"
 
 import (
-	"os"
-	"syscall"
 	"unsafe"
 
 	"fyne.io/fyne/v2"
@@ -108,22 +106,10 @@ func customChromeSupported() bool { return true }
 
 func chromeReady() {}
 
-// switchBackend hands over to the native Wayland build (same path with a
-// "-wayland" suffix) when the session is Wayland, so text is rendered at the
-// screen's real resolution instead of being upscaled by XWayland.
-func switchBackend() {
-	if os.Getenv("WAYLAND_DISPLAY") == "" || os.Getenv("ONELOOP_BACKEND") == "x11" {
-		return
-	}
-	exe, err := os.Executable()
-	if err != nil {
-		return
-	}
-	target := exe + "-wayland"
-	if _, err := os.Stat(target); err == nil {
-		syscall.Exec(target, append([]string{target}, os.Args[1:]...), os.Environ())
-	}
-}
+// builtBackend is this build's display, see switchBackend.
+const builtBackend = backendX11
+
+func backendReady() {}
 
 func systemScale() float32 {
 	if dpi := int(C.loop_xft_dpi()); dpi > 0 {

@@ -28,6 +28,11 @@ import (
 // update themselves.
 var Version = "dev"
 
+// Packaged names the package format this build was made for (deb, AppImage,
+// Flatpak, Nix), set at build time like Version. Those builds are updated
+// by the way they were installed, never by replacing their own files.
+var Packaged = ""
+
 // ManifestURL is the release page's manifest. ONELOOP_UPDATE_URL replaces
 // it, to test a release before publishing it.
 const ManifestURL = "https://tpm28.github.io/1loop/updates/latest.json"
@@ -183,6 +188,10 @@ func Check(ctx context.Context, kind string) (Status, Manifest) {
 		status.Problem = "This is a development build: it does not update itself."
 		return status, manifest
 	}
+	if Packaged != "" {
+		status.Problem = packagedProblem()
+		return status, manifest
+	}
 	status.CanUpdate = status.Available
 	return status, manifest
 }
@@ -223,4 +232,8 @@ func Download(ctx context.Context, file File, destination string) error {
 		os.Remove(destination)
 	}
 	return err
+}
+
+func packagedProblem() string {
+	return "This 1loop was installed from its " + Packaged + " package: update it the way you installed it."
 }

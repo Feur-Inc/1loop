@@ -74,9 +74,15 @@ var landlockABI = sync.OnceValue(func() int {
 
 // SandboxAvailable says whether Auto mode can run commands in the
 // workspace sandbox: Landlock here, or the phone's own project launcher.
+// Not in the Flatpak (ONELOOP_FLATPAK, set by its launcher): commands run on
+// the host through flatpak-spawn, which Landlock does not follow, so every
+// command that is not plainly safe asks first, as without Landlock.
 func SandboxAvailable() bool {
 	if launcher := os.Getenv("ONELOOP_PROJECT_LAUNCHER"); launcher != "" {
 		return true
+	}
+	if os.Getenv("ONELOOP_FLATPAK") != "" {
+		return false
 	}
 	return landlockABI() >= 1
 }

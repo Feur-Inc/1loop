@@ -1,0 +1,9 @@
+#!/bin/sh
+# Starts the host's Chromium or Chrome for Browser Use (linked as chromium,
+# the first name 1loop looks for).
+exec /app/lib/1loop/host/host-run sh -c '
+for browser in chromium chromium-browser google-chrome-stable google-chrome; do
+  command -v "$browser" >/dev/null && exec "$browser" "$@"
+done
+echo "1loop: install Chromium or Google Chrome on the system (not as a Flatpak) for Browser Use" >&2
+exit 127' sh "$@"

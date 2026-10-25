@@ -278,7 +278,6 @@ import (
 	"os"
 	"os/exec"
 	"strings"
-	"syscall"
 	"unsafe"
 
 	"fyne.io/fyne/v2"
@@ -310,22 +309,10 @@ func chromeReady() { C.loop_setup() }
 // Wayland scales through the buffer scale, no Xft.dpi involved.
 func systemScale() float32 { return 0 }
 
-// switchBackend hands over to the X11 build when no Wayland display exists.
-func switchBackend() {
-	if os.Getenv("WAYLAND_DISPLAY") != "" && os.Getenv("ONELOOP_BACKEND") != "x11" {
-		useSystemCursor()
-		return
-	}
-	exe, err := os.Executable()
-	if err != nil || !strings.HasSuffix(exe, "-wayland") {
-		return
-	}
-	target := strings.TrimSuffix(exe, "-wayland")
-	if _, err := os.Stat(target); err == nil {
-		os.Setenv("ONELOOP_BACKEND", "x11")
-		syscall.Exec(target, append([]string{target}, os.Args[1:]...), os.Environ())
-	}
-}
+// builtBackend is this build's display, see switchBackend.
+const builtBackend = backendWayland
+
+func backendReady() { useSystemCursor() }
 
 // useSystemCursor gives GLFW the desktop's cursor theme and size: without
 // XCURSOR_* it falls back to a generic theme at 16 px, unlike every other app.
@@ -373,7 +360,7 @@ func windowMoveResize(window fyne.Window, direction int) {
 }
 
 // windowIdentity gives the window its application id, which the desktop
-// matches with the launcher entry of the same name (see installLauncher).
+// matches with the launcher entry of the same name (see appID).
 func windowIdentity(window fyne.Window) {
 	withSurface(window, func(s C.uintptr_t) {
 		id := C.CString(appID)

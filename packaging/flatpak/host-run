@@ -1,0 +1,28 @@
+#!/bin/bash
+# Runs a command on the host, outside the Flatpak sandbox, through
+# flatpak-spawn: 1loop's terminal, the agent's commands, Git, the browser and
+# Computer Use's helper all need the user's real system. Linked under each
+# name 1loop starts (bash, git, chromium…), so that name runs on the host;
+# `host-run PROGRAM ARGS…` runs PROGRAM. The folder and the environment go
+# along, except what only means something inside the sandbox.
+#
+# --watch-bus ends the host command when this process ends: stopping or
+# killing a command from 1loop reaches the host.
+name=${0##*/}
+if [ "$name" = host-run ]; then
+  name=$1
+  shift
+fi
+args=(--host --watch-bus --directory="$PWD")
+while IFS= read -r -d '' variable; do
+  # The sandbox's own paths and its view of the session (the D-Bus proxy,
+  # the Wayland socket under another name): the host keeps its own values.
+  case ${variable%%=*} in
+  PATH | PWD | SHELL | PS1 | TMPDIR | _ | container | LD_* | FLATPAK_* | ONELOOP_FLATPAK | ONELOOP_COMPUTER_PYTHON | \
+    XDG_CONFIG_HOME | XDG_DATA_HOME | XDG_CACHE_HOME | XDG_STATE_HOME | XDG_DATA_DIRS | XDG_CONFIG_DIRS | \
+    DBUS_SESSION_BUS_ADDRESS | DBUS_SYSTEM_BUS_ADDRESS | AT_SPI_BUS_ADDRESS | WAYLAND_DISPLAY | DISPLAY | XAUTHORITY | \
+    PULSE_* | PIPEWIRE_* | ALSA_* | __EGL_* | GI_TYPELIB_PATH | GST_* | PYTHON* | GIO_* | GTK_* | GDK_PIXBUF_*) ;;
+  *) args+=(--env="$variable") ;;
+  esac
+done < <(env -0)
+exec flatpak-spawn "${args[@]}" "$name" "$@"

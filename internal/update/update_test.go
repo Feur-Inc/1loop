@@ -18,6 +18,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 )
 
@@ -144,5 +145,14 @@ func TestUnpackAndReplace(t *testing.T) {
 	file.Close()
 	if err := extractZip(evil, t.TempDir()); err == nil {
 		t.Fatal("an entry outside the folder is refused")
+	}
+}
+
+func TestPackagedBuildsDoNotReplaceThemselves(t *testing.T) {
+	Packaged = "deb"
+	defer func() { Packaged = "" }()
+	_, err := Install(context.Background(), Manifest{Files: map[string]File{Platform("desktop"): {URL: "http://127.0.0.1:1/x.tar.gz"}}}, "desktop")
+	if err == nil || !strings.Contains(err.Error(), "deb package") {
+		t.Fatalf("Install from a package: got %v", err)
 	}
 }

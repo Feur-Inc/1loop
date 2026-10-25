@@ -691,7 +691,8 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
         PanelScreen(app, shownContext) { onPanelChange(false) }
     }
     }
-    tool?.let { ToolSheet(app, it) { tool = null } }
+    // The call as it is now: a running command's output keeps arriving.
+    tool?.let { shown -> ToolSheet(app, app.items.firstOrNull { shown.id.isNotEmpty() && it.id == shown.id } ?: shown) { tool = null } }
 }
 
 @Composable

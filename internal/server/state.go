@@ -795,6 +795,12 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 			run.states[index] = "running"
 		}
 		run.approval = nil
+	case "tool_output": // a running command's output so far
+		outcome := value.(agent.ToolOutcome)
+		if at, ok := run.calls[outcome.ID]; ok {
+			index = at
+			chat.Items[index].Text = outcome.Output
+		}
 	case "tool_result":
 		outcome := value.(agent.ToolOutcome)
 		if at, ok := run.calls[outcome.ID]; ok {

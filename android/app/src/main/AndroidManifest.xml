@@ -47,6 +47,11 @@
                 <data android:mimeType="*/*" />
             </intent-filter>
         </activity>
+        <!-- ChatGPT (Web)'s sign-in and plugin setup, in the account's WebView profile. -->
+        <activity
+            android:name=".ChatGPTWebActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
         <!-- The QR scanner (pairing with a desktop) follows the phone's orientation. -->
         <activity
             android:name="com.journeyapps.barcodescanner.CaptureActivity"

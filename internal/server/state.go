@@ -93,6 +93,7 @@ type headlessServer struct {
 	modelProblems              map[string]string
 	limitsCache                map[string]agent.AccountLimits
 	logins                     map[string]*mobileLogin
+	webLeases                  map[string]*webLease // ChatGPT (Web) pages the phone's panel shows, by chat
 	claudeLogin                *mobileLogin
 	loading                    bool
 	local                      bool
@@ -275,6 +276,7 @@ func (server *headlessServer) close() {
 	}
 	server.engine.Cancel()
 	server.engine.WaitClosed()
+	server.backend.CloseChatGPTWeb()
 }
 
 func (server *headlessServer) chatLocked(id string) *serverChat {
@@ -356,6 +358,7 @@ func (server *headlessServer) configFor(choice agent.ModelChoice, previous agent
 	cfg.ServiceTier = agent.TierFor(choice, previous.ServiceTier)
 	cfg.ReasoningMode = choice.ReasoningMode
 	cfg.Session, cfg.SessionMark = previous.Session, previous.SessionMark
+	cfg.WebConversation = previous.WebConversation
 	cfg.RanWith = previous.RanWith // its next turn knows the model changed
 	if cfg.RanWith == nil && previous.Provider != "" && previous.Model != "" {
 		identity := agent.IdentityOf(previous)
@@ -639,6 +642,9 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	}
 	cfg.Review = chat.review
 	cfg.ContextKey = chat.ID + chat.Version
+	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok && cfg.Provider == "chatgptweb" {
+		cfg.WebSettings = connection.WebSettings // the tunnel as last saved, not as when the model was chosen
+	}
 	cfg.Browser = server.browserTools(chat)
 	cfg.Terminal = server.terminalTools(chat)
 	if server.bridge != nil {
@@ -825,6 +831,9 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: value.(string)})
 	case "usage":
 		run.used = value.(int)
+	case "web_session": // the ChatGPT (Web) conversation the next turn continues
+		web := value.(agent.WebConversation)
+		chat.Config.WebConversation = &web
 	case "session":
 		chat.Config.Session = value.(string)
 	case "session_synced": // the session has seen everything shown so far

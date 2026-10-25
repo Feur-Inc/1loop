@@ -61,6 +61,13 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
         digest.digest().joinToString("") { "%02x".format(it.toInt() and 255) }
     }
     val browser = LocalBrowser(context)
+    private val chatgptBrowsers = ConcurrentHashMap<String, LocalBrowser>() // ChatGPT (Web) accounts, by WebView profile
+
+    /** A ChatGPT (Web) account's browser: its own WebView profile, never Browser Use's. */
+    fun chatgptBrowser(profile: String): LocalBrowser {
+        require(profile.matches(Regex("chatgpt-[a-zA-Z0-9-]{1,80}"))) { "Invalid ChatGPT browser profile." }
+        return chatgptBrowsers.getOrPut(profile) { LocalBrowser(context, profile) }
+    }
     private val phone = LocalAdb(context, scope)
     private val preparation = Mutex()
     private val startup = Mutex()
@@ -290,7 +297,7 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
                     val root = root() ?: error("Prepare Debian before starting the local agent.")
                     LocalRuntimeService.ensureRunning(context)
                     seed(root)
-                    val nativeBridge = LocalBridge(scope, phone, browser, ::terminalOperation, ::installPackages)
+                    val nativeBridge = LocalBridge(scope, phone, browser, { chatgptBrowser(it) }, ::terminalOperation, ::installPackages)
                     var started: Process? = null
                     try {
                         privateText(File(root, "var/lib/1loop/native-bridge.json"), nativeBridge.configuration().toString())
@@ -528,6 +535,7 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
                     }
                     if (process.isAlive) process.destroyForcibly()
                 }
+                chatgptBrowsers.values.forEach { it.close() }
                 browser.close()
                 LocalRuntimeService.releaseIfIdle(context)
             }

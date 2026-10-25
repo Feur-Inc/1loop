@@ -73,6 +73,7 @@ dependencies {
     // Applies the compilation profiles Compose ships with at install time:
     // the interface runs compiled from the first launch, without warming up.
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
+    implementation("androidx.webkit:webkit:1.17.1") // separate WebView profiles for ChatGPT (Web)
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-tables:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")

@@ -79,6 +79,9 @@ func (server *headlessServer) panelTabs(w http.ResponseWriter, r *http.Request) 
 		tabs = append(tabs, remoteapi.Tab{Key: "todo", Kind: "todo", Title: "Tasks"})
 	}
 	tabs = append(tabs, remoteapi.Tab{Key: "changes", Kind: "changes", Title: "Changes"})
+	if server.bridge != nil && chat.Config.Provider == "chatgptweb" && !strings.HasPrefix(chat.ID, "home:") {
+		tabs = append(tabs, remoteapi.Tab{Key: "chatgptweb", Kind: "chatgptweb", Title: "ChatGPT"})
+	}
 	for _, tab := range chat.tabs {
 		item := remoteapi.Tab{Key: tab.key()}
 		if tab.browser != nil {

@@ -11,15 +11,22 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebStorage
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.webkit.RenderProcessGoneDetail
 import android.webkit.WebViewDatabase
+import androidx.webkit.WebViewCompat
+import androidx.webkit.WebViewFeature
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import java.io.ByteArrayOutputStream
 import org.json.JSONObject
 
-/** Web content has no JavaScript interface to the agent, accounts, files or ADB. */
-class LocalBrowser(private val context: Context) {
+/**
+ * Web content has no JavaScript interface to the agent, accounts, files or ADB.
+ * With a profile (a ChatGPT (Web) account), its WebViews keep their own
+ * cookies and storage, apart from Browser Use's.
+ */
+class LocalBrowser(private val context: Context, private val profile: String? = null) {
     private val pages = mutableMapOf<String, WebView>() // Main thread owns views.
 
     suspend fun view(id: String): WebView? = withContext(Dispatchers.Main) { pages[id] }
@@ -48,6 +55,7 @@ class LocalBrowser(private val context: Context) {
                 if (!pages.containsKey(id)) {
                     WebView.setWebContentsDebuggingEnabled(true)
                     val view = WebView(context)
+                    profile?.let { usingProfile(view, it) }
                     view.settings.apply {
                         javaScriptEnabled = true
                         domStorageEnabled = true
@@ -62,6 +70,15 @@ class LocalBrowser(private val context: Context) {
                     view.webViewClient = object : WebViewClient() {
                         override fun shouldOverrideUrlLoading(webView: WebView, request: WebResourceRequest): Boolean =
                             request.url.scheme !in listOf("https", "http", "about")
+
+                        // The shared renderer ended (memory, or another browser's close): this
+                        // tab ends instead of the app; the engine opens a new one when needed.
+                        override fun onRenderProcessGone(webView: WebView, detail: RenderProcessGoneDetail): Boolean {
+                            if (pages[id] === webView) pages.remove(id)
+                            (webView.parent as? android.view.ViewGroup)?.removeView(webView)
+                            webView.destroy()
+                            return true
+                        }
                     }
                     pages[id] = view
                     size(view, arguments)
@@ -134,7 +151,31 @@ class LocalBrowser(private val context: Context) {
             view.destroy()
         }
         pages.clear()
+        // The renderer and the debugging socket are the app's: they stay while
+        // another browser (Browser Use, a ChatGPT account, its sign-in) has pages.
+        if (synchronized(open) { open.any { it.pages.isNotEmpty() } } || screens > 0) return@withContext
         if (android.os.Build.VERSION.SDK_INT >= 29) renderers.forEach { it.terminate() }
         WebView.setWebContentsDebuggingEnabled(false)
+    }
+
+    init {
+        synchronized(open) { open += this }
+    }
+
+    companion object {
+        private val open = mutableListOf<LocalBrowser>()
+
+        /** WebViews shown outside these browsers (the ChatGPT sign-in), on the main thread. */
+        var screens = 0
+
+        /** Whether this phone's Android System WebView keeps separate profiles (androidx.webkit's MULTI_PROFILE). */
+        fun profilesSupported() = WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)
+
+        /** Before the view loads anything: its cookies and storage are the profile's. */
+        fun usingProfile(view: WebView, profile: String) {
+            check(profilesSupported()) { "ChatGPT (Web) needs a newer Android System WebView, with separate browser profiles." }
+            androidx.webkit.ProfileStore.getInstance().getOrCreateProfile(profile)
+            WebViewCompat.setProfile(view, profile)
+        }
     }
 }

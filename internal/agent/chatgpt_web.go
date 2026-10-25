@@ -25,6 +25,16 @@ type WebSettings struct {
 	TunnelID   string `json:"tunnelId,omitempty"`
 	KeyFile    string `json:"keyFile,omitempty"`
 	ProjectURL string `json:"projectURL,omitempty"`
+	// Plugin is the connector's name in ChatGPT: another tunnel (the phone's)
+	// needs another plugin.
+	Plugin string `json:"plugin,omitempty"`
+}
+
+func (settings WebSettings) plugin() string {
+	if name := strings.TrimSpace(settings.Plugin); name != "" {
+		return name
+	}
+	return "1loop"
 }
 
 func (backend *App) EnableChatGPTWeb(ctx context.Context) {
@@ -35,13 +45,22 @@ func (backend *App) EnableChatGPTWeb(ctx context.Context) {
 	backend.webSlots = make(chan struct{}, 3)
 }
 
+// EnableChatGPTWebNative is the phone's ChatGPT (Web): each account's pages
+// are Android WebViews with their own cookie profile, its files in dir.
+func (backend *App) EnableChatGPTWebNative(ctx context.Context, dir string, native func(profile string) browser.NativeHost) {
+	backend.EnableChatGPTWeb(ctx)
+	backend.mu.Lock()
+	defer backend.mu.Unlock()
+	backend.webDir, backend.webNative = dir, native
+}
+
 // WebAccount is desktop-only. Each connection owns its browser process and
 // profile; Browser Use is never given a reference to this engine.
 func (backend *App) WebAccount(cfg Config) (*ChatGPTWeb, error) {
 	backend.mu.Lock()
 	defer backend.mu.Unlock()
 	if backend.webContext == nil {
-		return nil, fmt.Errorf("ChatGPT (Web) is available on the local desktop only")
+		return nil, fmt.Errorf("ChatGPT (Web) runs only in the desktop app and in the phone's local agent")
 	}
 	profile := cfg.AuthProfile
 	if profile == "" {
@@ -50,9 +69,13 @@ func (backend *App) WebAccount(cfg Config) (*ChatGPTWeb, error) {
 	if account := backend.webAccounts[profile]; account != nil {
 		return account, nil
 	}
-	dir, err := os.UserConfigDir()
-	if err != nil {
-		return nil, err
+	dir := backend.webDir
+	if dir == "" {
+		config, err := os.UserConfigDir()
+		if err != nil {
+			return nil, err
+		}
+		dir = filepath.Join(config, "1loop")
 	}
 	// The first connection can reuse the profile used during the initial setup.
 	name := "chatgpt-browser"
@@ -66,7 +89,11 @@ func (backend *App) WebAccount(cfg Config) (*ChatGPTWeb, error) {
 	account.parent = backend.webContext
 	account.pages = make(map[string]*browser.Page)
 	account.engine = browser.NewBrowserEngine(account.parent)
-	account.engine.Profile = filepath.Join(dir, "1loop", name)
+	account.engine.Profile = filepath.Join(dir, name) // on the phone, only beside its models and tools
+	if backend.webNative != nil {
+		account.engine.Native = backend.webNative(profile)
+		account.phone = true
+	}
 	backend.webAccounts[profile] = account
 	return account, nil
 }
@@ -303,14 +330,14 @@ func (backend *App) CloseChatGPTWeb() {
 // refreshTools makes ChatGPT read the connector's tools again when they
 // changed since it last did (ChatGPT keeps the list it read): the plugin's
 // settings page has a "Refresh tools" button. The tunnel must be running.
-func (bridge *ChatGPTWeb) refreshTools(ctx context.Context) error {
+func (bridge *ChatGPTWeb) refreshTools(ctx context.Context, name string) error {
 	select {
 	case bridge.service <- struct{}{}:
 		defer func() { <-bridge.service }()
 	case <-ctx.Done():
 		return ctx.Err()
 	}
-	tools, _ := json.Marshal(webMCPTools())
+	tools, _ := json.Marshal(webMCPTools(bridge.phone))
 	sum := sha256.Sum256(tools)
 	hash := hex.EncodeToString(sum[:])
 	stamp := bridge.engine.Profile + ".tools"
@@ -322,7 +349,8 @@ func (bridge *ChatGPTWeb) refreshTools(ctx context.Context) error {
 		return err
 	}
 	var plugin string
-	find := `(()=>{const a=[...document.querySelectorAll('a[href^="/plugins/plugin_"]')].find(e=>e.innerText.trim().split('\n')[0]==='1loop');return a?a.getAttribute('href').split('/').pop():''})()`
+	wanted, _ := json.Marshal(name)
+	find := `(()=>{const a=[...document.querySelectorAll('a[href^="/plugins/plugin_"]')].find(e=>e.innerText.trim().split('\n')[0]===` + string(wanted) + `);return a?a.getAttribute('href').split('/').pop():''})()`
 	for i := 0; i < 50 && plugin == ""; i++ {
 		if err := tab.Run(ctx, evaluateWeb(find, &plugin)); err != nil {
 			return err
@@ -334,7 +362,7 @@ func (bridge *ChatGPTWeb) refreshTools(ctx context.Context) error {
 		}
 	}
 	if plugin == "" {
-		return fmt.Errorf("ChatGPT has no 1loop plugin: add it in ChatGPT's Plugins (Settings → Connections → ChatGPT (Web))")
+		return fmt.Errorf("ChatGPT has no %s plugin: add it in ChatGPT's Plugins (Settings → Connections → ChatGPT (Web))", name)
 	}
 	if err := tab.Navigate(ctx, "navigate", "https://chatgpt.com/settings/plugins-settings/"+plugin); err != nil {
 		return err

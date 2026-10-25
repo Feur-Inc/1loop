@@ -90,6 +90,7 @@ type desktopUI struct {
 	modelUnavailable map[string]string // model catalog problems, displayed inside the selector
 	accountLimits    map[string]agent.AccountLimits
 	userInstructions string
+	preferencesEntry *widget.Entry // the settings' editor of userInstructions, once shown
 	approvalMode     string
 	inForeground     bool // the window has the focus
 	chats            []*conversation
@@ -1168,8 +1169,8 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 			ui.userInstructions = next
 			ui.save()
 			ui.remote.settingsChanged()
-			if ui.prefs != nil && ui.prefs.open && ui.prefs.section == "Instructions" {
-				ui.prefs.showNow("Instructions") // an open page would save its old text over it
+			if ui.preferencesEntry != nil { // an open page would save its old text over it
+				ui.preferencesEntry.SetText(next)
 			}
 		})
 		if err == nil {

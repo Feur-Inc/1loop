@@ -78,40 +78,53 @@ func memoryStoreFor(ctx context.Context, cfg Config, root, scope string) (memory
 		if root == "" {
 			return memoryStore{}, fmt.Errorf("This chat has no workspace")
 		}
-		path, err := WorkspacePath(root, "AGENTS.md")
-		if err != nil {
+		if _, err := WorkspacePath(root, "AGENTS.md"); err != nil {
 			return memoryStore{}, err
 		}
-		read := func() (string, error) {
-			text, err := fileText(path)
-			if os.IsNotExist(err) {
-				return "", nil
-			}
-			return text, err
-		}
-		return memoryStore{label: "the project's AGENTS.md", title: "AGENTS.md", path: "AGENTS.md", limit: agentsFileLimit, read: read,
-			write: func(before, after string) error {
-				current, err := read()
-				if err != nil || current != before {
-					return fmt.Errorf("AGENTS.md changed since the preview; view it again")
-				}
-				_, missing := os.Stat(path)
-				flags := os.O_WRONLY | os.O_TRUNC
-				if os.IsNotExist(missing) {
-					flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
-				}
-				file, err := os.OpenFile(path, flags, 0644)
-				if err != nil {
-					return err
-				}
-				_, writeErr := file.WriteString(after)
-				if closeErr := file.Close(); writeErr == nil {
-					writeErr = closeErr
-				}
-				return writeErr
-			}}, nil
+		return memoryStore{label: "the project's AGENTS.md", title: "AGENTS.md", path: "AGENTS.md", limit: agentsFileLimit,
+			read:  func() (string, error) { return ProjectMemory(root) },
+			write: func(before, after string) error { return SaveProjectMemory(root, before, after) }}, nil
 	}
 	return memoryStore{}, fmt.Errorf("Memory scope must be user or project")
+}
+
+// ProjectMemory is the workspace's AGENTS.md, "" when it has none: the
+// memory tool's project scope, also shown in the settings.
+func ProjectMemory(workspace string) (string, error) {
+	path, err := WorkspacePath(workspace, "AGENTS.md")
+	if err != nil {
+		return "", err
+	}
+	text, err := fileText(path)
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	return text, err
+}
+
+// SaveProjectMemory writes the workspace's AGENTS.md, refused when it
+// changed since before was read.
+func SaveProjectMemory(workspace, before, after string) error {
+	path, err := WorkspacePath(workspace, "AGENTS.md")
+	if err != nil {
+		return err
+	}
+	if current, err := ProjectMemory(workspace); err != nil || current != before {
+		return fmt.Errorf("AGENTS.md changed since it was read; read it again")
+	}
+	flags := os.O_WRONLY | os.O_TRUNC
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		flags = os.O_WRONLY | os.O_CREATE | os.O_EXCL
+	}
+	file, err := os.OpenFile(path, flags, 0644)
+	if err != nil {
+		return err
+	}
+	_, writeErr := file.WriteString(after)
+	if closeErr := file.Close(); writeErr == nil {
+		writeErr = closeErr
+	}
+	return writeErr
 }
 
 // editedMemory is text after one action; the preferences are kept trimmed,

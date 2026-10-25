@@ -62,6 +62,8 @@ type Config struct {
 	// also blocks calls made from a model's earlier tool declarations.
 	ToolAllowed         func(string) bool `json:"-"`
 	CapabilitiesChanged <-chan struct{}   `json:"-"`
+	WebConversation     *WebConversation  `json:"webConversation,omitempty"`
+	WebSettings         *WebSettings      `json:"webSettings,omitempty"`
 }
 
 type emitter func(string, any)
@@ -73,6 +75,9 @@ type App struct {
 	openAIProfiles  map[string]*openAIAuth
 	capabilityCache map[string]ModelChoice
 	answers         map[string]chan map[string]string // request_user_input, by request
+	webContext      context.Context
+	webAccounts     map[string]*ChatGPTWeb
+	webSlots        chan struct{}
 }
 
 func ResolveWorkspace(path string) (string, error) {

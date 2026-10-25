@@ -152,6 +152,9 @@ func (panel *toolPanel) switchTo(chat *conversation) {
 	}
 	panel.ui.panelToggle.SetSelected(state.open)
 	panel.todoChanged(chat)
+	if panel.ui.cfg.Provider == "chatgptweb" {
+		panel.ui.ensureWebTab()
+	}
 	panel.render()
 	relayout(panel.ui.split)
 }

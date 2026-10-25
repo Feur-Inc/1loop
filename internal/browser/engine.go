@@ -59,6 +59,7 @@ type browserLog struct {
 // final tab closes; another tab starts a fresh generation using the profile.
 type Engine struct {
 	Native    NativeHost
+	Profile   string // a separate persistent profile, when this is not Browser Use
 	ctx       context.Context
 	Cancel    func()
 	mu        sync.Mutex
@@ -117,7 +118,11 @@ func (engine *Engine) start() error {
 		// One profile, kept between sessions: the agent's browser stays
 		// logged in, with its cookies and history, until the user clears
 		// it (Settings → General → Browser).
-		if dir := ProfileDir(); dir != "" {
+		dir := engine.Profile
+		if dir == "" {
+			dir = ProfileDir()
+		}
+		if dir != "" {
 			if _, err := os.Stat(dir + ".clear"); err == nil {
 				os.RemoveAll(dir)
 				os.Remove(dir + ".clear")

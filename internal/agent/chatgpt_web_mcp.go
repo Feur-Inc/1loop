@@ -8,11 +8,13 @@ package agent
 // approval mode it belongs to, without the user ever pairing anything.
 
 import (
+	"1loop/internal/browser"
 	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 
 	"1loop/internal/core"
 )
@@ -22,9 +24,12 @@ const webTurnField = "turn"
 
 // WebTurn is one 1loop turn waiting for ChatGPT's tool calls.
 type WebTurn struct {
-	ctx  context.Context // carries the run's Config (toolContext)
-	root string
-	emit emitter
+	callMu  sync.Mutex
+	running atomic.Int32
+	flush   func() error
+	ctx     context.Context // carries the run's Config (toolContext)
+	root    string
+	emit    emitter
 	// called runs after each call, in order, so the run records it in the
 	// chat's history between the model's messages.
 	called func(ToolCall, ToolOutcome)
@@ -32,9 +37,17 @@ type WebTurn struct {
 
 // ChatGPTWeb is the connector's MCP server, alive as long as the tunnel.
 type ChatGPTWeb struct {
-	backend *App
-	mu      sync.Mutex
-	turns   map[string]*WebTurn
+	backend        *App
+	mu             sync.Mutex
+	turns          map[string]*WebTurn
+	engine         *browser.Engine
+	pages          map[string]*browser.Page
+	parent         context.Context
+	stopTunnel     context.CancelFunc
+	tunnelSettings WebSettings
+	tunnelError    error
+	tunnelReady    bool
+	pageStreams    map[*browser.Page]*webStreams
 }
 
 func NewChatGPTWeb(backend *App) *ChatGPTWeb {
@@ -164,6 +177,15 @@ func (bridge *ChatGPTWeb) call(ctx context.Context, raw json.RawMessage) map[str
 	bridge.mu.Unlock()
 	if turn == nil {
 		return toolText("This 1loop turn has ended or its turn id is wrong: copy the turn id from the user's latest message, or answer without tools.", true)
+	}
+	turn.running.Add(1)
+	defer turn.running.Add(-1)
+	turn.callMu.Lock()
+	defer turn.callMu.Unlock()
+	if turn.flush != nil {
+		if err := turn.flush(); err != nil {
+			return toolText(err.Error(), true)
+		}
 	}
 	delete(params.Arguments, webTurnField)
 	arguments, _ := json.Marshal(params.Arguments)

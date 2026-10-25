@@ -199,6 +199,15 @@ func (backend *App) localCapabilities(ctx context.Context, cfg Config, row map[s
 }
 
 func (backend *App) ConnectionModels(ctx context.Context, conn Connection, key string) ([]ModelChoice, error) {
+	if conn.Provider == "chatgptweb" {
+		account, err := backend.WebAccount(conn.Config(""))
+		if err != nil {
+			return nil, err
+		}
+		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
+		defer cancel()
+		return account.Models(ctx, conn)
+	}
 	if conn.Provider == "claudecode" {
 		models, err := backend.claudeModels(ctx)
 		if err != nil {

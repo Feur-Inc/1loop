@@ -700,13 +700,14 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	key.SetPlaceHolder("Kept in memory until 1loop closes")
 	enabled := newToggle(draft.Enabled, func(on bool) { draft.Enabled = on })
 	typePicker := newPicker(ui.window, "Connection type", styleField, nil)
-	typePicker.Options = []string{"Local vLLM", "OpenRouter", "ChatGPT account", "OpenAI-compatible API", "Claude Code"}
+	typePicker.Options = []string{"Local vLLM", "OpenRouter", "ChatGPT account", "OpenAI-compatible API", "Claude Code", "ChatGPT (Web)"}
 	ids := map[string]string{
 		"Local vLLM":            "vllm",
 		"OpenRouter":            "openrouter",
 		"ChatGPT account":       "openai",
 		"OpenAI-compatible API": "compatible",
 		"Claude Code":           "claudecode",
+		"ChatGPT (Web)":         "chatgptweb",
 	}
 	status := plainFlow("", 13, colMuted)
 	say := func(text string) {
@@ -787,7 +788,8 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		container.NewVBox(account, container.NewHBox(login), loginLink)))
 	claudeFields := card(settingRow("Claude Code on this computer",
 		"Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it.", nil))
-	access := container.NewStack(apiFields, oauthFields, claudeFields)
+	webFields := ui.chatGPTWebSettings(&draft, say)
+	access := container.NewStack(apiFields, oauthFields, claudeFields, webFields)
 
 	routing := jsonEntry(draft.Routing)
 	parameters := jsonEntry(draft.Parameters)
@@ -902,11 +904,14 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		apiFields.Hide()
 		oauthFields.Hide()
 		claudeFields.Hide()
+		webFields.Hide()
 		switch draft.Provider {
 		case "openai":
 			oauthFields.Show()
 		case "claudecode":
 			claudeFields.Show()
+		case "chatgptweb":
+			webFields.Show()
 		default:
 			apiFields.Show()
 		}
@@ -985,7 +990,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		draft.BaseURL = strings.TrimSpace(base.Text)
 		draft.Routing = route
 		draft.Parameters = params
-		if draft.Provider != "openai" && draft.Provider != "claudecode" {
+		if draft.Provider != "openai" && draft.Provider != "claudecode" && draft.Provider != "chatgptweb" {
 			cfg := draft.Config("")
 			cfg.APIKey = key.Text
 			if _, _, err = agent.Endpoint(cfg); err != nil {

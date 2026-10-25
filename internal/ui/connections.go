@@ -84,7 +84,8 @@ func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 	cfg.Routing = agent.MergeOptions(cfg.Routing, options.Provider)
 	cfg.Parameters = agent.MergeOptions(cfg.Parameters, options.Parameters)
 	cfg.Session, cfg.SessionMark = previous.Session, previous.SessionMark // the chat keeps its Claude Code session across model changes
-	cfg.RanWith = previous.RanWith                                        // its next turn knows the model changed
+	cfg.WebConversation = previous.WebConversation
+	cfg.RanWith = previous.RanWith // its next turn knows the model changed
 	if cfg.RanWith == nil && previous.Provider != "" && previous.Model != "" {
 		identity := agent.IdentityOf(previous)
 		cfg.RanWith = &identity
@@ -105,6 +106,9 @@ func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 		ui.model.relayout()
 	}
 	ui.updateHeader()
+	if cfg.Provider == "chatgptweb" {
+		ui.ensureWebTab()
+	}
 	ui.save()
 	ui.remote.settingsChanged()
 	ui.remote.metaChanged(ui.current)

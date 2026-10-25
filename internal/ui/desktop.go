@@ -86,6 +86,7 @@ type desktopUI struct {
 	cfg              agent.Config
 	keys             map[string]string
 	connectionsList  []agent.Connection
+	webSetupWindows  map[*agent.ChatGPTWeb]fyne.Window
 	choices          map[string]agent.ModelChoice
 	modelUnavailable map[string]string // model catalog problems, displayed inside the selector
 	accountLimits    map[string]agent.AccountLimits
@@ -213,6 +214,7 @@ func runDesktop(backend *agent.App, root string) {
 	a := fyneapp.NewWithID("io.1loop.desktop")
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
+	backend.EnableChatGPTWeb(ctx)
 	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), statePath: statePath(root),
 		cfg: agent.Config{Provider: "compatible", Workspace: root}}
 	ui.load()
@@ -381,6 +383,7 @@ func (ui *desktopUI) release() {
 	ui.persist(true)
 	ui.prompt.drafts.flush()
 	ui.browser.WaitClosed() // Chrome writes its profile as it closes
+	ui.backend.CloseChatGPTWeb()
 }
 
 // fitLabel is a single line of text that ellipsises to the space it gets.
@@ -1498,7 +1501,7 @@ func (ui *desktopUI) load() {
 		state.Config.BaseURL = ""
 	}
 	switch state.Config.Provider {
-	case "vllm", "openrouter", "openai", "compatible", "claudecode":
+	case "vllm", "openrouter", "openai", "compatible", "claudecode", "chatgptweb":
 	default:
 		return
 	}

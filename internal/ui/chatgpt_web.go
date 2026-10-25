@@ -129,8 +129,8 @@ func (ui *desktopUI) chatGPTWebSettings(draft *agent.Connection, say func(string
 			note("1. Sign in to ChatGPT using the dedicated browser. Browser Use and your normal browser keep separate cookies."), open,
 			note("2. Create a Secure MCP Tunnel in your OpenAI organization, associated with this ChatGPT workspace."), link("Open tunnel settings", "https://platform.openai.com/settings/organization/tunnels"), tunnel,
 			note("3. Create a restricted key with Tunnels Read + Use. Save it in a private file (chmod 600). Enter only its file path here. The key is never saved in chats or sent to the model."), link("Open API key settings", "https://platform.openai.com/settings/organization/api-keys"), keyFile, start, status,
-			note("4. In ChatGPT Plugins, add a custom MCP server named 1loop. Choose Tunnel and the ID above, then No authentication. Review the warning and connect. Keep this desktop running during discovery."), link("Open ChatGPT Plugins", "https://chatgpt.com/plugins"),
-			note("5. The ChatGPT project named 1loop holds the Web conversations. After sign-in, load this account's actual models below."), project, prepare,
+			note("4. With the tunnel started, open ChatGPT Plugins in the sign-in window, then Add → Add custom MCP server. Name: 1loop. Connection: Tunnel, with the ID above. Authentication: No authentication. Tick \"I understand and want to continue\", choose Create as a plugin, then Connect 1loop."), link("Open ChatGPT Plugins", "https://chatgpt.com/plugins"),
+			note("5. Every chat 1loop opens goes in the ChatGPT project named 1loop. It is found, or created, on the first message; prepare it now if you like. The models come from your account."), project, prepare,
 		)),
 	)
 }

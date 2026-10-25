@@ -204,9 +204,7 @@ func (backend *App) ConnectionModels(ctx context.Context, conn Connection, key s
 		if err != nil {
 			return nil, err
 		}
-		ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
-		defer cancel()
-		return account.Models(ctx, conn)
+		return account.CachedModels(ctx, conn)
 	}
 	if conn.Provider == "claudecode" {
 		models, err := backend.claudeModels(ctx)

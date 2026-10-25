@@ -156,6 +156,47 @@ func (bridge *ChatGPTWeb) Close() {
 	bridge.engine.WaitClosed()
 }
 
+// CachedModels answers with the account's models as last read, at once,
+// and reads them again in the background for the next time: reading them
+// drives ChatGPT's model menu, which takes seconds.
+func (bridge *ChatGPTWeb) CachedModels(ctx context.Context, conn Connection) ([]ModelChoice, error) {
+	type saved struct {
+		Name    string   `json:"name"`
+		Efforts []string `json:"efforts"`
+		Default string   `json:"default"`
+	}
+	path := bridge.engine.Profile + ".models.json"
+	read := func(ctx context.Context) ([]ModelChoice, error) {
+		choices, err := bridge.Models(ctx, conn)
+		if err == nil {
+			var list []saved
+			for _, choice := range choices {
+				list = append(list, saved{choice.Name, choice.Efforts, choice.DefaultEffort})
+			}
+			if data, err := json.Marshal(list); err == nil {
+				_ = os.WriteFile(path, data, 0600)
+			}
+		}
+		return choices, err
+	}
+	var list []saved
+	if data, err := os.ReadFile(path); err != nil || json.Unmarshal(data, &list) != nil || len(list) == 0 {
+		ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+		defer cancel()
+		return read(ctx)
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(bridge.parent, 60*time.Second)
+		defer cancel()
+		_, _ = read(ctx)
+	}()
+	var choices []ModelChoice
+	for _, model := range list {
+		choices = append(choices, ModelChoice{Connection: conn, ID: model.Name, Name: model.Name, Efforts: model.Efforts, DefaultEffort: model.Default, ReasoningMode: "effort", Source: "ChatGPT browser model picker"})
+	}
+	return choices, nil
+}
+
 func (bridge *ChatGPTWeb) Models(ctx context.Context, conn Connection) ([]ModelChoice, error) {
 	tab := bridge.Page("setup", "https://chatgpt.com/")
 	if err := webModelMenu(ctx, tab, true); err != nil {

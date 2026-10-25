@@ -32,8 +32,10 @@ type Connection struct {
 }
 
 type ModelChoice struct {
-	Connection                           Connection
-	ID, Name                             string
+	Connection Connection
+	ID, Name   string
+	// Resolved is the model an alias stands for (Claude Code's "opus").
+	Resolved                             string
 	Efforts                              []string
 	DefaultEffort, ReasoningMode, Source string
 	// The speeds the ChatGPT plan offers for the model (Fast, Ultrafast…),

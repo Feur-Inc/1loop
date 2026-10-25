@@ -383,13 +383,19 @@ func (server *headlessServer) labelLocked(cfg agent.Config) string {
 func (server *headlessServer) settingsLocked() map[string]any {
 	models := []remoteapi.Model{}
 	for label, choice := range server.choices {
-		model := remoteapi.Model{Label: label, Name: choice.Display(), Detail: choice.Connection.Name, Account: choice.Connection.ID, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
+		model := remoteapi.Model{Label: label, Name: choice.Display(), Detail: choice.Connection.Name, Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
 		for _, effort := range choice.Efforts {
 			model.Efforts = append(model.Efforts, remoteapi.Effort{Value: effort, Label: agent.EffortLabel(effort)})
 		}
 		models = append(models, model)
 	}
 	slices.SortFunc(models, func(left, right remoteapi.Model) int {
+		if left.Account != right.Account {
+			return strings.Compare(left.Account, right.Account)
+		}
+		if order := agent.CompareModels(server.choices[left.Label], server.choices[right.Label]); order != 0 {
+			return order
+		}
 		return strings.Compare(left.Label, right.Label)
 	})
 	accounts := []remoteapi.Account{}

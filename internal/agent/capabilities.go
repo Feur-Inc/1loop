@@ -211,7 +211,7 @@ func (backend *App) ConnectionModels(ctx context.Context, conn Connection, key s
 			if Contains(efforts, "medium") {
 				def = "medium"
 			}
-			choices = append(choices, ModelChoice{Connection: conn, ID: claudeModel.Value, Name: claudeModel.DisplayName, Efforts: efforts,
+			choices = append(choices, ModelChoice{Connection: conn, ID: claudeModel.Value, Name: claudeModel.DisplayName, Resolved: claudeModel.Resolved, Efforts: efforts,
 				DefaultEffort: def, ReasoningMode: "effort", Source: "Claude Code"})
 		}
 		return choices, nil

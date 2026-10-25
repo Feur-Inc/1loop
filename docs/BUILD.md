@@ -1,49 +1,59 @@
 # Building 1loop
 
-These are the builds and checks the CI runs (`.github/workflows/ci.yml`),
-from the repository root, on Debian or Ubuntu (x86-64). Go comes from
-`go.mod`.
+Each download has its build script, run from the repository root on Debian
+or Ubuntu (x86-64). They write their files in `dist/` (`DIST=folder` to
+change it). The CI (`.github/workflows/ci.yml`) runs the same scripts after
+the checks below; `release.sh` uses them too. Go comes from `go.mod`.
 
-## Linux: checks, desktop and server
+| Script | Downloads in `dist/` |
+|---|---|
+| `packaging/linux/build.sh binaries tarball deb appimage` | `1loop-VERSION-linux-amd64.tar.gz`, `1loop-VERSION-amd64.deb`, `1loop-VERSION-x86_64.AppImage` |
+| `packaging/server/build.sh` | `1loop-server-VERSION-linux-amd64`, `1loop-server-VERSION-windows-amd64.exe` |
+| `packaging/windows/build.sh` | `1loop-VERSION-windows-amd64.zip` |
+| `packaging/android/build.sh` | `1loop-VERSION.apk`, `1loop-VERSION-android-native-sources.zip` |
+
+For development, `make` builds `bin/1loop` and `bin/1loop-wayland`, and
+`make server` builds `bin/1loop-server`.
+
+## Checks
+
+The CI runs them before building:
 
 ```bash
 sudo apt-get install libgl-dev libegl-dev xorg-dev libwayland-dev libxkbcommon-dev xvfb
 test -z "$(git ls-files -z -- '*.go' | xargs -0 -r gofmt -l)"
 go vet ./...
 xvfb-run -a go test ./...     # the tests need a display
-make server                   # bin/1loop-server
-packaging/linux/build.sh binaries tarball deb appimage
+./android/gradlew -p android :app:testDebugUnitTest :app:lintDebug --warning-mode fail
 ```
 
-The downloads land in `dist/`: `1loop-VERSION-linux-amd64.tar.gz`,
-`1loop-VERSION-amd64.deb` and `1loop-VERSION-x86_64.AppImage`. They use the
-libraries of the machine that builds them: the `.deb` requires the glibc
-version its binaries actually need. `make` alone builds `bin/1loop` and
-`bin/1loop-wayland` for development.
+## Linux desktop
+
+Needs the libraries above. The binaries use the libraries of the machine that
+builds them: the `.deb` requires the glibc version they actually need. The
+AppImage step downloads a pinned `appimagetool`. `make tarball deb appimage`
+runs the same script.
+
+## Servers
+
+Static, without cgo: nothing to install besides Go.
 
 ## Windows (cross-compiled from Linux)
 
 ```bash
-sudo apt-get install gcc-mingw-w64-x86-64 p7zip-full
-packaging/windows/build.sh
+sudo apt-get install gcc-mingw-w64-x86-64 p7zip-full zip
 ```
 
-`bin/windows/` then holds `1loop.exe`, `1loop-server.exe`, and `software/`
-with `1loop-software.cmd` (the Mesa CPU renderer, for PCs without a working
-OpenGL driver). The tests need Windows itself: run `go test ./...` there.
+The zip holds `1loop.exe`, `1loop-server.exe`, and `software/` with
+`1loop-software.cmd` (the Mesa CPU renderer, downloaded and checked, for PCs
+without a working OpenGL driver). `go vet` runs for Windows; the tests need
+Windows itself: run `go test ./...` there.
 
 ## Android
 
-JDK 21 and the Android SDK with `platforms;android-37.0`,
+JDK 21 and the Android SDK (`ANDROID_HOME`) with `platforms;android-37.0`,
 `build-tools;37.0.0` and the NDK `30.0.16248370` (`ANDROID_NDK_HOME` pointing
 to it), plus `cmake`, `make`, `patch` and `patchelf` for the native helpers.
-
-```bash
-./android/gradlew -p android \
-  :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest :app:lintDebug
-python3 android/runtime/build.py --output android/app/build/local-runtime \
-  --source-bundle android/app/build/local-runtime/native-sources.zip
-```
 
 ### Signing
 
@@ -59,9 +69,13 @@ keyPassword=…
 ```
 
 `storeFile` is relative to that file; `ONELOOP_ANDROID_SIGNING_PROPERTIES`
-can point to it from elsewhere. Without it, the debug APK uses the local
-Android debug key (installable for testing, but it cannot update an app
-signed with the publication key) and the release APK is unsigned.
+can point to it from elsewhere. The script copies the release APK to `dist/`
+only when debug and release carry that same certificate.
+
+Without the key (a contributor, a pull request), the debug APK uses the local
+Android debug key, so it installs for testing but cannot update an app signed
+with the publication key; the release APK stays unsigned and the script
+copies no APK.
 
 ## CI secrets
 

@@ -58,7 +58,9 @@ jobs:
     needs: draft
     # Runs on pull requests too, where the draft job is skipped.
     if: ${{ !cancelled() && needs.draft.result != 'failure' }}
-    # The self-hosted runners (TPM28_RUNNER and mopi) are not used for now:
+    # The self-hosted runners (TPM28_RUNNER and mopi) are not used for now.
+    # They would run every pull request's code: only on dedicated, isolated
+    # machines.
     # runs-on: [self-hosted, Linux, X64]
     runs-on: ubuntu-24.04
     timeout-minutes: 90
@@ -77,7 +79,7 @@ jobs:
         with:
           go-version-file: go.mod
 
-      - name: Linux — checks, desktop packages and server
+      - name: Linux — checks, desktop packages and servers
         if: matrix.platform == 'linux'
         env:
           DEB_MAINTAINER: TPM28 <77407722+tpm28@users.noreply.github.com>
@@ -90,26 +92,17 @@ jobs:
           if [ -n "$unformatted" ]; then printf 'Not formatted:\n%s\n' "$unformatted"; exit 1; fi
           go vet ./...
           xvfb-run -a go test ./...
-          make server
           packaging/linux/build.sh binaries tarball deb appimage
           dpkg-deb --info "dist/1loop-$(cat VERSION)-amd64.deb"
-          version=$(cat VERSION)
-          mkdir -p dist/ci
-          cp "dist/1loop-$version-linux-amd64.tar.gz" "dist/1loop-$version-amd64.deb" \
-            "dist/1loop-$version-x86_64.AppImage" dist/ci/
-          cp bin/1loop-server "dist/ci/1loop-server-$version-linux-amd64"
+          packaging/server/build.sh
 
-      - name: Windows — desktop and server, cross-compiled with MinGW
+      - name: Windows — desktop, cross-compiled with MinGW
         if: matrix.platform == 'windows'
         run: |
           set -euo pipefail
           sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends gcc-mingw-w64-x86-64 p7zip-full
+          sudo apt-get install -y -q --no-install-recommends gcc-mingw-w64-x86-64 p7zip-full zip
           packaging/windows/build.sh
-          version=$(cat VERSION)
-          mkdir -p dist/ci
-          (cd bin/windows && zip -qr "../../dist/ci/1loop-$version-windows-amd64.zip" .)
-          cp bin/windows/1loop-server.exe "dist/ci/1loop-server-$version-windows-amd64.exe"
 
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         if: matrix.platform == 'android'
@@ -143,27 +136,13 @@ jobs:
           printf '%s' "$ANDROID_SIGNING_BUNDLE" | base64 --decode | tar -xz -C "$signing" -- 1loop-release.p12 release.properties
           echo "ONELOOP_ANDROID_SIGNING_PROPERTIES=$signing/release.properties" >> "$GITHUB_ENV"
 
-      - name: Android — APKs, unit tests, lint and native sources
+      - name: Android — unit tests, lint, APKs and native sources
         if: matrix.platform == 'android'
         run: |
           set -euo pipefail
-          ./android/gradlew -p android --no-daemon \
-            :app:assembleDebug :app:assembleRelease :app:testDebugUnitTest :app:lintDebug \
+          ./android/gradlew -p android --no-daemon :app:testDebugUnitTest :app:lintDebug \
             --warning-mode fail --console=plain
-          python3 android/runtime/build.py --output android/app/build/local-runtime \
-            --source-bundle android/app/build/local-runtime/native-sources.zip
-          version=$(cat VERSION)
-          mkdir -p dist/ci
-          cp android/app/build/local-runtime/native-sources.zip "dist/ci/1loop-$version-android-native-sources.zip"
-          if [ -n "${ONELOOP_ANDROID_SIGNING_PROPERTIES:-}" ]; then
-            # Debug and release must carry the same certificate.
-            apksigner="$ANDROID_HOME/build-tools/37.0.0/apksigner"
-            certificate() { "$apksigner" verify --print-certs "$1" | sed -n 's/^.*certificate SHA-256 digest: //p' | sort -u; }
-            debug=$(certificate android/app/build/outputs/apk/debug/app-debug.apk)
-            release=$(certificate android/app/build/outputs/apk/release/app-release.apk)
-            test -n "$debug" && test "$debug" = "$release"
-            cp android/app/build/outputs/apk/release/app-release.apk "dist/ci/1loop-$version.apk"
-          fi
+          packaging/android/build.sh
 
       - name: Android — remove the publication key
         if: always() && matrix.platform == 'android'
@@ -175,7 +154,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
           TAG: ${{ needs.draft.outputs.tag }}
-        run: gh release upload "$TAG" dist/ci/* --clobber
+        run: gh release upload "$TAG" dist/* --clobber
 
   publish:
     name: Sign and publish the alpha
@@ -216,6 +195,10 @@ jobs:
             "1loop-$version.apk"
             "1loop-$version-android-native-sources.zip"
           )
+          # Only the expected files may be published: none unsigned beside them.
+          unexpected=$(gh release view "$TAG" --json assets --jq '.assets[].name' |
+            grep -vxF -e SHA256SUMS -e SHA256SUMS.sig -e release-key.pub "${assets[@]/#/-e}" || true)
+          if [ -n "$unexpected" ]; then printf 'Unexpected files in the draft:\n%s\n' "$unexpected" >&2; exit 1; fi
           mkdir "$work/assets"
           gh release download "$TAG" --dir "$work/assets"
           for asset in "${assets[@]}"; do test -s "$work/assets/$asset"; done
@@ -236,6 +219,13 @@ jobs:
               sha256sum --check SHA256SUMS
           NOTES
           gh release edit "$TAG" --draft=false --prerelease --latest=false --notes-file "$work/notes.md"
+
+          # Drafts of earlier runs whose builds failed are no longer needed.
+          gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100" |
+            jq -r --arg tag "$TAG" '.[][] | select(.draft == true and (.tag_name | test("^alpha-[0-9]+$")) and .tag_name != $tag) | .tag_name' |
+            while IFS= read -r draft; do
+              gh release delete "$draft" --yes
+            done
 
           # Only published alpha-N prereleases count; stable releases stay.
           gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100" |

@@ -197,12 +197,11 @@ silently install it on users' devices.
      bash release.sh
    ```
 
-   `release.sh` builds and packages all five downloads, signs
+   `release.sh` builds all the downloads (see
+   [docs/BUILD.md](docs/BUILD.md)), signs
    the manifest, pushes the files to `gh-pages`, and creates the matching
    GitHub release. The results are also kept locally in `dist/VERSION/`.
-   Do not reuse a version already published. If the builds of
-   [docs/BUILD.md](docs/BUILD.md) were just made from exactly this source,
-   `SKIP_CI=1` reuses them; otherwise leave the builds enabled.
+   Do not reuse a version already published.
 5. **Wait for Pages to deploy, then verify.** Open the release page and
    `updates/latest.json` above. The manifest is a signed envelope, rather
    than plain release notes; let an installed app verify it with
@@ -216,9 +215,9 @@ Do not edit the manifest by hand: its signature must match its contents.
 
 ## Building from source
 
-Requirements: Go 1.23+, a C compiler, and the OpenGL, X11 and Wayland
-development libraries (`libgl-dev`, `xorg-dev`, `libwayland-dev`,
-`libxkbcommon-dev`) for the desktop.
+Requirements: Go 1.23+, a C compiler, and the OpenGL, EGL, X11 and Wayland
+development libraries (`libgl-dev`, `libegl-dev`, `xorg-dev`,
+`libwayland-dev`, `libxkbcommon-dev`) for the desktop.
 
 ```bash
 make            # bin/1loop (X11) and bin/1loop-wayland (native Wayland)
@@ -237,10 +236,13 @@ Always start `bin/1loop`: in a Wayland session it hands over to
 
 - **Android**: JDK 21 and the Android SDK (`platforms;android-37.0`,
   `build-tools;37.0.0`, NDK `30.0.16248370` for the native helpers), then
-  `cd android && ./gradlew assembleRelease`.
-- **Windows**: `packaging/windows/build.sh` cross-builds `bin/windows/` from
-  Linux with MinGW. Natively: MinGW-w64 GCC on `PATH`, then
+  `packaging/android/build.sh` (the APK in `dist/`, signed with the
+  publication key) or `cd android && ./gradlew assembleDebug`.
+- **Windows**: `packaging/windows/build.sh` cross-builds the Windows zip in
+  `dist/` from Linux with MinGW. Natively: MinGW-w64 GCC on `PATH`, then
   `go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe ./cmd/1loop`.
+- **Servers**: `packaging/server/build.sh` builds the Linux and Windows
+  servers in `dist/`.
 - **Releases**: `bash release.sh` builds everything, signs the update manifest
   with `release-key.pem` (never committed), publishes the files on the release
   page (the `gh-pages` branch) and creates the GitHub release. The version

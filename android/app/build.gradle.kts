@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -12,6 +14,15 @@ abstract class LocalRuntimeBuild : Exec() {
 // versionCode follows internal/update.Code, "1.2.3" being 10203.
 val oneloopVersion = rootProject.file("../VERSION").readText().trim()
 val oneloopVersionCode = oneloopVersion.split(".").fold(0) { code, part -> code * 100 + part.toInt() }
+
+// CI and local builds use the same private publication key for both variants.
+val signingFile = rootProject.file(
+    providers.environmentVariable("ONELOOP_ANDROID_SIGNING_PROPERTIES")
+        .orElse("signing/release.properties").get()
+)
+val publicationSigning = Properties().apply {
+    if (signingFile.isFile) signingFile.inputStream().use { load(it) }
+}
 
 val localRuntimeDirectory = layout.buildDirectory.dir("local-runtime")
 val buildLocalNative = tasks.register<LocalRuntimeBuild>("buildLocalNative") {
@@ -45,12 +56,25 @@ android {
         versionCode = oneloopVersionCode
         versionName = oneloopVersion
     }
+    signingConfigs {
+        if (signingFile.isFile) {
+            create("publication") {
+                storeFile = signingFile.parentFile.resolve(publicationSigning.getProperty("storeFile"))
+                storePassword = publicationSigning.getProperty("storePassword")
+                keyAlias = publicationSigning.getProperty("keyAlias")
+                keyPassword = publicationSigning.getProperty("keyPassword")
+            }
+        }
+    }
     buildTypes {
+        debug {
+            signingConfig = signingConfigs.findByName("publication")
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
-            signingConfig = signingConfigs.getByName("debug") // sideloaded builds for now
+            signingConfig = signingConfigs.findByName("publication")
         }
     }
     buildFeatures { compose = true; aidl = true }

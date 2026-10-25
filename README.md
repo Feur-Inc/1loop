@@ -236,22 +236,95 @@ bash .github/scripts/build-and-verify.sh
 # all checks and builds: Go, Linux, Android, Windows (Docker)
 ```
 
-The GitHub Actions workflow runs these checks for pull requests and pushes to
-`dev` and `main`. After read-only checks succeed, a trusted push to `dev`
-rebuilds the same commit in a write-scoped publisher job and publishes a signed
-alpha prerelease directly on GitHub Releases; no Actions artifacts are used.
-Tags continue the existing `alpha-N` sequence. The workflow retains only the
-three newest `alpha-` prereleases and never removes stable releases. The release
-assets include signed `SHA256SUMS`; verify the checksum signature first, then
-the downloads:
+### Self-hosted CI
 
-```bash
+`.github/workflows/ci.yml` runs Linux, Windows and Android as separate jobs
+on organization runners with labels `self-hosted`, `Linux`, `X64`. GitHub
+schedules up to two jobs concurrently when both runners are idle; with one
+available runner the same jobs run sequentially. The runner group must share
+its runners with this repository. No Actions artifact or cache storage is used.
+
+Preinstall these packages on **each** Debian/Ubuntu runner (the workflow does
+not invoke sudo):
+
+```sh
+apt-get install build-essential cmake patch patchelf pkg-config libgl-dev \
+  xorg-dev libwayland-dev libxkbcommon-dev binutils zip unzip dpkg-dev \
+  python3 curl ca-certificates git gh jq openssl docker.io
+```
+
+The runner user needs access to Docker. Actions set up Go, Java 21 and the
+Android SDK/NDK. `bash ci.sh linux`, `bash ci.sh windows` and
+`bash ci.sh android` run the same checks locally; `bash ci.sh` runs all three.
+Windows is cross-compiled using MinGW in Docker; this does not run Windows tests.
+Linux packages use `packaging/linux/build.sh` from #57/#59: Debian 12 builds,
+the launcher and icons in the tarball, `.deb` and AppImage. Flatpak and Nix
+remain separate `make flatpak` / `make nix` targets, as in the packaging PRs.
+
+Pull requests from this repository and builds of `main` run verification only.
+Fork PRs do not automatically execute on persistent self-hosted runners:
+review them before testing their code on an isolated runner. PR verification
+receives no signing secrets and builds unsigned Android variants.
+
+On a trusted push to `dev`, each platform builds and verifies once, then uploads
+its outputs to this run's **draft** prerelease (`alpha-RUN_ID`). Only after
+all three jobs succeed does the publisher download the complete set, sign
+`SHA256SUMS`, and publish the alpha. Failed builds leave an unpublished draft
+for inspection; rerunning failed jobs reuses that draft. A completed run is not
+republished on rerun. Only the three most recently published `alpha-N`
+prereleases are retained; stable releases and other tags are excluded. These
+alpha builds do not change the stable Pages update manifest.
+
+Verify the downloads with the trusted `.github/release-key.pub` from the source
+commit linked in the release notes:
+
+```sh
 openssl dgst -sha256 -verify release-key.pub -signature SHA256SUMS.sig SHA256SUMS
 sha256sum --check SHA256SUMS
 ```
 
-Before trusting the included `release-key.pub`, compare it with
-`.github/release-key.pub` at the source commit linked by the release notes.
+### Android signing
+
+Debug and release use the **same publication certificate**, loaded from the
+ignored `android/signing/release.properties` (Java properties format):
+
+```properties
+storeFile=1loop-release.p12
+storePassword=YOUR_STORE_PASSWORD
+keyAlias=1loop-release
+keyPassword=YOUR_KEY_PASSWORD
+```
+
+`storeFile` is relative to this properties file. For another worktree, set
+`ONELOOP_ANDROID_SIGNING_PROPERTIES` to its absolute path. Without that file,
+both variants build unsigned; no machine-generated debug key is substituted.
+An existing app signed with the old debug key cannot be updated directly with
+the publication key. Do not uninstall an existing app without preserving its
+data and agreeing on migration first.
+
+Keep encrypted backups of `android/signing/` and `release-key.pem`; the latter
+signs update manifests/checksums and is a different key from the Android
+certificate. Never commit private keys or passwords. `.pem`, `.key`, `.p12`,
+`.jks`, `.keystore` and `android/signing/` are ignored by Git.
+
+CI requires two repository Actions secrets:
+
+- `RELEASE_KEY`: the existing PEM contents of `release-key.pem`, matching
+  `.github/release-key.pub`.
+- `ANDROID_SIGNING_BUNDLE`: base64 of a gzip tar archive containing only
+  `1loop-release.p12` and `release.properties`, with those exact archive names.
+
+Set them without placing credentials in command arguments:
+
+```sh
+gh secret set RELEASE_KEY --repo Feur-Inc/1loop < release-key.pem
+tar -C android/signing -czf - 1loop-release.p12 release.properties | base64 -w0 | \
+  gh secret set ANDROID_SIGNING_BUNDLE --repo Feur-Inc/1loop
+```
+
+The Android key is restored only for trusted `dev` publication and removed
+from the runner after use. The build verifies both APK signatures and compares
+their certificate SHA-256 digests before uploading the release APK.
 
 Always start `bin/1loop`: in a Wayland session it hands over to
 `bin/1loop-wayland`. `ONELOOP_BACKEND=x11` or `wayland` forces a backend (see

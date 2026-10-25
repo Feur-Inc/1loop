@@ -3,3 +3,6 @@ build/
 app/build/
 local.properties
 *.apk
+
+# Private publication keystore and its passwords.
+/signing/

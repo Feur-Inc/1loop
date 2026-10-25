@@ -1,6 +1,11 @@
 name: Build and verify 1loop
 
-description: Set up all build toolchains and run the repository's Go, Linux, Android and Windows checks.
+description: Run one platform's checks and package its downloads using the local CI script.
+
+inputs:
+  platform:
+    description: linux, windows or android
+    required: true
 
 runs:
   using: composite
@@ -9,46 +14,59 @@ runs:
       uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
       with:
         go-version-file: go.mod
-        cache: true
+        cache: false
 
     - name: Set up Java 21
+      if: inputs.platform == 'android'
       uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
       with:
         distribution: temurin
         java-version: '21'
 
     - name: Set up Android SDK tools
+      if: inputs.platform == 'android'
       uses: android-actions/setup-android@9fc6c4e9069bf8d3d10b2204b1fb8f6ef7065407 # v3
+      with:
+        packages: platform-tools
 
-    - name: Install Linux build dependencies
+    - name: Check preinstalled runner dependencies
       shell: bash
+      env:
+        PLATFORM: ${{ inputs.platform }}
       run: |
-        set -Eeuo pipefail
-        sudo apt-get update
-        sudo apt-get install --no-install-recommends --yes \
-          build-essential \
-          cmake \
-          libgl-dev \
-          libwayland-dev \
-          libxkbcommon-dev \
-          patchelf \
-          pkg-config \
-          xorg-dev \
-          zip
+        set -euo pipefail
+        commands=(python3)
+        if [[ $PLATFORM == android ]]; then
+          commands+=(make cmake patch patchelf dpkg-deb)
+        else
+          commands+=(docker zip)
+          docker version
+        fi
+        if [[ $PLATFORM == linux ]]; then
+          commands+=(gcc make pkg-config dpkg-deb objdump)
+          if ! pkg-config --exists gl x11 xrandr xxf86vm xi xcursor xinerama wayland-client xkbcommon; then
+            echo 'Install Linux headers on this runner: apt-get install build-essential libgl-dev xorg-dev libwayland-dev libxkbcommon-dev' >&2
+            exit 1
+          fi
+        fi
+        for command in "${commands[@]}"; do
+          command -v "$command" >/dev/null || {
+            echo "Missing runner dependency: $command. See README.md → Self-hosted CI." >&2
+            exit 1
+          }
+        done
 
     - name: Install Android platform and NDK
+      if: inputs.platform == 'android'
       shell: bash
       run: |
-        set -Eeuo pipefail
+        set -euo pipefail
         sdkmanager --sdk_root="$ANDROID_HOME" --install \
-          'platforms;android-37.0' \
-          'build-tools;37.0.0' \
-          'ndk;30.0.16248370'
+          'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;30.0.16248370'
 
-    - name: Verify Docker runner support
+    - name: Build, check and package
       shell: bash
-      run: docker version
-
-    - name: Run Go, Linux, Android and Windows build checks
-      shell: bash
-      run: bash .github/scripts/build-and-verify.sh
+      env:
+        PLATFORM: ${{ inputs.platform }}
+        DEB_MAINTAINER: TPM28 <77407722+tpm28@users.noreply.github.com>
+      run: bash ci.sh "$PLATFORM"

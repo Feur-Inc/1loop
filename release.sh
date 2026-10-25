@@ -4,7 +4,7 @@
 #   2. packages the downloads in dist/VERSION/;
 #   3. signs the update manifest with release-key.pem (never committed);
 #   4. publishes the files and the manifest on the release page, GitHub Pages
-#      served from the gh-pages branch: https://tpm28.github.io/1loop/;
+#      served from the gh-pages branch: https://feur-inc.github.io/1loop/;
 #   5. creates the GitHub release with the same files.
 # Installed apps find the new version through that manifest.
 #
@@ -15,8 +15,8 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
 version=$(cat VERSION)
 key=${RELEASE_KEY:-release-key.pem}
-repo=tpm28/1loop
-site=https://tpm28.github.io/1loop
+repo=Feur-Inc/1loop
+site=https://feur-inc.github.io/1loop
 notes=docs/releases/$version.md
 out=dist/$version
 pages=dist/gh-pages

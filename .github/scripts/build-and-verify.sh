@@ -5,6 +5,17 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
 # Keep Go compilation and Gradle workers bounded on the development machine.
 export GOFLAGS="${GOFLAGS:+$GOFLAGS }-p=1"
 
+platform=${1:-all}
+case $platform in
+  all|linux|windows|android) ;;
+  *) echo "Usage: $0 [all|linux|windows|android]" >&2; exit 2 ;;
+esac
+version=$(cat VERSION)
+out=dist/ci
+mkdir -p "$out"
+
+if [[ $platform == all || $platform == linux ]]; then
+
 echo 'Checking Go formatting'
 unformatted=$(git ls-files --cached --others --exclude-standard -z -- '*.go' | xargs -0 -r gofmt -l)
 if [ -n "$unformatted" ]; then
@@ -26,6 +37,12 @@ echo 'Packaging the Linux desktop (.tar.gz, .deb, AppImage) against Debian 12 in
 packaging/linux/build.sh binaries tarball deb appimage
 dpkg-deb --info "dist/1loop-$(cat VERSION)-amd64.deb" >/dev/null
 
+cp "dist/1loop-$version-linux-amd64.tar.gz" "dist/1loop-$version-amd64.deb" \
+  "dist/1loop-$version-x86_64.AppImage" "$out/"
+cp bin/1loop-server "$out/1loop-server-$version-linux-amd64"
+fi
+
+if [[ $platform == all || $platform == android ]]; then
 echo 'Building Android APKs, running unit tests and lint'
 ./android/gradlew -p android --no-daemon --no-parallel --max-workers=1 \
   -Dorg.gradle.jvmargs=-Xmx1536m -Pkotlin.compiler.execution.strategy=in-process \
@@ -36,6 +53,19 @@ echo 'Packaging Android native corresponding sources'
 python3 android/runtime/build.py --output android/app/build/local-runtime \
   --source-bundle android/app/build/local-runtime/native-sources.zip
 
+# Without publication credentials both variants are deliberately unsigned.
+if [[ -n ${ONELOOP_ANDROID_SIGNING_PROPERTIES:-} || -f android/signing/release.properties ]]; then
+  apksigner="${ANDROID_HOME:-$HOME/Android/Sdk}/build-tools/37.0.0/apksigner"
+  debug_certificate=$("$apksigner" verify --print-certs android/app/build/outputs/apk/debug/app-debug.apk)
+  release_certificate=$("$apksigner" verify --print-certs android/app/build/outputs/apk/release/app-release.apk)
+  test "$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<< "$debug_certificate")" = \
+    "$(sed -n 's/^Signer #1 certificate SHA-256 digest: //p' <<< "$release_certificate")"
+  cp android/app/build/outputs/apk/release/app-release.apk "$out/1loop-$version.apk"
+fi
+cp android/app/build/local-runtime/native-sources.zip "$out/1loop-$version-android-native-sources.zip"
+fi
+
+if [[ $platform == all || $platform == windows ]]; then
 echo 'Building Windows desktop and server (MinGW in Docker) with the software renderer'
 # The desktop needs cgo for OpenGL: a throwaway amd64 image carries MinGW, so
 # nothing is installed on the host. Go, the module cache and a build cache
@@ -68,10 +98,8 @@ cp .github/windows-licenses/* /out/software/licenses/
 printf "@echo off\r\nsetlocal\r\nrem Use the portable CPU renderer on systems without a working OpenGL driver.\r\nset GALLIUM_DRIVER=llvmpipe\r\nset LP_NUM_THREADS=1\r\nstart \"\" \"%%~dp0software\\\\1loop.exe\" %%*\r\n" > /out/1loop-software.cmd'
 # Windows tests need Windows itself: run go test ./... there (go vet runs above).
 
-printf '\nLocal checks passed. Outputs:\n'
-printf '%s\n' 'bin/1loop' 'bin/1loop-wayland' 'bin/1loop-server' \
-  "dist/1loop-$(cat VERSION)-linux-amd64.tar.gz" "dist/1loop-$(cat VERSION)-amd64.deb" "dist/1loop-$(cat VERSION)-x86_64.AppImage" \
-  'bin/windows/1loop.exe' 'bin/windows/1loop-server.exe' 'bin/windows/1loop-software.cmd' \
-  'android/app/build/outputs/apk/debug/app-debug.apk' \
-  'android/app/build/outputs/apk/release/app-release.apk' \
-  'android/app/build/local-runtime/native-sources.zip'
+(cd bin/windows && zip -qr "../../$out/1loop-$version-windows-amd64.zip" .)
+cp bin/windows/1loop-server.exe "$out/1loop-server-$version-windows-amd64.exe"
+fi
+
+printf '\nChecks passed for %s. Release files: %s/\n' "$platform" "$out"

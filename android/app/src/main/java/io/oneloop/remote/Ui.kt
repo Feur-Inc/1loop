@@ -567,7 +567,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                 )
             }
         }
-        NavRow("Settings", Icons.document, selected = false) { app.settingsOpen = true; onPicked() }
+        NavRow("Settings", Icons.settings, selected = false) { app.settingsOpen = true; onPicked() }
         NavRow("Switch execution target", Icons.refresh, selected = false) { app.switchTarget() }
         Spacer(Modifier.height(8.dp))
     }

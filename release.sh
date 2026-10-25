@@ -2,7 +2,7 @@
 # Publishes the version written in VERSION:
 #   1. builds the downloads in dist/VERSION/ with packaging/*/build.sh
 #      (docs/BUILD.md);
-#   2. checks that the APK is signed with the publication key;
+#   2. signs the APK with the private release key (android/signing/);
 #   3. signs the update manifest with release-key.pem (never committed);
 #   4. publishes the files and the manifest on the release page, GitHub Pages
 #      served from the gh-pages branch: https://tpm28.github.io/1loop/;
@@ -40,8 +40,7 @@ mkdir -p "$out"
 DIST=$out packaging/linux/build.sh binaries tarball deb appimage
 DIST=$out packaging/server/build.sh
 DIST=$out packaging/windows/build.sh
-DIST=$out packaging/android/build.sh
-[ -f "$out/1loop-$version.apk" ] || { echo "No signed APK: set up android/signing/release.properties (docs/BUILD.md)"; exit 1; }
+DIST=$out packaging/android/build.sh release
 
 echo "Signing the update manifest"
 go run ./cmd/1loop-release manifest -key "$key" -version "$version" \

@@ -121,32 +121,16 @@ jobs:
           "$sdkmanager" --install 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;30.0.16248370' >/dev/null
           echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
 
-      # Only for publication: pull requests never receive the key, and their
-      # release APK stays unsigned (the debug APK uses the runner's debug key).
-      - name: Android — publication key
-        if: matrix.platform == 'android' && env.PUBLISH == 'true'
-        env:
-          ANDROID_SIGNING_BUNDLE: ${{ secrets.ANDROID_SIGNING_BUNDLE }}
-        run: |
-          set -euo pipefail
-          test -n "$ANDROID_SIGNING_BUNDLE" || { echo 'The ANDROID_SIGNING_BUNDLE secret is missing' >&2; exit 1; }
-          umask 077
-          signing="$RUNNER_TEMP/android-signing"
-          mkdir -p "$signing"
-          printf '%s' "$ANDROID_SIGNING_BUNDLE" | base64 --decode | tar -xz -C "$signing" -- 1loop-release.p12 release.properties
-          echo "ONELOOP_ANDROID_SIGNING_PROPERTIES=$signing/release.properties" >> "$GITHUB_ENV"
-
-      - name: Android — unit tests, lint, APKs and native sources
+      # The CI builds only the debug app, signed with the shared debug key of
+      # the repository. The release key (secret ANDROID_SIGNING_BUNDLE) is kept
+      # for later but never used here: releases are built and signed locally.
+      - name: Android — unit tests, lint, debug APK and native sources
         if: matrix.platform == 'android'
         run: |
           set -euo pipefail
           ./android/gradlew -p android --no-daemon :app:testDebugUnitTest :app:lintDebug \
             --warning-mode fail --console=plain
-          packaging/android/build.sh
-
-      - name: Android — remove the publication key
-        if: always() && matrix.platform == 'android'
-        run: rm -rf -- "$RUNNER_TEMP/android-signing"
+          packaging/android/build.sh debug
 
       - name: Upload to the alpha draft
         if: env.PUBLISH == 'true'
@@ -192,7 +176,7 @@ jobs:
             "1loop-server-$version-linux-amd64"
             "1loop-$version-windows-amd64.zip"
             "1loop-server-$version-windows-amd64.exe"
-            "1loop-$version.apk"
+            "1loop-$version-debug.apk"
             "1loop-$version-android-native-sources.zip"
           )
           # Only the expected files may be published: none unsigned beside them.
@@ -209,8 +193,10 @@ jobs:
 
           cat > "$work/notes.md" <<NOTES
           Test builds of 1loop $version from $GITHUB_SHA: Linux (.tar.gz, .deb, AppImage),
-          Windows (desktop with the software renderer), both servers, and the Android APK
-          with its native sources. Linux, Windows and Android checks passed; Windows is
+          Windows (desktop with the software renderer), both servers, and the Android debug
+          APK ("1loop debug", installed beside the release app, debuggable: anyone with ADB
+          access to the phone can read its data) with its native sources. Linux, Windows and
+          Android checks passed; Windows is
           cross-compiled, its tests are not run here.
 
           Check the downloads with release-key.pub:

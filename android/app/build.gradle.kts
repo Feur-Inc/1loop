@@ -15,7 +15,8 @@ abstract class LocalRuntimeBuild : Exec() {
 val oneloopVersion = rootProject.file("../VERSION").readText().trim()
 val oneloopVersionCode = oneloopVersion.split(".").fold(0) { code, part -> code * 100 + part.toInt() }
 
-// CI and local builds use the same private publication key for both variants.
+// The release key stays private: android/signing/release.properties on the
+// machine that publishes. Without it, the release APK is unsigned.
 val signingFile = rootProject.file(
     providers.environmentVariable("ONELOOP_ANDROID_SIGNING_PROPERTIES")
         .orElse("signing/release.properties").get()
@@ -57,6 +58,14 @@ android {
         versionName = oneloopVersion
     }
     signingConfigs {
+        // Shared by everyone and committed (android/debug.keystore): any debug
+        // build updates any other. It never signs a published release.
+        create("sharedDebug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
         if (signingFile.isFile) {
             create("publication") {
                 storeFile = signingFile.parentFile.resolve(publicationSigning.getProperty("storeFile"))
@@ -67,8 +76,11 @@ android {
         }
     }
     buildTypes {
+        // A separate app ("1loop debug"): installed beside the release, as
+        // its signature differs.
         debug {
-            signingConfig = signingConfigs.findByName("publication") ?: signingConfigs.getByName("debug")
+            applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.getByName("sharedDebug")
         }
         release {
             isMinifyEnabled = true

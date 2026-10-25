@@ -236,8 +236,8 @@ Always start `bin/1loop`: in a Wayland session it hands over to
 
 - **Android**: JDK 21 and the Android SDK (`platforms;android-37.0`,
   `build-tools;37.0.0`, NDK `30.0.16248370` for the native helpers), then
-  `packaging/android/build.sh` (the APK in `dist/`, signed with the
-  publication key) or `cd android && ./gradlew assembleDebug`.
+  `packaging/android/build.sh debug` (the "1loop debug" APK, signed with the
+  shared debug key) or `release` (signed with the private release key).
 - **Windows**: `packaging/windows/build.sh` cross-builds the Windows zip in
   `dist/` from Linux with MinGW. Natively: MinGW-w64 GCC on `PATH`, then
   `go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe ./cmd/1loop`.

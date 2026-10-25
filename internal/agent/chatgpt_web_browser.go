@@ -297,14 +297,14 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 	if err = tab.Run(ctx, input.InsertText(prompt)); err != nil {
 		return err
 	}
-	if err = webClickVisible(ctx, tab, webSend); err != nil {
+	if err = webSend(ctx, tab); err != nil {
 		return err
 	}
 	defer func() {
 		if ctx.Err() != nil { // Stop in 1loop stops ChatGPT too
-			stopCtx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
+			stopCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 			defer cancel()
-			_, _ = tab.Evaluate(stopCtx, `Array.from(document.querySelectorAll('button[aria-label]')).find(b=>/^stop/i.test(b.getAttribute('aria-label')))?.click()`)
+			_ = webClickVisible(stopCtx, tab, `form button[aria-label="Stop"],button[aria-label^="Stop"]`)
 		}
 	}()
 	emit("activity", Activity{State: "think"})
@@ -384,8 +384,8 @@ func webUpload(ctx context.Context, tab *browser.Page, root string, images []cor
 
 // The page's controls, as ChatGPT names them (checked on the live page).
 const (
-	webComposer = `form .ProseMirror[contenteditable="true"]`
-	webSend     = `form button[aria-label="Send"],[data-testid="send-button"]`
+	webComposer   = `form .ProseMirror[contenteditable="true"]`
+	webSendButton = `form button[aria-label="Send"],[data-testid="send-button"]`
 	// webConnector is the "1loop" plugin, as the app mention ChatGPT inserts.
 	webConnector = `form .ProseMirror [app-mention-name="1loop"]`
 )
@@ -435,13 +435,37 @@ func webAllow(ctx context.Context, tab *browser.Page) (bool, error) {
 	return true, webClickText(ctx, tab, `[data-codex-approval-surface="true"] form button`, "Allow once")
 }
 
-// webClearComposer empties the message box with real keystrokes, as the
-// page's editor ignores script edits.
+// webClearComposer empties the message box (ChatGPT keeps unsent drafts):
+// the editor is focused and selected from the page, which a click cannot
+// do when a long draft scrolls it, then a real Backspace deletes it.
 func webClearComposer(ctx context.Context, tab *browser.Page) error {
-	if err := tab.Run(ctx, chromedp.Click(webComposer, chromedp.ByQuery), chromedp.KeyEvent("a", chromedp.KeyModifiers(input.ModifierCtrl)), chromedp.KeyEvent(kb.Backspace)); err != nil {
-		return fmt.Errorf("ChatGPT's message box is unavailable: %w", err)
+	empty := `(document.querySelector('` + webComposer + `')?.innerText||'').trim()===''`
+	selectAll := `(()=>{const e=document.querySelector('` + webComposer + `');if(!e)return false;e.focus();getSelection().selectAllChildren(e);return true})()`
+	for attempt := 0; attempt < 5; attempt++ {
+		var found bool
+		if err := tab.Run(ctx, evaluateWeb(selectAll, &found)); err != nil {
+			return err
+		}
+		if !found {
+			return fmt.Errorf("ChatGPT's message box is unavailable: open the ChatGPT tab to see why")
+		}
+		if err := tab.Run(ctx, chromedp.Sleep(100*time.Millisecond), chromedp.KeyEvent(kb.Backspace)); err != nil {
+			return err
+		}
+		for wait := 0; wait < 10; wait++ {
+			var cleared bool
+			if err := tab.Run(ctx, evaluateWeb(empty, &cleared)); err != nil {
+				return err
+			}
+			if cleared {
+				return nil
+			}
+			if err := sleepContext(ctx, 100*time.Millisecond); err != nil {
+				return err
+			}
+		}
 	}
-	return webWait(ctx, tab, `(document.querySelector('`+webComposer+`')?.innerText||'').trim()===''`)
+	return fmt.Errorf("ChatGPT's message box could not be emptied: open the ChatGPT tab to see why")
 }
 
 // webAttachConnector gives this message the 1loop app: "@1loop", then the
@@ -500,8 +524,10 @@ func webClickVisible(ctx context.Context, tab *browser.Page, selector string) er
 
 const webModelTrigger = `[aria-label="Select ChatGPT model"], [data-testid="model-switcher-dropdown-button"]`
 
+// webWait waits for script to be true on the page, for up to about 25 s:
+// a page that changed must end the turn with an error, never hang it.
 func webWait(ctx context.Context, tab *browser.Page, script string) error {
-	for {
+	for wait := 0; wait < 300; wait++ {
 		var ready bool
 		if err := tab.Run(ctx, evaluateWeb(script, &ready)); err != nil {
 			return err
@@ -513,6 +539,7 @@ func webWait(ctx context.Context, tab *browser.Page, script string) error {
 			return err
 		}
 	}
+	return fmt.Errorf("ChatGPT's page did not respond as expected: open the ChatGPT tab to see why")
 }
 
 func webModelMenu(ctx context.Context, tab *browser.Page, advanced bool) error {
@@ -700,4 +727,42 @@ func webClickVisibleText(ctx context.Context, tab *browser.Page, selector, text 
 		}
 	}
 	return err
+}
+
+// webSend sends the message once ChatGPT accepts it: the button waits for
+// attached images to finish uploading, and a click that did not send (the
+// message box still holds the text) is tried again.
+func webSend(ctx context.Context, tab *browser.Page) error {
+	empty := `(document.querySelector('` + webComposer + `')?.innerText||'').trim()===''`
+	for attempt := 0; attempt < 3; attempt++ {
+		ready := `[...document.querySelectorAll('` + webSendButton + `')].some(b=>b.getBoundingClientRect().width>0&&!b.disabled&&b.getAttribute('aria-disabled')!=='true')`
+		for wait := 0; wait < 600; wait++ { // an upload can take a while
+			var enabled bool
+			if err := tab.Run(ctx, evaluateWeb(ready, &enabled)); err != nil {
+				return err
+			}
+			if enabled {
+				break
+			}
+			if err := sleepContext(ctx, 100*time.Millisecond); err != nil {
+				return err
+			}
+		}
+		if err := webClickVisible(ctx, tab, webSendButton); err != nil {
+			return err
+		}
+		for wait := 0; wait < 30; wait++ {
+			var sent bool
+			if err := tab.Run(ctx, evaluateWeb(empty, &sent)); err != nil {
+				return err
+			}
+			if sent {
+				return nil
+			}
+			if err := sleepContext(ctx, 100*time.Millisecond); err != nil {
+				return err
+			}
+		}
+	}
+	return fmt.Errorf("ChatGPT did not send the message: open the ChatGPT tab to see why")
 }

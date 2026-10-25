@@ -123,6 +123,21 @@ private fun RunStatusSection() {
             context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri()))
         }
     }
+    // The Live Update (status bar chip, Samsung's Now Bar): Android 16 promotes it, but the
+    // user decides per app, and Samsung shows it in the Now Bar only once "Live notifications"
+    // is on for 1loop, in its notification settings, where this page leads on One UI.
+    if (Build.VERSION.SDK_INT >= 36 && style != StatusStyle.Off) {
+        Text("Live Update in the status bar and the Now Bar: in 1loop's notification settings, allow live notifications.", style = Type.small)
+        Pill("Live notifications settings") {
+            runCatching {
+                context.startActivity(
+                    Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+                )
+            }.recoverCatching {
+                context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
+            }
+        }
+    }
 }
 
 // The agent's browser keeps its logins between sessions: this erases them,

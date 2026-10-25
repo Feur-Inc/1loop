@@ -62,15 +62,15 @@ fun StatusBadge(onStop: (String) -> Unit, onTalk: (String) -> Unit, onDrag: (Flo
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Box(Modifier.clickable { open = false }) { WorkRing(run.mark, 26.dp) }
+                Box(Modifier.clickable { open = false }) { WorkRing(run.mark, 30.dp) }
                 Spacer(Modifier.width(6.dp))
                 Text(
                     run.label.ifEmpty { "Working…" }, style = Type.small.copy(color = Palette.text),
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 150.dp),
                 )
-                RoundButton(Icons.close, Color.Transparent, Palette.danger, description = "Stop", size = 40.dp, iconSize = 18.dp) { onStop(run.chat) }
-                RoundButton(Icons.chats, Color.Transparent, Palette.muted, description = "Talk to the agent", size = 40.dp, iconSize = 18.dp) { onTalk(run.chat) }
-                RoundButton(Icons.tasks, if (preview) Palette.code else Color.Transparent, Palette.muted, description = if (preview) "Hide preview" else "Show preview", size = 40.dp, iconSize = 18.dp) { preview = !preview }
+                RoundButton(Icons.close, Color.Transparent, Palette.danger, description = "Stop", size = 46.dp, iconSize = 24.dp) { onStop(run.chat) }
+                RoundButton(Icons.chats, Color.Transparent, Palette.muted, description = "Talk to the agent", size = 46.dp, iconSize = 24.dp) { onTalk(run.chat) }
+                RoundButton(Icons.tasks, if (preview) Palette.code else Color.Transparent, Palette.muted, description = if (preview) "Hide preview" else "Show preview", size = 46.dp, iconSize = 24.dp) { preview = !preview }
             }
             if (preview) Preview(run)
         }

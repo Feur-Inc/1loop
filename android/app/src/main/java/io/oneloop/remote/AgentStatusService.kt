@@ -101,6 +101,9 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
             .setOngoing(true)
             .setOnlyAlertOnce(true)
             .setCategory(Notification.CATEGORY_PROGRESS)
+            // Its own group: otherwise Android groups it with "Done." and the other chats'
+            // notifications, and a grouped notification is no Live Update (Samsung's Now Bar).
+            .setGroup(GROUP)
         if (status != null) {
             val stop = PendingIntent.getService(
                 this, 3, Intent(this, AgentStatusService::class.java).setAction(ACTION_STOP).putExtra(EXTRA_CHAT, status.chat),
@@ -181,6 +184,7 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
 
     companion object {
         const val CHANNEL = "running"
+        const val GROUP = "io.oneloop.remote.RUNNING"
         const val ID = 4317
         const val ACTION_STOP = "io.oneloop.remote.STOP_RUN"
         const val EXTRA_CHAT = "io.oneloop.remote.CHAT"

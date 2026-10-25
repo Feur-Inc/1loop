@@ -128,6 +128,7 @@ type Model struct {
 	Name    string   `json:"name"`
 	Detail  string   `json:"detail"`
 	Account string   `json:"account,omitempty"` // its connection's ID
+	Family  string   `json:"family,omitempty"`  // the picker groups by it, sorted newest first
 	Efforts []Effort `json:"efforts"`
 	// The speeds the plan offers (none on most), and the one used unless told.
 	ServiceTiers       []agent.ServiceTier `json:"serviceTiers,omitempty"`

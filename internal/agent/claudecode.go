@@ -110,6 +110,7 @@ type claudeBlock struct {
 type claudeModel struct {
 	Value       string   `json:"value"`
 	DisplayName string   `json:"displayName"`
+	Resolved    string   `json:"resolvedModel"`
 	Description string   `json:"description"`
 	Efforts     []string `json:"supportedEffortLevels"`
 }

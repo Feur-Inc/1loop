@@ -928,7 +928,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 	for _, label := range ui.model.Options {
 		choice := ui.choices[label]
 		remoteModelValue := remoteapi.Model{Label: label, Name: choice.Display(), Detail: ui.model.Details[label],
-			Account: choice.Connection.ID, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
+			Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
 		for _, e := range choice.Efforts {
 			remoteModelValue.Efforts = append(remoteModelValue.Efforts, remoteapi.Effort{Value: e, Label: agent.EffortLabel(e), About: modelEffortAbout(e)})
 		}

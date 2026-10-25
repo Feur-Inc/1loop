@@ -103,11 +103,22 @@ data class ServiceTier(val id: String, val name: String, val description: String
 /**
  * account: the ID of its connection (empty from a computer older than this app).
  * tiers: the plan's speeds for it, none on most plans; defaultTier is used unless told.
+ * family: its line (GPT, Claude Opus…); the computer sends models by family, newest first.
  */
 data class ModelOption(
     val label: String, val name: String, val detail: String, val account: String, val efforts: List<Effort>,
-    val tiers: List<ServiceTier> = emptyList(), val defaultTier: String = "",
+    val tiers: List<ServiceTier> = emptyList(), val defaultTier: String = "", val family: String = "",
 )
+
+/**
+ * An account's models under their family's caption, in the computer's order.
+ * One untitled group when they are all of one family, or the computer is
+ * older than this app and sends none.
+ */
+fun modelFamilies(options: List<ModelOption>): List<Pair<String, List<ModelOption>>> {
+    val groups = options.groupBy { it.family }
+    return if (groups.size < 2) listOf("" to options) else groups.toList()
+}
 
 /** A connection of the model picker; problem says why its models are missing. */
 data class Account(val id: String, val name: String, val provider: String, val kind: String, val problem: String)
@@ -768,7 +779,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 (0 until (tiers?.length() ?: 0)).map {
                     tiers!!.getJSONObject(it).let { tier -> ServiceTier(tier.optString("id"), tier.optString("name"), tier.optString("description")) }
                 },
-                model.optString("defaultServiceTier"),
+                model.optString("defaultServiceTier"), model.optString("family"),
             ))
         }
         val accountArray = settings.optJSONArray("accounts")

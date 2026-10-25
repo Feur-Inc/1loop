@@ -48,6 +48,8 @@ object Icons {
     val phone = lineIcon("phone", line("M5.2 1.8h5.6a1 1 0 0 1 1 1v10.4a1 1 0 0 1-1 1H5.2a1 1 0 0 1-1-1V2.8a1 1 0 0 1 1-1z"), line("M7 12h2"))
     val undo = lineIcon("undo", line("M5.5 4 3 6.5 5.5 9"), line("M3 6.5h6.5a3.5 3.5 0 0 1 0 7H7"))
     val redo = lineIcon("redo", line("M10.5 4 13 6.5 10.5 9"), line("M13 6.5H6.5a3.5 3.5 0 0 0 0 7H9"))
+    val settings = lineIcon("settings", line("M7 4.1L7 2.5L9 2.5L9 4.1A4 4 0 0 1 10.8 5.2L12.3 4.4L13.3 6.1L11.9 7A4 4 0 0 1 11.9 9L13.3 9.9L12.3 11.6L10.8 10.8A4 4 0 0 1 9 11.9L9 13.5L7 13.5L7 11.9A4 4 0 0 1 5.2 10.8L3.7 11.6L2.7 9.9L4.1 9A4 4 0 0 1 4.1 7L2.7 6.1L3.7 4.4L5.2 5.2A4 4 0 0 1 7 4.1z"),
+        line("M8 6.4a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2z"))
     val refresh = lineIcon("refresh", line("M12.8 7.2A4.9 4.9 0 1 0 11.4 11"), line("M13 3.6v3.6H9.4"))
 
     val panel = lineIcon("panel", line("M2.5 2.5h4v4h-4zM9.5 2.5h4v4h-4zM2.5 9.5h4v4h-4zM9.5 9.5h4v4h-4z"))

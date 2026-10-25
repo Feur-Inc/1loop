@@ -127,10 +127,11 @@ def build(ndk, output):
         "-DBUILD_TESTING=OFF", "-DCMAKE_BUILD_TYPE=Release",
         "-DCMAKE_TOOLCHAIN_FILE=" + str(ndk / "build/cmake/android.toolchain.cmake"),
         "-DANDROID_ABI=arm64-v8a", "-DANDROID_PLATFORM=android-31",
-        "-DCMAKE_EXE_LINKER_FLAGS=-static",
     )
     run("cmake", "--build", abwrap_build, "-j2")
-    run(compiler / "aarch64-linux-android31-clang", "-Wall", "-Wextra", "-Werror", "-O2", "-static",
+    # The guard and abwrap use the phone's libc: a static NDK libc requires
+    # MADV_WIPEONFORK (Linux 4.14) and aborts on older kernels (Pixel 3a, 4.9).
+    run(compiler / "aarch64-linux-android31-clang", "-Wall", "-Wextra", "-Werror", "-O2",
         SCRIPT.parent / "guard.c", "-o", libraries / "libguard.so")
     for source, name in (
         (proot / "src/proot", "libproot.so"),

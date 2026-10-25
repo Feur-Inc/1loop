@@ -25,8 +25,8 @@ import (
 // id of its message), each tool call it starts, and the end.
 type webStreamSink struct {
 	started  func()
-	text     func(message, delta string)
-	replace  func(message, text string) // the message sent again, changed
+	text     func(message, text string, rewritten bool) // complete text, including revisions
+	final    func(message, text string, rewritten bool)
 	toolCall func()
 	done     func(conversation string)
 }
@@ -38,6 +38,8 @@ type webStream struct {
 	pending      []byte
 	path, op     string
 	message      webMessage
+	object       int
+	objects      map[int]webMessage
 	texts        map[string]string // what each message's text was so far
 	conversation string
 	finished     bool
@@ -45,7 +47,7 @@ type webStream struct {
 
 type webMessage struct {
 	id, role, kind string
-	visible        bool
+	visible, final bool
 }
 
 func (stream *webStream) write(data []byte) {
@@ -79,6 +81,7 @@ func (stream *webStream) event(data string) {
 	}
 	var event struct {
 		Type           string          `json:"type"`
+		Object         *int            `json:"c"`
 		ConversationID string          `json:"conversation_id"`
 		Path           *string         `json:"p"`
 		Op             *string         `json:"o"`
@@ -102,6 +105,10 @@ func (stream *webStream) event(data string) {
 	if event.Op != nil {
 		stream.op = *event.Op
 	}
+	if event.Object != nil {
+		stream.object = *event.Object
+		stream.message = stream.objects[stream.object]
+	}
 	stream.apply(stream.path, stream.op, event.Value)
 }
 
@@ -110,8 +117,10 @@ func (stream *webStream) apply(path, op string, value json.RawMessage) {
 	case op == "add" && path == "":
 		var added struct {
 			Message struct {
-				ID     string `json:"id"`
-				Author struct {
+				ID        string `json:"id"`
+				Channel   string `json:"channel"`
+				Recipient string `json:"recipient"`
+				Author    struct {
 					Role string `json:"role"`
 				} `json:"author"`
 				Content struct {
@@ -132,7 +141,12 @@ func (stream *webStream) apply(path, op string, value json.RawMessage) {
 		}
 		m := added.Message
 		stream.message = webMessage{id: m.ID, role: m.Author.Role, kind: m.Content.Kind,
-			visible: m.Author.Role == "assistant" && m.Content.Kind == "text" && !m.Metadata.Hidden}
+			visible: m.Author.Role == "assistant" && m.Content.Kind == "text" && !m.Metadata.Hidden && (m.Recipient == "" || m.Recipient == "all"),
+			final:   m.Channel == "final"}
+		if stream.objects == nil {
+			stream.objects = make(map[int]webMessage)
+		}
+		stream.objects[stream.object] = stream.message
 		if m.Author.Role == "assistant" && m.Content.Kind == "code" {
 			stream.sink.toolCall()
 		}
@@ -168,13 +182,13 @@ func (stream *webStream) setText(id, text string) {
 		stream.texts = map[string]string{}
 	}
 	before := stream.texts[id]
-	switch {
-	case text == before:
+	if before == text {
 		return
-	case strings.HasPrefix(text, before):
-		stream.sink.text(id, text[len(before):])
-	default:
-		stream.sink.replace(id, text)
+	}
+	if stream.message.final {
+		stream.sink.final(id, text, !strings.HasPrefix(text, before))
+	} else {
+		stream.sink.text(id, text, !strings.HasPrefix(text, before))
 	}
 	stream.texts[id] = text
 }

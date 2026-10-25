@@ -59,3 +59,14 @@ func TestSandboxConfinesWrites(t *testing.T) {
 		t.Fatalf("reading outside the workspace failed: %v\n%s", err, output)
 	}
 }
+
+// In the Flatpak, commands run on the host, where Landlock does not follow.
+func TestNoSandboxInFlatpak(t *testing.T) {
+	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
+		t.Skip("the phone's launcher confines commands itself")
+	}
+	t.Setenv("ONELOOP_FLATPAK", "1")
+	if SandboxAvailable() {
+		t.Fatal("SandboxAvailable in the Flatpak")
+	}
+}

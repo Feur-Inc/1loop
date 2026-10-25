@@ -1,0 +1,72 @@
+# 1loop as a Flatpak, built from this repository:
+#
+#   flatpak-builder --user --install --force-clean build-flatpak \
+#     packaging/flatpak/io.github.Feur_Inc.OneLoop.yml
+#
+# or `make flatpak` for a single-file bundle in dist/. The Go modules are
+# downloaded during the build (--share=network): fine for local builds, not
+# accepted by Flathub as it is.
+#
+# A coding agent works on the user's real system, so this is not a tight
+# sandbox: it reads and writes the user's files, and runs its commands, its
+# terminal, Git, the browser and Computer Use's helper on the host through
+# flatpak-spawn (org.freedesktop.Flatpak). See packaging/flatpak/host-run and
+# docs/INSTALL.md for what that changes.
+id: io.github.Feur_Inc.OneLoop
+runtime: org.freedesktop.Platform
+runtime-version: '25.08'
+sdk: org.freedesktop.Sdk
+sdk-extensions:
+  - org.freedesktop.Sdk.Extension.golang
+command: 1loop-flatpak
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=wayland
+  - --socket=fallback-x11
+  - --device=dri
+  # Projects can be anywhere the user keeps them.
+  - --filesystem=host
+  # Commands, the terminal, Git, the browser and Computer Use run on the host.
+  - --talk-name=org.freedesktop.Flatpak
+  - --talk-name=org.freedesktop.Notifications
+modules:
+  - name: 1loop
+    buildsystem: simple
+    build-options:
+      append-path: /usr/lib/sdk/golang/bin
+      build-args:
+        - --share=network
+      env:
+        # -modcacherw: flatpak-builder must be able to delete the build folder.
+        GOFLAGS: -trimpath -modcacherw
+        GOTOOLCHAIN: local
+        GOPATH: /run/build/1loop/.go
+        GOCACHE: /run/build/1loop/.go-cache
+    sources:
+      - type: dir
+        path: ../..
+        skip:
+          - .git
+          - android
+          - bin
+          - dist
+          - build-flatpak
+          - .flatpak-builder
+          - result
+    build-commands:
+      - |
+        flags="-s -w -X 1loop/internal/update.Version=$(cat VERSION) -X 1loop/internal/update.Packaged=Flatpak"
+        go build -ldflags="$flags" -o build/1loop ./cmd/1loop
+        CGO_CFLAGS="$(go env CGO_CFLAGS) -w" go build -ldflags="$flags" -tags wayland -o build/1loop-wayland ./cmd/1loop
+        go build -o build/1loop-release ./cmd/1loop-release
+      - install -Dm755 build/1loop build/1loop-wayland -t /app/lib/1loop
+      - install -Dm755 packaging/flatpak/1loop-flatpak -t /app/bin
+      - install -Dm755 packaging/flatpak/host-run packaging/flatpak/host-browser packaging/flatpak/host-shell -t /app/lib/1loop/host
+      - for name in bash git python3; do ln -s host-run /app/lib/1loop/host/$name; done
+      - ln -s host-browser /app/lib/1loop/host/chromium
+      - build/1loop-release icons /app/share/icons io.github.Feur_Inc.OneLoop
+      # The window keeps the app id 1loop: StartupWMClass ties it to this entry.
+      - sed -e 's/^Exec=.*/Exec=1loop-flatpak/' -e 's/^Icon=.*/Icon=io.github.Feur_Inc.OneLoop/' packaging/linux/1loop.desktop
+        | install -Dm644 /dev/stdin /app/share/applications/io.github.Feur_Inc.OneLoop.desktop
+      - install -Dm644 packaging/flatpak/io.github.Feur_Inc.OneLoop.metainfo.xml -t /app/share/metainfo

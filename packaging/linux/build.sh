@@ -4,6 +4,7 @@
 #   packaging/linux/build.sh binaries   bin/linux/<format>/1loop and 1loop-wayland
 #   packaging/linux/build.sh tarball    dist/1loop-VERSION-linux-amd64.tar.gz
 #   packaging/linux/build.sh deb        dist/1loop-VERSION-amd64.deb
+#   packaging/linux/build.sh appimage   dist/1loop-VERSION-x86_64.AppImage
 #
 # Several steps can be given at once, in that order. DIST sets the output
 # folder (dist by default).
@@ -20,13 +21,14 @@ cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
 
 version=$(cat VERSION)
 dist=${DIST:-dist}
-formats=(tarball deb)
+formats=(tarball deb appimage)
 
 # packaged is the internal/update.Packaged value of each format.
 packaged() {
   case $1 in
   tarball) echo "" ;;
   deb) echo "deb" ;;
+  appimage) echo "AppImage" ;;
   esac
 }
 
@@ -131,13 +133,62 @@ EOF
   echo "$dist/1loop-$version-amd64.deb"
 }
 
+# appimage_tools downloads appimagetool and the AppImage runtime it packs,
+# pinned and checked, into the build cache: the runtime is given to
+# appimagetool so it fetches nothing itself. It runs extracted, without FUSE.
+appimage_tools() {
+  local cache="${XDG_CACHE_HOME:-$HOME/.cache}/1loop-linux-build/appimage" name url sum
+  mkdir -p "$cache"
+  # Only the hash is read: not every sha256sum has -c.
+  checked() { [ -f "$1" ] && [ "$(sha256sum "$1" | cut -d' ' -f1)" = "$2" ]; }
+  while read -r name url sum; do
+    if ! checked "$cache/$name" "$sum"; then
+      curl -fsSL -o "$cache/$name" "$url"
+      checked "$cache/$name" "$sum" || { echo "$name does not match its checksum" >&2; exit 1; }
+    fi
+  done <<'TOOLS'
+appimagetool-1.9.1 https://github.com/AppImage/appimagetool/releases/download/1.9.1/appimagetool-x86_64.AppImage ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0
+runtime-20251108 https://github.com/AppImage/type2-runtime/releases/download/20251108/runtime-x86_64 2fca8b443c92510f1483a883f60061ad09b46b978b2631c807cd873a47ec260d
+TOOLS
+  chmod +x "$cache/appimagetool-1.9.1"
+  appimagetool=("$cache/appimagetool-1.9.1" --appimage-extract-and-run)
+  runtime=$cache/runtime-20251108
+}
+
+appimage() {
+  need appimage
+  local appimagetool runtime
+  appimage_tools
+  local stage app
+  stage=$(mktemp -d)
+  trap 'rm -rf "$stage"' RETURN
+  app=$stage/1loop.AppDir
+  install -Dm755 bin/linux/appimage/1loop "$app/usr/lib/1loop/1loop"
+  install -Dm755 bin/linux/appimage/1loop-wayland "$app/usr/lib/1loop/1loop-wayland"
+  share "$app/usr/share"
+  cp packaging/linux/1loop.desktop "$app/"
+  cp "$app/usr/share/icons/hicolor/256x256/apps/1loop.png" "$app/1loop.png"
+  ln -s 1loop.png "$app/.DirIcon"
+  cat > "$app/AppRun" <<'EOF'
+#!/bin/sh
+# Nothing is bundled but 1loop itself: OpenGL, X11, Wayland, Git, the
+# browser and Python come from the system, as for the other formats.
+here=$(dirname -- "$(readlink -f -- "$0")")
+exec "$here/usr/lib/1loop/1loop" "$@"
+EOF
+  chmod 755 "$app/AppRun"
+  mkdir -p "$dist"
+  ARCH=x86_64 "${appimagetool[@]}" --no-appstream --runtime-file "$runtime" \
+    "$app" "$dist/1loop-$version-x86_64.AppImage" >/dev/null
+  echo "$dist/1loop-$version-x86_64.AppImage"
+}
 
 [ $# -gt 0 ] || set -- usage
 for step; do
   case $step in
-  binaries | tarball | deb) "$step" ;;
+  binaries | tarball | deb | appimage) "$step" ;;
   *)
-    echo "Usage: $0 binaries|tarball|deb..." >&2
+    echo "Usage: $0 binaries|tarball|deb|appimage..." >&2
     exit 2
     ;;
   esac

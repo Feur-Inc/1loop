@@ -14,7 +14,7 @@ VERSION_FLAG  := -X 1loop/internal/update.Version=$(VERSION)
 # Release builds: no local paths and no debug symbols in the binaries.
 RELEASE_FLAGS := -trimpath -ldflags="-s -w $(VERSION_FLAG)"
 
-.PHONY: build run dev server release clean linux-binaries tarball deb
+.PHONY: build run dev server release clean linux-binaries tarball deb appimage flatpak nix
 
 build:
 	go build -ldflags="$(VERSION_FLAG)" -o $(BIN)/1loop ./cmd/1loop
@@ -47,13 +47,26 @@ release:
 	cp android/app/build/outputs/apk/release/app-release.apk $(DIST)/1loop-remote-$(VERSION).apk
 
 # The Linux downloads, in dist/ (packaging/linux/build.sh): binaries built
-# against Debian 12's glibc in Docker, then the archive and the .deb, each
-# with the launcher entry and the icons.
+# against Debian 12's glibc in Docker, then the archive, the .deb and the
+# AppImage (with a pinned appimagetool it downloads), each with the launcher
+# entry and the icons.
 linux-binaries:
 	packaging/linux/build.sh binaries
 
-tarball deb: linux-binaries
+tarball deb appimage: linux-binaries
 	packaging/linux/build.sh $@
+
+# The Flatpak, built from the sources by flatpak-builder (with the
+# org.freedesktop.Sdk.Extension.golang//25.08 extension), as a bundle.
+FLATPAK_ID := io.github.Feur_Inc.OneLoop
+flatpak:
+	flatpak-builder --force-clean --repo=$(BIN)/flatpak-repo --state-dir=$(BIN)/flatpak-state $(BIN)/flatpak-build packaging/flatpak/$(FLATPAK_ID).yml
+	mkdir -p $(DIST)
+	flatpak build-bundle $(BIN)/flatpak-repo $(DIST)/1loop-$(VERSION).flatpak $(FLATPAK_ID)
+
+# Nix: the flake's package, in ./result (nix build .#default).
+nix:
+	nix build .#default
 
 clean:
 	rm -rf $(BIN) $(DIST)

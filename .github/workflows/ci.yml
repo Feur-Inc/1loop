@@ -1,0 +1,222 @@
+name: CI and alpha releases
+
+# Every push and pull request on dev and main builds and checks Linux,
+# Windows and Android. A push on dev also publishes the builds as an alpha
+# prerelease: they go to a draft release (no Actions artifacts), which is
+# signed and published only once all three platforms succeeded. Only the
+# three newest alpha-N prereleases are kept; stable releases are untouched.
+# The commands are the same as for a manual build: see docs/BUILD.md.
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# A dev publication and its cleanup finish before the next one starts.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  PUBLISH: ${{ github.event_name == 'push' && github.ref == 'refs/heads/dev' }}
+
+jobs:
+  draft:
+    name: Prepare the alpha draft
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    outputs:
+      tag: ${{ steps.draft.outputs.tag }}
+    steps:
+      - name: Create or reuse this run's draft
+        id: draft
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          tag="alpha-$GITHUB_RUN_NUMBER"
+          if release=$(gh release view "$tag" --json isDraft,targetCommitish 2>/dev/null); then
+            # A rerun of this workflow run: its own draft, never a published release.
+            test "$(jq -r .isDraft <<< "$release")" = true
+            test "$(jq -r .targetCommitish <<< "$release")" = "$GITHUB_SHA"
+          else
+            gh release create "$tag" --draft --prerelease --target "$GITHUB_SHA" \
+              --title "Alpha $GITHUB_RUN_NUMBER" --notes "Test builds of $GITHUB_SHA."
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+  build:
+    name: Build ${{ matrix.platform }}
+    needs: draft
+    # Runs on pull requests too, where the draft job is skipped.
+    if: ${{ !cancelled() && needs.draft.result != 'failure' }}
+    # The self-hosted runners (TPM28_RUNNER and mopi) are not used for now.
+    # They would run every pull request's code: only on dedicated, isolated
+    # machines.
+    # runs-on: [self-hosted, Linux, X64]
+    runs-on: ubuntu-24.04
+    timeout-minutes: 90
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: [linux, windows, android]
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+
+      - name: Linux — checks, desktop packages and servers
+        if: matrix.platform == 'linux'
+        env:
+          DEB_MAINTAINER: TPM28 <77407722+tpm28@users.noreply.github.com>
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends \
+            libgl-dev libegl-dev xorg-dev libwayland-dev libxkbcommon-dev xvfb
+          unformatted=$(git ls-files -z -- '*.go' | xargs -0 -r gofmt -l)
+          if [ -n "$unformatted" ]; then printf 'Not formatted:\n%s\n' "$unformatted"; exit 1; fi
+          go vet ./...
+          xvfb-run -a go test ./...
+          packaging/linux/build.sh binaries tarball deb appimage
+          dpkg-deb --info "dist/1loop-$(cat VERSION)-amd64.deb"
+          packaging/server/build.sh
+
+      - name: Windows — desktop, cross-compiled with MinGW
+        if: matrix.platform == 'windows'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends gcc-mingw-w64-x86-64 p7zip-full zip
+          packaging/windows/build.sh
+
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        if: matrix.platform == 'android'
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Android — SDK packages
+        if: matrix.platform == 'android'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends patchelf
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          { yes || true; } | "$sdkmanager" --licenses >/dev/null
+          "$sdkmanager" --install 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;30.0.16248370' >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+
+      # The CI builds only the debug app, signed with the shared debug key of
+      # the repository. The release key (secret ANDROID_SIGNING_BUNDLE) is kept
+      # for later but never used here: releases are built and signed locally.
+      - name: Android — unit tests, lint, debug APK and native sources
+        if: matrix.platform == 'android'
+        run: |
+          set -euo pipefail
+          ./android/gradlew -p android --no-daemon :app:testDebugUnitTest :app:lintDebug \
+            --warning-mode fail --console=plain
+          packaging/android/build.sh debug
+
+      - name: Upload to the alpha draft
+        if: env.PUBLISH == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.draft.outputs.tag }}
+        run: gh release upload "$TAG" dist/* --clobber
+
+  publish:
+    name: Sign and publish the alpha
+    needs: [draft, build]
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - name: Sign, publish and keep the three newest alphas
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          TAG: ${{ needs.draft.outputs.tag }}
+          RELEASE_KEY_PEM: ${{ secrets.RELEASE_KEY }}
+        run: |
+          set -euo pipefail
+          test -n "$RELEASE_KEY_PEM" || { echo 'The RELEASE_KEY secret is missing' >&2; exit 1; }
+          version=$(cat VERSION)
+          work=$(mktemp -d)
+          key=$work/release-key.pem
+          trap 'rm -f -- "$key"' EXIT
+          umask 077
+          printf '%s\n' "$RELEASE_KEY_PEM" > "$key"
+          openssl pkey -in "$key" -pubout | cmp - .github/release-key.pub
+
+          assets=(
+            "1loop-$version-linux-amd64.tar.gz"
+            "1loop-$version-amd64.deb"
+            "1loop-$version-x86_64.AppImage"
+            "1loop-server-$version-linux-amd64"
+            "1loop-$version-windows-amd64.zip"
+            "1loop-server-$version-windows-amd64.exe"
+            "1loop-$version-debug.apk"
+            "1loop-$version-android-native-sources.zip"
+          )
+          # Only the expected files may be published: none unsigned beside them.
+          unexpected=$(gh release view "$TAG" --json assets --jq '.assets[].name' |
+            grep -vxF -e SHA256SUMS -e SHA256SUMS.sig -e release-key.pub "${assets[@]/#/-e}" || true)
+          if [ -n "$unexpected" ]; then printf 'Unexpected files in the draft:\n%s\n' "$unexpected" >&2; exit 1; fi
+          mkdir "$work/assets"
+          gh release download "$TAG" --dir "$work/assets"
+          for asset in "${assets[@]}"; do test -s "$work/assets/$asset"; done
+          (cd "$work/assets" && sha256sum "${assets[@]}") > "$work/SHA256SUMS"
+          openssl dgst -sha256 -sign "$key" -out "$work/SHA256SUMS.sig" "$work/SHA256SUMS"
+          openssl dgst -sha256 -verify .github/release-key.pub -signature "$work/SHA256SUMS.sig" "$work/SHA256SUMS"
+          gh release upload "$TAG" "$work/SHA256SUMS" "$work/SHA256SUMS.sig" .github/release-key.pub --clobber
+
+          cat > "$work/notes.md" <<NOTES
+          Test builds of 1loop $version from $GITHUB_SHA: Linux (.tar.gz, .deb, AppImage),
+          Windows (desktop with the software renderer), both servers, and the Android debug
+          APK ("1loop debug", installed beside the release app, debuggable: anyone with ADB
+          access to the phone can read its data) with its native sources. Linux, Windows and
+          Android checks passed; Windows is
+          cross-compiled, its tests are not run here.
+
+          Check the downloads with release-key.pub:
+
+              openssl dgst -sha256 -verify release-key.pub -signature SHA256SUMS.sig SHA256SUMS
+              sha256sum --check SHA256SUMS
+          NOTES
+          gh release edit "$TAG" --draft=false --prerelease --latest=false --notes-file "$work/notes.md"
+
+          # Drafts of earlier runs whose builds failed are no longer needed.
+          gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100" |
+            jq -r --arg tag "$TAG" '.[][] | select(.draft == true and (.tag_name | test("^alpha-[0-9]+$")) and .tag_name != $tag) | .tag_name' |
+            while IFS= read -r draft; do
+              gh release delete "$draft" --yes
+            done
+
+          # Only published alpha-N prereleases count; stable releases stay.
+          gh api --paginate --slurp "repos/$GH_REPO/releases?per_page=100" |
+            jq -r '[.[][] | select(.draft == false and .prerelease == true and (.tag_name | test("^alpha-[0-9]+$")))]
+              | sort_by(.published_at) | reverse | .[3:][] | .tag_name' |
+            while IFS= read -r old; do
+              gh release delete "$old" --cleanup-tag --yes
+            done

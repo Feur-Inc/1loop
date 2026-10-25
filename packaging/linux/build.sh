@@ -8,9 +8,8 @@
 #
 # Several steps can be given at once, in that order. DIST sets the output
 # folder (dist by default).
-# The binaries are built in a Debian 12 container (Docker), against its
-# glibc 2.36: built on a newer system they would not start on Debian 12 or
-# Ubuntu 22.04. Go and the module cache come from the host, as in ci.sh.
+# The binaries are built on this machine, with its C compiler and libraries:
+# the .deb requires the glibc version they actually need.
 # Each format gets its own link, naming it in internal/update.Packaged:
 # packaged builds leave updates to the way they were installed.
 #
@@ -33,33 +32,21 @@ packaged() {
 }
 
 binaries() {
-  docker build -q --platform linux/amd64 -t 1loop-linux-build - >/dev/null <<'EOF'
-FROM debian:bookworm-slim
-RUN apt-get update && apt-get install -y --no-install-recommends gcc libc6-dev pkg-config git ca-certificates \
-      libgl1-mesa-dev libx11-dev libxrandr-dev libxxf86vm-dev libxi-dev libxcursor-dev libxinerama-dev \
-      libwayland-dev libxkbcommon-dev && rm -rf /var/lib/apt/lists/*
-EOF
-  local cache="${XDG_CACHE_HOME:-$HOME/.cache}/1loop-linux-build" list=""
-  mkdir -p "$cache/go" bin/linux
-  for format in "${formats[@]}"; do list+="$format=$(packaged "$format") "; done
-  docker run --rm --platform linux/amd64 -u "$(id -u):$(id -g)" \
-    -v "$(go env GOROOT)":/usr/local/go:ro -v "$(go env GOMODCACHE)":/gomod \
-    -v "$PWD":/src:ro -v "$PWD/bin/linux":/out -v "$cache":/cache -w /src \
-    -e HOME=/tmp -e GOMODCACHE=/gomod -e GOCACHE=/cache/go -e GOFLAGS="${GOFLAGS:-}" -e GOTOOLCHAIN=local \
-    -e CGO_ENABLED=1 -e FORMATS="$list" \
-    1loop-linux-build bash -euo pipefail -c '
-export PATH=/usr/local/go/bin:$PATH
-for entry in $FORMATS; do
-  format=${entry%%=*} packaged=${entry#*=}
-  flags="-s -w -X 1loop/internal/update.Version=$(cat VERSION) -X 1loop/internal/update.Packaged=$packaged"
-  mkdir -p /out/$format
-  go build -trimpath -buildmode=pie -ldflags="$flags" -o /out/$format/1loop ./cmd/1loop
-  # See WAYLAND_CFLAGS in the Makefile.
-  CGO_CFLAGS="$(go env CGO_CFLAGS) -w" go build -trimpath -buildmode=pie -ldflags="$flags" -tags wayland -o /out/$format/1loop-wayland ./cmd/1loop
-done'
-  local glibc
-  glibc=$(objdump -T bin/linux/tarball/1loop bin/linux/tarball/1loop-wayland | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1)
-  echo "Built bin/linux/{${formats[*]}}/ (needs $glibc)"
+  local format flags
+  for format in "${formats[@]}"; do
+    flags="-s -w -X 1loop/internal/update.Version=$version -X 1loop/internal/update.Packaged=$(packaged "$format")"
+    mkdir -p "bin/linux/$format"
+    CGO_ENABLED=1 go build -trimpath -buildmode=pie -ldflags="$flags" -o "bin/linux/$format/1loop" ./cmd/1loop
+    # See WAYLAND_CFLAGS in the Makefile.
+    CGO_ENABLED=1 CGO_CFLAGS="$(go env CGO_CFLAGS) -w" go build -trimpath -buildmode=pie -ldflags="$flags" \
+      -tags wayland -o "bin/linux/$format/1loop-wayland" ./cmd/1loop
+  done
+  echo "Built bin/linux/{${formats[*]}}/ (needs glibc $(glibc tarball))"
+}
+
+# glibc FORMAT: the newest glibc version the binaries of FORMAT need.
+glibc() {
+  objdump -T "bin/linux/$1/1loop" "bin/linux/$1/1loop-wayland" | grep -o 'GLIBC_[0-9.]*' | sed 's/GLIBC_//' | sort -uV | tail -1
 }
 
 # share STAGE: the desktop entry and the icons in STAGE/applications and
@@ -118,7 +105,7 @@ Installed-Size: $(du -sk --exclude=DEBIAN "$root" | cut -f1)
 Section: devel
 Priority: optional
 Homepage: https://github.com/Feur-Inc/1loop
-Depends: libc6 (>= 2.34), libgl1, libx11-6, libxrandr2, libxxf86vm1, libxi6, libxcursor1, libxinerama1, libwayland-client0, libwayland-cursor0, libwayland-egl1, libxkbcommon0
+Depends: libc6 (>= $(glibc deb)), libgl1, libx11-6, libxrandr2, libxxf86vm1, libxi6, libxcursor1, libxinerama1, libwayland-client0, libwayland-cursor0, libwayland-egl1, libxkbcommon0
 Recommends: git, chromium | google-chrome-stable | chromium-browser
 Suggests: python3, python3-gi, python3-dbus, python3-pil, gir1.2-gtk-3.0, gir1.2-gstreamer-1.0, gir1.2-gst-plugins-base-1.0, gstreamer1.0-pipewire, texlive-latex-base, dvipng
 Description: Coding agent for your project, with your model

@@ -47,7 +47,7 @@ release:
 	cp android/app/build/outputs/apk/release/app-release.apk $(DIST)/1loop-remote-$(VERSION).apk
 
 # The Linux downloads, in dist/ (packaging/linux/build.sh): binaries built
-# against Debian 12's glibc in Docker, then the archive, the .deb and the
+# with this machine's libraries, then the archive, the .deb and the
 # AppImage (with a pinned appimagetool it downloads), each with the launcher
 # entry and the icons.
 linux-binaries:

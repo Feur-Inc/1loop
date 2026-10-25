@@ -3,3 +3,8 @@ build/
 app/build/
 local.properties
 *.apk
+
+# Private release keystore and its passwords.
+/signing/
+# The shared debug keystore is public on purpose (see app/build.gradle.kts).
+!/debug.keystore

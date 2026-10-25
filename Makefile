@@ -48,7 +48,8 @@ release:
 
 # The Linux downloads, in dist/ (packaging/linux/build.sh): binaries built
 # against Debian 12's glibc in Docker, then the archive, the .deb and the
-# AppImage (needs appimagetool), each with the launcher entry and the icons.
+# AppImage (with a pinned appimagetool it downloads), each with the launcher
+# entry and the icons.
 linux-binaries:
 	packaging/linux/build.sh binaries
 

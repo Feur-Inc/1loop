@@ -38,7 +38,7 @@ fi
 
 echo "Packaging $version"
 mkdir -p "$out"
-DIST=$out packaging/linux/build.sh binaries tarball deb
+DIST=$out packaging/linux/build.sh binaries tarball deb appimage
 cp bin/1loop-server "$out/1loop-server-$version-linux-amd64"
 (cd bin/windows && zip -qr "../../$out/1loop-$version-windows-amd64.zip" .)
 cp bin/windows/1loop-server.exe "$out/1loop-server-$version-windows-amd64.exe"

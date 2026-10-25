@@ -54,6 +54,8 @@ package's own entry.
 
 ### AppImage
 
+Download `1loop-VERSION-x86_64.AppImage`, then:
+
 ```bash
 chmod +x 1loop-VERSION-x86_64.AppImage
 ./1loop-VERSION-x86_64.AppImage

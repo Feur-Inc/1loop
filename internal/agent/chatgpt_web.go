@@ -2,12 +2,16 @@ package agent
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"1loop/internal/browser"
 	"1loop/internal/core"
@@ -104,7 +108,7 @@ func (bridge *ChatGPTWeb) StartTunnel(settings WebSettings) error {
 	}
 	bridge.mu.Lock()
 	defer bridge.mu.Unlock()
-	if bridge.stopTunnel != nil && bridge.tunnelSettings == settings {
+	if bridge.stopTunnel != nil && bridge.tunnelSettings.TunnelID == settings.TunnelID && bridge.tunnelSettings.KeyFile == settings.KeyFile {
 		return nil
 	}
 	if bridge.stopTunnel != nil {
@@ -208,4 +212,46 @@ func (backend *App) CloseChatGPTWeb() {
 	for _, account := range accounts {
 		account.Close()
 	}
+}
+
+// refreshTools makes ChatGPT read the connector's tools again when they
+// changed since it last did (ChatGPT keeps the list it read): the plugin's
+// settings page has a "Refresh tools" button. The tunnel must be running.
+func (bridge *ChatGPTWeb) refreshTools(ctx context.Context) error {
+	tools, _ := json.Marshal(webMCPTools())
+	sum := sha256.Sum256(tools)
+	hash := hex.EncodeToString(sum[:])
+	stamp := bridge.engine.Profile + ".tools"
+	if saved, err := os.ReadFile(stamp); err == nil && strings.TrimSpace(string(saved)) == hash {
+		return nil
+	}
+	tab := bridge.Page("setup", "https://chatgpt.com/")
+	if err := tab.Navigate(ctx, "navigate", "https://chatgpt.com/plugins"); err != nil {
+		return err
+	}
+	var plugin string
+	find := `(()=>{const a=[...document.querySelectorAll('a[href^="/plugins/plugin_"]')].find(e=>e.innerText.trim().split('\n')[0]==='1loop');return a?a.getAttribute('href').split('/').pop():''})()`
+	for i := 0; i < 50 && plugin == ""; i++ {
+		if err := tab.Run(ctx, evaluateWeb(find, &plugin)); err != nil {
+			return err
+		}
+		if plugin == "" {
+			if err := sleepContext(ctx, 200*time.Millisecond); err != nil {
+				return err
+			}
+		}
+	}
+	if plugin == "" {
+		return fmt.Errorf("ChatGPT has no 1loop plugin: add it in ChatGPT's Plugins (Settings → Connections → ChatGPT (Web))")
+	}
+	if err := tab.Navigate(ctx, "navigate", "https://chatgpt.com/settings/plugins-settings/"+plugin); err != nil {
+		return err
+	}
+	if err := webClickVisibleText(ctx, tab, "button", "Refresh tools"); err != nil {
+		return err
+	}
+	if err := sleepContext(ctx, 5*time.Second); err != nil { // ChatGPT reads the list through the tunnel
+		return err
+	}
+	return os.WriteFile(stamp, []byte(hash+"\n"), 0600)
 }

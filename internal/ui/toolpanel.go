@@ -60,6 +60,7 @@ type panelTab struct {
 	todoTimes       map[string]*canvas.Text
 	todoMarks       []*taskMark // the rings of the list as drawn, stopped when it is drawn again
 	web             bool
+	webKey          string // the ChatGPT page shown: its chat's
 	workspace       string // manual tabs belong to a workspace, not a transcript item
 }
 

@@ -1073,6 +1073,9 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		handoff = &pendingHandoff{choice: plan.Recommended, plan: plan, previous: previous}
 	}
 	turn := ui.newTurn(chat, cfg)
+	if cfg.Provider == "chatgptweb" && chat == ui.current {
+		ui.ensureWebTab()
+	}
 	turn.show(agent.Activity{State: "wait"})
 	ui.runStarted(chat, &chatRun{cancel: cancel, turn: turn})
 	pump := &eventPump{handle: turn.handle}

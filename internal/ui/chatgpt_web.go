@@ -167,6 +167,8 @@ func (ui *desktopUI) webBrowserWindow(bridge *agent.ChatGPTWeb, key, address str
 	return view
 }
 
+// ensureWebTab shows the ChatGPT page of the chat on screen in the side
+// panel: its tab follows the chat (the start screen has the setup page).
 func (ui *desktopUI) ensureWebTab() {
 	bridge, err := ui.backend.WebAccount(ui.cfg)
 	if err != nil {
@@ -177,14 +179,23 @@ func (ui *desktopUI) ensureWebTab() {
 		address = ui.cfg.WebSettings.ProjectURL
 	}
 	if ui.current != nil {
-		key = ui.current.ID + ":" + ui.current.Version
+		key = ui.current.ID + ":" + ui.current.Version // the run's page (Config.ContextKey)
+		if web := ui.current.Config.WebConversation; web != nil && web.URL != "" {
+			address = web.URL
+		}
 	}
-	for _, tab := range ui.panel.tabs {
+	for i, tab := range ui.panel.tabs {
 		if tab.web {
+			if tab.webKey != key {
+				ui.panel.tabs[i].content, ui.panel.tabs[i].webKey = ui.webBrowser(bridge, key, address), key
+				if i == ui.panel.active {
+					ui.panel.render()
+				}
+			}
 			return
 		}
 	}
-	ui.panel.tabs = append(ui.panel.tabs, panelTab{kind: "chatgptweb", title: "ChatGPT", icon: iconPlug, web: true, content: ui.webBrowser(bridge, key, address)})
+	ui.panel.tabs = append(ui.panel.tabs, panelTab{kind: "chatgptweb", title: "ChatGPT", icon: iconPlug, web: true, webKey: key, content: ui.webBrowser(bridge, key, address)})
 	ui.panel.active = len(ui.panel.tabs) - 1
 	ui.panel.render()
 }

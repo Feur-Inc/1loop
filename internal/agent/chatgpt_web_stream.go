@@ -18,6 +18,7 @@ import (
 	"github.com/chromedp/chromedp"
 
 	"1loop/internal/browser"
+	"1loop/internal/platform"
 )
 
 // webStreamSink receives one turn's stream: text the model writes (with the
@@ -25,6 +26,7 @@ import (
 type webStreamSink struct {
 	started  func()
 	text     func(message, delta string)
+	replace  func(message, text string) // the message sent again, changed
 	toolCall func()
 	done     func(conversation string)
 }
@@ -36,6 +38,7 @@ type webStream struct {
 	pending      []byte
 	path, op     string
 	message      webMessage
+	texts        map[string]string // what each message's text was so far
 	conversation string
 	finished     bool
 }
@@ -135,14 +138,14 @@ func (stream *webStream) apply(path, op string, value json.RawMessage) {
 		}
 		if stream.message.visible && len(m.Content.Parts) > 0 {
 			var text string
-			if json.Unmarshal(m.Content.Parts[0], &text) == nil && text != "" {
-				stream.sink.text(m.ID, text)
+			if json.Unmarshal(m.Content.Parts[0], &text) == nil {
+				stream.setText(m.ID, text)
 			}
 		}
 	case op == "append" && path == "/message/content/parts/0":
 		var text string
 		if stream.message.visible && json.Unmarshal(value, &text) == nil && text != "" {
-			stream.sink.text(stream.message.id, text)
+			stream.setText(stream.message.id, stream.texts[stream.message.id]+text)
 		}
 	case op == "patch":
 		var operations []struct {
@@ -156,6 +159,24 @@ func (stream *webStream) apply(path, op string, value json.RawMessage) {
 			}
 		}
 	}
+}
+
+// setText records a message's whole text: ChatGPT also sends a message
+// again in full, which must not repeat what was already shown.
+func (stream *webStream) setText(id, text string) {
+	if stream.texts == nil {
+		stream.texts = map[string]string{}
+	}
+	before := stream.texts[id]
+	switch {
+	case text == before:
+		return
+	case strings.HasPrefix(text, before):
+		stream.sink.text(id, text[len(before):])
+	default:
+		stream.sink.replace(id, text)
+	}
+	stream.texts[id] = text
 }
 
 func (stream *webStream) finish() {
@@ -172,6 +193,10 @@ type webStreams struct {
 	mu       sync.Mutex
 	sink     *webStreamSink
 	watching map[network.RequestID]*webWatch
+	// following is the response the turn reads: the page can receive the
+	// same stream twice (its service worker relays it), so another one
+	// counts only once this one ended (after an approval, the next part).
+	following network.RequestID
 }
 
 // webWatch is one response: data arriving while its earlier part is being
@@ -227,8 +252,14 @@ func (streams *webStreams) event(ev any) {
 			streams.mu.Unlock()
 			return
 		}
+		if streams.watching[streams.following] != nil {
+			streams.mu.Unlock()
+			platform.Devf("chatgpt-web", "response %s ignored: %s is still followed", e.RequestID, streams.following)
+			return
+		}
 		watch := &webWatch{stream: &webStream{sink: *streams.sink}}
 		streams.watching[e.RequestID] = watch
+		streams.following = e.RequestID
 		streams.sink.started()
 		streams.mu.Unlock()
 		id := e.RequestID

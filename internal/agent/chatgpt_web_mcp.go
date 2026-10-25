@@ -3,27 +3,27 @@ package agent
 // ChatGPT (Web): the model runs in a ChatGPT conversation of the user's
 // subscription, in 1loop's own browser, and calls 1loop's tools through the
 // "1loop" connector, an MCP server reached through the user's Secure MCP
-// Tunnel. Every message 1loop sends carries a hidden turn id; the model
-// passes it with each tool call, so a call runs in the chat, workspace and
-// approval mode it belongs to, without the user ever pairing anything.
+// Tunnel. ChatGPT sends each tool call with its conversation's id
+// (_meta "openai/session"): the first call of a new ChatGPT chat binds that
+// id to the 1loop turn waiting for one (only one waits at a time), so every
+// call runs in the chat, workspace and approval mode it belongs to, without
+// the user pairing anything or a token in the model's arguments (which
+// ChatGPT's own review flags as suspicious).
 
 import (
-	"1loop/internal/browser"
 	"context"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"sync"
 	"sync/atomic"
 
+	"1loop/internal/browser"
 	"1loop/internal/core"
 )
 
-// webTurnField is the argument added to every connector tool.
-const webTurnField = "turn"
-
 // WebTurn is one 1loop turn waiting for ChatGPT's tool calls.
 type WebTurn struct {
+	session string // ChatGPT's id of the conversation, once known
 	callMu  sync.Mutex
 	running atomic.Int32
 	flush   func() error
@@ -39,7 +39,8 @@ type WebTurn struct {
 type ChatGPTWeb struct {
 	backend        *App
 	mu             sync.Mutex
-	turns          map[string]*WebTurn
+	turns          map[*WebTurn]bool
+	unbound        chan struct{} // held by the turn whose session is not known yet
 	engine         *browser.Engine
 	pages          map[string]*browser.Page
 	parent         context.Context
@@ -51,20 +52,54 @@ type ChatGPTWeb struct {
 }
 
 func NewChatGPTWeb(backend *App) *ChatGPTWeb {
-	return &ChatGPTWeb{backend: backend, turns: map[string]*WebTurn{}}
+	return &ChatGPTWeb{backend: backend, turns: map[*WebTurn]bool{}, unbound: make(chan struct{}, 1)}
 }
 
-// begin registers a turn under a new id and returns it with its removal.
-func (bridge *ChatGPTWeb) begin(turn *WebTurn) (string, func()) {
-	id := core.Identifier()[:12]
-	bridge.mu.Lock()
-	bridge.turns[id] = turn
-	bridge.mu.Unlock()
-	return id, func() {
-		bridge.mu.Lock()
-		delete(bridge.turns, id)
-		bridge.mu.Unlock()
+// begin registers a turn and returns its removal. A turn of a chat whose
+// session is known is found by it; otherwise it waits until no other turn
+// waits for its session, so the next unknown session is its own.
+func (bridge *ChatGPTWeb) begin(ctx context.Context, turn *WebTurn) (func(), error) {
+	if turn.session == "" {
+		select {
+		case bridge.unbound <- struct{}{}:
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
 	}
+	bridge.mu.Lock()
+	bridge.turns[turn] = true
+	bridge.mu.Unlock()
+	return func() {
+		bridge.mu.Lock()
+		delete(bridge.turns, turn)
+		bound := turn.session != ""
+		bridge.mu.Unlock()
+		if !bound {
+			<-bridge.unbound
+		}
+	}, nil
+}
+
+// turnFor finds the turn of a call from its session, binding the waiting
+// turn to an unknown one.
+func (bridge *ChatGPTWeb) turnFor(session string) *WebTurn {
+	bridge.mu.Lock()
+	defer bridge.mu.Unlock()
+	var waiting *WebTurn
+	for turn := range bridge.turns {
+		if session != "" && turn.session == session {
+			return turn
+		}
+		if turn.session == "" {
+			waiting = turn
+		}
+	}
+	if waiting == nil || session == "" {
+		return nil
+	}
+	waiting.session = session
+	<-bridge.unbound // the next new chat can send
+	return waiting
 }
 
 // webToolDefinitions are the connector's tools. ChatGPT reads them when the
@@ -90,27 +125,7 @@ func webMCPTools() []any {
 	tools := []any{}
 	for _, definition := range webToolDefinitions() {
 		function := definition["function"].(map[string]any)
-		schema := map[string]any{}
-		for key, value := range function["parameters"].(map[string]any) {
-			schema[key] = value
-		}
-		properties := map[string]any{webTurnField: map[string]any{"type": "string",
-			"description": "The turn id written at the end of the user's latest message, copied exactly."}}
-		for key, value := range schema["properties"].(map[string]any) {
-			properties[key] = value
-		}
-		schema["properties"] = properties
-		required := []any{webTurnField}
-		switch list := schema["required"].(type) {
-		case []string:
-			for _, name := range list {
-				required = append(required, name)
-			}
-		case []any:
-			required = append(required, list...)
-		}
-		schema["required"] = required
-		tools = append(tools, map[string]any{"name": function["name"], "description": function["description"], "inputSchema": schema})
+		tools = append(tools, map[string]any{"name": function["name"], "description": function["description"], "inputSchema": function["parameters"]})
 	}
 	return tools
 }
@@ -165,18 +180,18 @@ func toolText(text string, failed bool) map[string]any {
 
 func (bridge *ChatGPTWeb) call(ctx context.Context, raw json.RawMessage) map[string]any {
 	var params struct {
-		Name      string         `json:"name"`
-		Arguments map[string]any `json:"arguments"`
+		Name      string          `json:"name"`
+		Arguments json.RawMessage `json:"arguments"`
+		Meta      struct {
+			Session string `json:"openai/session"`
+		} `json:"_meta"`
 	}
 	if err := json.Unmarshal(raw, &params); err != nil {
 		return toolText("Invalid tool arguments", true)
 	}
-	id, _ := params.Arguments[webTurnField].(string)
-	bridge.mu.Lock()
-	turn := bridge.turns[id]
-	bridge.mu.Unlock()
+	turn := bridge.turnFor(params.Meta.Session)
 	if turn == nil {
-		return toolText("This 1loop turn has ended or its turn id is wrong: copy the turn id from the user's latest message, or answer without tools.", true)
+		return toolText("No 1loop turn is waiting for this chat: send the message from 1loop (and run one 1loop per tunnel).", true)
 	}
 	turn.running.Add(1)
 	defer turn.running.Add(-1)
@@ -187,10 +202,12 @@ func (bridge *ChatGPTWeb) call(ctx context.Context, raw json.RawMessage) map[str
 			return toolText(err.Error(), true)
 		}
 	}
-	delete(params.Arguments, webTurnField)
-	arguments, _ := json.Marshal(params.Arguments)
+	arguments := string(params.Arguments)
+	if arguments == "" || arguments == "null" {
+		arguments = "{}"
+	}
 	call := ToolCall{ID: core.Identifier()}
-	call.Function.Name, call.Function.Arguments = params.Name, string(arguments)
+	call.Function.Name, call.Function.Arguments = params.Name, arguments
 	// The tunnel's deadline and the turn's end both stop the tool.
 	operation, cancel := context.WithCancel(turn.ctx)
 	defer cancel()
@@ -207,10 +224,4 @@ func (bridge *ChatGPTWeb) call(ctx context.Context, raw json.RawMessage) map[str
 		content = append(content, map[string]any{"type": "image", "data": part.Data, "mimeType": part.Mime})
 	}
 	return map[string]any{"isError": outcome.Err != nil, "content": content}
-}
-
-// webTurnNote is appended to each message sent to ChatGPT: the id its tool
-// calls carry.
-func webTurnNote(id string) string {
-	return fmt.Sprintf("\n\n[1loop turn: %s]", id)
 }

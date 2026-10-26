@@ -117,8 +117,8 @@ jobs:
             --state-dir="$RUNNER_TEMP/flatpak-state" --repo="$RUNNER_TEMP/flatpak-repo" \
             "$RUNNER_TEMP/flatpak-build" "$manifest"
           desktop-file-validate "$RUNNER_TEMP/flatpak-build/files/share/applications/io.github.Feur_Inc.OneLoop.desktop"
-          flatpak-builder --state-dir="$RUNNER_TEMP/flatpak-state" --run "$RUNNER_TEMP/flatpak-build" "$manifest" /app/bin/1loop-flatpak --help
-          flatpak-builder --state-dir="$RUNNER_TEMP/flatpak-state" --run "$RUNNER_TEMP/flatpak-build" "$manifest" /app/lib/1loop/1loop-wayland --help
+          flatpak build "$RUNNER_TEMP/flatpak-build" /app/bin/1loop-flatpak --help
+          flatpak build "$RUNNER_TEMP/flatpak-build" /app/lib/1loop/1loop-wayland --help
           mkdir -p dist
           flatpak build-bundle --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
             "$RUNNER_TEMP/flatpak-repo" "dist/1loop-$(cat VERSION).flatpak" io.github.Feur_Inc.OneLoop

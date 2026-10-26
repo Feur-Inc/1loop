@@ -45,7 +45,7 @@ and generated caches are excluded. Keep credentials outside source directories.
 ```bash
 make flatpak
 desktop-file-validate bin/flatpak-build/files/share/applications/io.github.Feur_Inc.OneLoop.desktop
-flatpak-builder --state-dir=bin/flatpak-state --run bin/flatpak-build packaging/flatpak/io.github.Feur_Inc.OneLoop.yml /app/bin/1loop-flatpak --help
+flatpak build bin/flatpak-build /app/bin/1loop-flatpak --help
 ```
 
 CI builds the same manifest, validates the desktop entry and executable,

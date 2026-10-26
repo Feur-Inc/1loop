@@ -225,8 +225,6 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     var screen by mutableStateOf<Screen>(Screen.Launch)
     var target by mutableStateOf<ExecutionTarget?>(null)
-    private var resumeChat: String? = null // the chat shown when the local engine stopped while idle
-    private var resumeIdle = false // that chat was shown: the engine starts again when the app is
     val local = AndroidLocalRuntime.get(context)
     var starting by mutableStateOf(false) // the local engine is starting
     private var localStartGeneration = -1L
@@ -309,8 +307,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         scope.launch {
             local.activeServer.collect { active ->
                 if (active == null && server?.localPhone == true && screen == Screen.Chat) {
-                    resumeIdle = local.stoppedWhenIdle
-                    if (resumeIdle) resumeChat = current // opened again with the engine
+                    if (local.stoppedWhenIdle) prefs.edit { putString("resumeChat", current) } // opened again with the engine
                     disconnect()
                     screen = Screen.LocalSetup
                     if (foreground) resumeLocal() // shown again before this stop reached the app
@@ -361,7 +358,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         }
         target = saved
         if (saved == ExecutionTarget.LocalPhone) {
-            local.activeServer.value?.let { connect(it) } ?: run { screen = Screen.Mode }
+            // Stopped while idle: started again, also when Android ended the app meanwhile.
+            local.activeServer.value?.let { connect(it) } ?: run { if (local.stoppedWhenIdle) openLocal() else screen = Screen.Mode }
             return
         }
         if (known != null) connect(known) else {
@@ -393,9 +391,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     /** Shown again after the engine stopped while idle: it starts again, on the same chat. */
     fun resumeLocal() {
-        if (!resumeIdle || server != null || screen != Screen.LocalSetup) return
-        resumeIdle = false
-        openLocal()
+        if (local.stoppedWhenIdle && server == null && screen == Screen.LocalSetup) openLocal()
     }
 
     /** The running engine, or a start when nothing is missing, or the setup. */
@@ -417,8 +413,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 val active = local.start()
                 if (generation == connectionGeneration) {
                     connect(active)
-                    resumeChat?.let { open(it) }
-                    resumeChat = null
+                    prefs.getString("resumeChat", null)?.let { open(it) }
+                    prefs.edit { remove("resumeChat") }
                 }
             } catch (e: CancellationException) {
                 throw e

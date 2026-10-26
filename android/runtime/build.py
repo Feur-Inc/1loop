@@ -161,7 +161,7 @@ def source_bundle(output, destination):
     with zipfile.ZipFile(destination, "w", compression=zipfile.ZIP_DEFLATED) as archive:
         for path in archives:
             archive.write(path, "upstream/" + path.name)
-        for path in [SCRIPT, SCRIPT.parent / "guard.c", *sorted(PATCHES.glob("*.patch"))]:
+        for path in [SCRIPT, SCRIPT.parent / "guard.c", SCRIPT.parent / "arc4random.c", *sorted(PATCHES.glob("*.patch"))]:
             archive.write(path, str(path.relative_to(SCRIPT.parent)))
 
 

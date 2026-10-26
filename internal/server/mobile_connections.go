@@ -149,7 +149,9 @@ func (server *headlessServer) saveLocalConnection(w http.ResponseWriter, r *http
 		return
 	}
 	if tunnelKey != nil {
-		if err := os.WriteFile(server.webKeyFile(connection.ID), []byte(strings.TrimSpace(*tunnelKey)+"\n"), 0600); err != nil {
+		path := server.webKeyFile(connection.ID)
+		// WriteFile keeps an existing file's mode: the key must stay private.
+		if err := os.WriteFile(path, []byte(strings.TrimSpace(*tunnelKey)+"\n"), 0600); err != nil || os.Chmod(path, 0600) != nil {
 			core.Fail(w, 500, "Unable to save the tunnel key")
 			return
 		}

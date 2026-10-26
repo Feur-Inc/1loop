@@ -11,6 +11,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -28,7 +29,9 @@ type webStreamSink struct {
 	text     func(message, text string, rewritten bool) // complete text, including revisions
 	final    func(message, text string, rewritten bool)
 	toolCall func()
-	done     func(conversation string)
+	// done ends the response: err when it was cut before ChatGPT marked
+	// it complete (the network, the page closing).
+	done func(conversation string, err error)
 }
 
 // webStream decodes the "v1" delta encoding: each event patches the message
@@ -52,6 +55,19 @@ type webMessage struct {
 
 func (stream *webStream) write(data []byte) {
 	stream.pending = append(stream.pending, data...)
+	// Lines may end with CRLF or CR as well (the SSE format); a CR at the
+	// end may be the first half of a CRLF split across two writes.
+	if bytes.IndexByte(stream.pending, '\r') >= 0 {
+		tail := bytes.HasSuffix(stream.pending, []byte("\r"))
+		if tail {
+			stream.pending = stream.pending[:len(stream.pending)-1]
+		}
+		stream.pending = bytes.ReplaceAll(stream.pending, []byte("\r\n"), []byte("\n"))
+		stream.pending = bytes.ReplaceAll(stream.pending, []byte("\r"), []byte("\n"))
+		if tail {
+			stream.pending = append(stream.pending, '\r')
+		}
+	}
 	for {
 		end := bytes.Index(stream.pending, []byte("\n\n"))
 		if end < 0 {
@@ -60,7 +76,7 @@ func (stream *webStream) write(data []byte) {
 		block := string(stream.pending[:end])
 		stream.pending = stream.pending[end+2:]
 		var payload []string
-		for _, line := range strings.Split(strings.ReplaceAll(block, "\r", ""), "\n") {
+		for _, line := range strings.Split(block, "\n") {
 			if value, ok := strings.CutPrefix(line, "data:"); ok {
 				payload = append(payload, strings.TrimPrefix(value, " "))
 			}
@@ -76,7 +92,7 @@ func (stream *webStream) event(data string) {
 		return
 	}
 	if data == "[DONE]" {
-		stream.finish()
+		stream.finish(nil)
 		return
 	}
 	var event struct {
@@ -95,7 +111,7 @@ func (stream *webStream) event(data string) {
 	}
 	if event.Type != "" {
 		if event.Type == "message_stream_complete" {
-			stream.finish()
+			stream.finish(nil)
 		}
 		return
 	}
@@ -193,10 +209,10 @@ func (stream *webStream) setText(id, text string) {
 	stream.texts[id] = text
 }
 
-func (stream *webStream) finish() {
+func (stream *webStream) finish(err error) {
 	if !stream.finished {
 		stream.finished = true
-		stream.sink.done(stream.conversation)
+		stream.sink.done(stream.conversation, err)
 	}
 }
 
@@ -220,6 +236,7 @@ type webWatch struct {
 	ready    bool
 	queued   [][]byte
 	finished bool
+	failure  error // the response failed (EventLoadingFailed)
 }
 
 func (bridge *ChatGPTWeb) streams(ctx context.Context, tab *browser.Page) (*webStreams, error) {
@@ -294,7 +311,7 @@ func (streams *webStreams) event(ev any) {
 			watch.ready, watch.queued = true, nil
 			if watch.finished {
 				watch.stream.write([]byte("\n\n"))
-				watch.stream.finish()
+				watch.stream.finish(watch.failure)
 				delete(streams.watching, id)
 			}
 		}()
@@ -316,15 +333,17 @@ func (streams *webStreams) event(ev any) {
 			}
 		}
 	case *network.EventLoadingFinished:
-		streams.end(e.RequestID)
+		streams.end(e.RequestID, nil)
 	case *network.EventLoadingFailed:
-		streams.end(e.RequestID)
+		streams.end(e.RequestID, fmt.Errorf("ChatGPT's answer was interrupted (%s): send the message again", e.ErrorText))
 	}
 }
 
-// end closes a response: a stream cut before message_stream_complete still
-// ends its turn, with what it carried.
-func (streams *webStreams) end(id network.RequestID) {
+// end closes a response. One that finished loading without ChatGPT's
+// completion mark still ends its turn with what it carried (ChatGPT also
+// ends a response this way when it asks to allow a call); one that failed
+// ends it with that error.
+func (streams *webStreams) end(id network.RequestID, failure error) {
 	streams.mu.Lock()
 	defer streams.mu.Unlock()
 	watch := streams.watching[id]
@@ -332,10 +351,10 @@ func (streams *webStreams) end(id network.RequestID) {
 		return
 	}
 	if !watch.ready {
-		watch.finished = true
+		watch.finished, watch.failure = true, failure
 		return
 	}
 	watch.stream.write([]byte("\n\n"))
-	watch.stream.finish()
+	watch.stream.finish(failure)
 	delete(streams.watching, id)
 }

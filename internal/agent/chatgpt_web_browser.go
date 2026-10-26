@@ -74,6 +74,46 @@ type WebConversation struct {
 	Profile string `json:"profile"`
 	Seen    int    `json:"seen"`
 	Hash    string `json:"hash"`
+	// Preferences identifies the user preferences the chat was last given.
+	Preferences string `json:"preferences,omitempty"`
+}
+
+func webPreferences(cfg Config) string {
+	preferences := strings.TrimSpace(cfg.UserInstructions)
+	if preferences == "" {
+		return ""
+	}
+	sum := sha256.Sum256([]byte(preferences))
+	return hex.EncodeToString(sum[:8])
+}
+
+// webConversationText is the conversation as a website chat receives it:
+// whole, as the handoff selected it (its size was checked then), unlike a
+// summary's truncated input.
+func webConversationText(rounds []Message) string {
+	var builder strings.Builder
+	for _, message := range rounds {
+		switch message.Role {
+		case "user":
+			text := message.Content
+			if len(message.Images) > 0 {
+				text += fmt.Sprintf(" [+%d image(s) attached]", len(message.Images))
+			}
+			builder.WriteString("USER: " + text + "\n\n")
+		case "assistant":
+			if message.Content != "" {
+				builder.WriteString("ASSISTANT: " + message.Content + "\n\n")
+			}
+			for _, call := range message.ToolCalls {
+				builder.WriteString(fmt.Sprintf("TOOL %s(%s)\n\n", call.Function.Name, call.Function.Arguments))
+			}
+		case "tool":
+			if message.Content != "" {
+				builder.WriteString("RESULT: " + message.Content + "\n\n")
+			}
+		}
+	}
+	return builder.String()
 }
 
 type webState struct {
@@ -214,7 +254,7 @@ func (backend *App) webHandoffNote(ctx context.Context, cfg Config, prompt strin
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
-	key := "handoff:" + cfg.ContextKey // one per chat: handoffs of two chats may overlap
+	key := "handoff:" + core.Identifier() // its own: summarizers from other models have no chat key
 	tab := bridge.Page(key, project)
 	defer func() {
 		bridge.mu.Lock()
@@ -247,8 +287,12 @@ func (backend *App) webHandoffNote(ctx context.Context, cfg Config, prompt strin
 		last = text
 		mu.Unlock()
 	}
+	var failure error
 	detach := streams.attach(webStreamSink{started: func() {}, text: keep, final: keep, toolCall: func() {},
-		done: func(conversation string) {
+		done: func(conversation string, err error) {
+			mu.Lock()
+			failure = err
+			mu.Unlock()
 			select {
 			case finished <- conversation:
 			default:
@@ -274,8 +318,11 @@ func (backend *App) webHandoffNote(ctx context.Context, cfg Config, prompt strin
 		return "", ctx.Err()
 	}
 	mu.Lock()
-	note := webMarkdown(last)
+	note, err := webMarkdown(last), failure
 	mu.Unlock()
+	if err != nil {
+		return "", err
+	}
 	if conversation != "" { // the summary's chat is not the user's: it goes
 		address := strings.TrimSuffix(project, "/project") + "/c/" + conversation
 		if err := bridge.deleteConversation(ctx, address); err != nil {
@@ -285,7 +332,43 @@ func (backend *App) webHandoffNote(ctx context.Context, cfg Config, prompt strin
 	return note, nil
 }
 
+// runChatGPTWeb runs a turn, then the messages that came meanwhile: what
+// the user steered, then the queue, each as the next message of the same
+// website chat (ChatGPT cannot take them in the middle of an answer).
 func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Message, inbox Inbox, emit emitter) error {
+	for {
+		var done webTurnResult
+		if err := backend.webTurn(ctx, cfg, history, emit, &done); err != nil {
+			return err
+		}
+		var more []Message
+		if inbox.Steer != nil {
+			more = inbox.Steer()
+		}
+		if len(more) == 0 && inbox.Next != nil {
+			if next, ok := inbox.Next(); ok {
+				more = []Message{next}
+			}
+		}
+		if len(more) == 0 || ctx.Err() != nil {
+			return ctx.Err()
+		}
+		for _, m := range more {
+			emit("injected", m)
+		}
+		web := done.web
+		cfg.WebConversation, cfg.HandoffApplied = &web, false
+		history = append(done.messages, more...)
+	}
+}
+
+// webTurnResult is what a turn leaves for the next one.
+type webTurnResult struct {
+	web      WebConversation
+	messages []Message
+}
+
+func (backend *App) webTurn(ctx context.Context, cfg Config, history []Message, emit emitter, result *webTurnResult) error {
 	began := time.Now()
 	ctx, cancelRun := context.WithCancel(ctx)
 	defer cancelRun()
@@ -320,6 +403,8 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 	if len(messages) == 0 {
 		return fmt.Errorf("There is no message to send")
 	}
+	unhold := bridge.HoldPage(cfg.ContextKey) // kept for the turn, with or without a view
+	defer unhold()
 	tab := bridge.Page(cfg.ContextKey, cfg.WebSettings.ProjectURL)
 	// Only an unchanged prefix can resume a website conversation. Edits,
 	// branches and handoffs get a new chat with their selected history.
@@ -369,6 +454,7 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 	activeID, activeText := "", ""
 	texts := make(map[string]string) // survives repeated SSE responses within this turn
 	finalID, finalText := "", ""
+	var failure error // the response was cut (see webStreamSink.done)
 	started := make(chan struct{}, 1)
 	finished := make(chan string, 1)
 	endText := func() { // with mu held
@@ -418,7 +504,10 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 			defer mu.Unlock()
 			endText()
 		},
-		done: func(conversation string) {
+		done: func(conversation string, err error) {
+			mu.Lock()
+			failure = err
+			mu.Unlock()
 			select {
 			case finished <- conversation:
 			default:
@@ -453,14 +542,23 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 	prompt := history[len(history)-1].Content
 	if !resume {
 		if len(history) > 1 {
-			prompt = "[Earlier conversation, transferred by 1loop]\n" + conversationText(history[:len(history)-1]) + "\n[Current request]\n" + prompt
+			prompt = "[Earlier conversation, transferred by 1loop]\n" + webConversationText(history[:len(history)-1]) + "\n[Current request]\n" + prompt
 		}
 		prompt = webSystemInstructions(cfg, bridge.phone) + "\n\n" + prompt
 	} else {
 		// Turns with another model, or a stopped turn, since this chat's
 		// last reply: the website conversation has not seen them.
 		if unseen := history[previous.Seen : len(history)-1]; len(unseen) > 0 {
-			prompt = "[Messages since your last reply in this chat, transferred by 1loop]\n" + conversationText(unseen) + "\n[Current request]\n" + prompt
+			prompt = "[Messages since your last reply in this chat, transferred by 1loop]\n" + webConversationText(unseen) + "\n[Current request]\n" + prompt
+		}
+		// The user's preferences changed since this chat got them (Settings
+		// apply to the next turns of every chat).
+		if webPreferences(cfg) != previous.Preferences {
+			preferences := strings.TrimSpace(cfg.UserInstructions)
+			if preferences == "" {
+				preferences = "None: the earlier user preferences no longer apply."
+			}
+			prompt = "[1loop user preferences, updated: they supplement the base instructions]\n" + preferences + "\n\n" + prompt
 		}
 		prompt = "[1loop response format]\n" + webResponseInstructions + "\n\n" + prompt
 	}
@@ -524,6 +622,12 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 		case <-ctx.Done():
 			return ctx.Err()
 		}
+		mu.Lock()
+		cut := failure
+		mu.Unlock()
+		if cut != nil { // not saved as the chat's state: the next message starts again from here
+			return cut
+		}
 		if err := sleepContext(ctx, time.Second); err != nil {
 			return err
 		}
@@ -535,6 +639,7 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 			break
 		}
 	}
+	end() // no call is admitted from now on: wait for those already running
 	for turn.running.Load() != 0 {
 		if err := sleepContext(ctx, 20*time.Millisecond); err != nil {
 			return err
@@ -560,7 +665,9 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 	bridge.mu.Lock()
 	session := turn.session
 	bridge.mu.Unlock()
-	emit("web_session", WebConversation{URL: location, Session: session, Paired: session != "", Profile: cfg.AuthProfile, Seen: len(messages), Hash: webHistoryHash(messages)})
+	web := WebConversation{URL: location, Session: session, Paired: session != "", Profile: cfg.AuthProfile, Seen: len(messages), Hash: webHistoryHash(messages), Preferences: webPreferences(cfg)}
+	emit("web_session", web)
+	*result = webTurnResult{web, messages}
 	if replaced != "" && replaced != location {
 		go func() {
 			ctx, cancel := context.WithTimeout(bridge.parent, 3*time.Minute)
@@ -684,22 +791,75 @@ func webMarkdown(text string) string {
 		return text
 	}
 	lines := strings.Split(text, "\n")
-	fenced := false
+	fence := "" // the open block's fence: three or more backticks or tildes
 	for i, line := range lines {
-		if strings.HasPrefix(strings.TrimSpace(line), "```") {
-			fenced = !fenced
-			continue
+		trimmed := strings.TrimLeft(line, " ")
+		if marker := webFence(trimmed); marker != "" && len(line)-len(trimmed) < 4 {
+			if fence == "" {
+				fence = marker
+				continue
+			}
+			if marker[0] == fence[0] && len(marker) >= len(fence) && strings.TrimSpace(trimmed[len(marker):]) == "" {
+				fence = ""
+				continue
+			}
 		}
-		if fenced {
-			continue
+		if fence == "" {
+			lines[i] = webStripTags(line)
 		}
-		parts := strings.Split(line, "`")
-		for j := 0; j < len(parts); j += 2 { // outside code spans
-			parts[j] = webTag.ReplaceAllString(parts[j], "")
-		}
-		lines[i] = strings.Join(parts, "`")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// webFence is the fence a line starts with, or "".
+func webFence(line string) string {
+	for _, mark := range "`~" {
+		n := len(line) - len(strings.TrimLeft(line, string(mark)))
+		if n >= 3 {
+			return line[:n]
+		}
+	}
+	return ""
+}
+
+// webStripTags removes the tags of a line outside its code spans: a run of
+// backticks opens one, closed by the next run of the same length.
+func webStripTags(line string) string {
+	var out strings.Builder
+	for rest := line; ; {
+		start := strings.IndexByte(rest, '`')
+		if start < 0 {
+			out.WriteString(webTag.ReplaceAllString(rest, ""))
+			return out.String()
+		}
+		n := len(rest[start:]) - len(strings.TrimLeft(rest[start:], "`"))
+		closing := webBacktickRun(rest[start+n:], n)
+		if closing < 0 { // backticks without their pair are text
+			out.WriteString(webTag.ReplaceAllString(rest[:start+n], ""))
+			rest = rest[start+n:]
+			continue
+		}
+		end := start + n + closing + n
+		out.WriteString(webTag.ReplaceAllString(rest[:start], ""))
+		out.WriteString(rest[start:end])
+		rest = rest[end:]
+	}
+}
+
+// webBacktickRun is where the first run of exactly n backticks starts, or -1.
+func webBacktickRun(text string, n int) int {
+	for i := 0; i < len(text); {
+		if text[i] != '`' {
+			i++
+			continue
+		}
+		run := len(text[i:]) - len(strings.TrimLeft(text[i:], "`"))
+		if run == n {
+			return i
+		}
+		i += run
+	}
+	return -1
 }
 
 const webResponseInstructions = "Write all user-facing answers in standard Markdown only. Do not emit Declarative Interface Language (DIL), XML/HTML UI tags, or components such as <Link>, <row>, <box>, <title> or <icon>. Use Markdown links, lists, tables and fenced code blocks instead. Finish all required tool calls and wait for their results before writing the final answer."

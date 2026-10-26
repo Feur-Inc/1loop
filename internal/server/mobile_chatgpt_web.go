@@ -113,7 +113,7 @@ func (server *headlessServer) localWebPage(w http.ResponseWriter, r *http.Reques
 		replaced, lease = lease, nil
 	}
 	if lease == nil {
-		lease = &webLease{key: key, bridge: bridge, release: bridge.RetainView()}
+		lease = &webLease{key: key, bridge: bridge, release: bridge.RetainView(key)}
 		server.webLeases[chat.ID] = lease
 		var expire func()
 		expire = func() {

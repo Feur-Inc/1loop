@@ -39,6 +39,7 @@ import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.delay
 
@@ -53,6 +54,7 @@ import kotlinx.coroutines.delay
 fun StatusBadge(
     onStop: (String) -> Unit, onTalk: (String) -> Unit, onDrag: (Float) -> Unit,
     onAnswer: (Questions, Map<String, String>) -> Unit, onTyping: (Boolean) -> Unit,
+    onDismiss: (String) -> Unit,
 ) {
     val status by AgentStatus.status.collectAsState()
     val run = status ?: return
@@ -67,12 +69,11 @@ fun StatusBadge(
             // Collapsed, and always during phone use (click-through then).
             Box(
                 drag.size(52.dp).clip(CircleShape).background(Palette.surface).border(1.dp, Palette.borderSoft, CircleShape)
-                    .clickable { open = true }.semantics { contentDescription = "1loop is working: ${run.label}" },
+                    .clickable { open = true }
+                    .semantics { contentDescription = if (run.finished) "1loop is done" else "1loop is working: ${run.label}" },
                 contentAlignment = Alignment.Center,
             ) {
-                // Driving the phone: says so, rather than the working ring.
-                if (run.phoneUse) Icon(Icons.phone, null, tint = Palette.amber, modifier = Modifier.size(26.dp))
-                else WorkRing(run.mark, 32.dp)
+                StatusMark(run, 32.dp)
             }
         } else {
             Row(
@@ -81,15 +82,21 @@ fun StatusBadge(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Box(Modifier.clickable { open = false }) { WorkRing(run.mark, 30.dp) }
+                Box(Modifier.clickable { open = false }) { StatusMark(run, 30.dp) }
                 Spacer(Modifier.width(6.dp))
                 Text(
                     run.label.ifEmpty { "Working…" }, style = Type.small.copy(color = Palette.text),
                     maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 150.dp),
                 )
-                RoundButton(Icons.close, Color.Transparent, Palette.danger, description = "Stop", size = 46.dp, iconSize = 24.dp) { onStop(run.chat) }
-                RoundButton(Icons.chats, Color.Transparent, Palette.muted, description = "Talk to the agent", size = 46.dp, iconSize = 24.dp) { onTalk(run.chat) }
-                RoundButton(Icons.tasks, if (preview) Palette.code else Color.Transparent, Palette.muted, description = if (preview) "Hide preview" else "Show preview", size = 46.dp, iconSize = 24.dp) { preview = !preview }
+                // Finished: nothing to stop, the badge only waits to be put away.
+                if (run.finished) RoundButton(Icons.close, Color.Transparent, Palette.muted, description = "Dismiss", size = 46.dp, iconSize = 24.dp) { onDismiss(run.chat) }
+                else RoundButton(Icons.close, Color.Transparent, Palette.danger, description = "Stop", size = 46.dp, iconSize = 24.dp) { onStop(run.chat) }
+                RoundButton(Icons.chats, Color.Transparent, Palette.muted, description = "Talk to the agent", size = 46.dp, iconSize = 24.dp) {
+                    onTalk(run.chat)
+                    if (run.finished) onDismiss(run.chat)
+                }
+                // Open: its icon lights up, with no disc that would make it look bigger than the others.
+                RoundButton(Icons.tasks, Color.Transparent, if (preview) Palette.amber else Palette.muted, description = if (preview) "Hide preview" else "Show preview", size = 46.dp, iconSize = 24.dp) { preview = !preview }
             }
             val question = run.question
             if (question != null) QuestionCard(question, onAnswer, onTyping)
@@ -153,6 +160,16 @@ private fun QuestionCard(request: Questions, onAnswer: (Questions, Map<String, S
                 keyboard?.show()
             }
         }
+    }
+}
+
+/** Working: 1loop's ring; driving the phone: a phone; finished: a check. */
+@Composable
+private fun StatusMark(run: RunStatus, size: Dp) {
+    when {
+        run.finished -> Icon(Icons.check, null, tint = Palette.added, modifier = Modifier.size(size * 0.85f))
+        run.phoneUse -> Icon(Icons.phone, null, tint = Palette.amber, modifier = Modifier.size(size * 0.8f))
+        else -> WorkRing(run.mark, size)
     }
 }
 

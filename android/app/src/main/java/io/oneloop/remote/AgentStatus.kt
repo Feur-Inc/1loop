@@ -13,6 +13,9 @@ data class RunStatus(
     // phone_use or adb_shell drives the phone: the badge must not hide or catch what it touches.
     val phoneUse: Boolean,
     val question: Questions? = null, // the agent waits for answers: the badge takes them
+    // Done while 1loop was not on screen: the badge stays, with a check, until dismissed
+    // or until 1loop comes back.
+    val finished: Boolean = false,
 ) {
     val done get() = todo.count { it.status == "completed" }
 }
@@ -60,10 +63,20 @@ object AgentStatus {
 
     fun update(context: Context, meta: Meta) {
         if (meta.running) {
-            val phoneUse = meta.label.contains("phone_use") || meta.label.contains("adb_shell")
+            // The executing tool, which an approval does not hide; servers without it: the label.
+            val phoneUse = if (meta.tool.isNotEmpty()) meta.tool == "phone_use" || meta.tool == "adb_shell"
+            else meta.label.contains("phone_use") || meta.label.contains("adb_shell")
             runs.remove(meta.chat)
             runs[meta.chat] = RunStatus(meta.chat, meta.title, meta.label, meta.mark, meta.todo, phoneUse, meta.question)
-        } else if (runs.remove(meta.chat) == null) return
+        } else {
+            val run = runs[meta.chat] ?: return
+            if (run.finished) return
+            // The badge stays on what it finished; the Live Update alone leaves to the chat's
+            // "Done." notification (RemoteApp).
+            if (!foreground.value && style(context) == StatusStyle.Badge && canDrawOverlays(context)) {
+                runs[meta.chat] = run.copy(label = "Done", mark = "done", todo = meta.todo, phoneUse = false, question = null, finished = true)
+            } else runs.remove(meta.chat)
+        }
         refresh(context)
     }
 
@@ -73,8 +86,16 @@ object AgentStatus {
         refresh(context)
     }
 
+    /** The finished badge, put away (Dismiss, or Talk to the agent). */
+    fun dismiss(context: Context, chat: String) {
+        if (runs[chat]?.finished == true) runs.remove(chat)
+        refresh(context)
+    }
+
     fun setForeground(context: Context, shown: Boolean) {
         foreground.value = shown
+        // Back in 1loop: what finished is there to read.
+        if (shown) runs.values.removeAll { it.finished }
         refresh(context)
     }
 
@@ -83,7 +104,7 @@ object AgentStatus {
     fun answer(request: Questions, answers: Map<String, String>) { app.get()?.answer(request, answers) }
 
     private fun refresh(context: Context) {
-        status.value = runs.values.lastOrNull()
+        status.value = runs.values.lastOrNull { !it.finished } ?: runs.values.lastOrNull()
         val wanted = status.value != null && style(context) != StatusStyle.Off
         val intent = Intent(context, AgentStatusService::class.java)
         if (wanted && !AgentStatusService.active) {

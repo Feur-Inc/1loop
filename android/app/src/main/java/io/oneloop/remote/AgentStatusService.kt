@@ -71,7 +71,11 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
-        if (intent?.action == ACTION_STOP) intent.getStringExtra(EXTRA_CHAT)?.let(AgentStatus::stop)
+        val chat = intent?.getStringExtra(EXTRA_CHAT)
+        if (chat != null) when (intent.action) {
+            ACTION_STOP -> AgentStatus.stop(chat)
+            ACTION_DISMISS -> AgentStatus.dismiss(this, chat)
+        }
         return START_NOT_STICKY
     }
 
@@ -108,13 +112,17 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
             // on the lock screen: what the agent does, like a timer or a delivery.
             .setVisibility(Notification.VISIBILITY_PUBLIC)
         if (status != null) {
-            val stop = PendingIntent.getService(
-                this, 3, Intent(this, AgentStatusService::class.java).setAction(ACTION_STOP).putExtra(EXTRA_CHAT, status.chat),
+            // Running: Stop it. Finished (the badge kept it): put it away.
+            val (label, action) = if (status.finished) "Dismiss" to ACTION_DISMISS else "Stop" to ACTION_STOP
+            val button = PendingIntent.getService(
+                this, 3, Intent(this, AgentStatusService::class.java).setAction(action).putExtra(EXTRA_CHAT, status.chat),
                 PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
             )
-            builder.addAction(Notification.Action.Builder(null, "Stop", stop).build())
+            builder.addAction(Notification.Action.Builder(null, label, button).build())
             builder.addAction(Notification.Action.Builder(null, "Open", open).build())
         }
+        // Done: no progress, and no longer a Live Update.
+        if (status?.finished == true) return builder.setOngoing(false).setCategory(Notification.CATEGORY_STATUS).build()
         val total = status?.todo?.size ?: 0
         if (Build.VERSION.SDK_INT >= 36) {
             // A Live Update: the chip shows the task count, or that it works. The extra, not
@@ -170,6 +178,7 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
                             onTyping = ::setTyping,
                             onTalk = { chat -> startActivity(openIntent(this@AgentStatusService, chat).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
                             onDrag = { dy -> moveBadge(dy) },
+                            onDismiss = { chat -> AgentStatus.dismiss(this@AgentStatusService, chat) },
                         )
                     }
                 }
@@ -213,6 +222,7 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         const val GROUP = "io.oneloop.remote.RUNNING"
         const val ID = 4317
         const val ACTION_STOP = "io.oneloop.remote.STOP_RUN"
+        const val ACTION_DISMISS = "io.oneloop.remote.DISMISS_RUN"
         const val EXTRA_CHAT = "io.oneloop.remote.CHAT"
         @Volatile var active = false
 

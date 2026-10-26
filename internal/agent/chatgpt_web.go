@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -86,12 +87,14 @@ func (bridge *ChatGPTWeb) pauseWhenIdle() {
 			return
 		case <-tick.C:
 		}
+		var closing []*browser.Page
 		bridge.mu.Lock()
 		if bridge.users > 0 && bridge.users == bridge.views && len(bridge.pages) > 0 && time.Since(bridge.active) > webIdle {
-			bridge.closeLocked()
+			closing = bridge.closeLocked()
 			bridge.paused = true
 		}
 		bridge.mu.Unlock()
+		closePages(closing)
 	}
 }
 
@@ -110,10 +113,61 @@ func (bridge *ChatGPTWeb) Retain() func() {
 	return bridge.retain(false)
 }
 
-// RetainView keeps the browser for a view that shows a page; a view alone
-// is not activity, so its pages still close when idle (see webIdle).
-func (bridge *ChatGPTWeb) RetainView() func() {
-	return bridge.retain(true)
+// RetainView keeps the browser and the page key for a view that shows it; a
+// view alone is not activity, so its pages still close when idle (webIdle).
+func (bridge *ChatGPTWeb) RetainView(key string) func() {
+	release := bridge.retain(true)
+	unhold := bridge.HoldPage(key)
+	return func() {
+		unhold()
+		release()
+	}
+}
+
+// HoldPage keeps one page open (a view of it, a turn on it) until the
+// returned function: the last hold closes it, while the account and its
+// other pages stay. The service page is the account's own.
+func (bridge *ChatGPTWeb) HoldPage(key string) func() {
+	bridge.mu.Lock()
+	if bridge.pageHolds == nil {
+		bridge.pageHolds = map[string]int{}
+	}
+	bridge.pageHolds[key]++
+	bridge.mu.Unlock()
+	var once sync.Once
+	return func() {
+		once.Do(func() {
+			var closing *browser.Page
+			bridge.mu.Lock()
+			if bridge.pageHolds[key]--; bridge.pageHolds[key] <= 0 {
+				delete(bridge.pageHolds, key)
+				closing = bridge.detachLocked(key)
+			}
+			bridge.mu.Unlock()
+			if closing != nil {
+				closing.Close()
+			}
+		})
+	}
+}
+
+// detachLocked takes a page out of the account's state, to be closed
+// without the lock (closing a phone's WebView waits for Android).
+func (bridge *ChatGPTWeb) detachLocked(key string) *browser.Page {
+	tab := bridge.pages[key]
+	if tab == nil {
+		return nil
+	}
+	delete(bridge.pages, key)
+	delete(bridge.chosen, tab)
+	delete(bridge.pageStreams, tab)
+	return tab
+}
+
+func closePages(pages []*browser.Page) {
+	for _, tab := range pages {
+		tab.Close()
+	}
 }
 
 func (bridge *ChatGPTWeb) retain(view bool) func() {
@@ -128,8 +182,8 @@ func (bridge *ChatGPTWeb) retain(view bool) func() {
 	var once sync.Once
 	return func() {
 		once.Do(func() {
+			var closing []*browser.Page
 			bridge.mu.Lock()
-			defer bridge.mu.Unlock()
 			bridge.users--
 			if view {
 				bridge.views--
@@ -137,16 +191,21 @@ func (bridge *ChatGPTWeb) retain(view bool) func() {
 				bridge.active = time.Now() // a long turn's end is recent activity too
 			}
 			if bridge.users == 0 {
-				bridge.closeLocked()
+				closing = bridge.closeLocked()
 				bridge.paused = false
 			}
+			bridge.mu.Unlock()
+			closePages(closing)
 		})
 	}
 }
 
-func (bridge *ChatGPTWeb) closeLocked() {
+// closeLocked detaches every page and stops the tunnel; the caller closes
+// the pages once it releases the lock.
+func (bridge *ChatGPTWeb) closeLocked() []*browser.Page {
+	var closing []*browser.Page
 	for key, tab := range bridge.pages {
-		tab.Close()
+		closing = append(closing, tab)
 		delete(bridge.pages, key)
 	}
 	bridge.pageStreams, bridge.chosen = nil, nil
@@ -155,6 +214,7 @@ func (bridge *ChatGPTWeb) closeLocked() {
 		bridge.stopTunnel = nil
 	}
 	bridge.tunnelReady, bridge.tunnelError = false, nil
+	return closing
 }
 
 func (bridge *ChatGPTWeb) Page(key, address string) *browser.Page {
@@ -168,6 +228,16 @@ func (bridge *ChatGPTWeb) Page(key, address string) *browser.Page {
 	}
 	bridge.active, bridge.paused = time.Now(), false // opening a page is activity
 	tab := browser.NewBrowserPage(browser.NewBrowserSession(bridge.engine), browser.Info{URL: address, Width: 1100, Height: 800, Adaptive: key == "setup"})
+	// Its target gone (Chrome's tab, or Android's renderer killed): the page
+	// ends, and the next use of the key opens a new one.
+	tab.OnClosed = func() {
+		bridge.mu.Lock()
+		if bridge.pages[key] == tab {
+			bridge.detachLocked(key)
+		}
+		bridge.mu.Unlock()
+		go tab.Close()
+	}
 	bridge.pages[key] = tab
 	go tab.Start()
 	return tab
@@ -194,16 +264,17 @@ func (bridge *ChatGPTWeb) StartTunnel(settings WebSettings) error {
 	if len(strings.TrimSpace(string(key))) == 0 {
 		return fmt.Errorf("The tunnel key file is empty")
 	}
+	keySum := sha256.Sum256(bytes.TrimSpace(key)) // a key replaced in the same file restarts the tunnel too
 	bridge.mu.Lock()
 	defer bridge.mu.Unlock()
-	if bridge.stopTunnel != nil && bridge.tunnelSettings.TunnelID == settings.TunnelID && bridge.tunnelSettings.KeyFile == settings.KeyFile {
+	if bridge.stopTunnel != nil && bridge.tunnelSettings.TunnelID == settings.TunnelID && bridge.tunnelSettings.KeyFile == settings.KeyFile && bridge.tunnelKey == keySum {
 		return nil
 	}
 	if bridge.stopTunnel != nil {
 		bridge.stopTunnel()
 	}
 	ctx, cancel := context.WithCancel(bridge.parent)
-	bridge.stopTunnel, bridge.tunnelSettings = cancel, settings
+	bridge.stopTunnel, bridge.tunnelSettings, bridge.tunnelKey = cancel, settings, keySum
 	bridge.tunnelError, bridge.tunnelReady = nil, false
 	tunnel := &mcptunnel.Tunnel{ID: settings.TunnelID, Key: strings.TrimSpace(string(key)), Handle: bridge.HandleMCP, Instance: "1loop-" + core.Identifier(),
 		Status: func(err error) {

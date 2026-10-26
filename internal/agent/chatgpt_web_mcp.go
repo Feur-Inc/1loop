@@ -46,12 +46,14 @@ type ChatGPTWeb struct {
 	parent         context.Context
 	stopTunnel     context.CancelFunc
 	tunnelSettings WebSettings
+	tunnelKey      [32]byte // the key's digest when the tunnel started
 	tunnelError    error
 	tunnelReady    bool
 	toolLists      atomic.Uint64 // confirms discovery after Refresh tools
 	pageStreams    map[*browser.Page]*webStreams
 	chosen         map[*browser.Page]string // the model last selected on a page
 	projectURL     string                   // the 1loop project, once found
+	pageHolds      map[string]int           // by page key: the views and turns keeping it (HoldPage)
 }
 
 func NewChatGPTWeb(backend *App) *ChatGPTWeb {
@@ -77,11 +79,15 @@ func (bridge *ChatGPTWeb) begin(ctx context.Context, turn *WebTurn) (func(), err
 	}, nil
 }
 
-func (bridge *ChatGPTWeb) turnFor(session string) *WebTurn {
+// admit finds the turn a call belongs to and counts the call under the same
+// lock, so that a turn ended (removed by begin's function) admits no more
+// and its end waits only for the calls already counted.
+func (bridge *ChatGPTWeb) admit(session string) *WebTurn {
 	bridge.mu.Lock()
 	defer bridge.mu.Unlock()
 	for turn := range bridge.turns {
 		if session != "" && turn.session == session && turn.ctx.Err() == nil {
+			turn.running.Add(1)
 			return turn
 		}
 	}
@@ -210,11 +216,10 @@ func (bridge *ChatGPTWeb) call(ctx context.Context, raw json.RawMessage) map[str
 		}
 		return bridge.pair(params.Meta.Session, arguments.Code)
 	}
-	turn := bridge.turnFor(params.Meta.Session)
+	turn := bridge.admit(params.Meta.Session)
 	if turn == nil {
 		return toolText("This session is not paired with an active 1loop conversation. Do not call 1loop tools outside an explicitly authorized 1loop request.", true)
 	}
-	turn.running.Add(1)
 	defer turn.running.Add(-1)
 	turn.callMu.Lock()
 	defer turn.callMu.Unlock()

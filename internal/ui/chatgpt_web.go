@@ -64,7 +64,7 @@ func (ui *desktopUI) chatGPTWebSettings(draft *agent.Connection, say func(string
 			window.RequestFocus()
 			return
 		}
-		release := bridge.Retain()
+		release, unhold := bridge.Retain(), bridge.HoldPage("setup")
 		window := fyne.CurrentApp().NewWindow("ChatGPT sign-in · 1loop")
 		ui.webSetupWindows[bridge] = window
 		tab := bridge.Page("setup", "https://chatgpt.com/")
@@ -74,6 +74,7 @@ func (ui *desktopUI) chatGPTWebSettings(draft *agent.Connection, say func(string
 		window.SetOnClosed(func() {
 			tab.SetVisible(false)
 			delete(ui.webSetupWindows, bridge)
+			unhold()
 			release()
 		})
 		window.Show()
@@ -211,7 +212,7 @@ func (ui *desktopUI) ensureWebTab() {
 			return
 		}
 	}
-	release := bridge.RetainView()
+	release := bridge.RetainView(key)
 	page := bridge.Page(key, address)
 	stopView := func() {
 		page.SetVisible(false)

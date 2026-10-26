@@ -218,32 +218,6 @@ func (browser *fileBrowser) show(file remoteapi.FileEntry) {
 	}()
 }
 
-// codeLines are a file's lines as the diff view's rows, numbered from
-// first and coloured by the file's type.
-func codeLines(name string, lines []string, first int) ([]diffLine, float32) {
-	rows := make([]diffLine, len(lines))
-	width := float32(320)
-	for i, line := range lines {
-		rows[i] = diffLine{kind: ' ', text: line, next: first + i}
-		width = fyne.Max(width, float32(utf8.RuneCountInString(line))*outputCell().Width+110)
-	}
-	text := strings.Join(lines, "\n") + "\n"
-	lexer := lexers.Match(name)
-	if lexer == nil {
-		lexer = lexers.Analyse(text)
-	}
-	if lexer != nil {
-		if iterator, err := lexer.Tokenise(nil, text); err == nil {
-			for i, tokens := range chroma.SplitTokensIntoLines(iterator.Tokens()) {
-				if i < len(rows) {
-					rows[i].tokens = tokens
-				}
-			}
-		}
-	}
-	return rows, width
-}
-
 // newCodeViewAt shows a file's text with line numbers, coloured by its type,
 // with the diff view's rows; lines from to to (1-based, 0: none) are marked
 // and scrolled to.
@@ -252,9 +226,27 @@ func newCodeViewAt(name, text string, from, to int) fyne.CanvasObject {
 	if len(lines) > 50000 {
 		lines = lines[:50000]
 	}
-	rows, width := codeLines(name, lines, 1)
-	for i := from - 1; from > 0 && i < to && i < len(rows); i++ {
-		rows[i].kind = 'c'
+	rows := make([]diffLine, len(lines))
+	width := float32(320)
+	for i, line := range lines {
+		rows[i] = diffLine{kind: ' ', text: line, next: i + 1}
+		if i >= from-1 && i < to {
+			rows[i].kind = 'c'
+		}
+		width = fyne.Max(width, float32(utf8.RuneCountInString(line))*outputCell().Width+110)
+	}
+	lexer := lexers.Match(name)
+	if lexer == nil {
+		lexer = lexers.Analyse(text)
+	}
+	if lexer != nil {
+		if iterator, err := lexer.Tokenise(nil, strings.Join(lines, "\n")+"\n"); err == nil {
+			for i, tokens := range chroma.SplitTokensIntoLines(iterator.Tokens()) {
+				if i < len(rows) {
+					rows[i].tokens = tokens
+				}
+			}
+		}
 	}
 	list := widget.NewList(func() int { return len(rows) }, func() fyne.CanvasObject {
 		return newDiffRow(width)

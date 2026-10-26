@@ -753,7 +753,7 @@ private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> U
                         MessageActions(app, item, running) { editing = app.firstItem + index to item.text }
                     }
                     "assistant" -> Column {
-                        Markdown(item.text)
+                        Markdown(item.text, onCite = onCite)
                         // One Copy per finished answer: under its last text, not while it runs.
                         val endsTurn = (index + 1 until items.size).takeWhile { items[it].kind != "user" }.none { items[it].kind == "assistant" }
                         if (endsTurn && !(running && index > lastUser)) {
@@ -765,7 +765,6 @@ private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> U
                     }
                     "tool" -> Column {
                         ToolRow(item) { onTool(item) }
-                        if (item.state == "done") citationOf(item)?.let { CitationCard(it, onCite) }
                         // What the tool showed the model (a screenshot), as Codex shows it.
                         if (item.images > 0) ItemImages(app, app.firstItem + index, item.images, Modifier.padding(start = 32.dp, top = 2.dp))
                     }

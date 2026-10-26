@@ -1,52 +1,55 @@
 package ui
 
-// A citation's card (the cite tool): the file and its lines under the tool
-// row, a few of them shown; Open shows the file in the Files tab with the
-// cited lines marked.
+// A citation in the model's answer: <cite file="path" lines="12-30"/>, as
+// AI search engines cite their sources. It shows as a chip, the file's name
+// and lines; a click opens the file in the Files tab, those lines marked.
 
 import (
 	"fmt"
-
-	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/container"
-
-	"1loop/internal/agent"
+	"path"
+	"regexp"
+	"strconv"
+	"strings"
 )
 
-const citationCardLines = 12
+// citeScheme starts a citation chip's link: citeScheme + lines + ":" + path.
+const citeScheme = "1loop-cite:"
 
-func (ui *desktopUI) showCitation(box *fyne.Container, item agent.ChatItem) {
-	citation, ok := agent.CitationOf(item)
-	if !ok {
-		box.RemoveAll()
+var citeTag = regexp.MustCompile(`^<cite\s+file="([^"]+)"(?:\s+lines="(\d+)(?:\s*[-–]\s*(\d+))?")?\s*/?>(?:</cite>)?`)
+
+// citeAt reads the citation tag at the start of s: its chip and its length.
+func citeAt(s string) (span, int, bool) {
+	match := citeTag.FindStringSubmatchIndex(s)
+	if match == nil {
+		return span{}, 0, false
+	}
+	file := s[match[2]:match[3]]
+	from, to := 0, 0
+	if match[4] >= 0 {
+		from, _ = strconv.Atoi(s[match[4]:match[5]])
+		to = from
+		if match[6] >= 0 {
+			to, _ = strconv.Atoi(s[match[6]:match[7]])
+		}
+	}
+	label := path.Base(file)
+	switch { // no-break spaces: a chip does not wrap
+	case from > 0 && to > from:
+		label += fmt.Sprintf("\u00a0·\u00a0%d–%d", from, to)
+	case from > 0:
+		label += fmt.Sprintf("\u00a0·\u00a0%d", from)
+	}
+	return span{text: label, cite: true, link: fmt.Sprintf("%s%d-%d:%s", citeScheme, from, to, file)}, match[1], true
+}
+
+// openCitation shows a chip's file in the Files tab (set by the desktop).
+var openCitation = func(link string) {}
+
+func (ui *desktopUI) openCitation(link string) {
+	lines, file, _ := strings.Cut(strings.TrimPrefix(link, citeScheme), ":")
+	from, to := 0, 0
+	if _, err := fmt.Sscanf(lines, "%d-%d", &from, &to); err != nil || file == "" {
 		return
 	}
-	lines := fmt.Sprintf("lines %d–%d", citation.Start, citation.End)
-	from, to := citation.Start, citation.End
-	if citation.Start == 1 && citation.End == citation.Total {
-		lines = fmt.Sprintf("whole file · %d lines", citation.Total)
-		from, to = 0, 0 // nothing to mark
-	}
-	title := textLine(citation.Path, 12.5, colText)
-	title.TextStyle = fyne.TextStyle{Monospace: true}
-	open := newRow("Open", iconDocument, styleChip, func() { ui.panel.openFileAt(citation.Path, from, to) })
-	header := padded(6, 6, 12, 6, container.NewBorder(nil, nil, nil, open,
-		container.NewHBox(title, textLine("· "+lines, 12, colMuted))))
-	shown := citation.Code
-	if len(shown) > citationCardLines {
-		shown = shown[:citationCardLines]
-	}
-	rows, width := codeLines(citation.Path, shown, citation.Start)
-	code := container.NewVBox()
-	for _, line := range rows {
-		row := newDiffRow(width)
-		row.line = line
-		code.Add(row)
-	}
-	parts := []fyne.CanvasObject{header, container.NewHScroll(code)}
-	if more := citation.End - citation.Start + 1 - len(shown); more > 0 {
-		parts = append(parts, padded(6, 8, 12, 12, textLine(fmt.Sprintf("… %d more lines: Open shows them all", more), 12, colFaint)))
-	}
-	box.Objects = []fyne.CanvasObject{padded(4, 2, 30, 0, surface(container.NewVBox(parts...), colCode, colBorderSoft, 10, 0))}
-	box.Refresh()
+	ui.panel.openFileAt(file, from, to)
 }

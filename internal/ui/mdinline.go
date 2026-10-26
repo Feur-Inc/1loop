@@ -21,6 +21,7 @@ type span struct {
 	italic bool
 	strike bool
 	code   bool   // inline code: monospace on a tinted chip
+	cite   bool   // a citation of the workspace's code: a small chip, its link opens the file
 	link   string // where the run leads, when it is a link
 	math   string // LaTeX source, drawn typeset when a TeX system is installed
 	hard   bool   // a line break
@@ -171,6 +172,16 @@ func (parser *inlineParser) parse(s string, style span) {
 				plain = i
 				continue
 			}
+		case c == '<' && strings.HasPrefix(rest, "<cite"):
+			flush(i)
+			if cited, n, ok := citeAt(rest); ok {
+				parser.out = append(parser.out, cited)
+				i += n
+			} else {
+				i = len(s) // a tag still arriving: shown once whole
+			}
+			plain = i
+			continue
 		case c == '<':
 			if end := strings.IndexByte(rest, '>'); end > 0 {
 				inside := rest[1:end]

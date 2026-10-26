@@ -36,6 +36,9 @@ var (
 )
 
 type browserView struct {
+	inputAllowed  func() bool
+	window        fyne.Window
+	clipboardMenu bool
 	widget.BaseWidget
 	page           *browser.Page
 	panel          *toolPanel
@@ -136,7 +139,7 @@ func (panel *toolPanel) openBrowser() {
 }
 
 func newBrowserView(panel *toolPanel, chat *conversation, browser *browser.Page) *browserView {
-	view := &browserView{page: browser, panel: panel, chat: chat, status: textLine("Starting browser…", 11, colMuted)}
+	view := &browserView{window: panel.ui.window, page: browser, panel: panel, chat: chat, status: textLine("Starting browser…", 11, colMuted)}
 	view.ExtendBaseWidget(view)
 	view.screen = newBrowserScreen(view)
 	view.address = widget.NewEntry()
@@ -269,10 +272,10 @@ func (view *browserView) frame(img image.Image) {
 }
 
 func (view *browserView) changed(info browser.Info) {
-	if view.panel.ui.window.Canvas().Focused() != view.address {
+	if view.window.Canvas().Focused() != view.address {
 		view.address.SetText(info.URL)
 	}
-	if view.panel.ui.window.Canvas().Focused() != view.dimensions {
+	if view.window.Canvas().Focused() != view.dimensions {
 		view.dimensions.SetText(fmt.Sprintf("%d × %d", info.Width, info.Height))
 	}
 	selected := "Custom"
@@ -388,6 +391,7 @@ type browserScreen struct {
 	resizeTimer      *time.Timer
 	buttons          int64
 	modifiers        int64
+	altGr            bool
 }
 
 func newBrowserScreen(view *browserView) *browserScreen {
@@ -438,7 +442,7 @@ func (renderer *browserScreenRenderer) Layout(size fyne.Size) {
 		screen.modelCursor.Move(screen.cursorTarget(scale))
 	}
 	width, height := max(240, min(3840, int(size.Width))), max(200, min(2160, int(size.Height)))
-	ratio := float64(screen.view.panel.ui.window.Canvas().Scale())
+	ratio := float64(screen.view.window.Canvas().Scale())
 	if ratio != info.PixelRatio || (info.Adaptive && (width != info.Width || height != info.Height)) {
 		if screen.resizeTimer != nil {
 			screen.resizeTimer.Stop()
@@ -458,6 +462,9 @@ func (renderer *browserScreenRenderer) Layout(size fyne.Size) {
 }
 
 func (screen *browserScreen) coords(pos fyne.Position) (float64, float64, bool) {
+	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+		return 0, 0, false
+	}
 	if screen.rendered.Width <= 0 || screen.rendered.Height <= 0 {
 		return 0, 0, false
 	}
@@ -468,10 +475,13 @@ func (screen *browserScreen) coords(pos fyne.Position) (float64, float64, bool) 
 }
 
 func (screen *browserScreen) FocusGained()     {}
-func (screen *browserScreen) FocusLost()       { screen.modifiers = 0 }
+func (screen *browserScreen) FocusLost()       { screen.modifiers = 0; screen.altGr = false }
 func (screen *browserScreen) AcceptsTab() bool { return true }
 func (screen *browserScreen) TypedRune(r rune) {
-	if screen.modifiers&7 != 0 {
+	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+		return
+	}
+	if screen.modifiers&7 != 0 && !screen.altGr {
 		return
 	}
 	text := string(r)
@@ -480,6 +490,9 @@ func (screen *browserScreen) TypedRune(r rune) {
 
 func browserKey(key fyne.KeyName) string { return browser.NamedKey(string(key)) }
 func (screen *browserScreen) TypedKey(e *fyne.KeyEvent) {
+	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+		return
+	}
 	if key := browserKey(e.Name); key != "" {
 		modifiers := screen.modifiers
 		screen.view.page.Input(chromedp.KeyEvent(key, func(p *input.DispatchKeyEventParams) *input.DispatchKeyEventParams {
@@ -490,9 +503,16 @@ func (screen *browserScreen) TypedKey(e *fyne.KeyEvent) {
 }
 
 func (screen *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
-	switch shortcut.(type) {
+	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+		return
+	}
+	switch value := shortcut.(type) {
 	case *fyne.ShortcutPaste:
-		screen.view.page.Input(input.InsertText(fyne.CurrentApp().Clipboard().Content()))
+		clipboard := value.Clipboard
+		if clipboard == nil {
+			clipboard = screen.view.window.Clipboard()
+		}
+		screen.view.page.Input(input.InsertText(clipboard.Content()))
 	case *fyne.ShortcutCopy, *fyne.ShortcutCut:
 		_, cut := shortcut.(*fyne.ShortcutCut)
 		screen.view.page.Async(func(ctx context.Context) error {
@@ -527,13 +547,32 @@ func (screen *browserScreen) MouseMoved(e *desktop.MouseEvent) {
 }
 
 func (screen *browserScreen) MouseDown(e *desktop.MouseEvent) {
-	screen.view.panel.ui.window.Canvas().Focus(screen)
+	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+		return
+	}
+	screen.view.window.Canvas().Focus(screen)
+	if e.Button == desktop.MouseButtonSecondary && screen.view.clipboardMenu {
+		menu := fyne.NewMenu("",
+			fyne.NewMenuItem("Cut", func() { screen.TypedShortcut(&fyne.ShortcutCut{}) }),
+			fyne.NewMenuItem("Copy", func() { screen.TypedShortcut(&fyne.ShortcutCopy{}) }),
+			fyne.NewMenuItem("Paste", func() { screen.TypedShortcut(&fyne.ShortcutPaste{Clipboard: screen.view.window.Clipboard()}) }),
+			fyne.NewMenuItem("Select all", func() { screen.TypedShortcut(&fyne.ShortcutSelectAll{}) }),
+		)
+		widget.NewPopUpMenu(menu, screen.view.window.Canvas()).ShowAtPosition(e.AbsolutePosition)
+		return
+	}
 	screen.modelCursor.Hide()
 	screen.buttons = 1
 	screen.mouse(e, input.MousePressed)
 }
 
 func (screen *browserScreen) MouseUp(e *desktop.MouseEvent) {
+	if e.Button == desktop.MouseButtonSecondary && screen.view.clipboardMenu {
+		return
+	}
+	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+		return
+	}
 	screen.mouse(e, input.MouseReleased)
 	screen.buttons = 0
 }
@@ -554,6 +593,9 @@ func (screen *browserScreen) mouse(e *desktop.MouseEvent, kind input.MouseType) 
 }
 
 func (screen *browserScreen) Scrolled(e *fyne.ScrollEvent) {
+	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+		return
+	}
 	x, y, ok := screen.coords(e.Position)
 	if !ok {
 		return
@@ -611,8 +653,10 @@ func (screen *browserScreen) KeyDown(e *fyne.KeyEvent) {
 	switch e.Name {
 	case desktop.KeyControlLeft, desktop.KeyControlRight:
 		screen.modifiers |= 2
-	case desktop.KeyAltLeft, desktop.KeyAltRight:
+	case desktop.KeyAltLeft:
 		screen.modifiers |= 1
+	case desktop.KeyAltRight:
+		screen.altGr = true
 	case desktop.KeyShiftLeft, desktop.KeyShiftRight:
 		screen.modifiers |= 8
 	case desktop.KeySuperLeft, desktop.KeySuperRight:
@@ -624,8 +668,10 @@ func (screen *browserScreen) KeyUp(e *fyne.KeyEvent) {
 	switch e.Name {
 	case desktop.KeyControlLeft, desktop.KeyControlRight:
 		screen.modifiers &^= 2
-	case desktop.KeyAltLeft, desktop.KeyAltRight:
+	case desktop.KeyAltLeft:
 		screen.modifiers &^= 1
+	case desktop.KeyAltRight:
+		screen.altGr = false
 	case desktop.KeyShiftLeft, desktop.KeyShiftRight:
 		screen.modifiers &^= 8
 	case desktop.KeySuperLeft, desktop.KeySuperRight:

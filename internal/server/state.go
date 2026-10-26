@@ -775,6 +775,12 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		index = run.index
 		chat.Items[index].Text += value.(string)
 		run.label, run.mark = "Writing…", "write"
+	case "text": // the streaming answer rewritten as a whole (ChatGPT (Web))
+		if run.index < 0 {
+			run.index = server.addLocked(chat, agent.ChatItem{Kind: "assistant"})
+		}
+		index = run.index
+		chat.Items[index].Text = value.(string)
 	case "message_end":
 		run.index = -1
 	case "history":

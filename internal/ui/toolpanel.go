@@ -59,7 +59,11 @@ type panelTab struct {
 	todoContextText string
 	todoTimes       map[string]*canvas.Text
 	todoMarks       []*taskMark // the rings of the list as drawn, stopped when it is drawn again
-	workspace       string      // manual tabs belong to a workspace, not a transcript item
+	web             bool
+	webKey          string // the ChatGPT page shown: its chat's
+	webAccount      *agent.ChatGPTWeb
+	webPage         *browser.Page
+	workspace       string // manual tabs belong to a workspace, not a transcript item
 }
 
 const panelWidth = 840
@@ -271,6 +275,9 @@ func (panel *toolPanel) choose(i int) {
 }
 
 func (panel *toolPanel) close(i int) {
+	if panel.tabs[i].web && panel.ui.cfg.Provider == "chatgptweb" {
+		return
+	}
 	panel.tabs[i].dispose()
 	panel.tabs = append(panel.tabs[:i], panel.tabs[i+1:]...)
 	switch {
@@ -421,6 +428,9 @@ func (panel *toolPanel) tabView(i int, tab panelTab) fyne.CanvasObject {
 	label.ink = colText
 	closeTab := newIconButton(iconClose, color.NRGBA{}, color.NRGBA{}, func() { panel.close(i) })
 	closeTab.iconPx, closeTab.padPx = 14, 6
+	if tab.web && panel.ui.cfg.Provider == "chatgptweb" {
+		closeTab.Hide()
+	}
 	bg := canvas.NewRectangle(color.Transparent)
 	bg.CornerRadius = 10
 	if i == panel.active {

@@ -445,7 +445,7 @@ func modelFamilyCaption(name string, first bool) fyne.CanvasObject {
 
 func modelAccountBadge(provider string) fyne.Resource {
 	switch provider {
-	case "openai", "claudecode", "openrouter", "vllm":
+	case "openai", "claudecode", "openrouter", "vllm", "chatgptweb":
 		data, _ := assets.Artwork.ReadFile("provider-" + provider + ".svg")
 		return fyne.NewStaticResource("1loop-account-"+provider+".svg", data)
 	default:

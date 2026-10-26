@@ -86,6 +86,7 @@ type desktopUI struct {
 	cfg              agent.Config
 	keys             map[string]string
 	connectionsList  []agent.Connection
+	webSetupWindows  map[*agent.ChatGPTWeb]fyne.Window
 	choices          map[string]agent.ModelChoice
 	modelUnavailable map[string]string // model catalog problems, displayed inside the selector
 	accountLimits    map[string]agent.AccountLimits
@@ -215,6 +216,7 @@ func runDesktop(backend *agent.App, root string) {
 	a := fyneapp.NewWithID("io.1loop.desktop")
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
+	backend.EnableChatGPTWeb(ctx)
 	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), statePath: statePath(root),
 		cfg: agent.Config{Provider: "compatible", Workspace: root}}
 	ui.load()
@@ -383,6 +385,7 @@ func (ui *desktopUI) release() {
 	ui.persist(true)
 	ui.prompt.drafts.flush()
 	ui.browser.WaitClosed() // Chrome writes its profile as it closes
+	ui.backend.CloseChatGPTWeb()
 }
 
 // fitLabel is a single line of text that ellipsises to the space it gets.
@@ -1072,6 +1075,9 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		handoff = &pendingHandoff{choice: plan.Recommended, plan: plan, previous: previous}
 	}
 	turn := ui.newTurn(chat, cfg)
+	if cfg.Provider == "chatgptweb" && chat == ui.current {
+		ui.ensureWebTab()
+	}
 	turn.show(agent.Activity{State: "wait"})
 	ui.runStarted(chat, &chatRun{cancel: cancel, turn: turn})
 	pump := &eventPump{handle: turn.handle}
@@ -1103,7 +1109,12 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		}
 		if err == nil {
 			identity := agent.IdentityOf(cfg)
-			ui.onUI(ctx, func() { chat.Config.RanWith = &identity })
+			ui.onUI(ctx, func() {
+				chat.Config.RanWith = &identity
+				if chat == ui.current { // the model picker starts from ui.cfg: a later switch back is a handoff too
+					ui.cfg.RanWith = &identity
+				}
+			})
 			err = ui.backend.Run(ctx, cfg, history, inboxValue, pump.emit)
 		}
 		canceled := ctx.Err() == context.Canceled
@@ -1522,7 +1533,7 @@ func (ui *desktopUI) load() {
 		state.Config.BaseURL = ""
 	}
 	switch state.Config.Provider {
-	case "vllm", "openrouter", "openai", "compatible", "claudecode":
+	case "vllm", "openrouter", "openai", "compatible", "claudecode", "chatgptweb":
 	default:
 		return
 	}

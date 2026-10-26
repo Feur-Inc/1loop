@@ -76,6 +76,9 @@ type Meta struct {
 	Items         int       `json:"items"`
 	Approval      *Approval `json:"approval,omitempty"`
 	Question      *Question `json:"question,omitempty"` // request_user_input waiting for answers
+	// The tool executing now, whatever the label says (an approval replaces it):
+	// the phone's status badge lets touches through while phone_use runs.
+	Tool string `json:"tool,omitempty"`
 	// The chat's model, by its label in the model list, and context use.
 	Model  string `json:"model"`
 	Effort string `json:"effort"`

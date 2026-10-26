@@ -52,6 +52,7 @@ type serverRun struct {
 	index        int
 	used         int
 	label, mark  string
+	tool         string // executing now, from tool_exec to its tool_result
 	approval     *remoteapi.Approval
 	question     *remoteapi.Question
 }
@@ -464,6 +465,7 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 	meta.Used = agent.HistoryEstimate(chat.History) + agent.ContextOverhead(chat.Config)
 	if chat.run != nil {
 		meta.Label, meta.Mark, meta.Approval, meta.Question = chat.run.label, chat.run.mark, chat.run.approval, chat.run.question
+		meta.Tool = chat.run.tool
 		if chat.run.used > 0 {
 			meta.Used = chat.run.used
 		}
@@ -795,8 +797,12 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 			run.states[index] = "running"
 		}
 		run.approval = nil
+		run.tool = outcome.Name
 	case "tool_result":
 		outcome := value.(agent.ToolOutcome)
+		if run.tool == outcome.Name {
+			run.tool = ""
+		}
 		if at, ok := run.calls[outcome.ID]; ok {
 			index = at
 			item := &chat.Items[index]

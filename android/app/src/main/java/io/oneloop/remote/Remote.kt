@@ -134,6 +134,7 @@ data class Meta(
     val model: String, val effort: String, val used: Int, val window: Int,
     val todo: List<Task>, val tier: String = "", val contextStatus: String = "",
     val background: List<BackgroundTask> = emptyList(),
+    val tool: String = "", // executing now, whatever the label says (an approval replaces it)
 ) {
     companion object {
         fun from(o: JSONObject) = Meta(
@@ -151,6 +152,7 @@ data class Meta(
             o.optJSONArray("tasks").let { array ->
                 (0 until (array?.length() ?: 0)).map { i -> BackgroundTask.from(array!!.getJSONObject(i)) }
             },
+            o.optString("tool"),
         )
     }
 }
@@ -667,6 +669,14 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         events = null
         connected = false
         prefs.edit { remove("last") }
+        AgentStatus.clear(context) // its runs no longer report here
+    }
+
+    /** A chat to open from the badge or the Live Update: now, or once connected (refresh). */
+    private var pendingChat: String? = null
+
+    fun openFromStatus(chat: String) {
+        if (server != null && connected) open(chat) else pendingChat = chat
     }
 
     private suspend fun refresh(target: Server, generation: Long) {
@@ -680,6 +690,9 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             projectActions = state.optBoolean("projectActions")
             if (selectedProject !in projects) selectedProject = workspace
             state.optJSONObject("settings")?.let { applySettings(it) }
+            // Open or Talk to the agent started this activity: its chat, now that it is known.
+            pendingChat?.let { chat -> if (chats.any { it.id == chat }) current = chat }
+            pendingChat = null
             if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull { it.workspace == selectedProject }?.id
             chats.firstOrNull { it.id == current }?.workspace?.let { selectedProject = it }
             current?.let { load(it, target, generation) }

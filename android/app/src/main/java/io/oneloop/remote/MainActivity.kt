@@ -35,7 +35,7 @@ class MainActivity : ComponentActivity() {
 
     /** Talk to the agent (the badge) or Open (the Live Update): its chat. */
     private fun openChat(intent: Intent?) {
-        intent?.getStringExtra(AgentStatusService.EXTRA_CHAT)?.let { if (app.server != null) app.open(it) }
+        intent?.getStringExtra(AgentStatusService.EXTRA_CHAT)?.let(app::openFromStatus)
     }
 
     /** The update notification was tapped. */
@@ -72,5 +72,12 @@ class MainActivity : ComponentActivity() {
         AgentStatus.setForeground(applicationContext, false)
         AndroidLocalRuntime.get(applicationContext).appForeground = false
         super.onStop()
+    }
+
+    // RemoteApp lives in this activity's scope: once it is gone (swiped from Recents),
+    // no updates reach the badge and the Live Update, and Stop could not reach the run.
+    override fun onDestroy() {
+        if (!isChangingConfigurations) AgentStatus.clear(applicationContext)
+        super.onDestroy()
     }
 }

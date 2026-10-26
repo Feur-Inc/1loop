@@ -172,7 +172,7 @@ func systemInstructions(cfg Config) string {
 	}
 	prompt += userPreferenceInstructions(cfg)
 	prompt += mobileInstructions(cfg) + projectInstructions(cfg.Workspace)
-	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + platform.ShellDescription() + "." + todoInstructions(cfg) + contextInstructions(cfg) + toolSearchInstructions(cfg)
+	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + platform.ShellDescription() + "." + todoInstructions(cfg) + contextInstructions(cfg) + memoryInstructions(cfg) + toolSearchInstructions(cfg)
 }
 
 type approvalContextKey struct{}

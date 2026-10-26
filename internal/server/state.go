@@ -64,6 +64,7 @@ type serverSettings struct {
 	UserInstructions  string             `json:"userInstructions"`
 	ApprovalMode      string             `json:"approvalMode"`
 	ClassicCompaction bool               `json:"classicCompaction"`
+	MemoryOff         bool               `json:"memoryOff,omitempty"`
 }
 
 type headlessServer struct {
@@ -81,6 +82,7 @@ type headlessServer struct {
 	keys                       map[string]string
 	instructions, approvalMode string
 	classic                    bool
+	memoryOff                  bool                   // the agent's memory tool turned off
 	panelHomes                 map[string]*serverChat // project panels before the first prompt; not persisted
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
@@ -166,6 +168,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		}
 		server.instructions = settings.UserInstructions
 		server.classic = settings.ClassicCompaction
+		server.memoryOff = settings.MemoryOff
 		if settings.ApprovalMode != "" {
 			server.approvalMode = settings.ApprovalMode
 		}
@@ -407,6 +410,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 	return map[string]any{
 		"userPreferences":     server.instructions,
 		"preferencesEditable": true,
+		"memory":              !server.memoryOff,
 		"models":              models,
 		"accounts":            accounts,
 		"model":               server.labelLocked(server.cfg),
@@ -625,6 +629,9 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	cfg := chat.Config
 	cfg.APIKey = server.keys[cfg.ConnectionID]
 	cfg.UserInstructions = server.instructions
+	if !server.memoryOff {
+		cfg.Preferences = server.updatePreferences
+	}
 	cfg.ApprovalMode = agent.ApprovalFor(server.approvalMode, cfg)
 	cfg.ClassicCompaction = server.classic
 	cfg.Todo = chat.Todo
@@ -846,5 +853,6 @@ func (server *headlessServer) saveSettingsLocked() error {
 		UserInstructions:  server.instructions,
 		ApprovalMode:      server.approvalMode,
 		ClassicCompaction: server.classic,
+		MemoryOff:         server.memoryOff,
 	})
 }

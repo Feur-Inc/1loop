@@ -494,6 +494,8 @@ func (panel *toolPanel) details(item agent.ChatItem, state string) fyne.CanvasOb
 		add("Content", item.Text, outputPlaceholder(running, "Empty file"))
 	case "list_directory":
 		add("Entries", item.Text, outputPlaceholder(running, "Empty directory"))
+	case "memory": // a change shows as its diff (render)
+		add("Memory", item.Text, outputPlaceholder(running, "Nothing saved"))
 	default:
 		if item.Args != "" {
 			add("Arguments", item.Args, "")

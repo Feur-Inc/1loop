@@ -25,6 +25,10 @@ type Config struct {
 	Parameters       map[string]any `json:"parameters,omitempty"`
 	UserInstructions string         `json:"-"`
 	ApprovalMode     string         `json:"-"`
+	// Preferences changes the saved user preferences under their owner's
+	// lock: update receives the saved text and returns the new one. Nil
+	// where the memory tool cannot change them.
+	Preferences func(ctx context.Context, update func(string) (string, error)) error `json:"-"`
 	// ClassicCompaction turns the staged context policy off: one compaction
 	// when the window is nearly full, tool outputs kept as they come.
 	ClassicCompaction bool                                      `json:"-"`

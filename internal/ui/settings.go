@@ -592,6 +592,9 @@ func (ui *desktopUI) computerScreenRow() fyne.CanvasObject {
 // ---------------------------------------------------------------------------
 // Instructions.
 
+// instructionSettings shows what the agent is told in every chat and
+// what its memory tool changes: the user's preferences, and each project's
+// AGENTS.md.
 func (ui *desktopUI) instructionSettings() fyne.CanvasObject {
 	entry := widget.NewMultiLineEntry()
 	entry.Wrapping = fyne.TextWrapWord
@@ -602,12 +605,74 @@ func (ui *desktopUI) instructionSettings() fyne.CanvasObject {
 		ui.userInstructions = strings.TrimSpace(text)
 		ui.save()
 	}
-	return container.NewVBox(
-		ui.prefs.pageTitle("User preferences", "", nil),
+	ui.preferencesEntry = entry
+	page := container.NewVBox(
+		ui.prefs.pageTitle("Instructions", "", nil),
 		card(settingStack("Your preferences",
-			"Added to 1loop's own system prompt, whose workspace and tool rules stay in place. Saved as you type; they apply to subsequent turns in every chat.",
-			entry)),
+			"Added to 1loop's own system prompt, whose workspace and tool rules stay in place, in every chat. Saved as you type; they apply from the next turn.",
+			entry),
+			settingRow("Memory",
+				"The agent adds what it learns about you to these preferences, each change shown to you for approval. Off: it is not offered the memory tool.",
+				newToggle(!ui.memoryOff, func(on bool) {
+					ui.memoryOff = !on
+					ui.save()
+					ui.remote.settingsChanged()
+				}))),
+		sectionTitle("Project memory"),
 	)
+	if len(ui.projects) == 0 {
+		page.Add(card(settingRow("No projects yet", "Each project's AGENTS.md shows here once you add a project.", nil)))
+		return page
+	}
+	var rows []fyne.CanvasObject
+	for _, project := range ui.projects {
+		rows = append(rows, ui.projectMemoryRow(project))
+	}
+	page.Add(card(rows...))
+	return page
+}
+
+// projectMemoryRow edits a project's AGENTS.md, the instructions every agent
+// reads there and where the agent saves what it learns about the project.
+// It is a file of the project, so it is written only with Save.
+func (ui *desktopUI) projectMemoryRow(project string) fyne.CanvasObject {
+	saved, err := agent.ProjectMemory(project)
+	entry := widget.NewMultiLineEntry()
+	entry.Wrapping = fyne.TextWrapWord
+	entry.SetMinRowsVisible(6)
+	entry.SetText(saved)
+	entry.SetPlaceHolder("Nothing saved yet: build and test commands, layout, the project's rules…")
+	path := filepath.Join(project, "AGENTS.md")
+	if home, homeErr := os.UserHomeDir(); homeErr == nil && strings.HasPrefix(path, home+string(filepath.Separator)) {
+		path = "~" + strings.TrimPrefix(path, home)
+	}
+	detail := path + " · read by 1loop and the other agents in this project."
+	if err != nil {
+		entry.Disable()
+		detail = path + ": " + err.Error()
+	}
+	var save *tapRow
+	save = newRow("Save", nil, stylePrimary, func() {
+		text := entry.Text
+		if text = strings.TrimRight(text, "\n"); text != "" {
+			text += "\n"
+		}
+		if err := agent.SaveProjectMemory(project, saved, text); err != nil {
+			ui.notice("Project memory", err.Error())
+			return
+		}
+		saved = text
+		save.Disable()
+	})
+	save.Disable()
+	entry.OnChanged = func(text string) {
+		if text == saved {
+			save.Disable()
+		} else {
+			save.Enable()
+		}
+	}
+	return settingStack(filepath.Base(project), detail, container.NewVBox(entry, container.NewHBox(layout.NewSpacer(), save)))
 }
 
 // ---------------------------------------------------------------------------

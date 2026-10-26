@@ -75,6 +75,8 @@ func toolGlyph(tool string) fyne.Resource {
 		return iconDocument
 	case "checkpoint":
 		return iconCompact
+	case "memory":
+		return iconBookmark
 	}
 	return iconDocument
 }

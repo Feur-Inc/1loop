@@ -253,6 +253,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var updateLater by mutableStateOf(false) // the update card was put away until the next start
     var userPreferences by mutableStateOf("")
     var preferencesEditable by mutableStateOf(false)
+    /** Whether the agent may save memories to the preferences; null when the target cannot say. */
+    var memoryEnabled by mutableStateOf<Boolean?>(null)
     val models = mutableStateListOf<ModelOption>()
     val accounts = mutableStateListOf<Account>()
     val limits = mutableStateMapOf<String, AccountLimits>() // by account
@@ -581,6 +583,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         projectManagement = false
         projectActions = false
         preferencesEditable = false
+        memoryEnabled = null
         userPreferences = ""
         running.clear()
         defaultModel = ""
@@ -763,6 +766,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     private fun applySettings(settings: JSONObject) {
         userPreferences = settings.optString("userPreferences")
         preferencesEditable = settings.optBoolean("preferencesEditable")
+        memoryEnabled = if (settings.has("memory")) settings.optBoolean("memory") else null
         messageVersions = settings.optBoolean("messageVersions")
         attachmentsEnabled = settings.optBoolean("attachments")
         val array = settings.optJSONArray("models")
@@ -1031,6 +1035,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val reply = onConnection(target, generation) { it.post("/api/preferences", JSONObject().put("userPreferences", text)) }
         userPreferences = reply.optString("userPreferences")
+    }
+
+    suspend fun setMemory(enabled: Boolean) {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        val reply = onConnection(target, generation) { it.post("/api/memory", JSONObject().put("enabled", enabled)) }
+        memoryEnabled = reply.optBoolean("memory")
     }
 
     /** Local mode: whether this phone is shared, its devices and the pairings waiting. */

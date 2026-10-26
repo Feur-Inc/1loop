@@ -27,10 +27,11 @@ func projectMCPTools(cfg Config) []map[string]any {
 }
 
 // Claude Code keeps its own harness. Its MCP transport exposes the same
-// TODO store, browser tabs and terminals used by 1loop's other providers.
+// TODO store, memory, browser tabs and terminals used by 1loop's other
+// providers.
 // The server lives as long as one Claude Code run of 1loop and answers only
 // that run (a random token); it returns the path of its --mcp-config file.
-func startTodoMCP(ctx context.Context, cfg Config, emit emitter) (string, func(), error) {
+func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) (string, func(), error) {
 	state := cfg.Todo
 	browserTools, terminalTools, computerTools := cfg.Browser, cfg.Terminal, cfg.Computer
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
@@ -73,6 +74,9 @@ func startTodoMCP(ctx context.Context, cfg Config, emit emitter) (string, func()
 			if cfg.ProjectTools == nil && cfg.toolAvailable("update_todo") {
 				definitions = append(definitions, todoToolDefinition())
 			}
+			if cfg.ProjectTools == nil && cfg.toolAvailable("memory") {
+				definitions = append(definitions, memoryToolDefinition())
+			}
 			for _, group := range availableToolGroups(cfg) {
 				definitions = append(definitions, group.tools()...)
 			}
@@ -97,6 +101,20 @@ func startTodoMCP(ctx context.Context, cfg Config, emit emitter) (string, func()
 			}
 			if !cfg.toolAvailable(call.Name) {
 				response["error"] = map[string]any{"code": -32602, "message": "This tool is unavailable or its permission was revoked"}
+				break
+			}
+			if call.Name == "memory" {
+				// Claude Code lets the call through: it asks the user itself,
+				// with the change as a diff.
+				operation, cancel := context.WithCancel(ctx)
+				stop := context.AfterFunc(requestValue.Context(), cancel)
+				text, _, err := backend.editMemory(operation, string(call.Arguments), func() {}, emit)
+				stop()
+				cancel()
+				if err != nil {
+					text = err.Error()
+				}
+				response["result"] = map[string]any{"isError": err != nil, "content": []any{map[string]string{"type": "text", "text": text}}}
 				break
 			}
 			if call.Name != "update_todo" {

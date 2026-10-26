@@ -159,6 +159,121 @@ func (bridge *ChatGPTWeb) PrepareProject(ctx context.Context) (string, error) {
 	return "", fmt.Errorf("ChatGPT did not confirm creation of the 1loop project")
 }
 
+// project is the 1loop project's address: the one set, or the one found
+// (or created) in the account, once.
+func (bridge *ChatGPTWeb) project(ctx context.Context, configured string) (string, error) {
+	if webAddress(configured) {
+		return configured, nil
+	}
+	bridge.mu.Lock()
+	address := bridge.projectURL
+	bridge.mu.Unlock()
+	if address != "" {
+		return address, nil
+	}
+	address, err := bridge.PrepareProject(ctx)
+	if err != nil {
+		return "", err
+	}
+	bridge.mu.Lock()
+	bridge.projectURL = address
+	bridge.mu.Unlock()
+	return address, nil
+}
+
+// webHandoffNote is a handoff summary written by a ChatGPT (Web) model: the
+// request goes to a new chat of the 1loop project, without the connector,
+// and that chat is deleted once its answer is read.
+func (backend *App) webHandoffNote(ctx context.Context, cfg Config, prompt string) (string, error) {
+	bridge, err := backend.WebAccount(cfg)
+	if err != nil {
+		return "", err
+	}
+	release := bridge.Retain()
+	defer release()
+	if cfg.WebSettings == nil {
+		return "", fmt.Errorf("Finish ChatGPT (Web) setup in Settings → Connections")
+	}
+	project, err := bridge.project(ctx, cfg.WebSettings.ProjectURL)
+	if err != nil {
+		return "", err
+	}
+	select {
+	case backend.webSlots <- struct{}{}:
+		defer func() { <-backend.webSlots }()
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	tab := bridge.Page("handoff", project)
+	defer func() {
+		bridge.mu.Lock()
+		if bridge.pages["handoff"] == tab {
+			delete(bridge.pages, "handoff")
+			delete(bridge.chosen, tab)
+			delete(bridge.pageStreams, tab)
+		}
+		bridge.mu.Unlock()
+		tab.Close()
+	}()
+	if err := tab.Navigate(ctx, "navigate", project); err != nil {
+		return "", err
+	}
+	if err := webWait(ctx, tab, `!!document.querySelector('`+webComposer+`')`); err != nil {
+		return "", err
+	}
+	if err := bridge.choose(ctx, tab, cfg.Model, cfg.Effort); err != nil {
+		return "", err
+	}
+	streams, err := bridge.streams(ctx, tab)
+	if err != nil {
+		return "", err
+	}
+	var mu sync.Mutex
+	var last string // the latest message's whole text, final or not
+	finished := make(chan string, 1)
+	keep := func(_, text string, _ bool) {
+		mu.Lock()
+		last = text
+		mu.Unlock()
+	}
+	detach := streams.attach(webStreamSink{started: func() {}, text: keep, final: keep, toolCall: func() {},
+		done: func(conversation string) {
+			select {
+			case finished <- conversation:
+			default:
+			}
+		}})
+	defer detach()
+	if err := tab.Run(ctx, emulation.SetFocusEmulationEnabled(true)); err != nil {
+		return "", err
+	}
+	if err := webClearComposer(ctx, tab); err != nil {
+		return "", err
+	}
+	if err := tab.Run(ctx, input.InsertText("[1loop handoff summary: answer in plain text, without tools]\n"+prompt)); err != nil {
+		return "", err
+	}
+	if err := webSend(ctx, tab); err != nil {
+		return "", err
+	}
+	var conversation string
+	select {
+	case conversation = <-finished:
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+	mu.Lock()
+	note := webMarkdown(last)
+	mu.Unlock()
+	if conversation != "" { // the summary's chat is not the user's: it goes
+		address := strings.TrimSuffix(project, "/project") + "/c/" + conversation
+		if err := bridge.deleteConversation(ctx, address); err != nil {
+			platform.Devf("chatgpt-web", "the handoff summary chat %s was not deleted: %v", address, err)
+		}
+	}
+	return note, nil
+}
+
 func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Message, inbox Inbox, emit emitter) error {
 	began := time.Now()
 	ctx, cancelRun := context.WithCancel(ctx)
@@ -173,18 +288,8 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 		return fmt.Errorf("Finish ChatGPT (Web) setup in Settings → Connections")
 	}
 	settings := *cfg.WebSettings
-	if !webAddress(settings.ProjectURL) { // found, or created, in the account, once
-		bridge.mu.Lock()
-		settings.ProjectURL = bridge.projectURL
-		bridge.mu.Unlock()
-		if settings.ProjectURL == "" {
-			if settings.ProjectURL, err = bridge.PrepareProject(ctx); err != nil {
-				return err
-			}
-			bridge.mu.Lock()
-			bridge.projectURL = settings.ProjectURL
-			bridge.mu.Unlock()
-		}
+	if settings.ProjectURL, err = bridge.project(ctx, settings.ProjectURL); err != nil {
+		return err
 	}
 	cfg.WebSettings = &settings
 	if err = bridge.StartTunnel(*cfg.WebSettings); err != nil {

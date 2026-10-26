@@ -385,6 +385,9 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 	var note string
 	var err error
 	switch {
+	case summarizer.Provider == "chatgptweb":
+		note, err = backend.webHandoffNote(ctx, summarizer, handoffPrompt(budget, plan.To)+todoSnapshot(next)+
+			"\n\nConversation ("+levelName(choice.Level)+"):\n"+levelText(clean, choice.Level, ModelContextWindow(summarizer)))
 	case summarizer.Provider == "claudecode":
 		input := ""
 		if summarizer.Session == "" {

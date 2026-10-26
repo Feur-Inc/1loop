@@ -88,6 +88,7 @@ def sources(cache, working):
 def build(ndk, output):
     fingerprint = hashlib.sha256(SCRIPT.read_bytes())
     fingerprint.update((SCRIPT.parent / "guard.c").read_bytes())
+    fingerprint.update((SCRIPT.parent / "arc4random.c").read_bytes())
     for patch in sorted(PATCHES.glob("*.patch")):
         fingerprint.update(patch.read_bytes())
     fingerprint = fingerprint.hexdigest()
@@ -121,18 +122,21 @@ def build(ndk, output):
         "LDFLAGS=-L" + str(libraries) + " -ltalloc -Wl,-z,noexecstack",
         "PROOT_UNBUNDLE_LOADER=/oneloop", "HAS_LOADER_32BIT=",
     )
+    # The static helpers take this arc4random, not libc's (see the file).
+    arc4random = working / "arc4random.o"
+    run(compiler / "aarch64-linux-android31-clang", "-Wall", "-Wextra", "-Werror", "-O2", "-c",
+        SCRIPT.parent / "arc4random.c", "-o", arc4random)
     abwrap_build = working / "abwrap-build"
     run(
         "cmake", "-S", abwrap, "-B", abwrap_build,
         "-DBUILD_TESTING=OFF", "-DCMAKE_BUILD_TYPE=Release",
         "-DCMAKE_TOOLCHAIN_FILE=" + str(ndk / "build/cmake/android.toolchain.cmake"),
         "-DANDROID_ABI=arm64-v8a", "-DANDROID_PLATFORM=android-31",
+        "-DCMAKE_EXE_LINKER_FLAGS=-static " + str(arc4random),
     )
     run("cmake", "--build", abwrap_build, "-j2")
-    # The guard and abwrap use the phone's libc: a static NDK libc requires
-    # MADV_WIPEONFORK (Linux 4.14) and aborts on older kernels (Pixel 3a, 4.9).
-    run(compiler / "aarch64-linux-android31-clang", "-Wall", "-Wextra", "-Werror", "-O2",
-        SCRIPT.parent / "guard.c", "-o", libraries / "libguard.so")
+    run(compiler / "aarch64-linux-android31-clang", "-Wall", "-Wextra", "-Werror", "-O2", "-static",
+        SCRIPT.parent / "guard.c", arc4random, "-o", libraries / "libguard.so")
     for source, name in (
         (proot / "src/proot", "libproot.so"),
         (proot / "src/loader/loader", "libloader.so"),

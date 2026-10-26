@@ -30,6 +30,7 @@ val buildLocalNative = tasks.register<LocalRuntimeBuild>("buildLocalNative") {
     outputDirectory.set(localRuntimeDirectory.map { it.dir("jniLibs") })
     inputs.file(rootProject.file("runtime/build.py"))
     inputs.file(rootProject.file("runtime/guard.c"))
+    inputs.file(rootProject.file("runtime/arc4random.c"))
     inputs.dir(rootProject.file("runtime/patches"))
     val sdk = providers.environmentVariable("ANDROID_HOME").orElse("${System.getProperty("user.home")}/Android/Sdk")
     val ndk = providers.environmentVariable("ANDROID_NDK_HOME").orElse(sdk.map { "$it/ndk/30.0.16248370" })

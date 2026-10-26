@@ -821,7 +821,7 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 		if reason := cacheStale(cfg, time.Now()); dynamic && reason != "" && !coldChecked {
 			coldChecked = true
 			platform.Devf("context", "cache check: %s, model=%s tokens=%d", reason, cfg.Model, usage())
-			if contextAt(cfg, usage(), .4) {
+			if contextAtNatural(cfg, usage(), .4) {
 				compact(0, reason, "", false)
 			} else if contextAt(cfg, usage(), .3) {
 				kept, removed := lightenHistory(ctx, cfg, messages[1:])
@@ -835,10 +835,17 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 				}
 			}
 		}
-		if contextAt(cfg, usage(), limit) {
-			compact(4, limitReason, "", false)
+		atLimit := contextAt(cfg, usage(), limit)
+		if CompactLimit(cfg) > 0 {
+			atLimit = contextAtNatural(cfg, usage(), limit)
 		}
-		if dynamic && contextAt(cfg, usage(), .8) && !checkpointAsked {
+		if atLimit {
+			compact(4, limitReason, "", false)
+			if target := CompactLimit(cfg); target > 0 && usage() >= target {
+				return fmt.Errorf("Context is above the configured compaction target (%d tokens) and could not be reduced. Adjust the target or start a new conversation.", target)
+			}
+		}
+		if dynamic && contextAtNatural(cfg, usage(), .8) && !checkpointAsked {
 			checkpointAsked = true
 			messages = append(messages, Message{
 				Role:     "user",
@@ -889,7 +896,7 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 			}
 			// Compaction is still part of this run. The queued input only starts
 			// after it finishes; Done must not precede the compaction.
-			if dynamic && contextAt(cfg, usage(), .4) {
+			if dynamic && contextAtNatural(cfg, usage(), .4) {
 				compact(1, "prompt completed", "", false)
 			}
 			if ctx.Err() != nil {
@@ -965,9 +972,9 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 		if !dynamic {
 			continue
 		}
-		if todoCompleted(before, cfg.Todo.Snapshot()) && contextAt(cfg, usage(), .7) {
+		if todoCompleted(before, cfg.Todo.Snapshot()) && contextAtNatural(cfg, usage(), .7) {
 			compact(2, "TODO task completed", checkpoint, false)
-		} else if checkpoint != "" && contextAt(cfg, usage(), .8) {
+		} else if checkpoint != "" && contextAtNatural(cfg, usage(), .8) {
 			compact(3, "model checkpoint", checkpoint, false)
 		}
 	}

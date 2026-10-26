@@ -14,12 +14,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
@@ -94,11 +97,62 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                     }
                 }
             }
+            ModelCompactionSection(app)
             UpdatesSection(app)
             BrowserDataSection(app)
             HooksSection(app)
         }
     }
+}
+
+@Composable
+private fun ModelCompactionSection(app: RemoteApp) {
+    val scope = rememberCoroutineScope()
+    var selected by remember(app.server) { mutableStateOf("") }
+    var expanded by remember { mutableStateOf(false) }
+    var search by remember { mutableStateOf("") }
+    var notice by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    val model = app.models.firstOrNull { it.label == selected } ?: app.chatModel
+    Text("Model context", style = Type.headline)
+    Text("When 1loop compacts a conversation, for each model: choose a model, then its target in tokens.", style = Type.small)
+    Box {
+        Pill(model?.name ?: "Choose a model", enabled = app.models.isNotEmpty()) { expanded = true }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            Field(search, { search = it }, "Search models…", KeyboardType.Text, Modifier.width(260.dp))
+            app.models.filter { "${it.name} ${it.detail}".contains(search.trim(), ignoreCase = true) }.take(80).forEach { choice ->
+                DropdownMenuItem(text = { Text("${choice.name} · ${choice.detail}") }, onClick = {
+                    selected = choice.label
+                    expanded = false
+                    search = ""
+                    notice = null
+                })
+            }
+        }
+    }
+    if (model != null && model.compactSupported) {
+        var value by remember(model.label, model.compactAt) { mutableStateOf(model.compactAt.takeIf { it > 0 }?.toString().orEmpty()) }
+        val placeholder = if (model.compactDefault > 0) "Default · " + "%,d".format(java.util.Locale.US, model.compactDefault) else "Default · the model's window"
+        Field(value, { value = it; notice = null }, placeholder, KeyboardType.Number)
+        Text(model.compactHelp.ifEmpty { "Optional, for this model only. Leave it empty for the default." }, style = Type.small)
+        Pill(if (saving) "Saving…" else "Save context target", enabled = app.connected && !saving) {
+            val limit = value.trim().toIntOrNull()
+            if (value.isNotBlank() && (limit == null || limit !in 1..1000000)) {
+                notice = "Enter 1–1,000,000 tokens or leave the field empty."
+            } else {
+                saving = true
+                scope.launch {
+                    try { app.setModelCompaction(model.label, limit ?: 0); notice = "Saved" }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { notice = failure.message ?: "Could not save the context target." }
+                    finally { saving = false }
+                }
+            }
+        }
+    } else if (model != null) {
+        Text("This connection manages its own context, or the connected target needs an update.", style = Type.small)
+    }
+    notice?.let { Text(it, style = Type.small) }
 }
 
 // The agent's browser keeps its logins between sessions: this erases them,

@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -1129,6 +1130,21 @@ func (ui *desktopUI) modelPreferencesEditor(conn *agent.Connection, model agent.
 	preferences := conn.ModelOptions[model.ID]
 	routing := jsonEntry(preferences.Provider)
 	parameters := jsonEntry(preferences.Parameters)
+	compactAt := widget.NewEntry()
+	compactConfig := conn.Config("")
+	compactConfig.Model = model.ID
+	if target, _ := agent.CompactDefault(compactConfig); target > 0 {
+		compactAt.SetPlaceHolder("Default · " + agent.Thousands(target))
+	} else {
+		compactAt.SetPlaceHolder("Default · the model's window")
+	}
+	if preferences.CompactAt > 0 {
+		compactAt.SetText(strconv.Itoa(preferences.CompactAt))
+	}
+	if conn.Provider == "chatgptweb" {
+		compactAt.Disable()
+		compactAt.SetPlaceHolder("Managed by ChatGPT Web")
+	}
 	status := plainFlow("", 13, colMuted)
 	say := func(text string) {
 		status.spans, status.cut = []span{{text: text}}, nil
@@ -1192,11 +1208,22 @@ func (ui *desktopUI) modelPreferencesEditor(conn *agent.Connection, model agent.
 			settingRow("Allow fallback providers", "", fallbacks),
 			settingStack("Routing overrides (JSON)", "", routing)))
 	}
+	page.Add(sectionTitle("Context"))
+	page.Add(card(settingStack("Compact at (tokens)", agent.CompactHelp(compactConfig), compactAt)))
 	page.Add(sectionTitle("Parameters"))
 	page.Add(card(settingStack("Request parameter overrides (JSON)",
 		"They replace the matching defaults of the connection. Save the connection afterwards to apply them.", parameters)))
 	page.Add(spacer(0, 16))
 	save := newRow("Save model settings", nil, stylePrimary, func() {
+		compact := 0
+		if value := strings.TrimSpace(compactAt.Text); value != "" {
+			var err error
+			compact, err = strconv.Atoi(value)
+			if err != nil || compact < 1 || compact > 1000000 || conn.Provider == "claudecode" && compact < 100000 {
+				say("Enter a token count from 1 to 1,000,000 (100,000 minimum for Claude Code), or leave it empty.")
+				return
+			}
+		}
 		params, err := requestParameters(parameters.Text)
 		if err != nil {
 			say(err.Error())
@@ -1212,7 +1239,7 @@ func (ui *desktopUI) modelPreferencesEditor(conn *agent.Connection, model agent.
 		if conn.ModelOptions == nil {
 			conn.ModelOptions = map[string]agent.ModelPreferences{}
 		}
-		conn.ModelOptions[model.ID] = agent.ModelPreferences{Provider: route, Parameters: params}
+		conn.ModelOptions[model.ID] = agent.ModelPreferences{Provider: route, Parameters: params, CompactAt: compact}
 		settings.back()
 	})
 	settings.push(settingsFrame{content: page, actions: []fyne.CanvasObject{

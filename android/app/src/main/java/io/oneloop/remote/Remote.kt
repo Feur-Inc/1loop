@@ -108,6 +108,7 @@ data class ServiceTier(val id: String, val name: String, val description: String
 data class ModelOption(
     val label: String, val name: String, val detail: String, val account: String, val efforts: List<Effort>,
     val tiers: List<ServiceTier> = emptyList(), val defaultTier: String = "", val family: String = "",
+    val compactAt: Int = 0, val compactDefault: Int = 0, val compactSupported: Boolean = false, val compactHelp: String = "",
 )
 
 /**
@@ -800,6 +801,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                     tiers!!.getJSONObject(it).let { tier -> ServiceTier(tier.optString("id"), tier.optString("name"), tier.optString("description")) }
                 },
                 model.optString("defaultServiceTier"), model.optString("family"),
+                model.optInt("compactAt"), model.optInt("compactDefault"), model.optBoolean("compactSupported"), model.optString("compactHelp"),
             ))
         }
         val accountArray = settings.optJSONArray("accounts")
@@ -1058,6 +1060,12 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val reply = onConnection(target, generation) { it.post("/api/memory", JSONObject().put("enabled", enabled)) }
         memoryEnabled = reply.optBoolean("memory")
+    }
+
+    suspend fun setModelCompaction(label: String, limit: Int) {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        onConnection(target, generation) { it.post("/api/model/compaction", JSONObject().put("label", label).put("limit", limit)) }
     }
 
     /** Local mode: whether this phone is shared, its devices and the pairings waiting. */

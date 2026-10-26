@@ -135,6 +135,10 @@ type Model struct {
 	// The speeds the plan offers (none on most), and the one used unless told.
 	ServiceTiers       []agent.ServiceTier `json:"serviceTiers,omitempty"`
 	DefaultServiceTier string              `json:"defaultServiceTier,omitempty"`
+	CompactAt          int                 `json:"compactAt"`
+	CompactDefault     int                 `json:"compactDefault"`
+	CompactSupported   bool                `json:"compactSupported"`
+	CompactHelp        string              `json:"compactHelp,omitempty"`
 }
 
 // Account is a connection of the model picker; problem says why its

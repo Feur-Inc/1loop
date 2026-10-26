@@ -95,6 +95,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/preferences":                        server.setPreferences,
 		"POST /api/memory":                             server.setMemory,
 		"POST /api/model":                              server.setModel,
+		"POST /api/model/compaction":                   server.setModelCompaction,
 		"POST /api/approval-mode":                      server.setApprovalMode,
 		"GET /api/chats/{id}/panel":                    server.panelTabs,
 		"GET /api/chats/{id}/panel/{key}":              server.panelTab,
@@ -430,6 +431,42 @@ func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 	}
 	server.backend.Approve(args.ID, args.Allow)
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (server *headlessServer) setModelCompaction(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		Label string `json:"label"`
+		Limit int    `json:"limit"`
+	}
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	choice, ok := server.choices[args.Label]
+	if !ok {
+		core.Fail(w, 400, "Unknown model")
+		return
+	}
+	for i := range server.connections {
+		connection := &server.connections[i]
+		if connection.ID != choice.Connection.ID {
+			continue
+		}
+		if err := connection.SetCompactLimit(choice.ID, args.Limit); err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		if err := server.saveSettingsLocked(); err != nil {
+			core.Fail(w, 500, "Unable to save context settings")
+			return
+		}
+		server.broadcastLocked("settings", server.settingsLocked())
+		core.WriteJSON(w, 200, map[string]bool{"ok": true})
+		return
+	}
+	core.Fail(w, 404, "Connection not found")
 }
 
 func (server *headlessServer) setModel(w http.ResponseWriter, r *http.Request) {

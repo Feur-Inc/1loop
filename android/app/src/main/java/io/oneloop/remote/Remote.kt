@@ -134,6 +134,7 @@ data class Meta(
     val model: String, val effort: String, val used: Int, val window: Int,
     val todo: List<Task>, val tier: String = "", val contextStatus: String = "",
     val background: List<BackgroundTask> = emptyList(),
+    val provider: String = "", // the chat's account type
 ) {
     companion object {
         fun from(o: JSONObject) = Meta(
@@ -151,6 +152,7 @@ data class Meta(
             o.optJSONArray("tasks").let { array ->
                 (0 until (array?.length() ?: 0)).map { i -> BackgroundTask.from(array!!.getJSONObject(i)) }
             },
+            o.optString("provider"),
         )
     }
 }
@@ -269,6 +271,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var firstItem by mutableStateOf(0)
     private var loadingEarlier = false
     var meta by mutableStateOf<Meta?>(null)
+    /** The ChatGPT (Web) page of the chat shown on a local phone, as the engine last answered (see ChatGPTWebLease). */
+    var chatgptPage by mutableStateOf<JSONObject?>(null)
     val approvals = mutableStateMapOf<String, Approval>() // by chat
     val questions = mutableStateMapOf<String, Questions>() // by chat
     val questionsAside = mutableStateListOf<String>() // closed unanswered: reopened from the composer

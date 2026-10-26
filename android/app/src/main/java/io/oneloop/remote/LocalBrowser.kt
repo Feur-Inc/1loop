@@ -173,7 +173,7 @@ class LocalBrowser(private val context: Context, private val profile: String? = 
 
         /** Before the view loads anything: its cookies and storage are the profile's. */
         fun usingProfile(view: WebView, profile: String) {
-            check(profilesSupported()) { "ChatGPT (Web) needs a newer Android System WebView, with separate browser profiles." }
+            if (!WebViewFeature.isFeatureSupported(WebViewFeature.MULTI_PROFILE)) error("ChatGPT (Web) needs a newer Android System WebView, with separate browser profiles.")
             androidx.webkit.ProfileStore.getInstance().getOrCreateProfile(profile)
             WebViewCompat.setProfile(view, profile)
         }

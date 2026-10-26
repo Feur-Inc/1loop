@@ -85,6 +85,8 @@ type Meta struct {
 	Todo   []Todo `json:"todo"` // the chat's task list
 	// Its background commands; POST /api/chats/{id}/tasks/{task}/stop ends one.
 	Tasks []agent.BackgroundTaskInfo `json:"tasks"`
+	// Its account's type: a local phone keeps a ChatGPT (Web) chat's page open.
+	Provider string `json:"provider,omitempty"`
 }
 
 // Page is the part of a chat's items GET /api/chats/{id} returns: all of

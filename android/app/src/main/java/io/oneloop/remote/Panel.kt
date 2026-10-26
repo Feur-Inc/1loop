@@ -603,34 +603,48 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
 }
 
 // ChatGPT (Web): the chat's ChatGPT page, as 1loop drives it in this
-// phone's browser for the account. It stays open while shown (a lease the
-// engine ends once this view stops renewing it), and is locked: a touch
-// can interrupt the automated conversation, so taking control is confirmed.
+// phone's browser for the account, kept open while the chat is shown (as on
+// the desktop): ChatGPTWebLease renews it every few seconds, the engine
+// closes it when the app stops, and pauses it after a while without a turn.
 @Composable
-private fun ChatGPTWebView(app: RemoteApp, chat: String) {
-    val context = LocalContext.current
-    var page by remember(chat) { mutableStateOf<JSONObject?>(null) }
-    var profile by remember(chat) { mutableStateOf("") }
-    var problem by remember(chat) { mutableStateOf<String?>(null) }
-    var view by remember(chat) { mutableStateOf<android.webkit.WebView?>(null) }
-    var locked by remember(chat) { mutableStateOf(true) }
-    var asking by remember { mutableStateOf(false) }
-    LaunchedEffect(chat) {
+fun ChatGPTWebLease(app: RemoteApp) {
+    val chat = app.current
+    val web = app.server?.localPhone == true && chat != null && app.meta?.chat == chat && app.meta?.provider == "chatgptweb"
+    LaunchedEffect(chat, web) {
+        app.chatgptPage = null
+        if (!web || chat == null) return@LaunchedEffect
+        var open = true // the chat was just opened: a paused page opens again
         while (true) {
             val target = app.server
             if (target != null) try {
-                val reply = withContext(Dispatchers.IO) { Api(target).post("/api/local/chats/${android.net.Uri.encode(chat)}/chatgpt-web", JSONObject()) }
-                page = reply.optJSONObject("page")
-                profile = reply.optString("profile")
-                problem = null
+                val reply = withContext(Dispatchers.IO) {
+                    Api(target).post("/api/local/chats/${android.net.Uri.encode(chat)}/chatgpt-web", JSONObject().put("open", open))
+                }
+                app.chatgptPage = reply.put("chat", chat)
+                open = false
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
-                problem = e.message
+                app.chatgptPage = JSONObject().put("chat", chat).put("problem", e.message ?: "ChatGPT page unavailable.")
             }
             delay(10_000)
         }
     }
+}
+
+// The panel shows that page, locked: a touch can interrupt the automated
+// conversation, so taking control is confirmed.
+@Composable
+private fun ChatGPTWebView(app: RemoteApp, chat: String) {
+    val context = LocalContext.current
+    val reply = app.chatgptPage?.takeIf { it.optString("chat") == chat }
+    val page = reply?.optJSONObject("page")
+    val profile = reply?.optString("profile").orEmpty()
+    val problem = reply?.optString("problem")?.takeIf { it.isNotEmpty() }
+    val paused = reply?.optBoolean("paused") == true
+    var view by remember(chat) { mutableStateOf<android.webkit.WebView?>(null) }
+    var locked by remember(chat) { mutableStateOf(true) }
+    var asking by remember { mutableStateOf(false) }
     val id = page?.optString("id").orEmpty()
     LaunchedEffect(id, profile) {
         view = null
@@ -654,7 +668,8 @@ private fun ChatGPTWebView(app: RemoteApp, chat: String) {
             val shown = view
             val viewport = page?.let { Viewport(it.optInt("width"), it.optInt("height"), false, false, it.optDouble("pixelRatio", 1.0), true) }
             when {
-                problem != null && shown == null -> Text(problem!!, style = Type.small.copy(color = Palette.danger), modifier = Modifier.padding(16.dp))
+                paused -> Text("Paused after a while without a message, to save the phone's resources. It opens again with your next message, or when you open this chat again.", style = Type.small, modifier = Modifier.padding(16.dp))
+                problem != null && shown == null -> Text(problem, style = Type.small.copy(color = Palette.danger), modifier = Modifier.padding(16.dp))
                 shown == null || viewport == null || viewport.width <= 0 || viewport.height <= 0 -> WorkRing("wait", 34.dp, Modifier.align(Alignment.Center))
                 else -> Box(Modifier.aspectRatio(viewport.width / viewport.height.toFloat())) {
                     NativeBrowserSurface(shown, viewport, locked) {}

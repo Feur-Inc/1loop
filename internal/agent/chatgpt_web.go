@@ -92,6 +92,7 @@ func (backend *App) WebAccount(cfg Config) (*ChatGPTWeb, error) {
 	account.engine.Profile = filepath.Join(dir, name) // on the phone, only beside its models and tools
 	if backend.webNative != nil {
 		account.engine.Native = backend.webNative(profile)
+		account.engine.Language = "en-US,en" // the page driver reads ChatGPT's English labels
 		account.phone = true
 	}
 	backend.webAccounts[profile] = account

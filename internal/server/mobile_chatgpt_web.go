@@ -60,9 +60,11 @@ func (server *headlessServer) localWebTunnel(w http.ResponseWriter, r *http.Requ
 	core.WriteJSON(w, 200, map[string]string{"tunnel": bridge.TunnelStatus()})
 }
 
-// webLease keeps one chat's ChatGPT page open while the phone shows it:
-// the panel renews it every few seconds, and an app that stops renewing
-// (closed, killed) lets the page close.
+// webLease keeps one chat's ChatGPT page open while the phone shows the
+// chat, as the desktop's panel does: the app renews it every few seconds,
+// and an app that stops renewing (another chat, closed, killed) lets the
+// page close. It is a view: after a while without a turn the page still
+// closes (agent.webIdle), until the chat is opened again or a turn starts.
 type webLease struct {
 	key     string
 	bridge  *agent.ChatGPTWeb
@@ -73,6 +75,10 @@ type webLease struct {
 const webLeaseTime = 30 * time.Second
 
 func (server *headlessServer) localWebPage(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		Open bool `json:"open"` // the chat was just opened: a paused page opens again
+	}
+	_ = core.ReadJSON(r, &args)
 	server.mu.Lock()
 	chat := server.chatLocked(r.PathValue("id"))
 	if chat == nil || chat.Config.Provider != "chatgptweb" {
@@ -107,7 +113,7 @@ func (server *headlessServer) localWebPage(w http.ResponseWriter, r *http.Reques
 		replaced, lease = lease, nil
 	}
 	if lease == nil {
-		lease = &webLease{key: key, bridge: bridge, release: bridge.Retain()}
+		lease = &webLease{key: key, bridge: bridge, release: bridge.RetainView()}
 		server.webLeases[chat.ID] = lease
 		var expire func()
 		expire = func() {
@@ -131,6 +137,10 @@ func (server *headlessServer) localWebPage(w http.ResponseWriter, r *http.Reques
 	server.mu.Unlock()
 	if replaced != nil {
 		replaced.release() // after the new one holds the account: its browser keeps running
+	}
+	if bridge.Paused() && !args.Open {
+		core.WriteJSON(w, 200, map[string]any{"paused": true})
+		return
 	}
 	page := bridge.Page(key, address)
 	core.WriteJSON(w, 200, map[string]any{"page": page.Snapshot(), "profile": "chatgpt-" + cfg.AuthProfile})

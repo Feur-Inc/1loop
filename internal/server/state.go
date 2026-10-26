@@ -448,6 +448,7 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		Todo:    []remoteapi.Todo{},
 		Tasks:   append([]agent.BackgroundTaskInfo{}, chat.tasks.Snapshot()...),
 	}
+	meta.Provider = chat.Config.Provider
 	for _, m := range chat.queue {
 		meta.Queue = append(meta.Queue, m.Content)
 	}

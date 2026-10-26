@@ -60,6 +60,7 @@ type browserLog struct {
 type Engine struct {
 	Native    NativeHost
 	Profile   string // a separate persistent profile, when this is not Browser Use
+	Language  string // native pages' requests and navigator.language (WebView follows the phone's)
 	ctx       context.Context
 	Cancel    func()
 	mu        sync.Mutex
@@ -385,6 +386,14 @@ func (browser *Page) Start() {
 		actions := []chromedp.Action{runtime.Enable(), log.Enable(), network.Enable()}
 		if native == nil {
 			actions = append(actions, emulation.SetUserAgentOverride(browser.Session.userAgent).WithUserAgentMetadata(browser.Session.metadata), browserMetrics(info.Width, info.Height, info.PixelRatio, info.Mobile))
+		} else if language := browser.Session.engine.Language; language != "" {
+			actions = append(actions, chromedp.ActionFunc(func(ctx context.Context) error {
+				var agent string
+				if err := chromedp.Evaluate(`navigator.userAgent`, &agent).Do(ctx); err != nil {
+					return err
+				}
+				return emulation.SetUserAgentOverride(agent).WithAcceptLanguage(language).Do(ctx)
+			}))
 		}
 		err = chromedp.Run(ctx, actions...)
 	}

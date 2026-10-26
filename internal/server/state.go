@@ -65,6 +65,7 @@ type serverSettings struct {
 	ApprovalMode      string             `json:"approvalMode"`
 	ClassicCompaction bool               `json:"classicCompaction"`
 	MemoryOff         bool               `json:"memoryOff,omitempty"`
+	AutoResume        *agent.AutoResume  `json:"autoResume,omitempty"`
 }
 
 type headlessServer struct {
@@ -83,6 +84,7 @@ type headlessServer struct {
 	instructions, approvalMode string
 	classic                    bool
 	memoryOff                  bool                   // the agent's memory tool turned off
+	autoResume                 *agent.AutoResume      // what a rate limit does to a run, for every chat
 	panelHomes                 map[string]*serverChat // project panels before the first prompt; not persisted
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
@@ -170,6 +172,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		server.instructions = settings.UserInstructions
 		server.classic = settings.ClassicCompaction
 		server.memoryOff = settings.MemoryOff
+		server.autoResume = settings.AutoResume
 		if settings.ApprovalMode != "" {
 			server.approvalMode = settings.ApprovalMode
 		}
@@ -389,7 +392,7 @@ func (server *headlessServer) labelLocked(cfg agent.Config) string {
 func (server *headlessServer) settingsLocked() map[string]any {
 	models := []remoteapi.Model{}
 	for label, choice := range server.choices {
-		model := remoteapi.Model{Label: label, Name: choice.Display(), Detail: choice.Connection.Name, Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
+		model := remoteapi.Model{ID: choice.ID, Label: label, Name: choice.Display(), Detail: choice.Connection.Name, Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
 		for _, effort := range choice.Efforts {
 			model.Efforts = append(model.Efforts, remoteapi.Effort{Value: effort, Label: agent.EffortLabel(effort)})
 		}
@@ -411,6 +414,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 		}
 	}
 	return map[string]any{
+		"autoResume":          server.autoResume,
 		"userPreferences":     server.instructions,
 		"preferencesEditable": true,
 		"memory":              !server.memoryOff,
@@ -680,6 +684,33 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 		defer server.mu.Unlock()
 		return append([]agent.ChatItem{}, chat.Items...), ctx.Err()
 	}
+	cfg.AutoResume = server.autoResume
+	cfg.ResumeModel = func(ctx context.Context, step agent.ResumeStep) (agent.Config, error) {
+		server.mu.Lock()
+		defer server.mu.Unlock()
+		if ctx.Err() != nil {
+			return agent.Config{}, ctx.Err()
+		}
+		for _, choice := range server.choices {
+			if choice.Connection.ID == step.ConnectionID && choice.ID == step.Model && choice.Connection.Enabled {
+				return agent.ResumeConfig(server.runConfigLocked(chat, capabilities), choice, server.keys[choice.Connection.ID], step.Effort), nil
+			}
+		}
+		return agent.Config{}, fmt.Errorf("the selected model is no longer available")
+	}
+	cfg.ResumeSwitched = func(ctx context.Context, next agent.Config) error {
+		server.mu.Lock()
+		defer server.mu.Unlock()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		identity := agent.IdentityOf(next)
+		chat.Config = agent.ResumeStoredConfig(next)
+		chat.Config.RanWith = &identity
+		server.changedLocked(chat, -1)
+		server.scheduleSaveLocked()
+		return nil
+	}
 	return cfg
 }
 
@@ -870,5 +901,6 @@ func (server *headlessServer) saveSettingsLocked() error {
 		ApprovalMode:      server.approvalMode,
 		ClassicCompaction: server.classic,
 		MemoryOff:         server.memoryOff,
+		AutoResume:        server.autoResume,
 	})
 }

@@ -126,6 +126,7 @@ type Effort struct {
 }
 
 type Model struct {
+	ID      string   `json:"id,omitempty"`
 	Label   string   `json:"label"` // unique key, as in the desktop picker
 	Name    string   `json:"name"`
 	Detail  string   `json:"detail"`

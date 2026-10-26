@@ -169,6 +169,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/projects", server.authorized(server.addProject))
 	mux.HandleFunc("POST /api/projects/{action}", server.authorized(server.changeProject))
 	mux.HandleFunc("POST /api/model", server.authorized(server.setModel))
+	mux.HandleFunc("POST /api/auto-resume", server.authorized(server.setAutoResume))
 	mux.HandleFunc("GET /api/limits", server.authorized(server.limits))
 	mux.HandleFunc("POST /api/approval-mode", server.authorized(server.setApprovalMode))
 	mux.HandleFunc("POST /api/chats/{id}/panel", server.authorized(server.editPanel))
@@ -928,7 +929,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 	models := []remoteapi.Model{}
 	for _, label := range ui.model.Options {
 		choice := ui.choices[label]
-		remoteModelValue := remoteapi.Model{Label: label, Name: choice.Display(), Detail: ui.model.Details[label],
+		remoteModelValue := remoteapi.Model{ID: choice.ID, Label: label, Name: choice.Display(), Detail: ui.model.Details[label],
 			Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
 		for _, e := range choice.Efforts {
 			remoteModelValue.Efforts = append(remoteModelValue.Efforts, remoteapi.Effort{Value: e, Label: agent.EffortLabel(e), About: modelEffortAbout(e)})
@@ -941,7 +942,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 			accounts = append(accounts, remoteapi.Account{ID: conn.ID, Name: conn.Name, Provider: conn.Provider, Kind: agent.ProviderName(conn.Provider), Problem: ui.modelUnavailable[conn.ID]})
 		}
 	}
-	return map[string]any{"userPreferences": ui.userInstructions, "preferencesEditable": true, "memory": !ui.memoryOff, "messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
+	return map[string]any{"autoResume": ui.autoResume, "userPreferences": ui.userInstructions, "preferencesEditable": true, "memory": !ui.memoryOff, "messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
 		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": agent.AutoModeOffered(ui.cfg), "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.cfg)}
 }
 
@@ -1001,6 +1002,47 @@ func (server *remoteServer) limits(writer http.ResponseWriter, req *http.Request
 		}
 	})
 	core.WriteJSON(writer, http.StatusOK, map[string]any{"accounts": out})
+}
+
+func (server *remoteServer) setAutoResume(writer http.ResponseWriter, req *http.Request) {
+	var body struct {
+		Policy agent.AutoResume `json:"policy"`
+	}
+	if core.ReadJSON(req, &body) != nil {
+		core.Fail(writer, 400, "Invalid request")
+		return
+	}
+	if err := body.Policy.Validate(); err != nil {
+		core.Fail(writer, 400, err.Error())
+		return
+	}
+	problem := ""
+	server.onUI(func() {
+		for _, step := range body.Policy.Steps {
+			if step.Action != "switch" {
+				continue
+			}
+			found := false
+			for _, choice := range server.ui.choices {
+				if choice.Connection.ID == step.ConnectionID && choice.ID == step.Model && choice.Connection.Enabled {
+					found = true
+					break
+				}
+			}
+			if !found {
+				problem = "Resume model is unavailable"
+				return
+			}
+		}
+		server.ui.autoResume = &body.Policy
+		server.ui.save()
+		server.settingsChanged()
+	})
+	if problem != "" {
+		core.Fail(writer, 400, problem)
+		return
+	}
+	core.WriteJSON(writer, 200, map[string]bool{"ok": true})
 }
 
 func (server *remoteServer) setModel(writer http.ResponseWriter, req *http.Request) {

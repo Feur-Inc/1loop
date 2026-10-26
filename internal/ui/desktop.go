@@ -166,9 +166,10 @@ type desktopUI struct {
 	panel             *toolPanel
 	split             *fyne.Container
 	panelToggle       *tapRow
-	panelWidth        float32 // last width chosen by dragging, independent of window size
-	classicCompaction bool    // settings: dynamic context compaction turned off
-	memoryOff         bool    // settings: the agent's memory tool turned off
+	panelWidth        float32           // last width chosen by dragging, independent of window size
+	classicCompaction bool              // settings: dynamic context compaction turned off
+	memoryOff         bool              // settings: the agent's memory tool turned off
+	autoResume        *agent.AutoResume // settings: what a rate limit does to a run
 	tips              *tipLayer
 
 	// Window and sidebar
@@ -1193,6 +1194,37 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	}
 	cfg.ApprovalMode = agent.ApprovalFor(ui.approvalMode, cfg)
 	cfg.ClassicCompaction = ui.classicCompaction
+	cfg.AutoResume = ui.autoResume
+	cfg.ResumeModel = func(ctx context.Context, step agent.ResumeStep) (next agent.Config, err error) {
+		ui.onUI(ctx, func() {
+			err = fmt.Errorf("the selected model is no longer available")
+			for _, choice := range ui.choices {
+				if choice.Connection.ID == step.ConnectionID && choice.ID == step.Model && choice.Connection.Enabled {
+					next = agent.ResumeConfig(ui.runConfig(chat), choice, ui.keys[choice.Connection.ID], step.Effort)
+					err = nil
+					return
+				}
+			}
+		})
+		if ctx.Err() != nil {
+			return next, ctx.Err()
+		}
+		return next, err
+	}
+	cfg.ResumeSwitched = func(ctx context.Context, next agent.Config) error {
+		ui.onUI(ctx, func() {
+			identity := agent.IdentityOf(next)
+			chat.Config = agent.ResumeStoredConfig(next)
+			chat.Config.RanWith = &identity
+			if chat == ui.current {
+				ui.cfg = chat.Config
+				ui.showChatModel()
+			}
+			ui.save()
+			ui.remote.metaChanged(chat)
+		})
+		return ctx.Err()
+	}
 	return cfg
 }
 
@@ -1405,8 +1437,9 @@ type savedState struct {
 	ApprovalMode     string                   `json:"approvalMode"`
 	PanelWidth       float32                  `json:"panelWidth,omitempty"`
 	// Saved as its opposite so that a state file without it means dynamic.
-	ClassicCompaction bool `json:"classicCompaction,omitempty"`
-	MemoryOff         bool `json:"memoryOff,omitempty"`
+	ClassicCompaction bool              `json:"classicCompaction,omitempty"`
+	MemoryOff         bool              `json:"memoryOff,omitempty"`
+	AutoResume        *agent.AutoResume `json:"autoResume,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1447,6 +1480,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.panelWidth,
 		ui.classicCompaction,
 		ui.memoryOff,
+		ui.autoResume,
 	})
 	fields := map[string]json.RawMessage{}
 	if err == nil {
@@ -1545,6 +1579,7 @@ func (ui *desktopUI) load() {
 	ui.approvalMode = state.ApprovalMode
 	ui.classicCompaction = state.ClassicCompaction
 	ui.memoryOff = state.MemoryOff
+	ui.autoResume = state.AutoResume
 	for _, chat := range state.Chats {
 		if chat == nil {
 			continue

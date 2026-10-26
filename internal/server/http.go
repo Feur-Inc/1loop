@@ -95,6 +95,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/preferences":                        server.setPreferences,
 		"POST /api/memory":                             server.setMemory,
 		"POST /api/model":                              server.setModel,
+		"POST /api/auto-resume":                        server.setAutoResume,
 		"POST /api/approval-mode":                      server.setApprovalMode,
 		"GET /api/chats/{id}/panel":                    server.panelTabs,
 		"GET /api/chats/{id}/panel/{key}":              server.panelTab,
@@ -429,6 +430,45 @@ func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	server.backend.Approve(args.ID, args.Allow)
+	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (server *headlessServer) setAutoResume(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		Policy agent.AutoResume `json:"policy"`
+	}
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	if err := args.Policy.Validate(); err != nil {
+		core.Fail(w, 400, err.Error())
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	for _, step := range args.Policy.Steps {
+		if step.Action != "switch" {
+			continue
+		}
+		found := false
+		for _, choice := range server.choices {
+			if choice.Connection.ID == step.ConnectionID && choice.ID == step.Model && choice.Connection.Enabled {
+				found = true
+				break
+			}
+		}
+		if !found {
+			core.Fail(w, 400, "Resume model is unavailable")
+			return
+		}
+	}
+	server.autoResume = &args.Policy
+	if err := server.saveSettingsLocked(); err != nil {
+		core.Fail(w, 500, "Unable to save resume settings")
+		return
+	}
+	server.broadcastLocked("settings", server.settingsLocked())
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }
 

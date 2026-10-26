@@ -26,6 +26,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -39,6 +40,7 @@ import (
 type claudeEvent struct {
 	Type         string  `json:"type"`
 	Subtype      string  `json:"subtype"`
+	APIError     int     `json:"api_error_status"` // result: the API's HTTP status, 429 on a usage limit
 	SessionID    string  `json:"session_id"`
 	Parent       *string `json:"parent_tool_use_id"` // set for a subagent's messages
 	APIKeySource string  `json:"apiKeySource"`
@@ -83,6 +85,7 @@ type claudeEvent struct {
 	} `json:"response"`
 	RateLimit *struct {
 		Status         string `json:"status"`
+		ResetsAt       int64  `json:"resetsAt"`
 		IsUsingOverage bool   `json:"isUsingOverage"`
 		Windows        map[string]struct {
 			Utilization float64 `json:"utilization"`
@@ -199,6 +202,22 @@ func (backend *App) claudeModels(ctx context.Context) ([]claudeModel, error) {
 		}
 	}
 	return nil, fmt.Errorf("Claude Code did not answer: run claude once in a terminal to check it works")
+}
+
+// claudeLimit tells a turn Claude Code ended on a usage limit without its
+// rate_limit_event (it happens on a weekly limit): the result's API status
+// is 429, or its text says so, older versions adding "|<reset in Unix time>".
+func claudeLimit(status int, text string) (time.Time, bool) {
+	lower := strings.ToLower(text)
+	if status != 429 && !strings.Contains(lower, "usage limit") && !strings.Contains(lower, "rate limit") && !strings.Contains(lower, "limit reached") {
+		return time.Time{}, false
+	}
+	if _, after, found := strings.Cut(text, "|"); found {
+		if at, err := strconv.ParseInt(strings.TrimSpace(after), 10, 64); err == nil && at > 0 {
+			return unixAuto(at), true
+		}
+	}
+	return time.Time{}, true
 }
 
 // claudeTool translates a Claude Code tool call into the row 1loop shows:
@@ -643,6 +662,16 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			if claudeEventValue.RateLimit != nil {
 				if claudeEventValue.RateLimit.IsUsingOverage {
 					failure = fmt.Errorf("Claude Code started drawing on extra usage, beyond your plan's limits. 1loop stopped the task.")
+				} else if claudeEventValue.RateLimit.Status == "rejected" {
+					var reset time.Time
+					if at := claudeEventValue.RateLimit.ResetsAt; at > 0 {
+						if at > 100000000000 {
+							reset = time.UnixMilli(at)
+						} else {
+							reset = time.Unix(at, 0)
+						}
+					}
+					failure = &RateLimitError{Cause: fmt.Errorf("Claude Code reached a usage limit."), Reset: reset}
 				}
 				emit("plan", PlanUsage{FiveHour: claudeEventValue.RateLimit.Windows["five_hour"].Utilization, Week: claudeEventValue.RateLimit.Windows["seven_day"].Utilization})
 			}
@@ -777,6 +806,9 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 					text = "Claude Code ended the turn with an error (" + claudeEventValue.Subtype + ")"
 				}
 				failure = errors.New(text)
+				if limited, ok := claudeLimit(claudeEventValue.APIError, text); ok {
+					failure = &RateLimitError{Cause: failure, Reset: limited}
+				}
 			}
 			emit("history", append([]Message(nil), messages...))
 			if failure != nil || claudeEventValue.QueuedTurns > 0 {
@@ -795,6 +827,11 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		}
 	}
 	if failure != nil {
+		emit("history", append([]Message(nil), messages...))
+		var limited *RateLimitError
+		if len(calls) > 0 && errors.As(failure, &limited) {
+			return fmt.Errorf("Claude Code reached a limit while a tool result was pending; automatic resumption is unsafe. Review the conversation before continuing.")
+		}
 		return failure // the deferred kill stops it now: nothing more may be spent
 	}
 	if ctx.Err() != nil {

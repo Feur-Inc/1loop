@@ -84,9 +84,11 @@ fun StatusBadge(
             ) {
                 Box(Modifier.clickable { open = false }) { StatusMark(run, 30.dp) }
                 Spacer(Modifier.width(6.dp))
+                // Weighted, so measured after the buttons: a long label is cut short rather
+                // than squeezing the last button.
                 Text(
                     run.label.ifEmpty { "Working…" }, style = Type.small.copy(color = Palette.text),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 150.dp),
+                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).widthIn(max = 150.dp),
                 )
                 // Finished: nothing to stop, the badge only waits to be put away.
                 if (run.finished) RoundButton(Icons.close, Color.Transparent, Palette.muted, description = "Dismiss", size = 46.dp, iconSize = 24.dp) { onDismiss(run.chat) }

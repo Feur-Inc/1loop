@@ -131,6 +131,16 @@ func (bridge *ChatGPTWeb) PrepareProject(ctx context.Context) (string, error) {
 	if address != "" {
 		return address, nil
 	}
+	// The sidebar lists a few projects first: the rest are behind its "Show
+	// more", and a project not seen there must not be created twice.
+	expand := `(async()=>{for(let round=0;round<3;round++){const more=[...document.querySelectorAll('nav *')].filter(e=>e.children.length<3&&(e.innerText||'').trim()==='Show more'&&e.getBoundingClientRect().width>0);if(!more.length)break;for(const e of more){e.click();await new Promise(r=>setTimeout(r,1200))}}return true})()`
+	var expanded bool
+	if err := tab.Run(ctx, evaluateWeb(expand, &expanded), evaluateWeb(find, &address)); err != nil {
+		return "", err
+	}
+	if address != "" {
+		return address, nil
+	}
 	if err := tab.Run(ctx, chromedp.KeyEvent(kb.Escape), chromedp.Click(`[data-app-action-sidebar-project-create]`, chromedp.ByQuery), chromedp.WaitVisible(`#chatgpt-project-name`, chromedp.ByQuery), chromedp.SendKeys(`#chatgpt-project-name`, "1loop", chromedp.ByQuery)); err != nil {
 		return "", fmt.Errorf("Create the 1loop project after signing in: %w", err)
 	}

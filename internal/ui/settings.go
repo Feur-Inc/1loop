@@ -466,6 +466,8 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		card(settingRow("Tool permissions",
 			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto works as Codex: reads run at once, other commands run in a sandbox that writes only the workspace, and destructive ones go to Codex's review (ChatGPT account) or Claude Code's own Auto mode; other connections have no Auto mode and ask.",
 			sized(230, mode.row))),
+		sectionTitle("Import"),
+		card(ui.importRow()),
 		sectionTitle("Hooks"),
 		card(ui.hooksRow()),
 		sectionTitle("Browser"),

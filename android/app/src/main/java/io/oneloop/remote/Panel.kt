@@ -108,6 +108,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -610,24 +611,28 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
 fun ChatGPTWebLease(app: RemoteApp) {
     val chat = app.current
     val web = app.server?.localPhone == true && chat != null && app.meta?.chat == chat && app.meta?.provider == "chatgptweb"
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
     LaunchedEffect(chat, web) {
         app.chatgptPage = null
         if (!web || chat == null) return@LaunchedEffect
-        var open = true // the chat was just opened: a paused page opens again
-        while (true) {
-            val target = app.server
-            if (target != null) try {
-                val reply = withContext(Dispatchers.IO) {
-                    Api(target).post("/api/local/chats/${android.net.Uri.encode(chat)}/chatgpt-web", JSONObject().put("open", open))
+        // Only while 1loop is on screen: in the background the lease lapses.
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            var open = true // the chat was just opened (or shown again): a paused page opens again
+            while (true) {
+                val target = app.server
+                if (target != null) try {
+                    val reply = withContext(Dispatchers.IO) {
+                        Api(target).post("/api/local/chats/${android.net.Uri.encode(chat)}/chatgpt-web", JSONObject().put("open", open))
+                    }
+                    app.chatgptPage = reply.put("chat", chat)
+                    open = false
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    app.chatgptPage = JSONObject().put("chat", chat).put("problem", e.message ?: "ChatGPT page unavailable.")
                 }
-                app.chatgptPage = reply.put("chat", chat)
-                open = false
-            } catch (e: CancellationException) {
-                throw e
-            } catch (e: Exception) {
-                app.chatgptPage = JSONObject().put("chat", chat).put("problem", e.message ?: "ChatGPT page unavailable.")
+                delay(10_000)
             }
-            delay(10_000)
         }
     }
 }

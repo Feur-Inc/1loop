@@ -56,6 +56,10 @@ func (server *headlessServer) localConnections(w http.ResponseWriter, r *http.Re
 				row["login"] = server.claudeLogin
 			}
 		}
+		if connection.Provider == "chatgptweb" {
+			_, err := os.Stat(server.webKeyFile(connection.ID))
+			row["hasKey"] = err == nil
+		}
 		rows = append(rows, row)
 	}
 	_, installed := exec.LookPath("claude")
@@ -93,7 +97,7 @@ func (server *headlessServer) saveLocalConnection(w http.ResponseWriter, r *http
 			core.Fail(w, 404, "Connection not found")
 			return
 		}
-		if strings.TrimSpace(connection.Name) == "" || !agent.Contains([]string{"openai", "claudecode", "compatible", "openrouter", "vllm"}, connection.Provider) {
+		if strings.TrimSpace(connection.Name) == "" || !agent.Contains([]string{"openai", "claudecode", "compatible", "openrouter", "vllm", "chatgptweb"}, connection.Provider) {
 			core.Fail(w, 400, "Choose a connection name and supported provider")
 			return
 		}
@@ -102,6 +106,9 @@ func (server *headlessServer) saveLocalConnection(w http.ResponseWriter, r *http
 			connection.AuthProfile = connection.ID
 		} else {
 			connection.AuthProfile = existing.AuthProfile
+		}
+		if connection.Provider == "chatgptweb" {
+			server.webConnectionLocked(&connection)
 		}
 	}
 	// Save a candidate first, so a storage failure leaves the active settings intact.
@@ -127,14 +134,30 @@ func (server *headlessServer) saveLocalConnection(w http.ResponseWriter, r *http
 	} else if found && connection.Provider != existing.Provider {
 		delete(keys, connection.ID)
 	}
+	var tunnelKey *string // ChatGPT (Web)'s: in its own private file, never in the settings
 	if !args.Remove && args.APIKey != nil {
-		keys[connection.ID] = *args.APIKey
+		if connection.Provider == "chatgptweb" {
+			tunnelKey = args.APIKey
+		} else {
+			keys[connection.ID] = *args.APIKey
+		}
 	}
 	server.connections, server.keys = next, keys
 	if err := server.saveSettingsLocked(); err != nil {
 		server.connections, server.keys = previous, previousKeys
 		core.Fail(w, 500, "Unable to save the connection")
 		return
+	}
+	if tunnelKey != nil {
+		path := server.webKeyFile(connection.ID)
+		// WriteFile keeps an existing file's mode: the key must stay private.
+		if err := os.WriteFile(path, []byte(strings.TrimSpace(*tunnelKey)+"\n"), 0600); err != nil || os.Chmod(path, 0600) != nil {
+			core.Fail(w, 500, "Unable to save the tunnel key")
+			return
+		}
+	}
+	if args.Remove && existing.Provider == "chatgptweb" {
+		_ = os.Remove(server.webKeyFile(existing.ID))
 	}
 	if login := server.logins[connection.ID]; login != nil && login.cancel != nil {
 		login.cancel()
@@ -165,7 +188,7 @@ func (server *headlessServer) draftLocalConnectionModels(w http.ResponseWriter, 
 		Connection agent.Connection `json:"connection"`
 		APIKey     *string          `json:"apiKey"`
 	}
-	if core.ReadJSON(r, &args) != nil || !agent.Contains([]string{"openai", "claudecode", "compatible", "openrouter", "vllm"}, args.Connection.Provider) {
+	if core.ReadJSON(r, &args) != nil || !agent.Contains([]string{"openai", "claudecode", "compatible", "openrouter", "vllm", "chatgptweb"}, args.Connection.Provider) {
 		core.Fail(w, 400, "Choose a supported provider")
 		return
 	}
@@ -177,7 +200,10 @@ func (server *headlessServer) draftLocalConnectionModels(w http.ResponseWriter, 
 		if args.Connection.Provider == existing.Provider {
 			key = server.keys[existing.ID]
 		}
-	} else if args.Connection.Provider == "openai" {
+		if args.Connection.Provider == "chatgptweb" {
+			server.webConnectionLocked(&args.Connection)
+		}
+	} else if args.Connection.Provider == "openai" || args.Connection.Provider == "chatgptweb" {
 		server.mu.Unlock()
 		core.Fail(w, 409, "Save the ChatGPT connection and sign in first")
 		return

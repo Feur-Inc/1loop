@@ -8,7 +8,12 @@
 # Local secrets: never committed. release-key.pem signs the updates: keep a
 # copy somewhere safe, installed apps only trust updates signed with it.
 /TOKEN
-/release-key.pem
+*.pem
+*.key
+*.p12
+*.jks
+*.keystore
+/android/signing/
 # Release archives (make release).
 /dist/
 # nix build (make nix).

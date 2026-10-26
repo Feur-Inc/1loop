@@ -41,6 +41,9 @@ func (cfg Config) toolAvailable(name string) bool {
 	if cfg.ToolAllowed != nil && !cfg.ToolAllowed(name) {
 		return false
 	}
+	if name == "memory" { // off in the settings, or no preferences here
+		return cfg.Preferences != nil
+	}
 	switch groupOfTool(name) {
 	case "panel_browser":
 		return cfg.Browser != nil

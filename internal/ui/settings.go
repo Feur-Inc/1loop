@@ -592,6 +592,9 @@ func (ui *desktopUI) computerScreenRow() fyne.CanvasObject {
 // ---------------------------------------------------------------------------
 // Instructions.
 
+// instructionSettings shows what the agent is told in every chat and
+// what its memory tool changes: the user's preferences, and each project's
+// AGENTS.md.
 func (ui *desktopUI) instructionSettings() fyne.CanvasObject {
 	entry := widget.NewMultiLineEntry()
 	entry.Wrapping = fyne.TextWrapWord
@@ -602,12 +605,74 @@ func (ui *desktopUI) instructionSettings() fyne.CanvasObject {
 		ui.userInstructions = strings.TrimSpace(text)
 		ui.save()
 	}
-	return container.NewVBox(
-		ui.prefs.pageTitle("User preferences", "", nil),
+	ui.preferencesEntry = entry
+	page := container.NewVBox(
+		ui.prefs.pageTitle("Instructions", "", nil),
 		card(settingStack("Your preferences",
-			"Added to 1loop's own system prompt, whose workspace and tool rules stay in place. Saved as you type; they apply to subsequent turns in every chat.",
-			entry)),
+			"Added to 1loop's own system prompt, whose workspace and tool rules stay in place, in every chat. Saved as you type; they apply from the next turn.",
+			entry),
+			settingRow("Memory",
+				"The agent adds what it learns about you to these preferences, each change shown to you for approval. Off: it is not offered the memory tool.",
+				newToggle(!ui.memoryOff, func(on bool) {
+					ui.memoryOff = !on
+					ui.save()
+					ui.remote.settingsChanged()
+				}))),
+		sectionTitle("Project memory"),
 	)
+	if len(ui.projects) == 0 {
+		page.Add(card(settingRow("No projects yet", "Each project's AGENTS.md shows here once you add a project.", nil)))
+		return page
+	}
+	var rows []fyne.CanvasObject
+	for _, project := range ui.projects {
+		rows = append(rows, ui.projectMemoryRow(project))
+	}
+	page.Add(card(rows...))
+	return page
+}
+
+// projectMemoryRow edits a project's AGENTS.md, the instructions every agent
+// reads there and where the agent saves what it learns about the project.
+// It is a file of the project, so it is written only with Save.
+func (ui *desktopUI) projectMemoryRow(project string) fyne.CanvasObject {
+	saved, err := agent.ProjectMemory(project)
+	entry := widget.NewMultiLineEntry()
+	entry.Wrapping = fyne.TextWrapWord
+	entry.SetMinRowsVisible(6)
+	entry.SetText(saved)
+	entry.SetPlaceHolder("Nothing saved yet: build and test commands, layout, the project's rules…")
+	path := filepath.Join(project, "AGENTS.md")
+	if home, homeErr := os.UserHomeDir(); homeErr == nil && strings.HasPrefix(path, home+string(filepath.Separator)) {
+		path = "~" + strings.TrimPrefix(path, home)
+	}
+	detail := path + " · read by 1loop and the other agents in this project."
+	if err != nil {
+		entry.Disable()
+		detail = path + ": " + err.Error()
+	}
+	var save *tapRow
+	save = newRow("Save", nil, stylePrimary, func() {
+		text := entry.Text
+		if text = strings.TrimRight(text, "\n"); text != "" {
+			text += "\n"
+		}
+		if err := agent.SaveProjectMemory(project, saved, text); err != nil {
+			ui.notice("Project memory", err.Error())
+			return
+		}
+		saved = text
+		save.Disable()
+	})
+	save.Disable()
+	entry.OnChanged = func(text string) {
+		if text == saved {
+			save.Disable()
+		} else {
+			save.Enable()
+		}
+	}
+	return settingStack(filepath.Base(project), detail, container.NewVBox(entry, container.NewHBox(layout.NewSpacer(), save)))
 }
 
 // ---------------------------------------------------------------------------
@@ -700,13 +765,14 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	key.SetPlaceHolder("Kept in memory until 1loop closes")
 	enabled := newToggle(draft.Enabled, func(on bool) { draft.Enabled = on })
 	typePicker := newPicker(ui.window, "Connection type", styleField, nil)
-	typePicker.Options = []string{"Local vLLM", "OpenRouter", "ChatGPT account", "OpenAI-compatible API", "Claude Code"}
+	typePicker.Options = []string{"Local vLLM", "OpenRouter", "ChatGPT account", "OpenAI-compatible API", "Claude Code", "ChatGPT (Web)"}
 	ids := map[string]string{
 		"Local vLLM":            "vllm",
 		"OpenRouter":            "openrouter",
 		"ChatGPT account":       "openai",
 		"OpenAI-compatible API": "compatible",
 		"Claude Code":           "claudecode",
+		"ChatGPT (Web)":         "chatgptweb",
 	}
 	status := plainFlow("", 13, colMuted)
 	say := func(text string) {
@@ -787,7 +853,8 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		container.NewVBox(account, container.NewHBox(login), loginLink)))
 	claudeFields := card(settingRow("Claude Code on this computer",
 		"Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it.", nil))
-	access := container.NewStack(apiFields, oauthFields, claudeFields)
+	webFields, releaseWebSetup := ui.chatGPTWebSettings(&draft, say)
+	access := container.NewStack(apiFields, oauthFields, claudeFields, webFields)
 
 	routing := jsonEntry(draft.Routing)
 	parameters := jsonEntry(draft.Parameters)
@@ -899,14 +966,20 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	typePicker.onChanged = func(label string) {
 		previous := draft.Provider
 		draft.Provider = ids[label]
+		if draft.Provider != "chatgptweb" {
+			releaseWebSetup()
+		}
 		apiFields.Hide()
 		oauthFields.Hide()
 		claudeFields.Hide()
+		webFields.Hide()
 		switch draft.Provider {
 		case "openai":
 			oauthFields.Show()
 		case "claudecode":
 			claudeFields.Show()
+		case "chatgptweb":
+			webFields.Show()
 		default:
 			apiFields.Show()
 		}
@@ -985,7 +1058,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		draft.BaseURL = strings.TrimSpace(base.Text)
 		draft.Routing = route
 		draft.Parameters = params
-		if draft.Provider != "openai" && draft.Provider != "claudecode" {
+		if draft.Provider != "openai" && draft.Provider != "claudecode" && draft.Provider != "chatgptweb" {
 			cfg := draft.Config("")
 			cfg.APIKey = key.Text
 			if _, _, err = agent.Endpoint(cfg); err != nil {
@@ -1008,6 +1081,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		platform.Devf("ui", "connection %q saved", draft.Name)
 		ui.save()
 		ui.refreshModels()
+		releaseWebSetup()
 		return true
 	}
 	save := newRow("Save connection", nil, stylePrimary, func() {
@@ -1041,6 +1115,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		cancel,
 		save,
 	}, beforeLeave: beforeLeave, leave: func() {
+		releaseWebSetup()
 		loadGeneration++
 		if cancelLogin != nil {
 			cancelLogin()

@@ -39,7 +39,15 @@ func IdentityOf(cfg Config) RunIdentity {
 // HandoffNeeded reports whether the next turn starts with another provider,
 // account or model than the conversation's last one.
 func HandoffNeeded(cfg Config, history []Message) bool {
-	if cfg.RanWith == nil || *cfg.RanWith == IdentityOf(cfg) {
+	if cfg.RanWith == nil {
+		return false
+	}
+	previous, next := *cfg.RanWith, IdentityOf(cfg)
+	if next.Provider == "chatgptweb" && previous.Provider == next.Provider {
+		// The same Web account keeps the conversation when its model changes.
+		previous.Model = next.Model
+	}
+	if previous == next {
 		return false
 	}
 	for _, message := range history {
@@ -377,6 +385,9 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 	var note string
 	var err error
 	switch {
+	case summarizer.Provider == "chatgptweb":
+		note, err = backend.webHandoffNote(ctx, summarizer, handoffPrompt(budget, plan.To)+todoSnapshot(next)+
+			"\n\nConversation ("+levelName(choice.Level)+"):\n"+levelText(clean, choice.Level, ModelContextWindow(summarizer)))
 	case summarizer.Provider == "claudecode":
 		input := ""
 		if summarizer.Session == "" {

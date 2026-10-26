@@ -19,6 +19,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.net.toUri
 import androidx.compose.ui.unit.dp
@@ -80,6 +81,21 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                 }
             } else Text("Update the connected desktop or server to edit preferences here.", style = Type.small)
             notice?.let { Text(it, style = Type.small) }
+            app.memoryEnabled?.let { enabled ->
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Column(Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                        Text("Memory", style = Type.body.copy(fontWeight = FontWeight.Medium))
+                        Text("The agent adds what it learns about you to these preferences, each change shown to you for approval. Off: it is not offered the memory tool.", style = Type.small)
+                    }
+                    Toggle(enabled, enabled = app.connected) { on ->
+                        scope.launch {
+                            try { app.setMemory(on); notice = null }
+                            catch (cancelled: CancellationException) { throw cancelled }
+                            catch (failure: Exception) { notice = failure.message ?: "Could not change memory." }
+                        }
+                    }
+                }
+            }
             UpdatesSection(app)
             BrowserDataSection(app)
             HooksSection(app)

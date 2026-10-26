@@ -1,3 +1,5 @@
+import java.util.Properties
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.plugin.compose")
@@ -13,11 +15,22 @@ abstract class LocalRuntimeBuild : Exec() {
 val oneloopVersion = rootProject.file("../VERSION").readText().trim()
 val oneloopVersionCode = oneloopVersion.split(".").fold(0) { code, part -> code * 100 + part.toInt() }
 
+// The release key stays private: android/signing/release.properties on the
+// machine that publishes. Without it, the release APK is unsigned.
+val signingFile = rootProject.file(
+    providers.environmentVariable("ONELOOP_ANDROID_SIGNING_PROPERTIES")
+        .orElse("signing/release.properties").get()
+)
+val publicationSigning = Properties().apply {
+    if (signingFile.isFile) signingFile.inputStream().use { load(it) }
+}
+
 val localRuntimeDirectory = layout.buildDirectory.dir("local-runtime")
 val buildLocalNative = tasks.register<LocalRuntimeBuild>("buildLocalNative") {
     outputDirectory.set(localRuntimeDirectory.map { it.dir("jniLibs") })
     inputs.file(rootProject.file("runtime/build.py"))
     inputs.file(rootProject.file("runtime/guard.c"))
+    inputs.file(rootProject.file("runtime/arc4random.c"))
     inputs.dir(rootProject.file("runtime/patches"))
     val sdk = providers.environmentVariable("ANDROID_HOME").orElse("${System.getProperty("user.home")}/Android/Sdk")
     val ndk = providers.environmentVariable("ANDROID_NDK_HOME").orElse(sdk.map { "$it/ndk/30.0.16248370" })
@@ -45,12 +58,36 @@ android {
         versionCode = oneloopVersionCode
         versionName = oneloopVersion
     }
+    signingConfigs {
+        // Shared by everyone and committed (android/debug.keystore): any debug
+        // build updates any other. It never signs a published release.
+        create("sharedDebug") {
+            storeFile = rootProject.file("debug.keystore")
+            storePassword = "android"
+            keyAlias = "androiddebugkey"
+            keyPassword = "android"
+        }
+        if (signingFile.isFile) {
+            create("publication") {
+                storeFile = signingFile.parentFile.resolve(publicationSigning.getProperty("storeFile"))
+                storePassword = publicationSigning.getProperty("storePassword")
+                keyAlias = publicationSigning.getProperty("keyAlias")
+                keyPassword = publicationSigning.getProperty("keyPassword")
+            }
+        }
+    }
     buildTypes {
+        // A separate app ("1loop debug"): installed beside the release, as
+        // its signature differs.
+        debug {
+            applicationIdSuffix = ".debug"
+            signingConfig = signingConfigs.getByName("sharedDebug")
+        }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"))
-            signingConfig = signingConfigs.getByName("debug") // sideloaded builds for now
+            signingConfig = signingConfigs.findByName("publication")
         }
     }
     buildFeatures { compose = true; aidl = true }
@@ -73,6 +110,7 @@ dependencies {
     // Applies the compilation profiles Compose ships with at install time:
     // the interface runs compiled from the first launch, without warming up.
     implementation("androidx.profileinstaller:profileinstaller:1.4.1")
+    implementation("androidx.webkit:webkit:1.17.1") // separate WebView profiles for ChatGPT (Web)
     implementation("io.noties.markwon:core:4.6.2")
     implementation("io.noties.markwon:ext-tables:4.6.2")
     implementation("io.noties.markwon:ext-strikethrough:4.6.2")

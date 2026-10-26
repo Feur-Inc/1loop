@@ -108,6 +108,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.lifecycle.repeatOnLifecycle
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
@@ -179,6 +180,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
                 }
                 when (tab?.kind) {
                     "browser" -> BrowserView(app, chat, tab)
+                    "chatgptweb" -> ChatGPTWebView(app, chat)
                     "terminal" -> TerminalView(app, chat, tab)
                     "changes" -> ChangesView(app, chat, tab)
                     "tool" -> ToolView(app, app.items.getOrNull(tab.index))
@@ -193,7 +195,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
 }
 
 private fun tabIcon(kind: String) = when (kind) {
-    "browser" -> Icons.globe
+    "browser", "chatgptweb" -> Icons.globe
     "terminal" -> Icons.terminal
     "changes" -> Icons.pencil
     else -> Icons.document
@@ -598,6 +600,96 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
             Spacer(Modifier.width(8.dp))
             RoundButton(Icons.close, Palette.raised, Palette.muted, size = 38.dp, iconSize = 16.dp, description = "Erase") { act { app.panelInput(chat, tab.key, "key", "Backspace") } }
         }
+    }
+}
+
+// ChatGPT (Web): the chat's ChatGPT page, as 1loop drives it in this
+// phone's browser for the account, kept open while the chat is shown (as on
+// the desktop): ChatGPTWebLease renews it every few seconds, the engine
+// closes it when the app stops, and pauses it after a while without a turn.
+@Composable
+fun ChatGPTWebLease(app: RemoteApp) {
+    val chat = app.current
+    val web = app.server?.localPhone == true && chat != null && app.meta?.chat == chat && app.meta?.provider == "chatgptweb"
+    val lifecycle = androidx.lifecycle.compose.LocalLifecycleOwner.current.lifecycle
+    LaunchedEffect(chat, web) {
+        app.chatgptPage = null
+        if (!web || chat == null) return@LaunchedEffect
+        // Only while 1loop is on screen: in the background the lease lapses.
+        lifecycle.repeatOnLifecycle(androidx.lifecycle.Lifecycle.State.STARTED) {
+            var open = true // the chat was just opened (or shown again): a paused page opens again
+            while (true) {
+                val target = app.server
+                if (target != null) try {
+                    val reply = withContext(Dispatchers.IO) {
+                        Api(target).post("/api/local/chats/${android.net.Uri.encode(chat)}/chatgpt-web", JSONObject().put("open", open))
+                    }
+                    app.chatgptPage = reply.put("chat", chat)
+                    open = false
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    app.chatgptPage = JSONObject().put("chat", chat).put("problem", e.message ?: "ChatGPT page unavailable.")
+                }
+                delay(10_000)
+            }
+        }
+    }
+}
+
+// The panel shows that page, locked: a touch can interrupt the automated
+// conversation, so taking control is confirmed.
+@Composable
+private fun ChatGPTWebView(app: RemoteApp, chat: String) {
+    val context = LocalContext.current
+    val reply = app.chatgptPage?.takeIf { it.optString("chat") == chat }
+    val page = reply?.optJSONObject("page")
+    val profile = reply?.optString("profile").orEmpty()
+    val problem = reply?.optString("problem")?.takeIf { it.isNotEmpty() }
+    val paused = reply?.optBoolean("paused") == true
+    var view by remember(chat) { mutableStateOf<android.webkit.WebView?>(null) }
+    var locked by remember(chat) { mutableStateOf(true) }
+    var asking by remember { mutableStateOf(false) }
+    val id = page?.optString("id").orEmpty()
+    LaunchedEffect(id, profile) {
+        view = null
+        if (id.isEmpty() || profile.isEmpty()) return@LaunchedEffect
+        val browser = runCatching { AndroidLocalRuntime.get(context).chatgptBrowser(profile) }.getOrNull() ?: return@LaunchedEffect
+        while (true) { // the page opens a moment after the lease; the renderer may also end it
+            val shown = browser.view(id)
+            if (shown !== view) view = shown
+            delay(if (shown == null) 150 else 2000)
+        }
+    }
+    Column(Modifier.fillMaxSize()) {
+        Row(Modifier.fillMaxWidth().padding(horizontal = 12.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                if (locked) "ChatGPT · the conversation 1loop drives" else "You control this page: lock it when done",
+                style = Type.caption.copy(color = if (locked) Palette.muted else Palette.amber), modifier = Modifier.weight(1f), maxLines = 2,
+            )
+            Pill(if (locked) "Take control" else "Lock") { if (locked) asking = true else locked = true }
+        }
+        Box(Modifier.weight(1f).fillMaxWidth().background(Palette.code), contentAlignment = Alignment.TopCenter) {
+            val shown = view
+            val viewport = page?.let { Viewport(it.optInt("width"), it.optInt("height"), false, false, it.optDouble("pixelRatio", 1.0), true) }
+            when {
+                paused -> Text("Paused after a while without a message, to save the phone's resources. It opens again with your next message, or when you open this chat again.", style = Type.small, modifier = Modifier.padding(16.dp))
+                problem != null && shown == null -> Text(problem, style = Type.small.copy(color = Palette.danger), modifier = Modifier.padding(16.dp))
+                shown == null || viewport == null || viewport.width <= 0 || viewport.height <= 0 -> WorkRing("wait", 34.dp, Modifier.align(Alignment.Center))
+                else -> Box(Modifier.aspectRatio(viewport.width / viewport.height.toFloat())) {
+                    NativeBrowserSurface(shown, viewport, locked) {}
+                }
+            }
+        }
+    }
+    if (asking) {
+        androidx.compose.material3.AlertDialog(
+            onDismissRequest = { asking = false }, containerColor = Palette.popover,
+            title = { Text("Take control of ChatGPT?", style = Type.title) },
+            text = { Text("Taps and typing can interrupt the automated conversation. Complete sign-in or security checks yourself, then lock the page again.", style = Type.small) },
+            confirmButton = { androidx.compose.material3.TextButton(onClick = { asking = false; locked = false }) { Text("Take control", color = Palette.amber) } },
+            dismissButton = { androidx.compose.material3.TextButton(onClick = { asking = false }) { Text("Cancel", color = Palette.muted) } },
+        )
     }
 }
 

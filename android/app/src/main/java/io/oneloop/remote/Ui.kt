@@ -487,6 +487,7 @@ fun ChatScreen(app: RemoteApp) {
         return
     }
     var panel by remember(app.current, app.selectedProject, app.server?.key) { mutableStateOf(false) }
+    ChatGPTWebLease(app)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 720.dp) {
             Row(Modifier.fillMaxSize()) {
@@ -567,7 +568,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                 )
             }
         }
-        NavRow("Settings", Icons.document, selected = false) { app.settingsOpen = true; onPicked() }
+        NavRow("Settings", Icons.settings, selected = false) { app.settingsOpen = true; onPicked() }
         NavRow("Switch execution target", Icons.refresh, selected = false) { app.switchTarget() }
         Spacer(Modifier.height(8.dp))
     }
@@ -691,7 +692,8 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
         PanelScreen(app, shownContext) { onPanelChange(false) }
     }
     }
-    tool?.let { ToolSheet(app, it) { tool = null } }
+    // The call as it is now: a running command's output keeps arriving.
+    tool?.let { shown -> ToolSheet(app, app.items.firstOrNull { shown.id.isNotEmpty() && it.id == shown.id } ?: shown) { tool = null } }
 }
 
 @Composable
@@ -1084,6 +1086,7 @@ private fun ToolSheet(app: RemoteApp, item: Item, onDone: () -> Unit) {
                 "edit_file", "apply_patch" -> if (item.diff.isNotEmpty()) CodeWell(item.diff, "Changes", diff = true) else Text("No diff recorded", style = Type.small)
                 "read_file" -> Section("Content", item.text, if (running) "Waiting for the result…" else "Empty file")
                 "list_directory" -> Section("Entries", item.text, if (running) "Waiting for the result…" else "Empty directory")
+                "memory" -> if (item.diff.isNotEmpty()) CodeWell(item.diff, "Changes", diff = true) else Section("Memory", item.text, if (running) "Waiting for the result…" else "Nothing saved")
                 else -> Section("Output", item.text, "No output")
             }
             if (item.failed.isNotEmpty() && item.failed != "Stopped") CodeWell(item.failed, "Error", wrap = true)

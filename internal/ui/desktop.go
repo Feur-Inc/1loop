@@ -86,10 +86,12 @@ type desktopUI struct {
 	cfg              agent.Config
 	keys             map[string]string
 	connectionsList  []agent.Connection
+	webSetupWindows  map[*agent.ChatGPTWeb]fyne.Window
 	choices          map[string]agent.ModelChoice
 	modelUnavailable map[string]string // model catalog problems, displayed inside the selector
 	accountLimits    map[string]agent.AccountLimits
 	userInstructions string
+	preferencesEntry *widget.Entry // the settings' editor of userInstructions, once shown
 	approvalMode     string
 	inForeground     bool // the window has the focus
 	chats            []*conversation
@@ -166,6 +168,7 @@ type desktopUI struct {
 	panelToggle       *tapRow
 	panelWidth        float32 // last width chosen by dragging, independent of window size
 	classicCompaction bool    // settings: dynamic context compaction turned off
+	memoryOff         bool    // settings: the agent's memory tool turned off
 	tips              *tipLayer
 
 	// Window and sidebar
@@ -213,6 +216,7 @@ func runDesktop(backend *agent.App, root string) {
 	a := fyneapp.NewWithID("io.1loop.desktop")
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
+	backend.EnableChatGPTWeb(ctx)
 	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), statePath: statePath(root),
 		cfg: agent.Config{Provider: "compatible", Workspace: root}}
 	ui.load()
@@ -381,6 +385,7 @@ func (ui *desktopUI) release() {
 	ui.persist(true)
 	ui.prompt.drafts.flush()
 	ui.browser.WaitClosed() // Chrome writes its profile as it closes
+	ui.backend.CloseChatGPTWeb()
 }
 
 // fitLabel is a single line of text that ellipsises to the space it gets.
@@ -1070,6 +1075,9 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		handoff = &pendingHandoff{choice: plan.Recommended, plan: plan, previous: previous}
 	}
 	turn := ui.newTurn(chat, cfg)
+	if cfg.Provider == "chatgptweb" && chat == ui.current {
+		ui.ensureWebTab()
+	}
 	turn.show(agent.Activity{State: "wait"})
 	ui.runStarted(chat, &chatRun{cancel: cancel, turn: turn})
 	pump := &eventPump{handle: turn.handle}
@@ -1101,7 +1109,12 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		}
 		if err == nil {
 			identity := agent.IdentityOf(cfg)
-			ui.onUI(ctx, func() { chat.Config.RanWith = &identity })
+			ui.onUI(ctx, func() {
+				chat.Config.RanWith = &identity
+				if chat == ui.current { // the model picker starts from ui.cfg: a later switch back is a handoff too
+					ui.cfg.RanWith = &identity
+				}
+			})
 			err = ui.backend.Run(ctx, cfg, history, inboxValue, pump.emit)
 		}
 		canceled := ctx.Err() == context.Canceled
@@ -1158,6 +1171,26 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	}
 	cfg.APIKey = ui.keys[cfg.ConnectionID]
 	cfg.UserInstructions = ui.userInstructions
+	if !ui.memoryOff { // the memory tool changes the preferences
+		cfg.Preferences = func(ctx context.Context, update func(string) (string, error)) (err error) {
+			ui.onUI(ctx, func() {
+				var next string
+				if next, err = update(ui.userInstructions); err != nil || next == ui.userInstructions {
+					return
+				}
+				ui.userInstructions = next
+				ui.save()
+				ui.remote.settingsChanged()
+				if ui.preferencesEntry != nil { // an open page would save its old text over it
+					ui.preferencesEntry.SetText(next)
+				}
+			})
+			if err == nil {
+				err = ctx.Err()
+			}
+			return err
+		}
+	}
 	cfg.ApprovalMode = agent.ApprovalFor(ui.approvalMode, cfg)
 	cfg.ClassicCompaction = ui.classicCompaction
 	return cfg
@@ -1373,6 +1406,7 @@ type savedState struct {
 	PanelWidth       float32                  `json:"panelWidth,omitempty"`
 	// Saved as its opposite so that a state file without it means dynamic.
 	ClassicCompaction bool `json:"classicCompaction,omitempty"`
+	MemoryOff         bool `json:"memoryOff,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1412,6 +1446,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.approvalMode,
 		ui.panelWidth,
 		ui.classicCompaction,
+		ui.memoryOff,
 	})
 	fields := map[string]json.RawMessage{}
 	if err == nil {
@@ -1498,7 +1533,7 @@ func (ui *desktopUI) load() {
 		state.Config.BaseURL = ""
 	}
 	switch state.Config.Provider {
-	case "vllm", "openrouter", "openai", "compatible", "claudecode":
+	case "vllm", "openrouter", "openai", "compatible", "claudecode", "chatgptweb":
 	default:
 		return
 	}
@@ -1509,6 +1544,7 @@ func (ui *desktopUI) load() {
 	ui.userInstructions = state.UserInstructions
 	ui.approvalMode = state.ApprovalMode
 	ui.classicCompaction = state.ClassicCompaction
+	ui.memoryOff = state.MemoryOff
 	for _, chat := range state.Chats {
 		if chat == nil {
 			continue

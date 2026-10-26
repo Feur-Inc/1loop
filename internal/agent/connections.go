@@ -29,6 +29,7 @@ type Connection struct {
 	Routing      map[string]any              `json:"routing,omitempty"`
 	Parameters   map[string]any              `json:"parameters,omitempty"`
 	ModelOptions map[string]ModelPreferences `json:"modelOptions,omitempty"`
+	WebSettings  *WebSettings                `json:"webSettings,omitempty"`
 }
 
 type ModelChoice struct {
@@ -91,6 +92,7 @@ func (conn Connection) Config(workspace string) Config {
 		Workspace:    workspace,
 		Routing:      conn.Routing,
 		Parameters:   conn.Parameters,
+		WebSettings:  conn.WebSettings,
 	}
 }
 
@@ -129,6 +131,8 @@ func ProviderName(id string) string {
 		return "OpenAI-compatible API"
 	case "claudecode":
 		return "Claude Code"
+	case "chatgptweb":
+		return "ChatGPT (Web)"
 	}
 	return id
 }
@@ -172,7 +176,7 @@ func systemInstructions(cfg Config) string {
 	}
 	prompt += userPreferenceInstructions(cfg)
 	prompt += mobileInstructions(cfg) + projectInstructions(cfg.Workspace)
-	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + platform.ShellDescription() + "." + todoInstructions(cfg) + contextInstructions(cfg) + toolSearchInstructions(cfg)
+	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + platform.ShellDescription() + "." + todoInstructions(cfg) + contextInstructions(cfg) + memoryInstructions(cfg) + toolSearchInstructions(cfg)
 }
 
 type approvalContextKey struct{}

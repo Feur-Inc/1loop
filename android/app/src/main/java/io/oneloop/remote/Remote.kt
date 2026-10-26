@@ -134,6 +134,7 @@ data class Meta(
     val model: String, val effort: String, val used: Int, val window: Int,
     val todo: List<Task>, val tier: String = "", val contextStatus: String = "",
     val background: List<BackgroundTask> = emptyList(),
+    val provider: String = "", // the chat's account type
     val tool: String = "", // executing now, whatever the label says (an approval replaces it)
 ) {
     companion object {
@@ -152,6 +153,7 @@ data class Meta(
             o.optJSONArray("tasks").let { array ->
                 (0 until (array?.length() ?: 0)).map { i -> BackgroundTask.from(array!!.getJSONObject(i)) }
             },
+            o.optString("provider"),
             o.optString("tool"),
         )
     }
@@ -257,6 +259,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var updateLater by mutableStateOf(false) // the update card was put away until the next start
     var userPreferences by mutableStateOf("")
     var preferencesEditable by mutableStateOf(false)
+    /** Whether the agent may save memories to the preferences; null when the target cannot say. */
+    var memoryEnabled by mutableStateOf<Boolean?>(null)
     val models = mutableStateListOf<ModelOption>()
     val accounts = mutableStateListOf<Account>()
     val limits = mutableStateMapOf<String, AccountLimits>() // by account
@@ -273,6 +277,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var firstItem by mutableStateOf(0)
     private var loadingEarlier = false
     var meta by mutableStateOf<Meta?>(null)
+    /** The ChatGPT (Web) page of the chat shown on a local phone, as the engine last answered (see ChatGPTWebLease). */
+    var chatgptPage by mutableStateOf<JSONObject?>(null)
     val approvals = mutableStateMapOf<String, Approval>() // by chat
     val questions = mutableStateMapOf<String, Questions>() // by chat
     val questionsAside = mutableStateListOf<String>() // closed unanswered: reopened from the composer
@@ -309,8 +315,10 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         scope.launch {
             local.activeServer.collect { active ->
                 if (active == null && server?.localPhone == true && screen == Screen.Chat) {
+                    if (local.stoppedWhenIdle) prefs.edit { putString("resumeChat", current) } // opened again with the engine
                     disconnect()
                     screen = Screen.LocalSetup
+                    if (foreground) resumeLocal() // shown again before this stop reached the app
                 }
             }
         }
@@ -358,7 +366,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         }
         target = saved
         if (saved == ExecutionTarget.LocalPhone) {
-            local.activeServer.value?.let { connect(it) } ?: run { screen = Screen.Mode }
+            // Stopped while idle: started again, also when Android ended the app meanwhile.
+            local.activeServer.value?.let { connect(it) } ?: run { if (local.stoppedWhenIdle) openLocal() else screen = Screen.Mode }
             return
         }
         if (known != null) connect(known) else {
@@ -388,6 +397,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         screen = Screen.Mode
     }
 
+    /** Shown again after the engine stopped while idle: it starts again, on the same chat. */
+    fun resumeLocal() {
+        if (local.stoppedWhenIdle && server == null && screen == Screen.LocalSetup) openLocal()
+    }
+
     /** The running engine, or a start when nothing is missing, or the setup. */
     private fun openLocal() {
         local.activeServer.value?.let { return connect(it) }
@@ -405,7 +419,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         scope.launch {
             try {
                 val active = local.start()
-                if (generation == connectionGeneration) connect(active)
+                if (generation == connectionGeneration) {
+                    connect(active)
+                    prefs.getString("resumeChat", null)?.let { open(it) }
+                    prefs.edit { remove("resumeChat") }
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -585,6 +603,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         projectManagement = false
         projectActions = false
         preferencesEditable = false
+        memoryEnabled = null
         userPreferences = ""
         running.clear()
         AgentStatus.clear(context)
@@ -779,6 +798,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     private fun applySettings(settings: JSONObject) {
         userPreferences = settings.optString("userPreferences")
         preferencesEditable = settings.optBoolean("preferencesEditable")
+        memoryEnabled = if (settings.has("memory")) settings.optBoolean("memory") else null
         messageVersions = settings.optBoolean("messageVersions")
         attachmentsEnabled = settings.optBoolean("attachments")
         val array = settings.optJSONArray("models")
@@ -1048,6 +1068,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val reply = onConnection(target, generation) { it.post("/api/preferences", JSONObject().put("userPreferences", text)) }
         userPreferences = reply.optString("userPreferences")
+    }
+
+    suspend fun setMemory(enabled: Boolean) {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        val reply = onConnection(target, generation) { it.post("/api/memory", JSONObject().put("enabled", enabled)) }
+        memoryEnabled = reply.optBoolean("memory")
     }
 
     /** Local mode: whether this phone is shared, its devices and the pairings waiting. */

@@ -24,6 +24,23 @@ func (server *remoteServer) setPreferences(w http.ResponseWriter, r *http.Reques
 	core.WriteJSON(w, 200, map[string]string{"userPreferences": strings.TrimSpace(args.UserPreferences)})
 }
 
+func (server *remoteServer) setMemory(w http.ResponseWriter, r *http.Request) {
+	var args struct{ Enabled bool }
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Say whether memory is on")
+		return
+	}
+	server.onUI(func() {
+		server.ui.memoryOff = !args.Enabled
+		server.ui.save()
+		server.settingsChanged()
+		if server.ui.prefs != nil && server.ui.prefs.open && server.ui.prefs.section == "Instructions" {
+			server.ui.prefs.showNow("Instructions") // its switch shows the change
+		}
+	})
+	core.WriteJSON(w, 200, map[string]bool{"memory": args.Enabled})
+}
+
 func (server *remoteServer) projectFolders(w http.ResponseWriter, r *http.Request) {
 	var roots []string
 	var path string

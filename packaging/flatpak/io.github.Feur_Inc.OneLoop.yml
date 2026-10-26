@@ -44,16 +44,31 @@ modules:
         GOPATH: /run/build/1loop/.go
         GOCACHE: /run/build/1loop/.go-cache
     sources:
+      # Only build inputs: do not copy local tokens, signing keys or caches.
+      - type: file
+        path: ../../go.mod
+      - type: file
+        path: ../../go.sum
+      - type: file
+        path: ../../VERSION
       - type: dir
-        path: ../..
-        skip:
-          - .git
-          - android
-          - bin
-          - dist
-          - build-flatpak
-          - .flatpak-builder
-          - result
+        path: ../../cmd
+        dest: cmd
+      - type: dir
+        path: ../../internal
+        dest: internal
+      - type: dir
+        path: ../../assets
+        dest: assets
+      - type: dir
+        path: ../../third_party
+        dest: third_party
+      - type: dir
+        path: .
+        dest: packaging/flatpak
+      - type: file
+        path: ../linux/1loop.desktop
+        dest: packaging/linux
     build-commands:
       - |
         flags="-s -w -X 1loop/internal/update.Version=$(cat VERSION) -X 1loop/internal/update.Packaged=Flatpak"

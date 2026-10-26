@@ -275,6 +275,7 @@ static void loop_minimize(uintptr_t handle) {
 import "C"
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -282,6 +283,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver"
+	"github.com/go-gl/glfw/v3.3/glfw"
 
 	"1loop/internal/platform"
 )
@@ -312,7 +314,36 @@ func systemScale() float32 { return 0 }
 // builtBackend is this build's display, see switchBackend.
 const builtBackend = backendWayland
 
-func backendReady() { useSystemCursor() }
+func backendReady() {
+	useSystemCursor()
+	C.loop_disable_libdecor()
+	fallbackDisplay(initializeWayland)
+}
+
+// Only the short-lived display probe calls this, before loading app state.
+func initializeWayland() (err error) {
+	defer func() {
+		if failure := recover(); failure != nil {
+			err = fmt.Errorf("GLFW initialization: %v", failure)
+		}
+	}()
+	if err := glfw.Init(); err != nil {
+		return err
+	}
+	glfw.WindowHint(glfw.Visible, glfw.False)
+	glfw.WindowHint(glfw.ContextVersionMajor, 2)
+	glfw.WindowHint(glfw.ContextVersionMinor, 1)
+	window, err := glfw.CreateWindow(1, 1, "1loop", nil, nil)
+	if err != nil {
+		return err
+	}
+	if window == nil {
+		return fmt.Errorf("GLFW did not create a context")
+	}
+	window.Destroy()
+	glfw.Terminate()
+	return nil
+}
 
 // useSystemCursor gives GLFW the desktop's cursor theme and size: without
 // XCURSOR_* it falls back to a generic theme at 16 px, unlike every other app.

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"1loop/internal/browser"
 	"1loop/internal/core"
 )
 
@@ -25,6 +26,10 @@ type Config struct {
 	Parameters       map[string]any `json:"parameters,omitempty"`
 	UserInstructions string         `json:"-"`
 	ApprovalMode     string         `json:"-"`
+	// Preferences changes the saved user preferences under their owner's
+	// lock: update receives the saved text and returns the new one. Nil
+	// where the memory tool cannot change them.
+	Preferences func(ctx context.Context, update func(string) (string, error)) error `json:"-"`
 	// ClassicCompaction turns the staged context policy off: one compaction
 	// when the window is nearly full, tool outputs kept as they come.
 	ClassicCompaction bool                                      `json:"-"`
@@ -62,6 +67,8 @@ type Config struct {
 	// also blocks calls made from a model's earlier tool declarations.
 	ToolAllowed         func(string) bool `json:"-"`
 	CapabilitiesChanged <-chan struct{}   `json:"-"`
+	WebConversation     *WebConversation  `json:"webConversation,omitempty"`
+	WebSettings         *WebSettings      `json:"webSettings,omitempty"`
 }
 
 type emitter func(string, any)
@@ -73,6 +80,11 @@ type App struct {
 	openAIProfiles  map[string]*openAIAuth
 	capabilityCache map[string]ModelChoice
 	answers         map[string]chan map[string]string // request_user_input, by request
+	webContext      context.Context
+	webAccounts     map[string]*ChatGPTWeb
+	webSlots        chan struct{}
+	webDir          string                                  // the phone's: beside the server's state
+	webNative       func(profile string) browser.NativeHost // the phone's WebViews
 }
 
 func ResolveWorkspace(path string) (string, error) {

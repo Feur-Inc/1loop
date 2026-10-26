@@ -63,6 +63,7 @@ class MainActivity : ComponentActivity() {
         AgentStatus.setForeground(applicationContext, true)
         AndroidLocalRuntime.get(applicationContext).appForeground = true
         AndroidLocalRuntime.get(applicationContext).refreshPhoneAccess()
+        app.resumeLocal()
         app.updates.resume() // back from the "install unknown apps" page
         lifecycleScope.launch { app.checkUpdates() }
     }

@@ -77,7 +77,7 @@ data class LocalConnection(
 
 private val providers = listOf(
     "openai" to "ChatGPT account", "claudecode" to "Claude Code", "openrouter" to "OpenRouter",
-    "vllm" to "Local vLLM", "compatible" to "OpenAI-compatible API",
+    "vllm" to "Local vLLM", "compatible" to "OpenAI-compatible API", "chatgptweb" to "ChatGPT (Web)",
 )
 
 private fun providerName(id: String) = providers.firstOrNull { it.first == id }?.second ?: id
@@ -114,12 +114,16 @@ private class ConnectionDraft(val original: LocalConnection?) {
     val models = mutableStateListOf<String>().apply {
         base.optJSONArray("models")?.let { array -> for (i in 0 until array.length()) add(array.optString(i)) }
     }
-    var apiKey by mutableStateOf("") // empty: the saved key stays
+    var apiKey by mutableStateOf("") // empty: the saved key stays (ChatGPT (Web): its tunnel key)
+    private val web = base.optJSONObject("webSettings") ?: JSONObject()
+    var tunnelId by mutableStateOf(web.optString("tunnelId"))
+    var plugin by mutableStateOf(web.optString("plugin"))
 
     private fun savedModels() = base.optJSONArray("models")?.let { array -> (0 until array.length()).map { array.optString(it) } }.orEmpty()
 
     /** Its service, address or key differ from what is saved. */
-    val accessChanged get() = original == null || provider != original.provider || baseURL.trim() != base.optString("baseURL") || apiKey.isNotEmpty()
+    val accessChanged get() = original == null || provider != original.provider || baseURL.trim() != base.optString("baseURL") || apiKey.isNotEmpty() ||
+        tunnelId.trim() != web.optString("tunnelId") || plugin.trim() != web.optString("plugin")
 
     val changed get() = if (original == null) name.isNotBlank() || baseURL.isNotBlank() || apiKey.isNotEmpty() else accessChanged || name != base.optString("name") || enabled != base.optBoolean("enabled", true) ||
         allModels != base.optBoolean("allModels", true) || models.toSet() != savedModels().toSet()
@@ -136,7 +140,8 @@ private class ConnectionDraft(val original: LocalConnection?) {
     fun json(): JSONObject = JSONObject(base.toString()).apply {
         put("name", name.trim())
         put("provider", provider)
-        put("baseURL", if (provider in listOf("openai", "claudecode")) "" else baseURL.trim())
+        put("baseURL", if (provider in listOf("openai", "claudecode", "chatgptweb")) "" else baseURL.trim())
+        if (provider == "chatgptweb") put("webSettings", JSONObject(web.toString()).put("tunnelId", tunnelId.trim()).put("plugin", plugin.trim()))
         put("enabled", enabled)
         put("allModels", allModels)
         put("models", JSONArray(models.toList()))
@@ -230,6 +235,7 @@ private fun ConnectionList(list: List<LocalConnection>?, problem: String?, onBac
 private fun accessText(connection: LocalConnection) = when (connection.provider) {
     "openai" -> if (connection.signedIn) connection.email.ifEmpty { "Signed in" } else "Not signed in"
     "claudecode" -> ""
+    "chatgptweb" -> if (connection.hasKey) "Tunnel key saved" else ""
     else -> if (connection.hasKey) "Key saved" else ""
 }
 
@@ -336,6 +342,7 @@ private fun ConnectionEditor(
                 }
             }
             "claudecode" -> ClaudeAccess(app, claudeInstalled, current?.signedIn == true, reload) { claudePending = it }
+            "chatgptweb" -> WebAccess(app, draft, current)
             else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (draft.provider == "openrouter") {
                     Text("Address: $OPENROUTER", style = Type.small)
@@ -367,7 +374,7 @@ private fun ConnectionEditor(
         Spacer(Modifier.height(10.dp))
         // The draft's catalog, as on the desktop, before any Save; a ChatGPT
         // account needs its sign-in first, so it must be saved.
-        if (draft.provider == "openai" && (draft.original == null || draft.original.provider != "openai")) {
+        if (draft.provider in listOf("openai", "chatgptweb") && (draft.original == null || draft.original.provider != draft.provider)) {
             Text("Save the connection and sign in to load its models.", style = Type.caption)
         } else {
             Pill("Load models", enabled = !busy) {
@@ -501,6 +508,88 @@ private fun ChatGPTAccess(draft: ConnectionDraft, current: LocalConnection?, bus
                 Pill("Continue with ChatGPT", enabled = !busy) { act("login") }
             }
         }
+    }
+}
+
+/**
+ * ChatGPT (Web), as on the desktop: the ChatGPT website in this phone's own
+ * browser for the account, its tools through a Secure MCP Tunnel and the
+ * plugin added in ChatGPT.
+ */
+@Composable
+private fun WebAccess(app: RemoteApp, draft: ConnectionDraft, current: LocalConnection?) {
+    val scope = rememberCoroutineScope()
+    val context = LocalContext.current
+    val saved = draft.original != null && draft.original.provider == "chatgptweb"
+    val profile = "chatgpt-" + current?.json?.optString("authProfile").orEmpty()
+    var tunnel by remember { mutableStateOf<String?>(null) }
+    var starting by remember { mutableStateOf(false) }
+    val path = "/api/local/connections/${draft.original?.id}/web"
+    LaunchedEffect(saved) {
+        while (saved) { // the tunnel's state, while it is set up
+            tunnel = runCatching { app.localCall(path).optString("tunnel") }.getOrNull()
+            delay(3000)
+        }
+    }
+    Card {
+        Text(
+            "Uses the ChatGPT website with your subscription, in a browser of its own on this phone (Browser Use keeps its cookies). " +
+                "This is unofficial and can break when ChatGPT changes. ChatGPT's usage limits apply.",
+            style = Type.small,
+        )
+        Spacer(Modifier.height(12.dp))
+        if (!saved) {
+            Text("Enter the tunnel below, save the connection, then sign in.", style = Type.caption)
+            Spacer(Modifier.height(10.dp))
+        }
+        Text("1. Sign in to ChatGPT.", style = Type.small)
+        Spacer(Modifier.height(8.dp))
+        Pill("Open ChatGPT sign-in", enabled = saved) { ChatGPTWebActivity.open(context, profile) }
+        Spacer(Modifier.height(14.dp))
+        Text("2. Create a Secure MCP Tunnel in your OpenAI organization, for this ChatGPT workspace. Use one for this phone only: one 1loop answers per tunnel.", style = Type.small)
+        Spacer(Modifier.height(8.dp))
+        Pill("Open tunnel settings") { openLink(context, "https://platform.openai.com/settings/organization/tunnels") }
+        Spacer(Modifier.height(8.dp))
+        Field(draft.tunnelId, { draft.tunnelId = it }, "Tunnel ID (tunnel_…)", KeyboardType.Ascii)
+        Spacer(Modifier.height(14.dp))
+        Text("3. Create a restricted key with Tunnels Read + Use and paste it here. It stays in a private file on this phone, never in chats or sent to the model.", style = Type.small)
+        Spacer(Modifier.height(8.dp))
+        Pill("Open API key settings") { openLink(context, "https://platform.openai.com/settings/organization/api-keys") }
+        Spacer(Modifier.height(8.dp))
+        Field(
+            draft.apiKey, { draft.apiKey = it },
+            if (current?.hasKey == true && current.provider == "chatgptweb") "Saved key kept · paste to replace it" else "Tunnel key",
+            KeyboardType.Password, password = true,
+        )
+        Spacer(Modifier.height(14.dp))
+        Text(
+            "4. Save, start the tunnel, then open ChatGPT Plugins: Add → Add custom MCP server. Name: ${draft.plugin.trim().ifEmpty { "1loop" }}. " +
+                "Connection: Tunnel, with the ID above. Authentication: No authentication. Tick \"I understand and want to continue\", choose Create as a plugin, then Connect.",
+            style = Type.small,
+        )
+        Spacer(Modifier.height(8.dp))
+        Field(draft.plugin, { draft.plugin = it }, "Plugin name · 1loop", KeyboardType.Text)
+        Spacer(Modifier.height(8.dp))
+        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            Pill("Start tunnel", enabled = saved && current?.hasKey == true && !starting) {
+                starting = true
+                scope.launch {
+                    tunnel = try {
+                        app.localCall(path, JSONObject()).optString("tunnel")
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (e: Exception) {
+                        e.message
+                    } finally {
+                        starting = false
+                    }
+                }
+            }
+            Pill("Open ChatGPT Plugins", enabled = saved) { ChatGPTWebActivity.open(context, profile, "https://chatgpt.com/plugins") }
+        }
+        tunnel?.let { Text(it, style = Type.caption, modifier = Modifier.padding(top = 8.dp)) }
+        Spacer(Modifier.height(14.dp))
+        Text("5. Every chat 1loop opens goes in the ChatGPT project named 1loop, found or created on the first message. The models come from your account.", style = Type.small)
     }
 }
 

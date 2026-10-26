@@ -128,6 +128,17 @@ func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) 
 		return pick("Recalled", "Recalling"), "conversation history", false
 	case "checkpoint":
 		return pick("Recorded", "Recording"), "a context checkpoint", false
+	case "memory":
+		var memory struct{ Action string }
+		_ = json.Unmarshal([]byte(item.Args), &memory)
+		target = "your preferences"
+		switch memory.Action {
+		case "view":
+			return pick("Read", "Reading"), target, false
+		case "remove":
+			return pick("Removed a memory from", "Removing a memory from"), target, false
+		}
+		return pick("Saved a memory to", "Saving a memory to"), target, false
 	}
 	if target == "" {
 		return pick("Used", "Using"), item.Tool, false

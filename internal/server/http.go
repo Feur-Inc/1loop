@@ -45,6 +45,7 @@ func (server *headlessServer) routes() http.Handler {
 			server.mu.Unlock()
 			core.WriteJSON(w, 200, map[string]bool{"ok": true})
 		}))
+		mux.HandleFunc("GET /api/local/busy", server.localOnly(server.localBusy))
 		mux.HandleFunc("GET /api/local/connections", server.localOnly(server.localConnections))
 		mux.HandleFunc("POST /api/local/connections", server.localOnly(server.saveLocalConnection))
 		mux.HandleFunc("POST /api/local/connections/models", server.localOnly(server.draftLocalConnectionModels))
@@ -52,6 +53,9 @@ func (server *headlessServer) routes() http.Handler {
 		mux.HandleFunc("POST /api/local/connections/{id}/login", server.localOnly(server.localConnectionLogin))
 		mux.HandleFunc("POST /api/local/connections/{id}/disconnect", server.localOnly(server.localConnectionDisconnect))
 		mux.HandleFunc("POST /api/local/connections/refresh", server.localOnly(server.refreshLocalModels))
+		mux.HandleFunc("GET /api/local/connections/{id}/web", server.localOnly(server.localWebTunnel))
+		mux.HandleFunc("POST /api/local/connections/{id}/web", server.localOnly(server.localWebTunnel))
+		mux.HandleFunc("POST /api/local/chats/{id}/chatgpt-web", server.localOnly(server.localWebPage))
 		mux.HandleFunc("GET /api/local/claude/login", server.localOnly(server.claudeLoginState))
 		mux.HandleFunc("POST /api/local/claude/login", server.localOnly(server.beginClaudeLogin))
 		mux.HandleFunc("POST /api/local/sync", server.localOnly(server.localSync))
@@ -89,6 +93,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/approve":                            server.approve,
 		"POST /api/answer":                             server.answer,
 		"POST /api/preferences":                        server.setPreferences,
+		"POST /api/memory":                             server.setMemory,
 		"POST /api/model":                              server.setModel,
 		"POST /api/approval-mode":                      server.setApprovalMode,
 		"GET /api/chats/{id}/panel":                    server.panelTabs,

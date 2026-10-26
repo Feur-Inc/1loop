@@ -292,7 +292,7 @@ func actionSummary(title, preview string) string {
 }
 
 // obviouslySafe tells the edits that need no review: inside the workspace
-// (relative paths: confined to it), except in .git. Shell commands are
+// (relative paths: confined to it), except in .git and AGENTS.md. Shell commands are
 // sorted before they reach the review (shellApproval).
 func obviouslySafe(root, title, preview string) bool {
 	if !strings.HasPrefix(title, "Apply changes to ") {
@@ -300,7 +300,9 @@ func obviouslySafe(root, title, preview string) bool {
 	}
 	for _, path := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(title, "Apply changes to "), "?"), ", ") {
 		// An absolute path is outside the workspace, in a granted folder.
-		if path == ".git" || strings.HasPrefix(path, ".git/") || filepath.IsAbs(path) {
+		// AGENTS.md is every agent's instructions, read in every chat: what
+		// is written there is reviewed, so an injection cannot plant itself.
+		if path == ".git" || strings.HasPrefix(path, ".git/") || filepath.IsAbs(path) || filepath.Base(path) == "AGENTS.md" {
 			return false
 		}
 	}

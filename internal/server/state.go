@@ -65,6 +65,7 @@ type serverSettings struct {
 	UserInstructions  string             `json:"userInstructions"`
 	ApprovalMode      string             `json:"approvalMode"`
 	ClassicCompaction bool               `json:"classicCompaction"`
+	MemoryOff         bool               `json:"memoryOff,omitempty"`
 }
 
 type headlessServer struct {
@@ -82,6 +83,7 @@ type headlessServer struct {
 	keys                       map[string]string
 	instructions, approvalMode string
 	classic                    bool
+	memoryOff                  bool                   // the agent's memory tool turned off
 	panelHomes                 map[string]*serverChat // project panels before the first prompt; not persisted
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
@@ -94,6 +96,7 @@ type headlessServer struct {
 	modelProblems              map[string]string
 	limitsCache                map[string]agent.AccountLimits
 	logins                     map[string]*mobileLogin
+	webLeases                  map[string]*webLease // ChatGPT (Web) pages the phone's panel shows, by chat
 	claudeLogin                *mobileLogin
 	loading                    bool
 	local                      bool
@@ -167,6 +170,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		}
 		server.instructions = settings.UserInstructions
 		server.classic = settings.ClassicCompaction
+		server.memoryOff = settings.MemoryOff
 		if settings.ApprovalMode != "" {
 			server.approvalMode = settings.ApprovalMode
 		}
@@ -276,6 +280,7 @@ func (server *headlessServer) close() {
 	}
 	server.engine.Cancel()
 	server.engine.WaitClosed()
+	server.backend.CloseChatGPTWeb()
 }
 
 func (server *headlessServer) chatLocked(id string) *serverChat {
@@ -357,6 +362,7 @@ func (server *headlessServer) configFor(choice agent.ModelChoice, previous agent
 	cfg.ServiceTier = agent.TierFor(choice, previous.ServiceTier)
 	cfg.ReasoningMode = choice.ReasoningMode
 	cfg.Session, cfg.SessionMark = previous.Session, previous.SessionMark
+	cfg.WebConversation = previous.WebConversation
 	cfg.RanWith = previous.RanWith // its next turn knows the model changed
 	if cfg.RanWith == nil && previous.Provider != "" && previous.Model != "" {
 		identity := agent.IdentityOf(previous)
@@ -408,6 +414,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 	return map[string]any{
 		"userPreferences":     server.instructions,
 		"preferencesEditable": true,
+		"memory":              !server.memoryOff,
 		"models":              models,
 		"accounts":            accounts,
 		"model":               server.labelLocked(server.cfg),
@@ -446,6 +453,7 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		Todo:    []remoteapi.Todo{},
 		Tasks:   append([]agent.BackgroundTaskInfo{}, chat.tasks.Snapshot()...),
 	}
+	meta.Provider = chat.Config.Provider
 	for _, m := range chat.queue {
 		meta.Queue = append(meta.Queue, m.Content)
 	}
@@ -627,6 +635,9 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	cfg := chat.Config
 	cfg.APIKey = server.keys[cfg.ConnectionID]
 	cfg.UserInstructions = server.instructions
+	if !server.memoryOff {
+		cfg.Preferences = server.updatePreferences
+	}
 	cfg.ApprovalMode = agent.ApprovalFor(server.approvalMode, cfg)
 	cfg.ClassicCompaction = server.classic
 	cfg.Todo = chat.Todo
@@ -641,6 +652,9 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	}
 	cfg.Review = chat.review
 	cfg.ContextKey = chat.ID + chat.Version
+	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok && cfg.Provider == "chatgptweb" {
+		cfg.WebSettings = connection.WebSettings // the tunnel as last saved, not as when the model was chosen
+	}
 	cfg.Browser = server.browserTools(chat)
 	cfg.Terminal = server.terminalTools(chat)
 	if server.bridge != nil {
@@ -770,6 +784,12 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		index = run.index
 		chat.Items[index].Text += value.(string)
 		run.label, run.mark = "Writing…", "write"
+	case "text": // the streaming answer rewritten as a whole (ChatGPT (Web))
+		if run.index < 0 {
+			run.index = server.addLocked(chat, agent.ChatItem{Kind: "assistant"})
+		}
+		index = run.index
+		chat.Items[index].Text = value.(string)
 	case "message_end":
 		run.index = -1
 	case "history":
@@ -798,6 +818,12 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		}
 		run.approval = nil
 		run.tool = outcome.Name
+	case "tool_output": // a running command's output so far
+		outcome := value.(agent.ToolOutcome)
+		if at, ok := run.calls[outcome.ID]; ok {
+			index = at
+			chat.Items[index].Text = outcome.Output
+		}
 	case "tool_result":
 		outcome := value.(agent.ToolOutcome)
 		if run.tool == outcome.Name {
@@ -825,6 +851,9 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: value.(string)})
 	case "usage":
 		run.used = value.(int)
+	case "web_session": // the ChatGPT (Web) conversation the next turn continues
+		web := value.(agent.WebConversation)
+		chat.Config.WebConversation = &web
 	case "session":
 		chat.Config.Session = value.(string)
 	case "session_synced": // the session has seen everything shown so far
@@ -846,5 +875,6 @@ func (server *headlessServer) saveSettingsLocked() error {
 		UserInstructions:  server.instructions,
 		ApprovalMode:      server.approvalMode,
 		ClassicCompaction: server.classic,
+		MemoryOff:         server.memoryOff,
 	})
 }

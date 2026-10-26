@@ -1,14 +1,15 @@
 #!/usr/bin/env bash
 # Publishes the version written in VERSION:
-#   1. builds and checks everything (ci.sh);
-#   2. packages the downloads in dist/VERSION/;
+#   1. builds the downloads in dist/VERSION/ with packaging/*/build.sh
+#      (docs/BUILD.md);
+#   2. signs the APK with the private release key (android/signing/);
 #   3. signs the update manifest with release-key.pem (never committed);
 #   4. publishes the files and the manifest on the release page, GitHub Pages
 #      served from the gh-pages branch: https://tpm28.github.io/1loop/;
 #   5. creates the GitHub release with the same files.
 # Installed apps find the new version through that manifest.
 #
-# Usage: bash release.sh     (SKIP_CI=1 reuses the outputs of a ci.sh run)
+# Usage: bash release.sh
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")"
 
@@ -34,15 +35,12 @@ if gh release view "v$version" --repo "$repo" >/dev/null 2>&1; then
   exit 1
 fi
 
-[ "${SKIP_CI:-}" = 1 ] || bash ci.sh
-
-echo "Packaging $version"
+echo "Building $version in $out"
 mkdir -p "$out"
 DIST=$out packaging/linux/build.sh binaries tarball deb appimage
-cp bin/1loop-server "$out/1loop-server-$version-linux-amd64"
-(cd bin/windows && zip -qr "../../$out/1loop-$version-windows-amd64.zip" .)
-cp bin/windows/1loop-server.exe "$out/1loop-server-$version-windows-amd64.exe"
-cp android/app/build/outputs/apk/release/app-release.apk "$out/1loop-$version.apk"
+DIST=$out packaging/server/build.sh
+DIST=$out packaging/windows/build.sh
+DIST=$out packaging/android/build.sh release
 
 echo "Signing the update manifest"
 go run ./cmd/1loop-release manifest -key "$key" -version "$version" \

@@ -75,6 +75,8 @@ func toolGlyph(tool string) fyne.Resource {
 		return iconDocument
 	case "checkpoint":
 		return iconCompact
+	case "memory":
+		return iconBookmark
 	}
 	return iconDocument
 }
@@ -755,6 +757,13 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		currentTurn.chat.Items[currentTurn.index].Text += uiEventValue.data.(string)
 		currentTurn.render(false)
 		currentTurn.show(agent.Activity{State: "write"})
+	case "text": // the streaming answer rewritten as a whole (ChatGPT (Web))
+		if currentTurn.index < 0 {
+			currentTurn.index = len(currentTurn.chat.Items)
+			ui.addItem(currentTurn.chat, agent.ChatItem{Kind: "assistant"})
+		}
+		currentTurn.chat.Items[currentTurn.index].Text = uiEventValue.data.(string)
+		currentTurn.render(true)
 	case "message_end":
 		currentTurn.render(true)
 		currentTurn.index = -1
@@ -782,6 +791,13 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 			currentTurn.setRow(index, "running")
 		}
 		currentTurn.showRun(toolOutcomeValue)
+	case "tool_output": // a running command's output so far
+		o := uiEventValue.data.(agent.ToolOutcome)
+		if index, ok := currentTurn.calls[o.ID]; ok {
+			currentTurn.chat.Items[index].Text = o.Output
+			ui.remote.itemChanged(currentTurn.chat, index)
+			ui.panel.changed(currentTurn.chat, index)
+		}
 	case "tool_result":
 		o := uiEventValue.data.(agent.ToolOutcome)
 		index, ok := currentTurn.calls[o.ID]
@@ -828,6 +844,13 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 	case "notice":
 		currentTurn.label = uiEventValue.data.(string)
 		ui.applyActivity(currentTurn)
+	case "web_session":
+		value := uiEventValue.data.(agent.WebConversation)
+		currentTurn.chat.Config.WebConversation = &value
+		if currentTurn.chat == ui.current {
+			ui.cfg.WebConversation = &value
+		}
+		ui.save()
 	case "session": // Claude Code named the chat's session: later turns resume it
 		currentTurn.chat.Config.Session = uiEventValue.data.(string)
 		if currentTurn.chat == ui.current {

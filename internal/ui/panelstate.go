@@ -114,6 +114,15 @@ func (panel *toolPanel) stash() {
 // same width, open if it was. Nothing slides: the panel is simply the
 // other chat's.
 func (panel *toolPanel) switchTo(chat *conversation) {
+	// Hold the destination account while the old view is released, so
+	// switching between Web chats does not restart the shared browser.
+	if panel.ui.cfg.Provider == "chatgptweb" {
+		if bridge, err := panel.ui.backend.WebAccount(panel.ui.cfg); err == nil {
+			release := bridge.Retain()
+			defer release()
+		}
+	}
+	panel.ui.releaseWebTabs()
 	panel.stash()
 	if chat == nil { // the start screen keeps what belongs to the folder it shows
 		kept := panel.home.tabs[:0]
@@ -152,6 +161,9 @@ func (panel *toolPanel) switchTo(chat *conversation) {
 	}
 	panel.ui.panelToggle.SetSelected(state.open)
 	panel.todoChanged(chat)
+	if panel.ui.cfg.Provider == "chatgptweb" {
+		panel.ui.ensureWebTab()
+	}
 	panel.render()
 	relayout(panel.ui.split)
 }

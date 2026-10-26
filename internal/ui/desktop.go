@@ -1107,7 +1107,12 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		}
 		if err == nil {
 			identity := agent.IdentityOf(cfg)
-			ui.onUI(ctx, func() { chat.Config.RanWith = &identity })
+			ui.onUI(ctx, func() {
+				chat.Config.RanWith = &identity
+				if chat == ui.current { // the model picker starts from ui.cfg: a later switch back is a handoff too
+					ui.cfg.RanWith = &identity
+				}
+			})
 			err = ui.backend.Run(ctx, cfg, history, inboxValue, pump.emit)
 		}
 		canceled := ctx.Err() == context.Canceled

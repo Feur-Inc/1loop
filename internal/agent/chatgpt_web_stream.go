@@ -297,13 +297,18 @@ func (streams *webStreams) event(ev any) {
 		id := e.RequestID
 		go func() {
 			var buffered []byte
-			_ = chromedp.Run(streams.page.Ctx, chromedp.ActionFunc(func(ctx context.Context) error {
+			err := chromedp.Run(streams.page.Ctx, chromedp.ActionFunc(func(ctx context.Context) error {
 				data, err := network.StreamResourceContent(id).Do(ctx)
 				buffered = data
 				return err
 			}))
 			streams.mu.Lock()
 			defer streams.mu.Unlock()
+			if err != nil {
+				watch.stream.finish(fmt.Errorf("Unable to read ChatGPT's answer stream: %w", err))
+				delete(streams.watching, id)
+				return
+			}
 			watch.stream.write(buffered)
 			for _, data := range watch.queued {
 				watch.stream.write(data)

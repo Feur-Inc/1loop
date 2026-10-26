@@ -487,6 +487,7 @@ fun ChatScreen(app: RemoteApp) {
         return
     }
     var panel by remember(app.current, app.selectedProject, app.server?.key) { mutableStateOf(false) }
+    ChatGPTWebLease(app)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 720.dp) {
             Row(Modifier.fillMaxSize()) {

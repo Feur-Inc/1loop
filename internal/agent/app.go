@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"1loop/internal/browser"
 	"1loop/internal/core"
 )
 
@@ -82,6 +83,8 @@ type App struct {
 	webContext      context.Context
 	webAccounts     map[string]*ChatGPTWeb
 	webSlots        chan struct{}
+	webDir          string                                  // the phone's: beside the server's state
+	webNative       func(profile string) browser.NativeHost // the phone's WebViews
 }
 
 func ResolveWorkspace(path string) (string, error) {

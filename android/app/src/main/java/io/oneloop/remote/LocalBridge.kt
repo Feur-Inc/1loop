@@ -21,6 +21,7 @@ class LocalBridge(
     scope: CoroutineScope,
     private val phone: LocalAdb,
     private val browser: LocalBrowser,
+    private val chatgpt: suspend (String) -> LocalBrowser,
     private val terminal: suspend (JSONObject) -> JSONObject,
     private val installPackages: suspend (JSONObject) -> JSONObject,
 ) : Closeable {
@@ -57,6 +58,7 @@ class LocalBridge(
                     "phone_use", "adb_shell" -> phone.execute(method, request.getJSONObject("arguments"))
                     "browser_native" -> browser.execute(request.getJSONObject("arguments"))
                     "browser_clear" -> { browser.clearData(); JSONObject().put("ok", true) }
+                    "chatgpt_native" -> request.getJSONObject("arguments").let { chatgpt(it.getString("profile")).execute(it) }
                     "terminal_native" -> terminal(request.getJSONObject("arguments"))
                     "install_packages" -> installPackages(request.getJSONObject("arguments"))
                     else -> error("Unknown local bridge method.")

@@ -21,6 +21,9 @@ type mobileBrowser struct {
 	bridge  *mobileBridge
 	address string
 	client  *http.Client
+	// profile, for a ChatGPT (Web) account: its WebViews keep their own
+	// cookies, apart from Browser Use's.
+	profile string
 }
 
 func (host *mobileBrowser) call(ctx context.Context, action, id string, values any, result any) error {
@@ -30,8 +33,12 @@ func (host *mobileBrowser) call(ctx context.Context, action, id string, values a
 		_ = json.Unmarshal(data, &args)
 	}
 	args["action"], args["id"] = action, id
+	method := "browser_native"
+	if host.profile != "" {
+		method, args["profile"] = "chatgpt_native", host.profile
+	}
 	raw, _ := json.Marshal(args)
-	return host.bridge.call(ctx, "browser_native", raw, result)
+	return host.bridge.call(ctx, method, raw, result)
 }
 
 func (host *mobileBrowser) Connect(ctx context.Context) (string, target.ID, error) {

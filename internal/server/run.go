@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"1loop/internal/agent"
+	"1loop/internal/browser"
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
 )
@@ -98,6 +99,10 @@ func Main() {
 	}
 	if server.bridge != nil {
 		server.engine.Native = &mobileBrowser{bridge: server.bridge}
+		bridge := server.bridge
+		server.backend.EnableChatGPTWebNative(ctx, *dir, func(profile string) browser.NativeHost {
+			return &mobileBrowser{bridge: bridge, profile: "chatgpt-" + profile}
+		})
 	}
 	if *provider != "" || *model != "" || *base != "" {
 		if *provider != "" {

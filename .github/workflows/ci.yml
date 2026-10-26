@@ -1,9 +1,9 @@
 name: CI and alpha releases
 
 # Every push and pull request on dev and main builds and checks Linux,
-# Windows and Android. A push on dev also publishes the builds as an alpha
+# Windows, Android, Flatpak and Nix. A push on dev also publishes downloads as an alpha
 # prerelease: they go to a draft release (no Actions artifacts), which is
-# signed and published only once all three platforms succeeded. Only the
+# signed and published only once all five build jobs succeeded. Only the
 # three newest alpha-N prereleases are kept; stable releases are untouched.
 # The commands are the same as for a manual build: see docs/BUILD.md.
 
@@ -69,13 +69,14 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        platform: [linux, windows, android]
+        platform: [linux, windows, android, flatpak, nix]
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
 
       - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        if: matrix.platform != 'flatpak' && matrix.platform != 'nix'
         with:
           go-version-file: go.mod
 
@@ -103,6 +104,42 @@ jobs:
           sudo apt-get update -q
           sudo apt-get install -y -q --no-install-recommends gcc-mingw-w64-x86-64 p7zip-full zip
           packaging/windows/build.sh
+
+      - name: Flatpak — build, validate and bundle
+        if: matrix.platform == 'flatpak'
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends flatpak flatpak-builder appstream-compose desktop-file-utils
+          flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          manifest=packaging/flatpak/io.github.Feur_Inc.OneLoop.yml
+          flatpak-builder --user --install-deps-from=flathub --disable-rofiles-fuse \
+            --state-dir="$RUNNER_TEMP/flatpak-state" --repo="$RUNNER_TEMP/flatpak-repo" \
+            "$RUNNER_TEMP/flatpak-build" "$manifest"
+          desktop-file-validate "$RUNNER_TEMP/flatpak-build/files/share/applications/io.github.Feur_Inc.OneLoop.desktop"
+          flatpak-builder --state-dir="$RUNNER_TEMP/flatpak-state" --run "$RUNNER_TEMP/flatpak-build" "$manifest" /app/bin/1loop-flatpak --help
+          flatpak-builder --state-dir="$RUNNER_TEMP/flatpak-state" --run "$RUNNER_TEMP/flatpak-build" "$manifest" /app/lib/1loop/1loop-wayland --help
+          mkdir -p dist
+          flatpak build-bundle --runtime-repo=https://flathub.org/repo/flathub.flatpakrepo \
+            "$RUNNER_TEMP/flatpak-repo" "dist/1loop-$(cat VERSION).flatpak" io.github.Feur_Inc.OneLoop
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+        if: matrix.platform == 'nix'
+        with:
+          # Keep source builds sequential, with two compiler cores, to bound RAM.
+          extra_nix_config: |
+            max-jobs = 1
+            cores = 2
+
+      - name: Nix — evaluate, build and check installed helpers
+        if: matrix.platform == 'nix'
+        run: |
+          set -euo pipefail
+          nix flake check --no-write-lock-file
+          out=$(nix build .#default --no-write-lock-file --no-link --print-out-paths)
+          "$out/bin/1loop" --help
+          "$out/libexec/1loop/1loop-wayland" --help
+          "$out/libexec/1loop/computer-python" -c 'import gi, dbus, PIL; gi.require_version("Gst", "1.0"); from gi.repository import Gst; Gst.init(None); assert Gst.ElementFactory.find("pipewiresrc")'
 
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
         if: matrix.platform == 'android'
@@ -133,7 +170,7 @@ jobs:
           packaging/android/build.sh debug
 
       - name: Upload to the alpha draft
-        if: env.PUBLISH == 'true'
+        if: env.PUBLISH == 'true' && matrix.platform != 'nix'
         env:
           GH_TOKEN: ${{ github.token }}
           GH_REPO: ${{ github.repository }}
@@ -173,6 +210,7 @@ jobs:
             "1loop-$version-linux-amd64.tar.gz"
             "1loop-$version-amd64.deb"
             "1loop-$version-x86_64.AppImage"
+            "1loop-$version.flatpak"
             "1loop-server-$version-linux-amd64"
             "1loop-$version-windows-amd64.zip"
             "1loop-server-$version-windows-amd64.exe"
@@ -192,11 +230,11 @@ jobs:
           gh release upload "$TAG" "$work/SHA256SUMS" "$work/SHA256SUMS.sig" .github/release-key.pub --clobber
 
           cat > "$work/notes.md" <<NOTES
-          Test builds of 1loop $version from $GITHUB_SHA: Linux (.tar.gz, .deb, AppImage),
+          Test builds of 1loop $version from $GITHUB_SHA: Linux (.tar.gz, .deb, AppImage, Flatpak),
           Windows (desktop with the software renderer), both servers, and the Android debug
           APK ("1loop debug", installed beside the release app, debuggable: anyone with ADB
-          access to the phone can read its data) with its native sources. Linux, Windows and
-          Android checks passed; Windows is
+          access to the phone can read its data) with its native sources. Linux, Windows,
+          Android, Flatpak and Nix checks passed; Windows is
           cross-compiled, its tests are not run here.
 
           Check the downloads with release-key.pub:

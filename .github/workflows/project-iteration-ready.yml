@@ -1,0 +1,125 @@
+name: Ready current iteration
+
+# Moves items of the "1loop dev" project (Feur-Inc #1) from Backlog to Ready
+# once they belong to the current iteration. Items with any other status are
+# left alone. GitHub has no event for iteration changes, so this runs on a
+# schedule.
+#
+# Setup: the default GITHUB_TOKEN cannot reach organization projects. Create
+# a fine-grained personal access token with resource owner Feur-Inc and the
+# organization permission "Projects: Read and write", then save it as the
+# repository secret PROJECT_TOKEN.
+
+on:
+  schedule:
+    - cron: "*/15 * * * *"
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: project-iteration-ready
+
+env:
+  ORG: Feur-Inc
+  PROJECT_NUMBER: 1
+  STATUS_FIELD: Status
+  ITERATION_FIELD: Iteration
+  FROM_STATUS: Backlog
+  TO_STATUS: Ready
+
+jobs:
+  ready:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Move current-iteration Backlog items to Ready
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          project=$(gh api graphql \
+            -f org="$ORG" -F number="$PROJECT_NUMBER" \
+            -f status="$STATUS_FIELD" -f iteration="$ITERATION_FIELD" \
+            -f query='
+              query($org: String!, $number: Int!, $status: String!, $iteration: String!) {
+                organization(login: $org) {
+                  projectV2(number: $number) {
+                    id
+                    status: field(name: $status) {
+                      ... on ProjectV2SingleSelectField { id options { id name } }
+                    }
+                    iteration: field(name: $iteration) {
+                      ... on ProjectV2IterationField {
+                        configuration { iterations { id title startDate duration } }
+                      }
+                    }
+                  }
+                }
+              }' --jq '.data.organization.projectV2')
+
+          project_id=$(jq -r '.id' <<<"$project")
+          status_field_id=$(jq -r '.status.id' <<<"$project")
+          to_option_id=$(jq -r --arg name "$TO_STATUS" \
+            '.status.options[] | select(.name == $name) | .id' <<<"$project")
+
+          # An iteration covers startDate up to startDate + duration days (UTC).
+          current=$(jq -c '.iteration.configuration.iterations[]
+            | (.startDate + "T00:00:00Z" | fromdate) as $start
+            | select($start <= now and now < $start + .duration * 86400)' <<<"$project")
+
+          if [ -z "$current" ]; then
+            echo "No iteration is running today; nothing to do."
+            exit 0
+          fi
+          if [ -z "$to_option_id" ]; then
+            echo "::error::Status option \"$TO_STATUS\" not found"
+            exit 1
+          fi
+          iteration_id=$(jq -r '.id' <<<"$current")
+          echo "Current iteration: $(jq -r '.title' <<<"$current")"
+
+          items=$(gh api graphql --paginate \
+            -f org="$ORG" -F number="$PROJECT_NUMBER" \
+            -f status="$STATUS_FIELD" -f iteration="$ITERATION_FIELD" \
+            -f query='
+              query($org: String!, $number: Int!, $status: String!, $iteration: String!, $endCursor: String) {
+                organization(login: $org) {
+                  projectV2(number: $number) {
+                    items(first: 100, after: $endCursor) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes {
+                        id
+                        isArchived
+                        status: fieldValueByName(name: $status) {
+                          ... on ProjectV2ItemFieldSingleSelectValue { name }
+                        }
+                        iteration: fieldValueByName(name: $iteration) {
+                          ... on ProjectV2ItemFieldIterationValue { iterationId }
+                        }
+                      }
+                    }
+                  }
+                }
+              }' \
+            --jq ".data.organization.projectV2.items.nodes[]
+              | select(.isArchived | not)
+              | select(.iteration.iterationId == \"$iteration_id\")
+              | select(.status.name == \"$FROM_STATUS\")
+              | .id")
+
+          moved=0
+          for item in $items; do
+            gh api graphql \
+              -f project="$project_id" -f item="$item" \
+              -f field="$status_field_id" -f option="$to_option_id" \
+              -f query='
+                mutation($project: ID!, $item: ID!, $field: ID!, $option: String!) {
+                  updateProjectV2ItemFieldValue(input: {
+                    projectId: $project, itemId: $item, fieldId: $field,
+                    value: { singleSelectOptionId: $option }
+                  }) { projectV2Item { id } }
+                }' > /dev/null
+            moved=$((moved + 1))
+          done
+          echo "Moved $moved item(s) from $FROM_STATUS to $TO_STATUS."

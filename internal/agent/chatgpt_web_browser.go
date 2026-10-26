@@ -470,7 +470,11 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 	if err = webAttachConnector(ctx, tab, settings.plugin()); err != nil {
 		return err
 	}
-	if err = webUpload(ctx, tab, cfg.Workspace, history[len(history)-1].Images); err != nil {
+	upload := webUpload
+	if bridge.phone {
+		upload = webUploadData
+	}
+	if err = upload(ctx, tab, cfg.Workspace, history[len(history)-1].Images); err != nil {
 		return err
 	}
 	if err = tab.Run(ctx, input.InsertText(prompt)); err != nil {
@@ -623,6 +627,37 @@ func webUpload(ctx context.Context, tab *browser.Page, root string, images []cor
 	}
 	if err := tab.Run(ctx, chromedp.SetUploadFiles(`input[type="file"]`, paths, chromedp.ByQuery)); err != nil {
 		return fmt.Errorf("ChatGPT did not accept the images: %w", err)
+	}
+	return nil
+}
+
+// webUploadData gives the images to the page itself: on the phone the
+// files 1loop writes are in Debian, out of the WebView's reach.
+func webUploadData(ctx context.Context, tab *browser.Page, _ string, images []core.ImagePart) error {
+	if len(images) == 0 {
+		return nil
+	}
+	type file struct {
+		Name string `json:"name"`
+		Mime string `json:"mime"`
+		Data string `json:"data"`
+	}
+	var files []file
+	for i, image := range images {
+		ext := ".png"
+		if image.Mime == "image/jpeg" {
+			ext = ".jpg"
+		}
+		files = append(files, file{fmt.Sprintf("chatgpt-image-%d%s", i+1, ext), image.Mime, image.Data})
+	}
+	encoded, _ := json.Marshal(files)
+	var accepted bool
+	script := `((files)=>{const input=document.querySelector('input[type="file"]');if(!input)return false;const list=new DataTransfer();for(const f of files){const raw=atob(f.data);const bytes=new Uint8Array(raw.length);for(let i=0;i<raw.length;i++)bytes[i]=raw.charCodeAt(i);list.items.add(new File([bytes],f.name,{type:f.mime}))}input.files=list.files;input.dispatchEvent(new Event('change',{bubbles:true}));return true})(` + string(encoded) + `)`
+	if err := tab.Run(ctx, evaluateWeb(script, &accepted)); err != nil {
+		return fmt.Errorf("ChatGPT did not accept the images: %w", err)
+	}
+	if !accepted {
+		return fmt.Errorf("ChatGPT did not accept the images: its file field is unavailable")
 	}
 	return nil
 }

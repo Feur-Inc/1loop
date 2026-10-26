@@ -226,6 +226,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var screen by mutableStateOf<Screen>(Screen.Launch)
     var target by mutableStateOf<ExecutionTarget?>(null)
     private var resumeChat: String? = null // the chat shown when the local engine stopped while idle
+    private var resumeIdle = false // that chat was shown: the engine starts again when the app is
     val local = AndroidLocalRuntime.get(context)
     var starting by mutableStateOf(false) // the local engine is starting
     private var localStartGeneration = -1L
@@ -308,9 +309,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         scope.launch {
             local.activeServer.collect { active ->
                 if (active == null && server?.localPhone == true && screen == Screen.Chat) {
-                    if (local.stoppedWhenIdle) resumeChat = current // opened again with the engine
+                    resumeIdle = local.stoppedWhenIdle
+                    if (resumeIdle) resumeChat = current // opened again with the engine
                     disconnect()
                     screen = Screen.LocalSetup
+                    if (foreground) resumeLocal() // shown again before this stop reached the app
                 }
             }
         }
@@ -390,8 +393,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     /** Shown again after the engine stopped while idle: it starts again, on the same chat. */
     fun resumeLocal() {
-        if (!local.stoppedWhenIdle || target != ExecutionTarget.LocalPhone || server != null) return
-        local.stoppedWhenIdle = false
+        if (!resumeIdle || server != null || screen != Screen.LocalSetup) return
+        resumeIdle = false
         openLocal()
     }
 

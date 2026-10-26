@@ -93,7 +93,7 @@ class LocalRuntimeService : Service() {
                     }
                 if (busy) {
                     idleSince = SystemClock.elapsedRealtime()
-                } else if (SystemClock.elapsedRealtime() - idleSince >= IDLE_MS) {
+                } else if (!runtime.appForeground && SystemClock.elapsedRealtime() - idleSince >= IDLE_MS) { // shown during the check: kept
                     runtime.stoppedWhenIdle = true
                     released = true
                     runtime.stop()
@@ -109,6 +109,7 @@ class LocalRuntimeService : Service() {
         when (intent?.action) {
             ACTION_STOP -> {
                 released = true // the user's Stop: onDestroy must not stop a newer start again
+                runtime.stoppedWhenIdle = false // stopped on purpose: not started again
                 runtime.stop()
                 stopSelf()
             }

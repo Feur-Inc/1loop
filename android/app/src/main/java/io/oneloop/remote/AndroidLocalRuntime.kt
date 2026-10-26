@@ -281,6 +281,7 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
     }
 
     override suspend fun start(): Server {
+        stoppedWhenIdle = false // an older idle stop must not start it again later
         val epoch = generation.get()
         return scope.async {
             try {

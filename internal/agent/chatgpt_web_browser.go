@@ -785,7 +785,9 @@ func webClearComposer(ctx context.Context, tab *browser.Page) error {
 // webAttachConnector gives this message the 1loop app: "@1loop", then the
 // suggestion ChatGPT lists among its plugins.
 func webAttachConnector(ctx context.Context, tab *browser.Page, name string) error {
-	if err := tab.Run(ctx, chromedp.KeyEvent("@"+name)); err != nil {
+	// The first word only: a space can close ChatGPT's suggestions, and the
+	// suggestion is chosen by its whole name below.
+	if err := tab.Run(ctx, chromedp.KeyEvent("@"+strings.Fields(name)[0])); err != nil {
 		return err
 	}
 	wanted, _ := json.Marshal(name)

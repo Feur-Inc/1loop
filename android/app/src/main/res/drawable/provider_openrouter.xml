@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- OpenAI, Claude and OpenRouter SVG paths from https://github.com/lobehub/lobe-icons
+
+MIT License
+
+Copyright (c) 2023 LobeHub
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+ -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android" android:width="26dp" android:height="26dp" android:viewportWidth="26" android:viewportHeight="26">
+    <path android:pathData="M7.5,0.5H18.5Q25.5,0.5 25.5,7.5V18.5Q25.5,25.5 18.5,25.5H7.5Q0.5,25.5 0.5,18.5V7.5Q0.5,0.5 7.5,0.5Z" android:fillColor="#242424" android:strokeColor="#2a2a2a" android:strokeWidth="1" />
+    <group android:translateX="3" android:translateY="3" android:scaleX=".833333" android:scaleY=".833333">
+        <path android:pathData="M18.654 3.87C21.46347252238925 3.870000000000002 23.741000000000003 6.1475274776107565 23.741000000000003 8.957C23.741000000000003 11.766472522389247 21.46347252238925 14.044 18.654000000000003 14.044L23.7 19.09C24.34 19.731 23.887 20.826999999999998 22.98 20.826999999999998H8.48C3.797177606184705 20.826999999999998 0.0010000000000019561 17.0308223938153 0.0010000000000013826 12.348C0.0010000000000013826 7.665177606184704 3.7971776061847025 3.8690000000000015 8.479999999999999 3.869L18.655 3.8689999999999998L18.654 3.87ZM8.479 7.26C5.668975192860922 7.26 3.3909999999999987 9.537975192860923 3.3909999999999982 12.347999999999999C3.3909999999999982 15.158024807139077 5.66897519286092 17.436 8.478999999999997 17.436C11.288748664764162 17.436 13.566500000000001 15.158248664764162 13.566500000000001 12.348500000000001C13.566500000000001 9.53875133523584 11.288748664764162 7.261 8.479 7.261V7.26Z" android:fillColor="#f4f4f4" android:fillType="evenOdd" />
+    </group>
+</vector>

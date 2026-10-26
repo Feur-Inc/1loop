@@ -205,7 +205,13 @@ func (ui *desktopUI) ensureWebTab() {
 			address = web.URL
 		}
 	}
-	release := bridge.Retain()
+	for _, tab := range ui.panel.tabs {
+		// Paused pages (closed when idle) open again with the chat.
+		if tab.web && tab.webKey == key && tab.webAccount == bridge && tab.webPage.Life.Err() == nil {
+			return
+		}
+	}
+	release := bridge.RetainView()
 	page := bridge.Page(key, address)
 	stopView := func() {
 		page.SetVisible(false)
@@ -213,12 +219,8 @@ func (ui *desktopUI) ensureWebTab() {
 	}
 	for i, tab := range ui.panel.tabs {
 		if tab.web {
-			if tab.webKey == key && tab.webAccount == bridge {
-				release()
-				return
-			}
 			tab.dispose()
-			ui.panel.tabs[i].content, ui.panel.tabs[i].webKey = ui.webBrowser(bridge, key, address), key
+			ui.panel.tabs[i].content, ui.panel.tabs[i].webKey, ui.panel.tabs[i].webPage = ui.webBrowser(bridge, key, address), key, page
 			ui.panel.tabs[i].webAccount, ui.panel.tabs[i].cancel = bridge, stopView
 			if i == ui.panel.active {
 				ui.panel.render()
@@ -226,7 +228,7 @@ func (ui *desktopUI) ensureWebTab() {
 			return
 		}
 	}
-	ui.panel.tabs = append(ui.panel.tabs, panelTab{kind: "chatgptweb", title: "ChatGPT", icon: iconPlug, web: true, webKey: key, webAccount: bridge, cancel: stopView, content: ui.webBrowser(bridge, key, address)})
+	ui.panel.tabs = append(ui.panel.tabs, panelTab{kind: "chatgptweb", title: "ChatGPT", icon: iconPlug, web: true, webKey: key, webPage: page, webAccount: bridge, cancel: stopView, content: ui.webBrowser(bridge, key, address)})
 	ui.panel.active = len(ui.panel.tabs) - 1
 	ui.panel.render()
 }

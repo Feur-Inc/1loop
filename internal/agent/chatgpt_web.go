@@ -96,15 +96,62 @@ func (backend *App) WebAccount(cfg Config) (*ChatGPTWeb, error) {
 		account.phone = true
 	}
 	backend.webAccounts[profile] = account
+	go account.pauseWhenIdle()
 	return account, nil
+}
+
+// webIdle is how long the pages only a view keeps (the chat on screen) stay
+// open without a turn: then they close with the tunnel, to save the
+// computer's or phone's resources, until the next turn or chat opened.
+const webIdle = 15 * time.Minute
+
+func (bridge *ChatGPTWeb) pauseWhenIdle() {
+	tick := time.NewTicker(time.Minute)
+	defer tick.Stop()
+	for {
+		select {
+		case <-bridge.parent.Done():
+			return
+		case <-tick.C:
+		}
+		bridge.mu.Lock()
+		if bridge.users > 0 && bridge.users == bridge.views && len(bridge.pages) > 0 && time.Since(bridge.active) > webIdle {
+			bridge.closeLocked()
+			bridge.paused = true
+		}
+		bridge.mu.Unlock()
+	}
+}
+
+// Paused reports pages closed for inactivity while a view still shows them.
+func (bridge *ChatGPTWeb) Paused() bool {
+	bridge.mu.Lock()
+	defer bridge.mu.Unlock()
+	return bridge.paused
 }
 
 // Retain keeps this account's browser and tunnel available for one user.
 // Releasing the final user closes its pages; the existing browser engine
 // stops its process and can restart later with the same persistent profile.
+// A turn, a setup or a chat opened is activity: it restarts the idle time.
 func (bridge *ChatGPTWeb) Retain() func() {
+	return bridge.retain(false)
+}
+
+// RetainView keeps the browser for a view that shows a page; a view alone
+// is not activity, so its pages still close when idle (see webIdle).
+func (bridge *ChatGPTWeb) RetainView() func() {
+	return bridge.retain(true)
+}
+
+func (bridge *ChatGPTWeb) retain(view bool) func() {
 	bridge.mu.Lock()
 	bridge.users++
+	if view {
+		bridge.views++
+	} else {
+		bridge.active = time.Now()
+	}
 	bridge.mu.Unlock()
 	var once sync.Once
 	return func() {
@@ -112,21 +159,28 @@ func (bridge *ChatGPTWeb) Retain() func() {
 			bridge.mu.Lock()
 			defer bridge.mu.Unlock()
 			bridge.users--
-			if bridge.users != 0 {
-				return
+			if view {
+				bridge.views--
 			}
-			for key, tab := range bridge.pages {
-				tab.Close()
-				delete(bridge.pages, key)
+			if bridge.users == 0 {
+				bridge.closeLocked()
+				bridge.paused = false
 			}
-			bridge.pageStreams, bridge.chosen = nil, nil
-			if bridge.stopTunnel != nil {
-				bridge.stopTunnel()
-				bridge.stopTunnel = nil
-			}
-			bridge.tunnelReady, bridge.tunnelError = false, nil
 		})
 	}
+}
+
+func (bridge *ChatGPTWeb) closeLocked() {
+	for key, tab := range bridge.pages {
+		tab.Close()
+		delete(bridge.pages, key)
+	}
+	bridge.pageStreams, bridge.chosen = nil, nil
+	if bridge.stopTunnel != nil {
+		bridge.stopTunnel()
+		bridge.stopTunnel = nil
+	}
+	bridge.tunnelReady, bridge.tunnelError = false, nil
 }
 
 func (bridge *ChatGPTWeb) Page(key, address string) *browser.Page {
@@ -138,6 +192,7 @@ func (bridge *ChatGPTWeb) Page(key, address string) *browser.Page {
 	if address == "" {
 		address = "https://chatgpt.com/"
 	}
+	bridge.active, bridge.paused = time.Now(), false // opening a page is activity
 	tab := browser.NewBrowserPage(browser.NewBrowserSession(bridge.engine), browser.Info{URL: address, Width: 1100, Height: 800, Adaptive: key == "setup"})
 	bridge.pages[key] = tab
 	go tab.Start()

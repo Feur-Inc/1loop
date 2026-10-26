@@ -62,6 +62,7 @@ type panelTab struct {
 	web             bool
 	webKey          string // the ChatGPT page shown: its chat's
 	webAccount      *agent.ChatGPTWeb
+	webPage         *browser.Page
 	workspace       string // manual tabs belong to a workspace, not a transcript item
 }
 

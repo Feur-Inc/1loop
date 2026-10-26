@@ -5,6 +5,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.draw.clip
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.gestures.detectTapGestures
@@ -71,6 +75,14 @@ fun FilesView(app: RemoteApp, workspace: String) {
     var folder by remember(workspace) { mutableStateOf("") }
     var entries by remember(workspace) { mutableStateOf<List<ProjectFile>?>(null) }
     var open by remember(workspace) { mutableStateOf<ProjectFile?>(null) }
+    var cited by remember(workspace) { mutableStateOf<IntRange?>(null) }
+    LaunchedEffect(app.fileFocus) {
+        val citation = app.fileFocus ?: return@LaunchedEffect
+        app.fileFocus = null
+        folder = citation.path.substringBeforeLast('/', "")
+        open = ProjectFile(citation.path.substringAfterLast('/'), citation.path, false, 0)
+        cited = if (citation.start == 1 && citation.end == citation.total) null else citation.start..citation.end // a whole file: nothing to mark
+    }
     var status by remember { mutableStateOf<String?>(null) }
     var round by remember { mutableIntStateOf(0) }
     var copying by remember { mutableStateOf(false) }
@@ -92,7 +104,7 @@ fun FilesView(app: RemoteApp, workspace: String) {
         entries = try { app.listFiles(workspace, folder) } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { status = failure.message; emptyList() }
     }
     open?.let { file ->
-        FilePreview(app, workspace, file, onBack = { open = null }) { status = it }
+        FilePreview(app, workspace, file, cited, onBack = { open = null; cited = null }) { status = it }
         return
     }
     BackHandler(enabled = folder.isNotEmpty()) { folder = folder.substringBeforeLast('/', "") }
@@ -133,7 +145,7 @@ fun FilesView(app: RemoteApp, workspace: String) {
 }
 
 @Composable
-private fun FilePreview(app: RemoteApp, workspace: String, file: ProjectFile, onBack: () -> Unit, onStatus: (String?) -> Unit) {
+private fun FilePreview(app: RemoteApp, workspace: String, file: ProjectFile, cited: IntRange?, onBack: () -> Unit, onStatus: (String?) -> Unit) {
     BackHandler(onBack = onBack)
     val scope = rememberCoroutineScope()
     var preview by remember(file) { mutableStateOf<JSONObject?>(null) }
@@ -178,10 +190,13 @@ private fun FilePreview(app: RemoteApp, workspace: String, file: ProjectFile, on
                 shown == null -> WorkRing("wait", 30.dp)
                 picture != null -> Image(picture!!.asImageBitmap(), file.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
                 shown.optBoolean("binary") || shown.optBoolean("image") -> Text("Binary file · ${byteSize(file.size)}. Download it to open it.", style = Type.small)
-                else -> Column(Modifier.verticalScroll(rememberScrollState())) {
-                    var text = shown.optString("text")
-                    if (shown.optBoolean("truncated")) text += "\n… (the preview shows the first ${byteSize(text.length.toLong())} of ${byteSize(file.size)})"
-                    FileCode(text, file.name)
+                else -> {
+                    val scroll = rememberScrollState()
+                    Column(Modifier.verticalScroll(scroll)) {
+                        var text = shown.optString("text")
+                        if (shown.optBoolean("truncated")) text += "\n… (the preview shows the first ${byteSize(text.length.toLong())} of ${byteSize(file.size)})"
+                        FileCode(text, file.name, cited) { top -> scope.launch { scroll.scrollTo(top) } }
+                    }
                 }
             }
         }
@@ -328,13 +343,15 @@ private fun SendFileDialog(app: RemoteApp, workspace: String, file: ProjectFile,
 }
 
 @Composable
-private fun FileCode(text: String, name: String) {
+private fun FileCode(text: String, name: String, cited: IntRange? = null, onCitedTop: (Int) -> Unit = {}) {
     val colored = remember(text) {
         val token = Regex(""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|//[^\n]*|#[^\n]*|\b(?:func|fun|def|class|package|import|from|return|if|else|for|while|val|var|const|let|true|false|null|nil|public|private|void|int|string|bool)\b""")
         buildAnnotatedString {
             text.trimEnd('\n').lines().forEachIndexed { index, line ->
                 if (index > 0) append('\n')
-                withStyle(SpanStyle(color = Palette.faint)) { append("${index + 1}  ") }
+                val marked = cited != null && index + 1 in cited
+                if (marked) pushStyle(SpanStyle(background = Palette.raised))
+                withStyle(SpanStyle(color = if (marked) Palette.amber else Palette.faint)) { append("${index + 1}  ") }
                 var position = 0
                 token.findAll(line).forEach { match ->
                     append(line.substring(position, match.range.first))
@@ -343,14 +360,69 @@ private fun FileCode(text: String, name: String) {
                     position = match.range.last + 1
                 }
                 append(line.substring(position))
+                if (marked) pop()
             }
         }
     }
+    var scrolled by remember(text, cited) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(name, style = Type.caption, modifier = Modifier.weight(1f))
             CopyChip { text }
         }
-        Text(colored, style = Type.mono, softWrap = false, modifier = Modifier.horizontalScroll(rememberScrollState()))
+        Text(colored, style = Type.mono, softWrap = false, modifier = Modifier.horizontalScroll(rememberScrollState()), onTextLayout = { layout ->
+            // The cited lines in view, a few lines above them too.
+            if (cited != null && !scrolled && cited.first - 1 < layout.lineCount) {
+                scrolled = true
+                onCitedTop(layout.getLineTop(maxOf(cited.first - 4, 0)).toInt())
+            }
+        })
+    }
+}
+
+/** A cite call's card (the agent's cite tool): the file, its cited lines and the ones the card shows. */
+data class Citation(val path: String, val start: Int, val end: Int, val total: Int, val code: List<String>)
+
+private val citeHeader = Regex("""^Cited (.+), lines (\d+)-(\d+) of (\d+)\.$""")
+
+fun citationOf(item: Item): Citation? {
+    if (item.tool != "cite" || item.failed.isNotEmpty()) return null
+    val match = citeHeader.find(item.text.substringBefore('\n')) ?: return null
+    val (path, start, end, total) = match.destructured
+    return Citation(path, start.toInt(), end.toInt(), total.toInt(), item.text.substringAfter('\n', "").split('\n'))
+}
+
+private const val CITATION_CARD_LINES = 12
+
+/** Under the tool row: a few of the cited lines; Open shows the file in the panel, those lines marked. */
+@Composable
+fun CitationCard(citation: Citation, onOpen: (Citation) -> Unit) {
+    val shown = citation.code.take(CITATION_CARD_LINES)
+    val lines = if (citation.start == 1 && citation.end == citation.total) "whole file · ${citation.total} lines" else "lines ${citation.start}–${citation.end}"
+    Column(
+        Modifier.padding(start = 32.dp, top = 2.dp, bottom = 4.dp).fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp)).background(Palette.code).border(1.dp, Palette.borderSoft, RoundedCornerShape(10.dp))
+            .clickable { onOpen(citation) },
+    ) {
+        Row(Modifier.fillMaxWidth().padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+            Text(citation.path, style = Type.mono, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+            Text(" · $lines", style = Type.caption, maxLines = 1)
+            Spacer(Modifier.weight(1f))
+            Pill("Open") { onOpen(citation) }
+        }
+        val code = buildAnnotatedString {
+            val width = (citation.start + shown.size - 1).toString().length // numbers aligned, code too
+            shown.forEachIndexed { index, line ->
+                if (index > 0) append('\n')
+                withStyle(SpanStyle(color = Palette.faint)) { append("${citation.start + index}".padStart(width) + "  ") }
+                append(line)
+            }
+        }
+        Text(code, style = Type.mono, softWrap = false, modifier = Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp))
+        val more = citation.end - citation.start + 1 - shown.size
+        Text(
+            if (more > 0) "… $more more lines: Open shows them all" else "",
+            style = Type.caption, modifier = Modifier.padding(horizontal = 12.dp, vertical = if (more > 0) 6.dp else 3.dp),
+        )
     }
 }

@@ -77,6 +77,9 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 			if cfg.ProjectTools == nil && cfg.toolAvailable("memory") {
 				definitions = append(definitions, memoryToolDefinition())
 			}
+			if cfg.ProjectTools == nil && cfg.toolAvailable("cite") {
+				definitions = append(definitions, citeToolDefinition())
+			}
 			for _, group := range availableToolGroups(cfg) {
 				definitions = append(definitions, group.tools()...)
 			}
@@ -111,6 +114,14 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 				text, _, err := backend.editMemory(operation, string(call.Arguments), func() {}, emit)
 				stop()
 				cancel()
+				if err != nil {
+					text = err.Error()
+				}
+				response["result"] = map[string]any{"isError": err != nil, "content": []any{map[string]string{"type": "text", "text": text}}}
+				break
+			}
+			if call.Name == "cite" && cfg.ProjectTools == nil {
+				text, err := citeFile(cfg.Workspace, string(call.Arguments))
 				if err != nil {
 					text = err.Error()
 				}

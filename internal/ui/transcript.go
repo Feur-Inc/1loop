@@ -98,6 +98,7 @@ type toolRow struct {
 	onTap    func()
 	hover    float32
 	anim     *fyne.Animation
+	below    *fyne.Container // a citation's card, once the call is done
 }
 
 func newToolRow(item agent.ChatItem, state string, onTap func()) *toolRow {
@@ -376,6 +377,14 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		row.onTap = func() { ui.panel.open(chat, index) }
 		row.selected = ui.panel.showing(chat, index)
 		ui.views[index] = row
+		if item.Tool == "cite" {
+			row.below = container.NewVBox()
+			if state == "done" {
+				ui.showCitation(row.below, item)
+			}
+			ui.place(container.NewVBox(row, row.below))
+			return
+		}
 		ui.place(row)
 	}
 }
@@ -740,6 +749,10 @@ func (currentTurn *turn) setRow(index int, state string) {
 	currentTurn.ui.remote.itemChanged(currentTurn.chat, index)
 	if row, ok := currentTurn.ui.liveView(currentTurn.chat, index).(*toolRow); ok {
 		row.update(currentTurn.chat.Items[index], state)
+		if row.below != nil && state == "done" {
+			currentTurn.ui.showCitation(row.below, currentTurn.chat.Items[index])
+			currentTurn.ui.relayoutColumn()
+		}
 	}
 }
 

@@ -157,6 +157,17 @@ func (panel *toolPanel) changesTab(root string) panelTab {
 		content: container.NewBorder(header, nil, nil, nil, body)}
 }
 
+// openFileAt shows a citation: the file in the Files tab, its lines marked.
+func (panel *toolPanel) openFileAt(file string, from, to int) {
+	panel.openFiles()
+	for _, tab := range panel.tabs {
+		if tab.kind == "files" && tab.files != nil {
+			tab.files.showLines(file, from, to)
+			return
+		}
+	}
+}
+
 func (panel *toolPanel) openFiles() {
 	for i, tab := range panel.tabs {
 		if tab.kind == "files" {
@@ -250,6 +261,6 @@ func (panel *toolPanel) filesTab(root string) panelTab {
 		home, _ := os.UserHomeDir()
 		ui.pick(pickRequest{title: "Add files to the project", start: home, multiple: true}, done)
 	}
-	return panelTab{kind: "files", title: "Files", icon: iconFolder, cancel: cancel, workspace: root,
-		content: newFileBrowser(ctx, ui.window, source, actions, pick)}
+	files := buildFileBrowser(ctx, ui.window, source, actions, pick)
+	return panelTab{kind: "files", title: "Files", icon: iconFolder, cancel: cancel, workspace: root, content: files.content, files: files}
 }

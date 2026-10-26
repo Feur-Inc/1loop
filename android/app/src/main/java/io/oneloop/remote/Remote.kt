@@ -227,6 +227,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     var screen by mutableStateOf<Screen>(Screen.Launch)
     var target by mutableStateOf<ExecutionTarget?>(null)
+    var fileFocus by mutableStateOf<Citation?>(null) // a citation to show in the panel's Files tab
     val local = AndroidLocalRuntime.get(context)
     var starting by mutableStateOf(false) // the local engine is starting
     private var localStartGeneration = -1L

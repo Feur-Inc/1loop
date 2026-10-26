@@ -126,6 +126,12 @@ func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) 
 		return pick("Updated", "Updating"), "the task list", false
 	case "recall":
 		return pick("Recalled", "Recalling"), "conversation history", false
+	case "cite":
+		if citation, ok := CitationOf(item); ok {
+			return pick("Cited", "Citing"), fmt.Sprintf("%s:%d-%d", citation.Path, citation.Start, citation.End), true
+		}
+		path, _, _ := ToolArgs(item.Args)
+		return pick("Cited", "Citing"), path, true
 	case "checkpoint":
 		return pick("Recorded", "Recording"), "a context checkpoint", false
 	case "memory":

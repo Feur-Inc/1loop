@@ -673,7 +673,12 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
             RoundButton(Icons.plus, Color.Transparent, Palette.muted, description = "New chat") { app.open(null) }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (app.current == null) Welcome(app) else Transcript(app, running) { tool = it }
+            if (app.current == null) Welcome(app) else Transcript(app, running, onCite = {
+                // The citation's file, its lines marked, in the panel's Files tab.
+                focus.clearFocus(force = true)
+                app.fileFocus = it
+                onPanelChange(true)
+            }) { tool = it }
             // The conversation fades under the composer instead of a hard edge.
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(18.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Palette.background))))
         }
@@ -708,7 +713,7 @@ private fun Welcome(app: RemoteApp) {
 }
 
 @Composable
-private fun Transcript(app: RemoteApp, running: Boolean, onTool: (Item) -> Unit) {
+private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> Unit, onTool: (Item) -> Unit) {
     val list = rememberLazyListState()
     var follow by remember { mutableStateOf(true) }
     val items = app.items
@@ -760,6 +765,7 @@ private fun Transcript(app: RemoteApp, running: Boolean, onTool: (Item) -> Unit)
                     }
                     "tool" -> Column {
                         ToolRow(item) { onTool(item) }
+                        if (item.state == "done") citationOf(item)?.let { CitationCard(it, onCite) }
                         // What the tool showed the model (a screenshot), as Codex shows it.
                         if (item.images > 0) ItemImages(app, app.firstItem + index, item.images, Modifier.padding(start = 32.dp, top = 2.dp))
                     }

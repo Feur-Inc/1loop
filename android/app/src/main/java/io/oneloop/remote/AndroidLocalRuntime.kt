@@ -84,6 +84,14 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
     override val status = mutableStatus.asStateFlow()
     override val adb = phone.state
     @Volatile var appForeground = true
+    /**
+     * The engine was stopped after a while idle in the background: the app
+     * starts it again when shown. Saved, as Android may end the app's
+     * process once nothing runs.
+     */
+    var stoppedWhenIdle: Boolean
+        get() = prefs.getBoolean("stoppedWhenIdle", false)
+        set(value) { prefs.edit().putBoolean("stoppedWhenIdle", value).commit() }
     @Volatile private var requested: String? = null
     @Volatile private var progress: SetupStep? = null
     @Volatile private var failure: SetupStep? = null
@@ -286,6 +294,7 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
     }
 
     override suspend fun start(): Server {
+        stoppedWhenIdle = false // an older idle stop must not start it again later
         val epoch = generation.get()
         return scope.async {
             try {

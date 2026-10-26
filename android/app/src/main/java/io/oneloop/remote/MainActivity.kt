@@ -55,6 +55,7 @@ class MainActivity : ComponentActivity() {
         app.foreground = true
         AndroidLocalRuntime.get(applicationContext).appForeground = true
         AndroidLocalRuntime.get(applicationContext).refreshPhoneAccess()
+        app.resumeLocal()
         app.updates.resume() // back from the "install unknown apps" page
         lifecycleScope.launch { app.checkUpdates() }
     }

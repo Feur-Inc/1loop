@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"sync"
 	"sync/atomic"
+	"time"
 
 	"1loop/internal/browser"
 	"1loop/internal/core"
@@ -34,7 +35,10 @@ type WebTurn struct {
 type ChatGPTWeb struct {
 	backend        *App
 	mu             sync.Mutex
-	users          int // screens, active turns and setup/model operations
+	users          int       // screens, active turns and setup/model operations
+	views          int       // of users, the screens: they keep pages, not activity
+	active         time.Time // the last activity (see webIdle)
+	paused         bool      // pages closed for inactivity while a view shows them
 	turns          map[*WebTurn]bool
 	service        chan struct{} // serializes operations on the hidden service page
 	engine         *browser.Engine
@@ -55,14 +59,14 @@ func NewChatGPTWeb(backend *App) *ChatGPTWeb {
 }
 
 // begin registers only the tools of an active 1loop turn. Its pairing code
-// expires when the turn ends, including cancellation or a failed send.
+// expires when the turn ends, including cancellation or a failed send. A
+// resumed chat keeps its session and gets a code too: ChatGPT may call
+// from another session (after a restart of either side).
 func (bridge *ChatGPTWeb) begin(ctx context.Context, turn *WebTurn) (func(), error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
-	if turn.session == "" {
-		turn.pairing = core.Identifier()
-	}
+	turn.pairing = core.Identifier()
 	bridge.mu.Lock()
 	bridge.turns[turn] = true
 	bridge.mu.Unlock()
@@ -91,12 +95,12 @@ func (bridge *ChatGPTWeb) pair(session, code string) map[string]any {
 		return toolText("Pairing requires a session and the code provided by 1loop.", true)
 	}
 	for turn := range bridge.turns {
-		if turn.session == session {
+		if turn.session == session && turn.pairing != code {
 			return toolText("This session is already paired with an active 1loop conversation.", true)
 		}
 	}
 	for turn := range bridge.turns {
-		if turn.session == "" && turn.pairing == code && turn.ctx.Err() == nil {
+		if turn.pairing == code && turn.ctx.Err() == nil {
 			turn.session, turn.pairing = session, ""
 			return toolText("Paired with this active 1loop conversation. Use the available tools according to the user's request and 1loop's approval settings.", false)
 		}

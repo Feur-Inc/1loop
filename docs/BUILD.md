@@ -35,6 +35,42 @@ builds them: the `.deb` requires the glibc version they actually need. The
 AppImage step downloads a pinned `appimagetool`. `make tarball deb appimage`
 runs the same script.
 
+### Flatpak
+
+Install `flatpak`, `flatpak-builder`, `appstream-compose` and `desktop-file-utils`, then follow
+the runtime setup in [INSTALL.md](INSTALL.md#flatpak). The manifest copies only
+the build inputs, as the Nix package does; root tokens, Android signing files
+and generated caches are excluded. Keep credentials outside source directories.
+
+```bash
+make flatpak
+desktop-file-validate bin/flatpak-build/files/share/applications/io.github.Feur_Inc.OneLoop.desktop
+flatpak build bin/flatpak-build /app/bin/1loop-flatpak --help
+```
+
+CI builds the same manifest, validates the desktop entry and executable,
+and includes the bundle in the signed alpha downloads. The manifest needs
+network access to fetch Go modules; it is not suitable for Flathub submission
+as it stands.
+
+### Nix
+
+With Nix's `nix-command` and `flakes` features enabled:
+
+```bash
+nix flake check --no-write-lock-file
+nix build .#default --no-write-lock-file
+./result/bin/1loop --help
+./result/libexec/1loop/1loop-wayland --help
+./result/libexec/1loop/computer-python -c 'import gi, dbus, PIL; gi.require_version("Gst", "1.0"); from gi.repository import Gst; Gst.init(None); assert Gst.ElementFactory.find("pipewiresrc")'
+```
+
+CI evaluates and builds the locked flake and checks this Python helper.
+It does not publish a Nix binary archive. These checks do not replace a
+desktop session test: native Wayland/XWayland, GNOME/KDE launcher identity,
+and Computer Use portal permissions need a graphical session on the target
+system, including NixOS. They are not covered by the headless CI checks.
+
 ## Servers
 
 Static, without cgo: nothing to install besides Go.

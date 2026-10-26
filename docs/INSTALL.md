@@ -1,15 +1,19 @@
 # Installing 1loop
 
-Every download is on the **[release page](https://tpm28.github.io/1loop/)**
-(also attached to each [GitHub release](https://github.com/tpm28/1loop/releases)).
+Every download is on the **[release page](https://feur-inc.github.io/1loop/)**
+(also attached to each [GitHub release](https://github.com/Feur-Inc/1loop/releases)).
 Once installed, 1loop updates itself from that page: see
 [Updates](../README.md#updates).
 
 ## Linux desktop (x86-64)
 
-Pick one format. Every one of them puts 1loop in your applications menu; 1loop
-itself never writes a launcher entry. The binaries need glibc 2.34 or newer
-(Debian 12, Ubuntu 22.04, Fedora 35, RHEL 9 and later).
+Pick one format. Each includes a launcher entry; adding it to your applications
+menu depends on the installation method below. 1loop itself never writes one.
+The downloaded binaries use the build machine's libraries. Current alphas
+built on Ubuntu 24.04 require glibc 2.38 or newer: Debian 13 and Ubuntu 24.04
+work; Debian 12 and Ubuntu 22.04 do not. Check a `.deb`'s exact requirement
+with `dpkg-deb -f FILE.deb Depends`. Build locally or use Nix/Flatpak if your
+system is older; the AppImage does not bundle glibc either.
 
 ### Debian, Ubuntu and derivatives (`.deb`)
 
@@ -71,7 +75,17 @@ downloading the new AppImage.
 
 ### Flatpak
 
-Built from this repository (there is no Flathub listing yet):
+Download `1loop-VERSION.flatpak` from an alpha release, or build it from
+this repository (there is no Flathub listing yet). Set up Flathub for the
+runtime, then install the bundle:
+
+```bash
+flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+flatpak install --user ./1loop-VERSION.flatpak
+flatpak run io.github.Feur_Inc.OneLoop
+```
+
+To build it yourself, install `flatpak-builder` and `appstream-compose`, then:
 
 ```bash
 flatpak install --user flathub org.freedesktop.Platform//25.08 org.freedesktop.Sdk//25.08 \
@@ -97,6 +111,7 @@ What that changes:
   for the other formats.
 - **Terminal Use** opens your login shell on the host. The environment the
   sandbox sets for itself (`PATH`, `XDG_*_HOME`, `LD_*`…) is not passed on.
+  Interactive job control (`Ctrl+Z`, `fg`) is not supported through this bridge.
 - Stopping a command ends it on the host too (`flatpak-spawn --watch-bus`).
 - In a Wayland session the Flatpak has no X11 socket
   (`--socket=fallback-x11`), so `ONELOOP_BACKEND=x11` does not work there.
@@ -107,18 +122,18 @@ What that changes:
 
 ### Nix and NixOS
 
-The repository is a flake:
+The `dev` branch contains the flake (the default `main` branch does not yet):
 
 ```bash
-nix run github:Feur-Inc/1loop     # try it
-nix profile install github:Feur-Inc/1loop
+nix run github:Feur-Inc/1loop/dev     # try it
+nix profile install github:Feur-Inc/1loop/dev
 ```
 
 On NixOS, add the flake as an input and the package to your configuration:
 
 ```nix
 # flake.nix
-inputs.oneloop.url = "github:Feur-Inc/1loop";
+inputs.oneloop.url = "github:Feur-Inc/1loop/dev";
 # configuration.nix
 environment.systemPackages = [ inputs.oneloop.packages.x86_64-linux.default ];
 ```
@@ -145,6 +160,7 @@ Wayland). Always start `1loop`; it picks the backend when it starts:
 | Wayland (`WAYLAND_DISPLAY` set and the compositor answers) | native Wayland, `1loop-wayland`: sharp text at any scale |
 | X11 (`DISPLAY` set) | X11 |
 | Wayland with a stale `WAYLAND_DISPLAY` (for example after an ssh or tmux reattach) and `DISPLAY` set | X11, through XWayland |
+| Wayland answers but GLFW/OpenGL initialization fails or exceeds 10 seconds, with `DISPLAY` and both binaries available | retry once with X11/XWayland, before loading chats or accounts |
 | No display at all | 1loop stops with a message |
 
 `ONELOOP_BACKEND=x11` forces X11 (XWayland in a Wayland session), and
@@ -154,6 +170,12 @@ in the session: GNOME and KDE start one by themselves, niri uses
 blurry: that is XWayland upscaling, and the native backend avoids it.
 `ONELOOP_SYSTEM_TITLEBAR=1` keeps the desktop's own title bar instead of
 1loop's.
+
+The automatic retry checks initial GLFW/OpenGL setup in a short-lived process,
+including native driver crashes. It does not restart 1loop after a later crash
+or override an explicitly forced backend. A missing library that prevents the
+Wayland binary itself from loading is not covered. Flatpak's Wayland permissions
+do not expose X11, so that retry is unavailable there.
 
 ### What 1loop uses from the system
 

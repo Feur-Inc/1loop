@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
@@ -48,6 +49,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
@@ -300,10 +302,12 @@ private fun SheetCaption(text: String) {
 private fun AccountRow(account: Account, limits: AccountLimits?, selected: Boolean, onClick: () -> Unit) {
     val enabled = !(account.provider == "vllm" && account.problem.isNotEmpty())
     Column(
-        Modifier.fillMaxWidth().heightIn(min = 112.dp).clip(RoundedCornerShape(12.dp)).background(if (selected) Palette.selected else Color.Transparent)
+        Modifier.fillMaxWidth().heightIn(min = 64.dp).clip(RoundedCornerShape(12.dp)).background(if (selected) Palette.selected else Color.Transparent)
             .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
+            AccountIcon(account.provider, enabled)
+            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text(
                     account.name, style = Type.body.copy(fontSize = 14.5.sp, color = if (enabled) Palette.text else Palette.faint),
@@ -320,6 +324,26 @@ private fun AccountRow(account: Account, limits: AccountLimits?, selected: Boole
                 for (window in limits.windows) LimitGauge(window)
             }
         }
+    }
+}
+
+@Composable
+private fun AccountIcon(provider: String, enabled: Boolean) {
+    val resource = when (provider) {
+        "openai" -> R.drawable.provider_openai
+        "chatgptweb" -> R.drawable.provider_chatgptweb
+        "claudecode" -> R.drawable.provider_claudecode
+        "openrouter" -> R.drawable.provider_openrouter
+        "vllm" -> R.drawable.provider_vllm
+        else -> null
+    }
+    if (resource != null) {
+        Image(
+            painterResource(resource), contentDescription = null,
+            modifier = Modifier.size(26.dp), alpha = if (enabled) 1f else 0.5f,
+        )
+    } else {
+        Icon(Icons.plug, null, tint = Palette.muted, modifier = Modifier.size(26.dp))
     }
 }
 

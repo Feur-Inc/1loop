@@ -38,6 +38,7 @@ object Icons {
     val shield = lineIcon("shield", line("M8 2.2l4.6 1.8v3.5c0 3-2 5.1-4.6 6.3-2.6-1.2-4.6-3.3-4.6-6.3V4z"))
     val bolt = lineIcon("bolt", line("M8.9 1.8 3.7 9h4.1l-.7 5.2L12.3 7H8.2z"))
     val shieldCheck = lineIcon("shield-check", line("M8 2.2l4.6 1.8v3.5c0 3-2 5.1-4.6 6.3-2.6-1.2-4.6-3.3-4.6-6.3V4z"), line("M5.9 7.8 7.4 9.3l2.8-3"))
+    val plug = lineIcon("plug", line("M6 2.5v3M10 2.5v3M4.5 5.5h7v2.2a3.5 3.5 0 0 1-7 0zM8 11.2v2.3"))
     val terminal = lineIcon("terminal", line("M3.5 4.5 6.5 7.5 3.5 10.5M8 11.5h4.5"))
     val document = lineIcon("document", line("M4 2.8h5l3 3v7.4H4z"), line("M9 2.8v3h3M6 8.6h4M6 10.9h4"))
     val pencil = lineIcon("pencil", line("M3.2 12.8l.7-3 6.6-6.6 2.3 2.3-6.6 6.6zM9.2 4.5l2.3 2.3"))

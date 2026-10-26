@@ -225,6 +225,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     var screen by mutableStateOf<Screen>(Screen.Launch)
     var target by mutableStateOf<ExecutionTarget?>(null)
+    private var resumeChat: String? = null // the chat shown when the local engine stopped while idle
     val local = AndroidLocalRuntime.get(context)
     var starting by mutableStateOf(false) // the local engine is starting
     private var localStartGeneration = -1L
@@ -307,6 +308,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         scope.launch {
             local.activeServer.collect { active ->
                 if (active == null && server?.localPhone == true && screen == Screen.Chat) {
+                    if (local.stoppedWhenIdle) resumeChat = current // opened again with the engine
                     disconnect()
                     screen = Screen.LocalSetup
                 }
@@ -386,6 +388,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         screen = Screen.Mode
     }
 
+    /** Shown again after the engine stopped while idle: it starts again, on the same chat. */
+    fun resumeLocal() {
+        if (!local.stoppedWhenIdle || target != ExecutionTarget.LocalPhone || server != null) return
+        local.stoppedWhenIdle = false
+        openLocal()
+    }
+
     /** The running engine, or a start when nothing is missing, or the setup. */
     private fun openLocal() {
         local.activeServer.value?.let { return connect(it) }
@@ -403,7 +412,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         scope.launch {
             try {
                 val active = local.start()
-                if (generation == connectionGeneration) connect(active)
+                if (generation == connectionGeneration) {
+                    connect(active)
+                    resumeChat?.let { open(it) }
+                    resumeChat = null
+                }
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

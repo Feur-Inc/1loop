@@ -77,6 +77,8 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
     override val status = mutableStatus.asStateFlow()
     override val adb = phone.state
     @Volatile var appForeground = true
+    /** The engine was stopped after a while idle in the background: the app starts it again when shown. */
+    @Volatile var stoppedWhenIdle = false
     @Volatile private var requested: String? = null
     @Volatile private var progress: SetupStep? = null
     @Volatile private var failure: SetupStep? = null

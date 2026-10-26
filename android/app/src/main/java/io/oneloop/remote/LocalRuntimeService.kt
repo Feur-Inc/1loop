@@ -8,6 +8,7 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
 import android.os.IBinder
+import android.os.SystemClock
 import androidx.core.app.NotificationCompat
 import androidx.core.app.ServiceCompat
 import kotlinx.coroutines.CancellationException
@@ -19,6 +20,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 /**
  * Keeps Local phone's work alive while 1loop is in the background: the
@@ -70,6 +72,34 @@ class LocalRuntimeService : Service() {
             runtime.activeServer.collectLatest { server ->
                 running.clear(); approvals.clear(); questions.clear()
                 if (server != null) follow(server)
+            }
+        }
+        // In the background with nothing to do for IDLE_MS (no turn, waiting
+        // message, background command or open terminal), the engine and its
+        // Debian stop, to save battery and memory; the app starts them again,
+        // on the same chat, when it is shown.
+        scope.launch {
+            var idleSince = SystemClock.elapsedRealtime()
+            while (true) {
+                delay(IDLE_CHECK_MS)
+                val server = runtime.activeServer.value
+                val busy = server == null || runtime.appForeground || runtime.status.value.steps.any { it.state == StepState.Running } ||
+                    try {
+                        withContext(Dispatchers.IO) { Api(server).get("/api/local/busy") }.optBoolean("busy", true)
+                    } catch (e: CancellationException) {
+                        throw e
+                    } catch (_: Exception) {
+                        true // unknown: kept
+                    }
+                if (busy) {
+                    idleSince = SystemClock.elapsedRealtime()
+                } else if (SystemClock.elapsedRealtime() - idleSince >= IDLE_MS) {
+                    runtime.stoppedWhenIdle = true
+                    released = true
+                    runtime.stop()
+                    stopSelf()
+                    return@launch
+                }
             }
         }
     }
@@ -155,6 +185,8 @@ class LocalRuntimeService : Service() {
         private const val NOTIFICATION = 1
         private const val ACTION_STOP = "io.oneloop.remote.action.STOP_LOCAL"
         private const val ACTION_RELEASE_IDLE = "io.oneloop.remote.action.RELEASE_LOCAL_IDLE"
+        private const val IDLE_MS = 15 * 60 * 1000L
+        private const val IDLE_CHECK_MS = 60 * 1000L
 
         // An instance exists or was asked for: the release signal must never
         // recreate a destroyed one, but must reach one about to be created.

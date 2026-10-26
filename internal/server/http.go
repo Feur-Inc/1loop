@@ -45,6 +45,7 @@ func (server *headlessServer) routes() http.Handler {
 			server.mu.Unlock()
 			core.WriteJSON(w, 200, map[string]bool{"ok": true})
 		}))
+		mux.HandleFunc("GET /api/local/busy", server.localOnly(server.localBusy))
 		mux.HandleFunc("GET /api/local/connections", server.localOnly(server.localConnections))
 		mux.HandleFunc("POST /api/local/connections", server.localOnly(server.saveLocalConnection))
 		mux.HandleFunc("POST /api/local/connections/models", server.localOnly(server.draftLocalConnectionModels))

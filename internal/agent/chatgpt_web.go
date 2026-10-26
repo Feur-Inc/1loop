@@ -161,6 +161,8 @@ func (bridge *ChatGPTWeb) retain(view bool) func() {
 			bridge.users--
 			if view {
 				bridge.views--
+			} else {
+				bridge.active = time.Now() // a long turn's end is recent activity too
 			}
 			if bridge.users == 0 {
 				bridge.closeLocked()

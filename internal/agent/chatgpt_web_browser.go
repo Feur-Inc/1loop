@@ -208,6 +208,17 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 	// Only an unchanged prefix can resume a website conversation. Edits,
 	// branches and handoffs get a new chat with their selected history.
 	previous := cfg.WebConversation
+	// Back from another account (a handoff was applied): the conversation
+	// goes on in a new website chat with what the handoff transferred, as if
+	// it had started there; the earlier chat is deleted once this turn ends.
+	replaced := ""
+	if previous != nil && cfg.HandoffApplied {
+		if previous.Profile == cfg.AuthProfile && webConversationInProject(previous.URL, cfg.WebSettings.ProjectURL) {
+			replaced = previous.URL
+		}
+		platform.Devf("chatgpt-web", "handoff: a new chat replaces %s (deleted after the turn: %v)", previous.URL, replaced != "")
+		previous = nil
+	}
 	resume := previous != nil && previous.Profile == cfg.AuthProfile && previous.Seen <= len(history)-1 && previous.Seen >= 0 && previous.Hash == webHistoryHash(history[:previous.Seen]) && webConversationInProject(previous.URL, cfg.WebSettings.ProjectURL)
 	address := cfg.WebSettings.ProjectURL
 	if resume {
@@ -430,7 +441,59 @@ func (backend *App) runChatGPTWeb(ctx context.Context, cfg Config, history []Mes
 	session := turn.session
 	bridge.mu.Unlock()
 	emit("web_session", WebConversation{URL: location, Session: session, Paired: session != "", Profile: cfg.AuthProfile, Seen: len(messages), Hash: webHistoryHash(messages)})
+	if replaced != "" && replaced != location {
+		go func() {
+			ctx, cancel := context.WithTimeout(bridge.parent, 3*time.Minute)
+			defer cancel()
+			err := bridge.deleteConversation(ctx, replaced)
+			platform.Devf("chatgpt-web", "the replaced chat %s deleted: %v", replaced, err)
+		}()
+	}
 	return nil
+}
+
+// deleteConversation deletes a website chat of the 1loop project, as a user
+// does: its menu (More), Delete, then the confirmation (Delete chat).
+func (bridge *ChatGPTWeb) deleteConversation(ctx context.Context, address string) error {
+	release := bridge.Retain()
+	defer release()
+	select {
+	case bridge.service <- struct{}{}:
+		defer func() { <-bridge.service }()
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+	tab := bridge.Page(webServicePage, "https://chatgpt.com/")
+	if err := tab.Navigate(ctx, "navigate", address); err != nil {
+		return err
+	}
+	bridge.mu.Lock()
+	delete(bridge.chosen, tab)
+	bridge.mu.Unlock()
+	if err := webWait(ctx, tab, `!!document.querySelector('`+webComposer+`')`); err != nil {
+		return err
+	}
+	// The header's menu opens only once the page is ready: try it again.
+	opened := false
+	for attempt := 0; attempt < 3 && !opened; attempt++ {
+		if err := webClickVisible(ctx, tab, `header button[aria-label="More"]`); err != nil {
+			return err
+		}
+		opened = webWait(ctx, tab, `[...document.querySelectorAll('[role="menu"] [role="menuitem"]')].some(e=>e.innerText.trim()==='Delete')`) == nil
+		if !opened {
+			_ = tab.Run(ctx, chromedp.KeyEvent(kb.Escape))
+		}
+	}
+	if !opened {
+		return fmt.Errorf("ChatGPT's chat menu did not open")
+	}
+	if err := webClickVisibleText(ctx, tab, `[role="menu"] [role="menuitem"]`, "Delete"); err != nil {
+		return err
+	}
+	if err := webClickVisibleText(ctx, tab, `[role="dialog"] button`, "Delete chat"); err != nil {
+		return err
+	}
+	return webWait(ctx, tab, `![...document.querySelectorAll('[role="dialog"]')].some(d=>d.innerText.includes('Delete chat?'))`)
 }
 
 func webUpload(ctx context.Context, tab *browser.Page, root string, images []core.ImagePart) error {

@@ -163,11 +163,11 @@ private fun QuestionCard(request: Questions, onAnswer: (Questions, Map<String, S
     }
 }
 
-/** Working: 1loop's ring; driving the phone: a phone; finished: a check. */
+/** Working: 1loop's ring; driving the phone: a phone; finished: the ring closed on its check. */
 @Composable
 private fun StatusMark(run: RunStatus, size: Dp) {
     when {
-        run.finished -> Icon(Icons.check, null, tint = Palette.added, modifier = Modifier.size(size * 0.85f))
+        run.finished -> WorkRing("done", size) // the ring closes on its check, as in the app
         run.phoneUse -> Icon(Icons.phone, null, tint = Palette.amber, modifier = Modifier.size(size * 0.8f))
         else -> WorkRing(run.mark, size)
     }

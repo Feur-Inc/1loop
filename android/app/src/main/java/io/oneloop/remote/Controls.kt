@@ -302,7 +302,7 @@ private fun SheetCaption(text: String) {
 private fun AccountRow(account: Account, limits: AccountLimits?, selected: Boolean, onClick: () -> Unit) {
     val enabled = !(account.provider == "vllm" && account.problem.isNotEmpty())
     Column(
-        Modifier.fillMaxWidth().heightIn(min = 112.dp).clip(RoundedCornerShape(12.dp)).background(if (selected) Palette.selected else Color.Transparent)
+        Modifier.fillMaxWidth().heightIn(min = 64.dp).clip(RoundedCornerShape(12.dp)).background(if (selected) Palette.selected else Color.Transparent)
             .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {

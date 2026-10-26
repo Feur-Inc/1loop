@@ -204,11 +204,12 @@ func (backend *App) webHandoffNote(ctx context.Context, cfg Config, prompt strin
 	case <-ctx.Done():
 		return "", ctx.Err()
 	}
-	tab := bridge.Page("handoff", project)
+	key := "handoff:" + cfg.ContextKey // one per chat: handoffs of two chats may overlap
+	tab := bridge.Page(key, project)
 	defer func() {
 		bridge.mu.Lock()
-		if bridge.pages["handoff"] == tab {
-			delete(bridge.pages, "handoff")
+		if bridge.pages[key] == tab {
+			delete(bridge.pages, key)
 			delete(bridge.chosen, tab)
 			delete(bridge.pageStreams, tab)
 		}

@@ -15,8 +15,11 @@ make server
 ```
 
 `bin/1loop-server` is a static Go binary built with `CGO_ENABLED=0`. The runtime
-needs Bash and Git, plus Chromium for Browser Use. It needs no desktop session,
-X server, Wayland compositor or virtual display:
+needs Bash and Git. Browser Use runs the system's Chromium or Chrome, or else
+downloads its own Chromium into the data directory (`chromium/`); a minimal
+server may lack the libraries it needs, and installing the `chromium` package
+brings them. It needs no desktop session, X server, Wayland compositor or
+virtual display:
 
 ```sh
 sudo apt install bash git chromium chromium-sandbox ca-certificates

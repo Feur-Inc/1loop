@@ -244,6 +244,36 @@ executable, and follow [docs/SERVER.md](SERVER.md) to choose a model, run it as
 a service and pair your devices. A device connected to the server tells you
 when it can update, and updates it on request.
 
+## GitHub connector
+
+1. On desktop, open **Settings → Connectors → GitHub**. On Android, open
+   **Settings → Connectors · GitHub**. The connection belongs to the execution
+   target: the computer, server or Local phone currently running the agent.
+2. Choose **Choose repositories on GitHub** and install
+   [1loop GitHub Connector](https://github.com/apps/1loop-github-connector)
+   on the repositories you want to grant. The app requests read/write access
+   to contents, issues and pull requests, and read access to metadata.
+3. Choose **Connect GitHub**, open the GitHub link, enter the temporary code
+   shown by 1loop, and review the authorization in your browser.
+4. Once connected, GitHub's official hosted MCP tools become available to
+   the agent. Their actual capabilities depend on the app's permissions and
+   your own repository access. Write operations follow the selected approval
+   mode. Native image attachments are not included: the upload endpoint
+   returned HTTP 404 with this GitHub App authorization in the real test.
+   You can attach images manually through GitHub in your browser.
+5. Turn **Enable GitHub tools** off to remove them from later model requests
+   and reject later calls. An operation already sent to GitHub may finish.
+   **Disconnect** clears the locally saved authorization; **Review access on
+   GitHub** lets you revoke the app. **Manage repository access** opens the
+   app's installation settings to change its repository grants.
+
+Access and refresh tokens are saved in `github-connector.json` inside the
+execution target's private `1loop` configuration folder, separately from
+model configuration. They are not included in tool schemas or given to
+Claude Code subprocesses. Expiring authorizations are renewed automatically;
+after revocation, connect again. No app secret or private key is embedded in
+the application; its GitHub App client ID is public.
+
 ## Where 1loop keeps its data
 
 | | Linux | Windows |

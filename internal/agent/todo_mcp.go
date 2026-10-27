@@ -130,6 +130,19 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 					handler = cfg.Phone
 				case call.Name == "install_packages":
 					handler = cfg.Packages
+				case isGitHubTool(call.Name):
+					handler = func(operation context.Context, name string, arguments json.RawMessage) (PanelToolResult, error) {
+						// Claude's permission handler has already approved this call.
+						operation = context.WithValue(operation, approvalContextKey{}, approvalPolicy{yolo: true})
+						call := ToolCall{ID: core.Identifier()}
+						call.Function.Name, call.Function.Arguments = name, string(arguments)
+						result := backend.executeTool(operation, cfg.Workspace, call, func(event string, value any) {
+							if event != "tool" && event != "tool_exec" && event != "tool_output" {
+								emit(event, value)
+							}
+						})
+						return PanelToolResult{Text: result.Output, Images: result.Images}, result.Err
+					}
 				default:
 					for _, definition := range projectMCPTools(cfg) {
 						if definition["function"].(map[string]any)["name"] == call.Name {

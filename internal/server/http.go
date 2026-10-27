@@ -15,6 +15,7 @@ import (
 	"1loop/internal/browser"
 	"1loop/internal/core"
 	"1loop/internal/extensions"
+	"1loop/internal/githubconnector"
 	"1loop/internal/remoteapi"
 )
 
@@ -123,6 +124,9 @@ func (server *headlessServer) routes() http.Handler {
 		server.broadcastLocked("extensions", map[string]bool{"changed": true})
 		server.mu.Unlock()
 	}) {
+		endpoints[path] = handler
+	}
+	for path, handler := range githubconnector.Handlers() {
 		endpoints[path] = handler
 	}
 	for path, handler := range endpoints {

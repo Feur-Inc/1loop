@@ -71,6 +71,7 @@ var settingsSections = []struct {
 	{"Connections", iconPlug},
 	{"Instructions", iconDocument},
 	{"Extensions", iconPuzzle},
+	{"Connectors", iconPlug},
 	{"Phone remote", iconPhone},
 	{"Updates", iconArrowTurn},
 }
@@ -194,6 +195,8 @@ func (settings *settingsView) showNow(section string) {
 		page = settings.ui.instructionSettings()
 	case "Extensions":
 		page = settings.ui.extensionSettings()
+	case "Connectors":
+		page = settings.ui.connectorSettings()
 	case "Phone remote":
 		page = settings.ui.remoteSettings()
 	case "Updates":

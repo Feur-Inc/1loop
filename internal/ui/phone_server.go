@@ -65,6 +65,7 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/core"
 	"1loop/internal/extensions"
+	"1loop/internal/githubconnector"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 )
@@ -145,6 +146,9 @@ func (ui *desktopUI) startRemote() {
 		server.broadcast("extensions", map[string]bool{"changed": true})
 		server.onUI(server.ui.extensionsChanged)
 	}) {
+		mux.HandleFunc(path, server.authorized(handler))
+	}
+	for path, handler := range githubconnector.Handlers() {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
 	mux.HandleFunc("GET /api/hooks", server.authorized(remoteapi.GetHooks))

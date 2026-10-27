@@ -177,6 +177,46 @@ or override an explicitly forced backend. A missing library that prevents the
 Wayland binary itself from loading is not covered. Flatpak's Wayland permissions
 do not expose X11, so that retry is unavailable there.
 
+### Import browser cookies on desktop
+
+In **Settings → General → Browser → Import cookies**, choose a JSON file
+or a compatible local browser profile. Read the account-access warning,
+turn on **I understand**, then select **Import**. This is desktop-only;
+no cookie import is exposed on Android or through the remote API.
+
+For Chrome, Edge and other browsers, including protected Windows profiles:
+
+1. Open the source browser/profile and the site whose account you want to share.
+2. Use a cookie-export extension you trust, such as
+   [Cookie-Editor](https://github.com/Moustachauve/cookie-editor), installed
+   through its official browser-store link. Grant access only to the sites
+   you intend to export, then choose **Export → JSON**.
+3. If the extension copies JSON to the clipboard, paste it into a local text
+   editor and save it as `cookies.json`. Choose that file in 1loop.
+4. Open the site in Browser Use to verify whether the session works. Some
+   sites require signing in again; copied cookies alone cannot guarantee login.
+5. Keep the export private. It contains sensitive session data. Remove it
+   yourself when finished, and disable/remove the export extension if unused.
+   1loop reads the selected file locally without changing or deleting it.
+
+The importer accepts a JSON array of cookies, or an object with a `cookies`
+array, using `name`, `value`, `domain`, `path`, `secure`, `httpOnly`,
+`sameSite`, `hostOnly` and `expirationDate` (or DevTools `expires`). Session
+cookies are accepted from JSON but may end when Browser Use closes.
+Expired, invalid, container and partitioned cookies are skipped.
+
+Direct profile import supports Firefox-family profiles on Windows/Linux and
+compatible Chromium-family profiles on Linux. Close the source browser first.
+It reads a temporary copy; Linux Chromium uses its own browser and system
+keyring. Protected Windows Chromium profiles require a voluntary JSON export.
+An inaccessible keyring or browser installation can prevent direct import.
+
+Cookies can grant access to accounts you did not intend to share. Agents may
+act as those accounts, and malicious pages can influence their actions.
+**Clear browsing data** removes Browser Use's local sessions and data; it
+neither revokes every server-side session nor undoes previous actions. No
+passwords, history, bookmarks or local storage are imported.
+
 ### What 1loop uses from the system
 
 Runtime needs, for every format: OpenGL, X11 or Wayland libraries (the `.deb`

@@ -32,6 +32,7 @@ import (
 	"time"
 
 	"1loop/internal/core"
+	"1loop/internal/githubconnector"
 	"1loop/internal/platform"
 )
 
@@ -565,11 +566,17 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			}
 		}
 	}()
+	githubChanges := githubconnector.Default.Changes()
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
 	for failure == nil {
 		var line []byte
 		select {
+		case <-githubChanges:
+			githubChanges = githubconnector.Default.Changes()
+			request, _ := json.Marshal(map[string]any{"type": "control_request", "request_id": core.Identifier(), "request": map[string]string{"subtype": "mcp_reconnect", "serverName": "1loop_todo"}})
+			send(string(request))
+			continue
 		case <-cfg.CapabilitiesChanged:
 			request, _ := json.Marshal(map[string]any{"type": "control_request", "request_id": core.Identifier(), "request": map[string]string{"subtype": "mcp_reconnect", "serverName": "1loop_todo"}})
 			send(string(request))

@@ -326,6 +326,10 @@ Claude Code subprocesses. Expiring authorizations are renewed automatically;
 after revocation, connect again. No app secret or private key is embedded in
 the application; its GitHub App client ID is public.
 
+Changing GitHub accounts during an active Claude Code turn requires a new
+turn in the same chat. Calls belonging to the previous connection are
+rejected; refreshing an access token keeps the same connection.
+
 ## Where 1loop keeps its data
 
 | | Linux | Windows |

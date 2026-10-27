@@ -4,6 +4,8 @@ package githubconnector
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +18,7 @@ import (
 	"sync"
 	"time"
 
+	"1loop/internal/core"
 	"1loop/internal/extensions"
 )
 
@@ -34,6 +37,7 @@ var (
 )
 
 type credentials struct {
+	Connection   string    `json:"connection,omitempty"`
 	ClientID     string    `json:"clientId"`
 	Login        string    `json:"login,omitempty"`
 	Token        string    `json:"token,omitempty"`
@@ -69,6 +73,7 @@ type Manager struct {
 	mu      sync.Mutex
 	refresh sync.Mutex
 	pending *pending
+	changed chan struct{}
 	client  *http.Client
 	dir     func() string
 }
@@ -150,12 +155,38 @@ func (manager *Manager) Available() bool {
 	return state.Connected && state.Enabled
 }
 
-// Authorizes also rejects a call approved for a previous connection.
-func (manager *Manager) Authorizes(authorization string) bool {
+func connectionID(saved credentials) string {
+	if saved.Connection != "" {
+		return saved.Connection
+	}
+	sum := sha256.Sum256([]byte(saved.Token))
+	return hex.EncodeToString(sum[:])
+}
+
+func (manager *Manager) ConnectionID() string {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	saved, err := manager.load()
-	return err == nil && saved.Enabled && connected(saved) && authorization == "Bearer "+saved.Token
+	if err != nil || !saved.Enabled || !connected(saved) {
+		return ""
+	}
+	return connectionID(saved)
+}
+
+func (manager *Manager) Changes() <-chan struct{} {
+	manager.mu.Lock()
+	defer manager.mu.Unlock()
+	if manager.changed == nil {
+		manager.changed = make(chan struct{})
+	}
+	return manager.changed
+}
+
+func (manager *Manager) notifyLocked() {
+	if manager.changed != nil {
+		close(manager.changed)
+	}
+	manager.changed = make(chan struct{})
 }
 
 func (manager *Manager) Configure(id string) error {
@@ -190,8 +221,13 @@ func (manager *Manager) Enable(on bool) error {
 		manager.pending.cancel()
 		manager.pending = nil
 	}
+	changed := saved.Enabled != on
 	saved.Enabled = on
-	return manager.save(saved)
+	err = manager.save(saved)
+	if err == nil && changed {
+		manager.notifyLocked()
+	}
+	return err
 }
 
 func (manager *Manager) Cancel() {
@@ -214,7 +250,11 @@ func (manager *Manager) Disconnect() error {
 		manager.pending.cancel()
 		manager.pending = nil
 	}
-	return manager.save(credentials{ClientID: saved.ClientID})
+	err = manager.save(credentials{ClientID: saved.ClientID})
+	if err == nil {
+		manager.notifyLocked()
+	}
+	return err
 }
 
 type tokenReply struct {
@@ -316,7 +356,7 @@ func (manager *Manager) poll(ctx context.Context, attempt *pending, clientID, de
 		if err == nil {
 			login, err = manager.user(ctx, reply.Token)
 		}
-		saved := credentials{ClientID: clientID, Login: login, Token: reply.Token, RefreshToken: reply.RefreshToken, Enabled: true}
+		saved := credentials{Connection: core.Identifier(), ClientID: clientID, Login: login, Token: reply.Token, RefreshToken: reply.RefreshToken, Enabled: true}
 		if reply.ExpiresIn > 0 {
 			saved.Expires = time.Now().Add(time.Duration(reply.ExpiresIn) * time.Second)
 		}
@@ -340,6 +380,7 @@ func (manager *Manager) finish(attempt *pending, saved credentials, err error) {
 		return
 	}
 	manager.pending = nil
+	manager.notifyLocked()
 }
 
 func (manager *Manager) user(ctx context.Context, token string) (string, error) {
@@ -364,8 +405,20 @@ func (manager *Manager) user(ctx context.Context, token string) (string, error) 
 // Server supplies a short-lived descriptor to the existing MCP client.
 // Neither the UI nor the model receives its Authorization header.
 func (manager *Manager) Server(ctx context.Context) (extensions.MCPServer, error) {
+	return manager.server(ctx, "")
+}
+
+// Refresh retries a rejected access token without discarding a valid refresh token.
+func (manager *Manager) Refresh(ctx context.Context, authorization string) (extensions.MCPServer, error) {
+	return manager.server(ctx, authorization)
+}
+
+func (manager *Manager) server(ctx context.Context, rejected string) (extensions.MCPServer, error) {
 	manager.refresh.Lock()
 	defer manager.refresh.Unlock()
+	if err := ctx.Err(); err != nil {
+		return extensions.MCPServer{}, err
+	}
 	manager.mu.Lock()
 	saved, err := manager.load()
 	manager.mu.Unlock()
@@ -375,13 +428,17 @@ func (manager *Manager) Server(ctx context.Context) (extensions.MCPServer, error
 	if !saved.Enabled || !connected(saved) {
 		return extensions.MCPServer{}, fmt.Errorf("The GitHub connector is disconnected or disabled")
 	}
-	if !saved.Expires.IsZero() && time.Until(saved.Expires) < time.Minute {
+	if (!saved.Expires.IsZero() && time.Until(saved.Expires) < time.Minute) || (rejected != "" && rejected == "Bearer "+saved.Token) {
 		var reply tokenReply
 		if saved.RefreshToken == "" {
 			manager.RejectAuthorization("Bearer " + saved.Token)
 			return extensions.MCPServer{}, fmt.Errorf("GitHub authorization expired. Connect again")
 		}
-		if err := manager.post(ctx, loginURL+"/oauth/access_token", url.Values{"client_id": {saved.ClientID}, "grant_type": {"refresh_token"}, "refresh_token": {saved.RefreshToken}}, &reply); err != nil {
+		// Rotation must finish and be saved even if the requesting turn stops.
+		refreshCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 20*time.Second)
+		err := manager.post(refreshCtx, loginURL+"/oauth/access_token", url.Values{"client_id": {saved.ClientID}, "grant_type": {"refresh_token"}, "refresh_token": {saved.RefreshToken}}, &reply)
+		cancel()
+		if err != nil {
 			return extensions.MCPServer{}, err
 		}
 		if reply.Error != "" || reply.Token == "" {
@@ -390,10 +447,11 @@ func (manager *Manager) Server(ctx context.Context) (extensions.MCPServer, error
 		}
 		manager.mu.Lock()
 		current, readErr := manager.load()
-		if readErr != nil || !current.Enabled || current.Token != saved.Token {
+		if readErr != nil || current.Token != saved.Token {
 			manager.mu.Unlock()
 			return extensions.MCPServer{}, fmt.Errorf("The GitHub connection changed during refresh")
 		}
+		saved.Connection, saved.Enabled = connectionID(saved), current.Enabled
 		saved.Token, saved.RefreshToken = reply.Token, reply.RefreshToken
 		saved.Expires = time.Now().Add(time.Duration(reply.ExpiresIn) * time.Second)
 		err = manager.save(saved)
@@ -401,6 +459,12 @@ func (manager *Manager) Server(ctx context.Context) (extensions.MCPServer, error
 		if err != nil {
 			return extensions.MCPServer{}, err
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return extensions.MCPServer{}, err
+	}
+	if !saved.Enabled {
+		return extensions.MCPServer{}, fmt.Errorf("The GitHub connector is disabled")
 	}
 	return extensions.MCPServer{Name: ServerName, Type: "http", URL: mcpURL, Headers: map[string]string{"Authorization": "Bearer " + saved.Token}, Enabled: true}, nil
 }
@@ -412,6 +476,8 @@ func (manager *Manager) RejectAuthorization(authorization string) {
 	defer manager.mu.Unlock()
 	saved, err := manager.load()
 	if err == nil && saved.Token != "" && authorization == "Bearer "+saved.Token {
-		_ = manager.save(credentials{ClientID: saved.ClientID})
+		if manager.save(credentials{ClientID: saved.ClientID}) == nil {
+			manager.notifyLocked()
+		}
 	}
 }

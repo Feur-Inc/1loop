@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"1loop/internal/core"
+	"1loop/internal/githubconnector"
 )
 
 func projectMCPTools(cfg Config) []map[string]any {
@@ -33,6 +34,7 @@ func projectMCPTools(cfg Config) []map[string]any {
 // that run (a random token); it returns the path of its --mcp-config file.
 func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) (string, func(), error) {
 	state := cfg.Todo
+	githubConnection := githubconnector.Default.ConnectionID()
 	browserTools, terminalTools, computerTools := cfg.Browser, cfg.Terminal, cfg.Computer
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
@@ -132,8 +134,9 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 					handler = cfg.Packages
 				case isGitHubTool(call.Name):
 					handler = func(operation context.Context, name string, arguments json.RawMessage) (PanelToolResult, error) {
-						// Claude's permission handler has already approved this call.
+						// Keep Claude's approved call bound to the connection of this run.
 						operation = context.WithValue(operation, approvalContextKey{}, approvalPolicy{yolo: true})
+						operation = context.WithValue(operation, githubConnectionKey{}, githubConnection)
 						call := ToolCall{ID: core.Identifier()}
 						call.Function.Name, call.Function.Arguments = name, string(arguments)
 						result := backend.executeTool(operation, cfg.Workspace, call, func(event string, value any) {

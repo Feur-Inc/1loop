@@ -11,6 +11,8 @@ import (
 	"1loop/internal/githubconnector"
 )
 
+type githubConnectionKey struct{}
+
 func isGitHubTool(name string) bool { return strings.HasPrefix(name, "github_") }
 
 func githubGroup(cfg Config) *toolGroup {
@@ -19,13 +21,9 @@ func githubGroup(cfg Config) *toolGroup {
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
-	server, err := githubconnector.Default.Server(ctx)
-	if err != nil {
-		return nil
-	}
-	tools, err := extensions.Servers.Tools(ctx, server, mcpDir(cfg))
+	server, tools, err := githubTools(ctx, cfg)
 	if err != nil || len(tools) == 0 {
-		githubAuthorizationError(server, err)
+		githubAuthorizationError(ctx, server, err)
 		return nil
 	}
 	group := mcpToolGroup(server, tools)
@@ -41,29 +39,56 @@ func githubGroup(cfg Config) *toolGroup {
 }
 
 func (backend *App) callGitHub(ctx context.Context, cfg Config, call ToolCall, begin func(), emit emitter) (string, []core.ImagePart, error) {
-	server, err := githubconnector.Default.Server(ctx)
-	if err != nil {
-		return "", nil, err
+	id, bound := ctx.Value(githubConnectionKey{}).(string)
+	if !bound {
+		id = githubconnector.Default.ConnectionID()
 	}
-	tools, err := extensions.Servers.Tools(ctx, server, mcpDir(cfg))
+	if id == "" || id != githubconnector.Default.ConnectionID() {
+		return "", nil, fmt.Errorf("The GitHub connection changed. Start a new turn")
+	}
+	ctx = context.WithValue(ctx, githubConnectionKey{}, id)
+	server, tools, err := githubTools(ctx, cfg)
 	if err != nil {
-		return "", nil, githubAuthorizationError(server, err)
+		return "", nil, githubAuthorizationError(ctx, server, err)
 	}
 	for _, tool := range tools {
 		if "github_"+tool.Name != call.Function.Name {
 			continue
 		}
 		text, images, err := backend.callMCPTool(ctx, cfg, server, tool, call, begin, emit)
-		return text, images, githubAuthorizationError(server, err)
+		return text, images, githubAuthorizationError(ctx, server, err)
 	}
 	return "", nil, fmt.Errorf("This GitHub tool is unavailable for the connected account")
 }
 
-func githubAuthorizationError(server extensions.MCPServer, err error) error {
-	if err != nil && strings.Contains(err.Error(), "The server asks to sign in (HTTP 401)") {
-		githubconnector.Default.RejectAuthorization(server.Headers["Authorization"])
+func githubUnauthorized(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "The server asks to sign in (HTTP 401)")
+}
+
+func githubTools(ctx context.Context, cfg Config) (extensions.MCPServer, []extensions.MCPTool, error) {
+	server, err := githubconnector.Default.Server(ctx)
+	if err != nil {
+		return server, nil, err
+	}
+	tools, err := extensions.Servers.Tools(ctx, server, mcpDir(cfg))
+	if githubUnauthorized(err) {
 		extensions.Servers.Forget(githubconnector.ServerName)
-		return fmt.Errorf("GitHub authorization was rejected. Reconnect in Settings → Connectors")
+		server, err = githubconnector.Default.Refresh(ctx, server.Headers["Authorization"])
+		if err == nil {
+			tools, err = extensions.Servers.Tools(ctx, server, mcpDir(cfg))
+		}
+	}
+	return server, tools, err
+}
+
+func githubAuthorizationError(ctx context.Context, server extensions.MCPServer, err error) error {
+	if githubUnauthorized(err) {
+		_, refreshErr := githubconnector.Default.Refresh(ctx, server.Headers["Authorization"])
+		extensions.Servers.Forget(githubconnector.ServerName)
+		if refreshErr != nil {
+			return refreshErr
+		}
+		return fmt.Errorf("GitHub authorization was renewed. Retry this tool with the same connection")
 	}
 	return err
 }

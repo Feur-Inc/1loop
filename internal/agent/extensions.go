@@ -280,8 +280,18 @@ func (backend *App) callMCPTool(ctx context.Context, cfg Config, server extensio
 	if !cfg.toolAvailable(call.Function.Name) {
 		return "", nil, fmt.Errorf("This tool is unavailable or its permission was revoked")
 	}
-	if isGitHubTool(call.Function.Name) && !githubconnector.Default.Authorizes(server.Headers["Authorization"]) {
-		return "", nil, fmt.Errorf("The GitHub connection changed while waiting for approval. Retry with the current connection")
+	if isGitHubTool(call.Function.Name) {
+		id, _ := ctx.Value(githubConnectionKey{}).(string)
+		if id == "" || id != githubconnector.Default.ConnectionID() {
+			return "", nil, fmt.Errorf("The GitHub connection changed while waiting for approval")
+		}
+		server, err = githubconnector.Default.Server(ctx)
+		if err != nil {
+			return "", nil, err
+		}
+		if id != githubconnector.Default.ConnectionID() {
+			return "", nil, fmt.Errorf("The GitHub connection changed while refreshing authorization")
+		}
 	}
 	begin()
 	result, err := extensions.Servers.Call(ctx, server, mcpDir(cfg), tool.Name, json.RawMessage(call.Function.Arguments))

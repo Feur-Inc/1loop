@@ -915,32 +915,7 @@ func (currentTurn *turn) show(activityValue agent.Activity) {
 	}[activityValue.State]
 	switch activityValue.State {
 	case "call":
-		detail := agent.FirstLine(activityValue.Detail)
-		switch activityValue.Tool {
-		case "shell":
-			label = "Writing a command"
-		case "edit_file":
-			label = "Preparing an edit"
-			if detail != "" {
-				label, detail = label+" to "+detail, ""
-			}
-		case "read_file":
-			label = "Choosing a file to read"
-			if detail != "" {
-				label, detail = "Preparing to read "+detail, ""
-			}
-		case "list_directory":
-			label = "Preparing to list a directory"
-		case "web_search":
-			label = "Searching the web"
-		case "tool_search":
-			label = "Loading tools"
-		default:
-			label = "Preparing " + activityValue.Tool
-		}
-		if detail != "" {
-			label += ": " + detail
-		}
+		label = agent.CallLabel(activityValue.Tool, activityValue.Detail)
 	case "question":
 		label = "Waiting for your answer"
 	case "approval":
@@ -983,8 +958,9 @@ func (currentTurn *turn) showRun(outcome agent.ToolOutcome) {
 		currentTurn.label, currentTurn.mark = "Applying the edit to "+path+"…", "edit"
 	case "apply_patch":
 		currentTurn.label, currentTurn.mark = "Applying the patch…", "edit"
-	default: // a tool of another harness (Claude Code's Grep, WebFetch, Agent…)
-		currentTurn.label, currentTurn.mark = "Using "+outcome.Name+"…", "call"
+	default: // what the conversation's row says (agent.DescribeTool)
+		verb, target, _ := agent.DescribeTool(agent.ChatItem{Tool: outcome.Name, Args: outcome.Args}, true)
+		currentTurn.label, currentTurn.mark = strings.TrimSpace(verb+" "+target)+"…", "call"
 	}
 	currentTurn.ui.applyActivity(currentTurn)
 }

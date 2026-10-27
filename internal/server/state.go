@@ -845,6 +845,9 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		status := value.(agent.Activity)
 		run.mark = status.State
 		run.label = strings.TrimSpace(status.State + " " + status.Tool + " " + status.Detail)
+		if status.State == "call" {
+			run.label = agent.CallLabel(status.Tool, status.Detail) + "…"
+		}
 	case "tool":
 		outcome := value.(agent.ToolOutcome)
 		index = server.addLocked(chat, agent.ChatItem{ID: outcome.RecallID, Kind: "tool", Tool: outcome.Name, Args: outcome.Args})
@@ -857,6 +860,9 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 			run.states[index] = "running"
 		}
 		run.approval = nil
+		// The row's own words, as the desktop says them (agent.DescribeTool).
+		verb, target, _ := agent.DescribeTool(agent.ChatItem{Tool: outcome.Name, Args: outcome.Args}, true)
+		run.mark, run.label = "call", strings.TrimSpace(verb+" "+target)+"…"
 	case "tool_output": // a running command's output so far
 		outcome := value.(agent.ToolOutcome)
 		if at, ok := run.calls[outcome.ID]; ok {

@@ -432,7 +432,8 @@ func (panel *toolPanel) tabView(i int, tab panelTab) fyne.CanvasObject {
 	if tab.chat != nil {
 		item := tab.chat.Items[tab.index]
 		_, target, _ = agent.DescribeTool(item, false)
-		if item.Tool != "shell" {
+		switch item.Tool {
+		case "read_file", "list_directory", "edit_file", "apply_patch": // a path: its file's name
 			target = filepath.Base(target)
 		}
 		icon = toolGlyph(item.Tool)

@@ -2,14 +2,21 @@ package ui
 
 // A citation in the model's answer: <cite file="path" lines="12-30"/>, as
 // AI search engines cite their sources. It shows as a chip, the file's name
-// and lines; a click opens the file in the Files tab, those lines marked.
+// and lines; a click opens the file in the Files tab, those lines marked, or
+// with the desktop's app for it when it is not text (an image, a program…).
 
 import (
 	"fmt"
+	"net/url"
 	"path"
 	"regexp"
 	"strconv"
 	"strings"
+
+	"fyne.io/fyne/v2"
+
+	"1loop/internal/agent"
+	"1loop/internal/remoteapi"
 )
 
 // citeScheme starts a citation chip's link: citeScheme + lines + ":" + path.
@@ -49,6 +56,15 @@ func (ui *desktopUI) openCitation(link string) {
 	lines, file, _ := strings.Cut(strings.TrimPrefix(link, citeScheme), ":")
 	from, to := 0, 0
 	if _, err := fmt.Sscanf(lines, "%d-%d", &from, &to); err != nil || file == "" {
+		return
+	}
+	root := ui.cfg.Workspace
+	if preview, err := remoteapi.ReadPreview(root, file); from == 0 && err == nil && (preview.Binary || preview.Image) {
+		if target, err := agent.WorkspacePath(root, file); err == nil {
+			if err := fyne.CurrentApp().OpenURL(&url.URL{Scheme: "file", Path: target}); err != nil {
+				ui.notice("Open file", err.Error())
+			}
+		}
 		return
 	}
 	ui.panel.openFileAt(file, from, to)

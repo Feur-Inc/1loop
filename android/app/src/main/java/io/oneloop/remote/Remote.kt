@@ -1221,6 +1221,24 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         return onConnection(target, connectionGeneration) { it.bytes("/api/files/download?" + fileQuery(workspace, path)) }
     }
 
+    /** Opens a project file with the phone's app for its type: a cited file that is not text. */
+    suspend fun openWithApp(workspace: String, path: String) {
+        val target = server ?: throw ApiError("Connect first.")
+        val name = path.substringAfterLast('/')
+        val copy = java.io.File(java.io.File(context.cacheDir, "opened").apply { mkdirs() }, name)
+        onConnection(target, connectionGeneration) { api -> copy.outputStream().use { api.download("/api/files/download?" + fileQuery(workspace, path), it) } }
+        val type = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream"
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.opened", copy)
+        try {
+            context.startActivity(
+                android.content.Intent(android.content.Intent.ACTION_VIEW).setDataAndType(uri, type)
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        } catch (e: android.content.ActivityNotFoundException) {
+            throw ApiError("No app on this phone opens $name.")
+        }
+    }
+
     /** Saves a project file in the phone's Downloads; returns where. */
     suspend fun downloadFile(workspace: String, file: ProjectFile): String {
         val target = server ?: throw ApiError("Connect first.")

@@ -378,3 +378,6 @@ private fun FileCode(text: String, name: String, cited: IntRange? = null, onCite
 
 /** A citation of the model's answer (<cite file lines/>): the file and its lines, 0 for a whole file. */
 data class Citation(val path: String, val start: Int, val end: Int)
+
+/** Second FileProvider of the app (Android wants one class per provider): cited files opened in another app. */
+class OpenedFiles : androidx.core.content.FileProvider()

@@ -616,6 +616,8 @@ private fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running:
 @Composable
 private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifier, panel: Boolean, onPanelChange: (Boolean) -> Unit) {
     val focus = LocalFocusManager.current
+    val citeScope = rememberCoroutineScope()
+    val context = LocalContext.current
     val meta = app.meta
     val running = meta?.running == true
     var tool by remember { mutableStateOf<Item?>(null) }
@@ -673,11 +675,22 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
             RoundButton(Icons.plus, Color.Transparent, Palette.muted, description = "New chat") { app.open(null) }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (app.current == null) Welcome(app) else Transcript(app, running, onCite = {
-                // The citation's file, its lines marked, in the panel's Files tab.
+            if (app.current == null) Welcome(app) else Transcript(app, running, onCite = { citation ->
                 focus.clearFocus(force = true)
-                app.fileFocus = it
-                onPanelChange(true)
+                val workspace = app.chats.firstOrNull { it.id == app.current }?.workspace ?: app.selectedProject ?: app.workspace
+                // Code: the file, its lines marked, in the panel's Files tab.
+                fun show() {
+                    app.fileFocus = citation
+                    onPanelChange(true)
+                }
+                if (citation.start > 0) show() else citeScope.launch {
+                    // Not text (an image, a program…): the phone's app for it.
+                    val preview = try { app.filePreview(workspace, citation.path) } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (failure: Exception) { null }
+                    if (preview == null || !(preview.optBoolean("binary") || preview.optBoolean("image"))) return@launch show()
+                    try { app.openWithApp(workspace, citation.path) } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (failure: Exception) {
+                        android.widget.Toast.makeText(context, failure.message ?: "The file did not open.", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
             }) { tool = it }
             // The conversation fades under the composer instead of a hard edge.
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(18.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Palette.background))))

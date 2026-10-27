@@ -478,6 +478,7 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		sectionTitle("Computer Use"),
 		card(ui.computerScreenRow()),
 		sectionTitle("Context"),
+		card(settingRow("Automatic resumption", "What 1loop does when a conversation reaches a rate limit: wait for the reset, or go on with another model, in the order you choose.", newRow("Configure…", nil, styleOutline, ui.configureAutoResume))),
 		card(settingRow("Dynamic compaction",
 			"On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way.",
 			newToggle(!ui.classicCompaction, func(on bool) {

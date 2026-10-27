@@ -8,6 +8,7 @@ import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -30,6 +31,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 @Composable
 fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
@@ -49,6 +51,7 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
             Pill("Switch execution target") { app.switchTarget() }
             Text("Approvals", style = Type.headline)
             ApprovalChip(app)
+            AutoResumeSection(app)
             if (app.server?.localPhone == true) {
                 Text("Connections", style = Type.headline)
                 Pill("Accounts and models", onClick = { app.connectionsOpen = true })
@@ -103,6 +106,89 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
             HooksSection(app)
         }
     }
+}
+
+@Composable
+private fun AutoResumeSection(app: RemoteApp) {
+    val scope = rememberCoroutineScope()
+    val saved = app.defaultAutoResume
+    var enabled by remember(app.server, saved?.toString()) { mutableStateOf(saved?.optBoolean("enabled") ?: false) }
+    val steps = remember(app.server, saved?.toString()) {
+        mutableStateListOf<JSONObject>().apply {
+            saved?.optJSONArray("steps")?.let { array -> for (i in 0 until array.length()) add(JSONObject(array.getJSONObject(i).toString())) }
+        }
+    }
+    var expanded by remember { mutableStateOf(false) }
+    var search by remember { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    Text("Automatic resumption", style = Type.headline)
+    Text("When a rate limit interrupts a conversation, 1loop tries these options in order, for every conversation. Stop cancels a wait. Changes apply to the next run.", style = Type.small)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Enabled", style = Type.body, modifier = Modifier.weight(1f))
+        Toggle(enabled, enabled = app.connected) { enabled = it }
+    }
+    steps.forEachIndexed { index, step ->
+        val action = step.optString("action")
+        val choice = app.models.firstOrNull { it.account == step.optString("connectionId") && it.id == step.optString("model") }
+        Column(Modifier.fillMaxWidth().background(Palette.surface, RoundedCornerShape(10.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("${index + 1}. " + if (action == "wait") "Wait for the limit to reset" else choice?.name ?: step.optString("model"), style = Type.body)
+            if (action == "switch") {
+                if (choice != null && choice.efforts.isNotEmpty()) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Pill("Default", step.optString("effort").isEmpty()) { steps[index] = JSONObject(step.toString()).put("effort", "") }
+                        choice.efforts.forEach { effort ->
+                            Pill(effort.label, step.optString("effort") == effort.value) { steps[index] = JSONObject(step.toString()).put("effort", effort.value) }
+                        }
+                    }
+                }
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Pill("Send as is", step.optString("handoff", "as_is") == "as_is") { steps[index] = JSONObject(step.toString()).put("handoff", "as_is") }
+                    Pill("Summarize", step.optString("handoff") == "summary") { steps[index] = JSONObject(step.toString()).put("handoff", "summary").put("level", "everything") }
+                }
+                if (step.optString("handoff") == "summary") {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for ((id, label) in listOf("everything" to "Everything", "no_outputs" to "No tool outputs", "messages" to "Messages", "recent" to "Recent")) {
+                            Pill(label, step.optString("level") == id) { steps[index] = JSONObject(step.toString()).put("level", id) }
+                        }
+                    }
+                }
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Pill("Up", enabled = index > 0) { val previous = steps[index - 1]; steps[index - 1] = step; steps[index] = previous }
+                Pill("Down", enabled = index + 1 < steps.size) { val next = steps[index + 1]; steps[index + 1] = step; steps[index] = next }
+                Pill("Remove") { steps.removeAt(index) }
+            }
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Pill("Add wait", enabled = steps.size < 16) { steps.add(JSONObject().put("action", "wait")) }
+        Box {
+            Pill("Add model", enabled = steps.size < 16 && app.models.any { it.id.isNotEmpty() }) { expanded = true }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                Field(search, { search = it }, "Search models…", androidx.compose.ui.text.input.KeyboardType.Text, Modifier.width(260.dp))
+                app.models.filter { it.id.isNotEmpty() && "${it.name} ${it.detail}".contains(search.trim(), ignoreCase = true) }.take(80).forEach { model ->
+                    DropdownMenuItem(text = { Text("${model.name} · ${model.detail}") }, onClick = {
+                        steps.add(JSONObject().put("action", "switch").put("connectionId", model.account).put("model", model.id).put("handoff", "as_is"))
+                        expanded = false; search = ""
+                    })
+                }
+            }
+        }
+    }
+    Pill(if (saving) "Saving…" else "Save resumption", primary = true, enabled = app.connected && !saving) {
+        if (enabled && steps.isEmpty()) { notice = "Add at least one option." } else {
+            saving = true
+            val policy = JSONObject().put("enabled", enabled).put("steps", org.json.JSONArray(steps.toList()))
+            scope.launch {
+                try { app.saveAutoResume(policy); notice = "Saved" }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) { notice = failure.message ?: "Could not save resumption settings." }
+                finally { saving = false }
+            }
+        }
+    }
+    notice?.let { Text(it, style = Type.small) }
 }
 
 @Composable

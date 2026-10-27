@@ -133,12 +133,14 @@ func readResponses(stream io.Reader, emit emitter) (Message, error) {
 			ItemID  string          `json:"item_id"`
 			RawItem json.RawMessage `json:"item"`
 			Error   struct {
+				Code    string `json:"code"`
 				Message string `json:"message"`
 			} `json:"error"`
 			Response struct {
 				Status string            `json:"status"`
 				Output []json.RawMessage `json:"output"`
 				Error  struct {
+					Code    string `json:"code"`
 					Message string `json:"message"`
 				} `json:"error"`
 				Usage struct {
@@ -221,9 +223,10 @@ func readResponses(stream io.Reader, emit emitter) (Message, error) {
 			status.last = Activity{State: "write"} // the delta itself tells the interface
 			emit("delta", event.Delta)
 		case "response.failed", "response.incomplete":
-			return fmt.Errorf("OpenAI response interrupted: %s %s", event.Response.Status, event.Response.Error.Message)
+			failure := fmt.Errorf("OpenAI response interrupted: %s %s", event.Response.Status, event.Response.Error.Message)
+			return streamLimit(event.Response.Error.Code, event.Response.Error.Message, failure)
 		case "error":
-			return fmt.Errorf("OpenAI : %s", event.Error.Message)
+			return streamLimit(event.Error.Code, event.Error.Message, fmt.Errorf("OpenAI : %s", event.Error.Message))
 		case "response.completed":
 			if event.Response.Status != "completed" {
 				return fmt.Errorf("Incomplete OpenAI response")

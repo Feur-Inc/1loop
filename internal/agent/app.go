@@ -15,17 +15,20 @@ import (
 )
 
 type Config struct {
-	ConnectionID     string         `json:"connectionId,omitempty"`
-	AccountID        string         `json:"-"`
-	Residency        string         `json:"-"`
-	AuthProfile      string         `json:"authProfile,omitempty"`
-	Effort           string         `json:"effort,omitempty"`
-	ServiceTier      string         `json:"serviceTier,omitempty"` // a ChatGPT speed (see TierFor); "" for the plan's default
-	ReasoningMode    string         `json:"reasoningMode,omitempty"`
-	Routing          map[string]any `json:"routing,omitempty"`
-	Parameters       map[string]any `json:"parameters,omitempty"`
-	UserInstructions string         `json:"-"`
-	ApprovalMode     string         `json:"-"`
+	ConnectionID     string                                            `json:"connectionId,omitempty"`
+	AccountID        string                                            `json:"-"`
+	Residency        string                                            `json:"-"`
+	AuthProfile      string                                            `json:"authProfile,omitempty"`
+	Effort           string                                            `json:"effort,omitempty"`
+	ServiceTier      string                                            `json:"serviceTier,omitempty"` // a ChatGPT speed (see TierFor); "" for the plan's default
+	ReasoningMode    string                                            `json:"reasoningMode,omitempty"`
+	AutoResume       *AutoResume                                       `json:"-"` // the user's list, for every chat (Settings)
+	ResumeModel      func(context.Context, ResumeStep) (Config, error) `json:"-"`
+	ResumeSwitched   func(context.Context, Config) error               `json:"-"`
+	Routing          map[string]any                                    `json:"routing,omitempty"`
+	Parameters       map[string]any                                    `json:"parameters,omitempty"`
+	UserInstructions string                                            `json:"-"`
+	ApprovalMode     string                                            `json:"-"`
 	// Preferences changes the saved user preferences under their owner's
 	// lock: update receives the saved text and returns the new one. Nil
 	// where the memory tool cannot change them.

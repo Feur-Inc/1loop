@@ -108,6 +108,7 @@ data class ServiceTier(val id: String, val name: String, val description: String
 data class ModelOption(
     val label: String, val name: String, val detail: String, val account: String, val efforts: List<Effort>,
     val tiers: List<ServiceTier> = emptyList(), val defaultTier: String = "", val family: String = "",
+    val id: String = "",
     val compactAt: Int = 0, val compactDefault: Int = 0, val compactSupported: Boolean = false, val compactHelp: String = "",
 )
 
@@ -259,6 +260,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var preferencesEditable by mutableStateOf(false)
     /** Whether the agent may save memories to the preferences; null when the target cannot say. */
     var memoryEnabled by mutableStateOf<Boolean?>(null)
+    var defaultAutoResume by mutableStateOf<JSONObject?>(null)
     val models = mutableStateListOf<ModelOption>()
     val accounts = mutableStateListOf<Account>()
     val limits = mutableStateMapOf<String, AccountLimits>() // by account
@@ -782,6 +784,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     private fun applySettings(settings: JSONObject) {
+        defaultAutoResume = settings.optJSONObject("autoResume")
         userPreferences = settings.optString("userPreferences")
         preferencesEditable = settings.optBoolean("preferencesEditable")
         memoryEnabled = if (settings.has("memory")) settings.optBoolean("memory") else null
@@ -801,7 +804,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 (0 until (tiers?.length() ?: 0)).map {
                     tiers!!.getJSONObject(it).let { tier -> ServiceTier(tier.optString("id"), tier.optString("name"), tier.optString("description")) }
                 },
-                model.optString("defaultServiceTier"), model.optString("family"),
+                model.optString("defaultServiceTier"), model.optString("family"), model.optString("id"),
                 model.optInt("compactAt"), model.optInt("compactDefault"), model.optBoolean("compactSupported"), model.optString("compactHelp"),
             ))
         }
@@ -1061,6 +1064,12 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val reply = onConnection(target, generation) { it.post("/api/memory", JSONObject().put("enabled", enabled)) }
         memoryEnabled = reply.optBoolean("memory")
+    }
+
+    suspend fun saveAutoResume(policy: JSONObject) {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        onConnection(target, generation) { it.post("/api/auto-resume", JSONObject().put("policy", policy)) }
     }
 
     suspend fun setModelCompaction(label: String, limit: Int) {

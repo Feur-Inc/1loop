@@ -282,12 +282,27 @@ fun Markdown(text: String, modifier: Modifier = Modifier, onCite: ((Citation) ->
     }
 }
 
+/**
+ * A TextView asks for a new layout only up to a parent that is not marked for
+ * one already. Compose's AndroidView holder can stay marked (measured without
+ * being laid out again): it then never heard that the text grew, the view kept
+ * its old height and scrolled its text inside it (#68). Asking the holder's
+ * parent too, Compose's views handler, has the holder measured again.
+ */
+private class MarkdownTextView(context: Context) : TextView(context) {
+    override fun requestLayout() {
+        super.requestLayout()
+        val holder = parent as? View ?: return
+        if (holder.isLayoutRequested) holder.parent?.requestLayout()
+    }
+}
+
 @Composable
 private fun MarkdownText(renderer: Markwon, text: Spanned, textSize: Float, modifier: Modifier, onCite: ((Citation) -> Unit)?) {
     val lineHeight = with(LocalDensity.current) { Type.body.lineHeight.toPx() }.toInt()
     AndroidView(
         modifier = modifier,
-        factory = { TextView(it).apply {
+        factory = { MarkdownTextView(it).apply {
             setTextColor(Palette.text.toArgb())
             setLinkTextColor(Palette.amber.toArgb())
             typeface = ResourcesCompat.getFont(it, R.font.inter_regular)

@@ -502,6 +502,7 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	// dock layer floats over the conversation's bottom left corner.
 	conversation = container.New(dockLayout{ui}, conversation, ui.dockRow)
 	ui.panel = newToolPanel(ui)
+	openCitation = ui.openCitation
 	ui.split = container.New(splitLayout{ui.panel}, conversation, ui.panel.view, newPanelResizeHandle(ui.panel))
 
 	// Title bar: conversation title, drag region and window controls.

@@ -71,6 +71,14 @@ fun FilesView(app: RemoteApp, workspace: String) {
     var folder by remember(workspace) { mutableStateOf("") }
     var entries by remember(workspace) { mutableStateOf<List<ProjectFile>?>(null) }
     var open by remember(workspace) { mutableStateOf<ProjectFile?>(null) }
+    var cited by remember(workspace) { mutableStateOf<IntRange?>(null) }
+    LaunchedEffect(app.fileFocus) {
+        val citation = app.fileFocus ?: return@LaunchedEffect
+        app.fileFocus = null
+        folder = citation.path.substringBeforeLast('/', "")
+        open = ProjectFile(citation.path.substringAfterLast('/'), citation.path, false, 0)
+        cited = if (citation.start > 0) citation.start..citation.end else null // a whole file: nothing to mark
+    }
     var status by remember { mutableStateOf<String?>(null) }
     var round by remember { mutableIntStateOf(0) }
     var copying by remember { mutableStateOf(false) }
@@ -92,7 +100,7 @@ fun FilesView(app: RemoteApp, workspace: String) {
         entries = try { app.listFiles(workspace, folder) } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { status = failure.message; emptyList() }
     }
     open?.let { file ->
-        FilePreview(app, workspace, file, onBack = { open = null }) { status = it }
+        FilePreview(app, workspace, file, cited, onBack = { open = null; cited = null }) { status = it }
         return
     }
     BackHandler(enabled = folder.isNotEmpty()) { folder = folder.substringBeforeLast('/', "") }
@@ -133,7 +141,7 @@ fun FilesView(app: RemoteApp, workspace: String) {
 }
 
 @Composable
-private fun FilePreview(app: RemoteApp, workspace: String, file: ProjectFile, onBack: () -> Unit, onStatus: (String?) -> Unit) {
+private fun FilePreview(app: RemoteApp, workspace: String, file: ProjectFile, cited: IntRange?, onBack: () -> Unit, onStatus: (String?) -> Unit) {
     BackHandler(onBack = onBack)
     val scope = rememberCoroutineScope()
     var preview by remember(file) { mutableStateOf<JSONObject?>(null) }
@@ -178,10 +186,13 @@ private fun FilePreview(app: RemoteApp, workspace: String, file: ProjectFile, on
                 shown == null -> WorkRing("wait", 30.dp)
                 picture != null -> Image(picture!!.asImageBitmap(), file.name, contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())
                 shown.optBoolean("binary") || shown.optBoolean("image") -> Text("Binary file · ${byteSize(file.size)}. Download it to open it.", style = Type.small)
-                else -> Column(Modifier.verticalScroll(rememberScrollState())) {
-                    var text = shown.optString("text")
-                    if (shown.optBoolean("truncated")) text += "\n… (the preview shows the first ${byteSize(text.length.toLong())} of ${byteSize(file.size)})"
-                    FileCode(text, file.name)
+                else -> {
+                    val scroll = rememberScrollState()
+                    Column(Modifier.verticalScroll(scroll)) {
+                        var text = shown.optString("text")
+                        if (shown.optBoolean("truncated")) text += "\n… (the preview shows the first ${byteSize(text.length.toLong())} of ${byteSize(file.size)})"
+                        FileCode(text, file.name, cited) { top -> scope.launch { scroll.scrollTo(top) } }
+                    }
                 }
             }
         }
@@ -328,13 +339,15 @@ private fun SendFileDialog(app: RemoteApp, workspace: String, file: ProjectFile,
 }
 
 @Composable
-private fun FileCode(text: String, name: String) {
+private fun FileCode(text: String, name: String, cited: IntRange? = null, onCitedTop: (Int) -> Unit = {}) {
     val colored = remember(text) {
         val token = Regex(""""(?:\\.|[^"\\])*"|'(?:\\.|[^'\\])*'|//[^\n]*|#[^\n]*|\b(?:func|fun|def|class|package|import|from|return|if|else|for|while|val|var|const|let|true|false|null|nil|public|private|void|int|string|bool)\b""")
         buildAnnotatedString {
             text.trimEnd('\n').lines().forEachIndexed { index, line ->
                 if (index > 0) append('\n')
-                withStyle(SpanStyle(color = Palette.faint)) { append("${index + 1}  ") }
+                val marked = cited != null && index + 1 in cited
+                if (marked) pushStyle(SpanStyle(background = Palette.raised))
+                withStyle(SpanStyle(color = if (marked) Palette.amber else Palette.faint)) { append("${index + 1}  ") }
                 var position = 0
                 token.findAll(line).forEach { match ->
                     append(line.substring(position, match.range.first))
@@ -343,14 +356,28 @@ private fun FileCode(text: String, name: String) {
                     position = match.range.last + 1
                 }
                 append(line.substring(position))
+                if (marked) pop()
             }
         }
     }
+    var scrolled by remember(text, cited) { mutableStateOf(false) }
     Column(Modifier.fillMaxWidth()) {
         Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             Text(name, style = Type.caption, modifier = Modifier.weight(1f))
             CopyChip { text }
         }
-        Text(colored, style = Type.mono, softWrap = false, modifier = Modifier.horizontalScroll(rememberScrollState()))
+        Text(colored, style = Type.mono, softWrap = false, modifier = Modifier.horizontalScroll(rememberScrollState()), onTextLayout = { layout ->
+            // The cited lines in view, a few lines above them too.
+            if (cited != null && !scrolled && cited.first - 1 < layout.lineCount) {
+                scrolled = true
+                onCitedTop(layout.getLineTop(maxOf(cited.first - 4, 0)).toInt())
+            }
+        })
     }
 }
+
+/** A citation of the model's answer (<cite file lines/>): the file and its lines, 0 for a whole file. */
+data class Citation(val path: String, val start: Int, val end: Int)
+
+/** Second FileProvider of the app (Android wants one class per provider): cited files opened in another app. */
+class OpenedFiles : androidx.core.content.FileProvider()

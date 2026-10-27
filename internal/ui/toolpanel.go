@@ -64,6 +64,7 @@ type panelTab struct {
 	webAccount      *agent.ChatGPTWeb
 	webPage         *browser.Page
 	workspace       string // manual tabs belong to a workspace, not a transcript item
+	files           *fileBrowser
 }
 
 const panelWidth = 840

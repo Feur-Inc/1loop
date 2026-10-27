@@ -94,6 +94,8 @@ func (flow *flowText) look(spanValue span) (fyne.TextStyle, float32, color.Color
 	case spanValue.code:
 		style.Monospace = true
 		size, ink = flow.size*flowCodeScale, colCodeInk
+	case spanValue.cite:
+		size, ink = flow.size*0.85, colMuted
 	case spanValue.link != "":
 		ink = colLink
 	}
@@ -206,7 +208,7 @@ func (flow *flowText) atoms() []atom {
 				add(word, i, false)
 			}
 		}
-		if span.code && len(out) > first { // room for the chip around the code
+		if (span.code || span.cite) && len(out) > first { // room for the chip around the code
 			out[first].lead = flowChipPad
 			out[first].width += flowChipPad
 			out[len(out)-1].width += flowChipPad
@@ -385,7 +387,7 @@ func (flow *flowText) flow(width float32) {
 				}
 				flow.pieces = append(flow.pieces, selPiece{runes: []rune(text), at: at, size: fyne.NewSize(textWidth, first.height),
 					textSize: first.size, style: first.style, after: after})
-				if span.code || (span.math != "" && first.image == nil) {
+				if span.code || span.cite || (span.math != "" && first.image == nil) {
 					chip := canvas.NewRectangle(colCodeChip)
 					chip.CornerRadius = 4
 					chip.StrokeColor, chip.StrokeWidth = colCodeEdge, 1
@@ -394,10 +396,12 @@ func (flow *flowText) flow(width float32) {
 					chips = append(chips, chip)
 				}
 				if span.link != "" {
-					rule := canvas.NewRectangle(withAlpha(colLink, 0x70))
-					rule.Move(fyne.NewPos(at.X, top+first.base+2))
-					rule.Resize(fyne.NewSize(textWidth, 1))
-					marks = append(marks, rule)
+					if !span.cite { // a citation is a chip, not underlined
+						rule := canvas.NewRectangle(withAlpha(colLink, 0x70))
+						rule.Move(fyne.NewPos(at.X, top+first.base+2))
+						rule.Resize(fyne.NewSize(textWidth, 1))
+						marks = append(marks, rule)
+					}
 					flow.links = append(flow.links, flowLink{fyne.NewPos(x, top), size, span.link})
 				}
 				if span.strike {
@@ -449,6 +453,10 @@ func (flow *flowText) Tapped(e *fyne.PointEvent) {
 // openLink opens a web or mail address with the desktop's application.
 func openLink(address string) {
 	if address == "" {
+		return
+	}
+	if strings.HasPrefix(address, citeScheme) {
+		openCitation(address)
 		return
 	}
 	target, err := url.Parse(address)

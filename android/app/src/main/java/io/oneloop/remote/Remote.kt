@@ -227,6 +227,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     var screen by mutableStateOf<Screen>(Screen.Launch)
     var target by mutableStateOf<ExecutionTarget?>(null)
+    var fileFocus by mutableStateOf<Citation?>(null) // a citation to show in the panel's Files tab
     val local = AndroidLocalRuntime.get(context)
     var starting by mutableStateOf(false) // the local engine is starting
     private var localStartGeneration = -1L
@@ -1218,6 +1219,24 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     suspend fun fileBytes(workspace: String, path: String): ByteArray {
         val target = server ?: throw ApiError("Connect first.")
         return onConnection(target, connectionGeneration) { it.bytes("/api/files/download?" + fileQuery(workspace, path)) }
+    }
+
+    /** Opens a project file with the phone's app for its type: a cited file that is not text. */
+    suspend fun openWithApp(workspace: String, path: String) {
+        val target = server ?: throw ApiError("Connect first.")
+        val name = path.substringAfterLast('/')
+        val copy = java.io.File(java.io.File(context.cacheDir, "opened").apply { mkdirs() }, name)
+        onConnection(target, connectionGeneration) { api -> copy.outputStream().use { api.download("/api/files/download?" + fileQuery(workspace, path), it) } }
+        val type = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream"
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.opened", copy)
+        try {
+            context.startActivity(
+                android.content.Intent(android.content.Intent.ACTION_VIEW).setDataAndType(uri, type)
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        } catch (e: android.content.ActivityNotFoundException) {
+            throw ApiError("No app on this phone opens $name.")
+        }
     }
 
     /** Saves a project file in the phone's Downloads; returns where. */

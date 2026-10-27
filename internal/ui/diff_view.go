@@ -19,7 +19,7 @@ import (
 )
 
 type diffLine struct {
-	kind           byte // f: file, h: hunk, space: context, + or -: change, m: metadata
+	kind           byte // f: file, h: hunk, space: context, + or -: change, m: metadata, c: cited
 	text           string
 	old, next      int
 	added, removed int
@@ -266,6 +266,9 @@ func (renderer *diffRowRenderer) Refresh() {
 	case '-':
 		renderer.bg.FillColor = color.NRGBA{R: 0x40, G: 0x21, B: 0x1d, A: 0xff}
 		renderer.mark.FillColor, renderer.old.Color = colDanger, colDanger
+	case 'c':
+		renderer.bg.FillColor = colRaised
+		renderer.mark.FillColor, renderer.next.Color = colAmber, colAmber
 	case 'f':
 		renderer.bg.FillColor = colSurface
 	case 'h', 'm':
@@ -290,7 +293,7 @@ func (renderer *diffRowRenderer) Refresh() {
 			continue
 		}
 		text.Text = strings.TrimRight(tokens[i].Value, "\r\n")
-		text.TextStyle = fyne.TextStyle{Monospace: line.kind == ' ' || line.kind == '+' || line.kind == '-', Bold: line.kind == 'f'}
+		text.TextStyle = fyne.TextStyle{Monospace: line.kind == ' ' || line.kind == '+' || line.kind == '-' || line.kind == 'c', Bold: line.kind == 'f'}
 		text.Color = colText
 		if line.kind == 'f' && tokens[i].Type == chroma.GenericInserted {
 			text.Color = colAdded

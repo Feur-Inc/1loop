@@ -393,7 +393,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		defer close()
 		args = append(args, "--mcp-config", config)
 	}
-	appendPrompt := mobileInstructions(cfg) + projectInstructions(cfg.Workspace) + todoInstructions(cfg) + todoSnapshot(cfg) + memoryInstructions(cfg)
+	appendPrompt := mobileInstructions(cfg) + projectInstructions(cfg.Workspace) + citationInstructions + todoInstructions(cfg) + todoSnapshot(cfg) + memoryInstructions(cfg)
 	if cfg.ProjectTools != nil {
 		appendPrompt += "\n\nUse 1loop's MCP shell, read_file, list_directory, edit_file and apply_patch tools for project work. Follow the phone's selected execution policy and stay strictly inside the requested project. Use recall to retrieve older conversation details. Your own context compaction remains managed by Claude Code."
 	}

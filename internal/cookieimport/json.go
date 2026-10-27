@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"strings"
 	"time"
@@ -72,13 +71,11 @@ func ReadJSON(path string) (Result, error) {
 			skipped++
 			continue
 		}
+		// Chrome checks the rest, as it does for its own cookies: quoted or
+		// non-ASCII values are fine, and the ones it refuses are counted.
 		path := entry.Path
 		if path == "" {
 			path = "/"
-		}
-		if (&http.Cookie{Name: entry.Name, Value: *entry.Value, Domain: entry.Domain, Path: path}).Valid() != nil {
-			skipped++
-			continue
 		}
 		cookie := &network.CookieParam{Name: entry.Name, Value: *entry.Value, Path: path, Secure: entry.Secure, HTTPOnly: entry.HTTPOnly}
 		place(cookie, entry.Domain, entry.Secure)

@@ -7,11 +7,13 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 
 	"1loop/internal/browser"
 	"1loop/internal/cookieimport"
@@ -72,14 +74,13 @@ func (ui *desktopUI) chooseCookieProfile(profiles []cookieimport.Profile) {
 			fileLabel.Refresh()
 			for j, row := range rows {
 				row.SetSelected(j == i)
+				row.SetTrailing(map[bool]string{true: "✓"}[j == i])
 			}
 			update()
 		})
 		rows = append(rows, row)
 		list.Add(container.NewVBox(row, padded(0, 4, 14, 0, textLine(profile.Dir, 11.5, colFaint))))
 	}
-	scroll := container.NewVScroll(list)
-	scroll.SetMinSize(fyne.NewSize(0, min(float32(len(profiles))*58, 260)))
 	chooseFile := newRow("Choose JSON file…", nil, styleOutline, func() {
 		ui.pick(pickRequest{title: "Import cookie JSON", filterName: "Cookie JSON", extensions: []string{".json"}}, func(paths []string) {
 			file, chosen = paths[0], -1
@@ -87,12 +88,17 @@ func (ui *desktopUI) chooseCookieProfile(profiles []cookieimport.Profile) {
 			fileLabel.Refresh()
 			for _, row := range rows {
 				row.SetSelected(false)
+				row.SetTrailing("")
 			}
 			update()
 		})
 	})
 	guide := newRow("How to export cookies", nil, styleOutline, func() {
-		text := container.NewVScroll(plainFlow(cookieExportGuide, 13, colText))
+		paragraphs := container.New(layout.NewCustomPaddedVBoxLayout(10))
+		for _, paragraph := range strings.Split(cookieExportGuide, "\n\n") {
+			paragraphs.Add(plainFlow(paragraph, 13, colText))
+		}
+		text := container.NewVScroll(padded(0, 0, 0, 12, paragraphs))
 		text.SetMinSize(fyne.NewSize(0, min(float32(420), max(float32(160), ui.window.Canvas().Size().Height-180))))
 		link := newRow("Cookie-Editor project", nil, styleOutline, func() { openLink("https://github.com/Moustachauve/cookie-editor") })
 		ui.modal("Export and import cookies", container.NewVBox(text, link), 620, nil)
@@ -101,7 +107,7 @@ func (ui *desktopUI) chooseCookieProfile(profiles []cookieimport.Profile) {
 	if len(profiles) > 0 {
 		sources.Add(sectionTitle("Or from a local profile"))
 		sources.Add(note("Close the source browser before importing. Protected Windows Chromium profiles require a JSON export."))
-		sources.Add(scroll)
+		sources.Add(list) // the dialog scrolls; a scroll of its own here would catch the wheel
 	} else {
 		sources.Add(note("No compatible local profile found. Choose a JSON export instead."))
 	}
@@ -151,17 +157,21 @@ func (ui *desktopUI) chooseCookieProfile(profiles []cookieimport.Profile) {
 					text = "No usable cookies were found. Try a JSON export from the source browser."
 				}
 				if refused := len(result.Cookies) - kept; refused > 0 {
-					text += fmt.Sprintf(" The browser refused %d.", refused)
+					text += " The browser refused " + countText(refused, "invalid cookie") + "."
 				}
 				if result.Skipped > 0 {
-					text += fmt.Sprintf(" %d were left out: invalid, expired, private, partitioned or unavailable session cookies.", result.Skipped)
+					verb := "were"
+					if result.Skipped == 1 {
+						verb = "was"
+					}
+					text += fmt.Sprintf(" %s %s left out (incomplete, expired, private, partitioned or session-only).", countText(result.Skipped, "cookie"), verb)
 				}
 				ui.notice("Import cookies", text)
 			})
 		}()
 	})
 	install.Disable()
-	content := container.NewVScroll(body)
+	content := container.NewVScroll(padded(0, 0, 0, 12, body)) // clear of the scroll bar
 	content.SetMinSize(fyne.NewSize(0, min(float32(500), max(float32(160), ui.window.Canvas().Size().Height-180))))
 	dialog = ui.modal("Import cookies", content, 680, nil, cancel, install)
 }

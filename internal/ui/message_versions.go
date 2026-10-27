@@ -79,7 +79,7 @@ func (ui *desktopUI) startVersion(chat *conversation, index int, messageValue ag
 }
 
 func (ui *desktopUI) editMessage(chat *conversation, index int) {
-	if !ui.versionReady(chat) {
+	if chat.server == nil && !ui.versionReady(chat) {
 		return
 	}
 	item := chat.Items[index]
@@ -94,6 +94,11 @@ func (ui *desktopUI) editMessage(chat *conversation, index int) {
 		if text == "" && len(item.Images) == 0 {
 			return
 		}
+		if chat.server != nil {
+			chat.server.action("/api/chats/"+chat.serverID+"/message", map[string]any{"index": index, "action": "edit", "text": text})
+			dialog.Hide()
+			return
+		}
 		if ui.startVersion(chat, index, agent.Message{Role: "user", Content: text, Images: item.Images}, false) {
 			dialog.Hide()
 		}
@@ -103,6 +108,10 @@ func (ui *desktopUI) editMessage(chat *conversation, index int) {
 }
 
 func (ui *desktopUI) retryMessage(chat *conversation, index int) {
+	if chat.server != nil {
+		chat.server.action("/api/chats/"+chat.serverID+"/message", map[string]any{"index": index, "action": "retry"})
+		return
+	}
 	if at := userItemBefore(chat, index); at >= 0 {
 		item := chat.Items[at]
 		ui.startVersion(chat, at, agent.Message{Role: "user", Content: item.Text, Images: item.Images}, true)
@@ -111,10 +120,18 @@ func (ui *desktopUI) retryMessage(chat *conversation, index int) {
 
 func (ui *desktopUI) versionControls(chat *conversation, anchor string) fyne.CanvasObject {
 	family, selected := chat.versionFamily(anchor)
+	if chat.server != nil { // the server keeps the versions: it sends where this one stands
+		version := chat.versions[anchor]
+		family, selected = make([]int, version.Total), version.Current-1
+	}
 	if len(family) < 2 {
 		return spacer(0, 0)
 	}
 	move := func(delta int) {
+		if chat.server != nil {
+			chat.server.action("/api/chats/"+chat.serverID+"/version", map[string]any{"anchor": anchor, "delta": delta})
+			return
+		}
 		if !ui.versionReady(chat) {
 			return
 		}

@@ -496,6 +496,9 @@ func (ui *desktopUI) updateApprovalControl() {
 		return
 	}
 	mode := agent.ApprovalFor(ui.approvalMode, ui.cfg)
+	if ui.server != nil {
+		mode = ui.server.approvalMode
+	}
 	ui.approvalControl.icon = iconShield
 	ui.approvalControl.danger = mode == "yolo"
 	ui.approvalControl.SetText("Approval required")

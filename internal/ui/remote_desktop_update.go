@@ -1,8 +1,8 @@
 package ui
 
-// The server's updates, seen from the remote desktop: on connecting, a row
-// says when the server runs an older version than the release page's, and
-// its button has the server update itself and restart.
+// The server's updates, seen from the desktop: on connecting, the target
+// menu offers to update a server that runs an older version than the
+// release page's; the server then updates itself and restarts.
 
 import (
 	"context"
@@ -22,26 +22,15 @@ func (remote *remoteDesktop) checkServerUpdate() {
 			return // an older server without updates
 		}
 		fyne.Do(func() {
-			if !status.Available {
-				remote.serverUpdate.Hide()
-				relayout(remote.left)
-				return
+			if status.Available {
+				remote.update = &status
+				remote.status.SetText("Server " + status.Current + " · " + status.Latest + " is out: see the target menu")
 			}
-			if !status.CanUpdate {
-				remote.serverUpdate.SetText("Server " + status.Current + " · " + status.Latest + " is out")
-				remote.serverUpdate.onTap = func() { remote.status.SetText(status.Problem) }
-			} else {
-				remote.serverUpdate.SetText("Update server to " + status.Latest)
-				remote.serverUpdate.onTap = remote.updateServer
-			}
-			remote.serverUpdate.Show()
-			relayout(remote.left) // Show alone leaves the row at its hidden, empty size
 		})
 	}()
 }
 
 func (remote *remoteDesktop) updateServer() {
-	remote.serverUpdate.Disable()
 	remote.status.SetText("The server is downloading its update…")
 	go func() {
 		ctx, cancel := context.WithTimeout(remote.ctx, 30*time.Minute)
@@ -49,14 +38,12 @@ func (remote *remoteDesktop) updateServer() {
 		var reply struct{ Version string }
 		err := remote.client.json(ctx, "POST", "/api/update", map[string]any{}, &reply)
 		fyne.Do(func() {
-			remote.serverUpdate.Enable()
 			if err != nil {
 				remote.status.SetText("Server update: " + err.Error())
 				return
 			}
-			remote.serverUpdate.Hide()
-			relayout(remote.left)
-			remote.status.SetText("The server restarts with " + reply.Version + "; this window reconnects by itself.")
+			remote.update = nil
+			remote.status.SetText("The server restarts with " + reply.Version + "; 1loop reconnects by itself.")
 		})
 	}()
 }

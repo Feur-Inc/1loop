@@ -1,7 +1,7 @@
 package ui
 
-// The Files tab of the remote desktop: the server project's files, through
-// its /api/files routes. Download saves into the computer's Downloads.
+// The Files tab of a server chat: the server project's files, through its
+// /api/files routes. Download saves into the computer's Downloads.
 
 import (
 	"context"
@@ -33,12 +33,12 @@ func (remote *remoteDesktop) workspace() string {
 }
 
 func (remote *remoteDesktop) openFiles() {
-	if view, ok := remote.tabViews["files"]; ok {
-		for _, item := range remote.tabs.Items {
-			if item.Content == view {
-				remote.tabs.Select(item)
-				return
-			}
+	panel := remote.parent.panel
+	for i, tab := range panel.tabs {
+		if tab.kind == "server:files" {
+			panel.choose(i)
+			panel.unfold()
+			return
 		}
 	}
 	ctx, cancel := context.WithCancel(remote.ctx)
@@ -99,11 +99,7 @@ func (remote *remoteDesktop) openFiles() {
 		remote.parent.pick(pickRequest{title: "Add files to the server project", start: home, multiple: true}, done)
 	}
 	view := newFileBrowser(ctx, remote.window, source, actions, pick)
-	remote.tabViews["files"] = view
-	remote.tabCancel["files"] = cancel
-	item := container.NewTabItem("Files", view)
-	remote.tabs.Append(item)
-	remote.tabs.Select(item)
+	remote.addPanelTab("files", "Files", "files", view, cancel, func(bool) {}, true)
 }
 
 // download saves a server file into ~/Downloads, never over another file.

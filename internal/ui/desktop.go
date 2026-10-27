@@ -59,6 +59,14 @@ type conversation struct {
 	handoff *pendingHandoff // how the next turn's new model receives the chat
 	queue   []agent.Message // Enter while it runs: the next turns
 	steer   []agent.Message // Ctrl+Enter while it runs: joins at the next step
+
+	// A server's chat (remote_desktop.go): its server, its ID there, its tool
+	// calls' states, and the user pictures being fetched.
+	server   *remoteDesktop
+	serverID string
+	states   map[int]string
+	versions map[string]remoteapi.Versions // by anchor
+	fetching map[string]bool
 }
 
 // chatRun is an agent loop at work. Each chat has its own, so the user can
@@ -109,6 +117,10 @@ type desktopUI struct {
 	plan             agent.PlanUsage          // Claude Code connection: the subscription windows in use
 	claudeOffered    bool                     // the Claude Code connection was proposed once
 	remote           *remoteServer            // the phone remote, nil when off
+	server           *remoteDesktop           // the server the window works on, nil for this computer (remote_desktop.go)
+	localCfg         agent.Config             // this computer's settings while a server is the target
+	machine          *tapRow                  // the target: this computer or a server
+	serverStatus     *fitLabel                // the server's state beside it
 	remoteEnabled    bool                     // see phone_server.go
 	devices          []remoteapi.PairedDevice // phones paired with the remote
 	modelsLoading    bool
@@ -554,7 +566,11 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.prompt.send = ui.submit
 	ui.prompt.steer = ui.steerNow
 	// The message being typed will go to the model: open the connection now.
-	ui.prompt.typing = func() { ui.backend.Prewarm(ui.cfg) }
+	ui.prompt.typing = func() {
+		if ui.server == nil {
+			ui.backend.Prewarm(ui.cfg)
+		}
+	}
 	ui.prompt.escape = func() { ui.finishEdit(false); ui.clearSelection() }
 	ui.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
 		if key.Name == fyne.KeyEscape && ui.prefs.open { // Escape goes back a page, then to the conversation
@@ -575,10 +591,20 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 			ui.selectModel(choice)
 		}
 	})
-	ui.model.row.onTap = ui.modelMenu
+	ui.model.row.onTap = func() {
+		if ui.server != nil {
+			ui.server.modelMenu()
+			return
+		}
+		ui.modelMenu()
+	}
 	ui.send = newIconButton(iconSend, colAmber, colInk, ui.submit)
 	ui.send.iconPx = 20
 	ui.stop = newIconButton(iconStop, colText, colInk, func() {
+		if ui.current != nil && ui.current.server != nil {
+			ui.current.server.stop()
+			return
+		}
 		if ui.current != nil && ui.current.run != nil {
 			platform.Devf("ui", "stop pressed for %q", ui.current.Title)
 			ui.current.run.cancel()
@@ -586,7 +612,13 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	})
 	ui.stop.iconPx = 20
 	ui.stop.Hide()
-	ui.approvalControl = newRow("", iconShield, styleChip, ui.approvalMenu)
+	ui.approvalControl = newRow("", iconShield, styleChip, func() {
+		if ui.server != nil {
+			ui.server.approvalMenu()
+			return
+		}
+		ui.approvalMenu()
+	})
 	ui.updateApprovalControl()
 	ui.contextRing = newContextRing(ui.tips)
 	ui.attach = newIconButton(iconPlus, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x0d}, color.NRGBA{}, nil)
@@ -654,8 +686,10 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 
 	ui.folder = newRow(filepath.Base(ui.cfg.Workspace), theme.FolderIcon(), styleChip, nil)
 	ui.folder.onTap = func() { ui.projectMenu(ui.folder) }
-	machine := newRow("This computer", theme.ComputerIcon(), styleChip, ui.connectServer)
-	contextRow := container.NewHBox(ui.folder, machine)
+	ui.machine = newRow("This computer", theme.ComputerIcon(), styleChip, ui.targetMenu)
+	ui.serverStatus = newFitLabel("", 12, colFaint)
+	ui.serverStatus.Hide()
+	contextRow := container.NewBorder(nil, nil, container.NewHBox(ui.folder, ui.machine), nil, ui.serverStatus)
 	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.queueTray, composer)
 	return padded(0, 0, 24, 24, container.New(columnLayout{width: 760, inset: 0}, padded(0, 18, 0, 0, stack)))
 }
@@ -678,11 +712,17 @@ func (ui *desktopUI) draftKey() string {
 	if ui.current != nil {
 		return ui.current.ID
 	}
+	if ui.server != nil {
+		return ui.server.draftKey("") + ui.cfg.Workspace
+	}
 	return newChatDraft + ui.cfg.Workspace
 }
 
 func (ui *desktopUI) startNew() {
 	platform.Devf("ui", "new chat screen (workspace %s)", ui.cfg.Workspace)
+	if ui.server != nil {
+		ui.server.selectChat("")
+	}
 	ui.prefs.close()
 	ui.clearSelection()
 	ui.finishEdit(false)
@@ -794,6 +834,14 @@ func (ui *desktopUI) syncRun() {
 		ui.settled.Stop()
 		ui.settled = nil
 	}
+	if ui.server != nil {
+		ui.server.syncRun()
+		ui.controls.Refresh()
+		ui.renderQueue()
+		ui.syncCopies()
+		ui.relayoutColumn()
+		return
+	}
 	var currentTurn *turn
 	if ui.current != nil && ui.current.run != nil {
 		currentTurn = ui.current.run.turn
@@ -896,6 +944,10 @@ func (ui *desktopUI) submit() {
 		ui.finishEdit(true)
 		return
 	}
+	if ui.server != nil {
+		ui.server.submit("send")
+		return
+	}
 	text := strings.TrimSpace(ui.prompt.Text)
 	chat := ui.current
 	if chat != nil && chat.handoff == nil && agent.HandoffNeeded(ui.runConfig(chat), chat.History) && (text != "" || len(ui.attachments)+len(ui.fileAttachments)+len(chat.queue) > 0) {
@@ -935,6 +987,10 @@ func (ui *desktopUI) submit() {
 // steerNow is Ctrl+Enter: the message joins the running task at its next
 // step, without waiting for the answer to end.
 func (ui *desktopUI) steerNow() {
+	if ui.server != nil {
+		ui.server.submit("steer")
+		return
+	}
 	chat := ui.current
 	if ui.editing != nil || chat == nil || chat.run == nil {
 		ui.submit()
@@ -1289,7 +1345,7 @@ func (ui *desktopUI) compactChat(focus string) {
 
 // showApproval asks before a command or an edit, whichever chat it comes
 // from: the run waits for the answer.
-func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) {
+func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) *sheet {
 	id, _ := p["id"].(string)
 	title, _ := p["title"].(string)
 	preview, _ := p["preview"].(string)
@@ -1310,7 +1366,7 @@ func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) {
 			return
 		}
 		resolved = true
-		ui.backend.Approve(id, allow)
+		ui.approve(chat, id, allow)
 		forget()
 		dialog.Hide()
 	}
@@ -1321,7 +1377,7 @@ func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) {
 	dialog = ui.modal(title, body, 680, func() {
 		if !resolved {
 			resolved = true
-			ui.backend.Approve(id, false)
+			ui.approve(chat, id, false)
 			forget()
 		}
 	}, refuse, allow)
@@ -1332,6 +1388,16 @@ func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) {
 		chat.run.answer = answer
 		ui.remote.metaChanged(chat)
 	}
+	return dialog
+}
+
+// approve answers an approval: this computer's agent, or the server's.
+func (ui *desktopUI) approve(chat *conversation, id string, allow bool) {
+	if chat.server != nil {
+		chat.server.action("/api/approve", map[string]any{"id": id, "allow": allow})
+		return
+	}
+	ui.backend.Approve(id, allow)
 }
 
 func (ui *desktopUI) refreshModels() {
@@ -1480,11 +1546,15 @@ func (ui *desktopUI) persist(wait bool) {
 	remote := ui.remoteEnabled
 	// Everything but the chats is small, and holds maps the settings edit:
 	// it is encoded here, on the interface's thread.
+	cfg := ui.cfg
+	if ui.server != nil { // a server's chat is on screen: this computer's settings are put aside
+		cfg = ui.localCfg
+	}
 	head, err := json.Marshal(savedState{
 		ui.claudeOffered,
 		&remote,
 		ui.devices,
-		ui.cfg,
+		cfg,
 		nil,
 		ui.projects,
 		ui.connectionsList,

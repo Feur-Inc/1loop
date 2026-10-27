@@ -119,6 +119,9 @@ func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 // showChatModel puts the open chat's model in the picker, from the catalog
 // already loaded; it is fetched again only when the model is not in it.
 func (ui *desktopUI) showChatModel() {
+	if ui.server != nil { // the server names it (remote_desktop.go)
+		return
+	}
 	for label, choice := range ui.choices {
 		if choice.Connection.ID == ui.cfg.ConnectionID && choice.ID == ui.cfg.Model {
 			ui.model.Selected = label

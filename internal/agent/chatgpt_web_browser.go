@@ -879,7 +879,7 @@ func webSystemInstructions(cfg Config, phone bool) string {
 	if phone {
 		device = "phone"
 	}
-	for _, group := range availableToolGroups(cfg) {
+	for _, group := range builtinToolGroups(cfg) {
 		if phone || group.name != "local_phone" && group.name != "local_debian" {
 			prompt += group.instructions(cfg)
 		}

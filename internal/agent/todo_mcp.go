@@ -77,7 +77,7 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 			if cfg.ProjectTools == nil && cfg.toolAvailable("memory") {
 				definitions = append(definitions, memoryToolDefinition())
 			}
-			for _, group := range availableToolGroups(cfg) {
+			for _, group := range builtinToolGroups(cfg) {
 				definitions = append(definitions, group.tools()...)
 			}
 			tools := []any{}

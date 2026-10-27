@@ -62,6 +62,9 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                 LaunchedEffect(Unit) { runCatching { app.refreshSharing() } }
                 SharingSection(app)
             }
+            Text("Extensions", style = Type.headline)
+            Text("Skills and plugins from GitHub, and the MCP servers the agent uses.", style = Type.small)
+            Pill("Skills, plugins and MCP servers", enabled = app.connected) { app.extensionsOpen = true }
             Text("Personalization", style = Type.headline)
             Text("Your preferences are added to 1loop's base instructions. They never replace its system prompt or tool rules. They apply to subsequent turns on this execution target.", style = Type.small)
             if (app.preferencesEditable) {

@@ -64,6 +64,7 @@ import (
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
+	"1loop/internal/extensions"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 )
@@ -140,6 +141,12 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/chats/{id}/delete", server.authorized(server.deleteChat))
 	mux.HandleFunc("POST /api/chats/{id}/tasks/{task}/stop", server.authorized(server.stopTask))
 	mux.HandleFunc("POST /api/browser/clear", server.authorized(server.clearBrowser))
+	for path, handler := range extensions.Handlers(func() {
+		server.broadcast("extensions", map[string]bool{"changed": true})
+		server.onUI(server.ui.extensionsChanged)
+	}) {
+		mux.HandleFunc(path, server.authorized(handler))
+	}
 	mux.HandleFunc("GET /api/hooks", server.authorized(remoteapi.GetHooks))
 	mux.HandleFunc("POST /api/hooks", server.authorized(remoteapi.SaveHooks))
 	mux.HandleFunc("GET /api/chats/{id}/items/{index}/images/{n}", server.authorized(server.itemImage))

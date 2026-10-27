@@ -412,11 +412,15 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		defer close()
 		args = append(args, "--mcp-config", config)
 	}
+	// The user's MCP servers, plugins and skills, for this session only.
+	extensionArgs, cleanExtensions := claudeExtensionArgs()
+	defer cleanExtensions()
+	args = append(args, extensionArgs...)
 	appendPrompt := mobileInstructions(cfg) + projectInstructions(cfg.Workspace) + citationInstructions + todoInstructions(cfg) + todoSnapshot(cfg) + memoryInstructions(cfg)
 	if cfg.ProjectTools != nil {
 		appendPrompt += "\n\nUse 1loop's MCP shell, read_file, list_directory, edit_file and apply_patch tools for project work. Follow the phone's selected execution policy and stay strictly inside the requested project. Use recall to retrieve older conversation details. Your own context compaction remains managed by Claude Code."
 	}
-	for _, group := range availableToolGroups(cfg) {
+	for _, group := range builtinToolGroups(cfg) {
 		appendPrompt += group.instructions(cfg)
 	}
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
@@ -435,7 +439,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	logged := append([]string(nil), cmd.Args...)
 	for i := 1; i < len(logged); i++ {
 		if logged[i-1] == "--mcp-config" {
-			logged[i] = "[1loop TODO MCP config]"
+			logged[i] = "[1loop MCP config]"
 		}
 	}
 	platform.Devf("claude", "start in %s: %s", cfg.Workspace, strings.Join(logged, " "))

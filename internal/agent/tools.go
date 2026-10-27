@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"1loop/internal/core"
+	"1loop/internal/extensions"
 	"1loop/internal/platform"
 )
 
@@ -75,6 +76,9 @@ func availableCoreTools(cfg Config) []map[string]any {
 		if cfg.toolAvailable(name) {
 			definitions = append(definitions, definition)
 		}
+	}
+	if skill := skillToolDefinition(); skill != nil && cfg.toolAvailable("skill") {
+		definitions = append(definitions, skill)
 	}
 	return definitions
 }
@@ -372,6 +376,8 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 			result, err := handler(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
 			outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
 		}
+	} else if extensions.IsToolName(call.Function.Name) {
+		outcome.Output, outcome.Images, outcome.Err = backend.callMCP(ctx, cfg, call, begin, emit)
 	} else if strings.HasPrefix(call.Function.Name, "browser_") {
 		begin()
 		handler, _ := ctx.Value(browserContextKey{}).(PanelToolHandler)
@@ -396,6 +402,11 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	}
 	if call.Function.Name == "memory" {
 		return backend.editMemory(ctx, call.Function.Arguments, begin, emit)
+	}
+	if call.Function.Name == "skill" {
+		begin()
+		output, err = loadSkill(call.Function.Arguments)
+		return
 	}
 	if call.Function.Name == "apply_patch" {
 		var args struct{ Patch string }

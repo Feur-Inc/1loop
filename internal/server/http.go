@@ -14,6 +14,7 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/browser"
 	"1loop/internal/core"
+	"1loop/internal/extensions"
 	"1loop/internal/remoteapi"
 )
 
@@ -115,6 +116,15 @@ func (server *headlessServer) routes() http.Handler {
 	endpoints["GET /api/sync/manifest"] = syncManifest
 	endpoints["POST /api/sync/export"] = syncExport
 	endpoints["POST /api/sync/import"] = syncImport
+	// Skills, plugins and MCP servers (internal/extensions); a change is
+	// told to the clients.
+	for path, handler := range extensions.Handlers(func() {
+		server.mu.Lock()
+		server.broadcastLocked("extensions", map[string]bool{"changed": true})
+		server.mu.Unlock()
+	}) {
+		endpoints[path] = handler
+	}
 	for path, handler := range endpoints {
 		mux.HandleFunc(path, server.authorized(handler))
 	}

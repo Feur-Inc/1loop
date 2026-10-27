@@ -482,6 +482,10 @@ fun ChatScreen(app: RemoteApp) {
     app.handoffAsk?.let { HandoffDialog(it) } // the chat continues with another model
     SharedFilesDialog(app) // files shared to 1loop from another app
     if (app.settingsOpen) {
+        if (app.extensionsOpen) {
+            ExtensionsScreen(app) { app.extensionsOpen = false }
+            return
+        }
         MobileSettings(app) { app.settingsOpen = false }
         if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
         return

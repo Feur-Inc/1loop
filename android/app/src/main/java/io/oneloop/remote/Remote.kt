@@ -253,6 +253,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var projectActions by mutableStateOf(false)
     var projectsOpen by mutableStateOf(false)
     var settingsOpen by mutableStateOf(false)
+    var extensionsOpen by mutableStateOf(false) // Settings → Extensions (Extensions.kt)
+    var extensionsRevision by mutableIntStateOf(0) // something was installed, removed or switched
     var updateAsked by mutableStateOf(false) // the update dialog, over any screen
     var updateOffered: Int? = null // one automatic dialog per release while this app instance runs
     var updateLater by mutableStateOf(false) // the update card was put away until the next start
@@ -581,6 +583,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         clearAttachments() // picked for the previous target
         connectionsOpen = false
         settingsOpen = false
+        extensionsOpen = false
         sharing = null
         projectsOpen = false
         events?.cancel()
@@ -870,6 +873,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 current?.let { scope.launch { load(it, target, generation) } }
             }
             "settings" -> applySettings(data)
+            "extensions" -> extensionsRevision++
             "sharing" -> if (target.localPhone) scope.launch {
                 try {
                     refreshSharing(true)
@@ -1115,6 +1119,12 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val target = server ?: error("Connect first.")
         if (target.localPhone) local.browser.clearData()
         else onConnection(target, connectionGeneration) { it.post("/api/browser/clear", JSONObject()) }
+    }
+
+    /** A route of the extensions (skills, plugins, MCP servers) where the agent runs: GET without a body. */
+    suspend fun extensionsCall(path: String, body: JSONObject? = null, timeout: Int = 20000): JSONObject {
+        val target = server ?: error("Connect first.")
+        return onConnection(target, connectionGeneration) { if (body == null) it.get(path) else it.post(path, body, timeout) }
     }
 
     /** The hooks file of the machine the agent runs on, as text. */

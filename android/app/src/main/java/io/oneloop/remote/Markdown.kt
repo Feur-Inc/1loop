@@ -288,10 +288,21 @@ fun Markdown(text: String, modifier: Modifier = Modifier, onCite: ((Citation) ->
  * being laid out again): it then never heard that the text grew, the view kept
  * its old height and scrolled its text inside it (#68). Asking the holder's
  * parent too, Compose's views handler, has the holder measured again.
+ * Only while the text changes: the holder's measure sets the view's minimum
+ * size, which asks for a layout too, and passing that on measures it again
+ * without end (a README in a scrolling column froze the app).
  */
 private class MarkdownTextView(context: Context) : TextView(context) {
+    private var changing = false
+
+    fun change(block: () -> Unit) {
+        changing = true
+        try { block() } finally { changing = false }
+    }
+
     override fun requestLayout() {
         super.requestLayout()
+        if (!changing) return
         val holder = parent as? View ?: return
         if (holder.isLayoutRequested) holder.parent?.requestLayout()
     }
@@ -312,9 +323,11 @@ private fun MarkdownText(renderer: Markwon, text: Spanned, textSize: Float, modi
         } },
         update = { view ->
             view.tag = onCite
-            view.setTextSize(TypedValue.COMPLEX_UNIT_PX, textSize)
-            TextViewCompat.setLineHeight(view, lineHeight)
-            renderer.setParsedMarkdown(view, text)
+            view.change {
+                view.setTextSize(TypedValue.COMPLEX_UNIT_PX, textSize)
+                TextViewCompat.setLineHeight(view, lineHeight)
+                renderer.setParsedMarkdown(view, text)
+            }
         },
         onRelease = { AsyncDrawableScheduler.unschedule(it) },
     )

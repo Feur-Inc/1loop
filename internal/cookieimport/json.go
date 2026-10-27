@@ -116,5 +116,5 @@ func ReadJSON(path string) (Result, error) {
 		}
 		cookies = append(cookies, cookie)
 	}
-	return result(cookies, skipped), nil
+	return Result{Cookies: cookies, Skipped: skipped}, nil
 }

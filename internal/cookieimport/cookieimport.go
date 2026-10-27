@@ -12,7 +12,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -48,7 +47,6 @@ func (profile Profile) Label() string {
 // Result is what an import brought.
 type Result struct {
 	Cookies []*network.CookieParam
-	Sites   int // the sites they log into
 	Skipped int // expired, session-only or private (container, partitioned) cookies
 }
 
@@ -247,17 +245,10 @@ func firefoxProfiles(root string) []Profile {
 	return profiles
 }
 
-// findExecutable is the command that starts a browser: a path, a name on
-// the PATH, or in the Flatpak the host's program through host-run.
+// findExecutable resolves a browser on PATH, or through Flatpak's host-run.
 func findExecutable(candidates []string) []string {
 	flatpak := os.Getenv("FLATPAK_ID") != ""
 	for _, candidate := range candidates {
-		if filepath.IsAbs(candidate) {
-			if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
-				return []string{candidate}
-			}
-			continue
-		}
 		if flatpak {
 			if exec.Command("/app/lib/1loop/host/host-run", "sh", "-c", `command -v "$1" >/dev/null`, "sh", candidate).Run() == nil {
 				return []string{"/app/lib/1loop/host/host-run", candidate}
@@ -270,10 +261,6 @@ func findExecutable(candidates []string) []string {
 	}
 	return nil
 }
-
-// ErrBrowserOpen: the browser keeps its cookies locked while it runs
-// (Windows).
-var ErrBrowserOpen = errors.New("browser open")
 
 // Read gets a profile's cookies, the browser left untouched: it works on a
 // copy, in a folder of 1loop's cache.
@@ -303,24 +290,7 @@ func Read(ctx context.Context, profile Profile) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	return result(cookies, skipped), nil
-}
-
-func result(cookies []*network.CookieParam, skipped int) Result {
-	sites := map[string]bool{}
-	for _, cookie := range cookies {
-		sites[site(cookie)] = true
-	}
-	return Result{Cookies: cookies, Sites: len(sites), Skipped: skipped}
-}
-
-func site(cookie *network.CookieParam) string {
-	host := strings.TrimPrefix(cookie.Domain, ".")
-	if host == "" {
-		host = strings.TrimPrefix(strings.TrimPrefix(cookie.URL, "https://"), "http://")
-		host, _, _ = strings.Cut(host, "/")
-	}
-	return host
+	return Result{Cookies: cookies, Skipped: skipped}, nil
 }
 
 func copyFile(from, to string) error {
@@ -357,9 +327,6 @@ func readChromium(ctx context.Context, profile Profile, work string) ([]*network
 	relative, _ := filepath.Rel(profile.Dir, database) // where this browser looks for it, on this system
 	copy := filepath.Join(work, "Default", relative)
 	if err := copyFile(database, copy); err != nil {
-		if locked(err) {
-			return nil, 0, fmt.Errorf("%w: close %s, then import again (it keeps its cookies locked while it runs)", ErrBrowserOpen, profile.Browser)
-		}
 		return nil, 0, err
 	}
 	for _, extra := range []string{"-journal", "-wal"} {
@@ -456,7 +423,7 @@ func readFirefox(ctx context.Context, profile Profile, work string) ([]*network.
 	copy := filepath.Join(work, "cookies.sqlite")
 	if err := copyFile(filepath.Join(profile.Dir, "cookies.sqlite"), copy); err != nil {
 		if locked(err) {
-			return nil, 0, fmt.Errorf("%w: close %s, then import again", ErrBrowserOpen, profile.Browser)
+			return nil, 0, fmt.Errorf("Close %s, then import again (the browser keeps its cookies locked while running)", profile.Browser)
 		}
 		return nil, 0, err
 	}

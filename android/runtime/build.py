@@ -166,7 +166,8 @@ def source_bundle(output, destination):
     archives = [
         download(cache, "abwrap.tar.gz", f"https://codeload.github.com/dukmu/abwrap-android/tar.gz/{ABWRAP_COMMIT}", ABWRAP_SHA256),
         download(cache, "proot.zip", f"https://codeload.github.com/termux/proot/zip/refs/tags/v{PROOT_VERSION}", PROOT_SHA256),
-        download(cache, "talloc-2.5.0.tar.gz", "https://download.samba.org/pub/talloc/talloc-2.5.0.tar.gz", TALLOC_SOURCE_SHA256),
+        # Samba's server times out in CI; BLFS mirrors the same pinned archive.
+        download(cache, "talloc-2.5.0.tar.gz", "https://ftp.osuosl.org/pub/blfs/conglomeration/talloc/talloc-2.5.0.tar.gz", TALLOC_SOURCE_SHA256),
         download(cache, "termux-libtalloc-build.sh", "https://raw.githubusercontent.com/termux/termux-packages/bddd9721910e56bc36412a764b4b4f7bbdbb1eb1/packages/libtalloc/build.sh", "b722c5adb89e4d4ad4595dbba40be562d9894103a190777392c363b57b1a7201"),
     ]
     destination.parent.mkdir(parents=True, exist_ok=True)

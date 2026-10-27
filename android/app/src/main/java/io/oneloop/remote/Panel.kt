@@ -139,6 +139,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
             delay(2000)
         }
     }
+    LaunchedEffect(app.fileFocus) { if (app.fileFocus != null) selected = "files" }
     val tasks = app.meta?.todo.orEmpty()
     Column(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {

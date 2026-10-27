@@ -393,6 +393,14 @@ func (server *headlessServer) settingsLocked() map[string]any {
 	models := []remoteapi.Model{}
 	for label, choice := range server.choices {
 		model := remoteapi.Model{ID: choice.ID, Label: label, Name: choice.Display(), Detail: choice.Connection.Name, Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
+		if connection, ok := server.connectionLocked(choice.Connection.ID); ok {
+			model.CompactAt = connection.ModelOptions[choice.ID].CompactAt
+			cfg := connection.Config("")
+			cfg.Model = choice.ID
+			model.CompactDefault, _ = agent.CompactDefault(cfg)
+			model.CompactHelp = agent.CompactHelp(cfg)
+			model.CompactSupported = connection.Provider != "chatgptweb"
+		}
 		for _, effort := range choice.Efforts {
 			model.Efforts = append(model.Efforts, remoteapi.Effort{Value: effort, Label: agent.EffortLabel(effort)})
 		}
@@ -635,6 +643,9 @@ func (server *headlessServer) chatTasksLocked(chat *serverChat) *agent.Backgroun
 // secrets, preferences and tools.
 func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities chan struct{}) agent.Config {
 	cfg := chat.Config
+	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok {
+		cfg.CompactAt = connection.ModelOptions[cfg.Model].CompactAt
+	}
 	cfg.APIKey = server.keys[cfg.ConnectionID]
 	cfg.UserInstructions = server.instructions
 	if !server.memoryOff {

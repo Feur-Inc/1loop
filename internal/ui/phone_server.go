@@ -170,6 +170,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/projects/{action}", server.authorized(server.changeProject))
 	mux.HandleFunc("POST /api/model", server.authorized(server.setModel))
 	mux.HandleFunc("POST /api/auto-resume", server.authorized(server.setAutoResume))
+	mux.HandleFunc("POST /api/model/compaction", server.authorized(server.setModelCompaction))
 	mux.HandleFunc("GET /api/limits", server.authorized(server.limits))
 	mux.HandleFunc("POST /api/approval-mode", server.authorized(server.setApprovalMode))
 	mux.HandleFunc("POST /api/chats/{id}/panel", server.authorized(server.editPanel))
@@ -931,6 +932,17 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 		choice := ui.choices[label]
 		remoteModelValue := remoteapi.Model{ID: choice.ID, Label: label, Name: choice.Display(), Detail: ui.model.Details[label],
 			Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
+		for _, connection := range ui.connectionsList {
+			if connection.ID == choice.Connection.ID {
+				remoteModelValue.CompactAt = connection.ModelOptions[choice.ID].CompactAt
+				cfg := connection.Config("")
+				cfg.Model = choice.ID
+				remoteModelValue.CompactDefault, _ = agent.CompactDefault(cfg)
+				remoteModelValue.CompactHelp = agent.CompactHelp(cfg)
+				remoteModelValue.CompactSupported = connection.Provider != "chatgptweb"
+				break
+			}
+		}
 		for _, e := range choice.Efforts {
 			remoteModelValue.Efforts = append(remoteModelValue.Efforts, remoteapi.Effort{Value: e, Label: agent.EffortLabel(e), About: modelEffortAbout(e)})
 		}
@@ -1043,6 +1055,44 @@ func (server *remoteServer) setAutoResume(writer http.ResponseWriter, req *http.
 		return
 	}
 	core.WriteJSON(writer, 200, map[string]bool{"ok": true})
+}
+
+func (server *remoteServer) setModelCompaction(writer http.ResponseWriter, req *http.Request) {
+	var body struct {
+		Label string `json:"label"`
+		Limit int    `json:"limit"`
+	}
+	if core.ReadJSON(req, &body) != nil {
+		core.Fail(writer, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	problem := "Connection not found"
+	server.onUI(func() {
+		choice, ok := server.ui.choices[body.Label]
+		if !ok {
+			problem = "Unknown model"
+			return
+		}
+		for i := range server.ui.connectionsList {
+			connection := &server.ui.connectionsList[i]
+			if connection.ID != choice.Connection.ID {
+				continue
+			}
+			if err := connection.SetCompactLimit(choice.ID, body.Limit); err != nil {
+				problem = err.Error()
+				return
+			}
+			problem = ""
+			server.ui.save()
+			server.settingsChanged()
+			return
+		}
+	})
+	if problem != "" {
+		core.Fail(writer, http.StatusBadRequest, problem)
+		return
+	}
+	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (server *remoteServer) setModel(writer http.ResponseWriter, req *http.Request) {

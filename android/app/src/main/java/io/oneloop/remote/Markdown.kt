@@ -1,8 +1,18 @@
 package io.oneloop.remote
 
 import android.content.Context
+import android.content.res.Resources
+import android.graphics.Canvas
+import android.graphics.Paint
+import android.graphics.RectF
+import android.text.Spannable
+import android.text.SpannableStringBuilder
 import android.text.Spanned
+import android.text.TextPaint
+import android.text.style.ClickableSpan
+import android.text.style.ReplacementSpan
 import android.util.TypedValue
+import android.view.View
 import android.widget.TextView
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -35,6 +45,7 @@ import androidx.core.widget.TextViewCompat
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.Markwon
 import io.noties.markwon.core.MarkwonTheme
+import io.noties.markwon.core.spans.LinkSpan
 import io.noties.markwon.ext.latex.JLatexMathPlugin
 import io.noties.markwon.ext.strikethrough.StrikethroughPlugin
 import io.noties.markwon.ext.tables.TableAwareMovementMethod
@@ -48,6 +59,7 @@ import org.commonmark.ext.gfm.tables.TableBlock
 import org.commonmark.node.FencedCodeBlock
 import org.commonmark.node.IndentedCodeBlock
 import java.util.concurrent.Executors
+import kotlin.math.roundToInt
 
 private sealed interface MarkdownPart {
     data class Text(val content: Spanned, val columns: Int = 0) : MarkdownPart
@@ -84,7 +96,9 @@ private fun markdownRenderer(context: Context, textSize: Float) = Markwon.builde
 
 // Markwon uses $$ for inline math. Normalize the model's common TeX delimiters,
 // preserving code examples and escaped dollars verbatim. Incomplete streaming
-// formulas remain readable until their closing delimiter arrives.
+// formulas remain readable until their closing delimiter arrives. A citation
+// tag (<cite file="…" lines="12-30"/>) becomes a link to its chip; one still
+// arriving is left out until whole.
 internal fun normalizeMath(markdown: String): String = buildString {
     var index = 0
     while (index < markdown.length) {
@@ -116,6 +130,21 @@ internal fun normalizeMath(markdown: String): String = buildString {
                 continue
             }
         }
+        if (markdown.startsWith("<cite", index)) {
+            val tag = citeTag.find(markdown, index)?.takeIf { it.range.first == index }
+            if (tag == null) {
+                if (markdown.indexOf('>', index) < 0) break
+            } else {
+                val (file, from, to) = tag.destructured
+                val start = from.toIntOrNull() ?: 0
+                val end = to.toIntOrNull() ?: start
+                val lines = when { end > start -> " · $start–$end"; start > 0 -> " · $start"; else -> "" }
+                val label = (file.substringAfterLast('/') + lines).replace(Regex("""([\\`*_\[\]<>])"""), "\\\\$1")
+                append("[").append(label).append("](<").append(CITE_SCHEME).append("$start-$end:$file>)")
+                index = tag.range.last + 1
+                continue
+            }
+        }
         val opening = when {
             markdown.startsWith("\\(", index) -> "\\("
             markdown.startsWith("\\[", index) -> "\\["
@@ -143,12 +172,66 @@ internal fun normalizeMath(markdown: String): String = buildString {
     }
 }
 
+private const val CITE_SCHEME = "1loop-cite:"
+private val citeTag = Regex("""<cite\s+file="([^"]+)"(?:\s+lines="(\d+)(?:\s*[-–]\s*(\d+))?")?\s*/?>(?:</cite>)?""")
+
+/** A citation's chip, drawn whole (it does not wrap): smaller muted text on a rounded tint. */
+private class CiteChip : ReplacementSpan() {
+    private val pad = 5 * Resources.getSystem().displayMetrics.density
+
+    private fun small(paint: Paint) = TextPaint(paint).apply { textSize = paint.textSize * 0.85f; color = Palette.muted.toArgb() }
+
+    override fun getSize(paint: Paint, text: CharSequence, start: Int, end: Int, metrics: Paint.FontMetricsInt?): Int {
+        if (metrics != null) paint.getFontMetricsInt(metrics)
+        return (small(paint).measureText(text, start, end) + 2 * pad).roundToInt()
+    }
+
+    override fun draw(canvas: Canvas, text: CharSequence, start: Int, end: Int, x: Float, top: Int, y: Int, bottom: Int, paint: Paint) {
+        val small = small(paint)
+        val box = RectF(x, y + small.ascent() - pad / 3, x + small.measureText(text, start, end) + 2 * pad, y + small.descent() + pad / 3)
+        val fill = Paint(Paint.ANTI_ALIAS_FLAG).apply { color = Palette.raised.toArgb() }
+        canvas.drawRoundRect(box, pad, pad, fill)
+        fill.apply { style = Paint.Style.STROKE; strokeWidth = pad / 5; color = Palette.border.toArgb() }
+        canvas.drawRoundRect(box, pad, pad, fill)
+        canvas.drawText(text, start, end, x + pad, y.toFloat(), small)
+    }
+}
+
+/** A tap on a chip hands the citation to the TextView's tag (Markdown's onCite). */
+private class CiteSpan(val link: String) : ClickableSpan() {
+    override fun onClick(widget: View) {
+        @Suppress("UNCHECKED_CAST")
+        val onCite = (widget.tag as? ((Citation) -> Unit)) ?: return
+        val lines = link.removePrefix(CITE_SCHEME).substringBefore(':')
+        onCite(Citation(link.substringAfter(':').substringAfter(':'), lines.substringBefore('-').toInt(), lines.substringAfter('-').toInt()))
+    }
+
+    override fun updateDrawState(paint: TextPaint) {
+        paint.isUnderlineText = false
+    }
+}
+
+/** The text rendered, its citation links made chips. */
+private fun chips(rendered: Spanned): Spanned {
+    val links = rendered.getSpans(0, rendered.length, LinkSpan::class.java).filter { it.link.startsWith(CITE_SCHEME) }
+    if (links.isEmpty()) return rendered
+    val text = rendered as? Spannable ?: SpannableStringBuilder(rendered)
+    for (link in links) {
+        val start = text.getSpanStart(link)
+        val end = text.getSpanEnd(link)
+        text.removeSpan(link)
+        text.setSpan(CiteSpan(link.link), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+        text.setSpan(CiteChip(), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+    return text
+}
+
 private fun markdownParts(renderer: Markwon, text: String): List<MarkdownPart> {
     val parts = mutableListOf<MarkdownPart>()
     val parsed = renderer.parse(normalizeMath(text))
     var section = Document()
     fun flush() {
-        if (section.firstChild != null) parts.add(MarkdownPart.Text(renderer.render(section)))
+        if (section.firstChild != null) parts.add(MarkdownPart.Text(chips(renderer.render(section))))
         section = Document()
     }
     var node = parsed.firstChild
@@ -178,7 +261,7 @@ private fun markdownParts(renderer: Markwon, text: String): List<MarkdownPart> {
 }
 
 @Composable
-fun Markdown(text: String, modifier: Modifier = Modifier) {
+fun Markdown(text: String, modifier: Modifier = Modifier, onCite: ((Citation) -> Unit)? = null) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val textSize = with(density) { Type.body.fontSize.toPx() }
@@ -191,16 +274,16 @@ fun Markdown(text: String, modifier: Modifier = Modifier) {
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
                     val tableWidth = maxOf(maxWidth, (part.columns * 140).dp)
                     Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        MarkdownText(renderer, part.content, textSize, Modifier.width(tableWidth))
+                        MarkdownText(renderer, part.content, textSize, Modifier.width(tableWidth), onCite)
                     }
                 }
-            } else MarkdownText(renderer, part.content, textSize, Modifier.fillMaxWidth())
+            } else MarkdownText(renderer, part.content, textSize, Modifier.fillMaxWidth(), onCite)
         }
     }
 }
 
 @Composable
-private fun MarkdownText(renderer: Markwon, text: Spanned, textSize: Float, modifier: Modifier) {
+private fun MarkdownText(renderer: Markwon, text: Spanned, textSize: Float, modifier: Modifier, onCite: ((Citation) -> Unit)?) {
     val lineHeight = with(LocalDensity.current) { Type.body.lineHeight.toPx() }.toInt()
     AndroidView(
         modifier = modifier,
@@ -213,6 +296,7 @@ private fun MarkdownText(renderer: Markwon, text: Spanned, textSize: Float, modi
             movementMethod = TableAwareMovementMethod.create()
         } },
         update = { view ->
+            view.tag = onCite
             view.setTextSize(TypedValue.COMPLEX_UNIT_PX, textSize)
             TextViewCompat.setLineHeight(view, lineHeight)
             renderer.setParsedMarkdown(view, text)

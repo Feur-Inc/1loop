@@ -36,6 +36,7 @@ type Config struct {
 	// ClassicCompaction turns the staged context policy off: one compaction
 	// when the window is nearly full, tool outputs kept as they come.
 	ClassicCompaction bool                                      `json:"-"`
+	CompactAt         int                                       `json:"-"`
 	Cache             *ContextCache                             `json:"-"`
 	ContextKey        string                                    `json:"-"`
 	Todo              *TodoState                                `json:"-"`

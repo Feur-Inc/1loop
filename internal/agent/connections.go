@@ -6,6 +6,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"strings"
 
@@ -15,6 +16,23 @@ import (
 type ModelPreferences struct {
 	Provider   map[string]any `json:"provider,omitempty"`
 	Parameters map[string]any `json:"parameters,omitempty"`
+	CompactAt  int            `json:"compactAt,omitempty"`
+}
+
+func (conn *Connection) SetCompactLimit(model string, limit int) error {
+	if conn.Provider == "chatgptweb" {
+		return fmt.Errorf("ChatGPT Web manages its own context")
+	}
+	if limit < 0 || limit > 1000000 || conn.Provider == "claudecode" && limit > 0 && limit < 100000 {
+		return fmt.Errorf("Enter a token count from 1 to 1,000,000 (100,000 minimum for Claude Code), or use automatic")
+	}
+	if conn.ModelOptions == nil {
+		conn.ModelOptions = map[string]ModelPreferences{}
+	}
+	preferences := conn.ModelOptions[model]
+	preferences.CompactAt = limit
+	conn.ModelOptions[model] = preferences
+	return nil
 }
 
 type Connection struct {
@@ -176,7 +194,7 @@ func systemInstructions(cfg Config) string {
 	}
 	prompt += userPreferenceInstructions(cfg)
 	prompt += mobileInstructions(cfg) + projectInstructions(cfg.Workspace)
-	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + platform.ShellDescription() + "." + todoInstructions(cfg) + contextInstructions(cfg) + memoryInstructions(cfg) + toolSearchInstructions(cfg)
+	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + platform.ShellDescription() + "." + citationInstructions + todoInstructions(cfg) + contextInstructions(cfg) + memoryInstructions(cfg) + toolSearchInstructions(cfg)
 }
 
 type approvalContextKey struct{}

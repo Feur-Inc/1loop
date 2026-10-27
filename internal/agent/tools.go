@@ -376,6 +376,8 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 			result, err := handler(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
 			outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
 		}
+	} else if isGitHubTool(call.Function.Name) {
+		outcome.Output, outcome.Images, outcome.Err = backend.callGitHub(ctx, cfg, call, begin, emit)
 	} else if extensions.IsToolName(call.Function.Name) {
 		outcome.Output, outcome.Images, outcome.Err = backend.callMCP(ctx, cfg, call, begin, emit)
 	} else if strings.HasPrefix(call.Function.Name, "browser_") {

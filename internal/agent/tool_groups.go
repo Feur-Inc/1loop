@@ -15,6 +15,7 @@ import (
 	"strings"
 
 	"1loop/internal/extensions"
+	"1loop/internal/githubconnector"
 )
 
 type toolGroup struct {
@@ -42,6 +43,9 @@ func toolGroups() []toolGroup {
 func (cfg Config) toolAvailable(name string) bool {
 	if cfg.ToolAllowed != nil && !cfg.ToolAllowed(name) {
 		return false
+	}
+	if isGitHubTool(name) {
+		return githubconnector.Default.Available()
 	}
 	if name == "memory" { // off in the settings, or no preferences here
 		return cfg.Preferences != nil
@@ -84,7 +88,11 @@ func availableToolGroups(cfg Config) []toolGroup {
 // servers by itself, and ChatGPT (Web) keeps the tools it was given.
 func builtinToolGroups(cfg Config) []toolGroup {
 	var groups []toolGroup
-	for _, group := range toolGroups() {
+	candidates := toolGroups()
+	if group := githubGroup(cfg); group != nil {
+		candidates = append(candidates, *group)
+	}
+	for _, group := range candidates {
 		var definitions []map[string]any
 		for _, definition := range group.tools() {
 			name := definition["function"].(map[string]any)["name"].(string)
@@ -102,6 +110,9 @@ func builtinToolGroups(cfg Config) []toolGroup {
 
 // groupOfTool is the group a tool belongs to, "" for the core tools.
 func groupOfTool(name string) string {
+	if isGitHubTool(name) {
+		return "github"
+	}
 	if extensions.IsToolName(name) {
 		return mcpGroupOf(name)
 	}

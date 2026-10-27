@@ -17,6 +17,7 @@ import (
 
 	"1loop/internal/core"
 	"1loop/internal/extensions"
+	"1loop/internal/githubconnector"
 )
 
 // skillToolDefinition is offered while skills are installed and enabled.
@@ -130,31 +131,35 @@ func mcpGroups(cfg Config) []toolGroup {
 		if err != nil || len(tools) == 0 {
 			continue
 		}
-		var definitions []map[string]any
-		var names []string
-		for _, tool := range tools {
-			names = append(names, tool.Name)
-			parameters := map[string]any{"type": "object", "properties": map[string]any{}}
-			if len(tool.InputSchema) > 0 {
-				json.Unmarshal(tool.InputSchema, &parameters)
-			}
-			definitions = append(definitions, map[string]any{"type": "function", "function": map[string]any{
-				"name":        extensions.ToolName(server.Name, tool.Name),
-				"description": strings.TrimSpace(tool.Description),
-				"parameters":  parameters,
-				"strict":      false, // a server's schemas are not OpenAI's strict subset
-			}})
-		}
-		summary := "Tools of the MCP server " + server.Name
-		if server.Plugin != "" {
-			summary += " (plugin " + server.Plugin + ")"
-		}
-		summary += ": " + strings.Join(names, ", ") + "."
-		groups = append(groups, toolGroup{name: mcpGroupName(server.Name), summary: summary,
-			instructions: func(Config) string { return "" },
-			tools:        func() []map[string]any { return definitions }})
+		groups = append(groups, mcpToolGroup(server, tools))
 	}
 	return groups
+}
+
+func mcpToolGroup(server extensions.MCPServer, tools []extensions.MCPTool) toolGroup {
+	var definitions []map[string]any
+	var names []string
+	for _, tool := range tools {
+		names = append(names, tool.Name)
+		parameters := map[string]any{"type": "object", "properties": map[string]any{}}
+		if len(tool.InputSchema) > 0 {
+			json.Unmarshal(tool.InputSchema, &parameters)
+		}
+		definitions = append(definitions, map[string]any{"type": "function", "function": map[string]any{
+			"name":        extensions.ToolName(server.Name, tool.Name),
+			"description": strings.TrimSpace(tool.Description),
+			"parameters":  parameters,
+			"strict":      false, // a server's schemas are not OpenAI's strict subset
+		}})
+	}
+	summary := "Tools of the MCP server " + server.Name
+	if server.Plugin != "" {
+		summary += " (plugin " + server.Plugin + ")"
+	}
+	summary += ": " + strings.Join(names, ", ") + "."
+	return toolGroup{name: mcpGroupName(server.Name), summary: summary,
+		instructions: func(Config) string { return "" },
+		tools:        func() []map[string]any { return definitions }}
 }
 
 func mcpDir(cfg Config) string {
@@ -177,34 +182,7 @@ func (backend *App) callMCP(ctx context.Context, cfg Config, call ToolCall, begi
 			if extensions.ToolName(server.Name, tool.Name) != call.Function.Name {
 				continue
 			}
-			if !tool.Annotations.ReadOnly && !backend.confirm(ctx, emit, "Use "+server.Name+" · "+tool.Name+"?", call.Function.Arguments) {
-				return "", nil, fmt.Errorf("The user denied this MCP tool call")
-			}
-			begin()
-			result, err := extensions.Servers.Call(ctx, server, mcpDir(cfg), tool.Name, json.RawMessage(call.Function.Arguments))
-			if err != nil {
-				return "", nil, err
-			}
-			var parts []string
-			for _, content := range result.Content {
-				switch content.Type {
-				case "text":
-					parts = append(parts, content.Text)
-				case "image":
-					if _, decodeErr := base64.StdEncoding.DecodeString(content.Data); decodeErr == nil {
-						images = append(images, core.ImagePart{Mime: content.MimeType, Data: content.Data})
-					}
-				case "resource":
-					if content.Resource != nil {
-						parts = append(parts, content.Resource.URI+"\n"+content.Resource.Text)
-					}
-				}
-			}
-			output = strings.Join(parts, "\n")
-			if result.IsError {
-				return output, images, fmt.Errorf("%s", strings.TrimSpace(output))
-			}
-			return output, images, nil
+			return backend.callMCPTool(ctx, cfg, server, tool, call, begin, emit)
 		}
 	}
 	return "", nil, fmt.Errorf("The MCP server of %s is not connected", call.Function.Name)
@@ -293,4 +271,54 @@ var claudeToolNames = map[string][]string{
 	"apply_patch":    {"Edit", "Write", "MultiEdit"},
 	"read_file":      {"Read"},
 	"list_directory": {"LS", "Glob"},
+}
+
+func (backend *App) callMCPTool(ctx context.Context, cfg Config, server extensions.MCPServer, tool extensions.MCPTool, call ToolCall, begin func(), emit emitter) (output string, images []core.ImagePart, err error) {
+	if !tool.Annotations.ReadOnly && !backend.confirm(ctx, emit, "Use "+server.Name+" · "+tool.Name+"?", call.Function.Arguments) {
+		return "", nil, fmt.Errorf("The user denied this MCP tool call")
+	}
+	if !cfg.toolAvailable(call.Function.Name) {
+		return "", nil, fmt.Errorf("This tool is unavailable or its permission was revoked")
+	}
+	if isGitHubTool(call.Function.Name) {
+		id, _ := ctx.Value(githubConnectionKey{}).(string)
+		if id == "" || id != githubconnector.Default.ConnectionID() {
+			return "", nil, fmt.Errorf("The GitHub connection changed while waiting for approval")
+		}
+		server, err = githubconnector.Default.Server(ctx)
+		if err != nil {
+			return "", nil, err
+		}
+		if id != githubconnector.Default.ConnectionID() {
+			return "", nil, fmt.Errorf("The GitHub connection changed while refreshing authorization")
+		}
+	}
+	begin()
+	result, err := extensions.Servers.Call(ctx, server, mcpDir(cfg), tool.Name, json.RawMessage(call.Function.Arguments))
+	if isGitHubTool(call.Function.Name) {
+		err = githubAuthorizationError(ctx, server, err)
+	}
+	if err != nil {
+		return "", nil, err
+	}
+	var parts []string
+	for _, content := range result.Content {
+		switch content.Type {
+		case "text":
+			parts = append(parts, content.Text)
+		case "image":
+			if _, decodeErr := base64.StdEncoding.DecodeString(content.Data); decodeErr == nil {
+				images = append(images, core.ImagePart{Mime: content.MimeType, Data: content.Data})
+			}
+		case "resource":
+			if content.Resource != nil {
+				parts = append(parts, content.Resource.URI+"\n"+content.Resource.Text)
+			}
+		}
+	}
+	output = strings.Join(parts, "\n")
+	if result.IsError {
+		return output, images, fmt.Errorf("%s", strings.TrimSpace(output))
+	}
+	return output, images, nil
 }

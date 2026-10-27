@@ -65,6 +65,7 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
             Text("Extensions", style = Type.headline)
             Text("Skills and plugins from GitHub, and the MCP servers the agent uses.", style = Type.small)
             Pill("Skills, plugins and MCP servers", enabled = app.connected) { app.extensionsOpen = true }
+            GitHubConnectorSection(app)
             Text("Personalization", style = Type.headline)
             Text("Your preferences are added to 1loop's base instructions. They never replace its system prompt or tool rules. They apply to subsequent turns on this execution target.", style = Type.small)
             if (app.preferencesEditable) {

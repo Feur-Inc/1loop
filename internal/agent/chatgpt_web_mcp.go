@@ -131,6 +131,10 @@ func webToolDefinitions(phone bool) []map[string]any {
 			definitions = append(definitions, group.tools()...)
 		}
 	}
+	if group := githubGroup(Config{}); group != nil {
+		definitions = append(definitions, group.tools()...)
+	}
+
 	return definitions
 }
 

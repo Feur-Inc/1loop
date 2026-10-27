@@ -8,6 +8,8 @@ from pathlib import Path, PurePosixPath
 import shutil
 import subprocess
 import tarfile
+import time
+import urllib.error
 import urllib.request
 import zipfile
 
@@ -30,8 +32,18 @@ def run(*args, cwd=None):
 def download(cache, name, url, digest):
     path = cache / name
     if not path.exists():
-        with urllib.request.urlopen(url, timeout=60) as response:
-            data = response.read()
+        for attempt in range(3):
+            try:
+                with urllib.request.urlopen(url, timeout=60) as response:
+                    data = response.read()
+                break
+            except (TimeoutError, urllib.error.URLError) as error:
+                if isinstance(error, urllib.error.HTTPError) and error.code not in (408, 429, 500, 502, 503, 504):
+                    raise
+                if attempt == 2:
+                    raise
+                print(f"Download failed for {name}: {error}; retrying ({attempt + 2}/3)", flush=True)
+                time.sleep(2 ** attempt)
         if hashlib.sha256(data).hexdigest() != digest:
             raise RuntimeError(f"Checksum mismatch: {name}")
         path.write_bytes(data)
@@ -154,7 +166,7 @@ def source_bundle(output, destination):
     archives = [
         download(cache, "abwrap.tar.gz", f"https://codeload.github.com/dukmu/abwrap-android/tar.gz/{ABWRAP_COMMIT}", ABWRAP_SHA256),
         download(cache, "proot.zip", f"https://codeload.github.com/termux/proot/zip/refs/tags/v{PROOT_VERSION}", PROOT_SHA256),
-        download(cache, "talloc-2.5.0.tar.gz", "https://www.samba.org/ftp/talloc/talloc-2.5.0.tar.gz", TALLOC_SOURCE_SHA256),
+        download(cache, "talloc-2.5.0.tar.gz", "https://download.samba.org/pub/talloc/talloc-2.5.0.tar.gz", TALLOC_SOURCE_SHA256),
         download(cache, "termux-libtalloc-build.sh", "https://raw.githubusercontent.com/termux/termux-packages/bddd9721910e56bc36412a764b4b4f7bbdbb1eb1/packages/libtalloc/build.sh", "b722c5adb89e4d4ad4595dbba40be562d9894103a190777392c363b57b1a7201"),
     ]
     destination.parent.mkdir(parents=True, exist_ok=True)

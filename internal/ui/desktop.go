@@ -1146,6 +1146,12 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	if chat.Todo == nil {
 		chat.Todo = &agent.TodoState{}
 	}
+	// A Claude Code chat imported before 1loop had a Claude Code connection
+	// goes on with the first one it runs with: its session is the same.
+	if ran := chat.Config.RanWith; ran != nil && ran.Provider == "claudecode" && ran.ConnectionID == "" && chat.Config.Provider == "claudecode" {
+		identity := agent.IdentityOf(chat.Config)
+		chat.Config.RanWith = &identity
+	}
 	cfg := chat.Config
 	for _, conn := range ui.connectionsList {
 		if conn.ID == cfg.ConnectionID {

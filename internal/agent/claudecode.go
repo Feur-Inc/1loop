@@ -410,6 +410,9 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	if err != nil {
 		return err
 	}
+	if cfg.CompactAt > 0 {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("CLAUDE_CODE_AUTO_COMPACT_WINDOW=%d", cfg.CompactAt))
+	}
 	logged := append([]string(nil), cmd.Args...)
 	for i := 1; i < len(logged); i++ {
 		if logged[i-1] == "--mcp-config" {

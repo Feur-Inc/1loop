@@ -1147,6 +1147,12 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 		chat.Todo = &agent.TodoState{}
 	}
 	cfg := chat.Config
+	for _, conn := range ui.connectionsList {
+		if conn.ID == cfg.ConnectionID {
+			cfg.CompactAt = conn.ModelOptions[cfg.Model].CompactAt
+			break
+		}
+	}
 	cfg.Todo = chat.Todo
 	cfg.Tasks = ui.chatTasks(chat)
 	cfg.Browser = ui.browserTools(chat)

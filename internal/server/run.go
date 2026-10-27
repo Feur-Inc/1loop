@@ -22,6 +22,7 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/browser"
 	"1loop/internal/core"
+	"1loop/internal/extensions"
 	"1loop/internal/remoteapi"
 )
 
@@ -182,6 +183,7 @@ func Main() {
 	}()
 	err = httpServer.Serve(tls.NewListener(listener, httpServer.TLSConfig))
 	server.close()
+	extensions.Servers.CloseAll() // the MCP servers it started
 	if err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}

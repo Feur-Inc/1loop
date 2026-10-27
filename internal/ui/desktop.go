@@ -32,6 +32,7 @@ import (
 	"1loop/internal/browser"
 	"1loop/internal/computeruse"
 	"1loop/internal/core"
+	"1loop/internal/extensions"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 )
@@ -118,6 +119,7 @@ type desktopUI struct {
 	plan             agent.PlanUsage          // Claude Code connection: the subscription windows in use
 	claudeOffered    bool                     // the Claude Code connection was proposed once
 	remote           *remoteServer            // the phone remote, nil when off
+	extPage          *extensionsPage          // Settings → Extensions, while it was last built
 	server           *remoteDesktop           // the server the window works on, nil for this computer (remote_desktop.go)
 	localCfg         agent.Config             // this computer's settings while a server is the target
 	machine          *tapRow                  // the target: this computer or a server
@@ -395,6 +397,7 @@ func (ui *desktopUI) release() {
 	}
 	ui.panel.dispose()
 	ui.remote.close()
+	extensions.Servers.CloseAll() // the MCP servers 1loop started
 	ui.mark.stop()
 	ui.workMark.stop()
 	ui.persist(true)

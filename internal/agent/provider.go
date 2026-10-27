@@ -989,7 +989,7 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 
 // readOnlyTools need no approval and change nothing: a batch of them runs
 // at once.
-var readOnlyTools = map[string]bool{"read_file": true, "list_directory": true, "recall": true}
+var readOnlyTools = map[string]bool{"read_file": true, "list_directory": true, "recall": true, "skill": true}
 
 type recordedCall struct {
 	outcome ToolOutcome

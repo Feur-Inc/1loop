@@ -33,9 +33,11 @@ import (
 )
 
 type hookCommand struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
-	Timeout int    `json:"timeout"` // seconds
+	Type    string   `json:"type"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`    // set: the command runs with them, without a shell
+	Timeout int      `json:"timeout"` // seconds
+	Async   bool     `json:"async"`   // runs in the background; it cannot block or answer
 }
 
 type hookMatcher struct {
@@ -91,51 +93,102 @@ func runHooks(ctx context.Context, event, target string, payload map[string]any)
 	payload["hook_event_name"] = event
 	input, _ := json.Marshal(payload)
 	cwd, _ := payload["cwd"].(string)
-	for _, matcher := range file.Hooks[event] {
-		if !hookMatches(matcher.Matcher, target) {
-			continue
+	// The user's file, then the enabled plugins' hooks: written for Claude
+	// Code, they also match its names of 1loop's tools, and find their
+	// plugin's folder in CLAUDE_PLUGIN_ROOT.
+	type source struct {
+		matchers []hookMatcher
+		root     string
+	}
+	sources := []source{{file.Hooks[event], ""}}
+	for _, plugin := range pluginHookFiles() {
+		var hooks hooksFile
+		if data, err := os.ReadFile(plugin.File); err == nil && json.Unmarshal(data, &hooks) == nil {
+			sources = append(sources, source{hooks.Hooks[event], plugin.Root})
 		}
-		for _, hook := range matcher.Hooks {
-			if hook.Type != "" && hook.Type != "command" || strings.TrimSpace(hook.Command) == "" {
+	}
+	for _, from := range sources {
+		for _, matcher := range from.matchers {
+			if !hookMatches(matcher.Matcher, target) && (from.root == "" || !claudeHookMatches(matcher.Matcher, target)) {
 				continue
 			}
-			timeout := time.Duration(max(1, hook.Timeout)) * time.Second
-			if hook.Timeout == 0 {
-				timeout = 60 * time.Second
-			}
-			run, cancel := context.WithTimeout(ctx, timeout)
-			cmd := platform.ShellCommand(run, hook.Command)
-			platform.WorkspaceCommand(cmd, cwd, platform.WorkspaceYOLO(ctx))
-			cmd.Env = append(os.Environ(), "ONELOOP_WORKSPACE="+cwd, "ONELOOP_HOOK_EVENT="+event)
-			cmd.Stdin = bytes.NewReader(input)
-			var stdout, stderr bytes.Buffer
-			cmd.Stdout, cmd.Stderr = &stdout, &stderr
-			platform.PrepareProcess(cmd)
-			cmd.Cancel = func() error { return platform.KillProcessTree(cmd) }
-			err := cmd.Run()
-			cancel()
-			code := 0
-			var exit *exec.ExitError
-			if errors.As(err, &exit) {
-				code = exit.ExitCode()
-			} else if err != nil {
-				code = -1
-			}
-			platform.Devf("hooks", "%s %q on %s: exit %d", event, hook.Command, target, code)
-			switch code {
-			case 0:
-				if text := strings.TrimSpace(stdout.String()); text != "" {
-					result.output += text + "\n"
+			for _, hook := range matcher.Hooks {
+				if hook.Type != "" && hook.Type != "command" || strings.TrimSpace(hook.Command) == "" {
+					continue
 				}
-			case 2:
-				result.blocked = true
-				result.feedback += strings.TrimSpace(stderr.String()) + "\n"
-			default:
-				detail := strings.TrimSpace(stderr.String())
-				if detail == "" && err != nil {
-					detail = err.Error()
+				timeout := time.Duration(max(1, hook.Timeout)) * time.Second
+				if hook.Timeout == 0 {
+					timeout = 60 * time.Second
 				}
-				result.problems = append(result.problems, fmt.Sprintf("Hook %q failed (%s): %s", hook.Command, event, platform.DevText(detail, 300)))
+				parent := ctx
+				if hook.Async {
+					parent = context.Background() // outlives the tool call it follows
+				}
+				run, cancel := context.WithTimeout(parent, timeout)
+				expand := func(text string) string {
+					if from.root == "" {
+						return text
+					}
+					return strings.ReplaceAll(text, "${CLAUDE_PLUGIN_ROOT}", from.root)
+				}
+				var cmd *exec.Cmd
+				if len(hook.Args) > 0 {
+					args := make([]string, len(hook.Args))
+					for i, arg := range hook.Args {
+						args[i] = expand(arg)
+					}
+					cmd = exec.CommandContext(run, expand(hook.Command), args...)
+				} else {
+					cmd = platform.ShellCommand(run, expand(hook.Command))
+				}
+				platform.WorkspaceCommand(cmd, cwd, platform.WorkspaceYOLO(ctx))
+				cmd.Env = append(os.Environ(), "ONELOOP_WORKSPACE="+cwd, "ONELOOP_HOOK_EVENT="+event)
+				if from.root != "" {
+					cmd.Env = append(cmd.Env, "CLAUDE_PLUGIN_ROOT="+from.root, "CLAUDE_PROJECT_DIR="+cwd)
+				}
+				cmd.Stdin = bytes.NewReader(input)
+				var stdout, stderr bytes.Buffer
+				cmd.Stdout, cmd.Stderr = &stdout, &stderr
+				platform.PrepareProcess(cmd)
+				cmd.Cancel = func() error { return platform.KillProcessTree(cmd) }
+				if hook.Async {
+					if err := cmd.Start(); err != nil {
+						cancel()
+						result.problems = append(result.problems, fmt.Sprintf("Hook %q failed (%s): %s", hook.Command, event, err))
+						continue
+					}
+					go func() {
+						err := cmd.Wait()
+						cancel()
+						platform.Devf("hooks", "%s %q in the background on %s: %v %s", event, hook.Command, target, err, platform.DevText(strings.TrimSpace(stderr.String()), 300))
+					}()
+					continue
+				}
+				err := cmd.Run()
+				cancel()
+				code := 0
+				var exit *exec.ExitError
+				if errors.As(err, &exit) {
+					code = exit.ExitCode()
+				} else if err != nil {
+					code = -1
+				}
+				platform.Devf("hooks", "%s %q on %s: exit %d", event, hook.Command, target, code)
+				switch code {
+				case 0:
+					if text := strings.TrimSpace(stdout.String()); text != "" {
+						result.output += text + "\n"
+					}
+				case 2:
+					result.blocked = true
+					result.feedback += strings.TrimSpace(stderr.String()) + "\n"
+				default:
+					detail := strings.TrimSpace(stderr.String())
+					if detail == "" && err != nil {
+						detail = err.Error()
+					}
+					result.problems = append(result.problems, fmt.Sprintf("Hook %q failed (%s): %s", hook.Command, event, platform.DevText(detail, 300)))
+				}
 			}
 		}
 	}
@@ -152,6 +205,16 @@ func hookMatches(matcher, target string) bool {
 	}
 	re, err := regexp.Compile("^(?:" + matcher + ")$")
 	return err == nil && re.MatchString(target)
+}
+
+// claudeHookMatches tries Claude Code's names of a 1loop tool.
+func claudeHookMatches(matcher, target string) bool {
+	for _, name := range claudeToolNames[target] {
+		if hookMatches(matcher, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // HookCount is how many hook commands the user's file holds.

@@ -124,6 +124,31 @@ sharing.
 - Long conversations are **compacted** when they near the model's real context
   window; details stay reachable through the agent's `recall` tool.
 
+### Skills, plugins and MCP servers
+
+**Settings → Extensions** (also on the phone) has three tabs:
+
+- **Store**: skills and plugins published on GitHub (topics `agent-skills`
+  and `claude-code-plugin`), with their picture, stars and README, sorted by
+  stars, last update or relevance. **Install** downloads the repository and
+  first shows what it adds, the folders it writes, the commands it may run
+  (MCP servers, hooks) and the risks; for a marketplace, you pick its plugins.
+- **Installed**: turn a skill or plugin off, or remove it.
+- **MCP servers**: add a server by its command (stdio) or its address
+  (Streamable HTTP), see whether it connects and which tools it has.
+
+The agent sees the skills' names and descriptions and loads one with its
+`skill` tool when a task matches; each MCP server's tools load on demand
+(`tool_search`), and a tool that does not declare itself read-only asks for
+approval. Plugins bring skills, MCP servers and hooks. Claude Code receives
+the same extensions (`--plugin-dir`, `--mcp-config`), without changing its
+own settings. Plugins' commands and agents are kept for Claude Code: 1loop has
+no `/` commands. The ChatGPT (Web) connection has a fixed tool list and does
+not get them.
+
+Without a `GITHUB_TOKEN` (or `GH_TOKEN`), GitHub allows about ten searches a
+minute.
+
 ### The phone app
 
 - **Remote desktop / Remote server**: drive a desktop or a server from the
@@ -257,6 +282,10 @@ Always start `bin/1loop`: in a Wayland session it hands over to
   fingerprint at pairing; pairing tokens are stored as hashes.
 - Reads and edits stay inside the project, including symbolic links. The
   shell runs with your permissions; Auto mode's sandbox limits its writes.
+- Skills, plugins and MCP servers are installed in
+  `~/.config/1loop/extensions/`. 1loop does not review them: a skill steers
+  the model, and a plugin's MCP servers and hooks run commands with your
+  permissions.
 - Project copies leave out `.env` files, private keys, credentials and
   generated caches, but they are not a secret scanner: review a copy before
   confirming it.

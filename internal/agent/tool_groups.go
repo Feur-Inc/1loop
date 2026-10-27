@@ -13,6 +13,8 @@ package agent
 import (
 	"encoding/json"
 	"strings"
+
+	"1loop/internal/extensions"
 )
 
 type toolGroup struct {
@@ -59,7 +61,28 @@ func (cfg Config) toolAvailable(name string) bool {
 	return true
 }
 
+// availableToolGroups are the groups a chat may load: 1loop's, and the
+// tools of the user's MCP servers (extensions.go).
 func availableToolGroups(cfg Config) []toolGroup {
+	groups := builtinToolGroups(cfg)
+	for _, group := range mcpGroups(cfg) {
+		var definitions []map[string]any
+		for _, definition := range group.tools() {
+			if cfg.toolAvailable(definition["function"].(map[string]any)["name"].(string)) {
+				definitions = append(definitions, definition)
+			}
+		}
+		if len(definitions) > 0 {
+			group.tools = func() []map[string]any { return definitions }
+			groups = append(groups, group)
+		}
+	}
+	return groups
+}
+
+// builtinToolGroups are 1loop's own groups. Claude Code reaches the MCP
+// servers by itself, and ChatGPT (Web) keeps the tools it was given.
+func builtinToolGroups(cfg Config) []toolGroup {
 	var groups []toolGroup
 	for _, group := range toolGroups() {
 		var definitions []map[string]any
@@ -79,6 +102,9 @@ func availableToolGroups(cfg Config) []toolGroup {
 
 // groupOfTool is the group a tool belongs to, "" for the core tools.
 func groupOfTool(name string) string {
+	if extensions.IsToolName(name) {
+		return mcpGroupOf(name)
+	}
 	for _, group := range toolGroups() {
 		for _, definition := range group.tools() {
 			if definition["function"].(map[string]any)["name"] == name {
@@ -169,6 +195,15 @@ func searchTools(cfg Config, arguments string) (string, error) {
 	return "", errUnknownGroup(args.Group)
 }
 
+// strictTool: 1loop's tools follow OpenAI's strict schemas; an MCP server's
+// say "strict": false.
+func strictTool(function map[string]any) bool {
+	if strict, ok := function["strict"].(bool); ok {
+		return strict
+	}
+	return true
+}
+
 type errUnknownGroup string
 
 func (e errUnknownGroup) Error() string { return "No tool group named " + string(e) }
@@ -178,7 +213,7 @@ func responsesFunctions(definitions []map[string]any) []map[string]any {
 	var tools []map[string]any
 	for _, definition := range definitions {
 		f := definition["function"].(map[string]any)
-		tools = append(tools, map[string]any{"type": "function", "name": f["name"], "description": f["description"], "parameters": f["parameters"], "strict": true})
+		tools = append(tools, map[string]any{"type": "function", "name": f["name"], "description": f["description"], "parameters": f["parameters"], "strict": strictTool(f)})
 	}
 	return tools
 }
@@ -190,7 +225,7 @@ func responsesTools(cfg Config) []map[string]any {
 	var tools []map[string]any
 	function := func(definition map[string]any, deferred bool) map[string]any {
 		f := definition["function"].(map[string]any)
-		tool := map[string]any{"type": "function", "name": f["name"], "description": f["description"], "parameters": f["parameters"], "strict": true}
+		tool := map[string]any{"type": "function", "name": f["name"], "description": f["description"], "parameters": f["parameters"], "strict": strictTool(f)}
 		if deferred {
 			tool["defer_loading"] = true
 		}

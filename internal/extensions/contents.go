@@ -10,6 +10,8 @@ import (
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"gopkg.in/yaml.v3"
 )
 
 // ReadSkill reads a skill's SKILL.md front matter:
@@ -19,7 +21,9 @@ import (
 //	description: Extract text and tables from PDF files…
 //	---
 //
-// A skill without a name takes its folder's.
+// A skill without a name takes its folder's. The front matter is YAML
+// (a description is often a folded "description: >" block); one that is not
+// valid YAML is read line by line.
 func ReadSkill(dir string) (Skill, bool) {
 	file, err := os.Open(filepath.Join(dir, "SKILL.md"))
 	if err != nil {
@@ -29,25 +33,37 @@ func ReadSkill(dir string) (Skill, bool) {
 	skill := Skill{Name: filepath.Base(dir), Dir: dir}
 	scanner := bufio.NewScanner(file)
 	scanner.Buffer(make([]byte, 64*1024), 1<<20)
-	inside := false
+	var lines []string
 	for line := 0; scanner.Scan() && line < 200; line++ {
 		text := strings.TrimRight(scanner.Text(), "\r")
-		if line == 0 && strings.TrimSpace(text) == "---" {
-			inside = true
+		if line == 0 {
+			if strings.TrimSpace(text) != "---" {
+				return skill, true
+			}
 			continue
-		}
-		if !inside {
-			break
 		}
 		if strings.TrimSpace(text) == "---" {
 			break
 		}
+		lines = append(lines, text)
+	}
+	var front struct{ Name, Description any }
+	if yaml.Unmarshal([]byte(strings.Join(lines, "\n")), &front) == nil {
+		if name, ok := front.Name.(string); ok && strings.TrimSpace(name) != "" {
+			skill.Name = strings.TrimSpace(name)
+		}
+		if description, ok := front.Description.(string); ok {
+			skill.Description = strings.TrimSpace(description)
+		}
+		return skill, true
+	}
+	for _, text := range lines {
 		key, value, found := strings.Cut(text, ":")
 		if !found {
 			continue
 		}
 		value = strings.Trim(strings.TrimSpace(value), `"'`)
-		switch strings.TrimSpace(key) {
+		switch key {
 		case "name":
 			if value != "" {
 				skill.Name = value
@@ -156,7 +172,8 @@ func pathIn(dir string, raw json.RawMessage) string {
 }
 
 // parseMCPServers reads {"mcpServers": {...}} or the map itself, with the
-// plugin's folder for ${CLAUDE_PLUGIN_ROOT}.
+// plugin's folder for ${CLAUDE_PLUGIN_ROOT}, in the text and in the
+// environment.
 func parseMCPServers(data []byte, root string) []MCPServer {
 	var wrapped struct {
 		MCPServers map[string]json.RawMessage `json:"mcpServers"`
@@ -186,6 +203,9 @@ func parseMCPServers(data []byte, root string) []MCPServer {
 		}
 		for key, value := range entry.Env {
 			server.Env[key] = expandRoot(value, root)
+		}
+		if _, set := server.Env["CLAUDE_PLUGIN_ROOT"]; !set && root != "" {
+			server.Env["CLAUDE_PLUGIN_ROOT"] = root // as Claude Code gives it: servers find their files with it
 		}
 		switch {
 		case server.Command != "":

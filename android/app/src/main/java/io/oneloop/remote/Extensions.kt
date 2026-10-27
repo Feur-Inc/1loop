@@ -162,7 +162,9 @@ private fun RemoteApp.searchStore(store: StoreState, scope: CoroutineScope, numb
             val result = extensionsCall("/api/extensions/search", body, 45000)
             if (search != store.search) return@launch
             if (number == 1) store.listings.clear()
-            result.optJSONArray("listings")?.let { for (i in 0 until it.length()) store.listings.add(it.getJSONObject(i)) }
+            // A repository with both topics can come back on a later page; the list keys by repository.
+            val shown = store.listings.mapTo(HashSet()) { it.optString("repo") }
+            result.optJSONArray("listings")?.let { for (i in 0 until it.length()) if (shown.add(it.getJSONObject(i).optString("repo"))) store.listings.add(it.getJSONObject(i)) }
             store.page = number
             store.more = result.optBoolean("more")
             store.status = if (store.listings.isEmpty()) "Nothing found. Try other words, or another kind."
@@ -495,7 +497,7 @@ private fun McpTab(app: RemoteApp, onEdit: (JSONObject?, String) -> Unit, onProb
             val name = server.optString("name")
             val run = if (server.optString("type") == "http") server.optString("url")
             else (server.optString("command") + " " + server.optJSONArray("args").strings().joinToString(" ")).trim()
-            ExtensionRow(name, listOf(run, state(server, ""))) {
+            ExtensionRow(name, listOf(run.shortened(), state(server, ""))) {
                 RoundButton(Icons.pencil, Palette.raised, Palette.muted, description = "Edit", size = 36.dp, iconSize = 18.dp) { onEdit(server, name) }
                 RoundButton(Icons.trash, Palette.raised, Palette.muted, description = "Remove", size = 36.dp, iconSize = 18.dp) { removing = name }
                 Toggle(server.optBoolean("enabled"), enabled = app.connected) {
@@ -508,7 +510,7 @@ private fun McpTab(app: RemoteApp, onEdit: (JSONObject?, String) -> Unit, onProb
             for (name in plugin.optJSONArray("mcp").strings()) {
                 val status = statuses?.values?.firstOrNull { it.optString("name") == name && it.optString("plugin").isNotEmpty() }
                 val run = status?.let { if (it.optString("type") == "http") it.optString("url") else (it.optString("command") + " " + it.optJSONArray("args").strings().joinToString(" ")).trim() }.orEmpty()
-                ExtensionRow(name, listOf(run, state(JSONObject().put("name", name).put("enabled", true), status?.optString("plugin").orEmpty()),
+                ExtensionRow(name, listOf(run.shortened(), state(JSONObject().put("name", name).put("enabled", true), status?.optString("plugin").orEmpty()),
                     "from the plugin ${plugin.optString("name")} (turn the plugin off in Installed)"))
             }
         }
@@ -656,6 +658,9 @@ private fun WebPicture(address: String, modifier: Modifier) {
         picture?.let { Image(it, null, Modifier.fillMaxSize(), contentScale = ContentScale.Fit) }
     }
 }
+
+/** A server's command line, cut: a plugin's can be a whole script. */
+private fun String.shortened() = if (length > 160) take(159) + "…" else this
 
 private fun JSONArray?.objects(): List<JSONObject> = if (this == null) emptyList() else (0 until length()).mapNotNull { optJSONObject(it) }
 

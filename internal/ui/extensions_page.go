@@ -15,6 +15,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
@@ -159,9 +160,17 @@ func (page *extensionsPage) runSearch(number int) {
 				page.grid.Objects = nil
 			}
 			page.page = number
-			page.listings = append(page.listings, result.Listings...)
+			// A repository with both topics can come back on a later page.
+			shown := map[string]bool{}
+			for _, listing := range page.listings {
+				shown[listing.Repo] = true
+			}
 			for _, listing := range result.Listings {
-				page.grid.Add(page.card(listing))
+				if !shown[listing.Repo] {
+					shown[listing.Repo] = true
+					page.listings = append(page.listings, listing)
+					page.grid.Add(page.card(listing))
+				}
 			}
 			page.grid.Refresh()
 			switch {
@@ -265,7 +274,7 @@ func (page *extensionsPage) details(listing extensions.Listing) {
 			case strings.TrimSpace(text) == "":
 				readme.Objects = []fyne.CanvasObject{note("This repository has no README.")}
 			default:
-				readme.Objects = []fyne.CanvasObject{newMarkdownView(text).box}
+				readme.Objects = []fyne.CanvasObject{newMarkdownView(readmeMarkdown(text)).box}
 			}
 			readme.Refresh()
 		})
@@ -541,6 +550,9 @@ func (page *extensionsPage) mcpDetail(server extensions.MCPServer) []string {
 	if server.Type == "stdio" {
 		run = strings.TrimSpace(server.Command + " " + strings.Join(server.Args, " "))
 	}
+	if runes := []rune(run); len(runes) > 160 {
+		run = string(runes[:159]) + "…" // a plugin's command can be a whole script
+	}
 	state := ""
 	switch status, ok := page.statuses[server.Name+"\x00"+server.Plugin]; {
 	case !server.Enabled:
@@ -703,6 +715,19 @@ func textPairs(text, separator string) map[string]string {
 
 // ---------------------------------------------------------------------------
 // Small parts.
+
+var htmlTag = regexp.MustCompile(`(?s)<!--.*?-->|</?[A-Za-z][^<>]*>`)
+
+// readmeMarkdown leaves out the HTML a README often holds (centered
+// headers, badges), which the Markdown view would show as text; code
+// blocks keep it.
+func readmeMarkdown(text string) string {
+	parts := strings.Split(text, "```")
+	for i := 0; i < len(parts); i += 2 {
+		parts[i] = htmlTag.ReplaceAllString(parts[i], "")
+	}
+	return strings.Join(parts, "```")
+}
 
 // extensionRow is settingRow with several lines under the title.
 func extensionRow(title string, lines []string, control fyne.CanvasObject) fyne.CanvasObject {

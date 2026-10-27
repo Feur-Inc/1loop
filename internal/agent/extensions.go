@@ -263,14 +263,17 @@ func claudeExtensionArgs() (args []string, cleanup func()) {
 			os.WriteFile(manifest, []byte(`{"name":"1loop-skills","description":"The skills installed in 1loop"}`), 0o600)
 			os.MkdirAll(filepath.Join(dir, "skills"), 0o700)
 			for _, skill := range own {
-				os.Symlink(skill.Dir, filepath.Join(dir, "skills", filepath.Base(skill.Dir)))
+				link := filepath.Join(dir, "skills", filepath.Base(skill.Dir))
+				if os.Symlink(skill.Dir, link) != nil {
+					extensions.CopyDir(skill.Dir, link) // Windows lets only some accounts make links
+				}
 			}
 			args = append(args, "--plugin-dir", dir)
 		}
 	}
 	cleanup = func() {
 		for _, path := range files {
-			os.RemoveAll(path) // a temporary file or folder of its own; the skills' links only
+			os.RemoveAll(path) // a temporary file or folder of its own: the skills' links or copies only
 		}
 	}
 	return args, cleanup

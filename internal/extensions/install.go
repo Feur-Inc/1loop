@@ -474,6 +474,9 @@ func replaceDir(from, to string) error {
 	return copyTree(from, to)
 }
 
+// CopyDir copies a folder's files into to.
+func CopyDir(from, to string) error { return copyTree(from, to) }
+
 func copyTree(from, to string) error {
 	return filepath.WalkDir(from, func(path string, entry fs.DirEntry, err error) error {
 		if err != nil {

@@ -33,9 +33,11 @@ import (
 )
 
 type hookCommand struct {
-	Type    string `json:"type"`
-	Command string `json:"command"`
-	Timeout int    `json:"timeout"` // seconds
+	Type    string   `json:"type"`
+	Command string   `json:"command"`
+	Args    []string `json:"args"`    // set: the command runs with them, without a shell
+	Timeout int      `json:"timeout"` // seconds
+	Async   bool     `json:"async"`   // runs in the background; it cannot block or answer
 }
 
 type hookMatcher struct {
@@ -118,12 +120,27 @@ func runHooks(ctx context.Context, event, target string, payload map[string]any)
 				if hook.Timeout == 0 {
 					timeout = 60 * time.Second
 				}
-				run, cancel := context.WithTimeout(ctx, timeout)
-				command := hook.Command
-				if from.root != "" {
-					command = strings.ReplaceAll(command, "${CLAUDE_PLUGIN_ROOT}", from.root)
+				parent := ctx
+				if hook.Async {
+					parent = context.Background() // outlives the tool call it follows
 				}
-				cmd := platform.ShellCommand(run, command)
+				run, cancel := context.WithTimeout(parent, timeout)
+				expand := func(text string) string {
+					if from.root == "" {
+						return text
+					}
+					return strings.ReplaceAll(text, "${CLAUDE_PLUGIN_ROOT}", from.root)
+				}
+				var cmd *exec.Cmd
+				if len(hook.Args) > 0 {
+					args := make([]string, len(hook.Args))
+					for i, arg := range hook.Args {
+						args[i] = expand(arg)
+					}
+					cmd = exec.CommandContext(run, expand(hook.Command), args...)
+				} else {
+					cmd = platform.ShellCommand(run, expand(hook.Command))
+				}
 				platform.WorkspaceCommand(cmd, cwd, platform.WorkspaceYOLO(ctx))
 				cmd.Env = append(os.Environ(), "ONELOOP_WORKSPACE="+cwd, "ONELOOP_HOOK_EVENT="+event)
 				if from.root != "" {
@@ -134,6 +151,19 @@ func runHooks(ctx context.Context, event, target string, payload map[string]any)
 				cmd.Stdout, cmd.Stderr = &stdout, &stderr
 				platform.PrepareProcess(cmd)
 				cmd.Cancel = func() error { return platform.KillProcessTree(cmd) }
+				if hook.Async {
+					if err := cmd.Start(); err != nil {
+						cancel()
+						result.problems = append(result.problems, fmt.Sprintf("Hook %q failed (%s): %s", hook.Command, event, err))
+						continue
+					}
+					go func() {
+						err := cmd.Wait()
+						cancel()
+						platform.Devf("hooks", "%s %q in the background on %s: %v %s", event, hook.Command, target, err, platform.DevText(strings.TrimSpace(stderr.String()), 300))
+					}()
+					continue
+				}
 				err := cmd.Run()
 				cancel()
 				code := 0

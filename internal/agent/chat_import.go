@@ -508,7 +508,11 @@ func codexSessionInfo(path string, titles map[string]string) (ImportSession, boo
 func readCodexSession(r io.Reader, folder string) (ImportedChat, error) {
 	var events []codexEvent
 	var calls []codexEvent // response_item calls and outputs, for older versions
-	steps := false
+	// Each turn is read in the format it was written in: a session resumed
+	// with another Codex version mixes them, turn by turn.
+	var turns []int         // the turn of each event
+	steps := map[int]bool{} // the turns written as completed items
+	turn := 0
 	eachLine(r, 0, func(line []byte) bool {
 		var entry codexLine
 		if json.Unmarshal(line, &entry) != nil {
@@ -522,13 +526,16 @@ func readCodexSession(r io.Reader, folder string) (ImportedChat, error) {
 			}
 			if entry.Type == "turn_context" {
 				event.Type = "turn_context"
+				turn++
 			}
-			steps = steps || event.Type == "item_completed"
+			steps[turn] = steps[turn] || event.Type == "item_completed"
 			events = append(events, event)
+			turns = append(turns, turn)
 		case "response_item":
 			if json.Unmarshal(entry.Payload, &event) == nil && event.Type != "message" && event.Type != "reasoning" {
 				calls = append(calls, event)
 				events = append(events, event)
+				turns = append(turns, turn)
 			}
 		}
 		return true
@@ -550,9 +557,13 @@ func readCodexSession(r io.Reader, folder string) (ImportedChat, error) {
 		id := "import-" + core.Identifier()[:12]
 		call := ToolCall{ID: id, Type: "function"}
 		call.Function.Name, call.Function.Arguments = item.Tool, item.Args
+		output := item.Text
+		if item.Diff != "" { // the model continuing the chat sees what the edit changed
+			output += "\n" + item.Diff
+		}
 		chat.Items = append(chat.Items, item)
 		chat.History = append(chat.History, Message{Role: "assistant", ToolCalls: []ToolCall{call}},
-			Message{Role: "tool", ToolCallID: id, Content: item.Text})
+			Message{Role: "tool", ToolCallID: id, Content: output})
 	}
 	outputs := map[string]string{}
 	for _, call := range calls {
@@ -560,11 +571,11 @@ func readCodexSession(r io.Reader, folder string) (ImportedChat, error) {
 			outputs[call.CallID] = codexOutput(call.Output)
 		}
 	}
-	for _, event := range events {
+	for i, event := range events {
 		if event.Type == "turn_context" && event.Model != "" {
 			chat.Model = event.Model
 		}
-		if steps {
+		if steps[turns[i]] {
 			if event.Type != "item_completed" || event.Item == nil {
 				continue
 			}

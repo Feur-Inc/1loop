@@ -78,7 +78,8 @@ The [install guide](docs/INSTALL.md) has every step; in short:
    - **ChatGPT**: *Continue with ChatGPT*, then sign in in your browser
      (1loop listens on `localhost:1455` during sign-in).
    - **Claude Code**: offered automatically when `claude` is installed; 1loop
-     drives it with your Claude subscription.
+     drives it with your Claude subscription. Without it, choosing Claude Code
+     offers to install it with Anthropic's official installer.
    - **OpenRouter**: paste a key, or start 1loop with `OPENROUTER_API_KEY`.
    - **vLLM** or any **OpenAI-compatible API**: enter its `/v1` address.
    *Load / refresh models* fetches the catalog; tick the models to show.

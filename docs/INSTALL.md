@@ -105,8 +105,9 @@ What that changes:
 - **Auto mode's workspace sandbox (Landlock) is off.** Commands run on the
   host, outside the process Landlock restricts, so every command that is not
   plainly safe asks for your approval, as on systems without Landlock.
-- **Browser Use** needs Chromium or Google Chrome installed on the host
-  system, not as a Flatpak.
+- **Browser Use** runs the host's Chromium or Google Chrome (not a
+  Flatpak). Without one, 1loop downloads its own Chromium, which runs on the
+  host from `~/.var/app/io.github.Feur_Inc.OneLoop/config/1loop/chromium`.
 - **Computer Use** needs the Python packages listed below on the host, as
   for the other formats.
 - **Terminal Use** opens your login shell on the host. The environment the
@@ -142,8 +143,9 @@ The package installs `1loop` with its launcher entry (`makeDesktopItem`) and
 icons, and brings its own Python for Computer Use (`ONELOOP_COMPUTER_PYTHON`,
 with PyGObject, dbus-python, Pillow, GTK, GStreamer and its PipeWire
 plugin). It needs `hardware.graphics.enable = true;` (on by default with any
-desktop). Git and Chromium/Chrome come from your system: add `git` and
-`chromium` to your packages for the *Git changes* tab and Browser Use. On
+desktop). It also brings nixpkgs' Chromium for Browser Use
+(`ONELOOP_CHROMIUM`). Git comes from your system: add `git` to your packages
+for the *Git changes* tab. On
 another distribution, the Nix build cannot find your GPU driver: run it
 through [nixGL](https://github.com/nix-community/nixGL)
 (`nixGL 1loop`), or use the `.tar.gz`. Updates come with `nix flake update`
@@ -220,9 +222,18 @@ passwords, history, bookmarks or local storage are imported.
 ### What 1loop uses from the system
 
 Runtime needs, for every format: OpenGL, X11 or Wayland libraries (the `.deb`
-pulls them in), Bash, Git (for the *Git changes* tab), and Chrome or Chromium
-for the agent's browser (Browser Use). Optional: `latex` and `dvipng` to
-render formulas, and the Computer Use packages below.
+pulls them in), Bash and Git (for the *Git changes* tab). Optional: `latex`
+and `dvipng` to render formulas, and the Computer Use packages below.
+
+Browser Use runs the Chromium, Chrome or Edge it finds on the computer. Without
+one, it downloads its own Chromium the first time (Chrome for Testing, Google's
+build made to be driven, about 200 MB), into `~/.config/1loop/chromium` on
+Linux and `%AppData%\1loop\chromium` on Windows: no package to install and no
+administrator rights. 1loop checks once a day for a newer stable version and
+uses it from the next start. On Linux it uses the system libraries every
+desktop has (NSS, GTK, ALSA…). Where the system allows user namespaces only to
+browsers installed by the administrator (Ubuntu 23.10 and later), it runs
+without Chromium's own sandbox.
 
 <details>
 <summary>Computer Use on Linux (optional)</summary>
@@ -248,7 +259,8 @@ uses the bundled Mesa CPU renderer. It needs the Microsoft Visual C++
 
 Pairing a phone can trigger a Windows firewall prompt; desktop-only use does
 not need inbound access. Git is needed for the *Git changes* tab; Browser Use
-finds Chrome, Chromium or Microsoft Edge.
+finds Chrome, Chromium or Microsoft Edge, or downloads its own Chromium into
+`%AppData%\1loop\chromium`.
 
 ## Android (8.0 or newer)
 

@@ -295,6 +295,9 @@ func (view *browserView) changed(info browser.Info) {
 	if info.Error != "" {
 		view.status.Text = info.Error
 		view.status.Color = colDanger
+	} else if info.Status != "" {
+		view.status.Text = info.Status
+		view.status.Color = colMuted
 	} else {
 		view.status.Text = fmt.Sprintf("%d × %d CSS px", info.Width, info.Height)
 		view.status.Color = colMuted

@@ -151,6 +151,7 @@ jobs:
           out=$(nix build .#default --no-write-lock-file --no-link --print-out-paths)
           "$out/bin/1loop" --help
           "$out/libexec/1loop/1loop-wayland" --help
+          "$(grep -o '/nix/store/[^ "]*/bin/chromium' "$out/bin/1loop")" --version
           "$out/libexec/1loop/computer-python" -c 'import gi, dbus, PIL; gi.require_version("Gst", "1.0"); from gi.repository import Gst; Gst.init(None); assert Gst.ElementFactory.find("pipewiresrc")'
 
       - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1

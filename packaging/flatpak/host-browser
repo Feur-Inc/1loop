@@ -1,6 +1,10 @@
 #!/bin/sh
 # Starts the host's Chromium or Chrome for Browser Use (linked as chromium,
-# the first name 1loop looks for).
+# the first name 1loop looks for), or the Chromium 1loop downloaded when the
+# host has none (ONELOOP_OWN_CHROMIUM, in 1loop's folder the host shares).
+if [ -n "$ONELOOP_OWN_CHROMIUM" ]; then
+  exec /app/lib/1loop/host/host-run "$ONELOOP_OWN_CHROMIUM" "$@"
+fi
 exec /app/lib/1loop/host/host-run sh -c '
 for browser in chromium chromium-browser google-chrome-stable google-chrome; do
   command -v "$browser" >/dev/null && exec "$browser" "$@"

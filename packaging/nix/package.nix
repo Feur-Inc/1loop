@@ -26,6 +26,7 @@
   at-spi2-core,
   gst_all_1,
   pipewire,
+  chromium,
   version,
 }:
 
@@ -111,8 +112,11 @@ buildGoModule {
           pipewire
         ]
       }
+    # Browser Use's Chromium: the one 1loop downloads elsewhere does not run
+    # on NixOS.
     makeWrapper $out/libexec/1loop/1loop $out/bin/1loop \
-      --set-default ONELOOP_COMPUTER_PYTHON $out/libexec/1loop/computer-python
+      --set-default ONELOOP_COMPUTER_PYTHON $out/libexec/1loop/computer-python \
+      --set-default ONELOOP_CHROMIUM ${chromium}/bin/chromium
     build/1loop-release icons $out/share/icons
     runHook postInstall
   '';

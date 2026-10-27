@@ -65,6 +65,7 @@ type conversation struct {
 // open other chats, settings or projects while it runs in the background.
 type chatRun struct {
 	cancel   context.CancelFunc
+	stopped  bool // explicit cancellation; the worker also cancels its context on success
 	turn     *turn
 	approval *sheet
 	// The pending approval, so the phone remote can show and answer it.
@@ -134,6 +135,7 @@ type desktopUI struct {
 	approvalControl *tapRow
 	contextRing     *contextRing
 	send            *tapRow
+	steer           *tapRow
 	stop            *tapRow
 	controls        *fyne.Container
 	folder          *tapRow
@@ -578,6 +580,26 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.model.row.onTap = ui.modelMenu
 	ui.send = newIconButton(iconSend, colAmber, colInk, ui.submit)
 	ui.send.iconPx = 20
+	ui.send.onHover = func(in bool) {
+		if in {
+			tip := "Send message · Enter"
+			if ui.current != nil && ui.current.run != nil {
+				tip = "Queue for the next turn · Enter"
+			}
+			ui.tips.show(ui.send, tip)
+		} else {
+			ui.tips.hide()
+		}
+	}
+	ui.steer = newRow("Steer", iconArrowTurn, styleChip, ui.steerNow)
+	ui.steer.onHover = func(in bool) {
+		if in {
+			ui.tips.show(ui.steer, "Join the current task at the next step · Ctrl+Enter")
+		} else {
+			ui.tips.hide()
+		}
+	}
+	ui.steer.Hide()
 	ui.stop = newIconButton(iconStop, colText, colInk, func() {
 		if ui.current != nil && ui.current.run != nil {
 			platform.Devf("ui", "stop pressed for %q", ui.current.Title)
@@ -585,6 +607,13 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		}
 	})
 	ui.stop.iconPx = 20
+	ui.stop.onHover = func(in bool) {
+		if in {
+			ui.tips.show(ui.stop, "Stop the current task and pause the queue")
+		} else {
+			ui.tips.hide()
+		}
+	}
 	ui.stop.Hide()
 	ui.approvalControl = newRow("", iconShield, styleChip, ui.approvalMenu)
 	ui.updateApprovalControl()
@@ -603,7 +632,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		})
 	}
 
-	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), ui.contextRing, ui.model.row, container.NewStack(ui.send, ui.stop))
+	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), ui.contextRing, ui.model.row, ui.steer, ui.send, ui.stop)
 	ui.controls = container.New(&composerControlsLayout{}, container.NewCenter(ui.approvalControl), actions)
 	ui.model.relayout = ui.controls.Refresh
 
@@ -790,6 +819,7 @@ func (ui *desktopUI) notice(title, text string) {
 // syncRun shows the open chat's run state: the stop button, the activity
 // line under the conversation and the waiting messages.
 func (ui *desktopUI) syncRun() {
+	ui.tips.hide()
 	if ui.settled != nil {
 		ui.settled.Stop()
 		ui.settled = nil
@@ -800,12 +830,13 @@ func (ui *desktopUI) syncRun() {
 	}
 	if currentTurn != nil {
 		ui.mark.stop()
-		ui.send.Hide()
+		ui.steer.Show()
 		ui.stop.Show()
 		ui.showActivityLine(true)
 		ui.applyActivity(currentTurn)
 	} else {
 		ui.send.Show()
+		ui.steer.Hide()
 		ui.stop.Hide()
 		ui.showActivityLine(false)
 		ui.workMark.setState("brand")
@@ -821,6 +852,8 @@ func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
 	platform.Devf("run", "start %q [%s]: %s %s, effort %q, approval %q, session %q, on screen %v",
 		chat.Title, chat.ID, chat.Config.Provider, chat.Config.Model, chat.Config.Effort, agent.ApprovalFor(ui.approvalMode, chat.Config), chat.Config.Session, chat == ui.current)
 	run.started = time.Now()
+	cancel := run.cancel
+	run.cancel = func() { run.stopped = true; cancel() }
 	chat.run = run
 	ui.remote.metaChanged(chat)
 	if chat == ui.current {
@@ -833,6 +866,9 @@ func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
 // answer when the chat is on screen: "done" or "stopped".
 func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	run := chat.run
+	if run != nil && run.stopped {
+		ended = "stopped"
+	}
 	if run != nil {
 		platform.Devf("run", "end %q [%s]: %s after %s, on screen %v", chat.Title, chat.ID, ended, time.Since(run.started).Round(time.Millisecond), chat == ui.current)
 	}
@@ -843,6 +879,15 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	}
 	if run != nil && run.questions != nil {
 		run.questions.dismiss()
+	}
+	// A prompt can arrive after the provider's final inbox check but before
+	// this UI callback. Close that gap before announcing that the chat is done.
+	if ended == "done" {
+		if next, ok := ui.takeNext(chat); ok {
+			ui.startIn(chat, next, "")
+			ui.save()
+			return
+		}
 	}
 	if run != nil && ended == "done" {
 		ui.notifyUser(chat, "Done.")

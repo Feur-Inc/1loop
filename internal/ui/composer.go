@@ -404,11 +404,15 @@ func (ui *desktopUI) takeSteer(chat *conversation) []agent.Message {
 }
 
 func (ui *desktopUI) takeNext(chat *conversation) (agent.Message, bool) {
-	if len(chat.queue) == 0 {
+	waiting := &chat.queue
+	if chat.run == nil && len(chat.steer) > 0 {
+		waiting = &chat.steer
+	}
+	if len(*waiting) == 0 {
 		return agent.Message{}, false
 	}
-	next := chat.queue[0]
-	chat.queue = chat.queue[1:]
+	next := (*waiting)[0]
+	*waiting = (*waiting)[1:]
 	ui.remote.metaChanged(chat)
 	if chat == ui.current {
 		ui.renderQueue()
@@ -491,7 +495,9 @@ func (ui *desktopUI) renderQueue() {
 		label += fmt.Sprintf(" · %d steering", len(chat.steer))
 	}
 	if chat.run == nil {
-		label += " · press Enter to send"
+		label = "Queue paused · press Enter to resume"
+	} else if len(chat.steer) > 0 {
+		label += " · waiting for the next step"
 	}
 	ui.queueTitle.SetText(label)
 	ui.queueTray.Show()
@@ -534,11 +540,25 @@ func (ui *desktopUI) queueRow(steer bool, index int, messageValue agent.Message)
 		if index < len(ui.current.queue)-1 {
 			action(iconChevron, "Move down", func() { ui.moveQueued(index, +1) })
 		}
-		action(iconArrowTurn, "Send now, at the next step", func() { ui.sendQueuedNow(index) })
 	}
 	action(iconRename, "Edit in the prompt", func() { ui.editQueued(steer, index) })
 	action(iconClose, "Remove", func() { ui.dropQueued(steer, index) })
 	bar := container.New(layout.NewCustomPaddedHBoxLayout(0))
+	if !steer {
+		send := newRow("Send now", iconArrowTurn, styleChip, func() { ui.sendQueuedNow(index) })
+		send.onHover = func(in bool) {
+			if in {
+				tip := "Send this message"
+				if ui.current.run != nil {
+					tip = "Join the current task at the next step"
+				}
+				ui.tips.show(send, tip)
+			} else {
+				ui.tips.hide()
+			}
+		}
+		bar.Add(send)
+	}
 	for _, a := range actions {
 		bar.Add(a)
 	}

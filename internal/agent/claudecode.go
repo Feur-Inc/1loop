@@ -586,13 +586,12 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				return ctx.Err()
 			}
 		case <-tick.C:
-			if !idle {
-				continue
-			}
 			if extras := inboxValue.Steer(); len(extras) > 0 {
 				for _, extra := range extras {
 					inject(extra)
 				}
+			} else if !idle {
+				continue
 			} else if next, ok := inboxValue.Next(); ok {
 				inject(next)
 			} else if len(background) == 0 && time.Since(idleSince) > 600*time.Millisecond {

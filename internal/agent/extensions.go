@@ -295,6 +295,9 @@ func (backend *App) callMCPTool(ctx context.Context, cfg Config, server extensio
 	}
 	begin()
 	result, err := extensions.Servers.Call(ctx, server, mcpDir(cfg), tool.Name, json.RawMessage(call.Function.Arguments))
+	if isGitHubTool(call.Function.Name) {
+		err = githubAuthorizationError(ctx, server, err)
+	}
 	if err != nil {
 		return "", nil, err
 	}

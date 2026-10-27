@@ -167,7 +167,7 @@ func (manager *Manager) ConnectionID() string {
 	manager.mu.Lock()
 	defer manager.mu.Unlock()
 	saved, err := manager.load()
-	if err != nil || !saved.Enabled || !connected(saved) {
+	if err != nil || !connected(saved) {
 		return ""
 	}
 	return connectionID(saved)

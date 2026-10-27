@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"os/exec"
-
 	"1loop/internal/agent"
 	"1loop/internal/core"
 	"1loop/internal/platform"
@@ -21,7 +19,7 @@ func (ui *desktopUI) offerClaudeCode() {
 			return
 		}
 	}
-	if _, err := exec.LookPath("claude"); err != nil {
+	if _, err := agent.ClaudeExecutable(); err != nil {
 		return
 	}
 	ui.claudeOffered = true

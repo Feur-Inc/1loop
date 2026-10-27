@@ -137,9 +137,9 @@ const claudeDisabledTools = "Task,Agent"
 // key) and minus the variables of a Claude Code session 1loop may have been
 // started from.
 func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd, error) {
-	path, err := exec.LookPath("claude")
+	path, err := ClaudeExecutable()
 	if err != nil {
-		return nil, fmt.Errorf("Claude Code is not installed: no claude command was found")
+		return nil, err
 	}
 	args := append([]string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}, extra...)
 	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {

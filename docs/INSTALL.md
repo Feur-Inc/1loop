@@ -105,8 +105,9 @@ What that changes:
 - **Auto mode's workspace sandbox (Landlock) is off.** Commands run on the
   host, outside the process Landlock restricts, so every command that is not
   plainly safe asks for your approval, as on systems without Landlock.
-- **Browser Use** needs Chromium or Google Chrome installed on the host
-  system, not as a Flatpak.
+- **Browser Use** runs the host's Chromium or Google Chrome (not a
+  Flatpak). Without one, 1loop downloads its own Chromium, which runs on the
+  host from `~/.var/app/io.github.Feur_Inc.OneLoop/config/1loop/chromium`.
 - **Computer Use** needs the Python packages listed below on the host, as
   for the other formats.
 - **Terminal Use** opens your login shell on the host. The environment the
@@ -142,8 +143,9 @@ The package installs `1loop` with its launcher entry (`makeDesktopItem`) and
 icons, and brings its own Python for Computer Use (`ONELOOP_COMPUTER_PYTHON`,
 with PyGObject, dbus-python, Pillow, GTK, GStreamer and its PipeWire
 plugin). It needs `hardware.graphics.enable = true;` (on by default with any
-desktop). Git and Chromium/Chrome come from your system: add `git` and
-`chromium` to your packages for the *Git changes* tab and Browser Use. On
+desktop). It also brings nixpkgs' Chromium for Browser Use
+(`ONELOOP_CHROMIUM`). Git comes from your system: add `git` to your packages
+for the *Git changes* tab. On
 another distribution, the Nix build cannot find your GPU driver: run it
 through [nixGL](https://github.com/nix-community/nixGL)
 (`nixGL 1loop`), or use the `.tar.gz`. Updates come with `nix flake update`
@@ -177,12 +179,61 @@ or override an explicitly forced backend. A missing library that prevents the
 Wayland binary itself from loading is not covered. Flatpak's Wayland permissions
 do not expose X11, so that retry is unavailable there.
 
+### Import browser cookies on desktop
+
+In **Settings → General → Browser → Import cookies**, choose a JSON file
+or a compatible local browser profile. Read the account-access warning,
+turn on **I understand**, then select **Import**. This is desktop-only;
+no cookie import is exposed on Android or through the remote API.
+
+For Chrome, Edge and other browsers, including protected Windows profiles:
+
+1. Open the source browser/profile and the site whose account you want to share.
+2. Use a cookie-export extension you trust, such as
+   [Cookie-Editor](https://github.com/Moustachauve/cookie-editor), installed
+   through its official browser-store link. Grant access only to the sites
+   you intend to export, then choose **Export → JSON**.
+3. If the extension copies JSON to the clipboard, paste it into a local text
+   editor and save it as `cookies.json`. Choose that file in 1loop.
+4. Open the site in Browser Use to verify whether the session works. Some
+   sites require signing in again; copied cookies alone cannot guarantee login.
+5. Keep the export private. It contains sensitive session data. Remove it
+   yourself when finished, and disable/remove the export extension if unused.
+   1loop reads the selected file locally without changing or deleting it.
+
+The importer accepts a JSON array of cookies, or an object with a `cookies`
+array, using `name`, `value`, `domain`, `path`, `secure`, `httpOnly`,
+`sameSite`, `hostOnly` and `expirationDate` (or DevTools `expires`). Session
+cookies are accepted from JSON but may end when Browser Use closes.
+Expired, invalid, container and partitioned cookies are skipped.
+
+Direct profile import supports Firefox-family profiles on Windows/Linux and
+compatible Chromium-family profiles on Linux. Close the source browser first.
+It reads a temporary copy; Linux Chromium uses its own browser and system
+keyring. Protected Windows Chromium profiles require a voluntary JSON export.
+An inaccessible keyring or browser installation can prevent direct import.
+
+Cookies can grant access to accounts you did not intend to share. Agents may
+act as those accounts, and malicious pages can influence their actions.
+**Clear browsing data** removes Browser Use's local sessions and data; it
+neither revokes every server-side session nor undoes previous actions. No
+passwords, history, bookmarks or local storage are imported.
+
 ### What 1loop uses from the system
 
 Runtime needs, for every format: OpenGL, X11 or Wayland libraries (the `.deb`
-pulls them in), Bash, Git (for the *Git changes* tab), and Chrome or Chromium
-for the agent's browser (Browser Use). Optional: `latex` and `dvipng` to
-render formulas, and the Computer Use packages below.
+pulls them in), Bash and Git (for the *Git changes* tab). Optional: `latex`
+and `dvipng` to render formulas, and the Computer Use packages below.
+
+Browser Use runs the Chromium, Chrome or Edge it finds on the computer. Without
+one, it downloads its own Chromium the first time (Chrome for Testing, Google's
+build made to be driven, about 200 MB), into `~/.config/1loop/chromium` on
+Linux and `%AppData%\1loop\chromium` on Windows: no package to install and no
+administrator rights. 1loop checks once a day for a newer stable version and
+uses it from the next start. On Linux it uses the system libraries every
+desktop has (NSS, GTK, ALSA…). Where the system allows user namespaces only to
+browsers installed by the administrator (Ubuntu 23.10 and later), it runs
+without Chromium's own sandbox.
 
 <details>
 <summary>Computer Use on Linux (optional)</summary>
@@ -208,7 +259,8 @@ uses the bundled Mesa CPU renderer. It needs the Microsoft Visual C++
 
 Pairing a phone can trigger a Windows firewall prompt; desktop-only use does
 not need inbound access. Git is needed for the *Git changes* tab; Browser Use
-finds Chrome, Chromium or Microsoft Edge.
+finds Chrome, Chromium or Microsoft Edge, or downloads its own Chromium into
+`%AppData%\1loop\chromium`.
 
 ## Android (8.0 or newer)
 

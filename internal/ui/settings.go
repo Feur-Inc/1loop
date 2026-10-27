@@ -480,7 +480,10 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		sectionTitle("Browser"),
 		card(settingRow("Browsing data",
 			"The agents' browser keeps its cookies and logins, cache, site data and history from one session to the next, in "+browser.ProfileDir()+". Clear erases all of it.",
-			ui.clearBrowserButton())),
+			ui.clearBrowserButton()),
+			settingRow("Import cookies",
+				"Import a cookie JSON export or a compatible local browser profile into Browser Use. Review the accounts you are sharing before confirming.",
+				newRow("Import…", nil, styleOutline, ui.importCookies))),
 		sectionTitle("Computer Use"),
 		card(ui.computerScreenRow()),
 		sectionTitle("Context"),
@@ -861,8 +864,27 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	}
 	oauthFields := card(settingStack("ChatGPT account", "Uses your ChatGPT subscription, with a sign-in in your browser (OAuth with PKCE).",
 		container.NewVBox(account, container.NewHBox(login), loginLink)))
-	claudeFields := card(settingRow("Claude Code on this computer",
-		"Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it.", nil))
+	claudeState := plainFlow("", 12.5, colMuted)
+	installClaude := newRow("Install Claude Code", nil, styleOutline, nil)
+	showClaude := func() {
+		path, err := agent.ClaudeExecutable()
+		problem := agent.ClaudeInstallProblem()
+		switch {
+		case err == nil:
+			setFlow(claudeState, "Installed: "+path)
+			installClaude.Hide()
+		case problem != "":
+			setFlow(claudeState, "Not installed on this computer. "+problem)
+			installClaude.Hide()
+		default:
+			setFlow(claudeState, "Not installed on this computer.")
+			installClaude.Show()
+		}
+	}
+	installClaude.onTap = func() { ui.installClaudeCode(showClaude) }
+	claudeFields := card(settingStack("Claude Code on this computer",
+		"Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it.",
+		container.NewVBox(claudeState, container.NewHBox(installClaude))))
 	webFields, releaseWebSetup := ui.chatGPTWebSettings(&draft, say)
 	access := container.NewStack(apiFields, oauthFields, claudeFields, webFields)
 
@@ -988,6 +1010,11 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 			oauthFields.Show()
 		case "claudecode":
 			claudeFields.Show()
+			showClaude()
+			// Choosing Claude Code without it installed offers to install it.
+			if _, err := agent.ClaudeExecutable(); err != nil && previous != draft.Provider && agent.ClaudeInstallProblem() == "" {
+				ui.installClaudeCode(showClaude)
+			}
 		case "chatgptweb":
 			webFields.Show()
 		default:

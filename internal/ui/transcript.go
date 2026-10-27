@@ -371,6 +371,9 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		if currentTurn != nil && currentTurn.states[index] != "" {
 			state = currentTurn.states[index]
 		}
+		if chat.server != nil {
+			state = runState(chat, index)
+		}
 		row := newToolRow(item, state, nil)
 		row.chat, row.index = chat, index
 		row.onTap = func() { ui.panel.open(chat, index) }
@@ -1003,6 +1006,9 @@ func (ui *desktopUI) applyActivity(currentTurn *turn) {
 // runState is how far a tool call has got: "done" unless its chat's run is
 // still working on it.
 func runState(chat *conversation, index int) string {
+	if chat.server != nil && chat.states[index] != "" {
+		return chat.states[index]
+	}
 	if chat.run == nil {
 		return "done"
 	}

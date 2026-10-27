@@ -141,6 +141,10 @@ func (ui *desktopUI) ensureProject(path string) {
 }
 
 func (ui *desktopUI) selectProject(path string) {
+	if ui.server != nil {
+		ui.server.selectProject(path)
+		return
+	}
 	if path == ui.cfg.Workspace {
 		return
 	}
@@ -239,6 +243,10 @@ func (ui *desktopUI) removeProject(path string) {
 }
 
 func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
+	if ui.server != nil {
+		ui.server.projectMenu(anchor)
+		return
+	}
 	var actions []menuAction
 	for _, p := range ui.projects {
 		p := p
@@ -362,6 +370,10 @@ func (ui *desktopUI) confirm(title, text, verb string, run func()) {
 // renderChats redraws the project list and the current project's conversations.
 func (ui *desktopUI) renderChats() {
 	ui.remote.chatsChanged()
+	if ui.server != nil {
+		ui.server.renderChats()
+		return
+	}
 	ui.ensureProject(ui.cfg.Workspace)
 	ui.projectList.RemoveAll()
 	for _, p := range ui.projects {

@@ -16,7 +16,7 @@ import (
 	"1loop/internal/agent"
 )
 
-func (ui *desktopUI) showQuestions(chat *conversation, request agent.QuestionRequest) {
+func (ui *desktopUI) showQuestions(chat *conversation, request agent.QuestionRequest) *sheet {
 	answers := map[string]string{}
 	resolved := false
 	var dialog *sheet
@@ -43,7 +43,11 @@ func (ui *desktopUI) showQuestions(chat *conversation, request agent.QuestionReq
 			return
 		}
 		resolved = true
-		ui.backend.Answer(request.ID, given)
+		if chat.server != nil {
+			chat.server.action("/api/answer", map[string]any{"id": request.ID, "answers": given})
+		} else {
+			ui.backend.Answer(request.ID, given)
+		}
 		forget()
 		dialog.Hide()
 	}
@@ -124,6 +128,7 @@ func (ui *desktopUI) showQuestions(chat *conversation, request agent.QuestionReq
 		chat.run.answerQuestions = finish
 		ui.remote.metaChanged(chat)
 	}
+	return dialog
 }
 
 // reopenQuestions shows the open chat's questions again after they were

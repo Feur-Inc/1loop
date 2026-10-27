@@ -135,8 +135,7 @@ func (remote *remoteDesktop) panelContent(tab remoteapi.Tab) (fyne.CanvasObject,
 			for {
 				select {
 				case <-ctx.Done():
-					reader.Close()
-					return
+					return // the deferred Close: the terminal reads EOF and stops
 				case <-ticker.C:
 				}
 				if !active.Load() {
@@ -167,7 +166,10 @@ func (remote *remoteDesktop) panelContent(tab remoteapi.Tab) (fyne.CanvasObject,
 				}
 			}
 		}()
-		return shell, func() { cancel(); reader.Close(); writer.Close() }, active.Store
+		// Closing the writer ends the terminal's reads with EOF. A closed
+		// reader made it read "closed pipe" again and again, logging each
+		// one: the window stopped answering.
+		return shell, func() { cancel(); writer.Close() }, active.Store
 	default:
 		body := container.NewStack(note("Loading…"))
 		mode := widget.NewSelect([]string{"Unstaged and new files", "Staged"}, nil)

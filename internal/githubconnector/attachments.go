@@ -171,6 +171,13 @@ func (manager *Manager) Attachments(ctx context.Context, repository string) (*At
 	return &AttachmentTarget{Repository: repo.FullName, Login: login, Source: source, id: repo.ID, token: token, manager: manager}, nil
 }
 
+// Current says whether the credential is still the one to use, after an
+// approval during which the user may have changed it.
+func (target *AttachmentTarget) Current(ctx context.Context) bool {
+	token, _, _, err := target.manager.attachmentToken(ctx)
+	return err == nil && token == target.token
+}
+
 // Upload sends one file and returns its address on GitHub. An upload cannot
 // be deleted; it shows wherever its address is referenced.
 func (target *AttachmentTarget) Upload(ctx context.Context, name, contentType string, data []byte) (string, error) {

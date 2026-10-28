@@ -207,6 +207,9 @@ func (backend *App) uploadGitHubAttachments(ctx context.Context, cfg Config, cal
 	if id, _ := ctx.Value(githubConnectionKey{}).(string); id == "" || id != githubconnector.Default.ConnectionID() {
 		return "", nil, fmt.Errorf("The GitHub connection changed while waiting for approval")
 	}
+	if !target.Current(ctx) {
+		return "", nil, fmt.Errorf("The GitHub upload credential changed while waiting for approval")
+	}
 	begin()
 	type uploaded struct {
 		Source   string `json:"source"`

@@ -68,9 +68,21 @@ func AttachedMessage(workspace, text string, files []agent.FileAttachment) (agen
 			if err == nil && format.Width*format.Height <= 20_000_000 && (mime == "image/png" || mime == "image/jpeg" || mime == "image/gif") {
 				imageBytes += len(data)
 				message.Images = append(message.Images, core.ImagePart{Mime: mime, Data: base64.StdEncoding.EncodeToString(data)})
+				validated[len(validated)-1].Image = true
 			}
 		}
 	}
-	message.Content = agent.AttachmentText(text, validated)
-	return message, nil
+	return agent.PromptMessage(text, message.Images, validated), nil
+}
+
+// FileNames are the names a transcript shows for a prompt's attached files:
+// those sent as pictures already appear as images.
+func FileNames(files []agent.FileAttachment) []string {
+	var names []string
+	for _, file := range files {
+		if !file.Image {
+			names = append(names, file.Name)
+		}
+	}
+	return names
 }

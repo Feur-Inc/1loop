@@ -494,7 +494,7 @@ func itemForPhone(chat *conversation, index int) remoteapi.Item {
 	}
 	versions := chat.branching()
 	item := chat.Items[index]
-	out := remoteapi.Item{ID: item.ID, Versions: remoteapi.ItemVersions(&versions, index), Kind: item.Kind, Text: item.Text, Images: len(item.Images)}
+	out := remoteapi.Item{ID: item.ID, Versions: remoteapi.ItemVersions(&versions, index), Kind: item.Kind, Text: item.Text, Images: len(item.Images), Files: remoteapi.FileNames(item.Files)}
 	if item.Kind != "tool" {
 		return out
 	}
@@ -522,10 +522,10 @@ func itemForPhone(chat *conversation, index int) remoteapi.Item {
 func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 	remoteMetaValue := remoteapi.Meta{Chat: chat.ID, Title: chat.Title, Running: chat.run != nil, Items: len(chat.Items), Queue: []string{}, Steer: []string{}}
 	for _, message := range chat.queue {
-		remoteMetaValue.Queue = append(remoteMetaValue.Queue, message.Content)
+		remoteMetaValue.Queue = append(remoteMetaValue.Queue, message.Typed())
 	}
 	for _, messageValue := range chat.steer {
-		remoteMetaValue.Steer = append(remoteMetaValue.Steer, messageValue.Content)
+		remoteMetaValue.Steer = append(remoteMetaValue.Steer, messageValue.Typed())
 	}
 	remoteMetaValue.Model, remoteMetaValue.Effort, remoteMetaValue.Tier = ui.choiceLabel(chat.Config), chat.Config.Effort, chat.Config.ServiceTier
 	remoteMetaValue.Window = agent.ModelContextWindow(chat.Config)

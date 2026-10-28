@@ -58,7 +58,7 @@ func (server *headlessServer) editMessage(w http.ResponseWriter, r *http.Request
 	if args.Action == "edit" {
 		text = strings.TrimSpace(args.Text)
 	}
-	if text == "" && len(item.Images) == 0 {
+	if text == "" && len(item.Images) == 0 && len(item.Files) == 0 {
 		core.Fail(w, 400, "Nothing to send")
 		return
 	}
@@ -68,7 +68,7 @@ func (server *headlessServer) editMessage(w http.ResponseWriter, r *http.Request
 	chat.queue, chat.steer = nil, nil
 	chat.Cache, chat.review = &agent.ContextCache{}, nil
 	server.replaceLocked(chat)
-	server.runWithIDLocked(chat, agent.Message{Role: "user", Content: text, Images: item.Images}, id)
+	server.runWithIDLocked(chat, agent.PromptMessage(text, item.Images, item.Files), id)
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }
 

@@ -50,7 +50,7 @@ func recallText(item ChatItem) string {
 	if item.Tool != "" {
 		fmt.Fprintf(&builder, "Tool: %s\nArguments: %s\nOutput:\n", item.Tool, item.Args)
 	}
-	builder.WriteString(item.Text)
+	builder.WriteString(AttachmentText(item.Text, item.Files))
 	if item.Failed != "" {
 		builder.WriteString("\nError: " + item.Failed)
 	}

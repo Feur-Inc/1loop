@@ -42,6 +42,7 @@ type Message struct {
 	Role             string            `json:"role"`
 	Content          string            `json:"content"`
 	Images           []core.ImagePart  `json:"images,omitempty"`
+	Files            []FileAttachment  `json:"files,omitempty"` // a prompt's attachments, listed at the end of Content
 	ToolCalls        []ToolCall        `json:"tool_calls,omitempty"`
 	ToolCallID       string            `json:"tool_call_id,omitempty"`
 	CachedTokens     *int              `json:"cachedTokens,omitempty"`

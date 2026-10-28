@@ -893,7 +893,7 @@ func itemsText(items []ChatItem) string {
 	for _, item := range items {
 		switch item.Kind {
 		case "user":
-			text := item.Text
+			text := AttachmentText(item.Text, item.Files)
 			if len(item.Images) > 0 {
 				text += fmt.Sprintf(" [+%d image(s) attached]", len(item.Images))
 			}

@@ -129,7 +129,7 @@ func (chat *VersionState) historyBefore(index int) []Message {
 		found := -1
 		for j := cursor - 1; j >= 0; j-- {
 			messageValue := chat.History[j]
-			if messageValue.Role == "user" && messageValue.Content == item.Text && slices.Equal(messageValue.Images, item.Images) {
+			if messageValue.Role == "user" && messageValue.Content == AttachmentText(item.Text, item.Files) && slices.Equal(messageValue.Images, item.Images) {
 				found = j
 				break
 			}
@@ -147,7 +147,9 @@ func (chat *VersionState) historyBefore(index int) []Message {
 	var history []Message
 	for i, item := range chat.Items[:index] {
 		switch item.Kind {
-		case "user", "assistant":
+		case "user":
+			history = append(history, PromptMessage(item.Text, item.Images, item.Files))
+		case "assistant":
 			history = append(history, Message{Role: item.Kind, Content: item.Text, Images: item.Images})
 		case "tool":
 			call := ToolCall{ID: fmt.Sprintf("earlier-%d", i), Type: "function"}

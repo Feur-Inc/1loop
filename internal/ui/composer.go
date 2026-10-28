@@ -525,7 +525,10 @@ func (ui *desktopUI) renderQueue() {
 
 // queueRow shows one waiting message; its actions appear on hover.
 func (ui *desktopUI) queueRow(steer bool, index int, messageValue agent.Message) fyne.CanvasObject {
-	text := strings.Join(strings.Fields(messageValue.Content), " ")
+	text := strings.Join(strings.Fields(messageValue.Typed()), " ")
+	if text == "" && len(messageValue.Files) > 0 {
+		text = messageValue.Files[0].Name
+	}
 	if text == "" {
 		text = "[image]"
 	} else if len(messageValue.Images) > 0 {
@@ -665,9 +668,9 @@ func (ui *desktopUI) editQueued(steer bool, index int) {
 	message := (*waiting)[index]
 	*waiting = append((*waiting)[:index], (*waiting)[index+1:]...)
 	ui.editing = &queueEdit{chat: chat, steer: steer, index: index, original: message, draft: ui.prompt.Text, images: ui.attachments, files: ui.fileAttachments}
-	ui.fileAttachments = nil
-	ui.prompt.SetText(message.Content)
-	lines := strings.Split(message.Content, "\n")
+	ui.fileAttachments = append([]fileAttachment(nil), message.Files...)
+	ui.prompt.SetText(message.Typed())
+	lines := strings.Split(message.Typed(), "\n")
 	ui.prompt.CursorRow, ui.prompt.CursorColumn = len(lines)-1, len([]rune(lines[len(lines)-1]))
 	ui.prompt.Refresh()
 	ui.attachments = append([]core.ImagePart(nil), message.Images...)
@@ -694,7 +697,7 @@ func (ui *desktopUI) finishEdit(commit bool) {
 	ui.editing = nil
 	messageValue := queueEdit.original
 	if commit {
-		messageValue.Content, messageValue.Images = attachmentText(strings.TrimSpace(ui.prompt.Text), ui.fileAttachments), ui.attachments
+		messageValue.Content, messageValue.Images, messageValue.Files = attachmentText(strings.TrimSpace(ui.prompt.Text), ui.fileAttachments), ui.attachments, ui.fileAttachments
 	}
 	if messageValue.Content != "" || len(messageValue.Images) > 0 {
 		waiting := lane(queueEdit.chat, queueEdit.steer)

@@ -74,7 +74,7 @@ func ResumeConfig(current Config, choice ModelChoice, key, effort string) Config
 func ResumeStoredConfig(cfg Config) Config {
 	return Config{
 		ConnectionID: cfg.ConnectionID, AuthProfile: cfg.AuthProfile, Provider: cfg.Provider,
-		BaseURL: cfg.BaseURL, Model: cfg.Model, Workspace: cfg.Workspace, Effort: cfg.Effort,
+		BaseURL: cfg.BaseURL, Model: cfg.Model, Workspace: cfg.Workspace, MachineID: cfg.MachineID, Effort: cfg.Effort,
 		ServiceTier: cfg.ServiceTier, ReasoningMode: cfg.ReasoningMode, Routing: cfg.Routing,
 		Parameters: cfg.Parameters, Session: cfg.Session,
 		SessionMark: cfg.SessionMark, RanWith: cfg.RanWith, WebConversation: cfg.WebConversation,

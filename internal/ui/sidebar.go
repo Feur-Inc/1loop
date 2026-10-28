@@ -150,13 +150,17 @@ func (ui *desktopUI) selectProject(path string) {
 	}
 	platform.Devf("ui", "project %s", path)
 	ui.cfg.Workspace = path
-	ui.ensureProject(path)
+	ui.ensureTargetProject(path)
 	ui.current = nil
 	ui.save()
 	ui.startNew()
 }
 
 func (ui *desktopUI) addProject() {
+	if ui.server == nil && ui.cfg.MachineID != "" {
+		ui.addMachineProject()
+		return
+	}
 	start := filepath.Dir(ui.cfg.Workspace)
 	ui.pick(pickRequest{title: "Add a project folder", start: start, folder: true}, func(paths []string) {
 		root, err := agent.ResolveWorkspace(paths[0])
@@ -173,10 +177,11 @@ func (ui *desktopUI) addProject() {
 	})
 }
 
+// chatsIn are the chats of a project of the target.
 func (ui *desktopUI) chatsIn(path string) []*conversation {
 	var chats []*conversation
 	for _, chat := range ui.chats {
-		if chat.Config.Workspace == path {
+		if chat.Config.Workspace == path && chat.Config.MachineID == ui.cfg.MachineID {
 			chats = append(chats, chat)
 		}
 	}
@@ -206,7 +211,7 @@ func (ui *desktopUI) renameProject(path string) {
 
 func (ui *desktopUI) removeProject(path string) {
 	chats := ui.chatsIn(path)
-	text := fmt.Sprintf("“%s” will no longer be listed in 1loop.", filepath.Base(path))
+	text := fmt.Sprintf("“%s” will no longer be listed in 1loop.", ui.projectName(path))
 	if len(chats) > 0 {
 		text += fmt.Sprintf(" Its %d chat(s) will be removed from 1loop.", len(chats))
 	}
@@ -214,7 +219,7 @@ func (ui *desktopUI) removeProject(path string) {
 	ui.confirm("Remove project?", text, "Remove", func() {
 		var kept []*conversation
 		for _, chat := range ui.chats {
-			if chat.Config.Workspace != path {
+			if chat.Config.Workspace != path || chat.Config.MachineID != ui.cfg.MachineID {
 				kept = append(kept, chat)
 			} else if chat.run != nil {
 				chat.run.cancel()
@@ -222,12 +227,12 @@ func (ui *desktopUI) removeProject(path string) {
 		}
 		ui.chats = kept
 		var projects []string
-		for _, p := range ui.projects {
+		for _, p := range ui.targetProjects() {
 			if p != path {
 				projects = append(projects, p)
 			}
 		}
-		ui.projects = projects
+		ui.setTargetProjects(projects)
 		if ui.cfg.Workspace == path {
 			next := ""
 			if len(projects) > 0 {
@@ -248,15 +253,19 @@ func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
 		return
 	}
 	var actions []menuAction
-	for _, p := range ui.projects {
+	for _, p := range ui.targetProjects() {
 		p := p
 		var icon fyne.Resource = blankIcon
 		if p == ui.cfg.Workspace {
 			icon = iconCheck
 		}
-		actions = append(actions, menuAction{label: filepath.Base(p), icon: icon, run: func() { ui.selectProject(p) }})
+		actions = append(actions, menuAction{label: ui.projectName(p), icon: icon, run: func() { ui.selectProject(p) }})
 	}
-	actions = append(actions, menuAction{label: "Add folder…", icon: iconPlus, run: ui.addProject})
+	add := "Add folder…"
+	if ui.cfg.MachineID != "" {
+		add = "New project…"
+	}
+	actions = append(actions, menuAction{label: add, icon: iconPlus, run: ui.addProject})
 	showMenu(ui.window, anchor, actions)
 }
 
@@ -374,19 +383,20 @@ func (ui *desktopUI) renderChats() {
 		ui.server.renderChats()
 		return
 	}
-	ui.ensureProject(ui.cfg.Workspace)
+	ui.ensureTargetProject(ui.cfg.Workspace)
 	ui.projectList.RemoveAll()
-	for _, p := range ui.projects {
+	for _, p := range ui.targetProjects() {
 		p := p
-		row := newRow(filepath.Base(p), iconFolder, styleNav, func() { ui.selectProject(p) })
+		row := newRow(ui.projectName(p), iconFolder, styleNav, func() { ui.selectProject(p) })
 		row.selected = p == ui.cfg.Workspace
 		row.accent = true
 		ui.projectList.Add(withMore(row, func(anchor fyne.CanvasObject) *sheet {
-			return showMenu(ui.window, anchor, []menuAction{
-				{label: "New chat", icon: iconPlus, run: func() { ui.selectProject(p); ui.startNew() }},
-				{label: "Rename", icon: iconRename, run: func() { ui.renameProject(p) }},
-				{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { ui.removeProject(p) }},
-			})
+			actions := []menuAction{{label: "New chat", icon: iconPlus, run: func() { ui.selectProject(p); ui.startNew() }}}
+			if ui.cfg.MachineID == "" { // a machine's folder is renamed there, in its terminal
+				actions = append(actions, menuAction{label: "Rename", icon: iconRename, run: func() { ui.renameProject(p) }})
+			}
+			actions = append(actions, menuAction{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { ui.removeProject(p) }})
+			return showMenu(ui.window, anchor, actions)
 		}))
 	}
 	ui.chatList.RemoveAll()

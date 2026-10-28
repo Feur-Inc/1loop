@@ -44,6 +44,7 @@ func (ui *desktopUI) previousConfig(chat *conversation) *agent.Config {
 	}
 	cfg := ui.runConfig(chat)
 	previous := choice.Connection.Config(chat.Config.Workspace)
+	previous.MachineID, previous.Machine = cfg.MachineID, cfg.Machine
 	previous.Model, previous.Effort, previous.ReasoningMode = choice.ID, choice.DefaultEffort, choice.ReasoningMode
 	previous.Session, previous.SessionMark = chat.Config.Session, chat.Config.SessionMark
 	previous.APIKey = ui.keys[previous.ConnectionID]

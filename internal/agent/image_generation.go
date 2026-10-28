@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 
@@ -51,23 +52,7 @@ func (backend *App) generateImage(ctx context.Context, cfg Config, arguments str
 	}
 	var inputs []core.ImagePart
 	for _, name := range args.Paths {
-		path, err := WorkspacePath(cfg.Workspace, name)
-		if err != nil {
-			return "", nil, err
-		}
-		info, err := os.Stat(path)
-		if err != nil {
-			return "", nil, err
-		}
-		if !info.Mode().IsRegular() {
-			return "", nil, fmt.Errorf("Referenced images must be regular files")
-		}
-		file, err := os.Open(path)
-		if err != nil {
-			return "", nil, err
-		}
-		data, err := io.ReadAll(io.LimitReader(file, (32<<20)+1))
-		file.Close()
+		data, err := workspaceImage(ctx, cfg.Workspace, name)
 		if err != nil {
 			return "", nil, err
 		}
@@ -134,6 +119,17 @@ func (backend *App) generateImage(ctx context.Context, cfg Config, arguments str
 	if _, format, err := image.DecodeConfig(bytes.NewReader(data)); err != nil || format != "png" {
 		return "", nil, fmt.Errorf("The image service returned an invalid PNG")
 	}
+	if machine := machineOf(ctx); machine != nil {
+		dir, err := MachinePath(ctx, machine, cfg.Workspace, "generated-images")
+		if err != nil {
+			return "", nil, err
+		}
+		name := path.Join(dir, core.Identifier()+".png")
+		if err := machineNewFile(ctx, machine, name, string(data)); err != nil {
+			return "", nil, err
+		}
+		return imageSaved(name), []core.ImagePart{{Mime: "image/png", Data: encoded}}, nil
+	}
 	dir, err := WorkspacePath(cfg.Workspace, "generated-images")
 	if err != nil {
 		return "", nil, err
@@ -154,7 +150,50 @@ func (backend *App) generateImage(ctx context.Context, cfg Config, arguments str
 	if closeErr != nil {
 		return "", nil, closeErr
 	}
-	return "Generated image saved to " + path + " (PNG). It is already displayed to the user and returned below for you to inspect. Use this file for further edits or exports; do not regenerate it just to view it.", []core.ImagePart{{Mime: "image/png", Data: encoded}}, nil
+	return imageSaved(path), []core.ImagePart{{Mime: "image/png", Data: encoded}}, nil
+}
+
+func imageSaved(path string) string {
+	return "Generated image saved to " + path + " (PNG). It is already displayed to the user and returned below for you to inspect. Use this file for further edits or exports; do not regenerate it just to view it."
+}
+
+// workspaceImage reads a referenced image of the workspace, here or on
+// the run's machine (32 MiB at most, the caller checks).
+func workspaceImage(ctx context.Context, workspace, name string) ([]byte, error) {
+	if machine := machineOf(ctx); machine != nil {
+		target, err := MachinePath(ctx, machine, workspace, name)
+		if err != nil {
+			return nil, err
+		}
+		info, err := machine.Lstat(ctx, target)
+		if err != nil {
+			return nil, err
+		}
+		if !info.Mode().IsRegular() {
+			return nil, fmt.Errorf("Referenced images must be regular files")
+		}
+		if info.Size() > 32<<20 {
+			return nil, fmt.Errorf("Referenced images must be at most 32 MiB")
+		}
+		return machine.ReadFile(ctx, target)
+	}
+	path, err := WorkspacePath(workspace, name)
+	if err != nil {
+		return nil, err
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("Referenced images must be regular files")
+	}
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	return io.ReadAll(io.LimitReader(file, (32<<20)+1))
 }
 
 // Subscription image requests can return either a JSON result or an SSE

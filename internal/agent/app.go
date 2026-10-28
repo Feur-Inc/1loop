@@ -56,6 +56,8 @@ type Config struct {
 	APIKey            string                                    `json:"-"`
 	Model             string                                    `json:"model"`
 	Workspace         string                                    `json:"workspace"`
+	MachineID         string                                    `json:"machine,omitempty"` // the SSH machine the workspace is on, "" for this computer
+	Machine           Machine                                   `json:"-"`                 // that machine, for a run (machine.go)
 	Session           string                                    `json:"session,omitempty"` // Claude Code connection: the chat's session there
 	// SessionMark is how many of the chat's items that session has seen:
 	// what other models did after it is sent when Claude Code resumes.

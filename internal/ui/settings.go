@@ -69,6 +69,7 @@ var settingsSections = []struct {
 }{
 	{"General", iconSliders},
 	{"Connections", iconPlug},
+	{"SSH machines", iconTerminal},
 	{"Instructions", iconDocument},
 	{"Extensions", iconPuzzle},
 	{"Connectors", iconPlug},
@@ -191,6 +192,8 @@ func (settings *settingsView) showNow(section string) {
 	switch section {
 	case "Connections":
 		page = settings.ui.connectionSettings()
+	case "SSH machines":
+		page = settings.ui.sshSettings()
 	case "Instructions":
 		page = settings.ui.instructionSettings()
 	case "Extensions":
@@ -466,7 +469,7 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 	return container.NewVBox(
 		settings.pageTitle("General", "", nil),
 		sectionTitle("Workspace"),
-		card(settingRow("Project folder", ui.cfg.Workspace, change)),
+		card(ui.projectFolderRow(change)),
 		sectionTitle("Remote server"),
 		card(settingRow("HTTPS server", "Work on a headless 1loop server with its own models, files, browser and terminals. Approve this device in the server console.", newRow("Connect…", nil, styleOutline, ui.connectServer))),
 		sectionTitle("Permissions"),

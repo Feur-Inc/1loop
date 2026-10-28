@@ -35,6 +35,7 @@ import (
 	"1loop/internal/extensions"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
+	"1loop/internal/sshmachine"
 )
 
 type conversation struct {
@@ -107,6 +108,10 @@ type desktopUI struct {
 	chats            []*conversation
 	current          *conversation
 	projects         []string
+	sshMachines      []sshmachine.Settings          // Settings → SSH machines
+	machineProjects  map[string][]string            // each SSH machine's projects (paths there), by machine ID
+	machines         map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
+	localWorkspace   string                         // this computer's project while an SSH machine is the target
 	statePath        string
 	saveTimer        *time.Timer
 	saveLock         sync.Mutex // one write at a time, the newest state last
@@ -122,7 +127,7 @@ type desktopUI struct {
 	extPage          *extensionsPage          // Settings → Extensions, while it was last built
 	server           *remoteDesktop           // the server the window works on, nil for this computer (remote_desktop.go)
 	localCfg         agent.Config             // this computer's settings while a server is the target
-	machine          *tapRow                  // the target: this computer or a server
+	machine          *tapRow                  // the target: this computer, an SSH machine or a server
 	serverStatus     *fitLabel                // the server's state beside it
 	remoteEnabled    bool                     // see phone_server.go
 	devices          []remoteapi.PairedDevice // phones paired with the remote
@@ -716,9 +721,9 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.queueTray = padded(0, 0, 16, 16, container.NewStack(trayBg, padded(4, 6, 4, 4, trayBody)))
 	ui.queueTray.Hide()
 
-	ui.folder = newRow(filepath.Base(ui.cfg.Workspace), theme.FolderIcon(), styleChip, nil)
+	ui.folder = newRow(ui.folderLabel(), theme.FolderIcon(), styleChip, nil)
 	ui.folder.onTap = func() { ui.projectMenu(ui.folder) }
-	ui.machine = newRow("This computer", theme.ComputerIcon(), styleChip, ui.targetMenu)
+	ui.machine = newRow(ui.targetLabel(), theme.ComputerIcon(), styleChip, ui.targetMenu)
 	ui.serverStatus = newFitLabel("", 12, colFaint)
 	ui.serverStatus.Hide()
 	contextRow := container.NewBorder(nil, nil, container.NewHBox(ui.folder, ui.machine), nil, ui.serverStatus)
@@ -727,7 +732,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 }
 
 func (ui *desktopUI) updateHeader() {
-	ui.folder.SetText(filepath.Base(ui.cfg.Workspace))
+	ui.folder.SetText(ui.folderLabel())
 	title := "New chat"
 	if ui.current != nil {
 		title = ui.current.Title
@@ -747,7 +752,7 @@ func (ui *desktopUI) draftKey() string {
 	if ui.server != nil {
 		return ui.server.draftKey("") + ui.cfg.Workspace
 	}
-	return newChatDraft + ui.cfg.Workspace
+	return newChatDraft + ui.cfg.MachineID + ui.cfg.Workspace
 }
 
 func (ui *desktopUI) startNew() {
@@ -1067,6 +1072,15 @@ func (ui *desktopUI) notReady() string {
 	if ui.cfg.Model == "" {
 		return "Choose a connection and a model."
 	}
+	if ui.cfg.MachineID != "" { // the project is on the machine: it is checked there
+		if ui.machineFor(ui.cfg.MachineID) == nil {
+			return "This SSH machine is no longer in Settings → SSH machines."
+		}
+		if ui.cfg.Workspace == "" {
+			return "Create a project on " + ui.targetLabel() + " first (Projects, +)."
+		}
+		return ""
+	}
 	root, err := agent.ResolveWorkspace(ui.cfg.Workspace)
 	if err != nil {
 		return err.Error()
@@ -1269,6 +1283,11 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	cfg.Browser = ui.browserTools(chat)
 	cfg.Terminal = ui.terminalTools(chat)
 	cfg.Computer = ui.computerTools(chat)
+	if cfg.MachineID != "" {
+		if machine := ui.machineFor(cfg.MachineID); machine != nil { // nil: the run says the machine is gone
+			cfg.Machine = machine
+		}
+	}
 	if chat.Cache == nil {
 		chat.Cache = &agent.ContextCache{}
 	}
@@ -1564,9 +1583,12 @@ type savedState struct {
 	ApprovalMode     string                   `json:"approvalMode"`
 	PanelWidth       float32                  `json:"panelWidth,omitempty"`
 	// Saved as its opposite so that a state file without it means dynamic.
-	ClassicCompaction bool              `json:"classicCompaction,omitempty"`
-	MemoryOff         bool              `json:"memoryOff,omitempty"`
-	AutoResume        *agent.AutoResume `json:"autoResume,omitempty"`
+	ClassicCompaction bool                  `json:"classicCompaction,omitempty"`
+	MemoryOff         bool                  `json:"memoryOff,omitempty"`
+	AutoResume        *agent.AutoResume     `json:"autoResume,omitempty"`
+	SSHMachines       []sshmachine.Settings `json:"sshMachines,omitempty"`
+	MachineProjects   map[string][]string   `json:"machineProjects,omitempty"`
+	LocalWorkspace    string                `json:"localWorkspace,omitempty"` // while an SSH machine is the target
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1612,6 +1634,9 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.classicCompaction,
 		ui.memoryOff,
 		ui.autoResume,
+		ui.sshMachines,
+		ui.machineProjects,
+		ui.localWorkspace,
 	})
 	fields := map[string]json.RawMessage{}
 	if err == nil {
@@ -1705,6 +1730,10 @@ func (ui *desktopUI) load() {
 	state.Config.APIKey = ""
 	ui.cfg = state.Config
 	ui.projects = state.Projects
+	ui.sshMachines, ui.machineProjects, ui.localWorkspace = state.SSHMachines, state.MachineProjects, state.LocalWorkspace
+	if _, ok := ui.machineSettings(ui.cfg.MachineID); ui.cfg.MachineID != "" && !ok { // the machine was removed
+		ui.cfg.MachineID, ui.cfg.Workspace = "", ui.lastLocalWorkspace()
+	}
 	ui.connectionsList = state.Connections
 	ui.userInstructions = state.UserInstructions
 	ui.approvalMode = state.ApprovalMode
@@ -1722,7 +1751,11 @@ func (ui *desktopUI) load() {
 		chat.Items = upgradeItems(chat.Items)
 		chat.todoCount = len(chat.Todo.Snapshot())
 		ui.chats = append(ui.chats, chat)
-		ui.ensureProject(chat.Config.Workspace)
+		if chat.Config.MachineID != "" {
+			ui.ensureMachineProject(chat.Config.MachineID, chat.Config.Workspace)
+		} else {
+			ui.ensureProject(chat.Config.Workspace)
+		}
 	}
 }
 

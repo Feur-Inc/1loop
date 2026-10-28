@@ -197,6 +197,9 @@ type patchChange struct {
 
 // applyPatch checks the whole patch, asks once, then writes.
 func (backend *App) applyPatch(ctx context.Context, root, text string, begin func(), emit emitter) (string, string, error) {
+	if machine := machineOf(ctx); machine != nil {
+		return backend.applyMachinePatch(ctx, machine, root, text, begin, emit)
+	}
 	files, err := parsePatch(text)
 	if err != nil {
 		return "", "", err

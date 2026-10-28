@@ -187,10 +187,10 @@ func (ui *desktopUI) changeProject(action string, args remoteapi.ProjectChange) 
 				switch tab.kind {
 				case "files":
 					tab.dispose()
-					panel.tabs[index] = ui.panel.filesTab(root)
+					panel.tabs[index] = ui.panel.filesTab(root, "")
 				case "changes":
 					tab.dispose()
-					panel.tabs[index] = ui.panel.changesTab(root)
+					panel.tabs[index] = ui.panel.changesTab(root, "")
 				}
 			}
 		}

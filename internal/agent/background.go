@@ -10,7 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os/exec"
+	"io"
 	"strings"
 	"sync"
 	"time"
@@ -30,10 +30,10 @@ type BackgroundTaskInfo struct {
 }
 
 type backgroundTask struct {
-	info    BackgroundTaskInfo
-	output  lockedOutput
-	cancel  context.CancelFunc
-	command *exec.Cmd
+	info   BackgroundTaskInfo
+	output lockedOutput
+	cancel context.CancelFunc
+	kill   func() // ends the task's process tree at once, when cancel alone would be late
 }
 
 // lockedOutput is an outputBuffer the command writes while the model reads.
@@ -91,9 +91,10 @@ func (tasks *BackgroundTasks) changed() {
 // after another in a loop must not fill the machine with processes.
 const maxRunningTasks = 16
 
-// start runs command (already approved and prepared: workspace, sandbox)
-// without waiting for it.
-func (tasks *BackgroundTasks) start(command *exec.Cmd, text string, cancel context.CancelFunc) (string, error) {
+// start runs a command (already approved and prepared: workspace, sandbox)
+// without waiting for it: begin starts it writing to the task's output and
+// returns how to wait for its exit code.
+func (tasks *BackgroundTasks) start(begin func(io.Writer) (func() (int, error), error), kill func(), text string, cancel context.CancelFunc) (string, error) {
 	tasks.mu.Lock()
 	running := 0
 	for _, task := range tasks.tasks {
@@ -107,10 +108,10 @@ func (tasks *BackgroundTasks) start(command *exec.Cmd, text string, cancel conte
 		return "", fmt.Errorf("%d background tasks are already running; stop one (background_task) or wait for one to end", running)
 	}
 	tasks.next++
-	task := &backgroundTask{info: BackgroundTaskInfo{ID: fmt.Sprint(tasks.next), Command: text, Running: true, Started: time.Now()}, cancel: cancel, command: command}
+	task := &backgroundTask{info: BackgroundTaskInfo{ID: fmt.Sprint(tasks.next), Command: text, Running: true, Started: time.Now()}, cancel: cancel, kill: kill}
 	tasks.mu.Unlock()
-	command.Stdout, command.Stderr = &task.output, &task.output
-	if err := command.Start(); err != nil {
+	wait, err := begin(&task.output)
+	if err != nil {
 		cancel()
 		return "", err
 	}
@@ -125,11 +126,11 @@ func (tasks *BackgroundTasks) start(command *exec.Cmd, text string, cancel conte
 	}
 	tasks.changed()
 	go func() {
-		err := command.Wait()
+		code, err := wait()
 		cancel()
 		tasks.mu.Lock()
 		task.info.Running, task.info.Ended = false, time.Now()
-		task.info.ExitCode = command.ProcessState.ExitCode()
+		task.info.ExitCode = code
 		if err != nil && task.info.ExitCode == 0 {
 			task.info.ExitCode = -1
 		}
@@ -181,7 +182,9 @@ func (tasks *BackgroundTasks) Stop(id string) bool {
 	if running {
 		// Killed now, not when the context's goroutine gets to it: a signal
 		// handler exits right after StopEveryTask.
-		platform.KillProcessTree(task.command)
+		if task.kill != nil {
+			task.kill()
+		}
 		task.cancel()
 	}
 	return running
@@ -315,9 +318,40 @@ func startBackground(ctx context.Context, tasks *BackgroundTasks, root, command 
 	platform.PrepareProcess(cmd)
 	cmd.Cancel = func() error { return platform.KillProcessTree(cmd) }
 	cmd.WaitDelay = 2 * time.Second
-	id, err := tasks.start(cmd, command, cancel)
+	begin := func(output io.Writer) (func() (int, error), error) {
+		cmd.Stdout, cmd.Stderr = output, output
+		if err := cmd.Start(); err != nil {
+			return nil, err
+		}
+		return func() (int, error) {
+			err := cmd.Wait()
+			return cmd.ProcessState.ExitCode(), err
+		}, nil
+	}
+	id, err := tasks.start(begin, func() { platform.KillProcessTree(cmd) }, command, cancel)
 	if err != nil {
 		return "", err
 	}
-	return "Started background task " + id + ": $ " + command + "\nIt has no time limit. You will be told when it ends, with the end of its output; read it meanwhile with background_task (action output) and stop it with action stop.", nil
+	return backgroundStarted(id, command), nil
+}
+
+func backgroundStarted(id, command string) string {
+	return "Started background task " + id + ": $ " + command + "\nIt has no time limit. You will be told when it ends, with the end of its output; read it meanwhile with background_task (action output) and stop it with action stop."
+}
+
+// startMachineBackground starts an approved command on the machine as a
+// task: stopping it ends the command and what it started there.
+func startMachineBackground(tasks *BackgroundTasks, machine Machine, root, command string) (string, error) {
+	if tasks == nil {
+		return "", fmt.Errorf("Background tasks are not attached to this conversation")
+	}
+	taskCtx, cancel := context.WithCancel(context.Background())
+	begin := func(output io.Writer) (func() (int, error), error) {
+		return machine.Start(taskCtx, root, command, output)
+	}
+	id, err := tasks.start(begin, nil, command, cancel)
+	if err != nil {
+		return "", err
+	}
+	return backgroundStarted(id, command), nil
 }

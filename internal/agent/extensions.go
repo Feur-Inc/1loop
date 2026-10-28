@@ -163,7 +163,7 @@ func mcpToolGroup(server extensions.MCPServer, tools []extensions.MCPTool) toolG
 }
 
 func mcpDir(cfg Config) string {
-	if cfg.Workspace != "" {
+	if cfg.Workspace != "" && cfg.MachineID == "" { // a machine's workspace is not on this computer
 		return cfg.Workspace
 	}
 	home, _ := os.UserHomeDir()

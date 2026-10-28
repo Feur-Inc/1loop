@@ -114,9 +114,9 @@ func (server *remoteServer) panelChat(id string) *conversation {
 		server.panelHomes = map[string]*conversation{}
 	}
 	config := ui.cfg
-	config.Workspace, config.Session, config.RanWith = workspace, "", nil
+	config.Workspace, config.MachineID, config.Session, config.RanWith = workspace, "", "", nil // the phone works on this computer
 	chat := &conversation{ID: id, Config: config, panel: &panelState{active: -1}}
-	chat.panel.tabs = []panelTab{ui.panel.changesTab(workspace)}
+	chat.panel.tabs = []panelTab{ui.panel.changesTab(workspace, "")}
 	server.panelHomes[id] = chat
 	return chat
 }

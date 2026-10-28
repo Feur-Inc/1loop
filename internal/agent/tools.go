@@ -401,6 +401,21 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 	return outcome
 }
 
+// toolArgs are the arguments of the shell and file tools.
+type toolArgs struct {
+	Path      string `json:"path"`
+	Command   string `json:"command"`
+	Old       string `json:"old_text"`
+	New       string `json:"new_text"`
+	MaxTokens *int   `json:"max_output_tokens"`
+	Offset    *int   `json:"offset"`
+	Limit     *int   `json:"limit"`
+	Escalate  *bool  `json:"escalate"`
+	Reason    string `json:"justification"`
+	Timeout   *int   `json:"timeout_ms"`
+	Detach    *bool  `json:"run_in_background"`
+}
+
 func (backend *App) runTool(ctx context.Context, root string, call ToolCall, begin func(), emit emitter) (output, diff string, err error) {
 	if call.Function.Name == "recall" {
 		begin()
@@ -468,23 +483,14 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		data, _ := json.Marshal(items)
 		return string(data), "", nil
 	}
-	var args struct {
-		Path      string `json:"path"`
-		Command   string `json:"command"`
-		Old       string `json:"old_text"`
-		New       string `json:"new_text"`
-		MaxTokens *int   `json:"max_output_tokens"`
-		Offset    *int   `json:"offset"`
-		Limit     *int   `json:"limit"`
-		Escalate  *bool  `json:"escalate"`
-		Reason    string `json:"justification"`
-		Timeout   *int   `json:"timeout_ms"`
-		Detach    *bool  `json:"run_in_background"`
-	}
+	var args toolArgs
 	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 		return "", "", err
 	}
 	name := call.Function.Name
+	if machine := machineOf(ctx); machine != nil {
+		return backend.machineTool(ctx, machine, root, call, args, begin, emit)
+	}
 	if name == "shell" {
 		if strings.TrimSpace(args.Command) == "" {
 			return "", "", fmt.Errorf("Empty command")

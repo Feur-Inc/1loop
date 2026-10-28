@@ -468,6 +468,18 @@ func (ui *desktopUI) chatByID(id string) *conversation {
 	return nil
 }
 
+// phoneChats are the chats the phone sees: this computer's. Those of SSH
+// machines stay in the window.
+func phoneChats(all []*conversation) []remoteapi.Chat {
+	chats := []remoteapi.Chat{}
+	for _, chat := range all {
+		if chat.Config.MachineID == "" {
+			chats = append(chats, chatSummary(chat))
+		}
+	}
+	return chats
+}
+
 func chatSummary(chat *conversation) remoteapi.Chat {
 	return remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Running: chat.run != nil, Items: len(chat.Items)}
 }
@@ -534,16 +546,16 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 func (server *remoteServer) state(writer http.ResponseWriter, _ *http.Request) {
 	var out map[string]any
 	server.onUI(func() {
-		chats := []remoteapi.Chat{}
-		for _, chat := range server.ui.chats {
-			chats = append(chats, chatSummary(chat))
-		}
-		current := ""
-		if server.ui.current != nil {
+		chats := phoneChats(server.ui.chats)
+		current, workspace := "", server.ui.cfg.Workspace
+		if server.ui.current != nil && server.ui.current.Config.MachineID == "" {
 			current = server.ui.current.ID
 		}
+		if server.ui.cfg.MachineID != "" {
+			workspace = server.ui.lastLocalWorkspace()
+		}
 		projects := append([]string{}, server.ui.projects...)
-		out = map[string]any{"name": server.name, "projects": projects, "workspace": server.ui.cfg.Workspace,
+		out = map[string]any{"name": server.name, "projects": projects, "workspace": workspace,
 			"projectManagement": true, "projectActions": true, "chats": chats, "current": current, "settings": server.ui.settingsForPhone()}
 	})
 	core.WriteJSON(writer, http.StatusOK, out)
@@ -761,10 +773,7 @@ func (server *remoteServer) flush() {
 		return
 	}
 	if server.chatsDirt {
-		chats := []remoteapi.Chat{}
-		for _, chat := range server.ui.chats {
-			chats = append(chats, chatSummary(chat))
-		}
+		chats := phoneChats(server.ui.chats)
 		server.broadcast("chats", map[string]any{"chats": chats})
 	}
 	for chat, indexes := range server.dirty {
@@ -826,6 +835,9 @@ func (server *remoteServer) send(writer http.ResponseWriter, req *http.Request) 
 // remoteSend sends a phone's message as if it had been typed in the window:
 // the chat opens on the computer and the message is sent, queued or steered.
 func (ui *desktopUI) remoteSend(chatID, mode, workspace string, messageValue agent.Message) (string, string) {
+	if ui.server == nil && ui.cfg.MachineID != "" { // the phone works on this computer's chats
+		ui.leaveMachine()
+	}
 	var chat *conversation
 	if chatID != "" {
 		if chat = ui.chatByID(chatID); chat == nil {
@@ -1129,6 +1141,9 @@ func (server *remoteServer) setModel(writer http.ResponseWriter, req *http.Reque
 // remoteModel picks a chat's model and effort from the phone, through the
 // same picker as the window (the chat opens there to show it).
 func (ui *desktopUI) remoteModel(chatID, label, effort string, tier *string) string {
+	if ui.server == nil && ui.cfg.MachineID != "" { // the phone works on this computer's chats
+		ui.leaveMachine()
+	}
 	if chatID != "" {
 		chat := ui.chatByID(chatID)
 		if chat == nil {

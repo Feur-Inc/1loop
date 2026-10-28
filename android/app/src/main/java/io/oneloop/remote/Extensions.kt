@@ -688,7 +688,7 @@ private fun compactCount(n: Int): String = when {
 private fun countText(n: Int, word: String) = if (n == 1) "1 $word" else "${compactCount(n)} ${word}s"
 
 /** How long ago a time (RFC 3339) was, as people say it. */
-private fun ago(text: String): String {
+internal fun ago(text: String): String {
     val at = runCatching { java.time.OffsetDateTime.parse(text).toInstant().toEpochMilli() }.getOrNull() ?: return "a while ago"
     val hours = (System.currentTimeMillis() - at) / 3_600_000
     return when {

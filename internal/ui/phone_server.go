@@ -66,6 +66,7 @@ import (
 	"1loop/internal/core"
 	"1loop/internal/extensions"
 	"1loop/internal/githubconnector"
+	"1loop/internal/gitrepo"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 )
@@ -149,6 +150,9 @@ func (ui *desktopUI) startRemote() {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
 	for path, handler := range githubconnector.Handlers() {
+		mux.HandleFunc(path, server.authorized(handler))
+	}
+	for path, handler := range gitrepo.Handlers(phoneGitTarget{server}, githubconnector.Default.Authorizations) {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
 	mux.HandleFunc("GET /api/hooks", server.authorized(remoteapi.GetHooks))
@@ -557,7 +561,11 @@ func (server *remoteServer) state(writer http.ResponseWriter, _ *http.Request) {
 			workspace = server.ui.lastLocalWorkspace()
 		}
 		projects := append([]string{}, server.ui.projects...)
-		out = map[string]any{"name": server.name, "projects": projects, "workspace": workspace,
+		worktrees := map[string]string{}
+		for folder, project := range server.ui.worktrees {
+			worktrees[folder] = project
+		}
+		out = map[string]any{"name": server.name, "projects": projects, "worktrees": worktrees, "workspace": workspace,
 			"projectManagement": true, "projectActions": true, "chats": chats, "current": current, "settings": server.ui.settingsForPhone()}
 	})
 	core.WriteJSON(writer, http.StatusOK, out)

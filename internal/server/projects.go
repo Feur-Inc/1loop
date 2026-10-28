@@ -21,7 +21,7 @@ func (server *headlessServer) workspaceLocked(requested string) (string, error) 
 	if requested == "" {
 		requested = server.root
 	}
-	if !slices.Contains(server.projects, requested) {
+	if !slices.Contains(server.projects, requested) && !server.worktreeLocked(requested) {
 		return "", fmt.Errorf("Choose a registered project")
 	}
 	return remoteapi.ProjectFolder(server.projectBase(), requested, false)

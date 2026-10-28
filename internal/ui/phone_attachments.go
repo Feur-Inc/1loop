@@ -26,7 +26,7 @@ func (server *remoteServer) inProject(w http.ResponseWriter, r *http.Request, ha
 		if workspace == "" {
 			workspace = server.ui.cfg.Workspace
 		}
-		allowed = workspace == server.ui.cfg.Workspace || slices.Contains(server.ui.projects, workspace)
+		allowed = workspace == server.ui.cfg.Workspace || slices.Contains(server.ui.projects, workspace) || server.ui.worktrees[workspace] != ""
 	})
 	if !allowed {
 		core.Fail(w, 403, "Choose an existing project")

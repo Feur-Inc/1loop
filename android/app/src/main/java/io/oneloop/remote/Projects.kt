@@ -71,7 +71,7 @@ fun ProjectsSheet(app: RemoteApp, onDone: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProjectActionsSheet(app: RemoteApp, path: String, onDone: () -> Unit) {
+fun ProjectActionsSheet(app: RemoteApp, path: String, onNewWorktree: () -> Unit = {}, onDone: () -> Unit) {
     var action by remember(path) { mutableStateOf("") }
     var name by remember(path) { mutableStateOf(projectName(path)) }
     var busy by remember { mutableStateOf(false) }
@@ -125,8 +125,14 @@ fun ProjectActionsSheet(app: RemoteApp, path: String, onDone: () -> Unit) {
                     }
                 }
                 else -> {
-                    Pill("Rename") { action = "rename" }
-                    Pill("Delete project") { action = "delete" }
+                    if (app.repositories[path]?.let { it.loaded && it.error == null } == true) {
+                        Pill("New worktree", icon = Icons.branch) { onDone(); onNewWorktree() }
+                        Pill("Repository", icon = Icons.branch) { onDone(); app.repositoryOpen = path }
+                    }
+                    if (app.projectActions) {
+                        Pill("Rename") { action = "rename" }
+                        Pill("Delete project") { action = "delete" }
+                    }
                 }
             }
             problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }

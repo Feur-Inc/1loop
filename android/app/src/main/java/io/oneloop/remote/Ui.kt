@@ -485,6 +485,10 @@ fun ChatScreen(app: RemoteApp) {
     if (app.server?.localPhone == true) PairingRequestDialog(app) // a device asking to use this phone
     app.handoffAsk?.let { HandoffDialog(it) } // the chat continues with another model
     SharedFilesDialog(app) // files shared to 1loop from another app
+    app.repositoryOpen?.let { project ->
+        RepositoryScreen(app, project) { app.repositoryOpen = null }
+        return
+    }
     if (app.settingsOpen) {
         if (app.extensionsOpen) {
             ExtensionsScreen(app) { app.extensionsOpen = false }
@@ -537,6 +541,8 @@ fun ChatScreen(app: RemoteApp) {
 private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) {
     var deleting by remember(app.server) { mutableStateOf<ChatSummary?>(null) }
     var projectActions by remember(app.server) { mutableStateOf<String?>(null) }
+    var worktreeActions by remember(app.server) { mutableStateOf<Pair<String, Worktree>?>(null) }
+    var newWorktree by remember(app.server) { mutableStateOf<String?>(null) }
     Column(modifier.background(Palette.sidebar).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
         Image(painterResource(R.drawable.logo), "1loop", modifier = Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp))
         NavRow("New chat", Icons.plus, selected = app.current == null) { app.open(null); onPicked() }
@@ -545,21 +551,29 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                 Text("Projects", style = Type.small.copy(color = Palette.faint), modifier = Modifier.weight(1f).padding(start = 10.dp))
                 if (app.projectManagement) RoundButton(Icons.plus, Color.Transparent, Palette.muted, description = "Add project") { app.projectsOpen = true }
             }
-            for (workspace in (app.projects + app.chats.map { it.workspace }).distinct()) {
+            @Composable
+            fun chatRows(folder: String) {
+                val chats = app.chats.filter { it.workspace == folder }
+                for (chat in chats) NavRow(
+                    chat.title, null, selected = chat.id == app.current, running = chat.running,
+                    onLongClick = { deleting = chat },
+                ) { app.open(chat.id); onPicked() }
+                if (chats.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
+            }
+            // A worktree shows under its project, not as a project of its own.
+            for (workspace in (app.projects + app.chats.map { app.projectOf(it.workspace) ?: it.workspace }).distinct().filter { it !in app.worktrees }) {
                 val selected = workspace == app.selectedProject
+                val git = app.repositories[workspace]?.takeIf { it.loaded && it.error == null }
                 NavRow(
                     projectName(workspace), Icons.folder, selected = selected,
-                    onLongClick = if (app.projectActions) ({ projectActions = workspace }) else null,
+                    onLongClick = if (app.projectActions || git != null) ({ projectActions = workspace }) else null,
                     longClickLabel = "Project actions",
+                    trailing = git?.current?.takeIf { it.isNotEmpty() },
                 ) { app.selectProject(workspace) }
-                if (selected) {
-                    val chats = app.chats.filter { it.workspace == workspace }
+                if (app.projectOf(app.selectedProject) == workspace) {
                     Column(Modifier.padding(start = 16.dp)) {
-                        for (chat in chats) NavRow(
-                            chat.title, null, selected = chat.id == app.current, running = chat.running,
-                            onLongClick = { deleting = chat },
-                        ) { app.open(chat.id); onPicked() }
-                        if (chats.isEmpty()) Text("No chats in this project", style = Type.caption, modifier = Modifier.padding(10.dp))
+                        if (selected) chatRows(workspace)
+                        WorktreeEntries(app, workspace, { chatRows(it) }, { worktreeActions = workspace to it }) { newWorktree = workspace }
                     }
                 }
             }
@@ -584,7 +598,9 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
         NavRow("Switch execution target", Icons.refresh, selected = false) { app.switchTarget() }
         Spacer(Modifier.height(8.dp))
     }
-    projectActions?.let { path -> ProjectActionsSheet(app, path) { projectActions = null } }
+    projectActions?.let { path -> ProjectActionsSheet(app, path, onNewWorktree = { newWorktree = path }) { projectActions = null } }
+    worktreeActions?.let { (project, worktree) -> WorktreeSheet(app, project, worktree) { worktreeActions = null } }
+    newWorktree?.let { project -> NewWorktreeSheet(app, project) { newWorktree = null } }
     deleting?.let { chat ->
         ModalBottomSheet(
             onDismissRequest = { deleting = null },
@@ -610,7 +626,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
 }
 
 @Composable
-private fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", onClick: () -> Unit) {
+internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", trailing: String? = null, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (selected) Palette.selected else Color.Transparent)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = longClickLabel).padding(horizontal = 10.dp, vertical = 10.dp),
@@ -621,7 +637,8 @@ private fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running:
             Spacer(Modifier.width(10.dp))
         }
         Text(text, style = Type.body.copy(fontSize = 14.sp, color = if (selected) Palette.text else Color(0xFFB4B4B4)), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        if (running) Box(Modifier.size(7.dp).clip(CircleShape).background(Palette.amber))
+        trailing?.let { Text(it, style = Type.caption, maxLines = 1, modifier = Modifier.padding(start = 8.dp)) }
+        if (running) Box(Modifier.padding(start = 8.dp).size(7.dp).clip(CircleShape).background(Palette.amber))
     }
 }
 
@@ -1031,7 +1048,7 @@ private fun ProjectChip(app: RemoteApp, chosen: String?, onChoose: (String) -> U
         ) {
             Icon(Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
-            Text(projectName(path), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
+            Text(app.folderName(path), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
         }
         DropdownMenu(open, { open = false }, containerColor = Palette.popover) {
             for (p in app.projects) DropdownMenuItem(

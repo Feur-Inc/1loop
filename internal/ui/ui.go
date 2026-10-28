@@ -719,7 +719,11 @@ func (renderer *tapRowRenderer) Refresh() {
 	renderer.label.TextSize = row.size
 	renderer.trailing.Text = row.trailing
 	renderer.trailing.TextSize = row.size - 1
-	renderer.trailing.Color = text(colFaint)
+	trailingInk := text(colFaint)
+	if row.endInset > 0 { // the row's ⋯ takes its place while hovered
+		trailingInk.A = uint8(float32(trailingInk.A) * (1 - row.hover))
+	}
+	renderer.trailing.Color = trailingInk
 	renderer.detail.Text = row.detail
 	renderer.detail.Color = text(colMuted)
 	if row.style == styleModel {

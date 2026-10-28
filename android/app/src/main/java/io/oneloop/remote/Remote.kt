@@ -247,6 +247,17 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var connected by mutableStateOf(false)
     val chats = mutableStateListOf<ChatSummary>()
     var projects by mutableStateOf(listOf<String>())
+    // The target's worktrees, folder → project: their chats belong to the project (Worktrees.kt).
+    var worktrees by mutableStateOf(mapOf<String, String>())
+    val repositories = mutableStateMapOf<String, Repository>() // by project
+    var repositoryOpen by mutableStateOf<String?>(null) // the project the Repository screen shows
+    var worktreeSort by mutableStateOf(prefs.getString("worktreeSort", null) ?: "recent")
+        private set
+
+    fun chooseWorktreeSort(id: String) {
+        worktreeSort = id
+        prefs.edit { putString("worktreeSort", id) }
+    }
     var workspace by mutableStateOf("")
     var selectedProject by mutableStateOf<String?>(null)
     var projectManagement by mutableStateOf(false)
@@ -715,10 +726,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             chats.clear()
             chats.addAll(parseChats(state.optJSONArray("chats")))
             projects = strings(state.optJSONArray("projects"))
+            worktrees = stringMap(state.optJSONObject("worktrees"))
             workspace = state.optString("workspace")
             projectManagement = state.optBoolean("projectManagement")
             projectActions = state.optBoolean("projectActions")
-            if (selectedProject !in projects) selectedProject = workspace
+            if (selectedProject !in projects && selectedProject !in worktrees) selectedProject = workspace
             state.optJSONObject("settings")?.let { applySettings(it) }
             if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull { it.workspace == selectedProject }?.id
             chats.firstOrNull { it.id == current }?.workspace?.let { selectedProject = it }
@@ -1024,7 +1036,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     fun selectProject(path: String) {
-        if (path !in projects) return
+        if (path !in projects && path !in worktrees) return
         selectedProject = path
         server?.let { target -> prefs.edit { putString("project:${target.key}", path) } }
         open(null)
@@ -1063,13 +1075,14 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     private fun applyProjects(data: JSONObject) {
         projects = strings(data.optJSONArray("projects"))
+        data.optJSONObject("worktrees")?.let { worktrees = stringMap(it) }
         val previous = data.optString("previous")
         val destination = data.optString("workspace")
         val selected = selectedProject.orEmpty()
         if (previous.isNotEmpty() && (selected == previous || selected.startsWith("$previous/") || selected.startsWith("$previous\\"))) {
             selectedProject = if (destination.isEmpty()) null else destination + selected.removePrefix(previous)
         }
-        if (selectedProject !in projects) selectedProject = projects.firstOrNull()
+        if (selectedProject !in projects && selectedProject !in worktrees) selectedProject = projects.firstOrNull()
         server?.let { target -> prefs.edit { putString("project:${target.key}", selectedProject) } }
     }
 

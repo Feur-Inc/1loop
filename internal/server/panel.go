@@ -58,7 +58,7 @@ func (server *headlessServer) findTab(req *http.Request) (*serverChat, *serverTa
 	}
 	server.ensureTabsLocked(chat)
 	for _, tab := range chat.tabs {
-		if tab.key() == req.PathValue("key") {
+		if tab.key() == req.PathValue("key") && (tab.terminal == nil || !tab.terminal.root || server.phoneApp(req)) {
 			return chat, tab
 		}
 	}
@@ -90,6 +90,11 @@ func (server *headlessServer) panelTabs(w http.ResponseWriter, r *http.Request) 
 			if item.Title == "" {
 				item.Title = "Browser"
 			}
+		} else if tab.terminal.root {
+			if !server.phoneApp(r) { // the phone's own: devices it is shared with never see it
+				continue
+			}
+			item.Kind, item.Title = "terminal", "Debian"
 		} else {
 			item.Kind, item.Title = "terminal", "Terminal"
 		}

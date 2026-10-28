@@ -627,7 +627,10 @@ func (server *headlessServer) setApprovalMode(w http.ResponseWriter, r *http.Req
 }
 
 func (server *headlessServer) editPanel(w http.ResponseWriter, r *http.Request) {
-	var args struct{ Action, Kind, Key, URL string }
+	var args struct {
+		Action, Kind, Key, URL string
+		Root                   bool // the phone's Debian terminal (Settings → Linux)
+	}
 	if core.ReadJSON(r, &args) != nil {
 		core.Fail(w, 400, "Invalid request")
 		return
@@ -649,6 +652,13 @@ func (server *headlessServer) editPanel(w http.ResponseWriter, r *http.Request) 
 		}
 		raw, _ := json.Marshal(map[string]string{"action": "open", "tab_id": "", "url": args.URL})
 		result, err = server.browserTools(chat)(r.Context(), "browser_tabs", raw)
+	case args.Action == "open" && args.Kind == "terminal" && args.Root:
+		var key string
+		key, err = server.openDebianTerminal(r, chat)
+		if err == nil {
+			core.WriteJSON(w, 200, map[string]string{"key": key})
+			return
+		}
 	case args.Action == "open" && args.Kind == "terminal":
 		raw, _ := json.Marshal(map[string]string{"action": "open", "session_id": "", "cwd": ""})
 		result, err = server.terminalTools(chat)(r.Context(), "terminal_tabs", raw)

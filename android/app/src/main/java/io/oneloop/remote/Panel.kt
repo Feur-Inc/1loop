@@ -735,7 +735,7 @@ private fun LoadingLine(modifier: Modifier) {
 }
 
 @Composable
-private fun Input(
+internal fun Input(
     value: String, onChange: (String) -> Unit, placeholder: String, keyboard: KeyboardType, action: ImeAction,
     modifier: Modifier = Modifier, mono: Boolean = false, enabled: Boolean = true,
     interaction: MutableInteractionSource = remember { MutableInteractionSource() }, selectAll: Boolean = false, onDone: () -> Unit,
@@ -775,7 +775,7 @@ private fun Input(
 // Terminal: its output, followed live, and a line to type commands.
 
 @Composable
-private fun TerminalView(app: RemoteApp, chat: String, tab: PanelTab) {
+internal fun TerminalView(app: RemoteApp, chat: String, tab: PanelTab) {
     var output by remember { mutableStateOf<String?>(null) }
     var exited by remember { mutableStateOf(false) }
     var line by remember { mutableStateOf("") }

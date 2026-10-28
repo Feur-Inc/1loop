@@ -61,6 +61,9 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                 BackgroundExecutionSection(adb.installed)
                 LaunchedEffect(Unit) { runCatching { app.refreshSharing() } }
                 SharingSection(app)
+                Text("Linux", style = Type.headline)
+                Text("The Debian the local agent works in: storage, packages, a terminal and a reset.", style = Type.small)
+                Pill("Manage Linux", icon = Icons.terminal) { app.linuxOpen = true }
             }
             Text("Extensions", style = Type.headline)
             Text("Skills and plugins from GitHub, and the MCP servers the agent uses.", style = Type.small)

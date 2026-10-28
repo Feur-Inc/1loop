@@ -254,6 +254,22 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var projectsOpen by mutableStateOf(false)
     var settingsOpen by mutableStateOf(false)
     var extensionsOpen by mutableStateOf(false) // Settings → Extensions (Extensions.kt)
+    var linuxOpen by mutableStateOf(false) // Settings → Linux (LinuxScreen.kt)
+    // Its work outlives the screen: a reset stops the agent, which leaves the chat screen.
+    var linuxBusy by mutableStateOf<String?>(null)
+    var linuxNotice by mutableStateOf<Pair<String, Boolean>?>(null) // text, failed
+    var linuxRevision by mutableIntStateOf(0) // Debian changed: what it holds is read again
+
+    fun linuxWork(label: String, action: suspend () -> String) {
+        linuxBusy = label
+        linuxNotice = null
+        scope.launch {
+            try { linuxNotice = action() to false }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { linuxNotice = (e.message ?: "$label failed.") to true }
+            finally { linuxBusy = null; linuxRevision++ }
+        }
+    }
     var extensionsRevision by mutableIntStateOf(0) // something was installed, removed or switched
     var updateAsked by mutableStateOf(false) // the update dialog, over any screen
     var updateOffered: Int? = null // one automatic dialog per release while this app instance runs
@@ -584,6 +600,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         connectionsOpen = false
         settingsOpen = false
         extensionsOpen = false
+        linuxOpen = false
         sharing = null
         projectsOpen = false
         events?.cancel()

@@ -25,12 +25,17 @@ import (
 // remote (another port when it is taken).
 const sharingPort = 47101
 
+// phoneApp says whether a request carries the phone app's own token.
+func (server *headlessServer) phoneApp(r *http.Request) bool {
+	token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
+	return server.localHash != "" && token != r.Header.Get("Authorization") &&
+		subtle.ConstantTimeCompare([]byte(remoteapi.TokenHash(token)), []byte(server.localHash)) == 1
+}
+
 // localOnly lets a request through only with the phone app's own token.
 func (server *headlessServer) localOnly(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		token := strings.TrimPrefix(r.Header.Get("Authorization"), "Bearer ")
-		if server.localHash == "" || token == r.Header.Get("Authorization") ||
-			subtle.ConstantTimeCompare([]byte(remoteapi.TokenHash(token)), []byte(server.localHash)) != 1 {
+		if !server.phoneApp(r) {
 			core.Fail(w, http.StatusForbidden, "Only this phone's app can do this")
 			return
 		}

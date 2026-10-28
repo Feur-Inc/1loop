@@ -47,6 +47,7 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
     private val prefs = context.getSharedPreferences("1loop-local", Context.MODE_PRIVATE)
     private val base = File(context.noBackupFilesDir, "local-phone").apply { mkdirs() }
     private val roots = File(base, "roots").apply { mkdirs() }
+    private val keptProjects = File(base, "kept-projects") // a reset's projects, until the next Debian (resetLinux)
     private val libraries = File(context.applicationInfo.nativeLibraryDir)
     private val agentDigest by lazy {
         val digest = MessageDigest.getInstance("SHA-256")
@@ -174,6 +175,8 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
                             check(generation.get() == epoch) { "Local setup was stopped." }
                             val installed = File(roots, name)
                             check(File(installed, "usr/bin/bash").isFile) { "Debian did not install correctly." }
+                            // Projects kept by a reset (resetLinux) go back in.
+                            if (keptProjects.isDirectory && !File(installed, "projects").exists()) Os.rename(keptProjects.path, File(installed, "projects").path)
                             prepareBaseTools(installed, epoch)
                             check(prefs.edit().putString("root", name).remove("pending-root").commit()) { "Unable to save the local installation." }
                         } else if (stepId == "debian" && !baseToolsReady()) {
@@ -219,22 +222,163 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
             if (Files.exists(folder, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
                 // Debian contains symlinks. Never follow them while removing our
                 // incomplete installation, especially absolute guest paths.
-                Files.walkFileTree(folder, object : SimpleFileVisitor<Path>() {
-                    override fun visitFile(file: Path, attributes: BasicFileAttributes): FileVisitResult {
-                        Files.delete(file)
-                        return FileVisitResult.CONTINUE
-                    }
-                    override fun postVisitDirectory(directory: Path, failure: IOException?): FileVisitResult {
-                        if (failure != null) throw failure
-                        Files.delete(directory)
-                        return FileVisitResult.CONTINUE
-                    }
-                })
+                deleteTree(folder)
             }
         }
         Files.deleteIfExists(File(roots, "$name.tar.gz").toPath())
         check(prefs.edit().remove("pending-root").commit()) { "Unable to finish installation cleanup." }
     }
+
+    /**
+     * Deletes a folder and what it holds, links themselves and never their
+     * targets. Each folder is opened first: packages leave read-only ones
+     * and PRoot's bind points (/oneloop) have no permissions at all.
+     */
+    private fun deleteTree(path: Path) {
+        if (Files.isDirectory(path, java.nio.file.LinkOption.NOFOLLOW_LINKS)) {
+            Os.chmod(path.toString(), 0x1C0)
+            Files.newDirectoryStream(path).use { entries -> entries.forEach(::deleteTree) }
+        }
+        Files.delete(path)
+    }
+
+    // -- Settings → Linux (LinuxScreen): what Debian holds, its packages, a reset.
+
+    /** Debian's folder, even one too damaged to start: a reset must still reach it. */
+    private fun installedRoot(): File? = prefs.getString("root", null)?.takeIf {
+        it.matches(Regex("root-[0-9a-f-]{36}"))
+    }?.let { File(roots, it) }?.takeIf { it.isDirectory }
+
+    val debianInstalled: Boolean get() = installedRoot() != null
+
+    private val packageName = Regex("[a-z0-9][a-z0-9+.-]*")
+    // Installed with the base tools, which the agent and its setup rely on.
+    private val basePackages = setOf("ca-certificates", "python3", "python3-pip", "python3-venv", "git", "curl")
+
+    /** A listing's whole output: no lock and no setup state, it changes nothing. */
+    private suspend fun capture(root: File, arguments: List<String>): String = withContext(Dispatchers.IO) {
+        val child = process(root, arguments)
+        try {
+            val text = runInterruptible { child.inputStream.bufferedReader().readText() }
+            val code = runInterruptible { child.waitFor() }
+            check(code == 0) { text.takeLast(2000).ifBlank { "${arguments.first()} exited with status $code." } }
+            text
+        } finally {
+            if (child.isAlive) child.destroyForcibly()
+        }
+    }
+
+    private fun oldAgents(root: File) = File(root, "var/lib/1loop/bin").listFiles().orEmpty()
+        .filter { it.name.startsWith("agent-") && it.name != "agent-$agentDigest" }
+
+    suspend fun linuxUsage(): LinuxUsage = withContext(Dispatchers.IO) {
+        val root = installedRoot() ?: error("Debian is not installed.")
+        val top = root.toPath()
+        val parts = mapOf("projects" to "projects", "files" to "var/cache/apt", "data" to "var/lib/1loop").mapValues { top.resolve(it.value) }
+        val sizes = mutableMapOf<String, Long>().withDefault { 0L }
+        var total = 0L
+        // Links are not followed: Debian's absolute links point outside this folder.
+        Files.walkFileTree(top, object : SimpleFileVisitor<Path>() {
+            override fun visitFile(file: Path, attributes: BasicFileAttributes): FileVisitResult {
+                total += attributes.size()
+                parts.entries.firstOrNull { file.startsWith(it.value) }?.let { sizes[it.key] = sizes.getValue(it.key) + attributes.size() }
+                return FileVisitResult.CONTINUE
+            }
+            override fun visitFileFailed(file: Path, problem: IOException) = FileVisitResult.CONTINUE
+        })
+        val phone = android.os.StatFs(base.path)
+        LinuxUsage(total, sizes.getValue("projects"), sizes.getValue("files"), sizes.getValue("data"), phone.availableBytes, phone.totalBytes)
+    }
+
+    suspend fun linuxPackages(): List<LinuxPackage> {
+        val root = root() ?: error("Debian is not installed or cannot start.")
+        val manual = capture(root, listOf("/usr/bin/apt-mark", "showmanual")).lines().map { it.trim().removeSuffix(":arm64") }.toSet()
+        return installed(root, manual)
+    }
+
+    private suspend fun installed(root: File, manual: Set<String>): List<LinuxPackage> {
+        val format = "\${db:Status-Abbrev}\t\${binary:Package}\t\${Version}\t\${Installed-Size}\t\${Priority}\t\${Essential}\t\${binary:Summary}\n"
+        return capture(root, listOf("/usr/bin/dpkg-query", "-W", "-f", format)).lines().mapNotNull { line ->
+            val field = line.split('\t')
+            if (field.size < 7 || !field[0].startsWith("ii")) return@mapNotNull null
+            val name = field[1].removeSuffix(":arm64")
+            LinuxPackage(
+                name, field[2], (field[3].toLongOrNull() ?: 0L) * 1024, name in manual,
+                name in basePackages || field[5] == "yes" || field[4] == "required" || field[4] == "important", field[6],
+            )
+        }.sortedByDescending { it.size }
+    }
+
+    /** apt's plan: the packages that removing these takes with them, or why it may not. */
+    private suspend fun removalPlan(root: File, command: List<String>): List<String> {
+        val plan = capture(root, listOf("/usr/bin/apt-get", "-s") + command)
+        val removed = Regex("^(?:Purg|Remv) (\\S+)", RegexOption.MULTILINE).findAll(plan).map { it.groupValues[1].removeSuffix(":arm64") }.distinct().toList()
+        val needed = installed(root, emptySet()).filter { it.protected && it.name in removed }.map { it.name }
+        check(needed.isEmpty()) { "This would also remove ${needed.joinToString(", ")}, which Debian or 1loop needs." }
+        return removed
+    }
+
+    suspend fun linuxRemoval(names: List<String>): List<String> {
+        require(names.size in 1..30 && names.all { it.matches(packageName) }) { "Only Debian package names are accepted." }
+        val root = root() ?: error("Debian is not installed or cannot start.")
+        return removalPlan(root, listOf("remove", "--purge", "--") + names)
+    }
+
+    // Changes run in the runtime's scope: leaving the screen must not stop them halfway.
+    suspend fun removeLinuxPackages(names: List<String>): Unit = scope.async {
+        preparation.withLock {
+            val removed = linuxRemoval(names) // again under the lock: what was shown may have changed
+            val root = root() ?: error("Debian is not installed or cannot start.")
+            val epoch = generation.get()
+            runSetup(root, listOf("/usr/bin/dpkg", "--configure", "-a"), epoch)
+            runSetup(root, listOf("/usr/bin/apt-get", "remove", "--purge", "-y", "--") + names, epoch)
+            if ("claude-code" in removed) File(root, "var/lib/1loop/claude.ready").delete()
+            refresh()
+        }
+    }.await()
+
+    suspend fun linuxCleanup(): LinuxCleanup = withContext(Dispatchers.IO) {
+        val root = root() ?: error("Debian is not installed or cannot start.")
+        val files = File(root, "var/cache/apt").walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        LinuxCleanup(files, oldAgents(root).sumOf { it.length() }, removalPlan(root, listOf("autoremove", "--purge")))
+    }
+
+    suspend fun cleanLinux(): Unit = scope.async {
+        preparation.withLock {
+            val root = root() ?: error("Debian is not installed or cannot start.")
+            val unneeded = linuxCleanup().packages
+            val epoch = generation.get()
+            runSetup(root, listOf("/usr/bin/apt-get", "clean"), epoch)
+            if (unneeded.isNotEmpty()) runSetup(root, listOf("/usr/bin/apt-get", "autoremove", "--purge", "-y"), epoch)
+            // The running agent is always the current one (agent()).
+            oldAgents(root).forEach { it.delete() }
+        }
+    }.await()
+
+    /**
+     * Erases Debian with its packages, the local agent's chats and settings
+     * and Claude Code's sign-in. Kept projects wait beside it and go back into
+     * the next Debian (prepare).
+     */
+    suspend fun resetLinux(keepProjects: Boolean) {
+        stop()
+        scope.async {
+            preparation.withLock {
+                stopping?.join()
+                val root = installedRoot() ?: return@withLock
+                val projects = File(root, "projects")
+                if (keepProjects && projects.isDirectory) {
+                    check(!keptProjects.exists()) { "Projects kept by an earlier reset are still in ${keptProjects.path}." }
+                    Os.rename(projects.path, keptProjects.path)
+                }
+                check(prefs.edit().remove("root").putString("pending-root", root.name).commit()) { "Unable to record the reset." }
+                cleanupPendingInstallation()
+                refresh()
+            }
+        }.await()
+    }
+
+    val projectsKept: Boolean get() = keptProjects.isDirectory
 
     private suspend fun installPackages(arguments: JSONObject): JSONObject = preparation.withLock {
         val packages = arguments.getJSONArray("packages")
@@ -386,16 +530,22 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
                 check(!cancelledTerminals.remove(id)) { "Terminal startup was cancelled." }
                 check(!terminals.containsKey(id)) { "Terminal already exists." }
                 val root = root() ?: error("Debian is not installed.")
-                val workspace = arguments.getString("workspace")
-                require(workspace.startsWith("/projects/")) { "Choose a project directory." }
-                val folder = File(root, workspace.removePrefix("/")).canonicalFile
-                val projects = File(root.canonicalFile, "projects")
-                require(projects.canonicalFile == projects && folder.isDirectory && folder.path.startsWith(projects.path + "/")) { "Choose a project directory." }
                 val tty = arguments.getString("tty")
                 require(tty.matches(Regex("/dev/pts/[0-9]+"))) { "Invalid terminal device." }
-                val command = mutableListOf("/usr/local/libexec/1loop-project")
-                if (arguments.optBoolean("yolo")) command.add("--yolo")
-                command.addAll(listOf(workspace, "/bin/bash", "-i"))
+                val command = mutableListOf<String>()
+                if (arguments.optBoolean("root")) {
+                    // Settings → Linux: the user's own root shell, outside the projects' sandbox.
+                    command.addAll(listOf("/usr/bin/env", "-C", "/root", "/bin/bash", "-l"))
+                } else {
+                    val workspace = arguments.getString("workspace")
+                    require(workspace.startsWith("/projects/")) { "Choose a project directory." }
+                    val folder = File(root, workspace.removePrefix("/")).canonicalFile
+                    val projects = File(root.canonicalFile, "projects")
+                    require(projects.canonicalFile == projects && folder.isDirectory && folder.path.startsWith(projects.path + "/")) { "Choose a project directory." }
+                    command.add("/usr/local/libexec/1loop-project")
+                    if (arguments.optBoolean("yolo")) command.add("--yolo")
+                    command.addAll(listOf(workspace, "/bin/bash", "-i"))
+                }
                 terminals[id] = process(root, command, environment = mapOf("TERM" to "xterm-256color", "COLORTERM" to "truecolor"), tty = tty)
                 JSONObject()
             }

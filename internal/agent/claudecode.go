@@ -81,7 +81,10 @@ type claudeEvent struct {
 	} `json:"request"`
 	Response *struct {
 		Response struct {
-			Models []claudeModel `json:"models"`
+			Models  []claudeModel `json:"models"`
+			Account *struct {
+				TokenSource string `json:"tokenSource"`
+			} `json:"account"`
 		} `json:"response"`
 	} `json:"response"`
 	RateLimit *struct {
@@ -153,7 +156,7 @@ func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd,
 	for _, pair := range os.Environ() {
 		name, _, _ := strings.Cut(pair, "=")
 		if name == "ANTHROPIC_API_KEY" || name == "ANTHROPIC_AUTH_TOKEN" || name == "CLAUDECODE" ||
-			name == "CLAUDE_PID" || name == "CLAUDE_EFFORT" || strings.HasPrefix(name, "CLAUDE_CODE_") {
+			name == "CLAUDE_PID" || name == "CLAUDE_EFFORT" || (strings.HasPrefix(name, "CLAUDE_CODE_") && name != "CLAUDE_CODE_OAUTH_TOKEN") {
 			continue
 		}
 		cmd.Env = append(cmd.Env, pair)
@@ -161,8 +164,7 @@ func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd,
 	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
 		cmd.Env = append(cmd.Env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
 	}
-	// Stop ends the turn the way Claude Code documents (SIGINT), then the
-	// whole process group if it lingers.
+	// Keep the CLI and its children in a process group for bounded shutdown.
 	platform.PrepareProcess(cmd)
 	cmd.Cancel = func() error { return platform.InterruptProcess(cmd) }
 	cmd.WaitDelay = 3 * time.Second
@@ -171,7 +173,7 @@ func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd,
 
 // claudeModels asks the installed Claude Code which models the account can
 // use. It only exchanges the protocol's handshake: no request reaches a model.
-func (backend *App) claudeModels(ctx context.Context) ([]claudeModel, error) {
+func (backend *App) claudeModels(ctx context.Context) (models []claudeModel, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd, err := claudeCommand(ctx, os.TempDir())
@@ -180,10 +182,18 @@ func (backend *App) claudeModels(ctx context.Context) ([]claudeModel, error) {
 	}
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
+	cmd.Cancel = func() error { return stdin.Close() }
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	defer func() { stdin.Close(); cmd.Process.Kill(); cmd.Wait() }()
+	// Initialization can renew credentials too: let the CLI save them on exit.
+	defer func() {
+		stdin.Close()
+		io.Copy(io.Discard, stdout)
+		if waitErr := cmd.Wait(); err == nil && waitErr != nil {
+			models, err = nil, fmt.Errorf("Claude Code did not finish loading models: %w", waitErr)
+		}
+	}()
 	fmt.Fprintln(stdin, `{"type":"control_request","request_id":"1loop-init","request":{"subtype":"initialize"}}`)
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64<<10), 16<<20)
@@ -193,6 +203,9 @@ func (backend *App) claudeModels(ctx context.Context) ([]claudeModel, error) {
 			continue
 		}
 		if claudeEventValue.Type == "control_response" && claudeEventValue.Response != nil {
+			if account := claudeEventValue.Response.Response.Account; account != nil && account.TokenSource == "none" {
+				return nil, fmt.Errorf("Claude Code is not signed in. Open Settings → Connections → Claude Code → Sign in")
+			}
 			if len(claudeEventValue.Response.Response.Models) == 0 {
 				return nil, fmt.Errorf("Claude Code listed no model: check that it is signed in (run claude once)")
 			}
@@ -430,7 +443,9 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	if appendPrompt != "" {
 		args = append(args, "--append-system-prompt", appendPrompt)
 	}
-	cmd, err := claudeCommand(ctx, cfg.Workspace, args...)
+	processCtx, stopProcess := context.WithCancel(ctx)
+	defer stopProcess()
+	cmd, err := claudeCommand(processCtx, cfg.Workspace, args...)
 	if err != nil {
 		return err
 	}
@@ -449,9 +464,6 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	stdout, _ := cmd.StdoutPipe()
 	var stderr outputBuffer
 	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		return err
-	}
 	var writing sync.Mutex
 	open := true
 	send := func(line string) {
@@ -461,23 +473,52 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			io.WriteString(stdin, line+"\n")
 		}
 	}
-	finish := func() { // no more input: Claude Code exits after its last turn
+	finish := func(interrupt bool) { // no more input: Claude Code exits after its last turn
 		writing.Lock()
 		defer writing.Unlock()
 		if open {
+			if interrupt {
+				io.WriteString(stdin, `{"type":"control_request","request_id":"1loop-stop","request":{"subtype":"interrupt","cancel_queued":true}}`+"\n")
+			}
 			open = false
 			stdin.Close()
 		}
 	}
+	processDone := make(chan struct{})
+	cmd.Cancel = func() error {
+		go finish(true)
+		go func() {
+			timer := time.NewTimer(3 * time.Second)
+			defer timer.Stop()
+			select {
+			case <-processDone:
+			case <-timer.C:
+				platform.KillProcessTree(cmd)
+			}
+		}()
+		return nil
+	}
+	// Kill the tree before exec's fallback kills only its parent on Windows.
+	cmd.WaitDelay = 4 * time.Second
+	if err := cmd.Start(); err != nil {
+		return err
+	}
 	var failure error
 	defer func() {
-		finish()
-		if ctx.Err() != nil || failure != nil {
-			// Stopped: nothing Claude Code started may keep running (its
-			// commands and background tasks share its process group).
+		if ctx.Err() != nil {
+			stopProcess()
+		} else if failure != nil {
+			// Billing and other run failures retain their immediate stop.
 			platform.KillProcessTree(cmd)
+			finish(false)
+		} else {
+			finish(false)
 		}
 		cmd.Wait()
+		close(processDone)
+		if ctx.Err() != nil {
+			platform.KillProcessTree(cmd)
+		}
 	}()
 
 	messages := append([]Message(nil), history...)
@@ -562,6 +603,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			select {
 			case lines <- append([]byte(nil), scanner.Bytes()...):
 			case <-done:
+				io.Copy(io.Discard, stdout)
 				return
 			}
 		}
@@ -582,20 +624,8 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			send(string(request))
 			continue
 		case <-ctx.Done():
-			platform.Devf("claude", "stop asked: interrupt sent, waiting for it to close its session")
-			// Stop: Claude Code got the interrupt it documents (SIGINT);
-			// it has a moment to close its session before it is killed.
-			grace := time.After(1500 * time.Millisecond)
-			for {
-				select {
-				case _, more := <-lines:
-					if more {
-						continue
-					}
-				case <-grace:
-				}
-				return ctx.Err()
-			}
+			platform.Devf("claude", "stop asked: interrupting the input stream and waiting for shutdown")
+			return ctx.Err()
 		case <-tick.C:
 			if extras := inboxValue.Steer(); len(extras) > 0 {
 				for _, extra := range extras {
@@ -608,7 +638,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			} else if len(background) == 0 && time.Since(idleSince) > 600*time.Millisecond {
 				idle = false
 				platform.Devf("claude", "nothing runs, nothing waits: closing its input")
-				finish() // nothing runs, nothing waits: the task is over
+				finish(false) // nothing runs, nothing waits: the task is over
 			}
 			continue
 		case next, more := <-lines:

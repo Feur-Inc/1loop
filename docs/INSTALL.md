@@ -392,3 +392,23 @@ image service, and generation consumes its image quota.
 The tool is absent for Claude Code, vLLM, compatible APIs, OpenRouter and
 ChatGPT (Web). Access and image quotas depend on the connected subscription;
 a refusal is reported without switching accounts or charging an API key.
+
+## Claude Code sign-in
+
+On desktop, open Settings → Connections, add or edit a Claude Code connection,
+and choose **Sign in**. Complete Claude Code’s own browser authorization.
+If it supplies a code, paste it into the dialog and submit it. Close the dialog
+after success, then load the connection’s models. The phone keeps its existing
+Claude Code sign-in action; both interfaces use the same CLI login flow.
+
+For scripts or a desktop launched with a subscription token, `claude setup-token`
+prints a long-lived token. Supply it through `CLAUDE_CODE_OAUTH_TOKEN` in the
+environment that launches 1loop. It takes precedence over the stored login;
+1loop preserves this variable and still removes API-key billing overrides.
+Do not put the token in a prompt or commit it.
+
+A model catalog is not a live token-validation request. 1loop reports an explicitly
+signed-out CLI, but an expired or revoked credential may still be rejected when
+a turn starts. Sign in again if necessary and keep Claude Code up to date.
+Graceful shutdown reduces forced-interruption risks; it cannot repair an upstream
+OAuth renewal failure. See [Claude Code authentication](https://code.claude.com/docs/en/authentication).

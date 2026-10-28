@@ -470,10 +470,10 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 	}
 	meta.Provider = chat.Config.Provider
 	for _, m := range chat.queue {
-		meta.Queue = append(meta.Queue, m.Content)
+		meta.Queue = append(meta.Queue, m.Typed())
 	}
 	for _, m := range chat.steer {
-		meta.Steer = append(meta.Steer, m.Content)
+		meta.Steer = append(meta.Steer, m.Typed())
 	}
 	for _, task := range chat.Todo.Snapshot() {
 		item := remoteapi.Todo{ID: task.ID, Text: task.Text, Status: task.Status}
@@ -509,6 +509,7 @@ func (server *headlessServer) itemLocked(chat *serverChat, index int) remoteapi.
 		Kind:     item.Kind,
 		Text:     item.Text,
 		Images:   len(item.Images),
+		Files:    remoteapi.FileNames(item.Files),
 		Tool:     item.Tool,
 		Args:     item.Args,
 		Diff:     item.Diff,
@@ -733,7 +734,7 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 
 func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message, id string) {
 	chat.History = append(chat.History, m)
-	item := agent.ChatItem{ID: id, Kind: "user", Text: m.Content, Images: m.Images}
+	item := agent.PromptItem(id, m)
 	if m.Internal { // a background task's end: a note, not the user's words
 		item = agent.ChatItem{ID: id, Kind: "note", Text: agent.WakeSummary(m)}
 	}
@@ -845,7 +846,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		if m.Internal {
 			index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: agent.WakeSummary(m)})
 		} else {
-			index = server.addLocked(chat, agent.ChatItem{Kind: "user", Text: m.Content, Images: m.Images})
+			index = server.addLocked(chat, agent.PromptItem("", m))
 		}
 	case "activity":
 		status := value.(agent.Activity)

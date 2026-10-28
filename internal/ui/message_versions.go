@@ -91,7 +91,7 @@ func (ui *desktopUI) editMessage(chat *conversation, index int) {
 	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
 	send := newRow("Save & send", nil, stylePrimary, func() {
 		text := strings.TrimSpace(entry.Text)
-		if text == "" && len(item.Images) == 0 {
+		if text == "" && len(item.Images) == 0 && len(item.Files) == 0 {
 			return
 		}
 		if chat.server != nil {
@@ -99,7 +99,7 @@ func (ui *desktopUI) editMessage(chat *conversation, index int) {
 			dialog.Hide()
 			return
 		}
-		if ui.startVersion(chat, index, agent.Message{Role: "user", Content: text, Images: item.Images}, false) {
+		if ui.startVersion(chat, index, agent.PromptMessage(text, item.Images, item.Files), false) {
 			dialog.Hide()
 		}
 	})
@@ -114,7 +114,7 @@ func (ui *desktopUI) retryMessage(chat *conversation, index int) {
 	}
 	if at := userItemBefore(chat, index); at >= 0 {
 		item := chat.Items[at]
-		ui.startVersion(chat, at, agent.Message{Role: "user", Content: item.Text, Images: item.Images}, true)
+		ui.startVersion(chat, at, agent.PromptMessage(item.Text, item.Images, item.Files), true)
 	}
 }
 

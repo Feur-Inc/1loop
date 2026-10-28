@@ -51,6 +51,7 @@ type Item struct {
 	Kind     string    `json:"kind"`
 	Text     string    `json:"text,omitempty"`
 	Images   int       `json:"images,omitempty"`
+	Files    []string  `json:"files,omitempty"` // user rows: names of the attached files not shown as images
 	Tool     string    `json:"tool,omitempty"`
 	Verb     string    `json:"verb,omitempty"`
 	Target   string    `json:"target,omitempty"`

@@ -988,7 +988,7 @@ func (ui *desktopUI) promptMessage() (agent.Message, bool) {
 	if strings.TrimSpace(text) == "" && len(ui.attachments) == 0 && len(ui.fileAttachments) == 0 {
 		return agent.Message{}, false
 	}
-	messageValue := agent.Message{Role: "user", Content: attachmentText(text, ui.fileAttachments), Images: ui.takeAttachments()}
+	messageValue := agent.PromptMessage(text, ui.takeAttachments(), ui.fileAttachments)
 	ui.fileAttachments = nil
 	ui.renderAttachments()
 	ui.prompt.clearSent()
@@ -1150,9 +1150,12 @@ func (ui *desktopUI) chatTasks(chat *conversation) *agent.BackgroundTasks {
 // startIn runs the agent loop for a message in chat (a new chat when nil).
 func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id string) {
 	if chat == nil {
-		title := []rune(strings.Join(strings.Fields(messageValue.Content), " "))
+		title := []rune(strings.Join(strings.Fields(messageValue.Typed()), " "))
 		if len(title) > 36 {
 			title = title[:36]
+		}
+		if len(title) == 0 && len(messageValue.Files) > 0 {
+			title = []rune(messageValue.Files[0].Name)
 		}
 		if len(title) == 0 {
 			title = []rune("[image]")
@@ -1181,7 +1184,7 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 	if messageValue.Internal { // a background task's end: a note, not the user's words
 		ui.addItem(chat, agent.ChatItem{ID: id, Kind: "note", Text: agent.WakeSummary(messageValue)})
 	} else {
-		ui.addItem(chat, agent.ChatItem{ID: id, Kind: "user", Text: messageValue.Content, Images: messageValue.Images})
+		ui.addItem(chat, agent.PromptItem(id, messageValue))
 	}
 	ui.updateHeader()
 	// No deadline: a long task (long shell runs, many tool rounds) must not

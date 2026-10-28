@@ -47,6 +47,7 @@ data class Item(
     val meta: String, val tone: String, val state: String,
     val args: String, val diff: String, val millis: Long, val failed: String,
     val id: String = "", val versions: MessageVersions? = null,
+    val files: List<String> = emptyList(), // a prompt's attached files not shown as images
 ) {
     companion object {
         fun from(o: JSONObject) = Item(
@@ -55,6 +56,7 @@ data class Item(
             o.optString("meta"), o.optString("tone"), o.optString("state", "done"),
             o.optString("args"), o.optString("diff"), o.optLong("millis"), o.optString("failed"),
             o.optString("id"), o.optJSONObject("versions")?.let { MessageVersions(it.optString("anchor"), it.optInt("current"), it.optInt("total")) },
+            o.optJSONArray("files")?.let { names -> List(names.length()) { names.optString(it) } } ?: emptyList(),
         )
     }
 }

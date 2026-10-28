@@ -17,6 +17,7 @@ type ChatItem struct {
 	Title  string           `json:"title,omitempty"` // tool rows saved by earlier versions
 	Text   string           `json:"text"`            // the message, or a tool's output
 	Images []core.ImagePart `json:"images,omitempty"`
+	Files  []FileAttachment `json:"files,omitempty"`  // user rows: the attached files, apart from the text
 	Tool   string           `json:"tool,omitempty"`   // tool rows: the tool's name
 	Args   string           `json:"args,omitempty"`   // tool rows: the call's JSON arguments
 	Diff   string           `json:"diff,omitempty"`   // edit_file rows: the diff, once shown for approval

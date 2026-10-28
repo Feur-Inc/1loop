@@ -348,6 +348,15 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		if len(pics) > 0 {
 			content.Add(container.New(layout.NewCustomPaddedHBoxLayout(6), pics...))
 		}
+		var files []fyne.CanvasObject
+		for _, file := range item.Files {
+			if !file.Image { // a picture already shows above
+				files = append(files, surface(textLine(fitText(file.Name, 12.5, fyne.TextStyle{}, 220), 12.5, colText), colCode, colBorderSoft, 8, 6))
+			}
+		}
+		if len(files) > 0 {
+			content.Add(container.New(layout.NewCustomPaddedHBoxLayout(6), files...))
+		}
 		var text *flowText
 		if item.Text != "" {
 			// Fyne's wrapped label measured the text again for every
@@ -834,7 +843,7 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		if messageValue.Internal {
 			ui.addItem(currentTurn.chat, agent.ChatItem{Kind: "note", Text: agent.WakeSummary(messageValue)})
 		} else {
-			ui.addItem(currentTurn.chat, agent.ChatItem{Kind: "user", Text: messageValue.Content, Images: messageValue.Images})
+			ui.addItem(currentTurn.chat, agent.PromptItem("", messageValue))
 		}
 		if currentTurn.chat == ui.current { // the answer before it is now complete
 			ui.syncCopies()

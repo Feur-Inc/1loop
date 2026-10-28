@@ -856,7 +856,15 @@ private fun answerText(items: List<Item>, index: Int): String {
 private fun UserBubble(item: Item, images: @Composable () -> Unit = {}, actions: @Composable () -> Unit) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
         images()
-        if (item.text.isNotEmpty()) Box(Modifier.widthIn(max = 560.dp).fillMaxWidth(0.85f).padding(top = if (item.images > 0) 6.dp else 0.dp), contentAlignment = Alignment.CenterEnd) {
+        for (name in item.files) Row(
+            Modifier.padding(top = 6.dp).clip(RoundedCornerShape(10.dp)).background(Palette.raised)
+                .border(1.dp, Palette.border, RoundedCornerShape(10.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.document, null, tint = Palette.muted, modifier = Modifier.size(16.dp))
+            Text(name, style = Type.small.copy(color = Palette.text), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp).padding(start = 8.dp))
+        }
+        if (item.text.isNotEmpty()) Box(Modifier.widthIn(max = 560.dp).fillMaxWidth(0.85f).padding(top = if (item.images > 0 || item.files.isNotEmpty()) 6.dp else 0.dp), contentAlignment = Alignment.CenterEnd) {
             Text(
                 item.text,
                 style = Type.body,

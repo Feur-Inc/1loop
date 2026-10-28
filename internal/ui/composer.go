@@ -263,7 +263,14 @@ func linuxImageClipboardData() ([]byte, error) {
 	return data, nil
 }
 
+// maxImagePixels bounds a picture before it is decoded: a small file can
+// hold a huge image, and decoding it would allocate gigabytes.
+const maxImagePixels = 50_000_000
+
 func decodeImage(raw []byte) (*image.NRGBA, error) {
+	if config, _, err := image.DecodeConfig(bytes.NewReader(raw)); err == nil && config.Width*config.Height > maxImagePixels {
+		return nil, fmt.Errorf("This image is too large (%d × %d pixels)", config.Width, config.Height)
+	}
 	src, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("Unsupported image format")
@@ -315,6 +322,19 @@ func (ui *desktopUI) pickImages() {
 			ui.attachImage(img)
 		}
 	})
+}
+
+// thumbnail is img at most side pixels long: a chat's pictures show small,
+// and kept at full size each held up to 9 MB for as long as the chat was open.
+func thumbnail(img image.Image, side int) image.Image {
+	bounds := img.Bounds()
+	longest := max(bounds.Dx(), bounds.Dy())
+	if longest <= side {
+		return img
+	}
+	small := image.NewNRGBA(image.Rect(0, 0, max(1, bounds.Dx()*side/longest), max(1, bounds.Dy()*side/longest)))
+	xdraw.ApproxBiLinear.Scale(small, small.Bounds(), img, bounds, xdraw.Src, nil)
+	return small
 }
 
 // attachImage keeps a picture, as PNG, until the next message.

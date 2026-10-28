@@ -35,7 +35,7 @@ func (preview *generatedImagePreview) update(item agent.ChatItem, state string) 
 		raw, err := base64.StdEncoding.DecodeString(item.Images[0].Data)
 		if err == nil {
 			if img, _, err := image.Decode(bytes.NewReader(raw)); err == nil {
-				picture := canvas.NewImageFromImage(img)
+				picture := canvas.NewImageFromImage(thumbnail(img, 640))
 				picture.FillMode = canvas.ImageFillContain
 				picture.SetMinSize(fyne.NewSize(280, 280))
 				preview.box.Add(surface(picture, colCode, colBorderSoft, 12, 0))

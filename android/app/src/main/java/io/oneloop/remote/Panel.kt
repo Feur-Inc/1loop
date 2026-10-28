@@ -781,12 +781,14 @@ internal fun TerminalView(app: RemoteApp, chat: String, tab: PanelTab) {
     var line by remember { mutableStateOf("") }
     val scroll = rememberScrollState()
     LaunchedEffect(tab.key) {
-        while (true) {
+        // Followed until the shell exits: its output no longer changes.
+        exited = false
+        while (!exited) {
             app.panelTab(chat, tab.key)?.let { reply ->
                 output = reply.optString("output").lines().takeLast(600).joinToString("\n").trimEnd()
                 exited = reply.optBoolean("exited")
             }
-            delay(500)
+            if (!exited) delay(500)
         }
     }
     LaunchedEffect(output) { scroll.scrollTo(scroll.maxValue) }

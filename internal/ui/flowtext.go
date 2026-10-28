@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -190,22 +191,24 @@ func (flow *flowText) atoms() []atom {
 		if flow.mono {
 			add(strings.ReplaceAll(span.text, "\t", "    "), i, false)
 		} else {
-			word := ""
-			for _, r := range span.text {
+			start := -1 // of the word being read, in bytes
+			for at, r := range span.text {
 				if r == ' ' || r == '\t' || r == '\n' {
-					if word != "" {
-						add(word, i, false)
-						word = ""
+					if start >= 0 {
+						add(span.text[start:at], i, false)
+						start = -1
 					}
 					if n := len(out); n == 0 || !out[n-1].space {
 						add(" ", i, true)
 					}
 					continue
 				}
-				word += string(r)
+				if start < 0 {
+					start = at
+				}
 			}
-			if word != "" {
-				add(word, i, false)
+			if start >= 0 {
+				add(span.text[start:], i, false)
 			}
 		}
 		if (span.code || span.cite) && len(out) > first { // room for the chip around the code
@@ -250,23 +253,33 @@ func (flow *flowText) lines(atoms []atom, width float32) []flowLine {
 			flush(false)
 		}
 		// A word wider than the line (a long address) is cut where it must.
-		for !flow.mono && atomValue.image == nil && atomValue.width > width && len([]rune(atomValue.text)) > 1 {
+		// Each character is measured once: measuring every remaining part
+		// again cost the square of the word's length (a long base64 string
+		// froze the window for seconds and allocated gigabytes).
+		if !flow.mono && atomValue.image == nil && atomValue.width > width && utf8.RuneCountInString(atomValue.text) > 1 {
 			runes := []rune(atomValue.text)
-			fit := 1
-			for fit < len(runes) {
-				if w, _, _ := measureText(string(runes[:fit+1]), atomValue.size, atomValue.style); atomValue.lead+w > width {
-					break
-				}
-				fit++
+			advance := make([]float32, len(runes)+1) // advance[i]: the width of runes[i:]
+			for i := len(runes) - 1; i >= 0; i-- {
+				w, _, _ := measureText(string(runes[i]), atomValue.size, atomValue.style)
+				advance[i] = advance[i+1] + w
 			}
-			head := atomValue
-			head.text = string(runes[:fit])
-			head.width, _, _ = measureText(head.text, atomValue.size, atomValue.style)
-			head.width += atomValue.lead
-			head.trail = 0
-			line = append(line, head)
-			flush(false)
-			atomValue.text, atomValue.lead = string(runes[fit:]), 0
+			start := 0
+			for len(runes)-start > 1 && atomValue.lead+advance[start]+atomValue.trail > width {
+				fit := 1
+				for start+fit < len(runes) && atomValue.lead+advance[start]-advance[start+fit+1] <= width {
+					fit++
+				}
+				head := atomValue
+				head.text = string(runes[start : start+fit])
+				head.width, _, _ = measureText(head.text, atomValue.size, atomValue.style)
+				head.width += atomValue.lead
+				head.trail = 0
+				line = append(line, head)
+				flush(false)
+				start += fit
+				atomValue.lead = 0
+			}
+			atomValue.text = string(runes[start:])
 			atomValue.width, _, _ = measureText(atomValue.text, atomValue.size, atomValue.style)
 			atomValue.width += atomValue.trail
 		}

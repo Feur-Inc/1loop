@@ -309,6 +309,10 @@ func otherAction(tool, raw string) (action, bool) {
 		Folders   []string
 		Network   bool
 		Questions []struct{ Header, Question string }
+		// github_upload_attachments, github_view_attachment
+		Repository string
+		Files      []json.RawMessage
+		URL        string
 	}
 	_ = json.Unmarshal([]byte(raw), &args)
 	switch tool {
@@ -341,6 +345,14 @@ func otherAction(tool, raw string) (action, bool) {
 			group = "the " + server + " MCP tools"
 		}
 		return action{"Loaded", "Loading", group, false}, true
+	case githubUploadTool:
+		files := "1 file"
+		if len(args.Files) != 1 {
+			files = fmt.Sprintf("%d files", len(args.Files))
+		}
+		return action{"Uploaded", "Uploading", files + " to GitHub · " + args.Repository, false}, true
+	case githubViewTool:
+		return action{"Opened the GitHub attachment", "Opening the GitHub attachment", args.URL, false}, true
 	case "adb_shell":
 		return action{"Ran on the phone:", "Running on the phone:", FirstLine(args.Command), true}, true
 	case "install_packages":
@@ -429,6 +441,10 @@ func toolNoun(tool string) string {
 		return "a permission request"
 	case "install_packages":
 		return "a package install"
+	case githubUploadTool:
+		return "a GitHub upload"
+	case githubViewTool:
+		return "a GitHub attachment"
 	}
 	return tool
 }

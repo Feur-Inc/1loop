@@ -48,6 +48,14 @@ func Handlers() map[string]http.HandlerFunc {
 			}
 			answer(w, err)
 		},
+		"POST /api/github/attachment-token": func(w http.ResponseWriter, r *http.Request) {
+			var body struct{ Token string }
+			if core.ReadJSON(r, &body) != nil {
+				core.Fail(w, http.StatusBadRequest, "Invalid GitHub attachment token")
+				return
+			}
+			answer(w, Default.SetAttachmentToken(r.Context(), body.Token))
+		},
 		"POST /api/github/disconnect": func(w http.ResponseWriter, r *http.Request) {
 			err := Default.Disconnect()
 			if err == nil {

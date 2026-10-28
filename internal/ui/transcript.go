@@ -98,6 +98,7 @@ type toolRow struct {
 	onTap    func()
 	hover    float32
 	anim     *fyne.Animation
+	preview  *generatedImagePreview
 }
 
 func newToolRow(item agent.ChatItem, state string, onTap func()) *toolRow {
@@ -108,6 +109,9 @@ func newToolRow(item agent.ChatItem, state string, onTap func()) *toolRow {
 
 func (row *toolRow) update(item agent.ChatItem, state string) {
 	row.item, row.state = item, state
+	if row.preview != nil {
+		row.preview.update(item, state)
+	}
 	row.Refresh()
 }
 
@@ -256,7 +260,11 @@ func (renderer *toolRowRenderer) Objects() []fyne.CanvasObject {
 	return []fyne.CanvasObject{renderer.bg, renderer.icon, renderer.verb, renderer.target, renderer.meta, renderer.minus}
 }
 
-func (renderer *toolRowRenderer) Destroy() {}
+func (renderer *toolRowRenderer) Destroy() {
+	if renderer.row.preview != nil {
+		renderer.row.preview.progress.Stop()
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Transcript
@@ -379,7 +387,12 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		row.onTap = func() { ui.panel.open(chat, index) }
 		row.selected = ui.panel.showing(chat, index)
 		ui.views[index] = row
-		ui.place(row)
+		if item.Tool == "imagegen" {
+			row.preview = newGeneratedImagePreview(item, state, row.onTap)
+			ui.place(container.NewVBox(row, row.preview.box))
+		} else {
+			ui.place(row)
+		}
 	}
 }
 
@@ -743,6 +756,10 @@ func (currentTurn *turn) setRow(index int, state string) {
 	currentTurn.ui.remote.itemChanged(currentTurn.chat, index)
 	if row, ok := currentTurn.ui.liveView(currentTurn.chat, index).(*toolRow); ok {
 		row.update(currentTurn.chat.Items[index], state)
+		if row.preview != nil {
+			currentTurn.ui.items.changed(row)
+			currentTurn.ui.relayoutColumn()
+		}
 	}
 }
 

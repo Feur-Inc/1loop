@@ -795,6 +795,10 @@ func (remote *remoteDesktop) showItems(conv *conversation, items []remoteapi.Ite
 				ui.items.changed(view.box)
 			case *toolRow:
 				view.update(next[i], states[i])
+				if view.preview != nil {
+					ui.items.changed(view)
+					ui.relayoutColumn()
+				}
 				ui.panel.changed(conv, i)
 			}
 		default:

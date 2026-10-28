@@ -46,6 +46,10 @@ func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) 
 		return done
 	}
 	switch item.Tool {
+	case "imagegen":
+		var args struct{ Prompt string }
+		_ = json.Unmarshal([]byte(item.Args), &args)
+		return pick("Generated image", "Generating image"), FirstLine(args.Prompt), false
 	case "shell":
 		first, _, multi := strings.Cut(strings.TrimSpace(command), "\n")
 		if multi {

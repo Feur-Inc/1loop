@@ -790,6 +790,17 @@ private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> U
                     }
                     "tool" -> Column {
                         ToolRow(item) { onTool(item) }
+                        if (item.tool == "imagegen" && item.state == "running") {
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                    .background(Palette.code).padding(20.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                WorkRing("wait", 28.dp)
+                                Text("Creating your image…", style = Type.body)
+                            }
+                        }
                         // What the tool showed the model (a screenshot), as Codex shows it.
                         if (item.images > 0) ItemImages(app, app.firstItem + index, item.images, Modifier.padding(start = 32.dp, top = 2.dp))
                     }

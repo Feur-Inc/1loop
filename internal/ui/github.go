@@ -1,6 +1,8 @@
 package ui
 
 import (
+	"context"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -57,6 +59,9 @@ func (ui *desktopUI) connectorSettings() fyne.CanvasObject {
 		}))))
 		body.Add(newRow("Review access on GitHub", nil, styleOutline, func() { openLink("https://github.com/settings/apps/authorizations") }))
 		body.Add(newRow("Manage repository access", nil, styleOutline, func() { openLink(state.InstallURL) }))
+		for _, object := range ui.githubAttachmentSettings(state, refresh) {
+			body.Add(object)
+		}
 		body.Add(newRow("Disconnect", nil, styleOutline, func() {
 			if err := githubconnector.Default.Disconnect(); err != nil {
 				ui.notice("GitHub", err.Error())
@@ -133,4 +138,47 @@ func (ui *desktopUI) connectGitHub() {
 			}
 		}
 	}()
+}
+
+// githubAttachmentSettings: GitHub refuses the app's sign-in for images and
+// videos, so they need a personal access token or GitHub CLI's sign-in.
+func (ui *desktopUI) githubAttachmentSettings(state githubconnector.Status, refresh func()) []fyne.CanvasObject {
+	detail := "Not set up: the agent cannot upload screenshots or videos. Add a token, or sign in to GitHub CLI (gh auth login)."
+	switch {
+	case state.AttachmentLogin != "":
+		detail = "Personal access token of @" + state.AttachmentLogin
+	case state.GitHubCLI:
+		detail = "GitHub CLI is installed: uploads use its sign-in (gh auth login), read at each upload and never saved by 1loop"
+	}
+	objects := []fyne.CanvasObject{sectionTitle("Images and videos"),
+		note("GitHub accepts attachments to issues, pull requests and comments only from a personal access token or GitHub CLI, not from this app's sign-in. Uploads ask for your approval; they cannot be deleted from GitHub."),
+		card(settingRow("Uploads as", detail, nil))}
+	save := func(token string) {
+		go func() {
+			ctx, cancel := context.WithTimeout(ui.ctx, 30*time.Second)
+			err := githubconnector.Default.SetAttachmentToken(ctx, token)
+			cancel()
+			fyne.Do(func() {
+				if err != nil {
+					ui.notice("GitHub", err.Error())
+				}
+				refresh()
+			})
+		}()
+	}
+	if state.AttachmentLogin != "" {
+		return append(objects, newRow("Remove token", nil, styleOutline, func() { save("") }))
+	}
+	token := widget.NewPasswordEntry()
+	token.SetPlaceHolder("Personal access token (classic with repo scope, or fine-grained with write access)")
+	return append(objects, token,
+		newRow("Save token", nil, stylePrimary, func() {
+			if strings.TrimSpace(token.Text) != "" {
+				save(token.Text)
+			}
+		}),
+		newRow("Create a token on GitHub", nil, styleOutline, func() {
+			openLink("https://github.com/settings/tokens/new?scopes=repo&description=1loop+attachments")
+		}),
+		note("The token stays in the GitHub connector's private file on this execution target; it is never sent to the model. Disconnect removes it."))
 }

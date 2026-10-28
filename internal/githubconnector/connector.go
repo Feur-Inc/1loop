@@ -44,6 +44,9 @@ type credentials struct {
 	RefreshToken string    `json:"refreshToken,omitempty"`
 	Expires      time.Time `json:"expires,omitempty"`
 	Enabled      bool      `json:"enabled"`
+	// The attachment endpoint refuses the app's tokens (attachments.go).
+	AttachmentToken string `json:"attachmentToken,omitempty"`
+	AttachmentLogin string `json:"attachmentLogin,omitempty"`
 }
 
 // Status is safe to send to the settings UI. It contains no access token,
@@ -59,6 +62,10 @@ type Status struct {
 	Code       string    `json:"code,omitempty"`
 	Expires    time.Time `json:"expires,omitempty"`
 	Error      string    `json:"error,omitempty"`
+	// Attachments: the saved personal access token's account, else whether
+	// GitHub CLI can sign them.
+	AttachmentLogin string `json:"attachmentLogin,omitempty"`
+	GitHubCLI       bool   `json:"githubCli"`
 }
 
 type pending struct {
@@ -140,7 +147,7 @@ func (manager *Manager) Status() Status {
 	if err != nil {
 		return Status{Error: err.Error()}
 	}
-	status := Status{Configured: saved.ClientID != "", ClientID: saved.ClientID, Connected: connected(saved), Enabled: saved.Enabled, Login: saved.Login, InstallURL: "https://github.com/settings/installations"}
+	status := Status{Configured: saved.ClientID != "", ClientID: saved.ClientID, Connected: connected(saved), Enabled: saved.Enabled, Login: saved.Login, InstallURL: "https://github.com/settings/installations", AttachmentLogin: saved.AttachmentLogin, GitHubCLI: cliInstalled()}
 	if saved.ClientID == ClientID {
 		status.InstallURL = AppURL + "/installations/new"
 	}
@@ -373,6 +380,9 @@ func (manager *Manager) finish(attempt *pending, saved credentials, err error) {
 	}
 	attempt.cancel()
 	if err == nil {
+		if current, loadErr := manager.load(); loadErr == nil {
+			saved.AttachmentToken, saved.AttachmentLogin = current.AttachmentToken, current.AttachmentLogin
+		}
 		err = manager.save(saved)
 	}
 	if err != nil {
@@ -476,7 +486,7 @@ func (manager *Manager) RejectAuthorization(authorization string) {
 	defer manager.mu.Unlock()
 	saved, err := manager.load()
 	if err == nil && saved.Token != "" && authorization == "Bearer "+saved.Token {
-		if manager.save(credentials{ClientID: saved.ClientID}) == nil {
+		if manager.save(credentials{ClientID: saved.ClientID, AttachmentToken: saved.AttachmentToken, AttachmentLogin: saved.AttachmentLogin}) == nil {
 			manager.notifyLocked()
 		}
 	}

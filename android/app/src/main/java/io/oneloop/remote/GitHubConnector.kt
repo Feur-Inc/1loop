@@ -24,6 +24,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -38,6 +39,7 @@ fun GitHubConnectorSection(app: RemoteApp) {
     var problem by remember(app.server) { mutableStateOf<String?>(null) }
     var busy by remember(app.server) { mutableStateOf(false) }
     var clientId by remember(app.server) { mutableStateOf("") }
+    var attachmentToken by remember(app.server) { mutableStateOf("") }
 
     suspend fun refresh() {
         try {
@@ -122,6 +124,44 @@ fun GitHubConnectorSection(app: RemoteApp) {
             open("https://github.com/settings/apps/authorizations")
         }
         Pill("Manage repository access") { open(view.optString("installUrl")) }
+        // GitHub refuses the app's sign-in for images and videos.
+        Text("Images and videos", style = Type.title)
+        Text("GitHub accepts attachments to issues, pull requests and comments only from a personal access token or GitHub CLI, not from this app's sign-in. Uploads ask for your approval; they cannot be deleted from GitHub.", style = Type.small)
+        val attachmentLogin = view.optString("attachmentLogin")
+        Text(
+            when {
+                attachmentLogin.isNotEmpty() -> "Uploads as @$attachmentLogin (personal access token)"
+                view.optBoolean("githubCli") -> "GitHub CLI is installed: uploads use its sign-in (gh auth login), read at each upload"
+                else -> "Not set up: the agent cannot upload screenshots or videos."
+            },
+            style = Type.body,
+        )
+        if (attachmentLogin.isNotEmpty()) {
+            Pill("Remove token", enabled = !busy) { change("attachment-token", JSONObject().put("token", "")) }
+        } else {
+            BasicTextField(
+                attachmentToken,
+                { attachmentToken = it },
+                singleLine = true,
+                textStyle = Type.body,
+                visualTransformation = PasswordVisualTransformation(),
+                modifier = Modifier.fillMaxWidth()
+                    .border(1.dp, Palette.borderSoft, RoundedCornerShape(12.dp))
+                    .padding(12.dp),
+                decorationBox = { inner ->
+                    if (attachmentToken.isEmpty()) Text("Personal access token", style = Type.small)
+                    inner()
+                },
+            )
+            Pill("Save token", primary = true, enabled = app.connected && !busy && attachmentToken.isNotBlank()) {
+                change("attachment-token", JSONObject().put("token", attachmentToken.trim()))
+                attachmentToken = ""
+            }
+            Pill("Create a token on GitHub") {
+                open("https://github.com/settings/tokens/new?scopes=repo&description=1loop+attachments")
+            }
+            Text("A classic token with the repo scope, or a fine-grained token with write access. It stays in the connector's private file on this execution target and is never sent to the model. Disconnect removes it.", style = Type.small)
+        }
         Pill("Disconnect", enabled = !busy) { change("disconnect") }
         Text("Disconnect removes authorization stored on this execution target. Revoke the app separately in GitHub settings if needed. Tokens are not sent to the model.", style = Type.small)
     } else if (code.isNotEmpty()) {

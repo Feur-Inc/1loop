@@ -310,9 +310,7 @@ when it can update, and updates it on request.
 4. Once connected, GitHub's official hosted MCP tools become available to
    the agent. Their actual capabilities depend on the app's permissions and
    your own repository access. Write operations follow the selected approval
-   mode. Native image attachments are not included: the upload endpoint
-   returned HTTP 404 with this GitHub App authorization in the real test.
-   You can attach images manually through GitHub in your browser.
+   mode.
 5. Turn **Enable GitHub tools** off to remove them from later model requests
    and reject later calls. An operation already sent to GitHub may finish.
    **Disconnect** clears the locally saved authorization; **Review access on
@@ -325,6 +323,33 @@ model configuration. They are not included in tool schemas or given to
 Claude Code subprocesses. Expiring authorizations are renewed automatically;
 after revocation, connect again. No app secret or private key is embedded in
 the application; its GitHub App client ID is public.
+
+### Images and videos
+
+The agent can upload screenshots and recordings for issues, pull requests and
+comments (`github_upload_attachments`), and look at images already attached
+to them (`github_view_attachment`). A file comes from the workspace, here or on
+the SSH machine, or is a fresh screenshot of a Browser Use tab. GitHub accepts
+png, jpg, jpeg, gif, webp and svg images up to 10 MiB, and mp4, mov and webm
+videos up to 100 MiB.
+
+GitHub refuses uploads signed by a GitHub App such as the connector (only
+GitHub's own apps may use its attachment endpoint), so uploads need one of:
+
+- a personal access token saved under **Images and videos** in the connector's
+  settings: a classic token with the `repo` scope (`public_repo` for public
+  repositories only), or a fine-grained token with write access to the
+  repositories. It is saved in `github-connector.json` with the connector's
+  authorization and removed by **Disconnect**;
+- otherwise GitHub CLI's sign-in on the execution target (`gh auth login`).
+  1loop reads it with `gh auth token` at each upload and never saves it.
+
+The uploading account must be able to write to the repository. Each upload
+asks for approval and names the repository, the account and the files. GitHub
+has no way to delete an attachment; it shows only where its address is
+referenced, which the agent then does with the issue, pull request or comment
+tools. Opening an attached image uses the same credential, else the
+connector's, so images of private repositories open too.
 
 Connecting or reconnecting GitHub during an active Claude Code turn takes
 effect on the next turn in the same chat, even with the same account. Calls

@@ -260,11 +260,7 @@ func (renderer *toolRowRenderer) Objects() []fyne.CanvasObject {
 	return []fyne.CanvasObject{renderer.bg, renderer.icon, renderer.verb, renderer.target, renderer.meta, renderer.minus}
 }
 
-func (renderer *toolRowRenderer) Destroy() {
-	if renderer.row.preview != nil {
-		renderer.row.preview.progress.Stop()
-	}
-}
+func (renderer *toolRowRenderer) Destroy() {}
 
 // ---------------------------------------------------------------------------
 // Transcript

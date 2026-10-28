@@ -352,7 +352,7 @@ these folders too if you want to remove your data.
 
 With a connected **ChatGPT account** (Codex subscription authentication), ask
 for an image in a project chat. The `imagegen` tool uses the subscription's
-Codex image service, shows an animated placeholder while it works, and displays
+Codex image service with `gpt-image-2.5-sunburst`, shows an animated placeholder while it works, and displays
 the resulting image in the conversation. The PNG is saved in the project's
 `generated-images/` folder, with a unique filename; use Files to open or export
 it. The model receives the image too and can inspect it before replying.
@@ -360,6 +360,9 @@ it. The model receives the image too and can inspect it before replying.
 For edits, the tool accepts up to five workspace image paths, or the last
 one to five conversation images. These options cannot be combined. A transparent
 background can be requested. Existing files are never overwritten.
+Like Codex image generation, this tool does not request a separate action
+approval: referenced images are sent to the connected ChatGPT account’s
+image service, and generation consumes its image quota.
 
 The tool is absent for Claude Code, vLLM, compatible APIs, OpenRouter and
 ChatGPT (Web). Access and image quotas depend on the connected subscription;

@@ -822,11 +822,11 @@ func (remote *remoteDesktop) showItems(conv *conversation, items []remoteapi.Ite
 	ui.relayoutColumn()
 }
 
-// fetchImages loads the pictures of the user's messages, which the server
+// fetchImages loads attached and generated pictures, which the server
 // lists without their data, then shows the chat again with them.
 func (remote *remoteDesktop) fetchImages(conv *conversation, items []remoteapi.Item) {
 	for index, item := range items {
-		if item.Kind != "user" || item.Images == 0 || (index < len(conv.Items) && len(conv.Items[index].Images) > 0) {
+		if (item.Kind != "user" && item.Tool != "imagegen") || item.Images == 0 || (index < len(conv.Items) && len(conv.Items[index].Images) > 0) {
 			continue
 		}
 		if conv.fetching == nil {

@@ -55,6 +55,13 @@ func (backend *App) generateImage(ctx context.Context, cfg Config, arguments str
 		if err != nil {
 			return "", nil, err
 		}
+		info, err := os.Stat(path)
+		if err != nil {
+			return "", nil, err
+		}
+		if !info.Mode().IsRegular() {
+			return "", nil, fmt.Errorf("Referenced images must be regular files")
+		}
 		file, err := os.Open(path)
 		if err != nil {
 			return "", nil, err
@@ -100,7 +107,7 @@ func (backend *App) generateImage(ctx context.Context, cfg Config, arguments str
 	if args.Transparent {
 		background = "transparent"
 	}
-	body := map[string]any{"prompt": args.Prompt, "model": "gpt-image-2", "background": background, "quality": "auto", "size": "auto"}
+	body := map[string]any{"prompt": args.Prompt, "model": "gpt-image-2.5-sunburst", "background": background, "quality": "auto", "size": "auto"}
 	endpoint := "/images/generations"
 	if len(inputs) > 0 {
 		endpoint = "/images/edits"
@@ -169,6 +176,7 @@ func readGeneratedImage(response *http.Response) (string, error) {
 			if !strings.HasPrefix(line, "data:") {
 				continue
 			}
+			result.Type, result.Image, result.Error = "", "", nil
 			if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &result); err != nil {
 				return "", err
 			}

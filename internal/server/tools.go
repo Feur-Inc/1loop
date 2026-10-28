@@ -181,6 +181,7 @@ type serverTerminal struct {
 	output  []byte
 	total   int64
 	screen  vt10x.Terminal
+	root    bool // the phone's Debian terminal (openDebianTerminal)
 }
 
 func newServerTerminal(parent context.Context, dir string, host terminal.NativeHost) (*serverTerminal, error) {

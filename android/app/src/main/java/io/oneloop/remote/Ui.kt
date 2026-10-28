@@ -205,7 +205,11 @@ fun Root(app: RemoteApp) {
                 Screen.Servers::class -> ServersScreen(app)
                 Screen.LocalSetup::class -> {
                     val status by app.local.status.collectAsState()
-                    LocalSetupScreen(status, app::prepareLocal, app::startLocal, app::switchTarget, app.starting, app.problem)
+                    if (app.linuxOpen) LinuxScreen(app) { app.linuxOpen = false }
+                    else LocalSetupScreen(
+                        status, app::prepareLocal, app::startLocal, app::switchTarget, app.starting, app.problem,
+                        onManageLinux = if (app.local.debianInstalled) ({ app.linuxOpen = true }) else null,
+                    )
                 }
                 Screen.Pair::class -> (app.screen as? Screen.Pair)?.let { PairScreen(app, it) }
                 Screen.Chat::class -> ChatScreen(app)
@@ -484,6 +488,10 @@ fun ChatScreen(app: RemoteApp) {
     if (app.settingsOpen) {
         if (app.extensionsOpen) {
             ExtensionsScreen(app) { app.extensionsOpen = false }
+            return
+        }
+        if (app.linuxOpen) {
+            LinuxScreen(app) { app.linuxOpen = false }
             return
         }
         MobileSettings(app) { app.settingsOpen = false }

@@ -106,7 +106,7 @@ private fun ModeCard(icon: ImageVector, title: String, detail: String, onClick: 
 @Composable
 fun LocalSetupScreen(
     status: LocalStatus, onPrepare: (String) -> Unit, onStart: () -> Unit, onBack: () -> Unit,
-    starting: Boolean = false, problem: String? = null,
+    starting: Boolean = false, problem: String? = null, onManageLinux: (() -> Unit)? = null,
 ) {
     BackHandler(onBack = onBack)
     val pending = status.steps.filter { it.state != StepState.Done }
@@ -150,6 +150,8 @@ fun LocalSetupScreen(
                 modifier = Modifier.padding(top = 10.dp),
             )
         }
+        // A Debian that no longer starts can still be cleaned or reset.
+        onManageLinux?.let { Box(Modifier.padding(top = 18.dp)) { Pill("Manage Linux", onClick = it) } }
         Spacer(Modifier.height(32.dp))
     }
 }

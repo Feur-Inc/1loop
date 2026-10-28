@@ -1524,7 +1524,9 @@ func (ui *desktopUI) refreshModels() {
 			for i, result := range results {
 				if result.err != nil {
 					problem := "Models unavailable"
-					if connections[i].Provider == "vllm" {
+					if connections[i].Provider == "claudecode" {
+						problem = agent.FirstLine(result.err.Error())
+					} else if connections[i].Provider == "vllm" {
 						problem = "Unavailable"
 					} else {
 						var timeout net.Error

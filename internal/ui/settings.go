@@ -869,6 +869,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		container.NewVBox(account, container.NewHBox(login), loginLink)))
 	claudeState := plainFlow("", 12.5, colMuted)
 	installClaude := newRow("Install Claude Code", nil, styleOutline, nil)
+	signInClaude := newRow("Sign in", nil, styleOutline, ui.signInClaude)
 	showClaude := func() {
 		path, err := agent.ClaudeExecutable()
 		problem := agent.ClaudeInstallProblem()
@@ -876,10 +877,13 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		case err == nil:
 			setFlow(claudeState, "Installed: "+path)
 			installClaude.Hide()
+			signInClaude.Show()
 		case problem != "":
+			signInClaude.Hide()
 			setFlow(claudeState, "Not installed on this computer. "+problem)
 			installClaude.Hide()
 		default:
+			signInClaude.Hide()
 			setFlow(claudeState, "Not installed on this computer.")
 			installClaude.Show()
 		}
@@ -887,7 +891,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	installClaude.onTap = func() { ui.installClaudeCode(showClaude) }
 	claudeFields := card(settingStack("Claude Code on this computer",
 		"Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it.",
-		container.NewVBox(claudeState, container.NewHBox(installClaude))))
+		container.NewVBox(claudeState, container.NewHBox(installClaude, signInClaude))))
 	webFields, releaseWebSetup := ui.chatGPTWebSettings(&draft, say)
 	access := container.NewStack(apiFields, oauthFields, claudeFields, webFields)
 

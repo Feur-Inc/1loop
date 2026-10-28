@@ -1,20 +1,16 @@
 package server
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"net/http"
-	"net/url"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"regexp"
 	"strings"
 	"time"
 
+	"1loop/internal/agent"
 	"1loop/internal/core"
-	"1loop/internal/platform"
 )
 
 func mobileClaudeSignedIn() bool {
@@ -90,57 +86,29 @@ func (server *headlessServer) beginClaudeLogin(w http.ResponseWriter, r *http.Re
 		core.Fail(w, 409, "Start sign-in before submitting its code")
 		return
 	}
-	path, err := exec.LookPath("claude")
-	if err != nil {
+	if _, err := agent.ClaudeExecutable(); err != nil {
 		core.Fail(w, 409, "Install Claude Code first")
 		return
 	}
 	ctx, cancel := context.WithTimeout(server.ctx, 5*time.Minute)
-	command := exec.CommandContext(ctx, path, "auth", "login", "--claudeai")
-	command.Dir = server.dir
-	command.Env = append(os.Environ(), "BROWSER=/usr/local/libexec/1loop-open-url")
-	platform.PrepareProcess(command)
-	command.WaitDelay = time.Second
-	input, err := command.StdinPipe()
+	login := &mobileLogin{State: "pending", cancel: cancel}
+	process, err := agent.StartClaudeSignIn(ctx, server.dir, "/usr/local/libexec/1loop-open-url", func(link string) {
+		server.mu.Lock()
+		if server.claudeLogin == login {
+			login.URL = link
+		}
+		server.mu.Unlock()
+	})
 	if err != nil {
-		cancel()
-		core.Fail(w, 500, "Unable to start sign-in")
-		return
-	}
-	output, err := command.StdoutPipe()
-	if err != nil {
-		cancel()
-		core.Fail(w, 500, "Unable to start sign-in")
-		return
-	}
-	command.Stderr = command.Stdout
-	if err := command.Start(); err != nil {
 		cancel()
 		core.Fail(w, 500, err.Error())
 		return
 	}
-	login := &mobileLogin{State: "pending", cancel: cancel, input: input}
+	login.input = process.Input
 	server.claudeLogin = login
 	go func() {
 		defer cancel()
-		defer input.Close()
-		links := regexp.MustCompile(`https://[^\s\x1b]+`)
-		scanner := bufio.NewScanner(output)
-		scanner.Buffer(make([]byte, 4096), 64<<10)
-		for scanner.Scan() {
-			for _, candidate := range links.FindAllString(scanner.Text(), -1) {
-				parsed, err := url.Parse(candidate)
-				if err != nil || !claudeAuthorizationURL(parsed) {
-					continue
-				}
-				server.mu.Lock()
-				if server.claudeLogin == login {
-					login.URL = candidate
-				}
-				server.mu.Unlock()
-			}
-		}
-		err := command.Wait()
+		err := <-process.Done
 		server.mu.Lock()
 		if server.claudeLogin != login {
 			server.mu.Unlock()
@@ -156,14 +124,4 @@ func (server *headlessServer) beginClaudeLogin(w http.ResponseWriter, r *http.Re
 		}
 	}()
 	core.WriteJSON(w, 200, login)
-}
-
-func claudeAuthorizationURL(link *url.URL) bool {
-	if link.Scheme != "https" || link.User != nil || link.Port() != "" {
-		return false
-	}
-	if link.Hostname() == "claude.com" {
-		return link.Path == "/cai/oauth/authorize"
-	}
-	return link.Path == "/oauth/authorize" && (link.Hostname() == "claude.ai" || link.Hostname() == "platform.claude.com" || link.Hostname() == "console.anthropic.com")
 }

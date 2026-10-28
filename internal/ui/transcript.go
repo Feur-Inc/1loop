@@ -340,7 +340,7 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 			if err != nil {
 				continue
 			}
-			view := canvas.NewImageFromImage(img)
+			view := canvas.NewImageFromImage(thumbnail(img, 256))
 			view.FillMode = canvas.ImageFillContain
 			view.SetMinSize(fyne.NewSize(110, 110))
 			pics = append(pics, surface(view, colCode, colBorderSoft, 8, 0))

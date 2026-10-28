@@ -494,8 +494,10 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 
 func (server *headlessServer) itemLocked(chat *serverChat, index int) remoteapi.Item {
 	state := chat.branching()
-	state.IdentifyMessages()
-	chat.applyBranch(state)
+	if chat.Items[index].ID == "" { // the whole chat: per item, a page cost its square
+		state.IdentifyMessages()
+		chat.applyBranch(state)
+	}
 	item := chat.Items[index]
 	out := remoteapi.Item{
 		ID:       item.ID,

@@ -485,7 +485,9 @@ func chatSummary(chat *conversation) remoteapi.Chat {
 }
 
 func itemForPhone(chat *conversation, index int) remoteapi.Item {
-	chat.identifyMessages()
+	if chat.Items[index].ID == "" { // the whole chat: per item, a page cost its square
+		chat.identifyMessages()
+	}
 	versions := chat.branching()
 	item := chat.Items[index]
 	out := remoteapi.Item{ID: item.ID, Versions: remoteapi.ItemVersions(&versions, index), Kind: item.Kind, Text: item.Text, Images: len(item.Images)}

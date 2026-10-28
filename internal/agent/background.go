@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -62,9 +63,11 @@ type BackgroundTasks struct {
 	next     int
 	OnFinish func(info BackgroundTaskInfo, wake Message)
 	OnChange func()
+	listed   bool // in everyTasks while a task runs
 }
 
-// every registry with a task, for StopEveryTask.
+// every registry with a running task, for StopEveryTask. A registry leaves
+// it when its last task ends: kept forever, it held deleted chats in memory.
 var everyTasks struct {
 	mu   sync.Mutex
 	list []*BackgroundTasks
@@ -116,14 +119,14 @@ func (tasks *BackgroundTasks) start(begin func(io.Writer) (func() (int, error), 
 		return "", err
 	}
 	tasks.mu.Lock()
-	first := len(tasks.tasks) == 0
 	tasks.tasks = append(tasks.tasks, task)
-	tasks.mu.Unlock()
-	if first {
+	if !tasks.listed {
+		tasks.listed = true
 		everyTasks.mu.Lock()
 		everyTasks.list = append(everyTasks.list, tasks)
 		everyTasks.mu.Unlock()
 	}
+	tasks.mu.Unlock()
 	tasks.changed()
 	go func() {
 		code, err := wait()
@@ -135,6 +138,12 @@ func (tasks *BackgroundTasks) start(begin func(io.Writer) (func() (int, error), 
 			task.info.ExitCode = -1
 		}
 		info := task.info
+		if tasks.listed && !slices.ContainsFunc(tasks.tasks, func(other *backgroundTask) bool { return other.info.Running }) {
+			tasks.listed = false
+			everyTasks.mu.Lock()
+			everyTasks.list = slices.DeleteFunc(everyTasks.list, func(other *BackgroundTasks) bool { return other == tasks })
+			everyTasks.mu.Unlock()
+		}
 		tasks.mu.Unlock()
 		tasks.changed()
 		if tasks.OnFinish != nil {

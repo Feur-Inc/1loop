@@ -74,6 +74,7 @@ func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 	previous := ui.cfg
 	platform.Devf("ui", "model %s (%s)", choice.ID, choice.Display())
 	cfg := choice.Connection.Config(previous.Workspace)
+	cfg.MachineID = previous.MachineID // the project stays on its SSH machine
 	cfg.Model = choice.ID
 	cfg.ReasoningMode = choice.ReasoningMode
 	cfg.Effort = nearestModelEffort(choice, previous.Effort)

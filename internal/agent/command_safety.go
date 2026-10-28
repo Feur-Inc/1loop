@@ -467,13 +467,18 @@ func powerShellDangerous(words []string) bool {
 // reviewer unless it only creates in the workspace.
 func shellApproval(ctx context.Context, root, command string, escalate bool, reason string) (review, sandboxed bool, title, preview string, err error) {
 	title, preview = "Run command?", root+"\n\n$ "+command
+	// On an SSH machine there is no sandbox: what is not plainly safe is reviewed.
+	machine := machineOf(ctx)
+	if machine != nil {
+		preview = machine.Label() + ": " + preview
+	}
 	policy, _ := ctx.Value(approvalContextKey{}).(approvalPolicy)
 	if policy.review == nil {
 		return true, false, title, preview, nil
 	}
 	class := classifyCommand(command)
 	switch {
-	case escalate:
+	case escalate && machine == nil:
 		if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
 			return false, false, "", "", fmt.Errorf("On the phone, commands always stay in the project outside YOLO mode")
 		}
@@ -485,9 +490,9 @@ func shellApproval(ctx context.Context, root, command string, escalate bool, rea
 		return true, false, title, preview, nil
 	case class == commandSafe:
 		return false, false, title, preview, nil
-	case platform.SandboxAvailable():
+	case machine == nil && platform.SandboxAvailable():
 		return false, true, title, preview, nil
-	case runtime.GOOS != "windows" && createsOnly(root, command):
+	case machine == nil && runtime.GOOS != "windows" && createsOnly(root, command):
 		return false, false, title, preview, nil
 	}
 	return true, false, title, preview, nil

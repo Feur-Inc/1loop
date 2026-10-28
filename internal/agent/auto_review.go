@@ -302,7 +302,7 @@ func obviouslySafe(root, title, preview string) bool {
 		// An absolute path is outside the workspace, in a granted folder.
 		// AGENTS.md is every agent's instructions, read in every chat: what
 		// is written there is reviewed, so an injection cannot plant itself.
-		if path == ".git" || strings.HasPrefix(path, ".git/") || filepath.IsAbs(path) || filepath.Base(path) == "AGENTS.md" {
+		if path == ".git" || strings.HasPrefix(path, ".git/") || filepath.IsAbs(path) || strings.HasPrefix(path, "/") || filepath.Base(path) == "AGENTS.md" {
 			return false
 		}
 	}

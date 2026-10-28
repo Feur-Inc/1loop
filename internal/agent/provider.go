@@ -692,6 +692,9 @@ type Inbox struct {
 // Run works on a chat with the connection's harness: Claude Code's own for
 // a Claude Code connection, 1loop's agent loop for every other provider.
 func (backend *App) Run(ctx context.Context, cfg Config, history []Message, inboxValue Inbox, emit emitter) error {
+	if err := machineErr(cfg); err != nil {
+		return err
+	}
 	if cfg.AutoResume != nil && cfg.AutoResume.Enabled {
 		return backend.runWithResume(ctx, cfg, history, inboxValue, emit)
 	}

@@ -41,7 +41,7 @@ func (terminal *panelTerminal) close() {
 }
 
 func (panel *toolPanel) openTerminal() {
-	tab, err := panel.terminalTab(panel.ui.cfg.Workspace)
+	tab, err := panel.terminalTab(panel.ui.cfg.Workspace, panel.ui.cfg.MachineID)
 	if err != nil {
 		panel.ui.notice("Terminal", err.Error())
 		return
@@ -51,10 +51,24 @@ func (panel *toolPanel) openTerminal() {
 	panel.unfold()
 }
 
-// terminalTab starts a shell in dir and returns its tab.
-func (panel *toolPanel) terminalTab(dir string) (panelTab, error) {
+// terminalTab starts a shell in dir, on this computer or on an SSH
+// machine, and returns its tab.
+func (panel *toolPanel) terminalTab(dir, machineID string) (panelTab, error) {
 	ctx, cancel := context.WithCancel(panel.ui.ctx)
-	file, err := terminal.NewTerminalProcess(ctx, dir)
+	var file terminal.Process
+	var err error
+	var failed chan error
+	if machineID != "" {
+		machine := panel.ui.machineFor(machineID)
+		if machine == nil {
+			cancel()
+			return panelTab{}, fmt.Errorf("This SSH machine is no longer in Settings → SSH machines")
+		}
+		failed = make(chan error, 1)
+		file = newLazyTerminal(ctx, machine, dir, func(err error) { failed <- err })
+	} else {
+		file, err = terminal.NewTerminalProcess(ctx, dir)
+	}
 	if err != nil {
 		cancel()
 		return panelTab{}, err
@@ -63,7 +77,23 @@ func (panel *toolPanel) terminalTab(dir string) (panelTab, error) {
 	w.SetStartDir(dir)
 	w.Resize(fyne.NewSize(600, 400))
 	panelTerminalValue := &panelTerminal{widget: w, file: file, cancel: cancel, id: core.Identifier()[:16], dir: dir, done: make(chan struct{})}
-	status := textLine(dir, 11, colMuted)
+	where := dir
+	if machineID != "" {
+		where = panel.ui.targetLabelOf(machineID) + ": " + dir
+	}
+	status := textLine(where, 11, colMuted)
+	if failed != nil {
+		go func() {
+			select {
+			case err := <-failed:
+				fyne.Do(func() {
+					status.Text, status.Color = err.Error(), colDanger
+					status.Refresh()
+				})
+			case <-ctx.Done():
+			}
+		}()
+	}
 	configs := make(chan fyneterm.Config, 4)
 	w.AddListener(configs)
 	go func() {
@@ -107,13 +137,14 @@ func (panel *toolPanel) openChanges() {
 			return
 		}
 	}
-	panel.tabs = append(panel.tabs, panel.changesTab(panel.ui.cfg.Workspace))
+	panel.tabs = append(panel.tabs, panel.changesTab(panel.ui.cfg.Workspace, panel.ui.cfg.MachineID))
 	panel.choose(len(panel.tabs) - 1)
 	panel.unfold()
 }
 
 // changesTab returns the tab of the Git changes of root, already loading.
-func (panel *toolPanel) changesTab(root string) panelTab {
+func (panel *toolPanel) changesTab(root, machineID string) panelTab {
+	machine := panel.ui.machineFor(machineID)
 	ctx, cancel := context.WithCancel(panel.ui.ctx)
 	body := container.NewStack(note("Loading changes…"))
 	mode := newPicker(panel.ui.window, "Changes", styleChip, nil)
@@ -128,7 +159,16 @@ func (panel *toolPanel) changesTab(root string) panelTab {
 		staged := mode.Selected == "Staged"
 		refresh.Disable()
 		go func() {
-			diff, err := agent.WorkspaceDiff(ctx, root, staged)
+			var diff string
+			var err error
+			switch {
+			case machineID == "":
+				diff, err = agent.WorkspaceDiff(ctx, root, staged)
+			case machine == nil:
+				err = fmt.Errorf("This SSH machine is no longer in Settings → SSH machines")
+			default:
+				diff, err = agent.MachineDiff(ctx, machine, root, staged)
+			}
 			fyne.Do(func() {
 				if ctx.Err() != nil || current != generation {
 					return
@@ -176,14 +216,17 @@ func (panel *toolPanel) openFiles() {
 			return
 		}
 	}
-	panel.tabs = append(panel.tabs, panel.filesTab(panel.ui.cfg.Workspace))
+	panel.tabs = append(panel.tabs, panel.filesTab(panel.ui.cfg.Workspace, panel.ui.cfg.MachineID))
 	panel.choose(len(panel.tabs) - 1)
 	panel.unfold()
 }
 
-// filesTab browses the project's files on this computer.
-func (panel *toolPanel) filesTab(root string) panelTab {
+// filesTab browses the project's files, on this computer or an SSH machine.
+func (panel *toolPanel) filesTab(root, machineID string) panelTab {
 	ui := panel.ui
+	if machine := ui.machineFor(machineID); machine != nil {
+		return panel.machineFilesTab(machine, root)
+	}
 	ctx, cancel := context.WithCancel(ui.ctx)
 	source := fileSource{
 		name: filepath.Base(root),

@@ -150,6 +150,21 @@ not get them.
 Without a `GITHUB_TOKEN` (or `GH_TOKEN`), GitHub allows about ten searches a
 minute.
 
+### SSH machines
+
+**Settings → SSH machines** adds a computer the agent can work on over SSH:
+its host, port and user, a password, a private key (with its passphrase) or
+the SSH agent, and its **projects folder**. 1loop asks you to trust its host
+key the first time and refuses the connection if that key ever changes.
+Choose the machine in the target menu under the composer: its projects are
+folders of that projects folder (**Projects, +** makes one there), its chats
+stay apart from this computer's, and the agent's file edits, shell commands,
+background tasks, **Terminal**, **Git changes** and **Files** happen on the
+machine. The agent, its models, Browser Use and Computer Use stay on this
+computer. The machine has no sandbox: in Auto mode, any command that is not
+plainly safe waits for your approval. Claude Code and ChatGPT (Web) work on
+this computer's projects only.
+
 ### The phone app
 
 - **Remote desktop / Remote server**: drive a desktop or a server from the

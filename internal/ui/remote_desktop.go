@@ -194,6 +194,9 @@ func (ui *desktopUI) useServer(client *remoteClient) {
 		ui.server.close()
 	} else {
 		ui.localCfg = ui.cfg
+		if ui.localCfg.MachineID != "" { // back from the server, the target is this computer
+			ui.localCfg.MachineID, ui.localCfg.Workspace = "", ui.lastLocalWorkspace()
+		}
 	}
 	ctx, cancel := context.WithCancel(ui.ctx)
 	remote := &remoteDesktop{
@@ -234,6 +237,9 @@ func (ui *desktopUI) useServer(client *remoteClient) {
 // useComputer makes this computer the target again.
 func (ui *desktopUI) useComputer() {
 	if ui.server == nil {
+		if ui.cfg.MachineID != "" {
+			ui.leaveMachine()
+		}
 		return
 	}
 	ui.server.close()
@@ -276,8 +282,14 @@ func (ui *desktopUI) targetMenu() {
 	if data, err := os.ReadFile(remoteAddressPath()); err == nil {
 		json.Unmarshal(data, &saved)
 	}
-	computer := menuAction{label: "This computer", icon: theme.ComputerIcon(), checked: ui.server == nil, run: ui.useComputer}
+	computer := menuAction{label: "This computer", icon: theme.ComputerIcon(), checked: ui.server == nil && ui.cfg.MachineID == "", run: ui.useComputer}
 	actions := []menuAction{computer}
+	for _, machine := range ui.sshMachines {
+		id := machine.ID
+		actions = append(actions, menuAction{label: machine.Label(), detail: "SSH · " + machine.User + "@" + machine.Host, icon: iconTerminal,
+			checked: ui.server == nil && ui.cfg.MachineID == id, run: func() { ui.useMachine(id) }})
+	}
+	actions = append(actions, menuAction{label: "Add an SSH machine…", icon: iconPlus, run: func() { ui.prefs.openOn("SSH machines") }})
 	if saved.URL != "" && saved.Token != "" {
 		server := menuAction{label: serverName(saved.URL), detail: saved.URL, icon: iconBrowser, checked: ui.server != nil && ui.server.client.address.URL == saved.URL, run: func() {
 			if ui.server != nil && ui.server.client.address.URL == saved.URL {

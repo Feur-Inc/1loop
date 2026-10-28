@@ -93,6 +93,11 @@ func runHooks(ctx context.Context, event, target string, payload map[string]any)
 	payload["hook_event_name"] = event
 	input, _ := json.Marshal(payload)
 	cwd, _ := payload["cwd"].(string)
+	// The user's hooks run on this computer: a machine's workspace is not here.
+	dir, machine := cwd, machineOf(ctx)
+	if machine != nil {
+		dir, _ = os.UserHomeDir()
+	}
 	// The user's file, then the enabled plugins' hooks: written for Claude
 	// Code, they also match its names of 1loop's tools, and find their
 	// plugin's folder in CLAUDE_PLUGIN_ROOT.
@@ -141,8 +146,11 @@ func runHooks(ctx context.Context, event, target string, payload map[string]any)
 				} else {
 					cmd = platform.ShellCommand(run, expand(hook.Command))
 				}
-				platform.WorkspaceCommand(cmd, cwd, platform.WorkspaceYOLO(ctx))
+				platform.WorkspaceCommand(cmd, dir, platform.WorkspaceYOLO(ctx))
 				cmd.Env = append(os.Environ(), "ONELOOP_WORKSPACE="+cwd, "ONELOOP_HOOK_EVENT="+event)
+				if machine != nil {
+					cmd.Env = append(cmd.Env, "ONELOOP_MACHINE="+machine.Label())
+				}
 				if from.root != "" {
 					cmd.Env = append(cmd.Env, "CLAUDE_PLUGIN_ROOT="+from.root, "CLAUDE_PROJECT_DIR="+cwd)
 				}

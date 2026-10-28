@@ -293,7 +293,7 @@ func (ui *desktopUI) pasteFromClipboard() bool {
 
 // pickImages attaches pictures chosen in the desktop's file chooser.
 func (ui *desktopUI) pickImages() {
-	ui.pick(pickRequest{title: "Attach images", start: ui.cfg.Workspace, multiple: true, filterName: "Images",
+	ui.pick(pickRequest{title: "Attach images", start: ui.pickStart(), multiple: true, filterName: "Images",
 		extensions: []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}}, func(paths []string) {
 		for _, path := range paths {
 			file, err := os.Open(path)

@@ -536,7 +536,11 @@ func claudeHandoffNote(ctx context.Context, cfg Config, prompt string) (string, 
 	if cfg.Session != "" {
 		args = append(args, "--resume", cfg.Session)
 	}
-	cmd, err := claudeCommand(ctx, cfg.Workspace, args...)
+	dir := cfg.Workspace
+	if cfg.MachineID != "" { // the workspace is on an SSH machine, not here
+		dir = ""
+	}
+	cmd, err := claudeCommand(ctx, dir, args...)
 	if err != nil {
 		return "", err
 	}

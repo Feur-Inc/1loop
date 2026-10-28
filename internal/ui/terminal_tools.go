@@ -13,6 +13,8 @@ import (
 	"image/draw"
 	"image/png"
 	"io"
+	"path"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -128,13 +130,24 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 					return
 				case "open":
 					dir := chat.Config.Workspace
-					if args.Cwd != "" {
+					switch {
+					case args.Cwd == "":
+					case chat.Config.MachineID != "": // a folder of the project on the machine
+						dir = path.Join(dir, args.Cwd)
+						if path.IsAbs(args.Cwd) {
+							dir = path.Clean(args.Cwd)
+						}
+						if dir != chat.Config.Workspace && !strings.HasPrefix(dir, strings.TrimSuffix(chat.Config.Workspace, "/")+"/") {
+							problem = fmt.Errorf("The path is outside the workspace")
+							return
+						}
+					default:
 						dir, problem = agent.WorkspacePath(dir, args.Cwd)
 						if problem != nil {
 							return
 						}
 					}
-					tab, err := panel.terminalTab(dir)
+					tab, err := panel.terminalTab(dir, chat.Config.MachineID)
 					if err != nil {
 						problem = err
 						return

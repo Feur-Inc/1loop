@@ -586,6 +586,9 @@ func (page *extensionsPage) checkMCP() {
 		page.show("mcp")
 	}
 	workspace := page.ui.cfg.Workspace
+	if page.ui.cfg.MachineID != "" { // MCP servers run on this computer, not in the machine's project
+		workspace = ""
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(page.ui.ctx, time.Minute)
 		defer cancel()

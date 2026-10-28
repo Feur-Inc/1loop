@@ -187,14 +187,18 @@ func systemInstructions(cfg Config) string {
 	}
 	if cfg.ApprovalMode == "auto" {
 		auto := "Inside the workspace, file edits, creating files and folders, and commands that only read run at once; other shell commands and edits go through an automatic review, and what it refuses waits for the user's approval. Never bypass a refusal or try to word an action so that it passes the review."
-		if platform.SandboxAvailable() {
+		if platform.SandboxAvailable() && cfg.Machine == nil {
 			auto = "File edits inside the workspace run at once. Shell commands run at once in a sandbox: they read everything and write only the workspace, the temporary folders and the build caches. Destructive commands (deletions, git reset/clean/push, sudo, kill…) go through an automatic review, and what it refuses waits for the user's approval. When a command must write outside the sandbox, run it again with escalate: true and a justification; that goes through the review too. Never bypass a refusal or try to word an action so that it passes the review."
 		}
 		prompt = strings.Replace(prompt, "Shell commands and file edits require user approval; never bypass a refusal.", auto, 1)
 	}
 	prompt += userPreferenceInstructions(cfg)
-	prompt += mobileInstructions(cfg) + projectInstructions(cfg.Workspace)
-	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + platform.ShellDescription() + "." + citationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + contextInstructions(cfg) + memoryInstructions(cfg) + toolSearchInstructions(cfg)
+	prompt += mobileInstructions(cfg) + workspaceInstructions(cfg)
+	shell := platform.ShellDescription()
+	if cfg.Machine != nil {
+		shell = "bash (else sh) on " + cfg.Machine.Label()
+	}
+	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + shell + "." + citationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + contextInstructions(cfg) + memoryInstructions(cfg) + toolSearchInstructions(cfg)
 }
 
 type approvalContextKey struct{}
@@ -215,6 +219,9 @@ func toolContext(ctx context.Context, cfg Config) context.Context {
 	ctx = context.WithValue(ctx, todoContextKey{}, cfg.Todo)
 	ctx = context.WithValue(ctx, tasksContextKey{}, cfg.Tasks)
 	ctx = context.WithValue(ctx, grantsContextKey{}, cfg.Grants)
+	if cfg.Machine != nil {
+		ctx = context.WithValue(ctx, machineContextKey{}, cfg.Machine)
+	}
 	return context.WithValue(ctx, approvalContextKey{}, approvalPolicy{yolo: cfg.ApprovalMode == "yolo"})
 }
 

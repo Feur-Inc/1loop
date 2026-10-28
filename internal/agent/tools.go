@@ -77,6 +77,9 @@ func availableCoreTools(cfg Config) []map[string]any {
 			definitions = append(definitions, definition)
 		}
 	}
+	if cfg.toolAvailable("imagegen") {
+		definitions = append(definitions, imageGenerationToolDefinition())
+	}
 	if skill := skillToolDefinition(); skill != nil && cfg.toolAvailable("skill") {
 		definitions = append(definitions, skill)
 	}
@@ -376,6 +379,8 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 			result, err := handler(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
 			outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
 		}
+	} else if call.Function.Name == "imagegen" {
+		outcome.Output, outcome.Images, outcome.Err = backend.generateImage(ctx, cfg, call.Function.Arguments, begin)
 	} else if isGitHubTool(call.Function.Name) {
 		outcome.Output, outcome.Images, outcome.Err = backend.callGitHub(ctx, cfg, call, begin, emit)
 	} else if extensions.IsToolName(call.Function.Name) {

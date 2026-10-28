@@ -44,6 +44,9 @@ func (cfg Config) toolAvailable(name string) bool {
 	if cfg.ToolAllowed != nil && !cfg.ToolAllowed(name) {
 		return false
 	}
+	if name == "imagegen" {
+		return cfg.Provider == "openai"
+	}
 	if isGitHubTool(name) {
 		return githubconnector.Default.Available()
 	}

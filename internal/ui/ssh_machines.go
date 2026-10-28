@@ -258,6 +258,9 @@ func (ui *desktopUI) folderLabel() string {
 
 // projectName is a project as the sidebar names it.
 func (ui *desktopUI) projectName(project string) string {
+	if owner := ui.worktreeMap()[project]; owner != "" {
+		return ui.projectName(owner) + " › " + ui.worktreeLabel(project)
+	}
 	if ui.cfg.MachineID != "" {
 		return path.Base(project)
 	}

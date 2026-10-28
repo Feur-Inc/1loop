@@ -163,6 +163,7 @@ type remoteDesktop struct {
 	current          string // the open chat's ID on the server, "" on the start screen
 	chats            []remoteapi.Chat
 	projects         []string
+	worktrees        map[string]string // the server's worktrees: folder → project
 	meta             remoteapi.Meta
 	models           []remoteapi.Model
 	model, effort    string // the server's defaults, for a new chat
@@ -496,6 +497,9 @@ func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.Handof
 			}
 			ui.prompt.drafts.set(pending, "")
 			if chat == "" && reply.Chat != "" && remote.current == "" && ui.current == nil {
+				// The server lists the chat with the next refresh: its folder is
+				// the one it was sent to, not the server's default.
+				remote.conv(reply.Chat).Config.Workspace = workspace
 				remote.openChat(reply.Chat)
 			}
 			remote.notify()
@@ -587,6 +591,7 @@ func (remote *remoteDesktop) refreshLoop() {
 		var state struct {
 			Name, Workspace string
 			Chats           []remoteapi.Chat
+			Worktrees       map[string]string
 			Settings        struct {
 				Models                      []remoteapi.Model
 				Model, Effort, ApprovalMode string
@@ -621,6 +626,7 @@ func (remote *remoteDesktop) refreshLoop() {
 				remote.status.SetText(err.Error())
 				return
 			}
+			remote.worktrees = state.Worktrees
 			remote.show(state.Name, state.Workspace, state.Chats, projects.Projects)
 			remote.models = state.Settings.Models
 			remote.model, remote.effort = state.Settings.Model, state.Settings.Effort
@@ -647,7 +653,7 @@ func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat
 	remote.name, remote.defaultWorkspace = name, workspace
 	projects := []string{}
 	add := func(path string) {
-		if path != "" && !slices.Contains(projects, path) {
+		if path != "" && !slices.Contains(projects, path) && remote.worktrees[path] == "" {
 			projects = append(projects, path)
 		}
 	}
@@ -687,16 +693,26 @@ func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat
 func (remote *remoteDesktop) renderChats() {
 	ui := remote.parent
 	ui.projectList.RemoveAll()
+	opened := ui.projectOf(ui.cfg.Workspace)
 	for _, p := range remote.projects {
 		p := p
 		row := newRow(path.Base(filepath.ToSlash(p)), iconFolder, styleNav, func() { remote.selectProject(p) })
 		row.selected = p == ui.cfg.Workspace
 		row.accent = true
+		row.truncate = true
+		if state := ui.repoFor(p); state.repo != nil {
+			row.trailing = state.repo.Current
+		}
 		ui.projectList.Add(withMore(row, func(anchor fyne.CanvasObject) *sheet {
-			return showMenu(ui.window, anchor, []menuAction{
-				{label: "New chat", icon: iconPlus, run: func() { remote.selectProject(p); ui.startNew() }},
-			})
+			actions := []menuAction{{label: "New chat", icon: iconPlus, run: func() { remote.selectProject(p); ui.startNew() }}}
+			return showMenu(ui.window, anchor, append(actions, ui.repositoryActions(p)...))
 		}))
+		if p == opened {
+			for _, object := range ui.worktreeRows(p, remote.selectProject) {
+				ui.projectList.Add(object)
+			}
+			ui.loadRepo(p, true, 20*time.Second)
+		}
 	}
 	ui.chatList.RemoveAll()
 	shown := 0
@@ -733,6 +749,7 @@ func (remote *remoteDesktop) projectMenu(anchor fyne.CanvasObject) {
 	for _, p := range remote.projects {
 		p := p
 		actions = append(actions, menuAction{label: path.Base(filepath.ToSlash(p)), detail: p, checked: p == ui.cfg.Workspace, run: func() { remote.selectProject(p) }})
+		actions = append(actions, ui.worktreeChoices(p, remote.selectProject)...)
 	}
 	if len(actions) == 0 {
 		actions = append(actions, menuAction{label: "The server has no project yet"})

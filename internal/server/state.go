@@ -66,6 +66,8 @@ type serverSettings struct {
 	ClassicCompaction bool               `json:"classicCompaction"`
 	MemoryOff         bool               `json:"memoryOff,omitempty"`
 	AutoResume        *agent.AutoResume  `json:"autoResume,omitempty"`
+	// Worktrees of the projects, by folder: their chats belong to the project.
+	Worktrees map[string]string `json:"worktrees,omitempty"`
 }
 
 type headlessServer struct {
@@ -78,6 +80,7 @@ type headlessServer struct {
 	engine                     *browser.Engine
 	name, root, dir            string
 	projects                   []string
+	worktrees                  map[string]string // worktree folder → project (worktrees.go)
 	cfg                        agent.Config
 	connections                []agent.Connection
 	keys                       map[string]string
@@ -164,6 +167,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 			return nil, err
 		}
 		server.projects = settings.Projects
+		server.worktrees = settings.Worktrees
 		server.cfg = settings.Config
 		server.connections = settings.Connections
 		if settings.Keys != nil {
@@ -182,7 +186,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 	if server.projects == nil {
 		server.projects = []string{root}
 	}
-	if !slices.Contains(server.projects, server.cfg.Workspace) {
+	if !slices.Contains(server.projects, server.cfg.Workspace) && server.worktrees[server.cfg.Workspace] == "" {
 		server.cfg.Workspace = ""
 		if len(server.projects) > 0 {
 			server.cfg.Workspace = server.projects[0]
@@ -205,7 +209,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		if chat.Config.Workspace == "" {
 			chat.Config.Workspace = root
 		}
-		if !slices.Contains(server.projects, chat.Config.Workspace) {
+		if !slices.Contains(server.projects, chat.Config.Workspace) && server.worktrees[chat.Config.Workspace] == "" {
 			server.projects = append(server.projects, chat.Config.Workspace)
 		}
 		if chat.Todo == nil {
@@ -919,5 +923,6 @@ func (server *headlessServer) saveSettingsLocked() error {
 		ClassicCompaction: server.classic,
 		MemoryOff:         server.memoryOff,
 		AutoResume:        server.autoResume,
+		Worktrees:         server.worktrees,
 	})
 }

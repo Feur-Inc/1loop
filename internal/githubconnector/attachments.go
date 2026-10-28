@@ -306,3 +306,24 @@ func (manager *Manager) Download(ctx context.Context, address string, limit int6
 		return data, contentType, nil
 	}
 }
+
+// Authorizations are the credentials that can read repositories, best
+// first: the connector's, then the attachment token or GitHub CLI's. The
+// repository views try them in turn, then read public data without one.
+func (manager *Manager) Authorizations(ctx context.Context) []string {
+	var out []string
+	if manager.Available() {
+		if server, err := manager.Server(ctx); err == nil {
+			out = append(out, server.Headers["Authorization"])
+		}
+	}
+	manager.mu.Lock()
+	saved, err := manager.load()
+	manager.mu.Unlock()
+	if err == nil && saved.AttachmentToken != "" {
+		out = append(out, "Bearer "+saved.AttachmentToken)
+	} else if token, err := cliToken(ctx); err == nil {
+		out = append(out, "Bearer "+token)
+	}
+	return out
+}

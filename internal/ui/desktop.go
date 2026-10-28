@@ -112,6 +112,10 @@ type desktopUI struct {
 	machineProjects  map[string][]string            // each SSH machine's projects (paths there), by machine ID
 	machines         map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
 	localWorkspace   string                         // this computer's project while an SSH machine is the target
+	worktrees        map[string]string              // this computer's worktrees: folder → project (worktrees.go)
+	worktreeSort     string                         // how the sidebar and Repository order worktrees
+	repos            map[string]*repoState          // repositories read, by target and project
+	repoWindow       *repoWindow                    // the open Repository window
 	statePath        string
 	saveTimer        *time.Timer
 	saveLock         sync.Mutex // one write at a time, the newest state last
@@ -1589,6 +1593,8 @@ type savedState struct {
 	SSHMachines       []sshmachine.Settings `json:"sshMachines,omitempty"`
 	MachineProjects   map[string][]string   `json:"machineProjects,omitempty"`
 	LocalWorkspace    string                `json:"localWorkspace,omitempty"` // while an SSH machine is the target
+	Worktrees         map[string]string     `json:"worktrees,omitempty"`      // folder → project
+	WorktreeSort      string                `json:"worktreeSort,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1637,6 +1643,8 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.sshMachines,
 		ui.machineProjects,
 		ui.localWorkspace,
+		ui.worktrees,
+		ui.worktreeSort,
 	})
 	fields := map[string]json.RawMessage{}
 	if err == nil {
@@ -1731,6 +1739,7 @@ func (ui *desktopUI) load() {
 	ui.cfg = state.Config
 	ui.projects = state.Projects
 	ui.sshMachines, ui.machineProjects, ui.localWorkspace = state.SSHMachines, state.MachineProjects, state.LocalWorkspace
+	ui.worktrees, ui.worktreeSort = state.Worktrees, state.WorktreeSort
 	if _, ok := ui.machineSettings(ui.cfg.MachineID); ui.cfg.MachineID != "" && !ok { // the machine was removed
 		ui.cfg.MachineID, ui.cfg.Workspace = "", ui.lastLocalWorkspace()
 	}

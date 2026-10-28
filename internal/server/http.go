@@ -16,6 +16,7 @@ import (
 	"1loop/internal/core"
 	"1loop/internal/extensions"
 	"1loop/internal/githubconnector"
+	"1loop/internal/gitrepo"
 	"1loop/internal/remoteapi"
 )
 
@@ -129,6 +130,9 @@ func (server *headlessServer) routes() http.Handler {
 	for path, handler := range githubconnector.Handlers() {
 		endpoints[path] = handler
 	}
+	for path, handler := range gitrepo.Handlers(gitTarget{server}, githubconnector.Default.Authorizations) {
+		endpoints[path] = handler
+	}
 	for path, handler := range endpoints {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
@@ -152,6 +156,7 @@ func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 	core.WriteJSON(w, 200, map[string]any{
 		"name":              server.name,
 		"projects":          server.projects,
+		"worktrees":         server.worktrees,
 		"workspace":         server.cfg.Workspace,
 		"projectManagement": true,
 		"projectActions":    true,

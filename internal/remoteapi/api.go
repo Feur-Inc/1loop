@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -182,27 +181,6 @@ type Todo struct {
 	Status    string `json:"status"`
 	Started   int64  `json:"started,omitempty"` // Unix milliseconds
 	Completed int64  `json:"completed,omitempty"`
-}
-
-var ansiSequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[=>78DEHMc]`)
-
-// PlainTerminal turns a terminal's raw output into text: no escape
-// sequences, and a line rewritten after a carriage return shows its end.
-func PlainTerminal(raw []byte) string {
-	text := ansiSequence.ReplaceAllString(string(raw), "")
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	for i, line := range lines {
-		if cut := strings.LastIndex(strings.TrimRight(line, "\r"), "\r"); cut >= 0 {
-			line = line[cut+1:]
-		}
-		lines[i] = strings.Map(func(r rune) rune {
-			if r == '\t' || r >= ' ' {
-				return r
-			}
-			return -1
-		}, line)
-	}
-	return strings.Join(lines, "\n")
 }
 
 func BrowserInputFromPhone(ctx context.Context, b *browser.Page, action string, x, y, dy float64, text string) error {

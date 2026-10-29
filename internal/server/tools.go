@@ -14,6 +14,7 @@ import (
 	"image/draw"
 	"image/png"
 	"io"
+	"strings"
 	"sync"
 	"time"
 	"unicode/utf8"
@@ -201,10 +202,12 @@ func newServerTerminal(parent context.Context, dir string, host terminal.NativeH
 	}
 	go func() {
 		buffer := make([]byte, 8192)
+		var pending []byte
 		for {
 			count, err := file.Read(buffer)
 			if count > 0 {
-				terminal.screen.Write(buffer[:count])
+				pending = append(pending, buffer[:count]...)
+				pending = writeTerminalScreen(terminal.screen, pending)
 				terminal.mu.Lock()
 				terminal.output = append(terminal.output, buffer[:count]...)
 				terminal.total += int64(count)
@@ -230,6 +233,55 @@ func newServerTerminal(parent context.Context, dir string, host terminal.NativeH
 		close(terminal.done)
 	}()
 	return terminal, nil
+}
+
+// vt10x predates Kitty keyboard modes: its parser mistakes CSI < u for
+// cursor restoration. Ignore unsupported private CSI, retaining split escapes.
+func writeTerminalScreen(screen vt10x.Terminal, pending []byte) []byte {
+	clean := make([]byte, 0, len(pending))
+	cursor := 0
+	for cursor < len(pending) {
+		if pending[cursor] != 0x1b {
+			if !utf8.FullRune(pending[cursor:]) {
+				break
+			}
+			_, size := utf8.DecodeRune(pending[cursor:])
+			clean = append(clean, pending[cursor:cursor+size]...)
+			cursor += size
+			continue
+		}
+		if cursor+1 == len(pending) {
+			break
+		}
+		if pending[cursor+1] != '[' {
+			clean = append(clean, pending[cursor])
+			cursor++
+			continue
+		}
+		end := cursor + 2
+		for end < len(pending) && end-cursor < 256 && (pending[end] < 0x40 || pending[end] > 0x7e) {
+			end++
+		}
+		if end == len(pending) {
+			break
+		}
+		prefix := pending[cursor+2]
+		if prefix != '<' && prefix != '=' && prefix != '>' && !(prefix == '?' && pending[end] == 'u') {
+			clean = append(clean, pending[cursor:end+1]...)
+		}
+		cursor = end + 1
+	}
+	written, _ := screen.Write(clean)
+	return append(clean[written:], pending[cursor:]...)
+}
+
+// Text comes from the live emulator, not a replay of the output log.
+func (terminal *serverTerminal) text() string {
+	lines := strings.Split(terminal.screen.String(), "\n")
+	for i := range lines {
+		lines[i] = strings.TrimRight(lines[i], " \x00")
+	}
+	return strings.TrimRight(strings.Join(lines, "\n"), "\n")
 }
 
 func (terminal *serverTerminal) close() { terminal.cancel(); terminal.file.Close() }

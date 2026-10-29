@@ -2,7 +2,6 @@ package io.oneloop.remote
 
 import android.content.Context
 import android.content.Intent
-import android.net.ConnectivityManager
 import android.os.Build
 import android.system.Os
 import android.util.Base64
@@ -74,6 +73,7 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
     private val startup = Mutex()
     private val generation = AtomicLong()
     private val lifecycle = Any()
+    private var dns: LocalDns? = null
     private val engine = AtomicReference<Process?>()
     private val setupProcess = AtomicReference<Process?>()
     private val terminals = ConcurrentHashMap<String, Process>()
@@ -197,7 +197,10 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
                         refresh()
                     }
                 }
-            } finally { LocalRuntimeService.releaseIfIdle(context) }
+            } finally {
+                releaseIdleDns()
+                LocalRuntimeService.releaseIfIdle(context)
+            }
         }.await()
     }
 
@@ -265,6 +268,7 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
             text
         } finally {
             if (child.isAlive) child.destroyForcibly()
+            releaseIdleDns()
         }
     }
 
@@ -515,7 +519,10 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
                         throw problem
                     }
                 }
-            } finally { LocalRuntimeService.releaseIfIdle(context) }
+            } finally {
+                releaseIdleDns()
+                LocalRuntimeService.releaseIfIdle(context)
+            }
         }.await()
     }
 
@@ -566,10 +573,21 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
         }
     }
 
+    private fun dns(): LocalDns = synchronized(lifecycle) {
+        dns ?: LocalDns(scope).also { dns = it }
+    }
+
+    private fun releaseIdleDns() {
+        val resolver = synchronized(lifecycle) {
+            if (hasWork()) null else dns.also { dns = null }
+        }
+        resolver?.close()
+    }
+
     private fun process(root: File, arguments: List<String>, binds: List<String> = emptyList(), environment: Map<String, String> = emptyMap(), tty: String? = null): Process {
         val command = mutableListOf(File(libraries, "libguard.so").absolutePath, android.os.Process.myPid().toString())
         if (tty != null) command.addAll(listOf("--pty", tty))
-        command.addAll(listOf(File(libraries, "libproot.so").absolutePath, "--link2symlink", "-0", "-r", root.absolutePath, "-b", libraries.absolutePath + ":/oneloop", "-b", "/proc", "-b", "/dev", "-w", "/"))
+        command.addAll(listOf(File(libraries, "libproot.so").absolutePath, "--link2symlink", "--dns-port=${dns().port}", "-0", "-r", root.absolutePath, "-b", libraries.absolutePath + ":/oneloop", "-b", "/proc", "-b", "/dev", "-w", "/"))
         for (bind in binds) command.addAll(listOf("-b", bind))
         command.addAll(arguments)
         val child = ProcessBuilder(command).redirectErrorStream(true).apply {
@@ -632,9 +650,8 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
             }
         }
         privateText(File(root, "etc/ssl/certs/ca-certificates.crt"), certificates)
-        val manager = context.getSystemService(ConnectivityManager::class.java)
-        val dns = manager.activeNetwork?.let { manager.getLinkProperties(it)?.dnsServers }.orEmpty()
-        if (dns.isNotEmpty()) privateText(File(root, "etc/resolv.conf"), dns.joinToString("\n", postfix = "\n") { "nameserver ${it.hostAddress}" })
+        dns()
+        privateText(File(root, "etc/resolv.conf"), "nameserver 127.0.0.1\noptions timeout:2 attempts:2\n")
     }
 
     private fun asset(name: String, destination: File) {
@@ -670,6 +687,7 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
             val process = engine.getAndSet(null)
             val setup = setupProcess.get()
             val nativeBridge = bridge.getAndSet(null)
+            val resolver = dns.also { dns = null }
             val server = mutableServer.value
             mutableServer.value = null
             terminals.values.forEach { it.destroyForcibly() }
@@ -694,6 +712,7 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
                     }
                     if (process.isAlive) process.destroyForcibly()
                 }
+                resolver?.close()
                 chatgptBrowsers.values.forEach { it.close() }
                 browser.close()
                 LocalRuntimeService.releaseIfIdle(context)

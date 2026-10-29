@@ -843,7 +843,7 @@ func (remote *remoteDesktop) showItems(conv *conversation, items []remoteapi.Ite
 			changed = true
 		}
 	}
-	if changed {
+	if changed || len(next)-len(conv.Items) > chatLoadThreshold {
 		conv.Items, conv.states, conv.versions = next, states, versions
 		ui.reloadChat(conv)
 		return

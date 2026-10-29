@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -282,10 +283,15 @@ func (ui *desktopUI) openChat(chat *conversation) {
 	if chat == ui.current {
 		return
 	}
-	ui.reloadChat(chat)
+	ui.loadChat(chat, true)
 }
 
 func (ui *desktopUI) reloadChat(chat *conversation) {
+	ui.loadChat(chat, false)
+}
+
+func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
+	ui.cancelChatLoad()
 	platform.Devf("ui", "open chat %q [%s]: %d items, running %v", chat.Title, chat.ID, len(chat.Items), chat.run != nil)
 	defer platform.DevSlow("opening the chat", 30*time.Millisecond, time.Now())
 	ui.finishEdit(false)
@@ -299,11 +305,25 @@ func (ui *desktopUI) reloadChat(chat *conversation) {
 	ui.transcript.RemoveAll()
 	ui.items.reset()
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
+	if reuse && ui.restoreChatView(chat) {
+		ui.finishChatLoad()
+		return
+	}
+	if len(chat.Items) > chatLoadThreshold {
+		ui.cachedChat = nil // never retain a second large widget tree
+		ui.beginChatLoad(chat)
+		return
+	}
 	ui.building = true
 	for i := range chat.Items {
 		ui.appendItem(chat, i)
 	}
 	ui.building = false
+	ui.finishChatLoad()
+}
+
+func (ui *desktopUI) finishChatLoad() {
+	ui.transcript.Show()
 	ui.showTranscript(true)
 	ui.syncRun()
 	ui.updateHeader()
@@ -384,6 +404,9 @@ func (ui *desktopUI) confirm(title, text, verb string, run func()) {
 
 // renderChats redraws the project list and the current project's conversations.
 func (ui *desktopUI) renderChats() {
+	if ui.cachedChat != nil && !slices.Contains(ui.chats, ui.cachedChat.chat) {
+		ui.cachedChat = nil
+	}
 	ui.remote.chatsChanged()
 	if ui.server != nil {
 		ui.server.renderChats()

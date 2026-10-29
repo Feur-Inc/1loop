@@ -76,6 +76,10 @@ func (ui *desktopUI) refreshItemImages(chat *conversation, index int) {
 	if chat != ui.current {
 		return
 	}
+	if load := ui.loadingChat; load != nil {
+		load.checked = min(load.checked, index)
+		return
+	}
 	// Match the existing reloadChat behavior when a remote picture arrives.
 	ui.clearSelection()
 	ui.followTail = true

@@ -323,6 +323,9 @@ func plainSpans(text string) []span {
 // and tool rows are remembered in u.views, so a running task can update the
 // one it is working on while its chat is on screen.
 func (ui *desktopUI) appendItem(chat *conversation, index int) {
+	if ui.loadingChat != nil && ui.loadingChat.chat == chat && !ui.building {
+		return // the loader picks up newly appended items on its next frame
+	}
 	item := chat.Items[index]
 	var currentTurn *turn
 	if chat.run != nil {
@@ -569,6 +572,9 @@ func copyChip(text func() string) *tapRow {
 // addItem appends an item to a chat, and to the transcript when that chat
 // is the one on screen.
 func (ui *desktopUI) addItem(chat *conversation, item agent.ChatItem) int {
+	if ui.cachedChat != nil && ui.cachedChat.chat == chat {
+		ui.cachedChat = nil
+	}
 	if item.ID == "" {
 		item.ID = core.Identifier()[:16]
 	}
@@ -587,6 +593,10 @@ func (ui *desktopUI) liveView(chat *conversation, index int) any {
 	if chat != ui.current {
 		return nil
 	}
+	if load := ui.loadingChat; load != nil {
+		load.checked = min(load.checked, index)
+		return nil // changing messages are reconciled before the chat is shown
+	}
 	return ui.views[index]
 }
 
@@ -596,6 +606,9 @@ func (ui *desktopUI) liveView(chat *conversation, index int) any {
 // redraw every message, and a resize alone does nothing while the chat is
 // shorter than the window (the activity line then stayed over the answer).
 func (ui *desktopUI) relayoutColumn() {
+	if ui.loadingChat != nil {
+		return
+	}
 	defer platform.DevSlow("laying the conversation out", 6*time.Millisecond, time.Now())
 	content := ui.scroll.Content.(*fyne.Container)
 	relayout(ui.transcript) // first: it measures the items the sizes below are made of

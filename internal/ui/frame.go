@@ -137,6 +137,7 @@ func (hook *frameHook) turn() {
 			ui.window.Content().Refresh()
 		}
 	}
+	ui.advanceChatLoad()
 }
 
 // heal redraws now and refreshes everything two turns later.

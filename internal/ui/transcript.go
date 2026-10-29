@@ -123,6 +123,13 @@ func (row *toolRow) MouseIn(*desktop.MouseEvent)    { row.fade(1) }
 func (row *toolRow) MouseMoved(*desktop.MouseEvent) {}
 func (row *toolRow) MouseOut()                      { row.fade(0) }
 
+// The row's height does not depend on its text or width. Measuring an
+// off-screen call must not create its renderer and shape its full target.
+func (row *toolRow) MinSize() fyne.Size {
+	height := textSize("Ag", 13.5, fyne.TextStyle{}).Height + 12
+	return fyne.NewSize(120, height)
+}
+
 func (row *toolRow) fade(to float32) {
 	if row.anim != nil {
 		row.anim.Stop()
@@ -162,11 +169,13 @@ type toolRowRenderer struct {
 const toolRowPadX, toolRowIcon = float32(8), float32(16)
 
 func (renderer *toolRowRenderer) MinSize() fyne.Size {
-	height := textSize("Ag", 13.5, fyne.TextStyle{}).Height + 12
-	return fyne.NewSize(120, height)
+	return renderer.row.MinSize()
 }
 
 func (renderer *toolRowRenderer) Layout(size fyne.Size) {
+	if size.Width <= 0 || size.Height <= 0 {
+		return
+	}
 	renderer.bg.Resize(size)
 	middle := func(t *canvas.Text) float32 { return (size.Height - t.MinSize().Height) / 2 }
 	renderer.icon.Resize(fyne.NewSquareSize(toolRowIcon))
@@ -190,6 +199,9 @@ func (renderer *toolRowRenderer) Layout(size fyne.Size) {
 
 func (renderer *toolRowRenderer) Refresh() {
 	row := renderer.row
+	if !row.Visible() {
+		return // Show refreshes the current labels before the row is drawn.
+	}
 	item := row.item
 	running := row.state == "pending" || row.state == "running"
 	verb, target, mono := agent.DescribeTool(item, running)
@@ -426,7 +438,10 @@ func (layoutSpec *transcriptLayout) changed(part fyne.CanvasObject) {
 // measure sizes an item at the column's width: wrapped text only knows its
 // height once it has its width.
 func (layoutSpec *transcriptLayout) measure(object fyne.CanvasObject, width float32) fyne.Size {
-	if object.Size().Width != width {
+	row, fixed := object.(*toolRow)
+	// Plain calls have a fixed height. Resize only when they enter the
+	// viewport, otherwise BaseWidget.Resize creates every hidden renderer.
+	if (!fixed || row.preview != nil) && object.Size().Width != width {
 		object.Resize(fyne.NewSize(width, object.Size().Height))
 	}
 	min := object.MinSize()

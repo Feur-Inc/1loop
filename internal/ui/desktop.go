@@ -187,6 +187,7 @@ type desktopUI struct {
 	workMark          *loopMark
 	views             map[int]any             // live widgets of the chat on screen, by item index
 	copyRows          map[int]*fyne.Container // Copy buttons under its answers, by item index
+	thumbnails        transcriptThumbnailCache
 	settled           *time.Timer
 	panel             *toolPanel
 	split             *fyne.Container

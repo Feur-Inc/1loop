@@ -93,6 +93,7 @@ def sources(cache, working):
                 target.write_bytes(archive.read(member))
         run("patch", "--batch", "-p1", "-i", PATCHES / "abwrap-empty-path.patch", cwd=abwrap)
         run("patch", "--batch", "-p1", "-i", PATCHES / "proot-exitkill.patch", cwd=proot)
+        run("patch", "--batch", "-p1", "-i", PATCHES / "proot-dns-port.patch", cwd=proot)
         (working / "patched").touch()
     return abwrap, proot
 

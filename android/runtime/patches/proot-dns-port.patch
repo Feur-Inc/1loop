@@ -1,0 +1,122 @@
+--- a/src/cli/proot.c
++++ b/src/cli/proot.c
+@@ -331,6 +331,13 @@
+         return 0;
+ }
+ 
++extern int dns_port_callback(Extension *, ExtensionEvent, intptr_t, intptr_t);
++
++static int handle_option_dns_port(Tracee *tracee, const Cli *cli UNUSED, const char *value)
++{
++    return initialize_extension(tracee, dns_port_callback, value);
++}
++
+ static int handle_option_p(Tracee *tracee, const Cli *cli UNUSED, const char *value UNUSED)
+ {
+         (void) initialize_extension(tracee, port_switch_callback, NULL);
+--- a/src/cli/proot.h
++++ b/src/cli/proot.h
+@@ -71,1 +71,2 @@
+ static int handle_option_p(Tracee *tracee, const Cli *cli, const char *value);
++static int handle_option_dns_port(Tracee *tracee, const Cli *cli, const char *value);
+@@ -271,6 +271,14 @@
+           .handler = handle_option_H,
+           .description = "Hide files and directories starting with '.proot.' .",
+           .detail = "",
++        },
++        { .class = "Extension options",
++          .arguments = {
++                { .name = "--dns-port", .separator = '=', .value = "port" },
++                { .name = NULL, .separator = '\0', .value = NULL } },
++          .handler = handle_option_dns_port,
++          .description = "Forward localhost DNS to an unprivileged app resolver port.",
++          .detail = "Only 127.0.0.1:53 is redirected; other connections are unchanged.",
+         },
+         { .class = "Extension options",
+           .arguments = {
+--- a/src/extension/port_switch/port_switch.c
++++ b/src/extension/port_switch/port_switch.c
+@@ -5,6 +5,8 @@
+ #include <linux/net.h>
+ #include <stdint.h>
+ #include <string.h>
++#include <stdlib.h>
++#include <errno.h>
+ 
+ #include "extension/extension.h"
+ #include "tracee/tracee.h"
+@@ -254,3 +256,74 @@
+             return false;
+     }
+ }
++
++/* Android apps cannot bind port 53. Redirect only the guest's loopback DNS,
++ * leaving its resolver and every other network destination unchanged. */
++static int dns_address(Tracee *tracee, word_t address, size_t length,
++                       unsigned short from, unsigned short to, Reg argument)
++{
++    struct sockaddr_in addr;
++    if (!address || length < sizeof(addr) || read_data(tracee, &addr, address, sizeof(addr)) < 0)
++        return 0;
++    if (addr.sin_family != AF_INET || addr.sin_addr.s_addr != htonl(INADDR_LOOPBACK) ||
++        addr.sin_port != htons(from))
++        return 0;
++    addr.sin_port = htons(to);
++    if (argument != SYSARG_RESULT) {
++        /* A private syscall argument avoids changing libc's stored nameserver. */
++        address = alloc_mem(tracee, sizeof(addr));
++        if (!address)
++            return -ENOMEM;
++        poke_reg(tracee, argument, address);
++    }
++    return write_data(tracee, address, &addr, sizeof(addr));
++}
++
++int dns_port_callback(Extension *extension, ExtensionEvent event,
++                      intptr_t data1, intptr_t data2 UNUSED)
++{
++    Tracee *tracee = TRACEE(extension);
++    if (event == INITIALIZATION) {
++        char *end;
++        long port = strtol((const char *)data1, &end, 10);
++        static FilteredSysnum calls[] = {
++            { PR_connect, FILTER_SYSEXIT }, { PR_sendto, FILTER_SYSEXIT },
++            { PR_recvfrom, FILTER_SYSEXIT }, { PR_getpeername, FILTER_SYSEXIT },
++            FILTERED_SYSNUM_END
++        };
++        if (*end || port < 1024 || port > 65535)
++            return -EINVAL;
++        unsigned short *config = talloc(extension, unsigned short);
++        if (!config)
++            return -ENOMEM;
++        *config = port;
++        extension->config = config;
++        extension->filtered_sysnums = calls;
++        return 0;
++    }
++    if (event != SYSCALL_ENTER_END && event != SYSCALL_EXIT_END)
++        return 0;
++    unsigned short port = *(unsigned short *)extension->config;
++    word_t call = get_sysnum(tracee, ORIGINAL);
++    if (event == SYSCALL_ENTER_END) {
++        if (call == PR_connect)
++            return dns_address(tracee, peek_reg(tracee, ORIGINAL, SYSARG_2),
++                peek_reg(tracee, ORIGINAL, SYSARG_3), 53, port, SYSARG_2);
++        if (call == PR_sendto)
++            return dns_address(tracee, peek_reg(tracee, ORIGINAL, SYSARG_5),
++                peek_reg(tracee, ORIGINAL, SYSARG_6), 53, port, SYSARG_5);
++    } else if ((long)peek_reg(tracee, CURRENT, SYSARG_RESULT) >= 0) {
++        word_t address = 0, length_address = 0;
++        socklen_t length;
++        if (call == PR_recvfrom) {
++            address = peek_reg(tracee, ORIGINAL, SYSARG_5);
++            length_address = peek_reg(tracee, ORIGINAL, SYSARG_6);
++        } else if (call == PR_getpeername) {
++            address = peek_reg(tracee, ORIGINAL, SYSARG_2);
++            length_address = peek_reg(tracee, ORIGINAL, SYSARG_3);
++        }
++        if (length_address && read_data(tracee, &length, length_address, sizeof(length)) >= 0)
++            return dns_address(tracee, address, length, port, 53, SYSARG_RESULT);
++    }
++    return 0;
++}

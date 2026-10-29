@@ -180,12 +180,9 @@ func (server *remoteServer) panelTab(writer http.ResponseWriter, req *http.Reque
 	switch {
 	case tab.terminal != nil:
 		t := tab.terminal
+		var text string
+		server.onUI(func() { text = t.widget.Text() })
 		t.mu.Lock()
-		raw := t.output
-		if len(raw) > 48<<10 {
-			raw = raw[len(raw)-48<<10:]
-		}
-		text := remoteapi.PlainTerminal(raw)
 		exited := t.exit != nil
 		t.mu.Unlock()
 		core.WriteJSON(writer, http.StatusOK, map[string]any{"output": text, "cwd": t.dir, "exited": exited})

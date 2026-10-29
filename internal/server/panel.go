@@ -145,8 +145,8 @@ func (server *headlessServer) panelTab(w http.ResponseWriter, r *http.Request) {
 		core.WriteJSON(w, 200, tab.terminal.read(offset, 8192))
 		return
 	}
+	output := tab.terminal.text()
 	tab.terminal.mu.Lock()
-	output := remoteapi.PlainTerminal(tab.terminal.output)
 	exited := tab.terminal.exit != nil
 	tab.terminal.mu.Unlock()
 	core.WriteJSON(w, 200, map[string]any{"output": output, "cwd": tab.terminal.dir, "exited": exited})

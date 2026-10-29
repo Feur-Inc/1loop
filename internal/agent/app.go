@@ -15,6 +15,9 @@ import (
 )
 
 type Config struct {
+	DefaultPreset    bool `json:"defaultPreset,omitempty"`
+	presetSelection  *Config
+	selectionError   error
 	ConnectionID     string                                            `json:"connectionId,omitempty"`
 	AccountID        string                                            `json:"-"`
 	Residency        string                                            `json:"-"`

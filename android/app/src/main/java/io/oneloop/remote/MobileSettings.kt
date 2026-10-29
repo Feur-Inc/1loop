@@ -107,6 +107,7 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                     }
                 }
             }
+            if (app.defaultPresets) DefaultModelsSection(app)
             ModelCompactionSection(app)
             UpdatesSection(app)
             BrowserDataSection(app)

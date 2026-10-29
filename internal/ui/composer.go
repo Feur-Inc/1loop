@@ -809,7 +809,7 @@ func (ui *desktopUI) refreshContextRing() {
 		ui.contextRing.plan = ui.plan
 	}
 	if ui.current == nil {
-		ui.setContextUsage(0, agent.ModelContextWindow(ui.cfg))
+		ui.setContextUsage(0, agent.ModelContextWindow(ui.resolveModel(ui.cfg)))
 		return
 	}
 	usage := 0
@@ -818,5 +818,5 @@ func (ui *desktopUI) refreshContextRing() {
 			usage = message.Usage
 		}
 	}
-	ui.setContextUsage(usage, agent.ModelContextWindow(ui.current.Config))
+	ui.setContextUsage(usage, agent.ModelContextWindow(ui.resolveModel(ui.current.Config)))
 }

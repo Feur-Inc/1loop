@@ -76,6 +76,7 @@ func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 	cfg := choice.Connection.Config(previous.Workspace)
 	cfg.MachineID = previous.MachineID // the project stays on its SSH machine
 	cfg.Model = choice.ID
+	cfg.DefaultPreset = choice.IsDefaultPreset()
 	cfg.ReasoningMode = choice.ReasoningMode
 	cfg.Effort = nearestModelEffort(choice, previous.Effort)
 	cfg.ServiceTier = agent.TierFor(choice, previous.ServiceTier)
@@ -131,4 +132,13 @@ func (ui *desktopUI) showChatModel() {
 	if !ui.modelsLoading {
 		ui.refreshModels()
 	}
+}
+
+func (ui *desktopUI) resolveModel(cfg agent.Config) agent.Config {
+	for _, conn := range ui.connectionsList {
+		if conn.ID == cfg.ConnectionID {
+			return agent.ResolveDefault(cfg, conn, ui.choices)
+		}
+	}
+	return cfg
 }

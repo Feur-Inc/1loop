@@ -166,6 +166,8 @@ type remoteDesktop struct {
 	worktrees        map[string]string // the server's worktrees: folder → project
 	meta             remoteapi.Meta
 	models           []remoteapi.Model
+	accounts         []remoteapi.Account
+	defaultPresets   bool
 	model, effort    string // the server's defaults, for a new chat
 	approvalMode     string
 	autoMode         bool
@@ -594,6 +596,8 @@ func (remote *remoteDesktop) refreshLoop() {
 			Worktrees       map[string]string
 			Settings        struct {
 				Models                      []remoteapi.Model
+				Accounts                    []remoteapi.Account
+				DefaultPresets              bool
 				Model, Effort, ApprovalMode string
 				AutoMode                    bool // the server's model has an Auto mode
 			}
@@ -629,6 +633,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			remote.worktrees = state.Worktrees
 			remote.show(state.Name, state.Workspace, state.Chats, projects.Projects)
 			remote.models = state.Settings.Models
+			remote.accounts, remote.defaultPresets = state.Settings.Accounts, state.Settings.DefaultPresets
 			remote.model, remote.effort = state.Settings.Model, state.Settings.Effort
 			remote.approvalMode, remote.autoMode = state.Settings.ApprovalMode, state.Settings.AutoMode
 			remote.parent.updateApprovalControl()
@@ -1001,7 +1006,7 @@ func (remote *remoteDesktop) modelMenu() {
 		}
 		for _, entry := range model.Efforts {
 			entry := entry
-			action := menuAction{label: "Reasoning · " + entry.Label, run: func() {
+			action := menuAction{label: "Reasoning · " + entry.Label, detail: entry.About, run: func() {
 				remote.action("/api/model", map[string]string{"chat": remote.current, "effort": entry.Value})
 			}}
 			action.checked = entry.Value == effort

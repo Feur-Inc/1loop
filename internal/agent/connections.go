@@ -20,6 +20,9 @@ type ModelPreferences struct {
 }
 
 func (conn *Connection) SetCompactLimit(model string, limit int) error {
+	if model == "default" && len(conn.DefaultModels) > 0 {
+		return fmt.Errorf("Configure context limits on the preset’s target models")
+	}
 	if conn.Provider == "chatgptweb" {
 		return fmt.Errorf("ChatGPT Web manages its own context")
 	}
@@ -36,23 +39,25 @@ func (conn *Connection) SetCompactLimit(model string, limit int) error {
 }
 
 type Connection struct {
-	ID           string                      `json:"id"`
-	Name         string                      `json:"name"`
-	Provider     string                      `json:"provider"`
-	BaseURL      string                      `json:"baseURL"`
-	AuthProfile  string                      `json:"authProfile,omitempty"`
-	Enabled      bool                        `json:"enabled"`
-	AllModels    bool                        `json:"allModels"`
-	Models       []string                    `json:"models,omitempty"`
-	Routing      map[string]any              `json:"routing,omitempty"`
-	Parameters   map[string]any              `json:"parameters,omitempty"`
-	ModelOptions map[string]ModelPreferences `json:"modelOptions,omitempty"`
-	WebSettings  *WebSettings                `json:"webSettings,omitempty"`
+	ID            string                      `json:"id"`
+	Name          string                      `json:"name"`
+	Provider      string                      `json:"provider"`
+	BaseURL       string                      `json:"baseURL"`
+	AuthProfile   string                      `json:"authProfile,omitempty"`
+	Enabled       bool                        `json:"enabled"`
+	AllModels     bool                        `json:"allModels"`
+	Models        []string                    `json:"models,omitempty"`
+	Routing       map[string]any              `json:"routing,omitempty"`
+	Parameters    map[string]any              `json:"parameters,omitempty"`
+	ModelOptions  map[string]ModelPreferences `json:"modelOptions,omitempty"`
+	DefaultModels map[string]string           `json:"defaultModels,omitempty"`
+	WebSettings   *WebSettings                `json:"webSettings,omitempty"`
 }
 
 type ModelChoice struct {
-	Connection Connection
-	ID, Name   string
+	Connection     Connection
+	ID, Name       string
+	DefaultTargets []ModelChoice
 	// Resolved is the model an alias stands for (Claude Code's "opus").
 	Resolved                             string
 	Efforts                              []string
@@ -115,7 +120,7 @@ func (conn Connection) Config(workspace string) Config {
 }
 
 func (conn Connection) Includes(id string) bool {
-	if conn.AllModels {
+	if conn.AllModels || id == "default" && len(conn.DefaultModels) > 0 {
 		return true
 	}
 	for _, selected := range conn.Models {

@@ -112,6 +112,7 @@ data class ModelOption(
     val tiers: List<ServiceTier> = emptyList(), val defaultTier: String = "", val family: String = "",
     val id: String = "",
     val compactAt: Int = 0, val compactDefault: Int = 0, val compactSupported: Boolean = false, val compactHelp: String = "",
+    val defaultEffort: String = "",
 )
 
 /**
@@ -125,7 +126,7 @@ fun modelFamilies(options: List<ModelOption>): List<Pair<String, List<ModelOptio
 }
 
 /** A connection of the model picker; problem says why its models are missing. */
-data class Account(val id: String, val name: String, val provider: String, val kind: String, val problem: String)
+data class Account(val id: String, val name: String, val provider: String, val kind: String, val problem: String, val defaultModels: Map<String, String> = emptyMap())
 
 /** How much of a usage window is left, in percent; reset in Unix milliseconds (0: unknown). */
 data class LimitWindow(val label: String, val left: Float, val reset: Long)
@@ -297,6 +298,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     val limits = mutableStateMapOf<String, AccountLimits>() // by account
     var modelsLoading by mutableStateOf(false)
     var defaultModel by mutableStateOf("") // the model a new chat starts with
+    var defaultPresets by mutableStateOf(false)
     var defaultEffort by mutableStateOf("")
     var defaultTier by mutableStateOf("")
     var defaultWindow by mutableStateOf(0)
@@ -839,14 +841,19 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                     tiers!!.getJSONObject(it).let { tier -> ServiceTier(tier.optString("id"), tier.optString("name"), tier.optString("description")) }
                 },
                 model.optString("defaultServiceTier"), model.optString("family"), model.optString("id"),
-                model.optInt("compactAt"), model.optInt("compactDefault"), model.optBoolean("compactSupported"), model.optString("compactHelp"),
+                model.optInt("compactAt"), model.optInt("compactDefault"), model.optBoolean("compactSupported"), model.optString("compactHelp"), model.optString("defaultEffort"),
             ))
         }
         val accountArray = settings.optJSONArray("accounts")
         accounts.clear()
         accounts.addAll((0 until (accountArray?.length() ?: 0)).map { i ->
-            accountArray!!.getJSONObject(i).let { Account(it.optString("id"), it.optString("name"), it.optString("provider"), it.optString("kind"), it.optString("problem")) }
+            accountArray!!.getJSONObject(i).let {
+                val defaults = it.optJSONObject("defaultModels")
+                Account(it.optString("id"), it.optString("name"), it.optString("provider"), it.optString("kind"), it.optString("problem"),
+                    defaults?.keys()?.asSequence()?.associateWith { level -> defaults.optString(level) } ?: emptyMap())
+            }
         })
+        defaultPresets = settings.optBoolean("defaultPresets")
         defaultModel = settings.optString("model")
         defaultEffort = settings.optString("effort")
         defaultTier = settings.optString("tier")
@@ -1106,6 +1113,12 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val target = server ?: error("Connect first.")
         val generation = connectionGeneration
         onConnection(target, generation) { it.post("/api/auto-resume", JSONObject().put("policy", policy)) }
+    }
+
+    suspend fun saveDefaultModels(account: String, models: Map<String, String>) {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        onConnection(target, generation) { it.post("/api/model/defaults", JSONObject().put("account", account).put("models", JSONObject(models))) }
     }
 
     suspend fun setModelCompaction(label: String, limit: Int) {

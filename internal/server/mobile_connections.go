@@ -225,6 +225,9 @@ func (server *headlessServer) writeConnectionModels(w http.ResponseWriter, r *ht
 	}
 	models := []map[string]string{}
 	for _, choice := range choices {
+		if choice.IsDefaultPreset() {
+			continue
+		}
 		models = append(models, map[string]string{"id": choice.ID, "name": choice.Name})
 	}
 	core.WriteJSON(w, 200, map[string]any{"models": models})

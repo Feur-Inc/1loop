@@ -55,9 +55,11 @@ func (policy AutoResume) Validate() error {
 // a connection and model already chosen by the user.
 func ResumeConfig(current Config, choice ModelChoice, key, effort string) Config {
 	next := current
+	next.selectionError, next.presetSelection = nil, nil
 	base := choice.Connection.Config(current.Workspace)
 	next.Provider, next.ConnectionID, next.AuthProfile, next.BaseURL = base.Provider, base.ConnectionID, base.AuthProfile, base.BaseURL
 	next.WebSettings, next.APIKey, next.Model = base.WebSettings, key, choice.ID
+	next.DefaultPreset = choice.IsDefaultPreset()
 	next.AccountID, next.Residency = "", ""
 	next.ReasoningMode, next.ServiceTier = choice.ReasoningMode, TierFor(choice, "")
 	next.Effort = choice.DefaultEffort
@@ -68,12 +70,17 @@ func ResumeConfig(current Config, choice ModelChoice, key, effort string) Config
 	next.Routing = MergeOptions(base.Routing, options.Provider)
 	next.Parameters = MergeOptions(base.Parameters, options.Parameters)
 	next.ApprovalMode = ApprovalFor(current.ApprovalMode, next)
-	return next
+	return ResolveDefault(next, choice.Connection, map[string]ModelChoice{"selected": choice})
 }
 
 func ResumeStoredConfig(cfg Config) Config {
+	if cfg.presetSelection != nil {
+		selected := *cfg.presetSelection
+		selected.Session, selected.SessionMark, selected.RanWith = cfg.Session, cfg.SessionMark, cfg.RanWith
+		cfg = selected
+	}
 	return Config{
-		ConnectionID: cfg.ConnectionID, AuthProfile: cfg.AuthProfile, Provider: cfg.Provider,
+		DefaultPreset: cfg.DefaultPreset, ConnectionID: cfg.ConnectionID, AuthProfile: cfg.AuthProfile, Provider: cfg.Provider,
 		BaseURL: cfg.BaseURL, Model: cfg.Model, Workspace: cfg.Workspace, MachineID: cfg.MachineID, Effort: cfg.Effort,
 		ServiceTier: cfg.ServiceTier, ReasoningMode: cfg.ReasoningMode, Routing: cfg.Routing,
 		Parameters: cfg.Parameters, Session: cfg.Session,

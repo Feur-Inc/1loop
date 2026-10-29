@@ -324,6 +324,9 @@ type HandoffResult struct {
 // ApplyHandoff carries out the user's choice before the new model's first
 // turn. previous may be nil when the choice does not use it.
 func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Config, history []Message, choice HandoffChoice, plan HandoffPlan, emit emitter) (HandoffResult, error) {
+	if next.selectionError != nil {
+		return HandoffResult{}, next.selectionError
+	}
 	if plan.Target != IdentityOf(next) || choice.Target != nil && *choice.Target != IdentityOf(next) {
 		return HandoffResult{}, fmt.Errorf("The model changed after this handoff was confirmed. Send again to choose its context.")
 	}
@@ -371,6 +374,9 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 				name = entry.Name
 			}
 		}
+	}
+	if summarizer.selectionError != nil {
+		return HandoffResult{}, summarizer.selectionError
 	}
 	if summarizer.Provider == "openai" {
 		var authErr error

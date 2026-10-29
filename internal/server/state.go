@@ -340,6 +340,20 @@ func (server *headlessServer) loadModels() {
 		return
 	}
 	server.choices = choices
+	normalize := func(cfg *agent.Config) {
+		for _, choice := range choices {
+			if cfg.Model == "default" && choice.ID == cfg.Model && choice.Connection.ID == cfg.ConnectionID {
+				cfg.DefaultPreset = len(choice.Connection.DefaultModels) > 0
+				if cfg.DefaultPreset && !agent.Contains(choice.Efforts, cfg.Effort) {
+					cfg.Effort = choice.DefaultEffort
+				}
+			}
+		}
+	}
+	normalize(&server.cfg)
+	for _, chat := range server.chats {
+		normalize(&chat.Config)
+	}
 	server.modelProblems = problems
 	server.loading = false
 	if server.cfg.Model == "" {
@@ -364,6 +378,7 @@ func (server *headlessServer) configFor(choice agent.ModelChoice, previous agent
 	}
 	cfg := choice.Connection.Config(workspace)
 	cfg.Model = choice.ID
+	cfg.DefaultPreset = choice.IsDefaultPreset()
 	cfg.Effort = previous.Effort
 	cfg.ServiceTier = agent.TierFor(choice, previous.ServiceTier)
 	cfg.ReasoningMode = choice.ReasoningMode
@@ -396,17 +411,17 @@ func (server *headlessServer) labelLocked(cfg agent.Config) string {
 func (server *headlessServer) settingsLocked() map[string]any {
 	models := []remoteapi.Model{}
 	for label, choice := range server.choices {
-		model := remoteapi.Model{ID: choice.ID, Label: label, Name: choice.Display(), Detail: choice.Connection.Name, Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
+		model := remoteapi.Model{ID: choice.ID, Label: label, Name: choice.Display(), Detail: choice.Connection.Name, Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, DefaultEffort: choice.DefaultEffort, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
 		if connection, ok := server.connectionLocked(choice.Connection.ID); ok {
 			model.CompactAt = connection.ModelOptions[choice.ID].CompactAt
 			cfg := connection.Config("")
 			cfg.Model = choice.ID
 			model.CompactDefault, _ = agent.CompactDefault(cfg)
 			model.CompactHelp = agent.CompactHelp(cfg)
-			model.CompactSupported = connection.Provider != "chatgptweb"
+			model.CompactSupported = connection.Provider != "chatgptweb" && !choice.IsDefaultPreset()
 		}
 		for _, effort := range choice.Efforts {
-			model.Efforts = append(model.Efforts, remoteapi.Effort{Value: effort, Label: agent.EffortLabel(effort)})
+			model.Efforts = append(model.Efforts, remoteapi.Effort{Value: effort, Label: agent.EffortLabel(effort), About: choice.DefaultAbout(effort)})
 		}
 		models = append(models, model)
 	}
@@ -422,10 +437,11 @@ func (server *headlessServer) settingsLocked() map[string]any {
 	accounts := []remoteapi.Account{}
 	for _, connection := range server.connections {
 		if connection.Enabled {
-			accounts = append(accounts, remoteapi.Account{ID: connection.ID, Name: connection.Name, Provider: connection.Provider, Kind: agent.ProviderName(connection.Provider), Problem: server.modelProblems[connection.ID]})
+			accounts = append(accounts, remoteapi.Account{ID: connection.ID, Name: connection.Name, Provider: connection.Provider, Kind: agent.ProviderName(connection.Provider), Problem: server.modelProblems[connection.ID], DefaultModels: connection.DefaultModels})
 		}
 	}
 	return map[string]any{
+		"defaultPresets":      true,
 		"autoResume":          server.autoResume,
 		"userPreferences":     server.instructions,
 		"preferencesEditable": true,
@@ -435,7 +451,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 		"model":               server.labelLocked(server.cfg),
 		"effort":              server.cfg.Effort,
 		"tier":                server.cfg.ServiceTier,
-		"window":              agent.ModelContextWindow(server.cfg),
+		"window":              agent.ModelContextWindow(server.resolveModelLocked(server.cfg)),
 		"approvalMode":        server.approvalMode,
 		"autoMode":            agent.AutoModeOffered(server.cfg),
 		"loading":             server.loading,
@@ -464,7 +480,7 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		Model:   server.labelLocked(chat.Config),
 		Effort:  chat.Config.Effort,
 		Tier:    chat.Config.ServiceTier,
-		Window:  agent.ModelContextWindow(chat.Config),
+		Window:  agent.ModelContextWindow(server.resolveModelLocked(chat.Config)),
 		Todo:    []remoteapi.Todo{},
 		Tasks:   append([]agent.BackgroundTaskInfo{}, chat.tasks.Snapshot()...),
 	}
@@ -651,6 +667,7 @@ func (server *headlessServer) chatTasksLocked(chat *serverChat) *agent.Backgroun
 func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities chan struct{}) agent.Config {
 	cfg := chat.Config
 	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok {
+		cfg = agent.ResolveDefault(cfg, connection, server.choices)
 		cfg.CompactAt = connection.ModelOptions[cfg.Model].CompactAt
 	}
 	cfg.APIKey = server.keys[cfg.ConnectionID]
@@ -928,4 +945,11 @@ func (server *headlessServer) saveSettingsLocked() error {
 		AutoResume:        server.autoResume,
 		Worktrees:         server.worktrees,
 	})
+}
+
+func (server *headlessServer) resolveModelLocked(cfg agent.Config) agent.Config {
+	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok {
+		return agent.ResolveDefault(cfg, connection, server.choices)
+	}
+	return cfg
 }

@@ -703,6 +703,9 @@ func (backend *App) Run(ctx context.Context, cfg Config, history []Message, inbo
 }
 
 func (backend *App) runOnce(ctx context.Context, cfg Config, history []Message, inboxValue Inbox, emit emitter) error {
+	if cfg.selectionError != nil {
+		return cfg.selectionError
+	}
 	if cfg.Provider == "chatgptweb" {
 		return backend.runChatGPTWeb(ctx, cfg, history, inboxValue, emit)
 	}
@@ -1070,6 +1073,9 @@ func todoCompleted(before, after []TodoItem) bool {
 // CompactNow is the manual /compact command: it condenses the whole stored
 // conversation at once and returns the new history.
 func (backend *App) CompactNow(ctx context.Context, cfg Config, history []Message, focus string, emit emitter) ([]Message, error) {
+	if cfg.selectionError != nil {
+		return nil, cfg.selectionError
+	}
 	if cfg.Model == "" {
 		return nil, fmt.Errorf("Choose a model")
 	}

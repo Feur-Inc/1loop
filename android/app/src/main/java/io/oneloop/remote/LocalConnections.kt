@@ -145,7 +145,7 @@ private class ConnectionDraft(val original: LocalConnection?) {
         put("enabled", enabled)
         put("allModels", allModels)
         put("models", JSONArray(models.toList()))
-        if (provider != base.optString("provider")) remove("modelOptions")
+        if (provider != base.optString("provider")) { remove("modelOptions"); remove("defaultModels") }
         if (original == null) put("id", "")
     }
 }

@@ -1278,7 +1278,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 		identity := agent.IdentityOf(chat.Config)
 		chat.Config.RanWith = &identity
 	}
-	cfg := chat.Config
+	cfg := ui.resolveModel(chat.Config)
 	for _, conn := range ui.connectionsList {
 		if conn.ID == cfg.ConnectionID {
 			cfg.CompactAt = conn.ModelOptions[cfg.Model].CompactAt

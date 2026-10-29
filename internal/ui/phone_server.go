@@ -186,6 +186,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/model", server.authorized(server.setModel))
 	mux.HandleFunc("POST /api/auto-resume", server.authorized(server.setAutoResume))
 	mux.HandleFunc("POST /api/model/compaction", server.authorized(server.setModelCompaction))
+	mux.HandleFunc("POST /api/model/defaults", server.authorized(server.setDefaultModels))
 	mux.HandleFunc("GET /api/limits", server.authorized(server.limits))
 	mux.HandleFunc("POST /api/approval-mode", server.authorized(server.setApprovalMode))
 	mux.HandleFunc("POST /api/chats/{id}/panel", server.authorized(server.editPanel))
@@ -528,7 +529,7 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 		remoteMetaValue.Steer = append(remoteMetaValue.Steer, messageValue.Typed())
 	}
 	remoteMetaValue.Model, remoteMetaValue.Effort, remoteMetaValue.Tier = ui.choiceLabel(chat.Config), chat.Config.Effort, chat.Config.ServiceTier
-	remoteMetaValue.Window = agent.ModelContextWindow(chat.Config)
+	remoteMetaValue.Window = agent.ModelContextWindow(ui.resolveModel(chat.Config))
 	remoteMetaValue.Todo = todoForPhone(chat)
 	remoteMetaValue.Tasks = append([]agent.BackgroundTaskInfo{}, chat.tasks.Snapshot()...)
 	for _, h := range chat.History {
@@ -964,7 +965,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 	for _, label := range ui.model.Options {
 		choice := ui.choices[label]
 		remoteModelValue := remoteapi.Model{ID: choice.ID, Label: label, Name: choice.Display(), Detail: ui.model.Details[label],
-			Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
+			Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, DefaultEffort: choice.DefaultEffort, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
 		for _, connection := range ui.connectionsList {
 			if connection.ID == choice.Connection.ID {
 				remoteModelValue.CompactAt = connection.ModelOptions[choice.ID].CompactAt
@@ -972,23 +973,23 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 				cfg.Model = choice.ID
 				remoteModelValue.CompactDefault, _ = agent.CompactDefault(cfg)
 				remoteModelValue.CompactHelp = agent.CompactHelp(cfg)
-				remoteModelValue.CompactSupported = connection.Provider != "chatgptweb"
+				remoteModelValue.CompactSupported = connection.Provider != "chatgptweb" && !choice.IsDefaultPreset()
 				break
 			}
 		}
 		for _, e := range choice.Efforts {
-			remoteModelValue.Efforts = append(remoteModelValue.Efforts, remoteapi.Effort{Value: e, Label: agent.EffortLabel(e), About: modelEffortAbout(e)})
+			remoteModelValue.Efforts = append(remoteModelValue.Efforts, remoteapi.Effort{Value: e, Label: agent.EffortLabel(e), About: choiceEffortAbout(choice, e)})
 		}
 		models = append(models, remoteModelValue)
 	}
 	accounts := []remoteapi.Account{}
 	for _, conn := range ui.connectionsList {
 		if conn.Enabled {
-			accounts = append(accounts, remoteapi.Account{ID: conn.ID, Name: conn.Name, Provider: conn.Provider, Kind: agent.ProviderName(conn.Provider), Problem: ui.modelUnavailable[conn.ID]})
+			accounts = append(accounts, remoteapi.Account{ID: conn.ID, Name: conn.Name, Provider: conn.Provider, Kind: agent.ProviderName(conn.Provider), Problem: ui.modelUnavailable[conn.ID], DefaultModels: conn.DefaultModels})
 		}
 	}
-	return map[string]any{"autoResume": ui.autoResume, "userPreferences": ui.userInstructions, "preferencesEditable": true, "memory": !ui.memoryOff, "messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
-		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": agent.AutoModeOffered(ui.cfg), "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.cfg)}
+	return map[string]any{"defaultPresets": true, "autoResume": ui.autoResume, "userPreferences": ui.userInstructions, "preferencesEditable": true, "memory": !ui.memoryOff, "messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
+		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": agent.AutoModeOffered(ui.cfg), "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.resolveModel(ui.cfg))}
 }
 
 // limits reads every account's usage windows for the phone's model picker,
@@ -1284,4 +1285,42 @@ func (ui *desktopUI) remoteDefaults() {
 			chat.ID = core.Identifier()[:16]
 		}
 	}
+}
+
+func (server *remoteServer) setDefaultModels(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		Account string            `json:"account"`
+		Models  map[string]string `json:"models"`
+	}
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	problem := "Connection not found"
+	server.onUI(func() {
+		catalog := []agent.ModelChoice{}
+		for _, choice := range server.ui.choices {
+			catalog = append(catalog, choice)
+			catalog = append(catalog, choice.DefaultTargets...)
+		}
+		for i := range server.ui.connectionsList {
+			conn := &server.ui.connectionsList[i]
+			if conn.ID != args.Account {
+				continue
+			}
+			if err := conn.SetDefaultModels(args.Models, catalog); err != nil {
+				problem = err.Error()
+				return
+			}
+			server.ui.save()
+			server.ui.refreshModels()
+			problem = ""
+			return
+		}
+	})
+	if problem != "" {
+		core.Fail(w, 400, problem)
+		return
+	}
+	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }

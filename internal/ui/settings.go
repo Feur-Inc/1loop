@@ -695,6 +695,9 @@ func (ui *desktopUI) projectMemoryRow(project string) fyne.CanvasObject {
 // Connections.
 
 func (ui *desktopUI) connectionSettings() fyne.CanvasObject {
+	if ui.server != nil {
+		return ui.server.defaultPresetSettings()
+	}
 	settings := ui.prefs
 	var rows []fyne.CanvasObject
 	for _, conn := range ui.connectionsList {
@@ -912,6 +915,11 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 
 	// Models: which ones of the catalog appear in the composer.
 	var models []agent.ModelChoice
+	defaultRows := container.NewVBox()
+	showDefaults := func() {
+		defaultRows.Objects = []fyne.CanvasObject{ui.defaultModelFields(&draft, models)}
+		defaultRows.Refresh()
+	}
 	search := widget.NewEntry()
 	search.SetPlaceHolder("Search the models…")
 	modelRows := container.New(layout.NewCustomPaddedVBoxLayout(0))
@@ -995,7 +1003,13 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 					say(err.Error())
 					return
 				}
-				models = choices
+				models = nil
+				for _, choice := range choices {
+					if !choice.IsDefaultPreset() {
+						models = append(models, choice)
+					}
+				}
+				showDefaults()
 				listModels()
 				say(fmt.Sprintf("%d models loaded.", len(models)))
 			})
@@ -1040,6 +1054,8 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 			loadGeneration++
 			models = nil
 			draft.Models, draft.AllModels, draft.ModelOptions = nil, true, nil
+			draft.DefaultModels = nil
+			showDefaults()
 			allModels.set(true)
 			listModels()
 		}
@@ -1049,6 +1065,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	typePicker.SetSelected(agent.ProviderName(draft.Provider))
 	typePicker.onChanged(agent.ProviderName(draft.Provider))
 	listModels()
+	showDefaults()
 
 	title := draft.Name
 	if !existing {
@@ -1068,6 +1085,8 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 			settingRow("Catalog", "Ask the service which models it offers.", load),
 			padded(10, 10, 16, 16, search),
 			modelRows),
+		sectionTitle("Default preset"),
+		defaultRows,
 		sectionTitle("Advanced"),
 		advanced,
 	)

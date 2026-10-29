@@ -93,6 +93,9 @@ func (ui *desktopUI) askHandoff(chat *conversation, proceed func()) {
 	sort.Strings(labels)
 	for _, label := range labels {
 		choice := ui.choices[label]
+		if choice.IsDefaultPreset() {
+			continue
+		}
 		candidate := choice.Connection.Config(chat.Config.Workspace)
 		candidate.Model, candidate.APIKey = choice.ID, ui.keys[choice.Connection.ID]
 		candidate.Effort, candidate.ReasoningMode = choice.DefaultEffort, choice.ReasoningMode

@@ -197,7 +197,7 @@ func (ui *desktopUI) modelMenu() {
 		}
 		title := textLine(agent.EffortLabel(efforts[index]), 18, colAmber)
 		title.Alignment, title.TextStyle = fyne.TextAlignCenter, fyne.TextStyle{Bold: true}
-		about := textLine(modelEffortAbout(efforts[index]), 12, colMuted)
+		about := textLine(fitText(choiceEffortAbout(choice, efforts[index]), 12, fyne.TextStyle{}, 180), 12, colMuted)
 		about.Alignment = fyne.TextAlignCenter
 		if disabled {
 			title.Text, about.Text = "None", "No reasoning"
@@ -209,7 +209,7 @@ func (ui *desktopUI) modelMenu() {
 			}
 			ui.cfg.Effort = efforts[index]
 			ui.selectModel(choice)
-			title.Text, about.Text = agent.EffortLabel(ui.cfg.Effort), modelEffortAbout(ui.cfg.Effort)
+			title.Text, about.Text = agent.EffortLabel(ui.cfg.Effort), fitText(choiceEffortAbout(choice, ui.cfg.Effort), 12, fyne.TextStyle{}, 180)
 			title.Refresh()
 			about.Refresh()
 			for i, label := range groups[2] {
@@ -539,4 +539,11 @@ func (ui *desktopUI) approvalMenu() {
 	actions = append(actions, menuAction{label: "YOLO mode", detail: "Run commands and edits automatically", icon: iconBolt,
 		checked: mode == "yolo", run: set("yolo")})
 	showMenu(ui.window, ui.approvalControl, actions)
+}
+
+func choiceEffortAbout(choice agent.ModelChoice, effort string) string {
+	if about := choice.DefaultAbout(effort); about != "" {
+		return about
+	}
+	return modelEffortAbout(effort)
 }

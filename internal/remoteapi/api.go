@@ -127,13 +127,14 @@ type Effort struct {
 }
 
 type Model struct {
-	ID      string   `json:"id,omitempty"`
-	Label   string   `json:"label"` // unique key, as in the desktop picker
-	Name    string   `json:"name"`
-	Detail  string   `json:"detail"`
-	Account string   `json:"account,omitempty"` // its connection's ID
-	Family  string   `json:"family,omitempty"`  // the picker groups by it, sorted newest first
-	Efforts []Effort `json:"efforts"`
+	ID            string   `json:"id,omitempty"`
+	Label         string   `json:"label"` // unique key, as in the desktop picker
+	Name          string   `json:"name"`
+	Detail        string   `json:"detail"`
+	Account       string   `json:"account,omitempty"` // its connection's ID
+	Family        string   `json:"family,omitempty"`  // the picker groups by it, sorted newest first
+	Efforts       []Effort `json:"efforts"`
+	DefaultEffort string   `json:"defaultEffort,omitempty"`
 	// The speeds the plan offers (none on most), and the one used unless told.
 	ServiceTiers       []agent.ServiceTier `json:"serviceTiers,omitempty"`
 	DefaultServiceTier string              `json:"defaultServiceTier,omitempty"`
@@ -146,11 +147,12 @@ type Model struct {
 // Account is a connection of the model picker; problem says why its
 // models could not be listed.
 type Account struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
-	Kind     string `json:"kind"` // the provider's name, "ChatGPT account"
-	Problem  string `json:"problem,omitempty"`
+	DefaultModels map[string]string `json:"defaultModels,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Provider      string            `json:"provider"`
+	Kind          string            `json:"kind"` // the provider's name, "ChatGPT account"
+	Problem       string            `json:"problem,omitempty"`
 }
 
 // Limits is how much of an account's usage windows is left.

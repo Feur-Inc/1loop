@@ -100,6 +100,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/model":                              server.setModel,
 		"POST /api/auto-resume":                        server.setAutoResume,
 		"POST /api/model/compaction":                   server.setModelCompaction,
+		"POST /api/model/defaults":                     server.setDefaultModels,
 		"POST /api/approval-mode":                      server.setApprovalMode,
 		"GET /api/chats/{id}/panel":                    server.panelTabs,
 		"GET /api/chats/{id}/panel/{key}":              server.panelTab,
@@ -715,4 +716,43 @@ func (server *headlessServer) uploadAttachment(w http.ResponseWriter, r *http.Re
 		return
 	}
 	remoteapi.UploadAttachment(w, r, workspace)
+}
+
+func (server *headlessServer) setDefaultModels(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		Account string            `json:"account"`
+		Models  map[string]string `json:"models"`
+	}
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	catalog := []agent.ModelChoice{}
+	for _, choice := range server.choices {
+		catalog = append(catalog, choice)
+		catalog = append(catalog, choice.DefaultTargets...)
+	}
+	for i, original := range server.connections {
+		if original.ID != args.Account {
+			continue
+		}
+		updated := original
+		if err := updated.SetDefaultModels(args.Models, catalog); err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		server.connections[i] = updated
+		if err := server.saveSettingsLocked(); err != nil {
+			server.connections[i] = original
+			core.Fail(w, 500, "Unable to save Default preset")
+			return
+		}
+		server.modelRevision++
+		go server.loadModels()
+		core.WriteJSON(w, 200, map[string]bool{"ok": true})
+		return
+	}
+	core.Fail(w, 404, "Connection not found")
 }

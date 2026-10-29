@@ -188,6 +188,11 @@ type desktopUI struct {
 	views             map[int]any             // live widgets of the chat on screen, by item index
 	copyRows          map[int]*fyne.Container // Copy buttons under its answers, by item index
 	thumbnails        transcriptThumbnailCache
+	loadingChat       *conversationLoad
+	cachedChat        *conversationViewCache
+	chatWait          *loopMark
+	chatWaitView      *fyne.Container
+	chatViewport      *fyne.Container
 	settled           *time.Timer
 	panel             *toolPanel
 	split             *fyne.Container
@@ -396,6 +401,7 @@ func (ui *desktopUI) shortcut(s fyne.Shortcut) bool {
 
 // release stops background work and saves, before closing or restarting.
 func (ui *desktopUI) release() {
+	ui.cancelChatLoad()
 	if ui.frames != nil {
 		// No more frame-hook redraws: once seen right before a window that
 		// was closing hung in GLFW's event poll.
@@ -484,6 +490,11 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	// under the last message.
 	afterTypeset = func() {
 		if ui.ctx.Err() == nil {
+			if load := ui.loadingChat; load != nil {
+				ui.items.reset()
+				load.measured = 0
+				return
+			}
 			ui.relayoutColumn()
 		}
 	}
@@ -522,10 +533,15 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	// bands, 8 bits being too few for so dark a colour). The messages just
 	// end where the composer's block begins.
 	scroll := container.NewThemeOverride(ui.scroll, flatScrollTheme{loopTheme{theme.DefaultTheme()}})
-	view := container.NewStack(ui.welcome, scroll)
+	ui.chatWait = newLoopMark(56)
+	ui.chatWaitView = container.NewStack(canvas.NewRectangle(colBackground), container.NewCenter(container.NewVBox(
+		container.NewCenter(ui.chatWait.image), spacer(0, 12),
+		container.NewCenter(textLine("Loading conversation…", 14, colMuted)))))
+	ui.chatWaitView.Hide()
+	ui.chatViewport = container.NewStack(ui.welcome, scroll, ui.chatWaitView)
 	ui.scroll.Hide()
 
-	conversation := container.NewBorder(nil, ui.buildFooter(), nil, nil, view)
+	conversation := container.NewBorder(nil, ui.buildFooter(), nil, nil, ui.chatViewport)
 	// The activity line may sit beside the composer (dockActivity): the
 	// dock layer floats over the conversation's bottom left corner.
 	conversation = container.New(dockLayout{ui}, conversation, ui.dockRow)
@@ -761,6 +777,7 @@ func (ui *desktopUI) draftKey() string {
 }
 
 func (ui *desktopUI) startNew() {
+	ui.cancelChatLoad()
 	platform.Devf("ui", "new chat screen (workspace %s)", ui.cfg.Workspace)
 	if ui.server != nil {
 		ui.server.selectChat("")
@@ -910,6 +927,9 @@ func (ui *desktopUI) syncRun() {
 
 // runStarted marks a chat as working.
 func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
+	if ui.cachedChat != nil && ui.cachedChat.chat == chat {
+		ui.cachedChat = nil
+	}
 	platform.Devf("run", "start %q [%s]: %s %s, effort %q, approval %q, session %q, on screen %v",
 		chat.Title, chat.ID, chat.Config.Provider, chat.Config.Model, chat.Config.Effort, agent.ApprovalFor(ui.approvalMode, chat.Config), chat.Config.Session, chat == ui.current)
 	run.started = time.Now()

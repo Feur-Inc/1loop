@@ -494,8 +494,9 @@ type flowRenderer struct{ flowText *flowText }
 func (renderer *flowRenderer) MinSize() fyne.Size {
 	text := renderer.flowText
 	if text.width == 0 {
+		// Keep this provisional layout: repeated MinSize calls must not
+		// rebuild it. Layout reflows the text when its actual width differs.
 		text.flow(600)
-		text.width = 0 // still to be laid out for real
 	}
 	if text.mono {
 		return fyne.NewSize(text.natural, text.height) // code is never wrapped: it scrolls sideways

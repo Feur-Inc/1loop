@@ -1,10 +1,7 @@
 package ui
 
 import (
-	"bytes"
-	"encoding/base64"
 	"fmt"
-	"image"
 	"image/color"
 	"strings"
 	"sync"
@@ -329,25 +326,9 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		view.layer = newSelectLayer(ui, view.box)
 		ui.place(container.NewVBox(container.NewStack(view.box, view.layer), copyRow))
 	case "user":
-		content := container.NewVBox()
-		var pics []fyne.CanvasObject
-		for _, part := range item.Images {
-			raw, err := base64.StdEncoding.DecodeString(part.Data)
-			if err != nil {
-				continue
-			}
-			img, _, err := image.Decode(bytes.NewReader(raw))
-			if err != nil {
-				continue
-			}
-			view := canvas.NewImageFromImage(thumbnail(img, 256))
-			view.FillMode = canvas.ImageFillContain
-			view.SetMinSize(fyne.NewSize(110, 110))
-			pics = append(pics, surface(view, colCode, colBorderSoft, 8, 0))
-		}
-		if len(pics) > 0 {
-			content.Add(container.New(layout.NewCustomPaddedHBoxLayout(6), pics...))
-		}
+		view := &userImageView{pictures: container.New(layout.NewCustomPaddedHBoxLayout(6))}
+		ui.setUserImages(view, item.Images)
+		content := container.NewVBox(view.pictures)
 		var files []fyne.CanvasObject
 		for _, file := range item.Files {
 			if !file.Image { // a picture already shows above
@@ -369,7 +350,9 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		bubble := container.New(&bubbleLayout{text: text, chrom: 2*theme.InnerPadding() + 4}, surface(content, colRaised, nil, 14, 2))
 		copyRow := container.NewHBox(layout.NewSpacer(), copyChip(func() string { return item.Text }),
 			newRow("Edit", iconPencil, styleChip, func() { ui.editMessage(chat, index) }), ui.versionControls(chat, item.ID))
-		ui.place(container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, copyRow))
+		view.box = container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, copyRow)
+		ui.views[index] = view
+		ui.place(view.box)
 	case "error":
 		text := newFlowText(plainSpans(item.Text), theme.TextSize(), colDanger)
 		text.tail, text.tight = "", true

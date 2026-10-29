@@ -895,7 +895,7 @@ func (remote *remoteDesktop) fetchImages(conv *conversation, items []remoteapi.I
 				}
 				conv.Items[index].Images = parts
 				if remote.parent.current == conv {
-					remote.parent.reloadChat(conv)
+					remote.parent.refreshItemImages(conv, index)
 				}
 			})
 		}()

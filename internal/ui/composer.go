@@ -263,7 +263,14 @@ func linuxImageClipboardData() ([]byte, error) {
 	return data, nil
 }
 
+// maxImagePixels bounds a picture before it is decoded: a small file can
+// hold a huge image, and decoding it would allocate gigabytes.
+const maxImagePixels = 50_000_000
+
 func decodeImage(raw []byte) (*image.NRGBA, error) {
+	if config, _, err := image.DecodeConfig(bytes.NewReader(raw)); err == nil && config.Width*config.Height > maxImagePixels {
+		return nil, fmt.Errorf("This image is too large (%d × %d pixels)", config.Width, config.Height)
+	}
 	src, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
 		return nil, fmt.Errorf("Unsupported image format")
@@ -293,7 +300,7 @@ func (ui *desktopUI) pasteFromClipboard() bool {
 
 // pickImages attaches pictures chosen in the desktop's file chooser.
 func (ui *desktopUI) pickImages() {
-	ui.pick(pickRequest{title: "Attach images", start: ui.cfg.Workspace, multiple: true, filterName: "Images",
+	ui.pick(pickRequest{title: "Attach images", start: ui.pickStart(), multiple: true, filterName: "Images",
 		extensions: []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}}, func(paths []string) {
 		for _, path := range paths {
 			file, err := os.Open(path)
@@ -315,6 +322,19 @@ func (ui *desktopUI) pickImages() {
 			ui.attachImage(img)
 		}
 	})
+}
+
+// thumbnail is img at most side pixels long: a chat's pictures show small,
+// and kept at full size each held up to 9 MB for as long as the chat was open.
+func thumbnail(img image.Image, side int) image.Image {
+	bounds := img.Bounds()
+	longest := max(bounds.Dx(), bounds.Dy())
+	if longest <= side {
+		return img
+	}
+	small := image.NewNRGBA(image.Rect(0, 0, max(1, bounds.Dx()*side/longest), max(1, bounds.Dy()*side/longest)))
+	xdraw.ApproxBiLinear.Scale(small, small.Bounds(), img, bounds, xdraw.Src, nil)
+	return small
 }
 
 // attachImage keeps a picture, as PNG, until the next message.
@@ -404,11 +424,15 @@ func (ui *desktopUI) takeSteer(chat *conversation) []agent.Message {
 }
 
 func (ui *desktopUI) takeNext(chat *conversation) (agent.Message, bool) {
-	if len(chat.queue) == 0 {
+	waiting := &chat.queue
+	if chat.run == nil && len(chat.steer) > 0 {
+		waiting = &chat.steer
+	}
+	if len(*waiting) == 0 {
 		return agent.Message{}, false
 	}
-	next := chat.queue[0]
-	chat.queue = chat.queue[1:]
+	next := (*waiting)[0]
+	*waiting = (*waiting)[1:]
 	ui.remote.metaChanged(chat)
 	if chat == ui.current {
 		ui.renderQueue()
@@ -491,7 +515,9 @@ func (ui *desktopUI) renderQueue() {
 		label += fmt.Sprintf(" · %d steering", len(chat.steer))
 	}
 	if chat.run == nil {
-		label += " · press Enter to send"
+		label = "Queue paused · press Enter to resume"
+	} else if len(chat.steer) > 0 {
+		label += " · waiting for the next step"
 	}
 	ui.queueTitle.SetText(label)
 	ui.queueTray.Show()
@@ -499,7 +525,10 @@ func (ui *desktopUI) renderQueue() {
 
 // queueRow shows one waiting message; its actions appear on hover.
 func (ui *desktopUI) queueRow(steer bool, index int, messageValue agent.Message) fyne.CanvasObject {
-	text := strings.Join(strings.Fields(messageValue.Content), " ")
+	text := strings.Join(strings.Fields(messageValue.Typed()), " ")
+	if text == "" && len(messageValue.Files) > 0 {
+		text = messageValue.Files[0].Name
+	}
 	if text == "" {
 		text = "[image]"
 	} else if len(messageValue.Images) > 0 {
@@ -534,11 +563,25 @@ func (ui *desktopUI) queueRow(steer bool, index int, messageValue agent.Message)
 		if index < len(ui.current.queue)-1 {
 			action(iconChevron, "Move down", func() { ui.moveQueued(index, +1) })
 		}
-		action(iconArrowTurn, "Send now, at the next step", func() { ui.sendQueuedNow(index) })
 	}
 	action(iconRename, "Edit in the prompt", func() { ui.editQueued(steer, index) })
 	action(iconClose, "Remove", func() { ui.dropQueued(steer, index) })
 	bar := container.New(layout.NewCustomPaddedHBoxLayout(0))
+	if !steer {
+		send := newRow("Send now", iconArrowTurn, styleChip, func() { ui.sendQueuedNow(index) })
+		send.onHover = func(in bool) {
+			if in {
+				tip := "Send this message"
+				if ui.current.run != nil {
+					tip = "Join the current task at the next step"
+				}
+				ui.tips.show(send, tip)
+			} else {
+				ui.tips.hide()
+			}
+		}
+		bar.Add(send)
+	}
 	for _, a := range actions {
 		bar.Add(a)
 	}
@@ -625,9 +668,9 @@ func (ui *desktopUI) editQueued(steer bool, index int) {
 	message := (*waiting)[index]
 	*waiting = append((*waiting)[:index], (*waiting)[index+1:]...)
 	ui.editing = &queueEdit{chat: chat, steer: steer, index: index, original: message, draft: ui.prompt.Text, images: ui.attachments, files: ui.fileAttachments}
-	ui.fileAttachments = nil
-	ui.prompt.SetText(message.Content)
-	lines := strings.Split(message.Content, "\n")
+	ui.fileAttachments = append([]fileAttachment(nil), message.Files...)
+	ui.prompt.SetText(message.Typed())
+	lines := strings.Split(message.Typed(), "\n")
 	ui.prompt.CursorRow, ui.prompt.CursorColumn = len(lines)-1, len([]rune(lines[len(lines)-1]))
 	ui.prompt.Refresh()
 	ui.attachments = append([]core.ImagePart(nil), message.Images...)
@@ -654,7 +697,7 @@ func (ui *desktopUI) finishEdit(commit bool) {
 	ui.editing = nil
 	messageValue := queueEdit.original
 	if commit {
-		messageValue.Content, messageValue.Images = attachmentText(strings.TrimSpace(ui.prompt.Text), ui.fileAttachments), ui.attachments
+		messageValue.Content, messageValue.Images, messageValue.Files = attachmentText(strings.TrimSpace(ui.prompt.Text), ui.fileAttachments), ui.attachments, ui.fileAttachments
 	}
 	if messageValue.Content != "" || len(messageValue.Images) > 0 {
 		waiting := lane(queueEdit.chat, queueEdit.steer)
@@ -766,7 +809,7 @@ func (ui *desktopUI) refreshContextRing() {
 		ui.contextRing.plan = ui.plan
 	}
 	if ui.current == nil {
-		ui.setContextUsage(0, agent.ModelContextWindow(ui.cfg))
+		ui.setContextUsage(0, agent.ModelContextWindow(ui.resolveModel(ui.cfg)))
 		return
 	}
 	usage := 0
@@ -775,5 +818,5 @@ func (ui *desktopUI) refreshContextRing() {
 			usage = message.Usage
 		}
 	}
-	ui.setContextUsage(usage, agent.ModelContextWindow(ui.current.Config))
+	ui.setContextUsage(usage, agent.ModelContextWindow(ui.resolveModel(ui.current.Config)))
 }

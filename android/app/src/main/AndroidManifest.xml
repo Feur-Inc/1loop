@@ -93,5 +93,15 @@
                 android:name="android.support.FILE_PROVIDER_PATHS"
                 android:resource="@xml/update_files" />
         </provider>
+        <!-- A cited project file, shown to the app the user opens it with (Remote.kt). -->
+        <provider
+            android:name=".OpenedFiles"
+            android:authorities="${applicationId}.opened"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/opened_files" />
+        </provider>
     </application>
 </manifest>

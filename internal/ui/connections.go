@@ -1,8 +1,6 @@
 package ui
 
 import (
-	"os/exec"
-
 	"1loop/internal/agent"
 	"1loop/internal/core"
 	"1loop/internal/platform"
@@ -21,7 +19,7 @@ func (ui *desktopUI) offerClaudeCode() {
 			return
 		}
 	}
-	if _, err := exec.LookPath("claude"); err != nil {
+	if _, err := agent.ClaudeExecutable(); err != nil {
 		return
 	}
 	ui.claudeOffered = true
@@ -76,7 +74,9 @@ func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 	previous := ui.cfg
 	platform.Devf("ui", "model %s (%s)", choice.ID, choice.Display())
 	cfg := choice.Connection.Config(previous.Workspace)
+	cfg.MachineID = previous.MachineID // the project stays on its SSH machine
 	cfg.Model = choice.ID
+	cfg.DefaultPreset = choice.IsDefaultPreset()
 	cfg.ReasoningMode = choice.ReasoningMode
 	cfg.Effort = nearestModelEffort(choice, previous.Effort)
 	cfg.ServiceTier = agent.TierFor(choice, previous.ServiceTier)
@@ -119,6 +119,9 @@ func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 // showChatModel puts the open chat's model in the picker, from the catalog
 // already loaded; it is fetched again only when the model is not in it.
 func (ui *desktopUI) showChatModel() {
+	if ui.server != nil { // the server names it (remote_desktop.go)
+		return
+	}
 	for label, choice := range ui.choices {
 		if choice.Connection.ID == ui.cfg.ConnectionID && choice.ID == ui.cfg.Model {
 			ui.model.Selected = label
@@ -129,4 +132,13 @@ func (ui *desktopUI) showChatModel() {
 	if !ui.modelsLoading {
 		ui.refreshModels()
 	}
+}
+
+func (ui *desktopUI) resolveModel(cfg agent.Config) agent.Config {
+	for _, conn := range ui.connectionsList {
+		if conn.ID == cfg.ConnectionID {
+			return agent.ResolveDefault(cfg, conn, ui.choices)
+		}
+	}
+	return cfg
 }

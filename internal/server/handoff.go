@@ -71,6 +71,9 @@ func (server *headlessServer) handoffPlanLocked(chat *serverChat, cfg agent.Conf
 	sort.Strings(labels)
 	for _, label := range labels {
 		choice := server.choices[label]
+		if choice.IsDefaultPreset() {
+			continue
+		}
 		candidate := server.configFor(choice, cfg)
 		if agent.IdentityOf(candidate) == agent.IdentityOf(cfg) || previous != nil && agent.IdentityOf(candidate) == agent.IdentityOf(*previous) {
 			continue

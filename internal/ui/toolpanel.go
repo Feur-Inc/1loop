@@ -64,6 +64,7 @@ type panelTab struct {
 	webAccount      *agent.ChatGPTWeb
 	webPage         *browser.Page
 	workspace       string // manual tabs belong to a workspace, not a transcript item
+	files           *fileBrowser
 }
 
 const panelWidth = 840
@@ -89,6 +90,10 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	panel.strip = container.New(layout.NewCustomPaddedHBoxLayout(4))
 	add := newRow("", iconPlus, styleWindow, nil)
 	add.onTap = func() {
+		if ui.server != nil {
+			ui.server.panelMenu(add)
+			return
+		}
 		showMenu(ui.window, add, []menuAction{
 			{label: "Browser", icon: iconBrowser, run: panel.openBrowser},
 			{label: "Terminal", icon: toolGlyph("shell"), run: panel.openTerminal},
@@ -97,7 +102,13 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 		})
 	}
 	fold := newRow("", iconPanel, styleWindow, panel.fold)
-	todo := newRow("Tasks", iconCheck, styleChip, panel.openTodo)
+	todo := newRow("Tasks", iconCheck, styleChip, func() {
+		if ui.server != nil { // a server chat's tasks are the server's (remote_desktop.go)
+			ui.server.showTab("todo")
+			return
+		}
+		panel.openTodo()
+	})
 	header := container.NewBorder(nil, nil, nil, container.NewHBox(todo, add, fold), container.NewHScroll(panel.strip))
 	rule := canvas.NewRectangle(colBorderSoft)
 	rule.SetMinSize(fyne.NewSize(0, 1))
@@ -335,6 +346,9 @@ func (panel *toolPanel) renderStrip() {
 }
 
 func (panel *toolPanel) render() {
+	if panel.ui.server != nil {
+		defer panel.ui.server.activateTabs()
+	}
 	panel.renderStrip()
 	panel.syncBrowsers()
 	panel.texts = nil
@@ -418,7 +432,8 @@ func (panel *toolPanel) tabView(i int, tab panelTab) fyne.CanvasObject {
 	if tab.chat != nil {
 		item := tab.chat.Items[tab.index]
 		_, target, _ = agent.DescribeTool(item, false)
-		if item.Tool != "shell" {
+		switch item.Tool {
+		case "read_file", "list_directory", "edit_file", "apply_patch": // a path: its file's name
 			target = filepath.Base(target)
 		}
 		icon = toolGlyph(item.Tool)

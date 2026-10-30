@@ -8,18 +8,22 @@ import android.provider.Settings
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.net.toUri
 import androidx.compose.ui.unit.dp
@@ -28,6 +32,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
+import org.json.JSONObject
 
 @Composable
 fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
@@ -47,6 +52,7 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
             Pill("Switch execution target") { app.switchTarget() }
             Text("Approvals", style = Type.headline)
             ApprovalChip(app)
+            AutoResumeSection(app)
             if (app.server?.localPhone == true) {
                 Text("Connections", style = Type.headline)
                 Pill("Accounts and models", onClick = { app.connectionsOpen = true })
@@ -56,8 +62,15 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                 BackgroundExecutionSection(adb.installed)
                 LaunchedEffect(Unit) { runCatching { app.refreshSharing() } }
                 SharingSection(app)
+                Text("Linux", style = Type.headline)
+                Text("The Debian the local agent works in: storage, packages, a terminal and a reset.", style = Type.small)
+                Pill("Manage Linux", icon = Icons.terminal) { app.linuxOpen = true }
             }
             RunStatusSection()
+            Text("Extensions", style = Type.headline)
+            Text("Skills and plugins from GitHub, and the MCP servers the agent uses.", style = Type.small)
+            Pill("Skills, plugins and MCP servers", enabled = app.connected) { app.extensionsOpen = true }
+            GitHubConnectorSection(app)
             Text("Personalization", style = Type.headline)
             Text("Your preferences are added to 1loop's base instructions. They never replace its system prompt or tool rules. They apply to subsequent turns on this execution target.", style = Type.small)
             if (app.preferencesEditable) {
@@ -96,6 +109,8 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                     }
                 }
             }
+            if (app.defaultPresets) DefaultModelsSection(app)
+            ModelCompactionSection(app)
             UpdatesSection(app)
             BrowserDataSection(app)
             HooksSection(app)
@@ -160,6 +175,139 @@ private fun RunStatusSection() {
             }
         }
     }
+}
+
+@Composable
+private fun AutoResumeSection(app: RemoteApp) {
+    val scope = rememberCoroutineScope()
+    val saved = app.defaultAutoResume
+    var enabled by remember(app.server, saved?.toString()) { mutableStateOf(saved?.optBoolean("enabled") ?: false) }
+    val steps = remember(app.server, saved?.toString()) {
+        mutableStateListOf<JSONObject>().apply {
+            saved?.optJSONArray("steps")?.let { array -> for (i in 0 until array.length()) add(JSONObject(array.getJSONObject(i).toString())) }
+        }
+    }
+    var expanded by remember { mutableStateOf(false) }
+    var search by remember { mutableStateOf("") }
+    var saving by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    Text("Automatic resumption", style = Type.headline)
+    Text("When a rate limit interrupts a conversation, 1loop tries these options in order, for every conversation. Stop cancels a wait. Changes apply to the next run.", style = Type.small)
+    Row(verticalAlignment = Alignment.CenterVertically) {
+        Text("Enabled", style = Type.body, modifier = Modifier.weight(1f))
+        Toggle(enabled, enabled = app.connected) { enabled = it }
+    }
+    steps.forEachIndexed { index, step ->
+        val action = step.optString("action")
+        val choice = app.models.firstOrNull { it.account == step.optString("connectionId") && it.id == step.optString("model") }
+        Column(Modifier.fillMaxWidth().background(Palette.surface, RoundedCornerShape(10.dp)).padding(12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("${index + 1}. " + if (action == "wait") "Wait for the limit to reset" else choice?.name ?: step.optString("model"), style = Type.body)
+            if (action == "switch") {
+                if (choice != null && choice.efforts.isNotEmpty()) {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Pill("Default", step.optString("effort").isEmpty()) { steps[index] = JSONObject(step.toString()).put("effort", "") }
+                        choice.efforts.forEach { effort ->
+                            Pill(effort.label, step.optString("effort") == effort.value) { steps[index] = JSONObject(step.toString()).put("effort", effort.value) }
+                        }
+                    }
+                }
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Pill("Send as is", step.optString("handoff", "as_is") == "as_is") { steps[index] = JSONObject(step.toString()).put("handoff", "as_is") }
+                    Pill("Summarize", step.optString("handoff") == "summary") { steps[index] = JSONObject(step.toString()).put("handoff", "summary").put("level", "everything") }
+                }
+                if (step.optString("handoff") == "summary") {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for ((id, label) in listOf("everything" to "Everything", "no_outputs" to "No tool outputs", "messages" to "Messages", "recent" to "Recent")) {
+                            Pill(label, step.optString("level") == id) { steps[index] = JSONObject(step.toString()).put("level", id) }
+                        }
+                    }
+                }
+            }
+            Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Pill("Up", enabled = index > 0) { val previous = steps[index - 1]; steps[index - 1] = step; steps[index] = previous }
+                Pill("Down", enabled = index + 1 < steps.size) { val next = steps[index + 1]; steps[index + 1] = step; steps[index] = next }
+                Pill("Remove") { steps.removeAt(index) }
+            }
+        }
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Pill("Add wait", enabled = steps.size < 16) { steps.add(JSONObject().put("action", "wait")) }
+        Box {
+            Pill("Add model", enabled = steps.size < 16 && app.models.any { it.id.isNotEmpty() }) { expanded = true }
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+                Field(search, { search = it }, "Search models…", androidx.compose.ui.text.input.KeyboardType.Text, Modifier.width(260.dp))
+                app.models.filter { it.id.isNotEmpty() && "${it.name} ${it.detail}".contains(search.trim(), ignoreCase = true) }.take(80).forEach { model ->
+                    DropdownMenuItem(text = { Text("${model.name} · ${model.detail}") }, onClick = {
+                        steps.add(JSONObject().put("action", "switch").put("connectionId", model.account).put("model", model.id).put("handoff", "as_is"))
+                        expanded = false; search = ""
+                    })
+                }
+            }
+        }
+    }
+    Pill(if (saving) "Saving…" else "Save resumption", primary = true, enabled = app.connected && !saving) {
+        if (enabled && steps.isEmpty()) { notice = "Add at least one option." } else {
+            saving = true
+            val policy = JSONObject().put("enabled", enabled).put("steps", org.json.JSONArray(steps.toList()))
+            scope.launch {
+                try { app.saveAutoResume(policy); notice = "Saved" }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) { notice = failure.message ?: "Could not save resumption settings." }
+                finally { saving = false }
+            }
+        }
+    }
+    notice?.let { Text(it, style = Type.small) }
+}
+
+@Composable
+private fun ModelCompactionSection(app: RemoteApp) {
+    val scope = rememberCoroutineScope()
+    var selected by remember(app.server) { mutableStateOf("") }
+    var expanded by remember { mutableStateOf(false) }
+    var search by remember { mutableStateOf("") }
+    var notice by remember { mutableStateOf<String?>(null) }
+    var saving by remember { mutableStateOf(false) }
+    val model = app.models.firstOrNull { it.label == selected } ?: app.chatModel
+    Text("Model context", style = Type.headline)
+    Text("When 1loop compacts a conversation, for each model: choose a model, then its target in tokens.", style = Type.small)
+    Box {
+        Pill(model?.name ?: "Choose a model", enabled = app.models.isNotEmpty()) { expanded = true }
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            Field(search, { search = it }, "Search models…", KeyboardType.Text, Modifier.width(260.dp))
+            app.models.filter { "${it.name} ${it.detail}".contains(search.trim(), ignoreCase = true) }.take(80).forEach { choice ->
+                DropdownMenuItem(text = { Text("${choice.name} · ${choice.detail}") }, onClick = {
+                    selected = choice.label
+                    expanded = false
+                    search = ""
+                    notice = null
+                })
+            }
+        }
+    }
+    if (model != null && model.compactSupported) {
+        var value by remember(model.label, model.compactAt) { mutableStateOf(model.compactAt.takeIf { it > 0 }?.toString().orEmpty()) }
+        val placeholder = if (model.compactDefault > 0) "Default · " + "%,d".format(java.util.Locale.US, model.compactDefault) else "Default · the model's window"
+        Field(value, { value = it; notice = null }, placeholder, KeyboardType.Number)
+        Text(model.compactHelp.ifEmpty { "Optional, for this model only. Leave it empty for the default." }, style = Type.small)
+        Pill(if (saving) "Saving…" else "Save context target", enabled = app.connected && !saving) {
+            val limit = value.trim().toIntOrNull()
+            if (value.isNotBlank() && (limit == null || limit !in 1..1000000)) {
+                notice = "Enter 1–1,000,000 tokens or leave the field empty."
+            } else {
+                saving = true
+                scope.launch {
+                    try { app.setModelCompaction(model.label, limit ?: 0); notice = "Saved" }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { notice = failure.message ?: "Could not save the context target." }
+                    finally { saving = false }
+                }
+            }
+        }
+    } else if (model != null) {
+        Text("This connection manages its own context, or the connected target needs an update.", style = Type.small)
+    }
+    notice?.let { Text(it, style = Type.small) }
 }
 
 // The agent's browser keeps its logins between sessions: this erases them,

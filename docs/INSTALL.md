@@ -105,8 +105,9 @@ What that changes:
 - **Auto mode's workspace sandbox (Landlock) is off.** Commands run on the
   host, outside the process Landlock restricts, so every command that is not
   plainly safe asks for your approval, as on systems without Landlock.
-- **Browser Use** needs Chromium or Google Chrome installed on the host
-  system, not as a Flatpak.
+- **Browser Use** runs the host's Chromium or Google Chrome (not a
+  Flatpak). Without one, 1loop downloads its own Chromium, which runs on the
+  host from `~/.var/app/io.github.Feur_Inc.OneLoop/config/1loop/chromium`.
 - **Computer Use** needs the Python packages listed below on the host, as
   for the other formats.
 - **Terminal Use** opens your login shell on the host. The environment the
@@ -142,8 +143,9 @@ The package installs `1loop` with its launcher entry (`makeDesktopItem`) and
 icons, and brings its own Python for Computer Use (`ONELOOP_COMPUTER_PYTHON`,
 with PyGObject, dbus-python, Pillow, GTK, GStreamer and its PipeWire
 plugin). It needs `hardware.graphics.enable = true;` (on by default with any
-desktop). Git and Chromium/Chrome come from your system: add `git` and
-`chromium` to your packages for the *Git changes* tab and Browser Use. On
+desktop). It also brings nixpkgs' Chromium for Browser Use
+(`ONELOOP_CHROMIUM`). Git comes from your system: add `git` to your packages
+for the *Git changes* tab. On
 another distribution, the Nix build cannot find your GPU driver: run it
 through [nixGL](https://github.com/nix-community/nixGL)
 (`nixGL 1loop`), or use the `.tar.gz`. Updates come with `nix flake update`
@@ -177,12 +179,61 @@ or override an explicitly forced backend. A missing library that prevents the
 Wayland binary itself from loading is not covered. Flatpak's Wayland permissions
 do not expose X11, so that retry is unavailable there.
 
+### Import browser cookies on desktop
+
+In **Settings → General → Browser → Import cookies**, choose a JSON file
+or a compatible local browser profile. Read the account-access warning,
+turn on **I understand**, then select **Import**. This is desktop-only;
+no cookie import is exposed on Android or through the remote API.
+
+For Chrome, Edge and other browsers, including protected Windows profiles:
+
+1. Open the source browser/profile and the site whose account you want to share.
+2. Use a cookie-export extension you trust, such as
+   [Cookie-Editor](https://github.com/Moustachauve/cookie-editor), installed
+   through its official browser-store link. Grant access only to the sites
+   you intend to export, then choose **Export → JSON**.
+3. If the extension copies JSON to the clipboard, paste it into a local text
+   editor and save it as `cookies.json`. Choose that file in 1loop.
+4. Open the site in Browser Use to verify whether the session works. Some
+   sites require signing in again; copied cookies alone cannot guarantee login.
+5. Keep the export private. It contains sensitive session data. Remove it
+   yourself when finished, and disable/remove the export extension if unused.
+   1loop reads the selected file locally without changing or deleting it.
+
+The importer accepts a JSON array of cookies, or an object with a `cookies`
+array, using `name`, `value`, `domain`, `path`, `secure`, `httpOnly`,
+`sameSite`, `hostOnly` and `expirationDate` (or DevTools `expires`). Session
+cookies are accepted from JSON but may end when Browser Use closes.
+Expired, invalid, container and partitioned cookies are skipped.
+
+Direct profile import supports Firefox-family profiles on Windows/Linux and
+compatible Chromium-family profiles on Linux. Close the source browser first.
+It reads a temporary copy; Linux Chromium uses its own browser and system
+keyring. Protected Windows Chromium profiles require a voluntary JSON export.
+An inaccessible keyring or browser installation can prevent direct import.
+
+Cookies can grant access to accounts you did not intend to share. Agents may
+act as those accounts, and malicious pages can influence their actions.
+**Clear browsing data** removes Browser Use's local sessions and data; it
+neither revokes every server-side session nor undoes previous actions. No
+passwords, history, bookmarks or local storage are imported.
+
 ### What 1loop uses from the system
 
 Runtime needs, for every format: OpenGL, X11 or Wayland libraries (the `.deb`
-pulls them in), Bash, Git (for the *Git changes* tab), and Chrome or Chromium
-for the agent's browser (Browser Use). Optional: `latex` and `dvipng` to
-render formulas, and the Computer Use packages below.
+pulls them in), Bash and Git (for the *Git changes* tab). Optional: `latex`
+and `dvipng` to render formulas, and the Computer Use packages below.
+
+Browser Use runs the Chromium, Chrome or Edge it finds on the computer. Without
+one, it downloads its own Chromium the first time (Chrome for Testing, Google's
+build made to be driven, about 200 MB), into `~/.config/1loop/chromium` on
+Linux and `%AppData%\1loop\chromium` on Windows: no package to install and no
+administrator rights. 1loop checks once a day for a newer stable version and
+uses it from the next start. On Linux it uses the system libraries every
+desktop has (NSS, GTK, ALSA…). Where the system allows user namespaces only to
+browsers installed by the administrator (Ubuntu 23.10 and later), it runs
+without Chromium's own sandbox.
 
 <details>
 <summary>Computer Use on Linux (optional)</summary>
@@ -208,7 +259,8 @@ uses the bundled Mesa CPU renderer. It needs the Microsoft Visual C++
 
 Pairing a phone can trigger a Windows firewall prompt; desktop-only use does
 not need inbound access. Git is needed for the *Git changes* tab; Browser Use
-finds Chrome, Chromium or Microsoft Edge.
+finds Chrome, Chromium or Microsoft Edge, or downloads its own Chromium into
+`%AppData%\1loop\chromium`.
 
 ## Android (8.0 or newer)
 
@@ -244,6 +296,66 @@ executable, and follow [docs/SERVER.md](SERVER.md) to choose a model, run it as
 a service and pair your devices. A device connected to the server tells you
 when it can update, and updates it on request.
 
+## GitHub connector
+
+1. On desktop, open **Settings → Connectors → GitHub**. On Android, open
+   **Settings → Connectors · GitHub**. The connection belongs to the execution
+   target: the computer, server or Local phone currently running the agent.
+2. Choose **Choose repositories on GitHub** and install
+   [1loop GitHub Connector](https://github.com/apps/1loop-github-connector)
+   on the repositories you want to grant. The app requests read/write access
+   to contents, issues and pull requests, and read access to metadata.
+3. Choose **Connect GitHub**, open the GitHub link, enter the temporary code
+   shown by 1loop, and review the authorization in your browser.
+4. Once connected, GitHub's official hosted MCP tools become available to
+   the agent. Their actual capabilities depend on the app's permissions and
+   your own repository access. Write operations follow the selected approval
+   mode.
+5. Turn **Enable GitHub tools** off to remove them from later model requests
+   and reject later calls. An operation already sent to GitHub may finish.
+   **Disconnect** clears the locally saved authorization; **Review access on
+   GitHub** lets you revoke the app. **Manage repository access** opens the
+   app's installation settings to change its repository grants.
+
+Access and refresh tokens are saved in `github-connector.json` inside the
+execution target's private `1loop` configuration folder, separately from
+model configuration. They are not included in tool schemas or given to
+Claude Code subprocesses. Expiring authorizations are renewed automatically;
+after revocation, connect again. No app secret or private key is embedded in
+the application; its GitHub App client ID is public.
+
+### Images and videos
+
+The agent can upload screenshots and recordings for issues, pull requests and
+comments (`github_upload_attachments`), and look at images already attached
+to them (`github_view_attachment`). A file comes from the workspace, here or on
+the SSH machine, or is a fresh screenshot of a Browser Use tab. GitHub accepts
+png, jpg, jpeg, gif, webp and svg images up to 10 MiB, and mp4, mov and webm
+videos up to 100 MiB.
+
+GitHub refuses uploads signed by a GitHub App such as the connector (only
+GitHub's own apps may use its attachment endpoint), so uploads need one of:
+
+- a personal access token saved under **Images and videos** in the connector's
+  settings: a classic token with the `repo` scope (`public_repo` for public
+  repositories only), or a fine-grained token with write access to the
+  repositories. It is saved in `github-connector.json` with the connector's
+  authorization and removed by **Disconnect**;
+- otherwise GitHub CLI's sign-in on the execution target (`gh auth login`).
+  1loop reads it with `gh auth token` at each upload and never saves it.
+
+The uploading account must be able to write to the repository. Each upload
+asks for approval and names the repository, the account and the files. GitHub
+has no way to delete an attachment; it shows only where its address is
+referenced, which the agent then does with the issue, pull request or comment
+tools. Opening an attached image uses the same credential, else the
+connector's, so images of private repositories open too.
+
+Connecting or reconnecting GitHub during an active Claude Code turn takes
+effect on the next turn in the same chat, even with the same account. Calls
+belonging to the previous connection are rejected. Refreshing an access token
+or re-enabling the existing connection keeps the same connection.
+
 ## Where 1loop keeps its data
 
 | | Linux | Windows |
@@ -260,3 +372,43 @@ Uninstalling: remove the package (`apt remove 1loop`, `flatpak uninstall
 io.github.Feur_Inc.OneLoop`, `nix profile remove`, or delete the AppImage),
 or run `install.sh --uninstall` and delete the folder you extracted. Delete
 these folders too if you want to remove your data.
+
+## Image generation with a ChatGPT account
+
+With a connected **ChatGPT account** (Codex subscription authentication), ask
+for an image in a project chat. The `imagegen` tool uses the subscription's
+Codex image service with `gpt-image-2.5-sunburst`, shows an animated placeholder while it works, and displays
+the resulting image in the conversation. The PNG is saved in the project's
+`generated-images/` folder, with a unique filename; use Files to open or export
+it. The model receives the image too and can inspect it before replying.
+
+For edits, the tool accepts up to five workspace image paths, or the last
+one to five conversation images. These options cannot be combined. A transparent
+background can be requested. Existing files are never overwritten.
+Like Codex image generation, this tool does not request a separate action
+approval: referenced images are sent to the connected ChatGPT account’s
+image service, and generation consumes its image quota.
+
+The tool is absent for Claude Code, vLLM, compatible APIs, OpenRouter and
+ChatGPT (Web). Access and image quotas depend on the connected subscription;
+a refusal is reported without switching accounts or charging an API key.
+
+## Claude Code sign-in
+
+On desktop, open Settings → Connections, add or edit a Claude Code connection,
+and choose **Sign in**. Complete Claude Code’s own browser authorization.
+If it supplies a code, paste it into the dialog and submit it. Close the dialog
+after success, then load the connection’s models. The phone keeps its existing
+Claude Code sign-in action; both interfaces use the same CLI login flow.
+
+For scripts or a desktop launched with a subscription token, `claude setup-token`
+prints a long-lived token. Supply it through `CLAUDE_CODE_OAUTH_TOKEN` in the
+environment that launches 1loop. It takes precedence over the stored login;
+1loop preserves this variable and still removes API-key billing overrides.
+Do not put the token in a prompt or commit it.
+
+A model catalog is not a live token-validation request. 1loop reports an explicitly
+signed-out CLI, but an expired or revoked credential may still be rejected when
+a turn starts. Sign in again if necessary and keep Claude Code up to date.
+Graceful shutdown reduces forced-interruption risks; it cannot repair an upstream
+OAuth renewal failure. See [Claude Code authentication](https://code.claude.com/docs/en/authentication).

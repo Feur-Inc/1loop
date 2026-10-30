@@ -3,6 +3,7 @@ package ui
 import (
 	"fmt"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -129,7 +130,7 @@ func withMore(row *tapRow, open func(anchor fyne.CanvasObject) *sheet) fyne.Canv
 // Projects: the folders 1loop works in. Removing one only forgets it in 1loop.
 
 func (ui *desktopUI) ensureProject(path string) {
-	if path == "" {
+	if path == "" || ui.worktrees[path] != "" { // a worktree shows under its project
 		return
 	}
 	for _, p := range ui.projects {
@@ -141,18 +142,28 @@ func (ui *desktopUI) ensureProject(path string) {
 }
 
 func (ui *desktopUI) selectProject(path string) {
+	if ui.server != nil {
+		ui.server.selectProject(path)
+		return
+	}
 	if path == ui.cfg.Workspace {
 		return
 	}
 	platform.Devf("ui", "project %s", path)
 	ui.cfg.Workspace = path
-	ui.ensureProject(path)
+	if ui.worktreeMap()[path] == "" {
+		ui.ensureTargetProject(path)
+	}
 	ui.current = nil
 	ui.save()
 	ui.startNew()
 }
 
 func (ui *desktopUI) addProject() {
+	if ui.server == nil && ui.cfg.MachineID != "" {
+		ui.addMachineProject()
+		return
+	}
 	start := filepath.Dir(ui.cfg.Workspace)
 	ui.pick(pickRequest{title: "Add a project folder", start: start, folder: true}, func(paths []string) {
 		root, err := agent.ResolveWorkspace(paths[0])
@@ -169,10 +180,11 @@ func (ui *desktopUI) addProject() {
 	})
 }
 
+// chatsIn are the chats of a project of the target.
 func (ui *desktopUI) chatsIn(path string) []*conversation {
 	var chats []*conversation
 	for _, chat := range ui.chats {
-		if chat.Config.Workspace == path {
+		if chat.Config.Workspace == path && chat.Config.MachineID == ui.cfg.MachineID {
 			chats = append(chats, chat)
 		}
 	}
@@ -202,7 +214,7 @@ func (ui *desktopUI) renameProject(path string) {
 
 func (ui *desktopUI) removeProject(path string) {
 	chats := ui.chatsIn(path)
-	text := fmt.Sprintf("“%s” will no longer be listed in 1loop.", filepath.Base(path))
+	text := fmt.Sprintf("“%s” will no longer be listed in 1loop.", ui.projectName(path))
 	if len(chats) > 0 {
 		text += fmt.Sprintf(" Its %d chat(s) will be removed from 1loop.", len(chats))
 	}
@@ -210,7 +222,7 @@ func (ui *desktopUI) removeProject(path string) {
 	ui.confirm("Remove project?", text, "Remove", func() {
 		var kept []*conversation
 		for _, chat := range ui.chats {
-			if chat.Config.Workspace != path {
+			if chat.Config.Workspace != path || chat.Config.MachineID != ui.cfg.MachineID {
 				kept = append(kept, chat)
 			} else if chat.run != nil {
 				chat.run.cancel()
@@ -218,12 +230,12 @@ func (ui *desktopUI) removeProject(path string) {
 		}
 		ui.chats = kept
 		var projects []string
-		for _, p := range ui.projects {
+		for _, p := range ui.targetProjects() {
 			if p != path {
 				projects = append(projects, p)
 			}
 		}
-		ui.projects = projects
+		ui.setTargetProjects(projects)
 		if ui.cfg.Workspace == path {
 			next := ""
 			if len(projects) > 0 {
@@ -239,16 +251,28 @@ func (ui *desktopUI) removeProject(path string) {
 }
 
 func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
+	if ui.server != nil {
+		ui.server.projectMenu(anchor)
+		return
+	}
 	var actions []menuAction
-	for _, p := range ui.projects {
+	for _, p := range ui.targetProjects() {
 		p := p
+		if ui.worktreeMap()[p] != "" {
+			continue
+		}
 		var icon fyne.Resource = blankIcon
 		if p == ui.cfg.Workspace {
 			icon = iconCheck
 		}
-		actions = append(actions, menuAction{label: filepath.Base(p), icon: icon, run: func() { ui.selectProject(p) }})
+		actions = append(actions, menuAction{label: ui.projectName(p), icon: icon, run: func() { ui.selectProject(p) }})
+		actions = append(actions, ui.worktreeChoices(p, ui.selectProject)...)
 	}
-	actions = append(actions, menuAction{label: "Add folder…", icon: iconPlus, run: ui.addProject})
+	add := "Add folder…"
+	if ui.cfg.MachineID != "" {
+		add = "New project…"
+	}
+	actions = append(actions, menuAction{label: add, icon: iconPlus, run: ui.addProject})
 	showMenu(ui.window, anchor, actions)
 }
 
@@ -259,10 +283,15 @@ func (ui *desktopUI) openChat(chat *conversation) {
 	if chat == ui.current {
 		return
 	}
-	ui.reloadChat(chat)
+	ui.loadChat(chat, true)
 }
 
 func (ui *desktopUI) reloadChat(chat *conversation) {
+	ui.loadChat(chat, false)
+}
+
+func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
+	ui.cancelChatLoad()
 	platform.Devf("ui", "open chat %q [%s]: %d items, running %v", chat.Title, chat.ID, len(chat.Items), chat.run != nil)
 	defer platform.DevSlow("opening the chat", 30*time.Millisecond, time.Now())
 	ui.finishEdit(false)
@@ -276,11 +305,25 @@ func (ui *desktopUI) reloadChat(chat *conversation) {
 	ui.transcript.RemoveAll()
 	ui.items.reset()
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
+	if reuse && ui.restoreChatView(chat) {
+		ui.finishChatLoad()
+		return
+	}
+	if len(chat.Items) > chatLoadThreshold {
+		ui.cachedChat = nil // never retain a second large widget tree
+		ui.beginChatLoad(chat)
+		return
+	}
 	ui.building = true
 	for i := range chat.Items {
 		ui.appendItem(chat, i)
 	}
 	ui.building = false
+	ui.finishChatLoad()
+}
+
+func (ui *desktopUI) finishChatLoad() {
+	ui.transcript.Show()
 	ui.showTranscript(true)
 	ui.syncRun()
 	ui.updateHeader()
@@ -361,21 +404,47 @@ func (ui *desktopUI) confirm(title, text, verb string, run func()) {
 
 // renderChats redraws the project list and the current project's conversations.
 func (ui *desktopUI) renderChats() {
+	if ui.cachedChat != nil && !slices.Contains(ui.chats, ui.cachedChat.chat) {
+		ui.cachedChat = nil
+	}
 	ui.remote.chatsChanged()
-	ui.ensureProject(ui.cfg.Workspace)
+	if ui.server != nil {
+		ui.server.renderChats()
+		return
+	}
+	worktrees := ui.worktreeMap()
+	if worktrees[ui.cfg.Workspace] == "" {
+		ui.ensureTargetProject(ui.cfg.Workspace)
+	}
 	ui.projectList.RemoveAll()
-	for _, p := range ui.projects {
+	opened := ui.projectOf(ui.cfg.Workspace)
+	for _, p := range ui.targetProjects() {
 		p := p
-		row := newRow(filepath.Base(p), iconFolder, styleNav, func() { ui.selectProject(p) })
+		if worktrees[p] != "" {
+			continue // shown under its project
+		}
+		row := newRow(ui.projectName(p), iconFolder, styleNav, func() { ui.selectProject(p) })
 		row.selected = p == ui.cfg.Workspace
 		row.accent = true
+		row.truncate = true
+		if state := ui.repoFor(p); state.repo != nil {
+			row.trailing = state.repo.Current // the branch of the project's folder
+		}
 		ui.projectList.Add(withMore(row, func(anchor fyne.CanvasObject) *sheet {
-			return showMenu(ui.window, anchor, []menuAction{
-				{label: "New chat", icon: iconPlus, run: func() { ui.selectProject(p); ui.startNew() }},
-				{label: "Rename", icon: iconRename, run: func() { ui.renameProject(p) }},
-				{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { ui.removeProject(p) }},
-			})
+			actions := []menuAction{{label: "New chat", icon: iconPlus, run: func() { ui.selectProject(p); ui.startNew() }}}
+			actions = append(actions, ui.repositoryActions(p)...)
+			if ui.cfg.MachineID == "" { // a machine's folder is renamed there, in its terminal
+				actions = append(actions, menuAction{label: "Rename", icon: iconRename, run: func() { ui.renameProject(p) }})
+			}
+			actions = append(actions, menuAction{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { ui.removeProject(p) }})
+			return showMenu(ui.window, anchor, actions)
 		}))
+		if p == opened {
+			for _, object := range ui.worktreeRows(p, ui.selectProject) {
+				ui.projectList.Add(object)
+			}
+			ui.loadRepo(p, true, 20*time.Second)
+		}
 	}
 	ui.chatList.RemoveAll()
 	chats := ui.chatsIn(ui.cfg.Workspace)

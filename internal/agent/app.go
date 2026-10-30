@@ -15,17 +15,23 @@ import (
 )
 
 type Config struct {
-	ConnectionID     string         `json:"connectionId,omitempty"`
-	AccountID        string         `json:"-"`
-	Residency        string         `json:"-"`
-	AuthProfile      string         `json:"authProfile,omitempty"`
-	Effort           string         `json:"effort,omitempty"`
-	ServiceTier      string         `json:"serviceTier,omitempty"` // a ChatGPT speed (see TierFor); "" for the plan's default
-	ReasoningMode    string         `json:"reasoningMode,omitempty"`
-	Routing          map[string]any `json:"routing,omitempty"`
-	Parameters       map[string]any `json:"parameters,omitempty"`
-	UserInstructions string         `json:"-"`
-	ApprovalMode     string         `json:"-"`
+	DefaultPreset    bool `json:"defaultPreset,omitempty"`
+	presetSelection  *Config
+	selectionError   error
+	ConnectionID     string                                            `json:"connectionId,omitempty"`
+	AccountID        string                                            `json:"-"`
+	Residency        string                                            `json:"-"`
+	AuthProfile      string                                            `json:"authProfile,omitempty"`
+	Effort           string                                            `json:"effort,omitempty"`
+	ServiceTier      string                                            `json:"serviceTier,omitempty"` // a ChatGPT speed (see TierFor); "" for the plan's default
+	ReasoningMode    string                                            `json:"reasoningMode,omitempty"`
+	AutoResume       *AutoResume                                       `json:"-"` // the user's list, for every chat (Settings)
+	ResumeModel      func(context.Context, ResumeStep) (Config, error) `json:"-"`
+	ResumeSwitched   func(context.Context, Config) error               `json:"-"`
+	Routing          map[string]any                                    `json:"routing,omitempty"`
+	Parameters       map[string]any                                    `json:"parameters,omitempty"`
+	UserInstructions string                                            `json:"-"`
+	ApprovalMode     string                                            `json:"-"`
 	// Preferences changes the saved user preferences under their owner's
 	// lock: update receives the saved text and returns the new one. Nil
 	// where the memory tool cannot change them.
@@ -33,6 +39,7 @@ type Config struct {
 	// ClassicCompaction turns the staged context policy off: one compaction
 	// when the window is nearly full, tool outputs kept as they come.
 	ClassicCompaction bool                                      `json:"-"`
+	CompactAt         int                                       `json:"-"`
 	Cache             *ContextCache                             `json:"-"`
 	ContextKey        string                                    `json:"-"`
 	Todo              *TodoState                                `json:"-"`
@@ -52,6 +59,8 @@ type Config struct {
 	APIKey            string                                    `json:"-"`
 	Model             string                                    `json:"model"`
 	Workspace         string                                    `json:"workspace"`
+	MachineID         string                                    `json:"machine,omitempty"` // the SSH machine the workspace is on, "" for this computer
+	Machine           Machine                                   `json:"-"`                 // that machine, for a run (machine.go)
 	Session           string                                    `json:"session,omitempty"` // Claude Code connection: the chat's session there
 	// SessionMark is how many of the chat's items that session has seen:
 	// what other models did after it is sent when Claude Code resumes.

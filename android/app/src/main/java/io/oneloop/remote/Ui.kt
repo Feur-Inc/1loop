@@ -205,7 +205,11 @@ fun Root(app: RemoteApp) {
                 Screen.Servers::class -> ServersScreen(app)
                 Screen.LocalSetup::class -> {
                     val status by app.local.status.collectAsState()
-                    LocalSetupScreen(status, app::prepareLocal, app::startLocal, app::switchTarget, app.starting, app.problem)
+                    if (app.linuxOpen) LinuxScreen(app) { app.linuxOpen = false }
+                    else LocalSetupScreen(
+                        status, app::prepareLocal, app::startLocal, app::switchTarget, app.starting, app.problem,
+                        onManageLinux = if (app.local.debianInstalled) ({ app.linuxOpen = true }) else null,
+                    )
                 }
                 Screen.Pair::class -> (app.screen as? Screen.Pair)?.let { PairScreen(app, it) }
                 Screen.Chat::class -> ChatScreen(app)
@@ -481,7 +485,19 @@ fun ChatScreen(app: RemoteApp) {
     if (app.server?.localPhone == true) PairingRequestDialog(app) // a device asking to use this phone
     app.handoffAsk?.let { HandoffDialog(it) } // the chat continues with another model
     SharedFilesDialog(app) // files shared to 1loop from another app
+    app.repositoryOpen?.let { project ->
+        RepositoryScreen(app, project) { app.repositoryOpen = null }
+        return
+    }
     if (app.settingsOpen) {
+        if (app.extensionsOpen) {
+            ExtensionsScreen(app) { app.extensionsOpen = false }
+            return
+        }
+        if (app.linuxOpen) {
+            LinuxScreen(app) { app.linuxOpen = false }
+            return
+        }
         MobileSettings(app) { app.settingsOpen = false }
         if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
         return
@@ -525,6 +541,8 @@ fun ChatScreen(app: RemoteApp) {
 private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) {
     var deleting by remember(app.server) { mutableStateOf<ChatSummary?>(null) }
     var projectActions by remember(app.server) { mutableStateOf<String?>(null) }
+    var worktreeActions by remember(app.server) { mutableStateOf<Pair<String, Worktree>?>(null) }
+    var newWorktree by remember(app.server) { mutableStateOf<String?>(null) }
     Column(modifier.background(Palette.sidebar).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
         Image(painterResource(R.drawable.logo), "1loop", modifier = Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp))
         NavRow("New chat", Icons.plus, selected = app.current == null) { app.open(null); onPicked() }
@@ -533,21 +551,29 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                 Text("Projects", style = Type.small.copy(color = Palette.faint), modifier = Modifier.weight(1f).padding(start = 10.dp))
                 if (app.projectManagement) RoundButton(Icons.plus, Color.Transparent, Palette.muted, description = "Add project") { app.projectsOpen = true }
             }
-            for (workspace in (app.projects + app.chats.map { it.workspace }).distinct()) {
+            @Composable
+            fun chatRows(folder: String) {
+                val chats = app.chats.filter { it.workspace == folder }
+                for (chat in chats) NavRow(
+                    chat.title, null, selected = chat.id == app.current, running = chat.running,
+                    onLongClick = { deleting = chat },
+                ) { app.open(chat.id); onPicked() }
+                if (chats.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
+            }
+            // A worktree shows under its project, not as a project of its own.
+            for (workspace in (app.projects + app.chats.map { app.projectOf(it.workspace) ?: it.workspace }).distinct().filter { it !in app.worktrees }) {
                 val selected = workspace == app.selectedProject
+                val git = app.repositories[workspace]?.takeIf { it.loaded && it.error == null }
                 NavRow(
                     projectName(workspace), Icons.folder, selected = selected,
-                    onLongClick = if (app.projectActions) ({ projectActions = workspace }) else null,
+                    onLongClick = if (app.projectActions || git != null) ({ projectActions = workspace }) else null,
                     longClickLabel = "Project actions",
+                    trailing = git?.current?.takeIf { it.isNotEmpty() },
                 ) { app.selectProject(workspace) }
-                if (selected) {
-                    val chats = app.chats.filter { it.workspace == workspace }
+                if (app.projectOf(app.selectedProject) == workspace) {
                     Column(Modifier.padding(start = 16.dp)) {
-                        for (chat in chats) NavRow(
-                            chat.title, null, selected = chat.id == app.current, running = chat.running,
-                            onLongClick = { deleting = chat },
-                        ) { app.open(chat.id); onPicked() }
-                        if (chats.isEmpty()) Text("No chats in this project", style = Type.caption, modifier = Modifier.padding(10.dp))
+                        if (selected) chatRows(workspace)
+                        WorktreeEntries(app, workspace, { chatRows(it) }, { worktreeActions = workspace to it }) { newWorktree = workspace }
                     }
                 }
             }
@@ -572,7 +598,9 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
         NavRow("Switch execution target", Icons.refresh, selected = false) { app.switchTarget() }
         Spacer(Modifier.height(8.dp))
     }
-    projectActions?.let { path -> ProjectActionsSheet(app, path) { projectActions = null } }
+    projectActions?.let { path -> ProjectActionsSheet(app, path, onNewWorktree = { newWorktree = path }) { projectActions = null } }
+    worktreeActions?.let { (project, worktree) -> WorktreeSheet(app, project, worktree) { worktreeActions = null } }
+    newWorktree?.let { project -> NewWorktreeSheet(app, project) { newWorktree = null } }
     deleting?.let { chat ->
         ModalBottomSheet(
             onDismissRequest = { deleting = null },
@@ -598,7 +626,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
 }
 
 @Composable
-private fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", onClick: () -> Unit) {
+internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", trailing: String? = null, onClick: () -> Unit) {
     Row(
         Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (selected) Palette.selected else Color.Transparent)
             .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = longClickLabel).padding(horizontal = 10.dp, vertical = 10.dp),
@@ -609,13 +637,16 @@ private fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running:
             Spacer(Modifier.width(10.dp))
         }
         Text(text, style = Type.body.copy(fontSize = 14.sp, color = if (selected) Palette.text else Color(0xFFB4B4B4)), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-        if (running) Box(Modifier.size(7.dp).clip(CircleShape).background(Palette.amber))
+        trailing?.let { Text(it, style = Type.caption, maxLines = 1, modifier = Modifier.padding(start = 8.dp)) }
+        if (running) Box(Modifier.padding(start = 8.dp).size(7.dp).clip(CircleShape).background(Palette.amber))
     }
 }
 
 @Composable
 private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifier, panel: Boolean, onPanelChange: (Boolean) -> Unit) {
     val focus = LocalFocusManager.current
+    val citeScope = rememberCoroutineScope()
+    val context = LocalContext.current
     val meta = app.meta
     val running = meta?.running == true
     var tool by remember { mutableStateOf<Item?>(null) }
@@ -673,7 +704,23 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
             RoundButton(Icons.plus, Color.Transparent, Palette.muted, description = "New chat") { app.open(null) }
         }
         Box(Modifier.weight(1f).fillMaxWidth()) {
-            if (app.current == null) Welcome(app) else Transcript(app, running) { tool = it }
+            if (app.current == null) Welcome(app) else Transcript(app, running, onCite = { citation ->
+                focus.clearFocus(force = true)
+                val workspace = app.chats.firstOrNull { it.id == app.current }?.workspace ?: app.selectedProject ?: app.workspace
+                // Code: the file, its lines marked, in the panel's Files tab.
+                fun show() {
+                    app.fileFocus = citation
+                    onPanelChange(true)
+                }
+                if (citation.start > 0) show() else citeScope.launch {
+                    // Not text (an image, a program…): the phone's app for it.
+                    val preview = try { app.filePreview(workspace, citation.path) } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (failure: Exception) { null }
+                    if (preview == null || !(preview.optBoolean("binary") || preview.optBoolean("image"))) return@launch show()
+                    try { app.openWithApp(workspace, citation.path) } catch (cancelled: kotlinx.coroutines.CancellationException) { throw cancelled } catch (failure: Exception) {
+                        android.widget.Toast.makeText(context, failure.message ?: "The file did not open.", android.widget.Toast.LENGTH_LONG).show()
+                    }
+                }
+            }) { tool = it }
             // The conversation fades under the composer instead of a hard edge.
             Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(18.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Palette.background))))
         }
@@ -708,7 +755,7 @@ private fun Welcome(app: RemoteApp) {
 }
 
 @Composable
-private fun Transcript(app: RemoteApp, running: Boolean, onTool: (Item) -> Unit) {
+private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> Unit, onTool: (Item) -> Unit) {
     val list = rememberLazyListState()
     var follow by remember { mutableStateOf(true) }
     val items = app.items
@@ -748,7 +795,7 @@ private fun Transcript(app: RemoteApp, running: Boolean, onTool: (Item) -> Unit)
                         MessageActions(app, item, running) { editing = app.firstItem + index to item.text }
                     }
                     "assistant" -> Column {
-                        Markdown(item.text)
+                        Markdown(item.text, onCite = onCite)
                         // One Copy per finished answer: under its last text, not while it runs.
                         val endsTurn = (index + 1 until items.size).takeWhile { items[it].kind != "user" }.none { items[it].kind == "assistant" }
                         if (endsTurn && !(running && index > lastUser)) {
@@ -760,6 +807,17 @@ private fun Transcript(app: RemoteApp, running: Boolean, onTool: (Item) -> Unit)
                     }
                     "tool" -> Column {
                         ToolRow(item) { onTool(item) }
+                        if (item.tool == "imagegen" && item.state == "running") {
+                            Row(
+                                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                    .background(Palette.code).padding(20.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                            ) {
+                                WorkRing("wait", 28.dp)
+                                Text("Creating your image…", style = Type.body)
+                            }
+                        }
                         // What the tool showed the model (a screenshot), as Codex shows it.
                         if (item.images > 0) ItemImages(app, app.firstItem + index, item.images, Modifier.padding(start = 32.dp, top = 2.dp))
                     }
@@ -798,7 +856,15 @@ private fun answerText(items: List<Item>, index: Int): String {
 private fun UserBubble(item: Item, images: @Composable () -> Unit = {}, actions: @Composable () -> Unit) {
     Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
         images()
-        if (item.text.isNotEmpty()) Box(Modifier.widthIn(max = 560.dp).fillMaxWidth(0.85f).padding(top = if (item.images > 0) 6.dp else 0.dp), contentAlignment = Alignment.CenterEnd) {
+        for (name in item.files) Row(
+            Modifier.padding(top = 6.dp).clip(RoundedCornerShape(10.dp)).background(Palette.raised)
+                .border(1.dp, Palette.border, RoundedCornerShape(10.dp)).padding(horizontal = 10.dp, vertical = 8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(Icons.document, null, tint = Palette.muted, modifier = Modifier.size(16.dp))
+            Text(name, style = Type.small.copy(color = Palette.text), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp).padding(start = 8.dp))
+        }
+        if (item.text.isNotEmpty()) Box(Modifier.widthIn(max = 560.dp).fillMaxWidth(0.85f).padding(top = if (item.images > 0 || item.files.isNotEmpty()) 6.dp else 0.dp), contentAlignment = Alignment.CenterEnd) {
             Text(
                 item.text,
                 style = Type.body,
@@ -990,7 +1056,7 @@ private fun ProjectChip(app: RemoteApp, chosen: String?, onChoose: (String) -> U
         ) {
             Icon(Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
-            Text(projectName(path), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 160.dp))
+            Text(app.folderName(path), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
         }
         DropdownMenu(open, { open = false }, containerColor = Palette.popover) {
             for (p in app.projects) DropdownMenuItem(

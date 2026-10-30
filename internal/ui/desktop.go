@@ -32,8 +32,10 @@ import (
 	"1loop/internal/browser"
 	"1loop/internal/computeruse"
 	"1loop/internal/core"
+	"1loop/internal/extensions"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
+	"1loop/internal/sshmachine"
 )
 
 type conversation struct {
@@ -59,12 +61,21 @@ type conversation struct {
 	handoff *pendingHandoff // how the next turn's new model receives the chat
 	queue   []agent.Message // Enter while it runs: the next turns
 	steer   []agent.Message // Ctrl+Enter while it runs: joins at the next step
+
+	// A server's chat (remote_desktop.go): its server, its ID there, its tool
+	// calls' states, and the user pictures being fetched.
+	server   *remoteDesktop
+	serverID string
+	states   map[int]string
+	versions map[string]remoteapi.Versions // by anchor
+	fetching map[string]bool
 }
 
 // chatRun is an agent loop at work. Each chat has its own, so the user can
 // open other chats, settings or projects while it runs in the background.
 type chatRun struct {
 	cancel   context.CancelFunc
+	stopped  bool // explicit cancellation; the worker also cancels its context on success
 	turn     *turn
 	approval *sheet
 	// The pending approval, so the phone remote can show and answer it.
@@ -97,6 +108,14 @@ type desktopUI struct {
 	chats            []*conversation
 	current          *conversation
 	projects         []string
+	sshMachines      []sshmachine.Settings          // Settings → SSH machines
+	machineProjects  map[string][]string            // each SSH machine's projects (paths there), by machine ID
+	machines         map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
+	localWorkspace   string                         // this computer's project while an SSH machine is the target
+	worktrees        map[string]string              // this computer's worktrees: folder → project (worktrees.go)
+	worktreeSort     string                         // how the sidebar and Repository order worktrees
+	repos            map[string]*repoState          // repositories read, by target and project
+	repoWindow       *repoWindow                    // the open Repository window
 	statePath        string
 	saveTimer        *time.Timer
 	saveLock         sync.Mutex // one write at a time, the newest state last
@@ -109,6 +128,11 @@ type desktopUI struct {
 	plan             agent.PlanUsage          // Claude Code connection: the subscription windows in use
 	claudeOffered    bool                     // the Claude Code connection was proposed once
 	remote           *remoteServer            // the phone remote, nil when off
+	extPage          *extensionsPage          // Settings → Extensions, while it was last built
+	server           *remoteDesktop           // the server the window works on, nil for this computer (remote_desktop.go)
+	localCfg         agent.Config             // this computer's settings while a server is the target
+	machine          *tapRow                  // the target: this computer, an SSH machine or a server
+	serverStatus     *fitLabel                // the server's state beside it
 	remoteEnabled    bool                     // see phone_server.go
 	devices          []remoteapi.PairedDevice // phones paired with the remote
 	modelsLoading    bool
@@ -134,6 +158,7 @@ type desktopUI struct {
 	approvalControl *tapRow
 	contextRing     *contextRing
 	send            *tapRow
+	steer           *tapRow
 	stop            *tapRow
 	controls        *fyne.Container
 	folder          *tapRow
@@ -162,13 +187,20 @@ type desktopUI struct {
 	workMark          *loopMark
 	views             map[int]any             // live widgets of the chat on screen, by item index
 	copyRows          map[int]*fyne.Container // Copy buttons under its answers, by item index
+	thumbnails        transcriptThumbnailCache
+	loadingChat       *conversationLoad
+	cachedChat        *conversationViewCache
+	chatWait          *loopMark
+	chatWaitView      *fyne.Container
+	chatViewport      *fyne.Container
 	settled           *time.Timer
 	panel             *toolPanel
 	split             *fyne.Container
 	panelToggle       *tapRow
-	panelWidth        float32 // last width chosen by dragging, independent of window size
-	classicCompaction bool    // settings: dynamic context compaction turned off
-	memoryOff         bool    // settings: the agent's memory tool turned off
+	panelWidth        float32           // last width chosen by dragging, independent of window size
+	classicCompaction bool              // settings: dynamic context compaction turned off
+	memoryOff         bool              // settings: the agent's memory tool turned off
+	autoResume        *agent.AutoResume // settings: what a rate limit does to a run
 	tips              *tipLayer
 
 	// Window and sidebar
@@ -369,6 +401,7 @@ func (ui *desktopUI) shortcut(s fyne.Shortcut) bool {
 
 // release stops background work and saves, before closing or restarting.
 func (ui *desktopUI) release() {
+	ui.cancelChatLoad()
 	if ui.frames != nil {
 		// No more frame-hook redraws: once seen right before a window that
 		// was closing hung in GLFW's event poll.
@@ -380,6 +413,7 @@ func (ui *desktopUI) release() {
 	}
 	ui.panel.dispose()
 	ui.remote.close()
+	extensions.Servers.CloseAll() // the MCP servers 1loop started
 	ui.mark.stop()
 	ui.workMark.stop()
 	ui.persist(true)
@@ -456,6 +490,11 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	// under the last message.
 	afterTypeset = func() {
 		if ui.ctx.Err() == nil {
+			if load := ui.loadingChat; load != nil {
+				ui.items.reset()
+				load.measured = 0
+				return
+			}
 			ui.relayoutColumn()
 		}
 	}
@@ -494,14 +533,20 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	// bands, 8 bits being too few for so dark a colour). The messages just
 	// end where the composer's block begins.
 	scroll := container.NewThemeOverride(ui.scroll, flatScrollTheme{loopTheme{theme.DefaultTheme()}})
-	view := container.NewStack(ui.welcome, scroll)
+	ui.chatWait = newLoopMark(56)
+	ui.chatWaitView = container.NewStack(canvas.NewRectangle(colBackground), container.NewCenter(container.NewVBox(
+		container.NewCenter(ui.chatWait.image), spacer(0, 12),
+		container.NewCenter(textLine("Loading conversation…", 14, colMuted)))))
+	ui.chatWaitView.Hide()
+	ui.chatViewport = container.NewStack(ui.welcome, scroll, ui.chatWaitView)
 	ui.scroll.Hide()
 
-	conversation := container.NewBorder(nil, ui.buildFooter(), nil, nil, view)
+	conversation := container.NewBorder(nil, ui.buildFooter(), nil, nil, ui.chatViewport)
 	// The activity line may sit beside the composer (dockActivity): the
 	// dock layer floats over the conversation's bottom left corner.
 	conversation = container.New(dockLayout{ui}, conversation, ui.dockRow)
 	ui.panel = newToolPanel(ui)
+	openCitation = ui.openCitation
 	ui.split = container.New(splitLayout{ui.panel}, conversation, ui.panel.view, newPanelResizeHandle(ui.panel))
 
 	// Title bar: conversation title, drag region and window controls.
@@ -552,7 +597,11 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.prompt.send = ui.submit
 	ui.prompt.steer = ui.steerNow
 	// The message being typed will go to the model: open the connection now.
-	ui.prompt.typing = func() { ui.backend.Prewarm(ui.cfg) }
+	ui.prompt.typing = func() {
+		if ui.server == nil {
+			ui.backend.Prewarm(ui.cfg)
+		}
+	}
 	ui.prompt.escape = func() { ui.finishEdit(false); ui.clearSelection() }
 	ui.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
 		if key.Name == fyne.KeyEscape && ui.prefs.open { // Escape goes back a page, then to the conversation
@@ -573,18 +622,61 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 			ui.selectModel(choice)
 		}
 	})
-	ui.model.row.onTap = ui.modelMenu
+	ui.model.row.onTap = func() {
+		if ui.server != nil {
+			ui.server.modelMenu()
+			return
+		}
+		ui.modelMenu()
+	}
 	ui.send = newIconButton(iconSend, colAmber, colInk, ui.submit)
 	ui.send.iconPx = 20
+	ui.send.onHover = func(in bool) {
+		if in {
+			tip := "Send message · Enter"
+			if ui.current != nil && ui.current.run != nil {
+				tip = "Queue for the next turn · Enter"
+			}
+			ui.tips.show(ui.send, tip)
+		} else {
+			ui.tips.hide()
+		}
+	}
+	ui.steer = newRow("Steer", iconArrowTurn, styleChip, ui.steerNow)
+	ui.steer.onHover = func(in bool) {
+		if in {
+			ui.tips.show(ui.steer, "Join the current task at the next step · Ctrl+Enter")
+		} else {
+			ui.tips.hide()
+		}
+	}
+	ui.steer.Hide()
 	ui.stop = newIconButton(iconStop, colText, colInk, func() {
+		if ui.current != nil && ui.current.server != nil {
+			ui.current.server.stop()
+			return
+		}
 		if ui.current != nil && ui.current.run != nil {
 			platform.Devf("ui", "stop pressed for %q", ui.current.Title)
 			ui.current.run.cancel()
 		}
 	})
 	ui.stop.iconPx = 20
+	ui.stop.onHover = func(in bool) {
+		if in {
+			ui.tips.show(ui.stop, "Stop the current task and pause the queue")
+		} else {
+			ui.tips.hide()
+		}
+	}
 	ui.stop.Hide()
-	ui.approvalControl = newRow("", iconShield, styleChip, ui.approvalMenu)
+	ui.approvalControl = newRow("", iconShield, styleChip, func() {
+		if ui.server != nil {
+			ui.server.approvalMenu()
+			return
+		}
+		ui.approvalMenu()
+	})
 	ui.updateApprovalControl()
 	ui.contextRing = newContextRing(ui.tips)
 	ui.attach = newIconButton(iconPlus, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x0d}, color.NRGBA{}, nil)
@@ -601,7 +693,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		})
 	}
 
-	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), ui.contextRing, ui.model.row, container.NewStack(ui.send, ui.stop))
+	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), ui.contextRing, ui.model.row, ui.steer, ui.send, ui.stop)
 	ui.controls = container.New(&composerControlsLayout{}, container.NewCenter(ui.approvalControl), actions)
 	ui.model.relayout = ui.controls.Refresh
 
@@ -650,16 +742,18 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.queueTray = padded(0, 0, 16, 16, container.NewStack(trayBg, padded(4, 6, 4, 4, trayBody)))
 	ui.queueTray.Hide()
 
-	ui.folder = newRow(filepath.Base(ui.cfg.Workspace), theme.FolderIcon(), styleChip, nil)
+	ui.folder = newRow(ui.folderLabel(), theme.FolderIcon(), styleChip, nil)
 	ui.folder.onTap = func() { ui.projectMenu(ui.folder) }
-	machine := newRow("This computer", theme.ComputerIcon(), styleChip, ui.connectServer)
-	contextRow := container.NewHBox(ui.folder, machine)
+	ui.machine = newRow(ui.targetLabel(), theme.ComputerIcon(), styleChip, ui.targetMenu)
+	ui.serverStatus = newFitLabel("", 12, colFaint)
+	ui.serverStatus.Hide()
+	contextRow := container.NewBorder(nil, nil, container.NewHBox(ui.folder, ui.machine), nil, ui.serverStatus)
 	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.queueTray, composer)
 	return padded(0, 0, 24, 24, container.New(columnLayout{width: 760, inset: 0}, padded(0, 18, 0, 0, stack)))
 }
 
 func (ui *desktopUI) updateHeader() {
-	ui.folder.SetText(filepath.Base(ui.cfg.Workspace))
+	ui.folder.SetText(ui.folderLabel())
 	title := "New chat"
 	if ui.current != nil {
 		title = ui.current.Title
@@ -676,11 +770,18 @@ func (ui *desktopUI) draftKey() string {
 	if ui.current != nil {
 		return ui.current.ID
 	}
-	return newChatDraft + ui.cfg.Workspace
+	if ui.server != nil {
+		return ui.server.draftKey("") + ui.cfg.Workspace
+	}
+	return newChatDraft + ui.cfg.MachineID + ui.cfg.Workspace
 }
 
 func (ui *desktopUI) startNew() {
+	ui.cancelChatLoad()
 	platform.Devf("ui", "new chat screen (workspace %s)", ui.cfg.Workspace)
+	if ui.server != nil {
+		ui.server.selectChat("")
+	}
 	ui.prefs.close()
 	ui.clearSelection()
 	ui.finishEdit(false)
@@ -788,9 +889,18 @@ func (ui *desktopUI) notice(title, text string) {
 // syncRun shows the open chat's run state: the stop button, the activity
 // line under the conversation and the waiting messages.
 func (ui *desktopUI) syncRun() {
+	ui.tips.hide()
 	if ui.settled != nil {
 		ui.settled.Stop()
 		ui.settled = nil
+	}
+	if ui.server != nil {
+		ui.server.syncRun()
+		ui.controls.Refresh()
+		ui.renderQueue()
+		ui.syncCopies()
+		ui.relayoutColumn()
+		return
 	}
 	var currentTurn *turn
 	if ui.current != nil && ui.current.run != nil {
@@ -798,12 +908,13 @@ func (ui *desktopUI) syncRun() {
 	}
 	if currentTurn != nil {
 		ui.mark.stop()
-		ui.send.Hide()
+		ui.steer.Show()
 		ui.stop.Show()
 		ui.showActivityLine(true)
 		ui.applyActivity(currentTurn)
 	} else {
 		ui.send.Show()
+		ui.steer.Hide()
 		ui.stop.Hide()
 		ui.showActivityLine(false)
 		ui.workMark.setState("brand")
@@ -816,9 +927,14 @@ func (ui *desktopUI) syncRun() {
 
 // runStarted marks a chat as working.
 func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
+	if ui.cachedChat != nil && ui.cachedChat.chat == chat {
+		ui.cachedChat = nil
+	}
 	platform.Devf("run", "start %q [%s]: %s %s, effort %q, approval %q, session %q, on screen %v",
 		chat.Title, chat.ID, chat.Config.Provider, chat.Config.Model, chat.Config.Effort, agent.ApprovalFor(ui.approvalMode, chat.Config), chat.Config.Session, chat == ui.current)
 	run.started = time.Now()
+	cancel := run.cancel
+	run.cancel = func() { run.stopped = true; cancel() }
 	chat.run = run
 	ui.remote.metaChanged(chat)
 	if chat == ui.current {
@@ -831,6 +947,9 @@ func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
 // answer when the chat is on screen: "done" or "stopped".
 func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	run := chat.run
+	if run != nil && run.stopped {
+		ended = "stopped"
+	}
 	if run != nil {
 		platform.Devf("run", "end %q [%s]: %s after %s, on screen %v", chat.Title, chat.ID, ended, time.Since(run.started).Round(time.Millisecond), chat == ui.current)
 	}
@@ -841,6 +960,15 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	}
 	if run != nil && run.questions != nil {
 		run.questions.dismiss()
+	}
+	// A prompt can arrive after the provider's final inbox check but before
+	// this UI callback. Close that gap before announcing that the chat is done.
+	if ended == "done" {
+		if next, ok := ui.takeNext(chat); ok {
+			ui.startIn(chat, next, "")
+			ui.save()
+			return
+		}
 	}
 	if run != nil && ended == "done" {
 		ui.notifyUser(chat, "Done.")
@@ -881,7 +1009,7 @@ func (ui *desktopUI) promptMessage() (agent.Message, bool) {
 	if strings.TrimSpace(text) == "" && len(ui.attachments) == 0 && len(ui.fileAttachments) == 0 {
 		return agent.Message{}, false
 	}
-	messageValue := agent.Message{Role: "user", Content: attachmentText(text, ui.fileAttachments), Images: ui.takeAttachments()}
+	messageValue := agent.PromptMessage(text, ui.takeAttachments(), ui.fileAttachments)
 	ui.fileAttachments = nil
 	ui.renderAttachments()
 	ui.prompt.clearSent()
@@ -892,6 +1020,10 @@ func (ui *desktopUI) promptMessage() (agent.Message, bool) {
 func (ui *desktopUI) submit() {
 	if ui.editing != nil {
 		ui.finishEdit(true)
+		return
+	}
+	if ui.server != nil {
+		ui.server.submit("send")
 		return
 	}
 	text := strings.TrimSpace(ui.prompt.Text)
@@ -933,6 +1065,10 @@ func (ui *desktopUI) submit() {
 // steerNow is Ctrl+Enter: the message joins the running task at its next
 // step, without waiting for the answer to end.
 func (ui *desktopUI) steerNow() {
+	if ui.server != nil {
+		ui.server.submit("steer")
+		return
+	}
 	chat := ui.current
 	if ui.editing != nil || chat == nil || chat.run == nil {
 		ui.submit()
@@ -960,6 +1096,15 @@ func (ui *desktopUI) notReady() string {
 	}
 	if ui.cfg.Model == "" {
 		return "Choose a connection and a model."
+	}
+	if ui.cfg.MachineID != "" { // the project is on the machine: it is checked there
+		if ui.machineFor(ui.cfg.MachineID) == nil {
+			return "This SSH machine is no longer in Settings → SSH machines."
+		}
+		if ui.cfg.Workspace == "" {
+			return "Create a project on " + ui.targetLabel() + " first (Projects, +)."
+		}
+		return ""
 	}
 	root, err := agent.ResolveWorkspace(ui.cfg.Workspace)
 	if err != nil {
@@ -1026,9 +1171,12 @@ func (ui *desktopUI) chatTasks(chat *conversation) *agent.BackgroundTasks {
 // startIn runs the agent loop for a message in chat (a new chat when nil).
 func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id string) {
 	if chat == nil {
-		title := []rune(strings.Join(strings.Fields(messageValue.Content), " "))
+		title := []rune(strings.Join(strings.Fields(messageValue.Typed()), " "))
 		if len(title) > 36 {
 			title = title[:36]
+		}
+		if len(title) == 0 && len(messageValue.Files) > 0 {
+			title = []rune(messageValue.Files[0].Name)
 		}
 		if len(title) == 0 {
 			title = []rune("[image]")
@@ -1057,7 +1205,7 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 	if messageValue.Internal { // a background task's end: a note, not the user's words
 		ui.addItem(chat, agent.ChatItem{ID: id, Kind: "note", Text: agent.WakeSummary(messageValue)})
 	} else {
-		ui.addItem(chat, agent.ChatItem{ID: id, Kind: "user", Text: messageValue.Content, Images: messageValue.Images})
+		ui.addItem(chat, agent.PromptItem(id, messageValue))
 	}
 	ui.updateHeader()
 	// No deadline: a long task (long shell runs, many tool rounds) must not
@@ -1145,12 +1293,29 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	if chat.Todo == nil {
 		chat.Todo = &agent.TodoState{}
 	}
-	cfg := chat.Config
+	// A Claude Code chat imported before 1loop had a Claude Code connection
+	// goes on with the first one it runs with: its session is the same.
+	if ran := chat.Config.RanWith; ran != nil && ran.Provider == "claudecode" && ran.ConnectionID == "" && chat.Config.Provider == "claudecode" {
+		identity := agent.IdentityOf(chat.Config)
+		chat.Config.RanWith = &identity
+	}
+	cfg := ui.resolveModel(chat.Config)
+	for _, conn := range ui.connectionsList {
+		if conn.ID == cfg.ConnectionID {
+			cfg.CompactAt = conn.ModelOptions[cfg.Model].CompactAt
+			break
+		}
+	}
 	cfg.Todo = chat.Todo
 	cfg.Tasks = ui.chatTasks(chat)
 	cfg.Browser = ui.browserTools(chat)
 	cfg.Terminal = ui.terminalTools(chat)
 	cfg.Computer = ui.computerTools(chat)
+	if cfg.MachineID != "" {
+		if machine := ui.machineFor(cfg.MachineID); machine != nil { // nil: the run says the machine is gone
+			cfg.Machine = machine
+		}
+	}
 	if chat.Cache == nil {
 		chat.Cache = &agent.ContextCache{}
 	}
@@ -1193,6 +1358,37 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	}
 	cfg.ApprovalMode = agent.ApprovalFor(ui.approvalMode, cfg)
 	cfg.ClassicCompaction = ui.classicCompaction
+	cfg.AutoResume = ui.autoResume
+	cfg.ResumeModel = func(ctx context.Context, step agent.ResumeStep) (next agent.Config, err error) {
+		ui.onUI(ctx, func() {
+			err = fmt.Errorf("the selected model is no longer available")
+			for _, choice := range ui.choices {
+				if choice.Connection.ID == step.ConnectionID && choice.ID == step.Model && choice.Connection.Enabled {
+					next = agent.ResumeConfig(ui.runConfig(chat), choice, ui.keys[choice.Connection.ID], step.Effort)
+					err = nil
+					return
+				}
+			}
+		})
+		if ctx.Err() != nil {
+			return next, ctx.Err()
+		}
+		return next, err
+	}
+	cfg.ResumeSwitched = func(ctx context.Context, next agent.Config) error {
+		ui.onUI(ctx, func() {
+			identity := agent.IdentityOf(next)
+			chat.Config = agent.ResumeStoredConfig(next)
+			chat.Config.RanWith = &identity
+			if chat == ui.current {
+				ui.cfg = chat.Config
+				ui.showChatModel()
+			}
+			ui.save()
+			ui.remote.metaChanged(chat)
+		})
+		return ctx.Err()
+	}
 	return cfg
 }
 
@@ -1244,7 +1440,7 @@ func (ui *desktopUI) compactChat(focus string) {
 
 // showApproval asks before a command or an edit, whichever chat it comes
 // from: the run waits for the answer.
-func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) {
+func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) *sheet {
 	id, _ := p["id"].(string)
 	title, _ := p["title"].(string)
 	preview, _ := p["preview"].(string)
@@ -1265,7 +1461,7 @@ func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) {
 			return
 		}
 		resolved = true
-		ui.backend.Approve(id, allow)
+		ui.approve(chat, id, allow)
 		forget()
 		dialog.Hide()
 	}
@@ -1276,7 +1472,7 @@ func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) {
 	dialog = ui.modal(title, body, 680, func() {
 		if !resolved {
 			resolved = true
-			ui.backend.Approve(id, false)
+			ui.approve(chat, id, false)
 			forget()
 		}
 	}, refuse, allow)
@@ -1287,6 +1483,16 @@ func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) {
 		chat.run.answer = answer
 		ui.remote.metaChanged(chat)
 	}
+	return dialog
+}
+
+// approve answers an approval: this computer's agent, or the server's.
+func (ui *desktopUI) approve(chat *conversation, id string, allow bool) {
+	if chat.server != nil {
+		chat.server.action("/api/approve", map[string]any{"id": id, "allow": allow})
+		return
+	}
+	ui.backend.Approve(id, allow)
 }
 
 func (ui *desktopUI) refreshModels() {
@@ -1339,7 +1545,9 @@ func (ui *desktopUI) refreshModels() {
 			for i, result := range results {
 				if result.err != nil {
 					problem := "Models unavailable"
-					if connections[i].Provider == "vllm" {
+					if connections[i].Provider == "claudecode" {
+						problem = agent.FirstLine(result.err.Error())
+					} else if connections[i].Provider == "vllm" {
 						problem = "Unavailable"
 					} else {
 						var timeout net.Error
@@ -1405,8 +1613,14 @@ type savedState struct {
 	ApprovalMode     string                   `json:"approvalMode"`
 	PanelWidth       float32                  `json:"panelWidth,omitempty"`
 	// Saved as its opposite so that a state file without it means dynamic.
-	ClassicCompaction bool `json:"classicCompaction,omitempty"`
-	MemoryOff         bool `json:"memoryOff,omitempty"`
+	ClassicCompaction bool                  `json:"classicCompaction,omitempty"`
+	MemoryOff         bool                  `json:"memoryOff,omitempty"`
+	AutoResume        *agent.AutoResume     `json:"autoResume,omitempty"`
+	SSHMachines       []sshmachine.Settings `json:"sshMachines,omitempty"`
+	MachineProjects   map[string][]string   `json:"machineProjects,omitempty"`
+	LocalWorkspace    string                `json:"localWorkspace,omitempty"` // while an SSH machine is the target
+	Worktrees         map[string]string     `json:"worktrees,omitempty"`      // folder → project
+	WorktreeSort      string                `json:"worktreeSort,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1434,11 +1648,15 @@ func (ui *desktopUI) persist(wait bool) {
 	remote := ui.remoteEnabled
 	// Everything but the chats is small, and holds maps the settings edit:
 	// it is encoded here, on the interface's thread.
+	cfg := ui.cfg
+	if ui.server != nil { // a server's chat is on screen: this computer's settings are put aside
+		cfg = ui.localCfg
+	}
 	head, err := json.Marshal(savedState{
 		ui.claudeOffered,
 		&remote,
 		ui.devices,
-		ui.cfg,
+		cfg,
 		nil,
 		ui.projects,
 		ui.connectionsList,
@@ -1447,6 +1665,12 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.panelWidth,
 		ui.classicCompaction,
 		ui.memoryOff,
+		ui.autoResume,
+		ui.sshMachines,
+		ui.machineProjects,
+		ui.localWorkspace,
+		ui.worktrees,
+		ui.worktreeSort,
 	})
 	fields := map[string]json.RawMessage{}
 	if err == nil {
@@ -1540,11 +1764,17 @@ func (ui *desktopUI) load() {
 	state.Config.APIKey = ""
 	ui.cfg = state.Config
 	ui.projects = state.Projects
+	ui.sshMachines, ui.machineProjects, ui.localWorkspace = state.SSHMachines, state.MachineProjects, state.LocalWorkspace
+	ui.worktrees, ui.worktreeSort = state.Worktrees, state.WorktreeSort
+	if _, ok := ui.machineSettings(ui.cfg.MachineID); ui.cfg.MachineID != "" && !ok { // the machine was removed
+		ui.cfg.MachineID, ui.cfg.Workspace = "", ui.lastLocalWorkspace()
+	}
 	ui.connectionsList = state.Connections
 	ui.userInstructions = state.UserInstructions
 	ui.approvalMode = state.ApprovalMode
 	ui.classicCompaction = state.ClassicCompaction
 	ui.memoryOff = state.MemoryOff
+	ui.autoResume = state.AutoResume
 	for _, chat := range state.Chats {
 		if chat == nil {
 			continue
@@ -1556,7 +1786,11 @@ func (ui *desktopUI) load() {
 		chat.Items = upgradeItems(chat.Items)
 		chat.todoCount = len(chat.Todo.Snapshot())
 		ui.chats = append(ui.chats, chat)
-		ui.ensureProject(chat.Config.Workspace)
+		if chat.Config.MachineID != "" {
+			ui.ensureMachineProject(chat.Config.MachineID, chat.Config.Workspace)
+		} else {
+			ui.ensureProject(chat.Config.Workspace)
+		}
 	}
 }
 

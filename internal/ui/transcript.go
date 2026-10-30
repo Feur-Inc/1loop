@@ -1,10 +1,7 @@
 package ui
 
 import (
-	"bytes"
-	"encoding/base64"
 	"fmt"
-	"image"
 	"image/color"
 	"strings"
 	"sync"
@@ -98,6 +95,7 @@ type toolRow struct {
 	onTap    func()
 	hover    float32
 	anim     *fyne.Animation
+	preview  *generatedImagePreview
 }
 
 func newToolRow(item agent.ChatItem, state string, onTap func()) *toolRow {
@@ -108,6 +106,9 @@ func newToolRow(item agent.ChatItem, state string, onTap func()) *toolRow {
 
 func (row *toolRow) update(item agent.ChatItem, state string) {
 	row.item, row.state = item, state
+	if row.preview != nil {
+		row.preview.update(item, state)
+	}
 	row.Refresh()
 }
 
@@ -121,6 +122,13 @@ func (row *toolRow) Cursor() desktop.Cursor         { return desktop.PointerCurs
 func (row *toolRow) MouseIn(*desktop.MouseEvent)    { row.fade(1) }
 func (row *toolRow) MouseMoved(*desktop.MouseEvent) {}
 func (row *toolRow) MouseOut()                      { row.fade(0) }
+
+// The row's height does not depend on its text or width. Measuring an
+// off-screen call must not create its renderer and shape its full target.
+func (row *toolRow) MinSize() fyne.Size {
+	height := textSize("Ag", 13.5, fyne.TextStyle{}).Height + 12
+	return fyne.NewSize(120, height)
+}
 
 func (row *toolRow) fade(to float32) {
 	if row.anim != nil {
@@ -161,11 +169,13 @@ type toolRowRenderer struct {
 const toolRowPadX, toolRowIcon = float32(8), float32(16)
 
 func (renderer *toolRowRenderer) MinSize() fyne.Size {
-	height := textSize("Ag", 13.5, fyne.TextStyle{}).Height + 12
-	return fyne.NewSize(120, height)
+	return renderer.row.MinSize()
 }
 
 func (renderer *toolRowRenderer) Layout(size fyne.Size) {
+	if size.Width <= 0 || size.Height <= 0 {
+		return
+	}
 	renderer.bg.Resize(size)
 	middle := func(t *canvas.Text) float32 { return (size.Height - t.MinSize().Height) / 2 }
 	renderer.icon.Resize(fyne.NewSquareSize(toolRowIcon))
@@ -189,6 +199,9 @@ func (renderer *toolRowRenderer) Layout(size fyne.Size) {
 
 func (renderer *toolRowRenderer) Refresh() {
 	row := renderer.row
+	if !row.Visible() {
+		return // Show refreshes the current labels before the row is drawn.
+	}
 	item := row.item
 	running := row.state == "pending" || row.state == "running"
 	verb, target, mono := agent.DescribeTool(item, running)
@@ -310,6 +323,9 @@ func plainSpans(text string) []span {
 // and tool rows are remembered in u.views, so a running task can update the
 // one it is working on while its chat is on screen.
 func (ui *desktopUI) appendItem(chat *conversation, index int) {
+	if ui.loadingChat != nil && ui.loadingChat.chat == chat && !ui.building {
+		return // the loader picks up newly appended items on its next frame
+	}
 	item := chat.Items[index]
 	var currentTurn *turn
 	if chat.run != nil {
@@ -325,24 +341,17 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		view.layer = newSelectLayer(ui, view.box)
 		ui.place(container.NewVBox(container.NewStack(view.box, view.layer), copyRow))
 	case "user":
-		content := container.NewVBox()
-		var pics []fyne.CanvasObject
-		for _, part := range item.Images {
-			raw, err := base64.StdEncoding.DecodeString(part.Data)
-			if err != nil {
-				continue
+		view := &userImageView{pictures: container.New(layout.NewCustomPaddedHBoxLayout(6))}
+		ui.setUserImages(view, item.Images)
+		content := container.NewVBox(view.pictures)
+		var files []fyne.CanvasObject
+		for _, file := range item.Files {
+			if !file.Image { // a picture already shows above
+				files = append(files, surface(textLine(fitText(file.Name, 12.5, fyne.TextStyle{}, 220), 12.5, colText), colCode, colBorderSoft, 8, 6))
 			}
-			img, _, err := image.Decode(bytes.NewReader(raw))
-			if err != nil {
-				continue
-			}
-			view := canvas.NewImageFromImage(img)
-			view.FillMode = canvas.ImageFillContain
-			view.SetMinSize(fyne.NewSize(110, 110))
-			pics = append(pics, surface(view, colCode, colBorderSoft, 8, 0))
 		}
-		if len(pics) > 0 {
-			content.Add(container.New(layout.NewCustomPaddedHBoxLayout(6), pics...))
+		if len(files) > 0 {
+			content.Add(container.New(layout.NewCustomPaddedHBoxLayout(6), files...))
 		}
 		var text *flowText
 		if item.Text != "" {
@@ -356,7 +365,9 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		bubble := container.New(&bubbleLayout{text: text, chrom: 2*theme.InnerPadding() + 4}, surface(content, colRaised, nil, 14, 2))
 		copyRow := container.NewHBox(layout.NewSpacer(), copyChip(func() string { return item.Text }),
 			newRow("Edit", iconPencil, styleChip, func() { ui.editMessage(chat, index) }), ui.versionControls(chat, item.ID))
-		ui.place(container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, copyRow))
+		view.box = container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, copyRow)
+		ui.views[index] = view
+		ui.place(view.box)
 	case "error":
 		text := newFlowText(plainSpans(item.Text), theme.TextSize(), colDanger)
 		text.tail, text.tight = "", true
@@ -371,12 +382,20 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		if currentTurn != nil && currentTurn.states[index] != "" {
 			state = currentTurn.states[index]
 		}
+		if chat.server != nil {
+			state = runState(chat, index)
+		}
 		row := newToolRow(item, state, nil)
 		row.chat, row.index = chat, index
 		row.onTap = func() { ui.panel.open(chat, index) }
 		row.selected = ui.panel.showing(chat, index)
 		ui.views[index] = row
-		ui.place(row)
+		if item.Tool == "imagegen" {
+			row.preview = newGeneratedImagePreview(item, state, row.onTap)
+			ui.place(container.NewVBox(row, row.preview.box))
+		} else {
+			ui.place(row)
+		}
 	}
 }
 
@@ -422,7 +441,10 @@ func (layoutSpec *transcriptLayout) changed(part fyne.CanvasObject) {
 // measure sizes an item at the column's width: wrapped text only knows its
 // height once it has its width.
 func (layoutSpec *transcriptLayout) measure(object fyne.CanvasObject, width float32) fyne.Size {
-	if object.Size().Width != width {
+	row, fixed := object.(*toolRow)
+	// Plain calls have a fixed height. Resize only when they enter the
+	// viewport, otherwise BaseWidget.Resize creates every hidden renderer.
+	if (!fixed || row.preview != nil) && object.Size().Width != width {
 		object.Resize(fyne.NewSize(width, object.Size().Height))
 	}
 	min := object.MinSize()
@@ -550,6 +572,9 @@ func copyChip(text func() string) *tapRow {
 // addItem appends an item to a chat, and to the transcript when that chat
 // is the one on screen.
 func (ui *desktopUI) addItem(chat *conversation, item agent.ChatItem) int {
+	if ui.cachedChat != nil && ui.cachedChat.chat == chat {
+		ui.cachedChat = nil
+	}
 	if item.ID == "" {
 		item.ID = core.Identifier()[:16]
 	}
@@ -568,6 +593,10 @@ func (ui *desktopUI) liveView(chat *conversation, index int) any {
 	if chat != ui.current {
 		return nil
 	}
+	if load := ui.loadingChat; load != nil {
+		load.checked = min(load.checked, index)
+		return nil // changing messages are reconciled before the chat is shown
+	}
 	return ui.views[index]
 }
 
@@ -577,6 +606,9 @@ func (ui *desktopUI) liveView(chat *conversation, index int) any {
 // redraw every message, and a resize alone does nothing while the chat is
 // shorter than the window (the activity line then stayed over the answer).
 func (ui *desktopUI) relayoutColumn() {
+	if ui.loadingChat != nil {
+		return
+	}
 	defer platform.DevSlow("laying the conversation out", 6*time.Millisecond, time.Now())
 	content := ui.scroll.Content.(*fyne.Container)
 	relayout(ui.transcript) // first: it measures the items the sizes below are made of
@@ -740,6 +772,10 @@ func (currentTurn *turn) setRow(index int, state string) {
 	currentTurn.ui.remote.itemChanged(currentTurn.chat, index)
 	if row, ok := currentTurn.ui.liveView(currentTurn.chat, index).(*toolRow); ok {
 		row.update(currentTurn.chat.Items[index], state)
+		if row.preview != nil {
+			currentTurn.ui.items.changed(row)
+			currentTurn.ui.relayoutColumn()
+		}
 	}
 }
 
@@ -818,7 +854,7 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		if messageValue.Internal {
 			ui.addItem(currentTurn.chat, agent.ChatItem{Kind: "note", Text: agent.WakeSummary(messageValue)})
 		} else {
-			ui.addItem(currentTurn.chat, agent.ChatItem{Kind: "user", Text: messageValue.Content, Images: messageValue.Images})
+			ui.addItem(currentTurn.chat, agent.PromptItem("", messageValue))
 		}
 		if currentTurn.chat == ui.current { // the answer before it is now complete
 			ui.syncCopies()
@@ -912,32 +948,7 @@ func (currentTurn *turn) show(activityValue agent.Activity) {
 	}[activityValue.State]
 	switch activityValue.State {
 	case "call":
-		detail := agent.FirstLine(activityValue.Detail)
-		switch activityValue.Tool {
-		case "shell":
-			label = "Writing a command"
-		case "edit_file":
-			label = "Preparing an edit"
-			if detail != "" {
-				label, detail = label+" to "+detail, ""
-			}
-		case "read_file":
-			label = "Choosing a file to read"
-			if detail != "" {
-				label, detail = "Preparing to read "+detail, ""
-			}
-		case "list_directory":
-			label = "Preparing to list a directory"
-		case "web_search":
-			label = "Searching the web"
-		case "tool_search":
-			label = "Loading tools"
-		default:
-			label = "Preparing " + activityValue.Tool
-		}
-		if detail != "" {
-			label += ": " + detail
-		}
+		label = agent.CallLabel(activityValue.Tool, activityValue.Detail)
 	case "question":
 		label = "Waiting for your answer"
 	case "approval":
@@ -980,8 +991,9 @@ func (currentTurn *turn) showRun(outcome agent.ToolOutcome) {
 		currentTurn.label, currentTurn.mark = "Applying the edit to "+path+"…", "edit"
 	case "apply_patch":
 		currentTurn.label, currentTurn.mark = "Applying the patch…", "edit"
-	default: // a tool of another harness (Claude Code's Grep, WebFetch, Agent…)
-		currentTurn.label, currentTurn.mark = "Using "+outcome.Name+"…", "call"
+	default: // what the conversation's row says (agent.DescribeTool)
+		verb, target, _ := agent.DescribeTool(agent.ChatItem{Tool: outcome.Name, Args: outcome.Args}, true)
+		currentTurn.label, currentTurn.mark = strings.TrimSpace(verb+" "+target)+"…", "call"
 	}
 	currentTurn.ui.applyActivity(currentTurn)
 }
@@ -1003,6 +1015,9 @@ func (ui *desktopUI) applyActivity(currentTurn *turn) {
 // runState is how far a tool call has got: "done" unless its chat's run is
 // still working on it.
 func runState(chat *conversation, index int) string {
+	if chat.server != nil && chat.states[index] != "" {
+		return chat.states[index]
+	}
 	if chat.run == nil {
 		return "done"
 	}

@@ -19,6 +19,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strconv"
 	"strings"
 	"time"
 
@@ -68,7 +69,10 @@ var settingsSections = []struct {
 }{
 	{"General", iconSliders},
 	{"Connections", iconPlug},
+	{"SSH machines", iconTerminal},
 	{"Instructions", iconDocument},
+	{"Extensions", iconPuzzle},
+	{"Connectors", iconPlug},
 	{"Phone remote", iconPhone},
 	{"Updates", iconArrowTurn},
 }
@@ -188,8 +192,14 @@ func (settings *settingsView) showNow(section string) {
 	switch section {
 	case "Connections":
 		page = settings.ui.connectionSettings()
+	case "SSH machines":
+		page = settings.ui.sshSettings()
 	case "Instructions":
 		page = settings.ui.instructionSettings()
+	case "Extensions":
+		page = settings.ui.extensionSettings()
+	case "Connectors":
+		page = settings.ui.connectorSettings()
 	case "Phone remote":
 		page = settings.ui.remoteSettings()
 	case "Updates":
@@ -459,22 +469,28 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 	return container.NewVBox(
 		settings.pageTitle("General", "", nil),
 		sectionTitle("Workspace"),
-		card(settingRow("Project folder", ui.cfg.Workspace, change)),
+		card(ui.projectFolderRow(change)),
 		sectionTitle("Remote server"),
 		card(settingRow("HTTPS server", "Work on a headless 1loop server with its own models, files, browser and terminals. Approve this device in the server console.", newRow("Connect…", nil, styleOutline, ui.connectServer))),
 		sectionTitle("Permissions"),
 		card(settingRow("Tool permissions",
 			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto works as Codex: reads run at once, other commands run in a sandbox that writes only the workspace, and destructive ones go to Codex's review (ChatGPT account) or Claude Code's own Auto mode; other connections have no Auto mode and ask.",
 			sized(230, mode.row))),
+		sectionTitle("Import"),
+		card(ui.importRow()),
 		sectionTitle("Hooks"),
 		card(ui.hooksRow()),
 		sectionTitle("Browser"),
 		card(settingRow("Browsing data",
 			"The agents' browser keeps its cookies and logins, cache, site data and history from one session to the next, in "+browser.ProfileDir()+". Clear erases all of it.",
-			ui.clearBrowserButton())),
+			ui.clearBrowserButton()),
+			settingRow("Import cookies",
+				"Import a cookie JSON export or a compatible local browser profile into Browser Use. Review the accounts you are sharing before confirming.",
+				newRow("Import…", nil, styleOutline, ui.importCookies))),
 		sectionTitle("Computer Use"),
 		card(ui.computerScreenRow()),
 		sectionTitle("Context"),
+		card(settingRow("Automatic resumption", "What 1loop does when a conversation reaches a rate limit: wait for the reset, or go on with another model, in the order you choose.", newRow("Configure…", nil, styleOutline, ui.configureAutoResume))),
 		card(settingRow("Dynamic compaction",
 			"On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way.",
 			newToggle(!ui.classicCompaction, func(on bool) {
@@ -679,6 +695,9 @@ func (ui *desktopUI) projectMemoryRow(project string) fyne.CanvasObject {
 // Connections.
 
 func (ui *desktopUI) connectionSettings() fyne.CanvasObject {
+	if ui.server != nil {
+		return ui.server.defaultPresetSettings()
+	}
 	settings := ui.prefs
 	var rows []fyne.CanvasObject
 	for _, conn := range ui.connectionsList {
@@ -851,8 +870,31 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	}
 	oauthFields := card(settingStack("ChatGPT account", "Uses your ChatGPT subscription, with a sign-in in your browser (OAuth with PKCE).",
 		container.NewVBox(account, container.NewHBox(login), loginLink)))
-	claudeFields := card(settingRow("Claude Code on this computer",
-		"Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it.", nil))
+	claudeState := plainFlow("", 12.5, colMuted)
+	installClaude := newRow("Install Claude Code", nil, styleOutline, nil)
+	signInClaude := newRow("Sign in", nil, styleOutline, ui.signInClaude)
+	showClaude := func() {
+		path, err := agent.ClaudeExecutable()
+		problem := agent.ClaudeInstallProblem()
+		switch {
+		case err == nil:
+			setFlow(claudeState, "Installed: "+path)
+			installClaude.Hide()
+			signInClaude.Show()
+		case problem != "":
+			signInClaude.Hide()
+			setFlow(claudeState, "Not installed on this computer. "+problem)
+			installClaude.Hide()
+		default:
+			signInClaude.Hide()
+			setFlow(claudeState, "Not installed on this computer.")
+			installClaude.Show()
+		}
+	}
+	installClaude.onTap = func() { ui.installClaudeCode(showClaude) }
+	claudeFields := card(settingStack("Claude Code on this computer",
+		"Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it.",
+		container.NewVBox(claudeState, container.NewHBox(installClaude, signInClaude))))
 	webFields, releaseWebSetup := ui.chatGPTWebSettings(&draft, say)
 	access := container.NewStack(apiFields, oauthFields, claudeFields, webFields)
 
@@ -873,6 +915,11 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 
 	// Models: which ones of the catalog appear in the composer.
 	var models []agent.ModelChoice
+	defaultRows := container.NewVBox()
+	showDefaults := func() {
+		defaultRows.Objects = []fyne.CanvasObject{ui.defaultModelFields(&draft, models)}
+		defaultRows.Refresh()
+	}
 	search := widget.NewEntry()
 	search.SetPlaceHolder("Search the models…")
 	modelRows := container.New(layout.NewCustomPaddedVBoxLayout(0))
@@ -956,7 +1003,13 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 					say(err.Error())
 					return
 				}
-				models = choices
+				models = nil
+				for _, choice := range choices {
+					if !choice.IsDefaultPreset() {
+						models = append(models, choice)
+					}
+				}
+				showDefaults()
 				listModels()
 				say(fmt.Sprintf("%d models loaded.", len(models)))
 			})
@@ -978,6 +1031,11 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 			oauthFields.Show()
 		case "claudecode":
 			claudeFields.Show()
+			showClaude()
+			// Choosing Claude Code without it installed offers to install it.
+			if _, err := agent.ClaudeExecutable(); err != nil && previous != draft.Provider && agent.ClaudeInstallProblem() == "" {
+				ui.installClaudeCode(showClaude)
+			}
 		case "chatgptweb":
 			webFields.Show()
 		default:
@@ -996,6 +1054,8 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 			loadGeneration++
 			models = nil
 			draft.Models, draft.AllModels, draft.ModelOptions = nil, true, nil
+			draft.DefaultModels = nil
+			showDefaults()
 			allModels.set(true)
 			listModels()
 		}
@@ -1005,6 +1065,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	typePicker.SetSelected(agent.ProviderName(draft.Provider))
 	typePicker.onChanged(agent.ProviderName(draft.Provider))
 	listModels()
+	showDefaults()
 
 	title := draft.Name
 	if !existing {
@@ -1024,6 +1085,8 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 			settingRow("Catalog", "Ask the service which models it offers.", load),
 			padded(10, 10, 16, 16, search),
 			modelRows),
+		sectionTitle("Default preset"),
+		defaultRows,
 		sectionTitle("Advanced"),
 		advanced,
 	)
@@ -1129,6 +1192,21 @@ func (ui *desktopUI) modelPreferencesEditor(conn *agent.Connection, model agent.
 	preferences := conn.ModelOptions[model.ID]
 	routing := jsonEntry(preferences.Provider)
 	parameters := jsonEntry(preferences.Parameters)
+	compactAt := widget.NewEntry()
+	compactConfig := conn.Config("")
+	compactConfig.Model = model.ID
+	if target, _ := agent.CompactDefault(compactConfig); target > 0 {
+		compactAt.SetPlaceHolder("Default · " + agent.Thousands(target))
+	} else {
+		compactAt.SetPlaceHolder("Default · the model's window")
+	}
+	if preferences.CompactAt > 0 {
+		compactAt.SetText(strconv.Itoa(preferences.CompactAt))
+	}
+	if conn.Provider == "chatgptweb" {
+		compactAt.Disable()
+		compactAt.SetPlaceHolder("Managed by ChatGPT Web")
+	}
 	status := plainFlow("", 13, colMuted)
 	say := func(text string) {
 		status.spans, status.cut = []span{{text: text}}, nil
@@ -1192,11 +1270,22 @@ func (ui *desktopUI) modelPreferencesEditor(conn *agent.Connection, model agent.
 			settingRow("Allow fallback providers", "", fallbacks),
 			settingStack("Routing overrides (JSON)", "", routing)))
 	}
+	page.Add(sectionTitle("Context"))
+	page.Add(card(settingStack("Compact at (tokens)", agent.CompactHelp(compactConfig), compactAt)))
 	page.Add(sectionTitle("Parameters"))
 	page.Add(card(settingStack("Request parameter overrides (JSON)",
 		"They replace the matching defaults of the connection. Save the connection afterwards to apply them.", parameters)))
 	page.Add(spacer(0, 16))
 	save := newRow("Save model settings", nil, stylePrimary, func() {
+		compact := 0
+		if value := strings.TrimSpace(compactAt.Text); value != "" {
+			var err error
+			compact, err = strconv.Atoi(value)
+			if err != nil || compact < 1 || compact > 1000000 || conn.Provider == "claudecode" && compact < 100000 {
+				say("Enter a token count from 1 to 1,000,000 (100,000 minimum for Claude Code), or leave it empty.")
+				return
+			}
+		}
 		params, err := requestParameters(parameters.Text)
 		if err != nil {
 			say(err.Error())
@@ -1212,7 +1301,7 @@ func (ui *desktopUI) modelPreferencesEditor(conn *agent.Connection, model agent.
 		if conn.ModelOptions == nil {
 			conn.ModelOptions = map[string]agent.ModelPreferences{}
 		}
-		conn.ModelOptions[model.ID] = agent.ModelPreferences{Provider: route, Parameters: params}
+		conn.ModelOptions[model.ID] = agent.ModelPreferences{Provider: route, Parameters: params, CompactAt: compact}
 		settings.back()
 	})
 	settings.push(settingsFrame{content: page, actions: []fyne.CanvasObject{

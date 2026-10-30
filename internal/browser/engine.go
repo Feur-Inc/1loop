@@ -45,6 +45,7 @@ type Info struct {
 	Adaptive   bool    `json:"adaptive"`
 	Mobile     bool    `json:"mobile"`
 	Error      string  `json:"error,omitempty"`
+	Status     string  `json:"status,omitempty"` // what the page waits for (Chromium's first download)
 }
 
 type browserLog struct {
@@ -84,6 +85,16 @@ func NewBrowserEngine(parent context.Context) *Engine {
 }
 
 func (engine *Engine) start() error {
+	// The browser is found, and the first time downloaded, outside
+	// engine.mu: closing a tab must not wait minutes for a download.
+	var binary browserBinary
+	var lookup error
+	engine.mu.Lock()
+	stopped := engine.Native == nil && engine.root == nil && engine.err == nil
+	engine.mu.Unlock()
+	if stopped {
+		binary, lookup = findBrowser(engine.ctx)
+	}
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	engine.once.Do(func() {
@@ -103,13 +114,16 @@ func (engine *Engine) start() error {
 			}
 			return
 		}
-		executable := browserExecutable()
-		if executable == "" {
-			engine.err = fmt.Errorf("Install Chromium or Google Chrome to use browser tabs")
+		if !stopped { // stopped since the check above
+			binary, lookup = findBrowser(engine.ctx)
+		}
+		if lookup != nil {
+			engine.err = lookup
 			return
 		}
 		opts := append(chromedp.DefaultExecAllocatorOptions[:],
-			chromedp.ExecPath(executable),
+			chromedp.ExecPath(binary.path),
+			chromedp.Env(binary.env...),
 			chromedp.Flag("headless", "new"),
 			chromedp.Flag("disable-dev-shm-usage", true),
 			chromedp.Flag("enable-automation", false),
@@ -139,16 +153,30 @@ func (engine *Engine) start() error {
 		}
 		// Read native client hints before a process-wide UA override suppresses
 		// them. The process-wide UA also covers a popup's very first request.
-		profileAlloc, stopProfileAlloc := chromedp.NewExecAllocator(engine.runCtx, opts...)
-		profileRoot, stopProfileRoot := chromedp.NewContext(profileAlloc, contextOptions...)
 		var native struct {
 			UserAgent string
 			Metadata  *emulation.UserAgentMetadata
 		}
-		engine.err = chromedp.Run(profileRoot, chromedp.Navigate("chrome://version"), chromedp.Evaluate(`(async()=>({userAgent:navigator.userAgent,metadata:navigator.userAgentData?await navigator.userAgentData.getHighEntropyValues(['architecture','bitness','platformVersion','fullVersionList','model','wow64']):null}))()`, &native, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }))
-		stopProfileRoot()
-		stopProfileAlloc()
+		probe := func() error {
+			profileAlloc, stopProfileAlloc := chromedp.NewExecAllocator(engine.runCtx, opts...)
+			profileRoot, stopProfileRoot := chromedp.NewContext(profileAlloc, contextOptions...)
+			defer stopProfileAlloc()
+			defer stopProfileRoot()
+			return chromedp.Run(profileRoot, chromedp.Navigate("chrome://version"), chromedp.Evaluate(`(async()=>({userAgent:navigator.userAgent,metadata:navigator.userAgentData?await navigator.userAgentData.getHighEntropyValues(['architecture','bitness','platformVersion','fullVersionList','model','wow64']):null}))()`, &native, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }))
+		}
+		engine.err = probe()
+		if engine.err != nil && binary.own && strings.Contains(engine.err.Error(), "No usable sandbox") {
+			// Its sandbox needs user namespaces, which some systems (Ubuntu
+			// since 23.10, containers) allow only to browsers installed by
+			// the administrator, or a setuid helper only root can install.
+			platform.Devf("browser", "1loop's Chromium has no usable sandbox here: starting it without")
+			opts = append(opts, chromedp.NoSandbox)
+			engine.err = probe()
+		}
 		if engine.err != nil {
+			if binary.own {
+				engine.err = chromiumStartError(engine.err)
+			}
 			return
 		}
 		engine.userAgent = strings.ReplaceAll(native.UserAgent, "HeadlessChrome/", "Chrome/")
@@ -365,7 +393,16 @@ func (browser *Page) LogSnapshot(after int) []browserLog {
 }
 
 func (browser *Page) Start() {
+	var waiting atomic.Bool
+	stop := watchChromium(func(text string) {
+		waiting.Store(true)
+		browser.change(func(info *Info) { info.Status = text })
+	})
 	err := browser.Session.start()
+	stop()
+	if waiting.Load() {
+		browser.change(func(info *Info) { info.Status = "" })
+	}
 	native := browser.Session.engine.Native
 	if err == nil && native != nil {
 		err = nativeURL(browser.Snapshot().URL)

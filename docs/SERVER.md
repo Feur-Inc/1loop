@@ -15,8 +15,11 @@ make server
 ```
 
 `bin/1loop-server` is a static Go binary built with `CGO_ENABLED=0`. The runtime
-needs Bash and Git, plus Chromium for Browser Use. It needs no desktop session,
-X server, Wayland compositor or virtual display:
+needs Bash and Git. Browser Use runs the system's Chromium or Chrome, or else
+downloads its own Chromium into the data directory (`chromium/`); a minimal
+server may lack the libraries it needs, and installing the `chromium` package
+brings them. It needs no desktop session, X server, Wayland compositor or
+virtual display:
 
 ```sh
 sudo apt install bash git chromium chromium-sandbox ca-certificates
@@ -50,8 +53,9 @@ year, and prints its SHA-256 fingerprint. It reuses that certificate on later
 starts. You can instead supply a certificate and private key with
 `-tls-cert /path/server.crt -tls-key /path/server.key`.
 
-1. On desktop, click **This computer**, or open **Settings → General → Remote
-   server → Connect…**. On Android, choose **Add by address**.
+1. On desktop, click **This computer** under the message box and choose
+   **Connect a server…**, or open **Settings → General → Remote server →
+   Connect…**. On Android, choose **Add by address**.
 2. Enter `https://your-server:47101`. For a generated/private certificate,
    enter the fingerprint read directly from the server console. Leave it
    empty only when using a certificate trusted by the client's normal CA
@@ -66,6 +70,13 @@ starts. You can instead supply a certificate and private key with
 4. The paired client retains a random bearer token. The server persists only
    its hash. Tokens travel in the Authorization header, including streams;
    redirects are not followed with credentials.
+
+On desktop, the server then becomes the window's target, as on the phone: the
+sidebar lists its projects and conversations, and they open, run and show in
+the same conversation, message box and side panel (its browser, terminals,
+tasks, changes and files). The same menu lists the server for the next time,
+its hooks, copying a project to it and its update; **This computer** goes back
+to the desktop's own projects.
 
 The console also accepts `devices` and `revoke <number>`. Revocation rejects
 new requests and disconnects active event/browser streams. It does not undo

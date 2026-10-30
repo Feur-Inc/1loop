@@ -75,9 +75,9 @@ func (panel *toolPanel) stateOf(chat *conversation) *panelState {
 		case "todo":
 			opened = panel.todoTab(chat)
 		case "changes":
-			opened = panel.changesTab(chat.Config.Workspace)
+			opened = panel.changesTab(chat.Config.Workspace, chat.Config.MachineID)
 		case "files":
-			opened = panel.filesTab(chat.Config.Workspace)
+			opened = panel.filesTab(chat.Config.Workspace, chat.Config.MachineID)
 		case "browser":
 			info := browser.Info{Adaptive: true}
 			if tab.Browser != nil {
@@ -85,7 +85,7 @@ func (panel *toolPanel) stateOf(chat *conversation) *panelState {
 			}
 			opened = panel.browserTab(chat, info, state.tabs)
 		case "terminal": // a new shell in the chat's folder: the old one ended with 1loop
-			terminal, err := panel.terminalTab(chat.Config.Workspace)
+			terminal, err := panel.terminalTab(chat.Config.Workspace, chat.Config.MachineID)
 			if err != nil {
 				continue
 			}

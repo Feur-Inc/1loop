@@ -204,7 +204,8 @@ func (backend *App) ConnectionModels(ctx context.Context, conn Connection, key s
 		if err != nil {
 			return nil, err
 		}
-		return account.CachedModels(ctx, conn)
+		choices, err := account.CachedModels(ctx, conn)
+		return DefaultModelChoices(conn, choices), err
 	}
 	if conn.Provider == "claudecode" {
 		models, err := backend.claudeModels(ctx)
@@ -221,7 +222,7 @@ func (backend *App) ConnectionModels(ctx context.Context, conn Connection, key s
 			choices = append(choices, ModelChoice{Connection: conn, ID: claudeModel.Value, Name: claudeModel.DisplayName, Resolved: claudeModel.Resolved, Efforts: efforts,
 				DefaultEffort: def, ReasoningMode: "effort", Source: "Claude Code"})
 		}
-		return choices, nil
+		return DefaultModelChoices(conn, choices), nil
 	}
 	cfg := conn.Config("")
 	cfg.APIKey = key
@@ -278,7 +279,7 @@ func (backend *App) ConnectionModels(ctx context.Context, conn Connection, key s
 		}
 		choices = append(choices, choice)
 	}
-	return choices, nil
+	return DefaultModelChoices(conn, choices), nil
 }
 
 func (backend *App) UpstreamProviders(ctx context.Context, conn Connection, key, model string) ([]string, error) {

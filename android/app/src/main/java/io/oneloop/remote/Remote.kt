@@ -47,6 +47,7 @@ data class Item(
     val meta: String, val tone: String, val state: String,
     val args: String, val diff: String, val millis: Long, val failed: String,
     val id: String = "", val versions: MessageVersions? = null,
+    val files: List<String> = emptyList(), // a prompt's attached files not shown as images
 ) {
     companion object {
         fun from(o: JSONObject) = Item(
@@ -55,6 +56,7 @@ data class Item(
             o.optString("meta"), o.optString("tone"), o.optString("state", "done"),
             o.optString("args"), o.optString("diff"), o.optLong("millis"), o.optString("failed"),
             o.optString("id"), o.optJSONObject("versions")?.let { MessageVersions(it.optString("anchor"), it.optInt("current"), it.optInt("total")) },
+            o.optJSONArray("files")?.let { names -> List(names.length()) { names.optString(it) } } ?: emptyList(),
         )
     }
 }
@@ -108,6 +110,9 @@ data class ServiceTier(val id: String, val name: String, val description: String
 data class ModelOption(
     val label: String, val name: String, val detail: String, val account: String, val efforts: List<Effort>,
     val tiers: List<ServiceTier> = emptyList(), val defaultTier: String = "", val family: String = "",
+    val id: String = "",
+    val compactAt: Int = 0, val compactDefault: Int = 0, val compactSupported: Boolean = false, val compactHelp: String = "",
+    val defaultEffort: String = "",
 )
 
 /**
@@ -121,7 +126,7 @@ fun modelFamilies(options: List<ModelOption>): List<Pair<String, List<ModelOptio
 }
 
 /** A connection of the model picker; problem says why its models are missing. */
-data class Account(val id: String, val name: String, val provider: String, val kind: String, val problem: String)
+data class Account(val id: String, val name: String, val provider: String, val kind: String, val problem: String, val defaultModels: Map<String, String> = emptyMap())
 
 /** How much of a usage window is left, in percent; reset in Unix milliseconds (0: unknown). */
 data class LimitWindow(val label: String, val left: Float, val reset: Long)
@@ -231,6 +236,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     var screen by mutableStateOf<Screen>(Screen.Launch)
     var target by mutableStateOf<ExecutionTarget?>(null)
+    var fileFocus by mutableStateOf<Citation?>(null) // a citation to show in the panel's Files tab
     val local = AndroidLocalRuntime.get(context)
     var starting by mutableStateOf(false) // the local engine is starting
     private var localStartGeneration = -1L
@@ -248,12 +254,41 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var connected by mutableStateOf(false)
     val chats = mutableStateListOf<ChatSummary>()
     var projects by mutableStateOf(listOf<String>())
+    // The target's worktrees, folder → project: their chats belong to the project (Worktrees.kt).
+    var worktrees by mutableStateOf(mapOf<String, String>())
+    val repositories = mutableStateMapOf<String, Repository>() // by project
+    var repositoryOpen by mutableStateOf<String?>(null) // the project the Repository screen shows
+    var worktreeSort by mutableStateOf(prefs.getString("worktreeSort", null) ?: "recent")
+        private set
+
+    fun chooseWorktreeSort(id: String) {
+        worktreeSort = id
+        prefs.edit { putString("worktreeSort", id) }
+    }
     var workspace by mutableStateOf("")
     var selectedProject by mutableStateOf<String?>(null)
     var projectManagement by mutableStateOf(false)
     var projectActions by mutableStateOf(false)
     var projectsOpen by mutableStateOf(false)
     var settingsOpen by mutableStateOf(false)
+    var extensionsOpen by mutableStateOf(false) // Settings → Extensions (Extensions.kt)
+    var linuxOpen by mutableStateOf(false) // Settings → Linux (LinuxScreen.kt)
+    // Its work outlives the screen: a reset stops the agent, which leaves the chat screen.
+    var linuxBusy by mutableStateOf<String?>(null)
+    var linuxNotice by mutableStateOf<Pair<String, Boolean>?>(null) // text, failed
+    var linuxRevision by mutableIntStateOf(0) // Debian changed: what it holds is read again
+
+    fun linuxWork(label: String, action: suspend () -> String) {
+        linuxBusy = label
+        linuxNotice = null
+        scope.launch {
+            try { linuxNotice = action() to false }
+            catch (e: CancellationException) { throw e }
+            catch (e: Exception) { linuxNotice = (e.message ?: "$label failed.") to true }
+            finally { linuxBusy = null; linuxRevision++ }
+        }
+    }
+    var extensionsRevision by mutableIntStateOf(0) // something was installed, removed or switched
     var updateAsked by mutableStateOf(false) // the update dialog, over any screen
     var updateOffered: Int? = null // one automatic dialog per release while this app instance runs
     var updateLater by mutableStateOf(false) // the update card was put away until the next start
@@ -261,11 +296,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var preferencesEditable by mutableStateOf(false)
     /** Whether the agent may save memories to the preferences; null when the target cannot say. */
     var memoryEnabled by mutableStateOf<Boolean?>(null)
+    var defaultAutoResume by mutableStateOf<JSONObject?>(null)
     val models = mutableStateListOf<ModelOption>()
     val accounts = mutableStateListOf<Account>()
     val limits = mutableStateMapOf<String, AccountLimits>() // by account
     var modelsLoading by mutableStateOf(false)
     var defaultModel by mutableStateOf("") // the model a new chat starts with
+    var defaultPresets by mutableStateOf(false)
     var defaultEffort by mutableStateOf("")
     var defaultTier by mutableStateOf("")
     var defaultWindow by mutableStateOf(0)
@@ -581,6 +618,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         clearAttachments() // picked for the previous target
         connectionsOpen = false
         settingsOpen = false
+        extensionsOpen = false
+        linuxOpen = false
         sharing = null
         projectsOpen = false
         events?.cancel()
@@ -704,10 +743,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             chats.clear()
             chats.addAll(parseChats(state.optJSONArray("chats")))
             projects = strings(state.optJSONArray("projects"))
+            worktrees = stringMap(state.optJSONObject("worktrees"))
             workspace = state.optString("workspace")
             projectManagement = state.optBoolean("projectManagement")
             projectActions = state.optBoolean("projectActions")
-            if (selectedProject !in projects) selectedProject = workspace
+            if (selectedProject !in projects && selectedProject !in worktrees) selectedProject = workspace
             state.optJSONObject("settings")?.let { applySettings(it) }
             // Open or Talk to the agent started this activity: its chat, now that it is known.
             pendingChat?.let { chat -> if (chats.any { it.id == chat }) current = chat }
@@ -796,6 +836,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     private fun applySettings(settings: JSONObject) {
+        defaultAutoResume = settings.optJSONObject("autoResume")
         userPreferences = settings.optString("userPreferences")
         preferencesEditable = settings.optBoolean("preferencesEditable")
         memoryEnabled = if (settings.has("memory")) settings.optBoolean("memory") else null
@@ -815,14 +856,20 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 (0 until (tiers?.length() ?: 0)).map {
                     tiers!!.getJSONObject(it).let { tier -> ServiceTier(tier.optString("id"), tier.optString("name"), tier.optString("description")) }
                 },
-                model.optString("defaultServiceTier"), model.optString("family"),
+                model.optString("defaultServiceTier"), model.optString("family"), model.optString("id"),
+                model.optInt("compactAt"), model.optInt("compactDefault"), model.optBoolean("compactSupported"), model.optString("compactHelp"), model.optString("defaultEffort"),
             ))
         }
         val accountArray = settings.optJSONArray("accounts")
         accounts.clear()
         accounts.addAll((0 until (accountArray?.length() ?: 0)).map { i ->
-            accountArray!!.getJSONObject(i).let { Account(it.optString("id"), it.optString("name"), it.optString("provider"), it.optString("kind"), it.optString("problem")) }
+            accountArray!!.getJSONObject(i).let {
+                val defaults = it.optJSONObject("defaultModels")
+                Account(it.optString("id"), it.optString("name"), it.optString("provider"), it.optString("kind"), it.optString("problem"),
+                    defaults?.keys()?.asSequence()?.associateWith { level -> defaults.optString(level) } ?: emptyMap())
+            }
         })
+        defaultPresets = settings.optBoolean("defaultPresets")
         defaultModel = settings.optString("model")
         defaultEffort = settings.optString("effort")
         defaultTier = settings.optString("tier")
@@ -881,6 +928,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 current?.let { scope.launch { load(it, target, generation) } }
             }
             "settings" -> applySettings(data)
+            "extensions" -> extensionsRevision++
             "sharing" -> if (target.localPhone) scope.launch {
                 try {
                     refreshSharing(true)
@@ -1014,7 +1062,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     fun selectProject(path: String) {
-        if (path !in projects) return
+        if (path !in projects && path !in worktrees) return
         selectedProject = path
         server?.let { target -> prefs.edit { putString("project:${target.key}", path) } }
         open(null)
@@ -1053,13 +1101,14 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     private fun applyProjects(data: JSONObject) {
         projects = strings(data.optJSONArray("projects"))
+        data.optJSONObject("worktrees")?.let { worktrees = stringMap(it) }
         val previous = data.optString("previous")
         val destination = data.optString("workspace")
         val selected = selectedProject.orEmpty()
         if (previous.isNotEmpty() && (selected == previous || selected.startsWith("$previous/") || selected.startsWith("$previous\\"))) {
             selectedProject = if (destination.isEmpty()) null else destination + selected.removePrefix(previous)
         }
-        if (selectedProject !in projects) selectedProject = projects.firstOrNull()
+        if (selectedProject !in projects && selectedProject !in worktrees) selectedProject = projects.firstOrNull()
         server?.let { target -> prefs.edit { putString("project:${target.key}", selectedProject) } }
     }
 
@@ -1075,6 +1124,24 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val reply = onConnection(target, generation) { it.post("/api/memory", JSONObject().put("enabled", enabled)) }
         memoryEnabled = reply.optBoolean("memory")
+    }
+
+    suspend fun saveAutoResume(policy: JSONObject) {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        onConnection(target, generation) { it.post("/api/auto-resume", JSONObject().put("policy", policy)) }
+    }
+
+    suspend fun saveDefaultModels(account: String, models: Map<String, String>) {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        onConnection(target, generation) { it.post("/api/model/defaults", JSONObject().put("account", account).put("models", JSONObject(models))) }
+    }
+
+    suspend fun setModelCompaction(label: String, limit: Int) {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        onConnection(target, generation) { it.post("/api/model/compaction", JSONObject().put("label", label).put("limit", limit)) }
     }
 
     /** Local mode: whether this phone is shared, its devices and the pairings waiting. */
@@ -1114,6 +1181,12 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val target = server ?: error("Connect first.")
         if (target.localPhone) local.browser.clearData()
         else onConnection(target, connectionGeneration) { it.post("/api/browser/clear", JSONObject()) }
+    }
+
+    /** A route of the extensions (skills, plugins, MCP servers) where the agent runs: GET without a body. */
+    suspend fun extensionsCall(path: String, body: JSONObject? = null, timeout: Int = 20000): JSONObject {
+        val target = server ?: error("Connect first.")
+        return onConnection(target, connectionGeneration) { if (body == null) it.get(path) else it.post(path, body, timeout) }
     }
 
     /** The hooks file of the machine the agent runs on, as text. */
@@ -1235,6 +1308,24 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     suspend fun fileBytes(workspace: String, path: String): ByteArray {
         val target = server ?: throw ApiError("Connect first.")
         return onConnection(target, connectionGeneration) { it.bytes("/api/files/download?" + fileQuery(workspace, path)) }
+    }
+
+    /** Opens a project file with the phone's app for its type: a cited file that is not text. */
+    suspend fun openWithApp(workspace: String, path: String) {
+        val target = server ?: throw ApiError("Connect first.")
+        val name = path.substringAfterLast('/')
+        val copy = java.io.File(java.io.File(context.cacheDir, "opened").apply { mkdirs() }, name)
+        onConnection(target, connectionGeneration) { api -> copy.outputStream().use { api.download("/api/files/download?" + fileQuery(workspace, path), it) } }
+        val type = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream"
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.opened", copy)
+        try {
+            context.startActivity(
+                android.content.Intent(android.content.Intent.ACTION_VIEW).setDataAndType(uri, type)
+                    .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION or android.content.Intent.FLAG_ACTIVITY_NEW_TASK),
+            )
+        } catch (e: android.content.ActivityNotFoundException) {
+            throw ApiError("No app on this phone opens $name.")
+        }
     }
 
     /** Saves a project file in the phone's Downloads; returns where. */

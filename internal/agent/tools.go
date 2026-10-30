@@ -14,6 +14,7 @@ import (
 	"unicode/utf8"
 
 	"1loop/internal/core"
+	"1loop/internal/extensions"
 	"1loop/internal/platform"
 )
 
@@ -75,6 +76,12 @@ func availableCoreTools(cfg Config) []map[string]any {
 		if cfg.toolAvailable(name) {
 			definitions = append(definitions, definition)
 		}
+	}
+	if cfg.toolAvailable("imagegen") {
+		definitions = append(definitions, imageGenerationToolDefinition())
+	}
+	if skill := skillToolDefinition(); skill != nil && cfg.toolAvailable("skill") {
+		definitions = append(definitions, skill)
 	}
 	return definitions
 }
@@ -372,6 +379,12 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 			result, err := handler(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
 			outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
 		}
+	} else if call.Function.Name == "imagegen" {
+		outcome.Output, outcome.Images, outcome.Err = backend.generateImage(ctx, cfg, call.Function.Arguments, begin)
+	} else if isGitHubTool(call.Function.Name) {
+		outcome.Output, outcome.Images, outcome.Err = backend.callGitHub(ctx, cfg, call, begin, emit)
+	} else if extensions.IsToolName(call.Function.Name) {
+		outcome.Output, outcome.Images, outcome.Err = backend.callMCP(ctx, cfg, call, begin, emit)
 	} else if strings.HasPrefix(call.Function.Name, "browser_") {
 		begin()
 		handler, _ := ctx.Value(browserContextKey{}).(PanelToolHandler)
@@ -388,6 +401,21 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 	return outcome
 }
 
+// toolArgs are the arguments of the shell and file tools.
+type toolArgs struct {
+	Path      string `json:"path"`
+	Command   string `json:"command"`
+	Old       string `json:"old_text"`
+	New       string `json:"new_text"`
+	MaxTokens *int   `json:"max_output_tokens"`
+	Offset    *int   `json:"offset"`
+	Limit     *int   `json:"limit"`
+	Escalate  *bool  `json:"escalate"`
+	Reason    string `json:"justification"`
+	Timeout   *int   `json:"timeout_ms"`
+	Detach    *bool  `json:"run_in_background"`
+}
+
 func (backend *App) runTool(ctx context.Context, root string, call ToolCall, begin func(), emit emitter) (output, diff string, err error) {
 	if call.Function.Name == "recall" {
 		begin()
@@ -396,6 +424,11 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	}
 	if call.Function.Name == "memory" {
 		return backend.editMemory(ctx, call.Function.Arguments, begin, emit)
+	}
+	if call.Function.Name == "skill" {
+		begin()
+		output, err = loadSkill(call.Function.Arguments)
+		return
 	}
 	if call.Function.Name == "apply_patch" {
 		var args struct{ Patch string }
@@ -450,23 +483,14 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		data, _ := json.Marshal(items)
 		return string(data), "", nil
 	}
-	var args struct {
-		Path      string `json:"path"`
-		Command   string `json:"command"`
-		Old       string `json:"old_text"`
-		New       string `json:"new_text"`
-		MaxTokens *int   `json:"max_output_tokens"`
-		Offset    *int   `json:"offset"`
-		Limit     *int   `json:"limit"`
-		Escalate  *bool  `json:"escalate"`
-		Reason    string `json:"justification"`
-		Timeout   *int   `json:"timeout_ms"`
-		Detach    *bool  `json:"run_in_background"`
-	}
+	var args toolArgs
 	if err := json.Unmarshal([]byte(call.Function.Arguments), &args); err != nil {
 		return "", "", err
 	}
 	name := call.Function.Name
+	if machine := machineOf(ctx); machine != nil {
+		return backend.machineTool(ctx, machine, root, call, args, begin, emit)
+	}
 	if name == "shell" {
 		if strings.TrimSpace(args.Command) == "" {
 			return "", "", fmt.Errorf("Empty command")

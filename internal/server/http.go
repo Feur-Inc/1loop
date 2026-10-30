@@ -14,6 +14,9 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/browser"
 	"1loop/internal/core"
+	"1loop/internal/extensions"
+	"1loop/internal/githubconnector"
+	"1loop/internal/gitrepo"
 	"1loop/internal/remoteapi"
 )
 
@@ -95,6 +98,9 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/preferences":                        server.setPreferences,
 		"POST /api/memory":                             server.setMemory,
 		"POST /api/model":                              server.setModel,
+		"POST /api/auto-resume":                        server.setAutoResume,
+		"POST /api/model/compaction":                   server.setModelCompaction,
+		"POST /api/model/defaults":                     server.setDefaultModels,
 		"POST /api/approval-mode":                      server.setApprovalMode,
 		"GET /api/chats/{id}/panel":                    server.panelTabs,
 		"GET /api/chats/{id}/panel/{key}":              server.panelTab,
@@ -113,6 +119,21 @@ func (server *headlessServer) routes() http.Handler {
 	endpoints["GET /api/sync/manifest"] = syncManifest
 	endpoints["POST /api/sync/export"] = syncExport
 	endpoints["POST /api/sync/import"] = syncImport
+	// Skills, plugins and MCP servers (internal/extensions); a change is
+	// told to the clients.
+	for path, handler := range extensions.Handlers(func() {
+		server.mu.Lock()
+		server.broadcastLocked("extensions", map[string]bool{"changed": true})
+		server.mu.Unlock()
+	}) {
+		endpoints[path] = handler
+	}
+	for path, handler := range githubconnector.Handlers() {
+		endpoints[path] = handler
+	}
+	for path, handler := range gitrepo.Handlers(gitTarget{server}, githubconnector.Default.Authorizations) {
+		endpoints[path] = handler
+	}
 	for path, handler := range endpoints {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
@@ -136,6 +157,7 @@ func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 	core.WriteJSON(w, 200, map[string]any{
 		"name":              server.name,
 		"projects":          server.projects,
+		"worktrees":         server.worktrees,
 		"workspace":         server.cfg.Workspace,
 		"projectManagement": true,
 		"projectActions":    true,
@@ -432,6 +454,81 @@ func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }
 
+func (server *headlessServer) setAutoResume(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		Policy agent.AutoResume `json:"policy"`
+	}
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	if err := args.Policy.Validate(); err != nil {
+		core.Fail(w, 400, err.Error())
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	for _, step := range args.Policy.Steps {
+		if step.Action != "switch" {
+			continue
+		}
+		found := false
+		for _, choice := range server.choices {
+			if choice.Connection.ID == step.ConnectionID && choice.ID == step.Model && choice.Connection.Enabled {
+				found = true
+				break
+			}
+		}
+		if !found {
+			core.Fail(w, 400, "Resume model is unavailable")
+			return
+		}
+	}
+	server.autoResume = &args.Policy
+	if err := server.saveSettingsLocked(); err != nil {
+		core.Fail(w, 500, "Unable to save resume settings")
+		return
+	}
+	server.broadcastLocked("settings", server.settingsLocked())
+	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (server *headlessServer) setModelCompaction(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		Label string `json:"label"`
+		Limit int    `json:"limit"`
+	}
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	choice, ok := server.choices[args.Label]
+	if !ok {
+		core.Fail(w, 400, "Unknown model")
+		return
+	}
+	for i := range server.connections {
+		connection := &server.connections[i]
+		if connection.ID != choice.Connection.ID {
+			continue
+		}
+		if err := connection.SetCompactLimit(choice.ID, args.Limit); err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		if err := server.saveSettingsLocked(); err != nil {
+			core.Fail(w, 500, "Unable to save context settings")
+			return
+		}
+		server.broadcastLocked("settings", server.settingsLocked())
+		core.WriteJSON(w, 200, map[string]bool{"ok": true})
+		return
+	}
+	core.Fail(w, 404, "Connection not found")
+}
+
 func (server *headlessServer) setModel(w http.ResponseWriter, r *http.Request) {
 	var args struct {
 		Chat, Label, Effort string
@@ -536,7 +633,10 @@ func (server *headlessServer) setApprovalMode(w http.ResponseWriter, r *http.Req
 }
 
 func (server *headlessServer) editPanel(w http.ResponseWriter, r *http.Request) {
-	var args struct{ Action, Kind, Key, URL string }
+	var args struct {
+		Action, Kind, Key, URL string
+		Root                   bool // the phone's Debian terminal (Settings → Linux)
+	}
 	if core.ReadJSON(r, &args) != nil {
 		core.Fail(w, 400, "Invalid request")
 		return
@@ -558,6 +658,13 @@ func (server *headlessServer) editPanel(w http.ResponseWriter, r *http.Request) 
 		}
 		raw, _ := json.Marshal(map[string]string{"action": "open", "tab_id": "", "url": args.URL})
 		result, err = server.browserTools(chat)(r.Context(), "browser_tabs", raw)
+	case args.Action == "open" && args.Kind == "terminal" && args.Root:
+		var key string
+		key, err = server.openDebianTerminal(r, chat)
+		if err == nil {
+			core.WriteJSON(w, 200, map[string]string{"key": key})
+			return
+		}
 	case args.Action == "open" && args.Kind == "terminal":
 		raw, _ := json.Marshal(map[string]string{"action": "open", "session_id": "", "cwd": ""})
 		result, err = server.terminalTools(chat)(r.Context(), "terminal_tabs", raw)
@@ -609,4 +716,43 @@ func (server *headlessServer) uploadAttachment(w http.ResponseWriter, r *http.Re
 		return
 	}
 	remoteapi.UploadAttachment(w, r, workspace)
+}
+
+func (server *headlessServer) setDefaultModels(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		Account string            `json:"account"`
+		Models  map[string]string `json:"models"`
+	}
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	catalog := []agent.ModelChoice{}
+	for _, choice := range server.choices {
+		catalog = append(catalog, choice)
+		catalog = append(catalog, choice.DefaultTargets...)
+	}
+	for i, original := range server.connections {
+		if original.ID != args.Account {
+			continue
+		}
+		updated := original
+		if err := updated.SetDefaultModels(args.Models, catalog); err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		server.connections[i] = updated
+		if err := server.saveSettingsLocked(); err != nil {
+			server.connections[i] = original
+			core.Fail(w, 500, "Unable to save Default preset")
+			return
+		}
+		server.modelRevision++
+		go server.loadModels()
+		core.WriteJSON(w, 200, map[string]bool{"ok": true})
+		return
+	}
+	core.Fail(w, 404, "Connection not found")
 }

@@ -11,7 +11,6 @@ import (
 	"encoding/hex"
 	"fmt"
 	"net/http"
-	"regexp"
 	"strconv"
 	"strings"
 	"time"
@@ -51,6 +50,7 @@ type Item struct {
 	Kind     string    `json:"kind"`
 	Text     string    `json:"text,omitempty"`
 	Images   int       `json:"images,omitempty"`
+	Files    []string  `json:"files,omitempty"` // user rows: names of the attached files not shown as images
 	Tool     string    `json:"tool,omitempty"`
 	Verb     string    `json:"verb,omitempty"`
 	Target   string    `json:"target,omitempty"`
@@ -129,25 +129,32 @@ type Effort struct {
 }
 
 type Model struct {
-	Label   string   `json:"label"` // unique key, as in the desktop picker
-	Name    string   `json:"name"`
-	Detail  string   `json:"detail"`
-	Account string   `json:"account,omitempty"` // its connection's ID
-	Family  string   `json:"family,omitempty"`  // the picker groups by it, sorted newest first
-	Efforts []Effort `json:"efforts"`
+	ID            string   `json:"id,omitempty"`
+	Label         string   `json:"label"` // unique key, as in the desktop picker
+	Name          string   `json:"name"`
+	Detail        string   `json:"detail"`
+	Account       string   `json:"account,omitempty"` // its connection's ID
+	Family        string   `json:"family,omitempty"`  // the picker groups by it, sorted newest first
+	Efforts       []Effort `json:"efforts"`
+	DefaultEffort string   `json:"defaultEffort,omitempty"`
 	// The speeds the plan offers (none on most), and the one used unless told.
 	ServiceTiers       []agent.ServiceTier `json:"serviceTiers,omitempty"`
 	DefaultServiceTier string              `json:"defaultServiceTier,omitempty"`
+	CompactAt          int                 `json:"compactAt"`
+	CompactDefault     int                 `json:"compactDefault"`
+	CompactSupported   bool                `json:"compactSupported"`
+	CompactHelp        string              `json:"compactHelp,omitempty"`
 }
 
 // Account is a connection of the model picker; problem says why its
 // models could not be listed.
 type Account struct {
-	ID       string `json:"id"`
-	Name     string `json:"name"`
-	Provider string `json:"provider"`
-	Kind     string `json:"kind"` // the provider's name, "ChatGPT account"
-	Problem  string `json:"problem,omitempty"`
+	DefaultModels map[string]string `json:"defaultModels,omitempty"`
+	ID            string            `json:"id"`
+	Name          string            `json:"name"`
+	Provider      string            `json:"provider"`
+	Kind          string            `json:"kind"` // the provider's name, "ChatGPT account"
+	Problem       string            `json:"problem,omitempty"`
 }
 
 // Limits is how much of an account's usage windows is left.
@@ -177,27 +184,6 @@ type Todo struct {
 	Status    string `json:"status"`
 	Started   int64  `json:"started,omitempty"` // Unix milliseconds
 	Completed int64  `json:"completed,omitempty"`
-}
-
-var ansiSequence = regexp.MustCompile(`\x1b\[[0-9;?]*[ -/]*[@-~]|\x1b\][^\x07\x1b]*(\x07|\x1b\\)|\x1b[()][A-Za-z0-9]|\x1b[=>78DEHMc]`)
-
-// PlainTerminal turns a terminal's raw output into text: no escape
-// sequences, and a line rewritten after a carriage return shows its end.
-func PlainTerminal(raw []byte) string {
-	text := ansiSequence.ReplaceAllString(string(raw), "")
-	lines := strings.Split(strings.ReplaceAll(text, "\r\n", "\n"), "\n")
-	for i, line := range lines {
-		if cut := strings.LastIndex(strings.TrimRight(line, "\r"), "\r"); cut >= 0 {
-			line = line[cut+1:]
-		}
-		lines[i] = strings.Map(func(r rune) rune {
-			if r == '\t' || r >= ' ' {
-				return r
-			}
-			return -1
-		}, line)
-	}
-	return strings.Join(lines, "\n")
 }
 
 func BrowserInputFromPhone(ctx context.Context, b *browser.Page, action string, x, y, dy float64, text string) error {

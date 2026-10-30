@@ -139,6 +139,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
             delay(2000)
         }
     }
+    LaunchedEffect(app.fileFocus) { if (app.fileFocus != null) selected = "files" }
     val tasks = app.meta?.todo.orEmpty()
     Column(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -734,7 +735,7 @@ private fun LoadingLine(modifier: Modifier) {
 }
 
 @Composable
-private fun Input(
+internal fun Input(
     value: String, onChange: (String) -> Unit, placeholder: String, keyboard: KeyboardType, action: ImeAction,
     modifier: Modifier = Modifier, mono: Boolean = false, enabled: Boolean = true,
     interaction: MutableInteractionSource = remember { MutableInteractionSource() }, selectAll: Boolean = false, onDone: () -> Unit,
@@ -774,18 +775,20 @@ private fun Input(
 // Terminal: its output, followed live, and a line to type commands.
 
 @Composable
-private fun TerminalView(app: RemoteApp, chat: String, tab: PanelTab) {
+internal fun TerminalView(app: RemoteApp, chat: String, tab: PanelTab) {
     var output by remember { mutableStateOf<String?>(null) }
     var exited by remember { mutableStateOf(false) }
     var line by remember { mutableStateOf("") }
     val scroll = rememberScrollState()
     LaunchedEffect(tab.key) {
-        while (true) {
+        // Followed until the shell exits: its output no longer changes.
+        exited = false
+        while (!exited) {
             app.panelTab(chat, tab.key)?.let { reply ->
                 output = reply.optString("output").lines().takeLast(600).joinToString("\n").trimEnd()
                 exited = reply.optBoolean("exited")
             }
-            delay(500)
+            if (!exited) delay(500)
         }
     }
     LaunchedEffect(output) { scroll.scrollTo(scroll.maxValue) }

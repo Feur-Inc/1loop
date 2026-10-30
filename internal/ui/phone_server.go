@@ -64,6 +64,9 @@ import (
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
+	"1loop/internal/extensions"
+	"1loop/internal/githubconnector"
+	"1loop/internal/gitrepo"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 )
@@ -140,6 +143,18 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/chats/{id}/delete", server.authorized(server.deleteChat))
 	mux.HandleFunc("POST /api/chats/{id}/tasks/{task}/stop", server.authorized(server.stopTask))
 	mux.HandleFunc("POST /api/browser/clear", server.authorized(server.clearBrowser))
+	for path, handler := range extensions.Handlers(func() {
+		server.broadcast("extensions", map[string]bool{"changed": true})
+		server.onUI(server.ui.extensionsChanged)
+	}) {
+		mux.HandleFunc(path, server.authorized(handler))
+	}
+	for path, handler := range githubconnector.Handlers() {
+		mux.HandleFunc(path, server.authorized(handler))
+	}
+	for path, handler := range gitrepo.Handlers(phoneGitTarget{server}, githubconnector.Default.Authorizations) {
+		mux.HandleFunc(path, server.authorized(handler))
+	}
 	mux.HandleFunc("GET /api/hooks", server.authorized(remoteapi.GetHooks))
 	mux.HandleFunc("POST /api/hooks", server.authorized(remoteapi.SaveHooks))
 	mux.HandleFunc("GET /api/chats/{id}/items/{index}/images/{n}", server.authorized(server.itemImage))
@@ -169,6 +184,9 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/projects", server.authorized(server.addProject))
 	mux.HandleFunc("POST /api/projects/{action}", server.authorized(server.changeProject))
 	mux.HandleFunc("POST /api/model", server.authorized(server.setModel))
+	mux.HandleFunc("POST /api/auto-resume", server.authorized(server.setAutoResume))
+	mux.HandleFunc("POST /api/model/compaction", server.authorized(server.setModelCompaction))
+	mux.HandleFunc("POST /api/model/defaults", server.authorized(server.setDefaultModels))
 	mux.HandleFunc("GET /api/limits", server.authorized(server.limits))
 	mux.HandleFunc("POST /api/approval-mode", server.authorized(server.setApprovalMode))
 	mux.HandleFunc("POST /api/chats/{id}/panel", server.authorized(server.editPanel))
@@ -455,15 +473,29 @@ func (ui *desktopUI) chatByID(id string) *conversation {
 	return nil
 }
 
+// phoneChats are the chats the phone sees: this computer's. Those of SSH
+// machines stay in the window.
+func phoneChats(all []*conversation) []remoteapi.Chat {
+	chats := []remoteapi.Chat{}
+	for _, chat := range all {
+		if chat.Config.MachineID == "" {
+			chats = append(chats, chatSummary(chat))
+		}
+	}
+	return chats
+}
+
 func chatSummary(chat *conversation) remoteapi.Chat {
 	return remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Running: chat.run != nil, Items: len(chat.Items)}
 }
 
 func itemForPhone(chat *conversation, index int) remoteapi.Item {
-	chat.identifyMessages()
+	if chat.Items[index].ID == "" { // the whole chat: per item, a page cost its square
+		chat.identifyMessages()
+	}
 	versions := chat.branching()
 	item := chat.Items[index]
-	out := remoteapi.Item{ID: item.ID, Versions: remoteapi.ItemVersions(&versions, index), Kind: item.Kind, Text: item.Text, Images: len(item.Images)}
+	out := remoteapi.Item{ID: item.ID, Versions: remoteapi.ItemVersions(&versions, index), Kind: item.Kind, Text: item.Text, Images: len(item.Images), Files: remoteapi.FileNames(item.Files)}
 	if item.Kind != "tool" {
 		return out
 	}
@@ -491,13 +523,13 @@ func itemForPhone(chat *conversation, index int) remoteapi.Item {
 func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 	remoteMetaValue := remoteapi.Meta{Chat: chat.ID, Title: chat.Title, Running: chat.run != nil, Items: len(chat.Items), Queue: []string{}, Steer: []string{}}
 	for _, message := range chat.queue {
-		remoteMetaValue.Queue = append(remoteMetaValue.Queue, message.Content)
+		remoteMetaValue.Queue = append(remoteMetaValue.Queue, message.Typed())
 	}
 	for _, messageValue := range chat.steer {
-		remoteMetaValue.Steer = append(remoteMetaValue.Steer, messageValue.Content)
+		remoteMetaValue.Steer = append(remoteMetaValue.Steer, messageValue.Typed())
 	}
 	remoteMetaValue.Model, remoteMetaValue.Effort, remoteMetaValue.Tier = ui.choiceLabel(chat.Config), chat.Config.Effort, chat.Config.ServiceTier
-	remoteMetaValue.Window = agent.ModelContextWindow(chat.Config)
+	remoteMetaValue.Window = agent.ModelContextWindow(ui.resolveModel(chat.Config))
 	remoteMetaValue.Todo = todoForPhone(chat)
 	remoteMetaValue.Tasks = append([]agent.BackgroundTaskInfo{}, chat.tasks.Snapshot()...)
 	for _, h := range chat.History {
@@ -521,16 +553,20 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 func (server *remoteServer) state(writer http.ResponseWriter, _ *http.Request) {
 	var out map[string]any
 	server.onUI(func() {
-		chats := []remoteapi.Chat{}
-		for _, chat := range server.ui.chats {
-			chats = append(chats, chatSummary(chat))
-		}
-		current := ""
-		if server.ui.current != nil {
+		chats := phoneChats(server.ui.chats)
+		current, workspace := "", server.ui.cfg.Workspace
+		if server.ui.current != nil && server.ui.current.Config.MachineID == "" {
 			current = server.ui.current.ID
 		}
+		if server.ui.cfg.MachineID != "" {
+			workspace = server.ui.lastLocalWorkspace()
+		}
 		projects := append([]string{}, server.ui.projects...)
-		out = map[string]any{"name": server.name, "projects": projects, "workspace": server.ui.cfg.Workspace,
+		worktrees := map[string]string{}
+		for folder, project := range server.ui.worktrees {
+			worktrees[folder] = project
+		}
+		out = map[string]any{"name": server.name, "projects": projects, "worktrees": worktrees, "workspace": workspace,
 			"projectManagement": true, "projectActions": true, "chats": chats, "current": current, "settings": server.ui.settingsForPhone()}
 	})
 	core.WriteJSON(writer, http.StatusOK, out)
@@ -748,10 +784,7 @@ func (server *remoteServer) flush() {
 		return
 	}
 	if server.chatsDirt {
-		chats := []remoteapi.Chat{}
-		for _, chat := range server.ui.chats {
-			chats = append(chats, chatSummary(chat))
-		}
+		chats := phoneChats(server.ui.chats)
 		server.broadcast("chats", map[string]any{"chats": chats})
 	}
 	for chat, indexes := range server.dirty {
@@ -813,6 +846,9 @@ func (server *remoteServer) send(writer http.ResponseWriter, req *http.Request) 
 // remoteSend sends a phone's message as if it had been typed in the window:
 // the chat opens on the computer and the message is sent, queued or steered.
 func (ui *desktopUI) remoteSend(chatID, mode, workspace string, messageValue agent.Message) (string, string) {
+	if ui.server == nil && ui.cfg.MachineID != "" { // the phone works on this computer's chats
+		ui.leaveMachine()
+	}
 	var chat *conversation
 	if chatID != "" {
 		if chat = ui.chatByID(chatID); chat == nil {
@@ -928,21 +964,32 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 	models := []remoteapi.Model{}
 	for _, label := range ui.model.Options {
 		choice := ui.choices[label]
-		remoteModelValue := remoteapi.Model{Label: label, Name: choice.Display(), Detail: ui.model.Details[label],
-			Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
+		remoteModelValue := remoteapi.Model{ID: choice.ID, Label: label, Name: choice.Display(), Detail: ui.model.Details[label],
+			Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, DefaultEffort: choice.DefaultEffort, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
+		for _, connection := range ui.connectionsList {
+			if connection.ID == choice.Connection.ID {
+				remoteModelValue.CompactAt = connection.ModelOptions[choice.ID].CompactAt
+				cfg := connection.Config("")
+				cfg.Model = choice.ID
+				remoteModelValue.CompactDefault, _ = agent.CompactDefault(cfg)
+				remoteModelValue.CompactHelp = agent.CompactHelp(cfg)
+				remoteModelValue.CompactSupported = connection.Provider != "chatgptweb" && !choice.IsDefaultPreset()
+				break
+			}
+		}
 		for _, e := range choice.Efforts {
-			remoteModelValue.Efforts = append(remoteModelValue.Efforts, remoteapi.Effort{Value: e, Label: agent.EffortLabel(e), About: modelEffortAbout(e)})
+			remoteModelValue.Efforts = append(remoteModelValue.Efforts, remoteapi.Effort{Value: e, Label: agent.EffortLabel(e), About: choiceEffortAbout(choice, e)})
 		}
 		models = append(models, remoteModelValue)
 	}
 	accounts := []remoteapi.Account{}
 	for _, conn := range ui.connectionsList {
 		if conn.Enabled {
-			accounts = append(accounts, remoteapi.Account{ID: conn.ID, Name: conn.Name, Provider: conn.Provider, Kind: agent.ProviderName(conn.Provider), Problem: ui.modelUnavailable[conn.ID]})
+			accounts = append(accounts, remoteapi.Account{ID: conn.ID, Name: conn.Name, Provider: conn.Provider, Kind: agent.ProviderName(conn.Provider), Problem: ui.modelUnavailable[conn.ID], DefaultModels: conn.DefaultModels})
 		}
 	}
-	return map[string]any{"userPreferences": ui.userInstructions, "preferencesEditable": true, "memory": !ui.memoryOff, "messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
-		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": agent.AutoModeOffered(ui.cfg), "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.cfg)}
+	return map[string]any{"defaultPresets": true, "autoResume": ui.autoResume, "userPreferences": ui.userInstructions, "preferencesEditable": true, "memory": !ui.memoryOff, "messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
+		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": agent.AutoModeOffered(ui.cfg), "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.resolveModel(ui.cfg))}
 }
 
 // limits reads every account's usage windows for the phone's model picker,
@@ -1003,6 +1050,85 @@ func (server *remoteServer) limits(writer http.ResponseWriter, req *http.Request
 	core.WriteJSON(writer, http.StatusOK, map[string]any{"accounts": out})
 }
 
+func (server *remoteServer) setAutoResume(writer http.ResponseWriter, req *http.Request) {
+	var body struct {
+		Policy agent.AutoResume `json:"policy"`
+	}
+	if core.ReadJSON(req, &body) != nil {
+		core.Fail(writer, 400, "Invalid request")
+		return
+	}
+	if err := body.Policy.Validate(); err != nil {
+		core.Fail(writer, 400, err.Error())
+		return
+	}
+	problem := ""
+	server.onUI(func() {
+		for _, step := range body.Policy.Steps {
+			if step.Action != "switch" {
+				continue
+			}
+			found := false
+			for _, choice := range server.ui.choices {
+				if choice.Connection.ID == step.ConnectionID && choice.ID == step.Model && choice.Connection.Enabled {
+					found = true
+					break
+				}
+			}
+			if !found {
+				problem = "Resume model is unavailable"
+				return
+			}
+		}
+		server.ui.autoResume = &body.Policy
+		server.ui.save()
+		server.settingsChanged()
+	})
+	if problem != "" {
+		core.Fail(writer, 400, problem)
+		return
+	}
+	core.WriteJSON(writer, 200, map[string]bool{"ok": true})
+}
+
+func (server *remoteServer) setModelCompaction(writer http.ResponseWriter, req *http.Request) {
+	var body struct {
+		Label string `json:"label"`
+		Limit int    `json:"limit"`
+	}
+	if core.ReadJSON(req, &body) != nil {
+		core.Fail(writer, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	problem := "Connection not found"
+	server.onUI(func() {
+		choice, ok := server.ui.choices[body.Label]
+		if !ok {
+			problem = "Unknown model"
+			return
+		}
+		for i := range server.ui.connectionsList {
+			connection := &server.ui.connectionsList[i]
+			if connection.ID != choice.Connection.ID {
+				continue
+			}
+			if err := connection.SetCompactLimit(choice.ID, body.Limit); err != nil {
+				problem = err.Error()
+				return
+			}
+			problem = ""
+			server.ui.save()
+			server.settingsChanged()
+			return
+		}
+	})
+	if problem != "" {
+		core.Fail(writer, http.StatusBadRequest, problem)
+		return
+	}
+	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (server *remoteServer) setModel(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
 		Chat   string  `json:"chat"`
@@ -1026,6 +1152,9 @@ func (server *remoteServer) setModel(writer http.ResponseWriter, req *http.Reque
 // remoteModel picks a chat's model and effort from the phone, through the
 // same picker as the window (the chat opens there to show it).
 func (ui *desktopUI) remoteModel(chatID, label, effort string, tier *string) string {
+	if ui.server == nil && ui.cfg.MachineID != "" { // the phone works on this computer's chats
+		ui.leaveMachine()
+	}
 	if chatID != "" {
 		chat := ui.chatByID(chatID)
 		if chat == nil {
@@ -1156,4 +1285,42 @@ func (ui *desktopUI) remoteDefaults() {
 			chat.ID = core.Identifier()[:16]
 		}
 	}
+}
+
+func (server *remoteServer) setDefaultModels(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		Account string            `json:"account"`
+		Models  map[string]string `json:"models"`
+	}
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	problem := "Connection not found"
+	server.onUI(func() {
+		catalog := []agent.ModelChoice{}
+		for _, choice := range server.ui.choices {
+			catalog = append(catalog, choice)
+			catalog = append(catalog, choice.DefaultTargets...)
+		}
+		for i := range server.ui.connectionsList {
+			conn := &server.ui.connectionsList[i]
+			if conn.ID != args.Account {
+				continue
+			}
+			if err := conn.SetDefaultModels(args.Models, catalog); err != nil {
+				problem = err.Error()
+				return
+			}
+			server.ui.save()
+			server.ui.refreshModels()
+			problem = ""
+			return
+		}
+	})
+	if problem != "" {
+		core.Fail(w, 400, problem)
+		return
+	}
+	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }

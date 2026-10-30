@@ -26,11 +26,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
 
 	"1loop/internal/core"
+	"1loop/internal/githubconnector"
 	"1loop/internal/platform"
 )
 
@@ -39,6 +41,7 @@ import (
 type claudeEvent struct {
 	Type         string  `json:"type"`
 	Subtype      string  `json:"subtype"`
+	APIError     int     `json:"api_error_status"` // result: the API's HTTP status, 429 on a usage limit
 	SessionID    string  `json:"session_id"`
 	Parent       *string `json:"parent_tool_use_id"` // set for a subagent's messages
 	APIKeySource string  `json:"apiKeySource"`
@@ -78,11 +81,15 @@ type claudeEvent struct {
 	} `json:"request"`
 	Response *struct {
 		Response struct {
-			Models []claudeModel `json:"models"`
+			Models  []claudeModel `json:"models"`
+			Account *struct {
+				TokenSource string `json:"tokenSource"`
+			} `json:"account"`
 		} `json:"response"`
 	} `json:"response"`
 	RateLimit *struct {
 		Status         string `json:"status"`
+		ResetsAt       int64  `json:"resetsAt"`
 		IsUsingOverage bool   `json:"isUsingOverage"`
 		Windows        map[string]struct {
 			Utilization float64 `json:"utilization"`
@@ -134,9 +141,9 @@ const claudeDisabledTools = "Task,Agent"
 // key) and minus the variables of a Claude Code session 1loop may have been
 // started from.
 func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd, error) {
-	path, err := exec.LookPath("claude")
+	path, err := ClaudeExecutable()
 	if err != nil {
-		return nil, fmt.Errorf("Claude Code is not installed: no claude command was found")
+		return nil, err
 	}
 	args := append([]string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}, extra...)
 	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
@@ -149,7 +156,7 @@ func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd,
 	for _, pair := range os.Environ() {
 		name, _, _ := strings.Cut(pair, "=")
 		if name == "ANTHROPIC_API_KEY" || name == "ANTHROPIC_AUTH_TOKEN" || name == "CLAUDECODE" ||
-			name == "CLAUDE_PID" || name == "CLAUDE_EFFORT" || strings.HasPrefix(name, "CLAUDE_CODE_") {
+			name == "CLAUDE_PID" || name == "CLAUDE_EFFORT" || (strings.HasPrefix(name, "CLAUDE_CODE_") && name != "CLAUDE_CODE_OAUTH_TOKEN") {
 			continue
 		}
 		cmd.Env = append(cmd.Env, pair)
@@ -157,8 +164,7 @@ func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd,
 	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
 		cmd.Env = append(cmd.Env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
 	}
-	// Stop ends the turn the way Claude Code documents (SIGINT), then the
-	// whole process group if it lingers.
+	// Keep the CLI and its children in a process group for bounded shutdown.
 	platform.PrepareProcess(cmd)
 	cmd.Cancel = func() error { return platform.InterruptProcess(cmd) }
 	cmd.WaitDelay = 3 * time.Second
@@ -167,7 +173,7 @@ func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd,
 
 // claudeModels asks the installed Claude Code which models the account can
 // use. It only exchanges the protocol's handshake: no request reaches a model.
-func (backend *App) claudeModels(ctx context.Context) ([]claudeModel, error) {
+func (backend *App) claudeModels(ctx context.Context) (models []claudeModel, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd, err := claudeCommand(ctx, os.TempDir())
@@ -176,10 +182,18 @@ func (backend *App) claudeModels(ctx context.Context) ([]claudeModel, error) {
 	}
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
+	cmd.Cancel = func() error { return stdin.Close() }
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
-	defer func() { stdin.Close(); cmd.Process.Kill(); cmd.Wait() }()
+	// Initialization can renew credentials too: let the CLI save them on exit.
+	defer func() {
+		stdin.Close()
+		io.Copy(io.Discard, stdout)
+		if waitErr := cmd.Wait(); err == nil && waitErr != nil {
+			models, err = nil, fmt.Errorf("Claude Code did not finish loading models: %w", waitErr)
+		}
+	}()
 	fmt.Fprintln(stdin, `{"type":"control_request","request_id":"1loop-init","request":{"subtype":"initialize"}}`)
 	scanner := bufio.NewScanner(stdout)
 	scanner.Buffer(make([]byte, 64<<10), 16<<20)
@@ -189,6 +203,9 @@ func (backend *App) claudeModels(ctx context.Context) ([]claudeModel, error) {
 			continue
 		}
 		if claudeEventValue.Type == "control_response" && claudeEventValue.Response != nil {
+			if account := claudeEventValue.Response.Response.Account; account != nil && account.TokenSource == "none" {
+				return nil, fmt.Errorf("Claude Code is not signed in. Open Settings → Connections → Claude Code → Sign in")
+			}
 			if len(claudeEventValue.Response.Response.Models) == 0 {
 				return nil, fmt.Errorf("Claude Code listed no model: check that it is signed in (run claude once)")
 			}
@@ -199,6 +216,22 @@ func (backend *App) claudeModels(ctx context.Context) ([]claudeModel, error) {
 		}
 	}
 	return nil, fmt.Errorf("Claude Code did not answer: run claude once in a terminal to check it works")
+}
+
+// claudeLimit tells a turn Claude Code ended on a usage limit without its
+// rate_limit_event (it happens on a weekly limit): the result's API status
+// is 429, or its text says so, older versions adding "|<reset in Unix time>".
+func claudeLimit(status int, text string) (time.Time, bool) {
+	lower := strings.ToLower(text)
+	if status != 429 && !strings.Contains(lower, "usage limit") && !strings.Contains(lower, "rate limit") && !strings.Contains(lower, "limit reached") {
+		return time.Time{}, false
+	}
+	if _, after, found := strings.Cut(text, "|"); found {
+		if at, err := strconv.ParseInt(strings.TrimSpace(after), 10, 64); err == nil && at > 0 {
+			return unixAuto(at), true
+		}
+	}
+	return time.Time{}, true
 }
 
 // claudeTool translates a Claude Code tool call into the row 1loop shows:
@@ -393,11 +426,15 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		defer close()
 		args = append(args, "--mcp-config", config)
 	}
-	appendPrompt := mobileInstructions(cfg) + projectInstructions(cfg.Workspace) + todoInstructions(cfg) + todoSnapshot(cfg) + memoryInstructions(cfg)
+	// The user's MCP servers, plugins and skills, for this session only.
+	extensionArgs, cleanExtensions := claudeExtensionArgs()
+	defer cleanExtensions()
+	args = append(args, extensionArgs...)
+	appendPrompt := mobileInstructions(cfg) + projectInstructions(cfg.Workspace) + citationInstructions + todoInstructions(cfg) + todoSnapshot(cfg) + memoryInstructions(cfg)
 	if cfg.ProjectTools != nil {
 		appendPrompt += "\n\nUse 1loop's MCP shell, read_file, list_directory, edit_file and apply_patch tools for project work. Follow the phone's selected execution policy and stay strictly inside the requested project. Use recall to retrieve older conversation details. Your own context compaction remains managed by Claude Code."
 	}
-	for _, group := range availableToolGroups(cfg) {
+	for _, group := range builtinToolGroups(cfg) {
 		appendPrompt += group.instructions(cfg)
 	}
 	if strings.TrimSpace(cfg.UserInstructions) != "" {
@@ -406,14 +443,19 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	if appendPrompt != "" {
 		args = append(args, "--append-system-prompt", appendPrompt)
 	}
-	cmd, err := claudeCommand(ctx, cfg.Workspace, args...)
+	processCtx, stopProcess := context.WithCancel(ctx)
+	defer stopProcess()
+	cmd, err := claudeCommand(processCtx, cfg.Workspace, args...)
 	if err != nil {
 		return err
+	}
+	if cfg.CompactAt > 0 {
+		cmd.Env = append(cmd.Env, fmt.Sprintf("CLAUDE_CODE_AUTO_COMPACT_WINDOW=%d", cfg.CompactAt))
 	}
 	logged := append([]string(nil), cmd.Args...)
 	for i := 1; i < len(logged); i++ {
 		if logged[i-1] == "--mcp-config" {
-			logged[i] = "[1loop TODO MCP config]"
+			logged[i] = "[1loop MCP config]"
 		}
 	}
 	platform.Devf("claude", "start in %s: %s", cfg.Workspace, strings.Join(logged, " "))
@@ -422,9 +464,6 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	stdout, _ := cmd.StdoutPipe()
 	var stderr outputBuffer
 	cmd.Stderr = &stderr
-	if err := cmd.Start(); err != nil {
-		return err
-	}
 	var writing sync.Mutex
 	open := true
 	send := func(line string) {
@@ -434,23 +473,52 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			io.WriteString(stdin, line+"\n")
 		}
 	}
-	finish := func() { // no more input: Claude Code exits after its last turn
+	finish := func(interrupt bool) { // no more input: Claude Code exits after its last turn
 		writing.Lock()
 		defer writing.Unlock()
 		if open {
+			if interrupt {
+				io.WriteString(stdin, `{"type":"control_request","request_id":"1loop-stop","request":{"subtype":"interrupt","cancel_queued":true}}`+"\n")
+			}
 			open = false
 			stdin.Close()
 		}
 	}
+	processDone := make(chan struct{})
+	cmd.Cancel = func() error {
+		go finish(true)
+		go func() {
+			timer := time.NewTimer(3 * time.Second)
+			defer timer.Stop()
+			select {
+			case <-processDone:
+			case <-timer.C:
+				platform.KillProcessTree(cmd)
+			}
+		}()
+		return nil
+	}
+	// Kill the tree before exec's fallback kills only its parent on Windows.
+	cmd.WaitDelay = 4 * time.Second
+	if err := cmd.Start(); err != nil {
+		return err
+	}
 	var failure error
 	defer func() {
-		finish()
-		if ctx.Err() != nil || failure != nil {
-			// Stopped: nothing Claude Code started may keep running (its
-			// commands and background tasks share its process group).
+		if ctx.Err() != nil {
+			stopProcess()
+		} else if failure != nil {
+			// Billing and other run failures retain their immediate stop.
 			platform.KillProcessTree(cmd)
+			finish(false)
+		} else {
+			finish(false)
 		}
 		cmd.Wait()
+		close(processDone)
+		if ctx.Err() != nil {
+			platform.KillProcessTree(cmd)
+		}
 	}()
 
 	messages := append([]Message(nil), history...)
@@ -535,48 +603,42 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			select {
 			case lines <- append([]byte(nil), scanner.Bytes()...):
 			case <-done:
+				io.Copy(io.Discard, stdout)
 				return
 			}
 		}
 	}()
+	githubChanges := githubconnector.Default.Changes()
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
 	for failure == nil {
 		var line []byte
 		select {
+		case <-githubChanges:
+			githubChanges = githubconnector.Default.Changes()
+			request, _ := json.Marshal(map[string]any{"type": "control_request", "request_id": core.Identifier(), "request": map[string]string{"subtype": "mcp_reconnect", "serverName": "1loop_todo"}})
+			send(string(request))
+			continue
 		case <-cfg.CapabilitiesChanged:
 			request, _ := json.Marshal(map[string]any{"type": "control_request", "request_id": core.Identifier(), "request": map[string]string{"subtype": "mcp_reconnect", "serverName": "1loop_todo"}})
 			send(string(request))
 			continue
 		case <-ctx.Done():
-			platform.Devf("claude", "stop asked: interrupt sent, waiting for it to close its session")
-			// Stop: Claude Code got the interrupt it documents (SIGINT);
-			// it has a moment to close its session before it is killed.
-			grace := time.After(1500 * time.Millisecond)
-			for {
-				select {
-				case _, more := <-lines:
-					if more {
-						continue
-					}
-				case <-grace:
-				}
-				return ctx.Err()
-			}
+			platform.Devf("claude", "stop asked: interrupting the input stream and waiting for shutdown")
+			return ctx.Err()
 		case <-tick.C:
-			if !idle {
-				continue
-			}
 			if extras := inboxValue.Steer(); len(extras) > 0 {
 				for _, extra := range extras {
 					inject(extra)
 				}
+			} else if !idle {
+				continue
 			} else if next, ok := inboxValue.Next(); ok {
 				inject(next)
 			} else if len(background) == 0 && time.Since(idleSince) > 600*time.Millisecond {
 				idle = false
 				platform.Devf("claude", "nothing runs, nothing waits: closing its input")
-				finish() // nothing runs, nothing waits: the task is over
+				finish(false) // nothing runs, nothing waits: the task is over
 			}
 			continue
 		case next, more := <-lines:
@@ -643,6 +705,16 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			if claudeEventValue.RateLimit != nil {
 				if claudeEventValue.RateLimit.IsUsingOverage {
 					failure = fmt.Errorf("Claude Code started drawing on extra usage, beyond your plan's limits. 1loop stopped the task.")
+				} else if claudeEventValue.RateLimit.Status == "rejected" {
+					var reset time.Time
+					if at := claudeEventValue.RateLimit.ResetsAt; at > 0 {
+						if at > 100000000000 {
+							reset = time.UnixMilli(at)
+						} else {
+							reset = time.Unix(at, 0)
+						}
+					}
+					failure = &RateLimitError{Cause: fmt.Errorf("Claude Code reached a usage limit."), Reset: reset}
 				}
 				emit("plan", PlanUsage{FiveHour: claudeEventValue.RateLimit.Windows["five_hour"].Utilization, Week: claudeEventValue.RateLimit.Windows["seven_day"].Utilization})
 			}
@@ -777,6 +849,9 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 					text = "Claude Code ended the turn with an error (" + claudeEventValue.Subtype + ")"
 				}
 				failure = errors.New(text)
+				if limited, ok := claudeLimit(claudeEventValue.APIError, text); ok {
+					failure = &RateLimitError{Cause: failure, Reset: limited}
+				}
 			}
 			emit("history", append([]Message(nil), messages...))
 			if failure != nil || claudeEventValue.QueuedTurns > 0 {
@@ -795,6 +870,11 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		}
 	}
 	if failure != nil {
+		emit("history", append([]Message(nil), messages...))
+		var limited *RateLimitError
+		if len(calls) > 0 && errors.As(failure, &limited) {
+			return fmt.Errorf("Claude Code reached a limit while a tool result was pending; automatic resumption is unsafe. Review the conversation before continuing.")
+		}
 		return failure // the deferred kill stops it now: nothing more may be spent
 	}
 	if ctx.Err() != nil {
@@ -843,7 +923,7 @@ func itemsText(items []ChatItem) string {
 	for _, item := range items {
 		switch item.Kind {
 		case "user":
-			text := item.Text
+			text := AttachmentText(item.Text, item.Files)
 			if len(item.Images) > 0 {
 				text += fmt.Sprintf(" [+%d image(s) attached]", len(item.Images))
 			}

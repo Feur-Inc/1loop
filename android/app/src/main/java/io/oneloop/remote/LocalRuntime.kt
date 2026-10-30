@@ -17,6 +17,17 @@ data class SetupStep(
 
 data class LocalStatus(val ready: Boolean, val steps: List<SetupStep>)
 
+/** Settings → Linux: what Debian takes on this phone, in bytes. */
+data class LinuxUsage(
+    val total: Long, val projects: Long, val packageFiles: Long, val agentData: Long, val phoneFree: Long, val phoneTotal: Long,
+)
+
+/** An installed Debian package; a protected one is needed by Debian or by 1loop. */
+data class LinuxPackage(val name: String, val version: String, val size: Long, val manual: Boolean, val protected: Boolean, val summary: String)
+
+/** What Clean up removes: the downloaded package files, 1loop's older agents, the packages nothing needs any more. */
+data class LinuxCleanup(val packageFiles: Long, val oldVersions: Long, val packages: List<String>)
+
 data class LocalAdbState(
     val allowed: Boolean = false,
     val connected: Boolean = false,

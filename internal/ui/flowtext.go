@@ -14,6 +14,7 @@ import (
 	"net/url"
 	"strings"
 	"sync"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -94,6 +95,8 @@ func (flow *flowText) look(spanValue span) (fyne.TextStyle, float32, color.Color
 	case spanValue.code:
 		style.Monospace = true
 		size, ink = flow.size*flowCodeScale, colCodeInk
+	case spanValue.cite:
+		size, ink = flow.size*0.85, colMuted
 	case spanValue.link != "":
 		ink = colLink
 	}
@@ -188,25 +191,27 @@ func (flow *flowText) atoms() []atom {
 		if flow.mono {
 			add(strings.ReplaceAll(span.text, "\t", "    "), i, false)
 		} else {
-			word := ""
-			for _, r := range span.text {
+			start := -1 // of the word being read, in bytes
+			for at, r := range span.text {
 				if r == ' ' || r == '\t' || r == '\n' {
-					if word != "" {
-						add(word, i, false)
-						word = ""
+					if start >= 0 {
+						add(span.text[start:at], i, false)
+						start = -1
 					}
 					if n := len(out); n == 0 || !out[n-1].space {
 						add(" ", i, true)
 					}
 					continue
 				}
-				word += string(r)
+				if start < 0 {
+					start = at
+				}
 			}
-			if word != "" {
-				add(word, i, false)
+			if start >= 0 {
+				add(span.text[start:], i, false)
 			}
 		}
-		if span.code && len(out) > first { // room for the chip around the code
+		if (span.code || span.cite) && len(out) > first { // room for the chip around the code
 			out[first].lead = flowChipPad
 			out[first].width += flowChipPad
 			out[len(out)-1].width += flowChipPad
@@ -248,23 +253,33 @@ func (flow *flowText) lines(atoms []atom, width float32) []flowLine {
 			flush(false)
 		}
 		// A word wider than the line (a long address) is cut where it must.
-		for !flow.mono && atomValue.image == nil && atomValue.width > width && len([]rune(atomValue.text)) > 1 {
+		// Each character is measured once: measuring every remaining part
+		// again cost the square of the word's length (a long base64 string
+		// froze the window for seconds and allocated gigabytes).
+		if !flow.mono && atomValue.image == nil && atomValue.width > width && utf8.RuneCountInString(atomValue.text) > 1 {
 			runes := []rune(atomValue.text)
-			fit := 1
-			for fit < len(runes) {
-				if w, _, _ := measureText(string(runes[:fit+1]), atomValue.size, atomValue.style); atomValue.lead+w > width {
-					break
-				}
-				fit++
+			advance := make([]float32, len(runes)+1) // advance[i]: the width of runes[i:]
+			for i := len(runes) - 1; i >= 0; i-- {
+				w, _, _ := measureText(string(runes[i]), atomValue.size, atomValue.style)
+				advance[i] = advance[i+1] + w
 			}
-			head := atomValue
-			head.text = string(runes[:fit])
-			head.width, _, _ = measureText(head.text, atomValue.size, atomValue.style)
-			head.width += atomValue.lead
-			head.trail = 0
-			line = append(line, head)
-			flush(false)
-			atomValue.text, atomValue.lead = string(runes[fit:]), 0
+			start := 0
+			for len(runes)-start > 1 && atomValue.lead+advance[start]+atomValue.trail > width {
+				fit := 1
+				for start+fit < len(runes) && atomValue.lead+advance[start]-advance[start+fit+1] <= width {
+					fit++
+				}
+				head := atomValue
+				head.text = string(runes[start : start+fit])
+				head.width, _, _ = measureText(head.text, atomValue.size, atomValue.style)
+				head.width += atomValue.lead
+				head.trail = 0
+				line = append(line, head)
+				flush(false)
+				start += fit
+				atomValue.lead = 0
+			}
+			atomValue.text = string(runes[start:])
 			atomValue.width, _, _ = measureText(atomValue.text, atomValue.size, atomValue.style)
 			atomValue.width += atomValue.trail
 		}
@@ -385,7 +400,7 @@ func (flow *flowText) flow(width float32) {
 				}
 				flow.pieces = append(flow.pieces, selPiece{runes: []rune(text), at: at, size: fyne.NewSize(textWidth, first.height),
 					textSize: first.size, style: first.style, after: after})
-				if span.code || (span.math != "" && first.image == nil) {
+				if span.code || span.cite || (span.math != "" && first.image == nil) {
 					chip := canvas.NewRectangle(colCodeChip)
 					chip.CornerRadius = 4
 					chip.StrokeColor, chip.StrokeWidth = colCodeEdge, 1
@@ -394,10 +409,12 @@ func (flow *flowText) flow(width float32) {
 					chips = append(chips, chip)
 				}
 				if span.link != "" {
-					rule := canvas.NewRectangle(withAlpha(colLink, 0x70))
-					rule.Move(fyne.NewPos(at.X, top+first.base+2))
-					rule.Resize(fyne.NewSize(textWidth, 1))
-					marks = append(marks, rule)
+					if !span.cite { // a citation is a chip, not underlined
+						rule := canvas.NewRectangle(withAlpha(colLink, 0x70))
+						rule.Move(fyne.NewPos(at.X, top+first.base+2))
+						rule.Resize(fyne.NewSize(textWidth, 1))
+						marks = append(marks, rule)
+					}
 					flow.links = append(flow.links, flowLink{fyne.NewPos(x, top), size, span.link})
 				}
 				if span.strike {
@@ -451,6 +468,10 @@ func openLink(address string) {
 	if address == "" {
 		return
 	}
+	if strings.HasPrefix(address, citeScheme) {
+		openCitation(address)
+		return
+	}
 	target, err := url.Parse(address)
 	if err != nil || (target.Scheme != "http" && target.Scheme != "https" && target.Scheme != "mailto") {
 		platform.Devf("ui", "link not opened (not a web or mail address): %s", address)
@@ -473,8 +494,9 @@ type flowRenderer struct{ flowText *flowText }
 func (renderer *flowRenderer) MinSize() fyne.Size {
 	text := renderer.flowText
 	if text.width == 0 {
+		// Keep this provisional layout: repeated MinSize calls must not
+		// rebuild it. Layout reflows the text when its actual width differs.
 		text.flow(600)
-		text.width = 0 // still to be laid out for real
 	}
 	if text.mono {
 		return fyne.NewSize(text.natural, text.height) // code is never wrapped: it scrolls sideways

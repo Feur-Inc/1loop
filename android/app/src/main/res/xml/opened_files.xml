@@ -1,0 +1,5 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- A cited project file, shown to the app the user opens it with (Remote.kt). -->
+<paths>
+    <cache-path name="opened" path="opened/" />
+</paths>

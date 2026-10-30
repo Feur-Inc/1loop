@@ -44,7 +44,7 @@ func (server *remoteServer) editMessage(w http.ResponseWriter, r *http.Request) 
 		if args.Action == "edit" {
 			text = strings.TrimSpace(args.Text)
 		}
-		if text == "" && len(item.Images) == 0 {
+		if text == "" && len(item.Images) == 0 && len(item.Files) == 0 {
 			problem = "Nothing to send"
 			return
 		}
@@ -52,7 +52,7 @@ func (server *remoteServer) editMessage(w http.ResponseWriter, r *http.Request) 
 		if problem = server.ui.notReady(); problem != "" {
 			return
 		}
-		server.ui.startVersion(chat, index, agent.Message{Role: "user", Content: text, Images: item.Images}, args.Action == "retry")
+		server.ui.startVersion(chat, index, agent.PromptMessage(text, item.Images, item.Files), args.Action == "retry")
 	})
 	if problem != "" {
 		core.Fail(w, 409, problem)

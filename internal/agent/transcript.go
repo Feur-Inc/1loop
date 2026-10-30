@@ -17,6 +17,7 @@ type ChatItem struct {
 	Title  string           `json:"title,omitempty"` // tool rows saved by earlier versions
 	Text   string           `json:"text"`            // the message, or a tool's output
 	Images []core.ImagePart `json:"images,omitempty"`
+	Files  []FileAttachment `json:"files,omitempty"`  // user rows: the attached files, apart from the text
 	Tool   string           `json:"tool,omitempty"`   // tool rows: the tool's name
 	Args   string           `json:"args,omitempty"`   // tool rows: the call's JSON arguments
 	Diff   string           `json:"diff,omitempty"`   // edit_file rows: the diff, once shown for approval
@@ -35,25 +36,8 @@ func ToolArgs(raw string) (path, command string, creates bool) {
 }
 
 func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) {
-	if item.Tool == "computer_use" {
-		var request struct{ Action string }
-		_ = json.Unmarshal([]byte(item.Args), &request)
-		if running {
-			return "Using desktop:", request.Action, false
-		}
-		return "Used desktop:", request.Action, false
-	}
-	if strings.HasPrefix(item.Tool, "terminal_") {
-		if running {
-			return "Using terminal:", strings.TrimPrefix(item.Tool, "terminal_"), false
-		}
-		return "Used terminal:", strings.TrimPrefix(item.Tool, "terminal_"), false
-	}
-	if strings.HasPrefix(item.Tool, "browser_") {
-		if running {
-			return "Using", strings.TrimPrefix(item.Tool, "browser_"), false
-		}
-		return "Used browser:", strings.TrimPrefix(item.Tool, "browser_"), false
+	if verb, target, mono, ok := describeAction(item, running); ok { // tool_summary.go
+		return verb, target, mono
 	}
 	path, command, creates := ToolArgs(item.Args)
 	pick := func(done, doing string) string {
@@ -63,6 +47,10 @@ func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) 
 		return done
 	}
 	switch item.Tool {
+	case "imagegen":
+		var args struct{ Prompt string }
+		_ = json.Unmarshal([]byte(item.Args), &args)
+		return pick("Generated image", "Generating image"), FirstLine(args.Prompt), false
 	case "shell":
 		first, _, multi := strings.Cut(strings.TrimSpace(command), "\n")
 		if multi {

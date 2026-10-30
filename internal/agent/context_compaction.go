@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strconv"
 	"strings"
 	"time"
 
@@ -52,6 +54,93 @@ func contextThreshold(cfg Config, fraction float64) int {
 	// Small windows still need space for one answer and its tool results.
 	reserve := min(8192, max(1024, window/8))
 	return min(int(float64(window)*fraction), window-reserve)
+}
+
+func contextAtNatural(cfg Config, tokens int, fraction float64) bool {
+	if target := CompactLimit(cfg); target > 0 {
+		window := ModelContextWindow(cfg)
+		reserve := min(8192, max(1024, window/8))
+		return tokens >= min(target, window-reserve)
+	}
+	return contextAt(cfg, tokens, fraction)
+}
+
+// longContextModels are OpenAI's models whose API price doubles above
+// 272K input tokens ("long context" on its pricing page), which is also
+// Codex's default window for them with a ChatGPT plan.
+var longContextModels = map[string]bool{
+	"gpt-6-astra": true, "gpt-6-sol": true, "gpt-6.1-sol": true, "gpt-6.1-terra": true, "gpt-6-luna": true,
+	"gpt-5.6-sol": true, "gpt-5.6-terra": true, "gpt-5.6-luna": true,
+	"gpt-5.5": true, "gpt-5.5-pro": true, "gpt-5.4": true, "gpt-5.4-pro": true,
+}
+
+// CompactLimit is a target for automatic compaction, not a billing guarantee:
+// provider token counts can differ from the estimate available before a call.
+// The model's own setting wins; otherwise CompactDefault.
+func CompactLimit(cfg Config) int {
+	if cfg.CompactAt > 0 {
+		return cfg.CompactAt
+	}
+	limit, _ := CompactDefault(cfg)
+	return limit
+}
+
+// CompactDefault is the target used without a setting for the model, and
+// why, as the settings show it. It follows what each account charges:
+//   - a ChatGPT plan (Codex's limits): GPT-6.1 Sol has a 500K window with no
+//     long-context charge, compacted at 475K; other OpenAI models at 272K;
+//   - OpenAI's API, directly or through OpenRouter: 272K, where long-context
+//     pricing starts; Claude Haiku 5.5 through OpenRouter: 100K, where
+//     Anthropic's higher rate starts;
+//   - elsewhere (Claude Code, local models…): none, the model's window.
+func CompactDefault(cfg Config) (int, string) {
+	id := strings.ToLower(cfg.Model)
+	switch cfg.Provider {
+	case "openai":
+		if id == "gpt-6.1-sol" {
+			return 475000, "under the 500,000-token window Codex gives GPT-6.1 Sol, with no long-context charge on a ChatGPT plan"
+		}
+		if longContextModels[id] {
+			return 272000, "Codex's window for this model with a ChatGPT plan"
+		}
+	case "openrouter":
+		if strings.HasPrefix(id, "openai/") && longContextModels[strings.TrimPrefix(id, "openai/")] {
+			return 272000, "OpenAI charges long-context rates above it"
+		}
+		if strings.HasPrefix(id, "anthropic/") && strings.Contains(id, "haiku-5.5") {
+			return 100000, "Anthropic charges Claude Haiku 5.5 more above it"
+		}
+	case "compatible":
+		endpoint, err := url.Parse(cfg.BaseURL)
+		if err == nil && endpoint.Scheme == "https" && endpoint.Hostname() == "api.openai.com" && longContextModels[id] {
+			return 272000, "OpenAI charges long-context rates above it"
+		}
+	}
+	return 0, ""
+}
+
+// CompactHelp explains a model's compaction setting: its default and, for
+// Claude Code, how the value reaches it.
+func CompactHelp(cfg Config) string {
+	text := "Optional, for this model only. "
+	if limit, why := CompactDefault(cfg); limit > 0 {
+		text += fmt.Sprintf("Empty: %s tokens, %s. ", Thousands(limit), why)
+	} else {
+		text += "Empty: compact when the context nearly fills the model's window. "
+	}
+	if cfg.Provider == "claudecode" {
+		text += "Claude Code takes 100,000 to 1,000,000; 1loop gives it to the sessions it starts, without changing your Claude Code settings. "
+	}
+	return text + "Compaction can happen earlier, and token counts are estimates: this is not a price guarantee."
+}
+
+// Thousands writes n with comma separators: 272,000.
+func Thousands(n int) string {
+	text := strconv.Itoa(n)
+	for i := len(text) - 3; i > 0; i -= 3 {
+		text = text[:i] + "," + text[i:]
+	}
+	return text
 }
 
 func shortenedOutput(text, id string, budget int) string {
@@ -274,6 +363,9 @@ func compactHistoryTo(ctx context.Context, cfg Config, messages []Message, usage
 	target := min(ModelContextWindow(cfg)*15/100, before/2)
 	if relaxed {
 		target = before * 3 / 4
+	}
+	if limit := CompactLimit(cfg); limit > 0 {
+		target = min(target, limit*7/10)
 	}
 	users := retainedRequests(messages)
 	available := target - overhead - HistoryEstimate(users) - reminderSize

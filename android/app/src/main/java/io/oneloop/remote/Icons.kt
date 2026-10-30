@@ -31,6 +31,7 @@ object Icons {
     val close = lineIcon("close", line("M4.5 4.5l7 7M11.5 4.5l-7 7"))
     val chats = lineIcon("chats", line("M4 3h8a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 12 12H7l-3.5 2v-2A1.5 1.5 0 0 1 2 10.5v-6A1.5 1.5 0 0 1 4 3z"), line("M5 6h6M5 9h4"))
     val plus = lineIcon("plus", line("M8 3v10M3 8h10", 1.8f))
+    val branch = lineIcon("branch", line("M5 5.3v5.4M11 7.1c0 2.6-6 2-6 3.6"), line("M5 2.3a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3z"), line("M5 10.7a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3z"), line("M11 4.1a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3z"))
     val copy = lineIcon("copy", line("M7.1 5.5h4.3a1.6 1.6 0 0 1 1.6 1.6v4.3a1.6 1.6 0 0 1-1.6 1.6H7.1a1.6 1.6 0 0 1-1.6-1.6V7.1a1.6 1.6 0 0 1 1.6-1.6z"),
         line("M10.5 5.5V4.2c0-.7-.5-1.2-1.2-1.2H4.2C3.5 3 3 3.5 3 4.2v5.1c0 .7.5 1.2 1.2 1.2h1.3"))
     val folder = lineIcon("folder", line("M2.5 5c0-.8.6-1.5 1.4-1.5h2.7l1.3 1.4h4.2c.8 0 1.4.6 1.4 1.4v4.9c0 .8-.6 1.3-1.4 1.3H3.9c-.8 0-1.4-.5-1.4-1.3z"))
@@ -60,6 +61,8 @@ object Icons {
     val back = lineIcon("back", line("M9.5 4.5 6 8l3.5 3.5"))
     val lock = lineIcon("lock", line("M4.6 7.4h6.8a1.1 1.1 0 0 1 1.1 1.1v4a1.1 1.1 0 0 1-1.1 1.1H4.6a1.1 1.1 0 0 1-1.1-1.1v-4a1.1 1.1 0 0 1 1.1-1.1z"), line("M5.6 7.4V5.5a2.4 2.4 0 0 1 4.8 0v1.9"))
     val unlock = lineIcon("unlock", line("M4.6 7.4h6.8a1.1 1.1 0 0 1 1.1 1.1v4a1.1 1.1 0 0 1-1.1 1.1H4.6a1.1 1.1 0 0 1-1.1-1.1v-4a1.1 1.1 0 0 1 1.1-1.1z"), line("M5.6 7.4V5.5a2.4 2.4 0 0 1 4.6-1"))
+    val star = lineIcon("star", line("M8 2.3l1.7 3.6 3.9.5-2.9 2.7.7 3.9L8 11.1 4.6 13l.7-3.9-2.9-2.7 3.9-.5z"))
+    val trash = lineIcon("trash", line("M3 4.5h10M6.5 4.5V3.2h3v1.3M4.5 4.5l.6 8.3h5.8l.6-8.3M7 7v3.6M9 7v3.6"))
     val tasks = lineIcon("tasks", line("M2.8 4.6l1.3 1.3 2.3-2.4M8.5 4.7h4.7M2.8 10.6l1.3 1.3 2.3-2.4M8.5 10.7h4.7"))
 
     fun forTool(tool: String) = when (tool) {

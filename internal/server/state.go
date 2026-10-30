@@ -66,6 +66,9 @@ type serverSettings struct {
 	ApprovalMode      string             `json:"approvalMode"`
 	ClassicCompaction bool               `json:"classicCompaction"`
 	MemoryOff         bool               `json:"memoryOff,omitempty"`
+	AutoResume        *agent.AutoResume  `json:"autoResume,omitempty"`
+	// Worktrees of the projects, by folder: their chats belong to the project.
+	Worktrees map[string]string `json:"worktrees,omitempty"`
 }
 
 type headlessServer struct {
@@ -78,12 +81,14 @@ type headlessServer struct {
 	engine                     *browser.Engine
 	name, root, dir            string
 	projects                   []string
+	worktrees                  map[string]string // worktree folder → project (worktrees.go)
 	cfg                        agent.Config
 	connections                []agent.Connection
 	keys                       map[string]string
 	instructions, approvalMode string
 	classic                    bool
 	memoryOff                  bool                   // the agent's memory tool turned off
+	autoResume                 *agent.AutoResume      // what a rate limit does to a run, for every chat
 	panelHomes                 map[string]*serverChat // project panels before the first prompt; not persisted
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
@@ -163,6 +168,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 			return nil, err
 		}
 		server.projects = settings.Projects
+		server.worktrees = settings.Worktrees
 		server.cfg = settings.Config
 		server.connections = settings.Connections
 		if settings.Keys != nil {
@@ -171,6 +177,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		server.instructions = settings.UserInstructions
 		server.classic = settings.ClassicCompaction
 		server.memoryOff = settings.MemoryOff
+		server.autoResume = settings.AutoResume
 		if settings.ApprovalMode != "" {
 			server.approvalMode = settings.ApprovalMode
 		}
@@ -180,7 +187,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 	if server.projects == nil {
 		server.projects = []string{root}
 	}
-	if !slices.Contains(server.projects, server.cfg.Workspace) {
+	if !slices.Contains(server.projects, server.cfg.Workspace) && server.worktrees[server.cfg.Workspace] == "" {
 		server.cfg.Workspace = ""
 		if len(server.projects) > 0 {
 			server.cfg.Workspace = server.projects[0]
@@ -203,7 +210,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		if chat.Config.Workspace == "" {
 			chat.Config.Workspace = root
 		}
-		if !slices.Contains(server.projects, chat.Config.Workspace) {
+		if !slices.Contains(server.projects, chat.Config.Workspace) && server.worktrees[chat.Config.Workspace] == "" {
 			server.projects = append(server.projects, chat.Config.Workspace)
 		}
 		if chat.Todo == nil {
@@ -334,6 +341,20 @@ func (server *headlessServer) loadModels() {
 		return
 	}
 	server.choices = choices
+	normalize := func(cfg *agent.Config) {
+		for _, choice := range choices {
+			if cfg.Model == "default" && choice.ID == cfg.Model && choice.Connection.ID == cfg.ConnectionID {
+				cfg.DefaultPreset = len(choice.Connection.DefaultModels) > 0
+				if cfg.DefaultPreset && !agent.Contains(choice.Efforts, cfg.Effort) {
+					cfg.Effort = choice.DefaultEffort
+				}
+			}
+		}
+	}
+	normalize(&server.cfg)
+	for _, chat := range server.chats {
+		normalize(&chat.Config)
+	}
 	server.modelProblems = problems
 	server.loading = false
 	if server.cfg.Model == "" {
@@ -358,6 +379,7 @@ func (server *headlessServer) configFor(choice agent.ModelChoice, previous agent
 	}
 	cfg := choice.Connection.Config(workspace)
 	cfg.Model = choice.ID
+	cfg.DefaultPreset = choice.IsDefaultPreset()
 	cfg.Effort = previous.Effort
 	cfg.ServiceTier = agent.TierFor(choice, previous.ServiceTier)
 	cfg.ReasoningMode = choice.ReasoningMode
@@ -390,9 +412,17 @@ func (server *headlessServer) labelLocked(cfg agent.Config) string {
 func (server *headlessServer) settingsLocked() map[string]any {
 	models := []remoteapi.Model{}
 	for label, choice := range server.choices {
-		model := remoteapi.Model{Label: label, Name: choice.Display(), Detail: choice.Connection.Name, Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
+		model := remoteapi.Model{ID: choice.ID, Label: label, Name: choice.Display(), Detail: choice.Connection.Name, Account: choice.Connection.ID, Family: agent.FamilyOf(choice).Name, Efforts: []remoteapi.Effort{}, DefaultEffort: choice.DefaultEffort, ServiceTiers: choice.ServiceTiers, DefaultServiceTier: choice.DefaultServiceTier}
+		if connection, ok := server.connectionLocked(choice.Connection.ID); ok {
+			model.CompactAt = connection.ModelOptions[choice.ID].CompactAt
+			cfg := connection.Config("")
+			cfg.Model = choice.ID
+			model.CompactDefault, _ = agent.CompactDefault(cfg)
+			model.CompactHelp = agent.CompactHelp(cfg)
+			model.CompactSupported = connection.Provider != "chatgptweb" && !choice.IsDefaultPreset()
+		}
 		for _, effort := range choice.Efforts {
-			model.Efforts = append(model.Efforts, remoteapi.Effort{Value: effort, Label: agent.EffortLabel(effort)})
+			model.Efforts = append(model.Efforts, remoteapi.Effort{Value: effort, Label: agent.EffortLabel(effort), About: choice.DefaultAbout(effort)})
 		}
 		models = append(models, model)
 	}
@@ -408,10 +438,12 @@ func (server *headlessServer) settingsLocked() map[string]any {
 	accounts := []remoteapi.Account{}
 	for _, connection := range server.connections {
 		if connection.Enabled {
-			accounts = append(accounts, remoteapi.Account{ID: connection.ID, Name: connection.Name, Provider: connection.Provider, Kind: agent.ProviderName(connection.Provider), Problem: server.modelProblems[connection.ID]})
+			accounts = append(accounts, remoteapi.Account{ID: connection.ID, Name: connection.Name, Provider: connection.Provider, Kind: agent.ProviderName(connection.Provider), Problem: server.modelProblems[connection.ID], DefaultModels: connection.DefaultModels})
 		}
 	}
 	return map[string]any{
+		"defaultPresets":      true,
+		"autoResume":          server.autoResume,
 		"userPreferences":     server.instructions,
 		"preferencesEditable": true,
 		"memory":              !server.memoryOff,
@@ -420,7 +452,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 		"model":               server.labelLocked(server.cfg),
 		"effort":              server.cfg.Effort,
 		"tier":                server.cfg.ServiceTier,
-		"window":              agent.ModelContextWindow(server.cfg),
+		"window":              agent.ModelContextWindow(server.resolveModelLocked(server.cfg)),
 		"approvalMode":        server.approvalMode,
 		"autoMode":            agent.AutoModeOffered(server.cfg),
 		"loading":             server.loading,
@@ -449,16 +481,16 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		Model:   server.labelLocked(chat.Config),
 		Effort:  chat.Config.Effort,
 		Tier:    chat.Config.ServiceTier,
-		Window:  agent.ModelContextWindow(chat.Config),
+		Window:  agent.ModelContextWindow(server.resolveModelLocked(chat.Config)),
 		Todo:    []remoteapi.Todo{},
 		Tasks:   append([]agent.BackgroundTaskInfo{}, chat.tasks.Snapshot()...),
 	}
 	meta.Provider = chat.Config.Provider
 	for _, m := range chat.queue {
-		meta.Queue = append(meta.Queue, m.Content)
+		meta.Queue = append(meta.Queue, m.Typed())
 	}
 	for _, m := range chat.steer {
-		meta.Steer = append(meta.Steer, m.Content)
+		meta.Steer = append(meta.Steer, m.Typed())
 	}
 	for _, task := range chat.Todo.Snapshot() {
 		item := remoteapi.Todo{ID: task.ID, Text: task.Text, Status: task.Status}
@@ -484,8 +516,10 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 
 func (server *headlessServer) itemLocked(chat *serverChat, index int) remoteapi.Item {
 	state := chat.branching()
-	state.IdentifyMessages()
-	chat.applyBranch(state)
+	if chat.Items[index].ID == "" { // the whole chat: per item, a page cost its square
+		state.IdentifyMessages()
+		chat.applyBranch(state)
+	}
 	item := chat.Items[index]
 	out := remoteapi.Item{
 		ID:       item.ID,
@@ -493,6 +527,7 @@ func (server *headlessServer) itemLocked(chat *serverChat, index int) remoteapi.
 		Kind:     item.Kind,
 		Text:     item.Text,
 		Images:   len(item.Images),
+		Files:    remoteapi.FileNames(item.Files),
 		Tool:     item.Tool,
 		Args:     item.Args,
 		Diff:     item.Diff,
@@ -633,6 +668,10 @@ func (server *headlessServer) chatTasksLocked(chat *serverChat) *agent.Backgroun
 // secrets, preferences and tools.
 func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities chan struct{}) agent.Config {
 	cfg := chat.Config
+	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok {
+		cfg = agent.ResolveDefault(cfg, connection, server.choices)
+		cfg.CompactAt = connection.ModelOptions[cfg.Model].CompactAt
+	}
 	cfg.APIKey = server.keys[cfg.ConnectionID]
 	cfg.UserInstructions = server.instructions
 	if !server.memoryOff {
@@ -682,12 +721,39 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 		defer server.mu.Unlock()
 		return append([]agent.ChatItem{}, chat.Items...), ctx.Err()
 	}
+	cfg.AutoResume = server.autoResume
+	cfg.ResumeModel = func(ctx context.Context, step agent.ResumeStep) (agent.Config, error) {
+		server.mu.Lock()
+		defer server.mu.Unlock()
+		if ctx.Err() != nil {
+			return agent.Config{}, ctx.Err()
+		}
+		for _, choice := range server.choices {
+			if choice.Connection.ID == step.ConnectionID && choice.ID == step.Model && choice.Connection.Enabled {
+				return agent.ResumeConfig(server.runConfigLocked(chat, capabilities), choice, server.keys[choice.Connection.ID], step.Effort), nil
+			}
+		}
+		return agent.Config{}, fmt.Errorf("the selected model is no longer available")
+	}
+	cfg.ResumeSwitched = func(ctx context.Context, next agent.Config) error {
+		server.mu.Lock()
+		defer server.mu.Unlock()
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		identity := agent.IdentityOf(next)
+		chat.Config = agent.ResumeStoredConfig(next)
+		chat.Config.RanWith = &identity
+		server.changedLocked(chat, -1)
+		server.scheduleSaveLocked()
+		return nil
+	}
 	return cfg
 }
 
 func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message, id string) {
 	chat.History = append(chat.History, m)
-	item := agent.ChatItem{ID: id, Kind: "user", Text: m.Content, Images: m.Images}
+	item := agent.PromptItem(id, m)
 	if m.Internal { // a background task's end: a note, not the user's words
 		item = agent.ChatItem{ID: id, Kind: "note", Text: agent.WakeSummary(m)}
 	}
@@ -799,12 +865,15 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		if m.Internal {
 			index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: agent.WakeSummary(m)})
 		} else {
-			index = server.addLocked(chat, agent.ChatItem{Kind: "user", Text: m.Content, Images: m.Images})
+			index = server.addLocked(chat, agent.PromptItem("", m))
 		}
 	case "activity":
 		status := value.(agent.Activity)
 		run.mark = status.State
 		run.label = strings.TrimSpace(status.State + " " + status.Tool + " " + status.Detail)
+		if status.State == "call" {
+			run.label = agent.CallLabel(status.Tool, status.Detail) + "…"
+		}
 	case "tool":
 		outcome := value.(agent.ToolOutcome)
 		index = server.addLocked(chat, agent.ChatItem{ID: outcome.RecallID, Kind: "tool", Tool: outcome.Name, Args: outcome.Args})
@@ -818,6 +887,9 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		}
 		run.approval = nil
 		run.tool = outcome.Name
+		// The row's own words, as the desktop says them (agent.DescribeTool).
+		verb, target, _ := agent.DescribeTool(agent.ChatItem{Tool: outcome.Name, Args: outcome.Args}, true)
+		run.mark, run.label = "call", strings.TrimSpace(verb+" "+target)+"…"
 	case "tool_output": // a running command's output so far
 		outcome := value.(agent.ToolOutcome)
 		if at, ok := run.calls[outcome.ID]; ok {
@@ -876,5 +948,14 @@ func (server *headlessServer) saveSettingsLocked() error {
 		ApprovalMode:      server.approvalMode,
 		ClassicCompaction: server.classic,
 		MemoryOff:         server.memoryOff,
+		AutoResume:        server.autoResume,
+		Worktrees:         server.worktrees,
 	})
+}
+
+func (server *headlessServer) resolveModelLocked(cfg agent.Config) agent.Config {
+	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok {
+		return agent.ResolveDefault(cfg, connection, server.choices)
+	}
+	return cfg
 }

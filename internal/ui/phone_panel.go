@@ -114,9 +114,9 @@ func (server *remoteServer) panelChat(id string) *conversation {
 		server.panelHomes = map[string]*conversation{}
 	}
 	config := ui.cfg
-	config.Workspace, config.Session, config.RanWith = workspace, "", nil
+	config.Workspace, config.MachineID, config.Session, config.RanWith = workspace, "", "", nil // the phone works on this computer
 	chat := &conversation{ID: id, Config: config, panel: &panelState{active: -1}}
-	chat.panel.tabs = []panelTab{ui.panel.changesTab(workspace)}
+	chat.panel.tabs = []panelTab{ui.panel.changesTab(workspace, "")}
 	server.panelHomes[id] = chat
 	return chat
 }
@@ -180,12 +180,9 @@ func (server *remoteServer) panelTab(writer http.ResponseWriter, req *http.Reque
 	switch {
 	case tab.terminal != nil:
 		t := tab.terminal
+		var text string
+		server.onUI(func() { text = t.widget.Text() })
 		t.mu.Lock()
-		raw := t.output
-		if len(raw) > 48<<10 {
-			raw = raw[len(raw)-48<<10:]
-		}
-		text := remoteapi.PlainTerminal(raw)
 		exited := t.exit != nil
 		t.mu.Unlock()
 		core.WriteJSON(writer, http.StatusOK, map[string]any{"output": text, "cwd": t.dir, "exited": exited})

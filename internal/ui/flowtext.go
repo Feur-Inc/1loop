@@ -50,6 +50,8 @@ type flowText struct {
 	tail   string  // what follows the block in copied text
 
 	width, height float32
+	paintedWidth  float32 // differs from width after measuring hidden text
+	measuring     bool    // the transcript needs height without new drawing objects
 	natural       float32 // the width of the widest line as laid out
 	widest        float32 // the widest thing that cannot be broken
 	objects       []fyne.CanvasObject
@@ -295,7 +297,9 @@ func (flow *flowText) lines(atoms []atom, width float32) []flowLine {
 // flow lays the block out for a width and rebuilds what it draws.
 func (flow *flowText) flow(width float32) {
 	flow.width = width
-	flow.objects, flow.pieces, flow.links = flow.objects[:0], flow.pieces[:0], flow.links[:0]
+	if !flow.measuring {
+		flow.objects, flow.pieces, flow.links = flow.objects[:0], flow.pieces[:0], flow.links[:0]
+	}
 	if flow.cut == nil { // measuring every word is the costly part: once is enough
 		flow.cut = flow.atoms()
 	}
@@ -317,7 +321,7 @@ func (flow *flowText) flow(width float32) {
 	room := fyne.Max(width-flow.hang, 40)
 	lines := flow.lines(atoms, room)
 	var chips, marks, texts, pictures []fyne.CanvasObject
-	if flow.marker != "" {
+	if flow.marker != "" && !flow.measuring {
 		mark := canvas.NewText(flow.marker, colMuted)
 		mark.TextSize = flow.size
 		w, h, _ := measureText(flow.marker, flow.size, fyne.TextStyle{})
@@ -343,6 +347,13 @@ func (flow *flowText) flow(width float32) {
 			}
 		}
 		flow.natural = fyne.Max(flow.natural, flow.hang+lineWidth)
+		if flow.measuring {
+			y += height
+			if n < len(lines)-1 {
+				y += leading
+			}
+			continue
+		}
 		x := flow.hang
 		if flow.center {
 			x = fyne.Max(0, (width-lineWidth)/2)
@@ -433,7 +444,10 @@ func (flow *flowText) flow(width float32) {
 		}
 	}
 	flow.height = y
-	flow.objects = append(append(append(append(flow.objects, chips...), texts...), marks...), pictures...)
+	if !flow.measuring {
+		flow.objects = append(append(append(append(flow.objects, chips...), texts...), marks...), pictures...)
+		flow.paintedWidth = width
+	}
 	if flow.waiting {
 		whenTypeset(func() {
 			if flow.waiting {
@@ -514,12 +528,15 @@ func (flow *flowText) extent() (natural, widest float32) {
 }
 
 func (renderer *flowRenderer) Layout(size fyne.Size) {
-	if size.Width != renderer.flowText.width && size.Width > 0 {
+	if size.Width > 0 && (size.Width != renderer.flowText.width || (!renderer.flowText.measuring && size.Width != renderer.flowText.paintedWidth)) {
 		renderer.flowText.flow(size.Width)
 	}
 }
 
 func (renderer *flowRenderer) Refresh() {
+	if !renderer.flowText.measuring && renderer.flowText.width != renderer.flowText.paintedWidth {
+		renderer.flowText.flow(renderer.flowText.width)
+	}
 	for _, object := range renderer.flowText.objects {
 		object.Refresh()
 	}

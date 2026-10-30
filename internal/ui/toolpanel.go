@@ -41,6 +41,8 @@ type toolPanel struct {
 	target float32       // where the slide is going
 	snap   bool          // the conversation is too long to follow the slide frame by frame
 	anim   *fyne.Animation
+
+	resizePending bool
 }
 
 type panelTab struct {
@@ -150,6 +152,9 @@ func (layoutSpec splitLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 }
 
 func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	ui := layoutSpec.toolPanel.ui
+	followTail := ui.followTail
+	previousWidth := objects[0].Size().Width
 	full := layoutSpec.width(size.Width)
 	width := full * layoutSpec.toolPanel.shown
 	conversationWidth := size.Width - width
@@ -163,6 +168,10 @@ func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size
 		objects[0].Resize(fyne.NewSize(size.Width-full*layoutSpec.toolPanel.target, size.Height))
 	} else {
 		objects[0].Resize(fyne.NewSize(size.Width-width, size.Height))
+	}
+	if followTail && objects[0].Size().Width != previousWidth {
+		ui.scroll.ScrollToBottom()
+		ui.followTail = true
 	}
 	// Folded, the panel waits just past the right edge of the window.
 	objects[1].Move(fyne.NewPos(size.Width-width, 0))
@@ -215,10 +224,22 @@ func (handle *panelResizeHandle) Dragged(e *fyne.DragEvent) {
 	total := panel.ui.split.Size().Width
 	panel.width = panelWidthWithin((splitLayout{panel}).width(total)-e.Dragged.DX, total)
 	panel.ui.panelWidth = panel.width // what a chat without a width of its own takes
-	relayout(panel.ui.split)
+	// GLFW can deliver many pointer movements before the next frame. Only
+	// the latest width needs to reflow the conversation.
+	panel.resizePending = true
 }
 
-func (handle *panelResizeHandle) DragEnd() { handle.panel.ui.save() }
+func (panel *toolPanel) flushResize() {
+	if panel.resizePending {
+		panel.resizePending = false
+		relayout(panel.ui.split)
+	}
+}
+
+func (handle *panelResizeHandle) DragEnd() {
+	handle.panel.flushResize()
+	handle.panel.ui.save()
+}
 
 func (panel *toolPanel) slide(to float32) {
 	if panel.anim != nil {

@@ -138,6 +138,7 @@ func (hook *frameHook) turn() {
 		}
 	}
 	ui.advanceChatLoad()
+	ui.panel.flushResize()
 }
 
 // heal redraws now and refreshes everything two turns later.

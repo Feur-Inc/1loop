@@ -315,8 +315,8 @@ private fun TasksView(tasks: List<Task>, background: List<BackgroundTask> = empt
 
 // A finished task: the closed amber ring with its check; one to do: an empty ring.
 @Composable
-fun TaskMark(done: Boolean, size: Dp = 20.dp) {
-    Canvas(Modifier.size(size)) {
+fun TaskMark(done: Boolean, diameter: Dp = 20.dp) {
+    Canvas(Modifier.size(diameter)) {
         val r = size.minDimension / 2 - 1.5.dp.toPx()
         if (done) {
             drawCircle(Palette.amber, r, style = Stroke(2.dp.toPx()))

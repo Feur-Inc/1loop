@@ -24,6 +24,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.geometry.Offset
 import androidx.core.content.edit
+import androidx.lifecycle.findViewTreeLifecycleOwner
+import androidx.lifecycle.setViewTreeLifecycleOwner
+import androidx.savedstate.findViewTreeSavedStateRegistryOwner
+import androidx.savedstate.setViewTreeSavedStateRegistryOwner
 import kotlin.math.abs
 import kotlin.math.hypot
 import kotlin.math.roundToInt
@@ -63,7 +67,14 @@ class BadgeWindow(
 
     // The collapsed window: 8 dp of padding around a 52 dp badge, its ring in the middle.
     private val half = px(34f)
-    private val frame = Frame(context).apply { addView(compose { badge(ui) }) }
+    private val frame = Frame(context).apply {
+        val content = compose { badge(ui) }
+        addView(content)
+        // The window's root: Compose looks for its owners there, and finds those of the
+        // content (the service) only on the content itself.
+        setViewTreeLifecycleOwner(content.findViewTreeLifecycleOwner())
+        setViewTreeSavedStateRegistryOwner(content.findViewTreeSavedStateRegistryOwner())
+    }
     private val params = WindowManager.LayoutParams(
         WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
         WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,

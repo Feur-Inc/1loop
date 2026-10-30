@@ -10,7 +10,7 @@ func phoneToolDefinitions() []map[string]any {
 		}}
 	}
 	return []map[string]any{
-		definition("phone_use", "Control the local Android phone through its authorized ADB connection. Read state and a fresh screenshot before interacting. Screenshot images are delivered to your vision input. Coordinates are display pixels; use the dimensions reported by state and account for screenshot resizing. Typing pastes the text and replaces the phone clipboard. Only perform the user's requested actions. Use empty strings and zeros for unused fields.", map[string]any{
+		definition("phone_use", "Control the local Android phone through its authorized ADB connection. Read state and a fresh screenshot before interacting. Screenshot images are delivered to your vision input. Coordinates are display pixels; use the dimensions reported by state and account for screenshot resizing. Typing pastes the text and replaces the phone clipboard. Only perform the user's requested actions. Use empty strings and zeros for unused fields. 1loop may show its round status badge near the right edge of the screen while you work: it is translucent and lets taps through, so ignore it; if it hides something you need to see, hide it completely with adb_shell `appops set io.oneloop.remote SYSTEM_ALERT_WINDOW ignore`, and show it again with `appops set io.oneloop.remote SYSTEM_ALERT_WINDOW allow` when you are done.", map[string]any{
 			"action": map[string]any{"type": "string", "enum": []string{"state", "screenshot", "tap", "swipe", "type", "key"}},
 			"x":      integer, "y": integer, "end_x": integer, "end_y": integer,
 			"duration_ms": integer, "text": text,

@@ -246,7 +246,7 @@ func (mark *loopMark) tick() {
 // workGlyphs are the states with a centre icon, drawn from the page's paths.
 var workGlyphs = map[string]bool{
 	"think": true, "write": true, "wait": true, "call": true, "read": true, "list": true,
-	"edit": true, "bash": true, "approval": true, "compact": true, "done": true, "stopped": true,
+	"edit": true, "bash": true, "approval": true, "compact": true, "phone": true, "done": true, "stopped": true,
 }
 
 const glyphStyle = `stroke="#F4F4F4" stroke-linecap="round" stroke-linejoin="round" fill="none"`
@@ -274,6 +274,8 @@ func glyphMarkup(state string) string {
 		return `<path stroke-width="8" d="M60 39.7 L75.95 46.23 V58.55 C75.95 68.41 69.57 75.37 60 79.58 C50.43 75.37 44.05 68.41 44.05 58.55 V46.23 Z"/>`
 	case "compact":
 		return `<path stroke-width="8" d="M60 37 V52 M52.5 45 L60 52 L67.5 45 M60 83 V68 M52.5 75 L60 68 L67.5 75 M42 60 H78"/>`
+	case "phone":
+		return `<path stroke-width="7" d="M54 38 H66 C69.31 38 72 40.69 72 44 V76 C72 79.31 69.31 82 66 82 H54 C50.69 82 48 79.31 48 76 V44 C48 40.69 50.69 38 54 38 Z M56.5 72 H63.5"/>`
 	case "done":
 		return `<path stroke="#FFB000" stroke-width="9" d="M45 61 L55 71 L76 50"/>`
 	case "stopped":

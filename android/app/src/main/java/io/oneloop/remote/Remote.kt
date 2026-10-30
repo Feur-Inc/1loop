@@ -140,6 +140,7 @@ data class Meta(
     val todo: List<Task>, val tier: String = "", val contextStatus: String = "",
     val background: List<BackgroundTask> = emptyList(),
     val provider: String = "", // the chat's account type
+    val tool: String = "", // executing now, whatever the label says (an approval replaces it)
 ) {
     companion object {
         fun from(o: JSONObject) = Meta(
@@ -158,6 +159,7 @@ data class Meta(
                 (0 until (array?.length() ?: 0)).map { i -> BackgroundTask.from(array!!.getJSONObject(i)) }
             },
             o.optString("provider"),
+            o.optString("tool"),
         )
     }
 }
@@ -197,6 +199,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     private val notifier = Notifier(context)
     val drafts = PromptDrafts(context)
     val updates = Updates(context)
+
+    init { AgentStatus.attach(this) } // Stop from the badge or the Live Update
 
     /** The release page, checked at most every six hours; a notification for a new version. */
     suspend fun checkUpdates() = updates.checkInBackground(notifier)
@@ -641,6 +645,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         memoryEnabled = null
         userPreferences = ""
         running.clear()
+        AgentStatus.clear(context)
         defaultModel = ""
         defaultEffort = ""
         defaultTier = ""
@@ -722,6 +727,14 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         events = null
         connected = false
         prefs.edit { remove("last") }
+        AgentStatus.clear(context) // its runs no longer report here
+    }
+
+    /** A chat to open from the badge or the Live Update: now, or once connected (refresh). */
+    private var pendingChat: String? = null
+
+    fun openFromStatus(chat: String) {
+        if (server != null && connected) open(chat) else pendingChat = chat
     }
 
     private suspend fun refresh(target: Server, generation: Long) {
@@ -736,6 +749,9 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             projectActions = state.optBoolean("projectActions")
             if (selectedProject !in projects && selectedProject !in worktrees) selectedProject = workspace
             state.optJSONObject("settings")?.let { applySettings(it) }
+            // Open or Talk to the agent started this activity: its chat, now that it is known.
+            pendingChat?.let { chat -> if (chats.any { it.id == chat }) current = chat }
+            pendingChat = null
             if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull { it.workspace == selectedProject }?.id
             chats.firstOrNull { it.id == current }?.workspace?.let { selectedProject = it }
             current?.let { load(it, target, generation) }
@@ -871,6 +887,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     private fun applyMeta(m: Meta) {
         val wasRunning = running.put(m.chat, m.running)
+        AgentStatus.update(context, m)
         // On this phone, LocalRuntimeService notifies: it runs even without the app.
         val notify = !foreground && server?.localPhone != true
         if (notify && wasRunning == true && !m.running) notifier.show(m.chat, m.title, "Done.")
@@ -1418,10 +1435,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         attachments.clear()
     }
 
-    fun stop() {
+    /** Stops the chat on screen, or another one (from the badge or the Live Update). */
+    fun stop(chat: String? = current) {
         val generation = connectionGeneration
         val target = server ?: return
-        val id = current ?: return
+        val id = chat ?: return
         scope.launch { runCatching { onConnection(target, generation) { it.post("/api/stop", JSONObject().put("chat", id)) } } }
     }
 

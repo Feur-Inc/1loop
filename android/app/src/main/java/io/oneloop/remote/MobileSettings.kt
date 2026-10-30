@@ -25,6 +25,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.platform.LocalContext
+import androidx.core.net.toUri
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
@@ -65,6 +66,7 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                 Text("The Debian the local agent works in: storage, packages, a terminal and a reset.", style = Type.small)
                 Pill("Manage Linux", icon = Icons.terminal) { app.linuxOpen = true }
             }
+            RunStatusSection()
             Text("Extensions", style = Type.headline)
             Text("Skills and plugins from GitHub, and the MCP servers the agent uses.", style = Type.small)
             Pill("Skills, plugins and MCP servers", enabled = app.connected) { app.extensionsOpen = true }
@@ -112,6 +114,65 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
             UpdatesSection(app)
             BrowserDataSection(app)
             HooksSection(app)
+        }
+    }
+}
+
+// While a model runs and 1loop is not on screen: the floating badge (it needs
+// "Display over other apps"), the Live Update in the status bar, or nothing.
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun RunStatusSection() {
+    val context = LocalContext.current
+    val lifecycle = LocalLifecycleOwner.current.lifecycle
+    var style by remember { mutableStateOf(AgentStatus.style(context)) }
+    var overlay by remember { mutableStateOf(AgentStatus.canDrawOverlays(context)) }
+    DisposableEffect(lifecycle) {
+        // Back from the "Display over other apps" page.
+        val observer = LifecycleEventObserver { _, event -> if (event == Lifecycle.Event.ON_RESUME) overlay = AgentStatus.canDrawOverlays(context) }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
+    Text("While a model runs", style = Type.headline)
+    Text("Shows what the agent does over your other apps, with a button to stop it. It stays small and never covers the screen.", style = Type.small)
+    // Wraps: the three choices are wider than a phone.
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (option in StatusStyle.entries) {
+            Pill(option.title, primary = style == option) { style = option; AgentStatus.setStyle(context, option) }
+        }
+    }
+    // Always there: to allow it, or to take it back.
+    Text(
+        if (overlay) "Display over other apps: allowed." else "Display over other apps: not allowed.",
+        style = Type.body,
+    )
+    if (style == StatusStyle.Badge && !overlay) {
+        Text("The badge needs it. Until you allow it, the status shows in the status bar instead.", style = Type.small)
+    }
+    Pill(if (overlay) "Display over other apps settings" else "Allow display over other apps", primary = style == StatusStyle.Badge && !overlay) {
+        runCatching {
+            context.startActivity(Intent(Settings.ACTION_MANAGE_OVERLAY_PERMISSION, "package:${context.packageName}".toUri()))
+        }
+    }
+    // The Live Update (status bar chip, Samsung's Now Bar): Android 16 promotes it, but the
+    // user decides per app, and Samsung shows it in the Now Bar only once "Live notifications"
+    // is on for 1loop, in its notification settings, where this page leads on One UI.
+    if (Build.VERSION.SDK_INT >= 36 && style != StatusStyle.Off) {
+        Text(
+            if (Build.MANUFACTURER.equals("samsung", ignoreCase = true)) {
+                // One UI lists only its own and partner apps there: the rest needs this option.
+                "Live Update in the status bar and the Now Bar: on Samsung, turn on Developer options → Live notifications for all apps, and keep 1loop's notifications allowed on the lock screen."
+            } else "Live Update in the status bar: in 1loop's notification settings, allow live notifications.",
+            style = Type.small,
+        )
+        Pill("Live notifications settings") {
+            runCatching {
+                context.startActivity(
+                    Intent(Settings.ACTION_APP_NOTIFICATION_PROMOTION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName),
+                )
+            }.recoverCatching {
+                context.startActivity(Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName))
+            }
         }
     }
 }

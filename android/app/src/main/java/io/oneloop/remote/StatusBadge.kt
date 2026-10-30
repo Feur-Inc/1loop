@@ -3,12 +3,16 @@ package io.oneloop.remote
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
+import androidx.compose.animation.core.Animatable
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
@@ -20,6 +24,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
@@ -29,10 +34,18 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.graphics.Path
+import androidx.compose.ui.graphics.StrokeCap
+import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.graphics.drawscope.scale
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.lerp
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
@@ -46,12 +59,13 @@ import kotlinx.coroutines.delay
  * The floating badge over other apps while a model runs (AgentStatusService):
  * 1loop's working ring; tapped, a pill with Stop, Talk to the agent (opens
  * the chat) and the mini preview of what it does and its tasks. Small by
- * design: it never covers the screen, and it moves up and down by dragging.
+ * design: it never covers the screen. It moves anywhere by dragging, settles
+ * on a side when let go near it (BadgeWindow), and goes away on the ✕ ring.
  * A question from the agent opens it on the question, answered there.
  */
 @Composable
 fun StatusBadge(
-    onStop: (String) -> Unit, onTalk: (String) -> Unit, onDrag: (Float) -> Unit,
+    ui: BadgeUi, onStop: (String) -> Unit, onTalk: (String) -> Unit,
     onAnswer: (Questions, Map<String, String>) -> Unit, onTyping: (Boolean) -> Unit,
     onDismiss: (String) -> Unit,
 ) {
@@ -60,10 +74,15 @@ fun StatusBadge(
     var open by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf(false) }
     LaunchedEffect(run.question?.id) { if (run.question != null) open = true }
-    val drag = Modifier.pointerInput(Unit) { detectVerticalDragGestures { change, dy -> change.consume(); onDrag(dy) } }
+    // Moving it folds the pill: the badge alone follows the finger.
+    LaunchedEffect(ui.dragging) { if (ui.dragging) open = false }
+    SideEffect { ui.expanded = open && !run.phoneUse }
+    // Where a drag may start (BadgeWindow reads the touches): the badge, or the pill's row.
+    val drag = Modifier.onGloballyPositioned { ui.handle = it.boundsInRoot() }
     // No size animations: the overlay window wraps its content, so each frame
     // of one would resize the window through the window manager.
-    Column(Modifier.padding(8.dp), horizontalAlignment = Alignment.End) {
+    // On the left half, it opens toward the right.
+    Column(Modifier.padding(8.dp), horizontalAlignment = if (ui.onRight) Alignment.End else Alignment.Start) {
         if (!open || run.phoneUse) {
             // Collapsed, and always during phone use (click-through then).
             Box(
@@ -200,3 +219,33 @@ private fun Preview(run: RunStatus) {
         }
     }
 }
+
+/**
+ * Where the badge goes away, at the bottom of the screen while it moves: the
+ * ring closed on its ✕ (the work ring's stopped state), red once the badge
+ * is on it.
+ */
+@Composable
+fun RemoveTarget(ui: BadgeUi) {
+    val shown = remember { Animatable(0f) }
+    LaunchedEffect(ui.targetShown) { shown.animateTo(if (ui.targetShown) 1f else 0f, tween(180, easing = CssEase)) }
+    val near by animateFloatAsState(if (ui.nearTarget) 1f else 0f, tween(150, easing = CssEase), label = "near")
+    Box(
+        Modifier.fillMaxSize().graphicsLayer {
+            alpha = shown.value
+            translationY = (1 - shown.value) * 24.dp.toPx()
+        },
+        contentAlignment = Alignment.Center,
+    ) {
+        val color = lerp(Palette.muted, Palette.danger, near)
+        Canvas(Modifier.size(64.dp).graphicsLayer { scaleX = 1 + 0.2f * near; scaleY = 1 + 0.2f * near }.semantics { contentDescription = "Remove the badge" }) {
+            scale(size.width / 120f, size.width / 120f, pivot = Offset.Zero) {
+                drawCircle(Palette.surface, 58f, Offset(60f, 60f)) // over any app
+                drawCircle(color, 46f, Offset(60f, 60f), style = Stroke(12f))
+                drawPath(removeCross, color, style = Stroke(9f, cap = StrokeCap.Round))
+            }
+        }
+    }
+}
+
+private val removeCross = Path().apply { moveTo(47f, 47f); lineTo(73f, 73f); moveTo(73f, 47f); lineTo(47f, 73f) }

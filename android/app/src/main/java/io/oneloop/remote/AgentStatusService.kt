@@ -8,12 +8,11 @@ import android.app.Service
 import android.content.Context
 import android.content.Intent
 import android.content.pm.ServiceInfo
-import android.graphics.PixelFormat
+import android.content.res.Configuration
 import android.os.Build
 import android.os.Bundle
 import android.os.IBinder
-import android.view.Gravity
-import android.view.WindowManager
+import androidx.compose.runtime.Composable
 import androidx.compose.ui.platform.ComposeView
 import androidx.compose.ui.platform.ViewCompositionStrategy
 import androidx.lifecycle.Lifecycle
@@ -44,8 +43,7 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
     override val savedStateRegistry: SavedStateRegistry get() = savedState.savedStateRegistry
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main)
-    private var badge: ComposeView? = null
-    private var badgeParams: WindowManager.LayoutParams? = null
+    private var badge: BadgeWindow? = null
 
     override fun onCreate() {
         super.onCreate()
@@ -140,80 +138,69 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
 
     // -- the floating badge ---------------------------------------------------
 
+    // Put away on the ✕ ring while it ran: gone for this chat until 1loop is back on
+    // screen, or until the agent asks a new question there.
+    private var hiddenChat: String? = null
+    private var hiddenQuestion: String? = null
+
     private fun showBadge(status: RunStatus, shown: Boolean) {
-        val wanted = !shown && AgentStatus.style(this) == StatusStyle.Badge && AgentStatus.canDrawOverlays(this)
+        if (shown) hiddenChat = null
+        val question = status.question?.id
+        if (status.chat == hiddenChat && question != null && question != hiddenQuestion) hiddenChat = null
+        val wanted = !shown && status.chat != hiddenChat && AgentStatus.style(this) == StatusStyle.Badge && AgentStatus.canDrawOverlays(this)
         if (!wanted) return removeBadge()
-        val manager = getSystemService(WindowManager::class.java)
-        val params = badgeParams ?: WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT, WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY,
-            // Hardware accelerated: a window added from a service is drawn in software
-            // otherwise, and the working ring animates every frame.
-            // Not touch modal: touches beside the badge reach the app below, even while it
-            // takes the keyboard (typing an answer).
-            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE or WindowManager.LayoutParams.FLAG_LAYOUT_NO_LIMITS or
-                WindowManager.LayoutParams.FLAG_HARDWARE_ACCELERATED or WindowManager.LayoutParams.FLAG_NOT_TOUCH_MODAL,
-            PixelFormat.TRANSLUCENT,
-        ).apply {
-            gravity = Gravity.TOP or Gravity.END
-            y = (resources.displayMetrics.heightPixels * 0.28f).toInt()
-        }.also { badgeParams = it }
-        // Phone use: translucent and click-through (at most 0.8 opaque, or Android
-        // blocks the touches it lets through), so the agent sees and taps behind it.
-        val passThrough = WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
-        params.flags = if (status.phoneUse) params.flags or passThrough else params.flags and passThrough.inv()
-        params.alpha = if (status.phoneUse) 0.4f else 1f
-        params.flags = focusable(params.flags)
-        val view = badge
-        if (view == null) {
-            badge = ComposeView(this).apply {
-                setViewTreeLifecycleOwner(this@AgentStatusService)
-                setViewTreeSavedStateRegistryOwner(this@AgentStatusService)
-                setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
-                setContent {
-                    OneLoopTheme {
-                        StatusBadge(
-                            onStop = AgentStatus::stop,
-                            onAnswer = AgentStatus::answer,
-                            onTyping = ::setTyping,
-                            onTalk = { chat -> startActivity(openIntent(this@AgentStatusService, chat).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
-                            onDrag = { dy -> moveBadge(dy) },
-                            onDismiss = { chat -> AgentStatus.dismiss(this@AgentStatusService, chat) },
-                        )
-                    }
-                }
-            }
-            manager.addView(badge, params)
-        } else manager.updateViewLayout(view, params)
+        val window = badge ?: BadgeWindow(this, ::composeView, onRemove = ::removedByUser) { ui ->
+            StatusBadge(
+                ui = ui,
+                onStop = AgentStatus::stop,
+                onAnswer = AgentStatus::answer,
+                onTyping = ::setTyping,
+                onTalk = { chat -> startActivity(openIntent(this@AgentStatusService, chat).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
+                onDismiss = { chat -> AgentStatus.dismiss(this@AgentStatusService, chat) },
+            )
+        }.also { badge = it }
+        // Phone use: translucent and click-through, so the agent sees and taps behind it.
+        passThrough = status.phoneUse
+        window.update(passThrough, typing)
+    }
+
+    private fun composeView(content: @Composable () -> Unit) = ComposeView(this).apply {
+        setViewTreeLifecycleOwner(this@AgentStatusService)
+        setViewTreeSavedStateRegistryOwner(this@AgentStatusService)
+        setViewCompositionStrategy(ViewCompositionStrategy.DisposeOnDetachedFromWindow)
+        setContent { OneLoopTheme { content() } }
+    }
+
+    // Let go on the ✕ ring: a finished run is put away, a running one hidden.
+    private fun removedByUser() {
+        val status = AgentStatus.status.value
+        removeBadge()
+        if (status == null) return
+        if (status.finished) AgentStatus.dismiss(this, status.chat)
+        else {
+            hiddenChat = status.chat
+            hiddenQuestion = status.question?.id
+        }
     }
 
     // The badge takes the keyboard only while an answer is typed: otherwise it would
     // take it from the app the user is in.
     private var typing = false
-
-    private fun focusable(flags: Int): Int {
-        val notFocusable = WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
-        return if (typing) flags and notFocusable.inv() else flags or notFocusable
-    }
+    private var passThrough = false
 
     private fun setTyping(value: Boolean) {
         if (typing == value) return
         typing = value
-        val view = badge ?: return
-        val params = badgeParams ?: return
-        params.flags = focusable(params.flags)
-        getSystemService(WindowManager::class.java).updateViewLayout(view, params)
+        badge?.update(passThrough, typing)
     }
 
-    private fun moveBadge(dy: Float) {
-        val view = badge ?: return
-        val params = badgeParams ?: return
-        params.y = (params.y + dy.toInt()).coerceIn(0, resources.displayMetrics.heightPixels - view.height)
-        getSystemService(WindowManager::class.java).updateViewLayout(view, params)
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        badge?.place()
     }
 
     private fun removeBadge() {
-        badge?.let { runCatching { getSystemService(WindowManager::class.java).removeView(it) } }
+        badge?.remove()
         badge = null
     }
 

@@ -310,6 +310,11 @@ func commandScript(dir, command string) string {
 // Start runs a command in dir; output receives stdout and stderr. Cancelling
 // ctx stops the command and what it started. wait returns its exit code.
 func (machine *Machine) Start(ctx context.Context, dir, command string, output io.Writer) (func() (int, error), error) {
+	return machine.StartStreams(ctx, dir, command, output, output)
+}
+
+// StartStreams preserves stdout and stderr separately for structured tool results.
+func (machine *Machine) StartStreams(ctx context.Context, dir, command string, stdout, stderr io.Writer) (func() (int, error), error) {
 	session, err := machine.session(ctx)
 	if err != nil {
 		return nil, err
@@ -319,7 +324,7 @@ func (machine *Machine) Start(ctx context.Context, dir, command string, output i
 		session.Close()
 		return nil, err
 	}
-	session.Stdout, session.Stderr = output, output
+	session.Stdout, session.Stderr = stdout, stderr
 	if err := session.Start("sh -c " + quote(commandScript(dir, command))); err != nil {
 		session.Close()
 		return nil, err

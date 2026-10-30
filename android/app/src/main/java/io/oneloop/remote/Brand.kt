@@ -168,6 +168,7 @@ private val glyphs = mapOf(
     "bash" to glyph("M44 48 L55 59 L44 70 M60 72 H76" to 8f),
     "approval" to glyph("M60 39.7 L75.95 46.23 V58.55 C75.95 68.41 69.57 75.37 60 79.58 C50.43 75.37 44.05 68.41 44.05 58.55 V46.23 Z" to 8f),
     "compact" to glyph("M60 37 V52 M52.5 45 L60 52 L67.5 45 M60 83 V68 M52.5 75 L60 68 L67.5 75 M42 60 H78" to 8f),
+    "phone" to glyph("M54 38 H66 C69.31 38 72 40.69 72 44 V76 C72 79.31 69.31 82 66 82 H54 C50.69 82 48 79.31 48 76 V44 C48 40.69 50.69 38 54 38 Z M56.5 72 H63.5" to 7f),
     "done" to glyph("M45 61 L55 71 L76 50" to 9f, color = Palette.amber),
     "stopped" to glyph("M47 47 L73 73 M73 47 L47 73" to 9f),
 )

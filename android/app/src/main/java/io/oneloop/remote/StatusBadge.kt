@@ -16,7 +16,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
@@ -165,12 +164,12 @@ private fun QuestionCard(request: Questions, onAnswer: (Questions, Map<String, S
     }
 }
 
-/** Working: 1loop's ring; driving the phone: a phone; finished: the ring closed on its check. */
+/** Working: 1loop's ring; driving the phone: the ring around a phone; finished: the ring closed on its check. */
 @Composable
 private fun StatusMark(run: RunStatus, size: Dp) {
     when {
         run.finished -> WorkRing("done", size) // the ring closes on its check, as in the app
-        run.phoneUse -> Icon(Icons.phone, null, tint = Palette.amber, modifier = Modifier.size(size * 0.8f))
+        run.phoneUse -> WorkRing("phone", size)
         else -> WorkRing(run.mark, size)
     }
 }
@@ -188,13 +187,12 @@ private fun Preview(run: RunStatus) {
         if (run.todo.isNotEmpty()) {
             Text("Tasks ${run.done}/${run.todo.size}", style = Type.caption.copy(color = Palette.muted))
             for (task in run.todo.take(6)) {
-                val (mark, color) = when (task.status) {
-                    "completed" -> "✓" to Palette.added
-                    "in_progress" -> "•" to Palette.amber
-                    else -> "○" to Palette.faint
-                }
-                Row(verticalAlignment = Alignment.Top) {
-                    Text(mark, style = Type.small.copy(color = color), modifier = Modifier.width(16.dp))
+                // The marks of the tasks panel: the closed ring on its check, the working ring, an empty ring.
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Box(Modifier.size(16.dp), contentAlignment = Alignment.Center) {
+                        if (task.status == "in_progress") WorkRing("think", 16.dp) else TaskMark(task.status == "completed", 14.dp)
+                    }
+                    Spacer(Modifier.width(6.dp))
                     Text(task.text, style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }

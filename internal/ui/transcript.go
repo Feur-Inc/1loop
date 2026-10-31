@@ -441,6 +441,12 @@ func (layoutSpec *transcriptLayout) changed(part fyne.CanvasObject) {
 // measure sizes an item at the column's width: wrapped text only knows its
 // height once it has its width.
 func (layoutSpec *transcriptLayout) measure(object fyne.CanvasObject, width float32) fyne.Size {
+	// Hidden paragraphs still need their exact height, but not new drawing
+	// objects, selection geometry or link hitboxes for every transient width.
+	if !object.Visible() {
+		measureTranscriptText(object, true)
+		defer measureTranscriptText(object, false)
+	}
 	row, fixed := object.(*toolRow)
 	// Plain calls have a fixed height. Resize only when they enter the
 	// viewport, otherwise BaseWidget.Resize creates every hidden renderer.
@@ -450,6 +456,17 @@ func (layoutSpec *transcriptLayout) measure(object fyne.CanvasObject, width floa
 	min := object.MinSize()
 	layoutSpec.sizes[object] = min
 	return min
+}
+
+func measureTranscriptText(object fyne.CanvasObject, measuring bool) {
+	switch object := object.(type) {
+	case *flowText:
+		object.measuring = measuring
+	case *fyne.Container:
+		for _, child := range object.Objects {
+			measureTranscriptText(child, measuring)
+		}
+	}
 }
 
 // view is the band of the column worth keeping alive, in the transcript's

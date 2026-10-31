@@ -412,3 +412,28 @@ signed-out CLI, but an expired or revoked credential may still be rejected when
 a turn starts. Sign in again if necessary and keep Claude Code up to date.
 Graceful shutdown reduces forced-interruption risks; it cannot repair an upstream
 OAuth renewal failure. See [Claude Code authentication](https://code.claude.com/docs/en/authentication).
+
+## Command diagnostics
+
+Each `shell` call starts a fresh shell in the project. An optional `workdir`
+selects an existing subdirectory or a directory already granted by the user;
+`cd` in one call does not change later calls. The project sandbox boundary
+stays the project, including on Android. Background commands use the same
+working-directory selection and keep their existing `background_task` controls.
+
+Foreground results include `cwd`, `stdout`, `stderr`, `exit_code` and `status`
+(`completed`, `failed`, `execution_error`, `timed_out`, or `cancelled`). A
+nonzero exit remains an error; shell commands are not rewritten to hide errors.
+The displayed result can be shortened. `command_output` reads retained stdout
+or stderr with byte offsets and `next_offset`. Retention is in memory, scoped
+to the conversation runtime: the latest eight foreground commands, up to 2 MiB
+per stream. `total_bytes`, `retained_bytes` and `truncated` identify missing
+data; output beyond that bound cannot be recovered. The shell summary still
+includes the end of oversized output. Logs are not published or saved to disk.
+
+`search_files` uses ripgrep (`rg`, install it on the execution machine).
+It respects ignore files, skips binary files and files larger than 1 MiB,
+and limits matches to 100 lines per file. Its `no_matches` result is distinct
+from `failed` (for example an invalid expression or a missing executable).
+This distinction applies only to this search tool, not to arbitrary exit 1
+results from `shell`.

@@ -63,6 +63,7 @@ type BackgroundTasks struct {
 	next     int
 	OnFinish func(info BackgroundTaskInfo, wake Message)
 	OnChange func()
+	logs     []savedCommandOutput
 	listed   bool // in everyTasks while a task runs
 }
 
@@ -310,14 +311,14 @@ func shellTimeout(milliseconds *int) time.Duration {
 }
 
 // startBackground prepares and starts an approved command as a task.
-func startBackground(ctx context.Context, tasks *BackgroundTasks, root, command string, sandboxed bool) (string, error) {
+func startBackground(ctx context.Context, tasks *BackgroundTasks, root, dir, command string, sandboxed bool) (string, error) {
 	if tasks == nil {
 		return "", fmt.Errorf("Background tasks are not attached to this conversation")
 	}
 	// The task outlives the turn: its context is not the turn's.
 	taskCtx, cancel := context.WithCancel(context.Background())
 	cmd := platform.ShellCommand(taskCtx, command)
-	platform.WorkspaceCommand(cmd, root, platform.WorkspaceYOLO(ctx))
+	platform.WorkspaceCommandIn(cmd, root, dir, platform.WorkspaceYOLO(ctx))
 	if sandboxed {
 		if err := platform.SandboxCommand(cmd, root); err != nil {
 			cancel()
@@ -341,7 +342,7 @@ func startBackground(ctx context.Context, tasks *BackgroundTasks, root, command 
 	if err != nil {
 		return "", err
 	}
-	return backgroundStarted(id, command), nil
+	return backgroundStarted(id, command) + "\nWorking directory: " + dir, nil
 }
 
 func backgroundStarted(id, command string) string {

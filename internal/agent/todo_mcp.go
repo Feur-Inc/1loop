@@ -164,7 +164,8 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 				stop()
 				cancel()
 				content := []any{map[string]any{"type": "text", "text": result.Text}}
-				if err != nil {
+				structuredCommand := (call.Name == "shell" || call.Name == "search_files") && json.Valid([]byte(result.Text))
+				if err != nil && !structuredCommand {
 					content = []any{map[string]any{"type": "text", "text": err.Error()}}
 				}
 				for _, imagePart := range result.Images {

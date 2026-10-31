@@ -19,13 +19,22 @@ func WorkspaceYOLO(ctx context.Context) bool {
 }
 
 func WorkspaceCommand(command *exec.Cmd, workspace string, yolo ...bool) {
-	command.Dir = workspace
+	WorkspaceCommandIn(command, workspace, workspace, yolo...)
+}
+
+// WorkspaceCommandIn keeps the project boundary separate from the working directory.
+func WorkspaceCommandIn(command *exec.Cmd, workspace, dir string, yolo ...bool) {
+	command.Dir = dir
 	if launcher := os.Getenv("ONELOOP_PROJECT_LAUNCHER"); launcher != "" {
 		prefix := []string{launcher}
 		if len(yolo) > 0 && yolo[0] {
 			prefix = append(prefix, "--yolo")
 		}
-		command.Args = append(append(prefix, workspace, command.Path), command.Args[1:]...)
+		prefix = append(prefix, workspace)
+		if dir != workspace {
+			prefix = append(prefix, "--workdir", dir)
+		}
+		command.Args = append(append(prefix, command.Path), command.Args[1:]...)
 		command.Path = launcher
 	}
 }

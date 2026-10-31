@@ -57,6 +57,14 @@ func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) 
 			first += " …"
 		}
 		return pick("Ran", "Running"), first, true
+	case "search_files":
+		var args struct{ Pattern string }
+		_ = json.Unmarshal([]byte(item.Args), &args)
+		return pick("Searched", "Searching"), args.Pattern, false
+	case "command_output":
+		var args struct{ ID, Stream string }
+		_ = json.Unmarshal([]byte(item.Args), &args)
+		return pick("Read command output", "Reading command output"), args.ID + " · " + args.Stream, false
 	case "read_file":
 		return pick("Read", "Reading"), path, false
 	case "list_directory":

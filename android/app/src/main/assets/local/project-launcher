@@ -5,13 +5,15 @@ unrestricted=no
 if [ "${1:-}" = --yolo ]; then unrestricted=yes; shift; fi
 workspace=$1
 shift
+workdir=$workspace
+if [ "${1:-}" = --workdir ]; then workdir=$2; shift 2; fi
 case "$workspace" in
     /projects/*) ;;
     *) printf '%s\n' 'The project must be inside /projects.' >&2; exit 1 ;;
 esac
 
 if [ "$unrestricted" = yes ]; then
-    cd "$workspace"
+    cd "$workdir"
     mkdir -p "$workspace/.tmp"
     exec /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
         HOME="$workspace/.home" TMPDIR="$workspace/.tmp" TERM="${TERM:-xterm-256color}" COLORTERM=truecolor "$@"
@@ -24,6 +26,6 @@ exec /oneloop/libabwrap.so --backend ptrace --die-with-parent \
     --ro-bind /usr /usr --ro-bind /bin /bin --ro-bind /lib /lib --ro-bind /etc /etc \
     --ro-bind /dev/null /dev/null --ro-bind /dev/zero /dev/zero \
     --ro-bind /dev/random /dev/random --ro-bind /dev/urandom /dev/urandom \
-    --bind "$workspace" "$workspace" --tmpfs /tmp --proc /proc --chdir "$workspace" \
+    --bind "$workspace" "$workspace" --tmpfs /tmp --proc /proc --chdir "$workdir" \
     -- /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin LANG=C.UTF-8 \
     HOME="$workspace/.home" TMPDIR=/tmp TERM="${TERM:-xterm-256color}" COLORTERM=truecolor "$@"

@@ -25,7 +25,9 @@ func coreToolDefinitions() []map[string]any {
 		name, description string
 		fields            []string
 	}{
-		{"shell", "Run a " + platform.ShellDescription() + " command in the workspace after user approval. A command stops after timeout_ms (null: 60000, up to 600000). For longer work, a server or a watcher, set run_in_background to true: the command starts and this call returns at once, with no time limit; you are told when it ends, with the end of its output, and can follow it with background_task. Output longer than max_output_tokens (null: 10000, up to 50000) keeps its start and its end; filter or page long output rather than raising the limit. In Auto mode commands may run in a workspace sandbox: set escalate to true, with a justification, only to rerun a command that must write outside it (null otherwise).", []string{"command", "max_output_tokens:int", "timeout_ms:int", "run_in_background:bool", "escalate:bool", "justification:string?"}},
+		{"shell", "Run a " + platform.ShellDescription() + " command after user approval. Each call starts a new shell: cd does not persist. workdir is an existing directory relative to the project, or an absolute granted directory; null uses the project. The result reports cwd, stdout, stderr, exit_code and status. Exit 1 is not automatically success. A command stops after timeout_ms (null: 60000, up to 600000). For longer work, a server or a watcher, set run_in_background to true: the command starts and this call returns at once, with no time limit; you are told when it ends, with the end of its output, and can follow it with background_task. Output longer than max_output_tokens (null: 10000, up to 50000) keeps its start and its end; use command_output with output_id to read retained output pages. Logs are temporary and bounded. In Auto mode commands may run in a workspace sandbox: set escalate to true, with a justification, only to rerun a command that must write outside it (null otherwise).", []string{"command", "workdir:string?", "max_output_tokens:int", "timeout_ms:int", "run_in_background:bool", "escalate:bool", "justification:string?"}},
+		{"search_files", "Search workspace file contents with ripgrep (rg must be installed). pattern is a regular expression; path is a file or directory, null uses the project. Honors ignore files, skips binary files and files over 1 MiB; returns at most 100 matching lines per file. no_matches is a successful empty search; failed means a real error. Narrow path or pattern when truncated.", []string{"path:string?", "pattern", "max_output_tokens:int"}},
+		{"command_output", "Read a retained shell output page in this conversation. Choose stdout or stderr. offset is a zero-based byte offset, limit defaults to 8192 bytes (maximum 32768). Retention is eight commands, up to 2 MiB per stream; totals and truncated report any discarded bytes. Logs disappear when the conversation runtime closes.", []string{"id", "stream", "offset:int", "limit:int"}},
 		{"read_file", "Read a UTF-8 text file in the workspace (maximum 1 MiB): limit lines from line offset (1-based; null: from line 1, 2000 lines). The reply says which lines it holds and how many the file has; read further only when you need them.", []string{"path", "offset:int", "limit:int"}},
 		{"list_directory", "List entries of a directory in the workspace. Use . for the root.", []string{"path"}},
 		{
@@ -281,6 +283,9 @@ type ToolOutcome struct {
 // modelText is the tool result the model receives.
 func (outcome ToolOutcome) modelText() string {
 	if outcome.Err != nil {
+		if (outcome.Name == "shell" || outcome.Name == "search_files") && json.Valid([]byte(outcome.Output)) {
+			return outcome.Output
+		}
 		return outcome.Output + "\nError: " + outcome.Err.Error()
 	}
 	return outcome.Output
@@ -404,6 +409,7 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 // toolArgs are the arguments of the shell and file tools.
 type toolArgs struct {
 	Path      string `json:"path"`
+	Workdir   string `json:"workdir"`
 	Command   string `json:"command"`
 	Old       string `json:"old_text"`
 	New       string `json:"new_text"`
@@ -417,6 +423,16 @@ type toolArgs struct {
 }
 
 func (backend *App) runTool(ctx context.Context, root string, call ToolCall, begin func(), emit emitter) (output, diff string, err error) {
+	if call.Function.Name == "search_files" {
+		begin()
+		output, err = searchFiles(ctx, root, call.Function.Arguments)
+		return
+	}
+	if call.Function.Name == "command_output" {
+		begin()
+		output, err = readCommandOutput(ctx, call.Function.Arguments)
+		return
+	}
 	if call.Function.Name == "recall" {
 		begin()
 		output, err = recallConversation(ctx, json.RawMessage(call.Function.Arguments))
@@ -495,7 +511,11 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		if strings.TrimSpace(args.Command) == "" {
 			return "", "", fmt.Errorf("Empty command")
 		}
-		review, sandboxed, title, preview, problem := shellApproval(ctx, root, args.Command, args.Escalate != nil && *args.Escalate, args.Reason)
+		dir, problem := shellDirectory(ctx, nil, root, args.Workdir)
+		if problem != nil {
+			return "", "", problem
+		}
+		review, sandboxed, title, preview, problem := shellApproval(ctx, dir, args.Command, args.Escalate != nil && *args.Escalate, args.Reason)
 		if problem != nil {
 			return "", "", problem
 		}
@@ -505,13 +525,13 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		begin()
 		if args.Detach != nil && *args.Detach {
 			tasks, _ := ctx.Value(tasksContextKey{}).(*BackgroundTasks)
-			output, err := startBackground(ctx, tasks, root, args.Command, sandboxed)
+			output, err := startBackground(ctx, tasks, root, dir, args.Command, sandboxed)
 			return output, "", err
 		}
 		timeout, cancel := context.WithTimeout(ctx, shellTimeout(args.Timeout))
 		defer cancel()
 		cmd := platform.ShellCommand(timeout, args.Command)
-		platform.WorkspaceCommand(cmd, root, platform.WorkspaceYOLO(ctx))
+		platform.WorkspaceCommandIn(cmd, root, dir, platform.WorkspaceYOLO(ctx))
 		if sandboxed {
 			if err := platform.SandboxCommand(cmd, root); err != nil {
 				return "", "", err
@@ -521,23 +541,23 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		cmd.Cancel = func() error { return platform.KillProcessTree(cmd) }
 		cmd.WaitDelay = time.Second
 		output := &liveOutput{}
-		cmd.Stdout = output
-		cmd.Stderr = output
+		capture := &commandCapture{}
+		cmd.Stdout = io.MultiWriter(&capture.stdout, output)
+		cmd.Stderr = io.MultiWriter(&capture.stderr, output)
 		stop := output.stream(call.ID, emit)
 		err := cmd.Run()
 		stop()
-		tokens := 10000
-		if args.MaxTokens != nil {
-			tokens = min(50000, max(1000, *args.MaxTokens))
+		code := -1
+		if cmd.ProcessState != nil {
+			code = cmd.ProcessState.ExitCode()
 		}
-		text := output.buffer.String()
-		if sandboxed && err != nil && sandboxRefusal(text) {
-			text += "\n[1loop: this command ran in the workspace sandbox, which writes only in the workspace, the temporary folders and the build caches. If it must write elsewhere, run it again with escalate: true and a justification.]"
+		if sandboxed && err != nil && sandboxRefusal(output.buffer.String()) {
+			capture.stderr.Write([]byte("\n[1loop: this command ran in the workspace sandbox. If it must write elsewhere, rerun with escalate: true and a justification.]"))
 		}
 		if timeout.Err() != nil {
-			return headAndTail(text, tokens), "", timeout.Err()
+			err = timeout.Err()
 		}
-		return headAndTail(text, tokens), "", err
+		return commandResult(ctx, dir, capture, code, err, args.MaxTokens), "", err
 	}
 	if name != "read_file" && name != "list_directory" && name != "edit_file" {
 		return "", "", fmt.Errorf("Unknown tool: %s", name)

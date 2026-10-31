@@ -275,7 +275,11 @@ func (backend *App) machineTool(ctx context.Context, machine Machine, root strin
 		if strings.TrimSpace(args.Command) == "" {
 			return "", "", fmt.Errorf("Empty command")
 		}
-		review, _, title, preview, problem := shellApproval(ctx, root, args.Command, false, args.Reason)
+		dir, problem := shellDirectory(ctx, machine, root, args.Workdir)
+		if problem != nil {
+			return "", "", problem
+		}
+		review, _, title, preview, problem := shellApproval(ctx, dir, args.Command, false, args.Reason)
 		if problem != nil {
 			return "", "", problem
 		}
@@ -285,28 +289,32 @@ func (backend *App) machineTool(ctx context.Context, machine Machine, root strin
 		begin()
 		if args.Detach != nil && *args.Detach {
 			tasks, _ := ctx.Value(tasksContextKey{}).(*BackgroundTasks)
-			output, err := startMachineBackground(tasks, machine, root, args.Command)
+			output, err := startMachineBackground(tasks, machine, dir, args.Command)
 			return output, "", err
 		}
 		timeout, cancel := context.WithTimeout(ctx, shellTimeout(args.Timeout))
 		defer cancel()
 		output := &liveOutput{}
-		wait, err := machine.Start(timeout, root, args.Command, output)
+		capture := &commandCapture{}
+		var wait func() (int, error)
+		var err error
+		if streams, ok := machine.(interface {
+			StartStreams(context.Context, string, string, io.Writer, io.Writer) (func() (int, error), error)
+		}); ok {
+			wait, err = streams.StartStreams(timeout, dir, args.Command, io.MultiWriter(&capture.stdout, output), io.MultiWriter(&capture.stderr, output))
+		} else {
+			wait, err = machine.Start(timeout, dir, args.Command, io.MultiWriter(&capture.stdout, output))
+		}
 		if err != nil {
-			return "", "", err
+			return commandResult(ctx, dir, capture, -1, err, args.MaxTokens), "", err
 		}
 		stop := output.stream(call.ID, emit)
-		_, err = wait()
+		code, err := wait()
 		stop()
-		tokens := 10000
-		if args.MaxTokens != nil {
-			tokens = min(50000, max(1000, *args.MaxTokens))
-		}
-		text := output.buffer.String()
 		if timeout.Err() != nil {
-			return headAndTail(text, tokens), "", timeout.Err()
+			err = timeout.Err()
 		}
-		return headAndTail(text, tokens), "", err
+		return commandResult(ctx, dir, capture, code, err, args.MaxTokens), "", err
 	}
 	if name != "read_file" && name != "list_directory" && name != "edit_file" {
 		return "", "", fmt.Errorf("Unknown tool: %s", name)

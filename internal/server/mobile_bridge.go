@@ -101,7 +101,11 @@ func (bridge *mobileBridge) available(parent context.Context, capability string)
 }
 
 func (bridge *mobileBridge) phoneTools(ctx context.Context, name string, raw json.RawMessage) (agent.PanelToolResult, error) {
-	ctx, cancel := context.WithTimeout(ctx, 60*time.Second)
+	timeout := 60 * time.Second
+	if name == "install_apk" {
+		timeout = 5 * time.Minute // the user answers Android's dialog
+	}
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	var result struct {
 		Text   string           `json:"text"`

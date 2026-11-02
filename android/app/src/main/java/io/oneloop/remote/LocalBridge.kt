@@ -24,6 +24,7 @@ class LocalBridge(
     private val chatgpt: suspend (String) -> LocalBrowser,
     private val terminal: suspend (JSONObject) -> JSONObject,
     private val installPackages: suspend (JSONObject) -> JSONObject,
+    private val apk: ApkTools,
 ) : Closeable {
     private val name = "1loop-local-${UUID.randomUUID()}"
     private val token = ByteArray(32).also { SecureRandom().nextBytes(it) }.joinToString("") { "%02x".format(it.toInt() and 255) }
@@ -60,6 +61,7 @@ class LocalBridge(
                     "browser_clear" -> { browser.clearData(); JSONObject().put("ok", true) }
                     "chatgpt_native" -> request.getJSONObject("arguments").let { chatgpt(it.getString("profile")).execute(it) }
                     "terminal_native" -> terminal(request.getJSONObject("arguments"))
+                    "install_apk", "extract_apk" -> apk.execute(method, request.getJSONObject("arguments"))
                     "install_packages" -> installPackages(request.getJSONObject("arguments"))
                     else -> error("Unknown local bridge method.")
                 }

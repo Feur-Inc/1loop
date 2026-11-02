@@ -16,7 +16,9 @@ import (
 	"1loop/internal/agent"
 )
 
-func (ui *desktopUI) signInClaude() {
+// signInClaude signs a Claude Code connection in: the system login, or the
+// connection's own (claude_accounts.go). signedIn runs once it is done.
+func (ui *desktopUI) signInClaude(conn agent.Connection, signedIn func()) {
 	ctx, cancel := context.WithTimeout(ui.ctx, 5*time.Minute)
 	status := plainFlow("Starting Claude Code sign-in…", 12.5, colMuted)
 	link := widget.NewHyperlink("Open Claude sign-in in your browser", nil)
@@ -27,11 +29,15 @@ func (ui *desktopUI) signInClaude() {
 	submit.Disable()
 	var dialog *sheet
 	close := newRow("Close", nil, styleOutline, func() { dialog.dismiss() })
+	explanation := "Use your Claude subscription in Claude Code's own sign-in page. If the browser gives you a code, paste it below. Credentials are saved by Claude Code, not by 1loop."
+	if conn.ClaudeHome() != "" {
+		explanation += " This connection has its own login: the account you choose is used by this connection only, and the other connections stay signed in to theirs. If your browser is already signed in to another Claude account, sign out there first or use a private window."
+	}
 	dialog = ui.modal("Sign in to Claude Code", container.NewVBox(
-		note("Use your Claude subscription in Claude Code's own sign-in page. If the browser gives you a code, paste it below. Credentials are saved by Claude Code, not by 1loop."),
+		note(explanation),
 		link, code, status), 620, cancel, close, submit)
 	go func() {
-		process, err := agent.StartClaudeSignIn(ctx, os.TempDir(), "", func(raw string) {
+		process, err := agent.StartClaudeSignIn(ctx, conn, os.TempDir(), "", func(raw string) {
 			parsed, _ := url.Parse(raw)
 			fyne.Do(func() {
 				if ctx.Err() == nil {
@@ -91,6 +97,7 @@ func (ui *desktopUI) signInClaude() {
 				setFlow(status, fmt.Sprintf("Claude Code sign-in did not complete: %s", agent.FirstLine(err.Error())))
 			} else {
 				setFlow(status, "Sign-in completed. Close this dialog and load the connection's models.")
+				signedIn()
 			}
 			cancel()
 		})

@@ -143,7 +143,7 @@ func (plan HandoffPlan) Problem(choice HandoffChoice) string {
 // handoffResumes is a return to Claude Code with its session: it only reads
 // what happened meanwhile.
 func handoffResumes(next Config) bool {
-	return next.Provider == "claudecode" && next.Session != "" && next.SessionMark > 0
+	return next.Provider == "claudecode" && next.ClaudeSession() != "" && next.SessionMark > 0
 }
 
 // PlanHandoff lists the choices and the recommended one. previous is nil
@@ -173,7 +173,7 @@ func PlanHandoff(previous *Config, next Config, history []Message, items []ChatI
 	switch {
 	case previous == nil:
 		previousEntry.Problem = from + " is not available any more."
-	case previous.Provider == "claudecode" && previous.Session == "":
+	case previous.Provider == "claudecode" && previous.ClaudeSession() == "":
 		previousEntry.Problem = from + " has no session for this conversation."
 	default:
 		previousEntry.Window = ModelContextWindow(*previous)
@@ -396,7 +396,7 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 			"\n\nConversation ("+levelName(choice.Level)+"):\n"+levelText(clean, choice.Level, ModelContextWindow(summarizer)))
 	case summarizer.Provider == "claudecode":
 		input := ""
-		if summarizer.Session == "" {
+		if summarizer.ClaudeSession() == "" {
 			input = "\n\nConversation:\n" + levelText(clean, choice.Level, ModelContextWindow(summarizer))
 		} else if summarizer.Recall != nil {
 			items, readErr := summarizer.Recall(ctx)
@@ -450,7 +450,7 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 	estimate := HistoryEstimate(kept) + ContextOverhead(next)
 	markContextEstimate(kept, estimate)
 	level := "from its cache"
-	if !cached || summarizer.Provider == "claudecode" && summarizer.Session == "" {
+	if !cached || summarizer.Provider == "claudecode" && summarizer.ClaudeSession() == "" {
 		level = levelName(choice.Level)
 	}
 	return HandoffResult{
@@ -539,14 +539,14 @@ func claudeHandoffNote(ctx context.Context, cfg Config, prompt string) (string, 
 	if cfg.Model != "" && cfg.Model != "default" {
 		args = append(args, "--model", cfg.Model)
 	}
-	if cfg.Session != "" {
-		args = append(args, "--resume", cfg.Session)
+	if session := cfg.ClaudeSession(); session != "" {
+		args = append(args, "--resume", session)
 	}
 	dir := cfg.Workspace
 	if cfg.MachineID != "" { // the workspace is on an SSH machine, not here
 		dir = ""
 	}
-	cmd, err := claudeCommand(ctx, dir, args...)
+	cmd, err := claudeCommand(ctx, cfg.ClaudeHome, dir, args...)
 	if err != nil {
 		return "", err
 	}

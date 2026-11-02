@@ -58,6 +58,7 @@ func ResumeConfig(current Config, choice ModelChoice, key, effort string) Config
 	next.selectionError, next.presetSelection = nil, nil
 	base := choice.Connection.Config(current.Workspace)
 	next.Provider, next.ConnectionID, next.AuthProfile, next.BaseURL = base.Provider, base.ConnectionID, base.AuthProfile, base.BaseURL
+	next.ClaudeHome = base.ClaudeHome
 	next.WebSettings, next.APIKey, next.Model = base.WebSettings, key, choice.ID
 	next.DefaultPreset = choice.IsDefaultPreset()
 	next.AccountID, next.Residency = "", ""
@@ -80,7 +81,7 @@ func ResumeStoredConfig(cfg Config) Config {
 		cfg = selected
 	}
 	return Config{
-		DefaultPreset: cfg.DefaultPreset, ConnectionID: cfg.ConnectionID, AuthProfile: cfg.AuthProfile, Provider: cfg.Provider,
+		DefaultPreset: cfg.DefaultPreset, ConnectionID: cfg.ConnectionID, AuthProfile: cfg.AuthProfile, ClaudeHome: cfg.ClaudeHome, Provider: cfg.Provider,
 		BaseURL: cfg.BaseURL, Model: cfg.Model, Workspace: cfg.Workspace, MachineID: cfg.MachineID, Effort: cfg.Effort,
 		ServiceTier: cfg.ServiceTier, ReasoningMode: cfg.ReasoningMode, Routing: cfg.Routing,
 		Parameters: cfg.Parameters, Session: cfg.Session,

@@ -28,6 +28,19 @@ func (ui *desktopUI) offerClaudeCode() {
 		Enabled: true, Models: []string{"opus", "sonnet", "fable", "haiku"}})
 }
 
+// claudeAccountText says which Claude account a Claude Code connection
+// uses, and through which login.
+func claudeAccountText(conn agent.Connection) string {
+	login := "system Claude Code login"
+	if conn.ClaudeLogin == agent.ClaudeOwnLogin {
+		login = "own login"
+	}
+	if email := agent.ClaudeAccountOf(conn).Email; email != "" {
+		return email + " · " + login
+	}
+	return "Not signed in · " + login
+}
+
 func (ui *desktopUI) initializeConnections() {
 	if len(ui.connectionsList) > 0 || ui.cfg.Model != "" || ui.cfg.BaseURL != "" {
 		defer ui.offerClaudeCode()

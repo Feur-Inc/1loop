@@ -234,7 +234,7 @@ private fun ConnectionList(list: List<LocalConnection>?, problem: String?, onBac
 
 private fun accessText(connection: LocalConnection) = when (connection.provider) {
     "openai" -> if (connection.signedIn) connection.email.ifEmpty { "Signed in" } else "Not signed in"
-    "claudecode" -> ""
+    "claudecode" -> if (connection.signedIn) connection.email.ifEmpty { "Signed in" } else "Not signed in"
     "chatgptweb" -> if (connection.hasKey) "Tunnel key saved" else ""
     else -> if (connection.hasKey) "Key saved" else ""
 }
@@ -341,7 +341,7 @@ private fun ConnectionEditor(
                     }
                 }
             }
-            "claudecode" -> ClaudeAccess(app, claudeInstalled, current?.signedIn == true, reload) { claudePending = it }
+            "claudecode" -> ClaudeAccess(app, claudeInstalled, current, reload) { claudePending = it }
             "chatgptweb" -> WebAccess(app, draft, current)
             else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (draft.provider == "openrouter") {
@@ -594,19 +594,20 @@ private fun WebAccess(app: RemoteApp, draft: ConnectionDraft, current: LocalConn
 }
 
 @Composable
-private fun ClaudeAccess(app: RemoteApp, installed: Boolean, signedIn: Boolean, reload: suspend () -> Unit, onPending: (Boolean) -> Unit) {
+private fun ClaudeAccess(app: RemoteApp, installed: Boolean, current: LocalConnection?, reload: suspend () -> Unit, onPending: (Boolean) -> Unit) {
     val status by app.local.status.collectAsState()
     val step = status.steps.firstOrNull { it.id == "claudecode" }
     // An install that just ended: read again whether Claude Code is there.
     LaunchedEffect(step?.state) { if (step == null && !installed) reload() }
     Card {
         Text(
-            "Uses Claude Code, installed in this phone's Debian, with its own sign-in (your Claude subscription).",
+            "Uses Claude Code, installed in this phone's Debian, with its own sign-in (your Claude subscription). " +
+                "A second Claude Code connection gets a login of its own: sign it in to another Claude account.",
             style = Type.small,
         )
         Spacer(Modifier.height(10.dp))
         when {
-            installed -> ClaudeSignIn(app, signedIn, reload, onPending)
+            installed -> ClaudeSignIn(app, current, reload, onPending)
             step?.state == StepState.Running -> Row(verticalAlignment = Alignment.CenterVertically) {
                 WorkRing("wait", 22.dp)
                 Spacer(Modifier.width(10.dp))
@@ -624,9 +625,12 @@ private fun ClaudeAccess(app: RemoteApp, installed: Boolean, signedIn: Boolean, 
     }
 }
 
-/** Claude's own sign-in (claude auth login --claudeai), followed through the engine. */
+/** Claude's own sign-in (claude auth login --claudeai) for this connection's login, followed through the engine. */
 @Composable
-private fun ClaudeSignIn(app: RemoteApp, signedIn: Boolean, reload: suspend () -> Unit, onPending: (Boolean) -> Unit) {
+private fun ClaudeSignIn(app: RemoteApp, current: LocalConnection?, reload: suspend () -> Unit, onPending: (Boolean) -> Unit) {
+    val connectionId = current?.id.orEmpty() // "" for a connection not saved yet: the system login
+    val signedIn = current?.signedIn == true
+    val loginPath = "/api/local/claude/login?connection=" + Uri.encode(connectionId)
     val scope = rememberCoroutineScope()
     val context = LocalContext.current
     var state by remember { mutableStateOf("idle") }
@@ -645,7 +649,7 @@ private fun ClaudeSignIn(app: RemoteApp, signedIn: Boolean, reload: suspend () -
         problem = null
         scope.launch {
             try {
-                apply(app.localCall("/api/local/claude/login", body))
+                apply(app.localCall("/api/local/claude/login", body.put("connection", connectionId)))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -657,7 +661,7 @@ private fun ClaudeSignIn(app: RemoteApp, signedIn: Boolean, reload: suspend () -
     }
     SideEffect { onPending(state == "pending") }
     // The state, then while pending its link and its end.
-    LaunchedEffect(Unit) { runCatching { apply(app.localCall("/api/local/claude/login")) } }
+    LaunchedEffect(Unit) { runCatching { apply(app.localCall(loginPath)) } }
     LaunchedEffect(state) {
         while (state == "pending") {
             if (url.isNotEmpty() && url != opened) {
@@ -666,7 +670,7 @@ private fun ClaudeSignIn(app: RemoteApp, signedIn: Boolean, reload: suspend () -
             }
             delay(2000)
             try {
-                apply(app.localCall("/api/local/claude/login"))
+                apply(app.localCall(loginPath))
             } catch (e: CancellationException) {
                 throw e
             } catch (_: Exception) {
@@ -693,7 +697,10 @@ private fun ClaudeSignIn(app: RemoteApp, signedIn: Boolean, reload: suspend () -
                 Pill("Cancel", enabled = !busy) { send(JSONObject().put("cancel", true)) }
             }
         }
-        signedIn || state == "connected" -> Text("Signed in to Claude.", style = Type.small.copy(color = Palette.added))
+        signedIn || state == "connected" -> Text(
+            current?.email?.takeIf { it.isNotEmpty() }?.let { "Signed in to Claude as $it." } ?: "Signed in to Claude.",
+            style = Type.small.copy(color = Palette.added),
+        )
         else -> Pill("Sign in with Claude", enabled = !busy) { send(JSONObject()) }
     }
     problem?.let { Text(it, style = Type.small.copy(color = Palette.danger), modifier = Modifier.padding(top = 10.dp)) }

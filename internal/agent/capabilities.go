@@ -208,11 +208,12 @@ func (backend *App) ConnectionModels(ctx context.Context, conn Connection, key s
 		return DefaultModelChoices(conn, choices), err
 	}
 	if conn.Provider == "claudecode" {
-		models, err := backend.claudeModels(ctx)
+		models, err := backend.claudeModels(ctx, conn.ClaudeHome())
 		if err != nil {
 			return nil, err
 		}
 		var choices []ModelChoice
+		account := ClaudeAccountOf(conn).Email
 		for _, claudeModel := range models {
 			efforts := sortedEfforts(claudeModel.Efforts)
 			def := ""
@@ -220,7 +221,7 @@ func (backend *App) ConnectionModels(ctx context.Context, conn Connection, key s
 				def = "medium"
 			}
 			choices = append(choices, ModelChoice{Connection: conn, ID: claudeModel.Value, Name: claudeModel.DisplayName, Resolved: claudeModel.Resolved, Efforts: efforts,
-				DefaultEffort: def, ReasoningMode: "effort", Source: "Claude Code"})
+				DefaultEffort: def, ReasoningMode: "effort", Source: "Claude Code", Account: account})
 		}
 		return DefaultModelChoices(conn, choices), nil
 	}

@@ -1576,6 +1576,9 @@ func (ui *desktopUI) refreshModels() {
 					ui.model.Details[label] = choice.Connection.Name + " · " + choice.ID
 					if choice.Connection.Provider == "claudecode" {
 						ui.model.Details[label] = "Runs in Claude Code's own harness · " + choice.ID
+						if choice.Account != "" {
+							ui.model.Details[label] = "Claude Code · " + choice.Account + " · " + choice.ID
+						}
 					}
 					if choice.Connection.ID == previous.ConnectionID && choice.ID == previous.Model {
 						selected = label

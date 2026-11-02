@@ -52,7 +52,7 @@ func (server *headlessServer) handoffPlanLocked(chat *serverChat, cfg agent.Conf
 		prior := server.configFor(choice, chat.Config)
 		prior.Effort = choice.DefaultEffort
 		prior.APIKey = server.keys[prior.ConnectionID]
-		prior.Session, prior.SessionMark = chat.Config.Session, chat.Config.SessionMark
+		prior.InheritSession(chat.Config)
 		prior.Cache, prior.ContextKey, prior.Todo, prior.Recall = cfg.Cache, cfg.ContextKey, cfg.Todo, cfg.Recall
 		prior.UserInstructions, prior.Preferences, prior.ApprovalMode = cfg.UserInstructions, cfg.Preferences, agent.ApprovalFor(server.approvalMode, prior)
 		prior.Browser, prior.Terminal, prior.Tasks, prior.Phone, prior.ToolAllowed = cfg.Browser, cfg.Terminal, cfg.Tasks, cfg.Phone, cfg.ToolAllowed
@@ -78,7 +78,7 @@ func (server *headlessServer) handoffPlanLocked(chat *serverChat, cfg agent.Conf
 		if agent.IdentityOf(candidate) == agent.IdentityOf(cfg) || previous != nil && agent.IdentityOf(candidate) == agent.IdentityOf(*previous) {
 			continue
 		}
-		candidate.Session, candidate.SessionMark = "", 0
+		candidate.ClearSessions()
 		candidate.APIKey = server.keys[candidate.ConnectionID]
 		plan.AddSummarizer("model:"+candidate.ConnectionID+"|"+candidate.Model, label, candidate, agent.HandoffAvailability("", server.limitsCache[candidate.ConnectionID]))
 	}

@@ -43,8 +43,14 @@ func (ui *desktopUI) alreadyImported(session agent.ImportSession) bool {
 	}
 	if session.Source == "claudecode" {
 		for _, chat := range ui.chats {
-			if chat.Config.Session == agent.ClaudeSessionFor(session.Home, session.ID) {
+			ref := agent.ClaudeSessionFor(session.Home, session.ID)
+			if chat.Config.Session == ref {
 				return true
+			}
+			for _, kept := range chat.Config.OtherSessions {
+				if kept.Session == ref {
+					return true
+				}
 			}
 		}
 	}
@@ -292,7 +298,8 @@ func claudeImportConnection(connections []agent.Connection, session agent.Import
 // Claude Code resumes its own session, another model goes through a handoff.
 func (ui *desktopUI) addImportedChat(session agent.ImportSession, read agent.ImportedChat, claudeConnection string) {
 	cfg := ui.cfg
-	cfg.Workspace, cfg.Session, cfg.SessionMark, cfg.WebConversation = session.Folder, "", 0, nil
+	cfg.Workspace, cfg.WebConversation = session.Folder, nil
+	cfg.ClearSessions()
 	ran := agent.RunIdentity{Provider: session.Source, Model: read.Model}
 	if session.Source == "claudecode" {
 		cfg.Session, cfg.SessionMark = agent.ClaudeSessionFor(session.Home, session.ID), len(read.Items)

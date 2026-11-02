@@ -118,7 +118,7 @@ func (chat Chat) Portable() Chat {
 func (chat Chat) AtWorkspace(cfg agent.Config) Chat {
 	from := chat.Config.Workspace
 	chat.Config = cfg
-	chat.Config.Session, chat.Config.SessionMark = "", 0
+	chat.Config.ClearSessions()
 	if from != cfg.Workspace {
 		note := fmt.Sprintf("%s Work now takes place in %s. Earlier absolute paths under %s refer to this project's files there. Use this destination's accounts and tools; keep work within the current project.", relocationPrefix, cfg.Workspace, from)
 		chat.History = append(chat.History, agent.Message{Role: "user", Internal: true, Content: note})

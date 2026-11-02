@@ -223,3 +223,42 @@ func TestImportFindsEveryAccountsSessions(t *testing.T) {
 		t.Fatal("an imported session does not resume in its own folder")
 	}
 }
+
+func TestClaudeSessionSurvivesLoginSwitch(t *testing.T) {
+	a, b := Config{}, Config{ClaudeHome: filepath.Join("accounts", "bbbb")}
+	cfg := Config{}
+	cfg.SetClaudeSession("sess-a")
+	cfg.SyncClaudeSession(4)
+	if a.ClaudeSession() != "" || cfg.ClaudeSession() != "sess-a" || cfg.ClaudeMark() != 4 {
+		t.Fatalf("login A: session %q mark %d", cfg.ClaudeSession(), cfg.ClaudeMark())
+	}
+	// The chat runs with login B: A's session is kept aside.
+	cfg.ClaudeHome = b.ClaudeHome
+	if cfg.ClaudeSession() != "" {
+		t.Fatalf("login B resumed %q", cfg.ClaudeSession())
+	}
+	cfg.SetClaudeSession("sess-b@bbbb")
+	cfg.SyncClaudeSession(9)
+	if cfg.ClaudeSession() != "sess-b" || cfg.ClaudeMark() != 9 {
+		t.Fatalf("login B: session %q mark %d", cfg.ClaudeSession(), cfg.ClaudeMark())
+	}
+	// Back to A: its session and mark are still there.
+	cfg.ClaudeHome = ""
+	if cfg.ClaudeSession() != "sess-a" || cfg.ClaudeMark() != 4 {
+		t.Fatalf("back on A: session %q mark %d", cfg.ClaudeSession(), cfg.ClaudeMark())
+	}
+	cfg.SyncClaudeSession(12) // A runs again and has seen more
+	cfg.SetClaudeSession("sess-a")
+	cfg.ClaudeHome = b.ClaudeHome
+	if cfg.ClaudeSession() != "sess-b" || cfg.ClaudeMark() != 9 {
+		t.Fatalf("back on B: session %q mark %d", cfg.ClaudeSession(), cfg.ClaudeMark())
+	}
+	cfg.ClaudeHome = ""
+	if cfg.ClaudeMark() != 12 {
+		t.Fatalf("A's mark %d, want 12", cfg.ClaudeMark())
+	}
+	cfg.ClearSessions()
+	if cfg.ClaudeSession() != "" || len(cfg.OtherSessions) != 0 {
+		t.Fatal("ClearSessions left a session")
+	}
+}

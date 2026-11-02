@@ -184,7 +184,7 @@ func (chat *VersionState) ForkMessage(index int, response bool) string {
 	chat.History = chat.historyBefore(index)
 	id := chat.Items[index].ID
 	chat.Items = append([]ChatItem{}, chat.Items[:index]...)
-	chat.Config.Session = "" // Claude must not resume a session containing the discarded future.
+	chat.Config.ClearSessions() // Claude must not resume a session containing the discarded future.
 	return id
 }
 

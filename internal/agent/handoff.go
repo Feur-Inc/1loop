@@ -143,7 +143,7 @@ func (plan HandoffPlan) Problem(choice HandoffChoice) string {
 // handoffResumes is a return to Claude Code with its session: it only reads
 // what happened meanwhile.
 func handoffResumes(next Config) bool {
-	return next.Provider == "claudecode" && next.ClaudeSession() != "" && next.SessionMark > 0
+	return next.Provider == "claudecode" && next.ClaudeSession() != "" && next.ClaudeMark() > 0
 }
 
 // PlanHandoff lists the choices and the recommended one. previous is nil
@@ -154,8 +154,8 @@ func PlanHandoff(previous *Config, next Config, history []Message, items []ChatI
 	clean := forProvider(history, next)
 	if handoffResumes(next) {
 		end := len(items)
-		if next.SessionMark < end {
-			plan.AsIsTokens = len(itemsText(items[next.SessionMark:end]))/4 + 1
+		if next.ClaudeMark() < end {
+			plan.AsIsTokens = len(itemsText(items[next.ClaudeMark():end]))/4 + 1
 		}
 		plan.AsIsNote = fmt.Sprintf("%s resumes its own session and reads only what happened meanwhile (~%s tokens).", to, Tokens(plan.AsIsTokens))
 		if plan.AsIsTokens > window*4/10 {
@@ -403,8 +403,8 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 			if readErr != nil {
 				return HandoffResult{}, readErr
 			}
-			if summarizer.SessionMark < len(items) {
-				input = "\n\nExchanges since your last turn:\n" + itemsText(items[summarizer.SessionMark:])
+			if summarizer.ClaudeMark() < len(items) {
+				input = "\n\nExchanges since your last turn:\n" + itemsText(items[summarizer.ClaudeMark():])
 			}
 		}
 		note, err = claudeHandoffNote(ctx, summarizer, handoffPrompt(budget, plan.To)+input)

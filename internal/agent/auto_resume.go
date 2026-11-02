@@ -77,17 +77,19 @@ func ResumeConfig(current Config, choice ModelChoice, key, effort string) Config
 func ResumeStoredConfig(cfg Config) Config {
 	if cfg.presetSelection != nil {
 		selected := *cfg.presetSelection
-		selected.Session, selected.SessionMark, selected.RanWith = cfg.Session, cfg.SessionMark, cfg.RanWith
+		selected.InheritSession(cfg)
+		selected.RanWith = cfg.RanWith
 		cfg = selected
 	}
-	return Config{
+	resumed := Config{
 		DefaultPreset: cfg.DefaultPreset, ConnectionID: cfg.ConnectionID, AuthProfile: cfg.AuthProfile, ClaudeHome: cfg.ClaudeHome, Provider: cfg.Provider,
 		BaseURL: cfg.BaseURL, Model: cfg.Model, Workspace: cfg.Workspace, MachineID: cfg.MachineID, Effort: cfg.Effort,
 		ServiceTier: cfg.ServiceTier, ReasoningMode: cfg.ReasoningMode, Routing: cfg.Routing,
-		Parameters: cfg.Parameters, Session: cfg.Session,
-		SessionMark: cfg.SessionMark, RanWith: cfg.RanWith, WebConversation: cfg.WebConversation,
+		Parameters: cfg.Parameters, RanWith: cfg.RanWith, WebConversation: cfg.WebConversation,
 		WebSettings: cfg.WebSettings,
 	}
+	resumed.InheritSession(cfg)
+	return resumed
 }
 
 // runWithResume retains the last emitted history; tool batches publish their
@@ -115,12 +117,12 @@ func (backend *App) runWithResume(ctx context.Context, cfg Config, history []Mes
 	for {
 		historyMu.Lock()
 		input := append([]Message(nil), latest...)
-		cfg.Session = session
+		cfg.SetClaudeSession(session)
 		historyMu.Unlock()
 		err := backend.runOnce(ctx, cfg, input, inbox, forward)
 		historyMu.Lock()
 		current := append([]Message(nil), latest...)
-		cfg.Session = session
+		cfg.SetClaudeSession(session)
 		historyMu.Unlock()
 		var limit *RateLimitError
 		if err == nil || ctx.Err() != nil || cfg.AutoResume == nil || !cfg.AutoResume.Enabled || !errors.As(err, &limit) {

@@ -111,7 +111,7 @@ func (server *headlessServer) syncEngine() *projectsync.Local {
 				cfg := existing.Config
 				cfg.RanWith = ranWith(copied.Config)
 				copied = copied.AtWorkspace(cfg)
-				existing.Config.Session, existing.Config.SessionMark = "", 0
+				existing.Config.ClearSessions()
 				existing.Cache = &agent.ContextCache{}
 				existing.Title, existing.History, existing.Items = copied.Title, copied.History, copied.Items
 				existing.Todo, existing.Version, existing.Versions = copied.Todo, copied.Version, copied.Versions
@@ -119,7 +119,8 @@ func (server *headlessServer) syncEngine() *projectsync.Local {
 				server.broadcastLocked("replace", map[string]string{"chat": existing.ID})
 			} else {
 				cfg := server.cfg
-				cfg.Workspace, cfg.Session, cfg.SessionMark = workspace, "", 0
+				cfg.Workspace = workspace
+				cfg.ClearSessions()
 				cfg.RanWith = ranWith(copied.Config) // its next turn here goes through a handoff
 				copied = copied.AtWorkspace(cfg)
 				if copied.Todo == nil {

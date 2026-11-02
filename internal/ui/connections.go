@@ -96,7 +96,7 @@ func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 	options := choice.Connection.ModelOptions[choice.ID]
 	cfg.Routing = agent.MergeOptions(cfg.Routing, options.Provider)
 	cfg.Parameters = agent.MergeOptions(cfg.Parameters, options.Parameters)
-	cfg.Session, cfg.SessionMark = previous.Session, previous.SessionMark // the chat keeps its Claude Code session across model changes
+	cfg.InheritSession(previous) // the chat keeps its Claude Code session across model changes
 	cfg.WebConversation = previous.WebConversation
 	cfg.RanWith = previous.RanWith // its next turn knows the model changed
 	if cfg.RanWith == nil && previous.Provider != "" && previous.Model != "" {

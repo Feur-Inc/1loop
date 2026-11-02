@@ -171,14 +171,110 @@ func ClaudeSessionFor(home, id string) string {
 	return claudeSessionRef(home, id)
 }
 
-// ClaudeSession is the session the configuration resumes in Claude Code,
-// "" when it has none or the session belongs to another account's folder.
-func (cfg Config) ClaudeSession() string {
-	id, key, own := strings.Cut(cfg.Session, "@")
-	if cfg.ClaudeHome == "" && !own || cfg.ClaudeHome != "" && own && key == filepath.Base(cfg.ClaudeHome) {
-		return id
+// LoginSession is a chat's session in one Claude Code login (its reference)
+// and how many of the chat's items it has seen.
+type LoginSession struct {
+	Session string `json:"session"`
+	Mark    int    `json:"mark,omitempty"`
+}
+
+// sessionLogin is the login a session reference belongs to: its folder
+// name, "" for the system login.
+func sessionLogin(ref string) string {
+	_, key, _ := strings.Cut(ref, "@")
+	return key
+}
+
+func (cfg Config) claudeLogin() string {
+	if cfg.ClaudeHome == "" {
+		return ""
 	}
-	return ""
+	return filepath.Base(cfg.ClaudeHome)
+}
+
+// loginSession is the chat's session and mark in the configuration's login:
+// the active one, or the one kept when the chat ran with another login.
+func (cfg Config) loginSession() LoginSession {
+	login := cfg.claudeLogin()
+	if cfg.Session != "" && sessionLogin(cfg.Session) == login {
+		return LoginSession{cfg.Session, cfg.SessionMark}
+	}
+	return cfg.OtherSessions[login]
+}
+
+// ClaudeSession is the session the configuration resumes in Claude Code,
+// "" when its login has none.
+func (cfg Config) ClaudeSession() string {
+	id, _, _ := strings.Cut(cfg.loginSession().Session, "@")
+	return id
+}
+
+// ClaudeMark is how many of the chat's items that session has seen.
+func (cfg Config) ClaudeMark() int {
+	return cfg.loginSession().Mark
+}
+
+func cloneSessions(sessions map[string]LoginSession) map[string]LoginSession {
+	if sessions == nil {
+		return nil
+	}
+	clone := make(map[string]LoginSession, len(sessions)+1)
+	for key, value := range sessions {
+		clone[key] = value
+	}
+	return clone
+}
+
+// SetClaudeSession records the session a Claude Code turn named. A session
+// of another login moves aside, not away: it comes back when that login does.
+func (cfg *Config) SetClaudeSession(ref string) {
+	if ref == "" {
+		return
+	}
+	login := sessionLogin(ref)
+	if cfg.Session == ref {
+		return
+	}
+	cfg.OtherSessions = cloneSessions(cfg.OtherSessions)
+	mark := 0
+	if kept, ok := cfg.OtherSessions[login]; ok {
+		if kept.Session == ref {
+			mark = kept.Mark
+		}
+		delete(cfg.OtherSessions, login)
+	}
+	if cfg.Session != "" && sessionLogin(cfg.Session) != login {
+		if cfg.OtherSessions == nil {
+			cfg.OtherSessions = map[string]LoginSession{}
+		}
+		cfg.OtherSessions[sessionLogin(cfg.Session)] = LoginSession{cfg.Session, cfg.SessionMark}
+	}
+	cfg.Session, cfg.SessionMark = ref, mark
+}
+
+// SyncClaudeSession records that the configuration's login session has seen
+// the first n items of the chat.
+func (cfg *Config) SyncClaudeSession(n int) {
+	login := cfg.claudeLogin()
+	if cfg.Session != "" && sessionLogin(cfg.Session) == login {
+		cfg.SessionMark = n
+	} else if kept, ok := cfg.OtherSessions[login]; ok {
+		cfg.OtherSessions = cloneSessions(cfg.OtherSessions) // the map may be shared with another copy of the config
+		kept.Mark = n
+		cfg.OtherSessions[login] = kept
+	}
+}
+
+// InheritSession takes the chat's Claude Code sessions from another
+// configuration of the same chat.
+func (cfg *Config) InheritSession(from Config) {
+	cfg.Session, cfg.SessionMark = from.Session, from.SessionMark
+	cfg.OtherSessions = from.OtherSessions
+}
+
+// ClearSessions forgets every Claude Code session of the chat.
+func (cfg *Config) ClearSessions() {
+	cfg.Session, cfg.SessionMark, cfg.OtherSessions = "", 0, nil
 }
 
 // claudeHomes are the Claude Code folders on this computer: the system one

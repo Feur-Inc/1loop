@@ -546,7 +546,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	} else if session != "" && cfg.HandoffSummary != "" {
 		// Back after another model, the gap summarized as the user chose.
 		preface = "[Since your last turn in this chat, the user continued with another model. Summary of what happened meanwhile]\n" + cfg.HandoffSummary + "\n[End of the summary]\n\n"
-	} else if session != "" && cfg.SessionMark > 0 && cfg.Recall != nil {
+	} else if session != "" && cfg.ClaudeMark() > 0 && cfg.Recall != nil {
 		// Back to Claude Code after another model: its session misses
 		// what happened meanwhile, which it now reads before the prompt.
 		if items, err := cfg.Recall(ctx); err == nil {
@@ -554,8 +554,8 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			if end > 0 && items[end-1].Kind == "user" {
 				end-- // the prompt itself
 			}
-			if cfg.SessionMark < end {
-				preface = "[Since your last turn in this chat, the user continued with another model. What happened meanwhile]\n" + itemsText(items[cfg.SessionMark:end]) + "\n[End of what happened meanwhile]\n\n"
+			if cfg.ClaudeMark() < end {
+				preface = "[Since your last turn in this chat, the user continued with another model. What happened meanwhile]\n" + itemsText(items[cfg.ClaudeMark():end]) + "\n[End of what happened meanwhile]\n\n"
 			}
 		}
 	}

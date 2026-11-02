@@ -383,7 +383,7 @@ func (server *headlessServer) configFor(choice agent.ModelChoice, previous agent
 	cfg.Effort = previous.Effort
 	cfg.ServiceTier = agent.TierFor(choice, previous.ServiceTier)
 	cfg.ReasoningMode = choice.ReasoningMode
-	cfg.Session, cfg.SessionMark = previous.Session, previous.SessionMark
+	cfg.InheritSession(previous)
 	cfg.WebConversation = previous.WebConversation
 	cfg.RanWith = previous.RanWith // its next turn knows the model changed
 	if cfg.RanWith == nil && previous.Provider != "" && previous.Model != "" {
@@ -927,11 +927,9 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		web := value.(agent.WebConversation)
 		chat.Config.WebConversation = &web
 	case "session":
-		chat.Config.Session = value.(string)
+		chat.Config.SetClaudeSession(value.(string))
 	case "session_synced": // the session has seen everything shown so far
-		if chat.Config.Session != "" {
-			chat.Config.SessionMark = len(chat.Items)
-		}
+		chat.Config.SyncClaudeSession(len(chat.Items))
 	case "notice":
 		run.label = value.(string)
 	}

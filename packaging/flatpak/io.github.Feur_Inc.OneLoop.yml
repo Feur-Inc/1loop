@@ -19,17 +19,43 @@ sdk: org.freedesktop.Sdk
 sdk-extensions:
   - org.freedesktop.Sdk.Extension.golang
 command: 1loop-flatpak
+# Each permission says what needs it; docs/INSTALL.md says what stops working
+# without it, and 1loop names a revoked one at start (platform/flatpak.go).
+# Portals cover the rest without a static permission: the file and folder
+# chooser (ui/filepicker.go), opening links and files (the runtime's
+# xdg-open), notifications (ui/notify.go) and, for Computer Use, the
+# RemoteDesktop and ScreenCast portals (called by its helper on the host).
+# Nothing plays or records sound, so there is no --socket=pulseaudio.
 finish-args:
+  # The model providers' APIs, MCP servers, SSH machines, Browser Use and
+  # the remote app.
   - --share=network
+  # X11's shared memory, which the X11 build uses (fallback-x11 below).
   - --share=ipc
+  # The window: 1loop-wayland on Wayland, the X11 build elsewhere.
   - --socket=wayland
   - --socket=fallback-x11
+  # OpenGL rendering (Fyne draws with GL).
   - --device=dri
-  # Projects can be anywhere the user keeps them.
+  # SSH machines can sign in with the session's SSH agent (SSH_AUTH_SOCK).
+  - --socket=ssh-auth
+  # A coding agent reads and edits the user's projects, which can be
+  # anywhere (home, other disks, /srv, /mnt…), and its commands run on the
+  # host in those same folders (below), so the paths must be the same on
+  # both sides. A portal grants single files or folders at a time and gives
+  # them a /run/user/…/doc path the host commands cannot use, so it cannot
+  # replace this. --filesystem=home is enough for projects in the home
+  # folder (see docs/INSTALL.md).
   - --filesystem=host
-  # Commands, the terminal, Git, the browser and Computer Use run on the host.
+  # The agent's commands, its terminal, Git, Browser Use's Chromium and
+  # Computer Use's Python helper must run with the user's own tools and
+  # toolchains (compilers, package managers, language servers, shells),
+  # which no runtime can ship: they run on the host through flatpak-spawn
+  # --host (host-run). This is what the app is for, not an escape hatch:
+  # in Auto mode every command that is not plainly safe asks for the
+  # user's approval, and the metainfo and docs say plainly that it runs on
+  # the host.
   - --talk-name=org.freedesktop.Flatpak
-  - --talk-name=org.freedesktop.Notifications
 modules:
   - name: 1loop
     buildsystem: simple

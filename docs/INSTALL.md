@@ -113,7 +113,15 @@ What that changes:
 - **Terminal Use** opens your login shell on the host. The environment the
   sandbox sets for itself (`PATH`, `XDG_*_HOME`, `LD_*`…) is not passed on.
   Interactive job control (`Ctrl+Z`, `fg`) is not supported through this bridge.
-- Stopping a command ends it on the host too (`flatpak-spawn --watch-bus`).
+- **Claude Code** (the Claude Code connection) is the one installed on the
+  host: `claude` on its `PATH`, else `~/.local/bin/claude`. It runs on the
+  host with your own login and settings (`~/.claude`, `~/.claude.json`), so
+  sign in once, in 1loop or with `claude auth login` in a terminal; the
+  Flatpak cannot install it for you. The temporary files 1loop gives it
+  (its MCP config and skills) are under
+  `~/.var/app/io.github.Feur_Inc.OneLoop/cache/tmp`, which the host sees.
+- Stopping a command or a Claude Code reply ends it on the host too
+  (`flatpak-spawn --watch-bus`).
 - In a Wayland session the Flatpak has no X11 socket
   (`--socket=fallback-x11`), so `ONELOOP_BACKEND=x11` does not work there.
 - The window keeps the app id `1loop`; the entry,
@@ -131,8 +139,8 @@ plays or records sound, so it has no audio access.
 
 | Permission | What needs it | Without it |
 | --- | --- | --- |
-| `--filesystem=host` | Reading and editing your projects wherever they are, with the same paths the host commands use. | Only folders granted in another way are visible; projects elsewhere cannot be opened or edited. `--filesystem=home` is enough if all your projects are in your home folder. Read-only (`host:ro`) makes every edit fail. |
-| `--talk-name=org.freedesktop.Flatpak` | Commands, Terminal Use, Git, Browser Use and Computer Use's helper, which run on the host through `flatpak-spawn --host`. | None of them can run: commands print a message naming this permission. Chats with API providers and file edits still work. |
+| `--filesystem=host` | Reading and editing your projects wherever they are, with the same paths the host commands and Claude Code use. | Only folders granted in another way are visible; projects elsewhere cannot be opened or edited. `--filesystem=home` is enough if all your projects are in your home folder. Read-only (`host:ro`) makes every edit fail. |
+| `--talk-name=org.freedesktop.Flatpak` | Commands, Terminal Use, Git, Browser Use, Computer Use's helper and Claude Code, which run on the host through `flatpak-spawn --host`. | None of them can run: commands print a message naming this permission, and Claude Code shows as not installed. Chats with API providers and file edits still work. |
 | `--share=network` | Model providers, MCP servers, SSH machines, Browser Use, the remote app. | No model can be reached. |
 | `--socket=ssh-auth` | SSH machines that sign in with your SSH agent. | Use a key file or a password for SSH machines. |
 | `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc`, `--device=dri` | The window and its OpenGL rendering. | 1loop cannot open its window. |

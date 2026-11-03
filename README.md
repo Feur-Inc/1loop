@@ -25,8 +25,9 @@ agent runs on the **desktop** (Linux and Windows), on a **headless server**,
 and on an **Android phone**, and the phone can also drive the desktop or the
 server from anywhere on your network.
 
-- **Your models.** ChatGPT (sign in with your account), Claude Code, OpenRouter,
-  vLLM and any OpenAI-compatible API, several accounts at once.
+- **Your models.** ChatGPT (sign in with your account), Claude Code,
+  Antigravity CLI, OpenRouter, vLLM and any OpenAI-compatible API, several
+  accounts at once.
 - **A real workspace.** Files, shell, terminals, a browser it can use, Git
   changes, a task list and background tasks, in a side panel next to the chat.
 - **You stay in control.** Approve each action, let an Auto mode review risky
@@ -82,6 +83,10 @@ The [install guide](docs/INSTALL.md) has every step; in short:
      offers to install it with Anthropic's official installer. Add another
      Claude Code connection to use a second Claude account: it gets a login of
      its own ([several accounts](docs/INSTALL.md#several-claude-code-accounts)).
+   - **Antigravity CLI**: add it by hand once `agy` is installed and signed in
+     (run `agy` once in a terminal). 1loop drives your own `agy` in its
+     headless mode with your Google account; see
+     [Antigravity CLI](docs/INSTALL.md#antigravity-cli) for what that means.
    - **OpenRouter**: paste a key, or start 1loop with `OPENROUTER_API_KEY`.
    - **vLLM** or any **OpenAI-compatible API**: enter its `/v1` address.
    *Load / refresh models* fetches the catalog; tick the models to show.
@@ -164,8 +169,8 @@ stay apart from this computer's, and the agent's file edits, shell commands,
 background tasks, **Terminal**, **Git changes** and **Files** happen on the
 machine. The agent, its models, Browser Use and Computer Use stay on this
 computer. The machine has no sandbox: in Auto mode, any command that is not
-plainly safe waits for your approval. Claude Code and ChatGPT (Web) work on
-this computer's projects only.
+plainly safe waits for your approval. Claude Code, Antigravity CLI and
+ChatGPT (Web) work on this computer's projects only.
 
 ### The phone app
 

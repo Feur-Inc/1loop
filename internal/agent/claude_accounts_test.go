@@ -262,3 +262,22 @@ func TestClaudeSessionSurvivesLoginSwitch(t *testing.T) {
 		t.Fatal("ClearSessions left a session")
 	}
 }
+
+func TestHarnessSessionsKeepEachOther(t *testing.T) {
+	cfg := Config{Provider: "claudecode"}
+	cfg.SetClaudeSession("sess-claude")
+	cfg.SyncClaudeSession(3)
+	cfg.Provider = "antigravity"
+	if HarnessSession(cfg) != "" {
+		t.Fatalf("Antigravity resumed %q", HarnessSession(cfg))
+	}
+	cfg.SetClaudeSession(agySessionPrefix + "conv-1")
+	cfg.SyncClaudeSession(7)
+	if HarnessSession(cfg) != "conv-1" || HarnessMark(cfg) != 7 {
+		t.Fatalf("Antigravity: %q mark %d", HarnessSession(cfg), HarnessMark(cfg))
+	}
+	cfg.Provider = "claudecode"
+	if HarnessSession(cfg) != "sess-claude" || HarnessMark(cfg) != 3 {
+		t.Fatalf("back on Claude: %q mark %d", HarnessSession(cfg), HarnessMark(cfg))
+	}
+}

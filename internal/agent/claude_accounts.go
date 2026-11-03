@@ -181,11 +181,17 @@ type LoginSession struct {
 // sessionLogin is the login a session reference belongs to: its folder
 // name, "" for the system login.
 func sessionLogin(ref string) string {
+	if strings.HasPrefix(ref, agySessionPrefix) {
+		return agySessionPrefix // Antigravity's conversation: a login of its own
+	}
 	_, key, _ := strings.Cut(ref, "@")
 	return key
 }
 
 func (cfg Config) claudeLogin() string {
+	if cfg.Provider == "antigravity" {
+		return agySessionPrefix
+	}
 	if cfg.ClaudeHome == "" {
 		return ""
 	}

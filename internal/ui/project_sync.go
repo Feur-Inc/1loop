@@ -129,7 +129,7 @@ func (ui *desktopUI) syncEngine() *projectsync.Local {
 					cfg := existing.Config
 					cfg.RanWith = copiedRanWith(copied.Config)
 					copied = copied.AtWorkspace(cfg)
-					existing.Config.Session, existing.Config.SessionMark = "", 0
+					existing.Config.ClearSessions()
 					existing.Cache = &agent.ContextCache{}
 					existing.Title, existing.History, existing.Items = copied.Title, copied.History, copied.Items
 					existing.Todo, existing.Version, existing.Versions = copied.Todo, copied.Version, copied.Versions
@@ -140,7 +140,8 @@ func (ui *desktopUI) syncEngine() *projectsync.Local {
 					return
 				}
 				cfg := ui.cfg
-				cfg.Workspace, cfg.Session, cfg.SessionMark = workspace, "", 0
+				cfg.Workspace = workspace
+				cfg.ClearSessions()
 				cfg.RanWith = copiedRanWith(copied.Config) // its next turn here goes through a handoff
 				copied = copied.AtWorkspace(cfg)
 				ui.chats = append([]*conversation{{ID: copied.ID, Title: copied.Title, Config: cfg, History: copied.History, Items: copied.Items,

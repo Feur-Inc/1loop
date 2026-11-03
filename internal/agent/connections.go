@@ -26,6 +26,9 @@ func (conn *Connection) SetCompactLimit(model string, limit int) error {
 	if conn.Provider == "chatgptweb" {
 		return fmt.Errorf("ChatGPT Web manages its own context")
 	}
+	if conn.Provider == "antigravity" {
+		return fmt.Errorf("Antigravity manages its own context")
+	}
 	if limit < 0 || limit > 1000000 || conn.Provider == "claudecode" && limit > 0 && limit < 100000 {
 		return fmt.Errorf("Enter a token count from 1 to 1,000,000 (100,000 minimum for Claude Code), or use automatic")
 	}
@@ -158,17 +161,23 @@ func ProviderName(id string) string {
 		return "OpenAI-compatible API"
 	case "claudecode":
 		return "Claude Code"
+	case "antigravity":
+		return "Antigravity CLI"
 	case "chatgptweb":
 		return "ChatGPT (Web)"
 	}
 	return id
 }
 
-// Display is the model's name as the composer shows it. A Claude Code model
-// says so: there the work runs in Claude Code's harness, not in 1loop's.
+// Display is the model's name as the composer shows it. A Claude Code or
+// Antigravity model says so: there the work runs in that CLI's harness, not
+// in 1loop's.
 func (choice ModelChoice) Display() string {
-	if choice.Connection.Provider == "claudecode" {
+	switch choice.Connection.Provider {
+	case "claudecode":
 		return choice.Name + " · Claude Code"
+	case "antigravity":
+		return choice.Name + " · Antigravity"
 	}
 	return choice.Name
 }

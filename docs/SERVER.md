@@ -124,7 +124,8 @@ Configure additional accounts in this array, including their existing
 `authProfile`, model visibility and model options. Credentials for ChatGPT
 accounts must exist on the server in the existing 1loop account credential
 store; the desktop does not copy local OAuth credentials automatically.
-Claude Code uses the CLI and authentication installed on the server.
+Claude Code and Antigravity CLI use the CLI and sign-in installed on the
+server (`claude`, `agy`).
 Restart the server after editing connection configuration. Clients can
 select its available models and reasoning levels per conversation.
 

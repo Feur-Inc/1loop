@@ -78,7 +78,7 @@ modules:
       - install -Dm755 build/1loop build/1loop-wayland -t /app/lib/1loop
       - install -Dm755 packaging/flatpak/1loop-flatpak -t /app/bin
       - install -Dm755 packaging/flatpak/host-run packaging/flatpak/host-browser packaging/flatpak/host-shell -t /app/lib/1loop/host
-      - for name in bash git python3; do ln -s host-run /app/lib/1loop/host/$name; done
+      - for name in bash git python3 agy; do ln -s host-run /app/lib/1loop/host/$name; done
       - ln -s host-browser /app/lib/1loop/host/chromium
       - build/1loop-release icons /app/share/icons io.github.Feur_Inc.OneLoop
       # The window keeps the app id 1loop: StartupWMClass ties it to this entry.

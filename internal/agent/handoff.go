@@ -30,7 +30,7 @@ type RunIdentity struct {
 
 func IdentityOf(cfg Config) RunIdentity {
 	identity := RunIdentity{Provider: cfg.Provider, ConnectionID: cfg.ConnectionID, AuthProfile: cfg.AuthProfile, Model: cfg.Model}
-	if cfg.Provider == "claudecode" {
+	if CLIHarness(cfg.Provider) {
 		identity.Model = ""
 	}
 	return identity
@@ -143,7 +143,7 @@ func (plan HandoffPlan) Problem(choice HandoffChoice) string {
 // handoffResumes is a return to Claude Code with its session: it only reads
 // what happened meanwhile.
 func handoffResumes(next Config) bool {
-	return next.Provider == "claudecode" && next.Session != "" && next.SessionMark > 0
+	return CLIHarness(next.Provider) && HarnessSession(next) != "" && next.SessionMark > 0
 }
 
 // PlanHandoff lists the choices and the recommended one. previous is nil
@@ -173,7 +173,7 @@ func PlanHandoff(previous *Config, next Config, history []Message, items []ChatI
 	switch {
 	case previous == nil:
 		previousEntry.Problem = from + " is not available any more."
-	case previous.Provider == "claudecode" && previous.Session == "":
+	case CLIHarness(previous.Provider) && HarnessSession(*previous) == "":
 		previousEntry.Problem = from + " has no session for this conversation."
 	default:
 		previousEntry.Window = ModelContextWindow(*previous)
@@ -183,7 +183,7 @@ func PlanHandoff(previous *Config, next Config, history []Message, items []ChatI
 			previousEntry.Cached = !last.IsZero() && time.Since(last) < time.Hour
 		}
 		previousEntry.Tokens = HistoryEstimate(history)
-		if previous.Provider == "claudecode" {
+		if CLIHarness(previous.Provider) {
 			previousEntry.Cached = true // Its session retains the input; provider cache billing is not guaranteed.
 			previousEntry.Note = "Writes in its retained session. Provider cache availability and billing may vary."
 		} else if previousEntry.Cached {
@@ -394,9 +394,9 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 	case summarizer.Provider == "chatgptweb":
 		note, err = backend.webHandoffNote(ctx, summarizer, handoffPrompt(budget, plan.To)+todoSnapshot(next)+
 			"\n\nConversation ("+levelName(choice.Level)+"):\n"+levelText(clean, choice.Level, ModelContextWindow(summarizer)))
-	case summarizer.Provider == "claudecode":
+	case CLIHarness(summarizer.Provider):
 		input := ""
-		if summarizer.Session == "" {
+		if HarnessSession(summarizer) == "" {
 			input = "\n\nConversation:\n" + levelText(clean, choice.Level, ModelContextWindow(summarizer))
 		} else if summarizer.Recall != nil {
 			items, readErr := summarizer.Recall(ctx)
@@ -407,7 +407,11 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 				input = "\n\nExchanges since your last turn:\n" + itemsText(items[summarizer.SessionMark:])
 			}
 		}
-		note, err = claudeHandoffNote(ctx, summarizer, handoffPrompt(budget, plan.To)+input)
+		if summarizer.Provider == "antigravity" {
+			note, err = agyHandoffNote(ctx, summarizer, handoffPrompt(budget, plan.To)+input)
+		} else {
+			note, err = claudeHandoffNote(ctx, summarizer, handoffPrompt(budget, plan.To)+input)
+		}
 	case cached:
 		// The previous model's own requests, as it sent them: its cache
 		// covers them. Its tools stay declared (part of the cached prefix)
@@ -450,7 +454,7 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 	estimate := HistoryEstimate(kept) + ContextOverhead(next)
 	markContextEstimate(kept, estimate)
 	level := "from its cache"
-	if !cached || summarizer.Provider == "claudecode" && summarizer.Session == "" {
+	if !cached || CLIHarness(summarizer.Provider) && HarnessSession(summarizer) == "" {
 		level = levelName(choice.Level)
 	}
 	return HandoffResult{
@@ -539,8 +543,8 @@ func claudeHandoffNote(ctx context.Context, cfg Config, prompt string) (string, 
 	if cfg.Model != "" && cfg.Model != "default" {
 		args = append(args, "--model", cfg.Model)
 	}
-	if cfg.Session != "" {
-		args = append(args, "--resume", cfg.Session)
+	if session := HarnessSession(cfg); session != "" {
+		args = append(args, "--resume", session)
 	}
 	dir := cfg.Workspace
 	if cfg.MachineID != "" { // the workspace is on an SSH machine, not here

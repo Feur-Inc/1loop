@@ -97,7 +97,7 @@ func (server *headlessServer) saveLocalConnection(w http.ResponseWriter, r *http
 			core.Fail(w, 404, "Connection not found")
 			return
 		}
-		if strings.TrimSpace(connection.Name) == "" || !agent.Contains([]string{"openai", "claudecode", "compatible", "openrouter", "vllm", "chatgptweb"}, connection.Provider) {
+		if strings.TrimSpace(connection.Name) == "" || !agent.Contains([]string{"openai", "claudecode", "antigravity", "compatible", "openrouter", "vllm", "chatgptweb"}, connection.Provider) {
 			core.Fail(w, 400, "Choose a connection name and supported provider")
 			return
 		}
@@ -188,7 +188,7 @@ func (server *headlessServer) draftLocalConnectionModels(w http.ResponseWriter, 
 		Connection agent.Connection `json:"connection"`
 		APIKey     *string          `json:"apiKey"`
 	}
-	if core.ReadJSON(r, &args) != nil || !agent.Contains([]string{"openai", "claudecode", "compatible", "openrouter", "vllm", "chatgptweb"}, args.Connection.Provider) {
+	if core.ReadJSON(r, &args) != nil || !agent.Contains([]string{"openai", "claudecode", "antigravity", "compatible", "openrouter", "vllm", "chatgptweb"}, args.Connection.Provider) {
 		core.Fail(w, 400, "Choose a supported provider")
 		return
 	}

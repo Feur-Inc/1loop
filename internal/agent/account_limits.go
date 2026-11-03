@@ -167,6 +167,8 @@ func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key s
 				limits.Windows = append(limits.Windows, AccountLimitWindow{item.label, *item.windowValue.Used, item.windowValue.ResetAt})
 			}
 		}
+	case "antigravity":
+		return agyLimits(ctx)
 	case "openrouter":
 		cfg := conn.Config("")
 		cfg.APIKey = key

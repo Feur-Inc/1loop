@@ -2,12 +2,14 @@ package agent
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 )
 
 func TestParseAgyModels(t *testing.T) {
@@ -160,5 +162,31 @@ func TestRunAntigravityDeniedCommandStops(t *testing.T) {
 	calls, _ := os.ReadFile(log)
 	if n := strings.Count(string(calls), "\n"); n != 1 {
 		t.Fatalf("a denied command must not start agy again: %d runs", n)
+	}
+}
+
+func TestParseAgyUsage(t *testing.T) {
+	out := []byte(`{"conversation_id":"","status":"SUCCESS","num_turns":0,"command":{"name":"usage","data":{"groups":[
+		{"name":"Gemini Models","buckets":[{"id":"gemini-weekly","window":"weekly","remaining_fraction":0.75,"reset_time":"2026-11-09T15:53:11Z"},{"id":"gemini-5h","window":"5h","remaining_fraction":1,"reset_time":"2026-11-03T13:21:55Z"}]},
+		{"name":"Claude and GPT models","buckets":[{"id":"3p-5h","window":"5h","remaining_fraction":0.25,"reset_time":"2026-11-03T14:15:57Z"}]},
+		{"name":"Gemini 4 Argon","buckets":[{"id":"argon","window":"weekly"}]}]}}}`)
+	limits, err := parseAgyUsage(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, window := range limits.Windows {
+		got = append(got, fmt.Sprintf("%s %.0f%% %s", window.Label, window.Remaining(), window.ResetAt.Format(time.RFC3339)))
+	}
+	want := []string{
+		"Gemini · 7d 75% 2026-11-09T15:53:11Z",
+		"Gemini · 5h 100% 2026-11-03T13:21:55Z",
+		"Claude and GPT · 5h 25% 2026-11-03T14:15:57Z",
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("windows:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
+	}
+	if _, err := parseAgyUsage([]byte(`{"command":{"name":"help"}}`)); err == nil {
+		t.Fatal("an answer other than /usage was accepted")
 	}
 }

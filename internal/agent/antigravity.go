@@ -97,16 +97,19 @@ func AgyExecutable() (string, error) {
 // how 1loop uses agy.
 const AgyTerms = "1loop starts the Antigravity CLI installed on this computer, unmodified, in its documented headless mode, for you only. It never reads or reuses agy's sign-in, never contacts Antigravity's servers itself and never shares agy with other people. Google's forum answers describe this local, single-user use as supported; its FAQ says wrapping agy is not supported on consumer plans, so check that your plan allows it."
 
-// agyCommand prepares an agy process in its stream-json mode. The
-// environment is the user's minus API keys, so the run uses the account agy
-// is signed in with.
+// agyCommand prepares an agy process in its stream-json mode.
 func agyCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd, error) {
+	// -p= : a bare -p would take the next flag as the prompt.
+	return agyProcess(ctx, dir, append([]string{"--input-format", "stream-json", "--output-format", "stream-json", "-p="}, extra...)...)
+}
+
+// agyProcess prepares an agy process. The environment is the user's minus
+// API keys, so the run uses the account agy is signed in with.
+func agyProcess(ctx context.Context, dir string, args ...string) (*exec.Cmd, error) {
 	path, err := AgyExecutable()
 	if err != nil {
 		return nil, err
 	}
-	// -p= : a bare -p would take the next flag as the prompt.
-	args := append([]string{"--input-format", "stream-json", "--output-format", "stream-json", "-p="}, extra...)
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = dir
 	for _, pair := range os.Environ() {
@@ -120,6 +123,69 @@ func agyCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd, er
 	cmd.Cancel = func() error { return platform.InterruptProcess(cmd) }
 	cmd.WaitDelay = 3 * time.Second
 	return cmd, nil
+}
+
+// agyLimits asks agy itself for its usage limits: /usage in print mode is
+// answered by agy without a model turn (no tokens). 1loop still never reads
+// agy's sign-in.
+func agyLimits(ctx context.Context) (AccountLimits, error) {
+	limits := AccountLimits{Note: "Limits not provided"}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return limits, err
+	}
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd, err := agyProcess(ctx, home, "--output-format", "json", "-p=/usage")
+	if err != nil {
+		return limits, err
+	}
+	out, err := cmd.Output()
+	if err != nil {
+		return limits, err
+	}
+	return parseAgyUsage(out)
+}
+
+// parseAgyUsage reads agy's /usage result: model groups, each with its
+// usage windows (5 hours, a week).
+func parseAgyUsage(out []byte) (AccountLimits, error) {
+	limits := AccountLimits{Note: "Limits not provided"}
+	var result struct {
+		Command struct {
+			Name string `json:"name"`
+			Data struct {
+				Groups []struct {
+					Name    string `json:"name"`
+					Buckets []struct {
+						Window    string    `json:"window"`
+						Remaining *float64  `json:"remaining_fraction"`
+						ResetAt   time.Time `json:"reset_time"`
+					} `json:"buckets"`
+				} `json:"groups"`
+			} `json:"data"`
+		} `json:"command"`
+	}
+	if err := json.Unmarshal(out, &result); err != nil {
+		return limits, err
+	}
+	if result.Command.Name != "usage" {
+		return limits, fmt.Errorf("agy did not answer /usage")
+	}
+	for _, group := range result.Command.Data.Groups {
+		name := strings.TrimSuffix(strings.TrimSuffix(group.Name, " Models"), " models")
+		for _, bucket := range group.Buckets {
+			if bucket.Remaining == nil {
+				continue
+			}
+			period := map[string]string{"weekly": "7d", "daily": "1d"}[bucket.Window]
+			if period == "" {
+				period = bucket.Window
+			}
+			limits.Windows = append(limits.Windows, AccountLimitWindow{name + " · " + period, 100 * (1 - *bucket.Remaining), bucket.ResetAt})
+		}
+	}
+	return limits, nil
 }
 
 // agyModel is a model of `agy models`, its effort variants grouped: agy

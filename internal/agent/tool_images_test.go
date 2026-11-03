@@ -72,7 +72,7 @@ func TestClaudeResultImages(t *testing.T) {
 		{"inline picture and its file", content(text("Screenshot 4x3"), inline, text("[Image: source: "+saved+"]")), "Screenshot 4x3", 1},
 		{"only the file", content(text("Screenshot 4x3"), text("[Image: source: "+saved+"]")), "Screenshot 4x3", 1},
 		{"file deleted", content(text("Screenshot 4x3"), text("[Image: source: "+filepath.Join(folder, "gone.png")+"]")), "Screenshot 4x3", 0},
-		{"not a tool result", content(text("[Image: source: "+outside+"]")), "", 0},
+		{"not a tool result", content(text("[Image: source: " + outside + "]")), "", 0},
 		{"plain text", json.RawMessage(`"done"`), "done", 0},
 	} {
 		got, images := claudeResult(test.content)

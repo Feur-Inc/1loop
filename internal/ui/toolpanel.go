@@ -20,6 +20,7 @@ import (
 
 	"1loop/internal/agent"
 	"1loop/internal/browser"
+	"1loop/internal/core"
 )
 
 // toolPanel is the foldable panel on the right of the conversation. Each
@@ -546,26 +547,68 @@ func (panel *toolPanel) details(item agent.ChatItem, state string) fyne.CanvasOb
 		if item.Args != "" {
 			add("Arguments", item.Args, "")
 		}
-		add("Output", item.Text, outputPlaceholder(running, "No output"))
+		add("Output", agent.ToolText(item), outputPlaceholder(running, "No output"))
+	}
+	for _, part := range agent.ToolImages(item) {
+		sections.Add(spacer(0, 10))
+		sections.Add(panel.picture(item.Tool, part))
 	}
 	if item.Failed != "" && item.Failed != stoppedCall {
 		add("Error", item.Failed, "")
 	}
-	for _, part := range item.Images {
-		raw, err := base64.StdEncoding.DecodeString(part.Data)
-		if err != nil {
-			continue
-		}
-		img, _, err := image.Decode(bytes.NewReader(raw))
-		if err != nil {
-			continue
-		}
-		view := canvas.NewImageFromImage(img)
-		view.FillMode = canvas.ImageFillContain
-		view.SetMinSize(fyne.NewSize(320, 240))
-		sections.Add(padded(8, 8, 0, 0, view))
-	}
 	return sections
+}
+
+// toolPictureSide bounds the picture a detail view keeps decoded; the full
+// one is decoded again only while it is open.
+const toolPictureSide = 960
+
+// picture is a captioned picture a tool returned, what the model saw, or a
+// note when it can no longer be shown. A click opens it at full size.
+func (panel *toolPanel) picture(tool string, part core.ImagePart) fyne.CanvasObject {
+	name := "Image"
+	if tool == "phone_use" || tool == "computer_use" || strings.HasPrefix(tool, "browser_") || strings.HasPrefix(tool, "terminal_") {
+		name = "Screenshot"
+	}
+	caption := textLine(strings.ToUpper(name), 11.5, colFaint)
+	caption.TextStyle = fyne.TextStyle{Bold: true}
+	img := decodePicture(part)
+	if img == nil {
+		missing := textLine("This "+strings.ToLower(name)+" is no longer available: its file was deleted.", 13, colMuted)
+		return container.NewVBox(padded(0, 4, 2, 0, caption), surface(padded(14, 14, 12, 12, missing), colCode, colBorderSoft, 10, 0))
+	}
+	bounds := img.Bounds()
+	view := canvas.NewImageFromImage(thumbnail(img, toolPictureSide))
+	view.FillMode = canvas.ImageFillContain
+	view.SetMinSize(fyne.NewSize(320, min(480, max(160, 320*float32(bounds.Dy())/float32(bounds.Dx())))))
+	open := newTapArea(func() { panel.ui.showPicture(name, part) })
+	return container.NewVBox(padded(0, 4, 2, 0, caption), container.NewStack(surface(view, colCode, colBorderSoft, 10, 0), open))
+}
+
+func decodePicture(part core.ImagePart) image.Image {
+	raw, err := base64.StdEncoding.DecodeString(part.Data)
+	if err != nil || len(raw) == 0 {
+		return nil
+	}
+	img, _, err := image.Decode(bytes.NewReader(raw))
+	if err != nil || img.Bounds().Empty() {
+		return nil
+	}
+	return img
+}
+
+// showPicture shows a picture as large as the window allows.
+func (ui *desktopUI) showPicture(title string, part core.ImagePart) {
+	img := decodePicture(part)
+	if img == nil {
+		return
+	}
+	area := ui.window.Canvas().Size()
+	view := canvas.NewImageFromImage(img)
+	view.FillMode = canvas.ImageFillContain
+	view.ScaleMode = canvas.ImageScaleSmooth
+	view.SetMinSize(fyne.NewSize(area.Width-120, area.Height-200))
+	ui.modal(title, view, area.Width-80, nil)
 }
 
 func outputPlaceholder(running bool, empty string) string {

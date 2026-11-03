@@ -252,12 +252,14 @@ func (server *headlessServer) clearBrowser(w http.ResponseWriter, r *http.Reques
 func (server *headlessServer) itemImage(w http.ResponseWriter, r *http.Request) {
 	remoteapi.ItemImage(w, r, func(index int) ([]core.ImagePart, bool) {
 		server.mu.Lock()
-		defer server.mu.Unlock()
 		chat := server.chatLocked(r.PathValue("id"))
 		if chat == nil || index < 0 || index >= len(chat.Items) {
+			server.mu.Unlock()
 			return nil, false
 		}
-		return chat.Items[index].Images, true
+		item := chat.Items[index]
+		server.mu.Unlock()
+		return agent.ToolImages(item), true // may read a file: not under the lock
 	})
 }
 

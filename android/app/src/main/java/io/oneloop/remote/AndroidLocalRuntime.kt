@@ -453,6 +453,7 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
                     check(supported()) { "Local execution is not supported on this phone." }
                     val root = root() ?: error("Prepare Debian before starting the local agent.")
                     LocalRuntimeService.ensureRunning(context)
+                    phone.resume() // Phone Use as the user left it (LocalAdb)
                     seed(root)
                     val nativeBridge = LocalBridge(scope, phone, browser, { chatgptBrowser(it) }, ::terminalOperation, ::installPackages)
                     var started: Process? = null
@@ -682,7 +683,7 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
     fun hasWork(): Boolean = startup.isLocked || preparation.isLocked || engine.get() != null || setupProcess.get() != null
 
     override fun stop() {
-        phone.revoke()
+        phone.pause() // the user's Phone Use choice stays for the next start
         synchronized(lifecycle) {
             val process = engine.getAndSet(null)
             val setup = setupProcess.get()

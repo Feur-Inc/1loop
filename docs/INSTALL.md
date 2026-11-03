@@ -455,12 +455,56 @@ On desktop, open Settings → Connections, add or edit a Claude Code connection,
 and choose **Sign in**. Complete Claude Code’s own browser authorization.
 If it supplies a code, paste it into the dialog and submit it. Close the dialog
 after success, then load the connection’s models. The phone keeps its existing
-Claude Code sign-in action; both interfaces use the same CLI login flow.
+Claude Code sign-in action; both interfaces use the same CLI login flow, in the
+connection's own Claude Code folder when it has one (see below).
+
+### Several Claude Code accounts
+
+Claude Code has no account switcher: everything it knows (login, settings,
+sessions) lives in one configuration folder, `~/.claude` and `~/.claude.json`,
+or the folder `CLAUDE_CONFIG_DIR` names. 1loop gives each Claude Code
+connection one of two logins, chosen under **Login** in its settings:
+
+- **System Claude Code login**: the folder `claude` uses in a terminal. The
+  Claude Code connection 1loop adds by itself, and every connection made
+  before 1loop supported several accounts, use it, so nobody is signed out.
+- **Own login for this connection**: a folder of its own,
+  `<config>/1loop/claude-code/<connection ID>` (`~/.config` on Linux,
+  `~/Library/Application Support` on macOS, `%AppData%` on Windows; inside the
+  Flatpak, `~/.var/app/io.github.Feur_Inc.OneLoop/config`). Every Claude Code
+  process 1loop starts for the connection (sign-in, models, runs, summaries,
+  usage limits) gets it as `CLAUDE_CONFIG_DIR`, so the connection keeps its
+  own sign-in, usage limits and sessions, and signing it in leaves the others
+  signed in. The new folder links to your `settings.json`, `CLAUDE.md`,
+  `agents`, `commands`, `skills` and `output-styles` in `~/.claude`, so the
+  same rules and instructions apply; where links are not allowed (Windows
+  without Developer Mode) it starts from Claude Code's defaults.
+
+To add a second account: Settings → Connections → **Add connection**, type
+**Claude Code**. A new Claude Code connection gets its own login when another
+one already uses the system login. Choose **Sign in** and authorize the other
+Claude account; if the browser is already signed in to the first one, sign out
+of claude.ai there or use a private window first. Each connection shows the
+account it uses (email and login) in the connection list, in its settings and
+in the model picker's details.
+
+A chat's Claude Code session exists only in the folder that created it. When a
+chat moves to a connection with another login, Claude Code starts a new
+session there and the conversation goes through the usual handoff; coming
+back to the first connection resumes its session. **Import…** (Settings →
+General) lists the sessions of the system login and of every connection's own
+login. Removing a connection with its own login signs it out of Claude Code;
+its folder (and its sessions) stay on disk.
+
+On the phone, the first Claude Code connection uses the phone's Claude Code
+login and any further one gets its own; save the connection, then sign it in.
 
 For scripts or a desktop launched with a subscription token, `claude setup-token`
 prints a long-lived token. Supply it through `CLAUDE_CODE_OAUTH_TOKEN` in the
-environment that launches 1loop. It takes precedence over the stored login;
-1loop preserves this variable and still removes API-key billing overrides.
+environment that launches 1loop. It takes precedence over the stored login of
+the connections using the system login; 1loop preserves this variable for them,
+does not pass it to a connection with its own login, and still removes API-key
+billing overrides.
 Do not put the token in a prompt or commit it.
 
 A model catalog is not a live token-validation request. 1loop reports an explicitly

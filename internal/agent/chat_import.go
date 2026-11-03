@@ -28,6 +28,9 @@ type ImportSession struct {
 	Folder  string // the folder it worked in: the chat's 1loop project
 	Updated time.Time
 	Path    string
+	// Claude Code: the folder the session is in, "" for the system login
+	// (claude_accounts.go), and the account signed in there.
+	Home, Account string
 }
 
 // SourceName is how 1loop names the tool a session comes from.
@@ -51,14 +54,6 @@ const (
 	importTitleMax  = 80
 )
 
-func claudeHome() string {
-	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
-		return dir
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".claude")
-}
-
 func codexHome() string {
 	if dir := os.Getenv("CODEX_HOME"); dir != "" {
 		return dir
@@ -68,9 +63,18 @@ func codexHome() string {
 }
 
 // FindImportSessions lists the Claude Code and Codex sessions found on this
-// computer, newest first. A session without a folder or a message is left out.
+// computer, newest first: Claude Code's in the system login's folder and in
+// every connection's own. A session without a folder or a message is left out.
 func FindImportSessions() []ImportSession {
-	sessions := append(claudeSessions(filepath.Join(claudeHome(), "projects")), codexSessions(codexHome())...)
+	var sessions []ImportSession
+	for _, home := range claudeHomes() {
+		account := claudeAccountIn(home).Email
+		for _, session := range claudeSessions(filepath.Join(claudeDataDir(home), "projects")) {
+			session.Home, session.Account = home, account
+			sessions = append(sessions, session)
+		}
+	}
+	sessions = append(sessions, codexSessions(codexHome())...)
 	sort.SliceStable(sessions, func(i, j int) bool { return sessions[i].Updated.After(sessions[j].Updated) })
 	return sessions
 }

@@ -61,10 +61,16 @@ type Config struct {
 	Workspace         string                                    `json:"workspace"`
 	MachineID         string                                    `json:"machine,omitempty"` // the SSH machine the workspace is on, "" for this computer
 	Machine           Machine                                   `json:"-"`                 // that machine, for a run (machine.go)
-	Session           string                                    `json:"session,omitempty"` // Claude Code connection: the chat's session there
+	Session           string                                    `json:"session,omitempty"` // Claude Code connection: the chat's session there (see ClaudeSession)
+	// ClaudeHome is the Claude Code connection's CLAUDE_CONFIG_DIR, "" for
+	// the system Claude Code login (claude_accounts.go).
+	ClaudeHome string `json:"claudeHome,omitempty"`
 	// SessionMark is how many of the chat's items that session has seen:
 	// what other models did after it is sent when Claude Code resumes.
 	SessionMark int `json:"sessionMark,omitempty"`
+	// OtherSessions keeps the sessions of the chat's other Claude Code
+	// logins, so coming back to a login resumes its session (claude_accounts.go).
+	OtherSessions map[string]LoginSession `json:"otherSessions,omitempty"`
 	// RanWith is who the chat's last turn ran with: another provider,
 	// account or model first goes through a handoff (handoff.go).
 	RanWith *RunIdentity `json:"ranWith,omitempty"`

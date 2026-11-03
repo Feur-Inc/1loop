@@ -120,15 +120,8 @@ func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key s
 			appendWindows(extra.Name, extra.RateLimit)
 		}
 	case "claudecode":
-		dir := os.Getenv("CLAUDE_CONFIG_DIR")
-		if dir == "" {
-			home, err := os.UserHomeDir()
-			if err != nil {
-				return limits, err
-			}
-			dir = filepath.Join(home, ".claude")
-		}
-		data, err := os.ReadFile(filepath.Join(dir, ".credentials.json"))
+		// The connection's own Claude Code login (claude_accounts.go).
+		data, err := os.ReadFile(filepath.Join(claudeDataDir(conn.ClaudeHome()), ".credentials.json"))
 		if err != nil {
 			return limits, err
 		}

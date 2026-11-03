@@ -139,11 +139,17 @@ const claudeDisabledTools = "Task,Agent"
 // claudeCommand prepares a Claude Code process in its stream-json mode.
 // The environment is the user's, minus what would change who pays (an API
 // key) and minus the variables of a Claude Code session 1loop may have been
-// started from.
-func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd, error) {
+// started from. home is the connection's Claude Code folder, "" for the
+// system login (claude_accounts.go).
+func claudeCommand(ctx context.Context, home, dir string, extra ...string) (*exec.Cmd, error) {
 	path, err := ClaudeExecutable()
 	if err != nil {
 		return nil, err
+	}
+	if home != "" {
+		if err := prepareClaudeHome(home); err != nil {
+			return nil, err
+		}
 	}
 	args := append([]string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}, extra...)
 	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
@@ -156,10 +162,14 @@ func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd,
 	for _, pair := range os.Environ() {
 		name, _, _ := strings.Cut(pair, "=")
 		if name == "ANTHROPIC_API_KEY" || name == "ANTHROPIC_AUTH_TOKEN" || name == "CLAUDECODE" ||
-			name == "CLAUDE_PID" || name == "CLAUDE_EFFORT" || (strings.HasPrefix(name, "CLAUDE_CODE_") && name != "CLAUDE_CODE_OAUTH_TOKEN") {
+			name == "CLAUDE_PID" || name == "CLAUDE_EFFORT" || (strings.HasPrefix(name, "CLAUDE_CODE_") && name != "CLAUDE_CODE_OAUTH_TOKEN") ||
+			home != "" && (name == "CLAUDE_CONFIG_DIR" || name == "CLAUDE_CODE_OAUTH_TOKEN") {
 			continue
 		}
 		cmd.Env = append(cmd.Env, pair)
+	}
+	if home != "" {
+		cmd.Env = append(cmd.Env, "CLAUDE_CONFIG_DIR="+home)
 	}
 	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
 		cmd.Env = append(cmd.Env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
@@ -171,12 +181,13 @@ func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd,
 	return cmd, nil
 }
 
-// claudeModels asks the installed Claude Code which models the account can
-// use. It only exchanges the protocol's handshake: no request reaches a model.
-func (backend *App) claudeModels(ctx context.Context) (models []claudeModel, err error) {
+// claudeModels asks the installed Claude Code which models the account of
+// this Claude Code folder can use. It only exchanges the protocol's
+// handshake: no request reaches a model.
+func (backend *App) claudeModels(ctx context.Context, home string) (models []claudeModel, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd, err := claudeCommand(ctx, os.TempDir())
+	cmd, err := claudeCommand(ctx, home, os.TempDir())
 	if err != nil {
 		return nil, err
 	}
@@ -415,8 +426,9 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	if cfg.Effort != "" {
 		args = append(args, "--effort", cfg.Effort)
 	}
-	if cfg.Session != "" {
-		args = append(args, "--resume", cfg.Session)
+	session := cfg.ClaudeSession()
+	if session != "" {
+		args = append(args, "--resume", session)
 	}
 	if cfg.Todo != nil {
 		config, close, err := backend.startTodoMCP(ctx, cfg, emit)
@@ -445,7 +457,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	}
 	processCtx, stopProcess := context.WithCancel(ctx)
 	defer stopProcess()
-	cmd, err := claudeCommand(processCtx, cfg.Workspace, args...)
+	cmd, err := claudeCommand(processCtx, cfg.ClaudeHome, cfg.Workspace, args...)
 	if err != nil {
 		return err
 	}
@@ -527,14 +539,14 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	// The recap takes at most ~40% of Claude's window (about 4 characters a
 	// token): a 1M window receives nearly the whole conversation.
 	budget := ModelContextWindow(cfg) * 4 * 40 / 100
-	if cfg.Session == "" && len(messages) > 1 {
+	if session == "" && len(messages) > 1 {
 		// A chat begun with another model: Claude Code starts a session
 		// of its own, so it is told what was said before.
 		preface = "[Earlier conversation in this chat, for context]\n" + core.TruncateText(levelText(messages[:len(messages)-1], LevelEverything, ModelContextWindow(cfg)), budget) + "\n[End of the earlier conversation]\n\n"
-	} else if cfg.Session != "" && cfg.HandoffSummary != "" {
+	} else if session != "" && cfg.HandoffSummary != "" {
 		// Back after another model, the gap summarized as the user chose.
 		preface = "[Since your last turn in this chat, the user continued with another model. Summary of what happened meanwhile]\n" + cfg.HandoffSummary + "\n[End of the summary]\n\n"
-	} else if cfg.Session != "" && cfg.SessionMark > 0 && cfg.Recall != nil {
+	} else if session != "" && cfg.ClaudeMark() > 0 && cfg.Recall != nil {
 		// Back to Claude Code after another model: its session misses
 		// what happened meanwhile, which it now reads before the prompt.
 		if items, err := cfg.Recall(ctx); err == nil {
@@ -542,8 +554,8 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			if end > 0 && items[end-1].Kind == "user" {
 				end-- // the prompt itself
 			}
-			if cfg.SessionMark < end {
-				preface = "[Since your last turn in this chat, the user continued with another model. What happened meanwhile]\n" + itemsText(items[cfg.SessionMark:end]) + "\n[End of what happened meanwhile]\n\n"
+			if cfg.ClaudeMark() < end {
+				preface = "[Since your last turn in this chat, the user continued with another model. What happened meanwhile]\n" + itemsText(items[cfg.ClaudeMark():end]) + "\n[End of what happened meanwhile]\n\n"
 			}
 		}
 	}
@@ -691,7 +703,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 					failure = fmt.Errorf("Claude Code is not using your subscription here (credentials: %s). 1loop stopped before anything was billed to an API key.", claudeEventValue.APIKeySource)
 				}
 				if claudeEventValue.SessionID != "" {
-					emit("session", claudeEventValue.SessionID)
+					emit("session", claudeSessionRef(cfg.ClaudeHome, claudeEventValue.SessionID))
 				}
 			case "status":
 				if claudeEventValue.Status == "requesting" {

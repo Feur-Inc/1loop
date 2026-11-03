@@ -1863,9 +1863,27 @@ static void dataOfferHandleOffer(void* userData,
     }
 }
 
+// 1loop: GLFW binds wl_data_device_manager at version 1, whose offers have
+// no source_actions or action events, but a compositor can send them anyway
+// (niri does, during a drag). libwayland aborts the process on an event
+// whose listener entry is NULL, so every event has a handler.
+static void dataOfferHandleSourceActions(void* userData,
+                                         struct wl_data_offer* offer,
+                                         uint32_t actions)
+{
+}
+
+static void dataOfferHandleAction(void* userData,
+                                  struct wl_data_offer* offer,
+                                  uint32_t action)
+{
+}
+
 static const struct wl_data_offer_listener dataOfferListener =
 {
-    dataOfferHandleOffer
+    dataOfferHandleOffer,
+    dataOfferHandleSourceActions,
+    dataOfferHandleAction
 };
 
 static void dataDeviceHandleDataOffer(void* userData,
@@ -1915,7 +1933,8 @@ static void dataDeviceHandleEnter(void* userData,
                     window = wl_surface_get_user_data(surface);
             }
 
-            if (surface == window->wl.surface && _glfw.wl.offers[i].text_uri_list)
+            // 1loop: window is NULL when the surface is not GLFW's.
+            if (window && surface == window->wl.surface && _glfw.wl.offers[i].text_uri_list)
             {
                 _glfw.wl.dragOffer = offer;
                 _glfw.wl.dragFocus = window;
@@ -1928,7 +1947,8 @@ static void dataDeviceHandleEnter(void* userData,
         }
     }
 
-    if (wl_proxy_get_tag((struct wl_proxy*) surface) != &_glfw.wl.tag)
+    // 1loop: the surface can be NULL (a drag over a destroyed surface).
+    if (!surface || wl_proxy_get_tag((struct wl_proxy*) surface) != &_glfw.wl.tag)
         return;
 
     if (_glfw.wl.dragOffer)

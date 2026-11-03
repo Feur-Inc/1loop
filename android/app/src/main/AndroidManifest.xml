@@ -16,8 +16,9 @@
     <!-- The six-hourly update check stays scheduled after a restart (UpdateCheckJob). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
-    <!-- extract_apk: the agent copies the APKs of apps installed on the phone (ApkTools.kt). -->
-    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" />
+    <!-- extract_apk: the agent copies the APKs of any app installed on the phone (ApkTools.kt),
+         which no <queries> list can name in advance. Not distributed through the Play Store. -->
+    <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
 
     <queries><package android:name="moe.shizuku.privileged.api" /></queries>
 

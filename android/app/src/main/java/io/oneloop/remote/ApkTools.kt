@@ -131,7 +131,8 @@ class ApkTools(private val context: Context, private val root: () -> File?) {
             from.inputStream().use { input -> to.outputStream().use { input.copyTo(it) } }
             "${to.name} (${to.length()} bytes)"
         }
-        val shown = "/" + target.relativeTo(File(root() ?: target, "projects").canonicalFile.parentFile).path
+        val debianRoot = File(root() ?: target, "projects").canonicalFile.parentFile ?: target
+        val shown = "/" + target.relativeTo(debianRoot).path
         return "Extracted ${copied.size} APK(s) of $name into $shown: ${copied.joinToString(", ")}. Decompile them in Debian with apktool or jadx (see docs/INSTALL.md)."
     }
 }

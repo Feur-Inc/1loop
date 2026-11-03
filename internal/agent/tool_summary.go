@@ -388,6 +388,16 @@ func otherAction(tool, raw string) (action, bool) {
 
 // CallLabel says what the model is writing a call for, before its
 // arguments are complete: detail is the path or command seen so far.
+// CallMark is the work ring's centre icon while a tool is called: the >_ of
+// the terminal for anything that runs a command, the braces otherwise.
+func CallMark(tool string) string {
+	switch tool {
+	case "shell", "adb_shell", "terminal_command":
+		return "bash"
+	}
+	return "call"
+}
+
 func CallLabel(tool, detail string) string {
 	detail = FirstLine(detail)
 	label := ""

@@ -702,6 +702,8 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 		cfg.Packages = server.bridge.packageTools
 		cfg.ToolAllowed = func(name string) bool {
 			switch {
+			case agent.IsAPKTool(name):
+				return true // the installer, not ADB: no Shizuku, and one approval per call even in Approval mode
 			case name == "phone_use" || name == "adb_shell":
 				// Android publishes grant/connection changes; a slow bridge must
 				// not silently remove tools from a model request. In Approval

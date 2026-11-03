@@ -306,6 +306,7 @@ func runDesktop(backend *agent.App, root string) {
 		if ui.chrome {
 			chromeReady()
 		}
+		clipboardReady()
 		windowIdentity(ui.window) // again, should the window not have existed yet below
 		ui.startFrames()
 		size := ui.window.Canvas().Size()
@@ -684,8 +685,12 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.attach.onTap = func() {
 		showMenu(ui.window, ui.attach, []menuAction{
 			{label: "Paste image", detail: "From the clipboard", icon: iconCopy, run: func() {
-				if !ui.pasteFromClipboard() {
-					ui.notice("Paste", "No image in the clipboard.")
+				if err := ui.pasteImage(); err != nil {
+					message := err.Error()
+					if !errors.Is(err, errNoClipboardImage) {
+						message = "Could not read the clipboard: " + message
+					}
+					ui.notice("Paste", message+".")
 				}
 			}},
 			{label: "Attach files…", detail: "Copy to the workspace tmp folder", icon: iconFolder, run: ui.pickFiles},

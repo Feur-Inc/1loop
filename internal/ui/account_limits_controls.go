@@ -43,8 +43,11 @@ func newLimitGauge(window agent.AccountLimitWindow) fyne.CanvasObject {
 	return container.New(limitGaugeLayout{window}, label, track, fill, value, textLine("", 11, colMuted))
 }
 
-func (layoutSpec limitGaugeLayout) MinSize([]fyne.CanvasObject) fyne.Size {
-	return fyne.NewSize(98, 38)
+// MinSize is the width that shows the whole caption beside the value
+// (98 to 160).
+func (layoutSpec limitGaugeLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	caption := fyne.MeasureText(strings.ReplaceAll(layoutSpec.window.Label, " · ", " "), 11, fyne.TextStyle{}).Width
+	return fyne.NewSize(fyne.Min(160, fyne.Max(98, caption+6+objects[3].MinSize().Width)), 38)
 }
 
 func (layoutSpec limitGaugeLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
@@ -114,17 +117,44 @@ func (layoutSpec limitStripHeaderLayout) Layout(o []fyne.CanvasObject, size fyne
 
 type limitStripCellsLayout struct{}
 
+// Up to four windows share the strip's width: each gets the width its
+// caption needs when they all fit, and gives some back (down to 98) when
+// they do not. More windows keep their full width and scroll, rather than
+// cutting every caption.
 func (limitStripCellsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
-	return fyne.NewSize(float32(len(o))*110-12, 38)
+	width := float32(len(o)-1) * 12
+	for _, cell := range o {
+		if len(o) > 4 {
+			width += cell.MinSize().Width
+		} else {
+			width += 98
+		}
+	}
+	return fyne.NewSize(width, 38)
 }
 
 func (limitStripCellsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
-	// A few windows share the strip's width (up to 160 each), so that their
-	// captions fit; four or more keep 98 and scroll.
-	width := fyne.Min(160, fyne.Max(98, (size.Width+12)/float32(len(o))-12))
+	needs, total, spare := make([]float32, len(o)), float32(len(o)-1)*12, float32(0)
 	for i, cell := range o {
-		cell.Move(fyne.NewPos(float32(i)*(width+12), 0))
+		needs[i] = cell.MinSize().Width
+		total += needs[i]
+		spare += needs[i] - 98
+	}
+	grow, shrink := float32(0), float32(1)
+	if total <= size.Width {
+		grow = (size.Width - total) / float32(len(o))
+	} else if spare > 0 {
+		shrink = fyne.Max(0, 1-(total-size.Width)/spare)
+	}
+	x := float32(0)
+	for i, cell := range o {
+		width := fyne.Min(160, fyne.Max(needs[i], 98+(needs[i]-98)*shrink)+grow)
+		if total > size.Width {
+			width = 98 + (needs[i]-98)*shrink
+		}
+		cell.Move(fyne.NewPos(x, 0))
 		cell.Resize(fyne.NewSize(width, size.Height))
+		x += width + 12
 	}
 }
 

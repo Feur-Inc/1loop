@@ -31,6 +31,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -160,8 +161,7 @@ func agyGroupName(name string) string {
 }
 
 // parseAgyUsage reads agy's /usage result: model groups, each with its
-// usage windows (5 hours, a week). Each group gives one gauge: the window
-// with the least left, which is the one that stops its models first.
+// usage windows (5 hours, a week), shortest window first in each group.
 func parseAgyUsage(out []byte) (AccountLimits, error) {
 	limits := AccountLimits{Note: "Limits not provided"}
 	var result struct {
@@ -171,6 +171,7 @@ func parseAgyUsage(out []byte) (AccountLimits, error) {
 				Groups []struct {
 					Name    string `json:"name"`
 					Buckets []struct {
+						Window    string    `json:"window"`
 						Remaining *float64  `json:"remaining_fraction"`
 						ResetAt   time.Time `json:"reset_time"`
 					} `json:"buckets"`
@@ -185,19 +186,23 @@ func parseAgyUsage(out []byte) (AccountLimits, error) {
 		return limits, fmt.Errorf("agy did not answer /usage")
 	}
 	for _, group := range result.Command.Data.Groups {
-		var tightest *AccountLimitWindow
+		var windows []AccountLimitWindow
 		for _, bucket := range group.Buckets {
 			if bucket.Remaining == nil {
 				continue
 			}
-			window := AccountLimitWindow{agyGroupName(group.Name), 100 * (1 - *bucket.Remaining), bucket.ResetAt}
-			if tightest == nil || window.used > tightest.used || window.used == tightest.used && window.ResetAt.Before(tightest.ResetAt) {
-				tightest = &window
+			period := map[string]string{"weekly": "7d", "daily": "1d"}[bucket.Window]
+			if period == "" {
+				period = bucket.Window
 			}
+			windows = append(windows, AccountLimitWindow{agyGroupName(group.Name) + " · " + period, 100 * (1 - *bucket.Remaining), bucket.ResetAt})
 		}
-		if tightest != nil {
-			limits.Windows = append(limits.Windows, *tightest)
-		}
+		// agy lists the weekly limit first; the 5-hour one comes first here,
+		// as for Claude Code.
+		sort.SliceStable(windows, func(i, j int) bool {
+			return strings.HasSuffix(windows[i].Label, " · 5h") && !strings.HasSuffix(windows[j].Label, " · 5h")
+		})
+		limits.Windows = append(limits.Windows, windows...)
 	}
 	return limits, nil
 }

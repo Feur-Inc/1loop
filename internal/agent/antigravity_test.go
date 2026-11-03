@@ -179,8 +179,9 @@ func TestParseAgyUsage(t *testing.T) {
 		got = append(got, fmt.Sprintf("%s %.0f%% %s", window.Label, window.Remaining(), window.ResetAt.Format(time.RFC3339)))
 	}
 	want := []string{
-		"Gemini 75% 2026-11-09T15:53:11Z",
-		"Claude/GPT 25% 2026-11-03T14:15:57Z",
+		"Gemini · 5h 100% 2026-11-03T13:21:55Z",
+		"Gemini · 7d 75% 2026-11-09T15:53:11Z",
+		"Claude/GPT · 5h 25% 2026-11-03T14:15:57Z",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Fatalf("windows:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))

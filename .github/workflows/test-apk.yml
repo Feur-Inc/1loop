@@ -1,0 +1,42 @@
+name: Test debug APK
+
+# Temporary, only on the test/140-hidden-session branch: builds the debug app and
+# keeps it as a downloadable artifact (the main CI does not keep it).
+on:
+  push:
+    branches: [test/140-hidden-session]
+
+permissions:
+  contents: read
+
+jobs:
+  apk:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-java@c5195efecf7bdfc987ee8bae7a71cb8b11521c00 # v4.7.1
+        with:
+          distribution: temurin
+          java-version: '21'
+      - name: Android SDK packages
+        run: |
+          set -euo pipefail
+          sudo apt-get update -q
+          sudo apt-get install -y -q --no-install-recommends patchelf
+          sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          { yes || true; } | "$sdkmanager" --licenses >/dev/null
+          "$sdkmanager" --install 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;30.0.16248370' >/dev/null
+          echo "ANDROID_NDK_HOME=$ANDROID_HOME/ndk/30.0.16248370" >> "$GITHUB_ENV"
+      - name: Debug APK
+        run: packaging/android/build.sh debug
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: 1loop-debug-apk
+          path: dist/*-debug.apk
+          retention-days: 3

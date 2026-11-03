@@ -56,7 +56,7 @@ while IFS= read -r line; do
   printf '%s\n' "$line" >> "` + dir + `/input.jsonl"
   case "$line" in
   *'"initialize"'*)
-    echo '{"type":"control_response","response":{"subtype":"success","request_id":"1loop-init","response":{"models":[{"value":"default"}],"commands":[{"name":"usage","description":"Show plan usage\nmore","argumentHint":"","aliases":["cost"]},{"name":"review","argumentHint":"[pr]"}],"claude_code_version":"9.9.9","account":{"email":"someone@example.test","organization":"Org","subscriptionType":"Claude Max"}}}}' ;;
+    printf '%s\n' '{"type":"control_response","response":{"subtype":"success","request_id":"1loop-init","response":{"models":[{"value":"default"}],"commands":[{"name":"usage","description":"Show plan usage\nmore","argumentHint":"","aliases":["cost"]},{"name":"review","argumentHint":"[pr]"}],"claude_code_version":"9.9.9","account":{"email":"someone@example.test","organization":"Org","subscriptionType":"Claude Max"}}}}' ;;
   *'"type":"user"'*)
 ` + script + `
     ;;
@@ -99,9 +99,9 @@ func TestClaudeInfoFromHandshake(t *testing.T) {
 // A command goes to Claude Code as typed, even in a chat begun with another
 // model, and the throwaway session it opens is not kept.
 func TestClaudeCommandSentAsTyped(t *testing.T) {
-	dir := fakeClaude(t, `    echo '{"type":"system","subtype":"init","session_id":"s-command","apiKeySource":"none"}'
-    echo '{"type":"assistant","message":{"id":"m","model":"<synthetic>","content":[{"type":"text","text":"Current week: 8% used"}]}}'
-    echo '{"type":"result","subtype":"success","is_error":false,"result":"Current week: 8% used","session_id":"s-command"}'`)
+	dir := fakeClaude(t, `    printf '%s\n' '{"type":"system","subtype":"init","session_id":"s-command","apiKeySource":"none"}'
+    printf '%s\n' '{"type":"assistant","message":{"id":"m","model":"<synthetic>","content":[{"type":"text","text":"Current week: 8% used"}]}}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"Current week: 8% used","session_id":"s-command"}'`)
 	history := []Message{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "hi"}, {Role: "user", Content: "/usage"}}
 	var events []string
 	var text strings.Builder
@@ -132,8 +132,8 @@ func TestClaudeCommandSentAsTyped(t *testing.T) {
 
 // A command that answers nothing (/rename) is not reported as a failure.
 func TestClaudeCommandWithoutOutput(t *testing.T) {
-	fakeClaude(t, `    echo '{"type":"system","subtype":"init","session_id":"s1","apiKeySource":"none"}'
-    echo '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"s1"}'`)
+	fakeClaude(t, `    printf '%s\n' '{"type":"system","subtype":"init","session_id":"s1","apiKeySource":"none"}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"s1"}'`)
 	cfg := Config{Provider: "claudecode", ConnectionID: "claude", Model: "default", Workspace: t.TempDir(), Session: "s1"}
 	inbox := Inbox{Steer: func() []Message { return nil }, Next: func() (Message, bool) { return Message{}, false }}
 	err := (&App{}).runClaudeCode(context.Background(), cfg, []Message{{Role: "user", Content: "/rename tests"}}, inbox, func(string, any) {})

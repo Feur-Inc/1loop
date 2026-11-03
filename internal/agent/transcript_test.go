@@ -26,3 +26,20 @@ func TestDescribeApplyPatch(t *testing.T) {
 		}
 	}
 }
+
+func TestDescribePhoneSession(t *testing.T) {
+	for _, test := range []struct {
+		args         string
+		verb, target string
+	}{
+		{`{"session":"user","action":"tap","x":10,"y":20}`, "Tapped the phone", "at 10, 20"},
+		{`{"action":"state"}`, "Read", "the phone's screen"},
+		{`{"session":"hidden","action":"launch","text":"org.mozilla.firefox"}`, "Opened in the hidden session:", "org.mozilla.firefox"},
+		{`{"session":"hidden","action":"screenshot"}`, "Looked at", "the hidden phone session"},
+	} {
+		verb, target, _ := DescribeTool(ChatItem{Tool: "phone_use", Args: test.args}, false)
+		if verb != test.verb || target != test.target {
+			t.Errorf("DescribeTool(%s) = %q %q, want %q %q", test.args, verb, target, test.verb, test.target)
+		}
+	}
+}

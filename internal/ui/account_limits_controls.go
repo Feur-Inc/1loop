@@ -119,9 +119,12 @@ func (limitStripCellsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
 }
 
 func (limitStripCellsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
+	// A few windows share the strip's width (up to 160 each), so that their
+	// captions fit; four or more keep 98 and scroll.
+	width := fyne.Min(160, fyne.Max(98, (size.Width+12)/float32(len(o))-12))
 	for i, cell := range o {
-		cell.Move(fyne.NewPos(float32(i)*110, 0))
-		cell.Resize(fyne.NewSize(98, size.Height))
+		cell.Move(fyne.NewPos(float32(i)*(width+12), 0))
+		cell.Resize(fyne.NewSize(width, size.Height))
 	}
 }
 

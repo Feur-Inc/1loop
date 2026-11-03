@@ -147,8 +147,21 @@ func agyLimits(ctx context.Context) (AccountLimits, error) {
 	return parseAgyUsage(out)
 }
 
+// agyGroupName is a model group's name short enough for a limit gauge's
+// caption: "Gemini Models" is "Gemini", "Claude and GPT models" is
+// "Claude/GPT", "Gemini 4 Argon" is "Argon".
+func agyGroupName(name string) string {
+	name = strings.TrimSuffix(strings.TrimSuffix(name, " Models"), " models")
+	name = strings.ReplaceAll(name, " and ", "/")
+	if fields := strings.Fields(name); len(fields) > 1 && strings.HasPrefix(name, "Gemini ") {
+		name = fields[len(fields)-1] // a named Gemini model (Gemini 4 Argon): its name
+	}
+	return name
+}
+
 // parseAgyUsage reads agy's /usage result: model groups, each with its
-// usage windows (5 hours, a week).
+// usage windows (5 hours, a week). Each group gives one gauge: the window
+// with the least left, which is the one that stops its models first.
 func parseAgyUsage(out []byte) (AccountLimits, error) {
 	limits := AccountLimits{Note: "Limits not provided"}
 	var result struct {
@@ -158,7 +171,6 @@ func parseAgyUsage(out []byte) (AccountLimits, error) {
 				Groups []struct {
 					Name    string `json:"name"`
 					Buckets []struct {
-						Window    string    `json:"window"`
 						Remaining *float64  `json:"remaining_fraction"`
 						ResetAt   time.Time `json:"reset_time"`
 					} `json:"buckets"`
@@ -173,16 +185,18 @@ func parseAgyUsage(out []byte) (AccountLimits, error) {
 		return limits, fmt.Errorf("agy did not answer /usage")
 	}
 	for _, group := range result.Command.Data.Groups {
-		name := strings.TrimSuffix(strings.TrimSuffix(group.Name, " Models"), " models")
+		var tightest *AccountLimitWindow
 		for _, bucket := range group.Buckets {
 			if bucket.Remaining == nil {
 				continue
 			}
-			period := map[string]string{"weekly": "7d", "daily": "1d"}[bucket.Window]
-			if period == "" {
-				period = bucket.Window
+			window := AccountLimitWindow{agyGroupName(group.Name), 100 * (1 - *bucket.Remaining), bucket.ResetAt}
+			if tightest == nil || window.used > tightest.used || window.used == tightest.used && window.ResetAt.Before(tightest.ResetAt) {
+				tightest = &window
 			}
-			limits.Windows = append(limits.Windows, AccountLimitWindow{name + " · " + period, 100 * (1 - *bucket.Remaining), bucket.ResetAt})
+		}
+		if tightest != nil {
+			limits.Windows = append(limits.Windows, *tightest)
 		}
 	}
 	return limits, nil

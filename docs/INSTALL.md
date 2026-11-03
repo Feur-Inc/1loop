@@ -443,9 +443,9 @@ How 1loop uses it, and what it never does:
 
 Behaviour to expect in 1loop:
 
-- The model picker shows agy's usage limits like `/usage` does: for each model
-  group (Gemini, Claude and GPT, …), what is left of its 5-hour and weekly
-  limits and when they refresh.
+- The model picker shows agy's usage limits from `/usage`: for each model
+  group (Gemini, Claude/GPT, …), what is left of whichever of its 5-hour and
+  weekly limits has the least left, and when that one refreshes.
 - Headless agy cannot ask for a permission: it refuses what needs one (shell
   commands, by default) and reports it at the end of the turn. 1loop then asks
   you, and for each command you approve it starts agy again in the same

@@ -16,6 +16,8 @@
     <!-- The six-hourly update check stays scheduled after a restart (UpdateCheckJob). -->
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
 
+    <!-- uninstall_app: Android's uninstall dialog, where the user confirms (ApkTools.kt). -->
+    <uses-permission android:name="android.permission.REQUEST_DELETE_PACKAGES" />
     <!-- extract_apk: the agent copies the APKs of any app installed on the phone (ApkTools.kt),
          which no <queries> list can name in advance. Not distributed through the Play Store. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />

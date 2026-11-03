@@ -61,7 +61,7 @@ class LocalBridge(
                     "browser_clear" -> { browser.clearData(); JSONObject().put("ok", true) }
                     "chatgpt_native" -> request.getJSONObject("arguments").let { chatgpt(it.getString("profile")).execute(it) }
                     "terminal_native" -> terminal(request.getJSONObject("arguments"))
-                    "install_apk", "extract_apk" -> apk.execute(method, request.getJSONObject("arguments"))
+                    "install_apk", "extract_apk", "uninstall_app" -> apk.execute(method, request.getJSONObject("arguments"))
                     "install_packages" -> installPackages(request.getJSONObject("arguments"))
                     else -> error("Unknown local bridge method.")
                 }

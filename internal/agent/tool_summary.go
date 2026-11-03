@@ -359,6 +359,8 @@ func otherAction(tool, raw string) (action, bool) {
 		return action{"Ran on the phone:", "Running on the phone:", FirstLine(args.Command), true}, true
 	case "install_apk":
 		return action{"Installed the APK", "Installing the APK", args.Path, false}, true
+	case "uninstall_app":
+		return action{"Uninstalled", "Uninstalling", args.Package, false}, true
 	case "extract_apk":
 		return action{"Extracted the APK of", "Extracting the APK of", args.Package, false}, true
 	case "install_packages":
@@ -437,6 +439,8 @@ func toolNoun(tool string) string {
 		return "a phone command"
 	case "install_apk":
 		return "an APK install"
+	case "uninstall_app":
+		return "an app uninstall"
 	case "extract_apk":
 		return "an APK extraction"
 	case "skill":

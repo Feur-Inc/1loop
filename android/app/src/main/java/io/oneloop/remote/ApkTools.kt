@@ -37,6 +37,7 @@ class ApkTools(private val context: Context, private val root: () -> File?) {
     suspend fun execute(name: String, arguments: JSONObject): JSONObject = withContext(Dispatchers.IO) {
         JSONObject().put("text", when (name) {
             "install_apk" -> install(projectFile(arguments.getString("path")))
+            "uninstall_app" -> uninstall(arguments.getString("package").trim())
             "extract_apk" -> extract(arguments.getString("package").trim(), arguments.optString("destination").trim())
             else -> error("Unknown APK tool.")
         })
@@ -96,6 +97,51 @@ class ApkTools(private val context: Context, private val root: () -> File?) {
         } catch (failure: Exception) {
             runCatching { installer.abandonSession(id) }
             throw failure
+        } finally {
+            runCatching { context.unregisterReceiver(receiver) }
+        }
+    }
+
+    /** Android's own uninstall dialog: the user confirms, and the app's data goes with it. */
+    private suspend fun uninstall(name: String): String {
+        require(name.matches(Regex("[A-Za-z][A-Za-z0-9_]*(\\.[A-Za-z0-9_]+)+"))) { "Give a package name such as org.mozilla.firefox." }
+        require(name != context.packageName && !name.startsWith("io.oneloop.remote")) { "1loop does not uninstall itself: ask the user to do it in Android's settings." }
+        try {
+            context.packageManager.getPackageInfo(name, 0)
+        } catch (_: PackageManager.NameNotFoundException) {
+            return "Not installed: $name is not installed (or Android hides it from 1loop)."
+        }
+        val result = CompletableDeferred<Pair<Int, String>>()
+        val action = "${context.packageName}.APP_UNINSTALL.${System.nanoTime()}"
+        val receiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context, intent: Intent) {
+                val status = intent.getIntExtra(PackageInstaller.EXTRA_STATUS, PackageInstaller.STATUS_FAILURE)
+                if (status == PackageInstaller.STATUS_PENDING_USER_ACTION) {
+                    val confirm = if (Build.VERSION.SDK_INT >= 33) intent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+                    else @Suppress("DEPRECATION") intent.getParcelableExtra(Intent.EXTRA_INTENT)
+                    runCatching { context.startActivity(confirm?.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
+                        .onFailure { result.complete(PackageInstaller.STATUS_FAILURE to "Android's uninstall dialog could not be opened from the background: ${it.message}") }
+                } else result.complete(status to intent.getStringExtra(PackageInstaller.EXTRA_STATUS_MESSAGE).orEmpty())
+            }
+        }
+        ContextCompat.registerReceiver(context, receiver, IntentFilter(action), ContextCompat.RECEIVER_NOT_EXPORTED)
+        try {
+            val pending = android.app.PendingIntent.getBroadcast(
+                context, action.hashCode(), Intent(action).setPackage(context.packageName),
+                android.app.PendingIntent.FLAG_UPDATE_CURRENT or android.app.PendingIntent.FLAG_MUTABLE,
+            )
+            context.packageManager.packageInstaller.uninstall(name, pending.intentSender)
+            val (status, message) = try {
+                withTimeout(4 * 60_000L) { result.await() }
+            } catch (_: TimeoutCancellationException) {
+                return "Not finished: the user did not answer Android's uninstall dialog within 4 minutes. Ask them, then call uninstall_app again."
+            }
+            return when (status) {
+                PackageInstaller.STATUS_SUCCESS -> "Uninstalled: $name."
+                PackageInstaller.STATUS_FAILURE_ABORTED -> "Cancelled: the user declined to uninstall $name in Android's dialog."
+                PackageInstaller.STATUS_FAILURE_BLOCKED -> "Blocked: Android does not let $name be uninstalled ($message). It may be a system app or protected by a device policy."
+                else -> "Failed: $name was not uninstalled ($message)."
+            }
         } finally {
             runCatching { context.unregisterReceiver(receiver) }
         }

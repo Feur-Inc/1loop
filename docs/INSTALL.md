@@ -291,7 +291,7 @@ Android asks to allow 1loop to install apps: that permission is used for
 
 ### APKs on the local phone
 
-With **Local phone**, the agent has two tools for APKs. Neither needs Shizuku;
+With **Local phone**, the agent has three tools for APKs and apps. Neither needs Shizuku;
 each call goes through the conversation's approval mode like the other phone
 tools.
 
@@ -304,6 +304,9 @@ tools.
   with another key. It waits 4 minutes for your answer. The dialog opens over
   other apps thanks to the *display over other apps* permission that the status
   badge already uses; if it does not appear, open 1loop and call the tool again.
+- `uninstall_app` removes an app through Android's own uninstall dialog (you
+  confirm; the app's data goes with it). It reports *uninstalled*, *cancelled*
+  or *blocked* (a system app, a device policy). It refuses to uninstall 1loop.
 - `extract_apk` copies the base APK and every split APK of an installed app
   into the project (by default `/projects/default/apks/<package>`). 1loop asks
   Android to let it see all installed apps (`QUERY_ALL_PACKAGES`) for this.

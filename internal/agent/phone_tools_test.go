@@ -7,7 +7,7 @@ func TestAPKToolsArePhoneToolsWithDefinitions(t *testing.T) {
 	for _, definition := range phoneToolDefinitions() {
 		defined[definition["function"].(map[string]any)["name"].(string)] = true
 	}
-	for _, name := range []string{"install_apk", "extract_apk"} {
+	for _, name := range []string{"install_apk", "extract_apk", "uninstall_app"} {
 		if !IsAPKTool(name) || !isPhoneTool(name) || !defined[name] {
 			t.Errorf("%s: apk tool %v, phone tool %v, defined %v", name, IsAPKTool(name), isPhoneTool(name), defined[name])
 		}

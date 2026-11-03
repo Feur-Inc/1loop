@@ -29,7 +29,7 @@ func toolGroups() []toolGroup {
 	groups := []toolGroup{
 		{"panel_browser", "Web browser tabs in this chat's side panel: open pages, read or screenshot them, click, type, run JavaScript, resize.", browserInstructions, browserToolDefinitions},
 		{"panel_terminal", "Persistent terminals in this chat's side panel: run commands, type into programs, send keys, read output, capture the screen.", terminalInstructions, terminalToolDefinitions},
-		{"local_phone", "Control the local Android phone through the user-authorized ADB connection: inspect the screen, take screenshots, tap, swipe, type, send keys, run Android shell commands, install an APK or copy an installed app's APKs into the project.", phoneInstructions, phoneToolDefinitions},
+		{"local_phone", "Control the local Android phone through the user-authorized ADB connection: inspect the screen, take screenshots, tap, swipe, type, send keys, run Android shell commands, install or uninstall an app, or copy an installed app's APKs into the project.", phoneInstructions, phoneToolDefinitions},
 		{"local_debian", "Install Debian packages needed for work in the phone's project, through the trusted installer.", func(Config) string {
 			return "\n\nUse install_packages to add necessary Debian programs; project commands should only modify the selected project. Package installation uses the trusted installer and the current approval policy. It does not authorize Android or ADB access."
 		}, packageToolDefinitions},

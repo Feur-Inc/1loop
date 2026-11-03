@@ -353,6 +353,8 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 			title = "Use local Android shell?"
 		case "install_apk":
 			title = "Install an APK on the phone?"
+		case "uninstall_app":
+			title = "Uninstall an app from the phone?"
 		case "extract_apk":
 			title = "Copy an installed app's APK into the project?"
 		}

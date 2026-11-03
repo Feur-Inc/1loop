@@ -333,6 +333,7 @@ private fun AccountIcon(provider: String, enabled: Boolean) {
         "openai" -> R.drawable.provider_openai
         "chatgptweb" -> R.drawable.provider_chatgptweb
         "claudecode" -> R.drawable.provider_claudecode
+        "antigravity" -> R.drawable.provider_antigravity
         "openrouter" -> R.drawable.provider_openrouter
         "vllm" -> R.drawable.provider_vllm
         else -> null

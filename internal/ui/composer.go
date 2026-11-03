@@ -36,9 +36,10 @@ import (
 
 type chatEntry struct {
 	widget.Entry
-	send     func() // Enter
-	steer    func() // Ctrl+Enter
-	escape   func() // Escape
+	send     func()                    // Enter
+	steer    func()                    // Ctrl+Enter
+	escape   func()                    // Escape
+	keys     func(*fyne.KeyEvent) bool // the command menu's keys, true when it took one
 	onFocus  func(bool)
 	shortcut func(fyne.Shortcut) bool
 	paste    func() bool // image-aware paste (Ctrl+V), true when it handled the key
@@ -149,6 +150,9 @@ func (entry *chatEntry) TypedShortcut(s fyne.Shortcut) {
 }
 
 func (entry *chatEntry) TypedKey(key *fyne.KeyEvent) {
+	if entry.keys != nil && entry.keys(key) {
+		return
+	}
 	if key.Name == fyne.KeyEscape && entry.escape != nil {
 		entry.escape()
 		return

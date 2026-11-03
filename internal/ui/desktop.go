@@ -153,15 +153,22 @@ type desktopUI struct {
 	editBar         *fyne.Container
 	queueTray       *fyne.Container
 	queueList       *fyne.Container
-	queueTitle      *fitLabel
-	model           *picker
-	approvalControl *tapRow
-	contextRing     *contextRing
-	send            *tapRow
-	steer           *tapRow
-	stop            *tapRow
-	controls        *fyne.Container
-	folder          *tapRow
+	// The slash command menu over the composer (slash_commands.go).
+	commandTray, commandList        *fyne.Container
+	commandMatches                  []commandOption
+	commandPick                     int
+	commandFilter, commandDismissed string
+	commandsLoading                 bool
+	commandsErr                     error
+	queueTitle                      *fitLabel
+	model                           *picker
+	approvalControl                 *tapRow
+	contextRing                     *contextRing
+	send                            *tapRow
+	steer                           *tapRow
+	stop                            *tapRow
+	controls                        *fyne.Container
+	folder                          *tapRow
 
 	// Conversation
 	transcript        *fyne.Container
@@ -601,6 +608,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		if ui.server == nil {
 			ui.backend.Prewarm(ui.cfg)
 		}
+		ui.updateCommandMenu()
 	}
 	ui.prompt.escape = func() { ui.finishEdit(false); ui.clearSelection() }
 	ui.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
@@ -748,7 +756,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.serverStatus = newFitLabel("", 12, colFaint)
 	ui.serverStatus.Hide()
 	contextRow := container.NewBorder(nil, nil, container.NewHBox(ui.folder, ui.machine), nil, ui.serverStatus)
-	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.queueTray, composer)
+	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.buildCommandMenu(), ui.queueTray, composer)
 	return padded(0, 0, 24, 24, container.New(columnLayout{width: 760, inset: 0}, padded(0, 18, 0, 0, stack)))
 }
 
@@ -1028,6 +1036,12 @@ func (ui *desktopUI) submit() {
 	}
 	text := strings.TrimSpace(ui.prompt.Text)
 	chat := ui.current
+	if ui.commandsHere() && len(ui.attachments)+len(ui.fileAttachments) == 0 {
+		if name, args, ok := agent.SlashCommand(text); ok && ui.slashCommand(name, args) {
+			ui.hideCommandMenu()
+			return
+		}
+	}
 	if chat != nil && chat.handoff == nil && agent.HandoffNeeded(ui.runConfig(chat), chat.History) && (text != "" || len(ui.attachments)+len(ui.fileAttachments)+len(chat.queue) > 0) {
 		ui.askHandoff(chat, ui.submit)
 		return

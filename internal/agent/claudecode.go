@@ -152,7 +152,10 @@ func claudeCommand(ctx context.Context, home, dir string, extra ...string) (*exe
 	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
 		// The API client retains its private login. All model-controlled
 		// project operations go through 1loop's MCP tools and launcher.
-		args = append(args, "--tools", "", "--setting-sources", "", "--strict-mcp-config", "--no-chrome", "--disable-slash-commands")
+		// WebSearch stays: it runs on Anthropic's servers and touches
+		// nothing on the phone, and without it the model searches the web
+		// by driving the browser (#161).
+		args = append(args, "--tools", "WebSearch", "--setting-sources", "", "--strict-mcp-config", "--no-chrome", "--disable-slash-commands")
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = dir

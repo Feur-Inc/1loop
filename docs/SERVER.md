@@ -156,7 +156,7 @@ interactive tests must wait for the user's explicit signal.
 
 ## Updates
 
-The server checks the [release page](https://tpm28.github.io/1loop/) when a
+The server checks the [release page](https://feur-inc.github.io/1loop/) when a
 device asks (`GET /api/update`). A device connected to an outdated server
 shows *Update server*; on confirmation the server downloads its new version,
 checks its signature and SHA-256, replaces its own binary (the previous one

@@ -3,7 +3,7 @@
 Every download is on the **[release page](https://feur-inc.github.io/1loop/)**
 (also attached to each [GitHub release](https://github.com/Feur-Inc/1loop/releases)).
 Once installed, 1loop updates itself from that page: see
-[Updates](../README.md#updates).
+[Updates](USAGE.md#updates).
 
 ## Linux desktop (x86-64)
 

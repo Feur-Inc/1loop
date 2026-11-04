@@ -4,6 +4,7 @@ package ui
 
 import (
 	"fmt"
+	"image/color"
 	"path/filepath"
 	"slices"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
@@ -20,29 +22,119 @@ import (
 	"1loop/internal/remoteapi"
 )
 
-const sidebarWidth = 280
+// The sidebar's width: the default, and the bounds its edge can be dragged
+// within. The conversation always keeps sidebarRoom beside it.
+const (
+	sidebarWidth    = 280
+	sidebarMinWidth = 200
+	sidebarMaxWidth = 560
+	sidebarRoom     = 480
+)
+
+func sidebarWidthWithin(width, total float32) float32 {
+	return fyne.Max(sidebarMinWidth, fyne.Min(width, fyne.Min(sidebarMaxWidth, total-sidebarRoom)))
+}
 
 // paneLayout places the sidebar and the main area edge to edge (Fyne's
-// Border inserts a padding gap between them) and the shadow over the main
-// area's left edge. shown (0..1) slides the sidebar out when it is folded.
+// Border inserts a padding gap between them), the shadow over the main
+// area's left edge and the handle that resizes the sidebar. shown (0..1)
+// slides the sidebar out when it is folded.
 type paneLayout struct {
-	shown float32
-	shade float32
+	shown  float32
+	shade  float32
+	chosen *float32 // the width dragged to, 0: the default
+}
+
+func (layoutSpec *paneLayout) width(total float32) float32 {
+	width := *layoutSpec.chosen
+	if width <= 0 {
+		width = sidebarWidth
+	}
+	return sidebarWidthWithin(width, total)
 }
 
 func (layoutSpec *paneLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	main := objects[1].MinSize()
-	return fyne.NewSize(sidebarWidth*layoutSpec.shown+main.Width, main.Height)
+	return fyne.NewSize(sidebarMinWidth*layoutSpec.shown+main.Width, main.Height)
 }
 
 func (layoutSpec *paneLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	width := sidebarWidth * layoutSpec.shown
-	objects[0].Move(fyne.NewPos(width-sidebarWidth, 0))
-	objects[0].Resize(fyne.NewSize(sidebarWidth, size.Height))
+	full := layoutSpec.width(size.Width)
+	width := full * layoutSpec.shown
+	objects[0].Move(fyne.NewPos(width-full, 0))
+	objects[0].Resize(fyne.NewSize(full, size.Height))
 	objects[1].Move(fyne.NewPos(width, 0))
 	objects[1].Resize(fyne.NewSize(size.Width-width, size.Height))
 	objects[2].Move(fyne.NewPos(width, 0))
 	objects[2].Resize(fyne.NewSize(layoutSpec.shade, size.Height))
+	objects[3].Move(fyne.NewPos(width-4, 0))
+	objects[3].Resize(fyne.NewSize(8, size.Height))
+	if layoutSpec.shown >= 1 { // not while it slides or is folded
+		objects[3].Show()
+	} else {
+		objects[3].Hide()
+	}
+}
+
+// sidebarHandle is the sidebar's right edge: dragging it sets the sidebar's
+// width, which is kept for the next start. Like the side panel's handle, its
+// grip lights up while the pointer is on it; at rest the edge stays bare.
+type sidebarHandle struct {
+	widget.BaseWidget
+	ui       *desktopUI
+	grip     *canvas.Rectangle
+	dragging bool
+	raw      float32 // the width the pointer asks for, before the bounds
+	pending  bool
+}
+
+func newSidebarHandle(ui *desktopUI) *sidebarHandle {
+	handle := &sidebarHandle{ui: ui, grip: canvas.NewRectangle(color.NRGBA{})}
+	handle.grip.CornerRadius = 1
+	handle.grip.SetMinSize(fyne.NewSize(2, 40))
+	handle.ExtendBaseWidget(handle)
+	return handle
+}
+
+func (handle *sidebarHandle) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(container.NewCenter(handle.grip))
+}
+
+func (handle *sidebarHandle) Cursor() desktop.Cursor { return desktop.HResizeCursor }
+func (handle *sidebarHandle) MouseIn(*desktop.MouseEvent) {
+	handle.grip.FillColor = colAmber
+	handle.grip.Refresh()
+}
+
+func (handle *sidebarHandle) MouseMoved(*desktop.MouseEvent) {}
+func (handle *sidebarHandle) MouseOut() {
+	handle.grip.FillColor = color.NRGBA{}
+	handle.grip.Refresh()
+}
+
+func (handle *sidebarHandle) Dragged(e *fyne.DragEvent) {
+	ui := handle.ui
+	total := ui.root.Size().Width
+	if !handle.dragging {
+		handle.dragging, handle.raw = true, ui.pane.width(total)
+	}
+	// Past a bound the edge waits for the pointer to come back to it.
+	handle.raw += e.Dragged.DX
+	ui.sidebarWidth = sidebarWidthWithin(handle.raw, total)
+	handle.pending = true // laid out once per frame, as many moves as GLFW sends
+}
+
+func (handle *sidebarHandle) DragEnd() {
+	handle.dragging = false
+	handle.ui.flushSidebarResize()
+	handle.ui.save()
+}
+
+func (ui *desktopUI) flushSidebarResize() {
+	if ui.sideHandle != nil && ui.sideHandle.pending {
+		ui.sideHandle.pending = false
+		relayout(ui.root)
+	}
 }
 
 // toggleSidebar folds or unfolds the sidebar with an eased slide (Ctrl+B).
@@ -86,9 +178,11 @@ func sectionHeader(text string, action fyne.CanvasObject) fyne.CanvasObject {
 }
 
 // withMore adds a "⋯" button that appears while the row is hovered; it and a
-// right click on the row open the row's context menu.
-func withMore(row *tapRow, open func(anchor fyne.CanvasObject) *sheet) fyne.CanvasObject {
+// right click on the row open the row's context menu. A name cut short by
+// the sidebar's width shows in full while the row is hovered.
+func (ui *desktopUI) withMore(row *tapRow, open func(anchor fyne.CanvasObject) *sheet) fyne.CanvasObject {
 	more := newRow("", iconMore, styleWindow, nil)
+	row.tips = ui.tips
 	row.endInset = more.MinSize().Width + 4
 	more.Hide()
 	var rowIn, moreIn, menuOpen bool
@@ -432,7 +526,7 @@ func (ui *desktopUI) renderChats() {
 		if state := ui.repoFor(p); state.repo != nil {
 			row.trailing = state.repo.Current // the branch of the project's folder
 		}
-		ui.projectList.Add(withMore(row, func(anchor fyne.CanvasObject) *sheet {
+		ui.projectList.Add(ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
 			actions := []menuAction{{label: "New chat", icon: iconPlus, run: func() { ui.selectProject(p); ui.startNew() }}}
 			actions = append(actions, ui.repositoryActions(p)...)
 			if ui.cfg.MachineID == "" { // a machine's folder is renamed there, in its terminal
@@ -458,7 +552,7 @@ func (ui *desktopUI) renderChats() {
 		if chat.run != nil {
 			row.badge = iconDot // the agent works on it in the background
 		}
-		ui.chatList.Add(withMore(row, func(anchor fyne.CanvasObject) *sheet { return ui.chatMenu(chat, anchor) }))
+		ui.chatList.Add(ui.withMore(row, func(anchor fyne.CanvasObject) *sheet { return ui.chatMenu(chat, anchor) }))
 	}
 	if len(chats) == 0 {
 		ui.chatList.Add(padded(4, 0, 10, 0, textLine("No chats yet", 13, colFaint)))

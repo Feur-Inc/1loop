@@ -279,7 +279,7 @@ func (ui *desktopUI) worktreeRows(project string, open func(folder string)) []fy
 		if ui.worktreeRunning(worktree.Path) {
 			row.badge = iconDot // the agent works in it
 		}
-		rows = append(rows, padded(0, 0, 14, 0, withMore(row, func(anchor fyne.CanvasObject) *sheet {
+		rows = append(rows, padded(0, 0, 14, 0, ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, ui.worktreeActions(project, worktree, open))
 		})))
 	}

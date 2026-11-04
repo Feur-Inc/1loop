@@ -356,6 +356,8 @@ type tapRow struct {
 	padPx     float32       // optional padding around the icon (styleIcon), 0 = style default
 	badge     fyne.Resource // optional mark on the far edge (styleMenu: the active choice)
 	truncate  bool          // fills its column: truncates instead of forcing it wider
+	tips      *tipLayer     // optional: shows the whole text while hovered, when it is cut short
+	clipped   bool          // the text was cut short at the last layout
 	hover     float32
 	alpha     float32 // whole-row opacity, used by menu fades
 	anim      *fyne.Animation
@@ -388,6 +390,9 @@ func (row *tapRow) Disable()                  { row.disabled = true; row.setHove
 func (row *tapRow) Enable()                   { row.disabled = false; row.Refresh() }
 
 func (row *tapRow) Tapped(*fyne.PointEvent) {
+	if row.tips != nil {
+		row.tips.hide() // the sidebar is drawn again: the row may be gone before the pointer leaves it
+	}
 	if !row.disabled && row.onTap != nil {
 		row.onTap()
 	}
@@ -412,6 +417,9 @@ func (row *tapRow) MouseIn(*desktop.MouseEvent) {
 	if row.onHover != nil {
 		row.onHover(true)
 	}
+	if row.tips != nil && row.clipped {
+		row.tips.show(row, row.text)
+	}
 }
 
 func (row *tapRow) MouseMoved(*desktop.MouseEvent) {}
@@ -419,6 +427,9 @@ func (row *tapRow) MouseOut() {
 	row.setHover(0, true)
 	if row.onHover != nil {
 		row.onHover(false)
+	}
+	if row.tips != nil {
+		row.tips.hide()
 	}
 }
 
@@ -577,6 +588,7 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 	}
 	room := size.Width - 2*padX - iconRoom - trailingWidth - renderer.row.endInset
 	renderer.label.Text = fitText(renderer.row.text, renderer.row.size, fyne.TextStyle{}, room)
+	renderer.row.clipped = renderer.label.Text != renderer.row.text
 	textWidth := renderer.label.MinSize().Width
 	textY := (size.Height - renderer.label.MinSize().Height) / 2
 	if renderer.row.detail != "" {

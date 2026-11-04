@@ -31,14 +31,21 @@ import rikka.shizuku.Shizuku
 import java.io.DataInputStream
 import java.util.concurrent.atomic.AtomicLong
 
-/** Shizuku owns the local shell connection; 1loop's grant is independent. */
+/**
+ * Shizuku owns the local shell connection; 1loop's grant is independent. The
+ * user's choice is saved: a restart of 1loop reconnects by itself while
+ * Shizuku runs and still authorizes 1loop, and a revoke stays revoked.
+ */
 class LocalAdb(private val context: Context, private val scope: CoroutineScope) {
-    private val mutableState = MutableStateFlow(LocalAdbState())
+    private val prefs = context.getSharedPreferences("1loop-local-adb", Context.MODE_PRIVATE)
+    private val mutableState = MutableStateFlow(LocalAdbState(allowed = prefs.getBoolean("allowed", false)))
     val state = mutableState.asStateFlow()
     private val generation = AtomicLong()
     private val commands = Mutex()
     @Volatile private var shell: IPhoneShell? = null
     @Volatile private var binding: ServiceConnection? = null
+    // The local agent is stopped: no connection, the user's choice kept (pause, resume).
+    @Volatile private var suspended = true
     // Last screenshot size of each session: the user's screen and the hidden display.
     private val sizes = mutableMapOf<Boolean, Pair<Int, Int>>()
     private val serviceArgs = Shizuku.UserServiceArgs(ComponentName(context, PhoneShellService::class.java))
@@ -47,7 +54,7 @@ class LocalAdb(private val context: Context, private val scope: CoroutineScope) 
     init {
         Shizuku.addBinderReceivedListenerSticky {
             refresh()
-            if (state.value.allowed) scope.launch { connectService() }
+            if (state.value.allowed && !suspended) scope.launch { connectService() }
         }
         Shizuku.addBinderDeadListener {
             generation.incrementAndGet()
@@ -58,7 +65,7 @@ class LocalAdb(private val context: Context, private val scope: CoroutineScope) 
         Shizuku.addRequestPermissionResultListener { request, result ->
             if (request == 4101) {
                 if (result == PackageManager.PERMISSION_GRANTED && state.value.allowed) scope.launch { connectService() }
-                else revoke()
+                else revoke() // denied in Shizuku's dialog: the user's answer
             }
         }
         refresh()
@@ -74,6 +81,8 @@ class LocalAdb(private val context: Context, private val scope: CoroutineScope) 
     suspend fun setAllowed(allowed: Boolean) {
         if (!allowed) { revoke(); return }
         withContext(Dispatchers.Main) {
+            suspended = false
+            save(true)
             mutableState.update { it.copy(allowed = true, problem = null) }
             refresh()
             if (!state.value.serviceRunning) {
@@ -86,8 +95,25 @@ class LocalAdb(private val context: Context, private val scope: CoroutineScope) 
         }
     }
 
+    /** The local agent starts: reconnect when the user allowed it before. */
+    suspend fun resume() {
+        suspended = false
+        withContext(Dispatchers.Main) { refresh() }
+        if (state.value.allowed) connectService()
+    }
+
+    /** The local agent stops: disconnect without forgetting the user's choice. */
+    fun pause() {
+        suspended = true
+        disconnect()
+    }
+
+    private fun save(allowed: Boolean) {
+        check(prefs.edit().putBoolean("allowed", allowed).commit()) { "Unable to save the Phone Use choice." }
+    }
+
     private suspend fun connectService() = withContext(Dispatchers.Main) {
-        if (!state.value.allowed || !Shizuku.pingBinder()) return@withContext
+        if (suspended || !state.value.allowed || !Shizuku.pingBinder()) return@withContext
         if (Shizuku.checkSelfPermission() != PackageManager.PERMISSION_GRANTED) return@withContext
         if (shell != null || binding != null) return@withContext
         val epoch = generation.incrementAndGet()
@@ -114,9 +140,17 @@ class LocalAdb(private val context: Context, private val scope: CoroutineScope) 
         }
     }
 
+    /** The user turns Phone Use off: saved, so a restart does not turn it back on. */
     fun revoke() {
         generation.incrementAndGet()
         mutableState.update { it.copy(allowed = false, connected = false, busy = false, problem = null) }
+        runCatching { save(false) }
+        disconnect()
+    }
+
+    private fun disconnect() {
+        generation.incrementAndGet()
+        mutableState.update { it.copy(connected = false, busy = false) }
         shell = null
         binding?.let { connection ->
             // Detach the client's cached connection before killing the service:

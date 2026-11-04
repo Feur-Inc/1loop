@@ -153,15 +153,22 @@ type desktopUI struct {
 	editBar         *fyne.Container
 	queueTray       *fyne.Container
 	queueList       *fyne.Container
-	queueTitle      *fitLabel
-	model           *picker
-	approvalControl *tapRow
-	contextRing     *contextRing
-	send            *tapRow
-	steer           *tapRow
-	stop            *tapRow
-	controls        *fyne.Container
-	folder          *tapRow
+	// The slash command menu over the composer (slash_commands.go).
+	commandTray, commandList        *fyne.Container
+	commandMatches                  []commandOption
+	commandPick                     int
+	commandFilter, commandDismissed string
+	commandsLoading                 bool
+	commandsErr                     error
+	queueTitle                      *fitLabel
+	model                           *picker
+	approvalControl                 *tapRow
+	contextRing                     *contextRing
+	send                            *tapRow
+	steer                           *tapRow
+	stop                            *tapRow
+	controls                        *fyne.Container
+	folder                          *tapRow
 
 	// Conversation
 	transcript        *fyne.Container
@@ -296,7 +303,10 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.Canvas().Focus(ui.prompt)
 	// The launch sequence covers the first frames and only starts once the
 	// window is really on screen, otherwise it would play unseen.
-	launch := newLaunchScreen(ui.window.Canvas(), func() { ui.window.Canvas().Focus(ui.prompt) })
+	launch := newLaunchScreen(ui.window.Canvas(), func() {
+		ui.window.Canvas().Focus(ui.prompt)
+		ui.warnFlatpakPermissions()
+	})
 	launch.show()
 	// Notifications are for chats the user is not looking at (notify.go).
 	ui.inForeground = true
@@ -306,6 +316,7 @@ func runDesktop(backend *agent.App, root string) {
 		if ui.chrome {
 			chromeReady()
 		}
+		clipboardReady()
 		windowIdentity(ui.window) // again, should the window not have existed yet below
 		ui.startFrames()
 		size := ui.window.Canvas().Size()
@@ -601,6 +612,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		if ui.server == nil {
 			ui.backend.Prewarm(ui.cfg)
 		}
+		ui.updateCommandMenu()
 	}
 	ui.prompt.escape = func() { ui.finishEdit(false); ui.clearSelection() }
 	ui.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
@@ -684,8 +696,12 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.attach.onTap = func() {
 		showMenu(ui.window, ui.attach, []menuAction{
 			{label: "Paste image", detail: "From the clipboard", icon: iconCopy, run: func() {
-				if !ui.pasteFromClipboard() {
-					ui.notice("Paste", "No image in the clipboard.")
+				if err := ui.pasteImage(); err != nil {
+					message := err.Error()
+					if !errors.Is(err, errNoClipboardImage) {
+						message = "Could not read the clipboard: " + message
+					}
+					ui.notice("Paste", message+".")
 				}
 			}},
 			{label: "Attach files…", detail: "Copy to the workspace tmp folder", icon: iconFolder, run: ui.pickFiles},
@@ -748,7 +764,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.serverStatus = newFitLabel("", 12, colFaint)
 	ui.serverStatus.Hide()
 	contextRow := container.NewBorder(nil, nil, container.NewHBox(ui.folder, ui.machine), nil, ui.serverStatus)
-	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.queueTray, composer)
+	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.buildCommandMenu(), ui.queueTray, composer)
 	return padded(0, 0, 24, 24, container.New(columnLayout{width: 760, inset: 0}, padded(0, 18, 0, 0, stack)))
 }
 
@@ -884,6 +900,20 @@ func (ui *desktopUI) notice(title, text string) {
 	label := widget.NewLabel(text)
 	label.Wrapping = fyne.TextWrapWord
 	ui.modal(title, label, 420, nil)
+}
+
+// warnFlatpakPermissions says, once the window is up, which of the
+// Flatpak's permissions the user revoked and what that stops.
+func (ui *desktopUI) warnFlatpakPermissions() {
+	problems := platform.FlatpakPermissionProblems()
+	if len(problems) == 0 {
+		return
+	}
+	text := strings.Join(problems, "\n\n") + "\n\nRestart 1loop after changing its permissions. See docs/INSTALL.md (Flatpak) for what each one is for."
+	label := widget.NewLabel(text)
+	label.Wrapping = fyne.TextWrapWord
+	label.Selectable = true
+	ui.modal("Missing Flatpak permissions", label, 520, nil)
 }
 
 // syncRun shows the open chat's run state: the stop button, the activity
@@ -1028,6 +1058,12 @@ func (ui *desktopUI) submit() {
 	}
 	text := strings.TrimSpace(ui.prompt.Text)
 	chat := ui.current
+	if ui.commandsHere() && len(ui.attachments)+len(ui.fileAttachments) == 0 {
+		if name, args, ok := agent.SlashCommand(text); ok && ui.slashCommand(name, args) {
+			ui.hideCommandMenu()
+			return
+		}
+	}
 	if chat != nil && chat.handoff == nil && agent.HandoffNeeded(ui.runConfig(chat), chat.History) && (text != "" || len(ui.attachments)+len(ui.fileAttachments)+len(chat.queue) > 0) {
 		ui.askHandoff(chat, ui.submit)
 		return

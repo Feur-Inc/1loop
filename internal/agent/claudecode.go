@@ -80,12 +80,7 @@ type claudeEvent struct {
 		Input    json.RawMessage `json:"input"`
 	} `json:"request"`
 	Response *struct {
-		Response struct {
-			Models  []claudeModel `json:"models"`
-			Account *struct {
-				TokenSource string `json:"tokenSource"`
-			} `json:"account"`
-		} `json:"response"`
+		Response claudeAnswer `json:"response"`
 	} `json:"response"`
 	RateLimit *struct {
 		Status         string `json:"status"`
@@ -173,25 +168,52 @@ func claudeCommand(ctx context.Context, dir string, extra ...string) (*exec.Cmd,
 
 // claudeModels asks the installed Claude Code which models the account can
 // use. It only exchanges the protocol's handshake: no request reaches a model.
-func (backend *App) claudeModels(ctx context.Context) (models []claudeModel, err error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
-	defer cancel()
-	cmd, err := claudeCommand(ctx, os.TempDir())
+func (backend *App) claudeModels(ctx context.Context) ([]claudeModel, error) {
+	answer, err := backend.claudeHandshake(ctx, os.TempDir())
 	if err != nil {
 		return nil, err
+	}
+	if len(answer.Models) == 0 {
+		return nil, fmt.Errorf("Claude Code listed no model: check that it is signed in (run claude once)")
+	}
+	return answer.Models, nil
+}
+
+// claudeAnswer is Claude Code's answer to the initialize handshake.
+type claudeAnswer struct {
+	Models   []claudeModel   `json:"models"`
+	Commands []ClaudeCommand `json:"commands"`
+	Version  string          `json:"claude_code_version"`
+	Account  *struct {
+		TokenSource  string `json:"tokenSource"`
+		Email        string `json:"email"`
+		Organization string `json:"organization"`
+		Subscription string `json:"subscriptionType"`
+	} `json:"account"`
+}
+
+// claudeHandshake starts Claude Code in dir and returns its answer to the
+// initialize handshake: models, commands and account. No request reaches a
+// model.
+func (backend *App) claudeHandshake(ctx context.Context, dir string, extra ...string) (answer claudeAnswer, err error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+	cmd, err := claudeCommand(ctx, dir, extra...)
+	if err != nil {
+		return answer, err
 	}
 	stdin, _ := cmd.StdinPipe()
 	stdout, _ := cmd.StdoutPipe()
 	cmd.Cancel = func() error { return stdin.Close() }
 	if err := cmd.Start(); err != nil {
-		return nil, err
+		return answer, err
 	}
 	// Initialization can renew credentials too: let the CLI save them on exit.
 	defer func() {
 		stdin.Close()
 		io.Copy(io.Discard, stdout)
 		if waitErr := cmd.Wait(); err == nil && waitErr != nil {
-			models, err = nil, fmt.Errorf("Claude Code did not finish loading models: %w", waitErr)
+			answer, err = claudeAnswer{}, fmt.Errorf("Claude Code did not finish starting: %w", waitErr)
 		}
 	}()
 	fmt.Fprintln(stdin, `{"type":"control_request","request_id":"1loop-init","request":{"subtype":"initialize"}}`)
@@ -204,18 +226,15 @@ func (backend *App) claudeModels(ctx context.Context) (models []claudeModel, err
 		}
 		if claudeEventValue.Type == "control_response" && claudeEventValue.Response != nil {
 			if account := claudeEventValue.Response.Response.Account; account != nil && account.TokenSource == "none" {
-				return nil, fmt.Errorf("Claude Code is not signed in. Open Settings → Connections → Claude Code → Sign in")
+				return answer, fmt.Errorf("Claude Code is not signed in. Open Settings → Connections → Claude Code → Sign in")
 			}
-			if len(claudeEventValue.Response.Response.Models) == 0 {
-				return nil, fmt.Errorf("Claude Code listed no model: check that it is signed in (run claude once)")
-			}
-			return claudeEventValue.Response.Response.Models, nil
+			return claudeEventValue.Response.Response, nil
 		}
 		if claudeEventValue.Type == "result" && claudeEventValue.IsError {
-			return nil, errors.New(FirstLine(claudeEventValue.Result))
+			return answer, errors.New(FirstLine(claudeEventValue.Result))
 		}
 	}
-	return nil, fmt.Errorf("Claude Code did not answer: run claude once in a terminal to check it works")
+	return answer, fmt.Errorf("Claude Code did not answer: run claude once in a terminal to check it works")
 }
 
 // claudeLimit tells a turn Claude Code ended on a usage limit without its
@@ -547,9 +566,18 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			}
 		}
 	}
+	// A slash command goes as it is: a preface would make it a prompt. It
+	// leaves the chat's session marks alone, so the next prompt still gets
+	// what the session misses; without a session, the one Claude Code opens
+	// for the command is not kept.
+	_, _, command := SlashCommand(prompt.Content)
+	if command {
+		preface = ""
+	}
+	keepSession := !command || cfg.Session != ""
 	// The host then records how many of the chat's items the session has seen.
 	defer func() {
-		if failure == nil && ctx.Err() == nil {
+		if failure == nil && ctx.Err() == nil && !command {
 			emit("session_synced", nil)
 		}
 	}()
@@ -565,6 +593,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	sawText := false                 // the current text arrived as deltas
 	status := &announcer{emit: emit}
 	usage := 0
+	answered := false // a turn ended: commands such as /rename answer nothing
 	// Between two turns Claude Code is idle: either the task is over, or it
 	// waits for what it left running in the background (a command started
 	// with run_in_background, a Monitor) and will start a turn of its own
@@ -690,7 +719,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				if claudeEventValue.APIKeySource != "" && claudeEventValue.APIKeySource != "none" {
 					failure = fmt.Errorf("Claude Code is not using your subscription here (credentials: %s). 1loop stopped before anything was billed to an API key.", claudeEventValue.APIKeySource)
 				}
-				if claudeEventValue.SessionID != "" {
+				if claudeEventValue.SessionID != "" && keepSession {
 					emit("session", claudeEventValue.SessionID)
 				}
 			case "status":
@@ -811,10 +840,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 					continue
 				}
 				delete(calls, b.ToolUseID)
-				p.outcome.Output = claudeText(b.Content)
-				if strings.HasPrefix(p.outcome.Name, "browser_") || strings.HasPrefix(p.outcome.Name, "terminal_") || p.outcome.Name == "computer_use" {
-					p.outcome.Images = claudeBrowserImages(b.Content)
-				}
+				p.outcome.Output, p.outcome.Images = claudeResult(b.Content)
 				p.outcome.Elapsed = time.Since(p.started)
 				if b.IsError {
 					p.outcome.Err = errors.New(FirstLine(p.outcome.Output))
@@ -837,6 +863,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				inject(extra)
 			}
 		case "result":
+			answered = true
 			// Claude Code says how large the model's window really is.
 			for model, u := range claudeEventValue.ModelUsage {
 				if u.ContextWindow > 0 && (len(claudeEventValue.ModelUsage) == 1 || strings.Contains(model, cfg.Model)) {
@@ -880,7 +907,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
-	if len(messages) == len(history) {
+	if len(messages) == len(history) && !answered {
 		// Claude Code left without answering: its own words explain why.
 		if text := strings.TrimSpace(stderr.String()); text != "" {
 			return errors.New(FirstLine(text))
@@ -888,6 +915,23 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		return fmt.Errorf("Claude Code stopped without answering")
 	}
 	return nil
+}
+
+// claudeResult is a tool result's text and the pictures it returned (phone,
+// browser, terminal or computer screenshots). Claude Code names the file it
+// saved each picture to in the text: the picture comes from the result
+// itself or, when only the name is there, from that file.
+func claudeResult(content json.RawMessage) (string, []core.ImagePart) {
+	text, sources := splitImageSources(claudeText(content))
+	images := claudeBrowserImages(content)
+	if len(images) == 0 {
+		for _, source := range sources {
+			if part, ok := readImageSource(source); ok {
+				images = append(images, part)
+			}
+		}
+	}
+	return text, images
 }
 
 func claudeBrowserImages(raw json.RawMessage) []core.ImagePart {

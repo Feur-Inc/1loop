@@ -113,13 +113,69 @@ What that changes:
 - **Terminal Use** opens your login shell on the host. The environment the
   sandbox sets for itself (`PATH`, `XDG_*_HOME`, `LD_*`…) is not passed on.
   Interactive job control (`Ctrl+Z`, `fg`) is not supported through this bridge.
-- Stopping a command ends it on the host too (`flatpak-spawn --watch-bus`).
+- **Claude Code** (the Claude Code connection) is the one installed on the
+  host: `claude` on its `PATH`, else `~/.local/bin/claude`. It runs on the
+  host with your own login and settings (`~/.claude`, `~/.claude.json`), so
+  sign in once, in 1loop or with `claude auth login` in a terminal; the
+  Flatpak cannot install it for you. The temporary files 1loop gives it
+  (its MCP config and skills) are under
+  `~/.var/app/io.github.Feur_Inc.OneLoop/cache/tmp`, which the host sees.
+- Stopping a command or a Claude Code reply ends it on the host too
+  (`flatpak-spawn --watch-bus`).
 - In a Wayland session the Flatpak has no X11 socket
   (`--socket=fallback-x11`), so `ONELOOP_BACKEND=x11` does not work there.
 - The window keeps the app id `1loop`; the entry,
   `io.github.Feur_Inc.OneLoop.desktop`, matches it through
   `StartupWMClass=1loop`.
 - Updates: rebuild and reinstall.
+
+#### Flatpak permissions
+
+The Flatpak declares only these permissions; everything else goes through
+the desktop's portals, which need none: the file and folder chooser, opening
+links and files in other apps, notifications, and Computer Use's
+RemoteDesktop/ScreenCast portals (asked by its helper on the host). Nothing
+plays or records sound, so it has no audio access.
+
+| Permission | What needs it | Without it |
+| --- | --- | --- |
+| `--filesystem=host` | Reading and editing your projects wherever they are, with the same paths the host commands and Claude Code use. | Only folders granted in another way are visible; projects elsewhere cannot be opened or edited. `--filesystem=home` is enough if all your projects are in your home folder. Read-only (`host:ro`) makes every edit fail. |
+| `--talk-name=org.freedesktop.Flatpak` | Commands, Terminal Use, Git, Browser Use, Computer Use's helper and Claude Code, which run on the host through `flatpak-spawn --host`. | None of them can run: commands print a message naming this permission, and Claude Code shows as not installed. Chats with API providers and file edits still work. |
+| `--share=network` | Model providers, MCP servers, SSH machines, Browser Use, the remote app. | No model can be reached. |
+| `--socket=ssh-auth` | SSH machines that sign in with your SSH agent. | Use a key file or a password for SSH machines. |
+| `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc`, `--device=dri` | The window and its OpenGL rendering. | 1loop cannot open its window. |
+
+When `--filesystem=host` (or `home`) or `org.freedesktop.Flatpak` is
+missing, 1loop says so in a dialog when it starts, with the command that
+restores it.
+
+See what the installed Flatpak has, your overrides included:
+
+```bash
+flatpak info --show-permissions io.github.Feur_Inc.OneLoop
+flatpak override --user --show io.github.Feur_Inc.OneLoop   # only your overrides
+```
+
+Change them for your user (`sudo flatpak override` without `--user` changes
+them for everyone), then restart 1loop:
+
+```bash
+# Only your home folder instead of every file:
+flatpak override --user --nofilesystem=host --filesystem=home io.github.Feur_Inc.OneLoop
+# No commands on the host (no terminal, Git, Browser Use or Computer Use):
+flatpak override --user --no-talk-name=org.freedesktop.Flatpak io.github.Feur_Inc.OneLoop
+# Back to the permissions the Flatpak declares:
+flatpak override --user --reset io.github.Feur_Inc.OneLoop
+```
+
+[Flatseal](https://flathub.org/apps/com.github.tchx84.Flatseal) and the
+application settings of GNOME and KDE Plasma change the same overrides with
+switches.
+
+Commands run on the host are not limited by the Flatpak's file permissions:
+they see everything your user can. Removing `--filesystem=host` limits what
+1loop's own file tools see, not what an approved command can do; to stop
+that too, remove `org.freedesktop.Flatpak`.
 
 ### Nix and NixOS
 
@@ -224,6 +280,9 @@ passwords, history, bookmarks or local storage are imported.
 Runtime needs, for every format: OpenGL, X11 or Wayland libraries (the `.deb`
 pulls them in), Bash and Git (for the *Git changes* tab). Optional: `latex`
 and `dvipng` to render formulas, and the Computer Use packages below.
+Pasting an image (Ctrl+V, or **+** → **Paste image**) reads the clipboard
+through Wayland or X11 directly, with nothing to install; only a build made
+without cgo needs `wl-paste` (Wayland) or `xclip` (X11).
 
 Browser Use runs the Chromium, Chrome or Edge it finds on the computer. Without
 one, it downloads its own Chromium the first time (Chrome for Testing, Google's
@@ -286,8 +345,42 @@ finds Chrome, Chromium or Microsoft Edge, or downloads its own Chromium into
 
 Updating: **Settings → Updates** downloads the next version and opens
 Android's update screen. Your chats and settings are kept. The first time,
-Android asks to allow 1loop to install apps: that permission is only used for
-1loop's own updates.
+Android asks to allow 1loop to install apps: that permission is used for
+1loop's own updates and for the APKs the agent installs (below).
+
+### APKs on the local phone
+
+With **Local phone**, the agent has three tools for APKs and apps. Neither needs Shizuku;
+each call goes through the conversation's approval mode like the other phone
+tools.
+
+- `install_apk` installs an `.apk` file, or a folder of `.apk` files for a split
+  app, from the project (a path under `/projects`) through Android's package
+  installer. **You always confirm in Android's own dialog**; the tool then
+  reports *installed*, *cancelled*, *blocked* or *conflict* and says what to
+  change: turn on **Install unknown apps** for 1loop (its settings page opens
+  by itself), let Play Protect continue, or uninstall an installed app signed
+  with another key. It waits 4 minutes for your answer. The dialog opens over
+  other apps thanks to the *display over other apps* permission that the status
+  badge already uses; if it does not appear, open 1loop and call the tool again.
+- `uninstall_app` removes an app through Android's own uninstall dialog (you
+  confirm; the app's data goes with it). It reports *uninstalled*, *cancelled*
+  or *blocked* (a system app, a device policy). It refuses to uninstall 1loop.
+- `extract_apk` copies the base APK and every split APK of an installed app
+  into the project (by default `/projects/default/apks/<package>`). 1loop asks
+  Android to let it see all installed apps (`QUERY_ALL_PACKAGES`) for this.
+
+To decompile an APK, the agent installs the tools in the Debian environment
+with `install_packages`. Tried on arm64 Debian 12:
+
+- `apktool` (a Debian package; Java comes with it) decodes `AndroidManifest.xml`,
+  smali and the `res/` folder. Debian's 2.7.0 stops on the resources of recent
+  APKs: use `apktool d -r` to skip the resources, or download a newer
+  `apktool.jar`.
+- `jadx` is not a Debian package. Download `jadx-VERSION.zip` from
+  <https://github.com/skylot/jadx/releases>, unzip it in the project and run
+  `bin/jadx -d out app.apk`. Version 1.5.6 decompiled a 7 MB APK to about 5,000
+  Java files on the phone's container.
 
 ## Headless server
 

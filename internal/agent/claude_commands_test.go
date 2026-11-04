@@ -6,6 +6,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -141,5 +142,25 @@ func TestClaudeCommandWithoutOutput(t *testing.T) {
 	err := (&App{}).runClaudeCode(context.Background(), cfg, []Message{{Role: "user", Content: "/rename tests"}}, inbox, func(string, any) {})
 	if err != nil {
 		t.Fatal(err)
+	}
+}
+
+func TestClaudePermissionArgs(t *testing.T) {
+	asRoot := false
+	defer func(previous func() bool) { runningAsRoot = previous }(runningAsRoot)
+	runningAsRoot = func() bool { return asRoot }
+	for mode, want := range map[string][]string{
+		"":         nil,
+		"approval": nil,
+		"auto":     {"--permission-mode", "auto"},
+		"yolo":     {"--dangerously-skip-permissions"},
+	} {
+		if got := claudePermissionArgs(Config{ApprovalMode: mode}); !reflect.DeepEqual(got, want) {
+			t.Errorf("%q: got %q, want %q", mode, got, want)
+		}
+	}
+	asRoot = true // Claude Code refuses the flag: 1loop approves each request
+	if got := claudePermissionArgs(Config{ApprovalMode: "yolo"}); got != nil {
+		t.Errorf("yolo as root: got %q", got)
 	}
 }

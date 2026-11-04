@@ -163,6 +163,8 @@ type remoteDesktop struct {
 	name             string // as the server calls itself
 	defaultWorkspace string
 	current          string // the open chat's ID on the server, "" on the start screen
+	mentionsChat     string // the chat mentionList is for
+	mentionList      []agent.Mention
 	chats            []remoteapi.Chat
 	projects         []string
 	worktrees        map[string]string // the server's worktrees: folder → project

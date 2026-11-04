@@ -164,6 +164,9 @@ type desktopUI struct {
 	commandFilter, commandDismissed string
 	commandsLoading                 bool
 	commandsErr                     error
+	mentioning, mentionsLoading     bool // the same menu offering "@" mentions (mentions.go)
+	mentionAt                       int  // the "@"'s place in the composer's text
+	mentionOptions                  []commandOption
 	queueTitle                      *fitLabel
 	model                           *picker
 	approvalControl                 *tapRow

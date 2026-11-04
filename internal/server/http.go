@@ -105,6 +105,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/model/defaults":                     server.setDefaultModels,
 		"POST /api/approval-mode":                      server.setApprovalMode,
 		"GET /api/chats/{id}/context":                  server.chatContext,
+		"GET /api/mentions":                            server.mentions,
 		"GET /api/chats/{id}/panel":                    server.panelTabs,
 		"GET /api/chats/{id}/panel/{key}":              server.panelTab,
 		"GET /api/chats/{id}/panel/{key}/screen":       server.panelScreen,
@@ -206,6 +207,22 @@ func (server *headlessServer) chatContext(w http.ResponseWriter, r *http.Request
 		return
 	}
 	core.WriteJSON(w, 200, usage)
+}
+
+// mentions are what a chat's composer offers after "@" (?chat=, a new
+// chat's without it).
+func (server *headlessServer) mentions(w http.ResponseWriter, r *http.Request) {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	chat := server.chatLocked(r.URL.Query().Get("chat"))
+	if chat == nil {
+		chat = &serverChat{Config: server.cfg, Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}
+	}
+	mentions := agent.Mentions(server.runConfigLocked(chat, nil))
+	if mentions == nil {
+		mentions = []agent.Mention{}
+	}
+	core.WriteJSON(w, 200, map[string]any{"mentions": mentions})
 }
 
 func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request) {

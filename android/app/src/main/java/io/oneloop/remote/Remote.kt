@@ -1130,6 +1130,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         return ContextUsage.from(onConnection(target, generation) { it.get("/api/chats/$chat/context") }).mcpTools
     }
 
+    /** What a chat's composer offers after "@" (a new chat's when chat is null). */
+    suspend fun mentions(chat: String?): List<Mention> {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        return Mention.list(onConnection(target, generation) { it.get("/api/mentions?chat=" + java.net.URLEncoder.encode(chat.orEmpty(), "UTF-8")) })
+    }
+
     suspend fun setMemory(enabled: Boolean) {
         val target = server ?: error("Connect first.")
         val generation = connectionGeneration

@@ -143,6 +143,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("GET /api/state", server.authorized(server.state))
 	mux.HandleFunc("GET /api/chats/{id}", server.authorized(server.chat))
 	mux.HandleFunc("GET /api/chats/{id}/context", server.authorized(server.chatContext))
+	mux.HandleFunc("GET /api/mentions", server.authorized(server.mentions))
 	mux.HandleFunc("POST /api/chats/{id}/delete", server.authorized(server.deleteChat))
 	mux.HandleFunc("POST /api/chats/{id}/tasks/{task}/stop", server.authorized(server.stopTask))
 	mux.HandleFunc("POST /api/browser/clear", server.authorized(server.clearBrowser))
@@ -589,6 +590,16 @@ func (server *remoteServer) chatContext(writer http.ResponseWriter, req *http.Re
 		return
 	}
 	core.WriteJSON(writer, http.StatusOK, usage)
+}
+
+// mentions are what a chat's composer offers after "@" (?chat=, a new
+// chat's without it).
+func (server *remoteServer) mentions(writer http.ResponseWriter, req *http.Request) {
+	mentions := []agent.Mention{}
+	server.onUI(func() {
+		mentions = append(mentions, server.ui.mentionsFor(server.ui.chatByID(req.URL.Query().Get("chat")))...)
+	})
+	core.WriteJSON(writer, http.StatusOK, map[string]any{"mentions": mentions})
 }
 
 func (server *remoteServer) chat(writer http.ResponseWriter, req *http.Request) {

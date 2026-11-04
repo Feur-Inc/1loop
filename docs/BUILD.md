@@ -13,8 +13,25 @@ the checks below; `release.sh` uses them too. Go comes from `go.mod`.
 | `packaging/android/build.sh debug` | `1loop-VERSION-debug.apk`, `1loop-VERSION-android-native-sources.zip` |
 | `packaging/android/build.sh release` | `1loop-VERSION.apk` (only with the release key), same native sources |
 
-For development, `make` builds `bin/1loop` and `bin/1loop-wayland`, and
-`make server` builds `bin/1loop-server`.
+## Development
+
+Requirements: Go 1.23+, a C compiler, and the OpenGL, EGL, X11 and Wayland
+development libraries (`libgl-dev`, `libegl-dev`, `xorg-dev`,
+`libwayland-dev`, `libxkbcommon-dev`) for the desktop.
+
+```bash
+make            # bin/1loop (X11) and bin/1loop-wayland (native Wayland)
+make server     # bin/1loop-server, static, no CGO
+make run        # build, then open 1loop on the current folder
+make dev        # same, with the developer log (~/.cache/1loop/dev.log)
+```
+
+Always start `bin/1loop`: in a Wayland session it hands over to
+`bin/1loop-wayland`. `ONELOOP_BACKEND=x11` or `wayland` forces a backend (see
+[X11, Wayland and XWayland](INSTALL.md#x11-wayland-and-xwayland)).
+`make tarball deb`, `make appimage`, `make flatpak` and `make nix` build the
+Linux downloads. Natively on Windows: MinGW-w64 GCC on `PATH`, then
+`go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe ./cmd/1loop`.
 
 ## Checks
 
@@ -143,3 +160,46 @@ Two keys, never mixed:
 
 Keep backups of `android/signing/` and `release-key.pem`: installed apps
 only accept updates signed with them.
+
+## Publishing a release
+
+This is the maintainer's procedure. Publishing the signed manifest and files
+on GitHub Pages makes a new version available to installed apps; it does not
+silently install it on users' devices.
+
+1. **Check Pages once.** In the repository's **Settings → Pages**, select
+   **Deploy from a branch**, branch **gh-pages**, folder **/ (root)**.
+   The site is <https://feur-inc.github.io/1loop/>. This uses GitHub's Pages
+   deployment; no custom GitHub Actions CI workflow is required.
+2. **Prepare the release.** Increase `VERSION` (for example, `0.3.2` to
+   `0.3.3`) and write `docs/releases/0.3.3.md` with the release notes.
+   Commit, review and merge the changes, then publish from the intended clean
+   source commit. Use the build requirements above and a GitHub account with
+   repository, release and Pages publishing access.
+3. **Keep the existing signing keys.** Use the same private manifest key that
+   matches the public key embedded in installed apps, and the same Android
+   APK signing keystore. Android rejects an update signed by another APK key.
+   Never commit either private key or an access token.
+4. **Run the publisher from the repository root:**
+
+   ```bash
+   gh auth login                 # once, if not already authenticated
+   GH_TOKEN="$(gh auth token)" \
+     RELEASE_KEY=/path/to/existing/release-key.pem \
+     bash release.sh
+   ```
+
+   `release.sh` builds all the downloads (the scripts above), signs
+   the manifest, pushes the files to `gh-pages`, and creates the matching
+   GitHub release. The results are also kept locally in `dist/VERSION/`.
+   Do not reuse a version already published.
+5. **Wait for Pages to deploy, then verify.** Open the release page and
+   [`updates/latest.json`](https://feur-inc.github.io/1loop/updates/latest.json). The manifest is a signed envelope, rather
+   than plain release notes; let an installed app verify it with
+   **Settings → Updates → Check now**. Confirm the offered version and try
+   the update. On Android, complete the system install confirmation yourself.
+
+The published files live at `updates/VERSION/`; `updates/latest.json` selects
+the release offered to apps. Creating only a GitHub release, or uploading an
+APK without updating that signed manifest, does not publish an in-app update.
+Do not edit the manifest by hand: its signature must match its contents.

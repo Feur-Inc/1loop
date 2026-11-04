@@ -15,6 +15,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -28,6 +29,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -67,7 +69,13 @@ fun ItemImages(app: RemoteApp, index: Int, count: Int, modifier: Modifier = Modi
     var open by remember { mutableStateOf<ImageBitmap?>(null) }
     Row(modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         for (n in 0 until count) {
-            val image by produceState<ImageBitmap?>(null, app.server, app.current, index, n) { value = app.itemImage(index, n) }
+            // null while it loads; a picture that will not come (its file was
+            // deleted, or the computer is gone) says so instead of spinning.
+            var failed by remember(app.server, app.current, index, n) { mutableStateOf(false) }
+            val image by produceState<ImageBitmap?>(null, app.server, app.current, index, n) {
+                value = app.itemImage(index, n)
+                failed = value == null
+            }
             Box(
                 Modifier.height(140.dp).widthIn(min = 90.dp, max = 280.dp).clip(RoundedCornerShape(10.dp))
                     .background(Palette.code).border(1.dp, Palette.borderSoft, RoundedCornerShape(10.dp))
@@ -75,7 +83,8 @@ fun ItemImages(app: RemoteApp, index: Int, count: Int, modifier: Modifier = Modi
                 contentAlignment = Alignment.Center,
             ) {
                 image?.let { Image(it, contentDescription = "Image the model saw", contentScale = ContentScale.Fit, modifier = Modifier.height(140.dp)) }
-                    ?: WorkRing("wait", 22.dp)
+                    ?: if (failed) Text("No longer available", style = Type.small.copy(color = Palette.faint), textAlign = TextAlign.Center, modifier = Modifier.padding(10.dp))
+                    else WorkRing("wait", 22.dp)
             }
         }
     }

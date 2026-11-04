@@ -43,7 +43,7 @@ func Handlers(target Target, authorizations func(context.Context) []string) map[
 			return nil, false
 		}
 		for _, worktree := range repo.Worktrees {
-			if !worktree.Main {
+			if !worktree.Main && worktree.Path != path {
 				target.Opened(path, worktree.Path)
 			}
 		}

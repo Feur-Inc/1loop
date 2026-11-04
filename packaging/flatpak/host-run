@@ -13,6 +13,14 @@ if [ "$name" = host-run ]; then
   name=$1
   shift
 fi
+# Without org.freedesktop.Flatpak (revoked with flatpak override or Flatseal)
+# flatpak-spawn only prints a D-Bus error: say what is missing instead.
+# /.flatpak-info lists the sandbox's permissions, overrides included.
+if ! grep -qE '^org\.freedesktop\.Flatpak=(talk|own)$' /.flatpak-info 2>/dev/null; then
+  echo "1loop: cannot run $name on the host: this Flatpak lacks the org.freedesktop.Flatpak permission." >&2
+  echo "Restore it with: flatpak override --user --talk-name=org.freedesktop.Flatpak io.github.Feur_Inc.OneLoop" >&2
+  exit 126
+fi
 args=(--host --watch-bus --directory="$PWD")
 while IFS= read -r -d '' variable; do
   # The sandbox's own paths and its view of the session (the D-Bus proxy,

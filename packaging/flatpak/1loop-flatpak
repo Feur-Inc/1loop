@@ -5,4 +5,9 @@ export PATH=/app/lib/1loop/host:$PATH
 export SHELL=/app/lib/1loop/host/host-shell
 export ONELOOP_FLATPAK=1
 export ONELOOP_COMPUTER_PYTHON=/app/lib/1loop/host/python3
+# The sandbox's /tmp is its own: temporary files 1loop hands to host
+# commands (Claude Code's MCP config and skills) go where the host sees them
+# at the same path. host-run leaves the host its own TMPDIR.
+export TMPDIR="${XDG_CACHE_HOME:-$HOME/.var/app/io.github.Feur_Inc.OneLoop/cache}/tmp"
+mkdir -p "$TMPDIR"
 exec /app/lib/1loop/1loop "$@"

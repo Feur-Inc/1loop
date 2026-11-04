@@ -376,7 +376,11 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		ui.place(container.NewVBox(padded(theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(),
 			container.NewStack(text, newSelectLayer(ui, text))), ui.responseControls(chat, index)))
 	case "note":
-		icon := canvas.NewImageFromResource(tinted(iconCompact, colFaint))
+		glyph := iconCompact
+		if strings.HasPrefix(item.Text, "Background task ") { // agent.WakeSummary
+			glyph = iconTaskEnded
+		}
+		icon := canvas.NewImageFromResource(tinted(glyph, colFaint))
 		icon.SetMinSize(fyne.NewSquareSize(15))
 		ui.place(container.NewBorder(nil, nil, container.NewCenter(icon), nil, newFlowText([]span{{text: item.Text}}, 12.5, colFaint)))
 	case "tool":

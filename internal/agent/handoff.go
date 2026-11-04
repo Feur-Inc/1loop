@@ -108,6 +108,48 @@ type HandoffPlan struct {
 	Recommended HandoffChoice       `json:"recommended"`
 	Reason      string              `json:"reason"`
 	configs     map[string]Config
+	models      map[string]string // summarizer ID → sameModel key
+}
+
+// sameModel is what makes two summarizers the same model to the user, on
+// whichever account: the model ID without case or vendor prefix. The CLI
+// harnesses are told apart by their sessions, not their models.
+func sameModel(provider, model string) string {
+	if model == "" || CLIHarness(provider) {
+		return ""
+	}
+	return strings.ToLower(model[strings.LastIndex(model, "/")+1:])
+}
+
+// MergeSameModels shows each model once: of the summarizers that are the
+// same model, it keeps the one that can run, then the one that holds the
+// conversation, then the first listed. Call it once their availability is
+// known, before RecommendAvailable.
+func (plan *HandoffPlan) MergeSameModels() {
+	kept := map[string]int{} // model key → index in out
+	var out []HandoffSummarizer
+	renamed := map[string]string{}
+	for _, entry := range plan.Summarizers {
+		key := plan.models[entry.ID]
+		at, seen := kept[key]
+		if key == "" || !seen {
+			if key != "" {
+				kept[key] = len(out)
+			}
+			out = append(out, entry)
+			continue
+		}
+		if better := out[at]; entry.Problem == "" && better.Problem != "" || (entry.Problem == "") == (better.Problem == "") && entry.Cached && !better.Cached {
+			renamed[better.ID] = entry.ID
+			out[at] = entry
+		} else {
+			renamed[entry.ID] = better.ID
+		}
+	}
+	plan.Summarizers = out
+	for id, ok := renamed[plan.Recommended.Summarizer]; ok; id, ok = renamed[id] {
+		plan.Recommended.Summarizer = id
+	}
 }
 
 // LevelFits tells whether a summarizer without cache can read a level: its
@@ -196,6 +238,12 @@ func PlanHandoff(previous *Config, next Config, history []Message, items []ChatI
 	}
 	nextEntry := HandoffSummarizer{ID: "next", Name: to, Window: window, Note: "Has no cache for this conversation: reads the chosen level at full price."}
 	plan.Summarizers = []HandoffSummarizer{previousEntry, nextEntry}
+	plan.models = map[string]string{"next": sameModel(next.Provider, next.Model)}
+	if previous != nil {
+		plan.models["previous"] = sameModel(previous.Provider, previous.Model)
+	} else if ran := next.RanWith; ran != nil {
+		plan.models["previous"] = sameModel(ran.Provider, ran.Model)
+	}
 
 	small := plan.AsIsTokens <= min(window*25/100, 60000)
 	switch {
@@ -519,6 +567,10 @@ func (plan *HandoffPlan) AddSummarizer(id, name string, cfg Config, problem stri
 		plan.configs = map[string]Config{}
 	}
 	plan.configs[id] = cfg
+	if plan.models == nil {
+		plan.models = map[string]string{}
+	}
+	plan.models[id] = sameModel(cfg.Provider, cfg.Model)
 	plan.Summarizers = append(plan.Summarizers, HandoffSummarizer{
 		ID: id, Name: name, Window: ModelContextWindow(cfg), Problem: problem,
 		Note: "No cache for this conversation: reads the selected level at full price.",

@@ -193,6 +193,7 @@ type desktopUI struct {
 	dockRow           *fyne.Container // its place beside the composer (see dockActivity)
 	composer          fyne.CanvasObject
 	docked            bool
+	dockFits          bool // the margin beside the composer has room for the line (dockLayout)
 	lineShown         bool
 	mark              *loopMark
 	workMark          *loopMark
@@ -713,8 +714,12 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		})
 	}
 
-	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), ui.contextRing, ui.model.row, ui.steer, ui.send, ui.stop)
-	ui.controls = container.New(&composerControlsLayout{}, container.NewCenter(ui.approvalControl), actions)
+	// The settings sit on the left and the run controls on the right, send
+	// last: Steer and Stop come and go in the free space between the two,
+	// so nothing else moves when a task starts or ends.
+	settings := container.New(layout.NewCustomPaddedHBoxLayout(4), container.NewCenter(ui.approvalControl), ui.model.row, ui.contextRing)
+	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), ui.steer, ui.stop, ui.send)
+	ui.controls = container.New(&composerControlsLayout{transient: []fyne.CanvasObject{ui.steer, ui.stop, ui.send}}, settings, actions)
 	ui.model.relayout = ui.controls.Refresh
 
 	card := canvas.NewRectangle(colSurface)
@@ -990,6 +995,7 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	}
 	chat.run = nil
 	ui.remote.metaChanged(chat)
+	ui.staleAccountLimits(chat.Config.ConnectionID)
 	if run != nil && run.approval != nil {
 		run.approval.dismiss()
 	}
@@ -1877,8 +1883,19 @@ func (layoutSpec dockLayout) Layout(objects []fyne.CanvasObject, size fyne.Size)
 	card := layoutSpec.ui.composer.Size().Height
 	objects[1].Move(fyne.NewPos(24, size.Height-18-card))
 	objects[1].Resize(fyne.NewSize(fyne.Max(0, width), card))
-	if docked := dockActivity && width >= dockMinWidth; docked != layoutSpec.ui.docked {
-		fyne.Do(func() { layoutSpec.ui.setDocked(docked) }) // not while laying out
+	ui := layoutSpec.ui
+	ui.dockFits = dockActivity && width >= dockMinWidth
+	if !ui.dockFits {
+		// The line moves under the message on the next frame (setDocked); until
+		// then the margin is too narrow for it, and it would be drawn over the
+		// composer: the ring keeps its size and a label with no width its text.
+		objects[1].Hide()
+	}
+	if ui.dockFits != ui.docked {
+		// Not while laying out. The move reads the latest layout's answer:
+		// a wide margin, then a narrow one before the move ran, left the line
+		// docked in a margin that no longer had room for it.
+		fyne.Do(func() { ui.setDocked(ui.dockFits) })
 	}
 }
 

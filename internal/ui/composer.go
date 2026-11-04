@@ -190,20 +190,37 @@ func (entry *chatEntry) FocusLost() {
 
 // On narrow conversations, the two groups need separate lines when the
 // side panel is open. The split supplies the available width before sizing.
-type composerControlsLayout struct{ available float32 }
+// transient are the run controls that come and go: the choice of one or two
+// lines counts them even while hidden, so it does not flip as a task starts
+// or ends.
+type composerControlsLayout struct {
+	available float32
+	transient []fyne.CanvasObject
+}
+
+func (layoutSpec *composerControlsLayout) widths(o []fyne.CanvasObject) (left, right fyne.Size, wide float32) {
+	left, right = o[0].MinSize(), o[1].MinSize()
+	wide = left.Width + right.Width + 8
+	for _, object := range layoutSpec.transient {
+		if !object.Visible() {
+			wide += object.MinSize().Width + 4
+		}
+	}
+	return left, right, wide
+}
 
 func (layoutSpec *composerControlsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
-	size, sizeValue := o[0].MinSize(), o[1].MinSize()
-	if layoutSpec.available > 0 && size.Width+sizeValue.Width+8 > layoutSpec.available {
+	size, sizeValue, wide := layoutSpec.widths(o)
+	if layoutSpec.available > 0 && wide > layoutSpec.available {
 		return fyne.NewSize(fyne.Max(size.Width, sizeValue.Width), size.Height+sizeValue.Height+4)
 	}
 	return fyne.NewSize(size.Width+sizeValue.Width+8, fyne.Max(size.Height, sizeValue.Height))
 }
 
 func (layoutSpec *composerControlsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
-	sizeValue, b := o[0].MinSize(), o[1].MinSize()
+	sizeValue, b, wide := layoutSpec.widths(o)
 	y := (size.Height - b.Height) / 2
-	if sizeValue.Width+b.Width+8 > size.Width {
+	if wide > size.Width {
 		o[0].Move(fyne.NewPos(0, 0))
 		y = sizeValue.Height + 4
 	} else {

@@ -37,10 +37,11 @@ func (remote *remoteDesktop) panelContent(tab remoteapi.Tab) (fyne.CanvasObject,
 	switch tab.Kind {
 	case "todo":
 		remote.todoTasks = container.NewVBox()
-		remote.todoFooter = note("")
+		remote.todoFooter = container.NewVBox()
+		remote.todoFooterKey, remote.todoUsage = "", &contextUsageState{}
 		remote.todoRows = map[string]*widget.Label{}
 		remote.todoSignature = ""
-		return container.NewStack(container.NewBorder(nil, remote.todoFooter, nil, nil, container.NewVScroll(remote.todoTasks))), cancel, func(bool) {}
+		return container.NewStack(container.NewBorder(nil, padded(8, 10, 12, 12, remote.todoFooter), nil, nil, container.NewVScroll(remote.todoTasks))), cancel, func(bool) {}
 	case "browser":
 		screen := newRemoteBrowserScreen(remote, ctx, path)
 		address := widget.NewEntry()

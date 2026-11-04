@@ -190,7 +190,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
                     "tool" -> ToolView(app, app.items.getOrNull(tab.index))
                     else -> Column {
                         Box(Modifier.weight(1f)) { TasksView(tasks, app.meta?.background.orEmpty(), app::stopTask) }
-                        ContextFooter(app.meta)
+                        ContextFooter(app, chat, app.meta)
                     }
                 }
             }
@@ -916,15 +916,21 @@ fun AgentCursor(modifier: Modifier = Modifier) {
     }
 }
 
-// The desktop's footer under the task list: the context, and when it compacts.
+// The desktop's footer under the task list: the context by category (it
+// replaces the first line, Context · % · tokens), and when it compacts.
 @Composable
-private fun ContextFooter(meta: Meta?) {
-    val text = meta?.contextStatus?.ifEmpty { null } ?: when {
+private fun ContextFooter(app: RemoteApp, chat: String, meta: Meta?) {
+    var text = meta?.contextStatus?.ifEmpty { null } ?: when {
         meta == null || meta.window <= 0 -> "Context usage is available once a model is selected."
         else -> "Context · ${minOf(100, meta.used * 100 / meta.window)}% · ${tokens(meta.used)} / ${tokens(meta.window)} tokens"
     }
+    val usage = meta?.contextUsage
+    if (usage != null) text = text.substringAfter('\n', "")
     Column {
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.borderSoft))
-        Text(text, style = Type.caption.copy(color = Palette.muted), modifier = Modifier.padding(horizontal = 18.dp, vertical = 12.dp))
+        Column(Modifier.padding(horizontal = 18.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+            if (usage != null) ContextBreakdown(app, chat, usage)
+            if (text.isNotEmpty()) Text(text, style = Type.caption.copy(color = Palette.muted))
+        }
     }
 }

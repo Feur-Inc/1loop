@@ -142,6 +142,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)
 	mux.HandleFunc("GET /api/state", server.authorized(server.state))
 	mux.HandleFunc("GET /api/chats/{id}", server.authorized(server.chat))
+	mux.HandleFunc("GET /api/chats/{id}/context", server.authorized(server.chatContext))
 	mux.HandleFunc("POST /api/chats/{id}/delete", server.authorized(server.deleteChat))
 	mux.HandleFunc("POST /api/chats/{id}/tasks/{task}/stop", server.authorized(server.stopTask))
 	mux.HandleFunc("POST /api/browser/clear", server.authorized(server.clearBrowser))
@@ -533,6 +534,7 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 	remoteMetaValue.Model, remoteMetaValue.Effort, remoteMetaValue.Tier = ui.choiceLabel(chat.Config), chat.Config.Effort, chat.Config.ServiceTier
 	remoteMetaValue.Window = agent.ModelContextWindow(ui.resolveModel(chat.Config))
 	remoteMetaValue.Todo = todoForPhone(chat)
+	remoteMetaValue.ContextUsage = ui.contextUsage(chat).Summary()
 	remoteMetaValue.Tasks = append([]agent.BackgroundTaskInfo{}, chat.tasks.Snapshot()...)
 	for _, h := range chat.History {
 		remoteMetaValue.Used = max(remoteMetaValue.Used, h.Usage)
@@ -572,6 +574,21 @@ func (server *remoteServer) state(writer http.ResponseWriter, _ *http.Request) {
 			"projectManagement": true, "projectActions": true, "chats": chats, "current": current, "settings": server.ui.settingsForPhone()}
 	})
 	core.WriteJSON(writer, http.StatusOK, out)
+}
+
+// chatContext is the chat's window by category with the MCP tools' list.
+func (server *remoteServer) chatContext(writer http.ResponseWriter, req *http.Request) {
+	var usage *agent.ContextUsage
+	server.onUI(func() {
+		if chat := server.ui.chatByID(req.PathValue("id")); chat != nil {
+			usage = server.ui.contextUsage(chat)
+		}
+	})
+	if usage == nil {
+		core.Fail(writer, http.StatusNotFound, "No context usage yet")
+		return
+	}
+	core.WriteJSON(writer, http.StatusOK, usage)
 }
 
 func (server *remoteServer) chat(writer http.ResponseWriter, req *http.Request) {

@@ -41,19 +41,21 @@ import (
 )
 
 type conversation struct {
-	ID       string                  `json:"id,omitempty"` // stable, for the phone remote
-	Title    string                  `json:"title"`
-	Config   agent.Config            `json:"config"`
-	History  []agent.Message         `json:"history"`
-	Items    []agent.ChatItem        `json:"items"`
-	Cache    *agent.ContextCache     `json:"contextCache,omitempty"`
-	grants   *agent.PermissionGrants // what request_permissions granted, until 1loop closes
-	review   *agent.ReviewSession    // the Auto mode reviewer's conversation, until 1loop closes
-	tasks    *agent.BackgroundTasks  // shell commands run in the background, until 1loop closes
-	Todo     *agent.TodoState        `json:"todo,omitempty"`
-	Panel    *savedPanel             `json:"panel,omitempty"` // its side panel, to open it again as it was
-	Version  string                  `json:"version,omitempty"`
-	Versions []chatVersion           `json:"versions,omitempty"`
+	ID      string              `json:"id,omitempty"` // stable, for the phone remote
+	Title   string              `json:"title"`
+	Config  agent.Config        `json:"config"`
+	History []agent.Message     `json:"history"`
+	Items   []agent.ChatItem    `json:"items"`
+	Cache   *agent.ContextCache `json:"contextCache,omitempty"`
+	// ContextUsage is Claude Code's last count of the window by category.
+	ContextUsage *agent.ContextUsage     `json:"contextUsage,omitempty"`
+	grants       *agent.PermissionGrants // what request_permissions granted, until 1loop closes
+	review       *agent.ReviewSession    // the Auto mode reviewer's conversation, until 1loop closes
+	tasks        *agent.BackgroundTasks  // shell commands run in the background, until 1loop closes
+	Todo         *agent.TodoState        `json:"todo,omitempty"`
+	Panel        *savedPanel             `json:"panel,omitempty"` // its side panel, to open it again as it was
+	Version      string                  `json:"version,omitempty"`
+	Versions     []chatVersion           `json:"versions,omitempty"`
 
 	panel     *panelState // its side panel while 1loop runs (live tabs, terminals included)
 	todoCount int         // tasks last seen in its list: the first ones open the panel
@@ -1730,7 +1732,7 @@ func (ui *desktopUI) persist(wait bool) {
 	for i, chat := range ui.chats { // messages are never edited in place: copying the lists is enough
 		chats[i] = &conversation{ID: chat.ID, Title: chat.Title, Config: chat.Config, Panel: chat.Panel,
 			History: append([]agent.Message{}, chat.History...), Items: append([]agent.ChatItem{}, chat.Items...), Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(),
-			Version: chat.Version, Versions: copyVersions(chat.Versions)}
+			Version: chat.Version, Versions: copyVersions(chat.Versions), ContextUsage: chat.ContextUsage}
 	}
 	ui.saveCount++
 	count, path := ui.saveCount, ui.statePath

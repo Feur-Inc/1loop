@@ -67,17 +67,20 @@ type Item struct {
 }
 
 type Meta struct {
-	ContextStatus string    `json:"contextStatus,omitempty"`
-	Chat          string    `json:"chat"`
-	Title         string    `json:"title"`
-	Running       bool      `json:"running"`
-	Label         string    `json:"label,omitempty"`
-	Mark          string    `json:"mark,omitempty"`
-	Queue         []string  `json:"queue"`
-	Steer         []string  `json:"steer"`
-	Items         int       `json:"items"`
-	Approval      *Approval `json:"approval,omitempty"`
-	Question      *Question `json:"question,omitempty"` // request_user_input waiting for answers
+	ContextStatus string `json:"contextStatus,omitempty"`
+	// ContextUsage is the window by category, without the MCP tools' list
+	// (GET /api/chats/{id}/context has it).
+	ContextUsage *agent.ContextUsage `json:"contextUsage,omitempty"`
+	Chat         string              `json:"chat"`
+	Title        string              `json:"title"`
+	Running      bool                `json:"running"`
+	Label        string              `json:"label,omitempty"`
+	Mark         string              `json:"mark,omitempty"`
+	Queue        []string            `json:"queue"`
+	Steer        []string            `json:"steer"`
+	Items        int                 `json:"items"`
+	Approval     *Approval           `json:"approval,omitempty"`
+	Question     *Question           `json:"question,omitempty"` // request_user_input waiting for answers
 	// The tool executing now, whatever the label says (an approval replaces it):
 	// the phone's status badge lets touches through while phone_use runs.
 	Tool string `json:"tool,omitempty"`

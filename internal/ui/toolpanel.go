@@ -62,6 +62,7 @@ type panelTab struct {
 	todoView        *fyne.Container
 	todoContext     *fyne.Container
 	todoContextText string
+	todoUsage       *contextUsageState // what the user opened in the context breakdown
 	todoTimes       map[string]*canvas.Text
 	todoMarks       []*taskMark // the rings of the list as drawn, stopped when it is drawn again
 	web             bool

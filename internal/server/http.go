@@ -104,6 +104,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/model/compaction":                   server.setModelCompaction,
 		"POST /api/model/defaults":                     server.setDefaultModels,
 		"POST /api/approval-mode":                      server.setApprovalMode,
+		"GET /api/chats/{id}/context":                  server.chatContext,
 		"GET /api/chats/{id}/panel":                    server.panelTabs,
 		"GET /api/chats/{id}/panel/{key}":              server.panelTab,
 		"GET /api/chats/{id}/panel/{key}/screen":       server.panelScreen,
@@ -188,6 +189,23 @@ func (server *headlessServer) chat(w http.ResponseWriter, r *http.Request) {
 		"total": len(chat.Items),
 		"meta":  server.metaLocked(chat),
 	})
+}
+
+// chatContext is the chat's window by category with the MCP tools' list.
+func (server *headlessServer) chatContext(w http.ResponseWriter, r *http.Request) {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	chat := server.chatLocked(r.PathValue("id"))
+	if chat == nil {
+		core.Fail(w, 404, "Chat not found")
+		return
+	}
+	usage := agent.ChatContextUsage(chat.Config, chat.History, chat.ContextUsage, server.classic)
+	if usage == nil {
+		core.Fail(w, 404, "No context usage yet")
+		return
+	}
+	core.WriteJSON(w, 200, usage)
 }
 
 func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request) {

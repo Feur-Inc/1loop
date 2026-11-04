@@ -431,10 +431,15 @@ func (layoutSpec *transcriptLayout) reset() { layoutSpec.sizes = map[fyne.Canvas
 
 // changed forgets the size of the item that holds part: it changed while
 // perhaps out of sight, where nothing measures it.
+//
+// It looks from the end: the part is nearly always in the answer being
+// written, and going through every item of a long chat at each streamed
+// word walked the whole conversation.
 func (layoutSpec *transcriptLayout) changed(part fyne.CanvasObject) {
-	for item := range layoutSpec.sizes {
-		if _, holds := offsetIn(item, part); holds {
-			delete(layoutSpec.sizes, item)
+	items := layoutSpec.ui.transcript.Objects
+	for i := len(items) - 1; i >= 0; i-- {
+		if _, holds := offsetIn(items[i], part); holds {
+			delete(layoutSpec.sizes, items[i])
 			return
 		}
 	}

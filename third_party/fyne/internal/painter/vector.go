@@ -1,6 +1,8 @@
 package painter
 
 import (
+	"math"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 )
@@ -38,4 +40,13 @@ func VectorPad(obj fyne.CanvasObject) float32 {
 	}
 
 	return 0
+}
+
+// TextBottomPad is how far below its measured height a text's texture
+// reaches. The height ends at the font's descent, where some fonts put the
+// underscore (DejaVu Sans Mono, Fyne's monospace): with the baseline moved
+// down to a whole pixel it fell outside the texture, and "set_tier" read as
+// "set tier". The text is laid out by its height; only its drawing has room.
+func TextBottomPad(text *canvas.Text) float32 {
+	return float32(math.Ceil(float64(text.TextSize) / 6))
 }

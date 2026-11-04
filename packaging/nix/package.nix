@@ -66,7 +66,7 @@ buildGoModule {
       ../../third_party
     ];
   };
-  vendorHash = "sha256-9VOWzaP1tRf+JO73PqRL/BWdsIX/eCPoZCxOba4pWJs=";
+  vendorHash = "sha256-Q8zsPw5nskwC5NlPuoEcscdejJydQzL4+QGvIiv1+wI=";
 
   nativeBuildInputs = [
     pkg-config
@@ -145,6 +145,7 @@ buildGoModule {
   meta = {
     description = "Coding agent for your project, with your model";
     homepage = "https://github.com/Feur-Inc/1loop";
+    license = lib.licenses.mpl20;
     platforms = [ "x86_64-linux" ];
     mainProgram = "1loop";
   };

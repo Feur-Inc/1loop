@@ -80,7 +80,7 @@ func (server *headlessServer) handoffPlanLocked(chat *serverChat, cfg agent.Conf
 		}
 		candidate.ClearSessions()
 		candidate.APIKey = server.keys[candidate.ConnectionID]
-		plan.AddSummarizer("model:"+candidate.ConnectionID+"|"+candidate.Model, label, candidate, agent.HandoffAvailability("", server.limitsCache[candidate.ConnectionID]))
+		plan.AddSummarizer("model:"+candidate.ConnectionID+"|"+candidate.Model, label, candidate, agent.HandoffAvailability("", server.limitsCache[candidate.ConnectionID], candidate.Model))
 	}
 	for i := range plan.Summarizers {
 		entry := &plan.Summarizers[i]
@@ -89,7 +89,7 @@ func (server *headlessServer) handoffPlanLocked(chat *serverChat, cfg agent.Conf
 			candidate = *previous
 		}
 		if entry.ID == "previous" || entry.ID == "next" {
-			if problem := agent.HandoffAvailability("", server.limitsCache[candidate.ConnectionID]); problem != "" {
+			if problem := agent.HandoffAvailability("", server.limitsCache[candidate.ConnectionID], candidate.Model); problem != "" {
 				entry.Problem = problem
 			}
 		}

@@ -76,7 +76,7 @@ data class LocalConnection(
 }
 
 private val providers = listOf(
-    "openai" to "ChatGPT account", "claudecode" to "Claude Code", "openrouter" to "OpenRouter",
+    "openai" to "ChatGPT account", "claudecode" to "Claude Code", "antigravity" to "Antigravity CLI", "openrouter" to "OpenRouter",
     "vllm" to "Local vLLM", "compatible" to "OpenAI-compatible API", "chatgptweb" to "ChatGPT (Web)",
 )
 
@@ -140,7 +140,7 @@ private class ConnectionDraft(val original: LocalConnection?) {
     fun json(): JSONObject = JSONObject(base.toString()).apply {
         put("name", name.trim())
         put("provider", provider)
-        put("baseURL", if (provider in listOf("openai", "claudecode", "chatgptweb")) "" else baseURL.trim())
+        put("baseURL", if (provider in listOf("openai", "claudecode", "antigravity", "chatgptweb")) "" else baseURL.trim())
         if (provider == "chatgptweb") put("webSettings", JSONObject(web.toString()).put("tunnelId", tunnelId.trim()).put("plugin", plugin.trim()))
         put("enabled", enabled)
         put("allModels", allModels)
@@ -235,6 +235,7 @@ private fun ConnectionList(list: List<LocalConnection>?, problem: String?, onBac
 private fun accessText(connection: LocalConnection) = when (connection.provider) {
     "openai" -> if (connection.signedIn) connection.email.ifEmpty { "Signed in" } else "Not signed in"
     "claudecode" -> if (connection.signedIn) connection.email.ifEmpty { "Signed in" } else "Not signed in"
+    "antigravity" -> ""
     "chatgptweb" -> if (connection.hasKey) "Tunnel key saved" else ""
     else -> if (connection.hasKey) "Key saved" else ""
 }
@@ -342,6 +343,7 @@ private fun ConnectionEditor(
                 }
             }
             "claudecode" -> ClaudeAccess(app, claudeInstalled, current, reload) { claudePending = it }
+            "antigravity" -> Text("Uses the Antigravity CLI (agy) installed where the 1loop agent runs, with its own Google sign-in: run agy once there in a terminal to sign in. 1loop never reads its sign-in and runs it for you only.", style = Type.small)
             "chatgptweb" -> WebAccess(app, draft, current)
             else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (draft.provider == "openrouter") {

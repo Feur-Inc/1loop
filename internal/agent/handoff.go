@@ -30,7 +30,7 @@ type RunIdentity struct {
 
 func IdentityOf(cfg Config) RunIdentity {
 	identity := RunIdentity{Provider: cfg.Provider, ConnectionID: cfg.ConnectionID, AuthProfile: cfg.AuthProfile, Model: cfg.Model}
-	if cfg.Provider == "claudecode" {
+	if CLIHarness(cfg.Provider) {
 		identity.Model = ""
 	}
 	return identity
@@ -143,7 +143,7 @@ func (plan HandoffPlan) Problem(choice HandoffChoice) string {
 // handoffResumes is a return to Claude Code with its session: it only reads
 // what happened meanwhile.
 func handoffResumes(next Config) bool {
-	return next.Provider == "claudecode" && next.ClaudeSession() != "" && next.ClaudeMark() > 0
+	return CLIHarness(next.Provider) && HarnessSession(next) != "" && HarnessMark(next) > 0
 }
 
 // PlanHandoff lists the choices and the recommended one. previous is nil
@@ -154,8 +154,8 @@ func PlanHandoff(previous *Config, next Config, history []Message, items []ChatI
 	clean := forProvider(history, next)
 	if handoffResumes(next) {
 		end := len(items)
-		if next.ClaudeMark() < end {
-			plan.AsIsTokens = len(itemsText(items[next.ClaudeMark():end]))/4 + 1
+		if HarnessMark(next) < end {
+			plan.AsIsTokens = len(itemsText(items[HarnessMark(next):end]))/4 + 1
 		}
 		plan.AsIsNote = fmt.Sprintf("%s resumes its own session and reads only what happened meanwhile (~%s tokens).", to, Tokens(plan.AsIsTokens))
 		if plan.AsIsTokens > window*4/10 {
@@ -173,7 +173,7 @@ func PlanHandoff(previous *Config, next Config, history []Message, items []ChatI
 	switch {
 	case previous == nil:
 		previousEntry.Problem = from + " is not available any more."
-	case previous.Provider == "claudecode" && previous.ClaudeSession() == "":
+	case CLIHarness(previous.Provider) && HarnessSession(*previous) == "":
 		previousEntry.Problem = from + " has no session for this conversation."
 	default:
 		previousEntry.Window = ModelContextWindow(*previous)
@@ -183,7 +183,7 @@ func PlanHandoff(previous *Config, next Config, history []Message, items []ChatI
 			previousEntry.Cached = !last.IsZero() && time.Since(last) < time.Hour
 		}
 		previousEntry.Tokens = HistoryEstimate(history)
-		if previous.Provider == "claudecode" {
+		if CLIHarness(previous.Provider) {
 			previousEntry.Cached = true // Its session retains the input; provider cache billing is not guaranteed.
 			previousEntry.Note = "Writes in its retained session. Provider cache availability and billing may vary."
 		} else if previousEntry.Cached {
@@ -394,20 +394,24 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 	case summarizer.Provider == "chatgptweb":
 		note, err = backend.webHandoffNote(ctx, summarizer, handoffPrompt(budget, plan.To)+todoSnapshot(next)+
 			"\n\nConversation ("+levelName(choice.Level)+"):\n"+levelText(clean, choice.Level, ModelContextWindow(summarizer)))
-	case summarizer.Provider == "claudecode":
+	case CLIHarness(summarizer.Provider):
 		input := ""
-		if summarizer.ClaudeSession() == "" {
+		if HarnessSession(summarizer) == "" {
 			input = "\n\nConversation:\n" + levelText(clean, choice.Level, ModelContextWindow(summarizer))
 		} else if summarizer.Recall != nil {
 			items, readErr := summarizer.Recall(ctx)
 			if readErr != nil {
 				return HandoffResult{}, readErr
 			}
-			if summarizer.ClaudeMark() < len(items) {
-				input = "\n\nExchanges since your last turn:\n" + itemsText(items[summarizer.ClaudeMark():])
+			if HarnessMark(summarizer) < len(items) {
+				input = "\n\nExchanges since your last turn:\n" + itemsText(items[HarnessMark(summarizer):])
 			}
 		}
-		note, err = claudeHandoffNote(ctx, summarizer, handoffPrompt(budget, plan.To)+input)
+		if summarizer.Provider == "antigravity" {
+			note, err = agyHandoffNote(ctx, summarizer, handoffPrompt(budget, plan.To)+input)
+		} else {
+			note, err = claudeHandoffNote(ctx, summarizer, handoffPrompt(budget, plan.To)+input)
+		}
 	case cached:
 		// The previous model's own requests, as it sent them: its cache
 		// covers them. Its tools stay declared (part of the cached prefix)
@@ -450,7 +454,7 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 	estimate := HistoryEstimate(kept) + ContextOverhead(next)
 	markContextEstimate(kept, estimate)
 	level := "from its cache"
-	if !cached || summarizer.Provider == "claudecode" && summarizer.ClaudeSession() == "" {
+	if !cached || CLIHarness(summarizer.Provider) && HarnessSession(summarizer) == "" {
 		level = levelName(choice.Level)
 	}
 	return HandoffResult{
@@ -520,11 +524,14 @@ func (plan *HandoffPlan) AddSummarizer(id, name string, cfg Config, problem stri
 }
 
 // HandoffAvailability reports known connection or unexpired quota failures.
-func HandoffAvailability(unavailable string, limits AccountLimits) string {
+func HandoffAvailability(unavailable string, limits AccountLimits, model string) string {
 	if unavailable != "" {
 		return unavailable
 	}
 	for _, window := range limits.Windows {
+		if !window.appliesTo(model, limits.Windows) {
+			continue // another model group's limit: this model still has its own
+		}
 		if window.Remaining() == 0 && (window.ResetAt.IsZero() || window.ResetAt.After(time.Now())) {
 			return "The account's " + window.Label + " usage limit is exhausted."
 		}
@@ -539,7 +546,7 @@ func claudeHandoffNote(ctx context.Context, cfg Config, prompt string) (string, 
 	if cfg.Model != "" && cfg.Model != "default" {
 		args = append(args, "--model", cfg.Model)
 	}
-	if session := cfg.ClaudeSession(); session != "" {
+	if session := HarnessSession(cfg); session != "" {
 		args = append(args, "--resume", session)
 	}
 	dir := cfg.Workspace

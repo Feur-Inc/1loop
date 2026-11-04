@@ -550,6 +550,54 @@ a turn starts. Sign in again if necessary and keep Claude Code up to date.
 Graceful shutdown reduces forced-interruption risks; it cannot repair an upstream
 OAuth renewal failure. See [Claude Code authentication](https://code.claude.com/docs/en/authentication).
 
+## Antigravity CLI
+
+The Antigravity CLI connection drives the `agy` command installed on this
+computer (in the Flatpak, the host's `agy`, through `flatpak-spawn --host`).
+Install it with Google's instructions, then run `agy` once in a terminal to
+sign in: 1loop has no sign-in of its own for it. Open Settings → Connections,
+add a connection of type **Antigravity CLI** and load its models. agy lists
+each model once per effort (`gemini-3.8-flash-low`, `-medium`, `-high`);
+1loop shows one model with an effort setting and starts
+`agy --model gemini-3.8-flash --effort low`.
+
+How 1loop uses it, and what it never does:
+
+- It starts your own installed, unmodified `agy` with its documented headless
+  flags (`--input-format stream-json --output-format stream-json -p=`,
+  `--model`, `--effort`, `--conversation`, `--settings`, and
+  `--output-format json -p=/usage` for the usage limits), for the person at
+  this computer only.
+- It never reads, copies or reuses agy's credentials, never calls
+  Antigravity's servers itself, never shares agy with other people and does
+  not query it in the background: models are listed when you load them, and
+  the usage limits are read when you open the model picker (at most once a
+  minute) by asking agy for `/usage`, which agy answers itself without a model
+  turn or tokens.
+- Google's forum answers describe this local, single-user headless use as
+  supported; the Antigravity FAQ says wrapping `agy` is not supported on
+  consumer plans. Check that your plan allows it before using this connection.
+
+Behaviour to expect in 1loop:
+
+- The model picker shows agy's usage limits from `/usage`: for each model
+  group (Gemini, Claude/GPT, Argon), what is left of its 5-hour and weekly
+  limits and when each refreshes. Scroll the gauges sideways to see them all.
+- Headless agy cannot ask for a permission: it refuses what needs one (shell
+  commands, by default) and reports it at the end of the turn. 1loop then asks
+  you, and for each command you approve it starts agy again in the same
+  conversation with `--settings` allowing that exact command
+  (`command(<command line>)`), for that task only. Your `settings.json` is not
+  changed. YOLO mode passes `--dangerously-skip-permissions`. agy's Auto mode is
+  not offered (it is not available on every account).
+- agy accepts text only: attached images are saved to a private temporary
+  folder, and the message names them for agy's file viewer.
+- agy's own questions to the user (`ask_question`) are not relayed in headless
+  mode.
+- Long tool-using headless turns can end CANCELED, or SUCCESS with an empty
+  answer (agy issues #902 and #1065). 1loop says so in the chat; send a message
+  to have it continue.
+
 ## Command diagnostics
 
 Each `shell` call starts a fresh shell in the project. An optional `workdir`

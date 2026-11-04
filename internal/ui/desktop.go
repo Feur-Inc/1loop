@@ -1085,8 +1085,9 @@ func (ui *desktopUI) submit() {
 		}
 		return
 	}
-	// Claude Code compacts its own session: there /compact is sent as it is.
-	if ui.cfg.Provider != "claudecode" && (text == "/compact" || strings.HasPrefix(text, "/compact ")) {
+	// Claude Code and Antigravity compact their own session: there /compact
+	// is sent as it is.
+	if !agent.CLIHarness(ui.cfg.Provider) && (text == "/compact" || strings.HasPrefix(text, "/compact ")) {
 		ui.prompt.clearSent()
 		ui.compactChat(strings.TrimSpace(strings.TrimPrefix(text, "/compact")))
 		return
@@ -1583,7 +1584,7 @@ func (ui *desktopUI) refreshModels() {
 			for i, result := range results {
 				if result.err != nil {
 					problem := "Models unavailable"
-					if connections[i].Provider == "claudecode" {
+					if agent.CLIHarness(connections[i].Provider) {
 						problem = agent.FirstLine(result.err.Error())
 					} else if connections[i].Provider == "vllm" {
 						problem = "Unavailable"
@@ -1617,6 +1618,9 @@ func (ui *desktopUI) refreshModels() {
 						if choice.Account != "" {
 							ui.model.Details[label] = "Claude Code · " + choice.Account + " · " + choice.ID
 						}
+					}
+					if choice.Connection.Provider == "antigravity" {
+						ui.model.Details[label] = "Runs in Antigravity's own harness · " + choice.ID
 					}
 					if choice.Connection.ID == previous.ConnectionID && choice.ID == previous.Model {
 						selected = label
@@ -1798,7 +1802,7 @@ func (ui *desktopUI) load() {
 		state.Config.BaseURL = ""
 	}
 	switch state.Config.Provider {
-	case "vllm", "openrouter", "openai", "compatible", "claudecode", "chatgptweb":
+	case "vllm", "openrouter", "openai", "compatible", "claudecode", "antigravity", "chatgptweb":
 	default:
 		return
 	}

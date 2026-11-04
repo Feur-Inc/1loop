@@ -102,7 +102,7 @@ func (ui *desktopUI) askHandoff(chat *conversation, proceed func()) {
 		if agent.IdentityOf(candidate) == agent.IdentityOf(next) || previous != nil && agent.IdentityOf(candidate) == agent.IdentityOf(*previous) {
 			continue
 		}
-		plan.AddSummarizer("model:"+candidate.ConnectionID+"|"+candidate.Model, label, candidate, agent.HandoffAvailability(ui.modelUnavailable[candidate.ConnectionID], ui.accountLimits[candidate.ConnectionID]))
+		plan.AddSummarizer("model:"+candidate.ConnectionID+"|"+candidate.Model, label, candidate, agent.HandoffAvailability(ui.modelUnavailable[candidate.ConnectionID], ui.accountLimits[candidate.ConnectionID], candidate.Model))
 	}
 	for i := range plan.Summarizers {
 		entry := &plan.Summarizers[i]
@@ -111,7 +111,7 @@ func (ui *desktopUI) askHandoff(chat *conversation, proceed func()) {
 			candidate = *previous
 		}
 		if entry.ID == "previous" || entry.ID == "next" {
-			if problem := agent.HandoffAvailability(ui.modelUnavailable[candidate.ConnectionID], ui.accountLimits[candidate.ConnectionID]); problem != "" {
+			if problem := agent.HandoffAvailability(ui.modelUnavailable[candidate.ConnectionID], ui.accountLimits[candidate.ConnectionID], candidate.Model); problem != "" {
 				entry.Problem = problem
 			}
 		}

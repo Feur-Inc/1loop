@@ -63,6 +63,8 @@ func machineErr(cfg Config) error {
 	switch cfg.Provider {
 	case "claudecode":
 		return fmt.Errorf("Claude Code works on this computer's projects only. Choose another model for %s", cfg.Machine.Label())
+	case "antigravity":
+		return fmt.Errorf("Antigravity works on this computer's projects only. Choose another model for %s", cfg.Machine.Label())
 	case "chatgptweb":
 		return fmt.Errorf("ChatGPT (Web) works on this computer's projects only. Choose another model for %s", cfg.Machine.Label())
 	}

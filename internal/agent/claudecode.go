@@ -415,6 +415,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	if len(history) == 0 {
 		return fmt.Errorf("Nothing to send")
 	}
+	cfg.Session = HarnessSession(cfg) // not an Antigravity conversation
 	ctx = toolContext(ctx, cfg)
 	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
 		cfg.ProjectTools = func(operation context.Context, name string, raw json.RawMessage) (PanelToolResult, error) {
@@ -445,7 +446,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	if cfg.Effort != "" {
 		args = append(args, "--effort", cfg.Effort)
 	}
-	session := cfg.ClaudeSession()
+	session := HarnessSession(cfg)
 	if session != "" {
 		args = append(args, "--resume", session)
 	}

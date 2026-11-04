@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // AGENTS.md: the project's instructions for coding agents, read from the

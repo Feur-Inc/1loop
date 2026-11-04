@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package mcptunnel is a client of OpenAI's Secure MCP Tunnel: it long-polls
 // the control plane for the MCP requests ChatGPT sends to a tunnel, hands
 // each one to an in-process MCP handler and posts the result back. Nothing

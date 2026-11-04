@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // citationInstructions ask the model to cite the files its final answer talks

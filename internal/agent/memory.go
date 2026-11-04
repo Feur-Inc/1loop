@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // The memory tool: what the agent keeps about the user from one chat to the

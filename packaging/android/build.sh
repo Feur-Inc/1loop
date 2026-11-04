@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
 # Builds the Android app, with the sources of its native helpers:
 #
 #   packaging/android/build.sh debug     dist/1loop-VERSION-debug.apk

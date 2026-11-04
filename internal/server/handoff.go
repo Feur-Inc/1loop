@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package server
 
 // The handoff of a chat to another provider, account or model (the agent's

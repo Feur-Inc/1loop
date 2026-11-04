@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package assets holds the files built into 1loop: its artwork and the
 // Computer Use helpers it runs.
 package assets

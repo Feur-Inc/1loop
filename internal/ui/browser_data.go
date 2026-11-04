@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // The agent's browser profile: where it is kept, and how it is cleared.

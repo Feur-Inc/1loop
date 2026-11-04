@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // The desktop as a client of a headless server (docs/SERVER.md): connecting and

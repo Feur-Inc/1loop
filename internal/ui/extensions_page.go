@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // Settings → Extensions: a store of skills and plugins found on GitHub

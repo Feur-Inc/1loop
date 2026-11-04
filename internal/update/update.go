@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package update keeps 1loop up to date from its release page: a signed
 // manifest lists the latest version and a file for each platform. The
 // desktop and the server replace their own binaries; the phone app reads

@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+
 {
   description = "1loop: a coding agent for your project, with your model";
 

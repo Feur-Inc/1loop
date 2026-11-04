@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package extensions
 
 // The store: skills and plugins found on GitHub by their topic, with their

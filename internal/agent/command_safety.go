@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // How Auto mode sorts a shell command before running it, as Codex does

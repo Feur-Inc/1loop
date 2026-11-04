@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // Browser Use on the desktop: the model's browser tools act on the chat's

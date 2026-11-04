@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // The phone's view of a chat's side panel: the same tabs as on the computer

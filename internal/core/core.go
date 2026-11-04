@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package core holds the small types and helpers every part of 1loop
 // shares.
 package core

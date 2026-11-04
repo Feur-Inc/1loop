@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // ChatGPT (Web) calls tools through the connector and the Secure MCP Tunnel.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // Formulas. A model writes mathematics as LaTeX ($…$, \(…\), $$…$$, \[…\]).

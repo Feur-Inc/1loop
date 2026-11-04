@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // flowText draws one block of styled text (a paragraph, a heading, a list

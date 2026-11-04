@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package extensions holds what the user adds to 1loop's agent: Agent Skills,
 // plugins in Claude Code's format, and MCP servers 1loop connects to as a
 // client. Everything lives in one folder of the user's configuration:

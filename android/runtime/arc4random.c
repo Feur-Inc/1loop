@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 #include <errno.h>
 #include <pthread.h>
 #include <stdint.h>

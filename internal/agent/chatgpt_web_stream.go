@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // The answer of a ChatGPT (Web) turn is read from the page's own response

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package extensions
 
 // Reading skills and plugins from their folders, as Claude Code lays them out.

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // Phone remote: 1loop serves its chats on the local network so the 1loop

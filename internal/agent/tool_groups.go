@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // Tools loaded on demand, as Codex defers its own: the browser, terminal and

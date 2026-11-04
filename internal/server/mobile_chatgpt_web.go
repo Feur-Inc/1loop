@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package server
 
 // ChatGPT (Web) in the phone's local agent: the account's tunnel key, its

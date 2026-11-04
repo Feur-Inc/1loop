@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package agent is 1loop's agent: the model connections, the conversation
 // loop, its tools, approvals and context management.
 package agent

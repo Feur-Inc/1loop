@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package ui is the 1loop desktop: its Fyne window, the chats, the side
 // panel, the settings, and the phone remote it serves.
 package ui

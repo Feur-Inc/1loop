@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // The desktop's client for a headless 1loop server (see docs/SERVER.md): requests

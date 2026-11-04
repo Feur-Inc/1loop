@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // Text selection in answers. Fyne's rich text (which draws the answers:

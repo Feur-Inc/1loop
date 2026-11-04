@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package computeruse controls the real desktop for the agent through the
 // system's portals or UI Automation. Only the desktop program offers it.
 package computeruse

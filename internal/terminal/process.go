@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package terminal runs the panel's shells in a pseudo-terminal (a PTY on
 // Unix, a ConPTY on Windows).
 package terminal

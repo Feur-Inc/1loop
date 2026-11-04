@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package gitrepo is 1loop's view of a project's Git repository: its
 // worktrees, branches and GitHub remote. Git itself is the source of truth,
 // so worktrees made outside 1loop show up too. 1loop makes its own in the

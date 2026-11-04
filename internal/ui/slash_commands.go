@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // Slash commands in a Claude Code chat. Claude Code runs in its stream mode,

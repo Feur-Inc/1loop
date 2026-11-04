@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MPL-2.0
 # Starts the host's Claude Code (linked as claude, the name 1loop looks
 # for): on the host's PATH, else where its installer puts it
 # (~/.local/bin), a folder a desktop session's PATH often lacks. It runs on

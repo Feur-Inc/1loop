@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // Terminal Use: the tools the model calls to drive a shell, shared by the

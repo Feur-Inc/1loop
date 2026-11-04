@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package server
 
 // The headless server's HTTP API: the same routes as the desktop's phone

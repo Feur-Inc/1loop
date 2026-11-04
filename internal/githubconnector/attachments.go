@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package githubconnector
 
 // Images and videos for issues, pull requests and comments go to GitHub's

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package browser drives the agent's Chromium: pages, input, frames and
 // the phone's live view.
 package browser

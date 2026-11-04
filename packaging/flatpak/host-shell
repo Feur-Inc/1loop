@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MPL-2.0
 # 1loop's terminal: the user's login shell, on the host.
 shell=$(/app/lib/1loop/host/host-run sh -c 'getent passwd "$(id -un)" | cut -d: -f7')
 exec /app/lib/1loop/host/host-run "${shell:-/bin/bash}" "$@"

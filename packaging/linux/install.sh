@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MPL-2.0
 # Adds 1loop, from the folder this script is in, to your applications menu:
 # a launcher entry in ~/.local/share/applications and the icon in
 # ~/.local/share/icons. Optional: 1loop runs without it, and never writes

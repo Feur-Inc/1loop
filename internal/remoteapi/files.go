@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package remoteapi
 
 // A project's files for the file browser (desktop, remote desktop, phone):

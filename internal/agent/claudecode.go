@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // Claude Code connection. 1loop does not replace Claude Code's harness here:

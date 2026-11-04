@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // Settings → General → Browser → Import cookies: the agents' browser logs

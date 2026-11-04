@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+
 """1loop's persistent XDG RemoteDesktop session and PipeWire frame reader.
 
 Only this session's granted monitor and input devices are used. There is no

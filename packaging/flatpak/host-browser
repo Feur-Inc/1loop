@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MPL-2.0
 # Starts the host's Chromium or Chrome for Browser Use (linked as chromium,
 # the first name 1loop looks for), or the Chromium 1loop downloaded when the
 # host has none (ONELOOP_OWN_CHROMIUM, in 1loop's folder the host shares).

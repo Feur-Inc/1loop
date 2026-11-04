@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
 # Builds the headless server downloads (x86-64), static and without cgo:
 #
 #   dist/1loop-server-VERSION-linux-amd64

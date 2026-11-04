@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // The account limits' widgets: a gauge per usage window, in the model menu.

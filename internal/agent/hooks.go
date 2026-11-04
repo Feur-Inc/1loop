@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // What only the desktop provides to the agent, registered by the desktop at

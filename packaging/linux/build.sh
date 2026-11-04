@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
 # Builds the Linux desktop downloads (x86-64) from the repository:
 #
 #   packaging/linux/build.sh binaries   bin/linux/<format>/1loop and 1loop-wayland

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // Worktrees: a Git project's other checkouts show under it in the sidebar,

@@ -73,3 +73,5 @@ require (
 )
 
 replace fyne.io/fyne/v2 => ./third_party/fyne
+
+replace github.com/go-gl/glfw/v3.3/glfw => ./third_party/glfw

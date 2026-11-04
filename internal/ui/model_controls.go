@@ -56,6 +56,9 @@ func (ui *desktopUI) modelMenu() {
 	lists := [3]*fyne.Container{}
 	scrolls := [3]*kineticScroll{}
 	columns := make([]fyne.CanvasObject, 3)
+	// The speed button sits on the REASONING caption's line: below the
+	// effort track, the column has no room left and it would spill out.
+	speed := container.NewStack()
 	for i, title := range []string{"ACCOUNT", "MODEL", "REASONING"} {
 		lists[i] = container.New(layout.NewCustomPaddedVBoxLayout(0))
 		var body fyne.CanvasObject = lists[i]
@@ -66,7 +69,11 @@ func (ui *desktopUI) modelMenu() {
 		}
 		caption := textLine(title, 11, colFaint)
 		caption.TextStyle = fyne.TextStyle{Bold: true}
-		column := padded(7, 5, 3, 3, container.NewBorder(padded(0, 8, 9, 9, caption), nil, nil, nil, body))
+		var header fyne.CanvasObject = caption
+		if i == 2 {
+			header = container.New(captionActionLayout{}, caption, speed)
+		}
+		column := padded(7, 5, 3, 3, container.NewBorder(padded(0, 8, 9, 9, header), nil, nil, nil, body))
 		if i > 0 {
 			line := canvas.NewRectangle(colBorderSoft)
 			line.SetMinSize(fyne.NewSize(1, 0))
@@ -233,9 +240,11 @@ func (ui *desktopUI) modelMenu() {
 		}
 		lists[2].Add(padded(10, 3, 6, 6, container.New(layout.NewCustomPaddedVBoxLayout(3), title, about)))
 		lists[2].Add(padded(14, 9, 5, 5, container.New(modelReasoningLayout{}, controls...)))
+		speed.Objects = nil
 		if ok && shown == ui.cfg.ConnectionID && len(choice.ServiceTiers) > 0 {
-			lists[2].Add(ui.speedChips(choice))
+			speed.Objects = []fyne.CanvasObject{ui.speedToggle(choice)}
 		}
+		speed.Refresh()
 		menu.items = groups[column]
 		menu.active = -1
 	}
@@ -338,48 +347,53 @@ func (ui *desktopUI) modelMenu() {
 
 }
 
-// speedChips are the speeds the ChatGPT plan offers for the model: Standard
-// and its tiers (Fast, Ultrafast…). Absent when the plan offers none.
-func (ui *desktopUI) speedChips(choice agent.ModelChoice) fyne.CanvasObject {
-	current := agent.TierFor(choice, ui.cfg.ServiceTier)
-	if current == "" {
-		current = choice.DefaultServiceTier
-	}
-	chips := container.New(layout.NewCustomPaddedHBoxLayout(4))
-	var rows []*tapRow
-	add := func(id, name, detail string) {
-		var row *tapRow
-		row = newRow(name, nil, styleChip, func() {
-			ui.cfg.ServiceTier = id
-			if ui.current != nil {
-				ui.current.Config.ServiceTier = id
-			}
-			for _, other := range rows {
-				other.accent = other == row
-				other.Refresh()
-			}
-			ui.model.row.SetTrailing(modelTrailing(choice, ui.cfg))
-			ui.save()
-			ui.remote.metaChanged(ui.current)
-		})
-		row.size, row.accent = 12, id == current || id == agent.StandardTier && current == ""
-		if detail != "" {
-			row.detail = detail
-		}
-		rows = append(rows, row)
-		chips.Add(row)
-	}
+// speedToggle is the speed the ChatGPT plan offers for the model, as one
+// bolt button: each tap moves to the next speed, Standard then its tiers
+// (Fast, Ultrafast…), then Standard again. Absent when the plan offers none.
+func (ui *desktopUI) speedToggle(choice agent.ModelChoice) fyne.CanvasObject {
 	standard := ""
 	if choice.DefaultServiceTier != "" {
 		standard = agent.StandardTier
 	}
-	add(standard, "Standard", "")
+	ids, names := []string{standard}, []string{"Standard"}
 	for _, tier := range choice.ServiceTiers {
-		add(tier.ID, tier.Name, "")
+		ids, names = append(ids, tier.ID), append(names, tier.Name)
 	}
-	caption := textLine("SPEED", 11, colFaint)
-	caption.TextStyle = fyne.TextStyle{Bold: true}
-	return padded(0, 6, 9, 9, container.NewVBox(caption, chips))
+	current := agent.TierFor(choice, ui.cfg.ServiceTier)
+	if current == "" {
+		current = choice.DefaultServiceTier
+	}
+	index := max(0, slices.Index(ids, current))
+	var row *tapRow
+	row = newRow(names[index], iconBolt, styleChip, func() {
+		index = (index + 1) % len(ids)
+		ui.cfg.ServiceTier = ids[index]
+		if ui.current != nil {
+			ui.current.Config.ServiceTier = ids[index]
+		}
+		row.text, row.accent = names[index], index > 0
+		row.Refresh()
+		ui.model.row.SetTrailing(modelTrailing(choice, ui.cfg))
+		ui.save()
+		ui.remote.metaChanged(ui.current)
+	})
+	row.size, row.accent = 12, index > 0
+	return row
+}
+
+// captionActionLayout puts a column's action at the end of its caption's
+// line, centered on it, without making the line taller.
+type captionActionLayout struct{}
+
+func (captionActionLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	return objects[0].MinSize()
+}
+
+func (captionActionLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	objects[0].Resize(size)
+	action := objects[1].MinSize()
+	objects[1].Move(fyne.NewPos(size.Width-action.Width, (size.Height-action.Height)/2))
+	objects[1].Resize(action)
 }
 
 // modelTrailing is what follows the model's name in the composer: its

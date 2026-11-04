@@ -251,16 +251,18 @@ fun ModelSheet(app: RemoteApp, onDone: () -> Unit) {
                     }
                 }
             }
-            // The plan's speeds, only when it offers some (Standard, Fast…).
+            // The plan's speeds, only when it offers some, as one bolt button:
+            // each tap moves to the next speed, Standard then its tiers (Fast,
+            // Ultrafast…), then Standard again.
             if (model != null && model.tiers.isNotEmpty()) {
                 Spacer(Modifier.height(18.dp))
                 SheetCaption("Speed")
                 val standard = if (model.defaultTier.isNotEmpty()) "default" else ""
+                val ids = listOf(standard) + model.tiers.map { it.id }
+                val names = listOf("Standard") + model.tiers.map { it.name }
                 val chosen = app.chatTier.ifEmpty { model.defaultTier }.ifEmpty { standard }
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.horizontalScroll(rememberScrollState())) {
-                    SpeedChip("Standard", chosen == standard || chosen == "default") { app.setModel(tier = standard) }
-                    for (tier in model.tiers) SpeedChip(tier.name, chosen == tier.id) { app.setModel(tier = tier.id) }
-                }
+                val index = ids.indexOf(chosen).coerceAtLeast(0)
+                SpeedButton(names[index], index > 0) { app.setModel(tier = ids[(index + 1) % ids.size]) }
             }
             // Effort last, within the thumb's reach, as in ChatGPT's app.
             if (model != null && model.efforts.size > 1) {
@@ -285,12 +287,16 @@ fun ModelSheet(app: RemoteApp, onDone: () -> Unit) {
 }
 
 @Composable
-private fun SpeedChip(text: String, selected: Boolean, onClick: () -> Unit) {
-    Text(
-        text, style = Type.small.copy(color = if (selected) Palette.ink else Palette.text),
-        modifier = Modifier.clip(RoundedCornerShape(50)).background(if (selected) Palette.amber else Palette.raised).clickable(onClick = onClick)
-            .padding(horizontal = 14.dp, vertical = 8.dp),
-    )
+private fun SpeedButton(text: String, fast: Boolean, onClick: () -> Unit) {
+    Row(
+        Modifier.clip(RoundedCornerShape(50)).background(if (fast) Palette.amber else Palette.raised).clickable(onClick = onClick)
+            .padding(start = 12.dp, end = 14.dp, top = 8.dp, bottom = 8.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(Icons.bolt, null, tint = if (fast) Palette.ink else Palette.muted, modifier = Modifier.size(16.dp))
+        Spacer(Modifier.width(6.dp))
+        Text(text, style = Type.small.copy(color = if (fast) Palette.ink else Palette.text))
+    }
 }
 
 @Composable

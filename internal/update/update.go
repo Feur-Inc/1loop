@@ -37,7 +37,7 @@ var Packaged = ""
 
 // ManifestURL is the release page's manifest. ONELOOP_UPDATE_URL replaces
 // it, to test a release before publishing it.
-const ManifestURL = "https://tpm28.github.io/1loop/updates/latest.json"
+const ManifestURL = "https://feur-inc.github.io/1loop/updates/latest.json"
 
 // publicKey verifies the manifest's signature: only the holder of the
 // matching private key (kept off the repository) can publish an update.

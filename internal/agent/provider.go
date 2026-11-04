@@ -1046,11 +1046,11 @@ func (backend *App) executeReads(ctx context.Context, root string, calls []ToolC
 	return results
 }
 
-// withTurnContext adds what changes during the work (the TODO list) after
-// the conversation, for this request only: the instructions and the
-// history before it stay as the provider cached them.
+// withTurnContext adds what changes during the work (the model and effort,
+// the TODO list) after the conversation, for this request only: the
+// instructions and the history before it stay as the provider cached them.
 func withTurnContext(cfg Config, messages []Message) []Message {
-	note := todoSnapshot(cfg)
+	note := modelNote(cfg) + todoSnapshot(cfg)
 	if note == "" {
 		return messages
 	}

@@ -185,6 +185,33 @@ func userPreferenceInstructions(cfg Config) string {
 	return "\n\nAdditional user preferences (supplement the base instructions; do not replace them):\n" + cfg.UserInstructions
 }
 
+// modelNote tells the model which model and reasoning effort run this turn,
+// so it can write an Assisted-by line (#127). It is sent with every turn,
+// never in the cached instructions: the user can switch either in a chat.
+// Only the model and effort: never the connection's name, which may hold an
+// account name.
+func modelNote(cfg Config) string {
+	if cfg.Model == "" {
+		return ""
+	}
+	model, credit := fmt.Sprintf("the model %q", cfg.Model), cfg.Model
+	if cfg.Provider == "claudecode" {
+		// Claude Code's own system prompt names its model and exact ID.
+		model, credit = fmt.Sprintf("the model your system prompt names (selected in Claude Code as %q)", cfg.Model), "<that model's exact name and version>"
+	}
+	effort := ""
+	switch cfg.Effort {
+	case "":
+	case "none":
+		effort = ", reasoning off"
+	case "enabled":
+		effort = ", reasoning on (this model has no effort levels)"
+	default:
+		effort, credit = ", reasoning effort "+cfg.Effort, credit+" "+cfg.Effort
+	}
+	return "\nYou run as " + model + effort + ". When a pull request, commit or document asks which AI model was used, write: Assisted-by: " + credit + ". Name only the model and effort, never an account, email or token."
+}
+
 func systemInstructions(cfg Config) string {
 	prompt := instructions
 	if cfg.ApprovalMode == "yolo" {

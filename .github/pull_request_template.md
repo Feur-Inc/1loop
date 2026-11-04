@@ -1,130 +1,137 @@
 <!--
-Règles pour chaque pull request (PR), y compris si elle est créée avec
-`gh pr create --body` ou `gh pr create --body-file` :
+Rules for every pull request (PR), including one created with
+`gh pr create --body` or `gh pr create --body-file`:
 
-1. Référence à une issue :
-   - `Closes #N` pour une correction ou une fonctionnalité terminée.
-   - `Part of #N` si la PR ne traite qu'une partie de l'issue.
-   - `Aucune issue associée.` s'il n'existe pas d'issue correspondante.
-   Remplacez N par le véritable numéro ; ne laissez pas `Closes #` vide.
-   Attention : sur ce dépôt, `main` est la branche par défaut. Une PR
-   ciblant `dev` ne ferme PAS automatiquement l'issue avec `Closes #N` :
-   GitHub n'interprète ces mots-clés que pour les PR ciblant la branche
-   par défaut. Suivez l'issue jusqu'à sa fermeture au moment approprié.
+1. Language: write every pull request and every issue in English only:
+   title, description, comments and commit messages. No French anywhere,
+   even when the request was written in French.
 
-2. Branche cible : toujours `dev`, jamais `main`. La branche `main` ne
-   reçoit `dev` que lors d'une publication. `gh pr create` utilise
-   normalement la branche par défaut (`main`) en l'absence de réglage
-   particulier : précisez donc toujours `--base dev`.
+2. Issue reference:
+   - `Closes #N` for a fix or a finished feature.
+   - `Part of #N` when the PR covers only part of the issue.
+   - `No related issue.` when there is no matching issue.
+   Replace N with the real number; never leave `Closes #` empty.
+   Note: on this repository, `main` is the default branch. A PR targeting
+   `dev` does NOT close the issue automatically with `Closes #N`: GitHub
+   reads these keywords only for PRs targeting the default branch. Follow
+   the issue until it is closed at the right time.
 
-3. Remplissez les trois sections de la description :
-   - « Résumé » : expliquez ce qui change sans détailler le code, avec
-     une liste d'étapes dans leur ordre réel. Utilisez des mots simples
-     sans omettre les informations utiles : fichier et format enregistrés,
-     page de réglages, appel d'outil, résultat visible sur ordinateur et
-     sur téléphone, selon les éléments concernés.
-   - « Captures d'écran » : appliquez la règle 4 ci-dessous.
-   - « Détails techniques » : indiquez aux personnes qui relisent la PR
-     les fichiers, fonctions, événements, API et formats modifiés, ainsi
-     que les raisons des choix effectués.
+3. Target branch: always `dev`, never `main`. `main` only receives `dev`
+   for a release. `gh pr create` normally uses the default branch (`main`)
+   unless told otherwise: so always pass `--base dev`.
 
-4. Pour tout changement visible (application ordinateur ou téléphone,
-   site, interface GitHub, ou autre écran), fournissez un tableau Markdown
-   contenant au minimum une capture « Avant » et une capture « Après »
-   DU MÊME écran. Ajoutez des lignes ou des colonnes si nécessaire.
-   Si rien n'est visible, SUPPRIMEZ le tableau et écrivez uniquement
-   `Aucun changement visible.`. Ne laissez jamais un tableau vide et
-   n'inventez pas de captures ; signalez toute capture impossible.
+4. Fill in the three sections of the description:
+   - "Summary": explain what changes without detailing the code, as a list
+     of steps in their real order. Use simple words without leaving out
+     useful information: saved file and format, settings page, tool call,
+     visible result on desktop and on the phone, as relevant.
+   - "Screenshots": apply rule 5 below.
+   - "Technical details": tell reviewers which files, functions, events,
+     APIs and formats changed, and why these choices were made.
 
-5. Joignez les images avec GitHub CLI version 2.99.0 ou plus récente
-   (vérifiez avec `gh --version`). Les images destinées à la PR doivent
-   rester hors du dépôt (par exemple dans `/tmp/`) : ne les ajoutez pas
-   à des commits uniquement pour les afficher.
+5. For any visible change (desktop or phone app, site, GitHub interface,
+   or any other screen), provide a Markdown table with at least a "Before"
+   and an "After" screenshot OF THE SAME screen. Add rows or columns when
+   needed. If nothing is visible, DELETE the table and write only
+   `No visible change.`. Never leave an empty table and never invent
+   screenshots; say when a screenshot was not possible.
 
-   Dans le corps de la PR, référencez les mêmes chemins locaux que ceux
-   passés à `--attach`. GitHub CLI téléverse chaque image et remplace
-   son chemin Markdown par l'URL de l'image hébergée sur GitHub :
+6. Attach images with GitHub CLI version 2.99.0 or later (check with
+   `gh --version`). Images meant for the PR must stay outside the
+   repository (for example in `/tmp/`): do not add them to commits only
+   to display them.
 
-     | Avant | Après |
-     | ----- | ----- |
-     | ![Avant](/tmp/avant.png) | ![Après](/tmp/apres.png) |
+   In the PR body, reference the same local paths as the ones passed to
+   `--attach`. GitHub CLI uploads each image and replaces its Markdown path
+   with the URL of the image hosted on GitHub:
 
-   Créer une PR (après avoir enregistré le corps dans /tmp/pr-body.md) :
+     | Before | After |
+     | ------ | ----- |
+     | ![Before](/tmp/before.png) | ![After](/tmp/after.png) |
+
+   Create a PR (after saving the body in /tmp/pr-body.md):
 
      gh pr create \
        --repo Feur-Inc/1loop \
        --base dev \
-       --title "Titre de la PR" \
+       --title "PR title" \
        --body-file /tmp/pr-body.md \
-       --attach /tmp/avant.png \
-       --attach /tmp/apres.png
+       --attach /tmp/before.png \
+       --attach /tmp/after.png
 
-   Modifier une PR existante :
+   Edit an existing PR:
 
-     gh pr edit NUMERO --repo Feur-Inc/1loop \
+     gh pr edit NUMBER --repo Feur-Inc/1loop \
        --body-file /tmp/pr-body.md \
-       --attach /tmp/avant.png \
-       --attach /tmp/apres.png
+       --attach /tmp/before.png \
+       --attach /tmp/after.png
 
-   Ajouter une image à un emplacement précis dans un commentaire :
+   Add an image at a precise place in a comment:
 
-     gh pr comment NUMERO --repo Feur-Inc/1loop \
-       --body "![Capture](/tmp/capture.png)" \
-       --attach '/tmp/capture.png#Capture'
+     gh pr comment NUMBER --repo Feur-Inc/1loop \
+       --body "![Screenshot](/tmp/screenshot.png)" \
+       --attach '/tmp/screenshot.png#Screenshot'
 
-   Si un fichier transmis à `--attach` n'est PAS référencé dans le
-   Markdown du corps ou du commentaire, GitHub CLI l'ajoute à la fin.
-   Le suffixe `#Description` indique le texte alternatif des images
-   ajoutées automatiquement ; lorsqu'une image est déjà référencée
-   dans le Markdown, c'est le texte entre `![...]` qui est conservé.
-   Les téléversements nécessitent un accès en écriture au dépôt.
-   Documentation : https://docs.github.com/en/github-cli/github-cli/attaching-files-with-github-cli
+   If a file passed to `--attach` is NOT referenced in the Markdown of the
+   body or the comment, GitHub CLI adds it at the end. The `#Description`
+   suffix sets the alt text of images added automatically; when an image
+   is already referenced in the Markdown, the text inside `![...]` is
+   kept. Uploads require write access to the repository.
+   Documentation: https://docs.github.com/en/github-cli/github-cli/attaching-files-with-github-cli
 
-6. Terminez toujours par `Assisted-by:` avec le nom exact et la version
-   réelle de chaque modèle d'IA utilisé, en précisant l'effort de
-   raisonnement lorsque cette information est disponible. Exemple de
-   format uniquement : `Assisted-by: GPT-6.1 medium` ; ne recopiez pas
-   un modèle fictif ou non utilisé. « Codex » ou « Claude Code » seuls
-   désignent des outils, pas des versions exactes de modèle.
-   Si aucune IA n'a été utilisée, indiquez `Assisted-by: Aucun`.
+7. Always end with `Assisted-by:` and the exact name and real version of
+   each AI model used, with its reasoning effort when known. Format
+   example only: `Assisted-by: GPT-6.1 medium`; do not copy a made-up or
+   unused model. "Codex" or "Claude Code" alone name tools, not exact
+   model versions. If no AI was used, write `Assisted-by: None`.
+
+8. License header: every new source file of 1loop (Go, Kotlin, Gradle
+   `.kts`, C, Python, PowerShell, shell, Nix, extensionless scripts)
+   starts with a `SPDX-License-Identifier: MPL-2.0` line, as added by
+   #160: a `//` comment for Go, Kotlin and C, `#` for the others. A
+   shebang stays on line 1 and the header goes right below it. In Go, a
+   blank line follows the header so it does not become the package doc
+   comment and `//go:build` lines still work. Files under `third_party/`
+   and `android/third_party/`, `android/gradlew`, and license or asset
+   text files keep no header.
 -->
 
-<!-- Remplacer la ligne suivante par « Closes #N », « Part of #N » ou « Aucune issue associée. ». -->
-Issue : À renseigner.
+<!-- Replace the next line with "Closes #N", "Part of #N" or "No related issue.". -->
+Issue: To fill in.
 
-## Résumé
+## Summary
 
 <!--
-Expliquez les changements du point de vue de l'utilisateur, sans jargon
-technique inutile : une étape par ligne, dans l'ordre où elle se produit.
-Nommez les écrans, chemins de fichiers, formats et comportements réels.
-Supprimez ces instructions et remplacez le tiret par votre résumé.
+Explain the changes from the user's point of view, without needless
+technical jargon: one step per line, in the order it happens. Name the
+real screens, file paths, formats and behaviors.
+Delete these instructions and replace the dash with your summary.
 -->
 
-- À compléter.
+- To fill in.
 
-## Captures d'écran
+## Screenshots
 
 <!--
-SI le changement est visible, supprimez « Aucun changement visible. »
-et mettez à sa place un véritable tableau contenant des images avant/après
-prises sur le même écran. Exemple (à adapter aux fichiers existants) :
+IF the change is visible, delete "No visible change." and put in its
+place a real table with before/after images taken on the same screen.
+Example (adapt it to the real files):
 
-| Avant | Après |
-| ----- | ----- |
-| ![Avant](/tmp/avant.png) | ![Après](/tmp/apres.png) |
+| Before | After |
+| ------ | ----- |
+| ![Before](/tmp/before.png) | ![After](/tmp/after.png) |
 
-Joignez les deux fichiers avec `gh pr create/edit --attach` ; ils doivent
-rester hors du dépôt. SI aucun changement n'est visible, conservez
-seulement la phrase ci-dessous et ne mettez aucun tableau vide.
+Attach both files with `gh pr create/edit --attach`; they must stay
+outside the repository. IF nothing is visible, keep only the sentence
+below and no empty table.
 -->
 
-Aucun changement visible.
+No visible change.
 
-## Détails techniques
+## Technical details
 
-<!-- Précisez les fichiers/fonctions modifiés, les formats, API ou événements, et pourquoi. -->
+<!-- Give the changed files/functions, formats, APIs or events, and why. -->
 
-- À compléter.
+- To fill in.
 
-Assisted-by: À renseigner.
+Assisted-by: To fill in.

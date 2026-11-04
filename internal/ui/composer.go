@@ -3,6 +3,7 @@ package ui
 import (
 	"bytes"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -27,6 +28,7 @@ import (
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
+	"1loop/internal/platform"
 )
 
 // ---------------------------------------------------------------------------
@@ -235,32 +237,61 @@ func (attachButtonLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 
 var imageMime = regexp.MustCompile(`image/[a-z0-9.+-]+`)
 
-func linuxImageClipboardData() ([]byte, error) {
-	// Fyne's clipboard is text-only, so images are read from the native
-	// clipboard with wl-paste (Wayland) or xclip (X11).
-	missing := fmt.Errorf("No image in the clipboard")
+// errNoClipboardImage is a clipboard that holds no image (text, or
+// nothing), as opposed to one that could not be read.
+var errNoClipboardImage = errors.New("No image in the clipboard")
+
+const (
+	clipboardTimeout    = 5 * time.Second // for the application that copied the image to send it
+	clipboardImageLimit = 64 << 20
+)
+
+// externalImageClipboardData reads an image with wl-paste (Wayland) or
+// xclip (X11), where 1loop cannot read the clipboard itself.
+func externalImageClipboardData() ([]byte, error) {
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
 		out, err := exec.Command("wl-paste", "--list-types").Output()
 		if err != nil {
-			return nil, missing
+			return nil, clipboardToolError("wl-paste", err)
 		}
 		for _, raw := range strings.Split(string(out), "\n") {
 			if mime := imageMime.FindString(strings.ToLower(raw)); mime != "" {
 				// --no-newline keeps binary data intact.
 				data, err := exec.Command("wl-paste", "--no-newline", "-t", mime).Output()
-				if err != nil || len(bytes.TrimSpace(data)) == 0 {
-					return nil, missing
+				if err != nil {
+					return nil, clipboardToolError("wl-paste", err)
+				}
+				if len(bytes.TrimSpace(data)) == 0 {
+					return nil, errNoClipboardImage
 				}
 				return data, nil
 			}
 		}
-		return nil, missing
+		return nil, errNoClipboardImage
+	}
+	out, err := exec.Command("xclip", "-selection", "clipboard", "-t", "TARGETS", "-o").Output()
+	if err != nil {
+		return nil, clipboardToolError("xclip", err)
+	}
+	if !strings.Contains(string(out), "image/png") {
+		return nil, errNoClipboardImage
 	}
 	data, err := exec.Command("xclip", "-selection", "clipboard", "-t", "image/png", "-o").Output()
 	if err != nil {
-		return nil, missing
+		return nil, clipboardToolError("xclip", err)
 	}
 	return data, nil
+}
+
+func clipboardToolError(tool string, err error) error {
+	if errors.Is(err, exec.ErrNotFound) {
+		return fmt.Errorf("1loop cannot read images from the clipboard here: install %s", tool)
+	}
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && len(bytes.TrimSpace(exit.Stderr)) > 0 {
+		return fmt.Errorf("%s: %s", tool, strings.TrimSpace(string(exit.Stderr)))
+	}
+	return fmt.Errorf("%s: %v", tool, err)
 }
 
 // maxImagePixels bounds a picture before it is decoded: a small file can
@@ -282,20 +313,38 @@ func decodeImage(raw []byte) (*image.NRGBA, error) {
 }
 
 // pasteFromClipboard stages an image from the system clipboard as an
-// attachment. It reports true when it handled the key; a text-only
-// clipboard is left to the entry's own paste so Ctrl+V behaves normally.
+// attachment. It reports true when it handled the key; a clipboard without
+// an image is left to the entry's own paste so Ctrl+V pastes text normally.
 func (ui *desktopUI) pasteFromClipboard() bool {
 	raw, err := imageClipboardData()
 	if err != nil {
+		if !errors.Is(err, errNoClipboardImage) {
+			platform.Devf("clipboard", "no image pasted: %v", err)
+		}
 		return false
 	}
+	ui.attachClipboardImage(raw)
+	return true
+}
+
+// pasteImage attaches the image in the clipboard. It says why when there
+// is none, telling an empty clipboard from one that could not be read.
+func (ui *desktopUI) pasteImage() error {
+	raw, err := imageClipboardData()
+	if err != nil {
+		return err
+	}
+	ui.attachClipboardImage(raw)
+	return nil
+}
+
+func (ui *desktopUI) attachClipboardImage(raw []byte) {
 	img, err := decodeImage(raw)
 	if err != nil {
 		ui.notice("Paste", err.Error())
-		return true
+		return
 	}
 	ui.attachImage(img)
-	return true
 }
 
 // pickImages attaches pictures chosen in the desktop's file chooser.

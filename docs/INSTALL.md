@@ -224,6 +224,9 @@ passwords, history, bookmarks or local storage are imported.
 Runtime needs, for every format: OpenGL, X11 or Wayland libraries (the `.deb`
 pulls them in), Bash and Git (for the *Git changes* tab). Optional: `latex`
 and `dvipng` to render formulas, and the Computer Use packages below.
+Pasting an image (Ctrl+V, or **+** → **Paste image**) reads the clipboard
+through Wayland or X11 directly, with nothing to install; only a build made
+without cgo needs `wl-paste` (Wayland) or `xclip` (X11).
 
 Browser Use runs the Chromium, Chrome or Edge it finds on the computer. Without
 one, it downloads its own Chromium the first time (Chrome for Testing, Google's

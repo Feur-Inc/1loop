@@ -145,7 +145,7 @@ func (plan HandoffPlan) Problem(choice HandoffChoice) string {
 // handoffResumes is a return to Claude Code with its session: it only reads
 // what happened meanwhile.
 func handoffResumes(next Config) bool {
-	return CLIHarness(next.Provider) && HarnessSession(next) != "" && next.SessionMark > 0
+	return CLIHarness(next.Provider) && HarnessSession(next) != "" && HarnessMark(next) > 0
 }
 
 // PlanHandoff lists the choices and the recommended one. previous is nil
@@ -156,8 +156,8 @@ func PlanHandoff(previous *Config, next Config, history []Message, items []ChatI
 	clean := forProvider(history, next)
 	if handoffResumes(next) {
 		end := len(items)
-		if next.SessionMark < end {
-			plan.AsIsTokens = len(itemsText(items[next.SessionMark:end]))/4 + 1
+		if HarnessMark(next) < end {
+			plan.AsIsTokens = len(itemsText(items[HarnessMark(next):end]))/4 + 1
 		}
 		plan.AsIsNote = fmt.Sprintf("%s resumes its own session and reads only what happened meanwhile (~%s tokens).", to, Tokens(plan.AsIsTokens))
 		if plan.AsIsTokens > window*4/10 {
@@ -405,8 +405,8 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 			if readErr != nil {
 				return HandoffResult{}, readErr
 			}
-			if summarizer.SessionMark < len(items) {
-				input = "\n\nExchanges since your last turn:\n" + itemsText(items[summarizer.SessionMark:])
+			if HarnessMark(summarizer) < len(items) {
+				input = "\n\nExchanges since your last turn:\n" + itemsText(items[HarnessMark(summarizer):])
 			}
 		}
 		if summarizer.Provider == "antigravity" {
@@ -555,7 +555,7 @@ func claudeHandoffNote(ctx context.Context, cfg Config, prompt string) (string, 
 	if cfg.MachineID != "" { // the workspace is on an SSH machine, not here
 		dir = ""
 	}
-	cmd, err := claudeCommand(ctx, dir, args...)
+	cmd, err := claudeCommand(ctx, cfg.ClaudeHome, dir, args...)
 	if err != nil {
 		return "", err
 	}

@@ -716,7 +716,11 @@ func (ui *desktopUI) connectionSettings() fyne.CanvasObject {
 		})
 		edit := newRow("Edit", iconChevronRight, styleChip, func() { ui.connectionEditor(connectionValue) })
 		edit.iconAfter = true
-		rows = append(rows, settingRow(connectionValue.Name, agent.ProviderName(connectionValue.Provider), container.New(layout.NewCustomPaddedHBoxLayout(14), container.NewCenter(enabled), edit)))
+		detail := agent.ProviderName(connectionValue.Provider)
+		if connectionValue.Provider == "claudecode" {
+			detail += " · " + claudeAccountText(connectionValue)
+		}
+		rows = append(rows, settingRow(connectionValue.Name, detail, container.New(layout.NewCustomPaddedHBoxLayout(14), container.NewCenter(enabled), edit)))
 	}
 	add := newRow("Add connection", iconPlus, stylePrimary, func() {
 		id := core.Identifier()
@@ -746,6 +750,20 @@ func (ui *desktopUI) removeConnection(conn agent.Connection, done func()) {
 			ui.save()
 			ui.refreshModels()
 			done()
+		}
+		if conn.Provider == "claudecode" && conn.ClaudeHome() != "" {
+			go func() {
+				ctx, cancel := context.WithTimeout(ui.ctx, 25*time.Second)
+				defer cancel()
+				err := agent.SignOutClaude(ctx, conn)
+				fyne.Do(func() {
+					finish()
+					if err != nil {
+						ui.notice("Claude Code account not signed out", err.Error())
+					}
+				})
+			}()
+			return
 		}
 		if conn.Provider != "openai" {
 			finish()
@@ -874,11 +892,29 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	oauthFields := card(settingStack("ChatGPT account", "Uses your ChatGPT subscription, with a sign-in in your browser (OAuth with PKCE).",
 		container.NewVBox(account, container.NewHBox(login), loginLink)))
 	claudeState := plainFlow("", 12.5, colMuted)
+	claudeAccount := plainFlow("", 12.5, colMuted)
 	installClaude := newRow("Install Claude Code", nil, styleOutline, nil)
-	signInClaude := newRow("Sign in", nil, styleOutline, ui.signInClaude)
+	showClaudeAccount := func() { setFlow(claudeAccount, claudeAccountText(draft)) }
+	signInClaude := newRow("Sign in", nil, styleOutline, func() { ui.signInClaude(draft, showClaudeAccount) })
+	// The login: the system Claude Code one, or this connection's own, so
+	// that two connections can be two accounts (claude_accounts.go).
+	claudeLogins := map[string]string{"System Claude Code login": "", "Own login for this connection": agent.ClaudeOwnLogin}
+	claudeLogin := newPicker(ui.window, "Login", styleField, func(label string) {
+		draft.ClaudeLogin = claudeLogins[label]
+		showClaudeAccount()
+	})
+	claudeLogin.Options = []string{"System Claude Code login", "Own login for this connection"}
+	claudeLoginLabel := func() string {
+		if draft.ClaudeLogin == agent.ClaudeOwnLogin {
+			return "Own login for this connection"
+		}
+		return "System Claude Code login"
+	}
+	claudeLogin.SetSelected(claudeLoginLabel())
 	showClaude := func() {
 		path, err := agent.ClaudeExecutable()
 		problem := agent.ClaudeInstallProblem()
+		showClaudeAccount()
 		switch {
 		case err == nil:
 			setFlow(claudeState, "Installed: "+path)
@@ -897,7 +933,9 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	installClaude.onTap = func() { ui.installClaudeCode(showClaude) }
 	claudeFields := card(settingStack("Claude Code on this computer",
 		"Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it.",
-		container.NewVBox(claudeState, container.NewHBox(installClaude, signInClaude))))
+		container.NewVBox(claudeState, container.NewHBox(installClaude))),
+		settingRow("Login", "The system login is the one claude uses in a terminal. A connection with its own login signs in to its own account, keeps its own usage limits and sessions, and leaves the other connections signed in.", sized(340, claudeLogin.row)),
+		settingStack("Account", "", container.NewVBox(claudeAccount, container.NewHBox(signInClaude))))
 	agyState := plainFlow("", 12.5, colMuted)
 	showAgy := func() {
 		if path, err := agent.AgyExecutable(); err == nil {
@@ -1045,6 +1083,10 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		case "openai":
 			oauthFields.Show()
 		case "claudecode":
+			if !existing && previous != draft.Provider {
+				draft.ClaudeLogin = agent.NewClaudeLogin(ui.connectionsList, draft.ID)
+				claudeLogin.SetSelected(claudeLoginLabel())
+			}
 			claudeFields.Show()
 			showClaude()
 			// Choosing Claude Code without it installed offers to install it.
@@ -1114,7 +1156,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		})
 		remove.danger = true
 		page.Add(sectionTitle("Remove"))
-		page.Add(card(settingRow("Remove this connection", "Existing chats are kept. A ChatGPT account is signed out.", remove)))
+		page.Add(card(settingRow("Remove this connection", "Existing chats are kept. A ChatGPT account, or a Claude Code account with its own login, is signed out.", remove)))
 	}
 	page.Add(spacer(0, 16))
 
@@ -1137,6 +1179,9 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		}
 		draft.Name = strings.TrimSpace(name.Text)
 		draft.BaseURL = strings.TrimSpace(base.Text)
+		if draft.Provider != "claudecode" {
+			draft.ClaudeLogin = ""
+		}
 		draft.Routing = route
 		draft.Parameters = params
 		if draft.Provider != "openai" && !agent.CLIHarness(draft.Provider) && draft.Provider != "chatgptweb" {

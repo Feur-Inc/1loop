@@ -804,7 +804,8 @@ func (ui *desktopUI) startNew() {
 	ui.clearSelection()
 	ui.finishEdit(false)
 	ui.current = nil
-	ui.cfg.Session, ui.cfg.RanWith = "", nil
+	ui.cfg.ClearSessions()
+	ui.cfg.RanWith = nil
 	ui.prompt.switchDraft(ui.draftKey())
 	ui.followTail = true
 	ui.transcript.RemoveAll()
@@ -1220,7 +1221,8 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		if len(title) == 0 {
 			title = []rune("[image]")
 		}
-		ui.cfg.Session, ui.cfg.RanWith = "", nil // a new chat starts its own Claude Code session
+		ui.cfg.ClearSessions()
+		ui.cfg.RanWith = nil // a new chat starts its own Claude Code session
 		chat = ui.remote.takePanelHome(ui.cfg.Workspace)
 		if chat == nil {
 			chat = &conversation{}
@@ -1615,6 +1617,9 @@ func (ui *desktopUI) refreshModels() {
 					ui.model.Details[label] = choice.Connection.Name + " · " + choice.ID
 					if choice.Connection.Provider == "claudecode" {
 						ui.model.Details[label] = "Runs in Claude Code's own harness · " + choice.ID
+						if choice.Account != "" {
+							ui.model.Details[label] = "Claude Code · " + choice.Account + " · " + choice.ID
+						}
 					}
 					if choice.Connection.Provider == "antigravity" {
 						ui.model.Details[label] = "Runs in Antigravity's own harness · " + choice.ID

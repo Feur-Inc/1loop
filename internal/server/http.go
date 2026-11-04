@@ -373,7 +373,8 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		}
 		cfg := server.cfg
 		cfg.Workspace = workspace
-		cfg.Session, cfg.RanWith = "", nil
+		cfg.ClearSessions()
+		cfg.RanWith = nil
 		chat = server.panelHomes["home:"+workspace]
 		if chat == nil {
 			chat = &serverChat{Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}

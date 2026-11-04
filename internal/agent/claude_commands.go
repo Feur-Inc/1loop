@@ -67,7 +67,7 @@ func (backend *App) ClaudeInfo(ctx context.Context, conn Connection, dir string)
 	}
 	extensionArgs, cleanExtensions := claudeExtensionArgs()
 	defer cleanExtensions()
-	answer, err := backend.claudeHandshake(ctx, dir, extensionArgs...)
+	answer, err := backend.claudeHandshake(ctx, conn.ClaudeHome(), dir, extensionArgs...)
 	if err != nil {
 		return ClaudeInfo{}, err
 	}

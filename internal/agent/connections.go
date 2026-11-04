@@ -49,6 +49,7 @@ type Connection struct {
 	Provider      string                      `json:"provider"`
 	BaseURL       string                      `json:"baseURL"`
 	AuthProfile   string                      `json:"authProfile,omitempty"`
+	ClaudeLogin   string                      `json:"claudeLogin,omitempty"` // Claude Code: "" the system login, ClaudeOwnLogin its own folder (claude_accounts.go)
 	Enabled       bool                        `json:"enabled"`
 	AllModels     bool                        `json:"allModels"`
 	Models        []string                    `json:"models,omitempty"`
@@ -64,7 +65,9 @@ type ModelChoice struct {
 	ID, Name       string
 	DefaultTargets []ModelChoice
 	// Resolved is the model an alias stands for (Claude Code's "opus").
-	Resolved                             string
+	Resolved string
+	// Account is the Claude Code account the connection is signed in to.
+	Account                              string
 	Efforts                              []string
 	DefaultEffort, ReasoningMode, Source string
 	// The speeds the ChatGPT plan offers for the model (Fast, Ultrafast…),
@@ -115,6 +118,7 @@ func (conn Connection) Config(workspace string) Config {
 	return Config{
 		ConnectionID: conn.ID,
 		AuthProfile:  conn.AuthProfile,
+		ClaudeHome:   conn.ClaudeHome(),
 		Provider:     conn.Provider,
 		BaseURL:      conn.BaseURL,
 		Workspace:    workspace,

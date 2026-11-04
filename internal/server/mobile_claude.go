@@ -4,10 +4,8 @@ package server
 
 import (
 	"context"
-	"encoding/json"
+	"fmt"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -15,36 +13,33 @@ import (
 	"1loop/internal/core"
 )
 
-func mobileClaudeSignedIn() bool {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return false
+// claudeLoginConnectionLocked is the Claude Code connection a sign-in is
+// for: the saved one named, or for a connection not saved yet the system
+// login, when no other connection uses it (claude_accounts.go).
+func (server *headlessServer) claudeLoginConnectionLocked(id string) (agent.Connection, error) {
+	if id == "" {
+		if agent.NewClaudeLogin(server.connections, "") == agent.ClaudeOwnLogin {
+			return agent.Connection{}, fmt.Errorf("Save this connection first: it gets its own Claude login")
+		}
+		return agent.Connection{Provider: "claudecode"}, nil
 	}
-	data, err := os.ReadFile(filepath.Join(home, ".claude", ".credentials.json"))
-	if err != nil {
-		return false
+	connection, found := server.connectionLocked(id)
+	if !found || connection.Provider != "claudecode" {
+		return agent.Connection{}, fmt.Errorf("Connection not found")
 	}
-	var credentials struct {
-		OAuth struct {
-			Access  string `json:"accessToken"`
-			Refresh string `json:"refreshToken"`
-		} `json:"claudeAiOauth"`
-	}
-	if json.Unmarshal(data, &credentials) != nil {
-		return false
-	}
-	return credentials.OAuth.Access != "" || credentials.OAuth.Refresh != ""
+	return connection, nil
 }
 
 func (server *headlessServer) claudeLoginState(w http.ResponseWriter, r *http.Request) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	if server.claudeLogin != nil {
+	id := r.URL.Query().Get("connection")
+	if server.claudeLogin != nil && server.claudeLogin.connection == id {
 		core.WriteJSON(w, 200, server.claudeLogin)
 		return
 	}
 	state := "idle"
-	if mobileClaudeSignedIn() {
+	if connection, err := server.claudeLoginConnectionLocked(id); err == nil && agent.ClaudeSignedIn(connection) {
 		state = "connected"
 	}
 	core.WriteJSON(w, 200, map[string]string{"state": state})
@@ -52,8 +47,9 @@ func (server *headlessServer) claudeLoginState(w http.ResponseWriter, r *http.Re
 
 func (server *headlessServer) beginClaudeLogin(w http.ResponseWriter, r *http.Request) {
 	var args struct {
-		Code   string `json:"code"`
-		Cancel bool   `json:"cancel"`
+		Connection string `json:"connection"`
+		Code       string `json:"code"`
+		Cancel     bool   `json:"cancel"`
 	}
 	if core.ReadJSON(r, &args) != nil {
 		core.Fail(w, 400, "Invalid sign-in request")
@@ -68,6 +64,10 @@ func (server *headlessServer) beginClaudeLogin(w http.ResponseWriter, r *http.Re
 		}
 		server.claudeLogin = nil
 		core.WriteJSON(w, 200, map[string]string{"state": "idle"})
+		return
+	}
+	if current != nil && current.State == "pending" && current.connection != args.Connection {
+		core.Fail(w, 409, "Another Claude sign-in is in progress")
 		return
 	}
 	if current != nil && current.State == "pending" {
@@ -92,9 +92,14 @@ func (server *headlessServer) beginClaudeLogin(w http.ResponseWriter, r *http.Re
 		core.Fail(w, 409, "Install Claude Code first")
 		return
 	}
+	connection, err := server.claudeLoginConnectionLocked(args.Connection)
+	if err != nil {
+		core.Fail(w, 409, err.Error())
+		return
+	}
 	ctx, cancel := context.WithTimeout(server.ctx, 5*time.Minute)
-	login := &mobileLogin{State: "pending", cancel: cancel}
-	process, err := agent.StartClaudeSignIn(ctx, server.dir, "/usr/local/libexec/1loop-open-url", func(link string) {
+	login := &mobileLogin{State: "pending", cancel: cancel, connection: args.Connection}
+	process, err := agent.StartClaudeSignIn(ctx, connection, server.dir, "/usr/local/libexec/1loop-open-url", func(link string) {
 		server.mu.Lock()
 		if server.claudeLogin == login {
 			login.URL = link
@@ -117,7 +122,7 @@ func (server *headlessServer) beginClaudeLogin(w http.ResponseWriter, r *http.Re
 			return
 		}
 		login.URL, login.State = "", "connected"
-		if err != nil || !mobileClaudeSignedIn() {
+		if err != nil || !agent.ClaudeSignedIn(connection) {
 			login.State, login.Problem = "failed", "Claude Code sign-in did not complete. Try again."
 		}
 		server.mu.Unlock()

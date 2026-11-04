@@ -907,19 +907,17 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		}
 		ui.save()
 	case "session": // Claude Code named the chat's session: later turns resume it
-		currentTurn.chat.Config.Session = uiEventValue.data.(string)
+		currentTurn.chat.Config.SetClaudeSession(uiEventValue.data.(string))
 		if currentTurn.chat == ui.current {
-			ui.cfg.Session = currentTurn.chat.Config.Session
+			ui.cfg.InheritSession(currentTurn.chat.Config)
 		}
 		ui.save()
 	case "session_synced": // the session has seen everything shown so far
-		if currentTurn.chat.Config.Session != "" {
-			currentTurn.chat.Config.SessionMark = len(currentTurn.chat.Items)
-			if currentTurn.chat == ui.current {
-				ui.cfg.SessionMark = currentTurn.chat.Config.SessionMark
-			}
-			ui.save()
+		currentTurn.chat.Config.SyncClaudeSession(len(currentTurn.chat.Items))
+		if currentTurn.chat == ui.current {
+			ui.cfg.InheritSession(currentTurn.chat.Config)
 		}
+		ui.save()
 	case "plan":
 		ui.plan = uiEventValue.data.(agent.PlanUsage)
 		if currentTurn.chat == ui.current {

@@ -54,13 +54,21 @@ func HarnessSession(cfg Config) string {
 		if strings.HasPrefix(cfg.Session, agySessionPrefix) {
 			return ""
 		}
-		return cfg.Session
+		return cfg.ClaudeSession()
 	case "antigravity":
 		if id, found := strings.CutPrefix(cfg.Session, agySessionPrefix); found {
 			return id
 		}
 	}
 	return ""
+}
+
+// HarnessMark is how many of the chat's items that session has seen.
+func HarnessMark(cfg Config) int {
+	if cfg.Provider == "claudecode" {
+		return cfg.ClaudeMark()
+	}
+	return cfg.SessionMark
 }
 
 // CLIHarness says whether a provider runs in a coding agent's own harness

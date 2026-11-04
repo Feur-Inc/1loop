@@ -45,8 +45,14 @@ func (ui *desktopUI) alreadyImported(session agent.ImportSession) bool {
 	}
 	if session.Source == "claudecode" {
 		for _, chat := range ui.chats {
-			if chat.Config.Session == session.ID {
+			ref := agent.ClaudeSessionFor(session.Home, session.ID)
+			if chat.Config.Session == ref {
 				return true
+			}
+			for _, kept := range chat.Config.OtherSessions {
+				if kept.Session == ref {
+					return true
+				}
 			}
 		}
 	}
@@ -172,6 +178,9 @@ func (ui *desktopUI) importChats() {
 			for _, i := range indexes {
 				i, session := i, sessions[i]
 				detail := session.SourceName() + " · " + importAge(session.Updated)
+				if session.Account != "" {
+					detail = session.SourceName() + " · " + session.Account + " · " + importAge(session.Updated)
+				}
 				if ui.alreadyImported(session) {
 					detail += " · in 1loop"
 				}
@@ -208,13 +217,7 @@ func (ui *desktopUI) importChats() {
 		}
 		busy = true
 		render()
-		claude := ""
-		for _, conn := range ui.connectionsList {
-			if conn.Provider == "claudecode" && conn.Enabled {
-				claude = conn.ID
-				break
-			}
-		}
+		connections := append([]agent.Connection(nil), ui.connectionsList...)
 		go func() {
 			var failures []string
 			added := 0
@@ -231,7 +234,7 @@ func (ui *desktopUI) importChats() {
 					if ui.chatByID(importedChatID(session)) != nil {
 						return
 					}
-					ui.addImportedChat(session, read, claude)
+					ui.addImportedChat(session, read, claudeImportConnection(connections, session))
 					added++
 				})
 			}
@@ -273,15 +276,35 @@ func (ui *desktopUI) importChats() {
 	}()
 }
 
+// claudeImportConnection is the Claude Code connection a session resumes
+// with: one signed in through the folder the session is in, else the first
+// one enabled, which then receives it through a handoff.
+func claudeImportConnection(connections []agent.Connection, session agent.ImportSession) string {
+	fallback := ""
+	for _, conn := range connections {
+		if conn.Provider != "claudecode" || !conn.Enabled {
+			continue
+		}
+		if conn.ClaudeHome() == session.Home {
+			return conn.ID
+		}
+		if fallback == "" {
+			fallback = conn.ID
+		}
+	}
+	return fallback
+}
+
 // addImportedChat adds a session as a chat of its folder's project. It keeps
 // the model the chat now uses; the next turn knows the chat ran elsewhere:
 // Claude Code resumes its own session, another model goes through a handoff.
 func (ui *desktopUI) addImportedChat(session agent.ImportSession, read agent.ImportedChat, claudeConnection string) {
 	cfg := ui.cfg
-	cfg.Workspace, cfg.Session, cfg.SessionMark, cfg.WebConversation = session.Folder, "", 0, nil
+	cfg.Workspace, cfg.WebConversation = session.Folder, nil
+	cfg.ClearSessions()
 	ran := agent.RunIdentity{Provider: session.Source, Model: read.Model}
 	if session.Source == "claudecode" {
-		cfg.Session, cfg.SessionMark = session.ID, len(read.Items)
+		cfg.Session, cfg.SessionMark = agent.ClaudeSessionFor(session.Home, session.ID), len(read.Items)
 		ran = agent.RunIdentity{Provider: "claudecode", ConnectionID: claudeConnection}
 		for _, conn := range ui.connectionsList {
 			if conn.ID == claudeConnection {

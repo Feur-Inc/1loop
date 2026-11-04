@@ -37,7 +37,8 @@ func (server *headlessServer) panelChatLocked(id string) *serverChat {
 		server.panelHomes = map[string]*serverChat{}
 	}
 	config := server.cfg
-	config.Workspace, config.Session, config.RanWith = workspace, "", nil
+	config.Workspace, config.RanWith = workspace, nil
+	config.ClearSessions()
 	home := &serverChat{ID: id, Config: config, Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}
 	server.panelHomes[id] = home
 	return home

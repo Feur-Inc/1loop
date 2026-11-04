@@ -80,7 +80,9 @@ The [install guide](docs/INSTALL.md) has every step; in short:
      (1loop listens on `localhost:1455` during sign-in).
    - **Claude Code**: offered automatically when `claude` is installed; 1loop
      drives it with your Claude subscription. Without it, choosing Claude Code
-     offers to install it with Anthropic's official installer.
+     offers to install it with Anthropic's official installer. Add another
+     Claude Code connection to use a second Claude account: it gets a login of
+     its own ([several accounts](docs/INSTALL.md#several-claude-code-accounts)).
    - **Antigravity CLI**: add it by hand once `agy` is installed and signed in
      (run `agy` once in a terminal). 1loop drives your own `agy` in its
      headless mode with your Google account; see

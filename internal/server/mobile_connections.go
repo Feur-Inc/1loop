@@ -19,11 +19,12 @@ import (
 )
 
 type mobileLogin struct {
-	State   string `json:"state"`
-	URL     string `json:"url,omitempty"`
-	Problem string `json:"problem,omitempty"`
-	cancel  context.CancelFunc
-	input   io.WriteCloser
+	State      string `json:"state"`
+	URL        string `json:"url,omitempty"`
+	Problem    string `json:"problem,omitempty"`
+	cancel     context.CancelFunc
+	input      io.WriteCloser
+	connection string // Claude Code: the connection signing in, "" for one not saved yet
 }
 
 func (server *headlessServer) connectionLocked(id string) (agent.Connection, bool) {
@@ -53,8 +54,9 @@ func (server *headlessServer) localConnections(w http.ResponseWriter, r *http.Re
 			}
 		}
 		if connection.Provider == "claudecode" {
-			row["signedIn"] = mobileClaudeSignedIn()
-			if server.claudeLogin != nil {
+			row["signedIn"] = agent.ClaudeSignedIn(connection)
+			row["email"] = agent.ClaudeAccountOf(connection).Email
+			if server.claudeLogin != nil && server.claudeLogin.connection == connection.ID {
 				row["login"] = server.claudeLogin
 			}
 		}
@@ -106,8 +108,19 @@ func (server *headlessServer) saveLocalConnection(w http.ResponseWriter, r *http
 		if !found {
 			connection.ID = core.Identifier()
 			connection.AuthProfile = connection.ID
+			connection.ClaudeLogin = ""
+			if connection.Provider == "claudecode" {
+				connection.ClaudeLogin = agent.NewClaudeLogin(server.connections, connection.ID)
+			}
 		} else {
 			connection.AuthProfile = existing.AuthProfile
+			connection.ClaudeLogin = existing.ClaudeLogin
+			if connection.Provider != existing.Provider {
+				connection.ClaudeLogin = ""
+				if connection.Provider == "claudecode" {
+					connection.ClaudeLogin = agent.NewClaudeLogin(server.connections, connection.ID)
+				}
+			}
 		}
 		if connection.Provider == "chatgptweb" {
 			server.webConnectionLocked(&connection)
@@ -160,6 +173,13 @@ func (server *headlessServer) saveLocalConnection(w http.ResponseWriter, r *http
 	}
 	if args.Remove && existing.Provider == "chatgptweb" {
 		_ = os.Remove(server.webKeyFile(existing.ID))
+	}
+	if args.Remove && existing.Provider == "claudecode" && existing.ClaudeHome() != "" {
+		go func() { // its own login only: the system one is the user's
+			ctx, cancel := context.WithTimeout(server.ctx, 25*time.Second)
+			defer cancel()
+			_ = agent.SignOutClaude(ctx, existing)
+		}()
 	}
 	if login := server.logins[connection.ID]; login != nil && login.cancel != nil {
 		login.cancel()

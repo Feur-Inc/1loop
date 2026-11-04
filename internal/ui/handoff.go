@@ -48,7 +48,7 @@ func (ui *desktopUI) previousConfig(chat *conversation) *agent.Config {
 	previous := choice.Connection.Config(chat.Config.Workspace)
 	previous.MachineID, previous.Machine = cfg.MachineID, cfg.Machine
 	previous.Model, previous.Effort, previous.ReasoningMode = choice.ID, choice.DefaultEffort, choice.ReasoningMode
-	previous.Session, previous.SessionMark = chat.Config.Session, chat.Config.SessionMark
+	previous.InheritSession(chat.Config)
 	previous.APIKey = ui.keys[previous.ConnectionID]
 	previous.Cache, previous.ContextKey, previous.Todo, previous.Recall = cfg.Cache, cfg.ContextKey, cfg.Todo, cfg.Recall
 	previous.UserInstructions, previous.Preferences, previous.ApprovalMode = cfg.UserInstructions, cfg.Preferences, agent.ApprovalFor(ui.approvalMode, previous)

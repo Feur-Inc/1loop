@@ -143,7 +143,7 @@ func (ui *desktopUI) slashCommand(name, args string) bool {
 		return true
 	case "login":
 		ui.prompt.clearSent()
-		ui.signInClaude()
+		ui.signInClaude(ui.claudeConnection(), func() {})
 		return true
 	case "clear":
 		ui.prompt.clearSent()

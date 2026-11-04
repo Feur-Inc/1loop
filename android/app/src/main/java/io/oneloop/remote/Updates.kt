@@ -31,7 +31,7 @@ import java.security.spec.X509EncodedKeySpec
 // An in-app PackageInstaller session stalled there: Play Protect's dialog
 // outlives the install verification timeout and its answer is ignored.
 
-private const val MANIFEST_URL = "https://tpm28.github.io/1loop/updates/latest.json"
+private const val MANIFEST_URL = "https://feur-inc.github.io/1loop/updates/latest.json"
 
 // The release key's public half (internal/update/update.go has the same).
 private const val PUBLIC_KEY = "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAET3kQmwcR+o8F/efaAYkwc78WcTV1tO/sbBPxLH32uNqtzGn3WqfliMODCiLFoCT2dL0IrHJdBAiXQ+BXn5eSTw=="

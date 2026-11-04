@@ -145,6 +145,7 @@ buildGoModule {
   meta = {
     description = "Coding agent for your project, with your model";
     homepage = "https://github.com/Feur-Inc/1loop";
+    license = lib.licenses.mpl20;
     platforms = [ "x86_64-linux" ];
     mainProgram = "1loop";
   };

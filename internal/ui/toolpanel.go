@@ -32,6 +32,7 @@ type toolPanel struct {
 	ui     *desktopUI
 	view   fyne.CanvasObject
 	strip  *fyne.Container
+	strips *container.Scroll // the strip, scrolled sideways when the tabs outgrow the panel
 	body   *kineticScroll
 	page   *fyne.Container
 	texts  []*outputView // the code wells of the call on display
@@ -46,6 +47,7 @@ type toolPanel struct {
 	anim   *fyne.Animation
 
 	resizePending bool
+	openCommands  map[string]bool // the background commands shown in full in the Tasks tab, by task
 }
 
 type panelTab struct {
@@ -76,7 +78,7 @@ type panelTab struct {
 const panelWidth = 840
 
 func newToolPanel(ui *desktopUI) *toolPanel {
-	panel := &toolPanel{ui: ui, active: -1}
+	panel := &toolPanel{ui: ui, active: -1, openCommands: map[string]bool{}}
 	go func() {
 		timer := time.NewTicker(time.Second)
 		defer timer.Stop()
@@ -115,7 +117,8 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 		}
 		panel.openTodo()
 	})
-	header := container.NewBorder(nil, nil, nil, container.NewHBox(todo, add, fold), container.NewHScroll(panel.strip))
+	panel.strips = container.NewHScroll(panel.strip)
+	header := container.NewBorder(nil, nil, nil, container.NewHBox(todo, add, fold), panel.strips)
 	rule := canvas.NewRectangle(colBorderSoft)
 	rule.SetMinSize(fyne.NewSize(0, 1))
 	panel.body = newKineticVScroll(spacer(0, 0))
@@ -367,7 +370,11 @@ func (panel *toolPanel) renderStrip() {
 	for i, tab := range panel.tabs {
 		panel.strip.Add(panel.tabView(i, tab))
 	}
-	panel.strip.Refresh()
+	// Refreshing the scroll, not only the strip, gives the strip its new
+	// width and brings the offset back within it at once: a closed tab
+	// left the old width, and empty space past the last tab, until the
+	// next layout.
+	panel.strips.Refresh()
 }
 
 func (panel *toolPanel) render() {
@@ -634,10 +641,35 @@ func (panel *toolPanel) section(name, text, empty string) fyne.CanvasObject {
 		copyButton.SetText("Copied")
 		time.AfterFunc(1400*time.Millisecond, func() { fyne.Do(func() { copyButton.SetText("Copy") }) })
 	})
-	header := container.NewBorder(nil, nil, container.NewCenter(caption), copyButton)
+	actions := container.NewHBox(copyButton)
+	if strings.Count(text, "\n") >= 8 || len(text) > 600 { // a few lines read well enough where they are
+		actions.Objects = []fyne.CanvasObject{newRow("Expand", iconMaximize, styleChip, func() { panel.ui.showOutput(name, text) }), copyButton}
+	}
+	header := container.NewBorder(nil, nil, container.NewCenter(caption), actions)
 	well := newOutputView(strings.TrimRight(text, "\n"))
 	panel.texts = append(panel.texts, well)
 	return container.NewVBox(padded(0, 2, 2, 0, header), surface(well, colCode, colBorderSoft, 10, 12))
+}
+
+// showOutput shows a call's command or output as large as the window
+// allows: the side panel is often too narrow to read a log in.
+func (ui *desktopUI) showOutput(name, text string) {
+	area := ui.window.Canvas().Size()
+	well := newOutputView(strings.TrimRight(text, "\n"))
+	scroll := newKineticVScroll(padded(12, 12, 12, 12, well))
+	scroll.SetMinSize(fyne.NewSize(area.Width-160, area.Height-220))
+	scroll.OnScrolled = func(offset fyne.Position) {
+		well.show(offset.Y-12, offset.Y-12+scroll.Size().Height)
+	}
+	var copyButton *tapRow
+	copyButton = newRow("Copy", iconCopy, styleOutline, func() {
+		fyne.CurrentApp().Clipboard().SetContent(text)
+		copyButton.SetText("Copied")
+		time.AfterFunc(1400*time.Millisecond, func() { fyne.Do(func() { copyButton.SetText("Copy") }) })
+	})
+	var dialog *sheet
+	closeButton := newRow("Close", nil, styleOutline, func() { dialog.dismiss() })
+	dialog = ui.modal(name, surface(scroll, colCode, colBorderSoft, 10, 0), area.Width-80, nil, copyButton, closeButton)
 }
 
 // outputView shows a command, a diff or an output of any length at the cost

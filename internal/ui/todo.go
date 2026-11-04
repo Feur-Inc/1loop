@@ -146,7 +146,7 @@ func (panel *toolPanel) addBackgroundTasks(box *fyne.Container, chat *conversati
 			status, state = "pending", fmt.Sprintf("Failed with code %d", task.ExitCode)
 		}
 		mark := newTaskMark(status, func() bool { return false })
-		command := plainFlow("$ "+task.Command, 13, colText)
+		command := backgroundCommand(task.Command, panel.openCommands, task.ID, func() { panel.todoChanged(chat) })
 		var action fyne.CanvasObject = layout.NewSpacer()
 		if task.Running {
 			id := task.ID
@@ -155,6 +155,54 @@ func (panel *toolPanel) addBackgroundTasks(box *fyne.Container, chat *conversati
 		box.Add(padded(7, 7, 0, 0, container.NewBorder(nil, nil, container.NewVBox(mark), container.NewVBox(action),
 			padded(1, 0, 12, 8, container.NewVBox(command, textLine(state, 11.5, colMuted))))))
 	}
+}
+
+// backgroundCommand is a background command on one line, cut to the space
+// it gets, with a chevron that shows it in full when it does not fit. Which
+// ones are open is kept in open, by task, across the list's redraws.
+func backgroundCommand(command string, open map[string]bool, id string, redraw func()) fyne.CanvasObject {
+	toggle := func() {
+		open[id] = !open[id]
+		redraw()
+	}
+	if open[id] {
+		less := newIconButton(iconChevron, color.NRGBA{}, colMuted, toggle)
+		less.iconPx, less.padPx = 14, 3
+		return container.NewBorder(nil, nil, nil, container.NewVBox(less), plainFlow("$ "+command, 13, colText))
+	}
+	more := newIconButton(iconChevronRight, color.NRGBA{}, colMuted, toggle)
+	more.iconPx, more.padPx = 14, 3
+	summary := "$ " + strings.Join(strings.Fields(command), " ")
+	line := newFitLabel(summary, 13, colText)
+	return container.New(&foldLayout{full: summary, folded: strings.Contains(strings.TrimSpace(command), "\n")},
+		container.NewStack(line, newTapArea(toggle)), more)
+}
+
+// foldLayout lays a one-line summary out with its chevron, which only
+// shows when the summary leaves something out.
+type foldLayout struct {
+	full   string
+	folded bool // the summary is the command's lines joined: never all of it
+}
+
+func (layoutSpec *foldLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	return fyne.NewSize(objects[0].MinSize().Width+objects[1].MinSize().Width, fyne.Max(objects[0].MinSize().Height, objects[1].MinSize().Height))
+}
+
+func (layoutSpec *foldLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	line, chevron := objects[0], objects[1]
+	if !layoutSpec.folded && textSize(layoutSpec.full, 13, fyne.TextStyle{}).Width <= size.Width {
+		chevron.Hide()
+		line.Move(fyne.Position{})
+		line.Resize(size)
+		return
+	}
+	chevron.Show()
+	side := chevron.MinSize()
+	line.Move(fyne.Position{})
+	line.Resize(fyne.NewSize(size.Width-side.Width, size.Height))
+	chevron.Move(fyne.NewPos(size.Width-side.Width, (size.Height-side.Height)/2))
+	chevron.Resize(side)
 }
 
 // progressLayout draws a thin line filled up to a share of its width.

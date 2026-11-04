@@ -1,4 +1,4 @@
-OpenAI, Claude and OpenRouter SVG paths from https://github.com/lobehub/lobe-icons
+OpenAI, Claude, OpenRouter and Antigravity SVG paths from https://github.com/lobehub/lobe-icons
 
 MIT License
 

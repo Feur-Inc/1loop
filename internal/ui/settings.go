@@ -784,13 +784,14 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	key.SetPlaceHolder("Kept in memory until 1loop closes")
 	enabled := newToggle(draft.Enabled, func(on bool) { draft.Enabled = on })
 	typePicker := newPicker(ui.window, "Connection type", styleField, nil)
-	typePicker.Options = []string{"Local vLLM", "OpenRouter", "ChatGPT account", "OpenAI-compatible API", "Claude Code", "ChatGPT (Web)"}
+	typePicker.Options = []string{"Local vLLM", "OpenRouter", "ChatGPT account", "OpenAI-compatible API", "Claude Code", "Antigravity CLI", "ChatGPT (Web)"}
 	ids := map[string]string{
 		"Local vLLM":            "vllm",
 		"OpenRouter":            "openrouter",
 		"ChatGPT account":       "openai",
 		"OpenAI-compatible API": "compatible",
 		"Claude Code":           "claudecode",
+		"Antigravity CLI":       "antigravity",
 		"ChatGPT (Web)":         "chatgptweb",
 	}
 	status := plainFlow("", 13, colMuted)
@@ -895,8 +896,19 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	claudeFields := card(settingStack("Claude Code on this computer",
 		"Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it.",
 		container.NewVBox(claudeState, container.NewHBox(installClaude, signInClaude))))
+	agyState := plainFlow("", 12.5, colMuted)
+	showAgy := func() {
+		if path, err := agent.AgyExecutable(); err == nil {
+			setFlow(agyState, "Installed: "+path+". Sign in by running agy once in a terminal.")
+		} else {
+			setFlow(agyState, "Not installed on this computer. Install the Antigravity CLI with Google's instructions (antigravity.google), then run agy once in a terminal to sign in.")
+		}
+	}
+	agyFields := card(settingStack("Antigravity CLI on this computer",
+		"Uses the agy command installed here with its own Google sign-in, tools, settings and MCP servers. The work runs in Antigravity's harness: 1loop sends your messages and shows what it does. Headless agy cannot ask for permissions: when it refuses a command, 1loop asks you and, if you allow it, runs it again with a rule for that command only.",
+		container.NewVBox(agyState, plainFlow(agent.AgyTerms, 12, colMuted))))
 	webFields, releaseWebSetup := ui.chatGPTWebSettings(&draft, say)
-	access := container.NewStack(apiFields, oauthFields, claudeFields, webFields)
+	access := container.NewStack(apiFields, oauthFields, claudeFields, agyFields, webFields)
 
 	routing := jsonEntry(draft.Routing)
 	parameters := jsonEntry(draft.Parameters)
@@ -1025,6 +1037,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		apiFields.Hide()
 		oauthFields.Hide()
 		claudeFields.Hide()
+		agyFields.Hide()
 		webFields.Hide()
 		switch draft.Provider {
 		case "openai":
@@ -1036,6 +1049,9 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 			if _, err := agent.ClaudeExecutable(); err != nil && previous != draft.Provider && agent.ClaudeInstallProblem() == "" {
 				ui.installClaudeCode(showClaude)
 			}
+		case "antigravity":
+			agyFields.Show()
+			showAgy()
 		case "chatgptweb":
 			webFields.Show()
 		default:
@@ -1121,7 +1137,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		draft.BaseURL = strings.TrimSpace(base.Text)
 		draft.Routing = route
 		draft.Parameters = params
-		if draft.Provider != "openai" && draft.Provider != "claudecode" && draft.Provider != "chatgptweb" {
+		if draft.Provider != "openai" && !agent.CLIHarness(draft.Provider) && draft.Provider != "chatgptweb" {
 			cfg := draft.Config("")
 			cfg.APIKey = key.Text
 			if _, _, err = agent.Endpoint(cfg); err != nil {

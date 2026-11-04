@@ -303,7 +303,7 @@ var prewarmed sync.Map // base URL -> time.Time of the last prewarm
 // (Codex prewarms its own): the TLS handshake is done while the user types.
 // At most once in 30 seconds per server; any answer will do.
 func (backend *App) Prewarm(cfg Config) {
-	if cfg.Provider == "claudecode" {
+	if CLIHarness(cfg.Provider) {
 		return
 	}
 	base, _, err := Endpoint(Config{Provider: cfg.Provider, BaseURL: cfg.BaseURL, APIKey: "-"})
@@ -614,7 +614,7 @@ func ModelContextWindow(cfg Config) int {
 		{"gpt-5", 400000}, {"o4", 200000}, {"o3", 200000}, {"gpt-4.1", 1000000},
 		{"gpt-4o", 128000}, {"o1", 200000}, {"claude", 200000}, {"kimi", 256000},
 		{"deepseek", 128000}, {"qwen", 128000}, {"llama", 128000}, {"mistral", 128000},
-		{"gemma", 128000}, {"glm", 128000}, {"phi", 128000},
+		{"gemma", 128000}, {"gemini", 1048576}, {"glm", 128000}, {"phi", 128000},
 	}
 	for _, entry := range known {
 		if strings.Contains(id, entry.match) {
@@ -690,8 +690,9 @@ type Inbox struct {
 	Next func() (Message, bool)
 }
 
-// Run works on a chat with the connection's harness: Claude Code's own for
-// a Claude Code connection, 1loop's agent loop for every other provider.
+// Run works on a chat with the connection's harness: Claude Code's or
+// Antigravity's own for those connections, 1loop's agent loop for every
+// other provider.
 func (backend *App) Run(ctx context.Context, cfg Config, history []Message, inboxValue Inbox, emit emitter) error {
 	if err := machineErr(cfg); err != nil {
 		return err
@@ -711,6 +712,9 @@ func (backend *App) runOnce(ctx context.Context, cfg Config, history []Message, 
 	}
 	if cfg.Provider == "claudecode" {
 		return backend.runClaudeCode(ctx, cfg, history, inboxValue, emit)
+	}
+	if cfg.Provider == "antigravity" {
+		return backend.runAntigravity(ctx, cfg, history, inboxValue, emit)
 	}
 	return backend.runCompatible(ctx, cfg, history, inboxValue, emit)
 }

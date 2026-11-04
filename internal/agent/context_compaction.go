@@ -346,7 +346,7 @@ func compactHistory(ctx context.Context, cfg Config, messages []Message, usage i
 // the prompt): any real reduction is then accepted, rather than leaving the
 // context to overflow.
 func compactHistoryTo(ctx context.Context, cfg Config, messages []Message, usage int, focus string, force, relaxed bool, emit emitter) ([]Message, int, bool) {
-	if cfg.Provider == "claudecode" {
+	if CLIHarness(cfg.Provider) {
 		return nil, 0, false
 	}
 	if !force && !contextAt(cfg, usage, .4) {
@@ -500,6 +500,9 @@ func TaskContextText(cfg Config, used, window int, classic bool, activity string
 	text := fmt.Sprintf("Context · %d%% · %s / %s tokens", min(100, used*100/window), Tokens(used), Tokens(window))
 	if cfg.Provider == "claudecode" {
 		return text + "\nCompaction is managed by Claude Code."
+	}
+	if cfg.Provider == "antigravity" {
+		return text + "\nCompaction is managed by Antigravity."
 	}
 	if activity == "compact" {
 		return text + "\nCompacting context now…"

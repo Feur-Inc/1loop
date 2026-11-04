@@ -224,6 +224,25 @@ func (backend *App) ConnectionModels(ctx context.Context, conn Connection, key s
 		}
 		return DefaultModelChoices(conn, choices), nil
 	}
+	if conn.Provider == "antigravity" {
+		models, err := agyModels(ctx)
+		if err != nil {
+			return nil, err
+		}
+		var choices []ModelChoice
+		for _, model := range models {
+			choice := ModelChoice{Connection: conn, ID: model.ID, Name: model.Name, Source: "Antigravity CLI"}
+			if len(model.Efforts) > 1 {
+				choice.Efforts, choice.ReasoningMode = model.Efforts, "effort"
+				choice.DefaultEffort = model.Efforts[0]
+				if Contains(model.Efforts, "medium") {
+					choice.DefaultEffort = "medium"
+				}
+			}
+			choices = append(choices, choice)
+		}
+		return DefaultModelChoices(conn, choices), nil
+	}
 	cfg := conn.Config("")
 	cfg.APIKey = key
 	result, err := backend.models(ctx, cfg)

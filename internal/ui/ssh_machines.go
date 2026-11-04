@@ -258,8 +258,15 @@ func (ui *desktopUI) folderLabel() string {
 
 // projectName is a project as the sidebar names it.
 func (ui *desktopUI) projectName(project string) string {
-	if owner := ui.worktreeMap()[project]; owner != "" {
-		return ui.projectName(owner) + " › " + ui.worktreeLabel(project)
+	return ui.projectNameSeen(project, map[string]bool{})
+}
+
+// projectNameSeen stops at a folder already named: a saved map may have a
+// worktree as its own project, or two worktrees as each other's.
+func (ui *desktopUI) projectNameSeen(project string, seen map[string]bool) string {
+	seen[project] = true
+	if owner := ui.worktreeMap()[project]; owner != "" && !seen[owner] {
+		return ui.projectNameSeen(owner, seen) + " › " + ui.worktreeLabel(project)
 	}
 	if ui.cfg.MachineID != "" {
 		return path.Base(project)

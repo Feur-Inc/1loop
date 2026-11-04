@@ -224,7 +224,8 @@ func (ui *desktopUI) noteWorktrees(project string, repo *gitrepo.Repository) {
 		ui.worktrees = map[string]string{}
 	}
 	for _, worktree := range repo.Worktrees {
-		if !worktree.Main && ui.worktrees[worktree.Path] != project {
+		// A worktree opened as a project lists itself: it is not its own worktree.
+		if !worktree.Main && worktree.Path != project && ui.worktrees[worktree.Path] != project {
 			ui.worktrees[worktree.Path] = project
 			changed = true
 		}

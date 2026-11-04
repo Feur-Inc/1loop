@@ -88,6 +88,7 @@ type App struct {
 	openAI          *openAIAuth
 	openAIProfiles  map[string]*openAIAuth
 	capabilityCache map[string]ModelChoice
+	claudeInfo      map[string]ClaudeInfo             // Claude Code: commands and account, by connection and folder
 	answers         map[string]chan map[string]string // request_user_input, by request
 	webContext      context.Context
 	webAccounts     map[string]*ChatGPTWeb

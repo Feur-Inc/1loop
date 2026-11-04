@@ -412,6 +412,25 @@ func claudeApproval(root, name string, input json.RawMessage) (title, preview st
 	return "Allow " + name + "?", JSONText(pretty)
 }
 
+// runningAsRoot: Claude Code refuses --dangerously-skip-permissions as root.
+var runningAsRoot = func() bool { return os.Geteuid() == 0 }
+
+// claudePermissionArgs is the approval mode's Claude Code flags. Auto mode:
+// Claude Code's own judge decides, and what it still asks reaches the user
+// like any other permission request. YOLO mode skips its permission checks,
+// but not with CLAUDE_CODE_EVEN_MORE_DANGEROUSLY_SKIP_PERMISSIONS, which lets
+// through commands no normal use needs; as root, where Claude Code refuses
+// the flag, 1loop approves each request instead.
+func claudePermissionArgs(cfg Config) []string {
+	switch {
+	case cfg.ApprovalMode == "auto":
+		return []string{"--permission-mode", "auto"}
+	case cfg.ApprovalMode == "yolo" && !runningAsRoot():
+		return []string{"--dangerously-skip-permissions"}
+	}
+	return nil
+}
+
 // runClaudeCode runs one task in Claude Code: the last message of history
 // is the prompt, sent in the chat's Claude Code session (cfg.Session) when
 // it has one. Steered messages are written to Claude Code while it works,
@@ -436,12 +455,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			return PanelToolResult{Text: outcome.Output, Images: outcome.Images}, outcome.Err
 		}
 	}
-	args := []string{"--include-partial-messages", "--permission-prompt-tool", "stdio"}
-	if cfg.ApprovalMode == "auto" {
-		// Claude Code's own judge decides; what it still asks reaches the
-		// user like any other permission request.
-		args = append(args, "--permission-mode", "auto")
-	}
+	args := append([]string{"--include-partial-messages", "--permission-prompt-tool", "stdio"}, claudePermissionArgs(cfg)...)
 	if claudeDisabledTools != "" {
 		args = append(args, "--disallowedTools", claudeDisabledTools)
 	}

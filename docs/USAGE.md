@@ -49,6 +49,8 @@ Choose in the composer:
   `git push`, `curl … | sh`, …) always go to a reviewer model; everything else
   runs in a sandbox that can only write in the project (Landlock on Linux).
 - **YOLO mode**: everything runs without asking and without a sandbox.
+  Claude Code and Antigravity CLI run with `--dangerously-skip-permissions`
+  (Claude Code refuses it as root: 1loop then approves each of its requests).
 
 Commands run with your user's permissions: approving one lets it act on your
 machine.

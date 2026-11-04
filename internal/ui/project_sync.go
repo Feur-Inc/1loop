@@ -141,7 +141,7 @@ func (ui *desktopUI) syncEngine() *projectsync.Local {
 				}
 				cfg := ui.cfg
 				cfg.Workspace = workspace
-				cfg.ClearSessions() // ui.cfg is the chat on screen: none of its sessions belong to the copy
+				cfg.ClearSessions()                        // ui.cfg is the chat on screen: none of its sessions belong to the copy
 				cfg.RanWith = copiedRanWith(copied.Config) // its next turn here goes through a handoff
 				copied = copied.AtWorkspace(cfg)
 				ui.chats = append([]*conversation{{ID: copied.ID, Title: copied.Title, Config: cfg, History: copied.History, Items: copied.Items,

@@ -306,12 +306,27 @@ func (panel *toolPanel) refreshTodoStatus() {
 		}
 	}
 	text := agent.TaskContextText(cfg, panel.ui.contextRing.used, panel.ui.contextRing.window, panel.ui.classicCompaction, state)
-	if text != tab.todoContextText {
-		tab.todoContextText = text
+	usage := panel.ui.contextUsage(panel.owner)
+	if tab.todoUsage == nil {
+		tab.todoUsage = &contextUsageState{}
+	}
+	// The breakdown replaces the first line (Context · % · tokens); the
+	// compaction lines stay under it.
+	key := text + fmt.Sprintf("%v", *tab.todoUsage)
+	if usage != nil {
+		key += fmt.Sprintf("%v", *usage)
+	}
+	if key != tab.todoContextText {
+		tab.todoContextText = key
 		rule := canvas.NewRectangle(colBorderSoft)
 		rule.SetMinSize(fyne.NewSize(0, 1))
 		tab.todoContext.Objects = []fyne.CanvasObject{rule}
-		for _, line := range strings.Split(text, "\n") {
+		lines := strings.Split(text, "\n")
+		if usage != nil {
+			tab.todoContext.Objects = append(tab.todoContext.Objects, padded(2, 4, 0, 0, contextUsageView(usage, tab.todoUsage, nil, panel.refreshTodoStatus)))
+			lines = lines[1:]
+		}
+		for _, line := range lines {
 			tab.todoContext.Objects = append(tab.todoContext.Objects, plainFlow(line, 12, colMuted))
 		}
 		tab.todoContext.Refresh()

@@ -894,6 +894,14 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		if currentTurn.chat == ui.current {
 			ui.setContextUsage(uiEventValue.data.(int), agent.ModelContextWindow(currentTurn.cfg))
 		}
+	case "context_usage":
+		usage := uiEventValue.data.(agent.ContextUsage)
+		currentTurn.chat.ContextUsage = &usage
+		ui.remote.metaChanged(currentTurn.chat)
+		if currentTurn.chat == ui.current && ui.panel != nil {
+			ui.panel.refreshTodoStatus()
+		}
+		ui.save()
 	case "notice":
 		currentTurn.label = uiEventValue.data.(string)
 		ui.applyActivity(currentTurn)

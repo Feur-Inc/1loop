@@ -24,15 +24,17 @@ import (
 )
 
 type serverChat struct {
-	ID           string                  `json:"id"`
-	Title        string                  `json:"title"`
-	Config       agent.Config            `json:"config"`
-	History      []agent.Message         `json:"history"`
-	Items        []agent.ChatItem        `json:"items"`
-	Version      string                  `json:"version,omitempty"`
-	Versions     []agent.ChatVersion     `json:"versions,omitempty"`
-	Todo         *agent.TodoState        `json:"todo"`
-	Cache        *agent.ContextCache     `json:"contextCache,omitempty"`
+	ID       string              `json:"id"`
+	Title    string              `json:"title"`
+	Config   agent.Config        `json:"config"`
+	History  []agent.Message     `json:"history"`
+	Items    []agent.ChatItem    `json:"items"`
+	Version  string              `json:"version,omitempty"`
+	Versions []agent.ChatVersion `json:"versions,omitempty"`
+	Todo     *agent.TodoState    `json:"todo"`
+	Cache    *agent.ContextCache `json:"contextCache,omitempty"`
+	// ContextUsage is Claude Code's last count of the window by category.
+	ContextUsage *agent.ContextUsage     `json:"contextUsage,omitempty"`
 	grants       *agent.PermissionGrants // what request_permissions granted, until the server stops
 	review       *agent.ReviewSession    // the Auto mode reviewer's conversation, until the server stops
 	tasks        *agent.BackgroundTasks  // shell commands run in the background, until the server stops
@@ -511,6 +513,7 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		}
 	}
 	meta.ContextStatus = agent.TaskContextText(chat.Config, meta.Used, meta.Window, server.classic, meta.Mark)
+	meta.ContextUsage = agent.ChatContextUsage(chat.Config, chat.History, chat.ContextUsage, server.classic).Summary()
 	return meta
 }
 
@@ -926,6 +929,9 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: value.(string)})
 	case "usage":
 		run.used = value.(int)
+	case "context_usage":
+		usage := value.(agent.ContextUsage)
+		chat.ContextUsage = &usage
 	case "web_session": // the ChatGPT (Web) conversation the next turn continues
 		web := value.(agent.WebConversation)
 		chat.Config.WebConversation = &web

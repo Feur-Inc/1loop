@@ -141,6 +141,7 @@ data class Meta(
     val background: List<BackgroundTask> = emptyList(),
     val provider: String = "", // the chat's account type
     val tool: String = "", // executing now, whatever the label says (an approval replaces it)
+    val contextUsage: ContextUsage? = null, // the window by category, without the MCP tools' list
 ) {
     companion object {
         fun from(o: JSONObject) = Meta(
@@ -160,6 +161,7 @@ data class Meta(
             },
             o.optString("provider"),
             o.optString("tool"),
+            o.optJSONObject("contextUsage")?.let { ContextUsage.from(it) },
         )
     }
 }
@@ -1117,6 +1119,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val reply = onConnection(target, generation) { it.post("/api/preferences", JSONObject().put("userPreferences", text)) }
         userPreferences = reply.optString("userPreferences")
+    }
+
+    /** The chat's MCP tools and their sizes, for the context breakdown's list. */
+    suspend fun contextTools(chat: String): List<ContextTool> {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        return ContextUsage.from(onConnection(target, generation) { it.get("/api/chats/$chat/context") }).mcpTools
     }
 
     suspend fun setMemory(enabled: Boolean) {

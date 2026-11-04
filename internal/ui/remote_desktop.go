@@ -185,7 +185,9 @@ type remoteDesktop struct {
 	hiddenTabs    map[string]bool
 	asked         map[string]bool // kinds the user just asked for: shown when they come
 	todoTasks     *fyne.Container
-	todoFooter    *widget.Label
+	todoFooter    *fyne.Container // the context breakdown and compaction lines
+	todoFooterKey string
+	todoUsage     *contextUsageState
 	todoRows      map[string]*widget.Label
 	todoSignature string
 }
@@ -1223,5 +1225,46 @@ func (remote *remoteDesktop) renderTasks() {
 			label.SetText(task.Status + " · " + task.Text + " · " + taskElapsed(item, time.Now()))
 		}
 	}
-	remote.todoFooter.SetText(remote.meta.ContextStatus)
+	remote.refreshTodoFooter()
+}
+
+// refreshTodoFooter draws the server's context breakdown above its
+// compaction lines; the MCP tools' list is asked when it is opened.
+func (remote *remoteDesktop) refreshTodoFooter() {
+	if remote.todoFooter == nil {
+		return
+	}
+	usage := remote.meta.ContextUsage
+	key := remote.meta.ContextStatus + fmt.Sprintf("%v", *remote.todoUsage)
+	if usage != nil {
+		key += fmt.Sprintf("%v", *usage)
+	}
+	if key == remote.todoFooterKey {
+		return
+	}
+	remote.todoFooterKey = key
+	lines := strings.Split(remote.meta.ContextStatus, "\n")
+	remote.todoFooter.Objects = nil
+	if usage != nil {
+		chat, state := remote.current, remote.todoUsage
+		tools := func() {
+			go func() {
+				var full agent.ContextUsage
+				if remote.client.json(remote.ctx, "GET", "/api/chats/"+chat+"/context", nil, &full) == nil {
+					fyne.Do(func() {
+						state.tools = full.MCPTools
+						remote.refreshTodoFooter()
+					})
+				}
+			}()
+		}
+		remote.todoFooter.Add(contextUsageView(usage, state, tools, remote.refreshTodoFooter))
+		lines = lines[1:]
+	}
+	for _, line := range lines {
+		if line != "" {
+			remote.todoFooter.Add(plainFlow(line, 12, colMuted))
+		}
+	}
+	remote.todoFooter.Refresh()
 }

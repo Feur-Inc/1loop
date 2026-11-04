@@ -601,6 +601,10 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	// still ask for a permission and the user can still send a message.
 	idle := false
 	var idleSince time.Time
+	// The window by category, asked when a turn ends: Claude Code's input
+	// stays open until it answers (or for five seconds), since it exits
+	// with its last turn.
+	var contextAsked time.Time
 	var background []string // what Claude Code runs in the background
 	waitBackground := func() {
 		switch len(background) {
@@ -664,7 +668,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				continue
 			} else if next, ok := inboxValue.Next(); ok {
 				inject(next)
-			} else if len(background) == 0 && time.Since(idleSince) > 600*time.Millisecond {
+			} else if len(background) == 0 && time.Since(idleSince) > 600*time.Millisecond && (contextAsked.IsZero() || time.Since(contextAsked) > 5*time.Second) {
 				idle = false
 				platform.Devf("claude", "nothing runs, nothing waits: closing its input")
 				finish(false) // nothing runs, nothing waits: the task is over
@@ -693,6 +697,21 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		switch claudeEventValue.Type {
 		case "stream_event", "assistant", "user", "control_request":
 			idle = false // a turn is running
+		}
+		if claudeEventValue.Type == "control_response" && !contextAsked.IsZero() {
+			var answer struct {
+				Response struct {
+					RequestID string             `json:"request_id"`
+					Response  claudeContextUsage `json:"response"`
+				} `json:"response"`
+			}
+			if json.Unmarshal(line, &answer) == nil && answer.Response.RequestID == "1loop-context" {
+				contextAsked = time.Time{}
+				if answer.Response.Response.MaxTokens > 0 {
+					emit("context_usage", answer.Response.Response.usage())
+				}
+				continue
+			}
 		}
 		switch claudeEventValue.Type {
 		case "system":
@@ -893,6 +912,10 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			} else {
 				idle, idleSince = true, time.Now()
 				waitBackground()
+				// "summary": from the last answer's usage and local
+				// estimates, without Claude Code's per-category counting calls.
+				contextAsked = time.Now()
+				send(`{"type":"control_request","request_id":"1loop-context","request":{"subtype":"get_context_usage","detail":"summary"}}`)
 			}
 		}
 	}

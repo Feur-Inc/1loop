@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
@@ -94,29 +95,44 @@ fun StatusBadge(
                 StatusMark(run, 32.dp)
             }
         } else {
+            // The buttons stay where they are while the pill opens: the window keeps its docked
+            // edge fixed (BadgeWindow) and grows away from it, so the buttons go on that edge
+            // and the mark and label on the other, mirrored on the left half.
+            val parts = listOf<@Composable RowScope.() -> Unit>(
+                {
+                    Box(Modifier.padding(start = if (ui.onRight) 0.dp else 6.dp, end = if (ui.onRight) 6.dp else 0.dp).clickable { open = false }) { StatusMark(run, 30.dp) }
+                },
+                {
+                    // Weighted, so measured after the buttons: a long label is cut short rather
+                    // than squeezing the last button.
+                    Text(
+                        run.label.ifEmpty { "Working…" }, style = Type.small.copy(color = Palette.text),
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).widthIn(max = 150.dp),
+                    )
+                },
+                {
+                    // Finished: nothing to stop, the badge only waits to be put away.
+                    if (run.finished) RoundButton(Icons.close, Color.Transparent, Palette.muted, description = "Dismiss", size = 46.dp, iconSize = 24.dp) { onDismiss(run.chat) }
+                    else RoundButton(Icons.close, Color.Transparent, Palette.danger, description = "Stop", size = 46.dp, iconSize = 24.dp) { onStop(run.chat) }
+                },
+                {
+                    RoundButton(Icons.chats, Color.Transparent, Palette.muted, description = "Talk to the agent", size = 46.dp, iconSize = 24.dp) {
+                        onTalk(run.chat)
+                        if (run.finished) onDismiss(run.chat)
+                    }
+                },
+                {
+                    // Open: its icon lights up, with no disc that would make it look bigger than the others.
+                    RoundButton(Icons.tasks, Color.Transparent, if (preview) Palette.amber else Palette.muted, description = if (preview) "Hide preview" else "Show preview", size = 46.dp, iconSize = 24.dp) { preview = !preview }
+                },
+            )
             Row(
                 drag.clip(RoundedCornerShape(26.dp)).background(Palette.surface).border(1.dp, Palette.borderSoft, RoundedCornerShape(26.dp))
-                    .padding(start = 10.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    .padding(start = if (ui.onRight) 10.dp else 4.dp, end = if (ui.onRight) 4.dp else 10.dp, top = 4.dp, bottom = 4.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(2.dp),
             ) {
-                Box(Modifier.clickable { open = false }) { StatusMark(run, 30.dp) }
-                Spacer(Modifier.width(6.dp))
-                // Weighted, so measured after the buttons: a long label is cut short rather
-                // than squeezing the last button.
-                Text(
-                    run.label.ifEmpty { "Working…" }, style = Type.small.copy(color = Palette.text),
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false).widthIn(max = 150.dp),
-                )
-                // Finished: nothing to stop, the badge only waits to be put away.
-                if (run.finished) RoundButton(Icons.close, Color.Transparent, Palette.muted, description = "Dismiss", size = 46.dp, iconSize = 24.dp) { onDismiss(run.chat) }
-                else RoundButton(Icons.close, Color.Transparent, Palette.danger, description = "Stop", size = 46.dp, iconSize = 24.dp) { onStop(run.chat) }
-                RoundButton(Icons.chats, Color.Transparent, Palette.muted, description = "Talk to the agent", size = 46.dp, iconSize = 24.dp) {
-                    onTalk(run.chat)
-                    if (run.finished) onDismiss(run.chat)
-                }
-                // Open: its icon lights up, with no disc that would make it look bigger than the others.
-                RoundButton(Icons.tasks, Color.Transparent, if (preview) Palette.amber else Palette.muted, description = if (preview) "Hide preview" else "Show preview", size = 46.dp, iconSize = 24.dp) { preview = !preview }
+                for (part in if (ui.onRight) parts else parts.reversed()) part()
             }
             val question = run.question
             if (question != null) QuestionCard(question, onAnswer, onTyping)

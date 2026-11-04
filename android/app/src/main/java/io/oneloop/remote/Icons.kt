@@ -66,7 +66,7 @@ object Icons {
     val tasks = lineIcon("tasks", line("M2.8 4.6l1.3 1.3 2.3-2.4M8.5 4.7h4.7M2.8 10.6l1.3 1.3 2.3-2.4M8.5 10.7h4.7"))
 
     fun forTool(tool: String) = when (tool) {
-        "shell" -> terminal
+        "shell", "adb_shell" -> terminal
         "edit_file", "apply_patch" -> pencil
         "list_directory" -> folder
         "memory" -> bookmark

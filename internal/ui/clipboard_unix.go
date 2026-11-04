@@ -1,5 +1,8 @@
-//go:build !windows
+//go:build !windows && (!linux || !cgo)
 
 package ui
 
-func imageClipboardData() ([]byte, error) { return linuxImageClipboardData() }
+// Without cgo 1loop cannot speak to the display itself.
+func clipboardReady() {}
+
+func imageClipboardData() ([]byte, error) { return externalImageClipboardData() }

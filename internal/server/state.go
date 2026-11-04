@@ -525,8 +525,8 @@ func (server *headlessServer) itemLocked(chat *serverChat, index int) remoteapi.
 		ID:       item.ID,
 		Versions: remoteapi.ItemVersions(&state, index),
 		Kind:     item.Kind,
-		Text:     item.Text,
-		Images:   len(item.Images),
+		Text:     agent.ToolText(item),
+		Images:   agent.ToolImageCount(item),
 		Files:    remoteapi.FileNames(item.Files),
 		Tool:     item.Tool,
 		Args:     item.Args,
@@ -702,6 +702,8 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 		cfg.Packages = server.bridge.packageTools
 		cfg.ToolAllowed = func(name string) bool {
 			switch {
+			case agent.IsAPKTool(name):
+				return true // the installer, not ADB: no Shizuku, and one approval per call even in Approval mode
 			case name == "phone_use" || name == "adb_shell":
 				// Android publishes grant/connection changes; a slow bridge must
 				// not silently remove tools from a model request. In Approval
@@ -872,6 +874,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		run.mark = status.State
 		run.label = strings.TrimSpace(status.State + " " + status.Tool + " " + status.Detail)
 		if status.State == "call" {
+			run.mark = agent.CallMark(status.Tool)
 			run.label = agent.CallLabel(status.Tool, status.Detail) + "…"
 		}
 	case "tool":
@@ -889,7 +892,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		run.tool = outcome.Name
 		// The row's own words, as the desktop says them (agent.DescribeTool).
 		verb, target, _ := agent.DescribeTool(agent.ChatItem{Tool: outcome.Name, Args: outcome.Args}, true)
-		run.mark, run.label = "call", strings.TrimSpace(verb+" "+target)+"…"
+		run.mark, run.label = agent.CallMark(outcome.Name), strings.TrimSpace(verb+" "+target)+"…"
 	case "tool_output": // a running command's output so far
 		outcome := value.(agent.ToolOutcome)
 		if at, ok := run.calls[outcome.ID]; ok {

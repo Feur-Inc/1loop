@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- The release icon's ring with a wrench in place of the "1", so the debug
+     build is told apart from the release one on the same launcher. -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp" android:height="108dp"
+    android:viewportWidth="120" android:viewportHeight="120">
+    <group android:scaleX="0.6" android:scaleY="0.6" android:translateX="24" android:translateY="24">
+        <path android:pathData="M95.24 30.43 A46 46 0 1 1 67.99 14.70" android:strokeColor="#FFB000"
+            android:strokeWidth="12" android:strokeLineCap="round" />
+        <path android:pathData="M83 14.2 A6 6 0 1 1 82.99 14.2 Z" android:fillColor="#F4F4F4" />
+        <path android:pathData="M79.6 54.31 A12 12 0 1 1 65.69 40.4" android:strokeColor="#F4F4F4"
+            android:strokeWidth="11" android:strokeLineCap="round" />
+        <path android:pathData="M59.29 60.71 L42.32 77.68" android:strokeColor="#F4F4F4" android:strokeWidth="12"
+            android:strokeLineCap="round" />
+    </group>
+</vector>

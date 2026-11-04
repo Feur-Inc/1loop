@@ -455,7 +455,7 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
                     LocalRuntimeService.ensureRunning(context)
                     phone.resume() // Phone Use as the user left it (LocalAdb)
                     seed(root)
-                    val nativeBridge = LocalBridge(scope, phone, browser, { chatgptBrowser(it) }, ::terminalOperation, ::installPackages)
+                    val nativeBridge = LocalBridge(scope, phone, browser, { chatgptBrowser(it) }, ::terminalOperation, ::installPackages, ApkTools(context, ::root))
                     var started: Process? = null
                     try {
                         privateText(File(root, "var/lib/1loop/native-bridge.json"), nativeBridge.configuration().toString())

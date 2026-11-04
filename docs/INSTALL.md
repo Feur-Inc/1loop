@@ -289,8 +289,42 @@ finds Chrome, Chromium or Microsoft Edge, or downloads its own Chromium into
 
 Updating: **Settings → Updates** downloads the next version and opens
 Android's update screen. Your chats and settings are kept. The first time,
-Android asks to allow 1loop to install apps: that permission is only used for
-1loop's own updates.
+Android asks to allow 1loop to install apps: that permission is used for
+1loop's own updates and for the APKs the agent installs (below).
+
+### APKs on the local phone
+
+With **Local phone**, the agent has three tools for APKs and apps. Neither needs Shizuku;
+each call goes through the conversation's approval mode like the other phone
+tools.
+
+- `install_apk` installs an `.apk` file, or a folder of `.apk` files for a split
+  app, from the project (a path under `/projects`) through Android's package
+  installer. **You always confirm in Android's own dialog**; the tool then
+  reports *installed*, *cancelled*, *blocked* or *conflict* and says what to
+  change: turn on **Install unknown apps** for 1loop (its settings page opens
+  by itself), let Play Protect continue, or uninstall an installed app signed
+  with another key. It waits 4 minutes for your answer. The dialog opens over
+  other apps thanks to the *display over other apps* permission that the status
+  badge already uses; if it does not appear, open 1loop and call the tool again.
+- `uninstall_app` removes an app through Android's own uninstall dialog (you
+  confirm; the app's data goes with it). It reports *uninstalled*, *cancelled*
+  or *blocked* (a system app, a device policy). It refuses to uninstall 1loop.
+- `extract_apk` copies the base APK and every split APK of an installed app
+  into the project (by default `/projects/default/apks/<package>`). 1loop asks
+  Android to let it see all installed apps (`QUERY_ALL_PACKAGES`) for this.
+
+To decompile an APK, the agent installs the tools in the Debian environment
+with `install_packages`. Tried on arm64 Debian 12:
+
+- `apktool` (a Debian package; Java comes with it) decodes `AndroidManifest.xml`,
+  smali and the `res/` folder. Debian's 2.7.0 stops on the resources of recent
+  APKs: use `apktool d -r` to skip the resources, or download a newer
+  `apktool.jar`.
+- `jadx` is not a Debian package. Download `jadx-VERSION.zip` from
+  <https://github.com/skylot/jadx/releases>, unzip it in the project and run
+  `bin/jadx -d out app.apk`. Version 1.5.6 decompiled a 7 MB APK to about 5,000
+  Java files on the phone's container.
 
 ## Headless server
 

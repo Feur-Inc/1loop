@@ -874,6 +874,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		run.mark = status.State
 		run.label = strings.TrimSpace(status.State + " " + status.Tool + " " + status.Detail)
 		if status.State == "call" {
+			run.mark = agent.CallMark(status.Tool)
 			run.label = agent.CallLabel(status.Tool, status.Detail) + "…"
 		}
 	case "tool":
@@ -891,7 +892,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		run.tool = outcome.Name
 		// The row's own words, as the desktop says them (agent.DescribeTool).
 		verb, target, _ := agent.DescribeTool(agent.ChatItem{Tool: outcome.Name, Args: outcome.Args}, true)
-		run.mark, run.label = "call", strings.TrimSpace(verb+" "+target)+"…"
+		run.mark, run.label = agent.CallMark(outcome.Name), strings.TrimSpace(verb+" "+target)+"…"
 	case "tool_output": // a running command's output so far
 		outcome := value.(agent.ToolOutcome)
 		if at, ok := run.calls[outcome.ID]; ok {

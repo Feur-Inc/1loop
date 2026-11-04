@@ -60,7 +60,7 @@ func toolGlyph(tool string) fyne.Resource {
 		return theme.ComputerIcon()
 	}
 	switch tool {
-	case "shell":
+	case "shell", "adb_shell":
 		return iconTerminal
 	case "edit_file", "apply_patch":
 		return iconPencil
@@ -987,6 +987,9 @@ func (currentTurn *turn) show(activityValue agent.Activity) {
 		return
 	}
 	currentTurn.label, currentTurn.mark = label+"…", activityValue.State
+	if activityValue.State == "call" {
+		currentTurn.mark = agent.CallMark(activityValue.Tool)
+	}
 	if activityValue.State == "question" {
 		currentTurn.mark = "approval" // the ring's waiting-for-you glyph
 	}
@@ -1010,7 +1013,7 @@ func (currentTurn *turn) showRun(outcome agent.ToolOutcome) {
 		currentTurn.label, currentTurn.mark = "Applying the patch…", "edit"
 	default: // what the conversation's row says (agent.DescribeTool)
 		verb, target, _ := agent.DescribeTool(agent.ChatItem{Tool: outcome.Name, Args: outcome.Args}, true)
-		currentTurn.label, currentTurn.mark = strings.TrimSpace(verb+" "+target)+"…", "call"
+		currentTurn.label, currentTurn.mark = strings.TrimSpace(verb+" "+target)+"…", agent.CallMark(outcome.Name)
 	}
 	currentTurn.ui.applyActivity(currentTurn)
 }

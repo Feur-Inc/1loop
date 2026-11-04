@@ -725,6 +725,9 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
     }
 
     override suspend fun setAdbAllowed(allowed: Boolean) = phone.setAllowed(allowed)
+    override suspend fun workProfile() = phone.workProfile()
+    override suspend fun createWorkProfile() = phone.createWorkProfile()
+    override suspend fun removeWorkProfile() = phone.removeWorkProfile()
     override fun openShizuku() {
         val intent = context.packageManager.getLaunchIntentForPackage("moe.shizuku.privileged.api")
             ?: Intent(Intent.ACTION_VIEW, android.net.Uri.parse("https://shizuku.rikka.app/download/"))

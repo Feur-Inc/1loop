@@ -59,6 +59,7 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
                 Text("Phone access · Shizuku", style = Type.headline)
                 val adb by app.local.adb.collectAsState()
                 LocalAdbSection(adb, app::setAdbAllowed, app.local::openShizuku, manualApproval = app.approvalMode == "approval")
+                WorkProfileSection(app.local, adb)
                 BackgroundExecutionSection(adb.installed)
                 LaunchedEffect(Unit) { runCatching { app.refreshSharing() } }
                 SharingSection(app)

@@ -37,6 +37,7 @@ import org.json.JSONObject
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -232,6 +233,70 @@ fun LocalAdbSection(
             }
             Pill(if (state.installed) "Open Shizuku" else "Get Shizuku", onClick = onOpenShizuku)
             if (state.serviceRunning) Pill("Authorize 1loop", enabled = !state.busy) { onAllowedChange(true) }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// The agent's work profile: where Phone Use's hidden session opens apps, apart
+// from the user's data. Only the profile 1loop created is shown and removed;
+// an employer's work profile is never touched.
+
+@Composable
+fun WorkProfileSection(local: LocalRuntime, state: LocalAdbState, modifier: Modifier = Modifier) {
+    if (!state.allowed || !state.connected) return
+    val scope = rememberCoroutineScope()
+    var profile by remember { mutableStateOf<Int?>(null) }
+    var loaded by remember { mutableStateOf(false) }
+    var busy by remember { mutableStateOf(false) }
+    var confirming by remember { mutableStateOf(false) }
+    var problem by remember { mutableStateOf<String?>(null) }
+    LaunchedEffect(state.connected) {
+        profile = runCatching { local.workProfile() }.getOrNull()
+        loaded = true
+    }
+    fun act(action: suspend () -> Int?) {
+        busy = true
+        problem = null
+        scope.launch {
+            try { profile = action() }
+            catch (cancelled: CancellationException) { throw cancelled }
+            catch (failure: Exception) { problem = failure.message ?: "Android refused." }
+            finally { busy = false; confirming = false }
+        }
+    }
+    Column(
+        modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface)
+            .border(1.dp, Palette.borderSoft, RoundedCornerShape(14.dp)).padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Text("Work profile for the agent", style = Type.body.copy(fontWeight = FontWeight.Medium))
+        Text(
+            when {
+                busy -> "Working…"
+                !loaded -> "Checking…"
+                profile != null -> "Created (Android user $profile). The agent opens its apps there in its hidden session."
+                else -> "None. The agent's hidden session opens apps in your own account."
+            },
+            style = Type.caption.copy(color = if (profile != null) Palette.added else Palette.muted),
+        )
+        Text(
+            "A separate work profile on this phone: the apps the agent adds there (copies of apps you have installed) start without your accounts and data, " +
+                "and you keep using your phone meanwhile. Removing it deletes those apps and everything they stored.",
+            style = Type.caption,
+        )
+        problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }
+        when {
+            !loaded -> {}
+            profile == null -> Pill("Create the work profile", primary = true, enabled = !busy) { act { local.createWorkProfile() } }
+            !confirming -> Pill("Remove the work profile", enabled = !busy) { confirming = true }
+            else -> {
+                Text("Remove it, with its apps and their data?", style = Type.small.copy(color = Palette.danger))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Pill("Cancel", enabled = !busy) { confirming = false }
+                    Pill("Remove", primary = true, enabled = !busy) { act { local.removeWorkProfile(); null } }
+                }
+            }
         }
     }
 }

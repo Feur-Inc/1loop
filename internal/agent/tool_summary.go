@@ -274,11 +274,33 @@ func desktopAction(raw string) action {
 
 func phoneAction(raw string) action {
 	var args struct {
-		Action string
-		X, Y   float64
-		Text   string
+		Session, Action string
+		X, Y            float64
+		Text            string
 	}
 	_ = json.Unmarshal([]byte(raw), &args)
+	if args.Action == "profile_install" { // the profile, whichever the session
+		return action{"Added to the work profile:", "Adding to the work profile:", args.Text, false}
+	}
+	if args.Session == "hidden" {
+		switch args.Action {
+		case "state", "screenshot":
+			return action{"Looked at", "Looking at", "the hidden phone session", false}
+		case "tap":
+			return action{"Tapped the hidden session", "Tapping the hidden session", "at " + point(args.X, args.Y), false}
+		case "swipe":
+			return action{"Swiped", "Swiping", "in the hidden session", false}
+		case "type":
+			return action{"Typed in the hidden session:", "Typing in the hidden session:", quoted(args.Text), false}
+		case "key":
+			return action{"Pressed in the hidden session:", "Pressing in the hidden session:", args.Text, false}
+		case "launch":
+			return action{"Opened in the hidden session:", "Opening in the hidden session:", args.Text, false}
+		case "close":
+			return action{"Closed", "Closing", "the hidden phone session", false}
+		}
+		return action{"Used the hidden phone session:", "Using the hidden phone session:", args.Action, false}
+	}
 	switch args.Action {
 	case "state":
 		return action{"Read", "Reading", "the phone's screen", false}
@@ -292,6 +314,8 @@ func phoneAction(raw string) action {
 		return action{"Typed on the phone:", "Typing on the phone:", quoted(args.Text), false}
 	case "key":
 		return action{"Pressed on the phone:", "Pressing on the phone:", args.Text, false}
+	case "launch":
+		return action{"Opened on the phone:", "Opening on the phone:", args.Text, false}
 	}
 	return action{"Used the phone:", "Using the phone:", args.Action, false}
 }

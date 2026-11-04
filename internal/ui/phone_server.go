@@ -495,7 +495,7 @@ func itemForPhone(chat *conversation, index int) remoteapi.Item {
 	}
 	versions := chat.branching()
 	item := chat.Items[index]
-	out := remoteapi.Item{ID: item.ID, Versions: remoteapi.ItemVersions(&versions, index), Kind: item.Kind, Text: item.Text, Images: len(item.Images), Files: remoteapi.FileNames(item.Files)}
+	out := remoteapi.Item{ID: item.ID, Versions: remoteapi.ItemVersions(&versions, index), Kind: item.Kind, Text: agent.ToolText(item), Images: agent.ToolImageCount(item), Files: remoteapi.FileNames(item.Files)}
 	if item.Kind != "tool" {
 		return out
 	}
@@ -631,13 +631,18 @@ func (server *remoteServer) clearBrowser(writer http.ResponseWriter, _ *http.Req
 
 // itemImage serves a picture of an item, as the window shows it.
 func (server *remoteServer) itemImage(writer http.ResponseWriter, req *http.Request) {
-	remoteapi.ItemImage(writer, req, func(index int) (parts []core.ImagePart, ok bool) {
+	remoteapi.ItemImage(writer, req, func(index int) ([]core.ImagePart, bool) {
+		var item agent.ChatItem
+		found := false
 		server.onUI(func() {
 			if chat := server.ui.chatByID(req.PathValue("id")); chat != nil && index >= 0 && index < len(chat.Items) {
-				parts, ok = chat.Items[index].Images, true
+				item, found = chat.Items[index], true
 			}
 		})
-		return parts, ok
+		if !found {
+			return nil, false
+		}
+		return agent.ToolImages(item), true // may read a file: not on the UI thread
 	})
 }
 

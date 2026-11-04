@@ -840,10 +840,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 					continue
 				}
 				delete(calls, b.ToolUseID)
-				p.outcome.Output = claudeText(b.Content)
-				if strings.HasPrefix(p.outcome.Name, "browser_") || strings.HasPrefix(p.outcome.Name, "terminal_") || p.outcome.Name == "computer_use" {
-					p.outcome.Images = claudeBrowserImages(b.Content)
-				}
+				p.outcome.Output, p.outcome.Images = claudeResult(b.Content)
 				p.outcome.Elapsed = time.Since(p.started)
 				if b.IsError {
 					p.outcome.Err = errors.New(FirstLine(p.outcome.Output))
@@ -918,6 +915,23 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		return fmt.Errorf("Claude Code stopped without answering")
 	}
 	return nil
+}
+
+// claudeResult is a tool result's text and the pictures it returned (phone,
+// browser, terminal or computer screenshots). Claude Code names the file it
+// saved each picture to in the text: the picture comes from the result
+// itself or, when only the name is there, from that file.
+func claudeResult(content json.RawMessage) (string, []core.ImagePart) {
+	text, sources := splitImageSources(claudeText(content))
+	images := claudeBrowserImages(content)
+	if len(images) == 0 {
+		for _, source := range sources {
+			if part, ok := readImageSource(source); ok {
+				images = append(images, part)
+			}
+		}
+	}
+	return text, images
 }
 
 func claudeBrowserImages(raw json.RawMessage) []core.ImagePart {

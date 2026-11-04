@@ -195,7 +195,8 @@ func parseAgyUsage(out []byte) (AccountLimits, error) {
 			if period == "" {
 				period = bucket.Window
 			}
-			windows = append(windows, AccountLimitWindow{agyGroupName(group.Name) + " · " + period, 100 * (1 - *bucket.Remaining), bucket.ResetAt})
+			name := agyGroupName(group.Name)
+			windows = append(windows, AccountLimitWindow{Label: name + " · " + period, used: 100 * (1 - *bucket.Remaining), ResetAt: bucket.ResetAt, Group: name})
 		}
 		// agy lists the weekly limit first; the 5-hour one comes first here,
 		// as for Claude Code.
@@ -383,6 +384,21 @@ func agyAction(tool string) string {
 	return ""
 }
 
+// agyAttachmentsBase is where a run's attached images are saved: the
+// temporary folder, except in the Flatpak, whose /tmp is private while agy
+// runs on the host (packaging/flatpak/host-run): there, the app's cache
+// folder, which the host sees at the same path.
+func agyAttachmentsBase() string {
+	if os.Getenv("FLATPAK_ID") == "" {
+		return ""
+	}
+	cache, err := os.UserCacheDir()
+	if err != nil || os.MkdirAll(cache, 0o700) != nil {
+		return ""
+	}
+	return cache
+}
+
 // agyPrompt is a user message in agy's input format. agy reads text only:
 // attached images are saved to files in dir and named in the text, for its
 // file viewer. (--add-dir is not used for them: agy would then run commands
@@ -443,8 +459,14 @@ func (backend *App) runAntigravity(ctx context.Context, cfg Config, history []Me
 	if cfg.Machine != nil || cfg.MachineID != "" {
 		return fmt.Errorf("Antigravity works on this computer's projects only")
 	}
+	// The phone's local runtime keeps each project's tools inside the project
+	// through its launcher (ONELOOP_PROJECT_LAUNCHER); agy's own tools and
+	// commands would run outside it, in the whole Debian environment.
+	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
+		return fmt.Errorf("Antigravity is not available in the phone's local runtime yet: its tools would not stay inside the project")
+	}
 	ctx = toolContext(ctx, cfg)
-	attachments, err := os.MkdirTemp("", "1loop-agy-")
+	attachments, err := os.MkdirTemp(agyAttachmentsBase(), "1loop-agy-")
 	if err != nil {
 		return err
 	}
@@ -469,6 +491,11 @@ func (backend *App) runAntigravity(ctx context.Context, cfg Config, history []Me
 				preface = "[Since your last turn in this chat, the user continued with another model. What happened meanwhile]\n" + itemsText(items[cfg.SessionMark:end]) + "\n[End of what happened meanwhile]\n\n"
 			}
 		}
+	}
+	// agy takes no system prompt from 1loop: the user's saved preferences go
+	// first in each run's first message, so changes reach resumed chats too.
+	if strings.TrimSpace(cfg.UserInstructions) != "" {
+		preface = "[The user's preferences: they supplement your instructions]\n" + cfg.UserInstructions + "\n[End of the user's preferences]\n\n" + preface
 	}
 	answered := false
 	defer func() {
@@ -538,6 +565,11 @@ func (backend *App) agyProcess(ctx context.Context, cfg Config, session *string,
 		if open {
 			io.WriteString(stdin, line+"\n")
 		}
+	}
+	inputOpen := func() bool {
+		writing.Lock()
+		defer writing.Unlock()
+		return open
 	}
 	finish := func() { // no more input: agy exits after its last turn
 		writing.Lock()
@@ -628,7 +660,11 @@ func (backend *App) agyProcess(ctx context.Context, cfg Config, session *string,
 		case <-ctx.Done():
 			return outcome, ctx.Err()
 		case <-tick.C:
-			// Messages sent while agy works become its next turns.
+			// Messages sent while agy works become its next turns. Once its
+			// input is closed they stay queued, for the next run.
+			if !inputOpen() {
+				continue
+			}
 			for _, extra := range inboxValue.Steer() {
 				inject(extra)
 			}
@@ -752,7 +788,7 @@ func (backend *App) agyProcess(ctx context.Context, cfg Config, session *string,
 				if strings.TrimSpace(result.Response) == "" && len(result.Denied) == 0 {
 					// agy issues #902 and #1065: long tool-using headless
 					// turns can end with no answer.
-					emit("notice", "Antigravity ended the turn without an answer (a known Antigravity CLI issue). Send a message to have it continue.")
+					emit("note", "Antigravity ended the turn without an answer (a known Antigravity CLI issue). Send a message to have it continue.")
 				}
 			case result.Status == "CANCELED" || result.Status == "CANCELLED":
 				failure = fmt.Errorf("Antigravity canceled the turn without finishing it (a known Antigravity CLI issue in long headless turns). Send a message to have it continue.")

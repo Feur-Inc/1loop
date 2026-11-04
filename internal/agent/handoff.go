@@ -524,11 +524,14 @@ func (plan *HandoffPlan) AddSummarizer(id, name string, cfg Config, problem stri
 }
 
 // HandoffAvailability reports known connection or unexpired quota failures.
-func HandoffAvailability(unavailable string, limits AccountLimits) string {
+func HandoffAvailability(unavailable string, limits AccountLimits, model string) string {
 	if unavailable != "" {
 		return unavailable
 	}
 	for _, window := range limits.Windows {
+		if !window.appliesTo(model, limits.Windows) {
+			continue // another model group's limit: this model still has its own
+		}
 		if window.Remaining() == 0 && (window.ResetAt.IsZero() || window.ResetAt.After(time.Now())) {
 			return "The account's " + window.Label + " usage limit is exhausted."
 		}

@@ -190,3 +190,33 @@ func TestParseAgyUsage(t *testing.T) {
 		t.Fatal("an answer other than /usage was accepted")
 	}
 }
+
+// An exhausted model group makes only its own models unavailable as handoff
+// summarizers, not the rest of the account (Codex review on #144).
+func TestAgyLimitsPerModelGroup(t *testing.T) {
+	reset := time.Now().Add(time.Hour).UTC().Format(time.RFC3339)
+	out := []byte(`{"command":{"name":"usage","data":{"groups":[
+		{"name":"Gemini Models","buckets":[{"window":"5h","remaining_fraction":0,"reset_time":"` + reset + `"}]},
+		{"name":"Claude and GPT models","buckets":[{"window":"5h","remaining_fraction":1,"reset_time":"` + reset + `"}]},
+		{"name":"Gemini 4 Argon","buckets":[{"window":"weekly","remaining_fraction":0.5,"reset_time":"` + reset + `"}]}]}}}`)
+	limits, err := parseAgyUsage(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for model, unavailable := range map[string]bool{
+		"gemini-3.8-flash":  true,  // its group (Gemini) is exhausted
+		"claude-sonnet-5-5": false, // Claude/GPT still has quota
+		"gpt-6.1":           false,
+		"gemini-4-argon":    false, // a named group of its own, not the family's
+		"some-other-model":  true,  // no group names it: every one counts
+	} {
+		if got := HandoffAvailability("", limits, model) != ""; got != unavailable {
+			t.Errorf("%s: unavailable = %v, want %v", model, got, unavailable)
+		}
+	}
+	// A limit without group (other providers) still applies to every model.
+	account := AccountLimits{Windows: []AccountLimitWindow{{Label: "5h", used: 100}}}
+	if HandoffAvailability("", account, "claude-sonnet-5-5") == "" {
+		t.Error("an account-wide exhausted limit was ignored")
+	}
+}

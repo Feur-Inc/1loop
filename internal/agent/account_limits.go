@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
@@ -19,6 +20,9 @@ type AccountLimitWindow struct {
 	Label   string
 	used    float64
 	ResetAt time.Time
+	// Group is the model group the window limits (Antigravity's "Gemini",
+	// "Claude/GPT"…); empty, it limits every model of the account.
+	Group string
 }
 
 type AccountLimits struct {
@@ -112,7 +116,7 @@ func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key s
 				if windowValue.ResetAt > 0 {
 					reset = time.Unix(windowValue.ResetAt, 0)
 				}
-				limits.Windows = append(limits.Windows, AccountLimitWindow{label, *windowValue.Used, reset})
+				limits.Windows = append(limits.Windows, AccountLimitWindow{Label: label, used: *windowValue.Used, ResetAt: reset})
 			}
 		}
 		appendWindows("", data.RateLimit)
@@ -164,7 +168,7 @@ func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key s
 			windowValue *window
 		}{{"5h", usage.FiveHour}, {"7d", usage.Week}, {"Sonnet · 7d", usage.Sonnet}, {"Opus · 7d", usage.Opus}} {
 			if item.windowValue != nil && item.windowValue.Used != nil {
-				limits.Windows = append(limits.Windows, AccountLimitWindow{item.label, *item.windowValue.Used, item.windowValue.ResetAt})
+				limits.Windows = append(limits.Windows, AccountLimitWindow{Label: item.label, used: *item.windowValue.Used, ResetAt: item.windowValue.ResetAt})
 			}
 		}
 	case "antigravity":
@@ -192,4 +196,45 @@ func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key s
 		}
 	}
 	return limits, nil
+}
+
+// appliesTo says whether the window limits model. A window without group
+// limits every model. A group applies when the model's name contains one of
+// its words ("Claude/GPT": claude or gpt); a model matching a named group
+// ("Argon") is limited by that one, not by the family's ("Gemini"). A model
+// no group names is limited by all of them.
+func (window AccountLimitWindow) appliesTo(model string, all []AccountLimitWindow) bool {
+	if window.Group == "" {
+		return true
+	}
+	model = strings.ToLower(model)
+	matches := func(group string) (named, family bool) {
+		for _, word := range strings.FieldsFunc(strings.ToLower(group), func(r rune) bool { return r == '/' || r == ' ' }) {
+			if strings.Contains(model, word) {
+				if word == "gemini" {
+					family = true
+				} else {
+					named = true
+				}
+			}
+		}
+		return named, family
+	}
+	anyNamed, anyMatch := false, false
+	for _, other := range all {
+		if other.Group == "" {
+			continue
+		}
+		named, family := matches(other.Group)
+		anyNamed = anyNamed || named
+		anyMatch = anyMatch || named || family
+	}
+	if !anyMatch {
+		return true
+	}
+	named, family := matches(window.Group)
+	if anyNamed {
+		return named
+	}
+	return family
 }

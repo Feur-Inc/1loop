@@ -1,0 +1,12 @@
+#!/bin/sh
+# Starts the host's Claude Code (linked as claude, the name 1loop looks
+# for): on the host's PATH, else where its installer puts it
+# (~/.local/bin), a folder a desktop session's PATH often lacks. It runs on
+# the host with the host's HOME, so it uses the user's own login and
+# settings (~/.claude, ~/.claude.json); host-run does not pass on the
+# sandbox's XDG_*_HOME, which point into ~/.var/app.
+exec /app/lib/1loop/host/host-run sh -c '
+command -v claude >/dev/null && exec claude "$@"
+[ -x "$HOME/.local/bin/claude" ] && exec "$HOME/.local/bin/claude" "$@"
+echo "1loop: install Claude Code on the system (code.claude.com/docs) to use it from the Flatpak" >&2
+exit 127' sh "$@"

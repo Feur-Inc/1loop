@@ -26,12 +26,19 @@ const claudeDownloads = "https://downloads.claude.ai/claude-code-releases"
 
 // ClaudeExecutable is the claude command: on PATH, else where Claude Code's
 // installer puts it (~/.local/bin), a folder a desktop session's PATH often
-// lacks.
+// lacks. In the Flatpak it is the host's, through the host-claude launcher
+// linked as claude, which looks in both places on the host.
 func ClaudeExecutable() (string, error) {
+	if os.Getenv("ONELOOP_FLATPAK") != "" {
+		if exec.Command("/app/lib/1loop/host/host-run", "sh", "-c", `command -v claude >/dev/null || [ -x "$HOME/.local/bin/claude" ]`).Run() == nil {
+			return "/app/lib/1loop/host/claude", nil
+		}
+		return "", fmt.Errorf("Claude Code is not installed on the system: no claude command was found on the host")
+	}
 	if path, err := exec.LookPath("claude"); err == nil {
 		return path, nil
 	}
-	if home, err := os.UserHomeDir(); err == nil && os.Getenv("ONELOOP_FLATPAK") == "" {
+	if home, err := os.UserHomeDir(); err == nil {
 		path := filepath.Join(home, ".local", "bin", "claude")
 		if runtime.GOOS == "windows" {
 			path += ".exe"

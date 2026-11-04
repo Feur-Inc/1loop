@@ -303,7 +303,10 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.Canvas().Focus(ui.prompt)
 	// The launch sequence covers the first frames and only starts once the
 	// window is really on screen, otherwise it would play unseen.
-	launch := newLaunchScreen(ui.window.Canvas(), func() { ui.window.Canvas().Focus(ui.prompt) })
+	launch := newLaunchScreen(ui.window.Canvas(), func() {
+		ui.window.Canvas().Focus(ui.prompt)
+		ui.warnFlatpakPermissions()
+	})
 	launch.show()
 	// Notifications are for chats the user is not looking at (notify.go).
 	ui.inForeground = true
@@ -897,6 +900,20 @@ func (ui *desktopUI) notice(title, text string) {
 	label := widget.NewLabel(text)
 	label.Wrapping = fyne.TextWrapWord
 	ui.modal(title, label, 420, nil)
+}
+
+// warnFlatpakPermissions says, once the window is up, which of the
+// Flatpak's permissions the user revoked and what that stops.
+func (ui *desktopUI) warnFlatpakPermissions() {
+	problems := platform.FlatpakPermissionProblems()
+	if len(problems) == 0 {
+		return
+	}
+	text := strings.Join(problems, "\n\n") + "\n\nRestart 1loop after changing its permissions. See docs/INSTALL.md (Flatpak) for what each one is for."
+	label := widget.NewLabel(text)
+	label.Wrapping = fyne.TextWrapWord
+	label.Selectable = true
+	ui.modal("Missing Flatpak permissions", label, 520, nil)
 }
 
 // syncRun shows the open chat's run state: the stop button, the activity

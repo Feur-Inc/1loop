@@ -113,13 +113,69 @@ What that changes:
 - **Terminal Use** opens your login shell on the host. The environment the
   sandbox sets for itself (`PATH`, `XDG_*_HOME`, `LD_*`…) is not passed on.
   Interactive job control (`Ctrl+Z`, `fg`) is not supported through this bridge.
-- Stopping a command ends it on the host too (`flatpak-spawn --watch-bus`).
+- **Claude Code** (the Claude Code connection) is the one installed on the
+  host: `claude` on its `PATH`, else `~/.local/bin/claude`. It runs on the
+  host with your own login and settings (`~/.claude`, `~/.claude.json`), so
+  sign in once, in 1loop or with `claude auth login` in a terminal; the
+  Flatpak cannot install it for you. The temporary files 1loop gives it
+  (its MCP config and skills) are under
+  `~/.var/app/io.github.Feur_Inc.OneLoop/cache/tmp`, which the host sees.
+- Stopping a command or a Claude Code reply ends it on the host too
+  (`flatpak-spawn --watch-bus`).
 - In a Wayland session the Flatpak has no X11 socket
   (`--socket=fallback-x11`), so `ONELOOP_BACKEND=x11` does not work there.
 - The window keeps the app id `1loop`; the entry,
   `io.github.Feur_Inc.OneLoop.desktop`, matches it through
   `StartupWMClass=1loop`.
 - Updates: rebuild and reinstall.
+
+#### Flatpak permissions
+
+The Flatpak declares only these permissions; everything else goes through
+the desktop's portals, which need none: the file and folder chooser, opening
+links and files in other apps, notifications, and Computer Use's
+RemoteDesktop/ScreenCast portals (asked by its helper on the host). Nothing
+plays or records sound, so it has no audio access.
+
+| Permission | What needs it | Without it |
+| --- | --- | --- |
+| `--filesystem=host` | Reading and editing your projects wherever they are, with the same paths the host commands and Claude Code use. | Only folders granted in another way are visible; projects elsewhere cannot be opened or edited. `--filesystem=home` is enough if all your projects are in your home folder. Read-only (`host:ro`) makes every edit fail. |
+| `--talk-name=org.freedesktop.Flatpak` | Commands, Terminal Use, Git, Browser Use, Computer Use's helper and Claude Code, which run on the host through `flatpak-spawn --host`. | None of them can run: commands print a message naming this permission, and Claude Code shows as not installed. Chats with API providers and file edits still work. |
+| `--share=network` | Model providers, MCP servers, SSH machines, Browser Use, the remote app. | No model can be reached. |
+| `--socket=ssh-auth` | SSH machines that sign in with your SSH agent. | Use a key file or a password for SSH machines. |
+| `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc`, `--device=dri` | The window and its OpenGL rendering. | 1loop cannot open its window. |
+
+When `--filesystem=host` (or `home`) or `org.freedesktop.Flatpak` is
+missing, 1loop says so in a dialog when it starts, with the command that
+restores it.
+
+See what the installed Flatpak has, your overrides included:
+
+```bash
+flatpak info --show-permissions io.github.Feur_Inc.OneLoop
+flatpak override --user --show io.github.Feur_Inc.OneLoop   # only your overrides
+```
+
+Change them for your user (`sudo flatpak override` without `--user` changes
+them for everyone), then restart 1loop:
+
+```bash
+# Only your home folder instead of every file:
+flatpak override --user --nofilesystem=host --filesystem=home io.github.Feur_Inc.OneLoop
+# No commands on the host (no terminal, Git, Browser Use or Computer Use):
+flatpak override --user --no-talk-name=org.freedesktop.Flatpak io.github.Feur_Inc.OneLoop
+# Back to the permissions the Flatpak declares:
+flatpak override --user --reset io.github.Feur_Inc.OneLoop
+```
+
+[Flatseal](https://flathub.org/apps/com.github.tchx84.Flatseal) and the
+application settings of GNOME and KDE Plasma change the same overrides with
+switches.
+
+Commands run on the host are not limited by the Flatpak's file permissions:
+they see everything your user can. Removing `--filesystem=host` limits what
+1loop's own file tools see, not what an approved command can do; to stop
+that too, remove `org.freedesktop.Flatpak`.
 
 ### Nix and NixOS
 

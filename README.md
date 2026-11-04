@@ -311,6 +311,15 @@ Always start `bin/1loop`: in a Wayland session it hands over to
   generated caches, but they are not a secret scanner: review a copy before
   confirming it.
 
+## License
+
+Copyright (c) 2026 The 1loop contributors.
+
+1loop is licensed under the [Mozilla Public License 2.0](LICENSE). Bundled
+third-party code keeps its own license, for example `third_party/fyne`
+(BSD-3-Clause) and the tools the Android app ships, listed in
+`android/app/src/main/assets/local/licenses/`.
+
 ---
 
 Integration references: [OpenCode's OAuth flow](https://github.com/anomalyco/opencode/blob/dev/packages/opencode/src/plugin/openai/codex.ts),

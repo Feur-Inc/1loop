@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package server is the headless 1loop: no display, the agent and its
 // tools served to paired phones and desktops over HTTPS.
 package server

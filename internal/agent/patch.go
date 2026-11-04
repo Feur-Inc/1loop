@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // apply_patch: several files changed in one call, in Codex's patch format.

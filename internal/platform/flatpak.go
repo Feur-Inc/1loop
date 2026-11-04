@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package platform
 
 // The Flatpak's permissions as the sandbox really has them: the user can

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // Terminal Use on the desktop: the model's terminal tools act on the chat's

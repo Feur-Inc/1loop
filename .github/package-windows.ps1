@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+
 param([string]$Output = 'bin')
 $ErrorActionPreference = 'Stop'
 $version = '26.2.4'

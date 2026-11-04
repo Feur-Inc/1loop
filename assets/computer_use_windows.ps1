@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 [Console]::InputEncoding = New-Object Text.UTF8Encoding($false)

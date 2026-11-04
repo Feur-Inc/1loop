@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Command 1loop-release signs 1loop's update manifest (internal/update).
 //
 //	1loop-release keygen KEY.pem

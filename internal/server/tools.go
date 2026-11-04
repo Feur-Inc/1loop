@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package server
 
 // The headless server's panel tools: browser tabs and terminals that run on

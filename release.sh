@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
 # Publishes the version written in VERSION:
 #   1. builds the downloads in dist/VERSION/ with packaging/*/build.sh
 #      (docs/BUILD.md);

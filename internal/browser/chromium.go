@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package browser
 
 // 1loop's own Chromium, for a computer without Chrome, Chromium or Edge:

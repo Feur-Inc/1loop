@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package extensions
 
 // Installing from GitHub in two steps: Prepare downloads the repository into

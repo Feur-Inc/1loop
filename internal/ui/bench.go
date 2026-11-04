@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // Benchmarks of the interface, run by the application itself so they

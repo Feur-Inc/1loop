@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // Auto mode with a ChatGPT account, done as Codex does it (its Guardian):

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // The Files tab: a project's folders and files, as in an editor's explorer,

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // Browser Use: the tools the model calls to drive a browser tab, shared by

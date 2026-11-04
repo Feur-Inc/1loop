@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // The side panel's terminal, changes and files tabs on the desktop.

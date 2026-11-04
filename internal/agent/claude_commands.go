@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // Slash commands in a Claude Code conversation. Claude Code runs in its

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package io.oneloop.remote
 
 // Worktrees: a Git project's other checkouts show under it in the drawer,

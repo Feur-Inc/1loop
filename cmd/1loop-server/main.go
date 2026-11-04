@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // The headless 1loop server: no display, reached from the phone over HTTPS.
 package main
 

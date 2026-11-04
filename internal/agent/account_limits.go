@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // Account limits: how much of a subscription's usage windows (5 hours, a

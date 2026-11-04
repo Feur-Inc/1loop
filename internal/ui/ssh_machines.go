@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // SSH machines (internal/sshmachine): Settings → SSH machines adds them,

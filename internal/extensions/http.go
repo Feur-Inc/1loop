@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package extensions
 
 // The extensions' routes, the same on a server, on the phone's own engine

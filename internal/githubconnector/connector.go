@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package githubconnector owns the user's explicit GitHub connection.
 // Credentials stay on the execution target, outside model configuration.
 package githubconnector

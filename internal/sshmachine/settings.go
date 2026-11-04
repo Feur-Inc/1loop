@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package sshmachine reaches the computers the user adds as SSH machines:
 // the agent's files, shell commands and terminal run there, over SSH and
 // SFTP, while the agent, its models, Browser Use and Computer Use stay on

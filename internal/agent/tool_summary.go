@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // What a tool with several actions did, from its call's arguments: "Took a

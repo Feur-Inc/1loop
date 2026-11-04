@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // Settings are a page, not a window: opening them replaces the sidebar with

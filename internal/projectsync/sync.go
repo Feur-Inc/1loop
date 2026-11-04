@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package projectsync copies a project — its files and its conversations —
 // from one 1loop engine to another (the desktop, a server, a phone), and
 // back. Each copy sends only what changed since the last one: both sides'

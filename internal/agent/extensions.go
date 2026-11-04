@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // The user's extensions (internal/extensions) in the agent: skills it loads

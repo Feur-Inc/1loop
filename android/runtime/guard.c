@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 #include <signal.h>
 #include <fcntl.h>
 #include <string.h>

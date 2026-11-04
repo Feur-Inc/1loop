@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package cookieimport reads the cookies of the user's browsers on this
 // computer, for the agent's browser: Chromium's family (Chrome, Edge, Brave,
 // Vivaldi, Opera, Chromium) and Firefox's (Firefox, LibreWolf, Waterfox,

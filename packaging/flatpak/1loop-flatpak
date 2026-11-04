@@ -1,4 +1,5 @@
 #!/bin/sh
+# SPDX-License-Identifier: MPL-2.0
 # The Flatpak's command. The host's tools come first on PATH (see host-run),
 # and ONELOOP_FLATPAK tells 1loop its own command sandbox cannot follow them.
 export PATH=/app/lib/1loop/host:$PATH

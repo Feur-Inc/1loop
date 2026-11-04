@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package browser
 
 // A browser tab watched from the phone. The phone gets the page as the

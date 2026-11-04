@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package extensions
 
 // A Model Context Protocol client: 1loop connects to the user's MCP servers,

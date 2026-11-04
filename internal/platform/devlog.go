@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package platform holds what depends on the operating system (processes,
 // shells, signals) and the developer log.
 package platform

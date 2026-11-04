@@ -1,4 +1,5 @@
 #!/usr/bin/env bash
+# SPDX-License-Identifier: MPL-2.0
 # Builds the Windows desktop download (x86-64) from Linux, with MinGW-w64:
 #
 #   dist/1loop-VERSION-windows-amd64.zip

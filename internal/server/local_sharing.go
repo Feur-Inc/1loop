@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package server
 
 // Sharing the phone's engine on the network: the phone's own app turns it

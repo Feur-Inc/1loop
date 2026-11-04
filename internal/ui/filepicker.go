@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // Folder and file choosers use the desktop's own dialog: the XDG desktop

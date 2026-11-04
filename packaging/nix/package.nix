@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: MPL-2.0
+
 # 1loop for Nix and NixOS. Built from the repository by the flake
 # (flake.nix): nix build, nix run, or the package in a NixOS configuration.
 {

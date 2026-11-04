@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // appID is the window's application id (Wayland) and class (X11). The

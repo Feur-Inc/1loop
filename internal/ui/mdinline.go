@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // Inline Markdown: the styles inside a paragraph, a heading, a list item or

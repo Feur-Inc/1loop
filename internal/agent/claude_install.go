@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // Claude Code on this computer: where its command is, and Anthropic's

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package server
 
 // The headless server's state: chats, settings and paired devices, kept as

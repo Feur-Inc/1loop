@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package server
 
 // The headless server's side panel API: a chat's tabs, terminal screens,

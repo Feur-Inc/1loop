@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // Hooks: the user's own commands around the agent's work, in Claude Code's

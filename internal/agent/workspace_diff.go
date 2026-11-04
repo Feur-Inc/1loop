@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // The workspace's uncommitted changes, as one patch (new files included).

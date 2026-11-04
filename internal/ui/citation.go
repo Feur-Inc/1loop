@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // A citation in the model's answer: <cite file="path" lines="12-30"/>, as

@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 // Package remoteapi is what the desktop's phone remote
 // (internal/ui/phone_server.go) and the headless server (internal/server)
 // share: the JSON written on the wire, and how a phone's input reaches a

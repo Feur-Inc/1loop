@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // request_user_input: the model asks the user instead of guessing. Each

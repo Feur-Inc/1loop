@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // The chat's task list: its state and the update_todo tool, shared by the

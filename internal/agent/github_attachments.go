@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package agent
 
 // GitHub's MCP server can neither upload nor open the images and videos of

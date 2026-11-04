@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package ui
 
 // What the user types is never lost: each conversation keeps its own draft,

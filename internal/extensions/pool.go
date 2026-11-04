@@ -1,3 +1,5 @@
+// SPDX-License-Identifier: MPL-2.0
+
 package extensions
 
 // The connections to the MCP servers, kept open between the agent's turns:

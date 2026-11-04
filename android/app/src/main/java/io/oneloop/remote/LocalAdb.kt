@@ -208,13 +208,49 @@ class LocalAdb(private val context: Context, private val scope: CoroutineScope) 
         }
     }
 
+    private suspend fun currentUser() = command("am get-current-user").stdout.toString(Charsets.UTF_8).trim().toInt()
+
+    /** The phone's managed (work) profiles: Android user ID to name. */
+    private suspend fun managedProfiles(): Map<Int, String> =
+        Regex("""UserInfo\{(\d+):([^:}]*):([0-9a-fA-F]+)\}""").findAll(command("pm list users").stdout.toString(Charsets.UTF_8))
+            .filter { it.groupValues[3].toInt(16) and 0x20 != 0 }.associate { it.groupValues[1].toInt() to it.groupValues[2] }
+
+    /** The work profile 1loop created for the agent. An employer's profile is never touched. */
+    private suspend fun agentProfile(): Int? = managedProfiles().entries.firstOrNull { it.value == AGENT_PROFILE }?.key
+
     /** Managed (work) profiles first, then the user's own account. */
     private suspend fun launchUsers(hidden: Boolean): List<Int> {
-        val current = command("am get-current-user").stdout.toString(Charsets.UTF_8).trim().toInt()
+        val current = currentUser()
         if (!hidden) return listOf(current)
-        val profiles = Regex("""UserInfo\{(\d+):[^:}]*:([0-9a-fA-F]+)\}""").findAll(command("pm list users").stdout.toString(Charsets.UTF_8))
-            .filter { it.groupValues[2].toInt(16) and 0x20 != 0 }.map { it.groupValues[1].toInt() }.toList()
-        return profiles + current
+        return managedProfiles().keys.toList() + current
+    }
+
+    suspend fun workProfile(): Int? = commands.withLock { requireAccess(); agentProfile() }
+
+    /** Creates the agent's work profile (Android lets a phone limited to one user have one) and starts it. */
+    suspend fun createWorkProfile(): Int = commands.withLock {
+        requireAccess()
+        agentProfile()?.let { return@withLock it }
+        val output = command("pm create-user --profileOf ${currentUser()} --managed $AGENT_PROFILE").let { it.stdout.toString(Charsets.UTF_8) + it.stderr.toString(Charsets.UTF_8) }
+        val id = Regex("""created user id (\d+)""").find(output)?.groupValues?.get(1)?.toInt() ?: error(output.trim().ifEmpty { "Android did not create the work profile." })
+        command("am start-user -w $id")
+        id
+    }
+
+    /** Removes the agent's work profile, with its apps and their data. */
+    suspend fun removeWorkProfile() = commands.withLock {
+        requireAccess()
+        val id = agentProfile() ?: return@withLock
+        command("pm remove-user $id")
+        Unit
+    }
+
+    private suspend fun profileInstall(packageName: String): String {
+        require(Regex("""[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+""").matches(packageName)) { "Provide the app's package name in text, such as org.mozilla.firefox." }
+        val id = agentProfile() ?: error("The agent has no work profile yet. Ask the user to create it in 1loop: Settings → Phone access → Work profile for the agent.")
+        // The app must already be installed for the user: Android copies it, without its data.
+        command("pm install-existing --user $id $packageName")
+        return "Added $packageName to the agent's work profile (Android user $id). Open it with launch in the hidden session."
     }
 
     private suspend fun launch(packageName: String, hidden: Boolean): String {
@@ -288,6 +324,7 @@ class LocalAdb(private val context: Context, private val scope: CoroutineScope) 
                 command("${input()} keyevent $key")
             }
             "launch" -> return@withLock JSONObject().put("text", launch(text.trim(), hidden))
+            "profile_install" -> return@withLock JSONObject().put("text", profileInstall(text.trim()))
             "close" -> {
                 require(hidden) { "Only the hidden session can be closed." }
                 runInterruptible(Dispatchers.IO) { requireAccess().closeHiddenDisplay() }
@@ -305,6 +342,11 @@ class LocalAdb(private val context: Context, private val scope: CoroutineScope) 
         val (width, height) = sizes[hidden] ?: error("Read a fresh screenshot of this session first.")
         require(x in 0 until width && y in 0 until height) { "Coordinates are outside the last screenshot." }
         return x to y
+    }
+
+    companion object {
+        /** The name of the work profile 1loop creates for the agent. */
+        const val AGENT_PROFILE = "1loop"
     }
 }
 

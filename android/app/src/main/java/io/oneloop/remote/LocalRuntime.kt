@@ -46,4 +46,8 @@ interface LocalRuntime {
     fun stop()
     suspend fun setAdbAllowed(allowed: Boolean)
     fun openShizuku()
+    /** The agent's work profile (Phone Use's hidden session): its Android user ID, or null. */
+    suspend fun workProfile(): Int?
+    suspend fun createWorkProfile(): Int
+    suspend fun removeWorkProfile()
 }

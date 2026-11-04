@@ -36,6 +36,7 @@ func TestDescribePhoneSession(t *testing.T) {
 		{`{"action":"state"}`, "Read", "the phone's screen"},
 		{`{"session":"hidden","action":"launch","text":"org.mozilla.firefox"}`, "Opened in the hidden session:", "org.mozilla.firefox"},
 		{`{"session":"hidden","action":"screenshot"}`, "Looked at", "the hidden phone session"},
+		{`{"session":"hidden","action":"profile_install","text":"org.mozilla.firefox"}`, "Added to the work profile:", "org.mozilla.firefox"},
 	} {
 		verb, target, _ := DescribeTool(ChatItem{Tool: "phone_use", Args: test.args}, false)
 		if verb != test.verb || target != test.target {

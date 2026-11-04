@@ -279,6 +279,9 @@ func phoneAction(raw string) action {
 		Text            string
 	}
 	_ = json.Unmarshal([]byte(raw), &args)
+	if args.Action == "profile_install" { // the profile, whichever the session
+		return action{"Added to the work profile:", "Adding to the work profile:", args.Text, false}
+	}
 	if args.Session == "hidden" {
 		switch args.Action {
 		case "state", "screenshot":

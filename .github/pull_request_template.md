@@ -84,6 +84,16 @@ Rules for every pull request (PR), including one created with
    example only: `Assisted-by: GPT-6.1 medium`; do not copy a made-up or
    unused model. "Codex" or "Claude Code" alone name tools, not exact
    model versions. If no AI was used, write `Assisted-by: None`.
+
+8. License header: every new source file of 1loop (Go, Kotlin, Gradle
+   `.kts`, C, Python, PowerShell, shell, Nix, extensionless scripts)
+   starts with a `SPDX-License-Identifier: MPL-2.0` line, as added by
+   #160: a `//` comment for Go, Kotlin and C, `#` for the others. A
+   shebang stays on line 1 and the header goes right below it. In Go, a
+   blank line follows the header so it does not become the package doc
+   comment and `//go:build` lines still work. Files under `third_party/`
+   and `android/third_party/`, `android/gradlew`, and license or asset
+   text files keep no header.
 -->
 
 <!-- Replace the next line with "Closes #N", "Part of #N" or "No related issue.". -->

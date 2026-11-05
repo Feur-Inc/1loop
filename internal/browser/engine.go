@@ -816,22 +816,60 @@ func (browser *Page) Navigate(ctx context.Context, action, raw string) error {
 
 func (browser *Page) Evaluate(ctx context.Context, expression string) (json.RawMessage, error) {
 	var value json.RawMessage
-	err := browser.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		result, exception, err := runtime.Evaluate(expression).WithAwaitPromise(true).WithReturnByValue(true).WithUserGesture(true).WithReplMode(true).Do(ctx)
-		if err != nil {
-			return err
-		}
-		if exception != nil {
-			return fmt.Errorf("JavaScript: %s", exception.Error())
-		}
-		if result.Value == nil {
-			value = json.RawMessage(`null`)
-		} else {
-			value = append(json.RawMessage{}, result.Value...)
-		}
-		return nil
+	err := browser.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) (err error) {
+		value, err = evaluate(ctx, expression)
+		return err
 	}))
 	return value, err
+}
+
+// settle awaits what an expression returned and gives it as JSON: REPL mode
+// awaits a top-level await, not a promise the expression returns. Numbers
+// and BigInts JSON cannot hold are given as text ("NaN", "42n").
+const settle = `async function() {
+	const value = await this;
+	if (value === undefined) return null;
+	try {
+		return JSON.parse(JSON.stringify(value, (key, item) =>
+			typeof item === "bigint" ? item + "n" : typeof item === "number" && !isFinite(item) ? String(item) : item));
+	} catch (error) {
+		return value;
+	}
+}`
+
+// evaluate runs expression in the page in REPL mode (top-level await, let
+// redeclared from one call to the next), awaits a returned promise and
+// returns the result as JSON. A thrown error or a rejected promise is an
+// error.
+func evaluate(ctx context.Context, expression string) (json.RawMessage, error) {
+	result, exception, err := runtime.Evaluate(expression).WithAwaitPromise(true).WithUserGesture(true).WithReplMode(true).Do(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if exception != nil {
+		return nil, fmt.Errorf("JavaScript: %s", exception.Error())
+	}
+	if result.ObjectID == "" { // a primitive
+		switch {
+		case result.UnserializableValue != "":
+			return json.Marshal(string(result.UnserializableValue))
+		case result.Value == nil:
+			return json.RawMessage(`null`), nil
+		}
+		return append(json.RawMessage{}, result.Value...), nil
+	}
+	defer runtime.ReleaseObject(result.ObjectID).Do(ctx)
+	settled, exception, err := runtime.CallFunctionOn(settle).WithObjectID(result.ObjectID).WithAwaitPromise(true).WithReturnByValue(true).Do(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if exception != nil {
+		return nil, fmt.Errorf("JavaScript: %s", exception.Error())
+	}
+	if settled.Value == nil {
+		return json.RawMessage(`null`), nil
+	}
+	return append(json.RawMessage{}, settled.Value...), nil
 }
 
 func browserMetrics(width, height int, ratio float64, mobile bool) *emulation.SetDeviceMetricsOverrideParams {

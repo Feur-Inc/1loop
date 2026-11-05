@@ -237,5 +237,8 @@ func Download(ctx context.Context, file File, destination string) error {
 }
 
 func packagedProblem() string {
+	if Packaged == "Docker" {
+		return "This 1loop runs from its Docker image: pull the new image and recreate the container."
+	}
 	return "This 1loop was installed from its " + Packaged + " package: update it the way you installed it."
 }

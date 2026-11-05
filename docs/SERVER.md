@@ -46,6 +46,38 @@ use `0700`. Keep that directory outside Git and back it up privately. The
 server's workspace is fixed by `-workspace`: clients cannot select another
 server-side project directory through the remote API.
 
+## Docker
+
+The image `ghcr.io/feur-inc/1loop-server` holds the server with Bash, Git and
+Chromium, and runs it as a non-root user (uid 1000). Its data directory is
+`/data` (keys, certificate, pairings, configuration and chats) and its
+workspace is `/projects`: keep both on volumes. Browser Use runs Chromium
+without its own sandbox (`ONELOOP_CHROMIUM_NO_SANDBOX=1`): Docker's default
+profile allows none of them, so the container is what isolates it. Pairing happens in the
+server's console, so start it with a terminal (`-it`):
+
+```sh
+docker run -d -it --name 1loop-server -p 47101:47101 \
+  -v 1loop-data:/data -v ~/projects:/projects \
+  ghcr.io/feur-inc/1loop-server:latest
+docker logs 1loop-server          # the certificate's fingerprint
+docker attach 1loop-server        # type pair …, devices or revoke …
+```
+
+Detach from the console with **Ctrl+P Ctrl+Q**: Ctrl+C would stop the
+server. Arguments after the image name are added to the server's own, for
+example the first connection: `-provider compatible -base-url … -model …
+-api-key-env MODEL_API_KEY` with `-e MODEL_API_KEY=…`.
+[`packaging/docker/compose.yml`](../packaging/docker/compose.yml) does the same
+with Docker Compose. A bind-mounted projects folder must be writable by uid
+1000.
+
+Tags: `latest` and the version (`0.3.3`) for a stable release, `alpha` and
+`alpha-N` for the newest builds of `dev`. The server does not update itself
+in a container: pull the new image and recreate the container, and the
+volumes keep everything. To build it yourself: `docker build -t 1loop-server .`
+from the repository root.
+
 ## HTTPS and pairing
 
 On first start the server generates an ECDSA TLS certificate, valid for one

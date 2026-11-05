@@ -1,0 +1,28 @@
+# The headless 1loop server with Docker Compose (docs/SERVER.md#docker):
+#
+#   docker compose -f packaging/docker/compose.yml up -d
+#   docker compose -f packaging/docker/compose.yml logs server   # the certificate's fingerprint
+#   docker attach 1loop-server                                    # pair, devices, revoke; detach with Ctrl+P Ctrl+Q
+services:
+  server:
+    image: ghcr.io/feur-inc/1loop-server:latest
+    container_name: 1loop-server
+    restart: unless-stopped
+    # The console reads commands (pair, devices, revoke): keep it open.
+    stdin_open: true
+    tty: true
+    ports:
+      - "47101:47101"
+    environment:
+      # Read by -api-key-env in command, if the first connection needs a key.
+      MODEL_API_KEY: ${MODEL_API_KEY:-}
+    # Arguments after the image's own (-data-dir /data -workspace /projects
+    # -listen :47101). The first connection, as in docs/SERVER.md:
+    # command: ["-provider", "compatible", "-base-url", "https://api.example.com/v1",
+    #           "-model", "your-model-id", "-api-key-env", "MODEL_API_KEY"]
+    volumes:
+      - data:/data            # keys, certificate, pairings, configuration, chats
+      - ./projects:/projects  # the agent's workspace
+
+volumes:
+  data:

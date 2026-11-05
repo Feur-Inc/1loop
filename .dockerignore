@@ -1,0 +1,10 @@
+# The image only needs the Go sources (see Dockerfile): keep secrets, builds
+# and the Android project out of the build context.
+*
+!go.mod
+!go.sum
+!VERSION
+!cmd/
+!internal/
+!assets/
+!third_party/

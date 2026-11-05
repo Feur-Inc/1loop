@@ -166,6 +166,12 @@ func (engine *Engine) start() error {
 			defer stopProfileRoot()
 			return chromedp.Run(profileRoot, chromedp.Navigate("chrome://version"), chromedp.Evaluate(`(async()=>({userAgent:navigator.userAgent,metadata:navigator.userAgentData?await navigator.userAgentData.getHighEntropyValues(['architecture','bitness','platformVersion','fullVersionList','model','wow64']):null}))()`, &native, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }))
 		}
+		if os.Getenv("ONELOOP_CHROMIUM_NO_SANDBOX") == "1" {
+			// A container (the server's Docker image) is the browser's
+			// isolation: its default profile grants neither the user
+			// namespaces nor the privileges Chromium's sandboxes need.
+			opts = append(opts, chromedp.NoSandbox)
+		}
 		engine.err = probe()
 		if engine.err != nil && binary.own && strings.Contains(engine.err.Error(), "No usable sandbox") {
 			// Its sandbox needs user namespaces, which some systems (Ubuntu

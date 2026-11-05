@@ -38,10 +38,26 @@ func (class commandClass) String() string {
 // classifyCommand is the most severe class among every program the command
 // may start, including in pipes, lists, substitutions and `bash -c` scripts.
 func classifyCommand(command string) commandClass {
+	// A terminal reads control characters as keys: \r is Enter and runs
+	// what follows, which the parser takes for the same word or comment.
+	// Such a command is never safe, and is judged as if they were new lines.
+	if strings.IndexFunc(command, controlKey) >= 0 {
+		return worst(commandOther, classifyCommand(strings.Map(func(r rune) rune {
+			if controlKey(r) {
+				return '\n'
+			}
+			return r
+		}, command)))
+	}
 	if runtime.GOOS == "windows" {
 		return classifyPowerShell(command)
 	}
 	return classifyScript(command, 0)
+}
+
+// controlKey is a control character other than tab and newline.
+func controlKey(r rune) bool {
+	return r < 0x20 && r != '\t' && r != '\n' || r == 0x7f
 }
 
 func classifyScript(script string, depth int) commandClass {

@@ -61,6 +61,9 @@ func toolGlyph(tool string) fyne.Resource {
 	if tool == "computer_use" {
 		return theme.ComputerIcon()
 	}
+	if agent.PhoneTool(tool) {
+		return iconPhone
+	}
 	switch tool {
 	case "shell", "adb_shell":
 		return iconTerminal

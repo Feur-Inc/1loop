@@ -415,13 +415,27 @@ func otherAction(tool, raw string) (action, bool) {
 // CallLabel says what the model is writing a call for, before its
 // arguments are complete: detail is the path or command seen so far.
 // CallMark is the work ring's centre icon while a tool is called: the >_ of
-// the terminal for anything that runs a command, the braces otherwise.
+// the terminal for anything that runs a command, the phone for Phone Use,
+// the braces otherwise.
 func CallMark(tool string) string {
-	switch tool {
-	case "shell", "adb_shell", "terminal_command":
+	switch {
+	case tool == "shell" || tool == "adb_shell" || tool == "terminal_command":
 		return "bash"
+	case PhoneTool(tool):
+		return "phone"
 	}
 	return "call"
+}
+
+// PhoneTool says whether a tool acts on the phone itself, its screen or its
+// apps, called by 1loop or through Claude Code: those show the phone icon.
+// adb_shell runs a command, and shows the terminal's.
+func PhoneTool(tool string) bool {
+	switch strings.TrimPrefix(tool, "mcp__1loop_todo__") {
+	case "phone_use", "install_apk", "uninstall_app", "extract_apk":
+		return true
+	}
+	return false
 }
 
 func CallLabel(tool, detail string) string {

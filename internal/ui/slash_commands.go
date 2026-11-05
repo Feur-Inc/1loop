@@ -297,10 +297,15 @@ func (ui *desktopUI) updateCommandMenu() {
 		return
 	}
 	typed, ok := ui.commandTyped()
-	if !ok || ui.prompt.Text == ui.commandDismissed {
+	if !ok {
+		ui.updateMentionMenu() // or an "@" mention (mentions.go)
+		return
+	}
+	if ui.prompt.Text == ui.commandDismissed {
 		ui.hideCommandMenu()
 		return
 	}
+	ui.mentioning = false
 	ui.commandDismissed = ""
 	info, fresh := ui.backend.CachedClaudeInfo(ui.claudeConnection(), ui.commandDir())
 	if !fresh && ui.commandsErr == nil {
@@ -327,7 +332,11 @@ func (ui *desktopUI) renderCommandMenu() {
 	for i := first; i < len(ui.commandMatches) && i < first+commandMenuRows; i++ {
 		ui.commandList.Add(ui.commandRow(i))
 	}
-	if ui.commandsLoading {
+	if ui.mentioning {
+		if ui.mentionsLoading {
+			ui.commandList.Add(padded(4, 4, 10, 10, textLine("Loading…", 12.5, colFaint)))
+		}
+	} else if ui.commandsLoading {
 		ui.commandList.Add(padded(4, 4, 10, 10, textLine("Loading Claude Code's commands…", 12.5, colFaint)))
 	} else if ui.commandsErr != nil {
 		ui.commandList.Add(padded(4, 4, 10, 10, textLine("Claude Code did not list its commands: "+agent.FirstLine(ui.commandsErr.Error()), 12.5, colFaint)))
@@ -347,7 +356,11 @@ func (ui *desktopUI) commandRow(index int) fyne.CanvasObject {
 	}
 	highlight := canvas.NewRectangle(fill)
 	highlight.CornerRadius = 8
-	name := newRow("/"+option.name, nil, styleChip, func() {
+	sign := "/"
+	if ui.mentioning {
+		sign = "@"
+	}
+	name := newRow(sign+option.name, nil, styleChip, func() {
 		ui.commandPick = index
 		ui.completeCommand()
 	})
@@ -361,7 +374,7 @@ func (ui *desktopUI) commandRow(index int) fyne.CanvasObject {
 }
 
 func (ui *desktopUI) hideCommandMenu() {
-	ui.commandMatches = nil
+	ui.commandMatches, ui.mentioning = nil, false
 	if ui.commandTray != nil && ui.commandTray.Visible() {
 		ui.commandTray.Hide()
 		ui.relayoutColumn()
@@ -371,6 +384,10 @@ func (ui *desktopUI) hideCommandMenu() {
 // completeCommand puts the chosen command in the composer, ready for its
 // arguments.
 func (ui *desktopUI) completeCommand() {
+	if ui.mentioning {
+		ui.completeMention()
+		return
+	}
 	if ui.commandPick >= len(ui.commandMatches) {
 		return
 	}
@@ -398,7 +415,7 @@ func (ui *desktopUI) commandMenuKey(key *fyne.KeyEvent) bool {
 		ui.completeCommand()
 		return true
 	case fyne.KeyReturn, fyne.KeyEnter:
-		if ui.commandMatches[ui.commandPick].name == ui.commandFilter {
+		if !ui.mentioning && ui.commandMatches[ui.commandPick].name == ui.commandFilter {
 			ui.hideCommandMenu()
 			return false // the whole name: Enter sends it
 		}

@@ -542,6 +542,7 @@ func (backend *App) webTurn(ctx context.Context, cfg Config, history []Message, 
 	// the new request. Its first message carries 1loop's instructions, and
 	// the earlier conversation when the chat started on another model.
 	prompt := history[len(history)-1].Content
+	mentions := mentionNote(cfg, prompt)
 	if !resume {
 		if len(history) > 1 {
 			prompt = "[Earlier conversation, transferred by 1loop]\n" + webConversationText(history[:len(history)-1]) + "\n[Current request]\n" + prompt
@@ -564,7 +565,7 @@ func (backend *App) webTurn(ctx context.Context, cfg Config, history []Message, 
 		}
 		prompt = "[1loop response format]\n" + webResponseInstructions + "\n\n" + prompt
 	}
-	if note := modelNote(cfg); note != "" {
+	if note := modelNote(cfg) + mentions; note != "" {
 		prompt = "[1loop model]" + note + "\n\n" + prompt
 	}
 	if turn.session == "" {

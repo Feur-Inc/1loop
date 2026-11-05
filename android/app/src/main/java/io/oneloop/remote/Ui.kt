@@ -100,6 +100,7 @@ import androidx.compose.ui.platform.ClipEntry
 import androidx.compose.ui.platform.LocalClipboard
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.input.key.Key
@@ -934,6 +935,20 @@ private fun Composer(app: RemoteApp, running: Boolean) {
         steps++
     }
     var models by remember { mutableStateOf(false) }
+    // An "@" mention being typed: the chat's mentions, asked once the menu opens.
+    val typing = mentionTyped(value)
+    var mentions by remember(app.current, app.server) { mutableStateOf<List<Mention>?>(null) }
+    var mentionsFailed by remember(app.current, app.server) { mutableStateOf(false) } // asked again at the next "@"
+    // A mention picked with the keyboard closed: the field takes the focus
+    // back with the cursor after it (a tap would put it before the space).
+    val promptFocus = remember { FocusRequester() }
+    val keyboard = LocalSoftwareKeyboardController.current
+    LaunchedEffect(typing != null, app.current, app.server) {
+        if (typing != null && mentions == null) {
+            mentionsFailed = false
+            runCatching { app.mentions(app.current) }.onSuccess { mentions = it }.onFailure { mentionsFailed = true }
+        }
+    }
     val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
         if (uris.isNotEmpty()) app.attach(uris, project)
     }
@@ -955,6 +970,16 @@ private fun Composer(app: RemoteApp, running: Boolean) {
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         val meta = app.meta
+        if (typing != null && !mentionsFailed) {
+            val matches = mentions?.let { matchMentions(it, typing.second) }
+            if (matches == null || matches.isNotEmpty()) {
+                MentionTray(matches) {
+                    edit(completeMention(value, typing.first, it.name))
+                    promptFocus.requestFocus()
+                    keyboard?.show()
+                }
+            }
+        }
         if (meta != null && (meta.queue.isNotEmpty() || meta.steer.isNotEmpty())) QueueTray(meta)
         // Questions closed without an answer: the run still waits for them.
         app.current?.let { app.questions[it] }?.takeIf { it.id in app.questionsAside }?.let { request ->
@@ -979,7 +1004,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
             if (app.attachments.isNotEmpty()) AttachmentTray(app)
             BasicTextField(
                 value, ::edit,
-                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp, end = 6.dp).onPreviewKeyEvent { event ->
+                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp, end = 6.dp).focusRequester(promptFocus).onPreviewKeyEvent { event ->
                     // A hardware keyboard: Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, as on the desktop.
                     if (event.type != KeyEventType.KeyDown || !event.isCtrlPressed) false
                     else when {

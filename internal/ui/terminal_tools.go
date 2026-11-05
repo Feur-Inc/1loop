@@ -163,7 +163,7 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 					}
 					tabs[at].dispose()
 					tabs = append(tabs[:at], tabs[at+1:]...)
-					active = min(active, len(tabs)-1)
+					active = activeAfterClose(active, at, len(tabs))
 					update()
 					return
 				case "select":

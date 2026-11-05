@@ -322,11 +322,21 @@ func (panel *toolPanel) close(i int) {
 		panel.render()
 		panel.fold()
 		return
-	case panel.active >= len(panel.tabs) || panel.active > i:
-		panel.active--
+	default:
+		panel.active = activeAfterClose(panel.active, i, len(panel.tabs))
 	}
 	panel.render()
 	panel.ui.save()
+}
+
+// activeAfterClose is the active tab once tab closed is gone, remaining
+// tabs left: the same tab when another one closed, the next one (or the
+// new last) when it was the one closed, -1 when none remain.
+func activeAfterClose(active, closed, remaining int) int {
+	if active > closed {
+		active--
+	}
+	return min(active, remaining-1)
 }
 
 func (tab panelTab) dispose() {

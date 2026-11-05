@@ -70,9 +70,11 @@ type signed struct {
 	Signature string `json:"signature"`
 }
 
-// Code orders versions: "1.2.3" is 10203. Anything else is 0.
+// Code orders versions: "1.2.3" is 10203, and an alpha built after it,
+// "1.2.3-alpha.199.a2e2d63", has the same code. Anything else is 0.
 func Code(version string) int {
-	parts := strings.Split(strings.TrimPrefix(strings.TrimSpace(version), "v"), ".")
+	version, _, _ = strings.Cut(strings.TrimPrefix(strings.TrimSpace(version), "v"), "-")
+	parts := strings.Split(version, ".")
 	if len(parts) != 3 {
 		return 0
 	}

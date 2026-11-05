@@ -45,7 +45,8 @@ func sign(t *testing.T, key *ecdsa.PrivateKey, manifest Manifest) []byte {
 }
 
 func TestCode(t *testing.T) {
-	for version, code := range map[string]int{"0.2.0": 200, "v1.2.3": 10203, "10.0.1": 100001, "dev": 0, "1.2": 0, "1.100.0": 0} {
+	for version, code := range map[string]int{"0.2.0": 200, "v1.2.3": 10203, "10.0.1": 100001, "dev": 0, "1.2": 0, "1.100.0": 0,
+		"0.3.2-alpha.199.a2e2d63": 302, "0.3.2-": 302, "-alpha.1": 0} {
 		if Code(version) != code {
 			t.Errorf("Code(%q) = %d, want %d", version, Code(version), code)
 		}

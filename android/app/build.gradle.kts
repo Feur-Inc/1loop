@@ -13,9 +13,10 @@ abstract class LocalRuntimeBuild : Exec() {
 }
 
 // One version for every part of 1loop (the repository's VERSION file):
-// versionCode follows internal/update.Code, "1.2.3" being 10203.
+// versionCode follows internal/update.Code, "1.2.3" being 10203, with an
+// alpha's "-alpha.N.commit" left out of it.
 val oneloopVersion = rootProject.file("../VERSION").readText().trim()
-val oneloopVersionCode = oneloopVersion.split(".").fold(0) { code, part -> code * 100 + part.toInt() }
+val oneloopVersionCode = oneloopVersion.substringBefore("-").split(".").fold(0) { code, part -> code * 100 + part.toInt() }
 
 // The release key stays private: android/signing/release.properties on the
 // machine that publishes. Without it, the release APK is unsigned.

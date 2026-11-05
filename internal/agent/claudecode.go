@@ -382,6 +382,20 @@ func claudePrompt(messageValue Message, preface string) string {
 	return string(line)
 }
 
+// claudeCodeGuidance settles where Claude Code's own instructions and 1loop's
+// meet: two memories, two shells and two attribution lines (#211).
+func claudeCodeGuidance(cfg Config) string {
+	var guidance []string
+	if memoryInstructions(cfg) != "" {
+		guidance = append(guidance, "Memory: in 1loop, save what you learn about the user with mcp__1loop_todo__memory, which every model 1loop runs reads, and project facts in AGENTS.md. Claude Code's own memory files (CLAUDE.md, auto-memory) belong to the user's Claude Code setup: read them, but do not save there what goes to 1loop's memory, nor the same fact in both.")
+	}
+	if cfg.ProjectTools == nil && cfg.toolAvailable("terminal_command") {
+		guidance = append(guidance, "Shells: Claude Code's Bash tool and 1loop's terminals run in the same environment. Use Bash for commands whose output you need; use a terminal when the user should see or reach the program: interactive programs, TUIs, servers and long watches. Bash follows Claude Code's permission rules, terminals follow 1loop's approval mode: neither is a way around the other's refusal.")
+	}
+	guidance = append(guidance, "Attribution: keep the lines Claude Code asks for (Co-Authored-By, Generated with Claude Code). When the project or the user also asks for an Assisted-by line, add it as well: one does not replace the other.")
+	return "\n\n" + strings.Join(guidance, "\n")
+}
+
 // claudeApproval words a permission request like 1loop's own tools do.
 func claudeApproval(root, name string, input json.RawMessage) (title, preview string) {
 	tool, args := claudeTool(root, name, input)
@@ -488,10 +502,11 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	for _, group := range builtinToolGroups(cfg) {
 		appendPrompt += group.instructions(cfg)
 	}
-	if strings.TrimSpace(cfg.UserInstructions) != "" {
-		appendPrompt = userPreferenceInstructions(cfg) + appendPrompt
-	}
+	appendPrompt += claudeCodeGuidance(cfg)
 	if appendPrompt != "" {
+		// 1loop's rules under their own heading, the user's text after them
+		// under its own: one must not read as the other (#211).
+		appendPrompt = "\n\n# 1loop\nYou run inside 1loop, an app that drives Claude Code. Its rules for this session:" + appendPrompt + userPreferenceInstructions(cfg)
 		args = append(args, "--append-system-prompt", appendPrompt)
 	}
 	processCtx, stopProcess := context.WithCancel(ctx)

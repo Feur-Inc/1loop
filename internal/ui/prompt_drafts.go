@@ -158,11 +158,18 @@ func (entry *chatEntry) switchDraft(key string) {
 		return
 	}
 	entry.draftKey, entry.draftBound = key, true
-	entry.replace(entry.drafts.get(key))
+	if draft := entry.drafts.get(key); entry.replace(draft) != draft {
+		entry.drafts.set(key, "") // attached instead: restored once
+	}
 }
 
-// replace sets the text without recording an undo step or a draft change.
-func (entry *chatEntry) replace(text string) {
+// replace sets the text without recording an undo step or a draft change,
+// and returns it: a text too long for the prompt is attached instead.
+func (entry *chatEntry) replace(text string) string {
+	if entry.oversize != nil && textTooBig(text) {
+		entry.oversize(text)
+		text = ""
+	}
 	entry.restoring = true
 	entry.SetText(text)
 	entry.CursorRow = len(entry.textRows()) - 1
@@ -170,18 +177,11 @@ func (entry *chatEntry) replace(text string) {
 	entry.Refresh()
 	entry.restoring = false
 	entry.previous = text
+	return text
 }
 
 func (entry *chatEntry) textRows() []string {
-	rows := []string{""}
-	for _, r := range entry.Text {
-		if r == '\n' {
-			rows = append(rows, "")
-		} else {
-			rows[len(rows)-1] += string(r)
-		}
-	}
-	return rows
+	return strings.Split(entry.Text, "\n")
 }
 
 func (entry *chatEntry) history() *promptHistory {
@@ -196,6 +196,19 @@ func (entry *chatEntry) history() *promptHistory {
 // changed runs on every change of the text: typed ones become undo steps
 // and are saved; replaced ones only move the reference.
 func (entry *chatEntry) changed(text string) {
+	if !entry.restoring && entry.oversize != nil && textTooBig(text) {
+		// Typed or pasted past the limit: the text becomes an attachment
+		// and the prompt starts again, before it grows any slower.
+		if entry.drafts != nil {
+			entry.history().record(entry.previous)
+		}
+		entry.replace("")
+		entry.oversize(text)
+		if entry.drafts != nil {
+			entry.drafts.set(entry.draftKey, "")
+		}
+		return
+	}
 	if entry.drafts == nil {
 		return
 	}
@@ -233,8 +246,7 @@ func (entry *chatEntry) restoreDraft(text string) {
 	}
 	entry.history().record(entry.Text)
 	entry.history().last = time.Time{}
-	entry.replace(text)
-	entry.drafts.set(entry.draftKey, text)
+	entry.drafts.set(entry.draftKey, entry.replace(text))
 }
 
 func (entry *chatEntry) undo() {

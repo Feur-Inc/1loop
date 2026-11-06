@@ -633,6 +633,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	})
 	ui.prompt.shortcut = ui.shortcut
 	ui.prompt.paste = ui.pasteFromClipboard
+	ui.prompt.oversize = ui.attachText
 	ui.prompt.bindDrafts(loadPromptDrafts(filepath.Join(filepath.Dir(ui.statePath), "drafts.json")))
 	ui.prompt.resized = func() {
 		if ui.split != nil {

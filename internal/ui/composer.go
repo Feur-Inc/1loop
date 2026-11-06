@@ -46,7 +46,8 @@ type chatEntry struct {
 	keys     func(*fyne.KeyEvent) bool // the command menu's keys, true when it took one
 	onFocus  func(bool)
 	shortcut func(fyne.Shortcut) bool
-	paste    func() bool // image-aware paste (Ctrl+V), true when it handled the key
+	paste    func() bool  // image-aware paste (Ctrl+V), true when it handled the key
+	oversize func(string) // takes a text too long for the prompt (textTooBig) as an attachment
 	rows     int
 	measure  *widget.RichText
 	resized  func()
@@ -61,6 +62,26 @@ type chatEntry struct {
 }
 
 const promptMaxRows = 10
+
+// A text past these sizes goes as an attached file rather than into the
+// prompt: Fyne wraps each line again on every refresh, in time that grows
+// with the square of the line's length, so a 440 KB draft kept 1loop from
+// opening (#238).
+const promptMaxBytes, promptMaxLine = 64 << 10, 4096
+
+func textTooBig(text string) bool {
+	if len(text) > promptMaxBytes {
+		return true
+	}
+	for len(text) > promptMaxLine {
+		line, rest, _ := strings.Cut(text, "\n")
+		if len(line) > promptMaxLine {
+			return true
+		}
+		text = rest
+	}
+	return false
+}
 
 func newChatEntry() *chatEntry {
 	entry := &chatEntry{rows: 1, measure: widget.NewRichTextWithText("")}
@@ -144,8 +165,16 @@ func (entry *chatEntry) TypedShortcut(s fyne.Shortcut) {
 	if entry.historyShortcut(s) {
 		return
 	}
-	if _, ok := s.(*fyne.ShortcutPaste); ok && entry.paste != nil && entry.paste() {
-		return // an image was staged as an attachment
+	if paste, ok := s.(*fyne.ShortcutPaste); ok {
+		if entry.paste != nil && entry.paste() {
+			return // an image was staged as an attachment
+		}
+		if entry.oversize != nil && paste.Clipboard != nil {
+			if text := paste.Clipboard.Content(); textTooBig(entry.Text + text) {
+				entry.oversize(text)
+				return
+			}
+		}
 	}
 	if entry.shortcut != nil && entry.shortcut(s) {
 		return

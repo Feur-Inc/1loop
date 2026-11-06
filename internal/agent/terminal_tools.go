@@ -59,7 +59,7 @@ func terminalToolDefinitions() []map[string]any {
 			"session_id": str,
 			"cwd":        str,
 		}, "action", "session_id", "cwd"),
-		def("terminal_command", "Write a shell command followed by Enter in an integrated terminal. The shell persists and the user can interact with it. wait_ms is bounded to 0..5000; use terminal_read for longer jobs. Respect approval and never retry a refused action through a different tool.", map[string]any{
+		def("terminal_command", "Write a shell command followed by Enter in an integrated terminal. The shell persists and the user can interact with it. wait_ms (up to 30000) waits for the command to finish: it returns as soon as the shell shows its prompt again. The result's output is what the command wrote, without the echo of the command line; when longer than 8 KiB, its start and end with a marker giving the offsets of the part left out (read it with terminal_read). prompt_back is true once the shell is back at its prompt (zsh, bash 5.1+); false means still running, or a shell that doesn't say: follow with terminal_read from next_offset. command_exit_code is there only when the shell reports it (OSC 133 shell integration); otherwise run echo $? to know it. exit_code is the shell's own, null while it runs. Respect approval and never retry a refused action through a different tool.", map[string]any{
 			"session_id": str,
 			"command":    str,
 			"wait_ms":    integer,
@@ -89,7 +89,13 @@ func TerminalReadLimit(maxBytes *int) int64 {
 	if maxBytes == nil {
 		return 8192
 	}
-	return int64(min(65536, max(1024, *maxBytes)))
+	return int64(min(65536, max(1, *maxBytes)))
+}
+
+// WaitForCommand waits up to waitMS (at most CommandWaitLimit) until the
+// command is finished, the shell ends (done) or ctx is cancelled.
+func WaitForCommand(ctx context.Context, waitMS int, finished func() bool, done <-chan struct{}) {
+	WaitForOutput(ctx, min(waitMS, CommandWaitLimit), finished, done)
 }
 
 // WaitForOutput waits up to waitMS (at most 30 s) until ready says there is

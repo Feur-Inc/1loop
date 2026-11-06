@@ -52,8 +52,7 @@ func (terminal *panelTerminal) read(offset, limit int64) string {
 	terminal.mu.Lock()
 	defer terminal.mu.Unlock()
 	first := terminal.total - int64(len(terminal.output))
-	offset = max(first, min(offset, terminal.total))
-	end := min(terminal.total, offset+limit)
+	offset, end := agent.TerminalSpan(terminal.output, terminal.total, offset, limit)
 	data, _ := json.Marshal(map[string]any{
 		"session_id":     terminal.id,
 		"cwd":            terminal.dir,
@@ -64,6 +63,27 @@ func (terminal *panelTerminal) read(offset, limit int64) string {
 		"exit_code":      terminal.exit,
 	})
 	return string(data)
+}
+
+// command is terminal_command's result: what the shell wrote since offset,
+// when command was sent.
+func (terminal *panelTerminal) command(command string, offset int64) string {
+	terminal.mu.Lock()
+	defer terminal.mu.Unlock()
+	first := terminal.total - int64(len(terminal.output))
+	offset = max(first, offset)
+	result := agent.TerminalCommandResult(command, terminal.output[offset-first:], offset)
+	result["session_id"], result["cwd"], result["exit_code"], result["total"], result["available_from"] = terminal.id, terminal.dir, terminal.exit, terminal.total, first
+	data, _ := json.Marshal(result)
+	return string(data)
+}
+
+// since is what the shell wrote from offset on.
+func (terminal *panelTerminal) since(offset int64) []byte {
+	terminal.mu.Lock()
+	defer terminal.mu.Unlock()
+	first := terminal.total - int64(len(terminal.output))
+	return append([]byte(nil), terminal.output[max(first, offset)-first:]...)
 }
 
 func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
@@ -261,16 +281,23 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 		if _, err := io.WriteString(term.file, text); err != nil {
 			return agent.PanelToolResult{}, err
 		}
-		if args.WaitMS > 0 {
-			timer := time.NewTimer(time.Duration(min(args.WaitMS, 5000)) * time.Millisecond)
-			defer timer.Stop()
-			select {
-			case <-timer.C:
-			case <-term.done:
-			case <-ctx.Done():
-				return agent.PanelToolResult{}, ctx.Err()
+		if name != "terminal_command" {
+			if args.WaitMS > 0 {
+				timer := time.NewTimer(time.Duration(min(args.WaitMS, 5000)) * time.Millisecond)
+				defer timer.Stop()
+				select {
+				case <-timer.C:
+				case <-term.done:
+				case <-ctx.Done():
+					return agent.PanelToolResult{}, ctx.Err()
+				}
 			}
+			return agent.PanelToolResult{Text: term.read(offset, 8192)}, nil
 		}
-		return agent.PanelToolResult{Text: term.read(offset, 8192)}, nil
+		agent.WaitForCommand(ctx, args.WaitMS, func() bool { return agent.CommandFinished(args.Command, term.since(offset)) }, term.done)
+		if ctx.Err() != nil {
+			return agent.PanelToolResult{}, ctx.Err()
+		}
+		return agent.PanelToolResult{Text: term.command(args.Command, offset)}, nil
 	}
 }

@@ -1,0 +1,153 @@
+name: Carry over unfinished iteration items
+
+# Moves unfinished items of the "1loop dev" project (Feur-Inc #1) to the
+# current iteration once their iteration has ended: every item whose Status is
+# Ready, In progress or In review and whose Iteration is an ended one. Items
+# with any other status, and items already on the current or a future
+# iteration, are left alone, so running it again changes nothing. GitHub has no
+# event for iteration changes, so this runs on a schedule.
+#
+# Run it by hand with "dry_run" ticked to list what it would move.
+#
+# Setup: same PROJECT_TOKEN secret as project-iteration-ready.yml (a
+# fine-grained personal access token with resource owner Feur-Inc and the
+# organization permission "Projects: Read and write").
+
+on:
+  schedule:
+    - cron: "15 0 * * *"
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List the items it would move without moving them
+        type: boolean
+        default: false
+
+permissions: {}
+
+concurrency:
+  group: project-iteration-carry-over
+
+env:
+  ORG: Feur-Inc
+  PROJECT_NUMBER: 1
+  STATUS_FIELD: Status
+  ITERATION_FIELD: Iteration
+  # Comma-separated, compared case-insensitively.
+  CARRY_STATUSES: Ready,In progress,In review
+
+jobs:
+  carry-over:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Move unfinished items of ended iterations to the current one
+        env:
+          GH_TOKEN: ${{ secrets.PROJECT_TOKEN }}
+          DRY_RUN: ${{ inputs.dry_run || false }}
+        run: |
+          set -euo pipefail
+
+          # gh's built-in jq only, so this also runs where jq is not installed.
+          # An iteration covers startDate up to startDate + duration days (UTC).
+          eval "$(gh api graphql \
+            -f org="$ORG" -F number="$PROJECT_NUMBER" -f iteration="$ITERATION_FIELD" \
+            -f query='
+              query($org: String!, $number: Int!, $iteration: String!) {
+                organization(login: $org) {
+                  projectV2(number: $number) {
+                    id
+                    iteration: field(name: $iteration) {
+                      ... on ProjectV2IterationField {
+                        id
+                        configuration {
+                          iterations { id title startDate duration }
+                          completedIterations { id title startDate duration }
+                        }
+                      }
+                    }
+                  }
+                }
+              }' --jq '.data.organization.projectV2 as $p
+              | $p.iteration.configuration as $c
+              | [$c.iterations[], $c.completedIterations[]]
+              | map((.startDate + "T00:00:00Z" | fromdate) as $start
+                  | . + {start: $start, end: ($start + .duration * 86400)})
+              | (map(select(.start <= now and now < .end)) | first) as $current
+              | "project_id=\($p.id | @sh)",
+                "iteration_field_id=\($p.iteration.id | @sh)",
+                "current_id=\($current.id // "" | @sh)",
+                "current_title=\($current.title // "" | @sh)",
+                "ended_ids=\(map(select(.end <= now) | .id) | join(",") | @sh)"')"
+
+          if [ -z "$current_id" ]; then
+            echo "No iteration is running today; nothing to do."
+            exit 0
+          fi
+          echo "Current iteration: $current_title"
+          if [ -z "$ended_ids" ]; then
+            echo "No iteration has ended yet; nothing to do."
+            exit 0
+          fi
+
+          # One line per item to move: id, then a tab-separated description.
+          items=$(gh api graphql --paginate \
+            -f org="$ORG" -F number="$PROJECT_NUMBER" \
+            -f status="$STATUS_FIELD" -f iteration="$ITERATION_FIELD" \
+            -f query='
+              query($org: String!, $number: Int!, $status: String!, $iteration: String!, $endCursor: String) {
+                organization(login: $org) {
+                  projectV2(number: $number) {
+                    items(first: 100, after: $endCursor) {
+                      pageInfo { hasNextPage endCursor }
+                      nodes {
+                        id
+                        isArchived
+                        content {
+                          ... on Issue { title url }
+                          ... on PullRequest { title url }
+                          ... on DraftIssue { title }
+                        }
+                        status: fieldValueByName(name: $status) {
+                          ... on ProjectV2ItemFieldSingleSelectValue { name }
+                        }
+                        iteration: fieldValueByName(name: $iteration) {
+                          ... on ProjectV2ItemFieldIterationValue { iterationId title }
+                        }
+                      }
+                    }
+                  }
+                }
+              }' \
+            --jq "(\"$CARRY_STATUSES\" | ascii_downcase | split(\",\")) as \$statuses
+              | (\"$ended_ids\" | split(\",\")) as \$ended
+              | .data.organization.projectV2.items.nodes[]
+              | select(.isArchived | not)
+              | select(.iteration.iterationId as \$i | \$ended | index(\$i))
+              | select((.status.name // \"\" | ascii_downcase) as \$s | \$statuses | index(\$s))
+              | [.id, .iteration.title, .status.name, .content.title // \"\", .content.url // \"draft\"]
+              | join(\"\t\")")
+
+          moved=0
+          while IFS=$'\t' read -r item from status title url; do
+            [ -n "$item" ] || continue
+            echo "$from -> $current_title [$status] $title ($url)"
+            if [ "$DRY_RUN" != true ]; then
+              gh api graphql \
+                -f project="$project_id" -f item="$item" \
+                -f field="$iteration_field_id" -f iteration="$current_id" \
+                -f query='
+                  mutation($project: ID!, $item: ID!, $field: ID!, $iteration: String!) {
+                    updateProjectV2ItemFieldValue(input: {
+                      projectId: $project, itemId: $item, fieldId: $field,
+                      value: { iterationId: $iteration }
+                    }) { projectV2Item { id } }
+                  }' > /dev/null
+            fi
+            moved=$((moved + 1))
+          done <<<"$items"
+
+          if [ "$DRY_RUN" = true ]; then
+            echo "Dry run: would move $moved item(s) to $current_title."
+          else
+            echo "Moved $moved item(s) to $current_title."
+          fi

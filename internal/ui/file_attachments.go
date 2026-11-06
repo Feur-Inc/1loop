@@ -21,6 +21,12 @@ type fileAttachment = agent.FileAttachment
 // copyAttachment copies a file of this computer into the workspace: here,
 // or on the SSH machine when machine is set.
 func copyAttachment(machine agent.Machine, workspace, source string) (fileAttachment, error) {
+	// Before opening: opening a named pipe waits for a writer, forever.
+	if info, err := os.Stat(source); err != nil {
+		return fileAttachment{}, err
+	} else if !info.Mode().IsRegular() {
+		return fileAttachment{}, fmt.Errorf("Choose a regular file")
+	}
 	in, err := os.Open(source)
 	if err != nil {
 		return fileAttachment{}, err

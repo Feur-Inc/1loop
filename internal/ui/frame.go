@@ -140,6 +140,7 @@ func (hook *frameHook) turn() {
 		}
 	}
 	ui.advanceChatLoad()
+	ui.remeasure()
 	ui.panel.flushResize()
 	ui.flushSidebarResize()
 }

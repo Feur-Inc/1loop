@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -126,6 +127,8 @@ type desktopUI struct {
 	saveCount        int        // states handed to persist
 	saveDone         int        // the newest one written (under saveLock)
 	saveError        string
+	stateProblem     string // why the saved state could not be read, said once the window is up
+	stateBlocked     bool   // the unreadable state could not be put aside: never write over it
 	ctx              context.Context
 	shutdown         context.CancelFunc
 	modelLoad        int
@@ -316,6 +319,9 @@ func runDesktop(backend *agent.App, root string) {
 	launch := newLaunchScreen(ui.window.Canvas(), func() {
 		ui.window.Canvas().Focus(ui.prompt)
 		ui.warnFlatpakPermissions()
+		if ui.stateProblem != "" {
+			ui.notice("Saved state unreadable", ui.stateProblem)
+		}
 	})
 	launch.show()
 	// Notifications are for chats the user is not looking at (notify.go).
@@ -438,7 +444,6 @@ func (ui *desktopUI) release() {
 	ui.mark.stop()
 	ui.workMark.stop()
 	ui.persist(true)
-	ui.prompt.drafts.flush()
 	ui.browser.WaitClosed() // Chrome writes its profile as it closes
 	ui.backend.CloseChatGPTWeb()
 }
@@ -1708,6 +1713,9 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.saveTimer.Stop()
 		ui.saveTimer = nil
 	}
+	if ui.stateBlocked {
+		return
+	}
 	remote := ui.remoteEnabled
 	// Everything but the chats is small, and holds maps the settings edit:
 	// it is encoded here, on the interface's thread.
@@ -1736,10 +1744,6 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.worktrees,
 		ui.worktreeSort,
 	})
-	fields := map[string]json.RawMessage{}
-	if err == nil {
-		err = json.Unmarshal(head, &fields)
-	}
 	if ui.panel != nil {
 		ui.panel.stash() // the open chat's panel, as it is now
 	}
@@ -1758,24 +1762,22 @@ func (ui *desktopUI) persist(wait bool) {
 			return // a newer state is already on disk
 		}
 		ui.saveDone = count
+		// The chats are encoded once, into the place the head keeps for them.
 		var data []byte
-		if err == nil {
-			fields["chats"], err = json.Marshal(chats)
+		before, after, found := bytes.Cut(head, []byte(`"chats":null`))
+		if err == nil && !found {
+			err = errors.New("the state has no place for the chats")
 		}
 		if err == nil {
-			data, err = json.Marshal(fields)
-		}
-		if err == nil {
-			err = os.MkdirAll(filepath.Dir(path), 0700)
-		}
-		if err == nil {
-			// Write then rename, so a crash never leaves half a state file.
-			tmp := path + ".tmp"
-			if err = os.WriteFile(tmp, data, 0600); err == nil {
-				err = os.Rename(tmp, path)
+			for _, chat := range chats {
+				chat.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
 			}
+			data, err = json.Marshal(chats)
 		}
-		platform.Devf("app", "state saved: %d chats, %d KiB, %s in all (error: %v)", len(chats), len(data)>>10, time.Since(started).Round(time.Millisecond), err)
+		if err == nil {
+			err = core.WriteFileSafely(path, 0600, true, before, []byte(`"chats":`), data, after)
+		}
+		platform.Devf("app", "state saved: %d chats, %d KiB, %s in all (error: %v)", len(chats), (len(head)+len(data))>>10, time.Since(started).Round(time.Millisecond), err)
 		report := func() {
 			if err != nil && err.Error() != ui.saveError && ui.ctx.Err() == nil {
 				ui.notice("Unable to save", err.Error()) // once per distinct problem
@@ -1801,14 +1803,31 @@ func (ui *desktopUI) persist(wait bool) {
 func (ui *desktopUI) load() {
 	ui.remoteEnabled = true // the remote is on until the user turns it off
 	defer ui.remoteDefaults()
-	data, err := os.ReadFile(ui.statePath)
-	if err != nil {
-		return
-	}
 	var state savedState
-	if json.Unmarshal(data, &state) != nil {
-		return
+	data, err := os.ReadFile(ui.statePath)
+	if err == nil {
+		err = json.Unmarshal(data, &state)
 	}
+	if os.IsNotExist(err) {
+		return // a first launch, or the user removed it to start afresh
+	}
+	if err != nil {
+		aside := ui.setStateAside(err)
+		if ui.stateBlocked {
+			return
+		}
+		// The save before the last one, kept beside it (core.WriteFileSafely),
+		// written back at once: until the next save, nothing else holds it.
+		backup, readErr := os.ReadFile(ui.statePath + ".bak")
+		state = savedState{}
+		if readErr != nil || json.Unmarshal(backup, &state) != nil || core.WriteFileSafely(ui.statePath, 0600, false, backup) != nil {
+			state = savedState{}
+			ui.stateProblem = fmt.Sprintf("1loop could not read its saved chats and settings (%v). The file was kept as %s and 1loop starts empty.", err, aside)
+			return
+		}
+		ui.stateProblem = fmt.Sprintf("1loop could not read its saved chats and settings (%v). The file was kept as %s, and the save before it was restored: the latest changes may be missing.", err, aside)
+	}
+	data = nil // the file's bytes (the whole state) can go before the chats are set up
 	if state.RemoteEnabled != nil {
 		ui.remoteEnabled = *state.RemoteEnabled
 	}
@@ -1823,11 +1842,12 @@ func (ui *desktopUI) load() {
 	}
 	switch state.Config.Provider {
 	case "vllm", "openrouter", "openai", "compatible", "claudecode", "antigravity", "chatgptweb":
+		state.Config.APIKey = ""
+		ui.cfg = state.Config
 	default:
-		return
+		// A provider this version does not know (a newer version saved it):
+		// the default settings, but the chats and connections all stay.
 	}
-	state.Config.APIKey = ""
-	ui.cfg = state.Config
 	ui.projects = state.Projects
 	ui.sshMachines, ui.machineProjects, ui.localWorkspace = state.SSHMachines, state.MachineProjects, state.LocalWorkspace
 	ui.worktrees, ui.worktreeSort = state.Worktrees, state.WorktreeSort
@@ -1849,6 +1869,7 @@ func (ui *desktopUI) load() {
 		}
 		chat.Config.APIKey = ""
 		chat.Items = upgradeItems(chat.Items)
+		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
 		chat.todoCount = len(chat.Todo.Snapshot())
 		ui.chats = append(ui.chats, chat)
 		if chat.Config.MachineID != "" {
@@ -1857,6 +1878,19 @@ func (ui *desktopUI) load() {
 			ui.ensureProject(chat.Config.Workspace)
 		}
 	}
+}
+
+// setStateAside keeps a state file that could not be read under another
+// name, so the first save does not replace every chat with an empty list,
+// and returns that name. If it cannot be moved, nothing is saved this
+// session.
+func (ui *desktopUI) setStateAside(cause error) string {
+	aside := ui.statePath + ".unreadable-" + time.Now().Format("20060102-150405")
+	if err := os.Rename(ui.statePath, aside); err != nil {
+		ui.stateBlocked = true
+		ui.stateProblem = fmt.Sprintf("1loop could not read %s (%v) nor put it aside (%v). It starts empty and saves nothing until it is restarted, so the file stays as it is.", ui.statePath, cause, err)
+	}
+	return aside
 }
 
 // ---------------------------------------------------------------------------

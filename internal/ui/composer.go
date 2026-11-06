@@ -4,6 +4,7 @@ package ui
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -301,15 +302,19 @@ const (
 // externalImageClipboardData reads an image with wl-paste (Wayland) or
 // xclip (X11), where 1loop cannot read the clipboard itself.
 func externalImageClipboardData() ([]byte, error) {
+	// An application that copied and stopped answering would otherwise
+	// keep the tool, and the window waiting on it, forever.
+	ctx, cancel := context.WithTimeout(context.Background(), clipboardTimeout)
+	defer cancel()
 	if os.Getenv("WAYLAND_DISPLAY") != "" {
-		out, err := exec.Command("wl-paste", "--list-types").Output()
+		out, err := exec.CommandContext(ctx, "wl-paste", "--list-types").Output()
 		if err != nil {
 			return nil, clipboardToolError("wl-paste", err)
 		}
 		for _, raw := range strings.Split(string(out), "\n") {
 			if mime := imageMime.FindString(strings.ToLower(raw)); mime != "" {
 				// --no-newline keeps binary data intact.
-				data, err := exec.Command("wl-paste", "--no-newline", "-t", mime).Output()
+				data, err := exec.CommandContext(ctx, "wl-paste", "--no-newline", "-t", mime).Output()
 				if err != nil {
 					return nil, clipboardToolError("wl-paste", err)
 				}
@@ -321,14 +326,14 @@ func externalImageClipboardData() ([]byte, error) {
 		}
 		return nil, errNoClipboardImage
 	}
-	out, err := exec.Command("xclip", "-selection", "clipboard", "-t", "TARGETS", "-o").Output()
+	out, err := exec.CommandContext(ctx, "xclip", "-selection", "clipboard", "-t", "TARGETS", "-o").Output()
 	if err != nil {
 		return nil, clipboardToolError("xclip", err)
 	}
 	if !strings.Contains(string(out), "image/png") {
 		return nil, errNoClipboardImage
 	}
-	data, err := exec.Command("xclip", "-selection", "clipboard", "-t", "image/png", "-o").Output()
+	data, err := exec.CommandContext(ctx, "xclip", "-selection", "clipboard", "-t", "image/png", "-o").Output()
 	if err != nil {
 		return nil, clipboardToolError("xclip", err)
 	}
@@ -348,7 +353,7 @@ func clipboardToolError(tool string, err error) error {
 
 // maxImagePixels bounds a picture before it is decoded: a small file can
 // hold a huge image, and decoding it would allocate gigabytes.
-const maxImagePixels = 50_000_000
+const maxImagePixels = core.MaxImagePixels
 
 func decodeImage(raw []byte) (*image.NRGBA, error) {
 	if config, _, err := image.DecodeConfig(bytes.NewReader(raw)); err == nil && config.Width*config.Height > maxImagePixels {
@@ -391,12 +396,20 @@ func (ui *desktopUI) pasteImage() error {
 }
 
 func (ui *desktopUI) attachClipboardImage(raw []byte) {
-	img, err := decodeImage(raw)
-	if err != nil {
-		ui.notice("Paste", err.Error())
-		return
-	}
-	ui.attachImage(img)
+	// Decoding a large image takes a while: beside the interface, with the
+	// message held until the image is attached, as for files.
+	ui.filesAttaching++
+	go func() {
+		img, err := decodeImage(raw)
+		fyne.Do(func() {
+			ui.filesAttaching--
+			if err != nil {
+				ui.notice("Paste", err.Error())
+				return
+			}
+			ui.attachImage(img)
+		})
+	}()
 }
 
 // pickImages attaches pictures chosen in the desktop's file chooser.

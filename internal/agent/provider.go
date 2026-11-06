@@ -655,33 +655,6 @@ func remoteCompact(ctx context.Context, cfg Config, rounds []Message, focus stri
 	return result.Output, nil
 }
 
-// conversationText flattens rounds into plain text for the summarizer.
-func conversationText(rounds []Message) string {
-	var builder strings.Builder
-	for _, messageValue := range rounds {
-		switch messageValue.Role {
-		case "user":
-			text := messageValue.Content
-			if len(messageValue.Images) > 0 {
-				text += fmt.Sprintf(" [+%d image(s) attached]", len(messageValue.Images))
-			}
-			builder.WriteString("USER: " + core.TruncateText(text, 4000) + "\n\n")
-		case "assistant":
-			if messageValue.Content != "" {
-				builder.WriteString("ASSISTANT: " + core.TruncateText(messageValue.Content, 2000) + "\n\n")
-			}
-			for _, call := range messageValue.ToolCalls {
-				builder.WriteString(fmt.Sprintf("TOOL %s(%s)\n\n", call.Function.Name, core.TruncateText(call.Function.Arguments, 800)))
-			}
-		case "tool":
-			if messageValue.Content != "" {
-				builder.WriteString("RESULT: " + core.TruncateText(messageValue.Content, 1200) + "\n\n")
-			}
-		}
-	}
-	return builder.String()
-}
-
 // Inbox hands the running loop what the user typed while it worked.
 type Inbox struct {
 	// Steer returns the messages sent with Ctrl+Enter: they join the
@@ -695,7 +668,8 @@ type Inbox struct {
 // Run works on a chat with the connection's harness: Claude Code's or
 // Antigravity's own for those connections, 1loop's agent loop for every
 // other provider.
-func (backend *App) Run(ctx context.Context, cfg Config, history []Message, inboxValue Inbox, emit emitter) error {
+func (backend *App) Run(ctx context.Context, cfg Config, history []Message, inboxValue Inbox, emit emitter) (err error) {
+	defer recovered(&err, "this turn")
 	if err := machineErr(cfg); err != nil {
 		return err
 	}

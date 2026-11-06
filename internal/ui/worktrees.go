@@ -329,7 +329,7 @@ func (ui *desktopUI) worktreeActions(project string, worktree gitrepo.Worktree, 
 	}
 	actions = append(actions,
 		menuAction{label: "Repository…", icon: iconBranch, run: func() { ui.showRepository(project, "worktrees") }},
-		menuAction{label: "Copy path", icon: iconCopy, run: func() { ui.window.Clipboard().SetContent(worktree.Path) }},
+		menuAction{label: "Copy path", icon: iconCopy, run: func() { fyne.CurrentApp().Clipboard().SetContent(worktree.Path) }},
 		menuAction{label: "Remove worktree…", icon: iconTrash, danger: true, run: func() { ui.removeWorktreeDialog(project, worktree) }})
 	return actions
 }

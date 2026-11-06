@@ -165,7 +165,7 @@ func extractMobileDebian(destination string, archive *tar.Reader) (err error) {
 			if err := os.MkdirAll(target, 0755); err != nil {
 				return err
 			}
-		case tar.TypeReg, tar.TypeRegA:
+		case tar.TypeReg: // the reader reports old regular entries (TypeRegA) as TypeReg
 			expanded += header.Size
 			if header.Size < 0 || expanded > 1<<30 {
 				return fmt.Errorf("The Debian archive exceeds its expanded size limit")

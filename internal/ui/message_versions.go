@@ -14,7 +14,6 @@ import (
 	"1loop/internal/agent"
 )
 
-type chatSnapshot = agent.VersionSnapshot
 type chatVersion = agent.ChatVersion
 
 func (chat *conversation) branching() agent.VersionState {

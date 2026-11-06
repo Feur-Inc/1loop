@@ -515,7 +515,7 @@ func (screen *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 	case *fyne.ShortcutPaste:
 		clipboard := value.Clipboard
 		if clipboard == nil {
-			clipboard = screen.view.window.Clipboard()
+			clipboard = fyne.CurrentApp().Clipboard()
 		}
 		screen.view.page.Input(input.InsertText(clipboard.Content()))
 	case *fyne.ShortcutCopy, *fyne.ShortcutCut:
@@ -560,7 +560,7 @@ func (screen *browserScreen) MouseDown(e *desktop.MouseEvent) {
 		menu := fyne.NewMenu("",
 			fyne.NewMenuItem("Cut", func() { screen.TypedShortcut(&fyne.ShortcutCut{}) }),
 			fyne.NewMenuItem("Copy", func() { screen.TypedShortcut(&fyne.ShortcutCopy{}) }),
-			fyne.NewMenuItem("Paste", func() { screen.TypedShortcut(&fyne.ShortcutPaste{Clipboard: screen.view.window.Clipboard()}) }),
+			fyne.NewMenuItem("Paste", func() { screen.TypedShortcut(&fyne.ShortcutPaste{Clipboard: fyne.CurrentApp().Clipboard()}) }),
 			fyne.NewMenuItem("Select all", func() { screen.TypedShortcut(&fyne.ShortcutSelectAll{}) }),
 		)
 		widget.NewPopUpMenu(menu, screen.view.window.Canvas()).ShowAtPosition(e.AbsolutePosition)

@@ -55,9 +55,14 @@ var afterTypeset func()
 // high density screen, scaled down smoothly on the others.
 const mathOversample = 3
 
+// mathCacheLimit bounds the formulas kept typeset; an older one shown again
+// is typeset again.
+const mathCacheLimit = 512
+
 var formulas struct {
 	sync.Mutex
 	known   map[string]*mathPicture // nil for a formula that cannot be typeset
+	order   []string                // known's keys, oldest first
 	pending map[string]bool
 	waiters []func()
 	tools   int // 0 not looked for yet, 1 found, -1 missing
@@ -131,6 +136,11 @@ func mathWorker() {
 		}
 		formulas.Lock()
 		formulas.known[job.key] = picture
+		formulas.order = append(formulas.order, job.key)
+		if len(formulas.order) > mathCacheLimit {
+			delete(formulas.known, formulas.order[0])
+			formulas.order = formulas.order[1:]
+		}
 		delete(formulas.pending, job.key)
 		waiters := formulas.waiters
 		formulas.waiters = nil

@@ -195,7 +195,6 @@ func (backend *App) callMCP(ctx context.Context, cfg Config, call ToolCall, begi
 // (--mcp-config), the enabled plugins and the skills installed on their own
 // (--plugin-dir; those skills through a plugin 1loop writes).
 func claudeExtensionArgs() (args []string, cleanup func()) {
-	cleanup = func() {}
 	active := extensions.Enabled()
 	servers := map[string]any{}
 	for _, server := range active.MCP {

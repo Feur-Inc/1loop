@@ -125,13 +125,25 @@ type PlanUsage struct {
 }
 
 // claudeDisabledTools are the Claude Code tools 1loop turns off, with
-// Claude Code's own --disallowedTools option.
+// Claude Code's own --disallowedTools option: a tool named there leaves the
+// request entirely, schema and name, unlike a permission rule. A name this
+// Claude Code version lacks is ignored.
 //
-// Subagents (Task, named Agent in other versions) are off FOR NOW: 1loop
-// has no view of what a subagent does, so the conversation would show one
-// opaque row while a whole second agent works. To allow them again once the
-// interface can show their steps, empty this list.
-const claudeDisabledTools = "Task,Agent"
+//   - Subagents (Task, named Agent in other versions) and the tools that
+//     reach agents and other Claude sessions (SendMessage, ListAgents) are
+//     off FOR NOW: 1loop has no view of what a subagent does, so the
+//     conversation would show one opaque row while a whole second agent
+//     works.
+//   - CronCreate, CronDelete, CronList and ScheduleWakeup schedule work in
+//     the session, which never comes: 1loop ends Claude Code once nothing
+//     runs.
+//   - EnterPlanMode, ExitPlanMode: 1loop has no plan view.
+//   - EnterWorktree, ExitWorktree move Claude Code to another folder, while
+//     1loop's workspace, diffs and files stay in the chat's.
+//   - RemoteTrigger, PushNotification, ReportFindings and DesignSync belong
+//     to Claude's own apps (cloud routines, notifications, review and design
+//     views), which 1loop neither shows nor manages.
+const claudeDisabledTools = "Task,Agent,SendMessage,ListAgents,CronCreate,CronDelete,CronList,ScheduleWakeup,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,RemoteTrigger,PushNotification,ReportFindings,DesignSync"
 
 // claudeCommand prepares a Claude Code process in its stream-json mode.
 // The environment is the user's, minus what would change who pays (an API
@@ -149,13 +161,19 @@ func claudeCommand(ctx context.Context, home, dir string, extra ...string) (*exe
 		}
 	}
 	args := append([]string{"-p", "--input-format", "stream-json", "--output-format", "stream-json", "--verbose"}, extra...)
+	// 1loop's sessions stay apart from the user's own Claude Code setup: none
+	// of their settings, hooks, permission rules, CLAUDE.md files, skills or
+	// plugins, no MCP servers but those 1loop passes with --mcp-config, and
+	// no Claude in Chrome next to 1loop's browser. The project's rules come
+	// from AGENTS.md, as for 1loop's other models.
+	args = append(args, "--setting-sources", "", "--strict-mcp-config", "--no-chrome")
 	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
 		// The API client retains its private login. All model-controlled
 		// project operations go through 1loop's MCP tools and launcher.
 		// WebSearch stays: it runs on Anthropic's servers and touches
 		// nothing on the phone, and without it the model searches the web
 		// by driving the browser (#161).
-		args = append(args, "--tools", "WebSearch", "--setting-sources", "", "--strict-mcp-config", "--no-chrome", "--disable-slash-commands")
+		args = append(args, "--tools", "WebSearch", "--disable-slash-commands")
 	}
 	cmd := exec.CommandContext(ctx, path, args...)
 	cmd.Dir = dir
@@ -171,9 +189,9 @@ func claudeCommand(ctx context.Context, home, dir string, extra ...string) (*exe
 	if home != "" {
 		cmd.Env = append(cmd.Env, "CLAUDE_CONFIG_DIR="+home)
 	}
-	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
-		cmd.Env = append(cmd.Env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
-	}
+	// One memory: 1loop's (its memory tool and AGENTS.md), which every model
+	// it runs reads.
+	cmd.Env = append(cmd.Env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
 	// Keep the CLI and its children in a process group for bounded shutdown.
 	platform.PrepareProcess(cmd)
 	cmd.Cancel = func() error { return platform.InterruptProcess(cmd) }
@@ -283,6 +301,8 @@ func claudeTool(root, name string, input json.RawMessage) (tool, args string) {
 		Old      string `json:"old_string"`
 		New      string `json:"new_string"`
 		Content  string `json:"content"`
+		Source   string `json:"new_source"` // NotebookEdit's cell, ignored when it deletes one
+		Mode     string `json:"edit_mode"`
 	}
 	_ = json.Unmarshal(input, &in)
 	path := in.FilePath
@@ -298,8 +318,14 @@ func claudeTool(root, name string, input json.RawMessage) (tool, args string) {
 		return "shell", encode(map[string]string{"command": in.Command})
 	case "Read":
 		return "read_file", encode(map[string]string{"path": path})
-	case "Edit", "MultiEdit", "NotebookEdit":
+	case "Edit", "MultiEdit":
 		return "edit_file", encode(map[string]string{"path": path, "old_text": in.Old, "new_text": in.New})
+	case "NotebookEdit":
+		if in.Mode == "delete" {
+			in.Source = ""
+		}
+		// No old_text: an empty one would read as creating the file.
+		return "edit_file", encode(map[string]string{"path": path, "new_text": in.Source})
 	case "Write":
 		return "edit_file", encode(map[string]string{"path": path, "old_text": "", "new_text": in.Content})
 	}
@@ -387,7 +413,7 @@ func claudePrompt(messageValue Message, preface string) string {
 func claudeCodeGuidance(cfg Config) string {
 	var guidance []string
 	if memoryInstructions(cfg) != "" {
-		guidance = append(guidance, "Memory: in 1loop, save what you learn about the user with mcp__1loop_todo__memory, which every model 1loop runs reads, and project facts in AGENTS.md. Claude Code's own memory files (CLAUDE.md, auto-memory) belong to the user's Claude Code setup: read them, but do not save there what goes to 1loop's memory, nor the same fact in both.")
+		guidance = append(guidance, "Memory: Claude Code's auto-memory and CLAUDE.md files are off in 1loop. Save what you learn about the user with mcp__1loop_todo__memory, which every model 1loop runs reads, and project facts in AGENTS.md.")
 	}
 	if cfg.ProjectTools == nil && cfg.toolAvailable("terminal_command") {
 		guidance = append(guidance, "Shells: Claude Code's Bash tool and 1loop's terminals run in the same environment. Use Bash for commands whose output you need; use a terminal when the user should see or reach the program: interactive programs, TUIs, servers and long watches. Bash follows Claude Code's permission rules, terminals follow 1loop's approval mode: neither is a way around the other's refusal.")

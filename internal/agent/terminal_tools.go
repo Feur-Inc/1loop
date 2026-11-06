@@ -66,6 +66,18 @@ func terminalToolDefinitions() []map[string]any {
 	}
 }
 
+// NoTerminal is the error for a session_id the chat doesn't have: it names
+// the ones it has, or says there are none.
+func NoTerminal(id string, open []string) error {
+	switch {
+	case len(open) == 0:
+		return fmt.Errorf("This chat has no terminal; open one with terminal_tabs")
+	case id == "":
+		return fmt.Errorf("No terminal is selected; pass a session_id: %s", strings.Join(open, ", "))
+	}
+	return fmt.Errorf("No terminal with session_id %s in this chat; its terminals: %s", id, strings.Join(open, ", "))
+}
+
 // TerminalReadLimit is how much terminal_read returns: max_bytes, within
 // bounds, or 8 KiB.
 func TerminalReadLimit(maxBytes *int) int64 {

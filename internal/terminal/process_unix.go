@@ -25,6 +25,9 @@ func NewTerminalProcess(ctx context.Context, dir string, hosts ...NativeHost) (P
 	if len(hosts) > 0 && hosts[0] != nil {
 		return newNativeTerminal(ctx, dir, hosts[0])
 	}
+	if err := folderProblem(dir); err != nil {
+		return nil, err
+	}
 	shell := os.Getenv("SHELL")
 	if shell == "" {
 		shell = "/bin/bash"

@@ -58,11 +58,13 @@ jobs:
     needs: draft
     # Runs on pull requests too, where the draft job is skipped.
     if: ${{ !cancelled() && needs.draft.result != 'failure' }}
-    # The self-hosted runners (TPM28_RUNNER and mopi) are not used for now.
-    # They would run every pull request's code: only on dedicated, isolated
-    # machines.
-    # runs-on: [self-hosted, Linux, X64]
-    runs-on: ubuntu-24.04
+    # Linux and Windows build on the org's self-hosted runners (mopi, whose
+    # image has their packages, and TPM28_RUNNER) for pushes, manual runs and
+    # pull requests from this repository's own branches. A fork's pull request
+    # is code nobody here vetted: it stays on GitHub's disposable machines, as
+    # do Android, Flatpak and Nix, which need an SDK or privileges the
+    # self-hosted runners don't have.
+    runs-on: ${{ (contains(fromJSON('["linux","windows"]'), matrix.platform) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","Linux","X64"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     permissions:
       contents: write

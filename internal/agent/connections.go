@@ -261,7 +261,7 @@ func toolContext(ctx context.Context, cfg Config) context.Context {
 	ctx = context.WithValue(ctx, configContextKey{}, cfg)
 	ctx = context.WithValue(ctx, computerContextKey{}, cfg.Computer)
 	ctx = context.WithValue(ctx, terminalContextKey{}, cfg.Terminal)
-	ctx = context.WithValue(ctx, browserContextKey{}, cfg.Browser)
+	ctx = context.WithValue(ctx, browserContextKey{}, modelBrowser(cfg.Browser))
 	ctx = context.WithValue(ctx, recallContextKey{}, cfg.Recall)
 	ctx = context.WithValue(ctx, todoContextKey{}, cfg.Todo)
 	ctx = context.WithValue(ctx, tasksContextKey{}, cfg.Tasks)

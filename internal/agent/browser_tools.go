@@ -9,6 +9,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"net/url"
+	"strings"
 
 	"1loop/internal/browser"
 	"1loop/internal/core"
@@ -159,4 +161,28 @@ func ExecuteBrowserTool(ctx context.Context, browser *browser.Page, name string,
 		err = fmt.Errorf("Unknown browser tool")
 	}
 	return result, err
+}
+
+// modelBrowser is the browser tools as the model calls them. The user's own
+// tabs may show local files (a path in the address bar), the model's may
+// not: file tools keep it in the workspace, and a page could otherwise lead
+// it to read ~/.ssh through the browser, without any approval.
+func modelBrowser(handler PanelToolHandler) PanelToolHandler {
+	if handler == nil {
+		return nil
+	}
+	return func(ctx context.Context, name string, raw json.RawMessage) (PanelToolResult, error) {
+		var args struct{ Action, URL string }
+		_ = json.Unmarshal(raw, &args)
+		if name == "browser_navigate" && args.Action == "navigate" || name == "browser_tabs" && args.Action == "open" {
+			address, err := browser.URL(args.URL)
+			if err != nil {
+				return PanelToolResult{}, err
+			}
+			if parsed, err := url.Parse(address); err != nil || strings.EqualFold(parsed.Scheme, "file") {
+				return PanelToolResult{}, fmt.Errorf("The browser tools open web pages, not local files: read files with read_file")
+			}
+		}
+		return handler(ctx, name, raw)
+	}
 }

@@ -37,7 +37,7 @@ func projectMCPTools(cfg Config) []map[string]any {
 func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) (string, func(), error) {
 	state := cfg.Todo
 	githubConnection := githubconnector.Default.ConnectionID()
-	browserTools, terminalTools, computerTools := cfg.Browser, cfg.Terminal, cfg.Computer
+	browserTools, terminalTools, computerTools := modelBrowser(cfg.Browser), cfg.Terminal, cfg.Computer
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", nil, err

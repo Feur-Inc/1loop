@@ -17,6 +17,14 @@ func TestClassifyCommand(t *testing.T) {
 	}{
 		// Codex's plain reads.
 		{"ls -la", commandSafe},
+		{"ls\tsrc", commandSafe},
+
+		// A terminal runs what follows a control character (\r is Enter).
+		{"ls\rtouch /tmp/x", commandOther},
+		{"ls # \r rm -rf ~/x", commandDangerous},
+		{"ls\x03", commandOther},
+		{"cat README.md\x1b[A", commandOther},
+		{"ls\x7f", commandOther},
 		{"cat go.mod | head -n 20", commandSafe},
 		{"grep -rn TODO internal && wc -l README.md", commandSafe},
 		{"sed -n 10,40p internal/agent/tools.go", commandSafe},

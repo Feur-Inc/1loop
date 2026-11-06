@@ -197,7 +197,7 @@ func userPreferenceInstructions(cfg Config) string {
 	if strings.TrimSpace(cfg.UserInstructions) == "" {
 		return ""
 	}
-	return "\n\nAdditional user preferences (supplement the base instructions; do not replace them):\n" + cfg.UserInstructions
+	return "\n\nUser preferences (the user's own text, from 1loop's Settings → Instructions; the memory tool edits it). They supplement the instructions above; they do not replace them:\n" + cfg.UserInstructions
 }
 
 // modelNote tells the model which model and reasoning effort run this turn,

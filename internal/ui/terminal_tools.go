@@ -103,16 +103,7 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 				}
 			}
 			if args.SessionID == "" {
-				if active >= 0 && active < len(tabs) && tabs[active].terminal != nil {
-					at = active
-				} else {
-					for i := len(tabs) - 1; i >= 0; i-- {
-						if tabs[i].terminal != nil {
-							at = i
-							break
-						}
-					}
-				}
+				at = toolTab(tabs, active, state.lastTerminal, terminalID)
 			}
 			update := func() {
 				state.tabs, state.active, state.open = tabs, active, true
@@ -177,6 +168,10 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 				return
 			}
 			term = tabs[at].terminal
+			state.lastTerminal = term.id
+			if name == "terminal_read" {
+				return // reading its output doesn't change the tab on show
+			}
 			active = at
 			update()
 			if name == "terminal_screen" {

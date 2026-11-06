@@ -19,6 +19,42 @@ type panelState struct {
 	active int
 	open   bool
 	width  float32 // 0: the default width
+	// The browser tab and terminal the model used last: what an empty ID
+	// means when the tab on show is of the other kind.
+	lastBrowser, lastTerminal string
+}
+
+// toolTab is the tab a browser or terminal call with an empty ID acts on:
+// the tab on show when it is of that kind (id gives a tab's ID, "" for
+// another kind), else the one the model used last, else the newest.
+func toolTab(tabs []panelTab, active int, last string, id func(panelTab) string) int {
+	if active >= 0 && active < len(tabs) && id(tabs[active]) != "" {
+		return active
+	}
+	newest := -1
+	for i, tab := range tabs {
+		switch tabID := id(tab); {
+		case tabID != "" && tabID == last:
+			return i
+		case tabID != "":
+			newest = i
+		}
+	}
+	return newest
+}
+
+func browserID(tab panelTab) string {
+	if tab.browser == nil {
+		return ""
+	}
+	return tab.browser.Snapshot().ID
+}
+
+func terminalID(tab panelTab) string {
+	if tab.terminal == nil {
+		return ""
+	}
+	return tab.terminal.id
 }
 
 // savedPanel is what is written with the chat.

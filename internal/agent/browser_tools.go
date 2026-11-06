@@ -26,7 +26,7 @@ func browserToolDefinitions() []map[string]any {
 		return map[string]any{"type": "string", "description": description}
 	}
 	enum := func(values ...string) map[string]any { return map[string]any{"type": "string", "enum": values} }
-	tab := str("Stable tab ID from browser_tabs; empty uses this chat's selected browser tab.")
+	tab := str("Stable tab ID from browser_tabs; empty: the browser tab on show in the side panel, or else the one you used last.")
 	integer := map[string]any{"type": "integer"}
 	number := map[string]any{"type": "number"}
 	boolean := map[string]any{"type": "boolean"}

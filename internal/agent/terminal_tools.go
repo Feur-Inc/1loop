@@ -49,7 +49,7 @@ func terminalToolDefinitions() []map[string]any {
 		}}
 	}
 	return []map[string]any{
-		def("terminal_tabs", "List, open, select or close this chat's integrated terminals. They are real persistent shells visible to the user. Empty session_id selects the active terminal; empty cwd opens in the workspace. Never access external terminals.", map[string]any{
+		def("terminal_tabs", "List, open, select or close this chat's integrated terminals. They are real persistent shells visible to the user. In every terminal tool, an empty session_id is the terminal on show in the side panel, or else the one you used last; empty cwd opens in the workspace. Never access external terminals.", map[string]any{
 			"action":     map[string]any{"type": "string", "enum": []string{"list", "open", "select", "close"}},
 			"session_id": str,
 			"cwd":        str,

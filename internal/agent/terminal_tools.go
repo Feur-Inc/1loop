@@ -10,9 +10,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"time"
 
 	"1loop/internal/platform"
@@ -104,10 +106,35 @@ func WaitForOutput(ctx context.Context, waitMS int, ready func() bool, done <-ch
 	}
 }
 
+// hostShells caches, per host-shell, the shell it runs.
+var hostShells sync.Map
+
+// userShell is the shell a terminal tab runs: $SHELL, except in the
+// Flatpak, where $SHELL is its host-shell script, which runs the host
+// user's login shell: that one, asked of the host the same way.
+func userShell() string {
+	shell := os.Getenv("SHELL")
+	if filepath.Base(shell) != "host-shell" {
+		return shell
+	}
+	if cached, ok := hostShells.Load(shell); ok {
+		return cached.(string)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	output, _ := exec.CommandContext(ctx, filepath.Join(filepath.Dir(shell), "host-run"), "sh", "-c", `getent passwd "$(id -un)" | cut -d: -f7`).Output()
+	login := strings.TrimSpace(string(output))
+	if login == "" {
+		login = "/bin/bash" // as host-shell does
+	}
+	hostShells.Store(shell, login)
+	return login
+}
+
 // terminalShell names the shell a terminal tab runs: on Unix the user's own
 // ($SHELL, often zsh), not the bash the shell tool uses.
 func terminalShell() string {
-	shell := filepath.Base(os.Getenv("SHELL"))
+	shell := filepath.Base(userShell())
 	if runtime.GOOS == "windows" {
 		return platform.ShellDescription()
 	}

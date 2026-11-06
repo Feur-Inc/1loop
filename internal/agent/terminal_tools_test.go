@@ -5,6 +5,8 @@
 package agent
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -16,5 +18,20 @@ func TestTerminalShell(t *testing.T) {
 		if got := terminalShell(); !strings.Contains(got, want) {
 			t.Errorf("SHELL=%q: %q, want %q", shell, got, want)
 		}
+	}
+}
+
+// In the Flatpak, $SHELL is host-shell: the instructions name the host's
+// login shell it runs, not "host-shell".
+func TestTerminalShellFlatpak(t *testing.T) {
+	dir := t.TempDir()
+	for name, script := range map[string]string{"host-shell": "#!/bin/sh\n", "host-run": "#!/bin/sh\necho /usr/bin/fish\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(script), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	t.Setenv("SHELL", filepath.Join(dir, "host-shell"))
+	if got := terminalShell(); !strings.Contains(got, "interactive fish, not bash") {
+		t.Fatalf("%q", got)
 	}
 }

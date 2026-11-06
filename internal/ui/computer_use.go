@@ -95,6 +95,9 @@ func (ui *desktopUI) computerTools(chat *conversation) agent.PanelToolHandler {
 		if request.Action == "start" {
 			return session.StartLocked(operation, false)
 		}
+		if session.Portal == nil && (request.Action == "describe" || request.Action == "doctor") {
+			return computerBeforeStart(operation, session, request.Action, arguments)
+		}
 		if session.Portal == nil {
 			return agent.PanelToolResult{}, fmt.Errorf("Call start and approve desktop sharing before using Computer Use")
 		}
@@ -162,6 +165,37 @@ func (ui *desktopUI) computerTools(chat *conversation) agent.PanelToolHandler {
 			return agent.PanelToolResult{}, fmt.Errorf("Unknown Computer Use action: %s", request.Action)
 		}
 	}
+}
+
+// computerBeforeStart answers describe and doctor before desktop sharing:
+// neither shows the screen nor controls anything, and doctor is what says
+// why start or an action can't work. On Linux the accessibility backend
+// runs without sharing; on Windows it is the sharing session itself.
+func computerBeforeStart(ctx context.Context, session *computeruse.ComputerSession, action string, arguments map[string]any) (agent.PanelToolResult, error) {
+	const notStarted = "Desktop sharing: not started (start asks the user to share the screen and allow keyboard and pointer control)."
+	if runtime.GOOS == "windows" {
+		if action == "describe" {
+			return agent.PanelToolResult{}, fmt.Errorf("On Windows, the accessibility schemas come with desktop sharing: call start first")
+		}
+		return agent.PanelToolResult{Text: notStarted + "\nAccessibility and window operations: available once sharing is approved."}, nil
+	}
+	backend, err := session.Backend(ctx)
+	if err != nil {
+		if action == "describe" {
+			return agent.PanelToolResult{}, err
+		}
+		return agent.PanelToolResult{Text: notStarted + "\nAccessibility and window operations: unavailable: " + err.Error()}, nil
+	}
+	if action == "describe" {
+		data, err := backend.Request(ctx, "tools/list", map[string]any{})
+		return agent.PanelToolResult{Text: string(data)}, err
+	}
+	result, err := backend.Call(ctx, "doctor", arguments)
+	if err != nil {
+		return agent.PanelToolResult{Text: notStarted + "\nAccessibility backend doctor failed: " + err.Error()}, nil
+	}
+	result.Text = notStarted + "\n" + result.Text
+	return result, nil
 }
 
 // chooseComputerScreen opens GNOME's dialog again to share another screen;

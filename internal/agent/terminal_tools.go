@@ -54,14 +54,14 @@ func terminalToolDefinitions() []map[string]any {
 			"session_id": str,
 			"cwd":        str,
 		}, "action", "session_id", "cwd"),
-		def("terminal_command", "Write a shell command followed by Enter in an integrated terminal. The shell persists and the user can interact with it. wait_ms is bounded to 0..5000; use terminal_read for longer jobs. Respect approval and never retry a refused action through a different tool.", map[string]any{
+		def("terminal_command", "Write a shell command followed by Enter in an integrated terminal. The shell persists and the user can interact with it. wait_ms (up to 30000) waits for the command to finish: it returns as soon as the shell shows its prompt again. The result's output is what the command wrote, without the echo of the command line; when longer than 8 KiB, its start and end with a marker giving the offsets of the part left out (read it with terminal_read). prompt_back is true once the shell is back at its prompt (zsh, bash 5.1+); false means still running, or a shell that doesn't say: follow with terminal_read from next_offset. command_exit_code is there only when the shell reports it (OSC 133 shell integration); otherwise run echo $? to know it. exit_code is the shell's own, null while it runs. Respect approval and never retry a refused action through a different tool.", map[string]any{
 			"session_id": str,
 			"command":    str,
 			"wait_ms":    integer,
 		}, "session_id", "command", "wait_ms"),
 		def("terminal_write", "Write literal text without Enter into an integrated terminal, including a running interactive program.", map[string]any{"session_id": str, "text": str}, "session_id", "text"),
 		def("terminal_keys", "Send named keys or control chords to a terminal: Enter, Tab, Escape, ArrowUp, Home, PageDown, F1..F12, Ctrl+C, Ctrl+D, Ctrl+L, Shift+Tab or Alt+x.", map[string]any{"session_id": str, "keys": map[string]any{"type": "array", "items": str}}, "session_id", "keys"),
-		def("terminal_read", "Read captured terminal output since byte offset, at most max_bytes (null: 8192; up to 65536). With wait_ms (up to 30000), wait for output past offset first: it returns as soon as there is some or the shell exits, so a long job is followed without busy polling. ANSI sequences may be present; use terminal_screen for full-screen TUI state. Continue with next_offset; available_from identifies output still retained in the 256 KiB buffer. exit_code is null while the shell runs.", map[string]any{"session_id": str, "offset": integer, "max_bytes": map[string]any{"type": []string{"integer", "null"}}, "wait_ms": map[string]any{"type": []string{"integer", "null"}}}, "session_id", "offset", "max_bytes", "wait_ms"),
+		def("terminal_read", "Read captured terminal output since byte offset, at most max_bytes (null: 8192; up to 65536), cut on whole UTF-8 characters. With wait_ms (up to 30000), wait for output past offset first: it returns as soon as there is some or the shell exits, so a long job is followed without busy polling. ANSI sequences may be present; use terminal_screen for full-screen TUI state. Continue with next_offset; available_from identifies output still retained in the 256 KiB buffer. exit_code is null while the shell runs.", map[string]any{"session_id": str, "offset": integer, "max_bytes": map[string]any{"type": []string{"integer", "null"}}, "wait_ms": map[string]any{"type": []string{"integer", "null"}}}, "session_id", "offset", "max_bytes", "wait_ms"),
 		def("terminal_screen", "Capture the selected terminal as a PNG image delivered to your vision input. "+TerminalScreenVisibility, map[string]any{"session_id": str}, "session_id"),
 	}
 }
@@ -72,7 +72,13 @@ func TerminalReadLimit(maxBytes *int) int64 {
 	if maxBytes == nil {
 		return 8192
 	}
-	return int64(min(65536, max(1024, *maxBytes)))
+	return int64(min(65536, max(1, *maxBytes)))
+}
+
+// WaitForCommand waits up to waitMS (at most CommandWaitLimit) until the
+// command is finished, the shell ends (done) or ctx is cancelled.
+func WaitForCommand(ctx context.Context, waitMS int, finished func() bool, done <-chan struct{}) {
+	WaitForOutput(ctx, min(waitMS, CommandWaitLimit), finished, done)
 }
 
 // WaitForOutput waits up to waitMS (at most 30 s) until ready says there is

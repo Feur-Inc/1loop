@@ -298,24 +298,7 @@ func (terminal *serverTerminal) read(offset, limit int64) map[string]any {
 	terminal.mu.Lock()
 	defer terminal.mu.Unlock()
 	first := terminal.total - int64(len(terminal.output))
-	offset = max(first, min(offset, terminal.total))
-	for offset < terminal.total && !utf8.RuneStart(terminal.output[offset-first]) {
-		offset++
-	}
-	end := min(terminal.total, offset+limit)
-	// JSON text must not split a multibyte character between offset pages.
-	for end < terminal.total && end > offset && !utf8.RuneStart(terminal.output[end-first]) {
-		end--
-	}
-	if end > offset {
-		start := end - 1
-		for start > offset && !utf8.RuneStart(terminal.output[start-first]) {
-			start--
-		}
-		if !utf8.FullRune(terminal.output[start-first : end-first]) {
-			end = start
-		}
-	}
+	offset, end := agent.TerminalSpan(terminal.output, terminal.total, offset, limit)
 	return map[string]any{
 		"session_id":     terminal.id,
 		"cwd":            terminal.dir,
@@ -325,6 +308,26 @@ func (terminal *serverTerminal) read(offset, limit int64) map[string]any {
 		"total":          terminal.total,
 		"exit_code":      terminal.exit,
 	}
+}
+
+// command is terminal_command's result: what the shell wrote since offset,
+// when command was sent.
+func (terminal *serverTerminal) command(command string, offset int64) map[string]any {
+	terminal.mu.Lock()
+	defer terminal.mu.Unlock()
+	first := terminal.total - int64(len(terminal.output))
+	offset = max(first, offset)
+	result := agent.TerminalCommandResult(command, terminal.output[offset-first:], offset)
+	result["session_id"], result["cwd"], result["exit_code"], result["total"], result["available_from"] = terminal.id, terminal.dir, terminal.exit, terminal.total, first
+	return result
+}
+
+// since is what the shell wrote from offset on.
+func (terminal *serverTerminal) since(offset int64) []byte {
+	terminal.mu.Lock()
+	defer terminal.mu.Unlock()
+	first := terminal.total - int64(len(terminal.output))
+	return append([]byte(nil), terminal.output[max(first, offset)-first:]...)
 }
 
 func terminalColor(value vt10x.Color, background bool) color.Color {
@@ -487,6 +490,9 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 			return agent.PanelToolResult{}, fmt.Errorf("Open a terminal with terminal_tabs first")
 		}
 		var err error
+		terminal.mu.Lock()
+		offset := terminal.total
+		terminal.mu.Unlock()
 		switch name {
 		case "terminal_command":
 			err = terminal.write(args.Command + "\r")
@@ -513,6 +519,14 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 		if err != nil {
 			return agent.PanelToolResult{}, err
 		}
+		if name == "terminal_command" {
+			agent.WaitForCommand(ctx, args.WaitMS, func() bool { return agent.CommandFinished(args.Command, terminal.since(offset)) }, terminal.done)
+			if ctx.Err() != nil {
+				return agent.PanelToolResult{}, ctx.Err()
+			}
+			data, _ := json.Marshal(terminal.command(args.Command, offset))
+			return agent.PanelToolResult{Text: string(data)}, nil
+		}
 		if name == "terminal_read" {
 			agent.WaitForOutput(ctx, args.WaitMS, func() bool {
 				terminal.mu.Lock()
@@ -529,7 +543,11 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 			case <-terminal.done:
 			}
 		}
-		data, _ := json.Marshal(terminal.read(args.Offset, agent.TerminalReadLimit(args.MaxBytes)))
+		from := args.Offset
+		if name == "terminal_write" || name == "terminal_keys" {
+			from = offset // what they caused, not the output from the start
+		}
+		data, _ := json.Marshal(terminal.read(from, agent.TerminalReadLimit(args.MaxBytes)))
 		return agent.PanelToolResult{Text: string(data)}, nil
 	}
 }

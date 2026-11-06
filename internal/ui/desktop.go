@@ -218,17 +218,19 @@ type desktopUI struct {
 	tips              *tipLayer
 
 	// Window and sidebar
-	header      *fitLabel
-	headerBar   *fyne.Container
-	expand      *tapRow
-	newChat     *tapRow
-	connections *tapRow
-	projectList *fyne.Container
-	chatList    *fyne.Container
-	sideLists   *fyne.Container
-	pane        *paneLayout
-	paneAnim    *fyne.Animation
-	root        *fyne.Container
+	header       *fitLabel
+	headerBar    *fyne.Container
+	expand       *tapRow
+	newChat      *tapRow
+	connections  *tapRow
+	projectList  *fyne.Container
+	chatList     *fyne.Container
+	sideLists    *fyne.Container
+	pane         *paneLayout
+	sideHandle   *sidebarHandle
+	sidebarWidth float32 // dragged to, independent of window size; 0: the default
+	paneAnim     *fyne.Animation
+	root         *fyne.Container
 }
 
 // Fyne snapshots its built-in dialog language when loading translations.
@@ -598,8 +600,9 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view)))
 	// No rule between the panes: the sidebar only casts a faint shadow.
 	shade := canvas.NewHorizontalGradient(color.NRGBA{A: 0x2a}, color.NRGBA{})
-	ui.pane = &paneLayout{shown: 1, shade: 14}
-	ui.root = container.New(ui.pane, sidebar, main, shade)
+	ui.pane = &paneLayout{shown: 1, shade: 14, chosen: &ui.sidebarWidth}
+	ui.sideHandle = newSidebarHandle(ui)
+	ui.root = container.New(ui.pane, sidebar, main, shade, ui.sideHandle)
 	layers := []fyne.CanvasObject{ui.root}
 	if ui.chrome {
 		layers = append(layers, resizeEdges(ui.window))
@@ -1664,6 +1667,7 @@ type savedState struct {
 	UserInstructions string                   `json:"userInstructions"`
 	ApprovalMode     string                   `json:"approvalMode"`
 	PanelWidth       float32                  `json:"panelWidth,omitempty"`
+	SidebarWidth     float32                  `json:"sidebarWidth,omitempty"`
 	// Saved as its opposite so that a state file without it means dynamic.
 	ClassicCompaction bool                  `json:"classicCompaction,omitempty"`
 	MemoryOff         bool                  `json:"memoryOff,omitempty"`
@@ -1715,6 +1719,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.userInstructions,
 		ui.approvalMode,
 		ui.panelWidth,
+		ui.sidebarWidth,
 		ui.classicCompaction,
 		ui.memoryOff,
 		ui.autoResume,
@@ -1802,6 +1807,7 @@ func (ui *desktopUI) load() {
 	}
 	ui.devices = state.Devices
 	ui.panelWidth = state.PanelWidth
+	ui.sidebarWidth = state.SidebarWidth
 	ui.claudeOffered = state.ClaudeOffered
 	if state.Config.Provider == "codex" {
 		state.Config.Provider = "openai"

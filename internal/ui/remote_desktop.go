@@ -715,7 +715,7 @@ func (remote *remoteDesktop) renderChats() {
 		if state := ui.repoFor(p); state.repo != nil {
 			row.trailing = state.repo.Current
 		}
-		ui.projectList.Add(withMore(row, func(anchor fyne.CanvasObject) *sheet {
+		ui.projectList.Add(ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
 			actions := []menuAction{{label: "New chat", icon: iconPlus, run: func() { remote.selectProject(p); ui.startNew() }}}
 			return showMenu(ui.window, anchor, append(actions, ui.repositoryActions(p)...))
 		}))
@@ -740,7 +740,7 @@ func (remote *remoteDesktop) renderChats() {
 		if chat.Running {
 			row.badge = iconDot // the agent works on it on the server
 		}
-		ui.chatList.Add(withMore(row, func(anchor fyne.CanvasObject) *sheet {
+		ui.chatList.Add(ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, []menuAction{
 				{label: "Delete", icon: iconTrash, danger: true, run: func() { remote.deleteChat(chat) }},
 			})

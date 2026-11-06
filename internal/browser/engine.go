@@ -14,6 +14,7 @@ import (
 	"image"
 	"image/draw"
 	_ "image/png"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -754,6 +755,11 @@ func (browser *Page) refreshTitle() {
 	}
 }
 
+// URL is the address to open for what was typed or given: a full URL, an
+// absolute path (a local file) or a host with no scheme, which gets https,
+// or plain http when it is this machine. A relative path or a file name is
+// refused rather than sent out as a web request: README.md is also a host
+// name, in Moldova.
 func URL(raw string) (string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -762,18 +768,31 @@ func URL(raw string) (string, error) {
 	if filepath.IsAbs(raw) {
 		return (&url.URL{Scheme: "file", Path: raw}).String(), nil
 	}
-	if !strings.Contains(raw, "://") && !strings.HasPrefix(raw, "about:") && !strings.HasPrefix(raw, "data:") {
-		scheme := "https://"
-		if strings.HasPrefix(raw, "localhost") || strings.HasPrefix(raw, "127.") || strings.HasPrefix(raw, "[::1]") {
-			scheme = "http://"
+	if !hasScheme(raw) {
+		if strings.HasPrefix(raw, ".") || strings.HasPrefix(raw, "~") || strings.Contains(raw, `\`) {
+			return "", fmt.Errorf("%s is a path, not a web address: give a full URL (https://…), or an absolute path for a local file", raw)
 		}
-		raw = scheme + raw
+		parsed, err := url.Parse("https://" + raw)
+		if err != nil {
+			return "", err
+		}
+		host := parsed.Hostname()
+		switch {
+		case localHost(host):
+			raw = "http://" + raw
+		case !strings.Contains(host, ".") && parsed.Port() == "":
+			return "", fmt.Errorf("%s is not a web address: give a full URL such as https://example.com", raw)
+		case parsed.Port() == "" && strings.Trim(parsed.Path, "/") == "" && fileExtensions[strings.ToLower(host[strings.LastIndex(host, ".")+1:])]:
+			return "", fmt.Errorf("%s looks like a file name, not a web address: give a full URL (https://%s) to open a site of that name", raw, raw)
+		default:
+			raw = "https://" + raw
+		}
 	}
 	parsed, err := url.Parse(raw)
 	if err != nil {
 		return "", err
 	}
-	switch parsed.Scheme {
+	switch strings.ToLower(parsed.Scheme) {
 	case "http", "https":
 		if parsed.Host == "" {
 			return "", fmt.Errorf("Enter a valid URL")
@@ -785,10 +804,52 @@ func URL(raw string) (string, error) {
 	return raw, nil
 }
 
+// hasScheme says whether an address starts with its scheme (https:,
+// file:, about:...), and not with a host and its port (localhost:3000).
+func hasScheme(raw string) bool {
+	colon := strings.Index(raw, ":")
+	if colon <= 0 {
+		return false
+	}
+	for i, r := range raw[:colon] {
+		letter := r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
+		if !letter && (i == 0 || !(r >= '0' && r <= '9' || r == '+' || r == '-' || r == '.')) {
+			return false
+		}
+	}
+	port, _, _ := strings.Cut(raw[colon+1:], "/")
+	_, err := strconv.Atoi(port)
+	return port == "" && strings.HasPrefix(raw[colon+1:], "/") || err != nil
+}
+
+// localHost is this machine: only these get plain http without asking.
+func localHost(host string) bool {
+	host = strings.ToLower(strings.TrimSuffix(host, "."))
+	if host == "localhost" || strings.HasSuffix(host, ".localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
+// fileExtensions end file names that are also host names a web request
+// would go to (.md, .py, .sh are countries): without a scheme, they are files.
+var fileExtensions = map[string]bool{}
+
+func init() {
+	for _, extension := range strings.Fields("md markdown txt log json jsonl yaml yml toml ini cfg conf env lock mod sum go py rb rs js mjs cjs ts tsx jsx java kt kts swift c h cc cpp hpp cs php pl sh bash zsh fish ps1 bat sql html htm css scss xml svg png jpg jpeg gif webp ico pdf csv tsv zip tar gz tgz deb rpm apk exe dll so wasm") {
+		fileExtensions[extension] = true
+	}
+}
+
 func (browser *Page) Navigate(ctx context.Context, action, raw string) error {
 	var job chromedp.Action
 	switch action {
 	case "navigate":
+		if strings.TrimSpace(raw) == "" {
+			// about:blank is for a new tab: here it would wipe the page.
+			return fmt.Errorf("Give the address to open")
+		}
 		u, err := URL(raw)
 		if err == nil && browser.Session.engine.Native != nil {
 			err = nativeURL(u)

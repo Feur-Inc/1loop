@@ -112,6 +112,7 @@ fun PairingRequestDialog(app: RemoteApp) {
             problem = failure.message
         }
     }
+    GlassBackdrop()
     AlertDialog(
         onDismissRequest = {},
         containerColor = Palette.surface,

@@ -17,6 +17,9 @@ type Painter interface {
 	Init()
 	// Capture requests that the specified canvas be drawn to an in-memory image
 	Capture(fyne.Canvas) image.Image
+	// CaptureFrame reads the frame just painted, before it is shown: what
+	// the front buffer holds after a swap is undefined on many drivers.
+	CaptureFrame(fyne.Canvas) image.Image
 	// Clear tells our painter to prepare a fresh paint
 	Clear()
 	// Free is used to indicate that a certain canvas object is no longer needed

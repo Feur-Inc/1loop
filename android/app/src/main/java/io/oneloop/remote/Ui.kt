@@ -29,6 +29,10 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.material3.ripple
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -141,8 +145,9 @@ fun Pill(text: String, primary: Boolean = false, enabled: Boolean = true, icon: 
     val shape = RoundedCornerShape(50)
     val base = if (primary) Modifier.background(if (enabled) Palette.amber else Palette.raised, shape)
     else Modifier.border(1.dp, Palette.border, shape)
+    val press = remember { MutableInteractionSource() }
     Row(
-        base.clip(shape).clickable(enabled = enabled, onClick = onClick).height(44.dp).padding(horizontal = 20.dp),
+        Modifier.pressScale(press).then(base).clip(shape).clickable(press, ripple(), enabled = enabled, onClick = onClick).height(44.dp).padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         val ink = if (primary) Palette.ink else Palette.muted
@@ -153,8 +158,9 @@ fun Pill(text: String, primary: Boolean = false, enabled: Boolean = true, icon: 
 
 @Composable
 fun RoundButton(icon: ImageVector, fill: Color, ink: Color, description: String, modifier: Modifier = Modifier, size: Dp = 40.dp, iconSize: Dp = 20.dp, onClick: () -> Unit) {
+    val press = remember { MutableInteractionSource() }
     Box(
-        modifier.size(size).clip(CircleShape).background(fill).clickable(onClick = onClick),
+        modifier.pressScale(press, 0.9f).size(size).clip(CircleShape).background(fill).clickable(press, ripple(), onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, description, tint = ink, modifier = Modifier.size(iconSize)) }
 }
@@ -201,7 +207,7 @@ fun Root(app: RemoteApp) {
             app.updateAsked = true
         }
     }
-    Box(Modifier.fillMaxSize().background(Palette.background)) {
+    FrostedBox(glassCover(), Modifier.fillMaxSize().background(Palette.background)) {
         Crossfade(app.screen::class, animationSpec = tween(220), label = "screen") { kind ->
             when (kind) {
                 Screen.Mode::class -> ModeScreen(app::chooseTarget)
@@ -377,6 +383,7 @@ private fun AddressSheet(onDone: () -> Unit, onAdd: (Pair<String, String>) -> Un
     var address by remember { mutableStateOf("") }
     var fingerprint by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
+    GlassBackdrop()
     ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp).imePadding()) {
             Text("Add by address", style = Type.title)
@@ -521,12 +528,17 @@ fun ChatScreen(app: RemoteApp) {
                 drawerState = drawer,
                 gesturesEnabled = drawer.isOpen || !panel,
                 drawerContent = {
-                    ModalDrawerSheet(drawerContainerColor = Palette.sidebar, drawerShape = RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp)) {
+                    ModalDrawerSheet(drawerContainerColor = Palette.sidebar.copy(alpha = 0.9f), drawerShape = RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp)) {
                         ChatsPane(app, Modifier.fillMaxHeight()) { scope.launch { drawer.close() } }
                     }
                 },
             ) {
-                Conversation(app, onMenu = { scope.launch { drawer.open() } }, Modifier.fillMaxSize(), panel) { panel = it }
+                // The conversation frosts as the drawer slides over it, following the finger.
+                val width = with(LocalDensity.current) { 300.dp.toPx() }
+                val cover = (1f + drawer.currentOffset / width).takeIf { !it.isNaN() }?.coerceIn(0f, 1f) ?: 0f
+                FrostedBox(cover, Modifier.fillMaxSize()) {
+                    Conversation(app, onMenu = { scope.launch { drawer.open() } }, Modifier.fillMaxSize(), panel) { panel = it }
+                }
             }
         }
     }
@@ -605,6 +617,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
     worktreeActions?.let { (project, worktree) -> WorktreeSheet(app, project, worktree) { worktreeActions = null } }
     newWorktree?.let { project -> NewWorktreeSheet(app, project) { newWorktree = null } }
     deleting?.let { chat ->
+        GlassBackdrop()
         ModalBottomSheet(
             onDismissRequest = { deleting = null },
             containerColor = Palette.surface,
@@ -785,6 +798,11 @@ private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> U
     LaunchedEffect(tail, running, app.meta?.label) {
         if (follow && items.isNotEmpty()) list.scrollToItem(items.size + 1, 0)
     }
+    // Items from fresh on arrived after the chat opened; older ones loaded above reset it.
+    var fresh by remember(app.current) { mutableIntStateOf(items.size) }
+    val appeared = remember(app.current) { mutableSetOf<Int>() }
+    val first = items.firstOrNull()
+    LaunchedEffect(first) { fresh = items.size; appeared.clear() }
     LazyColumn(
         state = list, modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
@@ -792,44 +810,49 @@ private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> U
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         itemsIndexed(items, contentType = { _, item -> item.kind }) { index, item ->
-            Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
-                when (item.kind) {
-                    "user" -> UserBubble(item, images = { if (item.images > 0) ItemImages(app, app.firstItem + index, item.images) }) {
-                        MessageActions(app, item, running) { editing = app.firstItem + index to item.text }
-                    }
-                    "assistant" -> Column {
-                        Markdown(item.text, onCite = onCite)
-                        // One Copy per finished answer: under its last text, not while it runs.
-                        val endsTurn = (index + 1 until items.size).takeWhile { items[it].kind != "user" }.none { items[it].kind == "assistant" }
-                        if (endsTurn && !(running && index > lastUser)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                CopyChip { answerText(items, index) }
-                                MessageActions(app, item, running) { app.retryMessage(index) }
+            // A message that arrives while the chat is on screen rises into place; those already there do not move.
+            val rise = remember { index >= fresh && appeared.add(index) }
+            Box(Modifier.fillMaxWidth().appear(rise), contentAlignment = Alignment.TopCenter) {
+                Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
+                    when (item.kind) {
+                        "user" -> UserBubble(item, images = { if (item.images > 0) ItemImages(app, app.firstItem + index, item.images) }) {
+                            MessageActions(app, item, running) { editing = app.firstItem + index to item.text }
+                        }
+                        "assistant" -> Column {
+                            Markdown(item.text, onCite = onCite)
+                            // One Copy per finished answer: under its last text, not while it runs.
+                            val endsTurn = (index + 1 until items.size).takeWhile { items[it].kind != "user" }.none { items[it].kind == "assistant" }
+                            if (endsTurn && !(running && index > lastUser)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CopyChip { answerText(items, index) }
+                                    MessageActions(app, item, running) { app.retryMessage(index) }
+                                }
                             }
                         }
-                    }
-                    "tool" -> Column {
-                        ToolRow(item) { onTool(item) }
-                        if (item.tool == "imagegen" && item.state == "running") {
-                            Row(
-                                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                                    .background(Palette.code).padding(20.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                WorkRing("wait", 28.dp)
-                                Text("Creating your image…", style = Type.body)
+                        "tool" -> Column {
+                            ToolRow(item) { onTool(item) }
+                            if (item.tool == "imagegen" && item.state == "running") {
+                                Row(
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                        .background(Palette.code).padding(20.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    WorkRing("wait", 28.dp)
+                                    Text("Creating your image…", style = Type.body)
+                                }
                             }
+                            // What the tool showed the model (a screenshot), as Codex shows it.
+                            if (item.images > 0) ItemImages(app, app.firstItem + index, item.images, Modifier.padding(start = 32.dp, top = 2.dp))
                         }
-                        // What the tool showed the model (a screenshot), as Codex shows it.
-                        if (item.images > 0) ItemImages(app, app.firstItem + index, item.images, Modifier.padding(start = 32.dp, top = 2.dp))
+                        "error" -> Column {
+                            Text(item.text, style = Type.body.copy(color = Palette.danger))
+                            if (!(running && index > lastUser)) MessageActions(app, item, running) { app.retryMessage(index) }
+                        }
+                        "note" -> Text(item.text, style = Type.caption, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                     }
-                    "error" -> Column {
-                        Text(item.text, style = Type.body.copy(color = Palette.danger))
-                        if (!(running && index > lastUser)) MessageActions(app, item, running) { app.retryMessage(index) }
-                    }
-                    "note" -> Text(item.text, style = Type.caption, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 }
+        
             }
         }
         item {
@@ -998,7 +1021,10 @@ private fun Composer(app: RemoteApp, running: Boolean) {
             Text(app.server?.name.orEmpty(), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Column(
-            Modifier.widthIn(max = 760.dp).fillMaxWidth().background(Palette.surface, RoundedCornerShape(18.dp))
+            // Focused, the card lifts in a soft amber glow.
+            Modifier.widthIn(max = 760.dp).fillMaxWidth()
+                .shadow(animateDpAsState(if (focused) 14.dp else 0.dp, tween(220), label = "glow").value, RoundedCornerShape(18.dp), ambientColor = Palette.amber, spotColor = Palette.amber)
+                .background(Palette.surface, RoundedCornerShape(18.dp))
                 .border(1.dp, border, RoundedCornerShape(18.dp)).padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
         ) {
             if (app.attachments.isNotEmpty()) AttachmentTray(app)
@@ -1085,7 +1111,8 @@ private fun ProjectChip(app: RemoteApp, chosen: String?, onChoose: (String) -> U
             Spacer(Modifier.width(6.dp))
             Text(app.folderName(path), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
         }
-        DropdownMenu(open, { open = false }, containerColor = Palette.popover) {
+        if (open) GlassBackdrop()
+        DropdownMenu(open, { open = false }, containerColor = Palette.popover.copy(alpha = 0.88f)) {
             for (p in app.projects) DropdownMenuItem(
                 text = { Text(projectName(p), style = Type.body) },
                 onClick = { onChoose(p); open = false },
@@ -1147,6 +1174,7 @@ private fun QueueLine(text: String, number: Int?) {
 @Composable
 private fun ToolSheet(app: RemoteApp, item: Item, onDone: () -> Unit) {
     val args = remember(item.args) { runCatching { JSONObject(item.args) }.getOrDefault(JSONObject()) }
+    GlassBackdrop()
     ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1210,6 +1238,7 @@ private fun QuestionSheet(app: RemoteApp, request: Questions) {
     val others = draft.others
     // Closing (swipe, back, outside tap) sets the questions aside, to answer
     // from the composer: the run keeps waiting for them.
+    GlassBackdrop()
     ModalBottomSheet(onDismissRequest = { app.questionsAside.add(request.id) }, sheetState = state, containerColor = Palette.surface) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1257,6 +1286,7 @@ private fun ApprovalSheet(app: RemoteApp, approval: Approval) {
     // Only Deny or Allow close it: a hidden sheet left in place would block every touch.
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { it != SheetValue.Hidden })
     val title = app.chats.firstOrNull { it.id == approval.chat }?.title.orEmpty()
+    GlassBackdrop()
     ModalBottomSheet(onDismissRequest = {}, sheetState = state, containerColor = Palette.surface) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -1317,6 +1347,7 @@ private fun ActionChip(icon: ImageVector, label: String, onClick: () -> Unit) {
 private fun EditSheet(original: String, onSend: (String) -> Unit, onDone: () -> Unit) {
     var text by remember { mutableStateOf(original) }
     val focus = remember { FocusRequester() }
+    GlassBackdrop()
     ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp).imePadding()) {
             Text("Edit message", style = Type.title)

@@ -237,6 +237,7 @@ private fun AutoResumeSection(app: RemoteApp) {
         Pill("Add wait", enabled = steps.size < 16) { steps.add(JSONObject().put("action", "wait")) }
         Box {
             Pill("Add model", enabled = steps.size < 16 && app.models.any { it.id.isNotEmpty() }) { expanded = true }
+            if (expanded) GlassBackdrop()
             DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
                 Field(search, { search = it }, "Search models…", androidx.compose.ui.text.input.KeyboardType.Text, Modifier.width(260.dp))
                 app.models.filter { it.id.isNotEmpty() && "${it.name} ${it.detail}".contains(search.trim(), ignoreCase = true) }.take(80).forEach { model ->
@@ -276,6 +277,7 @@ private fun ModelCompactionSection(app: RemoteApp) {
     Text("When 1loop compacts a conversation, for each model: choose a model, then its target in tokens.", style = Type.small)
     Box {
         Pill(model?.name ?: "Choose a model", enabled = app.models.isNotEmpty()) { expanded = true }
+        if (expanded) GlassBackdrop()
         DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             Field(search, { search = it }, "Search models…", KeyboardType.Text, Modifier.width(260.dp))
             app.models.filter { "${it.name} ${it.detail}".contains(search.trim(), ignoreCase = true) }.take(80).forEach { choice ->
@@ -329,6 +331,7 @@ private fun BrowserDataSection(app: RemoteApp) {
     )
     Pill(if (busy) "Clearing…" else "Clear browsing data", enabled = app.connected && !busy) { asking = true }
     status?.let { Text(it, style = Type.small.copy(color = if (it.startsWith("Cleared")) Palette.added else Palette.danger)) }
+    if (asking) GlassBackdrop()
     if (asking) AlertDialog(
         onDismissRequest = { asking = false },
         containerColor = Palette.surface,
@@ -563,6 +566,7 @@ fun UpdateActions(app: RemoteApp) {
 @Composable
 fun UpdateDialog(app: RemoteApp, onDismiss: () -> Unit) {
     LaunchedEffect(Unit) { app.updates.check() }
+    GlassBackdrop()
     AlertDialog(
         onDismissRequest = onDismiss,
         containerColor = Palette.surface,

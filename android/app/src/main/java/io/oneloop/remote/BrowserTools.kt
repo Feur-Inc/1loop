@@ -89,7 +89,8 @@ fun BrowserToolbar(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box {
                 ToolChip("${viewport.mode()} · ${viewport.width} × ${viewport.height}", selected = false, icon = Icons.chevron, enabled = enabled) { menu = true }
-                DropdownMenu(menu, { menu = false }, containerColor = Palette.popover) {
+                if (menu) GlassBackdrop()
+                DropdownMenu(menu, { menu = false }, containerColor = Palette.popover.copy(alpha = 0.88f)) {
                     val modes = listOf("Adaptive" to "Follow this view's size") +
                         presets.map { (name, size, _) -> name to "${size.first} × ${size.second}" } + ("Custom" to "Choose CSS viewport dimensions")
                     for ((name, detail) in modes) {

@@ -140,6 +140,7 @@ fun ContextRing(used: Int, window: Int) {
                 if (sweep > 0f) drawArc(Palette.amber, -90f, sweep, false, Offset(inset, inset), arc, style = Stroke(stroke))
             }
         }
+        if (open) GlassBackdrop()
         DropdownMenu(open, { open = false }, containerColor = Palette.raised) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
                 if (window <= 0) {
@@ -198,6 +199,7 @@ fun ModelSheet(app: RemoteApp, onDone: () -> Unit) {
     // The account whose models show: the chosen model's, until another is tapped.
     var picked by remember { mutableStateOf<String?>(null) }
     val shown = picked ?: model?.account ?: app.accounts.firstOrNull()?.id.orEmpty()
+    GlassBackdrop()
     ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
             if (app.accounts.isNotEmpty()) {
@@ -395,7 +397,8 @@ fun ApprovalChip(app: RemoteApp) {
             Spacer(Modifier.width(6.dp))
             Text(if (yolo) "YOLO" else if (auto) "Auto" else "Approval", style = Type.small.copy(color = ink))
         }
-        DropdownMenu(open, { open = false }, containerColor = Palette.popover) {
+        if (open) GlassBackdrop()
+        DropdownMenu(open, { open = false }, containerColor = Palette.popover.copy(alpha = 0.88f)) {
             ModeItem(Icons.shield, "Approval required", "Ask before each command and edit", !yolo && !auto) { app.chooseApprovalMode("approval"); open = false }
             if (app.autoMode) { // a computer older than this app may not offer it
                 ModeItem(Icons.shieldCheck, "Auto mode", "Approves safe actions, asks you for risky ones", auto) { app.chooseApprovalMode("auto"); open = false }

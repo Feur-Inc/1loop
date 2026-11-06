@@ -212,6 +212,7 @@ fun LinuxScreen(app: RemoteApp, onBack: () -> Unit) {
         }
     }
     ask?.let { shown ->
+        GlassBackdrop()
         AlertDialog(
             onDismissRequest = { ask = null },
             containerColor = Palette.surface,
@@ -223,6 +224,7 @@ fun LinuxScreen(app: RemoteApp, onBack: () -> Unit) {
     }
     if (resetAsked) {
         var keep by remember { mutableStateOf(true) }
+        GlassBackdrop()
         AlertDialog(
             onDismissRequest = { resetAsked = false },
             containerColor = Palette.surface,

@@ -209,6 +209,7 @@ fun SharedFilesDialog(app: RemoteApp) {
     var problem by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     val workspace = app.chats.firstOrNull { it.id == app.current }?.workspace ?: app.selectedProject ?: app.workspace
+    GlassBackdrop()
     AlertDialog(
         onDismissRequest = { if (!busy) app.shared.clear() },
         containerColor = Palette.surface,
@@ -276,6 +277,7 @@ private fun CopyProjectDialog(app: RemoteApp, workspace: String, onDone: () -> U
             } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { status = failure.message } finally { busy = false }
         }
     }
+    GlassBackdrop()
     AlertDialog(
         onDismissRequest = { if (!busy) onDone() },
         containerColor = Palette.surface,
@@ -312,6 +314,7 @@ private fun SendFileDialog(app: RemoteApp, workspace: String, file: ProjectFile,
     var destination by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
+    GlassBackdrop()
     AlertDialog(
         onDismissRequest = { if (!busy) close() }, containerColor = Palette.surface,
         title = { Text("Send “${file.name}”", style = Type.title) },

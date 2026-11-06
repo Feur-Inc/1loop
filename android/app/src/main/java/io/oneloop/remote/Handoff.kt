@@ -56,6 +56,7 @@ fun HandoffDialog(ask: RemoteApp.HandoffAsk) {
             if (chosen.window > 0 && l.tokens <= chosen.window * 8 / 10) "" else "${chosen.name} cannot read ~${tokens(l.tokens)} tokens: its window is ${tokens(chosen.window)}."
         } ?: "Choose a level."
     }
+    GlassBackdrop()
     AlertDialog(
         onDismissRequest = ask.cancel,
         containerColor = Palette.surface,

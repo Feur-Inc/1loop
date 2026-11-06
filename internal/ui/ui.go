@@ -4,6 +4,7 @@ package ui
 
 import (
 	"fmt"
+	"image"
 	"image/color"
 	"os"
 	"strings"
@@ -860,6 +861,10 @@ type sheet struct {
 	dim        *canvas.Rectangle
 	panel      *canvas.Rectangle
 	shadow     *shadow
+	glass      *image.NRGBA  // the window blurred as the sheet opened (glass.go), nil without
+	backdrop   *canvas.Image // a dialog's: the whole frosted window behind it
+	frost      *canvas.Image // a menu's: the frosted part of the window under its panel
+	frostAt    rect          // the panel rectangle frost was cut for
 	open       bool
 	closing    bool
 	items      []*tapRow
@@ -898,6 +903,8 @@ func (dialog *sheet) Show() {
 		dialog.anchorSz = dialog.anchor.Size()
 	}
 	dialog.Resize(dialog.canvas.Size())
+	dialog.glass = frostedBackdrop(dialog.canvas) // before the sheet is drawn: what it covers
+	dialog.frostAt = rect{}
 	dialog.canvas.Overlays().Add(dialog)
 	dialog.Refresh()
 	duration := 200 * time.Millisecond
@@ -940,6 +947,10 @@ func (dialog *sheet) Hide() {
 		found = found || object == dialog
 	}
 	stack.Remove(dialog)
+	dialog.glass = nil // the backdrop is only worth its memory while shown
+	if dialog.backdrop != nil {
+		dialog.backdrop.Image, dialog.frost.Image = nil, nil
+	}
 	for _, canvasObjectValue := range above {
 		stack.Add(canvasObjectValue)
 	}
@@ -1069,6 +1080,11 @@ func (dialog *sheet) CreateRenderer() fyne.WidgetRenderer {
 	dialog.panel = canvas.NewRectangle(colSurface)
 	dialog.panel.StrokeWidth = 1
 	dialog.shadow = newShadow(2.4)
+	dialog.backdrop, dialog.frost = canvas.NewImageFromImage(nil), canvas.NewImageFromImage(nil)
+	for _, glass := range []*canvas.Image{dialog.backdrop, dialog.frost} {
+		glass.FillMode, glass.ScaleMode = canvas.ImageFillStretch, canvas.ImageScaleSmooth
+		glass.Hide()
+	}
 	return &sheetRenderer{dialog}
 }
 
@@ -1089,13 +1105,52 @@ func (renderer *sheetRenderer) Layout(size fyne.Size) {
 		}
 		panelPos = fyne.NewPos(box.pos.X+(panelSize.Width-w)/2, originY+(box.pos.Y-originY)*k)
 		panelSize = fyne.NewSize(w, h)
+	} else {
+		// A dialog settles from slightly smaller, centred, as it rises.
+		k := 0.965 + 0.035*sheet.progress
+		w, h := panelSize.Width*k, panelSize.Height*k
+		panelPos = fyne.NewPos(box.pos.X+(panelSize.Width-w)/2, box.pos.Y+(panelSize.Height-h)/2)
+		panelSize = fyne.NewSize(w, h)
 	}
+	renderer.layoutGlass(size, box, panelPos, panelSize)
 	sheet.panel.Move(panelPos)
 	sheet.panel.Resize(panelSize)
 	sheet.shadow.layout(panelPos.AddXY(0, 2), panelSize, sheet.panel.CornerRadius)
 	pad := sheet.pad()
 	sheet.content.Move(box.pos.AddXY(pad, pad))
 	sheet.content.Resize(fyne.NewSize(box.size.X-2*pad, box.size.Y-2*pad))
+}
+
+// layoutGlass places the frosted window: all of it behind a dialog, the
+// part under the panel behind a menu (cut once for the panel's final place;
+// while it zooms in, the cut is only stretched).
+func (renderer *sheetRenderer) layoutGlass(size fyne.Size, box rect, panelPos fyne.Position, panelSize fyne.Size) {
+	sheet := renderer.dialog
+	if sheet.glass == nil || size.Width <= 0 {
+		sheet.backdrop.Hide()
+		sheet.frost.Hide()
+		return
+	}
+	if !sheet.menu {
+		if sheet.backdrop.Image != sheet.glass {
+			sheet.backdrop.Image = sheet.glass
+			sheet.backdrop.Refresh()
+		}
+		sheet.backdrop.Move(fyne.Position{})
+		sheet.backdrop.Resize(size)
+		sheet.backdrop.Show()
+		return
+	}
+	if sheet.frostAt != box {
+		sheet.frostAt = box
+		scale := float32(sheet.glass.Rect.Dx()) / size.Width
+		cut := image.Rect(int(box.pos.X*scale), int(box.pos.Y*scale), int((box.pos.X+box.size.X)*scale)+1, int((box.pos.Y+box.size.Y)*scale)+1)
+		sheet.frost.Image = sheet.glass.SubImage(cut.Intersect(sheet.glass.Rect))
+		sheet.frost.Refresh()
+	}
+	sheet.frost.Move(panelPos)
+	sheet.frost.Resize(panelSize)
+	sheet.frost.Show()
 }
 
 func (renderer *sheetRenderer) MinSize() fyne.Size { return fyne.NewSize(0, 0) }
@@ -1119,6 +1174,15 @@ func (renderer *sheetRenderer) Refresh() {
 			sheet.panel.StrokeColor = withAlpha(colBorder, o)
 			sheet.panel.CornerRadius = 14
 		}
+		if sheet.glass != nil { // frosted glass: the tint lets the blurred window through
+			base := colPopover
+			if sheet.columns {
+				base = colSurface
+			}
+			sheet.panel.FillColor = glassTint(base, o)
+			sheet.frost.Translucency = float64(1 - o)
+			sheet.frost.CornerRadius = sheet.panel.CornerRadius
+		}
 		sheet.shadow.setOpacity(o)
 		// Items follow the surface slightly later, so the panel leads.
 		itemAlpha := fyne.Min(1, fyne.Max(0, (o-0.25)/0.75))
@@ -1131,6 +1195,11 @@ func (renderer *sheetRenderer) Refresh() {
 	} else {
 		sheet.dim.FillColor = color.NRGBA{A: uint8(150 * o)}
 		sheet.panel.FillColor = colSurface
+		if sheet.glass != nil { // the frosted window, already darkened, fades in under a lighter dim
+			sheet.dim.FillColor = color.NRGBA{A: uint8(55 * o)}
+			sheet.backdrop.Translucency = float64(1 - o)
+			sheet.panel.FillColor = color.NRGBA{R: colSurface.R, G: colSurface.G, B: colSurface.B, A: 0xe0} // a pane of glass too
+		}
 		sheet.panel.StrokeColor = colBorder
 		sheet.panel.CornerRadius = 14
 		sheet.shadow.setOpacity(1)
@@ -1141,12 +1210,16 @@ func (renderer *sheetRenderer) Refresh() {
 	sheet.dim.Refresh()
 	sheet.shadow.refresh()
 	sheet.panel.Refresh()
+	if sheet.glass != nil {
+		canvas.Refresh(sheet.backdrop)
+		canvas.Refresh(sheet.frost)
+	}
 }
 
 func (renderer *sheetRenderer) Objects() []fyne.CanvasObject {
-	objects := []fyne.CanvasObject{renderer.dialog.dim}
+	objects := []fyne.CanvasObject{renderer.dialog.backdrop, renderer.dialog.dim}
 	objects = append(objects, renderer.dialog.shadow.objects()...)
-	objects = append(objects, renderer.dialog.panel, renderer.dialog.content)
+	objects = append(objects, renderer.dialog.frost, renderer.dialog.panel, renderer.dialog.content)
 	return objects
 }
 

@@ -36,6 +36,7 @@ fun DefaultModelsSection(app: RemoteApp) {
     Text("Optional, for each account. Choose a model per level, then select Default in the composer. Only configured levels appear. Accounts never switch.", style = Type.small)
     Box {
         Pill(account?.name ?: "No account", enabled = !saving && app.accounts.isNotEmpty()) { expanded = true }
+        if (expanded) GlassBackdrop()
         DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
             app.accounts.forEach { choice ->
                 DropdownMenuItem(text = { Text(choice.name) }, onClick = { selected = choice.id; expanded = false })
@@ -73,6 +74,7 @@ fun DefaultModelsSection(app: RemoteApp) {
     notice?.let { Text(it, style = Type.small) }
     editing?.let { level ->
         var search by remember(level) { mutableStateOf("") }
+        GlassBackdrop()
         AlertDialog(
             onDismissRequest = { editing = null },
             title = { Text("${levels.first { it.first == level }.second} · ${account.name}") },

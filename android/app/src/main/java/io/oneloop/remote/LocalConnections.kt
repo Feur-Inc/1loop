@@ -172,6 +172,7 @@ fun ConnectionsSheet(app: RemoteApp, onDone: () -> Unit) {
         }
     }
     LaunchedEffect(Unit) { reload() }
+    GlassBackdrop()
     Dialog(onDismissRequest = {}, properties = DialogProperties(usePlatformDefaultWidth = false, dismissOnClickOutside = false, dismissOnBackPress = false)) {
         Box(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
             val draft = editing
@@ -443,6 +444,7 @@ private fun ConnectionEditor(
         Spacer(Modifier.height(32.dp))
     }
     if (leaving) {
+        GlassBackdrop()
         AlertDialog(
             onDismissRequest = { leaving = false }, containerColor = Palette.popover,
             title = { Text("Unsaved changes", style = Type.title) },
@@ -459,6 +461,7 @@ private fun ConnectionEditor(
         )
     }
     if (removing) {
+        GlassBackdrop()
         AlertDialog(
             onDismissRequest = { removing = false }, containerColor = Palette.popover,
             title = { Text("Remove connection?", style = Type.title) },

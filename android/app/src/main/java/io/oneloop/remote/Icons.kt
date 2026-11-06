@@ -67,7 +67,9 @@ object Icons {
     val trash = lineIcon("trash", line("M3 4.5h10M6.5 4.5V3.2h3v1.3M4.5 4.5l.6 8.3h5.8l.6-8.3M7 7v3.6M9 7v3.6"))
     val tasks = lineIcon("tasks", line("M2.8 4.6l1.3 1.3 2.3-2.4M8.5 4.7h4.7M2.8 10.6l1.3 1.3 2.3-2.4M8.5 10.7h4.7"))
 
-    fun forTool(tool: String) = when (tool) {
+    // The same choice as agent.PhoneTool and toolGlyph on the desktop.
+    fun forTool(tool: String) = when (tool.removePrefix("mcp__1loop_todo__")) {
+        "phone_use", "install_apk", "uninstall_app", "extract_apk" -> phone
         "shell", "adb_shell" -> terminal
         "edit_file", "apply_patch" -> pencil
         "list_directory" -> folder

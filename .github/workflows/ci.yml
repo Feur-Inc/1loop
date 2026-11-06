@@ -58,13 +58,14 @@ jobs:
     needs: draft
     # Runs on pull requests too, where the draft job is skipped.
     if: ${{ !cancelled() && needs.draft.result != 'failure' }}
-    # Linux and Windows build on the org's self-hosted runners (mopi, whose
-    # image has their packages, and TPM28_RUNNER) for pushes, manual runs and
+    # Linux and Windows build on the org's self-hosted runner mopi, whose
+    # image has their packages and passwordless sudo (TPM28_RUNNER asks for a
+    # password and the build waits forever), for pushes, manual runs and
     # pull requests from this repository's own branches. A fork's pull request
     # is code nobody here vetted: it stays on GitHub's disposable machines, as
     # do Android, Flatpak and Nix, which need an SDK or privileges the
     # self-hosted runners don't have.
-    runs-on: ${{ (contains(fromJSON('["linux","windows"]'), matrix.platform) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","Linux","X64"]') || 'ubuntu-24.04' }}
+    runs-on: ${{ (contains(fromJSON('["linux","windows"]'), matrix.platform) && (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)) && fromJSON('["self-hosted","Linux","X64","dietpi"]') || 'ubuntu-24.04' }}
     timeout-minutes: 90
     permissions:
       contents: write
@@ -96,8 +97,8 @@ jobs:
           DEB_MAINTAINER: TPM28 <77407722+tpm28@users.noreply.github.com>
         run: |
           set -euo pipefail
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends \
+          sudo -n apt-get update -q
+          sudo -n apt-get install -y -q --no-install-recommends \
             libgl-dev libegl-dev xorg-dev libwayland-dev libxkbcommon-dev xvfb xauth
           unformatted=$(git ls-files -z -- '*.go' | xargs -0 -r gofmt -l)
           if [ -n "$unformatted" ]; then printf 'Not formatted:\n%s\n' "$unformatted"; exit 1; fi
@@ -120,19 +121,19 @@ jobs:
         if: matrix.platform == 'windows'
         run: |
           set -euo pipefail
-          sudo apt-get update -q
+          sudo -n apt-get update -q
           mkdir -p ~/apt-windows/partial
-          sudo apt-get install -y -q --no-install-recommends -o Dir::Cache::archives="$HOME/apt-windows" \
+          sudo -n apt-get install -y -q --no-install-recommends -o Dir::Cache::archives="$HOME/apt-windows" \
             gcc-mingw-w64-x86-64 p7zip-full zip
-          sudo chown -R "$(id -u):$(id -g)" ~/apt-windows # apt's lock file, readable by the cache
+          sudo -n chown -R "$(id -u):$(id -g)" ~/apt-windows # apt's lock file, readable by the cache
           packaging/windows/build.sh
 
       - name: Flatpak — build, validate and bundle
         if: matrix.platform == 'flatpak'
         run: |
           set -euo pipefail
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends flatpak flatpak-builder appstream-compose desktop-file-utils
+          sudo -n apt-get update -q
+          sudo -n apt-get install -y -q --no-install-recommends flatpak flatpak-builder appstream-compose desktop-file-utils
           flatpak remote-add --user --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
           manifest=packaging/flatpak/io.github.Feur_Inc.OneLoop.yml
           flatpak-builder --user --install-deps-from=flathub --disable-rofiles-fuse \
@@ -174,8 +175,8 @@ jobs:
         if: matrix.platform == 'android'
         run: |
           set -euo pipefail
-          sudo apt-get update -q
-          sudo apt-get install -y -q --no-install-recommends patchelf
+          sudo -n apt-get update -q
+          sudo -n apt-get install -y -q --no-install-recommends patchelf
           sdkmanager="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
           { yes || true; } | "$sdkmanager" --licenses >/dev/null
           "$sdkmanager" --install 'platforms;android-37.0' 'build-tools;37.0.0' 'ndk;30.0.16248370' >/dev/null

@@ -5,6 +5,12 @@ or Ubuntu (x86-64). They write their files in `dist/` (`DIST=folder` to
 change it). The CI (`.github/workflows/ci.yml`) runs the same scripts after
 the checks below; `release.sh` uses them too. Go comes from `go.mod`.
 
+The CI stamps its builds with their run and commit: `VERSION` becomes
+`0.3.2-alpha.199.a2e2d63` before anything is built, so an alpha says in
+Settings → Updates, in its file names and in its package version which commit
+it was built from. Update checks only read the `0.3.2`. A push on `main`
+keeps the plain version.
+
 | Script | Downloads in `dist/` |
 |---|---|
 | `packaging/linux/build.sh binaries tarball deb appimage` | `1loop-VERSION-linux-amd64.tar.gz`, `1loop-VERSION-amd64.deb`, `1loop-VERSION-x86_64.AppImage` |

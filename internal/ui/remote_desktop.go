@@ -194,6 +194,7 @@ type remoteDesktop struct {
 	todoUsage     *contextUsageState
 	todoRows      map[string]*widget.Label
 	todoSignature string
+	openCommands  map[string]bool // the background commands shown in full, by task
 }
 
 // useServer makes a server the window's target: the sidebar lists its
@@ -210,7 +211,7 @@ func (ui *desktopUI) useServer(client *remoteClient) {
 	ctx, cancel := context.WithCancel(ui.ctx)
 	remote := &remoteDesktop{
 		parent: ui, client: client, ctx: ctx, cancel: cancel, window: ui.window, status: ui.serverStatus,
-		wake: make(chan struct{}, 1), convs: map[string]*conversation{},
+		wake: make(chan struct{}, 1), convs: map[string]*conversation{}, openCommands: map[string]bool{},
 	}
 	remote.resetTabs()
 	ui.server = remote
@@ -1197,22 +1198,26 @@ func (remote *remoteDesktop) renderTasks() {
 		}
 		for i := len(remote.meta.Tasks) - 1; i >= 0; i-- {
 			task := remote.meta.Tasks[i]
-			state := "running since " + task.Started.Format("15:04")
+			state := "Running since " + task.Started.Format("15:04")
 			switch {
 			case task.Running:
 			case task.Stopped:
-				state = "stopped"
+				state = "Stopped"
 			case task.ExitCode == 0:
-				state = "done in " + task.Ended.Sub(task.Started).Round(time.Second).String()
+				state = "Done in " + task.Ended.Sub(task.Started).Round(time.Second).String()
 			default:
-				state = fmt.Sprintf("failed with code %d", task.ExitCode)
+				state = fmt.Sprintf("Failed with code %d", task.ExitCode)
 			}
 			var stop fyne.CanvasObject = layout.NewSpacer()
 			if task.Running {
 				path := "/api/chats/" + remote.meta.Chat + "/tasks/" + task.ID + "/stop"
 				stop = newRow("Stop", iconStop, styleChip, func() { remote.action(path, map[string]any{}) })
 			}
-			remote.todoTasks.Add(container.NewBorder(nil, nil, nil, stop, note("$ "+task.Command+" · "+state)))
+			command := backgroundCommand(task.Command, remote.openCommands, task.ID, func() {
+				remote.todoSignature = "" // drawn again with the command open or closed
+				remote.renderTasks()
+			})
+			remote.todoTasks.Add(container.NewBorder(nil, nil, nil, stop, container.NewVBox(command, textLine(state, 11.5, colMuted))))
 		}
 	}
 	for _, task := range remote.meta.Todo {

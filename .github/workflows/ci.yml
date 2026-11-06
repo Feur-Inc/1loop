@@ -99,7 +99,7 @@ jobs:
           set -euo pipefail
           sudo -n apt-get update -q
           sudo -n apt-get install -y -q --no-install-recommends \
-            libgl-dev libegl-dev xorg-dev libwayland-dev libxkbcommon-dev xvfb xauth
+            libgl-dev libegl-dev xorg-dev libwayland-dev libxkbcommon-dev xvfb xauth file
           unformatted=$(git ls-files -z -- '*.go' | xargs -0 -r gofmt -l)
           if [ -n "$unformatted" ]; then printf 'Not formatted:\n%s\n' "$unformatted"; exit 1; fi
           go vet ./...

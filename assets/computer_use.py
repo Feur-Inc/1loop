@@ -308,7 +308,10 @@ class DesktopSession:
                 self.notify("NotifyKeyboardKeysym", dbus.Int32(key), dbus.UInt32(0))
         elif name == "press_key":
             aliases = {"ctrl":"Control_L", "control":"Control_L", "alt":"Alt_L", "shift":"Shift_L",
-                       "super":"Super_L", "meta":"Super_L", "enter":"Return", "escape":"Escape",
+                       "option":"Alt_L", "opt":"Alt_L", "super":"Super_L", "meta":"Super_L",
+                       "cmd":"Super_L", "command":"Super_L", "win":"Super_L", "windows":"Super_L",
+                       "enter":"Return", "return":"Return", "escape":"Escape", "plus":"plus",
+                       "insert":"Insert", "del":"Delete", "up":"Up", "down":"Down", "left":"Left", "right":"Right",
                        "esc":"Escape", "tab":"Tab", "space":"space", "backspace":"BackSpace",
                        "delete":"Delete", "home":"Home", "end":"End", "pageup":"Page_Up",
                        "pagedown":"Page_Down", "arrowleft":"Left", "arrowright":"Right",
@@ -316,7 +319,10 @@ class DesktopSession:
             keys = []
             modifiers = {Gdk.KEY_Control_L:29, Gdk.KEY_Alt_L:56,
                          Gdk.KEY_Shift_L:42, Gdk.KEY_Super_L:125}
-            for token in arguments["key"].split("+"):
+            tokens = arguments["key"].split("+")
+            if arguments["key"].endswith("++"):  # the + key itself: Ctrl++
+                tokens = arguments["key"][:-2].split("+") + ["plus"]
+            for token in tokens:
                 token = token.strip()
                 key = Gdk.keyval_from_name(aliases.get(token.lower(), token.lower() if len(token)==1 else token.title()))
                 if not key or key == Gdk.KEY_VoidSymbol:

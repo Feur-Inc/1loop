@@ -58,7 +58,7 @@ func browserToolDefinitions() []map[string]any {
 			"tab_id":   tab,
 			"action":   enum("click", "move", "type", "key", "scroll"),
 			"selector": str("Optional CSS selector; empty uses coordinates or focused input."),
-			"text":     str("Text to insert, or key/shortcut name."),
+			"text":     str("Text to insert, or for key: a key with its modifiers, as in terminal_keys: Enter, Escape, ArrowDown, F5, Ctrl+A, Meta+Shift+T (Meta: Cmd/Super), Ctrl++; an unknown name is an error."),
 			"x":        number,
 			"y":        number,
 			"delta_x":  number,

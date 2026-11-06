@@ -35,6 +35,7 @@ import (
 	"github.com/chromedp/chromedp/kb"
 
 	"1loop/internal/core"
+	"1loop/internal/keys"
 	"1loop/internal/platform"
 )
 
@@ -1088,7 +1089,10 @@ func (browser *Page) Interact(ctx context.Context, action, selector, text string
 		}
 		return browser.Run(ctx, input.InsertText(text))
 	case "key":
-		key, modifiers := browserKeyChord(text)
+		key, modifiers, err := browserKeyChord(text)
+		if err != nil {
+			return err
+		}
 		return browser.Run(ctx, chromedp.KeyEvent(key, chromedp.KeyModifiers(modifiers...)))
 	default:
 		return fmt.Errorf("Unknown browser interaction")
@@ -1109,48 +1113,37 @@ func (browser *Page) Capture(ctx context.Context, full bool) (core.ImagePart, er
 	return core.ImagePart{Mime: "image/png", Data: base64.StdEncoding.EncodeToString(data)}, err
 }
 
-func browserKeyChord(text string) (string, []input.Modifier) {
-	parts := strings.Split(text, "+")
+// browserKeyChord is the key event for a key name (see keys.Parse). An
+// unknown name is an error, not letters typed into the page.
+func browserKeyChord(text string) (string, []input.Modifier, error) {
+	chord, err := keys.Parse(text)
+	if err != nil {
+		return "", nil, err
+	}
 	var mods []input.Modifier
-	for _, part := range parts[:len(parts)-1] {
-		switch strings.ToLower(part) {
-		case "ctrl", "control":
-			mods = append(mods, input.ModifierCtrl)
-		case "shift":
-			mods = append(mods, input.ModifierShift)
-		case "alt":
-			mods = append(mods, input.ModifierAlt)
-		case "meta", "super":
-			mods = append(mods, input.ModifierMeta)
+	for _, held := range []struct {
+		on       bool
+		modifier input.Modifier
+	}{{chord.Ctrl, input.ModifierCtrl}, {chord.Shift, input.ModifierShift}, {chord.Alt, input.ModifierAlt}, {chord.Meta, input.ModifierMeta}} {
+		if held.on {
+			mods = append(mods, held.modifier)
 		}
 	}
-	key := parts[len(parts)-1]
-	if special := NamedKey(key); special != "" {
-		return special, mods
+	named := map[string]string{
+		"Enter": kb.Enter, "Tab": kb.Tab, "Escape": kb.Escape, "Backspace": kb.Backspace,
+		"Delete": kb.Delete, "Insert": kb.Insert, "Home": kb.Home, "End": kb.End,
+		"PageUp": kb.PageUp, "PageDown": kb.PageDown, "ArrowUp": kb.ArrowUp,
+		"ArrowDown": kb.ArrowDown, "ArrowLeft": kb.ArrowLeft, "ArrowRight": kb.ArrowRight,
+		"Space": " ", "F1": kb.F1, "F2": kb.F2, "F3": kb.F3, "F4": kb.F4, "F5": kb.F5,
+		"F6": kb.F6, "F7": kb.F7, "F8": kb.F8, "F9": kb.F9, "F10": kb.F10, "F11": kb.F11, "F12": kb.F12,
 	}
-	aliases := map[string]string{
-		"enter":      kb.Enter,
-		"return":     kb.Enter,
-		"tab":        kb.Tab,
-		"escape":     kb.Escape,
-		"backspace":  kb.Backspace,
-		"delete":     kb.Delete,
-		"arrowleft":  kb.ArrowLeft,
-		"arrowright": kb.ArrowRight,
-		"arrowup":    kb.ArrowUp,
-		"arrowdown":  kb.ArrowDown,
-		"home":       kb.Home,
-		"end":        kb.End,
-		"pageup":     kb.PageUp,
-		"pagedown":   kb.PageDown,
-		"space":      " ",
+	if key, ok := named[chord.Key]; ok {
+		return key, mods, nil
 	}
-	if special := aliases[strings.ToLower(key)]; special != "" {
-		key = special
-	} else if len(mods) > 0 {
-		key = strings.ToLower(key)
+	if len(mods) > 0 {
+		return strings.ToLower(chord.Key), mods, nil
 	}
-	return key, mods
+	return chord.Key, mods, nil
 }
 
 // mainLoading follows the loading of the page itself (not of its frames),

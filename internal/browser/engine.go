@@ -9,6 +9,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/draw"
@@ -816,22 +817,109 @@ func (browser *Page) Navigate(ctx context.Context, action, raw string) error {
 
 func (browser *Page) Evaluate(ctx context.Context, expression string) (json.RawMessage, error) {
 	var value json.RawMessage
-	err := browser.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) error {
-		result, exception, err := runtime.Evaluate(expression).WithAwaitPromise(true).WithReturnByValue(true).WithUserGesture(true).WithReplMode(true).Do(ctx)
-		if err != nil {
-			return err
-		}
-		if exception != nil {
-			return fmt.Errorf("JavaScript: %s", exception.Error())
-		}
-		if result.Value == nil {
-			value = json.RawMessage(`null`)
-		} else {
-			value = append(json.RawMessage{}, result.Value...)
-		}
-		return nil
+	err := browser.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) (err error) {
+		value, err = evaluate(ctx, expression)
+		return err
 	}))
+	if errors.Is(err, context.DeadlineExceeded) && ctx.Err() == nil {
+		// Run's own limit, not the caller's: say what it means here.
+		err = fmt.Errorf("JavaScript: the expression didn't finish within 30 s (a promise that never settles, or a loop)")
+	}
 	return value, err
+}
+
+// settle awaits what an expression returned and gives it as JSON: REPL mode
+// awaits a top-level await, not a promise the expression returns. Numbers
+// and BigInts JSON cannot hold are given as text ("NaN", "42n").
+// A reference back to an object being given is "[Circular]", a DOM node
+// its HTML (cut at 300 characters) instead of {}.
+const settle = `async function() {
+	const value = await this;
+	if (value === undefined) return null;
+	const ancestors = [];
+	try {
+		return JSON.parse(JSON.stringify(value, function (key, item) {
+			if (typeof item === "bigint") return item + "n";
+			if (typeof item === "number" && !isFinite(item)) return String(item);
+			if (typeof item !== "object" || item === null) return item;
+			if (typeof Node !== "undefined" && item instanceof Node) {
+				const html = item.outerHTML ?? item.textContent ?? item.nodeName;
+				return html.length > 300 ? html.slice(0, 300) + "…" : html;
+			}
+			while (ancestors.length > 0 && ancestors.at(-1) !== this) ancestors.pop();
+			if (ancestors.includes(item)) return "[Circular]";
+			ancestors.push(item);
+			return item;
+		}));
+	} catch (error) {
+		return "[Not serializable: " + error.message + "]";
+	}
+}`
+
+// evaluate runs expression in the page in REPL mode (top-level await, let
+// redeclared from one call to the next), awaits a returned promise and
+// returns the result as JSON. A thrown error or a rejected promise is an
+// error.
+func evaluate(ctx context.Context, expression string) (json.RawMessage, error) {
+	result, exception, err := runtime.Evaluate(expression).WithAwaitPromise(true).WithUserGesture(true).WithReplMode(true).Do(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if exception != nil {
+		return nil, javaScriptError(exception)
+	}
+	if result.ObjectID == "" { // a primitive
+		switch {
+		case result.UnserializableValue != "":
+			return json.Marshal(string(result.UnserializableValue))
+		case result.Value == nil:
+			return json.RawMessage(`null`), nil
+		}
+		return append(json.RawMessage{}, result.Value...), nil
+	}
+	defer runtime.ReleaseObject(result.ObjectID).Do(ctx)
+	settled, exception, err := runtime.CallFunctionOn(settle).WithObjectID(result.ObjectID).WithAwaitPromise(true).WithReturnByValue(true).Do(ctx)
+	if err != nil {
+		return nil, err
+	}
+	if exception != nil {
+		return nil, javaScriptError(exception)
+	}
+	if settled.Value == nil {
+		return json.RawMessage(`null`), nil
+	}
+	return append(json.RawMessage{}, settled.Value...), nil
+}
+
+// javaScriptError is a thrown error or a rejection with its reason, which
+// the exception's text leaves out when it isn't an Error object: a
+// rejected Promise.reject("why") said only "Uncaught (in promise)".
+func javaScriptError(exception *runtime.ExceptionDetails) error {
+	reason := ""
+	if thrown := exception.Exception; thrown != nil {
+		switch {
+		case thrown.Description != "":
+			reason = thrown.Description
+		case len(thrown.Value) > 0:
+			reason = string(thrown.Value)
+		case thrown.UnserializableValue != "":
+			reason = string(thrown.UnserializableValue)
+		default:
+			reason = string(thrown.Type)
+		}
+	}
+	text := strings.TrimSuffix(strings.TrimSpace(exception.Text), ":")
+	first, stack, _ := strings.Cut(reason, "\n")
+	switch {
+	case reason == "":
+		return fmt.Errorf("JavaScript: %s", text)
+	case strings.HasSuffix(text, first): // "Uncaught Error: boom", then its stack
+		reason = stack
+	}
+	if reason == "" {
+		return fmt.Errorf("JavaScript: %s", text)
+	}
+	return fmt.Errorf("JavaScript: %s: %s", text, strings.TrimSpace(reason))
 }
 
 func browserMetrics(width, height int, ratio float64, mobile bool) *emulation.SetDeviceMetricsOverrideParams {

@@ -151,6 +151,9 @@ func (ui *desktopUI) computerTools(chat *conversation) agent.PanelToolHandler {
 		case "describe", "doctor", "list_windows", "focused_window", "activate_window", "perform_action", "set_value", "move_window", "resize_window", "setup_accessibility":
 			backend, err := session.Backend(operation)
 			if err != nil {
+				if request.Action == "describe" {
+					return agent.PanelToolResult{}, describeUnavailable(err)
+				}
 				return agent.PanelToolResult{}, err
 			}
 			if (request.Action == "perform_action" || request.Action == "set_value") && session.StateChat != chat.ID {
@@ -180,22 +183,29 @@ func computerBeforeStart(ctx context.Context, session *computeruse.ComputerSessi
 		return agent.PanelToolResult{Text: notStarted + "\nAccessibility and window operations: available once sharing is approved."}, nil
 	}
 	backend, err := session.Backend(ctx)
-	if err != nil {
-		if action == "describe" {
-			return agent.PanelToolResult{}, err
-		}
-		return agent.PanelToolResult{Text: notStarted + "\nAccessibility and window operations: unavailable: " + err.Error()}, nil
-	}
 	if action == "describe" {
+		if err != nil {
+			return agent.PanelToolResult{}, describeUnavailable(err)
+		}
 		data, err := backend.Request(ctx, "tools/list", map[string]any{})
 		return agent.PanelToolResult{Text: string(data)}, err
 	}
+	report := notStarted + "\nScreen capture and input: " + computeruse.PortalHelperReport(ctx) + "."
+	if err != nil {
+		return agent.PanelToolResult{Text: report + "\nAccessibility and window operations: unavailable: " + err.Error()}, nil
+	}
 	result, err := backend.Call(ctx, "doctor", arguments)
 	if err != nil {
-		return agent.PanelToolResult{Text: notStarted + "\nAccessibility backend doctor failed: " + err.Error()}, nil
+		return agent.PanelToolResult{Text: report + "\nAccessibility backend doctor failed: " + err.Error()}, nil
 	}
-	result.Text = notStarted + "\n" + result.Text
+	result.Text = report + "\n" + result.Text
 	return result, nil
+}
+
+// describeUnavailable says what is missing without the accessibility backend,
+// whose schemas describe returns, and what still works.
+func describeUnavailable(err error) error {
+	return fmt.Errorf("describe lists the accessibility/window operations (list_windows, focused_window, activate_window, perform_action, set_value, move_window, resize_window), which need the accessibility backend: %v. The actions with parameters in the instructions (screenshot, click, type_text...) work without it", err)
 }
 
 // chooseComputerScreen opens GNOME's dialog again to share another screen;

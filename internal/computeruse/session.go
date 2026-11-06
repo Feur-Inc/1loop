@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"sync"
+	"time"
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
@@ -50,6 +51,32 @@ type computerProcess struct {
 	lines   chan []byte
 	cancel  context.CancelFunc
 	nextID  int
+	stderr  *stderrTail
+	exited  chan struct{} // closed once the helper is gone and its stderr read
+}
+
+// stderrTail keeps the end of a helper's error output: when the helper dies,
+// its last line (with Python, the traceback's exception) says why.
+type stderrTail struct {
+	mu   sync.Mutex
+	data []byte
+}
+
+func (tail *stderrTail) Write(data []byte) (int, error) {
+	tail.mu.Lock()
+	defer tail.mu.Unlock()
+	tail.data = append(tail.data, data...)
+	if len(tail.data) > 4096 {
+		tail.data = append([]byte(nil), tail.data[len(tail.data)-4096:]...)
+	}
+	return len(data), nil
+}
+
+func (tail *stderrTail) lastLine() string {
+	tail.mu.Lock()
+	defer tail.mu.Unlock()
+	text := strings.TrimSpace(string(tail.data))
+	return strings.TrimSpace(text[strings.LastIndexByte(text, '\n')+1:])
 }
 
 func startComputerProcess(lifetime context.Context, executable string, arguments ...string) (*computerProcess, error) {
@@ -67,13 +94,14 @@ func startComputerProcess(lifetime context.Context, executable string, arguments
 		input.Close()
 		return nil, err
 	}
-	command.Stderr = io.Discard
+	stderr := &stderrTail{}
+	command.Stderr = stderr
 	if err = command.Start(); err != nil {
 		cancel()
 		input.Close()
 		return nil, err
 	}
-	process := &computerProcess{context: processContext, input: input, lines: make(chan []byte, 8), cancel: cancel}
+	process := &computerProcess{context: processContext, input: input, lines: make(chan []byte, 8), cancel: cancel, stderr: stderr, exited: make(chan struct{})}
 	go func() {
 		defer close(process.lines)
 		scanner := bufio.NewScanner(output)
@@ -90,8 +118,22 @@ func startComputerProcess(lifetime context.Context, executable string, arguments
 	go func() {
 		_ = command.Wait()
 		cancel()
+		close(process.exited)
 	}()
 	return process, nil
+}
+
+// exitError says that the helper is gone, and why when it printed a reason.
+func (process *computerProcess) exitError() error {
+	process.cancel()
+	select {
+	case <-process.exited:
+	case <-time.After(time.Second):
+	}
+	if reason := process.stderr.lastLine(); reason != "" {
+		return fmt.Errorf("Computer Use helper exited: %s", reason)
+	}
+	return fmt.Errorf("Computer Use helper exited")
 }
 
 func (process *computerProcess) Close() {
@@ -116,8 +158,7 @@ func (process *computerProcess) Request(ctx context.Context, method string, para
 			return nil, ctx.Err()
 		case line, ok := <-process.lines:
 			if !ok {
-				process.cancel()
-				return nil, fmt.Errorf("Computer Use helper exited")
+				return nil, process.exitError()
 			}
 			var response struct {
 				ID     int

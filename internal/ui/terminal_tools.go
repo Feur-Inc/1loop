@@ -85,6 +85,7 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 		var term *panelTerminal
 		var problem error
 		var list []map[string]any
+		var ids []string
 		var screen image.Image
 		ui.onUI(ctx, func() {
 			panel := ui.panel
@@ -97,6 +98,7 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 			for i, tab := range tabs {
 				if tab.terminal != nil {
 					list = append(list, map[string]any{"session_id": tab.terminal.id, "cwd": tab.terminal.dir})
+					ids = append(ids, tab.terminal.id)
 					if tab.terminal.id == args.SessionID {
 						at = i
 					}
@@ -149,7 +151,7 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 					at = len(tabs) - 1
 				case "close":
 					if at < 0 {
-						problem = fmt.Errorf("No terminal with this ID in this chat")
+						problem = agent.NoTerminal(args.SessionID, ids)
 						return
 					}
 					tabs[at].dispose()
@@ -164,7 +166,7 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 				}
 			}
 			if at < 0 {
-				problem = fmt.Errorf("No terminal in this chat; open one with terminal_tabs first")
+				problem = agent.NoTerminal(args.SessionID, ids)
 				return
 			}
 			term = tabs[at].terminal

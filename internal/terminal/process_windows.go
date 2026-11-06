@@ -24,6 +24,9 @@ type windowsTerminal struct {
 }
 
 func NewTerminalProcess(ctx context.Context, dir string, hosts ...NativeHost) (Process, error) {
+	if err := folderProblem(dir); err != nil {
+		return nil, err
+	}
 	path, err := exec.LookPath("powershell.exe")
 	if err != nil {
 		return nil, err

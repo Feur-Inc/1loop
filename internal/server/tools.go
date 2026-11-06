@@ -426,10 +426,12 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 		}
 		var terminal *serverTerminal
 		list := []map[string]string{}
+		var ids []string
 		index := -1
 		for i, tab := range chat.tabs {
 			if tab.terminal != nil {
 				list = append(list, map[string]string{"session_id": tab.terminal.id, "cwd": tab.terminal.dir})
+				ids = append(ids, tab.terminal.id)
 				if args.SessionID == "" || args.SessionID == tab.terminal.id {
 					terminal = tab.terminal
 					index = i
@@ -471,7 +473,7 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 			case "close":
 				if terminal == nil {
 					server.mu.Unlock()
-					return agent.PanelToolResult{}, fmt.Errorf("Unknown terminal")
+					return agent.PanelToolResult{}, agent.NoTerminal(args.SessionID, ids)
 				}
 				server.detachTabLocked(chat, index)
 				server.mu.Unlock()
@@ -484,7 +486,7 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 		}
 		server.mu.Unlock()
 		if terminal == nil {
-			return agent.PanelToolResult{}, fmt.Errorf("Open a terminal with terminal_tabs first")
+			return agent.PanelToolResult{}, agent.NoTerminal(args.SessionID, ids)
 		}
 		var err error
 		switch name {

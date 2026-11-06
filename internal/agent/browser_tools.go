@@ -48,13 +48,13 @@ func browserToolDefinitions() []map[string]any {
 			"action": enum("navigate", "reload", "back", "forward"),
 			"url":    str("URL for navigate; empty otherwise."),
 		}, []string{"tab_id", "action", "url"}),
-		def("browser_read", "Inspect visible text and interactive elements with viewport coordinates, capture an image, or read browser console/errors. Screenshot images are delivered to your vision input. Logs use monotonically increasing indices; pass after=0 to read available entries. Full-page captures can be large.", map[string]any{
+		def("browser_read", "Inspect the page: its text (the whole document, including what is scrolled out of view, up to 16000 characters) and the interactive elements on screen now, with viewport coordinates; capture an image; or read browser console/errors. Screenshot images are delivered to your vision input. Logs come oldest first, at most 50 per call, with increasing indices: pass after=0, then the returned next_after for the following ones. Full-page captures can be large.", map[string]any{
 			"tab_id":    tab,
 			"action":    enum("snapshot", "screenshot", "logs"),
 			"full_page": boolean,
 			"after":     integer,
 		}, []string{"tab_id", "action", "full_page", "after"}),
-		def("browser_interact", "Control the real page. Click/move at CSS viewport coordinates or a CSS selector. Type inserts text into the focused element, clicking selector first if provided. Key accepts Enter, Tab, Escape, ArrowDown, Control+A and similar shortcuts. Scroll uses pixel deltas. Your cursor is visible in the side panel. Use empty strings and zeros for unused fields.", map[string]any{
+		def("browser_interact", "Control the real page. Click/move at CSS viewport coordinates or a CSS selector. Type inserts text into the focused element, clicking selector first if provided. Key accepts Enter, Tab, Escape, ArrowDown, Control+A and similar shortcuts. Scroll uses pixel deltas and scrolls whatever is under x,y (or selector): aim at the content to scroll, since 0,0 may be a fixed header or sidebar. Your cursor is visible in the side panel. Use empty strings and zeros for fields the action does not use.", map[string]any{
 			"tab_id":   tab,
 			"action":   enum("click", "move", "type", "key", "scroll"),
 			"selector": str("Optional CSS selector; empty uses coordinates or focused input."),
@@ -64,7 +64,7 @@ func browserToolDefinitions() []map[string]any {
 			"delta_x":  number,
 			"delta_y":  number,
 		}, []string{"tab_id", "action", "selector", "text", "x", "y", "delta_x", "delta_y"}),
-		def("browser_evaluate", "Execute JavaScript in this tab's page context, await a promise and return the JSON result. Expressions can read or modify the page; perform only the user's requested actions. Commands, results and exceptions appear in the browser console.", map[string]any{"tab_id": tab, "expression": str("JavaScript expression; use an async IIFE for multi-statement asynchronous code.")}, []string{"tab_id", "expression"}),
+		def("browser_evaluate", "Execute JavaScript in this tab's page context, await a promise and return the JSON result. Expressions can read or modify the page; perform only the user's requested actions. Commands, results and exceptions appear in the browser console.", map[string]any{"tab_id": tab, "expression": str("JavaScript expression; several statements and top-level await work; the value of the last expression is returned.")}, []string{"tab_id", "expression"}),
 		def("browser_resize", "Set the page's actual CSS viewport for responsive testing. Fixed preserves the requested dimensions while the panel scales its preview. Adaptive follows the available panel size. Mobile enables Chromium's mobile viewport behavior.", map[string]any{
 			"tab_id": tab,
 			"mode":   enum("fixed", "adaptive"),

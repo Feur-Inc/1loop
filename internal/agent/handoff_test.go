@@ -177,3 +177,21 @@ func TestAddSummarizerOnePerAccount(t *testing.T) {
 		t.Fatalf("one per account, %d at most: %d offered", otherSummarizers, len(plan.Summarizers))
 	}
 }
+
+func TestMergeSameModels(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	// The account the chat ran with is gone; another one lists the same model.
+	next := Config{Provider: "openai", ConnectionID: "work", Model: "gpt-6.1-mini", RanWith: &RunIdentity{Provider: "openai", ConnectionID: "old", Model: "gpt-6.1-sol"}}
+	plan := PlanHandoff(nil, next, nil, nil, "gpt-6.1-sol", "GPT-6.1-Mini")
+	plan.AddSummarizer("model:home|GPT-6.1-Sol", "GPT-6.1-Sol · Home", Config{Provider: "openai", ConnectionID: "home", Model: "GPT-6.1-Sol"}, "")
+	plan.AddSummarizer("model:router|openai/gpt-6.1-mini", "GPT-6.1-Mini · Router", Config{Provider: "openrouter", ConnectionID: "router", Model: "openai/gpt-6.1-mini"}, "")
+	plan.AddSummarizer("model:other|o5", "O5 · Other", Config{Provider: "openai", ConnectionID: "other", Model: "o5"}, "")
+	plan.MergeSameModels()
+	var ids []string
+	for _, entry := range plan.Summarizers {
+		ids = append(ids, entry.ID)
+	}
+	if got := strings.Join(ids, " "); got != "model:home|GPT-6.1-Sol next model:other|o5" {
+		t.Fatalf("each model once, the available one kept: %s", got)
+	}
+}

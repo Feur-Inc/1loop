@@ -283,6 +283,7 @@ var (
 	iconDot          = lineIcon("dot", `<circle cx="8" cy="8" r="3.2" fill="currentColor" stroke="none"/>`)
 	iconBookmark     = lineIcon("bookmark", `<path d="M4.5 2.5h7v11L8 10.8l-3.5 2.7z"/>`)
 	iconCompact      = lineIcon("compact", `<path d="M8 2.5v4M5.8 4.6 8 6.6l2.2-2M8 13.5v-4M5.8 11.4 8 9.4l2.2 2M3 8h10"/>`)
+	iconTaskEnded    = lineIcon("task-ended", `<rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M5 6.3 6.8 8 5 9.7M8.4 10h2.6"/>`)
 )
 
 // tinted recolours an icon to an exact colour: line icons by substitution,

@@ -96,6 +96,7 @@ func (server *headlessServer) handoffPlanLocked(chat *serverChat, cfg agent.Conf
 			}
 		}
 	}
+	plan.MergeSameModels()
 	plan.RecommendAvailable()
 	return plan, previous
 }

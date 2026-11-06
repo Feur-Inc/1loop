@@ -48,3 +48,13 @@ func (ui *desktopUI) loadAccountLimits(ctx context.Context, menu *sheet, conn ag
 		})
 	}()
 }
+
+// staleAccountLimits marks an account's limits out of date once a turn has
+// used it: the next look at them asks the provider again, showing the old
+// figures meanwhile, and nothing is fetched until someone looks.
+func (ui *desktopUI) staleAccountLimits(connectionID string) {
+	if limits, ok := ui.accountLimits[connectionID]; ok {
+		limits.Checked = time.Time{}
+		ui.accountLimits[connectionID] = limits
+	}
+}

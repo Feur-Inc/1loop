@@ -9,6 +9,7 @@ package ui
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -64,6 +65,13 @@ func (ui *desktopUI) previousName(chat *conversation) string {
 	}
 	if ran := chat.Config.RanWith; ran != nil {
 		if ran.Model != "" {
+			// Its account is gone: name the model as the picker does, if
+			// another account still lists it.
+			for _, choice := range ui.choices {
+				if strings.EqualFold(choice.ID, ran.Model) {
+					return choice.Display()
+				}
+			}
 			return ran.Model
 		}
 		return ran.Provider
@@ -118,6 +126,7 @@ func (ui *desktopUI) askHandoff(chat *conversation, proceed func()) {
 			}
 		}
 	}
+	plan.MergeSameModels()
 	plan.RecommendAvailable()
 	showHandoffDialog(ui.window, plan, func(choice agent.HandoffChoice) {
 		if ui.current != chat || agent.IdentityOf(ui.runConfig(chat)) != agent.IdentityOf(next) {
@@ -200,13 +209,18 @@ func showHandoffDialog(window fyne.Window, plan agent.HandoffPlan, done func(age
 			dialog.Refresh()
 		}
 	}
+	// The previous model, unless the list shows it under another account.
+	firstSummarizer := "previous"
+	if len(plan.Summarizers) > 0 {
+		firstSummarizer = plan.Summarizers[0].ID
+	}
 	mode.OnChanged = func(selected string) {
 		if selected == "Continue as is" {
 			choice.Mode = "as_is"
 		} else {
 			choice.Mode = "summary"
 			if choice.Summarizer == "" {
-				choice.Summarizer = "previous"
+				choice.Summarizer = firstSummarizer
 			}
 			if choice.Level == "" {
 				choice.Level = agent.LevelNoOutputs
@@ -221,7 +235,7 @@ func showHandoffDialog(window fyne.Window, plan agent.HandoffPlan, done func(age
 		choice.Level = agent.LevelNoOutputs
 	}
 	if choice.Summarizer == "" {
-		choice.Summarizer = "previous"
+		choice.Summarizer = firstSummarizer
 	}
 	for label, id := range summarizerNames {
 		if id == choice.Summarizer {

@@ -8,9 +8,11 @@ package agent
 import (
 	"encoding/json"
 	"fmt"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"1loop/internal/core"
 )
@@ -65,15 +67,11 @@ func todoRank(status string) int {
 
 func (todo *TodoState) update(raw json.RawMessage) ([]TodoItem, error) {
 	var request struct {
-		Add     []string `json:"add"`
-		Updates []struct {
-			ID     string  `json:"id"`
-			Status *string `json:"status"`
-			Text   *string `json:"text"`
-		} `json:"updates"`
-		Remove []string `json:"remove"`
-		Order  []string `json:"order"`
-		Clear  bool     `json:"clear"`
+		Add     []string     `json:"add"`
+		Updates []todoChange `json:"updates"`
+		Remove  []string     `json:"remove"`
+		Order   []string     `json:"order"`
+		Clear   bool         `json:"clear"`
 	}
 	decoder := json.NewDecoder(strings.NewReader(string(raw)))
 	decoder.DisallowUnknownFields()
@@ -83,50 +81,19 @@ func (todo *TodoState) update(raw json.RawMessage) ([]TodoItem, error) {
 	todo.mu.Lock()
 	defer todo.mu.Unlock()
 	// Apply the entire operation to a copy so an invalid edit cannot partially
-	// delete tasks or clear the authoritative list.
+	// delete tasks or clear the authoritative list. Changes to the tasks
+	// already there come first, so that a call can complete the last step
+	// of a request and clear the list for the next one; "+1", "+2"... name
+	// the tasks the call adds, so that it can also start or place them.
 	next := append([]TodoItem{}, todo.items...)
-	if request.Clear {
-		next = nil
-	}
+	var later []todoChange
 	for _, change := range request.Updates {
-		found := false
-		for index, item := range next {
-			if item.ID != change.ID {
-				continue
-			}
-			found = true
-			if change.Text != nil {
-				text := strings.TrimSpace(*change.Text)
-				if text == "" {
-					return nil, fmt.Errorf("A task needs a non-empty text")
-				}
-				next[index].Text = text
-			}
-			if change.Status != nil {
-				status := *change.Status
-				if todoRank(status) < 0 {
-					return nil, fmt.Errorf("Unknown TODO status: %s", status)
-				}
-				if status != item.Status {
-					now := time.Now()
-					switch status {
-					case "pending":
-						next[index].StartedAt, next[index].CompletedAt = nil, nil
-					case "in_progress":
-						if item.StartedAt == nil || item.Status == "completed" {
-							next[index].StartedAt = &now
-						}
-						next[index].CompletedAt = nil
-					case "completed":
-						next[index].CompletedAt = &now
-					}
-				}
-				next[index].Status = status
-			}
-			break
+		if addedTask(change.ID) {
+			later = append(later, change)
+			continue
 		}
-		if !found {
-			return nil, fmt.Errorf("Unknown TODO id: %s", change.ID)
+		if err := applyTodoChange(next, change); err != nil {
+			return nil, err
 		}
 	}
 	for _, id := range request.Remove {
@@ -139,25 +106,37 @@ func (todo *TodoState) update(raw json.RawMessage) ([]TodoItem, error) {
 			}
 		}
 		if !found {
-			return nil, fmt.Errorf("Unknown TODO id: %s", id)
+			return nil, unknownTodo(id, next)
 		}
 	}
-	for _, text := range request.Add {
-		text = strings.TrimSpace(text)
+	if request.Clear {
+		next = nil
+	}
+	added := map[string]string{}
+	for i, text := range request.Add {
+		text = todoText(text)
 		if text == "" {
 			return nil, fmt.Errorf("A task needs a non-empty text")
 		}
-		duplicate := false
-		for _, item := range next {
-			duplicate = duplicate || item.Text == text
+		// A task is known by its ID: the same text twice is two tasks
+		// (a step done again, a check run after each change).
+		item := TodoItem{ID: core.Identifier()[:12], Text: text, Status: "pending"}
+		added["+"+strconv.Itoa(i+1)] = item.ID
+		next = append(next, item)
+	}
+	for _, change := range later {
+		id, exists := added[change.ID]
+		if !exists {
+			return nil, fmt.Errorf("%s names no task of add: this call adds %d", change.ID, len(request.Add))
 		}
-		if !duplicate {
-			next = append(next, TodoItem{ID: core.Identifier()[:12], Text: text, Status: "pending"})
+		change.ID = id
+		if err := applyTodoChange(next, change); err != nil {
+			return nil, err
 		}
 	}
 	if len(request.Order) > 0 {
 		if len(request.Order) != len(next) {
-			return nil, fmt.Errorf("order must contain every remaining task ID exactly once")
+			return nil, fmt.Errorf("order must contain every task ID exactly once (%d, not %d), the ones this call adds as +1, +2...", len(next), len(request.Order))
 		}
 		byID := map[string]TodoItem{}
 		for _, item := range next {
@@ -165,6 +144,9 @@ func (todo *TodoState) update(raw json.RawMessage) ([]TodoItem, error) {
 		}
 		ordered := make([]TodoItem, 0, len(next))
 		for _, id := range request.Order {
+			if addedTask(id) && added[id] != "" {
+				id = added[id]
+			}
 			item, exists := byID[id]
 			if !exists {
 				return nil, fmt.Errorf("Unknown or repeated TODO id in order: %s", id)
@@ -178,16 +160,94 @@ func (todo *TodoState) update(raw json.RawMessage) ([]TodoItem, error) {
 	return append([]TodoItem{}, next...), nil
 }
 
+type todoChange struct {
+	ID     string  `json:"id"`
+	Status *string `json:"status"`
+	Text   *string `json:"text"`
+}
+
+// addedTask is a reference to a task the same call adds: "+1" for the first.
+func addedTask(id string) bool {
+	return strings.HasPrefix(id, "+")
+}
+
+func applyTodoChange(items []TodoItem, change todoChange) error {
+	for index, item := range items {
+		if item.ID != change.ID {
+			continue
+		}
+		if change.Text != nil {
+			text := todoText(*change.Text)
+			if text == "" {
+				return fmt.Errorf("A task needs a non-empty text")
+			}
+			items[index].Text = text
+		}
+		if change.Status != nil {
+			status := *change.Status
+			if todoRank(status) < 0 {
+				return fmt.Errorf("Unknown TODO status: %s", status)
+			}
+			if status != item.Status {
+				now := time.Now()
+				switch status {
+				case "pending":
+					items[index].StartedAt, items[index].CompletedAt = nil, nil
+				case "in_progress":
+					if item.StartedAt == nil || item.Status == "completed" {
+						items[index].StartedAt = &now
+					}
+					items[index].CompletedAt = nil
+				case "completed":
+					items[index].CompletedAt = &now
+				}
+			}
+			items[index].Status = status
+		}
+		return nil
+	}
+	return unknownTodo(change.ID, items)
+}
+
+func unknownTodo(id string, items []TodoItem) error {
+	ids := make([]string, len(items))
+	for i, item := range items {
+		ids[i] = item.ID
+	}
+	if len(ids) == 0 {
+		return fmt.Errorf("Unknown TODO id: %s (the list is empty)", id)
+	}
+	return fmt.Errorf("Unknown TODO id: %s (the list has %s)", id, strings.Join(ids, ", "))
+}
+
+// todoText is a task's text on one line: the list is shown to the model and
+// in the UI as text, where a newline, a control character or a direction
+// mark would break or disguise the line.
+func todoText(text string) string {
+	text = strings.Map(func(r rune) rune {
+		switch {
+		case unicode.IsSpace(r) || unicode.IsControl(r):
+			return ' '
+		case unicode.Is(unicode.Bidi_Control, r) || r == '\u200b' || r == '\ufeff':
+			return -1
+		}
+		return r
+	}, text)
+	return strings.Join(strings.Fields(text), " ")
+}
+
 func todoToolDefinition() map[string]any {
 	stringsArray := map[string]any{"type": "array", "items": map[string]string{"type": "string"}}
 	return map[string]any{"type": "function", "function": map[string]any{
 		"name":        "update_todo",
 		"description": "Change the conversation's persistent TODO. The current list already comes with every request (the TODO snapshot): never call this tool just to read it. Call it only when the list changes, and make all the changes of a moment in one call (for example, complete one step and start the next). Plan all steps of multi-step work up front. Keep pending, in-progress and completed steps of the current request together; update existing IDs as work progresses. Remove tasks only when cancelled or explicitly requested. Use null text/status to leave that field unchanged. When a new user request starts and every task of the list is completed, start the new request's list with clear=true and its steps in add, in the same call.",
 		"parameters": map[string]any{"type": "object", "properties": map[string]any{
-			"add": stringsArray, "remove": stringsArray, "order": stringsArray,
-			"clear": map[string]any{"type": "boolean"},
+			"add":    stringsArray,
+			"remove": stringsArray,
+			"order":  map[string]any{"type": "array", "items": map[string]string{"type": "string"}, "description": "Every task ID once, in the new order; +1, +2... are the tasks of add."},
+			"clear":  map[string]any{"type": "boolean"},
 			"updates": map[string]any{"type": "array", "items": map[string]any{"type": "object", "properties": map[string]any{
-				"id":     map[string]string{"type": "string"},
+				"id":     map[string]string{"type": "string", "description": "A task ID, or +1, +2... for the tasks this call adds (e.g. +1 in_progress starts the first one)."},
 				"status": map[string]any{"type": []string{"string", "null"}, "enum": []any{"pending", "in_progress", "completed", nil}},
 				"text":   map[string]any{"type": []string{"string", "null"}},
 			}, "required": []string{"id", "status", "text"}, "additionalProperties": false}},

@@ -68,8 +68,8 @@ func browserToolDefinitions() []map[string]any {
 		def("browser_resize", "Set the page's actual CSS viewport for responsive testing. Fixed preserves the requested dimensions while the panel scales its preview. Adaptive follows the available panel size. Mobile enables Chromium's mobile viewport behavior.", map[string]any{
 			"tab_id": tab,
 			"mode":   enum("fixed", "adaptive"),
-			"width":  integer,
-			"height": integer,
+			"width":  map[string]any{"type": "integer", "description": "CSS pixels, 240-3840, for fixed; adaptive ignores it (pass 0)."},
+			"height": map[string]any{"type": "integer", "description": "CSS pixels, 200-2160, for fixed; adaptive ignores it (pass 0)."},
 			"mobile": boolean,
 		}, []string{"tab_id", "mode", "width", "height", "mobile"}),
 	}
@@ -108,6 +108,11 @@ func ExecuteBrowserTool(ctx context.Context, browser *browser.Page, name string,
 	case "browser_resize":
 		if args.Mode != "fixed" && args.Mode != "adaptive" {
 			return result, fmt.Errorf("Use fixed or adaptive viewport mode")
+		}
+		if args.Mode == "adaptive" {
+			// The panel gives the size: keep the current one until it does.
+			info := browser.Snapshot()
+			args.Width, args.Height = info.Width, info.Height
 		}
 		err = browser.Resize(ctx, args.Width, args.Height, args.Mobile, args.Mode == "adaptive")
 		result.Text = encode(browser.Snapshot())

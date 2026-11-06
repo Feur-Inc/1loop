@@ -451,6 +451,15 @@ func (browser *Page) Start() {
 	}
 	if err != nil {
 		browser.change(func(browserInfoValue *Info) { browserInfoValue.Error = err.Error() })
+	} else {
+		// The page's own title, before anyone reads the tab: until then
+		// Chrome gives its address as its title.
+		titled, stop := context.WithTimeout(browser.Ctx, 5*time.Second)
+		var title, location string
+		if chromedp.Run(titled, chromedp.Title(&title), chromedp.Location(&location)) == nil {
+			browser.change(func(info *Info) { info.Title = title; info.URL = location })
+		}
+		stop()
 	}
 	close(browser.ready)
 	go browser.frameLoop()
@@ -922,6 +931,11 @@ func (browser *Page) Interact(ctx context.Context, action, selector, text string
 			if err := browser.Run(ctx, chromedp.MouseClickXY(x, y)); err != nil {
 				return err
 			}
+		}
+		// Text sent with nothing focused goes nowhere, and would be reported typed.
+		focused, err := browser.Evaluate(ctx, `(()=>{const e=document.activeElement;return document.designMode==="on"||!!e&&(e.isContentEditable||e!==document.body&&e!==document.documentElement)})()`)
+		if err == nil && string(focused) == "false" {
+			return fmt.Errorf("Nothing is focused to type into: click the field first, or give its selector")
 		}
 		return browser.Run(ctx, input.InsertText(text))
 	case "key":

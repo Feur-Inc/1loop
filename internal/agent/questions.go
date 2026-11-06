@@ -114,3 +114,39 @@ func (backend *App) Answer(id string, answers map[string]string) bool {
 	}
 	return true
 }
+
+// claudeAskUser asks Claude Code's AskUserQuestion in 1loop's question
+// prompt. Claude Code reads the answers from the permission response's
+// updatedInput: by question text, the chosen label or the user's own words.
+func (backend *App) claudeAskUser(ctx context.Context, input json.RawMessage, emit emitter) map[string]any {
+	var in struct {
+		Questions []struct {
+			Question string           `json:"question"`
+			Header   string           `json:"header"`
+			Options  []QuestionOption `json:"options"`
+		} `json:"questions"`
+	}
+	updated := map[string]any{}
+	if json.Unmarshal(input, &in) != nil || json.Unmarshal(input, &updated) != nil {
+		return map[string]any{"behavior": "deny", "message": "1loop could not read these questions."}
+	}
+	questions := make([]Question, len(in.Questions))
+	for i, question := range in.Questions {
+		questions[i] = Question{ID: fmt.Sprintf("q%d", i+1), Header: question.Header, Question: question.Question, Options: question.Options}
+	}
+	arguments, _ := json.Marshal(map[string]any{"questions": questions})
+	output, err := backend.askUser(ctx, string(arguments), func() {}, emit)
+	if err != nil {
+		return map[string]any{"behavior": "deny", "message": err.Error()}
+	}
+	var reply struct{ Answers map[string]string }
+	_ = json.Unmarshal([]byte(output), &reply)
+	answers := map[string]string{}
+	for _, question := range questions {
+		if answer := strings.TrimPrefix(reply.Answers[question.ID], OtherAnswer); answer != "" {
+			answers[question.Question] = answer
+		}
+	}
+	updated["answers"] = answers
+	return map[string]any{"behavior": "allow", "updatedInput": updated}
+}

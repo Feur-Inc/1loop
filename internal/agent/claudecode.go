@@ -888,6 +888,14 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			if claudeEventValue.Request == nil || claudeEventValue.Request.Subtype != "can_use_tool" {
 				break
 			}
+			if claudeEventValue.Request.ToolName == "AskUserQuestion" {
+				// The questions are the user's to answer, not a permission:
+				// 1loop asks them in every approval mode.
+				line, _ := json.Marshal(map[string]any{"type": "control_response", "response": map[string]any{
+					"subtype": "success", "request_id": claudeEventValue.RequestID, "response": backend.claudeAskUser(ctx, claudeEventValue.Request.Input, emit)}})
+				send(string(line))
+				break
+			}
 			title, preview := claudeApproval(cfg.Workspace, claudeEventValue.Request.ToolName, claudeEventValue.Request.Input)
 			response := map[string]any{"behavior": "deny", "message": "The user denied this action."}
 			name := strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__")

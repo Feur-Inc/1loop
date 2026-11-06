@@ -15,7 +15,9 @@ import (
 
 func TestEvaluate(t *testing.T) {
 	path := ""
-	for _, name := range []string{"chromium", "chromium-browser", "google-chrome"} {
+	// Google Chrome first: on Ubuntu, chromium-browser may be the stub that
+	// installs the snap, which never starts here.
+	for _, name := range []string{"google-chrome", "chromium", "chromium-browser"} {
 		if found, err := exec.LookPath(name); err == nil {
 			path = found
 			break
@@ -28,10 +30,13 @@ func TestEvaluate(t *testing.T) {
 	defer cancel()
 	ctx, cancel := chromedp.NewContext(alloc)
 	defer cancel()
+	// The first Run starts the browser: its context bounds the whole test.
 	ctx, cancel = context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	if err := chromedp.Run(ctx, chromedp.Navigate("about:blank")); err != nil {
-		t.Fatal(err)
+		// This tests evaluation, not the machine: a browser that cannot
+		// start here (no display, no sandbox) is no reason to fail.
+		t.Skipf("%s does not start here: %v", path, err)
 	}
 	for expression, want := range map[string]string{
 		`42`:                                     `42`,

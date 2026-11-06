@@ -662,12 +662,19 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			status.set(Activity{State: "background", Detail: fmt.Sprintf("%d background tasks", len(background))})
 		}
 	}
+	// The TODO snapshot in the instructions is the list at launch: a
+	// message added while Claude works carries the list when it changed.
+	todoSent := todoSnapshot(cfg)
 	inject := func(messageValue Message) {
 		idle = false
 		messages = append(messages, messageValue)
 		emit("injected", messageValue)
 		status.set(Activity{State: "wait"})
-		send(claudePrompt(messageValue, ""))
+		preface := ""
+		if todo := todoSnapshot(cfg); todo != todoSent {
+			preface, todoSent = "[1loop TODO list now]"+todo+"\n[End of the TODO list]\n\n", todo
+		}
+		send(claudePrompt(messageValue, preface))
 	}
 
 	// The output is read apart, so the loop below can also watch the clock
@@ -767,6 +774,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				// Claude owns compaction; send the live task position through its
 				// supported input stream without replacing its session context.
 				if reminder := todoResumeReminder(cfg); reminder != "" {
+					todoSent = todoSnapshot(cfg)
 					message := Message{Role: "user", Internal: true, Content: reminder}
 					messages = append(messages, message)
 					send(claudePrompt(message, ""))

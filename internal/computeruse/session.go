@@ -148,7 +148,8 @@ func (process *computerProcess) Request(ctx context.Context, method string, para
 	process.nextID++
 	request, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": process.nextID, "method": method, "params": parameters})
 	if _, err := process.input.Write(append(request, '\n')); err != nil {
-		return nil, err
+		// The helper died before reading: its reason, not "broken pipe".
+		return nil, process.exitError()
 	}
 	for {
 		select {

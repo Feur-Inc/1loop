@@ -7,6 +7,8 @@ package ui
 // and its own undo history, kept while 1loop runs.
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -19,19 +21,40 @@ import (
 )
 
 // promptDrafts are the drafts, by key: a chat ID, or newChatDraft + its
-// project for the start screen.
+// project for the start screen. Each is a file of its own in dir, written
+// as it is typed: an edit rewrites its draft only, not every draft.
 type promptDrafts struct {
-	path  string
+	dir   string
 	mu    sync.Mutex
 	texts map[string]string
 }
 
 const newChatDraft = "new:"
 
+// savedDraft is a draft's file.
+type savedDraft struct {
+	Key  string `json:"key"`
+	Text string `json:"text"`
+}
+
+// loadPromptDrafts reads the drafts of the folder path names without its
+// .json, and those of the single file path that earlier versions wrote.
 func loadPromptDrafts(path string) *promptDrafts {
-	drafts := &promptDrafts{path: path, texts: map[string]string{}}
+	drafts := &promptDrafts{dir: strings.TrimSuffix(path, ".json"), texts: map[string]string{}}
+	changed := map[string]bool{}
 	if data, err := os.ReadFile(path); err == nil {
 		_ = json.Unmarshal(data, &drafts.texts)
+		for key := range drafts.texts {
+			changed[key] = true // into a file of its own
+		}
+	}
+	entries, _ := os.ReadDir(drafts.dir)
+	for _, entry := range entries {
+		var draft savedDraft
+		if data, err := os.ReadFile(filepath.Join(drafts.dir, entry.Name())); err == nil && json.Unmarshal(data, &draft) == nil && draft.Key != "" {
+			drafts.texts[draft.Key] = draft.Text
+			delete(changed, draft.Key)
+		}
 	}
 	// An interrupted remote send is offered again rather than discarded.
 	for key, text := range drafts.texts {
@@ -45,9 +68,18 @@ func loadPromptDrafts(path string) *promptDrafts {
 					text = current + "\n\n" + text
 				}
 				drafts.texts[destination] = text
+				changed[destination] = true
 			}
 			delete(drafts.texts, key)
+			changed[key] = true
 		}
+	}
+	saved := true
+	for key := range changed {
+		saved = drafts.writeLocked(key) && saved
+	}
+	if _, err := os.Stat(path); err == nil && saved {
+		os.Remove(path) // every draft it held now has its own file
 	}
 	return drafts
 }
@@ -70,7 +102,7 @@ func (drafts *promptDrafts) set(key, text string) {
 	} else {
 		drafts.texts[key] = text
 	}
-	drafts.flushLocked()
+	drafts.writeLocked(key)
 }
 
 // move hands a draft to another key: the start screen's draft becomes the
@@ -85,26 +117,25 @@ func (drafts *promptDrafts) move(from, to string) {
 	}
 }
 
-// flush writes every draft now, atomically: an interrupted write never
-// leaves a half file.
-func (drafts *promptDrafts) flush() {
-	if drafts.path == "" {
-		return
+// writeLocked writes one draft's file atomically (an interrupted write
+// never leaves half a file), or removes it once the draft is empty.
+func (drafts *promptDrafts) writeLocked(key string) bool {
+	if drafts.dir == "" {
+		return false
 	}
-	drafts.mu.Lock()
-	defer drafts.mu.Unlock()
-	drafts.flushLocked()
-}
-
-func (drafts *promptDrafts) flushLocked() {
-	data, _ := json.Marshal(drafts.texts)
-	if os.MkdirAll(filepath.Dir(drafts.path), 0700) != nil {
-		return
+	sum := sha256.Sum256([]byte(key))
+	path := filepath.Join(drafts.dir, hex.EncodeToString(sum[:16])+".json")
+	text, ok := drafts.texts[key]
+	if !ok {
+		err := os.Remove(path)
+		return err == nil || os.IsNotExist(err)
 	}
-	temporary := drafts.path + ".tmp"
-	if os.WriteFile(temporary, data, 0600) == nil {
-		os.Rename(temporary, drafts.path)
+	if os.MkdirAll(drafts.dir, 0700) != nil {
+		return false
 	}
+	data, _ := json.Marshal(savedDraft{key, text})
+	temporary := path + ".tmp"
+	return os.WriteFile(temporary, data, 0600) == nil && os.Rename(temporary, path) == nil
 }
 
 // promptHistory is one draft's undo and redo, as successive texts. Typing

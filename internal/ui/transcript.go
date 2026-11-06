@@ -427,14 +427,20 @@ func (ui *desktopUI) place(view fyne.CanvasObject) {
 // whole history. A hidden item costs nothing: it keeps its place with the
 // size it last measured, and is measured again when it comes back in view.
 type transcriptLayout struct {
-	ui    *desktopUI
-	sizes map[fyne.CanvasObject]fyne.Size // each item's last measured minimum size
-	width float32                         // the width they were measured at
+	ui     *desktopUI
+	sizes  map[fyne.CanvasObject]fyne.Size // each item's last measured minimum size
+	widths map[fyne.CanvasObject]float32   // the width each was measured at
+	width  float32                         // the column's width
+	stale  bool                            // items out of sight keep an earlier width's size (remeasure)
+	shift  float32                         // how much the items above the view grew since the scroll last moved
 }
 
 const transcriptGap = 14
 
-func (layoutSpec *transcriptLayout) reset() { layoutSpec.sizes = map[fyne.CanvasObject]fyne.Size{} }
+func (layoutSpec *transcriptLayout) reset() {
+	layoutSpec.sizes, layoutSpec.widths = map[fyne.CanvasObject]fyne.Size{}, map[fyne.CanvasObject]float32{}
+	layoutSpec.stale, layoutSpec.shift = false, 0
+}
 
 // changed forgets the size of the item that holds part: it changed while
 // perhaps out of sight, where nothing measures it.
@@ -469,6 +475,7 @@ func (layoutSpec *transcriptLayout) measure(object fyne.CanvasObject, width floa
 	}
 	min := object.MinSize()
 	layoutSpec.sizes[object] = min
+	layoutSpec.widths[object] = width
 	return min
 }
 
@@ -521,14 +528,31 @@ func (layoutSpec *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyn
 	if size.Width <= 0 {
 		return // not on screen yet: nothing can be measured
 	}
-	resized := size.Width != layoutSpec.width
 	layoutSpec.width = size.Width
 	top, bottom := layoutSpec.view()
+	shown := top // the view's top: view adds a margin above it
+	if scroll := layoutSpec.ui.scroll; scroll != nil {
+		shown += fyne.Max(scroll.Size().Height, 600)
+	}
 	y := float32(0)
 	for _, object := range objects {
 		min, known := layoutSpec.sizes[object]
-		if object.Visible() || !known || resized {
+		switch {
+		case object.Visible() || !known:
 			min = layoutSpec.measure(object, size.Width)
+		case layoutSpec.widths[object] != size.Width:
+			// Measured at another width: now if it is near the view, otherwise
+			// over the next frames (remeasure). Measuring every item of a long
+			// chat at once froze the window at each step of a resize.
+			if y+min.Height >= top && y <= bottom {
+				before := min.Height
+				min = layoutSpec.measure(object, size.Width)
+				if y+before <= shown {
+					layoutSpec.shift += min.Height - before
+				}
+			} else {
+				layoutSpec.stale = true
+			}
 		}
 		near := y+min.Height >= top && y <= bottom
 		switch {
@@ -544,6 +568,43 @@ func (layoutSpec *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyn
 		}
 		y += min.Height + transcriptGap
 	}
+}
+
+// remeasure measures, a few milliseconds a frame, the items a resize left
+// at an earlier width, and keeps what is on screen in place: the growth of
+// the items above the view moves the scroll by as much.
+func (ui *desktopUI) remeasure() {
+	layoutSpec := ui.items
+	if layoutSpec == nil || (!layoutSpec.stale && layoutSpec.shift == 0) || ui.loadingChat != nil || ui.scroll == nil {
+		return
+	}
+	shown := float32(0)
+	if origin, found := offsetIn(ui.scroll.Content, ui.transcript); found {
+		shown = ui.scroll.Offset.Y - origin.Y
+	}
+	deadline := time.Now().Add(4 * time.Millisecond)
+	width, y, done := layoutSpec.width, float32(0), true
+	for _, object := range ui.transcript.Objects {
+		min := layoutSpec.sizes[object]
+		if layoutSpec.widths[object] != width && layoutSpec.stale {
+			if time.Now().After(deadline) {
+				done = false
+				break
+			}
+			before := min.Height
+			min = layoutSpec.measure(object, width)
+			if y+before <= shown {
+				layoutSpec.shift += min.Height - before
+			}
+		}
+		y += min.Height + transcriptGap
+	}
+	layoutSpec.stale = layoutSpec.stale && !done
+	if !ui.followTail {
+		ui.scroll.Offset.Y += layoutSpec.shift
+	}
+	layoutSpec.shift = 0
+	ui.relayoutColumn()
 }
 
 // syncCopies shows one Copy button per finished answer: under the last

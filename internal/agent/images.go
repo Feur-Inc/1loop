@@ -23,7 +23,7 @@ const toolImageSide = 1568
 // Images the user attaches never come here.
 func compactToolImage(part core.ImagePart) core.ImagePart {
 	data, err := base64.StdEncoding.DecodeString(part.Data)
-	if err != nil {
+	if err != nil || !core.ImageDecodable(data) {
 		return part
 	}
 	img, _, err := image.Decode(bytes.NewReader(data))

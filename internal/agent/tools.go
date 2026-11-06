@@ -297,6 +297,7 @@ func (outcome ToolOutcome) modelText() string {
 // any approval) and "tool_exec" when it really begins to run.
 func (backend *App) executeTool(ctx context.Context, root string, call ToolCall, emit emitter) (outcome ToolOutcome) {
 	outcome = ToolOutcome{ID: call.ID, Name: call.Function.Name, Args: call.Function.Arguments, RecallID: core.Identifier()[:16]}
+	defer recovered(&outcome.Err, "the tool "+call.Function.Name)
 	emit("tool", outcome)
 	var started time.Time
 	begin := func() {

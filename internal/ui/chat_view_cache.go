@@ -19,6 +19,7 @@ type conversationViewCache struct {
 	views   map[int]any
 	copies  map[int]*fyne.Container
 	sizes   map[fyne.CanvasObject]fyne.Size
+	widths  map[fyne.CanvasObject]float32
 	width   float32
 	scale   float32
 }
@@ -30,7 +31,7 @@ func (ui *desktopUI) rememberChatView(load *conversationLoad) {
 	}
 	ui.cachedChat = &conversationViewCache{
 		chat: chat, items: load.items, objects: ui.transcript.Objects,
-		views: ui.views, copies: ui.copyRows, sizes: ui.items.sizes,
+		views: ui.views, copies: ui.copyRows, sizes: ui.items.sizes, widths: ui.items.widths,
 		width: load.width, scale: ui.window.Canvas().Scale(),
 	}
 }
@@ -52,7 +53,7 @@ func (ui *desktopUI) restoreChatView(chat *conversation) bool {
 	ui.transcript.Hide()
 	ui.scroll.Show() // refresh only the empty transcript, before restoring it
 	ui.transcript.Objects, ui.views, ui.copyRows = cache.objects, cache.views, cache.copies
-	ui.items.sizes, ui.items.width = cache.sizes, cache.width
+	ui.items.sizes, ui.items.widths, ui.items.width = cache.sizes, cache.widths, cache.width
 	for _, object := range cache.objects {
 		if row, ok := object.(*toolRow); ok && row.hover != 0 {
 			if row.anim != nil {

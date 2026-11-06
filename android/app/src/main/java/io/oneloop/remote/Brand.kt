@@ -193,15 +193,18 @@ fun WorkRing(state: String, size: Dp, modifier: Modifier = Modifier) {
     var now by remember { mutableLongStateOf(0L) } // ms, drives every layer
     var angle by remember { mutableStateOf(0f) }
     val layers = remember { mutableStateListOf<GlyphLayer>() }
-    LaunchedEffect(Unit) {
-        val start = withFrameNanos { it }
-        var last = start
+    LaunchedEffect(closed) {
+        var start = 0L
+        var last = -1L
         while (true) {
             withFrameNanos { frame ->
-                if (!closedRef(layers)) angle = (angle + (frame - last) / 1e6f / 1100f * 360f) % 360f
+                if (last < 0) start = frame - now * 1_000_000 // the clock goes on from where it paused
+                else if (!closedRef(layers)) angle = (angle + (frame - last) / 1e6f / 1100f * 360f) % 360f
                 last = frame
                 now = (frame - start) / 1_000_000
             }
+            // Closed and settled, nothing moves: no frame until the state changes.
+            if (closed && layers.size <= 1 && layers.lastOrNull()?.let { now - it.at > 400 } == true) break
         }
     }
     LaunchedEffect(shown) {

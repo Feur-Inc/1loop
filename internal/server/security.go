@@ -14,7 +14,6 @@ import (
 	"math/big"
 	"net/http"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -183,23 +182,9 @@ func (server *headlessServer) console() {
 }
 
 func saveServerJSON(path string, value any) error {
-	data, err := json.MarshalIndent(value, "", "  ")
+	data, err := json.Marshal(value)
 	if err != nil {
 		return err
 	}
-	file, err := os.CreateTemp(filepath.Dir(path), ".server-state-*")
-	if err != nil {
-		return err
-	}
-	if err = file.Chmod(0600); err == nil {
-		_, err = file.Write(data)
-	}
-	closeErr := file.Close()
-	if err != nil {
-		return err
-	}
-	if closeErr != nil {
-		return closeErr
-	}
-	return os.Rename(file.Name(), path)
+	return core.WriteFileSafely(path, 0600, false, data)
 }

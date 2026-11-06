@@ -30,7 +30,7 @@ func (cache *transcriptThumbnailCache) get(part core.ImagePart) image.Image {
 		return img
 	}
 	raw, err := base64.StdEncoding.DecodeString(part.Data)
-	if err != nil {
+	if err != nil || !core.ImageDecodable(raw) {
 		return nil
 	}
 	img, _, err := image.Decode(bytes.NewReader(raw))

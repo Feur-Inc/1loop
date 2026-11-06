@@ -148,7 +148,7 @@ func (process *computerProcess) Request(ctx context.Context, method string, para
 	process.nextID++
 	request, _ := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": process.nextID, "method": method, "params": parameters})
 	if _, err := process.input.Write(append(request, '\n')); err != nil {
-		return nil, err
+		return nil, process.exitError() // the helper is gone: say why, not "broken pipe"
 	}
 	for {
 		select {

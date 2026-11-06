@@ -97,6 +97,10 @@ func (tasks *BackgroundTasks) changed() {
 // after another in a loop must not fill the machine with processes.
 const maxRunningTasks = 16
 
+// maxEndedTasks bounds the ended tasks a chat keeps, output included: a long
+// chat that runs many commands must not hold every output until it closes.
+const maxEndedTasks = 16
+
 // start runs a command (already approved and prepared: workspace, sandbox)
 // without waiting for it: begin starts it writing to the task's output and
 // returns how to wait for its exit code.
@@ -141,6 +145,7 @@ func (tasks *BackgroundTasks) start(begin func(io.Writer) (func() (int, error), 
 			task.info.ExitCode = -1
 		}
 		info := task.info
+		tasks.forgetEndedLocked()
 		if tasks.listed && !slices.ContainsFunc(tasks.tasks, func(other *backgroundTask) bool { return other.info.Running }) {
 			tasks.listed = false
 			everyTasks.mu.Lock()
@@ -154,6 +159,23 @@ func (tasks *BackgroundTasks) start(begin func(io.Writer) (func() (int, error), 
 		}
 	}()
 	return task.info.ID, nil
+}
+
+// forgetEndedLocked drops the oldest ended tasks beyond maxEndedTasks.
+func (tasks *BackgroundTasks) forgetEndedLocked() {
+	ended := 0
+	for _, task := range tasks.tasks {
+		if !task.info.Running {
+			ended++
+		}
+	}
+	tasks.tasks = slices.DeleteFunc(tasks.tasks, func(task *backgroundTask) bool {
+		if ended <= maxEndedTasks || task.info.Running {
+			return false
+		}
+		ended--
+		return true
+	})
 }
 
 // Snapshot is every task of the chat, oldest first.
@@ -282,7 +304,7 @@ func backgroundTool(tasks *BackgroundTasks, arguments string) (string, error) {
 	task := tasks.find(*args.ID)
 	tasks.mu.Unlock()
 	if task == nil {
-		return "", fmt.Errorf("No background task %s", *args.ID)
+		return "", fmt.Errorf("No background task %s (only the last %d ended tasks are kept)", *args.ID, maxEndedTasks)
 	}
 	switch args.Action {
 	case "output":

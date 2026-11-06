@@ -95,7 +95,7 @@ func (ui *desktopUI) connectGitHub() {
 		}
 	})
 	open.Disable()
-	copy := newRow("Copy code", nil, styleOutline, func() { ui.window.Clipboard().SetContent(githubconnector.Default.Status().Code) })
+	copy := newRow("Copy code", nil, styleOutline, func() { fyne.CurrentApp().Clipboard().SetContent(githubconnector.Default.Status().Code) })
 	copy.Disable()
 	cancel := func() { githubconnector.Default.Cancel() }
 	dialog = ui.modal("Connect GitHub", container.NewVBox(message, code), 520, cancel,

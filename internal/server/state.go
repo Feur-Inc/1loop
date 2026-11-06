@@ -112,6 +112,8 @@ type headlessServer struct {
 	bridge                     *mobileBridge
 	phoneAvailable             atomic.Bool
 	saveTimer                  *time.Timer
+	saveLock                   sync.Mutex // one state write at a time, the newest last
+	saveCount, saveDone        int        // states taken (under mu), the newest written (under saveLock)
 	// Local phone mode: the phone app's token hash, apart from the paired
 	// network devices, and the network listener while the phone is shared.
 	localHash   string
@@ -223,11 +225,19 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		if chat.Cache == nil {
 			chat.Cache = &agent.ContextCache{}
 		}
+		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
 	}
 	return server, nil
 }
 
 func (server *headlessServer) saveLocked() error {
+	return server.stateLocked()()
+}
+
+// stateLocked takes the state to save, under the lock, and returns what
+// writes it: encoding and writing every chat can take seconds, during which
+// the phone's requests and the agents' events must not wait for the lock.
+func (server *headlessServer) stateLocked() (write func() error) {
 	for _, chat := range server.chats {
 		// Unopened chats still hold their saved tabs; no live session owns them yet.
 		if chat.session == nil {
@@ -240,10 +250,31 @@ func (server *headlessServer) saveLocked() error {
 			}
 		}
 	}
-	return saveServerJSON(filepath.Join(server.dir, "state.json"), struct {
-		Chats   []*serverChat            `json:"chats"`
-		Devices []remoteapi.PairedDevice `json:"devices"`
-	}{server.chats, server.devices})
+	// Messages are never edited in place: copying the lists is enough.
+	chats := make([]*serverChat, len(server.chats))
+	for i, chat := range server.chats {
+		chats[i] = &serverChat{ID: chat.ID, Title: chat.Title, Config: chat.Config, History: append([]agent.Message{}, chat.History...),
+			Items: append([]agent.ChatItem{}, chat.Items...), Version: chat.Version, Versions: agent.CopyVersions(chat.Versions),
+			Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...)}
+	}
+	devices := append([]remoteapi.PairedDevice{}, server.devices...)
+	server.saveCount++
+	count, path := server.saveCount, filepath.Join(server.dir, "state.json")
+	return func() error {
+		server.saveLock.Lock()
+		defer server.saveLock.Unlock()
+		if count < server.saveDone {
+			return nil // a newer state is already on disk
+		}
+		server.saveDone = count
+		for _, chat := range chats {
+			chat.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
+		}
+		return saveServerJSON(path, struct {
+			Chats   []*serverChat            `json:"chats"`
+			Devices []remoteapi.PairedDevice `json:"devices"`
+		}{chats, devices})
+	}
 }
 
 func (server *headlessServer) scheduleSaveLocked() {
@@ -252,8 +283,9 @@ func (server *headlessServer) scheduleSaveLocked() {
 	}
 	server.saveTimer = time.AfterFunc(400*time.Millisecond, func() {
 		server.mu.Lock()
-		defer server.mu.Unlock()
-		if err := server.saveLocked(); err != nil {
+		write := server.stateLocked()
+		server.mu.Unlock()
+		if err := write(); err != nil {
 			fmt.Fprintln(os.Stderr, "Save:", err)
 		}
 	})

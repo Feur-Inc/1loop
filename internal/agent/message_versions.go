@@ -4,6 +4,7 @@ package agent
 
 import (
 	"fmt"
+	"reflect"
 	"slices"
 	"strings"
 
@@ -26,6 +27,10 @@ type VersionSnapshot struct {
 	Config  Config     `json:"config"`
 	History []Message  `json:"history"`
 	Items   []ChatItem `json:"items"`
+	// In a saved file only (CompactVersions): how many leading messages and
+	// items are the active conversation's, left out of History and Items.
+	SharedHistory int `json:"sharedHistory,omitempty"`
+	SharedItems   int `json:"sharedItems,omitempty"`
 }
 
 type ChatVersion struct {
@@ -223,4 +228,48 @@ func CopyVersions(versions []ChatVersion) []ChatVersion {
 		}
 	}
 	return copy
+}
+
+// CompactVersions is versions as they are saved: each snapshot without the
+// leading messages and items it shares with the active conversation (history
+// and items), which a long chat otherwise repeated in full for every edit.
+// The snapshots of versions are new ones: the live ones are not changed.
+func CompactVersions(versions []ChatVersion, history []Message, items []ChatItem) []ChatVersion {
+	out := CopyVersions(versions)
+	for i, version := range out {
+		snapshot := version.Snapshot
+		if snapshot == nil || snapshot.SharedHistory > 0 || snapshot.SharedItems > 0 {
+			continue
+		}
+		messages := sharedPrefix(snapshot.History, history)
+		rows := sharedPrefix(snapshot.Items, items)
+		out[i].Snapshot = &VersionSnapshot{Config: snapshot.Config, History: snapshot.History[messages:], Items: snapshot.Items[rows:],
+			SharedHistory: messages, SharedItems: rows}
+	}
+	return out
+}
+
+// ExpandVersions undoes CompactVersions once a chat is loaded: the shared
+// part comes back from the active conversation, whose strings it shares.
+func ExpandVersions(versions []ChatVersion, history []Message, items []ChatItem) []ChatVersion {
+	for i := range versions {
+		snapshot := versions[i].Snapshot
+		if snapshot == nil || (snapshot.SharedHistory == 0 && snapshot.SharedItems == 0) {
+			continue
+		}
+		messages, rows := min(snapshot.SharedHistory, len(history)), min(snapshot.SharedItems, len(items))
+		versions[i].Snapshot = &VersionSnapshot{Config: snapshot.Config,
+			History: append(append([]Message{}, history[:messages]...), snapshot.History...),
+			Items:   append(append([]ChatItem{}, items[:rows]...), snapshot.Items...)}
+	}
+	return versions
+}
+
+// sharedPrefix is how many leading elements of a and b are equal.
+func sharedPrefix[T any](a, b []T) int {
+	n := 0
+	for n < len(a) && n < len(b) && reflect.DeepEqual(a[n], b[n]) {
+		n++
+	}
+	return n
 }

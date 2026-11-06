@@ -189,7 +189,7 @@ func computerBackendPath() (string, error) {
 			return path, nil
 		}
 	}
-	return "", fmt.Errorf("Install codex-computer-use-linux or set ONELOOP_COMPUTER_BACKEND to its executable; desktop capture and coordinate input remain available")
+	return "", fmt.Errorf("Install codex-computer-use-linux or set ONELOOP_COMPUTER_BACKEND to its executable (screenshots and coordinate input don't need it)")
 }
 
 func (session *ComputerSession) Backend(ctx context.Context) (*computerProcess, error) {

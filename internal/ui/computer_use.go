@@ -95,6 +95,9 @@ func (ui *desktopUI) computerTools(chat *conversation) agent.PanelToolHandler {
 		if request.Action == "start" {
 			return session.StartLocked(operation, false)
 		}
+		if session.Portal == nil && (request.Action == "describe" || request.Action == "doctor") {
+			return computerBeforeStart(operation, session, request.Action, arguments)
+		}
 		if session.Portal == nil {
 			return agent.PanelToolResult{}, fmt.Errorf("Call start and approve desktop sharing before using Computer Use")
 		}
@@ -148,6 +151,9 @@ func (ui *desktopUI) computerTools(chat *conversation) agent.PanelToolHandler {
 		case "describe", "doctor", "list_windows", "focused_window", "activate_window", "perform_action", "set_value", "move_window", "resize_window", "setup_accessibility":
 			backend, err := session.Backend(operation)
 			if err != nil {
+				if request.Action == "describe" {
+					return agent.PanelToolResult{}, describeUnavailable(err)
+				}
 				return agent.PanelToolResult{}, err
 			}
 			if (request.Action == "perform_action" || request.Action == "set_value") && session.StateChat != chat.ID {
@@ -162,6 +168,44 @@ func (ui *desktopUI) computerTools(chat *conversation) agent.PanelToolHandler {
 			return agent.PanelToolResult{}, fmt.Errorf("Unknown Computer Use action: %s", request.Action)
 		}
 	}
+}
+
+// computerBeforeStart answers describe and doctor before desktop sharing:
+// neither shows the screen nor controls anything, and doctor is what says
+// why start or an action can't work. On Linux the accessibility backend
+// runs without sharing; on Windows it is the sharing session itself.
+func computerBeforeStart(ctx context.Context, session *computeruse.ComputerSession, action string, arguments map[string]any) (agent.PanelToolResult, error) {
+	const notStarted = "Desktop sharing: not started (start asks the user to share the screen and allow keyboard and pointer control)."
+	if runtime.GOOS == "windows" {
+		if action == "describe" {
+			return agent.PanelToolResult{}, fmt.Errorf("On Windows, the accessibility schemas come with desktop sharing: call start first")
+		}
+		return agent.PanelToolResult{Text: notStarted + "\nAccessibility and window operations: available once sharing is approved."}, nil
+	}
+	backend, err := session.Backend(ctx)
+	if action == "describe" {
+		if err != nil {
+			return agent.PanelToolResult{}, describeUnavailable(err)
+		}
+		data, err := backend.Request(ctx, "tools/list", map[string]any{})
+		return agent.PanelToolResult{Text: string(data)}, err
+	}
+	report := notStarted + "\nScreen capture and input: " + computeruse.PortalHelperReport(ctx) + "."
+	if err != nil {
+		return agent.PanelToolResult{Text: report + "\nAccessibility and window operations: unavailable: " + err.Error()}, nil
+	}
+	result, err := backend.Call(ctx, "doctor", arguments)
+	if err != nil {
+		return agent.PanelToolResult{Text: report + "\nAccessibility backend doctor failed: " + err.Error()}, nil
+	}
+	result.Text = report + "\n" + result.Text
+	return result, nil
+}
+
+// describeUnavailable says what is missing without the accessibility backend,
+// whose schemas describe returns, and what still works.
+func describeUnavailable(err error) error {
+	return fmt.Errorf("describe lists the accessibility/window operations (list_windows, focused_window, activate_window, perform_action, set_value, move_window, resize_window), which need the accessibility backend: %v. The actions with parameters in the instructions (screenshot, click, type_text...) work without it", err)
 }
 
 // chooseComputerScreen opens GNOME's dialog again to share another screen;

@@ -27,6 +27,10 @@ func startNativeComputer(ctx context.Context) (*computerProcess, error) {
 	}
 	return startComputerProcess(ctx, "powershell.exe", "-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-File", path)
 }
+
+// PortalHelperReport is for Linux: on Windows, start's helper is PowerShell.
+func PortalHelperReport(context.Context) string { return "" }
+
 func ComputerGuideText() string {
 	guide := strings.Replace(computerGuide, "1loop opens the desktop's screen-sharing and remote-control consent dialog.", "1loop opens its Windows consent dialog, where the user selects a monitor or the whole desktop and can remember the grant.", 1)
 	guide = strings.ReplaceAll(guide, "Wayland accessibility bounds may be local to the application, so do not treat them as global screen coordinates.", "Windows UI Automation bounds are physical desktop pixels; subtract the shared screen origin to get input coordinates. Locked desktops, UAC secure desktops and higher-integrity applications cannot be controlled. Ask the user to unlock or handle these surfaces; never bypass them.")

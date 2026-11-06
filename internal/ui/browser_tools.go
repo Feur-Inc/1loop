@@ -46,16 +46,7 @@ func (ui *desktopUI) browserTools(chat *conversation) agent.PanelToolHandler {
 				}
 			}
 			if args.TabID == "" {
-				if active >= 0 && active < len(tabs) && tabs[active].browser != nil {
-					at = active
-				} else {
-					for i := len(tabs) - 1; i >= 0; i-- {
-						if tabs[i].browser != nil {
-							at = i
-							break
-						}
-					}
-				}
+				at = toolTab(tabs, active, state.lastBrowser, browserID)
 			}
 			update := func() {
 				state.tabs, state.active, state.open = tabs, active, true
@@ -83,6 +74,7 @@ func (ui *desktopUI) browserTools(chat *conversation) agent.PanelToolHandler {
 					tabs = append(tabs, tab)
 					active = len(tabs) - 1
 					page = tab.browser
+					state.lastBrowser = page.Snapshot().ID
 					update()
 					return
 				case "close":
@@ -102,6 +94,7 @@ func (ui *desktopUI) browserTools(chat *conversation) agent.PanelToolHandler {
 					}
 					active = at
 					page = tabs[at].browser
+					state.lastBrowser = page.Snapshot().ID
 					update()
 					return
 				default:
@@ -114,6 +107,10 @@ func (ui *desktopUI) browserTools(chat *conversation) agent.PanelToolHandler {
 				return
 			}
 			page = tabs[at].browser
+			state.lastBrowser = page.Snapshot().ID
+			if name == "browser_read" && args.Action != "screenshot" {
+				return // reading the page or its logs doesn't change the tab on show
+			}
 			active = at
 			update()
 		})

@@ -644,7 +644,7 @@ func (panel *toolPanel) removeBrowser(chat *conversation, browser *browser.Page)
 		if tab.browser == browser {
 			tab.dispose()
 			state.tabs = append(state.tabs[:i], state.tabs[i+1:]...)
-			state.active = min(state.active, len(state.tabs)-1)
+			state.active = activeAfterClose(state.active, i, len(state.tabs))
 			if chat != nil {
 				chat.Panel = state.saved()
 			}

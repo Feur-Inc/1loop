@@ -360,7 +360,7 @@ func markdownCode(lang, text string) fyne.CanvasObject {
 	}
 	code := newFlowText(spans, 13, colText)
 	code.mono = true
-	scroll := container.NewHScroll(code)
+	scroll := newSideScroll(code)
 	if lang == "" {
 		lang = "code"
 	}

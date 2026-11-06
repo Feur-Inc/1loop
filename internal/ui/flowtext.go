@@ -445,6 +445,9 @@ func (flow *flowText) flow(width float32) {
 			y += leading
 		}
 	}
+	if flow.mono && len(lines) > 0 {
+		y += leading // code scrolls sideways, clipped at its height: room for the underscores of its last line
+	}
 	flow.height = y
 	if !flow.measuring {
 		flow.objects = append(append(append(append(flow.objects, chips...), texts...), marks...), pictures...)

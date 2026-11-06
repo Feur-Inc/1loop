@@ -29,11 +29,14 @@ import (
 //   - The glide advances from the frame hook, by the time really elapsed
 //     since the previous frame, not from a timer of its own.
 //
-// A mouse wheel has no inertia: only gestures from a touchpad glide.
+// A mouse wheel has no inertia: only gestures from a touchpad glide, and
+// only where the display tells the two apart (Wayland). Elsewhere a wheel
+// notch and a touchpad step reach 1loop as the same event: guessing a
+// release from a silence made a quickly spun wheel slide on for screens
+// (X11, Windows), and macOS already sends a touchpad's inertia itself.
 const (
 	kineticWindow   = 100 * time.Millisecond // the speed is measured over this much of the gesture's end
 	kineticStale    = 60 * time.Millisecond  // fingers that rested this long before leaving throw nothing
-	kineticSilence  = 45 * time.Millisecond  // without a release event: this silence ends the gesture
 	kineticDecay    = 0.325                  // seconds for the speed to fall to 1/e
 	kineticMinStart = 80.0                   // slower than this at release (points per second): no glide
 	kineticMinSpeed = 12.0                   // the glide ends below this
@@ -107,14 +110,10 @@ func kineticFrame(now time.Time, elapsed time.Duration) {
 	last := scroll.samples[len(scroll.samples)-1]
 	finger, released, told := scrollGesture()
 	switch {
-	case told && !finger:
-		scroll.samples = scroll.samples[:0] // a wheel: no inertia
-	case told && released:
+	case !told || !finger:
+		scroll.samples = scroll.samples[:0] // a wheel, or no telling: no inertia
+	case released:
 		scroll.release(now.Sub(last.heard) > kineticStale)
-	case !told && now.Sub(last.heard) > kineticSilence:
-		// This display does not say when fingers lift: a gesture of several
-		// events that falls silent is taken as released.
-		scroll.release(len(scroll.samples) < 4)
 	}
 }
 
@@ -171,4 +170,82 @@ func (scroll *kineticScroll) glide(dt float64) {
 	if scroll.Offset == before || math.Hypot(scroll.vx, scroll.vy) < kineticMinSpeed || !scroll.Visible() {
 		scroll.rest() // an edge, or slow enough to stop
 	}
+}
+
+// sideScroll is container.NewHScroll for a block inside a vertical scroll
+// (code in an answer). Fyne gives every wheel event to the innermost scroll
+// under the pointer, and its horizontal scroll turned a vertical wheel
+// sideways: over a code block the conversation stopped, even when the block
+// had nothing to scroll. Here the block keeps only the sideways motion it
+// can make, and the rest goes on to the scroll around it.
+type sideScroll struct {
+	container.Scroll
+	outer fyne.Scrollable // found on the first event that needs it
+}
+
+func newSideScroll(content fyne.CanvasObject) *sideScroll {
+	scroll := &sideScroll{}
+	scroll.Direction = container.ScrollHorizontalOnly
+	scroll.Content = content
+	scroll.ExtendBaseWidget(scroll)
+	return scroll
+}
+
+func (scroll *sideScroll) Scrolled(ev *fyne.ScrollEvent) {
+	dx, dy := ev.Scrolled.DX, ev.Scrolled.DY
+	if scroll.canScroll(dx) {
+		if kineticActive != nil {
+			kineticActive.rest()
+		}
+		scroll.Scroll.Scrolled(&fyne.ScrollEvent{PointEvent: ev.PointEvent, Scrolled: fyne.Delta{DX: dx}})
+		dx = 0
+	}
+	if dx == 0 && dy == 0 {
+		return
+	}
+	if scroll.outer == nil {
+		if c := fyne.CurrentApp().Driver().CanvasForObject(scroll); c != nil {
+			scroll.outer, _ = scrollAround(c.Content(), scroll, nil)
+		}
+	}
+	if scroll.outer != nil {
+		scroll.outer.Scrolled(&fyne.ScrollEvent{PointEvent: ev.PointEvent, Scrolled: fyne.Delta{DX: dx, DY: dy}})
+	}
+}
+
+// canScroll tells whether the content can move by dx (positive: towards
+// its start).
+func (scroll *sideScroll) canScroll(dx float32) bool {
+	switch {
+	case dx > 0:
+		return scroll.Offset.X > 0
+	case dx < 0:
+		return scroll.Offset.X+scroll.Size().Width < scroll.Content.MinSize().Width
+	}
+	return false
+}
+
+// scrollAround finds the innermost scroll that holds target, below object
+// (outer: the one around object).
+func scrollAround(object, target fyne.CanvasObject, outer fyne.Scrollable) (fyne.Scrollable, bool) {
+	if object == target {
+		return outer, true
+	}
+	switch object := object.(type) {
+	case *fyne.Container:
+		for _, child := range object.Objects {
+			if found, ok := scrollAround(child, target, outer); ok {
+				return found, true
+			}
+		}
+	case *container.ThemeOverride:
+		return scrollAround(object.Content, target, outer)
+	case *container.Scroll:
+		return scrollAround(object.Content, target, object)
+	case *kineticScroll:
+		return scrollAround(object.Content, target, object)
+	case *sideScroll:
+		return scrollAround(object.Content, target, object)
+	}
+	return nil, false
 }

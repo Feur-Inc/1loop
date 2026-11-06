@@ -1,0 +1,68 @@
+name: Server Docker image
+
+# The 1loop-server image (Dockerfile, docs/SERVER.md#docker) on GHCR,
+# ghcr.io/feur-inc/1loop-server: "latest" and the version for a stable
+# release, for amd64 and arm64. A pull request that changes the image only
+# builds it. The alphas' "alpha" and "alpha-N" come from ci.yml, with the
+# alpha release of the same run.
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths: [Dockerfile, .dockerignore, .github/workflows/docker.yml]
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: docker-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    name: Build and publish the server image
+    # Alpha releases are prereleases, published by the CI: only stable ones.
+    if: github.event_name != 'release' || !github.event.release.prerelease
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+    env:
+      PUSH: ${{ github.event_name != 'pull_request' }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4.4.0
+      - uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        if: env.PUSH == 'true'
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: ghcr.io/feur-inc/1loop-server
+          flavor: latest=false
+          tags: |
+            type=raw,value=latest
+            type=semver,pattern={{version}}
+
+      - uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          # A pull request checks the Dockerfile on amd64 only.
+          platforms: ${{ env.PUSH == 'true' && 'linux/amd64,linux/arm64' || 'linux/amd64' }}
+          push: ${{ env.PUSH == 'true' }}
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max

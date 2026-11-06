@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 )
 
@@ -46,6 +47,9 @@ func TestEvaluate(t *testing.T) {
 		`undefined`:                              `null`,
 		`(async () => {})()`:                     `null`,
 		`document.title = "t"; document.title`:   `"t"`,
+		`const o = {a: 1}; o.self = o; o`:        `{"a":1,"self":"[Circular]"}`,
+		`const s = {x: 1}; [s, s]`:               `[{"x":1},{"x":1}]`,
+		`document.createElement("b")`:            `"<b></b>"`,
 	} {
 		var got []byte
 		err := chromedp.Run(ctx, chromedp.ActionFunc(func(ctx context.Context) (err error) {
@@ -63,6 +67,23 @@ func TestEvaluate(t *testing.T) {
 		}))
 		if err == nil || !strings.Contains(err.Error(), "JavaScript") {
 			t.Errorf("%s: error %v, want a JavaScript error", expression, err)
+		}
+	}
+}
+
+// A rejection keeps its reason when it isn't an Error.
+func TestJavaScriptError(t *testing.T) {
+	for _, c := range []struct {
+		exception runtime.ExceptionDetails
+		want      string
+	}{
+		{runtime.ExceptionDetails{Text: "Uncaught (in promise)", Exception: &runtime.RemoteObject{Type: "string", Value: []byte(`"why"`)}}, `JavaScript: Uncaught (in promise): "why"`},
+		{runtime.ExceptionDetails{Text: "Uncaught (in promise) Error: boom", Exception: &runtime.RemoteObject{Description: "Error: boom\n    at <anonymous>:1:22"}}, "JavaScript: Uncaught (in promise) Error: boom: at <anonymous>:1:22"},
+		{runtime.ExceptionDetails{Text: "Uncaught", Exception: &runtime.RemoteObject{Description: "ReferenceError: nope is not defined"}}, "JavaScript: Uncaught: ReferenceError: nope is not defined"},
+		{runtime.ExceptionDetails{Text: "Uncaught (in promise)", Exception: &runtime.RemoteObject{Type: "undefined"}}, "JavaScript: Uncaught (in promise): undefined"},
+	} {
+		if got := javaScriptError(&c.exception).Error(); got != c.want {
+			t.Errorf("%q, want %q", got, c.want)
 		}
 	}
 }

@@ -233,6 +233,7 @@ type desktopUI struct {
 	sideLists      *fyne.Container
 	sideChats      []sideChat      // the chats listed, for search
 	allChatsShown  map[string]bool // projects whose every chat is listed
+	worktreesShown map[string]bool // projects whose worktrees are unfolded
 	foldedProjects map[string]bool
 	pane           *paneLayout
 	sideHandle     *sidebarHandle
@@ -274,7 +275,7 @@ func runDesktop(backend *agent.App, root string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	backend.EnableChatGPTWeb(ctx)
 	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), statePath: statePath(root),
-		cfg: agent.Config{Provider: "compatible", Workspace: root}, foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}}
+		cfg: agent.Config{Provider: "compatible", Workspace: root}, foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}}
 	ui.load()
 	ui.initializeConnections()
 	// Our own title bar on X11 and native Wayland; the system bar elsewhere.

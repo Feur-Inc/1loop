@@ -722,7 +722,7 @@ func (remote *remoteDesktop) projectMenu(anchor fyne.CanvasObject) {
 	var actions []menuAction
 	for _, p := range remote.projects {
 		p := p
-		actions = append(actions, menuAction{label: path.Base(filepath.ToSlash(p)), detail: p, checked: p == ui.cfg.Workspace, run: func() { remote.selectProject(p) }})
+		actions = append(actions, menuAction{label: path.Base(filepath.ToSlash(p)), detail: p, checked: p == ui.cfg.Workspace, group: p, run: func() { remote.selectProject(p) }})
 		actions = append(actions, ui.worktreeChoices(p, remote.selectProject)...)
 	}
 	if len(actions) == 0 {

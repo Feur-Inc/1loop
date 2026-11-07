@@ -97,3 +97,28 @@ func TestSearchSnippet(t *testing.T) {
 		t.Errorf("snippet = %q, want one line", got)
 	}
 }
+
+func TestMenuMatches(t *testing.T) {
+	actions := []menuAction{
+		{label: "1loop", group: "/p/1loop"},
+		{label: "    claude/sidebar", group: "/p/1loop"},
+		{label: "    claude/settings", group: "/p/1loop"},
+		{label: "website", group: "/p/website"},
+		{label: "Add folder…"},
+	}
+	for _, c := range []struct {
+		text string
+		want []bool
+	}{
+		{"", []bool{true, true, true, true, true}},
+		{"sidebar", []bool{true, true, false, false, false}}, // a worktree keeps its project above it
+		{"1LOOP", []bool{true, true, true, false, false}},    // a project keeps its worktrees
+		{"web", []bool{false, false, false, true, false}},
+		{"folder", []bool{false, false, false, false, true}},
+		{"1loop settings", []bool{true, false, true, false, false}}, // words from the project and the worktree
+	} {
+		if got := menuMatches(actions, c.text); !slices.Equal(got, c.want) {
+			t.Errorf("menuMatches(%q) = %v, want %v", c.text, got, c.want)
+		}
+	}
+}

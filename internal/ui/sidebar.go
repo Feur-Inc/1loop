@@ -361,7 +361,7 @@ func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
 		if p == ui.cfg.Workspace {
 			icon = iconCheck
 		}
-		actions = append(actions, menuAction{label: ui.projectName(p), icon: icon, run: func() { ui.selectProject(p) }})
+		actions = append(actions, menuAction{label: ui.projectName(p), icon: icon, group: p, run: func() { ui.selectProject(p) }})
 		actions = append(actions, ui.worktreeChoices(p, ui.selectProject)...)
 	}
 	add := "Add folder…"

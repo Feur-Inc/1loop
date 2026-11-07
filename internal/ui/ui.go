@@ -1055,9 +1055,8 @@ func (dialog *sheet) panelRect() rect {
 		if y+height > size.Height-8 {
 			y = at.Y - height - 6 + shift
 		}
-		if dialog.columns {
-			y = fyne.Max(8, fyne.Min(y, size.Height-height-8))
-		}
+		// Neither below nor above fits: it stays inside the window.
+		y = fyne.Max(8, fyne.Min(y, size.Height-height-8))
 		return rect{fyne.NewPos(x, y), fyne.NewPos(width, height)}
 	}
 	shift := (1 - dialog.progress) * 12
@@ -1294,8 +1293,15 @@ type menuAction struct {
 	icon    fyne.Resource
 	checked bool // marks the active choice of a mode menu
 	danger  bool
+	group   string // actions sharing one form a group: the filter keeps the first with any of them
 	run     func()
 }
+
+// A menu longer than this gets a filter field, and scrolls past menuRows.
+const (
+	menuFilterAt = 12
+	menuRows     = 12
+)
 
 // showMenu opens a web-style popover menu of actions next to anchor.
 func showMenu(window fyne.Window, anchor fyne.CanvasObject, actions []menuAction) *sheet {
@@ -1327,13 +1333,81 @@ func showMenu(window fyne.Window, anchor fyne.CanvasObject, actions []menuAction
 		items = append(items, item)
 		list.Add(item)
 	}
-	menu = newSheet(window.Canvas(), list, fyne.Max(list.MinSize().Width+10, 200))
+	var content fyne.CanvasObject = list
+	var field *keyEntry
+	if len(items) > menuFilterAt {
+		scroll := newKineticVScroll(list)
+		scroll.SetMinSize(fyne.NewSize(0, menuRows*(items[0].MinSize().Height+2)))
+		field = newKeyEntry()
+		field.SetPlaceHolder("Filter")
+		field.OnChanged = func(text string) {
+			menu.items = filterMenu(actions, items, text)
+			list.Refresh()
+			scroll.ScrollToTop()
+			menu.highlight(0)
+		}
+		// The arrows, Enter and Escape still drive the menu while typing.
+		field.onKey = func(key *fyne.KeyEvent) bool {
+			switch key.Name {
+			case fyne.KeyUp, fyne.KeyDown, fyne.KeyReturn, fyne.KeyEnter, fyne.KeyEscape:
+				menu.TypedKey(key)
+				return true
+			}
+			return false
+		}
+		content = container.NewBorder(padded(2, 6, 2, 2, field), nil, nil, nil, scroll)
+	}
+	menu = newSheet(window.Canvas(), content, fyne.Max(list.MinSize().Width+10, 240))
 	menu.menu = true
 	menu.anchor = anchor
 	menu.items = items
 	menu.Show()
-	window.Canvas().Focus(menu)
+	if field != nil {
+		window.Canvas().Focus(field)
+	} else {
+		window.Canvas().Focus(menu)
+	}
 	return menu
+}
+
+// filterMenu shows the actions holding every word of text, with the first
+// action of their group, and returns the rows left.
+func filterMenu(actions []menuAction, items []*tapRow, text string) []*tapRow {
+	var shown []*tapRow
+	for i, keep := range menuMatches(actions, text) {
+		if keep {
+			items[i].alpha = 1 // hidden while the menu faded in, it missed the fade
+			items[i].Show()
+			shown = append(shown, items[i])
+		} else {
+			items[i].Hide()
+		}
+	}
+	return shown
+}
+
+// menuMatches says which actions a filter keeps: those whose label, detail
+// or group's first label hold every word, and the first of a group that
+// keeps any.
+func menuMatches(actions []menuAction, text string) []bool {
+	words := strings.Fields(strings.ToLower(text))
+	head := map[string]int{}
+	keep := make([]bool, len(actions))
+	for i, action := range actions {
+		match := strings.ToLower(action.label + " " + action.detail)
+		if action.group != "" {
+			first, seen := head[action.group]
+			if !seen {
+				head[action.group], first = i, i
+			}
+			match += " " + strings.ToLower(actions[first].label)
+		}
+		keep[i] = containsAll(match, words)
+		if keep[i] && action.group != "" {
+			keep[head[action.group]] = true
+		}
+	}
+	return keep
 }
 
 var blankIcon = fyne.NewStaticResource("1loop-blank.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"></svg>`))

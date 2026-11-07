@@ -4,6 +4,7 @@ package ui
 
 import (
 	"fmt"
+	"path"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -138,7 +139,7 @@ func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 		row.truncate = true
 		row.selected = chat.selected
 		if chat.folder != project && project != "" {
-			row.trailing = ui.worktreeLabel(chat.folder) // a worktree's chat
+			row.trailing = path.Base(ui.worktreeLabel(chat.folder)) // a worktree's chat: its branch's last part, short
 		}
 		if chat.running {
 			row.badge = iconDot // the agent works on it in the background

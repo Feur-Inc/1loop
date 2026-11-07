@@ -422,8 +422,150 @@ func claudeCodeGuidance(cfg Config) string {
 	return "\n\n" + strings.Join(guidance, "\n")
 }
 
+// diffLines writes text as removed (-) or added (+) lines of a diff.
+func diffLines(builder *strings.Builder, sign, text string) {
+	if text == "" {
+		return
+	}
+	for _, line := range strings.Split(strings.TrimSuffix(text, "\n"), "\n") {
+		builder.WriteString(sign + line + "\n")
+	}
+}
+
+// claudeRelPath is a tool's path, relative to the workspace when inside it.
+func claudeRelPath(root, path string) string {
+	if rel, err := filepath.Rel(root, path); err == nil && path != "" && !strings.HasPrefix(rel, "..") {
+		return rel
+	}
+	return path
+}
+
+// claudeMultiEditApproval shows every edit of a MultiEdit, each a hunk
+// (#240): its edits list, not old_string/new_string, holds the change.
+func claudeMultiEditApproval(root string, input json.RawMessage) (title, preview string) {
+	var in struct {
+		FilePath string `json:"file_path"`
+		Edits    []struct {
+			Old        string `json:"old_string"`
+			New        string `json:"new_string"`
+			ReplaceAll bool   `json:"replace_all"`
+		} `json:"edits"`
+	}
+	_ = json.Unmarshal(input, &in)
+	path := claudeRelPath(root, in.FilePath)
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "--- a/%s\n+++ b/%s\n", path, path)
+	for i, edit := range in.Edits {
+		all := ""
+		if edit.ReplaceAll {
+			all = ", every occurrence"
+		}
+		fmt.Fprintf(&builder, "@@ edit %d of %d%s @@\n", i+1, len(in.Edits), all)
+		diffLines(&builder, "-", edit.Old)
+		diffLines(&builder, "+", edit.New)
+	}
+	return "Apply changes to " + path + "?", builder.String()
+}
+
+// claudeNotebookApproval shows which cell a NotebookEdit changes, its source
+// now (read from the notebook) and after (#240).
+func claudeNotebookApproval(root string, input json.RawMessage) (title, preview string) {
+	var in struct {
+		Notebook string `json:"notebook_path"`
+		CellID   string `json:"cell_id"`
+		Source   string `json:"new_source"`
+		CellType string `json:"cell_type"`
+		Mode     string `json:"edit_mode"`
+	}
+	_ = json.Unmarshal(input, &in)
+	path := claudeRelPath(root, in.Notebook)
+	full := in.Notebook
+	if !filepath.IsAbs(full) {
+		full = filepath.Join(root, full)
+	}
+	old, oldType := notebookCell(full, in.CellID)
+	if in.CellType == "" {
+		in.CellType = oldType
+	}
+	if in.Mode == "" {
+		in.Mode = "replace"
+	}
+	cell := "cell " + in.CellID
+	if in.CellID == "" {
+		cell = "the first cell"
+	}
+	var what string
+	switch in.Mode {
+	case "insert":
+		what = "insert a new " + in.CellType + " cell after " + cell
+		if in.CellID == "" {
+			what = "insert a new " + in.CellType + " cell at the start"
+		}
+		old = ""
+	case "delete":
+		what, in.Source = "delete "+cell, ""
+	default:
+		what = "replace " + cell
+		if in.CellType != "" {
+			what += " (" + in.CellType + ")"
+		}
+	}
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "--- a/%s\n+++ b/%s\n@@ %s @@\n", path, path, what)
+	diffLines(&builder, "-", old)
+	diffLines(&builder, "+", in.Source)
+	return "Apply changes to " + path + "?", builder.String()
+}
+
+// notebookCell is the source and type of a notebook's cell, by its id or,
+// as Claude Code also accepts, "cell-N" for the Nth (from 0).
+func notebookCell(path, id string) (source, cellType string) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", ""
+	}
+	var notebook struct {
+		Cells []struct {
+			ID     string          `json:"id"`
+			Type   string          `json:"cell_type"`
+			Source json.RawMessage `json:"source"`
+		} `json:"cells"`
+	}
+	if json.Unmarshal(data, &notebook) != nil {
+		return "", ""
+	}
+	index := -1
+	for i, cell := range notebook.Cells {
+		if cell.ID == id {
+			index = i
+		}
+	}
+	if n, err := strconv.Atoi(strings.TrimPrefix(id, "cell-")); index < 0 && err == nil && strings.HasPrefix(id, "cell-") {
+		index = n
+	}
+	if id == "" {
+		index = 0
+	}
+	if index < 0 || index >= len(notebook.Cells) {
+		return "", ""
+	}
+	cell := notebook.Cells[index]
+	var lines []string
+	if json.Unmarshal(cell.Source, &lines) == nil {
+		return strings.Join(lines, ""), cell.Type
+	}
+	_ = json.Unmarshal(cell.Source, &source)
+	return source, cell.Type
+}
+
 // claudeApproval words a permission request like 1loop's own tools do.
 func claudeApproval(root, name string, input json.RawMessage) (title, preview string) {
+	switch name {
+	case "MultiEdit":
+		return claudeMultiEditApproval(root, input)
+	case "NotebookEdit":
+		return claudeNotebookApproval(root, input)
+	}
 	tool, args := claudeTool(root, name, input)
 	path, command, _ := ToolArgs(args)
 	switch tool {

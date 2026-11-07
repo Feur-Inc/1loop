@@ -245,7 +245,7 @@ func systemInstructions(cfg Config) string {
 	if cfg.Machine != nil {
 		shell = "bash (else sh) on " + cfg.Machine.Label()
 	}
-	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + shell + "." + citationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + contextInstructions(cfg) + memoryInstructions(cfg) + toolSearchInstructions(cfg)
+	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + shell + "." + citationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + contextInstructions(cfg) + memoryInstructions(cfg) + settingsInstructions(cfg) + toolSearchInstructions(cfg)
 }
 
 type approvalContextKey struct{}

@@ -1417,6 +1417,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 			return err
 		}
 	}
+	cfg.Settings = ui.settingsAccess()
 	cfg.ApprovalMode = agent.ApprovalFor(ui.approvalMode, cfg)
 	cfg.ClassicCompaction = ui.classicCompaction
 	cfg.AutoResume = ui.autoResume

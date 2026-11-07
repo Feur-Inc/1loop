@@ -521,7 +521,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	extensionArgs, cleanExtensions := claudeExtensionArgs()
 	defer cleanExtensions()
 	args = append(args, extensionArgs...)
-	appendPrompt := mobileInstructions(cfg) + projectInstructions(cfg.Workspace) + citationInstructions + todoInstructions(cfg) + todoSnapshot(cfg) + memoryInstructions(cfg) + modelNote(cfg) + mentionNote(cfg, lastUserText(history))
+	appendPrompt := mobileInstructions(cfg) + projectInstructions(cfg.Workspace) + citationInstructions + todoInstructions(cfg) + todoSnapshot(cfg) + memoryInstructions(cfg) + settingsInstructions(cfg) + modelNote(cfg) + mentionNote(cfg, lastUserText(history))
 	if cfg.ProjectTools != nil {
 		appendPrompt += "\n\nUse 1loop's MCP shell, read_file, list_directory, edit_file and apply_patch tools for project work. Follow the phone's selected execution policy and stay strictly inside the requested project. Use recall to retrieve older conversation details. Your own context compaction remains managed by Claude Code."
 	}
@@ -926,7 +926,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			response := map[string]any{"behavior": "deny", "message": "The user denied this action."}
 			name := strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__")
 			projectRead := cfg.ProjectTools != nil && (name == "read_file" || name == "list_directory" || name == "search_files" || name == "command_output" || name == "recall" || name == "request_user_input")
-			if projectRead || claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__memory" || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || backend.confirm(ctx, emit, title, preview) {
+			if projectRead || claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__memory" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__settings" || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || backend.confirm(ctx, emit, title, preview) {
 				response = map[string]any{"behavior": "allow", "updatedInput": claudeEventValue.Request.Input}
 				for _, p := range calls { // the approved call starts now
 					p.started = time.Now()

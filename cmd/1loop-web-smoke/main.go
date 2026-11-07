@@ -30,6 +30,7 @@ import (
 	"sync"
 	"time"
 
+	cdpbrowser "github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/runtime"
@@ -45,6 +46,7 @@ var (
 	prompt    = flag.String("prompt", "", "x,y of the composer, to type and send there")
 	scroll    = flag.String("scroll", "", "x,y over the conversation, to scroll it")
 	connect   = flag.String("connect", "", "x,y of the pairing sheet's Connect button")
+	copyAt    = flag.String("copy", "", "x,y of a Copy button, to read the clipboard after")
 	longChat  = flag.Int("long", 60, "turns in the long chat")
 )
 
@@ -203,6 +205,7 @@ func main() {
 	}
 	if *scroll != "" {
 		x, y := xy(*scroll)
+		chromedp.Run(ctx, chromedp.MouseEvent(input.MouseMoved, x, y))
 		t := time.Now()
 		for i := 0; i < 10; i++ {
 			chromedp.Run(ctx, chromedp.MouseEvent(input.MouseWheel, x, y, func(p *input.DispatchMouseEventParams) *input.DispatchMouseEventParams {
@@ -223,7 +226,7 @@ func main() {
 		streamMu.Lock()
 		before := events
 		streamMu.Unlock()
-		for i, wait := range []time.Duration{2, 3, 8} {
+		for i, wait := range []time.Duration{3, 3, 12} {
 			time.Sleep(wait * time.Second)
 			shot(ctx, fmt.Sprintf("07-streaming-%d", i+1))
 		}
@@ -231,10 +234,25 @@ func main() {
 		log.Printf("/api/events responses during the run: %d (before %d)", events, before)
 		streamMu.Unlock()
 	}
+	if *copyAt != "" {
+		chromedp.Run(ctx, browserGrant())
+		click(ctx, *copyAt)
+		time.Sleep(time.Second)
+		var text string
+		err := chromedp.Run(ctx, chromedp.Evaluate(`navigator.clipboard.readText()`, &text, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }))
+		log.Printf("clipboard after Copy: %q (%v)", text, err)
+	}
 	streamMu.Lock()
 	os.WriteFile(filepath.Join(*outDir, "console.log"), []byte(strings.Join(consoleLines, "\n")), 0o644)
 	streamMu.Unlock()
 	log.Printf("first pairing request %s after navigation", firstFrame.Round(time.Millisecond))
+}
+
+// browserGrant lets the page read and write the clipboard without a prompt.
+func browserGrant() chromedp.Action {
+	return chromedp.ActionFunc(func(ctx context.Context) error {
+		return cdpbrowser.GrantPermissions([]cdpbrowser.PermissionType{cdpbrowser.PermissionTypeClipboardReadWrite, cdpbrowser.PermissionTypeClipboardSanitizedWrite}).Do(ctx)
+	})
 }
 
 func browser(trust bool) (context.Context, context.CancelFunc) {
@@ -264,6 +282,10 @@ func shot(ctx context.Context, name string) {
 
 func click(ctx context.Context, at string) {
 	x, y := xy(at)
+	// glfw-js takes the click's position from the last mousemove, which a
+	// real pointer always sends first.
+	chromedp.Run(ctx, chromedp.MouseEvent(input.MouseMoved, x-3, y-3), chromedp.MouseEvent(input.MouseMoved, x, y))
+	time.Sleep(150 * time.Millisecond)
 	if err := chromedp.Run(ctx, chromedp.MouseClickXY(x, y)); err != nil {
 		log.Printf("click %s: %v", at, err)
 	}
@@ -291,7 +313,7 @@ func fakeModel() string {
 		body, _ := io.ReadAll(r.Body)
 		delay := time.Duration(0)
 		if bytes.Contains(body, []byte("slowly")) {
-			delay = 40 * time.Millisecond
+			delay = 150 * time.Millisecond
 		}
 		w.Header().Set("Content-Type", "text/event-stream")
 		flusher := w.(http.Flusher)

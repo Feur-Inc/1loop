@@ -687,8 +687,9 @@ private fun ChatGPTWebView(app: RemoteApp, chat: String) {
         }
     }
     if (asking) {
+        GlassBackdrop()
         androidx.compose.material3.AlertDialog(
-            onDismissRequest = { asking = false }, containerColor = Palette.popover,
+            onDismissRequest = { asking = false }, containerColor = GlassSurface, modifier = GlassDialogEdge,
             title = { Text("Take control of ChatGPT?", style = Type.title) },
             text = { Text("Taps and typing can interrupt the automated conversation. Complete sign-in or security checks yourself, then lock the page again.", style = Type.small) },
             confirmButton = { androidx.compose.material3.TextButton(onClick = { asking = false; locked = false }) { Text("Take control", color = Palette.amber) } },

@@ -202,7 +202,7 @@ fun ModelSheet(app: RemoteApp, onDone: () -> Unit) {
     var picked by remember { mutableStateOf<String?>(null) }
     val shown = picked ?: model?.account ?: app.accounts.firstOrNull()?.id.orEmpty()
     GlassBackdrop()
-    ModalBottomSheet(onDismissRequest = onDone, containerColor = GlassSurface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
             if (app.accounts.isNotEmpty()) {
                 SheetCaption("Account")

@@ -23,6 +23,7 @@ import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.drawWithContent
 import androidx.compose.ui.graphics.CompositingStrategy
@@ -49,6 +50,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.withContext
 
 // Frosted glass and touch response. What opens over the app (a dialog, a
@@ -102,7 +105,7 @@ fun GlassMenuOpen() {
 fun Modifier.glassMenu(tint: Color): Modifier {
     var at by remember { mutableStateOf(Offset.Zero) }
     val picture = Glass.picture
-    val shown by animateFloatAsState(if (picture != null) 1f else 0f, tween(180), label = "menu glass")
+    val shown by animateFloatAsState(if (picture != null) 1f else 0f, tween(120), label = "menu glass")
     return onGloballyPositioned { at = it.positionOnScreen() }.drawBehind {
         val sheen = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.10f), Color.White.copy(alpha = 0.02f)))
         if (picture == null || shown <= 0f) {
@@ -148,8 +151,14 @@ fun FrostedBox(
     val hiddenNow by rememberUpdatedState(hidden)
     val covered by remember { derivedStateOf { coverNow() > 0.001f } }
     val reading = read ?: covered
-    LaunchedEffect(reading) {
+    // The root reads again when a dialog opens over an open menu: only then does it need the dialogs' picture.
+    val dialogs = publish && Glass.open > 0
+    LaunchedEffect(reading, dialogs) {
         if (!reading) {
+            // Kept until what closed has faded out over it: dropped at once,
+            // the glass went clear under a closing dialog or menu.
+            snapshotFlow { coverNow() <= 0.001f }.first { it }
+            if (publish) delay(250) // a menu's own exit
             frost = null
             if (publish) Glass.picture = null
             return@LaunchedEffect
@@ -157,14 +166,15 @@ fun FrostedBox(
         capture = true // the next frame also records an eighth-size copy, nothing more
         withFrameNanos {}
         withFrameNanos {}
-        // Two small pictures from one read: dimmed for what covers the whole
-        // app (baked in: no dimming layer redrawn on every frame of a slide),
-        // bright for the menus' glass.
         val read = runCatching { small.toImageBitmap() }.getOrNull()
-        frost = read?.let { runCatching { frosted(it, 90, 9) }.getOrNull() }
-        // Finer and brighter: what a menu covers still shows through its glass as soft shapes.
-        if (publish) Glass.picture = read?.let { runCatching { frosted(it, 135, 12) }.getOrNull() }
-        capture = false
+        capture = false // read: the frames after it record nothing more
+        val source = read?.let { runCatching { softwareCopy(it) }.getOrNull() } ?: return@LaunchedEffect
+        // Finer and brighter for the menus' glass, first: what a menu covers
+        // still shows through it as soft shapes.
+        if (publish) Glass.picture = runCatching { frosted(source, 135, 12) }.getOrNull()
+        // Dimmed for what covers the whole app (baked in: no dimming layer
+        // redrawn on every frame of a slide); a menu alone does not need it.
+        if (!publish || dialogs) frost = runCatching { frosted(source, 90, 9) }.getOrNull()
     }
     Box(if (publish) modifier.onGloballyPositioned { Glass.origin = it.positionOnScreen(); Glass.extent = it.size } else modifier) {
         Box(
@@ -196,9 +206,13 @@ fun glassCover(): () -> Float {
     return { cover.value }
 }
 
+/** The picture as a bitmap the CPU can read: copied once from the GPU's, then shared by the frosted pictures. */
+private suspend fun softwareCopy(picture: ImageBitmap): Bitmap = withContext(Dispatchers.Default) {
+    picture.asAndroidBitmap().let { if (it.config == Bitmap.Config.HARDWARE) it.copy(Bitmap.Config.ARGB_8888, false) else it }
+}
+
 /** The picture shrunk to [width] pixels, blurred, at [tenths] of its brightness: upscaled smoothly, it reads as frosted glass. */
-private suspend fun frosted(picture: ImageBitmap, width: Int, tenths: Int): ImageBitmap = withContext(Dispatchers.Default) {
-    val source = picture.asAndroidBitmap().let { if (it.config == Bitmap.Config.HARDWARE) it.copy(Bitmap.Config.ARGB_8888, false) else it }
+private suspend fun frosted(source: Bitmap, width: Int, tenths: Int): ImageBitmap = withContext(Dispatchers.Default) {
     val height = maxOf(1, source.height * width / maxOf(1, source.width))
     val small = Bitmap.createScaledBitmap(source, width, height, true)
     val pixels = IntArray(width * height)
@@ -220,8 +234,11 @@ private suspend fun frosted(picture: ImageBitmap, width: Int, tenths: Int): Imag
 
 /** A box blur over 2*radius+1 pixels, rows then columns, with running sums. */
 private fun boxBlur(pixels: IntArray, width: Int, height: Int, radius: Int) {
-    fun pass(n: Int, at: (Int) -> Int) {
-        val line = IntArray(n) { pixels[at(it)] }
+    val line = IntArray(maxOf(width, height))
+    // One line of n pixels from first, stride apart: plain index steps, no call per pixel.
+    fun pass(n: Int, first: Int, stride: Int) {
+        var o = first
+        for (i in 0 until n) { line[i] = pixels[o]; o += stride }
         var r = 0
         var g = 0
         var b = 0
@@ -229,16 +246,18 @@ private fun boxBlur(pixels: IntArray, width: Int, height: Int, radius: Int) {
         for (k in 0 until minOf(radius, n)) {
             val c = line[k]; r += (c shr 16) and 0xff; g += (c shr 8) and 0xff; b += c and 0xff; count++
         }
+        o = first
         for (i in 0 until n) {
             val add = i + radius
             if (add < n) { val c = line[add]; r += (c shr 16) and 0xff; g += (c shr 8) and 0xff; b += c and 0xff; count++ }
             val drop = i - radius - 1
             if (drop >= 0) { val c = line[drop]; r -= (c shr 16) and 0xff; g -= (c shr 8) and 0xff; b -= c and 0xff; count-- }
-            pixels[at(i)] = (0xff shl 24) or ((r / count) shl 16) or ((g / count) shl 8) or (b / count)
+            pixels[o] = (0xff shl 24) or ((r / count) shl 16) or ((g / count) shl 8) or (b / count)
+            o += stride
         }
     }
-    for (y in 0 until height) pass(width) { y * width + it }
-    for (x in 0 until width) pass(height) { it * width + x }
+    for (y in 0 until height) pass(width, y * width, 1)
+    for (x in 0 until width) pass(height, x, width)
 }
 
 /** A control that sinks a little under the finger and springs back: pass the same source to its clickable. */
@@ -267,7 +286,7 @@ fun Modifier.appear(animate: Boolean): Modifier {
 /** The glass surfaces' edge: a hairline of light, brightest at the top, as glass catches it. */
 val GlassEdge = BorderStroke(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.26f), Color.White.copy(alpha = 0.06f))))
 
-/** A dialog's or sheet's surface: translucent over the frosted app. */
+/** A dialog's surface: translucent over the frosted app (a sheet stays opaque: it runs under the navigation bar, which shows light through it). */
 val GlassSurface: Color get() = Palette.surface.copy(alpha = 0.84f)
 
 /** A menu's shape: rounder, as a pane of glass. */

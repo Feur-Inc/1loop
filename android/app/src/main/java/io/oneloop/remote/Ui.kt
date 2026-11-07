@@ -391,7 +391,7 @@ private fun AddressSheet(onDone: () -> Unit, onAdd: (Pair<String, String>) -> Un
     var fingerprint by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
     GlassBackdrop()
-    ModalBottomSheet(onDismissRequest = onDone, containerColor = GlassSurface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp).imePadding()) {
             Text("Add by address", style = Type.title)
             Spacer(Modifier.height(6.dp))
@@ -645,7 +645,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
         GlassBackdrop()
         ModalBottomSheet(
             onDismissRequest = { deleting = null },
-            containerColor = GlassSurface, scrimColor = GlassScrim,
+            containerColor = Palette.surface, scrimColor = GlassScrim,
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) {
             Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
@@ -1204,7 +1204,7 @@ private fun QueueLine(text: String, number: Int?) {
 private fun ToolSheet(app: RemoteApp, item: Item, onDone: () -> Unit) {
     val args = remember(item.args) { runCatching { JSONObject(item.args) }.getOrDefault(JSONObject()) }
     GlassBackdrop()
-    ModalBottomSheet(onDismissRequest = onDone, containerColor = GlassSurface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.forTool(item.tool), null, tint = Palette.text, modifier = Modifier.size(20.dp))
@@ -1268,7 +1268,7 @@ private fun QuestionSheet(app: RemoteApp, request: Questions) {
     // Closing (swipe, back, outside tap) sets the questions aside, to answer
     // from the composer: the run keeps waiting for them.
     GlassBackdrop()
-    ModalBottomSheet(onDismissRequest = { app.questionsAside.add(request.id) }, sheetState = state, containerColor = GlassSurface, scrimColor = GlassScrim) {
+    ModalBottomSheet(onDismissRequest = { app.questionsAside.add(request.id) }, sheetState = state, containerColor = Palette.surface, scrimColor = GlassScrim) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 WorkRing("approval", 34.dp)
@@ -1316,7 +1316,7 @@ private fun ApprovalSheet(app: RemoteApp, approval: Approval) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { it != SheetValue.Hidden })
     val title = app.chats.firstOrNull { it.id == approval.chat }?.title.orEmpty()
     GlassBackdrop()
-    ModalBottomSheet(onDismissRequest = {}, sheetState = state, containerColor = GlassSurface, scrimColor = GlassScrim) {
+    ModalBottomSheet(onDismissRequest = {}, sheetState = state, containerColor = Palette.surface, scrimColor = GlassScrim) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 WorkRing("approval", 34.dp)
@@ -1377,7 +1377,7 @@ private fun EditSheet(original: String, onSend: (String) -> Unit, onDone: () -> 
     var text by remember { mutableStateOf(original) }
     val focus = remember { FocusRequester() }
     GlassBackdrop()
-    ModalBottomSheet(onDismissRequest = onDone, containerColor = GlassSurface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp).imePadding()) {
             Text("Edit message", style = Type.title)
             Spacer(Modifier.height(6.dp))

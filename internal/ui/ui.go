@@ -854,6 +854,7 @@ type sheet struct {
 	onClosed   func()
 	afterClose func()                    // runs once the sheet is gone (menu actions)
 	onKey      func(*fyne.KeyEvent) bool // optional: content-specific keys, true when handled
+	onRune     func(rune)                // optional: typed characters (the questions' number keys)
 	canvas     fyne.Canvas
 	progress   float32
 	anim       *fyne.Animation
@@ -1016,9 +1017,13 @@ func (dialog *sheet) highlight(index int) {
 }
 
 // Sheets take keyboard focus so Escape and arrows reach them.
-func (dialog *sheet) FocusGained()   {}
-func (dialog *sheet) FocusLost()     {}
-func (dialog *sheet) TypedRune(rune) {}
+func (dialog *sheet) FocusGained() {}
+func (dialog *sheet) FocusLost()   {}
+func (dialog *sheet) TypedRune(r rune) {
+	if dialog.onRune != nil {
+		dialog.onRune(r)
+	}
+}
 
 type rect struct{ pos, size fyne.Position }
 

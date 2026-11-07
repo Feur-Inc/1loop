@@ -50,6 +50,15 @@ func TestClaudeAskUserQuestion(t *testing.T) {
 		t.Fatalf("updated input lost the questions: %v", updated)
 	}
 
+	multi := `{"questions":[{"question":"Which toppings?","header":"Toppings","multiSelect":true,"options":[{"label":"Milk","description":""},{"label":"Sugar","description":""}]}]}`
+	response, request = claudeAsk(t, multi, map[string]string{"q1": "Milk, Sugar"})
+	if !request.Questions[0].MultiSelect {
+		t.Fatalf("multi-select lost: %+v", request.Questions[0])
+	}
+	if got := response["updatedInput"].(map[string]any)["answers"]; !reflect.DeepEqual(got, map[string]string{"Which toppings?": "Milk, Sugar"}) {
+		t.Fatalf("multi-select answers: %v", got)
+	}
+
 	closed, _ := claudeAsk(t, input, nil)
 	if closed["behavior"] != "deny" || closed["message"] == "" {
 		t.Fatalf("closed questions: %v", closed)

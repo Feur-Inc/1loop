@@ -12,6 +12,7 @@ import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.RowScope
 import androidx.compose.foundation.layout.Spacer
@@ -152,7 +153,9 @@ private fun QuestionCard(request: Questions, onAnswer: (Questions, Map<String, S
     var index by remember(request.id) { mutableStateOf(0) }
     val answers = remember(request.id) { mutableStateMapOf<String, String>() }
     var other by remember(request.id, index) { mutableStateOf<String?>(null) } // null: not writing one
+    var picked by remember(request.id, index) { mutableStateOf(setOf<String>()) } // a multi-select's options
     val question = request.questions.getOrNull(index) ?: return
+    val chosen = question.options.map { it.label }.filter { it in picked }
     DisposableEffect(request.id) { onDispose { onTyping(false) } }
     fun choose(value: String) {
         answers[question.id] = value
@@ -172,13 +175,27 @@ private fun QuestionCard(request: Questions, onAnswer: (Questions, Map<String, S
         if (header.isNotEmpty()) Text(header, style = Type.caption.copy(color = Palette.amber))
         Text(question.text, style = Type.body)
         for (option in question.options) {
-            Column(
-                Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Palette.code)
-                    .clickable { choose(option.label) }.padding(horizontal = 12.dp, vertical = 10.dp),
-            ) {
-                Text(option.label, style = Type.body)
+            val (label, recommended) = recommendedLabel(option.label)
+            val lines: @Composable ColumnScope.() -> Unit = {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+                    Text(label, style = Type.body, modifier = Modifier.weight(1f, fill = false))
+                    if (recommended) Tag("Recommended", Palette.amber, Palette.amber.copy(alpha = 0.14f))
+                }
                 if (option.description.isNotEmpty()) Text(option.description, style = Type.small, maxLines = 2, overflow = TextOverflow.Ellipsis)
             }
+            // A multi-select ticks options, then sends them; otherwise a tap is the answer.
+            if (question.multiSelect) {
+                ChoiceCard(option.label in picked, true, onClick = { picked = if (option.label in picked) picked - option.label else picked + option.label }, content = lines)
+            } else {
+                Column(
+                    Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Palette.code)
+                        .clickable { choose(option.label) }.padding(horizontal = 12.dp, vertical = 10.dp),
+                    content = lines,
+                )
+            }
+        }
+        if (question.multiSelect && other == null) {
+            Pill(if (index + 1 < request.questions.size) "Next" else "Send", primary = true, enabled = chosen.isNotEmpty()) { choose(chosen.joinToString(", ")) }
         }
         val written = other
         if (written == null) {
@@ -189,7 +206,9 @@ private fun QuestionCard(request: Questions, onAnswer: (Questions, Map<String, S
             Field(written, { other = it }, "Your answer", KeyboardType.Text, Modifier.focusRequester(focus))
             Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                 Pill("Cancel") { other = null; onTyping(false) }
-                Pill("Send", primary = true, enabled = written.isNotBlank()) { choose(Questions.OTHER + written.trim()) }
+                Pill("Send", primary = true, enabled = written.isNotBlank()) {
+                    choose(if (chosen.isEmpty()) Questions.OTHER + written.trim() else (chosen + written.trim()).joinToString(", "))
+                }
             }
             // The window takes the keyboard once focusable (onTyping): then focus the field.
             LaunchedEffect(Unit) {

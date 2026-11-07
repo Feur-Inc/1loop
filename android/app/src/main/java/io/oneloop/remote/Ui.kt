@@ -34,6 +34,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -1198,16 +1199,17 @@ private fun elapsed(ms: Long) = when {
     else -> "${ms / 60000}m ${(ms / 1000 % 60).toString().padStart(2, '0')}s"
 }
 
-// The model's questions: an option per question, or the user's own words
-// on the "Other" line; sent once every question has an answer.
+// The model's questions, one at a time: each option a choice card, then the
+// user's own words in the "Other" field; the send button says what is still
+// missing until every question has an answer.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun QuestionSheet(app: RemoteApp, request: Questions) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { true })
     val title = app.chats.firstOrNull { it.id == request.chat }?.title.orEmpty()
     val draft = app.questionDraft(request) // survives the sheet being set aside
-    val answers = draft.answers
-    val others = draft.others
+    val index = draft.page.coerceIn(0, (request.questions.size - 1).coerceAtLeast(0))
+    val question = request.questions.getOrNull(index) ?: return
     // Closing (swipe, back, outside tap) sets the questions aside, to answer
     // from the composer: the run keeps waiting for them.
     ModalBottomSheet(onDismissRequest = { app.questionsAside.add(request.id) }, sheetState = state, containerColor = Palette.surface) {
@@ -1220,33 +1222,87 @@ private fun QuestionSheet(app: RemoteApp, request: Questions) {
                     Text(title, style = Type.caption.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            for (question in request.questions) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (question.header.isNotEmpty()) Text(question.header.uppercase(), style = Type.caption.copy(color = Palette.faint, fontWeight = FontWeight.SemiBold))
-                    Text(question.text, style = Type.body)
-                    for (option in question.options) {
-                        val selected = answers[question.id] == option.label
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (selected) Palette.selected else Color.Transparent)
-                                .clickable { answers[question.id] = option.label; others.remove(question.id) }.padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(option.label, style = Type.body.copy(fontSize = 14.5.sp))
-                                if (option.description.isNotEmpty()) Text(option.description, style = Type.caption.copy(color = Palette.muted))
-                            }
-                            if (selected) Icon(Icons.check, null, tint = Palette.amber, modifier = Modifier.size(18.dp))
-                        }
-                    }
-                    Field(others[question.id].orEmpty(), { text ->
-                        others[question.id] = text
-                        if (text.isNotBlank()) answers[question.id] = Questions.OTHER + text.trim() else if (answers[question.id]?.startsWith(Questions.OTHER) == true) answers.remove(question.id)
-                    }, "Other: your own answer", KeyboardType.Text)
+            QuestionPage(request, question, index, draft)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (index > 0) Pill("Back") { draft.page = index - 1 }
+                Spacer(Modifier.weight(1f))
+                if (index + 1 < request.questions.size) Pill("Next") { draft.page = index + 1 }
+                val missing = draft.firstMissing(request)
+                // Until all are answered it names what is missing, and takes the user there.
+                Pill(draft.sendLabel(request), primary = missing < 0) {
+                    if (missing >= 0) draft.page = missing else app.answer(request, draft.answers(request))
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                Pill("Send answers", primary = true, enabled = request.questions.all { answers.containsKey(it.id) }) { app.answer(request, answers.toMap()) }
+        }
+    }
+}
+
+/** A question: its header as a tag and its place among the others, the question, its options and Other. */
+@Composable
+private fun QuestionPage(request: Questions, question: Question, index: Int, draft: QuestionDraft) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (question.header.isNotEmpty()) Tag(question.header, Palette.muted, Palette.selected)
+            Spacer(Modifier.weight(1f))
+            if (request.questions.size > 1) Text("${index + 1}/${request.questions.size}", style = Type.caption.copy(color = Palette.muted))
+        }
+        Text(question.text, style = Type.body.copy(fontWeight = FontWeight.SemiBold))
+        Text(if (question.multiSelect) "Pick any that apply, or add your own" else "Pick one, or write your own", style = Type.caption.copy(color = Palette.faint))
+        val chosen = draft.picked[question.id].orEmpty()
+        for (option in question.options) {
+            val (label, recommended) = recommendedLabel(option.label)
+            ChoiceCard(option.label in chosen, question.multiSelect, onClick = { draft.pick(question, option.label) }) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(label, style = Type.body.copy(fontSize = 14.5.sp), modifier = Modifier.weight(1f, fill = false))
+                    if (recommended) Tag("Recommended", Palette.amber, Palette.amber.copy(alpha = 0.14f))
+                }
+                if (option.description.isNotEmpty()) Text(option.description, style = Type.caption.copy(color = Palette.muted))
             }
+        }
+        val own = draft.others[question.id].orEmpty()
+        val focus = remember { FocusRequester() }
+        ChoiceCard(own.isNotBlank(), question.multiSelect, onClick = { focus.requestFocus() }) {
+            Field(own, { draft.write(question, it) }, "Other: type your own answer", KeyboardType.Text, Modifier.focusRequester(focus))
+        }
+    }
+}
+
+/** A small rounded label: a question's header, the Recommended badge. */
+@Composable
+fun Tag(text: String, ink: Color, fill: Color) {
+    Text(
+        text, style = Type.caption.copy(fontSize = 11.sp, color = ink, fontWeight = FontWeight.SemiBold),
+        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(fill).padding(horizontal = 7.dp, vertical = 2.dp),
+    )
+}
+
+/** An option: a radio (a checkbox on a multi-select) beside its content, lit with the accent once picked. */
+@Composable
+fun ChoiceCard(picked: Boolean, multi: Boolean, onClick: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(shape).background(if (picked) Palette.amber.copy(alpha = 0.10f) else Palette.code)
+            .border(1.dp, if (picked) Palette.amber else Palette.border, shape)
+            .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ChoiceMark(picked, multi)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp), content = content)
+    }
+}
+
+@Composable
+private fun ChoiceMark(picked: Boolean, multi: Boolean) {
+    val shape = if (multi) RoundedCornerShape(4.dp) else CircleShape
+    Box(
+        Modifier.size(18.dp).clip(shape).background(if (multi && picked) Palette.amber else Color.Transparent)
+            .border(1.5.dp, if (picked) Palette.amber else Palette.borderHot, shape),
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            multi && picked -> Icon(Icons.check, null, tint = Palette.ink, modifier = Modifier.size(14.dp))
+            picked -> Box(Modifier.size(9.dp).clip(CircleShape).background(Palette.amber))
         }
     }
 }

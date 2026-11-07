@@ -15,7 +15,6 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.layout.onSizeChanged
 import android.graphics.BitmapFactory
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.Crossfade
 import androidx.compose.animation.core.VectorConverter
 import androidx.compose.animation.core.animateFloat
@@ -124,7 +123,7 @@ import org.json.JSONObject
 
 @Composable
 fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
-    BackHandler(onBack = onClose)
+    val back = predictiveBack(onBack = onClose)
     val home = chat.startsWith("home:")
     val initialTab = if (home) "files" else "tasks"
     var tabs by remember(chat) { mutableStateOf<List<PanelTab>>(emptyList()) }
@@ -144,7 +143,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
     }
     LaunchedEffect(app.fileFocus) { if (app.fileFocus != null) selected = "files" }
     val tasks = app.meta?.todo.orEmpty()
-    Column(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
+    Column(back.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundButton(Icons.back, Color.Transparent, Palette.muted, description = "Back to the chat", onClick = onClose)
             Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {

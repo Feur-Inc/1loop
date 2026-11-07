@@ -423,9 +423,9 @@ fun Field(value: String, onChange: (String) -> Unit, placeholder: String, keyboa
 fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
     var code by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
-    BackHandler { app.screen = Screen.Servers }
+    val back = predictiveBack { app.screen = Screen.Servers }
     Column(
-        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(horizontal = 24.dp),
+        back.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {

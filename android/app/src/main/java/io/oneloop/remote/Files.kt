@@ -144,7 +144,7 @@ fun FilesView(app: RemoteApp, workspace: String) {
 
 @Composable
 private fun FilePreview(app: RemoteApp, workspace: String, file: ProjectFile, cited: IntRange?, onBack: () -> Unit, onStatus: (String?) -> Unit) {
-    BackHandler(onBack = onBack)
+    val back = predictiveBack(onBack = onBack)
     val scope = rememberCoroutineScope()
     var preview by remember(file) { mutableStateOf<JSONObject?>(null) }
     var picture by remember(file) { mutableStateOf<android.graphics.Bitmap?>(null) }
@@ -162,7 +162,7 @@ private fun FilePreview(app: RemoteApp, workspace: String, file: ProjectFile, ci
             preview = loaded
         } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { problem = failure.message }
     }
-    Column(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = {}) }) {
+    Column(back.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = {}) }) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundButton(Icons.back, Color.Transparent, Palette.muted, size = 36.dp, description = "Back to the folder", onClick = onBack)
             Text(file.name, style = Type.body.copy(fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))

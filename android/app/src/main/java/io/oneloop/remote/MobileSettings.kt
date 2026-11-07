@@ -7,7 +7,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.horizontalScroll
@@ -38,12 +37,12 @@ import org.json.JSONObject
 
 @Composable
 fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
-    BackHandler(onBack = onBack)
+    val back = predictiveBack(onBack = onBack)
     val scope = rememberCoroutineScope()
     var preferences by remember(app.server) { mutableStateOf(app.userPreferences) }
     var saving by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
-    Column(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
+    Column(back.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundButton(Icons.back, Color.Transparent, Palette.muted, description = "Back", onClick = onBack)
             Text("Settings", style = Type.title, modifier = Modifier.padding(start = 12.dp))

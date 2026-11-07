@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/color"
+	"image/draw"
 	"os"
 	"strings"
 	"time"
@@ -926,9 +927,9 @@ func (dialog *sheet) Show() {
 	dialog.frostAt = rect{}
 	dialog.canvas.Overlays().Add(dialog)
 	dialog.Refresh()
-	duration := 200 * time.Millisecond
+	duration := 220 * time.Millisecond
 	if dialog.menu {
-		duration = 170 * time.Millisecond
+		duration = 260 * time.Millisecond // long enough for the rows to cascade in
 	}
 	// Start on the next loop turn: the first frame of a new overlay builds its
 	// textures, and timing that frame would swallow the start of the motion.
@@ -1172,6 +1173,7 @@ func (renderer *sheetRenderer) layoutGlass(size fyne.Size, box rect, panelPos fy
 		if sheet.sharp.Image != nil && windowControlsBox != nil {
 			sheet.sharp.Move(fyne.CurrentApp().Driver().AbsolutePositionForObject(windowControlsBox))
 			sheet.sharp.Resize(windowControlsBox.Size())
+			sheet.sharp.CornerRadius = 8 // no square patch on the frosted window
 			sheet.sharp.Show()
 		}
 		return
@@ -1180,7 +1182,11 @@ func (renderer *sheetRenderer) layoutGlass(size fyne.Size, box rect, panelPos fy
 		sheet.frostAt = box
 		scale := float32(sheet.glass.Rect.Dx()) / size.Width
 		cut := image.Rect(int(box.pos.X*scale), int(box.pos.Y*scale), int((box.pos.X+box.size.X)*scale)+1, int((box.pos.Y+box.size.Y)*scale)+1)
-		sheet.frost.Image = sheet.glass.SubImage(cut.Intersect(sheet.glass.Rect))
+		// A copy at the origin: Fyne draws a sub-image (its bounds elsewhere) as nothing.
+		cut = cut.Intersect(sheet.glass.Rect)
+		piece := image.NewNRGBA(image.Rect(0, 0, cut.Dx(), cut.Dy()))
+		draw.Draw(piece, piece.Rect, sheet.glass, cut.Min, draw.Src)
+		sheet.frost.Image = piece
 		sheet.frost.Refresh()
 	}
 	sheet.frost.Move(panelPos)
@@ -1219,9 +1225,13 @@ func (renderer *sheetRenderer) Refresh() {
 			sheet.frost.CornerRadius = sheet.panel.CornerRadius
 		}
 		sheet.shadow.setOpacity(o)
-		// Items follow the surface slightly later, so the panel leads.
-		itemAlpha := fyne.Min(1, fyne.Max(0, (o-0.25)/0.75))
-		for _, item := range sheet.items {
+		// Items follow the surface, one after the other, so the panel leads
+		// and the rows cascade in after it.
+		for i, item := range sheet.items {
+			itemAlpha := fyne.Min(1, fyne.Max(0, (o-0.2-0.07*float32(min(i, 6)))/0.5))
+			if sheet.closing {
+				itemAlpha = o // closing: everything fades together
+			}
 			if item.alpha != itemAlpha {
 				item.alpha = itemAlpha
 				item.Refresh()

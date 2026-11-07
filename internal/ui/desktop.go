@@ -541,9 +541,6 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.scroll = newKineticVScroll(container.New(columnLayout{width: 760, inset: 24}, ui.column))
 	ui.followTail = true
 	ui.scroll.OnScrolled = func(position fyne.Position) {
-		if ui.footerGlass != nil {
-			ui.footerGlass.changed()
-		}
 		// A small tolerance absorbs fractional pixel rounding at the bottom.
 		// Content.Size, not MinSize: MinSize walks the whole chat on every event.
 		bottom := fyne.Max(0, ui.scroll.Content.Size().Height-ui.scroll.Size().Height)
@@ -568,10 +565,10 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.chatViewport = container.NewStack(ui.welcome, scroll, ui.chatWaitView)
 	ui.scroll.Hide()
 
+	ui.footerGlass = newFooterGlass()
 	footer := ui.buildFooter()
-	ui.footerGlass = newFooterGlass(ui, footer)
 	conversation := container.New(&glassFooterLayout{ui: ui, glass: ui.footerGlass},
-		ui.chatViewport, ui.footerGlass.band, ui.footerGlass.tint, ui.footerGlass.fade, footer)
+		ui.chatViewport, ui.footerGlass.fade, ui.footerGlass.floor, footer)
 	// The activity line may sit beside the composer (dockActivity): the
 	// dock layer floats over the conversation's bottom left corner.
 	conversation = container.New(dockLayout{ui}, conversation, ui.dockRow)
@@ -739,9 +736,9 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.controls = container.New(&composerControlsLayout{transient: []fyne.CanvasObject{ui.steer, ui.stop, ui.send}}, settings, actions)
 	ui.model.relayout = ui.controls.Refresh
 
-	// A pane of glass: the frosted band shows through it, a hairline of light
-	// runs along its top edge.
-	card := canvas.NewRectangle(color.NRGBA{R: colSurface.R, G: colSurface.G, B: colSurface.B, A: 0x88})
+	// The card catches the light from above: a hairline of light along its
+	// top edge. (Fyne's gradients have square corners: none under the card.)
+	card := canvas.NewRectangle(colSurface)
 	card.CornerRadius = 18
 	card.StrokeColor = colBorder
 	card.StrokeWidth = 1

@@ -150,152 +150,53 @@ func vibrancy(img *image.NRGBA, saturation, brightness float32) {
 // glassTint is laid over the frosted backdrop of a menu or tooltip: the
 // popover colour, translucent, so the blurred window shows through it.
 func glassTint(base color.NRGBA, opacity float32) color.NRGBA {
-	return withAlpha(color.NRGBA{R: base.R, G: base.G, B: base.B, A: 0xb8}, opacity)
+	return withAlpha(color.NRGBA{R: base.R, G: base.G, B: base.B, A: 0x8c}, opacity)
 }
 
-// footerGlass is the frosted band the composer floats on: the conversation
-// passes under it, blurred, and fades into it at its top. The blur is taken
-// again only once what is behind it has changed and settled (a scroll, a new
-// message, a resize), at most every glassEvery while text streams in: a
-// frame painted for it costs a few milliseconds, nothing in between.
+// footerGlass lays the composer over the conversation's end: above it the
+// conversation fades into the background, which is opaque under it, so the
+// text behind never muddles the composer's own lines.
 type footerGlass struct {
-	ui      *desktopUI
-	footer  fyne.CanvasObject
-	band    *canvas.Image
-	tint    *canvas.Rectangle
-	fade    *canvas.LinearGradient
-	timer   *time.Timer
-	first   time.Time // the first change not yet frosted
-	pending bool
+	fade  *canvas.LinearGradient // the conversation fading out above the composer
+	floor *canvas.Rectangle      // the background under it
 }
 
-const (
-	glassSettle = 140 * time.Millisecond // after the last change
-	glassEvery  = 700 * time.Millisecond // while changes keep coming
-	glassFade   = 44                     // how far above the band the conversation fades into it
-)
+const glassFade = 72 // how far above the composer the conversation fades out
 
-func newFooterGlass(ui *desktopUI, footer fyne.CanvasObject) *footerGlass {
-	glass := &footerGlass{ui: ui, footer: footer, band: canvas.NewImageFromImage(nil),
-		tint: canvas.NewRectangle(color.NRGBA{R: colBackground.R, G: colBackground.G, B: colBackground.B, A: 0x48}),
-		fade: canvas.NewVerticalGradient(color.Transparent, color.NRGBA{R: colBackground.R, G: colBackground.G, B: colBackground.B, A: 0xd0})}
-	glass.band.FillMode, glass.band.ScaleMode = canvas.ImageFillStretch, canvas.ImageScaleSmooth
-	return glass
-}
-
-// changed asks for a new frost once things settle.
-func (glass *footerGlass) changed() {
-	now := time.Now()
-	if !glass.pending {
-		glass.pending, glass.first = true, now
-	}
-	wait := glassSettle
-	if left := glassEvery - now.Sub(glass.first); left < wait {
-		wait = max(0, left)
-	}
-	if glass.timer != nil {
-		glass.timer.Stop()
-	}
-	glass.timer = time.AfterFunc(wait, func() { fyne.Do(glass.frost) })
-}
-
-// frost reads what is behind the band, without the band and the composer.
-func (glass *footerGlass) frost() {
-	glass.pending = false
-	c := glass.ui.window.Canvas()
-	now, ok := c.(interface{ CaptureNow() image.Image })
-	size := glass.band.Size()
-	if !ok || size.Width <= 0 || size.Height <= 0 || !glass.band.Visible() {
-		return
-	}
-	at := fyne.CurrentApp().Driver().AbsolutePositionForObject(glass.band)
-	glass.footer.Hide()
-	glass.band.Hide()
-	glass.tint.Hide()
-	glass.fade.Hide()
-	shot := now.CaptureNow()
-	glass.footer.Show()
-	glass.band.Show()
-	glass.tint.Show()
-	glass.fade.Show()
-	if shot == nil {
-		return
-	}
-	scale := float32(shot.Bounds().Dx()) / c.Size().Width
-	r := image.Rect(int(at.X*scale), int(at.Y*scale), int((at.X+size.Width)*scale), int((at.Y+size.Height)*scale)).Intersect(shot.Bounds())
-	if r.Dx() < 8 || r.Dy() < 8 {
-		return
-	}
-	started := time.Now()
-	glass.band.Image = blurRegion(shot, r, 4)
-	glass.band.Refresh()
-	platform.Devf("perf", "composer glass %dx%d in %s", r.Dx(), r.Dy(), time.Since(started).Round(100*time.Microsecond))
-}
-
-// blurRegion is r of shot, shrunk by step, blurred and tinted as frosted glass.
-func blurRegion(shot image.Image, r image.Rectangle, step int) *image.NRGBA {
-	w, h := max(1, r.Dx()/step), max(1, r.Dy()/step)
-	small := image.NewNRGBA(image.Rect(0, 0, w, h))
-	pix, pw, ph := []uint8(nil), 0, 0
-	if raw, ok := shot.(interface{ RawRGBA() ([]uint8, int, int) }); ok {
-		pix, pw, ph = raw.RawRGBA()
-	}
-	for y := 0; y < h; y++ {
-		for x := 0; x < w; x++ {
-			sx, sy := r.Min.X+x*step+step/2, r.Min.Y+y*step+step/2
-			i := small.PixOffset(x, y)
-			if pix != nil {
-				o := ((ph-sy-1)*pw + sx) * 4
-				copy(small.Pix[i:i+3], pix[o:o+3])
-			} else {
-				cr, cg, cb, _ := shot.At(sx, sy).RGBA()
-				small.Pix[i], small.Pix[i+1], small.Pix[i+2] = uint8(cr>>8), uint8(cg>>8), uint8(cb>>8)
-			}
-			small.Pix[i+3] = 0xff
-		}
-	}
-	for pass := 0; pass < 3; pass++ {
-		boxBlur(small, 4)
-	}
-	vibrancy(small, 1.5, 1.05)
-	return small
+func newFooterGlass() *footerGlass {
+	return &footerGlass{fade: canvas.NewVerticalGradient(color.NRGBA{R: colBackground.R, G: colBackground.G, B: colBackground.B}, colBackground),
+		floor: canvas.NewRectangle(colBackground)}
 }
 
 // glassFooterLayout lets the conversation fill everything and floats the
-// composer at the bottom, on the frosted band; the conversation's end gets
-// as much room (footerSpace) so its last message can scroll above it.
+// composer over its end; the conversation's end gets as much room
+// (footerSpace) so its last message can scroll above the composer.
+// Objects: the conversation, the fade, the floor, the composer.
 type glassFooterLayout struct {
 	ui    *desktopUI
 	glass *footerGlass
-	last  fyne.Size
 }
 
 func (layoutSpec *glassFooterLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
-	view, footer := o[0].MinSize(), o[4].MinSize()
+	view, footer := o[0].MinSize(), o[3].MinSize()
 	return fyne.NewSize(fyne.Max(view.Width, footer.Width), view.Height+footer.Height)
 }
 
 func (layoutSpec *glassFooterLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
 	glass := layoutSpec.glass
-	footer := o[4].MinSize()
+	footer := o[3].MinSize()
 	top := size.Height - footer.Height
 	o[0].Move(fyne.Position{})
 	o[0].Resize(size)
-	for _, band := range []fyne.CanvasObject{glass.band, glass.tint} {
-		band.Move(fyne.NewPos(0, top))
-		band.Resize(fyne.NewSize(size.Width, footer.Height))
-	}
 	glass.fade.Move(fyne.NewPos(0, top-glassFade))
 	glass.fade.Resize(fyne.NewSize(size.Width, glassFade))
-	o[4].Move(fyne.NewPos(0, top))
-	o[4].Resize(fyne.NewSize(size.Width, footer.Height))
+	glass.floor.Move(fyne.NewPos(0, top))
+	glass.floor.Resize(fyne.NewSize(size.Width, footer.Height))
+	o[3].Move(fyne.NewPos(0, top))
+	o[3].Resize(fyne.NewSize(size.Width, footer.Height))
 	if space := layoutSpec.ui.footerSpace; space != nil && space.MinSize().Height != footer.Height {
 		space.SetMinSize(fyne.NewSize(1, footer.Height))
 		fyne.Do(layoutSpec.ui.relayoutColumn) // after this layout: it lays the column out again
-	}
-	if size != layoutSpec.last || footer.Height != glass.band.Size().Height {
-		layoutSpec.last = size
-		glass.changed()
 	}
 }
 

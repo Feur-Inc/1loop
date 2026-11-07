@@ -641,9 +641,6 @@ func (ui *desktopUI) relayoutColumn() {
 		return
 	}
 	defer platform.DevSlow("laying the conversation out", 6*time.Millisecond, time.Now())
-	if ui.footerGlass != nil {
-		ui.footerGlass.changed() // what shows through the composer's glass changed
-	}
 	content := ui.scroll.Content.(*fyne.Container)
 	relayout(ui.transcript) // first: it measures the items the sizes below are made of
 	content.Resize(content.MinSize().Max(ui.scroll.Size()))

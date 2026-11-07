@@ -205,8 +205,8 @@ private fun StoreTab(app: RemoteApp, store: StoreState, scope: CoroutineScope, o
                 Text(store.status.orEmpty(), style = Type.small, modifier = Modifier.weight(1f))
                 Box {
                     Pill(storeOrders.first { it.first == store.order }.second, icon = Icons.chevron) { ordering = true }
-                    if (ordering) GlassBackdrop()
-                    DropdownMenu(ordering, { ordering = false }, containerColor = Palette.popover.copy(alpha = 0.88f)) {
+                    if (ordering) GlassMenuOpen()
+                    DropdownMenu(ordering, { ordering = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover)) {
                         for ((id, label) in storeOrders) DropdownMenuItem(
                             text = { Text(label, style = Type.body) },
                             trailingIcon = { if (store.order == id) Icon(Icons.check, null, tint = Palette.amber, modifier = Modifier.size(18.dp)) },

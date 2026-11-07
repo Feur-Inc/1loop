@@ -237,8 +237,8 @@ private fun AutoResumeSection(app: RemoteApp) {
         Pill("Add wait", enabled = steps.size < 16) { steps.add(JSONObject().put("action", "wait")) }
         Box {
             Pill("Add model", enabled = steps.size < 16 && app.models.any { it.id.isNotEmpty() }) { expanded = true }
-            if (expanded) GlassBackdrop()
-            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+            if (expanded) GlassMenuOpen()
+            DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover)) {
                 Field(search, { search = it }, "Search models…", androidx.compose.ui.text.input.KeyboardType.Text, Modifier.width(260.dp))
                 app.models.filter { it.id.isNotEmpty() && "${it.name} ${it.detail}".contains(search.trim(), ignoreCase = true) }.take(80).forEach { model ->
                     DropdownMenuItem(text = { Text("${model.name} · ${model.detail}") }, onClick = {
@@ -277,8 +277,8 @@ private fun ModelCompactionSection(app: RemoteApp) {
     Text("When 1loop compacts a conversation, for each model: choose a model, then its target in tokens.", style = Type.small)
     Box {
         Pill(model?.name ?: "Choose a model", enabled = app.models.isNotEmpty()) { expanded = true }
-        if (expanded) GlassBackdrop()
-        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
+        if (expanded) GlassMenuOpen()
+        DropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover)) {
             Field(search, { search = it }, "Search models…", KeyboardType.Text, Modifier.width(260.dp))
             app.models.filter { "${it.name} ${it.detail}".contains(search.trim(), ignoreCase = true) }.take(80).forEach { choice ->
                 DropdownMenuItem(text = { Text("${choice.name} · ${choice.detail}") }, onClick = {

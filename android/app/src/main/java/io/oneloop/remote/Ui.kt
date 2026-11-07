@@ -207,7 +207,7 @@ fun Root(app: RemoteApp) {
             app.updateAsked = true
         }
     }
-    FrostedBox(glassCover(), Modifier.fillMaxSize().background(Palette.background)) {
+    FrostedBox(glassCover(), Modifier.fillMaxSize().background(Palette.background), read = Glass.open > 0 || Glass.menus > 0, publish = true) {
         Crossfade(app.screen::class, animationSpec = tween(220), label = "screen") { kind ->
             when (kind) {
                 Screen.Mode::class -> ModeScreen(app::chooseTarget)
@@ -1111,8 +1111,8 @@ private fun ProjectChip(app: RemoteApp, chosen: String?, onChoose: (String) -> U
             Spacer(Modifier.width(6.dp))
             Text(app.folderName(path), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
         }
-        if (open) GlassBackdrop()
-        DropdownMenu(open, { open = false }, containerColor = Palette.popover.copy(alpha = 0.88f)) {
+        if (open) GlassMenuOpen()
+        DropdownMenu(open, { open = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover)) {
             for (p in app.projects) DropdownMenuItem(
                 text = { Text(projectName(p), style = Type.body) },
                 onClick = { onChoose(p); open = false },

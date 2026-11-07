@@ -2,6 +2,7 @@
 
 package io.oneloop.remote
 
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -89,8 +90,8 @@ fun BrowserToolbar(
         Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             Box {
                 ToolChip("${viewport.mode()} · ${viewport.width} × ${viewport.height}", selected = false, icon = Icons.chevron, enabled = enabled) { menu = true }
-                if (menu) GlassBackdrop()
-                DropdownMenu(menu, { menu = false }, containerColor = Palette.popover.copy(alpha = 0.88f)) {
+                if (menu) GlassMenuOpen()
+                DropdownMenu(menu, { menu = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover)) {
                     val modes = listOf("Adaptive" to "Follow this view's size") +
                         presets.map { (name, size, _) -> name to "${size.first} × ${size.second}" } + ("Custom" to "Choose CSS viewport dimensions")
                     for ((name, detail) in modes) {

@@ -352,8 +352,8 @@ fun LocalPanelAdd(app: RemoteApp, chat: String) {
     }
     Box {
         RoundButton(Icons.plus, Color.Transparent, Palette.muted, description = "Open a tab") { menu = true }
-        if (menu) GlassBackdrop()
-        DropdownMenu(menu, { menu = false }, containerColor = Palette.popover.copy(alpha = 0.88f)) {
+        if (menu) GlassMenuOpen()
+        DropdownMenu(menu, { menu = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover)) {
             Row(
                 Modifier.widthIn(min = 200.dp).clickable {
                     menu = false

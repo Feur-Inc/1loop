@@ -140,8 +140,8 @@ fun ContextRing(used: Int, window: Int) {
                 if (sweep > 0f) drawArc(Palette.amber, -90f, sweep, false, Offset(inset, inset), arc, style = Stroke(stroke))
             }
         }
-        if (open) GlassBackdrop()
-        DropdownMenu(open, { open = false }, containerColor = Palette.raised) {
+        if (open) GlassMenuOpen()
+        DropdownMenu(open, { open = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.raised)) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
                 if (window <= 0) {
                     Text("Context usage", style = Type.body.copy(fontSize = 14.sp))
@@ -397,8 +397,8 @@ fun ApprovalChip(app: RemoteApp) {
             Spacer(Modifier.width(6.dp))
             Text(if (yolo) "YOLO" else if (auto) "Auto" else "Approval", style = Type.small.copy(color = ink))
         }
-        if (open) GlassBackdrop()
-        DropdownMenu(open, { open = false }, containerColor = Palette.popover.copy(alpha = 0.88f)) {
+        if (open) GlassMenuOpen()
+        DropdownMenu(open, { open = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover)) {
             ModeItem(Icons.shield, "Approval required", "Ask before each command and edit", !yolo && !auto) { app.chooseApprovalMode("approval"); open = false }
             if (app.autoMode) { // a computer older than this app may not offer it
                 ModeItem(Icons.shieldCheck, "Auto mode", "Approves safe actions, asks you for risky ones", auto) { app.chooseApprovalMode("auto"); open = false }

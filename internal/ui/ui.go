@@ -822,6 +822,13 @@ func (dropShadow *shadow) setOpacity(o float32) {
 		c := dropShadow.tint
 		c.A = uint8(255 * fyne.Min(1, dropShadow.alphas[i]) * o)
 		r.FillColor = c
+		// A layer with nothing to show is not drawn at all: a translucent
+		// rectangle still costs its whole area on every frame.
+		if c.A == 0 {
+			r.Hide()
+		} else {
+			r.Show()
+		}
 	}
 }
 

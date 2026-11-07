@@ -2,6 +2,7 @@
 
 package io.oneloop.remote
 
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -36,8 +37,8 @@ fun DefaultModelsSection(app: RemoteApp) {
     Text("Optional, for each account. Choose a model per level, then select Default in the composer. Only configured levels appear. Accounts never switch.", style = Type.small)
     Box {
         Pill(account?.name ?: "No account", enabled = !saving && app.accounts.isNotEmpty()) { expanded = true }
-        if (expanded) GlassBackdrop()
-        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
+        if (expanded) GlassMenuOpen()
+        DropdownMenu(expanded, onDismissRequest = { expanded = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover)) {
             app.accounts.forEach { choice ->
                 DropdownMenuItem(text = { Text(choice.name) }, onClick = { selected = choice.id; expanded = false })
             }

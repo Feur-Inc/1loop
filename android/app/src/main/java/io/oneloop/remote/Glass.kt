@@ -35,8 +35,14 @@ import androidx.compose.ui.unit.IntSize
 import androidx.compose.runtime.withFrameNanos
 import androidx.compose.ui.graphics.rememberGraphicsLayer
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionOnScreen
+import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 // Frosted glass and touch response. What opens over the app (a dialog, a
@@ -48,17 +54,61 @@ import kotlinx.coroutines.withContext
 // fading a still picture costs next to nothing. While nothing covers the app,
 // nothing is kept or computed.
 
-/** How many dialogs, sheets and menus cover the app now. */
+/** What covers the app now, and the frosted picture menus show. */
 object Glass {
+    /** Dialogs and sheets: the whole app frosts behind them. */
     var open by mutableIntStateOf(0)
+
+    /** Menus: only what each covers shows through it, frosted ([glassMenu]). */
+    var menus by mutableIntStateOf(0)
+
+    /** The app frosted as a menu opened, at an eighth of its size, and where the app is on the screen. */
+    var picture by mutableStateOf<ImageBitmap?>(null)
+    var origin by mutableStateOf(Offset.Zero)
 }
 
-/** Put beside a dialog, sheet or open menu: the app frosts behind it while it is shown. */
+/** Put beside a dialog or sheet: the app frosts behind it while it is shown. */
 @Composable
 fun GlassBackdrop() {
     DisposableEffect(Unit) {
         Glass.open++
         onDispose { Glass.open-- }
+    }
+}
+
+/** Put beside an open menu: the app is read once, frosted, for the menu's glass. */
+@Composable
+fun GlassMenuOpen() {
+    DisposableEffect(Unit) {
+        Glass.menus++
+        onDispose { Glass.menus-- }
+    }
+}
+
+/**
+ * A menu's surface as a pane of glass, as on the desktop: the part of the app
+ * it covers, frosted, under a light [tint]. Until the frosted picture is
+ * ready (a few frames) and without one, the tint is drawn opaque.
+ */
+@Composable
+fun Modifier.glassMenu(tint: Color): Modifier {
+    var at by remember { mutableStateOf(Offset.Zero) }
+    val picture = Glass.picture
+    val shown by animateFloatAsState(if (picture != null) 1f else 0f, tween(180), label = "menu glass")
+    return onGloballyPositioned { at = it.positionOnScreen() }.drawBehind {
+        if (picture != null && shown > 0f) {
+            val x = ((at.x - Glass.origin.x) / 8f).toInt() // the picture is an eighth of the app
+            val y = ((at.y - Glass.origin.y) / 8f).toInt()
+            val w = maxOf(1, (size.width / 8f).toInt())
+            val h = maxOf(1, (size.height / 8f).toInt())
+            val sx = x.coerceIn(0, maxOf(0, picture.width - 1))
+            val sy = y.coerceIn(0, maxOf(0, picture.height - 1))
+            drawImage(
+                picture, IntOffset(sx, sy), IntSize(minOf(w, picture.width - sx), minOf(h, picture.height - sy)),
+                dstSize = IntSize(size.width.toInt(), size.height.toInt()), alpha = shown, filterQuality = FilterQuality.High,
+            )
+            drawRect(tint.copy(alpha = 1f - 0.45f * shown)) // lighter over the glass
+        } else drawRect(tint)
     }
 }
 
@@ -68,23 +118,33 @@ fun GlassBackdrop() {
  * when it comes back.
  */
 @Composable
-fun FrostedBox(cover: Float, modifier: Modifier = Modifier, content: @Composable BoxScope.() -> Unit) {
+fun FrostedBox(
+    cover: Float, modifier: Modifier = Modifier,
+    read: Boolean = cover > 0.001f, // take the frosted picture (also for menus, with publish)
+    publish: Boolean = false, // the app's root: share the picture and its place with the menus
+    content: @Composable BoxScope.() -> Unit,
+) {
     val small = rememberGraphicsLayer()
     var capture by remember { mutableStateOf(false) }
     var frost by remember { mutableStateOf<ImageBitmap?>(null) }
     val covered = cover > 0.001f
-    LaunchedEffect(covered) {
-        if (!covered) {
+    LaunchedEffect(read) {
+        if (!read) {
             frost = null
+            if (publish) Glass.picture = null
             return@LaunchedEffect
         }
+        // A menu's glass is read once its popup has opened: reading it during
+        // the popup's entrance made both late. Dialogs frost the app at once.
+        if (publish && Glass.open == 0) delay(160)
         capture = true // the next frame also records an eighth-size copy, nothing more
         withFrameNanos {}
         withFrameNanos {}
         frost = runCatching { frosted(small.toImageBitmap()) }.getOrNull()
+        if (publish) Glass.picture = frost
         capture = false
     }
-    Box(modifier) {
+    Box(if (publish) modifier.onGloballyPositioned { Glass.origin = it.positionOnScreen() } else modifier) {
         Box(
             Modifier.matchParentSize().drawWithContent {
                 drawContent()

@@ -14,7 +14,7 @@ VERSION_FLAG  := -X 1loop/internal/update.Version=$(VERSION)
 # Release builds: no local paths and no debug symbols in the binaries.
 RELEASE_FLAGS := -trimpath -ldflags="-s -w $(VERSION_FLAG)"
 
-.PHONY: build run dev server release clean linux-binaries tarball deb appimage flatpak nix
+.PHONY: build run dev server web release clean linux-binaries tarball deb appimage flatpak nix
 
 build:
 	go build -ldflags="$(VERSION_FLAG)" -o $(BIN)/1loop ./cmd/1loop
@@ -32,6 +32,14 @@ dev: build
 # display or CGO needed.
 server:
 	CGO_ENABLED=0 go build -ldflags="$(VERSION_FLAG)" -o $(BIN)/1loop-server ./cmd/1loop-server
+
+# The browser client (issue #267, a spike): the desktop's remote mode for
+# GOOS=js, in $(BIN)/web, served with 1loop-server -web-dir $(BIN)/web at /app/.
+web:
+	mkdir -p $(BIN)/web
+	GOOS=js GOARCH=wasm go build $(RELEASE_FLAGS) -o $(BIN)/web/1loop.wasm ./cmd/1loop-web
+	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" cmd/1loop-web/index.html $(BIN)/web/
+	gzip -9kf $(BIN)/web/1loop.wasm
 
 # Everything to hand out, in dist/: the Linux desktop (X11 and Wayland) and
 # the headless server in one archive, and the phone app's release APK.

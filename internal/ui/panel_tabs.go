@@ -16,12 +16,12 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	fyneterm "github.com/fyne-io/terminal"
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
 	"1loop/internal/terminal"
+	fyneterm "1loop/internal/termwidget"
 )
 
 type panelTerminal struct {

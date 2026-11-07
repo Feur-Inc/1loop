@@ -7,7 +7,6 @@ package ui
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"image"
 	"io"
@@ -134,12 +133,8 @@ func (remote *remoteDesktop) download(query, name string) {
 
 // sendProjectFile uses the last paired engine; it never creates a new trust relationship.
 func (ui *desktopUI) sendProjectFile(root string, file remoteapi.FileEntry) {
-	var address serverAddress
-	data, err := os.ReadFile(remoteAddressPath())
-	if err == nil {
-		err = json.Unmarshal(data, &address)
-	}
-	if err != nil || address.Token == "" {
+	address := loadServerAddress()
+	if address.Token == "" {
 		ui.notice("Send file", "Connect and pair the destination first using Remote server.")
 		return
 	}

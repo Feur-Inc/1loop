@@ -19,7 +19,6 @@ import (
 	"io"
 	"maps"
 	"net/url"
-	"os"
 	"path"
 	"path/filepath"
 	"reflect"
@@ -39,16 +38,8 @@ import (
 	"1loop/internal/update"
 )
 
-func remoteAddressPath() string {
-	dir, _ := os.UserConfigDir()
-	return filepath.Join(dir, "1loop", "remote-server.json")
-}
-
 func (ui *desktopUI) connectServer() {
-	var saved serverAddress
-	if data, err := os.ReadFile(remoteAddressPath()); err == nil {
-		json.Unmarshal(data, &saved)
-	}
+	saved := loadServerAddress()
 	address, pin := widget.NewEntry(), widget.NewEntry()
 	address.SetText(saved.URL)
 	address.SetPlaceHolder("https://192.168.1.20:47101")
@@ -121,15 +112,7 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 					return
 				}
 				client.address.Token = reply.Token
-				data, _ := json.Marshal(client.address)
-				path := remoteAddressPath()
-				if err := os.MkdirAll(filepath.Dir(path), 0700); err == nil {
-					err = os.WriteFile(path, data, 0600)
-					if err != nil {
-						status.SetText(err.Error())
-						return
-					}
-				} else {
+				if err := saveServerAddress(client.address); err != nil {
 					status.SetText(err.Error())
 					return
 				}
@@ -288,10 +271,7 @@ func (remote *remoteDesktop) close() {
 // targetMenu chooses where the agent works, as on the phone: this
 // computer, the server last used, or another one.
 func (ui *desktopUI) targetMenu() {
-	var saved serverAddress
-	if data, err := os.ReadFile(remoteAddressPath()); err == nil {
-		json.Unmarshal(data, &saved)
-	}
+	saved := loadServerAddress()
 	computer := menuAction{label: "This computer", icon: theme.ComputerIcon(), checked: ui.server == nil && ui.cfg.MachineID == "", run: ui.useComputer}
 	actions := []menuAction{computer}
 	for _, machine := range ui.sshMachines {

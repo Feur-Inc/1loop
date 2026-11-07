@@ -44,6 +44,7 @@ func Main() {
 	localReady := flag.String("local-ready-file", "", "Private local-phone startup endpoint JSON")
 	localBridge := flag.String("local-bridge-config", "", "Private local-phone native bridge configuration")
 	installDebian := flag.String("install-mobile-debian", "", "Install the pinned mobile Debian filesystem into a new directory, then exit")
+	webDir := flag.String("web-dir", "", "Folder with the browser client (index.html, 1loop.wasm, wasm_exec.js), served at /app/")
 	installClaude := flag.Bool("install-mobile-claude", false, "Install Claude Code from its signed Debian repository, then exit")
 	flag.Parse()
 	if *installClaude {
@@ -89,6 +90,7 @@ func Main() {
 		log.Fatal(err)
 	}
 	server.shutdown = stop
+	server.webDir = *webDir
 	if *localToken != "" {
 		if err := server.authorizeLocalClient(*localToken, *listen); err != nil {
 			log.Fatal(err)

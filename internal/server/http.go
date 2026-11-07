@@ -27,6 +27,9 @@ func (server *headlessServer) routes() http.Handler {
 	mux.HandleFunc("GET /api/info", func(w http.ResponseWriter, r *http.Request) {
 		core.WriteJSON(w, 200, map[string]any{"name": server.name, "protocol": 1, "headless": true, "secure": true, "consolePairing": !server.local})
 	})
+	if server.webDir != "" && !server.local {
+		mux.Handle("GET /app/", webClient(server.webDir))
+	}
 	if !server.local {
 		mux.HandleFunc("POST /api/pair", server.pair)
 		mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)

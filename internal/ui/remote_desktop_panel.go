@@ -24,10 +24,10 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
-	fyneterm "github.com/fyne-io/terminal"
 
 	"1loop/internal/browser"
 	"1loop/internal/remoteapi"
+	fyneterm "1loop/internal/termwidget"
 )
 
 func (remote *remoteDesktop) panelContent(tab remoteapi.Tab) (fyne.CanvasObject, context.CancelFunc, func(bool)) {

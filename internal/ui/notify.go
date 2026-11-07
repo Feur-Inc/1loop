@@ -9,17 +9,9 @@ package ui
 
 import (
 	"os"
-	"sync/atomic"
 
 	"fyne.io/fyne/v2"
-	"github.com/rymdport/portal/notification"
-
-	"1loop/internal/platform"
 )
-
-// portalNotification numbers the portal's notifications: one id each, so a
-// new one does not replace the last.
-var portalNotification atomic.Uint64
 
 func (ui *desktopUI) notifyUser(chat *conversation, text string) {
 	if ui.inForeground && chat == ui.current {
@@ -31,11 +23,7 @@ func (ui *desktopUI) notifyUser(chat *conversation, text string) {
 	}
 	if os.Getenv("ONELOOP_FLATPAK") != "" {
 		// The portal shows the application's own icon.
-		go func() {
-			if err := notification.Add(uint(portalNotification.Add(1)), notification.Content{Title: title, Body: text}); err != nil {
-				platform.Devf("app", "notification portal: %v", err)
-			}
-		}()
+		go portalNotify(title, text)
 		return
 	}
 	fyne.CurrentApp().SendNotification(fyne.NewNotification(title, text))

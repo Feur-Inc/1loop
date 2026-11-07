@@ -10,6 +10,8 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
+
+	registry "1loop/internal/settings"
 )
 
 var (
@@ -98,9 +100,75 @@ func (entry searchEntry) snippet(word string) string {
 	return snippet
 }
 
-// searchChats finds a chat of the target by its title or its messages
-// (Ctrl+F): Up and Down choose, Enter opens, Escape closes.
-func (ui *desktopUI) searchChats() {
+// What the search looks for: everything, or one kind, chosen with a tag
+// above the results or typed as a prefix ("chat:", "setting:").
+type searchKind int
+
+const (
+	searchAll searchKind = iota
+	searchChatsOnly
+	searchSettingsOnly
+)
+
+var searchKinds = []struct {
+	kind  searchKind
+	label string
+}{{searchAll, "All"}, {searchChatsOnly, "Chats"}, {searchSettingsOnly, "Settings"}}
+
+// searchPrefixes are the tags that can be typed at the start of a search.
+var searchPrefixes = map[string]searchKind{
+	"chat:": searchChatsOnly, "chats:": searchChatsOnly,
+	"setting:": searchSettingsOnly, "settings:": searchSettingsOnly,
+}
+
+// searchTag takes a typed tag off the start of the query: the kind it
+// names, or the one chosen, and the words left.
+func searchTag(query string, chosen searchKind) (searchKind, string) {
+	trimmed := strings.TrimLeft(query, " ")
+	lower := strings.ToLower(trimmed)
+	for prefix, kind := range searchPrefixes {
+		if strings.HasPrefix(lower, prefix) {
+			return kind, trimmed[len(prefix):]
+		}
+	}
+	return chosen, query
+}
+
+// searchFound is what a search shows: chats, then settings.
+type searchFound struct {
+	chats    []chatHit
+	settings []registry.Setting
+}
+
+// findAll runs a search over the chats and the settings, limited to one
+// kind by a tag. With no words it lists the chats, or every setting when
+// only settings are asked for.
+func findAll(query string, chosen searchKind, chats []searchEntry, settings []registry.Setting) (searchKind, searchFound) {
+	kind, words := searchTag(query, chosen)
+	var found searchFound
+	if kind != searchSettingsOnly {
+		found.chats = matchChats(words, chats)
+		if len(found.chats) > searchLimit {
+			found.chats = found.chats[:searchLimit]
+		}
+	}
+	if kind != searchChatsOnly {
+		if strings.TrimSpace(words) == "" {
+			if kind == searchSettingsOnly {
+				found.settings = settings
+			}
+		} else {
+			for _, match := range registry.Search(settings, words) {
+				found.settings = append(found.settings, match.Setting)
+			}
+		}
+	}
+	return kind, found
+}
+
+// search finds chats of the target and settings in one list (Ctrl+F):
+// Up and Down choose, Enter opens, Tab changes the tag, Escape closes.
+func (ui *desktopUI) search() {
 	chats := ui.sideChats
 	entries := make([]searchEntry, len(chats))
 	for i, chat := range chats {
@@ -110,15 +178,18 @@ func (ui *desktopUI) searchChats() {
 		}
 		entries[i] = newSearchEntry(chat.title, texts)
 	}
+	settings := registry.On(registry.OnDesktop)
 	field := newKeyEntry()
-	field.SetPlaceHolder("Search chats by title or content")
+	field.SetPlaceHolder("Search chats and settings")
+	field.tabs = true
+	tags := container.New(layout.NewCustomPaddedHBoxLayout(6))
 	list := container.New(layout.NewCustomPaddedVBoxLayout(2))
 	scroll := container.NewVScroll(list)
-	scroll.SetMinSize(fyne.NewSize(0, 340))
+	scroll.SetMinSize(fyne.NewSize(0, 360))
 	var dialog *sheet
-	var hits []chatHit
 	var rows []*tapRow
-	active := 0
+	var opens []func()
+	chosen, active := searchAll, 0
 	highlight := func(index int) {
 		for i, row := range rows {
 			if i == index {
@@ -138,23 +209,46 @@ func (ui *desktopUI) searchChats() {
 			scroll.ScrollToOffset(fyne.NewPos(0, y+height-scroll.Size().Height))
 		}
 	}
-	open := func(hit chatHit) {
-		dialog.Hide()
-		chat := chats[hit.index]
-		delete(ui.foldedProjects, ui.projectOf(chat.folder)) // show where it is
-		chat.open()
-		ui.renderChats()
+	add := func(row *tapRow, open func()) {
+		row.iconAfter = false
+		row.truncate = true
+		row.onTap = func() { dialog.Hide(); open() }
+		rows = append(rows, row)
+		opens = append(opens, open)
+		list.Add(row)
 	}
-	render := func() {
-		hits = matchChats(field.Text, entries)
+	heading := func(text string) {
+		list.Add(padded(8, 2, 10, 0, textLine(text, 12, colFaint)))
+	}
+	var render func()
+	showTags := func(kind searchKind) {
+		tags.RemoveAll()
+		for _, tag := range searchKinds {
+			tag := tag
+			chip := newRow(tag.label, nil, styleChip, func() {
+				chosen = tag.kind
+				if typed, words := searchTag(field.Text, chosen); typed != chosen {
+					field.SetText(strings.TrimLeft(words, " ")) // the chip wins over a typed tag
+				}
+				render()
+				ui.window.Canvas().Focus(field)
+			})
+			chip.accent = tag.kind == kind
+			chip.selected = tag.kind == kind
+			tags.Add(chip)
+		}
+	}
+	render = func() {
+		kind, found := findAll(field.Text, chosen, entries, settings)
+		showTags(kind)
 		list.RemoveAll()
-		rows = nil
-		for _, hit := range hits[:min(len(hits), searchLimit)] {
-			hit := hit
+		rows, opens = nil, nil
+		if len(found.chats) > 0 {
+			heading("Chats")
+		}
+		for _, hit := range found.chats {
 			chat := chats[hit.index]
-			row := newRow(chat.title, nil, styleMenu, func() { open(hit) })
-			row.iconAfter = false
-			row.truncate = true
+			row := newRow(chat.title, nil, styleMenu, nil)
 			row.detail = "Other chats"
 			if project := ui.projectOf(chat.folder); project != "" {
 				row.detail = ui.projectName(project)
@@ -165,11 +259,30 @@ func (ui *desktopUI) searchChats() {
 			if chat.running {
 				row.badge = iconDot
 			}
-			rows = append(rows, row)
-			list.Add(row)
+			add(row, func() {
+				delete(ui.foldedProjects, ui.projectOf(chat.folder)) // show where it is
+				chat.open()
+				ui.renderChats()
+			})
+		}
+		if len(found.settings) > 0 {
+			heading("Settings")
+		}
+		for _, setting := range found.settings {
+			key := setting.Key
+			row := newRow(setting.Title, iconSliders, styleMenu, nil)
+			row.detail = registry.SectionTitle(setting.Section)
+			if setting.Page != "" {
+				row.detail += " › " + setting.Page
+			}
+			row.detail += " · " + setting.Description
+			add(row, func() {
+				ui.settings()
+				ui.prefs.jump(key) // opens its page, its row glowing
+			})
 		}
 		if len(rows) == 0 {
-			list.Add(padded(10, 10, 10, 0, textLine("No chat matches", 13, colFaint)))
+			list.Add(padded(10, 10, 10, 0, textLine("Nothing matches", 13, colFaint)))
 		}
 		list.Refresh()
 		scroll.ScrollToTop()
@@ -188,7 +301,16 @@ func (ui *desktopUI) searchChats() {
 			}
 		case fyne.KeyReturn, fyne.KeyEnter:
 			if active >= 0 && active < len(rows) {
-				open(hits[active])
+				dialog.Hide()
+				opens[active]()
+			}
+		case fyne.KeyTab:
+			kind, words := searchTag(field.Text, chosen)
+			chosen = (kind + 1) % searchKind(len(searchKinds))
+			if words != field.Text {
+				field.SetText(strings.TrimLeft(words, " ")) // renders
+			} else {
+				render()
 			}
 		case fyne.KeyEscape:
 			dialog.dismiss()
@@ -197,8 +319,10 @@ func (ui *desktopUI) searchChats() {
 		}
 		return true
 	}
-	body := container.NewBorder(field, nil, nil, nil, padded(10, 0, 0, 0, scroll))
-	dialog = ui.modal("Search chats", body, 560, nil)
+	hint := textLine("Tab or chat: / setting: to narrow", 12, colFaint)
+	top := container.NewVBox(field, padded(8, 0, 0, 0, container.NewBorder(nil, nil, tags, container.NewCenter(hint))))
+	body := container.NewBorder(top, nil, nil, nil, padded(8, 0, 0, 0, scroll))
+	dialog = ui.modal("Search", body, 600, nil)
 	render()
 	ui.window.Canvas().Focus(field)
 }
@@ -207,7 +331,10 @@ func (ui *desktopUI) searchChats() {
 type keyEntry struct {
 	widget.Entry
 	onKey func(*fyne.KeyEvent) bool
+	tabs  bool // Tab goes to onKey instead of moving the focus
 }
+
+func (entry *keyEntry) AcceptsTab() bool { return entry.tabs }
 
 func newKeyEntry() *keyEntry {
 	entry := &keyEntry{}

@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 	"unicode/utf8"
+
+	registry "1loop/internal/settings"
 )
 
 func TestSidebarWidthWithin(t *testing.T) {
@@ -120,5 +122,69 @@ func TestMenuMatches(t *testing.T) {
 		if got := menuMatches(actions, c.text); !slices.Equal(got, c.want) {
 			t.Errorf("menuMatches(%q) = %v, want %v", c.text, got, c.want)
 		}
+	}
+}
+
+func TestSearchTag(t *testing.T) {
+	for _, c := range []struct {
+		query  string
+		chosen searchKind
+		kind   searchKind
+		rest   string
+	}{
+		{"sidebar", searchAll, searchAll, "sidebar"},
+		{"chat: sidebar", searchAll, searchChatsOnly, " sidebar"},
+		{"  Settings:sudo", searchAll, searchSettingsOnly, "sudo"},
+		{"setting:", searchChatsOnly, searchSettingsOnly, ""}, // a typed tag wins over the chip
+		{"sudo", searchSettingsOnly, searchSettingsOnly, "sudo"},
+		{"what is chat: about", searchAll, searchAll, "what is chat: about"}, // only at the start
+	} {
+		kind, rest := searchTag(c.query, c.chosen)
+		if kind != c.kind || rest != c.rest {
+			t.Errorf("searchTag(%q, %v) = %v, %q; want %v, %q", c.query, c.chosen, kind, rest, c.kind, c.rest)
+		}
+	}
+}
+
+func TestFindAll(t *testing.T) {
+	chats := []searchEntry{
+		newSearchEntry("Tool permissions for sudo", nil),
+		newSearchEntry("Landing page", []string{"hero text"}),
+	}
+	settings := registry.On(registry.OnDesktop)
+	has := func(found []registry.Setting, title string) bool {
+		for _, setting := range found {
+			if setting.Title == title {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Both kinds, chats first.
+	kind, found := findAll("permissions", searchAll, chats, settings)
+	if kind != searchAll || len(found.chats) != 1 || found.chats[0].index != 0 || !has(found.settings, "Tool permissions") {
+		t.Errorf("all: kind %v, chats %+v, settings %d", kind, found.chats, len(found.settings))
+	}
+	// Settings go through their own matcher, which forgives a typo.
+	if _, found := findAll("permisions", searchAll, chats, settings); len(found.chats) != 0 || !has(found.settings, "Tool permissions") {
+		t.Errorf("typo: %d chats, %d settings", len(found.chats), len(found.settings))
+	}
+	// A tag leaves out the other kind.
+	if _, found := findAll("chat: permissions", searchAll, chats, settings); len(found.chats) != 1 || len(found.settings) != 0 {
+		t.Errorf("chat: tag: %d chats, %d settings", len(found.chats), len(found.settings))
+	}
+	if kind, found := findAll("sudo", searchSettingsOnly, chats, settings); kind != searchSettingsOnly || len(found.chats) != 0 || !has(found.settings, "Tool permissions") {
+		t.Errorf("Settings chip: %d chats, %d settings", len(found.chats), len(found.settings))
+	}
+	// Nothing typed: the chats, and every setting only when asked for.
+	if _, found := findAll("", searchAll, chats, settings); len(found.chats) != 2 || len(found.settings) != 0 {
+		t.Errorf("empty: %d chats, %d settings", len(found.chats), len(found.settings))
+	}
+	if _, found := findAll("setting:", searchAll, chats, settings); len(found.chats) != 0 || len(found.settings) != len(settings) {
+		t.Errorf("setting: alone: %d chats, %d settings, want all %d", len(found.chats), len(found.settings), len(settings))
+	}
+	if _, found := findAll("hero", searchAll, chats, settings); len(found.chats) != 1 || found.chats[0].snippet != "hero text" {
+		t.Errorf("content: %+v", found.chats)
 	}
 }

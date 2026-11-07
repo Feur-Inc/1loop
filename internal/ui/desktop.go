@@ -423,7 +423,7 @@ func (ui *desktopUI) shortcut(s fyne.Shortcut) bool {
 	case c.KeyName == fyne.KeyK && c.Modifier == fyne.KeyModifierControl:
 		ui.startNew()
 	case c.KeyName == fyne.KeyF && c.Modifier == fyne.KeyModifierControl:
-		ui.searchChats()
+		ui.search()
 	case c.KeyName == fyne.KeyR && c.Modifier == fyne.KeyModifierControl|fyne.KeyModifierShift:
 		ui.restart()
 	case c.KeyName == fyne.KeyB && c.Modifier == fyne.KeyModifierControl:

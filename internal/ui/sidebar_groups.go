@@ -187,7 +187,7 @@ func (ui *desktopUI) foldProject(project string, folded bool) {
 func (ui *desktopUI) sideActions() fyne.CanvasObject {
 	ui.newChat = newRow("New chat", iconPlus, styleNav, ui.startNew)
 	ui.newChat.trailing = "Ctrl K"
-	search := newRow("Search", iconSearch, styleNav, ui.searchChats)
+	search := newRow("Search", iconSearch, styleNav, ui.search)
 	search.trailing = "Ctrl F"
 	add := newRow("Add project", iconFolderAdd, styleNav, ui.addProject)
 	return container.New(layout.NewCustomPaddedVBoxLayout(1), ui.newChat, search, add)

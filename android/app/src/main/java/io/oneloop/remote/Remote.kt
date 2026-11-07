@@ -24,7 +24,11 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean)
+/** scratch: a chat without a folder, in one 1loop made for it; it shows as "No folder", never its path. */
+data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean, val scratch: Boolean = false)
+
+/** The project choice that starts a chat in a folder 1loop makes for it (#258). */
+const val NO_FOLDER = "\u0000no-folder"
 
 /** A file picked for the next message: sending, then the engine's copy (ready) or a problem. */
 data class Attachment(
@@ -751,13 +755,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             workspace = state.optString("workspace")
             projectManagement = state.optBoolean("projectManagement")
             projectActions = state.optBoolean("projectActions")
-            if (selectedProject !in projects && selectedProject !in worktrees) selectedProject = workspace
+            if (selectedProject !in projects && selectedProject !in worktrees && selectedProject != NO_FOLDER) selectedProject = workspace
             state.optJSONObject("settings")?.let { applySettings(it) }
             // Open or Talk to the agent started this activity: its chat, now that it is known.
             pendingChat?.let { chat -> if (chats.any { it.id == chat }) current = chat }
             pendingChat = null
             if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull { it.workspace == selectedProject }?.id
-            chats.firstOrNull { it.id == current }?.workspace?.let { selectedProject = it }
+            chats.firstOrNull { it.id == current }?.let { selectedProject = if (it.scratch) NO_FOLDER else it.workspace }
             current?.let { load(it, target, generation) }
             if (target.localPhone) refreshSharing() else scope.launch { refreshServerUpdate(target, generation) }
         } catch (cancelled: CancellationException) {
@@ -766,7 +770,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     private fun parseChats(array: JSONArray?) = (0 until (array?.length() ?: 0)).map { i ->
-        array!!.getJSONObject(i).let { ChatSummary(it.getString("id"), it.optString("title"), it.optString("workspace"), it.optBoolean("running")) }
+        array!!.getJSONObject(i).let { ChatSummary(it.getString("id"), it.optString("title"), it.optString("workspace"), it.optBoolean("running"), it.optBoolean("scratch")) }
     }
 
     private suspend fun load(id: String, target: Server, generation: Long) {
@@ -827,7 +831,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     fun open(id: String?) {
         current = id
-        chats.firstOrNull { it.id == id }?.workspace?.let {
+        chats.firstOrNull { it.id == id }?.let { if (it.scratch) NO_FOLDER else it.workspace }?.let {
             selectedProject = it
             server?.let { target -> prefs.edit { putString("project:${target.key}", it) } }
         }
@@ -961,6 +965,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val sent = attachments.filter { it.ready != null }
         val body = JSONObject().put("chat", current.orEmpty()).put("text", text).put("mode", mode)
             .put("workspace", project ?: chats.firstOrNull { it.id == current }?.workspace ?: selectedProject ?: workspace)
+        if (current == null && body.optString("workspace") == NO_FOLDER) body.put("workspace", "").put("noFolder", true)
         if (sent.isNotEmpty()) body.put("attachments", JSONArray(sent.map { it.ready }))
         handoff?.let { body.put("handoff", it) }
         val pending = "sending:${java.util.UUID.randomUUID()}|$draft"
@@ -1066,7 +1071,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     fun selectProject(path: String) {
-        if (path !in projects && path !in worktrees) return
+        if (path !in projects && path !in worktrees && path != NO_FOLDER) return
         selectedProject = path
         server?.let { target -> prefs.edit { putString("project:${target.key}", path) } }
         open(null)
@@ -1112,7 +1117,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         if (previous.isNotEmpty() && (selected == previous || selected.startsWith("$previous/") || selected.startsWith("$previous\\"))) {
             selectedProject = if (destination.isEmpty()) null else destination + selected.removePrefix(previous)
         }
-        if (selectedProject !in projects && selectedProject !in worktrees) selectedProject = projects.firstOrNull()
+        if (selectedProject !in projects && selectedProject !in worktrees && selectedProject != NO_FOLDER) selectedProject = projects.firstOrNull()
         server?.let { target -> prefs.edit { putString("project:${target.key}", selectedProject) } }
     }
 

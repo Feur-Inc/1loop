@@ -245,7 +245,11 @@ func systemInstructions(cfg Config) string {
 	if cfg.Machine != nil {
 		shell = "bash (else sh) on " + cfg.Machine.Label()
 	}
-	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + shell + "." + citationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + contextInstructions(cfg) + memoryInstructions(cfg) + toolSearchInstructions(cfg)
+	workspace := cfg.Workspace
+	if cfg.InScratch() { // never its path (scratchInstructions)
+		workspace = "a folder 1loop made for this chat (the project root of your tools)"
+	}
+	return prompt + scratchInstructions(cfg) + "\nWorkspace: " + workspace + "\nShell: " + shell + "." + citationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + contextInstructions(cfg) + memoryInstructions(cfg) + toolSearchInstructions(cfg)
 }
 
 type approvalContextKey struct{}

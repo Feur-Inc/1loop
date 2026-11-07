@@ -246,7 +246,7 @@ func (ui *desktopUI) selectProject(path string) {
 		return
 	}
 	platform.Devf("ui", "project %s", path)
-	ui.cfg.Workspace = path
+	ui.cfg.Workspace, ui.cfg.Scratch = path, ""
 	if ui.worktreeMap()[path] == "" {
 		ui.ensureTargetProject(path)
 	}
@@ -278,6 +278,9 @@ func (ui *desktopUI) addProject() {
 
 // chatsIn are the chats of a project of the target.
 func (ui *desktopUI) chatsIn(path string) []*conversation {
+	if ui.cfg.InScratch() && path == ui.cfg.Workspace {
+		return ui.scratchChats()
+	}
 	var chats []*conversation
 	for _, chat := range ui.chats {
 		if chat.Config.Workspace == path && chat.Config.MachineID == ui.cfg.MachineID {
@@ -363,6 +366,13 @@ func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
 		}
 		actions = append(actions, menuAction{label: ui.projectName(p), icon: icon, run: func() { ui.selectProject(p) }})
 		actions = append(actions, ui.worktreeChoices(p, ui.selectProject)...)
+	}
+	if ui.cfg.MachineID == "" { // a folder 1loop makes for the chat, on this computer
+		var icon fyne.Resource = blankIcon
+		if ui.cfg.InScratch() {
+			icon = iconCheck
+		}
+		actions = append(actions, menuAction{label: noFolderLabel, icon: icon, run: ui.chooseNoFolder})
 	}
 	add := "Add folder…"
 	if ui.cfg.MachineID != "" {
@@ -452,7 +462,11 @@ func (ui *desktopUI) renameChat(chat *conversation) {
 }
 
 func (ui *desktopUI) deleteChat(chat *conversation) {
-	ui.confirm("Delete chat?", fmt.Sprintf("“%s” will be permanently deleted from 1loop.", chat.Title), "Delete", func() {
+	text := fmt.Sprintf("“%s” will be permanently deleted from 1loop.", chat.Title)
+	if chat.Config.Scratch != "" {
+		text = fmt.Sprintf("“%s” and the folder 1loop made for it will be permanently deleted.", chat.Title)
+	}
+	ui.confirm("Delete chat?", text, "Delete", func() {
 		ui.removeChat(chat)
 	})
 }
@@ -476,6 +490,7 @@ func (ui *desktopUI) removeChat(chat *conversation) {
 		ui.startNew()
 	}
 	chat.disposePanel()
+	ui.removeScratch(chat)
 	ui.save()
 	ui.renderChats()
 }
@@ -509,10 +524,16 @@ func (ui *desktopUI) renderChats() {
 		return
 	}
 	worktrees := ui.worktreeMap()
-	if worktrees[ui.cfg.Workspace] == "" {
+	if worktrees[ui.cfg.Workspace] == "" && !ui.cfg.InScratch() {
 		ui.ensureTargetProject(ui.cfg.Workspace)
 	}
 	ui.projectList.RemoveAll()
+	if ui.cfg.MachineID == "" && (ui.cfg.InScratch() || len(ui.scratchChats()) > 0) {
+		row := newRow(noFolderLabel, iconFolder, styleNav, ui.chooseNoFolder)
+		row.selected = ui.cfg.InScratch()
+		row.accent = true
+		ui.projectList.Add(row)
+	}
 	opened := ui.projectOf(ui.cfg.Workspace)
 	for _, p := range ui.targetProjects() {
 		p := p

@@ -563,8 +563,20 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                 ) { app.open(chat.id); onPicked() }
                 if (chats.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
             }
+            // Chats without a folder: one "No folder" entry, never their paths.
+            val scratch = app.chats.filter { it.scratch }
+            if (scratch.isNotEmpty() || app.selectedProject == NO_FOLDER) {
+                NavRow("No folder", Icons.folder, selected = app.selectedProject == NO_FOLDER) { app.selectProject(NO_FOLDER) }
+                if (app.selectedProject == NO_FOLDER) Column(Modifier.padding(start = 16.dp)) {
+                    for (chat in scratch) NavRow(
+                        chat.title, null, selected = chat.id == app.current, running = chat.running,
+                        onLongClick = { deleting = chat },
+                    ) { app.open(chat.id); onPicked() }
+                    if (scratch.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
+                }
+            }
             // A worktree shows under its project, not as a project of its own.
-            for (workspace in (app.projects + app.chats.map { app.projectOf(it.workspace) ?: it.workspace }).distinct().filter { it !in app.worktrees }) {
+            for (workspace in (app.projects + app.chats.filter { !it.scratch }.map { app.projectOf(it.workspace) ?: it.workspace }).distinct().filter { it !in app.worktrees }) {
                 val selected = workspace == app.selectedProject
                 val git = app.repositories[workspace]?.takeIf { it.loaded && it.error == null }
                 NavRow(
@@ -613,7 +625,11 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
             Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
                 Text("Delete chat?", style = Type.title)
                 Spacer(Modifier.height(12.dp))
-                Text("“${chat.title}” will be permanently deleted. Its running tasks and tabs will stop. Project files are kept.", style = Type.body)
+                Text(
+                    if (chat.scratch) "“${chat.title}” and the folder 1loop made for it will be permanently deleted. Its running tasks and tabs will stop."
+                    else "“${chat.title}” will be permanently deleted. Its running tasks and tabs will stop. Project files are kept.",
+                    style = Type.body,
+                )
                 Spacer(Modifier.height(20.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     Pill("Cancel") { deleting = null }
@@ -1090,6 +1106,11 @@ private fun ProjectChip(app: RemoteApp, chosen: String?, onChoose: (String) -> U
                 text = { Text(projectName(p), style = Type.body) },
                 onClick = { onChoose(p); open = false },
                 leadingIcon = { Icon(if (p == path) Icons.check else Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp)) },
+            )
+            DropdownMenuItem(
+                text = { Text("No folder", style = Type.body) },
+                onClick = { onChoose(NO_FOLDER); open = false },
+                leadingIcon = { Icon(if (path == NO_FOLDER) Icons.check else Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp)) },
             )
             if (app.projectManagement) DropdownMenuItem(text = { Text("Add project…", style = Type.body) }, onClick = { open = false; app.projectsOpen = true })
         }

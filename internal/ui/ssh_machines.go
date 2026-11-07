@@ -252,6 +252,9 @@ func (ui *desktopUI) ensureMachineProject(id, path string) {
 
 // folderLabel is the project chip under the composer.
 func (ui *desktopUI) folderLabel() string {
+	if ui.cfg.InScratch() {
+		return noFolderLabel // never its path
+	}
 	if ui.cfg.Workspace == "" {
 		return "No project"
 	}

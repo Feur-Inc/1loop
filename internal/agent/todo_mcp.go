@@ -81,6 +81,13 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 			if cfg.ProjectTools == nil && cfg.toolAvailable("memory") {
 				definitions = append(definitions, memoryToolDefinition())
 			}
+			// Moving a chat without a folder; 1loop asks the user itself.
+			if cfg.ProjectTools == nil && cfg.toolAvailable("change_directory") {
+				definitions = append(definitions, changeDirectoryToolDefinition())
+			}
+			if cfg.ProjectTools == nil && cfg.toolAvailable("request_directory") {
+				definitions = append(definitions, requestDirectoryToolDefinition())
+			}
 			for _, group := range builtinToolGroups(cfg) {
 				definitions = append(definitions, group.tools()...)
 			}
@@ -134,6 +141,17 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 					handler = cfg.Phone
 				case call.Name == "install_packages":
 					handler = cfg.Packages
+				case call.Name == "change_directory" || call.Name == "request_directory":
+					handler = func(operation context.Context, name string, arguments json.RawMessage) (PanelToolResult, error) {
+						call := ToolCall{ID: core.Identifier()}
+						call.Function.Name, call.Function.Arguments = name, string(arguments)
+						result := backend.executeTool(operation, cfg.Workspace, call, func(event string, value any) {
+							if event != "tool" && event != "tool_exec" && event != "tool_output" {
+								emit(event, value)
+							}
+						})
+						return PanelToolResult{Text: result.Output}, result.Err
+					}
 				case isGitHubTool(call.Name):
 					handler = func(operation context.Context, name string, arguments json.RawMessage) (PanelToolResult, error) {
 						// Keep Claude's approved call bound to the connection of this run.

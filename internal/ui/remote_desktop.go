@@ -700,58 +700,20 @@ func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat
 	ui.renderChats()
 }
 
-// renderChats is the sidebar for a server: its projects, and the chats of
-// the selected one.
+// renderChats is the sidebar for a server: its projects and their chats.
 func (remote *remoteDesktop) renderChats() {
 	ui := remote.parent
-	ui.projectList.RemoveAll()
-	opened := ui.projectOf(ui.cfg.Workspace)
-	for _, p := range remote.projects {
-		p := p
-		row := newRow(path.Base(filepath.ToSlash(p)), iconFolder, styleNav, func() { remote.selectProject(p) })
-		row.selected = p == ui.cfg.Workspace
-		row.accent = true
-		row.truncate = true
-		if state := ui.repoFor(p); state.repo != nil {
-			row.trailing = state.repo.Current
-		}
-		ui.projectList.Add(ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
-			actions := []menuAction{{label: "New chat", icon: iconPlus, run: func() { remote.selectProject(p); ui.startNew() }}}
-			return showMenu(ui.window, anchor, append(actions, ui.repositoryActions(p)...))
-		}))
-		if p == opened {
-			for _, object := range ui.worktreeRows(p, remote.selectProject) {
-				ui.projectList.Add(object)
-			}
-			ui.loadRepo(p, true, 20*time.Second)
-		}
-	}
-	ui.chatList.RemoveAll()
-	shown := 0
+	var chats []sideChat
 	for _, chat := range remote.chats {
-		if chat.Workspace != ui.cfg.Workspace && ui.cfg.Workspace != "" {
-			continue
-		}
 		chat := chat
-		shown++
-		row := newRow(chat.Title, nil, styleNav, func() { remote.openChat(chat.ID) })
-		row.accent = true
-		row.selected = ui.current != nil && ui.current.server == remote && ui.current.serverID == chat.ID
-		if chat.Running {
-			row.badge = iconDot // the agent works on it on the server
-		}
-		ui.chatList.Add(ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
-			return showMenu(ui.window, anchor, []menuAction{
-				{label: "Delete", icon: iconTrash, danger: true, run: func() { remote.deleteChat(chat) }},
-			})
-		}))
+		chats = append(chats, sideChat{
+			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
+			selected: ui.current != nil && ui.current.server == remote && ui.current.serverID == chat.ID,
+			open:     func() { remote.openChat(chat.ID) },
+			menu:     []menuAction{{label: "Delete", icon: iconTrash, danger: true, run: func() { remote.deleteChat(chat) }}},
+		})
 	}
-	if shown == 0 {
-		ui.chatList.Add(padded(4, 0, 10, 0, textLine("No chats yet", 13, colFaint)))
-	}
-	if ui.sideLists != nil {
-		ui.sideLists.Refresh()
-	}
+	ui.renderSidebar(remote.projects, chats, remote.selectProject, ui.repositoryActions)
 }
 
 // projectMenu is the composer's folder chip for a server: its projects.

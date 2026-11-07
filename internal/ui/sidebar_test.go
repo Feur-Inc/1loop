@@ -2,7 +2,12 @@
 
 package ui
 
-import "testing"
+import (
+	"slices"
+	"strings"
+	"testing"
+	"unicode/utf8"
+)
 
 func TestSidebarWidthWithin(t *testing.T) {
 	for _, c := range []struct{ width, total, want float32 }{
@@ -15,5 +20,80 @@ func TestSidebarWidthWithin(t *testing.T) {
 		if got := sidebarWidthWithin(c.width, c.total); got != c.want {
 			t.Errorf("sidebarWidthWithin(%v, %v) = %v, want %v", c.width, c.total, got, c.want)
 		}
+	}
+}
+
+func TestGroupByProject(t *testing.T) {
+	type chat struct{ name, folder string }
+	chats := []chat{{"a", "/p/one"}, {"b", "/p/two"}, {"c", "/p/one-wt"}, {"d", "/gone"}, {"e", "/p/one"}}
+	worktrees := map[string]string{"/p/one-wt": "/p/one"}
+	projectOf := func(folder string) string {
+		if project := worktrees[folder]; project != "" {
+			return project
+		}
+		return folder
+	}
+	groups := groupByProject([]string{"/p/one", "/p/two", "/p/empty"}, chats, func(c chat) string { return c.folder }, projectOf)
+	var got []string
+	for _, group := range groups {
+		line := group.project + ":"
+		for _, c := range group.chats {
+			line += c.name
+		}
+		got = append(got, line)
+	}
+	// A worktree's chat is under its project, a project with no chat still
+	// shows, and chats of no listed project come last, in the chats' order.
+	want := []string{"/p/one:ace", "/p/two:b", "/p/empty:", ":d"}
+	if !slices.Equal(got, want) {
+		t.Errorf("groups = %q, want %q", got, want)
+	}
+	if groups := groupByProject([]string{"/p/one"}, chats[:1], func(c chat) string { return c.folder }, projectOf); len(groups) != 1 {
+		t.Errorf("no other chats: %d groups, want 1", len(groups))
+	}
+}
+
+func TestMatchChats(t *testing.T) {
+	entries := []searchEntry{
+		newSearchEntry("Rework the sidebar", []string{"Projects as groups"}),
+		newSearchEntry("Fix the update manifest", []string{"The sidebar flickers when the manifest is signed"}),
+		newSearchEntry("Android sounds", []string{"Notification sounds on the phone"}),
+	}
+	for _, c := range []struct {
+		query string
+		want  []int
+	}{
+		{"", []int{0, 1, 2}},            // nothing typed: every chat
+		{"SIDEBAR", []int{0, 1}},        // case does not matter; title matches first
+		{"sidebar groups", []int{0}},    // every word, in the title or in the messages
+		{"manifest flickers", []int{1}}, // words anywhere in the messages
+		{"phone sidebar", nil},          // a word found nowhere
+		{"  sounds   phone ", []int{2}}, // extra spaces
+	} {
+		var got []int
+		for _, hit := range matchChats(c.query, entries) {
+			got = append(got, hit.index)
+		}
+		if !slices.Equal(got, c.want) {
+			t.Errorf("matchChats(%q) = %v, want %v", c.query, got, c.want)
+		}
+	}
+	hits := matchChats("flickers", entries)
+	if len(hits) != 1 || hits[0].snippet != "The sidebar flickers when the manifest is signed" {
+		t.Errorf("snippet = %+v", hits)
+	}
+}
+
+func TestSearchSnippet(t *testing.T) {
+	long := strings.Repeat("word ", 30) + "needle " + strings.Repeat("étoile ", 30)
+	snippet := newSearchEntry("", []string{long}).snippet("needle")
+	if !strings.HasPrefix(snippet, "…") || !strings.HasSuffix(snippet, "…") || !strings.Contains(snippet, "needle") {
+		t.Errorf("snippet = %q, want the words around the match, cut on both sides", snippet)
+	}
+	if !utf8.ValidString(snippet) {
+		t.Errorf("snippet %q cuts a character in two", snippet)
+	}
+	if got := newSearchEntry("", []string{"two\nlines"}).snippet("lines"); got != "two lines" {
+		t.Errorf("snippet = %q, want one line", got)
 	}
 }

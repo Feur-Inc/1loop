@@ -49,7 +49,6 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.withContext
 
 // Frosted glass and touch response. What opens over the app (a dialog, a
@@ -96,7 +95,8 @@ fun GlassMenuOpen() {
 /**
  * A menu's surface as a pane of glass, as on the desktop: the part of the app
  * it covers, frosted, under a light [tint]. Until the frosted picture is
- * ready (a few frames) and without one, the tint is drawn opaque.
+ * ready (a few frames), the tint alone is translucent over the app, so the
+ * menu is glass from its first frame; the frost then fades in under it.
  */
 @Composable
 fun Modifier.glassMenu(tint: Color): Modifier {
@@ -104,22 +104,26 @@ fun Modifier.glassMenu(tint: Color): Modifier {
     val picture = Glass.picture
     val shown by animateFloatAsState(if (picture != null) 1f else 0f, tween(180), label = "menu glass")
     return onGloballyPositioned { at = it.positionOnScreen() }.drawBehind {
-        if (picture != null && shown > 0f) {
-            // The picture is the app shrunk to its own width: scale from the app's size.
-            val k = picture.width / maxOf(1f, Glass.extent.width.toFloat())
-            val x = ((at.x - Glass.origin.x) * k).toInt()
-            val y = ((at.y - Glass.origin.y) * k).toInt()
-            val w = maxOf(1, (size.width * k).toInt())
-            val h = maxOf(1, (size.height * k).toInt())
-            val sx = x.coerceIn(0, maxOf(0, picture.width - 1))
-            val sy = y.coerceIn(0, maxOf(0, picture.height - 1))
-            drawImage(
-                picture, IntOffset(sx, sy), IntSize(minOf(w, picture.width - sx), minOf(h, picture.height - sy)),
-                dstSize = IntSize(size.width.toInt(), size.height.toInt()), alpha = shown, filterQuality = FilterQuality.High,
-            )
-            drawRect(tint.copy(alpha = 1f - 0.5f * shown)) // light over the glass
-            drawRect(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.10f * shown), Color.White.copy(alpha = 0.02f * shown)))) // its sheen
-        } else drawRect(tint)
+        val sheen = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.10f), Color.White.copy(alpha = 0.02f)))
+        if (picture == null || shown <= 0f) {
+            drawRect(tint.copy(alpha = 0.82f)) // the app shows through, sharp, until the frost is ready
+            drawRect(sheen)
+            return@drawBehind
+        }
+        // The picture is the app shrunk to its own width: scale from the app's size.
+        val k = picture.width / maxOf(1f, Glass.extent.width.toFloat())
+        val x = ((at.x - Glass.origin.x) * k).toInt()
+        val y = ((at.y - Glass.origin.y) * k).toInt()
+        val w = maxOf(1, (size.width * k).toInt())
+        val h = maxOf(1, (size.height * k).toInt())
+        val sx = x.coerceIn(0, maxOf(0, picture.width - 1))
+        val sy = y.coerceIn(0, maxOf(0, picture.height - 1))
+        drawImage(
+            picture, IntOffset(sx, sy), IntSize(minOf(w, picture.width - sx), minOf(h, picture.height - sy)),
+            dstSize = IntSize(size.width.toInt(), size.height.toInt()), alpha = shown, filterQuality = FilterQuality.High,
+        )
+        drawRect(tint.copy(alpha = 0.82f - 0.32f * shown)) // light over the glass
+        drawRect(sheen)
     }
 }
 
@@ -150,9 +154,6 @@ fun FrostedBox(
             if (publish) Glass.picture = null
             return@LaunchedEffect
         }
-        // A menu's glass is read once its popup has opened: reading it during
-        // the popup's entrance made both late. Dialogs frost the app at once.
-        if (publish && Glass.open == 0) delay(160)
         capture = true // the next frame also records an eighth-size copy, nothing more
         withFrameNanos {}
         withFrameNanos {}

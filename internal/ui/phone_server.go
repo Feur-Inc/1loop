@@ -71,6 +71,7 @@ import (
 	"1loop/internal/gitrepo"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
+	registry "1loop/internal/settings"
 )
 
 const (
@@ -338,8 +339,8 @@ func (server *remoteServer) confirmPair(writer http.ResponseWriter, req *http.Re
 		token = core.Identifier()
 		server.ui.devices = append(server.ui.devices, remoteapi.PairedDevice{Name: paired.Device, TokenHash: remoteapi.TokenHash(token), Added: time.Now()})
 		server.ui.save()
-		if server.ui.prefs.open && server.ui.prefs.section == "Phone remote" {
-			server.ui.prefs.show("Phone remote")
+		if server.ui.prefs.on("Phone") {
+			server.ui.prefs.show("Phone")
 		}
 	})
 	if err != nil {
@@ -1282,7 +1283,7 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 			ui.remote = nil
 		}
 		ui.save()
-		ui.prefs.show("Phone remote") // the state line and the list follow
+		ui.prefs.show("Phone") // the state line and the list follow
 	})
 	var phones []fyne.CanvasObject
 	for i, pairedDevice := range ui.devices {
@@ -1293,7 +1294,7 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 			if ui.remote != nil {
 				ui.remote.disconnectAll()
 			}
-			ui.prefs.show("Phone remote")
+			ui.prefs.show("Phone")
 		})
 		phones = append(phones, settingRow(pairedDevice.Name, "Paired "+pairedDevice.Added.Format("2 Jan 2006 15:04"), remove))
 	}
@@ -1304,12 +1305,15 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 	if ui.remote != nil {
 		pairing = card(settingRow("Pair a phone", "Shows a QR code to scan with the 1loop app.", newRow("Pair a phone", iconPhone, styleChip, ui.showPairingQR)))
 	}
+	view := ui.prefs
 	return container.NewVBox(
-		ui.prefs.pageTitle("Phone remote", "", nil),
-		card(settingRow("Allow the 1loop phone app on this network", describe(), enabled)),
+		view.pageTitle("Phone", "", nil),
+		view.intro(registry.Phone),
+		sectionTitle("Phone app"),
+		card(view.mark("phone.remote", settingRow("Allow the 1loop phone app on this network", describe(), enabled))),
 		pairing,
 		sectionTitle("Paired phones"),
-		card(phones...),
+		view.mark("phone.pairing", card(phones...)),
 	)
 }
 

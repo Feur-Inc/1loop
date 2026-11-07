@@ -26,7 +26,7 @@ func (ui *desktopUI) connectorSettings() fyne.CanvasObject {
 			status += " · tools disabled"
 		}
 	}
-	body := container.NewVBox(ui.prefs.pageTitle("Connectors", "", nil),
+	body := container.NewVBox(ui.prefs.pageTitle("Connectors", "Tools & extensions", nil),
 		sectionTitle("GitHub"), note("Connect the GitHub account whose repositories the agent may use. Tools come from GitHub's official MCP server and follow your approval mode. Signing in does not authorize unrelated changes."),
 		card(settingRow("GitHub account", status, nil)))
 	refresh := func() { ui.prefs.show("Connectors") }

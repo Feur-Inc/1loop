@@ -122,6 +122,7 @@ dependencies {
     implementation("io.noties.markwon:ext-latex:4.6.2")
     implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.json:json:20240303") // Android's org.json is a stub in unit tests
     implementation("dev.rikka.shizuku:api:13.1.5")
     implementation("dev.rikka.shizuku:provider:13.1.5")
 }

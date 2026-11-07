@@ -241,7 +241,8 @@ func (layoutSpec *composerControlsLayout) widths(o []fyne.CanvasObject) (left, r
 func (layoutSpec *composerControlsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
 	size, sizeValue, wide := layoutSpec.widths(o)
 	if layoutSpec.available > 0 && wide > layoutSpec.available {
-		return fyne.NewSize(fyne.Max(size.Width, sizeValue.Width), size.Height+sizeValue.Height+4)
+		// Two lines: the settings line shrinks to the card (composerSettingsLayout).
+		return fyne.NewSize(sizeValue.Width, size.Height+sizeValue.Height+4)
 	}
 	return fyne.NewSize(size.Width+sizeValue.Width+8, fyne.Max(size.Height, sizeValue.Height))
 }
@@ -255,9 +256,63 @@ func (layoutSpec *composerControlsLayout) Layout(o []fyne.CanvasObject, size fyn
 	} else {
 		o[0].Move(fyne.NewPos(0, (size.Height-sizeValue.Height)/2))
 	}
-	o[0].Resize(sizeValue)
+	o[0].Resize(fyne.NewSize(fyne.Min(sizeValue.Width, size.Width), sizeValue.Height)) // never past the card
 	o[1].Move(fyne.NewPos(fyne.Max(0, size.Width-b.Width), y))
 	o[1].Resize(b)
+}
+
+// haloLayout sizes its last object to the whole area and lays a glow and a
+// drop shadow out around it, past its edges.
+type haloLayout struct {
+	drop, glow *shadow
+	radius     float32
+}
+
+func (layoutSpec *haloLayout) MinSize(o []fyne.CanvasObject) fyne.Size { return o[len(o)-1].MinSize() }
+
+func (layoutSpec *haloLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
+	layoutSpec.glow.layout(fyne.NewPos(0, -2), size, layoutSpec.radius)
+	layoutSpec.drop.layout(fyne.NewPos(0, 3), size, layoutSpec.radius)
+	o[len(o)-1].Move(fyne.Position{})
+	o[len(o)-1].Resize(size)
+}
+
+// composerSettingsLayout lines up the approval mode, the model and the
+// context ring. Its minimum is their natural width, which decides whether
+// the controls take two lines; given less, the model's name is cut short so
+// that nothing leaves the card.
+type composerSettingsLayout struct{ model *tapRow }
+
+const composerSettingsGap = 4
+
+func (layoutSpec composerSettingsLayout) natural() float32 {
+	layoutSpec.model.truncate = false
+	defer func() { layoutSpec.model.truncate = true }()
+	return layoutSpec.model.MinSize().Width
+}
+
+func (layoutSpec composerSettingsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
+	width := o[0].MinSize().Width + layoutSpec.natural() + 2*composerSettingsGap
+	height := fyne.Max(o[0].MinSize().Height, o[1].MinSize().Height)
+	if o[2].Visible() {
+		width += o[2].MinSize().Width
+		height = fyne.Max(height, o[2].MinSize().Height)
+	}
+	return fyne.NewSize(width, height)
+}
+
+func (layoutSpec composerSettingsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
+	approval, ring := o[0].MinSize(), fyne.Size{}
+	if o[2].Visible() {
+		ring = o[2].MinSize()
+	}
+	model := fyne.NewSize(fyne.Max(40, fyne.Min(layoutSpec.natural(), size.Width-approval.Width-ring.Width-2*composerSettingsGap)), o[1].MinSize().Height)
+	x := float32(0)
+	for i, s := range []fyne.Size{approval, model, ring} {
+		o[i].Resize(s)
+		o[i].Move(fyne.NewPos(x, (size.Height-s.Height)/2))
+		x += s.Width + composerSettingsGap
+	}
 }
 
 // attachButtonLayout puts the "+" button at the left of the prompt, centred

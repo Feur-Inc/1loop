@@ -724,7 +724,8 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	// The settings sit on the left and the run controls on the right, send
 	// last: Steer and Stop come and go in the free space between the two,
 	// so nothing else moves when a task starts or ends.
-	settings := container.New(layout.NewCustomPaddedHBoxLayout(4), container.NewCenter(ui.approvalControl), ui.model.row, ui.contextRing)
+	ui.model.row.truncate = true // a long model name is cut short rather than pushed out of the card
+	settings := container.New(composerSettingsLayout{model: ui.model.row}, container.NewCenter(ui.approvalControl), ui.model.row, ui.contextRing)
 	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), ui.steer, ui.stop, ui.send)
 	ui.controls = container.New(&composerControlsLayout{transient: []fyne.CanvasObject{ui.steer, ui.stop, ui.send}}, settings, actions)
 	ui.model.relayout = ui.controls.Refresh
@@ -733,6 +734,10 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	card.CornerRadius = 16
 	card.StrokeColor = colBorder
 	card.StrokeWidth = 1
+	// The card floats on a soft shadow; focused, an amber halo lights up around it.
+	drop, glow := newShadow(1.6), newGlow(colAmber, 0.55)
+	var glowAnim *fyne.Animation
+	glowLevel := float32(0)
 	ui.prompt.onFocus = func(focused bool) {
 		from, to := colBorder, colBorderHot
 		if !focused {
@@ -742,6 +747,20 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 			card.StrokeColor = c
 			card.Refresh()
 		}).Start()
+		if glowAnim != nil {
+			glowAnim.Stop()
+		}
+		start, target := glowLevel, float32(0)
+		if focused {
+			target = 1
+		}
+		glowAnim = fyne.NewAnimation(220*time.Millisecond, func(p float32) {
+			glowLevel = start + (target-start)*p
+			glow.setOpacity(glowLevel)
+			glow.refresh()
+		})
+		glowAnim.Curve = fyne.AnimationEaseOut
+		glowAnim.Start()
 	}
 	ui.attachRow = container.New(layout.NewCustomPaddedHBoxLayout(8))
 	// The optional rows are hidden with their margins: a hidden child inside
@@ -758,7 +777,8 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		container.NewHBox(container.NewCenter(pencil), textLine("Editing a queued message", 12.5, colAmber)),
 		container.NewHBox(container.NewCenter(textLine("Enter to save · Esc to cancel", 12, colFaint)), cancelEdit)))
 	ui.editBar.Hide()
-	composer := container.NewStack(card, padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
+	body := container.NewStack(card, padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
+	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: card.CornerRadius}, append(append(glow.objects(), drop.objects()...), body)...)
 	ui.composer = composer
 
 	// Messages waiting for the running task sit in a tray on top of the card.

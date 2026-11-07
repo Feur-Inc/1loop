@@ -794,6 +794,7 @@ func (renderer *tapRowRenderer) Destroy() {}
 type shadow struct {
 	layers []*canvas.Rectangle
 	alphas []float32
+	tint   color.NRGBA // black for a shadow, a colour for a glow (newGlow)
 }
 
 func newShadow(strength float32) *shadow {
@@ -807,9 +808,19 @@ func newShadow(strength float32) *shadow {
 	return dropShadow
 }
 
+// newGlow is a halo of tint around a surface, like newShadow's layers.
+func newGlow(tint color.NRGBA, strength float32) *shadow {
+	glow := newShadow(strength)
+	glow.tint = tint
+	glow.setOpacity(0)
+	return glow
+}
+
 func (dropShadow *shadow) setOpacity(o float32) {
 	for i, r := range dropShadow.layers {
-		r.FillColor = color.NRGBA{A: uint8(255 * fyne.Min(1, dropShadow.alphas[i]) * o)}
+		c := dropShadow.tint
+		c.A = uint8(255 * fyne.Min(1, dropShadow.alphas[i]) * o)
+		r.FillColor = c
 	}
 }
 

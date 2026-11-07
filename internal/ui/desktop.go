@@ -179,6 +179,8 @@ type desktopUI struct {
 
 	// Conversation
 	transcript        *fyne.Container
+	footerSpace       *canvas.Rectangle // room left at the end for the floating composer
+	footerGlass       *footerGlass
 	column            *fyne.Container
 	scroll            *kineticScroll
 	followTail        bool
@@ -534,10 +536,14 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.inlineRow.Hide()
 	ui.dockRow = container.NewStack()
 	ui.dockRow.Hide()
-	ui.column = container.NewVBox(ui.transcript, ui.inlineRow)
+	ui.footerSpace = canvas.NewRectangle(color.Transparent) // the composer floats over the end (glassFooterLayout)
+	ui.column = container.NewVBox(ui.transcript, ui.inlineRow, ui.footerSpace)
 	ui.scroll = newKineticVScroll(container.New(columnLayout{width: 760, inset: 24}, ui.column))
 	ui.followTail = true
 	ui.scroll.OnScrolled = func(position fyne.Position) {
+		if ui.footerGlass != nil {
+			ui.footerGlass.changed()
+		}
 		// A small tolerance absorbs fractional pixel rounding at the bottom.
 		// Content.Size, not MinSize: MinSize walks the whole chat on every event.
 		bottom := fyne.Max(0, ui.scroll.Content.Size().Height-ui.scroll.Size().Height)
@@ -562,7 +568,10 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.chatViewport = container.NewStack(ui.welcome, scroll, ui.chatWaitView)
 	ui.scroll.Hide()
 
-	conversation := container.NewBorder(nil, ui.buildFooter(), nil, nil, ui.chatViewport)
+	footer := ui.buildFooter()
+	ui.footerGlass = newFooterGlass(ui, footer)
+	conversation := container.New(&glassFooterLayout{ui: ui, glass: ui.footerGlass},
+		ui.chatViewport, ui.footerGlass.band, ui.footerGlass.tint, ui.footerGlass.fade, footer)
 	// The activity line may sit beside the composer (dockActivity): the
 	// dock layer floats over the conversation's bottom left corner.
 	conversation = container.New(dockLayout{ui}, conversation, ui.dockRow)
@@ -730,12 +739,15 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.controls = container.New(&composerControlsLayout{transient: []fyne.CanvasObject{ui.steer, ui.stop, ui.send}}, settings, actions)
 	ui.model.relayout = ui.controls.Refresh
 
-	card := canvas.NewRectangle(colSurface)
-	card.CornerRadius = 16
+	// A pane of glass: the frosted band shows through it, a hairline of light
+	// runs along its top edge.
+	card := canvas.NewRectangle(color.NRGBA{R: colSurface.R, G: colSurface.G, B: colSurface.B, A: 0x88})
+	card.CornerRadius = 18
 	card.StrokeColor = colBorder
 	card.StrokeWidth = 1
+	shine := canvas.NewRectangle(color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x1c})
 	// The card floats on a soft shadow; focused, an amber halo lights up around it.
-	drop, glow := newShadow(1.6), newGlow(colAmber, 0.55)
+	drop, glow := newShadow(2.2), newGlow(colAmber, 0.32)
 	var glowAnim *fyne.Animation
 	glowLevel := float32(0)
 	ui.prompt.onFocus = func(focused bool) {
@@ -777,7 +789,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		container.NewHBox(container.NewCenter(pencil), textLine("Editing a queued message", 12.5, colAmber)),
 		container.NewHBox(container.NewCenter(textLine("Enter to save · Esc to cancel", 12, colFaint)), cancelEdit)))
 	ui.editBar.Hide()
-	body := container.NewStack(card, padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
+	body := container.NewStack(card, container.New(shineLayout{}, shine), padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
 	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: card.CornerRadius}, append(append(glow.objects(), drop.objects()...), body)...)
 	ui.composer = composer
 

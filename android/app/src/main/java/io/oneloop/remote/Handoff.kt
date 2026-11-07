@@ -59,7 +59,7 @@ fun HandoffDialog(ask: RemoteApp.HandoffAsk) {
     GlassBackdrop()
     AlertDialog(
         onDismissRequest = ask.cancel,
-        containerColor = Palette.surface,
+        containerColor = GlassSurface, modifier = GlassDialogEdge,
         title = { Text("Continue with $to", style = Type.title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {

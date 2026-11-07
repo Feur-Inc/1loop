@@ -46,7 +46,7 @@ fun ProjectsSheet(app: RemoteApp, onDone: () -> Unit) {
         }
     }
     GlassBackdrop()
-    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    ModalBottomSheet(onDismissRequest = onDone, containerColor = GlassSurface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Choose a project folder", style = Type.title)
             Text("Folders are on the selected phone, desktop or server. Browsing stays within its authorized project area.", style = Type.small)
@@ -99,7 +99,7 @@ fun ProjectActionsSheet(app: RemoteApp, path: String, onNewWorktree: () -> Unit 
     GlassBackdrop()
     ModalBottomSheet(
         onDismissRequest = { if (!busy) onDone() },
-        containerColor = Palette.surface,
+        containerColor = GlassSurface, scrimColor = GlassScrim,
         sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
     ) {
         Column(

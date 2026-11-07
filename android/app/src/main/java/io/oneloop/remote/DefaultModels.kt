@@ -38,7 +38,7 @@ fun DefaultModelsSection(app: RemoteApp) {
     Box {
         Pill(account?.name ?: "No account", enabled = !saving && app.accounts.isNotEmpty()) { expanded = true }
         if (expanded) GlassMenuOpen()
-        DropdownMenu(expanded, onDismissRequest = { expanded = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover)) {
+        DropdownMenu(expanded, onDismissRequest = { expanded = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover), border = GlassEdge, shape = GlassMenuShape) {
             app.accounts.forEach { choice ->
                 DropdownMenuItem(text = { Text(choice.name) }, onClick = { selected = choice.id; expanded = false })
             }
@@ -94,7 +94,7 @@ fun DefaultModelsSection(app: RemoteApp) {
                 }
             },
             confirmButton = { Pill("Close") { editing = null } },
-            containerColor = Palette.surface,
+            containerColor = GlassSurface, modifier = GlassDialogEdge,
             titleContentColor = Palette.text,
             textContentColor = Palette.text,
         )

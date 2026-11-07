@@ -12,7 +12,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -208,7 +211,11 @@ fun Root(app: RemoteApp) {
         }
     }
     FrostedBox(glassCover(), Modifier.fillMaxSize().background(Palette.background), read = Glass.open > 0 || Glass.menus > 0, publish = true) {
-        Crossfade(app.screen::class, animationSpec = tween(220), label = "screen") { kind ->
+        AnimatedContent(
+            app.screen::class, label = "screen",
+            // A new step settles into place as the last one fades.
+            transitionSpec = { (fadeIn(tween(260, 60)) + scaleIn(tween(320, 60, FastOutSlowInEasing), initialScale = 0.96f)) togetherWith fadeOut(tween(160)) },
+        ) { kind ->
             when (kind) {
                 Screen.Mode::class -> ModeScreen(app::chooseTarget)
                 Screen.Servers::class -> ServersScreen(app)
@@ -384,7 +391,7 @@ private fun AddressSheet(onDone: () -> Unit, onAdd: (Pair<String, String>) -> Un
     var fingerprint by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
     GlassBackdrop()
-    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    ModalBottomSheet(onDismissRequest = onDone, containerColor = GlassSurface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp).imePadding()) {
             Text("Add by address", style = Type.title)
             Spacer(Modifier.height(6.dp))
@@ -495,23 +502,48 @@ fun ChatScreen(app: RemoteApp) {
     if (app.server?.localPhone == true) PairingRequestDialog(app) // a device asking to use this phone
     app.handoffAsk?.let { HandoffDialog(it) } // the chat continues with another model
     SharedFilesDialog(app) // files shared to 1loop from another app
-    app.repositoryOpen?.let { project ->
-        RepositoryScreen(app, project) { app.repositoryOpen = null }
-        return
-    }
-    if (app.settingsOpen) {
-        if (app.extensionsOpen) {
-            ExtensionsScreen(app) { app.extensionsOpen = false }
-            return
+    val page = app.repositoryOpen?.let { ChatPage("repository", it) }
+        ?: if (!app.settingsOpen) ChatPage("chat")
+        else if (app.extensionsOpen) ChatPage("extensions")
+        else if (app.linuxOpen) ChatPage("linux")
+        else ChatPage("settings")
+    AnimatedContent(
+        page, label = "page",
+        // Deeper pages slide in from the right, and back out the way they came.
+        transitionSpec = {
+            val deeper = targetState.depth > initialState.depth
+            val enter = slideInHorizontally(tween(300, easing = FastOutSlowInEasing)) { if (deeper) it / 5 else -it / 5 } + fadeIn(tween(240, 40))
+            val exit = slideOutHorizontally(tween(300, easing = FastOutSlowInEasing)) { if (deeper) -it / 10 else it / 10 } + fadeOut(tween(160))
+            enter togetherWith exit
+        },
+    ) { shown ->
+        when (shown.name) {
+            "repository" -> RepositoryScreen(app, shown.project!!) { app.repositoryOpen = null }
+            "extensions" -> ExtensionsScreen(app) { app.extensionsOpen = false }
+            "linux" -> LinuxScreen(app) { app.linuxOpen = false }
+            "settings" -> MobileSettings(app) { app.settingsOpen = false }
+            else -> ChatMain(app)
         }
-        if (app.linuxOpen) {
-            LinuxScreen(app) { app.linuxOpen = false }
-            return
-        }
-        MobileSettings(app) { app.settingsOpen = false }
-        if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
-        return
     }
+    // Sheets open over a page: outside its animation, shown for the page they belong to.
+    if (page.name == "settings" && app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
+    if (page.name != "chat") return
+    val approval = app.approvals.values.firstOrNull()
+    if (approval != null) ApprovalSheet(app, approval)
+    val question = app.questions.values.firstOrNull { it.id !in app.questionsAside }
+    // A sheet per request: closing one shows the next with its own state, not the last one's Hidden.
+    if (approval == null && question != null) key(question.id) { QuestionSheet(app, question) }
+    if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
+    if (app.projectsOpen) ProjectsSheet(app) { app.projectsOpen = false }
+}
+
+/** A page of the connected app: the chat, Settings or one of its pages, a project's repository. */
+private data class ChatPage(val name: String, val project: String? = null) {
+    val depth get() = when (name) { "chat" -> 0; "settings", "repository" -> 1; else -> 2 }
+}
+
+@Composable
+private fun ChatMain(app: RemoteApp) {
     var panel by remember(app.current, app.selectedProject, app.server?.key) { mutableStateOf(false) }
     ChatGPTWebLease(app)
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -535,20 +567,13 @@ fun ChatScreen(app: RemoteApp) {
             ) {
                 // The conversation frosts as the drawer slides over it, following the finger.
                 val width = with(LocalDensity.current) { 300.dp.toPx() }
-                val cover = (1f + drawer.currentOffset / width).takeIf { !it.isNaN() }?.coerceIn(0f, 1f) ?: 0f
-                FrostedBox(cover, Modifier.fillMaxSize()) {
+                val cover = { (1f + drawer.currentOffset / width).takeIf { !it.isNaN() }?.coerceIn(0f, 1f) ?: 0f }
+                FrostedBox(cover, Modifier.fillMaxSize(), hidden = { width * cover() }) { // the drawer covers its left part
                     Conversation(app, onMenu = { scope.launch { drawer.open() } }, Modifier.fillMaxSize(), panel) { panel = it }
                 }
             }
         }
     }
-    val approval = app.approvals.values.firstOrNull()
-    if (approval != null) ApprovalSheet(app, approval)
-    val question = app.questions.values.firstOrNull { it.id !in app.questionsAside }
-    // A sheet per request: closing one shows the next with its own state, not the last one's Hidden.
-    if (approval == null && question != null) key(question.id) { QuestionSheet(app, question) }
-    if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
-    if (app.projectsOpen) ProjectsSheet(app) { app.projectsOpen = false }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -620,7 +645,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
         GlassBackdrop()
         ModalBottomSheet(
             onDismissRequest = { deleting = null },
-            containerColor = Palette.surface,
+            containerColor = GlassSurface, scrimColor = GlassScrim,
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) {
             Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
@@ -643,9 +668,11 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
 
 @Composable
 internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", trailing: String? = null, onClick: () -> Unit) {
+    val press = remember { MutableInteractionSource() }
+    val fill by animateColorAsState(if (selected) Palette.selected else Color.Transparent, tween(180), label = "row")
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (selected) Palette.selected else Color.Transparent)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = longClickLabel).padding(horizontal = 10.dp, vertical = 10.dp),
+        Modifier.pressScale(press, 0.97f).fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(fill)
+            .combinedClickable(press, ripple(), onClick = onClick, onLongClick = onLongClick, onLongClickLabel = longClickLabel).padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) {
@@ -987,7 +1014,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
     }
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    val border by animateColorAsState(if (focused) Palette.borderHot else Palette.border, tween(160), label = "card")
+    val border by animateColorAsState(if (focused) Palette.borderHot else Color.White.copy(alpha = 0.11f), tween(160), label = "card")
     Column(
         Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 12.dp).padding(bottom = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1025,6 +1052,8 @@ private fun Composer(app: RemoteApp, running: Boolean) {
             Modifier.widthIn(max = 760.dp).fillMaxWidth()
                 .shadow(animateDpAsState(if (focused) 14.dp else 0.dp, tween(220), label = "glow").value, RoundedCornerShape(18.dp), ambientColor = Palette.amber, spotColor = Palette.amber)
                 .background(Palette.surface, RoundedCornerShape(18.dp))
+                // Glass catching the light: a sheen over its upper half, a hairline edge.
+                .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.06f), Color.Transparent)), RoundedCornerShape(18.dp))
                 .border(1.dp, border, RoundedCornerShape(18.dp)).padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
         ) {
             if (app.attachments.isNotEmpty()) AttachmentTray(app)
@@ -1112,7 +1141,7 @@ private fun ProjectChip(app: RemoteApp, chosen: String?, onChoose: (String) -> U
             Text(app.folderName(path), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
         }
         if (open) GlassMenuOpen()
-        DropdownMenu(open, { open = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover)) {
+        DropdownMenu(open, { open = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover), border = GlassEdge, shape = GlassMenuShape) {
             for (p in app.projects) DropdownMenuItem(
                 text = { Text(projectName(p), style = Type.body) },
                 onClick = { onChoose(p); open = false },
@@ -1175,7 +1204,7 @@ private fun QueueLine(text: String, number: Int?) {
 private fun ToolSheet(app: RemoteApp, item: Item, onDone: () -> Unit) {
     val args = remember(item.args) { runCatching { JSONObject(item.args) }.getOrDefault(JSONObject()) }
     GlassBackdrop()
-    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    ModalBottomSheet(onDismissRequest = onDone, containerColor = GlassSurface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.forTool(item.tool), null, tint = Palette.text, modifier = Modifier.size(20.dp))
@@ -1239,7 +1268,7 @@ private fun QuestionSheet(app: RemoteApp, request: Questions) {
     // Closing (swipe, back, outside tap) sets the questions aside, to answer
     // from the composer: the run keeps waiting for them.
     GlassBackdrop()
-    ModalBottomSheet(onDismissRequest = { app.questionsAside.add(request.id) }, sheetState = state, containerColor = Palette.surface) {
+    ModalBottomSheet(onDismissRequest = { app.questionsAside.add(request.id) }, sheetState = state, containerColor = GlassSurface, scrimColor = GlassScrim) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 WorkRing("approval", 34.dp)
@@ -1287,7 +1316,7 @@ private fun ApprovalSheet(app: RemoteApp, approval: Approval) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { it != SheetValue.Hidden })
     val title = app.chats.firstOrNull { it.id == approval.chat }?.title.orEmpty()
     GlassBackdrop()
-    ModalBottomSheet(onDismissRequest = {}, sheetState = state, containerColor = Palette.surface) {
+    ModalBottomSheet(onDismissRequest = {}, sheetState = state, containerColor = GlassSurface, scrimColor = GlassScrim) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 WorkRing("approval", 34.dp)
@@ -1348,7 +1377,7 @@ private fun EditSheet(original: String, onSend: (String) -> Unit, onDone: () -> 
     var text by remember { mutableStateOf(original) }
     val focus = remember { FocusRequester() }
     GlassBackdrop()
-    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    ModalBottomSheet(onDismissRequest = onDone, containerColor = GlassSurface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp).imePadding()) {
             Text("Edit message", style = Type.title)
             Spacer(Modifier.height(6.dp))

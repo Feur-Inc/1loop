@@ -115,7 +115,7 @@ fun PairingRequestDialog(app: RemoteApp) {
     GlassBackdrop()
     AlertDialog(
         onDismissRequest = {},
-        containerColor = Palette.surface,
+        containerColor = GlassSurface, modifier = GlassDialogEdge,
         title = { Text("“${request.device}” wants to use this phone", style = Type.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

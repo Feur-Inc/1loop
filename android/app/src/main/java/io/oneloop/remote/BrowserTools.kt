@@ -91,7 +91,7 @@ fun BrowserToolbar(
             Box {
                 ToolChip("${viewport.mode()} · ${viewport.width} × ${viewport.height}", selected = false, icon = Icons.chevron, enabled = enabled) { menu = true }
                 if (menu) GlassMenuOpen()
-                DropdownMenu(menu, { menu = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover)) {
+                DropdownMenu(menu, { menu = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover), border = GlassEdge, shape = GlassMenuShape) {
                     val modes = listOf("Adaptive" to "Follow this view's size") +
                         presets.map { (name, size, _) -> name to "${size.first} × ${size.second}" } + ("Custom" to "Choose CSS viewport dimensions")
                     for ((name, detail) in modes) {

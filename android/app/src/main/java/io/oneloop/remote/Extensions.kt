@@ -145,7 +145,7 @@ fun ExtensionsScreen(app: RemoteApp, onBack: () -> Unit) {
     notice?.let { text ->
         GlassBackdrop()
         AlertDialog(
-            onDismissRequest = { notice = null }, containerColor = Palette.surface,
+            onDismissRequest = { notice = null }, containerColor = GlassSurface, modifier = GlassDialogEdge,
             title = { Text("Extensions", style = Type.title) }, text = { Text(text, style = Type.small) },
             confirmButton = { Pill("OK") { notice = null } },
         )
@@ -206,7 +206,7 @@ private fun StoreTab(app: RemoteApp, store: StoreState, scope: CoroutineScope, o
                 Box {
                     Pill(storeOrders.first { it.first == store.order }.second, icon = Icons.chevron) { ordering = true }
                     if (ordering) GlassMenuOpen()
-                    DropdownMenu(ordering, { ordering = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover)) {
+                    DropdownMenu(ordering, { ordering = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover), border = GlassEdge, shape = GlassMenuShape) {
                         for ((id, label) in storeOrders) DropdownMenuItem(
                             text = { Text(label, style = Type.body) },
                             trailingIcon = { if (store.order == id) Icon(Icons.check, null, tint = Palette.amber, modifier = Modifier.size(18.dp)) },
@@ -440,7 +440,7 @@ private fun InstalledTab(app: RemoteApp, onProblem: (String) -> Unit) {
     removing?.let { (kind, id, name) ->
         GlassBackdrop()
         AlertDialog(
-            onDismissRequest = { removing = null }, containerColor = Palette.surface,
+            onDismissRequest = { removing = null }, containerColor = GlassSurface, modifier = GlassDialogEdge,
             title = { Text("Remove $name?", style = Type.title) },
             text = { Text("Its files are deleted from 1loop's extensions folder.", style = Type.small) },
             confirmButton = {
@@ -526,7 +526,7 @@ private fun McpTab(app: RemoteApp, onEdit: (JSONObject?, String) -> Unit, onProb
     removing?.let { name ->
         GlassBackdrop()
         AlertDialog(
-            onDismissRequest = { removing = null }, containerColor = Palette.surface,
+            onDismissRequest = { removing = null }, containerColor = GlassSurface, modifier = GlassDialogEdge,
             title = { Text("Remove $name?", style = Type.title) },
             text = { Text("1loop stops using this MCP server.", style = Type.small) },
             confirmButton = {

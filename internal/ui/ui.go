@@ -364,6 +364,8 @@ type tapRow struct {
 	hover     float32
 	alpha     float32 // whole-row opacity, used by menu fades
 	anim      *fyne.Animation
+	press     float32         // a click's flash of light, fading from 1
+	pressAnim *fyne.Animation // its fade
 }
 
 func newRow(text string, icon fyne.Resource, style rowStyle, onTap func()) *tapRow {
@@ -397,8 +399,23 @@ func (row *tapRow) Tapped(*fyne.PointEvent) {
 		row.tips.hide() // the sidebar is drawn again: the row may be gone before the pointer leaves it
 	}
 	if !row.disabled && row.onTap != nil {
+		row.flash()
 		row.onTap()
 	}
+}
+
+// flash lights the row up as it is clicked and lets the light fade: the
+// click is seen even when what it opens takes a moment.
+func (row *tapRow) flash() {
+	if row.pressAnim != nil {
+		row.pressAnim.Stop()
+	}
+	row.pressAnim = fyne.NewAnimation(300*time.Millisecond, func(p float32) {
+		row.press = 1 - p
+		row.Refresh()
+	})
+	row.pressAnim.Curve = fyne.AnimationEaseOut
+	row.pressAnim.Start()
 }
 
 // Rows are mouse targets of their own, so a title bar behind them never
@@ -727,6 +744,13 @@ func (renderer *tapRowRenderer) Refresh() {
 	shape := func(c color.NRGBA) color.NRGBA { c.A = uint8(float32(c.A) * row.alpha); return c }
 	textAlpha := quantize(row.alpha, 5)
 	text := func(c color.NRGBA) color.NRGBA { c.A = uint8(float32(c.A) * textAlpha); return c }
+	if row.press > 0 { // a click's light over the fill: shapes only, the text keeps its texture
+		light := color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x1c}
+		if fill.A > 0x80 {
+			light = mix(fill, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: fill.A}, 0.18)
+		}
+		fill = mix(fill, light, row.press)
+	}
 	renderer.bg.FillColor = shape(fill)
 	renderer.bg.StrokeColor = shape(stroke)
 	renderer.bg.StrokeWidth = 0
@@ -1193,6 +1217,8 @@ func (renderer *sheetRenderer) layoutGlass(size fyne.Size, box rect, panelPos fy
 		cut = cut.Intersect(sheet.glass.Rect)
 		piece := image.NewNRGBA(image.Rect(0, 0, cut.Dx(), cut.Dy()))
 		draw.Draw(piece, piece.Rect, sheet.glass, cut.Min, draw.Src)
+		// Brighter than behind a dialog: what the menu covers shows through it.
+		vibrancy(piece, 1.15, 1.45)
 		sheet.frost.Image = piece
 		sheet.frost.Refresh()
 	}
@@ -1228,6 +1254,8 @@ func (renderer *sheetRenderer) Refresh() {
 				base = colSurface
 			}
 			sheet.panel.FillColor = glassTint(base, o)
+			sheet.panel.StrokeColor = withAlpha(glassEdge, o) // glass catching the light
+			sheet.panel.CornerRadius += 2
 			sheet.frost.Translucency = float64(1 - o)
 			sheet.frost.CornerRadius = sheet.panel.CornerRadius
 		}
@@ -1253,6 +1281,9 @@ func (renderer *sheetRenderer) Refresh() {
 			sheet.panel.FillColor = color.NRGBA{R: colSurface.R, G: colSurface.G, B: colSurface.B, A: 0xe0} // a pane of glass too
 		}
 		sheet.panel.StrokeColor = colBorder
+		if sheet.glass != nil {
+			sheet.panel.StrokeColor = glassEdge
+		}
 		sheet.panel.CornerRadius = 14
 		sheet.shadow.setOpacity(1)
 	}

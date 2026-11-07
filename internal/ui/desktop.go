@@ -187,6 +187,7 @@ type desktopUI struct {
 	items             *transcriptLayout
 	frames            *frameHook
 	prefs             *settingsView     // the settings page
+	curtain           *pageCurtain      // fades the main area's new page in
 	sideApp           fyne.CanvasObject // the sidebar's usual content, hidden while settings are open
 	selected          textSelection     // what holds the selected text, if anything does
 	building          bool              // openChat is adding a whole chat's items (see place)
@@ -604,7 +605,8 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, ui.headerBar))
 	}
 	// The settings page takes the conversation's place while it is open.
-	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view)))
+	ui.curtain = newPageCurtain()
+	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view, ui.curtain.cover)))
 	// No rule between the panes: the sidebar only casts a faint shadow.
 	shade := canvas.NewHorizontalGradient(color.NRGBA{A: 0x2a}, color.NRGBA{})
 	ui.pane = &paneLayout{shown: 1, shade: 14, chosen: &ui.sidebarWidth}
@@ -856,6 +858,7 @@ func (ui *desktopUI) startNew() {
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
 	ui.panel.switchTo(nil)
 	ui.showTranscript(false)
+	ui.curtain.reveal()
 	ui.syncRun()
 	ui.mark.intro()
 	ui.updateHeader()

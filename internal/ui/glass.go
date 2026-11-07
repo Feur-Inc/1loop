@@ -150,8 +150,11 @@ func vibrancy(img *image.NRGBA, saturation, brightness float32) {
 // glassTint is laid over the frosted backdrop of a menu or tooltip: the
 // popover colour, translucent, so the blurred window shows through it.
 func glassTint(base color.NRGBA, opacity float32) color.NRGBA {
-	return withAlpha(color.NRGBA{R: base.R, G: base.G, B: base.B, A: 0x8c}, opacity)
+	return withAlpha(color.NRGBA{R: base.R, G: base.G, B: base.B, A: 0x80}, opacity)
 }
+
+// glassEdge outlines a pane of glass: a hairline of light rather than a border.
+var glassEdge = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x2a}
 
 // footerGlass lays the composer over the conversation's end: above it the
 // conversation fades into the background, which is opaque under it, so the
@@ -198,6 +201,41 @@ func (layoutSpec *glassFooterLayout) Layout(o []fyne.CanvasObject, size fyne.Siz
 		space.SetMinSize(fyne.NewSize(1, footer.Height))
 		fyne.Do(layoutSpec.ui.relayoutColumn) // after this layout: it lays the column out again
 	}
+}
+
+// pageCurtain fades a page in as it takes the main area's place (Settings,
+// a section, a chat): the background laid over it clears in 220 ms. Hidden
+// at rest, so nothing is drawn for it; taps pass through a rectangle.
+type pageCurtain struct {
+	cover *canvas.Rectangle
+	anim  *fyne.Animation
+}
+
+func newPageCurtain() *pageCurtain {
+	curtain := &pageCurtain{cover: canvas.NewRectangle(colBackground)}
+	curtain.cover.Hide()
+	return curtain
+}
+
+func (curtain *pageCurtain) reveal() {
+	if curtain == nil { // before the window is built
+		return
+	}
+	if curtain.anim != nil {
+		curtain.anim.Stop()
+	}
+	curtain.cover.FillColor = colBackground
+	curtain.cover.Show()
+	curtain.cover.Refresh()
+	curtain.anim = fyne.NewAnimation(220*time.Millisecond, func(p float32) {
+		curtain.cover.FillColor = withAlpha(colBackground, 1-p)
+		if p >= 1 {
+			curtain.cover.Hide()
+		}
+		curtain.cover.Refresh()
+	})
+	curtain.anim.Curve = fyne.AnimationEaseOut
+	curtain.anim.Start()
 }
 
 // shineLayout lays a glass card's light along its top edge: a hairline

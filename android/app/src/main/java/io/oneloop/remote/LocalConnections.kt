@@ -446,7 +446,7 @@ private fun ConnectionEditor(
     if (leaving) {
         GlassBackdrop()
         AlertDialog(
-            onDismissRequest = { leaving = false }, containerColor = Palette.popover,
+            onDismissRequest = { leaving = false }, containerColor = GlassSurface, modifier = GlassDialogEdge,
             title = { Text("Unsaved changes", style = Type.title) },
             text = { Text("Save this connection before leaving?", style = Type.small) },
             confirmButton = {
@@ -463,7 +463,7 @@ private fun ConnectionEditor(
     if (removing) {
         GlassBackdrop()
         AlertDialog(
-            onDismissRequest = { removing = false }, containerColor = Palette.popover,
+            onDismissRequest = { removing = false }, containerColor = GlassSurface, modifier = GlassDialogEdge,
             title = { Text("Remove connection?", style = Type.title) },
             text = { Text("Remove “${draft.original?.name}” from this phone? Existing chats are kept.", style = Type.small) },
             confirmButton = {

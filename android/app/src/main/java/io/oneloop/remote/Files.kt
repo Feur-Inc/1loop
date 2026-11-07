@@ -212,7 +212,7 @@ fun SharedFilesDialog(app: RemoteApp) {
     GlassBackdrop()
     AlertDialog(
         onDismissRequest = { if (!busy) app.shared.clear() },
-        containerColor = Palette.surface,
+        containerColor = GlassSurface, modifier = GlassDialogEdge,
         title = { Text("${app.shared.size} file(s) shared to 1loop", style = Type.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -280,7 +280,7 @@ private fun CopyProjectDialog(app: RemoteApp, workspace: String, onDone: () -> U
     GlassBackdrop()
     AlertDialog(
         onDismissRequest = { if (!busy) onDone() },
-        containerColor = Palette.surface,
+        containerColor = GlassSurface, modifier = GlassDialogEdge,
         title = { Text("Copy “$name”", style = Type.title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -316,7 +316,7 @@ private fun SendFileDialog(app: RemoteApp, workspace: String, file: ProjectFile,
     var status by remember { mutableStateOf<String?>(null) }
     GlassBackdrop()
     AlertDialog(
-        onDismissRequest = { if (!busy) close() }, containerColor = Palette.surface,
+        onDismissRequest = { if (!busy) close() }, containerColor = GlassSurface, modifier = GlassDialogEdge,
         title = { Text("Send “${file.name}”", style = Type.title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {

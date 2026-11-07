@@ -595,7 +595,7 @@ func (ui *desktopUI) sshSettings() fyne.CanvasObject {
 	add := newRow("Add machine", iconPlus, stylePrimary, func() {
 		ui.sshEditor(sshmachine.Settings{ID: core.Identifier(), Port: 22, Auth: "key", KeyPath: "~/.ssh/id_ed25519", Projects: "~/1loop-projects"})
 	})
-	page := container.NewVBox(settings.pageTitle("SSH machines", "", container.NewCenter(add)),
+	page := container.NewVBox(settings.pageTitle("SSH machines", "General", container.NewCenter(add)),
 		padded(0, 10, 2, 0, plainFlow("Computers the agent can work on over SSH: choose one in the target menu, under the composer. Its projects are folders there; the agent edits files, runs commands and opens its terminal there, while this computer keeps its models, Browser Use and Computer Use.", 13, colMuted)))
 	if len(rows) == 0 {
 		rows = append(rows, settingRow("No machine yet", "Add one to work on it over SSH.", nil))

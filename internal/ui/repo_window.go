@@ -182,11 +182,8 @@ func (window *repoWindow) worktrees(state *repoState) {
 	// Set after the first choice: SetSelected calls it, and it redraws the list.
 	order.onChanged = func(choice string) {
 		for id, label := range sortLabels {
-			if label == choice && id != ui.worktreeSort {
-				ui.worktreeSort = id
-				ui.save()
-				ui.renderChats()
-				window.render()
+			if label == choice {
+				ui.setWorktreeSort(id)
 			}
 		}
 	}

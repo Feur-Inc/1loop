@@ -8,8 +8,11 @@ import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -23,6 +26,9 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -33,92 +39,220 @@ import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
+// The settings: the sections of the shared list (SettingsSearch.kt), the
+// same as the desktop's, one under the other. The search above them finds a
+// setting by its name, what it does or a synonym, and a result scrolls to it,
+// glowing a moment.
 @Composable
 fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
     BackHandler(onBack = onBack)
+    val context = LocalContext.current
+    val list = remember { SettingsList.load(context) }
     val scope = rememberCoroutineScope()
-    var preferences by remember(app.server) { mutableStateOf(app.userPreferences) }
-    var saving by remember { mutableStateOf(false) }
-    var notice by remember { mutableStateOf<String?>(null) }
+    val scroll = rememberScrollState()
+    val anchors = remember { SettingAnchors() }
+    var query by remember { mutableStateOf("") }
+    val local = app.server?.localPhone == true
+    val adb = if (local) app.local.adb.collectAsState().value else null
+    // What the page shows now: the search finds only those.
+    val shown = list.onPhone().filter { setting ->
+        when (setting.key) {
+            "models.connections", "tools.linux", "phone.adb", "phone.background", "phone.sharing" -> local
+            "phone.work_profile" -> adb?.allowed == true && adb.connected
+            "models.default_preset" -> app.defaultPresets
+            "agent.memory" -> app.memoryEnabled != null
+            else -> true
+        }
+    }
+    val keys = shown.map { it.key }.toSet()
+    fun jump(key: String) {
+        query = ""
+        scope.launch {
+            withFrameNanos { } // the page is back on screen a frame later, with its places
+            withFrameNanos { }
+            anchors.places[key]?.let { scroll.animateScrollTo((it - 12).coerceAtLeast(0)) }
+            anchors.glowing = key
+            delay(2200)
+            if (anchors.glowing == key) anchors.glowing = null
+        }
+    }
     Column(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundButton(Icons.back, Color.Transparent, Palette.muted, description = "Back", onClick = onBack)
             Text("Settings", style = Type.title, modifier = Modifier.padding(start = 12.dp))
         }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("Execution target", style = Type.headline)
+        Field(query, { query = it }, "Search settings", KeyboardType.Text, Modifier.fillMaxWidth().padding(horizontal = 20.dp))
+        if (query.isBlank()) {
+            // The sections, to go straight to one.
+            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                list.sections.filter { section -> shown.any { it.section == section.id } }.forEach { section ->
+                    Pill(section.title) { scope.launch { anchors.places["section:" + section.id]?.let { scroll.animateScrollTo(it) } } }
+                }
+            }
+        }
+        if (query.isNotBlank()) {
+            val results = SettingsSearch.search(list, shown, query)
+            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                if (results.isEmpty()) {
+                    Text("No setting matches “${query.trim()}”", style = Type.body)
+                    Text("Try another word: its name, what it does, or a synonym.", style = Type.small)
+                }
+                results.forEach { setting ->
+                    Column(
+                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Palette.surface).clickable { jump(setting.key) }
+                            .border(1.dp, Palette.borderSoft, RoundedCornerShape(12.dp)).padding(14.dp),
+                        verticalArrangement = Arrangement.spacedBy(3.dp),
+                    ) {
+                        Text(setting.title, style = Type.body.copy(fontWeight = FontWeight.Medium))
+                        Text(list.sectionTitle(setting.section), style = Type.caption)
+                        Text(setting.description, style = Type.small)
+                    }
+                }
+            }
+            return@Column
+        }
+        Column(Modifier.weight(1f).verticalScroll(scroll).padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            for (section in list.sections) {
+                val inSection = shown.filter { it.section == section.id }
+                if (inSection.isEmpty()) continue
+                Column(
+                    Modifier.fillMaxWidth().onGloballyPositioned { anchors.places["section:" + section.id] = it.positionInParent().y.toInt() }
+                        .padding(start = 8.dp, end = 8.dp, top = 18.dp),
+                    verticalArrangement = Arrangement.spacedBy(4.dp),
+                ) {
+                    Text(section.title, style = Type.headline)
+                    Text(section.intro, style = Type.small)
+                }
+                for (setting in inSection) {
+                    SettingBlock(setting.key, anchors) { SettingContent(app, setting.key, adb) }
+                }
+            }
+            Spacer(Modifier.height(24.dp))
+        }
+        LaunchedEffect(keys) { anchors.places.keys.retainAll { it.startsWith("section:") || it in keys } }
+    }
+}
+
+/** Where each setting is in the page, and the one glowing after a search. */
+private class SettingAnchors {
+    val places = mutableMapOf<String, Int>()
+    var glowing by mutableStateOf<String?>(null)
+}
+
+@Composable
+private fun SettingBlock(key: String, anchors: SettingAnchors, content: @Composable ColumnScope.() -> Unit) {
+    val glow by animateColorAsState(if (anchors.glowing == key) Palette.amber.copy(alpha = 0.16f) else Color.Transparent, tween(450), label = "glow")
+    Column(
+        Modifier.fillMaxWidth().onGloballyPositioned { anchors.places[key] = it.positionInParent().y.toInt() }
+            .background(glow, RoundedCornerShape(12.dp)).padding(horizontal = 8.dp, vertical = 8.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp),
+        content = content,
+    )
+}
+
+/** A setting's title, explanation and controls, by its key in the shared list. */
+@Composable
+private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAdbState?) {
+    val scope = rememberCoroutineScope()
+    when (key) {
+        "general.target" -> {
+            Text("Execution target", style = Type.title)
             Text(app.server?.name.orEmpty(), style = Type.body)
             Pill("Switch execution target") { app.switchTarget() }
-            Text("Approvals", style = Type.headline)
-            ApprovalChip(app)
-            AutoResumeSection(app)
-            if (app.server?.localPhone == true) {
-                Text("Connections", style = Type.headline)
-                Pill("Accounts and models", onClick = { app.connectionsOpen = true })
-                Text("Phone access · Shizuku", style = Type.headline)
-                val adb by app.local.adb.collectAsState()
-                LocalAdbSection(adb, app::setAdbAllowed, app.local::openShizuku, manualApproval = app.approvalMode == "approval")
-                WorkProfileSection(app.local, adb)
-                BackgroundExecutionSection(adb.installed)
-                LaunchedEffect(Unit) { runCatching { app.refreshSharing() } }
-                SharingSection(app)
-                Text("Linux", style = Type.headline)
-                Text("The Debian the local agent works in: storage, packages, a terminal and a reset.", style = Type.small)
-                Pill("Manage Linux", icon = Icons.terminal) { app.linuxOpen = true }
-            }
-            RunStatusSection()
-            Text("Extensions", style = Type.headline)
-            Text("Skills and plugins from GitHub, and the MCP servers the agent uses.", style = Type.small)
-            Pill("Skills, plugins and MCP servers", enabled = app.connected) { app.extensionsOpen = true }
-            GitHubConnectorSection(app)
-            Text("Personalization", style = Type.headline)
-            Text("Your preferences are added to 1loop's base instructions. They never replace its system prompt or tool rules. They apply to subsequent turns on this execution target.", style = Type.small)
-            if (app.preferencesEditable) {
-                BasicTextField(
-                    preferences, { if (it.length <= 65536) { preferences = it; notice = null } },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp).background(Palette.surface, RoundedCornerShape(12.dp))
-                        .border(1.dp, Palette.borderSoft, RoundedCornerShape(12.dp)).padding(14.dp),
-                    textStyle = Type.body, minLines = 8,
-                    decorationBox = { inner ->
-                        Box { if (preferences.isEmpty()) Text("Language, tone, coding conventions, level of detail…", style = Type.small); inner() }
-                    },
-                )
-                Pill(if (saving) "Saving…" else "Save preferences", primary = true, enabled = app.connected && !saving) {
-                    saving = true
-                    scope.launch {
-                        try { app.savePreferences(preferences); notice = "Saved" }
-                        catch (cancelled: CancellationException) { throw cancelled }
-                        catch (failure: Exception) { notice = failure.message ?: "Could not save preferences." }
-                        finally { saving = false }
-                    }
-                }
-            } else Text("Update the connected desktop or server to edit preferences here.", style = Type.small)
-            notice?.let { Text(it, style = Type.small) }
-            app.memoryEnabled?.let { enabled ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("Memory", style = Type.body.copy(fontWeight = FontWeight.Medium))
-                        Text("The agent adds what it learns about you to these preferences, each change shown to you for approval. Off: it is not offered the memory tool.", style = Type.small)
-                    }
-                    Toggle(enabled, enabled = app.connected) { on ->
-                        scope.launch {
-                            try { app.setMemory(on); notice = null }
-                            catch (cancelled: CancellationException) { throw cancelled }
-                            catch (failure: Exception) { notice = failure.message ?: "Could not change memory." }
-                        }
-                    }
-                }
-            }
-            if (app.defaultPresets) DefaultModelsSection(app)
-            ModelCompactionSection(app)
-            UpdatesSection(app)
-            BrowserDataSection(app)
-            HooksSection(app)
         }
+        "models.connections" -> {
+            Text("Connections", style = Type.title)
+            Text("The services and accounts this phone's agent takes its models from.", style = Type.small)
+            Pill("Accounts and models", onClick = { app.connectionsOpen = true })
+        }
+        "models.default_preset" -> DefaultModelsSection(app)
+        "models.context" -> ModelCompactionSection(app)
+        "models.auto_resume" -> AutoResumeSection(app)
+        "agent.approval_mode" -> {
+            Text("Tool permissions", style = Type.title)
+            Text("Ask before each command and edit, approve the safe ones on their own (Auto), or run everything (YOLO).", style = Type.small)
+            ApprovalChip(app)
+        }
+        "agent.preferences" -> PreferencesSection(app)
+        "agent.memory" -> app.memoryEnabled?.let { enabled ->
+            var notice by remember { mutableStateOf<String?>(null) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Memory", style = Type.title)
+                    Text("The agent adds what it learns about you to your preferences, each change shown to you for approval. Off: it is not offered the memory tool.", style = Type.small)
+                }
+                Toggle(enabled, enabled = app.connected) { on ->
+                    scope.launch {
+                        try { app.setMemory(on); notice = null }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { notice = failure.message ?: "Could not change memory." }
+                    }
+                }
+            }
+            notice?.let { Text(it, style = Type.small) }
+        }
+        "tools.extensions" -> {
+            Text("Skills, plugins and MCP servers", style = Type.title)
+            Text("Skills and plugins from GitHub, and the MCP servers the agent uses.", style = Type.small)
+            Pill("Open extensions", enabled = app.connected) { app.extensionsOpen = true }
+        }
+        "tools.github" -> GitHubConnectorSection(app)
+        "tools.browser_data" -> BrowserDataSection(app)
+        "tools.linux" -> {
+            Text("Linux", style = Type.title)
+            Text("The Debian the local agent works in: storage, packages, a terminal and a reset.", style = Type.small)
+            Pill("Manage Linux", icon = Icons.terminal) { app.linuxOpen = true }
+        }
+        "phone.status" -> RunStatusSection()
+        "phone.adb" -> if (adb != null) {
+            Text("Phone access", style = Type.title)
+            LocalAdbSection(adb, app::setAdbAllowed, app.local::openShizuku, manualApproval = app.approvalMode == "approval")
+        }
+        "phone.work_profile" -> if (adb != null) WorkProfileSection(app.local, adb)
+        "phone.background" -> BackgroundExecutionSection(adb?.installed == true)
+        "phone.sharing" -> {
+            LaunchedEffect(Unit) { runCatching { app.refreshSharing() } }
+            SharingSection(app)
+        }
+        "updates.check" -> UpdatesSection(app)
+        "advanced.hooks" -> HooksSection(app)
     }
+}
+
+// Your preferences: added to 1loop's base instructions on this target.
+@Composable
+private fun PreferencesSection(app: RemoteApp) {
+    val scope = rememberCoroutineScope()
+    var preferences by remember(app.server) { mutableStateOf(app.userPreferences) }
+    var saving by remember { mutableStateOf(false) }
+    var notice by remember { mutableStateOf<String?>(null) }
+    Text("Your preferences", style = Type.title)
+    Text("Added to 1loop's base instructions. They never replace its system prompt or tool rules. They apply to subsequent turns on this execution target.", style = Type.small)
+    if (app.preferencesEditable) {
+        BasicTextField(
+            preferences, { if (it.length <= 65536) { preferences = it; notice = null } },
+            modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp).background(Palette.surface, RoundedCornerShape(12.dp))
+                .border(1.dp, Palette.borderSoft, RoundedCornerShape(12.dp)).padding(14.dp),
+            textStyle = Type.body, minLines = 8,
+            decorationBox = { inner ->
+                Box { if (preferences.isEmpty()) Text("Language, tone, coding conventions, level of detail…", style = Type.small); inner() }
+            },
+        )
+        Pill(if (saving) "Saving…" else "Save preferences", primary = true, enabled = app.connected && !saving) {
+            saving = true
+            scope.launch {
+                try { app.savePreferences(preferences); notice = "Saved" }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) { notice = failure.message ?: "Could not save preferences." }
+                finally { saving = false }
+            }
+        }
+    } else Text("Update the connected desktop or server to edit preferences here.", style = Type.small)
+    notice?.let { Text(it, style = Type.small) }
 }
 
 // While a model runs and 1loop is not on screen: the floating badge (it needs
@@ -136,7 +270,7 @@ private fun RunStatusSection() {
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
-    Text("While a model runs", style = Type.headline)
+    Text("While a model runs", style = Type.title)
     Text("Shows what the agent does over your other apps, with a button to stop it. It stays small and never covers the screen.", style = Type.small)
     // Wraps: the three choices are wider than a phone.
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -194,7 +328,7 @@ private fun AutoResumeSection(app: RemoteApp) {
     var search by remember { mutableStateOf("") }
     var saving by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
-    Text("Automatic resumption", style = Type.headline)
+    Text("Automatic resumption", style = Type.title)
     Text("When a rate limit interrupts a conversation, 1loop tries these options in order, for every conversation. Stop cancels a wait. Changes apply to the next run.", style = Type.small)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text("Enabled", style = Type.body, modifier = Modifier.weight(1f))
@@ -272,7 +406,7 @@ private fun ModelCompactionSection(app: RemoteApp) {
     var notice by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     val model = app.models.firstOrNull { it.label == selected } ?: app.chatModel
-    Text("Model context", style = Type.headline)
+    Text("Model context", style = Type.title)
     Text("When 1loop compacts a conversation, for each model: choose a model, then its target in tokens.", style = Type.small)
     Box {
         Pill(model?.name ?: "Choose a model", enabled = app.models.isNotEmpty()) { expanded = true }
@@ -321,7 +455,7 @@ private fun BrowserDataSection(app: RemoteApp) {
     var asking by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var status by remember(app.server) { mutableStateOf<String?>(null) }
-    Text("Browser", style = Type.headline)
+    Text("Browsing data", style = Type.title)
     Text(
         if (app.server?.localPhone == true) "The agent's browser on this phone keeps its cookies and logins, cache and site data. Clear erases all of it."
         else "The agent's browser on ${app.server?.name ?: "the computer"} keeps its cookies and logins, cache, site data and history. Clear erases all of it.",
@@ -358,7 +492,7 @@ private fun HooksSection(app: RemoteApp) {
     var hooks by remember(app.server) { mutableStateOf<String?>(null) }
     var status by remember(app.server) { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
-    Text("Hooks", style = Type.headline)
+    Text("Hook commands", style = Type.title)
     Text("Commands run before or after the agent's tools (PreToolUse, PostToolUse), when you send a message (UserPromptSubmit) or when it stops (Stop). Exit code 2 from a PreToolUse blocks the tool.", style = Type.small)
     val text = hooks
     if (text == null) {
@@ -428,7 +562,7 @@ private fun BackgroundExecutionSection(shizukuInstalled: Boolean) {
         }
     }
 
-    Text("Background execution", style = Type.headline)
+    Text("Background execution", style = Type.title)
     Text(
         if (exempt) {
             "1loop is exempt from Android battery optimization."
@@ -507,7 +641,7 @@ private fun UpdatesSection(app: RemoteApp) {
     val scope = rememberCoroutineScope()
     var serverStatus by remember(app.server) { mutableStateOf<String?>(null) }
     var serverBusy by remember { mutableStateOf(false) }
-    Text("Updates", style = Type.headline)
+    Text("1loop updates", style = Type.title)
     UpdateActions(app)
     app.serverUpdate?.let { status ->
         val name = app.server?.name ?: "The server"

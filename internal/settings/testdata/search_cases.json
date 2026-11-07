@@ -1,0 +1,22 @@
+[
+  {"query": "sudo", "first": "agent.approval_mode", "why": "a keyword"},
+  {"query": "YOLO", "first": "agent.approval_mode", "why": "case"},
+  {"query": "permisions", "first": "agent.approval_mode", "why": "a typo"},
+  {"query": "tool permissoins", "first": "agent.approval_mode", "why": "swapped letters"},
+  {"query": "compac", "first": "agent.dynamic_compaction", "why": "the start of a word"},
+  {"query": "dynamic compaction", "first": "agent.dynamic_compaction", "why": "the title"},
+  {"query": "memory", "first": "agent.memory", "why": "the exact title before Project memory", "also": ["agent.project_memory"]},
+  {"query": "badge", "first": "phone.status", "why": "a keyword", "platform": "phone"},
+  {"query": "turn off the badge", "first": "phone.status", "why": "common words are skipped", "platform": "phone"},
+  {"query": "rate limit", "first": "models.auto_resume", "why": "a phrase keyword"},
+  {"query": "ssh", "first": "general.ssh", "why": "a short word, whole"},
+  {"query": "upd", "first": "updates.check", "why": "a short start"},
+  {"query": "hooks", "first": "advanced.hooks", "why": "the section is not a word of it"},
+  {"query": "api key", "first": "models.connections", "why": "a keyword of two words"},
+  {"query": "cookies", "first": "tools.import_cookies", "also": ["tools.browser_data"], "why": "the title first, then the keyword"},
+  {"query": "shizuku", "first": "phone.adb", "platform": "phone", "why": "phone only"},
+  {"query": "shizuku", "none": true, "platform": "desktop", "why": "not on the desktop"},
+  {"query": "xyzzy", "none": true, "why": "nothing"},
+  {"query": "   ", "none": true, "why": "blank"},
+  {"query": "sudo xyzzy", "none": true, "why": "every word must match"}
+]

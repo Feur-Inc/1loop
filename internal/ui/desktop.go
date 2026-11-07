@@ -59,6 +59,7 @@ type conversation struct {
 	Versions     []chatVersion           `json:"versions,omitempty"`
 
 	panel     *panelState // its side panel while 1loop runs (live tabs, terminals included)
+	failed    bool        // its last run failed and the user has not looked at it since: the tray says so
 	todoCount int         // tasks last seen in its list: the first ones open the panel
 	taskCount int         // background tasks last seen: a new one opens the panel on them
 
@@ -219,6 +220,9 @@ type desktopUI struct {
 	classicCompaction bool              // settings: dynamic context compaction turned off
 	memoryOff         bool              // settings: the agent's memory tool turned off
 	autoResume        *agent.AutoResume // settings: what a rate limit does to a run
+	closeQuits        bool              // settings: closing the window quits rather than hiding it in the tray
+	trayNoticeShown   bool              // the first close said that 1loop stays in the tray
+	tray              *trayIcon         // the system tray icon (tray.go), nil without one
 	tips              *tipLayer
 
 	// Window and sidebar
@@ -298,8 +302,9 @@ func runDesktop(backend *agent.App, root string) {
 		ui.attachFiles(files)
 	})
 	ui.prompt.switchDraft(ui.draftKey())
-	ui.window.SetCloseIntercept(ui.quit)
+	ui.window.SetCloseIntercept(ui.closeWindow)
 	for _, s := range []*desktop.CustomShortcut{
+		{KeyName: fyne.KeyQ, Modifier: fyne.KeyModifierControl},
 		{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierControl},
 		{KeyName: fyne.KeyR, Modifier: fyne.KeyModifierControl | fyne.KeyModifierShift},
 		{KeyName: fyne.KeyB, Modifier: fyne.KeyModifierControl},
@@ -339,6 +344,7 @@ func runDesktop(backend *agent.App, root string) {
 		platform.Devf("app", "window %.0f x %.0f at scale %.2f, own title bar %v", size.Width, size.Height, ui.window.Canvas().Scale(), ui.chrome)
 		time.AfterFunc(180*time.Millisecond, func() { fyne.Do(launch.play) })
 	})
+	ui.startTray(a)
 	// Shown, named, then run: the desktop learns which application this is
 	// before the window's first frame, when it picks its name and icon.
 	ui.window.Show()
@@ -414,6 +420,8 @@ func (ui *desktopUI) shortcut(s fyne.Shortcut) bool {
 		return false
 	}
 	switch {
+	case c.KeyName == fyne.KeyQ && c.Modifier == fyne.KeyModifierControl:
+		ui.quit() // really quits, even when closing hides the window in the tray
 	case c.KeyName == fyne.KeyK && c.Modifier == fyne.KeyModifierControl:
 		ui.startNew()
 	case c.KeyName == fyne.KeyR && c.Modifier == fyne.KeyModifierControl|fyne.KeyModifierShift:
@@ -595,7 +603,7 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	}
 	right := container.New(layout.NewCustomPaddedHBoxLayout(2), container.NewCenter(ui.panelToggle))
 	if ui.chrome {
-		right.Add(windowControls(ui.window, ui.quit))
+		right.Add(windowControls(ui.window, ui.closeWindow))
 	}
 	ui.headerBar = container.NewBorder(nil, nil, padded(0, 0, 0, 8, container.NewCenter(ui.expand)), right, ui.header)
 	var header fyne.CanvasObject = padded(14, 8, 24, 24, ui.headerBar)
@@ -988,6 +996,7 @@ func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
 	cancel := run.cancel
 	run.cancel = func() { run.stopped = true; cancel() }
 	chat.run = run
+	chat.failed = false
 	ui.remote.metaChanged(chat)
 	if chat == ui.current {
 		ui.syncRun()
@@ -1050,6 +1059,12 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	if ui.window.Canvas().Overlays().Top() == nil { // never pull focus out of an open dialog
 		ui.window.Canvas().Focus(ui.prompt)
 	}
+}
+
+// runFailed marks a chat whose run ended on an error, for the tray, unless
+// the user saw it fail.
+func (ui *desktopUI) runFailed(chat *conversation) {
+	chat.failed = !(chat == ui.current && ui.inForeground)
 }
 
 // promptMessage takes what the composer holds as a message.
@@ -1339,6 +1354,8 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 				text := err.Error()
 				if canceled {
 					text = "Response stopped."
+				} else {
+					ui.runFailed(chat)
 				}
 				ui.addItem(chat, agent.ChatItem{Kind: "error", Text: text})
 			}
@@ -1489,6 +1506,9 @@ func (ui *desktopUI) compactChat(focus string) {
 			ended := "done"
 			if err != nil {
 				ended = "stopped"
+				if ctx.Err() != context.Canceled {
+					ui.runFailed(chat)
+				}
 				ui.addItem(chat, agent.ChatItem{Kind: "error", Text: err.Error()})
 			} else {
 				chat.History = kept
@@ -1515,6 +1535,7 @@ func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) *sheet {
 			chat.run.approval = nil
 			chat.run.approvalID, chat.run.answer = "", nil
 			ui.remote.metaChanged(chat)
+			ui.syncTray()
 		}
 	}
 	answer := func(allow bool) {
@@ -1543,6 +1564,7 @@ func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) *sheet {
 		chat.run.approvalID, chat.run.approvalTitle, chat.run.approvalPreview = id, title, preview
 		chat.run.answer = answer
 		ui.remote.metaChanged(chat)
+		ui.syncTray()
 	}
 	return dialog
 }
@@ -1689,6 +1711,8 @@ type savedState struct {
 	LocalWorkspace    string                `json:"localWorkspace,omitempty"` // while an SSH machine is the target
 	Worktrees         map[string]string     `json:"worktrees,omitempty"`      // folder → project
 	WorktreeSort      string                `json:"worktreeSort,omitempty"`
+	CloseQuits        bool                  `json:"closeQuits,omitempty"`
+	TrayNoticeShown   bool                  `json:"trayNoticeShown,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1743,6 +1767,8 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.localWorkspace,
 		ui.worktrees,
 		ui.worktreeSort,
+		ui.closeQuits,
+		ui.trayNoticeShown,
 	})
 	if ui.panel != nil {
 		ui.panel.stash() // the open chat's panel, as it is now
@@ -1859,6 +1885,7 @@ func (ui *desktopUI) load() {
 	ui.approvalMode = state.ApprovalMode
 	ui.classicCompaction = state.ClassicCompaction
 	ui.memoryOff = state.MemoryOff
+	ui.closeQuits, ui.trayNoticeShown = state.CloseQuits, state.TrayNoticeShown
 	ui.autoResume = state.AutoResume
 	for _, chat := range state.Chats {
 		if chat == nil {

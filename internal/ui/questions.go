@@ -38,6 +38,7 @@ func (ui *desktopUI) showQuestions(chat *conversation, request agent.QuestionReq
 		if chat.run != nil && chat.run.questions == dialog {
 			chat.run.questions, chat.run.questionID, chat.run.answerQuestions = nil, "", nil
 			ui.remote.metaChanged(chat)
+			ui.syncTray()
 		}
 	}
 	finish := func(given map[string]string) {
@@ -129,6 +130,7 @@ func (ui *desktopUI) showQuestions(chat *conversation, request agent.QuestionReq
 		chat.run.questions, chat.run.questionID, chat.run.questionList = dialog, request.ID, request.Questions
 		chat.run.answerQuestions = finish
 		ui.remote.metaChanged(chat)
+		ui.syncTray()
 	}
 	return dialog
 }

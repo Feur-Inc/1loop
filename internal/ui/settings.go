@@ -472,6 +472,14 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		settings.pageTitle("General", "", nil),
 		sectionTitle("Workspace"),
 		card(ui.projectFolderRow(change)),
+		sectionTitle("Window"),
+		card(settingRow("Close to tray",
+			"On: closing the window keeps 1loop running in the system tray, so running tasks and the phone connection go on. Quit from the tray icon's menu or with Ctrl+Q. Off: closing the window quits. Without a tray (GNOME without an AppIndicator extension, a bar that shows no tray items) closing always quits.",
+			newToggle(!ui.closeQuits, func(on bool) {
+				ui.closeQuits = !on
+				platform.Devf("ui", "close to tray %v", on)
+				ui.save()
+			}))),
 		sectionTitle("Remote server"),
 		card(settingRow("HTTPS server", "Work on a headless 1loop server with its own models, files, browser and terminals. Approve this device in the server console.", newRow("Connect…", nil, styleOutline, ui.connectServer))),
 		sectionTitle("Permissions"),

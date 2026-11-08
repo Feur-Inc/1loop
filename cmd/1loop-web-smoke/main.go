@@ -65,7 +65,7 @@ var (
 	filesItem = flag.String("attach-files", "", "x,y of the + menu's Attach files… item")
 	imeAt     = flag.String("ime", "", "x,y of the composer, to type through a dead key and an input method there")
 	phone     = flag.String("phone", "", "x,y of the composer in a phone's viewport (390×844, touch), to tap and type there")
-	clicks    = flag.String("clicks", "", "name@x,y;… clicks made last, each followed by a screenshot named after it")
+	clicks    = flag.String("clicks", "", "name@x,y;… clicks made last, each followed by a screenshot named after it; name@x,y=text types text after the click (^text over the entry's, {model} the fake model's address)")
 	longChat  = flag.Int("long", 60, "turns in the long chat")
 	check     = flag.Bool("check", false, "fail unless the page pairs, reads the server's state and events, and never panics (CI)")
 )
@@ -78,6 +78,8 @@ func main() {
 	flag.Parse()
 	must(os.MkdirAll(*outDir, 0o755))
 	data, err := os.MkdirTemp(*outDir, "server-")
+	must(err)
+	data, err = filepath.Abs(data) // XDG_CONFIG_HOME must be absolute, or the server has no config folder
 	must(err)
 	projects := filepath.Join(data, "projects")
 	must(os.MkdirAll(projects, 0o755))
@@ -308,7 +310,16 @@ func main() {
 	}
 	for _, step := range strings.Split(*clicks, ";") {
 		if name, at, ok := strings.Cut(step, "@"); ok {
+			at, text, typing := strings.Cut(at, "=")
 			click(ctx, at)
+			if typing {
+				time.Sleep(300 * time.Millisecond)
+				if replace, found := strings.CutPrefix(text, "^"); found { // over what the entry holds
+					chromedp.Run(ctx, chromedp.KeyEvent("a", chromedp.KeyModifiers(input.ModifierCtrl)))
+					text = replace
+				}
+				typeText(ctx, strings.ReplaceAll(text, "{model}", "http://"+model+"/v1"))
+			}
 			time.Sleep(2 * time.Second)
 			shot(ctx, "click-"+name)
 		}
@@ -478,6 +489,10 @@ func browser(trust bool) (context.Context, context.CancelFunc) {
 // no key for as "Unidentified", where a real é key's keydown says "é".
 func typeText(ctx context.Context, text string) {
 	for _, r := range text {
+		if r == '\n' { // a new line, as Enter types it
+			chromedp.Run(ctx, chromedp.KeyEvent(kb.Enter))
+			continue
+		}
 		if _, known := kb.Keys[r]; known {
 			chromedp.Run(ctx, chromedp.KeyEvent(string(r)))
 			continue

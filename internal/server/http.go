@@ -120,6 +120,16 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/hooks":                              remoteapi.SaveHooks,
 		"GET /api/chats/{id}/items/{index}/images/{n}": server.itemImage,
 	}
+	if !server.local {
+		// The server's accounts, for its paired devices; the phone app's own
+		// engine keeps its accounts to the phone (/api/local/connections).
+		endpoints["GET /api/connections"] = server.localConnections
+		endpoints["POST /api/connections"] = server.saveNetworkConnection
+		endpoints["POST /api/connections/models"] = server.draftLocalConnectionModels
+		endpoints["GET /api/connections/{id}/models"] = server.localConnectionModels
+		endpoints["POST /api/connections/{id}/disconnect"] = server.localConnectionDisconnect
+		endpoints["POST /api/connections/refresh"] = server.refreshLocalModels
+	}
 	syncEngine := server.syncEngine()
 	syncManifest, syncExport, syncImport := syncEngine.Routes()
 	endpoints["GET /api/sync/base"] = syncEngine.BaseRoute

@@ -71,6 +71,16 @@ func (remote *remoteDesktop) defaultPresetSettings() fyne.CanvasObject {
 		rows.Add(note("Update the server to configure Default presets here."))
 		return rows
 	}
+	for _, row := range remote.presetRows() {
+		rows.Add(row)
+	}
+	return rows
+}
+
+// presetRows are the server's accounts, each with its Default preset.
+func (remote *remoteDesktop) presetRows() []fyne.CanvasObject {
+	ui := remote.parent
+	var rows []fyne.CanvasObject
 	for _, account := range remote.accounts {
 		account := account
 		edit := newRow("Default preset…", nil, styleOutline, func() {
@@ -117,7 +127,7 @@ func (remote *remoteDesktop) defaultPresetSettings() fyne.CanvasObject {
 			}
 			dialog = ui.modal(account.Name+" · Default", container.NewVBox(ui.defaultModelFields(&draft, models), problem), 620, nil, cancel, save)
 		})
-		rows.Add(card(settingRow(account.Name, account.Kind, edit)))
+		rows = append(rows, card(settingRow(account.Name, account.Kind, edit)))
 	}
 	return rows
 }

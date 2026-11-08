@@ -119,24 +119,26 @@ func Main() {
 		if *base != "" {
 			server.cfg.BaseURL = *base
 		}
+		// The flags' account is enabled, beside those added from the clients.
 		existing := ""
-		for _, conn := range server.connections {
+		for i, conn := range server.connections {
 			if conn.Provider == server.cfg.Provider && conn.BaseURL == server.cfg.BaseURL {
 				existing = conn.ID
+				server.connections[i].Enabled = true
 				break
 			}
 		}
 		if existing == "" {
 			existing = core.Identifier()
+			server.connections = append(server.connections, agent.Connection{
+				ID:        existing,
+				Name:      agent.ProviderName(server.cfg.Provider),
+				Provider:  server.cfg.Provider,
+				BaseURL:   server.cfg.BaseURL,
+				Enabled:   true,
+				AllModels: true,
+			})
 		}
-		server.connections = []agent.Connection{{
-			ID:        existing,
-			Name:      agent.ProviderName(server.cfg.Provider),
-			Provider:  server.cfg.Provider,
-			BaseURL:   server.cfg.BaseURL,
-			Enabled:   true,
-			AllModels: true,
-		}}
 		server.cfg.ConnectionID = existing
 	}
 	if err = server.saveSettingsLocked(); err != nil {

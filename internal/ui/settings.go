@@ -701,8 +701,8 @@ func (ui *desktopUI) projectMemoryRow(project string) fyne.CanvasObject {
 // Connections.
 
 func (ui *desktopUI) connectionSettings() fyne.CanvasObject {
-	if ui.server != nil {
-		return ui.server.defaultPresetSettings()
+	if ui.server != nil { // the server's chats use the server's
+		return ui.server.connectionSettings()
 	}
 	settings := ui.prefs
 	var rows []fyne.CanvasObject

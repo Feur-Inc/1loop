@@ -21,7 +21,7 @@ import (
 // discordAppID is 1loop's application on Discord: its name is what the
 // profile shows ("Playing 1loop"). Shipping it means nobody has to make
 // their own. ONELOOP_DISCORD_APP_ID replaces it, to try another one.
-const discordAppID = ""
+const discordAppID = "1569084103125508196"
 
 // discordArt is where Discord fetches the presence images from: the work
 // ring's animations as GIFs, drawn by TestDiscordArt into assets/discord.

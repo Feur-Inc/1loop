@@ -25,15 +25,18 @@ const discordAppID = "1569084103125508196"
 
 // discordArt is where Discord fetches the presence images from: the work
 // ring's animations as GIFs, drawn by TestDiscordArt into assets/discord.
-// Discord takes any https image there and plays GIFs.
-const discordArt = "https://raw.githubusercontent.com/Feur-Inc/1loop/main/assets/"
+// Discord takes any https image there and plays GIFs. The URL names the
+// commit that added them, so every build finds its own images whatever
+// branch it was built from: drawing them again means pointing it at the
+// new commit.
+const discordArt = "https://raw.githubusercontent.com/Feur-Inc/1loop/6cb9b3c9a5bd98dce442186833757a740d83d0e0/assets/"
 
 // discordActivities is what the profile says each state of the work ring
 // is doing, without the details (commands, files) that stay private.
 var discordActivities = map[string]string{
 	"think":    "Thinking",
 	"write":    "Writing the answer",
-	"wait":     "Waiting for a task",
+	"wait":     "Waiting for a command", // one that lasts, or left in the background
 	"call":     "Using a tool",
 	"read":     "Reading files",
 	"list":     "Looking through folders",

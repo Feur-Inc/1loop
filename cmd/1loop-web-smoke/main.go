@@ -7,7 +7,9 @@
 //	go run ./cmd/1loop-web-smoke -server bin/1loop-server -web bin/web -out .out/web
 //
 // Canvas positions (Fyne draws everything in one <canvas>) are flags, read
-// off an earlier run's screenshots.
+// off an earlier run's screenshots. CI runs it with -check and no positions:
+//
+//	go run ./cmd/1loop-web-smoke -long 5 -check
 package main
 
 import (
@@ -49,30 +51,38 @@ var (
 	picker    = flag.String("picker", "", "x,y of the composer's model button, to show its picker")
 	copyAt    = flag.String("copy", "", "x,y of a Copy button, to read the clipboard after")
 	longChat  = flag.Int("long", 60, "turns in the long chat")
+	check     = flag.Bool("check", false, "fail unless the page pairs, reads the server's state and events, and never panics (CI)")
 )
 
-const listen = "127.0.0.1:47167"
+// stopServer ends the server on every exit, log.Fatal's included (fatal):
+// a server left running keeps its port and the next run reaches it instead.
+var stopServer = func() {}
 
 func main() {
 	flag.Parse()
 	must(os.MkdirAll(*outDir, 0o755))
 	data, err := os.MkdirTemp(*outDir, "server-")
 	must(err)
-	workspace := filepath.Join(data, "project")
-	must(os.MkdirAll(workspace, 0o755))
+	projects := filepath.Join(data, "projects")
+	must(os.MkdirAll(projects, 0o755))
 	model := fakeModel()
 
 	// The server, its console on a pipe for pairing.
 	logFile, err := os.Create(filepath.Join(*outDir, "server.log"))
 	must(err)
-	server := exec.Command(*serverBin, "-listen", listen, "-data-dir", filepath.Join(data, "state"), "-workspace", workspace,
+	free, err := net.Listen("tcp", "127.0.0.1:0")
+	must(err)
+	listen := free.Addr().String()
+	free.Close()
+	server := exec.Command(*serverBin, "-listen", listen, "-data-dir", filepath.Join(data, "state"), "-workspace", projects,
 		"-provider", "compatible", "-base-url", "http://"+model+"/v1", "-model", "fake", "-web-dir", *webDir)
 	console, err := server.StdinPipe()
 	must(err)
 	server.Stdout, server.Stderr = logFile, logFile
 	server.Env = append(os.Environ(), "HOME="+data, "XDG_CONFIG_HOME="+filepath.Join(data, "config"), "ONELOOP_UPDATE_URL=http://127.0.0.1:9/none")
 	must(server.Start())
-	defer server.Process.Kill()
+	stopServer = func() { server.Process.Kill() }
+	defer stopServer()
 	base := "https://" + listen
 	insecure := &http.Client{Timeout: 30 * time.Second, Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}}
 	waitFor(func() bool { r, err := insecure.Get(base + "/api/info"); return err == nil && r.Body.Close() == nil })
@@ -89,8 +99,14 @@ func main() {
 	call(insecure, base, "", "POST", "/api/pair", map[string]string{"device": "smoke seed"}, &pair)
 	approve(pair.Pairing, pair.Code)
 	var paired struct{ Token string }
-	call(insecure, base, "", "POST", "/api/pair/confirm", map[string]string{"pairing": pair.Pairing, "code": pair.Code}, &paired)
+	// The console takes the approval when it gets to it: 409 until then.
+	waitFor(func() bool {
+		return try(insecure, base, "", "POST", "/api/pair/confirm", map[string]string{"pairing": pair.Pairing, "code": pair.Code}, &paired) != http.StatusConflict
+	})
 	token := paired.Token
+	var project struct{ Workspace string }
+	call(insecure, base, token, "POST", "/api/projects", map[string]any{"path": "project", "create": true}, &project)
+	workspace := project.Workspace
 	seed := func(chat, text string) string {
 		var reply struct{ Chat string }
 		call(insecure, base, token, "POST", "/api/send", map[string]any{"chat": chat, "text": text, "mode": "", "workspace": workspace}, &reply)
@@ -134,7 +150,7 @@ func main() {
 	var consoleLines []string
 	pairBodies := make(chan network.RequestID, 4)
 	var streamMu sync.Mutex
-	events := 0
+	events, states := 0, 0
 	chromedp.ListenTarget(ctx, func(ev any) {
 		switch e := ev.(type) {
 		case *runtime.EventConsoleAPICalled:
@@ -154,6 +170,15 @@ func main() {
 				events++
 				streamMu.Unlock()
 			}
+			if strings.HasSuffix(e.Response.URL, "/api/state") && e.Response.Status == http.StatusOK {
+				streamMu.Lock()
+				states++
+				streamMu.Unlock()
+			}
+		case *runtime.EventExceptionThrown:
+			streamMu.Lock()
+			consoleLines = append(consoleLines, "uncaught: "+e.ExceptionDetails.Error())
+			streamMu.Unlock()
 		}
 	})
 	start := time.Now()
@@ -183,6 +208,7 @@ func main() {
 	case <-time.After(30 * time.Second):
 		log.Printf("the page never asked to pair")
 		shot(ctx, "02-no-pairing")
+		failIf(*check, "the page never asked to pair")
 	}
 	firstFrame := time.Since(start)
 	if *connect != "" {
@@ -253,8 +279,30 @@ func main() {
 	}
 	streamMu.Lock()
 	os.WriteFile(filepath.Join(*outDir, "console.log"), []byte(strings.Join(consoleLines, "\n")), 0o644)
-	streamMu.Unlock()
 	log.Printf("first pairing request %s after navigation", firstFrame.Round(time.Millisecond))
+	if *check {
+		// Go's runtime prints a panic to the console before the page dies.
+		for _, line := range consoleLines {
+			failIf(strings.Contains(line, "panic:") || strings.Contains(line, "fatal error:") || strings.HasPrefix(line, "uncaught: "),
+				"the page crashed: "+line)
+		}
+		failIf(states == 0, "the page never read /api/state")
+		failIf(events == 0, "the page never opened /api/events")
+		log.Printf("check passed: %d state reads, %d event streams", states, events)
+	}
+	streamMu.Unlock()
+}
+
+// failIf ends the run with the server's log, for a CI run that has no
+// screenshots to look at.
+func failIf(failed bool, why string) {
+	if !failed {
+		return
+	}
+	if data, err := os.ReadFile(filepath.Join(*outDir, "server.log")); err == nil {
+		os.Stderr.Write(data)
+	}
+	fatal(why)
 }
 
 // browserGrant lets the page read and write the clipboard without a prompt.
@@ -353,6 +401,11 @@ func fakeModel() string {
 }
 
 func call(client *http.Client, base, token, method, path string, body, result any) {
+	try(client, base, token, method, path, body, result)
+}
+
+// try is call, except that it returns a 409 Conflict instead of failing.
+func try(client *http.Client, base, token, method, path string, body, result any) int {
 	var reader io.Reader
 	if body != nil {
 		data, _ := json.Marshal(body)
@@ -367,12 +420,16 @@ func call(client *http.Client, base, token, method, path string, body, result an
 	must(err)
 	defer response.Body.Close()
 	data, _ := io.ReadAll(bufio.NewReader(response.Body))
+	if response.StatusCode == http.StatusConflict {
+		return response.StatusCode
+	}
 	if response.StatusCode >= 300 {
-		log.Fatalf("%s %s: %s %s", method, path, response.Status, data)
+		fatal(fmt.Sprintf("%s %s: %s %s", method, path, response.Status, data))
 	}
 	if result != nil {
 		must(json.Unmarshal(data, result))
 	}
+	return response.StatusCode
 }
 
 func waitFor(ok func() bool) {
@@ -381,11 +438,16 @@ func waitFor(ok func() bool) {
 			return
 		}
 	}
-	log.Fatal("timed out")
+	fatal("timed out")
 }
 
 func must(err error) {
 	if err != nil {
-		log.Fatal(err)
+		fatal(err)
 	}
+}
+
+func fatal(v any) {
+	stopServer()
+	log.Fatal(v)
 }

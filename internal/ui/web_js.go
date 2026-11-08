@@ -37,6 +37,8 @@ func WebMain() {
 	ui.window.SetContent(ui.build())
 	ui.prompt.switchDraft(ui.draftKey())
 	ui.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { ui.copySelection() })
+	ui.prompt.paste = nil // pictures come with the page's paste event (web_attach_js.go)
+	ui.listenBrowserFiles()
 	ui.updateHeader()
 	ui.inForeground = true
 	a.Lifecycle().SetOnStarted(func() {

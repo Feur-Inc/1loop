@@ -414,6 +414,10 @@ func (ui *desktopUI) attachClipboardImage(raw []byte) {
 
 // pickImages attaches pictures chosen in the desktop's file chooser.
 func (ui *desktopUI) pickImages() {
+	if ui.server != nil {
+		ui.server.pickAttachments(true)
+		return
+	}
 	ui.pick(pickRequest{title: "Attach images", start: ui.pickStart(), multiple: true, filterName: "Images",
 		extensions: []string{".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}}, func(paths []string) {
 		for _, path := range paths {
@@ -467,16 +471,24 @@ func (ui *desktopUI) attachImage(img *image.NRGBA) {
 		ui.notice("Image", err.Error())
 		return
 	}
+	if ui.server != nil { // a server chat sends its pictures as files
+		ui.server.attachBytes("pasted-image.png", buf.Bytes())
+		return
+	}
 	ui.attachments = append(ui.attachments, core.ImagePart{Mime: "image/png", Data: base64.StdEncoding.EncodeToString(buf.Bytes())})
 	ui.renderAttachments()
 }
 
 func (ui *desktopUI) renderAttachments() {
 	ui.attachRow.RemoveAll()
-	for i, file := range ui.fileAttachments {
+	files := &ui.fileAttachments
+	if ui.server != nil { // a server chat's, uploaded there
+		files = &ui.server.fileAttachments
+	}
+	for i, file := range *files {
 		i := i
 		remove := newRow("", iconClose, styleWindow, func() {
-			ui.fileAttachments = append(ui.fileAttachments[:i], ui.fileAttachments[i+1:]...)
+			*files = append((*files)[:i], (*files)[i+1:]...)
 			ui.renderAttachments()
 		})
 		label := textLine(fitText(file.Name, 12.5, fyne.TextStyle{}, 180), 12.5, colText)

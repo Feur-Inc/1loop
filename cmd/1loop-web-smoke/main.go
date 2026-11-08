@@ -46,6 +46,7 @@ var (
 	prompt    = flag.String("prompt", "", "x,y of the composer, to type and send there")
 	scroll    = flag.String("scroll", "", "x,y over the conversation, to scroll it")
 	connect   = flag.String("connect", "", "x,y of the pairing sheet's Connect button")
+	picker    = flag.String("picker", "", "x,y of the composer's model button, to show its picker")
 	copyAt    = flag.String("copy", "", "x,y of a Copy button, to read the clipboard after")
 	longChat  = flag.Int("long", 60, "turns in the long chat")
 )
@@ -217,9 +218,17 @@ func main() {
 		time.Sleep(time.Second)
 		shot(ctx, "05-scrolled")
 	}
+	if *picker != "" {
+		click(ctx, *picker)
+		time.Sleep(1500 * time.Millisecond)
+		shot(ctx, "05-model-picker")
+		chromedp.Run(ctx, chromedp.KeyEvent(kb.Escape))
+		time.Sleep(500 * time.Millisecond)
+	}
 	if *prompt != "" {
 		click(ctx, *prompt)
-		chromedp.Run(ctx, chromedp.KeyEvent("Please answer slowly: é à ü — ünïcödé ✓"))
+		time.Sleep(time.Second)
+		typeText(ctx, "Please answer slowly: é à ü ç — ünïcödé ✓ @#{[|")
 		time.Sleep(time.Second)
 		shot(ctx, "06-typed")
 		chromedp.Run(ctx, chromedp.KeyEvent(kb.Enter))
@@ -270,6 +279,21 @@ func browser(trust bool) (context.Context, context.CancelFunc) {
 	return ctx, func() { cancel(); cancelAlloc() }
 }
 
+// typeText types as a keyboard does: chromedp sends the characters it has
+// no key for as "Unidentified", where a real é key's keydown says "é".
+func typeText(ctx context.Context, text string) {
+	for _, r := range text {
+		if _, known := kb.Keys[r]; known {
+			chromedp.Run(ctx, chromedp.KeyEvent(string(r)))
+			continue
+		}
+		key := string(r)
+		chromedp.Run(ctx,
+			input.DispatchKeyEvent(input.KeyDown).WithKey(key).WithText(key).WithUnmodifiedText(key),
+			input.DispatchKeyEvent(input.KeyUp).WithKey(key))
+	}
+}
+
 func shot(ctx context.Context, name string) {
 	var png []byte
 	if err := chromedp.Run(ctx, chromedp.CaptureScreenshot(&png)); err != nil {
@@ -307,7 +331,7 @@ func fakeModel() string {
 		"```go\nfunc main() {\n\tfmt.Println(\"hello from the fake model\")\n}\n```\n"
 	go http.Serve(listener, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method == "GET" {
-			io.WriteString(w, `{"data":[{"id":"fake","object":"model"}]}`)
+			io.WriteString(w, `{"data":[{"id":"fake","object":"model"},{"id":"gpt-5.5","object":"model"},{"id":"gpt-5.4-mini","object":"model"},{"id":"qwen3-coder-30b","object":"model"},{"id":"qwen3-8b","object":"model"}]}`)
 			return
 		}
 		body, _ := io.ReadAll(r.Body)

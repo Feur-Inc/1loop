@@ -972,40 +972,6 @@ func (remote *remoteDesktop) modelText(label, effort string) string {
 }
 
 // modelMenu chooses the chat's model and reasoning among the server's.
-func (remote *remoteDesktop) modelMenu() {
-	ui := remote.parent
-	current, effort := remote.model, remote.effort
-	if remote.current != "" {
-		current, effort = remote.meta.Model, remote.meta.Effort
-	}
-	var actions []menuAction
-	for _, model := range remote.models {
-		model := model
-		action := menuAction{label: model.Name, detail: model.Detail, run: func() {
-			remote.action("/api/model", map[string]string{"chat": remote.current, "label": model.Label})
-		}}
-		action.checked = model.Label == current
-		actions = append(actions, action)
-	}
-	for _, model := range remote.models {
-		if model.Label != current {
-			continue
-		}
-		for _, entry := range model.Efforts {
-			entry := entry
-			action := menuAction{label: "Reasoning · " + entry.Label, detail: entry.About, run: func() {
-				remote.action("/api/model", map[string]string{"chat": remote.current, "effort": entry.Value})
-			}}
-			action.checked = entry.Value == effort
-			actions = append(actions, action)
-		}
-	}
-	if len(actions) == 0 {
-		actions = append(actions, menuAction{label: "The server has no model yet"})
-	}
-	showMenu(ui.window, ui.model.row, actions)
-}
-
 // approvalMenu is the approval chip for a server: its mode, for every chat.
 func (remote *remoteDesktop) approvalMenu() {
 	ui := remote.parent

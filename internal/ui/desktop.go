@@ -1713,6 +1713,9 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.saveTimer.Stop()
 		ui.saveTimer = nil
 	}
+	if ui.statePath == "" { // the browser client: its chats are the server's (web_js.go)
+		return
+	}
 	if ui.stateBlocked {
 		return
 	}

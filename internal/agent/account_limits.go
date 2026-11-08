@@ -33,6 +33,12 @@ type AccountLimits struct {
 	Checked time.Time
 }
 
+// NewAccountLimitWindow is a window read back from a server's /api/limits,
+// which says what is left.
+func NewAccountLimitWindow(label string, left float64, reset time.Time) AccountLimitWindow {
+	return AccountLimitWindow{Label: label, used: 100 - left, ResetAt: reset}
+}
+
 func (window AccountLimitWindow) Remaining() float64 {
 	return math.Max(0, math.Min(100, 100-window.used))
 }

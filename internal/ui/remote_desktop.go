@@ -156,6 +156,7 @@ type remoteDesktop struct {
 	accounts         []remoteapi.Account
 	defaultPresets   bool
 	model, effort    string // the server's defaults, for a new chat
+	tier             string // and its speed
 	approvalMode     string
 	autoMode         bool
 	convs            map[string]*conversation // the server's chats as this window shows them
@@ -586,6 +587,7 @@ func (remote *remoteDesktop) refreshLoop() {
 				Accounts                    []remoteapi.Account
 				DefaultPresets              bool
 				Model, Effort, ApprovalMode string
+				Tier                        string
 				AutoMode                    bool // the server's model has an Auto mode
 			}
 		}
@@ -621,7 +623,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			remote.show(state.Name, state.Workspace, state.Chats, projects.Projects)
 			remote.models = state.Settings.Models
 			remote.accounts, remote.defaultPresets = state.Settings.Accounts, state.Settings.DefaultPresets
-			remote.model, remote.effort = state.Settings.Model, state.Settings.Effort
+			remote.model, remote.effort, remote.tier = state.Settings.Model, state.Settings.Effort, state.Settings.Tier
 			remote.approvalMode, remote.autoMode = state.Settings.ApprovalMode, state.Settings.AutoMode
 			remote.parent.updateApprovalControl()
 			if id == "" {

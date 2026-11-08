@@ -120,6 +120,8 @@ const (
 	KeyMemory            = "agent.memory"
 	KeyAutoResume        = "models.auto_resume"
 	KeyWorktreeSort      = "general.worktree_sort"
+	KeyDiscordPresence   = "general.discord_presence"
+	KeyDiscordDetails    = "general.discord_details"
 )
 
 var list = []Setting{
@@ -140,6 +142,12 @@ var list = []Setting{
 		Description: "How the sidebar and the Repository window order a project's git worktrees.",
 		Keywords:    []string{"worktree", "sort", "order", "branch", "git", "sidebar"},
 		Values:      []Value{{"recent", "Latest commit"}, {"name", "Name"}, {"pull", "Pull requests first"}}},
+	{Key: KeyDiscordPresence, Section: General, Title: "Discord status", Where: OnDesktop, Kind: Toggle, Protected: true,
+		Description: "Shows on your Discord profile that 1loop is working: the model, what it is doing and for how long.",
+		Keywords:    []string{"discord", "rich presence", "status", "activity", "profile", "playing", "rpc"}},
+	{Key: KeyDiscordDetails, Section: General, Title: "Share the chat on Discord", Where: OnDesktop, Kind: Toggle, Protected: true,
+		Description: "Adds the chat's title, its project and the current command or file to the Discord status.",
+		Keywords:    []string{"discord", "rich presence", "privacy", "project", "chat", "details", "share"}},
 	{Key: "general.import", Section: General, Title: "Import chats", Where: OnDesktop, Kind: Action,
 		Description: "Bring conversations over from Claude Code, Codex and other apps.",
 		Keywords:    []string{"import", "history", "migrate", "conversations", "codex", "claude"}},

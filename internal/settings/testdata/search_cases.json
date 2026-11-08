@@ -1,4 +1,6 @@
 [
+  {"query": "discord", "first": "general.discord_presence", "why": "a keyword, before the setting that refines it", "also": ["general.discord_details"]},
+  {"query": "rich presence", "first": "general.discord_presence", "why": "the protocol's name"},
   {"query": "sudo", "first": "agent.approval_mode", "why": "a keyword"},
   {"query": "YOLO", "first": "agent.approval_mode", "why": "case"},
   {"query": "permisions", "first": "agent.approval_mode", "why": "a typo"},

@@ -35,6 +35,7 @@ import (
 	"1loop/internal/browser"
 	"1loop/internal/computeruse"
 	"1loop/internal/core"
+	"1loop/internal/discord"
 	"1loop/internal/extensions"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
@@ -219,6 +220,9 @@ type desktopUI struct {
 	classicCompaction bool              // settings: dynamic context compaction turned off
 	memoryOff         bool              // settings: the agent's memory tool turned off
 	autoResume        *agent.AutoResume // settings: what a rate limit does to a run
+	discordPresence   bool              // settings: show on Discord what the agent is doing
+	discordDetails    bool              // settings: with the chat, project and tool
+	presence          *discord.Presence // while discordPresence is on
 	tips              *tipLayer
 
 	// Window and sidebar
@@ -443,6 +447,7 @@ func (ui *desktopUI) release() {
 	extensions.Servers.CloseAll() // the MCP servers 1loop started
 	ui.mark.stop()
 	ui.workMark.stop()
+	ui.presence.Close()
 	ui.persist(true)
 	ui.browser.WaitClosed() // Chrome writes its profile as it closes
 	ui.backend.CloseChatGPTWeb()
@@ -989,6 +994,7 @@ func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
 	run.cancel = func() { run.stopped = true; cancel() }
 	chat.run = run
 	ui.remote.metaChanged(chat)
+	ui.syncPresence()
 	if chat == ui.current {
 		ui.syncRun()
 	}
@@ -1007,6 +1013,7 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	}
 	chat.run = nil
 	ui.remote.metaChanged(chat)
+	ui.syncPresence()
 	ui.staleAccountLimits(chat.Config.ConnectionID)
 	if run != nil && run.approval != nil {
 		run.approval.dismiss()
@@ -1689,6 +1696,8 @@ type savedState struct {
 	LocalWorkspace    string                `json:"localWorkspace,omitempty"` // while an SSH machine is the target
 	Worktrees         map[string]string     `json:"worktrees,omitempty"`      // folder → project
 	WorktreeSort      string                `json:"worktreeSort,omitempty"`
+	DiscordPresence   bool                  `json:"discordPresence,omitempty"`
+	DiscordDetails    bool                  `json:"discordDetails,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1743,6 +1752,8 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.localWorkspace,
 		ui.worktrees,
 		ui.worktreeSort,
+		ui.discordPresence,
+		ui.discordDetails,
 	})
 	if ui.panel != nil {
 		ui.panel.stash() // the open chat's panel, as it is now
@@ -1860,6 +1871,8 @@ func (ui *desktopUI) load() {
 	ui.classicCompaction = state.ClassicCompaction
 	ui.memoryOff = state.MemoryOff
 	ui.autoResume = state.AutoResume
+	ui.discordPresence, ui.discordDetails = state.DiscordPresence, state.DiscordDetails
+	ui.syncPresence()
 	for _, chat := range state.Chats {
 		if chat == nil {
 			continue

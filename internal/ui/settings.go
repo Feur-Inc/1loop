@@ -551,9 +551,25 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		sectionTitle("Where the agent runs"),
 		card(view.mark("general.remote_server", settingRow("HTTPS server", "Work on a headless 1loop server with its own models, files, browser and terminals. Approve this device in the server console.", newRow("Connect…", nil, styleOutline, ui.connectServer))),
 			view.mark("general.ssh", settingRow("SSH machines", "Other computers the agent can work on over SSH. "+machines, view.pageButton("SSH machines")))),
+		sectionTitle("Discord"),
+		card(view.mark(registry.KeyDiscordPresence, settingRow("Discord status",
+			"While the agent works, your Discord profile shows “Playing 1loop” with the model, what it is doing (thinking, running a command, editing files…) and for how long; “Idle” the rest of the time. Needs the Discord app open on this computer.",
+			newToggle(ui.discordPresence, func(on bool) { ui.setDiscordPresence(on, ui.discordDetails) }))),
+			view.mark(registry.KeyDiscordDetails, settingRow("Share the chat",
+				"Also shows the chat's title, its project and the command or file the agent is on. Off, they stay on this computer.",
+				newToggle(ui.discordDetails, func(on bool) { ui.setDiscordPresence(ui.discordPresence, on) })))),
 		sectionTitle("Import"),
 		card(view.mark("general.import", ui.importRow())),
 	)
+}
+
+// setDiscordPresence turns the Discord status on or off, with or without
+// the chat's details.
+func (ui *desktopUI) setDiscordPresence(on, details bool) {
+	ui.discordPresence, ui.discordDetails = on, details
+	platform.Devf("ui", "discord status %v, details %v", on, details)
+	ui.syncPresence()
+	ui.save()
 }
 
 // setWorktreeSort orders the worktrees, in the sidebar and the Repository

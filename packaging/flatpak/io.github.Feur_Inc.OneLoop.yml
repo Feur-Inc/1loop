@@ -39,6 +39,12 @@ finish-args:
   - --device=dri
   # SSH machines can sign in with the session's SSH agent (SSH_AUTH_SOCK).
   - --socket=ssh-auth
+  # The Discord status (off by default) talks to the Discord app's IPC
+  # socket: the native build's, and those of the Discord and Vesktop
+  # Flatpaks.
+  - --filesystem=xdg-run/discord-ipc-0
+  - --filesystem=xdg-run/app/com.discordapp.Discord:create
+  - --filesystem=xdg-run/.flatpak/dev.vencord.Vesktop:create
   # A coding agent reads and edits the user's projects, which can be
   # anywhere (home, other disks, /srv, /mnt…), and its commands run on the
   # host in those same folders (below), so the paths must be the same on

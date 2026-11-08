@@ -519,11 +519,13 @@ func (ui *desktopUI) takeAttachments() []core.ImagePart {
 }
 
 // ---------------------------------------------------------------------------
-// While a task runs, Enter queues the message: it becomes the next turn once
-// the model has answered. Ctrl+Enter steers instead: the message joins the
-// running task at the next gap between two model calls (after the current
-// tool calls). Both wait, per chat, in a tray above the composer, where they
-// can be reordered, edited in the prompt, sent at once or dropped.
+// While a task runs, a message sent (Enter, Ctrl+Enter, Send) steers it: it
+// shows at once at the conversation's end, greyed, and joins the running
+// task at the next gap between two model calls (after the current tool
+// calls), where it takes its place in the conversation. Messages kept for
+// the next turn (one that could not be sent, a queue left by a stopped
+// task) wait in a tray above the composer, where they can be reordered,
+// edited in the prompt, sent at once or dropped.
 
 func (ui *desktopUI) takeSteer(chat *conversation) []agent.Message {
 	out := chat.steer
@@ -606,35 +608,89 @@ func (ui *desktopUI) clearQueue() {
 	ui.renderQueue()
 }
 
-// renderQueue shows the open chat's waiting messages.
+// renderQueue shows the open chat's waiting messages: those steering it at
+// the conversation's end, those queued for the next turn in the tray.
 func (ui *desktopUI) renderQueue() {
 	ui.queueList.RemoveAll()
 	chat := ui.current
 	ui.remote.metaChanged(chat)
-	if chat == nil || len(chat.steer)+len(chat.queue) == 0 {
+	ui.renderPending()
+	if chat == nil || len(chat.queue) == 0 {
 		ui.queueTray.Hide()
 		return
-	}
-	for i, message := range chat.steer {
-		ui.queueList.Add(ui.queueRow(true, i, message))
 	}
 	for i, messageValue := range chat.queue {
 		ui.queueList.Add(ui.queueRow(false, i, messageValue))
 	}
-	label := fmt.Sprintf("%d queued", len(chat.queue))
-	switch {
-	case len(chat.queue) == 0:
-		label = "Steering the current task"
-	case len(chat.steer) > 0:
-		label += fmt.Sprintf(" · %d steering", len(chat.steer))
-	}
+	label := fmt.Sprintf("%d queued for the next turn", len(chat.queue))
 	if chat.run == nil {
 		label = "Queue paused · press Enter to resume"
-	} else if len(chat.steer) > 0 {
-		label += " · waiting for the next step"
 	}
 	ui.queueTitle.SetText(label)
 	ui.queueTray.Show()
+}
+
+// renderPending shows the messages sent while the agent works, greyed at
+// the conversation's end, until the agent takes them in. A server chat's
+// come from the server (its metadata), without actions.
+func (ui *desktopUI) renderPending() {
+	if ui.pendingBox == nil {
+		return
+	}
+	ui.pendingBox.RemoveAll()
+	type pendingMessage struct {
+		text  string
+		index int // in chat.steer; -1 for a server chat's
+	}
+	var waiting []pendingMessage
+	running := false
+	if ui.server != nil {
+		meta := ui.server.meta
+		running = meta.Running
+		for _, text := range append(append([]string(nil), meta.Steer...), meta.Queue...) {
+			waiting = append(waiting, pendingMessage{text, -1})
+		}
+	} else if chat := ui.current; chat != nil {
+		running = chat.run != nil
+		for i, message := range chat.steer {
+			waiting = append(waiting, pendingMessage{pendingText(message), i})
+		}
+	}
+	for _, message := range waiting {
+		text := newFlowText(plainSpans(message.text), theme.TextSize(), colMuted)
+		text.tail, text.tight = "", true
+		pad := theme.InnerPadding()
+		bubble := container.New(&bubbleLayout{text: text, chrom: 2*pad + 4},
+			surface(padded(pad, pad, pad, pad, text), withAlpha(colRaised, 0.5), colBorderSoft, 14, 2))
+		note := "Sent at the next step"
+		if !running {
+			note = "Not sent yet · press Enter to send"
+		}
+		status := textLine(note, 12, colFaint)
+		row := container.New(layout.NewCustomPaddedHBoxLayout(2), layout.NewSpacer(), container.NewCenter(status))
+		if index := message.index; index >= 0 {
+			row.Add(newRow("Edit", iconPencil, styleChip, func() { ui.editQueued(true, index) }))
+			row.Add(newRow("Remove", iconClose, styleChip, func() { ui.dropQueued(true, index) }))
+		}
+		ui.pendingBox.Add(container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, row))
+	}
+	ui.pendingBox.Refresh()
+}
+
+// pendingText is what a waiting message shows: its text, else its first
+// file's name, with its pictures counted.
+func pendingText(messageValue agent.Message) string {
+	text := strings.TrimSpace(messageValue.Typed())
+	if text == "" && len(messageValue.Files) > 0 {
+		text = messageValue.Files[0].Name
+	}
+	if text == "" {
+		return "[image]"
+	}
+	if len(messageValue.Images) > 0 {
+		text += fmt.Sprintf("  [+%d image]", len(messageValue.Images))
+	}
+	return text
 }
 
 // queueRow shows one waiting message; its actions appear on hover.

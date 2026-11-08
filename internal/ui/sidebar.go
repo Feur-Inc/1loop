@@ -396,6 +396,7 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 	ui.current = chat
 	ui.cfg = chat.Config
 	ui.prompt.switchDraft(chat.ID)
+	ui.scroll.rest() // what the wheel still owed the last chat
 	ui.followTail = true
 	ui.panel.switchTo(chat)
 	ui.transcript.RemoveAll()

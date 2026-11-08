@@ -419,7 +419,7 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		server.chats = append([]*serverChat{chat}, server.chats...)
 	}
 
-	if chat.handoff == nil && !(chat.run != nil && args.Mode == "steer") {
+	if chat.handoff == nil && chat.run == nil {
 		// Another provider, account or model than the chat's last turn: the
 		// client first asks the user how the new one receives the chat.
 		if cfg := server.runConfigLocked(chat, nil); agent.HandoffNeeded(cfg, chat.History) {
@@ -437,11 +437,10 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if chat.run != nil {
-		if args.Mode == "steer" {
-			chat.steer = append(chat.steer, m)
-		} else {
-			chat.queue = append(chat.queue, m)
-		}
+		// A message sent while the agent works joins it at its next step,
+		// whatever the client asked (older clients say "queue" or "send"):
+		// clients show it greyed at the conversation's end until then.
+		chat.steer = append(chat.steer, m)
 		server.changedLocked(chat, -1)
 	} else {
 		server.runLocked(chat, m)

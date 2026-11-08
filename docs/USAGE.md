@@ -130,8 +130,8 @@ ChatGPT (Web) work on this computer's projects only.
 
 | Keys | Action |
 |---|---|
-| Enter | send (queued while the agent works) |
-| Ctrl+Enter | steer the running task with this message |
+| Enter | send; while the agent works, the message shows greyed at the end of the conversation and joins the task at its next step |
+| Ctrl+Enter | the same as Enter |
 | Shift+Enter | new line |
 | Ctrl+Z / Ctrl+Y | undo / redo in the prompt |
 | Ctrl+K | new chat |

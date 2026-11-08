@@ -782,8 +782,10 @@ private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> U
         }
     }
     val tail by remember { derivedStateOf { items.size to (items.lastOrNull()?.text?.length ?: 0) } }
-    LaunchedEffect(tail, running, app.meta?.label) {
-        if (follow && items.isNotEmpty()) list.scrollToItem(items.size + 1, 0)
+    // Sent while the agent works: greyed at the end until the agent takes them in.
+    val pending = app.meta?.let { it.steer + it.queue }.orEmpty()
+    LaunchedEffect(tail, running, app.meta?.label, pending.size) {
+        if (follow && items.isNotEmpty()) list.scrollToItem(items.size + 1 + pending.size, 0)
     }
     LazyColumn(
         state = list, modifier = Modifier.fillMaxSize(),
@@ -841,6 +843,9 @@ private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> U
                 }
             }
         }
+        items(pending.size) { i ->
+            Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) { PendingBubble(pending[i], running) }
+        }
     }
     editing?.let { (index, text) -> EditSheet(text, onSend = { app.editMessage(index, it) }) { editing = null } }
 }
@@ -853,6 +858,25 @@ private fun answerText(items: List<Item>, index: Int): String {
         i--
     }
     return parts.joinToString("\n\n")
+}
+
+/** A message sent while the agent works: greyed until the agent takes it in at its next step. */
+@Composable
+private fun PendingBubble(text: String, running: Boolean) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
+        Box(Modifier.widthIn(max = 560.dp).fillMaxWidth(0.85f), contentAlignment = Alignment.CenterEnd) {
+            Text(
+                text,
+                style = Type.body.copy(color = Palette.muted),
+                modifier = Modifier.background(Palette.raised.copy(alpha = 0.5f), RoundedCornerShape(18.dp))
+                    .border(1.dp, Palette.borderSoft, RoundedCornerShape(18.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
+            )
+        }
+        Text(
+            if (running) "Sent at the next step" else "Not sent yet",
+            style = Type.caption.copy(color = Palette.faint), modifier = Modifier.padding(top = 4.dp, end = 4.dp),
+        )
+    }
 }
 
 @Composable
@@ -980,7 +1004,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 }
             }
         }
-        if (meta != null && (meta.queue.isNotEmpty() || meta.steer.isNotEmpty())) QueueTray(meta)
+        if (meta != null && meta.queue.isNotEmpty()) QueueTray(meta)
         // Questions closed without an answer: the run still waits for them.
         app.current?.let { app.questions[it] }?.takeIf { it.id in app.questionsAside }?.let { request ->
             QuestionTray(request) { app.questionsAside.remove(request.id) }
@@ -1054,9 +1078,8 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 }
                 if (running) {
                     if (ready) {
-                        RoundButton(Icons.arrowTurn, Palette.raised, Palette.amber, size = 36.dp, iconSize = 18.dp, description = "Steer now") { send("steer") }
-                        Spacer(Modifier.width(8.dp))
-                        RoundButton(Icons.send, Palette.amber, Palette.ink, size = 36.dp, description = "Queue") { send("queue") }
+                        // Joins the running task at its next step, shown greyed until then.
+                        RoundButton(Icons.send, Palette.amber, Palette.ink, size = 36.dp, description = "Send at the next step") { send("steer") }
                         Spacer(Modifier.width(8.dp))
                     }
                     RoundButton(Icons.close, Palette.text, Palette.ink, size = 36.dp, iconSize = 18.dp, description = "Stop") { app.stop() }
@@ -1103,11 +1126,7 @@ private fun QueueTray(meta: Meta) {
             .border(1.dp, Palette.borderSoft, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)).padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            if (meta.queue.isEmpty()) "Steering the current task" else "${meta.queue.size} queued" + if (meta.steer.isNotEmpty()) " · ${meta.steer.size} steering" else "",
-            style = Type.caption.copy(color = Palette.muted),
-        )
-        for (s in meta.steer) QueueLine(s, null)
+        Text("${meta.queue.size} queued for the next turn", style = Type.caption.copy(color = Palette.muted))
         meta.queue.forEachIndexed { i, q -> QueueLine(q, i + 1) }
     }
 }

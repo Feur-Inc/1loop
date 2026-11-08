@@ -903,11 +903,10 @@ func (ui *desktopUI) remoteSend(chatID, mode, workspace string, messageValue age
 		ui.startNew()
 	}
 	if chat != nil && chat.run != nil {
-		if mode == "steer" {
-			chat.steer = append(chat.steer, messageValue)
-		} else {
-			chat.queue = append(chat.queue, messageValue)
-		}
+		// Whatever the phone asked (an older app still says "queue"), a
+		// message sent while the agent works joins it at its next step, as
+		// one typed in the window does.
+		chat.steer = append(chat.steer, messageValue)
 		ui.renderQueue()
 		ui.remote.metaChanged(chat)
 		return chat.ID, ""

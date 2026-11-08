@@ -149,6 +149,7 @@ func framePaceSetup(fyne.Window)                      {}
 func framePaceWait(bool)                              {}
 func scrollGesture() (finger, released, ok bool)      { return false, false, false }
 func scrollEventTime() (milliseconds uint32, ok bool) { return 0, false }
+func scrollFinger() (finger, ok bool)                 { return false, false }
 
 // windowIdentity has nothing to do on X11: GLFW already names the window
 // class after its title, which is the application id.

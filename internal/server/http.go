@@ -29,6 +29,7 @@ func (server *headlessServer) routes() http.Handler {
 	})
 	if server.webDir != "" && !server.local {
 		mux.Handle("GET /app/", webClient(server.webDir))
+		mux.Handle("GET /{$}", http.RedirectHandler("/app/", http.StatusFound))
 	}
 	if !server.local {
 		mux.HandleFunc("POST /api/pair", server.pair)

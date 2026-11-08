@@ -25,6 +25,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.geometry.Size
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.animation.core.tween
@@ -88,7 +90,15 @@ private fun SettingsSectionPage(app: RemoteApp, section: String, highlight: Stri
         }
         Column(
             Modifier.fillMaxWidth().onGloballyPositioned { positions[title] = it.positionInParent().y.toInt() }
-                .drawBehind { if (light.value > 0f) drawRoundRect(Palette.amber.copy(alpha = light.value), cornerRadius = CornerRadius(12.dp.toPx())) }
+                .drawBehind {
+                    if (light.value > 0f) { // a little wider than the setting: its text does not touch the light's edge
+                        val margin = 10.dp.toPx()
+                        drawRoundRect(
+                            Palette.amber.copy(alpha = light.value), topLeft = Offset(-margin, -margin / 2),
+                            size = Size(size.width + 2 * margin, size.height + margin), cornerRadius = CornerRadius(12.dp.toPx()),
+                        )
+                    }
+                }
                 .padding(vertical = 4.dp),
             verticalArrangement = Arrangement.spacedBy(12.dp),
             content = content,

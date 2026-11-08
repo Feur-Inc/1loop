@@ -3,10 +3,11 @@
 package ui
 
 // Settings in the browser client (issue #267): the page has no computer of
-// its own, so each section is the server's, through its API, or says where
-// on the server it is set. The desktop's pages would read files that are
-// not there ("open extensions.json: not implemented on js") or reach sites
-// a page may not (the release page, for updates).
+// its own, so each section is the server's, through its API. The desktop's
+// own pages would read files that are not there ("open extensions.json: not
+// implemented on js") or reach sites a page may not (the release page, for
+// updates); Connections, Extensions and Connectors are the desktop's pages
+// on the server's API, as in its remote mode.
 
 import (
 	"context"
@@ -33,24 +34,13 @@ func (ui *desktopUI) browserSettings(section string) fyne.CanvasObject {
 	switch section {
 	case "Instructions":
 		return remote.instructionSettings()
-	case "Connections":
-		return serverSideSettings(ui, section, "The server's accounts and models",
-			"Chats run on the server, with its connections. They are set where the server runs: its configuration file (-config), or -provider, -base-url, -model and -api-key-env when it starts.")
-	case "Extensions":
-		return serverSideSettings(ui, section, "The server's skills, plugins and MCP servers",
-			"The agent runs on the server, with the extensions installed there, in the data folder of its user.")
-	case "Connectors":
-		return serverSideSettings(ui, section, "The server's connectors",
-			"Connectors such as GitHub sign in on the server, where the agent uses them.")
+	case "Connections", "Extensions", "Connectors":
+		return nil // the server's, as in the desktop's remote mode (settings.go)
 	case "Updates":
 		return remote.updateSettings()
 	default:
 		return remote.generalSettings()
 	}
-}
-
-func serverSideSettings(ui *desktopUI, section, title, detail string) fyne.CanvasObject {
-	return container.NewVBox(ui.prefs.pageTitle(section, "", nil), card(settingRow(title, detail, nil)))
 }
 
 // generalSettings is what of General a server takes: tool permissions and

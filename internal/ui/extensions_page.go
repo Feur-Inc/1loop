@@ -71,7 +71,12 @@ func (ui *desktopUI) extensionSettings() fyne.CanvasObject {
 	}
 	intro := note("Skills teach the agent a task; plugins bundle skills, MCP servers and hooks. Both work with 1loop's agent and with Claude Code. MCP servers give the agent the tools of other apps.")
 	page.show("store")
-	return container.NewVBox(ui.prefs.pageTitle("Extensions", "", nil), intro, padded(6, 10, 0, 0, tabs), page.body)
+	// The GitHub connector, a page of its own, opens from here: it is how
+	// the agent gets GitHub's tools, as an extension would bring them.
+	open := newRow("Open", iconChevronRight, styleChip, func() { ui.prefs.push(settingsFrame{content: ui.connectorSettings()}) })
+	open.iconAfter = true
+	connector := card(settingRow("GitHub connector", "Lets the agent use your GitHub repositories, with GitHub's official tools.", open))
+	return container.NewVBox(ui.prefs.pageTitle("Extensions", "", nil), intro, padded(0, 12, 0, 0, connector), padded(6, 10, 0, 0, tabs), page.body)
 }
 
 // extensionsChanged redraws the section after a change made elsewhere

@@ -2,7 +2,7 @@
 
 package ui
 
-// Import from Claude Code and Codex (Settings > General): their sessions on
+// Import from Claude Code and Codex (Settings > Connections): their sessions on
 // this computer, grouped by the folder they worked in, copied into 1loop as
 // chats of that folder's project. A whole project or single chats can be
 // chosen; a chat imported once is marked and not imported twice.
@@ -79,7 +79,7 @@ func (ui *desktopUI) importChats() {
 	importButton := newRow("Import", nil, stylePrimary, nil)
 	importButton.disabled = true
 	page := container.NewVBox(
-		settings.pageTitle("Import chats", "General", nil),
+		settings.pageTitle("Import chats", "Connections", nil),
 		note("Conversations found in Claude Code's and Codex's history on this computer, by the folder they worked in. Choose a project to take all its chats, or single chats. The files are only read: Claude Code and Codex keep them."),
 		list,
 	)

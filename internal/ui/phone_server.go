@@ -60,7 +60,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 	"github.com/skip2/go-qrcode"
 
@@ -1300,17 +1299,16 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 	if len(phones) == 0 {
 		phones = append(phones, settingRow("No paired phone yet", "Open the 1loop app on a phone connected to the same network.", nil))
 	}
-	var pairing fyne.CanvasObject = layout.NewSpacer()
-	if ui.remote != nil {
-		pairing = card(settingRow("Pair a phone", "Shows a QR code to scan with the 1loop app.", newRow("Pair a phone", iconPhone, styleChip, ui.showPairingQR)))
-	}
-	return container.NewVBox(
+	page := container.NewVBox(
 		ui.prefs.pageTitle("Phone remote", "", nil),
-		card(settingRow("Allow the 1loop phone app on this network", describe(), enabled)),
-		pairing,
-		sectionTitle("Paired phones"),
-		card(phones...),
-	)
+		padded(0, 10, 2, 0, plainFlow("Use 1loop on this computer from the 1loop phone app: its chats, models and projects stay here.", 13, colMuted)),
+		card(settingRow("Allow the 1loop phone app on this network", describe(), enabled)))
+	if ui.remote != nil { // a spacer here stretched and pushed the list to the bottom
+		page.Add(card(settingRow("Pair a phone", "Shows a QR code to scan with the 1loop app.", newRow("Pair a phone", iconPhone, styleChip, ui.showPairingQR))))
+	}
+	page.Add(sectionTitle("Paired phones"))
+	page.Add(card(phones...))
+	return page
 }
 
 // remoteDefaults gives conversations saved before the remote an id.

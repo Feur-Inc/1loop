@@ -22,6 +22,14 @@ import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
+import androidx.compose.ui.layout.positionInParent
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.geometry.CornerRadius
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.core.FastOutLinearInEasing
+import androidx.compose.animation.core.Animatable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
@@ -36,87 +44,164 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
+// Settings, as on the desktop (settings.go): a home with a search field and
+// the sections, in the same order and with the same names, each section a
+// page of its own (Android's settings pattern: an overview, then subscreens).
+// A search result opens its section, scrolls to the setting and lights it up.
 @Composable
 fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
-    BackHandler(onBack = onBack)
+    var section by app::settingsSection
+    var query by rememberSaveable { mutableStateOf("") }
+    var highlight by remember { mutableStateOf<String?>(null) }
+    val leave = { if (section != null) { section = null; highlight = null } else onBack() }
+    BackHandler(onBack = leave)
+    Column(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
+        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            RoundButton(Icons.back, Color.Transparent, Palette.muted, description = "Back", onClick = leave)
+            Text(section ?: "Settings", style = Type.title, modifier = Modifier.padding(start = 12.dp))
+        }
+        val shown = section
+        if (shown == null) {
+            SettingsHome(app, query, { query = it }) { name, title -> section = name; highlight = title }
+        } else {
+            SettingsSectionPage(app, shown, highlight)
+        }
+    }
+}
+
+/** One section's page; [highlight] is the setting a search opened it on. */
+@Composable
+private fun SettingsSectionPage(app: RemoteApp, section: String, highlight: String?) {
+    val scroll = rememberScrollState()
+    val positions = remember(section) { mutableStateMapOf<String, Int>() }
+    LaunchedEffect(section, highlight, positions[highlight]) {
+        positions[highlight ?: return@LaunchedEffect]?.let { scroll.animateScrollTo(maxOf(0, it - 40)) }
+    }
+    @Composable
+    fun Setting(title: String, content: @Composable ColumnScope.() -> Unit) {
+        val light = remember { Animatable(0f) }
+        LaunchedEffect(highlight) {
+            if (highlight == title) {
+                light.snapTo(0.22f)
+                light.animateTo(0f, tween(1600, easing = FastOutLinearInEasing))
+            }
+        }
+        Column(
+            Modifier.fillMaxWidth().onGloballyPositioned { positions[title] = it.positionInParent().y.toInt() }
+                .drawBehind { if (light.value > 0f) drawRoundRect(Palette.amber.copy(alpha = light.value), cornerRadius = CornerRadius(12.dp.toPx())) }
+                .padding(vertical = 4.dp),
+            verticalArrangement = Arrangement.spacedBy(12.dp),
+            content = content,
+        )
+    }
+    Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(20.dp), verticalArrangement = Arrangement.spacedBy(20.dp)) {
+        when (section) {
+            "Execution target" -> Setting("Execution target") {
+                Text("Where the agent works: it runs commands, edits files and keeps its projects there.", style = Type.small)
+                Text(app.server?.name.orEmpty(), style = Type.body)
+                Pill("Switch execution target") { app.switchTarget() }
+            }
+            "Connections" -> {
+                if (app.server?.localPhone == true) Setting("Connections") {
+                    Text("Accounts and services whose models the agent uses on this phone.", style = Type.small)
+                    Pill("Accounts and models", onClick = { app.connectionsOpen = true })
+                }
+                if (app.defaultPresets) Setting("Default model preset") { DefaultModelsSection(app) }
+                if (app.server?.localPhone != true && !app.defaultPresets) {
+                    Text("The connected computer or server manages its connections: open its settings to change them.", style = Type.small)
+                }
+            }
+            "Agent" -> {
+                Setting("Tool permissions") {
+                    Text("Tool permissions", style = Type.headline)
+                    Text("What the agent may do without asking: Approval asks before each command or edit, YOLO runs them at once.", style = Type.small)
+                    ApprovalChip(app)
+                }
+                Setting("Automatic resumption") { AutoResumeSection(app) }
+                Setting("Context compaction") { ModelCompactionSection(app) }
+                Setting("Hooks") { HooksSection(app) }
+            }
+            "Instructions" -> InstructionsSection(app) { title, content -> Setting(title, content) }
+            "Browser" -> Setting("Browsing data") { BrowserDataSection(app) }
+            "Extensions" -> {
+                Setting("Extensions") {
+                    Text("Extensions", style = Type.headline)
+                    Text("Skills and plugins from GitHub, and the MCP servers the agent uses.", style = Type.small)
+                    Pill("Skills, plugins and MCP servers", enabled = app.connected) { app.extensionsOpen = true }
+                }
+                Setting("GitHub connector") { GitHubConnectorSection(app) }
+            }
+            "This phone" -> {
+                Setting("While a model runs") { RunStatusSection() }
+                if (app.server?.localPhone == true) {
+                    val adb by app.local.adb.collectAsState()
+                    Setting("Phone access") {
+                        Text("Phone access", style = Type.headline)
+                        LocalAdbSection(adb, app::setAdbAllowed, app.local::openShizuku, manualApproval = app.approvalMode == "approval")
+                    }
+                    Setting("Work profile") { WorkProfileSection(app.local, adb) }
+                    Setting("Background execution") { BackgroundExecutionSection(adb.installed) }
+                    LaunchedEffect(Unit) { runCatching { app.refreshSharing() } }
+                    Setting("Share this phone") { SharingSection(app) }
+                    Setting("Linux") {
+                        Text("Linux", style = Type.headline)
+                        Text("The Debian the local agent works in: storage, packages, a terminal and a reset.", style = Type.small)
+                        Pill("Manage Linux", icon = Icons.terminal) { app.linuxOpen = true }
+                    }
+                }
+            }
+            "Updates" -> Setting("Updates") { UpdatesSection(app) }
+        }
+    }
+}
+
+/** Your preferences, which the agent reads with 1loop's instructions, and the memory that adds to them. */
+@Composable
+private fun InstructionsSection(app: RemoteApp, setting: @Composable (String, @Composable ColumnScope.() -> Unit) -> Unit) {
     val scope = rememberCoroutineScope()
     var preferences by remember(app.server) { mutableStateOf(app.userPreferences) }
     var saving by remember { mutableStateOf(false) }
     var notice by remember { mutableStateOf<String?>(null) }
-    Column(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
-        Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            RoundButton(Icons.back, Color.Transparent, Palette.muted, description = "Back", onClick = onBack)
-            Text("Settings", style = Type.title, modifier = Modifier.padding(start = 12.dp))
-        }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(16.dp)) {
-            Text("Execution target", style = Type.headline)
-            Text(app.server?.name.orEmpty(), style = Type.body)
-            Pill("Switch execution target") { app.switchTarget() }
-            Text("Approvals", style = Type.headline)
-            ApprovalChip(app)
-            AutoResumeSection(app)
-            if (app.server?.localPhone == true) {
-                Text("Connections", style = Type.headline)
-                Pill("Accounts and models", onClick = { app.connectionsOpen = true })
-                Text("Phone access · Shizuku", style = Type.headline)
-                val adb by app.local.adb.collectAsState()
-                LocalAdbSection(adb, app::setAdbAllowed, app.local::openShizuku, manualApproval = app.approvalMode == "approval")
-                WorkProfileSection(app.local, adb)
-                BackgroundExecutionSection(adb.installed)
-                LaunchedEffect(Unit) { runCatching { app.refreshSharing() } }
-                SharingSection(app)
-                Text("Linux", style = Type.headline)
-                Text("The Debian the local agent works in: storage, packages, a terminal and a reset.", style = Type.small)
-                Pill("Manage Linux", icon = Icons.terminal) { app.linuxOpen = true }
+    setting("Your preferences") {
+        Text("Your preferences", style = Type.headline)
+        Text("Added to 1loop's base instructions. They never replace its system prompt or tool rules. They apply to subsequent turns on this execution target.", style = Type.small)
+        if (app.preferencesEditable) {
+            BasicTextField(
+                preferences, { if (it.length <= 65536) { preferences = it; notice = null } },
+                modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp).background(Palette.surface, RoundedCornerShape(12.dp))
+                    .border(1.dp, Palette.borderSoft, RoundedCornerShape(12.dp)).padding(14.dp),
+                textStyle = Type.body, minLines = 8,
+                decorationBox = { inner ->
+                    Box { if (preferences.isEmpty()) Text("Language, tone, coding conventions, level of detail…", style = Type.small); inner() }
+                },
+            )
+            Pill(if (saving) "Saving…" else "Save preferences", primary = true, enabled = app.connected && !saving) {
+                saving = true
+                scope.launch {
+                    try { app.savePreferences(preferences); notice = "Saved" }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { notice = failure.message ?: "Could not save preferences." }
+                    finally { saving = false }
+                }
             }
-            RunStatusSection()
-            Text("Extensions", style = Type.headline)
-            Text("Skills and plugins from GitHub, and the MCP servers the agent uses.", style = Type.small)
-            Pill("Skills, plugins and MCP servers", enabled = app.connected) { app.extensionsOpen = true }
-            GitHubConnectorSection(app)
-            Text("Personalization", style = Type.headline)
-            Text("Your preferences are added to 1loop's base instructions. They never replace its system prompt or tool rules. They apply to subsequent turns on this execution target.", style = Type.small)
-            if (app.preferencesEditable) {
-                BasicTextField(
-                    preferences, { if (it.length <= 65536) { preferences = it; notice = null } },
-                    modifier = Modifier.fillMaxWidth().heightIn(min = 180.dp).background(Palette.surface, RoundedCornerShape(12.dp))
-                        .border(1.dp, Palette.borderSoft, RoundedCornerShape(12.dp)).padding(14.dp),
-                    textStyle = Type.body, minLines = 8,
-                    decorationBox = { inner ->
-                        Box { if (preferences.isEmpty()) Text("Language, tone, coding conventions, level of detail…", style = Type.small); inner() }
-                    },
-                )
-                Pill(if (saving) "Saving…" else "Save preferences", primary = true, enabled = app.connected && !saving) {
-                    saving = true
+        } else Text("Update the connected desktop or server to edit preferences here.", style = Type.small)
+        notice?.let { Text(it, style = Type.small) }
+    }
+    app.memoryEnabled?.let { enabled ->
+        setting("Memory") {
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Memory", style = Type.body.copy(fontWeight = FontWeight.Medium))
+                    Text("The agent adds what it learns about you to these preferences, each change shown to you for approval. Off: it is not offered the memory tool.", style = Type.small)
+                }
+                Toggle(enabled, enabled = app.connected) { on ->
                     scope.launch {
-                        try { app.savePreferences(preferences); notice = "Saved" }
+                        try { app.setMemory(on); notice = null }
                         catch (cancelled: CancellationException) { throw cancelled }
-                        catch (failure: Exception) { notice = failure.message ?: "Could not save preferences." }
-                        finally { saving = false }
-                    }
-                }
-            } else Text("Update the connected desktop or server to edit preferences here.", style = Type.small)
-            notice?.let { Text(it, style = Type.small) }
-            app.memoryEnabled?.let { enabled ->
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Column(Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                        Text("Memory", style = Type.body.copy(fontWeight = FontWeight.Medium))
-                        Text("The agent adds what it learns about you to these preferences, each change shown to you for approval. Off: it is not offered the memory tool.", style = Type.small)
-                    }
-                    Toggle(enabled, enabled = app.connected) { on ->
-                        scope.launch {
-                            try { app.setMemory(on); notice = null }
-                            catch (cancelled: CancellationException) { throw cancelled }
-                            catch (failure: Exception) { notice = failure.message ?: "Could not change memory." }
-                        }
+                        catch (failure: Exception) { notice = failure.message ?: "Could not change memory." }
                     }
                 }
             }
-            if (app.defaultPresets) DefaultModelsSection(app)
-            ModelCompactionSection(app)
-            UpdatesSection(app)
-            BrowserDataSection(app)
-            HooksSection(app)
         }
     }
 }
@@ -272,7 +357,7 @@ private fun ModelCompactionSection(app: RemoteApp) {
     var notice by remember { mutableStateOf<String?>(null) }
     var saving by remember { mutableStateOf(false) }
     val model = app.models.firstOrNull { it.label == selected } ?: app.chatModel
-    Text("Model context", style = Type.headline)
+    Text("Context compaction", style = Type.headline)
     Text("When 1loop compacts a conversation, for each model: choose a model, then its target in tokens.", style = Type.small)
     Box {
         Pill(model?.name ?: "Choose a model", enabled = app.models.isNotEmpty()) { expanded = true }
@@ -321,7 +406,7 @@ private fun BrowserDataSection(app: RemoteApp) {
     var asking by remember { mutableStateOf(false) }
     var busy by remember { mutableStateOf(false) }
     var status by remember(app.server) { mutableStateOf<String?>(null) }
-    Text("Browser", style = Type.headline)
+    Text("Browsing data", style = Type.headline)
     Text(
         if (app.server?.localPhone == true) "The agent's browser on this phone keeps its cookies and logins, cache and site data. Clear erases all of it."
         else "The agent's browser on ${app.server?.name ?: "the computer"} keeps its cookies and logins, cache, site data and history. Clear erases all of it.",

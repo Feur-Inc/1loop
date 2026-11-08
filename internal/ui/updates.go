@@ -104,7 +104,7 @@ func (ui *desktopUI) updateSettings() fyne.CanvasObject {
 	status := widget.NewLabel("")
 	status.Wrapping = fyne.TextWrapWord
 	notes := newMarkdownView("")
-	box := container.NewVBox()
+	box := container.NewVBox(ui.prefs.pageTitle("Updates", "", nil))
 	var render func()
 	check := newRow("Check now", nil, styleOutline, nil)
 	install := newRow("Update and restart", nil, stylePrimary, nil)

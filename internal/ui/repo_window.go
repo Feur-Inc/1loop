@@ -276,7 +276,7 @@ func (window *repoWindow) hubProblem(state *repoState) bool {
 		window.body.Add(note("Reading GitHub…"))
 	default:
 		if !state.hub.Signed {
-			window.body.Add(note("Read without a GitHub account: checks are unknown and private repositories are hidden. Connect GitHub in Settings → Connectors."))
+			window.body.Add(note("Read without a GitHub account: checks are unknown and private repositories are hidden. Connect GitHub in Settings → Extensions → GitHub connector."))
 		}
 		return false
 	}

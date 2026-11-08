@@ -2,7 +2,7 @@
 
 package ui
 
-// Settings → General → Browser → Import cookies: the agents' browser logs
+// Settings → Browser and computer → Import cookies: the agents' browser logs
 // in with the cookies of a browser profile on this computer (desktop only).
 
 import (

@@ -64,7 +64,7 @@ func (panel *toolPanel) terminalTab(dir, machineID string) (panelTab, error) {
 		machine := panel.ui.machineFor(machineID)
 		if machine == nil {
 			cancel()
-			return panelTab{}, fmt.Errorf("This SSH machine is no longer in Settings → SSH machines")
+			return panelTab{}, fmt.Errorf("This SSH machine is no longer in Settings → Execution target")
 		}
 		failed = make(chan error, 1)
 		file = newLazyTerminal(ctx, machine, dir, func(err error) { failed <- err })
@@ -167,7 +167,7 @@ func (panel *toolPanel) changesTab(root, machineID string) panelTab {
 			case machineID == "":
 				diff, err = agent.WorkspaceDiff(ctx, root, staged)
 			case machine == nil:
-				err = fmt.Errorf("This SSH machine is no longer in Settings → SSH machines")
+				err = fmt.Errorf("This SSH machine is no longer in Settings → Execution target")
 			default:
 				diff, err = agent.MachineDiff(ctx, machine, root, staged)
 			}

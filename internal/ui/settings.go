@@ -65,19 +65,27 @@ func jsonEntry(value map[string]any) *widget.Entry {
 // ---------------------------------------------------------------------------
 // The page and its navigation.
 
+// settingsSections are grouped by what the user wants to do, in the same
+// order and with the same names as on the phone (MobileSettings.kt): where
+// the agent works, with which accounts, how it behaves, what it is told,
+// the tools around it, the phone, and updates.
 var settingsSections = []struct {
 	name string
 	icon fyne.Resource
 }{
-	{"General", iconSliders},
+	{"Execution target", iconTerminal},
 	{"Connections", iconPlug},
-	{"SSH machines", iconTerminal},
+	{"Agent", iconSliders},
 	{"Instructions", iconDocument},
+	{"Browser and computer", iconGlobe},
 	{"Extensions", iconPuzzle},
-	{"Connectors", iconPlug},
 	{"Phone remote", iconPhone},
 	{"Updates", iconArrowTurn},
 }
+
+// settingsAliases are sections of earlier versions, still named by links
+// and messages: they open where their settings went.
+var settingsAliases = map[string]string{"General": "Agent", "SSH machines": "Execution target", "Connectors": "Extensions"}
 
 // settingsFrame is one page of the settings: a section, or what was opened
 // from it.
@@ -86,6 +94,7 @@ type settingsFrame struct {
 	actions     []fyne.CanvasObject // pinned under the page: Cancel, Save
 	leave       func()              // called when the page is left without saving
 	beforeLeave func(func())        // asks what to do with an unsaved draft
+	search      bool                // the search's results, not a section
 }
 
 type settingsView struct {
@@ -101,19 +110,29 @@ type settingsView struct {
 	barRow  *fyne.Container
 	frames  []settingsFrame // the section, then the pages opened from it
 	panelOn bool            // the tool panel's button was showing
+
+	search  *widget.Entry                // at the top of the sidebar
+	anchors map[string]*canvas.Rectangle // the open page's rows by title: a search result brings one into view
 }
 
 func (ui *desktopUI) buildSettings() {
-	settings := &settingsView{ui: ui, rows: map[string]*tapRow{}, section: "General"}
+	settings := &settingsView{ui: ui, rows: map[string]*tapRow{}, section: settingsSections[0].name}
 	back := newRow("Back to 1loop", iconChevronLeft, styleNav, settings.close)
+	settings.search = widget.NewEntry()
+	settings.search.SetPlaceHolder("Search settings")
+	settings.search.ActionItem = widget.NewIcon(theme.SearchIcon())
+	settings.search.OnChanged = settings.searchChanged
 	nav := container.New(layout.NewCustomPaddedVBoxLayout(1))
 	for _, section := range settingsSections {
 		name := section.name
-		row := newRow(name, section.icon, styleNav, func() { settings.show(name) })
+		row := newRow(name, section.icon, styleNav, func() {
+			settings.clearSearch()
+			settings.show(name)
+		})
 		settings.rows[name] = row
 		nav.Add(row)
 	}
-	settings.side = container.NewVBox(back, padded(14, 6, 12, 0, textLine("Settings", 13, colFaint)), nav)
+	settings.side = container.NewVBox(back, padded(10, 8, 4, 4, settings.search), padded(8, 6, 12, 0, textLine("Settings", 13, colFaint)), nav)
 	settings.side.Hide()
 
 	settings.column = container.NewStack()
@@ -186,30 +205,43 @@ func (settings *settingsView) showNow(section string) {
 	for len(settings.frames) > 0 {
 		settings.drop()
 	}
+	sub := ""
+	if alias, ok := settingsAliases[section]; ok {
+		if section == "Connectors" {
+			sub = section
+		}
+		section = alias
+	}
 	settings.section = section
 	for name, row := range settings.rows {
 		row.SetSelected(name == section)
 	}
+	settings.anchors = map[string]*canvas.Rectangle{}
+	settingAnchors = settings.anchors
+	defer func() { settingAnchors = nil }()
 	var page fyne.CanvasObject
 	switch section {
 	case "Connections":
 		page = settings.ui.connectionSettings()
-	case "SSH machines":
-		page = settings.ui.sshSettings()
+	case "Agent":
+		page = settings.ui.agentSettings()
 	case "Instructions":
 		page = settings.ui.instructionSettings()
+	case "Browser and computer":
+		page = settings.ui.browserSettings()
 	case "Extensions":
 		page = settings.ui.extensionSettings()
-	case "Connectors":
-		page = settings.ui.connectorSettings()
 	case "Phone remote":
 		page = settings.ui.remoteSettings()
 	case "Updates":
 		page = settings.ui.updateSettings()
 	default:
-		page = settings.ui.generalSettings()
+		page = settings.ui.executionSettings()
 	}
 	settings.frames = []settingsFrame{{content: page}}
+	if sub == "Connectors" { // the GitHub connector, opened from Extensions
+		settings.frames = append(settings.frames, settingsFrame{content: settings.ui.connectorSettings()})
+	}
 	settings.present()
 }
 
@@ -300,7 +332,7 @@ func (settings *settingsView) pageTitle(title, back string, trailing fyne.Canvas
 func sectionTitle(text string) fyne.CanvasObject {
 	title := textLine(text, 14, colText)
 	title.TextStyle = fyne.TextStyle{Bold: true}
-	return padded(18, 8, 2, 0, title)
+	return anchored(text, padded(18, 8, 2, 0, title))
 }
 
 // card frames rows, with a rule between two of them.
@@ -317,6 +349,24 @@ func card(rows ...fyne.CanvasObject) fyne.CanvasObject {
 	return surface(box, colSurface, colBorder, 12, 0)
 }
 
+// settingAnchors, while a section's page is built, collects its rows by
+// title: a search result scrolls to its row and lights it up briefly.
+var settingAnchors map[string]*canvas.Rectangle
+
+// anchored lays a row over a transparent rectangle registered under its
+// title, which the search's highlight fills for a moment.
+func anchored(title string, row fyne.CanvasObject) fyne.CanvasObject {
+	if settingAnchors == nil {
+		return row
+	}
+	light := canvas.NewRectangle(color.Transparent)
+	light.CornerRadius = 10
+	if _, taken := settingAnchors[title]; !taken {
+		settingAnchors[title] = light
+	}
+	return container.NewStack(light, row)
+}
+
 // settingRow is a title and its explanation, with a control at the end.
 func settingRow(title, detail string, control fyne.CanvasObject) fyne.CanvasObject {
 	text := container.New(layout.NewCustomPaddedVBoxLayout(3), plainFlow(title, 14, colText))
@@ -328,7 +378,7 @@ func settingRow(title, detail string, control fyne.CanvasObject) fyne.CanvasObje
 		end = padded(0, 0, 20, 0, container.NewCenter(control))
 	}
 	// The text keeps the row's width and sits at mid-height beside a taller control.
-	return padded(13, 13, 16, 16, container.NewBorder(nil, nil, nil, end, container.NewVBox(layout.NewSpacer(), text, layout.NewSpacer())))
+	return anchored(title, padded(13, 13, 16, 16, container.NewBorder(nil, nil, nil, end, container.NewVBox(layout.NewSpacer(), text, layout.NewSpacer()))))
 }
 
 // settingStack is a title and its explanation above a wide control.
@@ -337,7 +387,7 @@ func settingStack(title, detail string, below fyne.CanvasObject) fyne.CanvasObje
 	if detail != "" {
 		text.Add(plainFlow(detail, 12.5, colMuted))
 	}
-	return padded(13, 14, 16, 16, container.New(layout.NewCustomPaddedVBoxLayout(9), text, below))
+	return anchored(title, padded(13, 14, 16, 16, container.New(layout.NewCustomPaddedVBoxLayout(9), text, below)))
 }
 
 // sized gives a control (an entry, a picker) a width of its own.
@@ -430,21 +480,11 @@ func (renderer *toggleRenderer) Destroy() {}
 // ---------------------------------------------------------------------------
 // General.
 
-func (ui *desktopUI) generalSettings() fyne.CanvasObject {
+// agentSettings is how the agent behaves: what it may do without asking,
+// what happens at a rate limit, how its context is kept small, and the
+// user's hooks.
+func (ui *desktopUI) agentSettings() fyne.CanvasObject {
 	settings := ui.prefs
-	change := newRow("Change…", nil, styleOutline, func() {
-		ui.pick(pickRequest{title: "Choose the workspace", start: ui.cfg.Workspace, folder: true}, func(paths []string) {
-			root, err := agent.ResolveWorkspace(paths[0])
-			if err != nil {
-				ui.notice("Workspace", err.Error())
-				return
-			}
-			if root != ui.cfg.Workspace {
-				ui.selectProject(root) // shows the project's start screen: come back here
-				settings.openOn("General")
-			}
-		})
-	})
 	mode := newPicker(ui.window, "Tool permissions", styleField, nil)
 	mode.Options = []string{"Approval required", "YOLO mode"}
 	modes := []string{"approval", "yolo"}
@@ -469,19 +509,33 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		ui.save()
 	}
 	return container.NewVBox(
-		settings.pageTitle("General", "", nil),
-		sectionTitle("Workspace"),
-		card(ui.projectFolderRow(change)),
-		sectionTitle("Remote server"),
-		card(settingRow("HTTPS server", "Work on a headless 1loop server with its own models, files, browser and terminals. Approve this device in the server console.", newRow("Connect…", nil, styleOutline, ui.connectServer))),
+		settings.pageTitle("Agent", "", nil),
+		padded(0, 10, 2, 0, plainFlow("How the agent works: what it may do without asking, what it does at a rate limit, and how its context stays small.", 13, colMuted)),
 		sectionTitle("Permissions"),
 		card(settingRow("Tool permissions",
 			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto works as Codex: reads run at once, other commands run in a sandbox that writes only the workspace, and destructive ones go to Codex's review (ChatGPT account) or Claude Code's own Auto mode; other connections have no Auto mode and ask.",
 			sized(230, mode.row))),
-		sectionTitle("Import"),
-		card(ui.importRow()),
+		sectionTitle("Rate limits"),
+		card(settingRow("Automatic resumption", "What 1loop does when a conversation reaches a rate limit: wait for the reset, or go on with another model, in the order you choose.", newRow("Configure…", nil, styleOutline, ui.configureAutoResume))),
+		sectionTitle("Context"),
+		card(settingRow("Dynamic compaction",
+			"On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way.",
+			newToggle(!ui.classicCompaction, func(on bool) {
+				ui.classicCompaction = !on
+				platform.Devf("ui", "dynamic compaction %v", on)
+				ui.save()
+			}))),
 		sectionTitle("Hooks"),
 		card(ui.hooksRow()),
+	)
+}
+
+// browserSettings is the agents' browser (Browser Use) and the screen they
+// may control (Computer Use).
+func (ui *desktopUI) browserSettings() fyne.CanvasObject {
+	return container.NewVBox(
+		ui.prefs.pageTitle("Browser and computer", "", nil),
+		padded(0, 10, 2, 0, plainFlow("The browser the agent uses (Browser Use) and the screen it may control (Computer Use).", 13, colMuted)),
 		sectionTitle("Browser"),
 		card(settingRow("Browsing data",
 			"The agents' browser keeps its cookies and logins, cache, site data and history from one session to the next, in "+browser.ProfileDir()+". Clear erases all of it.",
@@ -491,15 +545,6 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 				newRow("Import…", nil, styleOutline, ui.importCookies))),
 		sectionTitle("Computer Use"),
 		card(ui.computerScreenRow()),
-		sectionTitle("Context"),
-		card(settingRow("Automatic resumption", "What 1loop does when a conversation reaches a rate limit: wait for the reset, or go on with another model, in the order you choose.", newRow("Configure…", nil, styleOutline, ui.configureAutoResume))),
-		card(settingRow("Dynamic compaction",
-			"On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way.",
-			newToggle(!ui.classicCompaction, func(on bool) {
-				ui.classicCompaction = !on
-				platform.Devf("ui", "dynamic compaction %v", on)
-				ui.save()
-			}))),
 	)
 }
 
@@ -545,8 +590,8 @@ func (ui *desktopUI) editHooks() {
 			return
 		}
 		dialog.dismiss()
-		if ui.prefs.open && ui.prefs.section == "General" {
-			ui.prefs.show("General") // the count follows
+		if ui.prefs.open && ui.prefs.section == "Agent" {
+			ui.prefs.show("Agent") // the count follows
 		}
 	})
 	dialog = ui.modal("Hooks", body, 640, nil, cancel, save)
@@ -580,8 +625,8 @@ func (ui *desktopUI) computerScreenRow() fyne.CanvasObject {
 			grant.Width, grant.Height, grant.X, grant.Y)
 	}
 	refresh := func() { // the page, if it is still the one on screen
-		if ui.prefs.open && ui.prefs.section == "General" {
-			ui.prefs.show("General")
+		if ui.prefs.open && ui.prefs.section == "Browser and computer" {
+			ui.prefs.show("Browser and computer")
 		}
 	}
 	var change *tapRow
@@ -732,6 +777,8 @@ func (ui *desktopUI) connectionSettings() fyne.CanvasObject {
 		rows = append(rows, settingRow("No connection yet", "Add one to get started.", nil))
 	}
 	page.Add(card(rows...))
+	page.Add(sectionTitle("Import"))
+	page.Add(card(ui.importRow()))
 	return page
 }
 

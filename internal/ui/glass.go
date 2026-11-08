@@ -16,6 +16,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
 
 	"1loop/internal/platform"
 )
@@ -160,15 +161,41 @@ var glassEdge = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x2a}
 // conversation fades into the background, which is opaque under it, so the
 // text behind never muddles the composer's own lines.
 type footerGlass struct {
-	fade  *canvas.LinearGradient // the conversation fading out above the composer
-	floor *canvas.Rectangle      // the background under it
+	fade  *fyne.Container   // the conversation fading out above the composer
+	floor *canvas.Rectangle // the background under it
 }
 
 const glassFade = 72 // how far above the composer the conversation fades out
 
+// fadeStrip is how tall each step of the fade is.
+const fadeStrip = 2
+
 func newFooterGlass() *footerGlass {
-	return &footerGlass{fade: canvas.NewVerticalGradient(color.NRGBA{R: colBackground.R, G: colBackground.G, B: colBackground.B}, colBackground),
-		floor: canvas.NewRectangle(colBackground)}
+	// Strips of the background, more opaque towards the composer, rather
+	// than a canvas.LinearGradient: Fyne computes a gradient's pixels with
+	// truncated, premultiplied integers, so over the background itself it
+	// showed as stripes one level darker. A rectangle's colour reaches the
+	// shader exactly, and the background over itself stays the background.
+	steps := glassFade / fadeStrip
+	strips := make([]fyne.CanvasObject, steps)
+	for i := range strips {
+		alpha := uint8((float32(i) + 0.5) / float32(steps) * 0xff)
+		strips[i] = canvas.NewRectangle(color.NRGBA{R: colBackground.R, G: colBackground.G, B: colBackground.B, A: alpha})
+	}
+	return &footerGlass{fade: container.New(fadeLayout{}, strips...), floor: canvas.NewRectangle(colBackground)}
+}
+
+// fadeLayout stacks the fade's strips from top to bottom.
+type fadeLayout struct{}
+
+func (fadeLayout) MinSize([]fyne.CanvasObject) fyne.Size { return fyne.Size{} }
+
+func (fadeLayout) Layout(strips []fyne.CanvasObject, size fyne.Size) {
+	height := size.Height / float32(len(strips))
+	for i, strip := range strips {
+		strip.Move(fyne.NewPos(0, float32(i)*height))
+		strip.Resize(fyne.NewSize(size.Width, height))
+	}
 }
 
 // glassFooterLayout lets the conversation fill everything and floats the

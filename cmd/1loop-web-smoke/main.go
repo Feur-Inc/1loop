@@ -65,6 +65,7 @@ var (
 	filesItem = flag.String("attach-files", "", "x,y of the + menu's Attach files… item")
 	imeAt     = flag.String("ime", "", "x,y of the composer, to type through a dead key and an input method there")
 	phone     = flag.String("phone", "", "x,y of the composer in a phone's viewport (390×844, touch), to tap and type there")
+	clicks    = flag.String("clicks", "", "name@x,y;… clicks made last, each followed by a screenshot named after it")
 	longChat  = flag.Int("long", 60, "turns in the long chat")
 	check     = flag.Bool("check", false, "fail unless the page pairs, reads the server's state and events, and never panics (CI)")
 )
@@ -303,6 +304,13 @@ func main() {
 		if *attachAt != "" {
 			log.Printf("the model got: a picture %v, the attached files' list %v", modelSawImage.Load(), modelSawFiles.Load())
 			failIf(*check && !(modelSawImage.Load() && modelSawFiles.Load()), "the sent message lacks its attachments")
+		}
+	}
+	for _, step := range strings.Split(*clicks, ";") {
+		if name, at, ok := strings.Cut(step, "@"); ok {
+			click(ctx, at)
+			time.Sleep(2 * time.Second)
+			shot(ctx, "click-"+name)
 		}
 	}
 	if *copyAt != "" {

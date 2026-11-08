@@ -109,6 +109,9 @@ func (ui *desktopUI) buildSettings() {
 	nav := container.New(layout.NewCustomPaddedVBoxLayout(1))
 	for _, section := range settingsSections {
 		name := section.name
+		if !settingsSectionShown(name) {
+			continue
+		}
 		row := newRow(name, section.icon, styleNav, func() { settings.show(name) })
 		settings.rows[name] = row
 		nav.Add(row)
@@ -190,21 +193,22 @@ func (settings *settingsView) showNow(section string) {
 	for name, row := range settings.rows {
 		row.SetSelected(name == section)
 	}
-	var page fyne.CanvasObject
-	switch section {
-	case "Connections":
+	page := settings.ui.browserSettings(section)
+	switch {
+	case page != nil:
+	case section == "Connections":
 		page = settings.ui.connectionSettings()
-	case "SSH machines":
+	case section == "SSH machines":
 		page = settings.ui.sshSettings()
-	case "Instructions":
+	case section == "Instructions":
 		page = settings.ui.instructionSettings()
-	case "Extensions":
+	case section == "Extensions":
 		page = settings.ui.extensionSettings()
-	case "Connectors":
+	case section == "Connectors":
 		page = settings.ui.connectorSettings()
-	case "Phone remote":
+	case section == "Phone remote":
 		page = settings.ui.remoteSettings()
-	case "Updates":
+	case section == "Updates":
 		page = settings.ui.updateSettings()
 	default:
 		page = settings.ui.generalSettings()

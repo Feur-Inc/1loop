@@ -38,7 +38,11 @@ server:
 web:
 	mkdir -p $(BIN)/web
 	GOOS=js GOARCH=wasm go build $(RELEASE_FLAGS) -o $(BIN)/web/1loop.wasm ./cmd/1loop-web
-	cp "$$(go env GOROOT)/lib/wasm/wasm_exec.js" cmd/1loop-web/index.html $(BIN)/web/
+	# Go 1.24 moved wasm_exec.js from misc/wasm to lib/wasm; a toolchain
+	# downloaded by GOTOOLCHAIN has neither.
+	exec_js="$$(ls "$$(go env GOROOT)"/lib/wasm/wasm_exec.js "$$(go env GOROOT)"/misc/wasm/wasm_exec.js 2>/dev/null | head -1)"; \
+	test -n "$$exec_js" || { echo "wasm_exec.js is missing from $$(go env GOROOT): use a full Go install" >&2; exit 1; }; \
+	cp "$$exec_js" cmd/1loop-web/index.html $(BIN)/web/
 	gzip -9kf $(BIN)/web/1loop.wasm
 
 # Everything to hand out, in dist/: the Linux desktop (X11 and Wayland) and

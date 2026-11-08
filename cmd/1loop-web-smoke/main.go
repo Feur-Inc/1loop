@@ -42,6 +42,7 @@ import (
 	cdpbrowser "github.com/chromedp/cdproto/browser"
 	"github.com/chromedp/cdproto/cdp"
 	"github.com/chromedp/cdproto/dom"
+	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/page"
@@ -62,6 +63,8 @@ var (
 	copyAt    = flag.String("copy", "", "x,y of a Copy button, to read the clipboard after")
 	attachAt  = flag.String("attach", "", "x,y of the composer's + button, to attach a file and paste a picture before -prompt sends")
 	filesItem = flag.String("attach-files", "", "x,y of the + menu's Attach files… item")
+	imeAt     = flag.String("ime", "", "x,y of the composer, to type through a dead key and an input method there")
+	phone     = flag.String("phone", "", "x,y of the composer in a phone's viewport (390×844, touch), to tap and type there")
 	longChat  = flag.Int("long", 60, "turns in the long chat")
 	check     = flag.Bool("check", false, "fail unless the page pairs, reads the server's state and events, and never panics (CI)")
 )
@@ -310,6 +313,107 @@ func main() {
 		err := chromedp.Run(ctx, chromedp.Evaluate(`navigator.clipboard.readText()`, &text, func(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }))
 		log.Printf("clipboard after Copy: %q (%v)", text, err)
 	}
+	// What the browser hands the page as text (glfw-js's hidden textarea):
+	// a dead key's composition, an input method's, a phone keyboard's.
+	var typed []string
+	expect := func(ctx context.Context, step, want string) {
+		var text string
+		chromedp.Run(ctx, chromedp.Evaluate(`window.loopFocusedText ? loopFocusedText() : ""`, &text))
+		log.Printf("%s: the focused entry reads %q", step, text)
+		if !strings.Contains(text, want) {
+			typed = append(typed, fmt.Sprintf("%s: %q lacks %q", step, text, want))
+		}
+	}
+	if *imeAt != "" {
+		click(ctx, *imeAt)
+		time.Sleep(time.Second)
+		typeText(ctx, "Dead key: ")
+		// ^ then e on a French keyboard: the dead key starts a composition,
+		// the next key ends it with ê.
+		chromedp.Run(ctx,
+			input.DispatchKeyEvent(input.KeyRawDown).WithKey("Dead").WithCode("BracketLeft").WithWindowsVirtualKeyCode(219),
+			input.ImeSetComposition("^", 1, 1),
+			input.DispatchKeyEvent(input.KeyUp).WithKey("Dead").WithCode("BracketLeft").WithWindowsVirtualKeyCode(219))
+		time.Sleep(500 * time.Millisecond)
+		shot(ctx, "08-dead-key-composing")
+		chromedp.Run(ctx, input.InsertText("ê"))
+		typeText(ctx, "tre, IME: ")
+		time.Sleep(500 * time.Millisecond)
+		expect(ctx, "dead key", "Dead key: être, IME: ")
+		// Japanese: the preedit grows as one types, then becomes kanji.
+		for _, preedit := range []string{"に", "にほ", "にほん", "日本"} {
+			n := int64(len([]rune(preedit)))
+			chromedp.Run(ctx, input.ImeSetComposition(preedit, n, n))
+			time.Sleep(200 * time.Millisecond)
+		}
+		time.Sleep(500 * time.Millisecond)
+		shot(ctx, "09-ime-composing")
+		expect(ctx, "IME preedit", "IME: 日本")
+		chromedp.Run(ctx, input.InsertText("日本語"))
+		typeText(ctx, " ok")
+		time.Sleep(time.Second)
+		shot(ctx, "10-ime-committed")
+		expect(ctx, "IME committed", "IME: 日本語 ok")
+	}
+	if *phone != "" {
+		phoneCtx, cancelPhone := chromedp.NewContext(ctx)
+		defer cancelPhone()
+		must(chromedp.Run(phoneCtx,
+			emulation.SetDeviceMetricsOverride(390, 844, 2, true),
+			emulation.SetTouchEmulationEnabled(true).WithMaxTouchPoints(5),
+			chromedp.Navigate(base+"/app/")))
+		waitFor(func() bool {
+			chromedp.Run(phoneCtx, chromedp.Evaluate(`window.loopTimings && window.loopTimings.instantiated || 0`, &loaded))
+			return loaded > 0
+		})
+		time.Sleep(5 * time.Second)
+		shot(phoneCtx, "11-phone")
+		// A phone opens its keyboard only for a text field focused during
+		// the tap: the focus must be there as soon as the tap is handled,
+		// not when the page next looks at Fyne's focus. A tap elsewhere
+		// first takes it away.
+		// window's listener runs right after glfw-js's on document, within
+		// the same dispatch of the tap's pointerup.
+		chromedp.Run(phoneCtx, chromedp.Evaluate(`addEventListener("pointerup", () => window.loopTapFocus = document.activeElement.tagName)`, nil))
+		focusAfterTap := func(x, y float64) string {
+			var focus string
+			chromedp.Run(phoneCtx,
+				input.DispatchTouchEvent(input.TouchStart, []*input.TouchPoint{{X: x, Y: y}}),
+				input.DispatchTouchEvent(input.TouchEnd, []*input.TouchPoint{}),
+				chromedp.Evaluate(`window.loopTapFocus || ""`, &focus))
+			return focus
+		}
+		focusAfterTap(100, 450)
+		time.Sleep(time.Second)
+		var focus string
+		chromedp.Run(phoneCtx, chromedp.Evaluate(`document.activeElement.tagName`, &focus))
+		log.Printf("phone: after a tap outside the composer the focus is on %s", focus)
+		if focus == "TEXTAREA" {
+			typed = append(typed, "phone: a tap outside the composer left the keyboard open")
+		}
+		focus = focusAfterTap(xy(*phone))
+		log.Printf("phone: during the tap on the composer the focus went to %s", focus)
+		if focus != "TEXTAREA" {
+			typed = append(typed, "phone: the tap on the composer left the focus on "+focus)
+		}
+		time.Sleep(time.Second)
+		// A soft keyboard composes each word, then commits it.
+		for _, word := range []string{"Hello", " from", " a", " phone"} {
+			for i := range word {
+				n := int64(i + 1)
+				chromedp.Run(phoneCtx, input.ImeSetComposition(word[:i+1], n, n))
+			}
+			chromedp.Run(phoneCtx, input.InsertText(word))
+		}
+		chromedp.Run(phoneCtx, input.InsertText(" ✓"))
+		time.Sleep(time.Second)
+		shot(phoneCtx, "12-phone-typed")
+		expect(phoneCtx, "phone", "Hello from a phone ✓")
+	}
+	for _, problem := range typed {
+		log.Printf("text input: %s", problem)
+	}
+
 	streamMu.Lock()
 	os.WriteFile(filepath.Join(*outDir, "console.log"), []byte(strings.Join(consoleLines, "\n")), 0o644)
 	log.Printf("first pairing request %s after navigation", firstFrame.Round(time.Millisecond))
@@ -321,6 +425,7 @@ func main() {
 		}
 		failIf(states == 0, "the page never read /api/state")
 		failIf(events == 0, "the page never opened /api/events")
+		failIf(len(typed) > 0, "text input: "+strings.Join(typed, "; "))
 		failIf(attached < 2, fmt.Sprintf("%d attachment(s) reached the server", attached))
 		log.Printf("check passed: %d state reads, %d event streams, %d attachments", states, events, attached)
 	}

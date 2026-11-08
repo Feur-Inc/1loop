@@ -43,6 +43,7 @@ func WebMain() {
 	ui.inForeground = true
 	a.Lifecycle().SetOnStarted(func() {
 		ui.startFrames()
+		ui.watchTextInput()
 		ui.connectOrigin()
 	})
 	ui.window.ShowAndRun()

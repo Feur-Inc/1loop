@@ -242,6 +242,7 @@ func (ui *desktopUI) useComputer() {
 	ui.serverStatus.SetText("")
 	ui.serverStatus.Hide()
 	ui.startNew()
+	ui.renderAttachments()
 	ui.showChatModel()
 	ui.updateApprovalControl()
 }
@@ -356,6 +357,7 @@ func (remote *remoteDesktop) openChat(id string) {
 func (remote *remoteDesktop) selectChat(id string) {
 	remote.current = id
 	remote.fileAttachments = nil
+	remote.parent.renderAttachments()
 	remote.meta = remoteapi.Meta{}
 	remote.closeTabs()
 	remote.notify()
@@ -428,12 +430,17 @@ func (remote *remoteDesktop) submit(mode string) {
 	if strings.TrimSpace(text) == "" && len(remote.fileAttachments) == 0 {
 		return
 	}
+	if ui.filesAttaching > 0 {
+		remote.status.SetText("Files are still being uploaded. Wait before sending.")
+		return
+	}
 	chat := remote.current
 	pending := "sending:" + core.Identifier() + "|" + remote.draftKey(chat)
 	ui.prompt.drafts.set(pending, text)
 	ui.prompt.clearSent()
 	files := append([]agent.FileAttachment(nil), remote.fileAttachments...)
 	remote.fileAttachments = nil
+	ui.renderAttachments()
 	remote.post(chat, text, mode, nil, files, pending)
 }
 
@@ -471,6 +478,7 @@ func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.Handof
 				ui.prompt.drafts.set(pending, "")
 				if remote.current == chat {
 					remote.fileAttachments = append(files, remote.fileAttachments...)
+					ui.renderAttachments()
 				}
 			}
 			if required, ok := err.(handoffRequired); ok {

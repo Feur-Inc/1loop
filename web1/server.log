@@ -1,0 +1,13 @@
+1loop server listening on https://127.0.0.1:40341
+Certificate SHA-256: b0b40182b268f69f044dc8a3483405d5332467ae32537ee9f7455b30f5012239
+Workspace: /work/267-web-ime-b955b9/.out/web1/server-1324122716/projects
+Commands: pair <id> <code>, devices, revoke <number>
+
+Pairing requested by "smoke seed". Type: pair 67fc3c994a52 <code shown on that device>
+Approved "smoke seed". Finish connecting on that device.
+2026/11/08 11:33:36 http: TLS handshake error from 127.0.0.1:41728: remote error: tls: unknown certificate
+2026/11/08 11:33:36 http: TLS handshake error from 127.0.0.1:41734: remote error: tls: unknown certificate
+2026/11/08 11:33:36 http: TLS handshake error from 127.0.0.1:41740: remote error: tls: unknown certificate
+
+Pairing requested by "1loop web". Type: pair 35e0fef8c4af <code shown on that device>
+Approved "1loop web". Finish connecting on that device.

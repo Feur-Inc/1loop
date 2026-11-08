@@ -109,12 +109,14 @@ func CreateWindow(_, _ int, title string, monitor *Monitor, share *Window) (*Win
 		}
 	}
 
-	w.eventHandlerCleanups = make([]func(), 0, 11)
+	w.eventHandlerCleanups = make([]func(), 0, 18)
 	newJsFuncFrom := func(handler func(this js.Value, args []js.Value) any) js.Func {
 		function := js.FuncOf(handler)
 		w.eventHandlerCleanups = append(w.eventHandlerCleanups, function.Release)
 		return function
 	}
+
+	w.startTextInput(body, newJsFuncFrom)
 
 	addGlobalEventListener := js.Global().Get("addEventListener").Call("bind", js.Global())
 
@@ -157,6 +159,13 @@ func CreateWindow(_, _ int, title string, monitor *Monitor, share *Window) (*Win
 		ke := args[0]
 		w.goFullscreenIfRequested()
 
+		// 1loop: the hidden textarea's (textinput_wasm.go).
+		mods := toModifierKey(ke)
+		compose, types := w.textKey(ke, mods)
+		if compose {
+			return nil
+		}
+
 		action := Press
 		if ke.Get("repeat").Bool() {
 			action = Repeat
@@ -170,9 +179,11 @@ func CreateWindow(_, _ int, title string, monitor *Monitor, share *Window) (*Win
 			w.keys = append(w.keys, make([]Action, neededSize-len(w.keys))...)
 		}
 		w.keys[key] = action
-		mods := toModifierKey(ke)
 		if w.keyCallback != nil {
 			go w.keyCallback(w, key, -1, action, mods)
+		}
+		if types {
+			return nil // the textarea's input event sends the character
 		}
 
 		// 1loop: a character is one rune, not one byte (é, ß, ✓ were
@@ -193,6 +204,10 @@ func CreateWindow(_, _ int, title string, monitor *Monitor, share *Window) (*Win
 	addDocumentEventListener.Invoke("keyup", newJsFuncFrom(func(this js.Value, args []js.Value) any {
 		ke := args[0]
 		w.goFullscreenIfRequested()
+
+		if compose, _ := w.textKey(ke, toModifierKey(ke)); compose {
+			return nil
+		}
 
 		key := toKey(ke)
 
@@ -387,6 +402,8 @@ type Window struct {
 	closeCallback           CloseCallback
 
 	touches js.Value // Hacky mouse-emulation-via-touch.
+
+	text textInput // 1loop: textinput_wasm.go
 
 	eventHandlerCleanups  []func()
 	requestAnimationFrame js.Value

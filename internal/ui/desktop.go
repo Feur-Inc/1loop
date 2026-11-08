@@ -713,6 +713,9 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.attach.onTap = func() {
 		showMenu(ui.window, ui.attach, []menuAction{
 			{label: "Paste image", detail: "From the clipboard", icon: iconCopy, run: func() {
+				if ui.pasteBrowserImage() {
+					return
+				}
 				if err := ui.pasteImage(); err != nil {
 					message := err.Error()
 					if !errors.Is(err, errNoClipboardImage) {

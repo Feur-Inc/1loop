@@ -54,17 +54,29 @@ func writeAttachment(machine agent.Machine, workspace, name string, content io.R
 }
 
 func (ui *desktopUI) pickFiles() {
+	if ui.server != nil {
+		ui.server.pickAttachments(false)
+		return
+	}
 	ui.pick(pickRequest{title: "Attach files", start: ui.pickStart(), multiple: true}, func(paths []string) {
 		ui.attachFiles(paths)
 	})
 }
 
 func (ui *desktopUI) attachFiles(paths []string) {
+	if ui.server != nil { // a server chat: its files go to the server
+		ui.server.attachPaths(paths)
+		return
+	}
 	ui.copyAttachments(paths, copyAttachment)
 }
 
 // attachText attaches a text too long for the prompt as a file (#238).
 func (ui *desktopUI) attachText(text string) {
+	if ui.server != nil {
+		ui.server.attachBytes("pasted-text.txt", []byte(text))
+		return
+	}
 	ui.copyAttachments([]string{"pasted-text.txt"}, func(machine agent.Machine, workspace, name string) (fileAttachment, error) {
 		return writeAttachment(machine, workspace, name, strings.NewReader(text))
 	})

@@ -7,7 +7,9 @@
 //	go run ./cmd/1loop-web-smoke -server bin/1loop-server -web bin/web -out .out/web
 //
 // Canvas positions (Fyne draws everything in one <canvas>) are flags, read
-// off an earlier run's screenshots. CI runs it with -check and no positions:
+// off an earlier run's screenshots. CI runs it with -check and no positions,
+// where files still reach the composer through the page's file input, a
+// paste and a drop:
 //
 //	go run ./cmd/1loop-web-smoke -long 5 -check
 package main
@@ -17,9 +19,13 @@ import (
 	"bytes"
 	"context"
 	"crypto/tls"
+	"encoding/base64"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"log"
 	"net"
@@ -30,12 +36,16 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	cdpbrowser "github.com/chromedp/cdproto/browser"
+	"github.com/chromedp/cdproto/cdp"
+	"github.com/chromedp/cdproto/dom"
 	"github.com/chromedp/cdproto/emulation"
 	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/network"
+	"github.com/chromedp/cdproto/page"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
@@ -51,6 +61,8 @@ var (
 	connect   = flag.String("connect", "", "x,y of the pairing sheet's Connect button")
 	picker    = flag.String("picker", "", "x,y of the composer's model button, to show its picker")
 	copyAt    = flag.String("copy", "", "x,y of a Copy button, to read the clipboard after")
+	attachAt  = flag.String("attach", "", "x,y of the composer's + button, to attach a file and paste a picture before -prompt sends")
+	filesItem = flag.String("attach-files", "", "x,y of the + menu's Attach files… item")
 	imeAt     = flag.String("ime", "", "x,y of the composer, to type through a dead key and an input method there")
 	phone     = flag.String("phone", "", "x,y of the composer in a phone's viewport (390×844, touch), to tap and type there")
 	longChat  = flag.Int("long", 60, "turns in the long chat")
@@ -152,6 +164,7 @@ func main() {
 	defer cancel()
 	var consoleLines []string
 	pairBodies := make(chan network.RequestID, 4)
+	chooser := make(chan cdp.BackendNodeID, 1)
 	var streamMu sync.Mutex
 	events, states := 0, 0
 	chromedp.ListenTarget(ctx, func(ev any) {
@@ -178,6 +191,8 @@ func main() {
 				states++
 				streamMu.Unlock()
 			}
+		case *page.EventFileChooserOpened:
+			chooser <- e.BackendNodeID
 		case *runtime.EventExceptionThrown:
 			streamMu.Lock()
 			consoleLines = append(consoleLines, "uncaught: "+e.ExceptionDetails.Error())
@@ -254,12 +269,26 @@ func main() {
 		chromedp.Run(ctx, chromedp.KeyEvent(kb.Escape))
 		time.Sleep(500 * time.Millisecond)
 	}
+	attached := 0
+	if *check && (*attachAt == "" || *prompt == "") {
+		attached = attachWithoutPositions(ctx, projects)
+	}
 	if *prompt != "" {
 		click(ctx, *prompt)
 		time.Sleep(time.Second)
 		typeText(ctx, "Please answer slowly: é à ü ç — ünïcödé ✓ @#{[|")
 		time.Sleep(time.Second)
 		shot(ctx, "06-typed")
+		if *attachAt != "" {
+			attachThroughMenu(ctx, chooser)
+			click(ctx, *prompt)
+			pasteImage(ctx)
+			time.Sleep(time.Second)
+			pasteText(ctx, " (and pasted text)")
+			time.Sleep(2 * time.Second)
+			shot(ctx, "06-attached")
+			attached = waitAttachments(projects, 2)
+		}
 		chromedp.Run(ctx, chromedp.KeyEvent(kb.Enter))
 		streamMu.Lock()
 		before := events
@@ -271,6 +300,10 @@ func main() {
 		streamMu.Lock()
 		log.Printf("/api/events responses during the run: %d (before %d)", events, before)
 		streamMu.Unlock()
+		if *attachAt != "" {
+			log.Printf("the model got: a picture %v, the attached files' list %v", modelSawImage.Load(), modelSawFiles.Load())
+			failIf(*check && !(modelSawImage.Load() && modelSawFiles.Load()), "the sent message lacks its attachments")
+		}
 	}
 	if *copyAt != "" {
 		chromedp.Run(ctx, browserGrant())
@@ -393,7 +426,8 @@ func main() {
 		failIf(states == 0, "the page never read /api/state")
 		failIf(events == 0, "the page never opened /api/events")
 		failIf(len(typed) > 0, "text input: "+strings.Join(typed, "; "))
-		log.Printf("check passed: %d state reads, %d event streams", states, events)
+		failIf(attached < 2, fmt.Sprintf("%d attachment(s) reached the server", attached))
+		log.Printf("check passed: %d state reads, %d event streams, %d attachments", states, events, attached)
 	}
 	streamMu.Unlock()
 }
@@ -475,6 +509,130 @@ func xy(at string) (float64, float64) {
 	return fx, fy
 }
 
+// attachThroughMenu picks a file as a person does: the + menu's Attach
+// files… opens the browser's chooser (which only a click may do), and the
+// harness answers it.
+func attachThroughMenu(ctx context.Context, chooser chan cdp.BackendNodeID) {
+	file := sampleFile("notes.txt", []byte("Notes attached from the browser.\n"))
+	must(chromedp.Run(ctx, page.SetInterceptFileChooserDialog(true)))
+	click(ctx, *attachAt)
+	time.Sleep(time.Second)
+	shot(ctx, "06-attach-menu")
+	click(ctx, *filesItem)
+	select {
+	case node := <-chooser:
+		log.Printf("Attach files… opened the file chooser")
+		must(chromedp.Run(ctx, dom.SetFileInputFiles([]string{file}).WithBackendNodeID(node)))
+	case <-time.After(10 * time.Second):
+		log.Printf("Attach files… opened no file chooser")
+		failIf(*check, "Attach files… opened no file chooser")
+	}
+}
+
+// pasteImage copies a picture and presses Ctrl+V in the page, which pastes
+// as the browser's own paste would.
+func pasteImage(ctx context.Context) {
+	chromedp.Run(ctx, browserGrant())
+	write := fmt.Sprintf(`(async () => {
+		const bytes = Uint8Array.from(atob(%q), c => c.charCodeAt(0));
+		await navigator.clipboard.write([new ClipboardItem({"image/png": new Blob([bytes], {type: "image/png"})})]);
+		return "ok";
+	})()`, base64.StdEncoding.EncodeToString(samplePNG()))
+	var result string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(write, &result, awaitPromise)); err != nil {
+		log.Printf("clipboard write: %v", err)
+	}
+	pressCtrlV(ctx)
+}
+
+// pasteText pastes text, which goes to the composer as before pictures did.
+func pasteText(ctx context.Context, text string) {
+	var result string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(fmt.Sprintf(`navigator.clipboard.writeText(%q).then(() => "ok")`, text), &result, awaitPromise)); err != nil {
+		log.Printf("clipboard write: %v", err)
+	}
+	pressCtrlV(ctx)
+}
+
+func pressCtrlV(ctx context.Context) {
+	ctrlV := input.DispatchKeyEvent(input.KeyDown).WithKey("v").WithCode("KeyV").WithWindowsVirtualKeyCode(86).
+		WithModifiers(input.ModifierCtrl).WithCommands([]string{"paste"})
+	chromedp.Run(ctx, ctrlV, input.DispatchKeyEvent(input.KeyUp).WithKey("v").WithCode("KeyV").WithWindowsVirtualKeyCode(86).WithModifiers(input.ModifierCtrl))
+}
+
+// attachWithoutPositions gives the page a file through its file input, a
+// pasted picture and a dropped file, as the browser would, for a run that
+// knows no positions on the canvas.
+func attachWithoutPositions(ctx context.Context, projects string) int {
+	file := sampleFile("notes.txt", []byte("Notes attached from the browser.\n"))
+	must(chromedp.Run(ctx, chromedp.SetUploadFiles("#loop-attach", []string{file}, chromedp.ByID)))
+	events := fmt.Sprintf(`(() => {
+		const bytes = Uint8Array.from(atob(%q), c => c.charCodeAt(0));
+		const pasted = new DataTransfer();
+		pasted.items.add(new File([bytes], "image.png", {type: "image/png"}));
+		document.dispatchEvent(new ClipboardEvent("paste", {clipboardData: pasted, bubbles: true, cancelable: true}));
+		const dropped = new DataTransfer();
+		dropped.items.add(new File(["dropped on the page\n"], "dropped.txt", {type: "text/plain"}));
+		const canvas = document.querySelector("canvas");
+		canvas.dispatchEvent(new DragEvent("dragover", {dataTransfer: dropped, bubbles: true, cancelable: true}));
+		canvas.dispatchEvent(new DragEvent("drop", {dataTransfer: dropped, bubbles: true, cancelable: true}));
+		return "ok";
+	})()`, base64.StdEncoding.EncodeToString(samplePNG()))
+	var result string
+	if err := chromedp.Run(ctx, chromedp.Evaluate(events, &result)); err != nil {
+		log.Printf("paste and drop: %v", err)
+	}
+	attached := waitAttachments(projects, 3)
+	shot(ctx, "06-attached-without-positions")
+	return attached
+}
+
+// waitAttachments waits for want files in the server projects' tmp
+// folders, where uploaded attachments go, and says how many there are.
+func waitAttachments(projects string, want int) int {
+	var names []string
+	for deadline := time.Now().Add(20 * time.Second); time.Now().Before(deadline); time.Sleep(250 * time.Millisecond) {
+		names = nil
+		filepath.WalkDir(projects, func(path string, entry os.DirEntry, err error) error {
+			if err == nil && !entry.IsDir() && filepath.Base(filepath.Dir(path)) == "tmp" {
+				names = append(names, entry.Name())
+			}
+			return nil
+		})
+		if len(names) >= want {
+			break
+		}
+	}
+	log.Printf("attachments on the server: %v", names)
+	return len(names)
+}
+
+func sampleFile(name string, data []byte) string {
+	path, err := filepath.Abs(filepath.Join(*outDir, name))
+	must(err)
+	must(os.WriteFile(path, data, 0o644))
+	return path
+}
+
+// samplePNG is a small picture for pasting: a diagonal gradient.
+func samplePNG() []byte {
+	img := image.NewNRGBA(image.Rect(0, 0, 240, 160))
+	for y := 0; y < 160; y++ {
+		for x := 0; x < 240; x++ {
+			img.Set(x, y, color.NRGBA{R: uint8(x), G: uint8(y + 60), B: 0xd0, A: 0xff})
+		}
+	}
+	var buf bytes.Buffer
+	must(png.Encode(&buf, img))
+	return buf.Bytes()
+}
+
+func awaitPromise(p *runtime.EvaluateParams) *runtime.EvaluateParams { return p.WithAwaitPromise(true) }
+
+// modelSawImage and modelSawFiles are what the fake model was last sent:
+// a picture, and the list of attached files.
+var modelSawImage, modelSawFiles atomic.Bool
+
 // fakeModel answers like an OpenAI-compatible API, streaming word by word:
 // slowly when asked to, for watching a run arrive in the browser.
 func fakeModel() string {
@@ -488,6 +646,12 @@ func fakeModel() string {
 			return
 		}
 		body, _ := io.ReadAll(r.Body)
+		if bytes.Contains(body, []byte("data:image/png;base64")) {
+			modelSawImage.Store(true)
+		}
+		if bytes.Contains(body, []byte("[Attached files]")) {
+			modelSawFiles.Store(true)
+		}
 		delay := time.Duration(0)
 		if bytes.Contains(body, []byte("slowly")) {
 			delay = 150 * time.Millisecond

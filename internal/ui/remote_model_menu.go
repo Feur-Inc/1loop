@@ -4,17 +4,21 @@ package ui
 
 // The model picker for a server (remote_desktop.go): the same three
 // columns as this computer's (model_controls.go), account, model by
-// family, reasoning, filled from what the server lists.
+// family, reasoning, filled from what the server lists, with the shown
+// account's limits below them and the model's speed button.
 
 import (
+	"context"
 	"slices"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 
+	"1loop/internal/agent"
 	"1loop/internal/remoteapi"
 )
 
@@ -24,9 +28,9 @@ func (remote *remoteDesktop) modelMenu() {
 		ui.model.open.dismiss()
 		return
 	}
-	current, effort := remote.model, remote.effort
+	current, effort, tier := remote.model, remote.effort, remote.tier
 	if remote.current != "" {
-		current, effort = remote.meta.Model, remote.meta.Effort
+		current, effort, tier = remote.meta.Model, remote.meta.Effort, remote.meta.Tier
 	}
 	if len(remote.models) == 0 && len(remote.accounts) == 0 {
 		showMenu(ui.window, ui.model.row, []menuAction{{label: "The server has no model yet"}})
@@ -51,6 +55,7 @@ func (remote *remoteDesktop) modelMenu() {
 	lists := [3]*fyne.Container{}
 	scrolls := [2]*kineticScroll{}
 	columns := make([]fyne.CanvasObject, 3)
+	speed := container.NewStack() // on the REASONING caption's line, as on the desktop
 	for i, title := range []string{"ACCOUNT", "MODEL", "REASONING"} {
 		lists[i] = container.New(layout.NewCustomPaddedVBoxLayout(0))
 		var body fyne.CanvasObject = lists[i]
@@ -61,7 +66,11 @@ func (remote *remoteDesktop) modelMenu() {
 		}
 		caption := textLine(title, 11, colFaint)
 		caption.TextStyle = fyne.TextStyle{Bold: true}
-		column := padded(7, 5, 3, 3, container.NewBorder(padded(0, 8, 9, 9, caption), nil, nil, nil, body))
+		var header fyne.CanvasObject = caption
+		if i == 2 {
+			header = container.New(captionActionLayout{}, caption, speed)
+		}
+		column := padded(7, 5, 3, 3, container.NewBorder(padded(0, 8, 9, 9, header), nil, nil, nil, body))
 		if i > 0 {
 			line := canvas.NewRectangle(colBorderSoft)
 			line.SetMinSize(fyne.NewSize(1, 0))
@@ -70,10 +79,25 @@ func (remote *remoteDesktop) modelMenu() {
 			columns[i] = column
 		}
 	}
-	menu := newSheet(ui.window.Canvas(), container.New(modelColumnsLayout{}, append(columns, container.NewStack())...), 674)
+	strip := container.NewStack()
+	menu := newSheet(ui.window.Canvas(), container.New(modelColumnsLayout{}, append(columns, strip)...), 674)
 	menu.menu, menu.columns, menu.anchor = true, true, ui.model.row
 	groups := [3][]*tapRow{}
 	shown := ""
+	values := map[string]agent.AccountLimits{}
+	refreshStrip := func() {
+		for _, account := range accounts {
+			if account.ID == shown {
+				limits, ok := values[account.ID]
+				if !ok {
+					limits = agent.AccountLimits{Note: "Loading limits…"}
+				}
+				conn := agent.Connection{ID: account.ID, Name: account.Name, Provider: account.Provider}
+				strip.Objects = []fyne.CanvasObject{modelLimitsStrip(conn, limits, account.Problem)}
+			}
+		}
+		strip.Refresh()
+	}
 	column, cursor := 0, 0
 	var reasoning *stepSlider
 	row := func(title, detail string, icon fyne.Resource, run func()) *tapRow {
@@ -200,6 +224,12 @@ func (remote *remoteDesktop) modelMenu() {
 		}
 		lists[2].Add(padded(10, 3, 6, 6, container.New(layout.NewCustomPaddedVBoxLayout(3), title, about)))
 		lists[2].Add(padded(14, 9, 5, 5, container.New(modelReasoningLayout{}, controls...)))
+		speed.Objects = nil
+		if ok && model.Account == shown && len(model.ServiceTiers) > 0 {
+			speed.Objects = []fyne.CanvasObject{remote.speedToggle(model, &tier)}
+		}
+		speed.Refresh()
+		refreshStrip()
 		menu.items, menu.active = groups[column], -1
 	}
 	menu.onKey = func(e *fyne.KeyEvent) bool {
@@ -230,7 +260,9 @@ func (remote *remoteDesktop) modelMenu() {
 		}
 		return true
 	}
+	ctx, cancel := context.WithCancel(remote.ctx)
 	menu.onClosed = func() {
+		cancel()
 		if ui.model.open == menu {
 			ui.model.open = nil
 			ui.model.setOpen(false)
@@ -247,4 +279,72 @@ func (remote *remoteDesktop) modelMenu() {
 	ui.model.setOpen(true)
 	menu.Show()
 	ui.window.Canvas().Focus(menu)
+	go remote.watchLimits(ctx, func(limits []remoteapi.Limits) {
+		if menu.closing {
+			return
+		}
+		for _, account := range limits {
+			value := agent.AccountLimits{Note: account.Note, Checked: time.Now()}
+			for _, window := range account.Windows {
+				reset := time.Time{}
+				if window.Reset > 0 {
+					reset = time.UnixMilli(window.Reset)
+				}
+				value.Windows = append(value.Windows, agent.NewAccountLimitWindow(window.Label, window.Left, reset))
+			}
+			values[account.Account] = value
+		}
+		refreshStrip()
+	})
+}
+
+// watchLimits reads the server's account limits while the picker is open:
+// at once, then every minute, as the desktop does.
+func (remote *remoteDesktop) watchLimits(ctx context.Context, show func([]remoteapi.Limits)) {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	for {
+		var limits []remoteapi.Limits
+		if remote.client.json(ctx, "GET", "/api/limits", nil, &limits) == nil {
+			fyne.Do(func() {
+				if ctx.Err() == nil {
+					show(limits)
+				}
+			})
+		}
+		select {
+		case <-ctx.Done():
+			return
+		case <-ticker.C:
+		}
+	}
+}
+
+// speedToggle is the desktop's bolt button (model_controls.go) for a
+// server's model: each tap asks the server for the next speed.
+func (remote *remoteDesktop) speedToggle(model remoteapi.Model, tier *string) fyne.CanvasObject {
+	choice := agent.ModelChoice{ServiceTiers: model.ServiceTiers, DefaultServiceTier: model.DefaultServiceTier}
+	standard := ""
+	if choice.DefaultServiceTier != "" {
+		standard = agent.StandardTier
+	}
+	ids, names := []string{standard}, []string{"Standard"}
+	for _, t := range choice.ServiceTiers {
+		ids, names = append(ids, t.ID), append(names, t.Name)
+	}
+	current := agent.TierFor(choice, *tier)
+	if current == "" {
+		current = choice.DefaultServiceTier
+	}
+	index := max(0, slices.Index(ids, current))
+	var row *tapRow
+	row = newRow(names[index], iconBolt, styleChip, func() {
+		index = (index + 1) % len(ids)
+		*tier = ids[index]
+		remote.action("/api/model", map[string]any{"chat": remote.current, "tier": ids[index]})
+		row.text, row.accent = names[index], index > 0
+		row.Refresh()
+	})
+	row.size, row.accent = 12, index > 0
+	return row
 }

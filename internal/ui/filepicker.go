@@ -15,10 +15,7 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/dialog"
-	"fyne.io/fyne/v2/driver"
 	"fyne.io/fyne/v2/storage"
-	"github.com/rymdport/portal"
-	"github.com/rymdport/portal/filechooser"
 )
 
 type pickRequest struct {
@@ -55,44 +52,11 @@ func (ui *desktopUI) pick(pickRequestValue pickRequest, done func([]string)) {
 	}()
 }
 
-// portalHandle names the parent window so the portal can keep its dialog
-// on top of it. Wayland needs an exported xdg_foreign handle, which GLFW
-// does not offer: the dialog is then simply centred by the compositor.
-func portalHandle(window fyne.Window) string {
-	handle := ""
-	if native, ok := window.(driver.NativeWindow); ok {
-		native.RunNative(func(context any) {
-			if x, ok := context.(driver.X11WindowContext); ok && x.WindowHandle != 0 {
-				handle = portal.FormatX11WindowHandle(x.WindowHandle)
-			}
-		})
-	}
-	return handle
-}
-
 func nativePick(handle string, pickRequestValue pickRequest) ([]string, error) {
 	if runtime.GOOS == "windows" {
 		return nil, errNoNativePicker
 	}
-	options := &filechooser.OpenFileOptions{Directory: pickRequestValue.folder, Multiple: pickRequestValue.multiple, CurrentFolder: pickRequestValue.start}
-	if pickRequestValue.folder {
-		options.AcceptLabel = "Open"
-	}
-	if len(pickRequestValue.extensions) > 0 {
-		var rules []filechooser.Rule
-		for _, ext := range pickRequestValue.extensions {
-			rules = append(rules,
-				filechooser.Rule{Type: filechooser.GlobPattern, Pattern: "*" + strings.ToLower(ext)},
-				filechooser.Rule{Type: filechooser.GlobPattern, Pattern: "*" + strings.ToUpper(ext)})
-		}
-		filter := &filechooser.Filter{Name: pickRequestValue.filterName, Rules: rules}
-		options.Filters, options.CurrentFilter = []*filechooser.Filter{filter}, filter
-	}
-	if uris, err := filechooser.OpenFile(handle, pickRequestValue.title, options); err == nil {
-		paths := make([]string, 0, len(uris))
-		for _, uri := range uris {
-			paths = append(paths, strings.TrimPrefix(uri, "file://"))
-		}
+	if paths, ok := portalPick(handle, pickRequestValue); ok {
 		return paths, nil
 	}
 	// No portal on this desktop: try the classic helpers.

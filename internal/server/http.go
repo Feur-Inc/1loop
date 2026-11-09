@@ -27,6 +27,10 @@ func (server *headlessServer) routes() http.Handler {
 	mux.HandleFunc("GET /api/info", func(w http.ResponseWriter, r *http.Request) {
 		core.WriteJSON(w, 200, map[string]any{"name": server.name, "protocol": 1, "headless": true, "secure": true, "consolePairing": !server.local})
 	})
+	if server.webDir != "" && !server.local {
+		mux.Handle("GET /app/", webClient(server.webDir))
+		mux.Handle("GET /{$}", http.RedirectHandler("/app/", http.StatusFound))
+	}
 	if !server.local {
 		mux.HandleFunc("POST /api/pair", server.pair)
 		mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)
@@ -115,6 +119,16 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/hooks":                               remoteapi.GetHooks,
 		"POST /api/hooks":                              remoteapi.SaveHooks,
 		"GET /api/chats/{id}/items/{index}/images/{n}": server.itemImage,
+	}
+	if !server.local {
+		// The server's accounts, for its paired devices; the phone app's own
+		// engine keeps its accounts to the phone (/api/local/connections).
+		endpoints["GET /api/connections"] = server.localConnections
+		endpoints["POST /api/connections"] = server.saveNetworkConnection
+		endpoints["POST /api/connections/models"] = server.draftLocalConnectionModels
+		endpoints["GET /api/connections/{id}/models"] = server.localConnectionModels
+		endpoints["POST /api/connections/{id}/disconnect"] = server.localConnectionDisconnect
+		endpoints["POST /api/connections/refresh"] = server.refreshLocalModels
 	}
 	syncEngine := server.syncEngine()
 	syncManifest, syncExport, syncImport := syncEngine.Routes()

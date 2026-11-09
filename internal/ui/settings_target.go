@@ -9,9 +9,6 @@ package ui
 // spelled out step by step, since nothing else in the window says it).
 
 import (
-	"encoding/json"
-	"os"
-
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
@@ -70,10 +67,7 @@ func (ui *desktopUI) sshRows() []fyne.CanvasObject {
 // serverRows are the headless 1loop server last paired, if any, and how to
 // connect one.
 func (ui *desktopUI) serverRows() []fyne.CanvasObject {
-	var saved serverAddress
-	if data, err := os.ReadFile(remoteAddressPath()); err == nil {
-		json.Unmarshal(data, &saved)
-	}
+	saved := loadServerAddress()
 	var rows []fyne.CanvasObject
 	if saved.URL != "" && saved.Token != "" {
 		connected := ui.server != nil && ui.server.client.address.URL == saved.URL

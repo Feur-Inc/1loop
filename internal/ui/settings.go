@@ -138,6 +138,9 @@ func (ui *desktopUI) buildSettings() {
 	nav := container.New(layout.NewCustomPaddedVBoxLayout(1))
 	for _, section := range registry.Sections() {
 		name := section.Title
+		if !settingsSectionShown(name) {
+			continue
+		}
 		row := newRow(name, sectionIcons[section.ID], styleNav, func() { view.show(name) })
 		view.rows[name] = row
 		nav.Add(row)
@@ -266,6 +269,9 @@ func (view *settingsView) showNow(page string) {
 // build makes a page from what is stored now.
 func (view *settingsView) build(page string) fyne.CanvasObject {
 	ui := view.ui
+	if content := ui.browserSettings(page); content != nil {
+		return content
+	}
 	switch page {
 	case "Models & accounts":
 		return ui.modelSettings()
@@ -607,8 +613,8 @@ func (view *settingsView) intro(section string) fyne.CanvasObject {
 // a rate limit.
 func (ui *desktopUI) modelSettings() fyne.CanvasObject {
 	view := ui.prefs
-	if ui.server != nil {
-		return container.NewVBox(view.pageTitle("Models & accounts", "", nil), view.mark("models.connections", ui.server.defaultPresetSettings()))
+	if ui.server != nil { // the server's chats use the server's
+		return view.mark("models.connections", ui.server.connectionSettings())
 	}
 	add := newRow("Add connection", iconPlus, stylePrimary, func() {
 		id := core.Identifier()

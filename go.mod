@@ -10,6 +10,7 @@ require (
 	github.com/chromedp/cdproto v0.0.0-20250403032234-65de8f5d025b
 	github.com/chromedp/chromedp v0.13.7
 	github.com/creack/pty v1.1.21
+	github.com/fyne-io/glfw-js v0.3.0
 	github.com/fyne-io/oksvg v0.2.0
 	github.com/fyne-io/terminal v0.0.0-20251106165109-867da7c64268
 	github.com/go-gl/glfw/v3.3/glfw v0.0.0-20240506104042-037f3cc74f2a
@@ -38,7 +39,6 @@ require (
 	github.com/fredbi/uri v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fyne-io/gl-js v0.2.0 // indirect
-	github.com/fyne-io/glfw-js v0.3.0 // indirect
 	github.com/fyne-io/image v0.1.1 // indirect
 	github.com/go-gl/gl v0.0.0-20231021071112-07e5d0ea2e71 // indirect
 	github.com/go-json-experiment/json v0.0.0-20250211171154-1ae217ad3535 // indirect
@@ -75,3 +75,5 @@ require (
 replace fyne.io/fyne/v2 => ./third_party/fyne
 
 replace github.com/go-gl/glfw/v3.3/glfw => ./third_party/glfw
+
+replace github.com/fyne-io/glfw-js => ./third_party/glfw-js

@@ -19,7 +19,6 @@ import (
 	"io"
 	"maps"
 	"net/url"
-	"os"
 	"path"
 	"path/filepath"
 	"reflect"
@@ -39,16 +38,8 @@ import (
 	"1loop/internal/update"
 )
 
-func remoteAddressPath() string {
-	dir, _ := os.UserConfigDir()
-	return filepath.Join(dir, "1loop", "remote-server.json")
-}
-
 func (ui *desktopUI) connectServer() {
-	var saved serverAddress
-	if data, err := os.ReadFile(remoteAddressPath()); err == nil {
-		json.Unmarshal(data, &saved)
-	}
+	saved := loadServerAddress()
 	address, pin := widget.NewEntry(), widget.NewEntry()
 	address.SetText(saved.URL)
 	address.SetPlaceHolder("https://192.168.1.20:47101")
@@ -125,15 +116,7 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 					return
 				}
 				client.address.Token = reply.Token
-				data, _ := json.Marshal(client.address)
-				path := remoteAddressPath()
-				if err := os.MkdirAll(filepath.Dir(path), 0700); err == nil {
-					err = os.WriteFile(path, data, 0600)
-					if err != nil {
-						status.SetText(err.Error())
-						return
-					}
-				} else {
+				if err := saveServerAddress(client.address); err != nil {
 					status.SetText(err.Error())
 					return
 				}
@@ -177,6 +160,7 @@ type remoteDesktop struct {
 	accounts         []remoteapi.Account
 	defaultPresets   bool
 	model, effort    string // the server's defaults, for a new chat
+	tier             string // and its speed
 	approvalMode     string
 	autoMode         bool
 	convs            map[string]*conversation // the server's chats as this window shows them
@@ -263,6 +247,7 @@ func (ui *desktopUI) useComputer() {
 	ui.serverStatus.SetText("")
 	ui.serverStatus.Hide()
 	ui.startNew()
+	ui.renderAttachments()
 	ui.showChatModel()
 	ui.updateApprovalControl()
 }
@@ -292,10 +277,7 @@ func (remote *remoteDesktop) close() {
 // targetMenu chooses where the agent works, as on the phone: this
 // computer, the server last used, or another one.
 func (ui *desktopUI) targetMenu() {
-	var saved serverAddress
-	if data, err := os.ReadFile(remoteAddressPath()); err == nil {
-		json.Unmarshal(data, &saved)
-	}
+	saved := loadServerAddress()
 	computer := menuAction{label: "This computer", icon: theme.ComputerIcon(), checked: ui.server == nil && ui.cfg.MachineID == "", run: ui.useComputer}
 	actions := []menuAction{computer}
 	for _, machine := range ui.sshMachines {
@@ -380,6 +362,7 @@ func (remote *remoteDesktop) openChat(id string) {
 func (remote *remoteDesktop) selectChat(id string) {
 	remote.current = id
 	remote.fileAttachments = nil
+	remote.parent.renderAttachments()
 	remote.meta = remoteapi.Meta{}
 	remote.closeTabs()
 	remote.notify()
@@ -452,12 +435,17 @@ func (remote *remoteDesktop) submit(mode string) {
 	if strings.TrimSpace(text) == "" && len(remote.fileAttachments) == 0 {
 		return
 	}
+	if ui.filesAttaching > 0 {
+		remote.status.SetText("Files are still being uploaded. Wait before sending.")
+		return
+	}
 	chat := remote.current
 	pending := "sending:" + core.Identifier() + "|" + remote.draftKey(chat)
 	ui.prompt.drafts.set(pending, text)
 	ui.prompt.clearSent()
 	files := append([]agent.FileAttachment(nil), remote.fileAttachments...)
 	remote.fileAttachments = nil
+	ui.renderAttachments()
 	remote.post(chat, text, mode, nil, files, pending)
 }
 
@@ -495,6 +483,7 @@ func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.Handof
 				ui.prompt.drafts.set(pending, "")
 				if remote.current == chat {
 					remote.fileAttachments = append(files, remote.fileAttachments...)
+					ui.renderAttachments()
 				}
 			}
 			if required, ok := err.(handoffRequired); ok {
@@ -610,6 +599,7 @@ func (remote *remoteDesktop) refreshLoop() {
 				Accounts                    []remoteapi.Account
 				DefaultPresets              bool
 				Model, Effort, ApprovalMode string
+				Tier                        string
 				AutoMode                    bool // the server's model has an Auto mode
 			}
 		}
@@ -645,7 +635,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			remote.show(state.Name, state.Workspace, state.Chats, projects.Projects)
 			remote.models = state.Settings.Models
 			remote.accounts, remote.defaultPresets = state.Settings.Accounts, state.Settings.DefaultPresets
-			remote.model, remote.effort = state.Settings.Model, state.Settings.Effort
+			remote.model, remote.effort, remote.tier = state.Settings.Model, state.Settings.Effort, state.Settings.Tier
 			remote.approvalMode, remote.autoMode = state.Settings.ApprovalMode, state.Settings.AutoMode
 			remote.parent.updateApprovalControl()
 			if id == "" {
@@ -958,40 +948,6 @@ func (remote *remoteDesktop) modelText(label, effort string) string {
 }
 
 // modelMenu chooses the chat's model and reasoning among the server's.
-func (remote *remoteDesktop) modelMenu() {
-	ui := remote.parent
-	current, effort := remote.model, remote.effort
-	if remote.current != "" {
-		current, effort = remote.meta.Model, remote.meta.Effort
-	}
-	var actions []menuAction
-	for _, model := range remote.models {
-		model := model
-		action := menuAction{label: model.Name, detail: model.Detail, run: func() {
-			remote.action("/api/model", map[string]string{"chat": remote.current, "label": model.Label})
-		}}
-		action.checked = model.Label == current
-		actions = append(actions, action)
-	}
-	for _, model := range remote.models {
-		if model.Label != current {
-			continue
-		}
-		for _, entry := range model.Efforts {
-			entry := entry
-			action := menuAction{label: "Reasoning · " + entry.Label, detail: entry.About, run: func() {
-				remote.action("/api/model", map[string]string{"chat": remote.current, "effort": entry.Value})
-			}}
-			action.checked = entry.Value == effort
-			actions = append(actions, action)
-		}
-	}
-	if len(actions) == 0 {
-		actions = append(actions, menuAction{label: "The server has no model yet"})
-	}
-	showMenu(ui.window, ui.model.row, actions)
-}
-
 // approvalMenu is the approval chip for a server: its mode, for every chat.
 func (remote *remoteDesktop) approvalMenu() {
 	ui := remote.parent

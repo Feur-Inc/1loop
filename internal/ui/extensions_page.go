@@ -40,6 +40,7 @@ var (
 // extensionsPage is the section while it is shown.
 type extensionsPage struct {
 	ui       *desktopUI
+	source   extensionSource
 	tab      string
 	tabs     map[string]*tapRow
 	body     *fyne.Container
@@ -55,12 +56,13 @@ type extensionsPage struct {
 	search   int // the search on screen; an older one's answer is dropped
 	statuses map[string]extensions.MCPStatus
 	checking bool
+	checked  bool // since the servers last changed: a check finding none is not run again
 }
 
 var storeOrders = map[string]string{"Most stars": "stars", "Recently updated": "updated", "Best match": "best"}
 
 func (ui *desktopUI) extensionSettings() fyne.CanvasObject {
-	page := &extensionsPage{ui: ui, tab: "store", tabs: map[string]*tapRow{}, kind: "all", kinds: map[string]*tapRow{}, body: container.NewVBox(), statuses: map[string]extensions.MCPStatus{}}
+	page := &extensionsPage{ui: ui, source: ui.extensionSource(), tab: "store", tabs: map[string]*tapRow{}, kind: "all", kinds: map[string]*tapRow{}, body: container.NewVBox(), statuses: map[string]extensions.MCPStatus{}}
 	ui.extPage = page
 	tabs := container.New(layout.NewCustomPaddedHBoxLayout(6))
 	for _, tab := range []struct{ id, label string }{{"store", "Store"}, {"installed", "Installed"}, {"mcp", "MCP servers"}} {
@@ -147,7 +149,7 @@ func (page *extensionsPage) runSearch(number int) {
 	go func() {
 		ctx, cancel := context.WithTimeout(page.ui.ctx, 40*time.Second)
 		defer cancel()
-		result, err := extensions.Search(ctx, kind, query, order, number)
+		result, err := page.source.search(ctx, kind, query, order, number)
 		fyne.Do(func() {
 			if search != page.search {
 				return
@@ -268,7 +270,7 @@ func (page *extensionsPage) details(listing extensions.Listing) {
 	go func() {
 		ctx, cancel := context.WithTimeout(ui.ctx, 30*time.Second)
 		defer cancel()
-		text, err := extensions.Readme(ctx, listing.Repo)
+		text, err := page.source.readme(ctx, listing.Repo)
 		fyne.Do(func() {
 			switch {
 			case err != nil:
@@ -292,7 +294,7 @@ func (ui *desktopUI) installFromStore(repo string) {
 	go func() {
 		ctx, cancel := context.WithTimeout(ui.ctx, 5*time.Minute)
 		defer cancel()
-		plan, err := extensions.Prepare(ctx, repo)
+		plan, err := ui.extensionSource().prepare(ctx, repo)
 		fyne.Do(func() {
 			if !waiting.open {
 				return // cancelled
@@ -391,14 +393,15 @@ func (ui *desktopUI) confirmInstall(plan *extensions.Plan) {
 		}
 		install.Disable()
 		go func() {
-			_, err := extensions.Install(plan.ID, chosen)
+			ctx, cancel := context.WithTimeout(ui.ctx, 5*time.Minute)
+			defer cancel()
+			err := ui.extensionSource().install(ctx, plan.ID, chosen)
 			fyne.Do(func() {
 				dialog.dismiss()
 				if err != nil {
 					ui.notice("Install "+plan.Repo, err.Error())
 					return
 				}
-				ui.remote.broadcast("extensions", map[string]bool{"changed": true})
 				if page := ui.extPage; page != nil {
 					for i := range page.listings {
 						if page.listings[i].Repo == plan.Repo {
@@ -421,11 +424,50 @@ func (ui *desktopUI) confirmInstall(plan *extensions.Plan) {
 // ---------------------------------------------------------------------------
 // What is installed.
 
+// loading fills a view once what it shows is read, off the interface's
+// thread: a server's comes over the network.
+func (page *extensionsPage) loading(tab string, build func(extensions.Installed) fyne.CanvasObject) fyne.CanvasObject {
+	box := container.NewStack(note("Loading…"))
+	go func() {
+		ctx, cancel := context.WithTimeout(page.ui.ctx, 30*time.Second)
+		defer cancel()
+		view, err := page.source.view(ctx)
+		fyne.Do(func() {
+			if page.tab != tab {
+				return
+			}
+			if err != nil {
+				box.Objects = []fyne.CanvasObject{note(err.Error())}
+			} else {
+				box.Objects = []fyne.CanvasObject{build(view)}
+			}
+			box.Refresh()
+		})
+	}()
+	return box
+}
+
+// change runs a change, then shows the tab again.
+func (page *extensionsPage) change(title string, run func(context.Context) error) {
+	go func() {
+		ctx, cancel := context.WithTimeout(page.ui.ctx, 30*time.Second)
+		defer cancel()
+		err := run(ctx)
+		fyne.Do(func() {
+			if err != nil {
+				page.ui.notice(title, err.Error())
+			}
+			page.statuses, page.checked = map[string]extensions.MCPStatus{}, false
+			page.show(page.tab)
+		})
+	}()
+}
+
 func (page *extensionsPage) installedView() fyne.CanvasObject {
-	view, err := extensions.View()
-	if err != nil {
-		return note(err.Error())
-	}
+	return page.loading("installed", page.installedList)
+}
+
+func (page *extensionsPage) installedList(view extensions.Installed) fyne.CanvasObject {
 	box := container.NewVBox()
 	box.Add(sectionTitle("Plugins"))
 	if len(view.Plugins) == 0 {
@@ -475,28 +517,21 @@ func (page *extensionsPage) installedView() fyne.CanvasObject {
 		}
 		box.Add(card(rows...))
 	}
-	box.Add(padded(10, 0, 0, 0, note("Installed in "+view.Dir+". Changes apply to the next message.")))
+	where := "Installed in " + view.Dir
+	if on := page.source.where(); on != "" {
+		where = "Installed on " + on + ", in " + view.Dir
+	}
+	box.Add(padded(10, 0, 0, 0, note(where+". Changes apply to the next message.")))
 	return box
 }
 
 func (page *extensionsPage) enable(kind, id string, on bool) {
-	if err := extensions.SetEnabled(kind, id, on); err != nil {
-		page.ui.notice("Extensions", err.Error())
-	}
-	if kind == "mcp" {
-		extensions.Servers.Forget(id)
-	}
-	page.ui.remote.broadcast("extensions", map[string]bool{"changed": true})
-	page.show(page.tab)
+	page.change("Extensions", func(ctx context.Context) error { return page.source.enable(ctx, kind, id, on) })
 }
 
 func (page *extensionsPage) remove(kind, id, name string) {
 	page.ui.confirm("Remove "+name+"?", "Its files are deleted from 1loop's extensions folder.", "Remove", func() {
-		if err := extensions.Remove(kind, id); err != nil {
-			page.ui.notice("Extensions", err.Error())
-		}
-		page.ui.remote.broadcast("extensions", map[string]bool{"changed": true})
-		page.show(page.tab)
+		page.change("Extensions", func(ctx context.Context) error { return page.source.remove(ctx, kind, id) })
 	})
 }
 
@@ -504,43 +539,36 @@ func (page *extensionsPage) remove(kind, id, name string) {
 // MCP servers.
 
 func (page *extensionsPage) mcpView() fyne.CanvasObject {
+	return page.loading("mcp", page.mcpList)
+}
+
+func (page *extensionsPage) mcpList(view extensions.Installed) fyne.CanvasObject {
 	ui := page.ui
-	registry, err := extensions.Load()
-	if err != nil {
-		return note(err.Error())
-	}
 	add := newRow("Add server", iconPlus, stylePrimary, func() { page.editMCP(extensions.MCPServer{Type: "stdio", Enabled: true}, "") })
 	check := newRow("Check connections", iconArrowTurn, styleOutline, page.checkMCP)
 	box := container.NewVBox(note("1loop connects to these servers as a client: their tools join the agent's, and Claude Code gets them too. A command starts in the chat's project."),
 		padded(4, 6, 0, 0, container.NewHBox(add, check)))
 	var rows []fyne.CanvasObject
-	for _, server := range registry.MCP {
+	for _, server := range view.MCP {
 		server := server
 		toggle := newToggle(server.Enabled, func(on bool) { page.enable("mcp", server.Name, on) })
 		edit := newIconButton(iconPencil, colRaised, colMuted, func() { page.editMCP(server, server.Name) })
 		remove := newIconButton(iconTrash, colRaised, colMuted, func() {
 			ui.confirm("Remove "+server.Name+"?", "1loop stops using this MCP server.", "Remove", func() {
-				extensions.Servers.Forget(server.Name)
-				if err := extensions.RemoveMCP(server.Name); err != nil {
-					ui.notice("MCP servers", err.Error())
-				}
-				ui.remote.broadcast("extensions", map[string]bool{"changed": true})
-				page.show("mcp")
+				page.change("MCP servers", func(ctx context.Context) error { return page.source.removeMCP(ctx, server.Name) })
 			})
 		})
 		rows = append(rows, extensionRow(server.Name, page.mcpDetail(server), container.NewHBox(edit, remove, container.NewCenter(toggle))))
 	}
-	for _, server := range extensions.Enabled().MCP {
-		if server.Plugin != "" {
-			rows = append(rows, extensionRow(server.Name, append(page.mcpDetail(server), "from the plugin "+server.Plugin+" (turn the plugin off in Installed)"), nil))
-		}
+	for _, server := range view.PluginMCP {
+		rows = append(rows, extensionRow(server.Name, append(page.mcpDetail(server), "from the plugin "+server.Plugin+" (turn the plugin off in Installed)"), nil))
 	}
 	if len(rows) == 0 {
 		box.Add(note("No server yet. Add one with its command (for example npx -y @modelcontextprotocol/server-filesystem ~/docs) or its address."))
 	} else {
 		box.Add(card(rows...))
 	}
-	if len(page.statuses) == 0 && !page.checking && len(rows) > 0 {
+	if !page.checked && !page.checking && len(rows) > 0 {
 		page.checkMCP()
 	}
 	return box
@@ -582,21 +610,24 @@ func (page *extensionsPage) checkMCP() {
 	if page.checking {
 		return
 	}
-	page.checking = true
+	page.checking, page.checked = true, true
 	page.statuses = map[string]extensions.MCPStatus{}
 	if page.tab == "mcp" {
 		page.show("mcp")
 	}
 	workspace := page.ui.cfg.Workspace
-	if page.ui.cfg.MachineID != "" { // MCP servers run on this computer, not in the machine's project
+	if page.ui.cfg.MachineID != "" && page.ui.server == nil { // MCP servers run on this computer, not in the machine's project
 		workspace = ""
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(page.ui.ctx, time.Minute)
 		defer cancel()
-		statuses := extensions.Servers.Status(ctx, extensions.Enabled().MCP, workspace)
+		statuses, err := page.source.mcpStatus(ctx, workspace)
 		fyne.Do(func() {
 			page.checking = false
+			if err != nil {
+				page.ui.notice("MCP servers", err.Error())
+			}
 			for _, status := range statuses {
 				page.statuses[status.Name+"\x00"+status.Plugin] = status
 			}
@@ -633,13 +664,18 @@ func (page *extensionsPage) editMCP(server extensions.MCPServer, previous string
 	headers.SetText(pairsText(server.Headers, ": "))
 	headers.SetPlaceHolder("Authorization: Bearer …")
 	headers.SetMinRowsVisible(2)
+	computer, kept := "this computer", ""
+	if on := page.source.where(); on != "" {
+		computer = "the server"
+		kept = " The server keeps its values: " + extensions.Hidden + " stands for one, saved unchanged."
+	}
 	stdio := card(
 		settingStack("Command", "The program that starts the server.", command),
 		settingStack("Arguments", "One per line.", args),
-		settingStack("Environment", "One KEY=value per line. $NAME takes this computer's variable.", env))
+		settingStack("Environment", "One KEY=value per line. $NAME takes "+computer+"'s variable."+kept, env))
 	web := card(
 		settingStack("Address", "Its Streamable HTTP endpoint.", address),
-		settingStack("Headers", "One Name: value per line, for example its token.", headers))
+		settingStack("Headers", "One Name: value per line, for example its token."+kept, headers))
 	sync := func() {
 		if kind.Selected == kind.Options[0] {
 			stdio.Show()
@@ -666,7 +702,8 @@ func (page *extensionsPage) editMCP(server extensions.MCPServer, previous string
 			settingRow("Connects with", "", sized(200, kind.row))),
 		stdio, web, problem)
 	cancel := newRow("Cancel", nil, styleOutline, ui.prefs.back)
-	save := newRow("Save", nil, stylePrimary, func() {
+	save := newRow("Save", nil, stylePrimary, nil)
+	save.onTap = func() {
 		edited := extensions.MCPServer{Name: strings.TrimSpace(name.Text), Enabled: server.Enabled || previous == ""}
 		if kind.Selected == kind.Options[1] {
 			edited.Type, edited.URL, edited.Headers = "http", strings.TrimSpace(address.Text), textPairs(headers.Text, ":")
@@ -678,21 +715,25 @@ func (page *extensionsPage) editMCP(server extensions.MCPServer, previous string
 				}
 			}
 		}
-		if err := extensions.SaveMCP(edited, previous); err != nil {
-			problem.SetText(err.Error())
-			return
-		}
-		extensions.Servers.Forget(edited.Name)
-		if previous != "" {
-			extensions.Servers.Forget(previous)
-		}
-		ui.remote.broadcast("extensions", map[string]bool{"changed": true})
-		page.statuses = map[string]extensions.MCPStatus{}
-		ui.prefs.done()
-		if page := ui.extPage; page != nil {
-			page.show("mcp")
-		}
-	})
+		save.Disable()
+		go func() {
+			ctx, cancel := context.WithTimeout(ui.ctx, 30*time.Second)
+			defer cancel()
+			err := page.source.saveMCP(ctx, edited, previous)
+			fyne.Do(func() {
+				save.Enable()
+				if err != nil {
+					problem.SetText(err.Error())
+					return
+				}
+				page.statuses, page.checked = map[string]extensions.MCPStatus{}, false
+				ui.prefs.done()
+				if page := ui.extPage; page != nil {
+					page.show("mcp")
+				}
+			})
+		}()
+	}
 	ui.prefs.push(settingsFrame{content: content, actions: []fyne.CanvasObject{cancel, save}})
 }
 

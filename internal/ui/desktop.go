@@ -743,6 +743,9 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.attach.onTap = func() {
 		showMenu(ui.window, ui.attach, []menuAction{
 			{label: "Paste image", detail: "From the clipboard", icon: iconCopy, run: func() {
+				if ui.pasteBrowserImage() {
+					return
+				}
 				if err := ui.pasteImage(); err != nil {
 					message := err.Error()
 					if !errors.Is(err, errNoClipboardImage) {
@@ -1796,6 +1799,9 @@ func (ui *desktopUI) persist(wait bool) {
 	if ui.saveTimer != nil {
 		ui.saveTimer.Stop()
 		ui.saveTimer = nil
+	}
+	if ui.statePath == "" { // the browser client: its chats are the server's (web_js.go)
+		return
 	}
 	if ui.stateBlocked {
 		return

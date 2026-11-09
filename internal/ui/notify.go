@@ -10,14 +10,9 @@ package ui
 
 import (
 	"slices"
-	"sync/atomic"
 
 	"fyne.io/fyne/v2"
 )
-
-// portalNotification numbers the portal's notifications: one id each, so a
-// new one does not replace the last.
-var portalNotification atomic.Uint64
 
 func (ui *desktopUI) notifyUser(chat *conversation, text string) {
 	if ui.inForeground && chat == ui.current {

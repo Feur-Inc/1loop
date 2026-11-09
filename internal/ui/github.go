@@ -11,12 +11,43 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 
-	"1loop/internal/extensions"
 	"1loop/internal/githubconnector"
 )
 
 func (ui *desktopUI) connectorSettings() fyne.CanvasObject {
-	state := githubconnector.Default.Status()
+	source := ui.githubSource()
+	content := container.NewStack(note("Loading…"))
+	go func() {
+		ctx, cancel := context.WithTimeout(ui.ctx, 30*time.Second)
+		defer cancel()
+		state, err := source.status(ctx)
+		fyne.Do(func() {
+			if err != nil {
+				state.Error = err.Error()
+			}
+			content.Objects = []fyne.CanvasObject{ui.githubSettings(source, state)}
+			content.Refresh()
+		})
+	}()
+	return container.NewVBox(ui.prefs.pageTitle("Connectors", "Tools & extensions", nil), content)
+}
+
+// githubChange runs a change of the connector, then shows the page again.
+func (ui *desktopUI) githubChange(run func(context.Context) error) {
+	go func() {
+		ctx, cancel := context.WithTimeout(ui.ctx, 30*time.Second)
+		defer cancel()
+		err := run(ctx)
+		fyne.Do(func() {
+			if err != nil {
+				ui.notice("GitHub", err.Error())
+			}
+			ui.prefs.show("Connectors")
+		})
+	}()
+}
+
+func (ui *desktopUI) githubSettings(source githubSource, state githubconnector.Status) fyne.CanvasObject {
 	status := "Not connected. GitHub tools are not offered to the model."
 	if state.Connected {
 		status = "Connected as @" + state.Login
@@ -26,10 +57,13 @@ func (ui *desktopUI) connectorSettings() fyne.CanvasObject {
 			status += " · tools disabled"
 		}
 	}
-	body := container.NewVBox(ui.prefs.pageTitle("GitHub connector", "Tools & extensions", nil),
+	target := "this execution target"
+	if ui.server != nil {
+		target = "the server, where the agent runs"
+	}
+	body := container.NewVBox(
 		sectionTitle("GitHub"), note("Connect the GitHub account whose repositories the agent may use. Tools come from GitHub's official MCP server and follow your approval mode. Signing in does not authorize unrelated changes."),
 		card(settingRow("GitHub account", status, nil)))
-	refresh := func() { ui.prefs.show("Connectors") }
 	if state.Error != "" {
 		body.Add(note(state.Error))
 	}
@@ -40,70 +74,68 @@ func (ui *desktopUI) connectorSettings() fyne.CanvasObject {
 		body.Add(note("This build has no GitHub App configured yet. The publisher registers one GitHub App with Device flow enabled; users then sign in to that app. Enter its public client ID, never an app secret or private key."))
 		body.Add(id)
 		body.Add(newRow("Save client ID", nil, stylePrimary, func() {
-			if err := githubconnector.Default.Configure(id.Text); err != nil {
-				ui.notice("GitHub", err.Error())
-				return
-			}
-			refresh()
+			clientID := id.Text
+			ui.githubChange(func(ctx context.Context) error { return source.configure(ctx, clientID) })
 		}))
 		body.Add(newRow("Register a GitHub App", nil, styleOutline, func() { openLink("https://github.com/settings/apps/new") }))
 		return body
 	}
 	if state.Connected {
 		body.Add(card(settingRow("Enable GitHub tools", "Turning this off removes GitHub tools from subsequent model requests and rejects calls made after access is disabled.", newToggle(state.Enabled, func(on bool) {
-			if err := githubconnector.Default.Enable(on); err != nil {
-				ui.notice("GitHub", err.Error())
-			}
-			if !on {
-				extensions.Servers.Forget(githubconnector.ServerName)
-			}
-			refresh()
+			ui.githubChange(func(ctx context.Context) error { return source.enable(ctx, on) })
 		}))))
 		body.Add(newRow("Review access on GitHub", nil, styleOutline, func() { openLink("https://github.com/settings/apps/authorizations") }))
 		body.Add(newRow("Manage repository access", nil, styleOutline, func() { openLink(state.InstallURL) }))
-		for _, object := range ui.githubAttachmentSettings(state, refresh) {
+		for _, object := range ui.githubAttachmentSettings(source, state, target) {
 			body.Add(object)
 		}
-		body.Add(newRow("Disconnect", nil, styleOutline, func() {
-			if err := githubconnector.Default.Disconnect(); err != nil {
-				ui.notice("GitHub", err.Error())
-				return
-			}
-			extensions.Servers.Forget(githubconnector.ServerName)
-			refresh()
-		}))
-		body.Add(note("Disconnect removes 1loop's local authorization. You can also revoke the app in your GitHub settings. Credentials stay on this execution target; they are not sent to the model."))
+		body.Add(newRow("Disconnect", nil, styleOutline, func() { ui.githubChange(source.disconnect) }))
+		body.Add(note("Disconnect removes 1loop's authorization on " + target + ". You can also revoke the app in your GitHub settings. Credentials stay on " + target + "; they are not sent to the model."))
 		return body
 	}
 	body.Add(newRow("Choose repositories on GitHub", nil, styleOutline, func() { openLink(state.InstallURL) }))
-	body.Add(newRow("Connect GitHub…", nil, stylePrimary, ui.connectGitHub))
-	body.Add(note("Authorize the account in your browser. Review the app's access and choose which repositories to grant on GitHub. The sign-in code is shown only in this settings window."))
+	body.Add(newRow("Connect GitHub…", nil, stylePrimary, func() { ui.connectGitHub(source, state) }))
+	body.Add(note("Authorize the account in your browser. Review the app's access and choose which repositories to grant on GitHub. The sign-in code is shown only in these settings."))
 	return body
 }
 
-func (ui *desktopUI) connectGitHub() {
-	if state := githubconnector.Default.Status(); state.Code != "" || state.Error != "" {
-		githubconnector.Default.Cancel()
-	}
+func (ui *desktopUI) connectGitHub(source githubSource, current githubconnector.Status) {
 	message := widget.NewLabel("Preparing GitHub sign-in…")
 	message.Wrapping = fyne.TextWrapWord
 	code := widget.NewLabel("")
 	var dialog *sheet
+	var shown githubconnector.Status // the attempt on screen
 	open := newRow("Open GitHub", nil, stylePrimary, func() {
-		if address := githubconnector.Default.Status().URL; address != "" {
-			openLink(address)
+		if shown.URL != "" {
+			openLink(shown.URL)
 		}
 	})
 	open.Disable()
-	copy := newRow("Copy code", nil, styleOutline, func() { fyne.CurrentApp().Clipboard().SetContent(githubconnector.Default.Status().Code) })
+	copy := newRow("Copy code", nil, styleOutline, func() { fyne.CurrentApp().Clipboard().SetContent(shown.Code) })
 	copy.Disable()
-	cancel := func() { githubconnector.Default.Cancel() }
+	cancel := func() {
+		go func() {
+			ctx, done := context.WithTimeout(ui.ctx, 15*time.Second)
+			defer done()
+			source.cancel(ctx)
+		}()
+	}
 	dialog = ui.modal("Connect GitHub", container.NewVBox(message, code), 520, cancel,
 		newRow("Cancel", nil, styleOutline, func() { cancel(); dialog.dismiss() }), copy, open)
 	go func() {
-		err := githubconnector.Default.Start(ui.ctx)
+		ctx, done := context.WithTimeout(ui.ctx, 30*time.Second)
+		if current.Code != "" || current.Error != "" {
+			source.cancel(ctx)
+		}
+		err := source.start(ctx)
+		done()
 		for {
-			state := githubconnector.Default.Status()
+			ctx, done := context.WithTimeout(ui.ctx, 15*time.Second)
+			state, problem := source.status(ctx)
+			done()
+			if problem != nil && err == nil {
+				err = problem
+			}
 			if err != nil || state.Error != "" || state.Connected {
 				fyne.Do(func() {
 					if !dialog.open {
@@ -124,6 +156,7 @@ func (ui *desktopUI) connectGitHub() {
 					cancel()
 					return
 				}
+				shown = state
 				message.SetText("Open GitHub in your browser, enter this code and review the requested access. This code expires in a few minutes.")
 				code.SetText(state.Code)
 				open.Enable()
@@ -144,7 +177,7 @@ func (ui *desktopUI) connectGitHub() {
 
 // githubAttachmentSettings: GitHub refuses the app's sign-in for images and
 // videos, so they need a personal access token or GitHub CLI's sign-in.
-func (ui *desktopUI) githubAttachmentSettings(state githubconnector.Status, refresh func()) []fyne.CanvasObject {
+func (ui *desktopUI) githubAttachmentSettings(source githubSource, state githubconnector.Status, target string) []fyne.CanvasObject {
 	detail := "Not set up: the agent cannot upload screenshots or videos. Add a token, or sign in to GitHub CLI (gh auth login)."
 	switch {
 	case state.AttachmentLogin != "":
@@ -156,17 +189,7 @@ func (ui *desktopUI) githubAttachmentSettings(state githubconnector.Status, refr
 		note("GitHub accepts attachments to issues, pull requests and comments only from a personal access token or GitHub CLI, not from this app's sign-in. Uploads ask for your approval; they cannot be deleted from GitHub."),
 		card(settingRow("Uploads as", detail, nil))}
 	save := func(token string) {
-		go func() {
-			ctx, cancel := context.WithTimeout(ui.ctx, 30*time.Second)
-			err := githubconnector.Default.SetAttachmentToken(ctx, token)
-			cancel()
-			fyne.Do(func() {
-				if err != nil {
-					ui.notice("GitHub", err.Error())
-				}
-				refresh()
-			})
-		}()
+		ui.githubChange(func(ctx context.Context) error { return source.setAttachmentToken(ctx, token) })
 	}
 	if state.AttachmentLogin != "" {
 		return append(objects, newRow("Remove token", nil, styleOutline, func() { save("") }))
@@ -182,5 +205,5 @@ func (ui *desktopUI) githubAttachmentSettings(state githubconnector.Status, refr
 		newRow("Create a token on GitHub", nil, styleOutline, func() {
 			openLink("https://github.com/settings/tokens/new?scopes=repo&description=1loop+attachments")
 		}),
-		note("The token stays in the GitHub connector's private file on this execution target; it is never sent to the model. Disconnect removes it."))
+		note("The token stays in the GitHub connector's private file on "+target+"; it is never sent to the model. Disconnect removes it."))
 }

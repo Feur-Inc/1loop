@@ -21,7 +21,6 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/widget"
-	"fyne.io/systray"
 	xdraw "golang.org/x/image/draw"
 
 	"1loop/internal/platform"
@@ -123,7 +122,7 @@ func (ui *desktopUI) startTray(a fyne.App) {
 	ui.tray = &trayIcon{app: desk}
 	// Before the menu, which starts the tray: the host learns then that a
 	// click is not for the menu but for the window.
-	systray.SetOnTapped(func() { fyne.Do(ui.showWindow) })
+	traySetOnTapped(func() { fyne.Do(ui.showWindow) })
 	ui.syncTray()
 }
 
@@ -157,7 +156,7 @@ func (ui *desktopUI) syncTray() {
 	work := status.label(title)
 	if menu := fmt.Sprint(work, tray.hidden); menu != tray.menu {
 		tray.menu = menu
-		systray.SetTooltip("1loop · " + work)
+		traySetTooltip("1loop · " + work)
 		ui.buildTrayMenu(work, status.chat >= 0)
 	}
 }

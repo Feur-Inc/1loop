@@ -122,6 +122,7 @@ type headlessServer struct {
 	fingerprint string
 	handler     http.Handler
 	tlsConfig   *tls.Config
+	webDir      string // the browser client, served at /app/ (web.go)
 	// Changes waiting for the next flush to the clients: a streamed answer
 	// reaches them at most ten times a second, as the desktop sends it.
 	pending  map[*serverChat]map[int]bool

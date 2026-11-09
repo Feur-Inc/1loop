@@ -14,7 +14,7 @@ VERSION_FLAG  := -X 1loop/internal/update.Version=$(VERSION)
 # Release builds: no local paths and no debug symbols in the binaries.
 RELEASE_FLAGS := -trimpath -ldflags="-s -w $(VERSION_FLAG)"
 
-.PHONY: build run dev server release clean linux-binaries tarball deb appimage flatpak nix
+.PHONY: build run dev server web release clean linux-binaries tarball deb appimage flatpak nix
 
 build:
 	go build -ldflags="$(VERSION_FLAG)" -o $(BIN)/1loop ./cmd/1loop
@@ -32,6 +32,18 @@ dev: build
 # display or CGO needed.
 server:
 	CGO_ENABLED=0 go build -ldflags="$(VERSION_FLAG)" -o $(BIN)/1loop-server ./cmd/1loop-server
+
+# The browser client (issue #267, a spike): the desktop's remote mode for
+# GOOS=js, in $(BIN)/web, served with 1loop-server -web-dir $(BIN)/web at /app/.
+web:
+	mkdir -p $(BIN)/web
+	GOOS=js GOARCH=wasm go build $(RELEASE_FLAGS) -o $(BIN)/web/1loop.wasm ./cmd/1loop-web
+	# Go 1.24 moved wasm_exec.js from misc/wasm to lib/wasm; a toolchain
+	# downloaded by GOTOOLCHAIN has neither.
+	exec_js="$$(ls "$$(go env GOROOT)"/lib/wasm/wasm_exec.js "$$(go env GOROOT)"/misc/wasm/wasm_exec.js 2>/dev/null | head -1)"; \
+	test -n "$$exec_js" || { echo "wasm_exec.js is missing from $$(go env GOROOT): use a full Go install" >&2; exit 1; }; \
+	cp "$$exec_js" cmd/1loop-web/index.html $(BIN)/web/
+	gzip -9kf $(BIN)/web/1loop.wasm
 
 # Everything to hand out, in dist/: the Linux desktop (X11 and Wayland) and
 # the headless server in one archive, and the phone app's release APK.

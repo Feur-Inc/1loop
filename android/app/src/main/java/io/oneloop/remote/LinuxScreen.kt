@@ -2,7 +2,6 @@
 
 package io.oneloop.remote
 
-import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -55,7 +54,7 @@ fun LinuxScreen(app: RemoteApp, onBack: () -> Unit) {
         }
         return
     }
-    BackHandler(onBack = onBack)
+    val back = predictiveBack(onBack = onBack)
     var usage by remember { mutableStateOf<LinuxUsage?>(null) }
     var packages by remember { mutableStateOf<List<LinuxPackage>?>(null) }
     var busy by app::linuxBusy
@@ -86,7 +85,7 @@ fun LinuxScreen(app: RemoteApp, onBack: () -> Unit) {
             finally { busy = null }
         }
     }
-    Column(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
+    Column(back.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundButton(Icons.back, Color.Transparent, Palette.muted, description = "Back", onClick = onBack)
             Text("Linux", style = Type.title, modifier = Modifier.padding(start = 12.dp))
@@ -296,8 +295,8 @@ private fun PackageRow(item: LinuxPackage, enabled: Boolean, onRemove: () -> Uni
 /** The Debian terminal, full screen; leaving closes it. */
 @Composable
 private fun LinuxTerminal(app: RemoteApp, home: String, key: String, onClose: () -> Unit) {
-    BackHandler(onBack = onClose)
-    Column(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
+    val back = predictiveBack(onBack = onClose)
+    Column(back.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing).imePadding()) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundButton(Icons.back, Color.Transparent, Palette.muted, description = "Close the terminal", onClick = onClose)
             Column(Modifier.padding(start = 12.dp)) {

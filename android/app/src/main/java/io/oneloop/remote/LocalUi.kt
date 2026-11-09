@@ -4,7 +4,6 @@ package io.oneloop.remote
 
 import androidx.compose.material3.ripple
 import androidx.compose.foundation.interaction.MutableInteractionSource
-import androidx.activity.compose.BackHandler
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -114,10 +113,10 @@ fun LocalSetupScreen(
     status: LocalStatus, onPrepare: (String) -> Unit, onStart: () -> Unit, onBack: () -> Unit,
     starting: Boolean = false, problem: String? = null, onManageLinux: (() -> Unit)? = null,
 ) {
-    BackHandler(onBack = onBack)
+    val back = predictiveBack(onBack = onBack)
     val pending = status.steps.filter { it.state != StepState.Done }
     Column(
-        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState())
+        back.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {

@@ -399,7 +399,7 @@ fun RepositoryScreen(app: RemoteApp, project: String, onBack: () -> Unit) {
                     else -> null
                 }
                 if (text != null) item { Text(text, style = Type.small) }
-                else if (!repo.signed) item { Text("Read without a GitHub account: checks are unknown and private repositories are hidden. Connect GitHub in Settings → Connectors.", style = Type.small) }
+                else if (!repo.signed) item { Text("Read without a GitHub account: checks are unknown and private repositories are hidden. Connect GitHub in Settings → Tools & extensions → GitHub connector.", style = Type.small) }
                 return text != null
             }
             when (tab) {
@@ -512,6 +512,7 @@ fun issueBranch(number: Int, title: String): String {
 
 /** A folder as the composer names it: a worktree is its project › its branch. */
 fun RemoteApp.folderName(path: String): String {
+    if (path == NO_FOLDER || chats.any { it.scratch && it.workspace == path }) return "No folder" // never its path
     val project = worktrees[path] ?: return projectName(path)
     val branch = repositories[project]?.worktrees?.firstOrNull { it.path == path }?.label ?: projectName(path)
     return projectName(project) + " › " + branch

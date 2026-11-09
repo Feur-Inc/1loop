@@ -28,6 +28,7 @@ type pickRequest struct {
 	multiple   bool     // allow several files
 	filterName string   // label of the file filter, e.g. "Images"
 	extensions []string // accepted extensions with their dot, e.g. ".png"
+	always     bool     // call done when the chooser closes without a choice too (no paths)
 }
 
 var errNoNativePicker = errors.New("no native file chooser")
@@ -44,7 +45,10 @@ func (ui *desktopUI) pick(pickRequestValue pickRequest, done func([]string)) {
 				ui.fynePick(pickRequestValue, done)
 			case err != nil:
 				ui.notice(pickRequestValue.title, err.Error())
-			case len(paths) > 0:
+				if pickRequestValue.always {
+					done(nil)
+				}
+			case len(paths) > 0 || pickRequestValue.always:
 				done(paths)
 			}
 		})
@@ -172,8 +176,11 @@ func (ui *desktopUI) fynePick(pickRequestValue pickRequest, done func([]string))
 		d := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
 			if err != nil {
 				ui.notice(pickRequestValue.title, err.Error())
-			} else if uri != nil {
+			}
+			if err == nil && uri != nil {
 				done([]string{uri.Path()})
+			} else if pickRequestValue.always {
+				done(nil)
 			}
 		}, ui.window)
 		d.SetLocation(start)

@@ -81,3 +81,30 @@ func TestTodoUnknownID(t *testing.T) {
 		t.Fatalf("error: %v", err)
 	}
 }
+
+// advance completes the step in progress and starts the next pending one,
+// with no ID to look up (#216).
+func TestTodoAdvance(t *testing.T) {
+	todo := &TodoState{}
+	items := todoCall(t, todo, `{"add":["Read","Fix","Test"],"updates":[{"id":"+1","status":"in_progress","text":null}],"remove":[],"order":[],"clear":false,"advance":false}`)
+	if items[0].Status != "in_progress" {
+		t.Fatalf("items: %+v", items)
+	}
+	advance := `{"add":[],"updates":[],"remove":[],"order":[],"clear":false,"advance":true}`
+	items = todoCall(t, todo, advance)
+	if items[0].Status != "completed" || items[0].CompletedAt == nil || items[1].Status != "in_progress" || items[1].StartedAt == nil || items[2].Status != "pending" {
+		t.Fatalf("after one advance: %+v", items)
+	}
+	todoCall(t, todo, advance)
+	items = todoCall(t, todo, advance) // past the last step: all done, nothing started
+	for _, item := range items {
+		if item.Status != "completed" {
+			t.Fatalf("after the last advance: %+v", items)
+		}
+	}
+	// A new list started by advance alone: its first step begins.
+	items = todoCall(t, todo, `{"add":["Next request"],"updates":[],"remove":[],"order":[],"clear":true,"advance":true}`)
+	if len(items) != 1 || items[0].Status != "in_progress" {
+		t.Fatalf("a new list: %+v", items)
+	}
+}

@@ -137,6 +137,21 @@ ChatGPT (Web) work on this computer's projects only.
 | Ctrl+K | new chat |
 | Ctrl+B | show or hide the sidebar |
 | Ctrl+Shift+R | restart 1loop |
+| Ctrl+Q | quit 1loop, even when closing the window hides it in the tray |
+
+## System tray
+
+The desktop app shows its ring in the system tray: idle, working, waiting for
+you (an approval or a question) or failed. Its menu shows or hides the window,
+says which chat that state is about (click it to open the chat), starts a new
+chat and quits. Clicking the icon brings the window back.
+
+Closing the window hides it in the tray, so running tasks and the phone
+connection go on; 1loop says so the first time. **Settings → General → Close
+to tray** turns this off. It needs a tray host: KDE Plasma, Waybar and most
+panels have one, GNOME needs an AppIndicator extension. Without one, closing
+the window quits, as before. Notifications still arrive while the window is
+hidden, and clicking one opens its chat (on Linux).
 
 ## Updates
 

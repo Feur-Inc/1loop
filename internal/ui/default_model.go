@@ -65,8 +65,7 @@ func (ui *desktopUI) defaultModelFields(draft *agent.Connection, models []agent.
 
 func (remote *remoteDesktop) defaultPresetSettings() fyne.CanvasObject {
 	ui := remote.parent
-	rows := container.NewVBox(ui.prefs.pageTitle("Connections", "", nil),
-		note("Default presets for the connected server. Changes are saved on that server, separately for each account."))
+	rows := container.NewVBox(note("Default presets for the connected server. Changes are saved on that server, separately for each account."))
 	if !remote.defaultPresets {
 		rows.Add(note("Update the server to configure Default presets here."))
 		return rows

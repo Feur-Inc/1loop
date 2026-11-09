@@ -15,6 +15,7 @@ package ui
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image/color"
 	"net/url"
@@ -37,7 +38,10 @@ import (
 	"1loop/internal/browser"
 	"1loop/internal/computeruse"
 	"1loop/internal/core"
+	"1loop/internal/githubconnector"
+	"1loop/internal/gitrepo"
 	"1loop/internal/platform"
+	registry "1loop/internal/settings"
 )
 
 func note(text string) *widget.Label {
@@ -65,18 +69,38 @@ func jsonEntry(value map[string]any) *widget.Entry {
 // ---------------------------------------------------------------------------
 // The page and its navigation.
 
-var settingsSections = []struct {
-	name string
-	icon fyne.Resource
-}{
-	{"General", iconSliders},
-	{"Connections", iconPlug},
-	{"SSH machines", iconTerminal},
-	{"Instructions", iconDocument},
-	{"Extensions", iconPuzzle},
-	{"Connectors", iconPlug},
-	{"Phone remote", iconPhone},
-	{"Updates", iconArrowTurn},
+// The sections are the shared list's (internal/settings), with an icon each.
+var sectionIcons = map[string]fyne.Resource{
+	registry.General:  iconSliders,
+	registry.Models:   iconPlug,
+	registry.Agent:    iconShield,
+	registry.Tools:    iconPuzzle,
+	registry.Phone:    iconPhone,
+	registry.Updates:  iconArrowTurn,
+	registry.Advanced: iconTerminal,
+}
+
+// subPages are pages of their own, opened from a row of their section.
+var subPages = map[string]string{
+	"Extensions": registry.Tools,
+	"Connectors": registry.Tools,
+}
+
+// pageAliases are pages of earlier versions, still named by links and
+// messages: they open where their settings went.
+var pageAliases = map[string]string{
+	"SSH machines": "General",
+	"Connections":  "Models & accounts",
+	"Instructions": "Agent & approvals",
+	"Phone remote": "Phone",
+}
+
+// pageSection is the title of the section a page belongs to.
+func pageSection(page string) string {
+	if section, ok := subPages[page]; ok {
+		return registry.SectionTitle(section)
+	}
+	return page
 }
 
 // settingsFrame is one page of the settings: a section, or what was opened
@@ -91,7 +115,8 @@ type settingsFrame struct {
 type settingsView struct {
 	ui      *desktopUI
 	open    bool
-	section string
+	section string // the section selected in the sidebar
+	page    string // the page shown: the section, or one of its sub-pages
 	rows    map[string]*tapRow
 	side    fyne.CanvasObject // what the sidebar shows
 	view    *fyne.Container   // what the main area shows
@@ -99,77 +124,91 @@ type settingsView struct {
 	scroll  *kineticScroll
 	bar     *fyne.Container
 	barRow  *fyne.Container
-	frames  []settingsFrame // the section, then the pages opened from it
+	frames  []settingsFrame // the page, then what was opened from it
 	panelOn bool            // the tool panel's button was showing
+
+	search    *widget.Entry
+	searching bool                      // the results are on screen
+	anchors   map[string]*settingAnchor // the rows of the page shown, by setting
 }
 
 func (ui *desktopUI) buildSettings() {
-	settings := &settingsView{ui: ui, rows: map[string]*tapRow{}, section: "General"}
-	back := newRow("Back to 1loop", iconChevronLeft, styleNav, settings.close)
+	view := &settingsView{ui: ui, rows: map[string]*tapRow{}, section: "General", page: "General", anchors: map[string]*settingAnchor{}}
+	back := newRow("Back to 1loop", iconChevronLeft, styleNav, view.close)
 	nav := container.New(layout.NewCustomPaddedVBoxLayout(1))
-	for _, section := range settingsSections {
-		name := section.name
-		row := newRow(name, section.icon, styleNav, func() { settings.show(name) })
-		settings.rows[name] = row
+	for _, section := range registry.Sections() {
+		name := section.Title
+		row := newRow(name, sectionIcons[section.ID], styleNav, func() { view.show(name) })
+		view.rows[name] = row
 		nav.Add(row)
 	}
-	settings.side = container.NewVBox(back, padded(14, 6, 12, 0, textLine("Settings", 13, colFaint)), nav)
-	settings.side.Hide()
+	view.search = widget.NewEntry()
+	view.search.SetPlaceHolder("Search settings")
+	view.search.OnChanged = view.find
+	view.search.OnSubmitted = func(query string) {
+		if matches := registry.Search(registry.On(registry.OnDesktop), query); len(matches) > 0 {
+			view.jump(matches[0].Setting.Key)
+		}
+	}
+	view.side = container.NewVBox(back, padded(14, 6, 12, 0, textLine("Settings", 13, colFaint)), padded(0, 8, 6, 6, view.search), nav)
+	view.side.Hide()
 
-	settings.column = container.NewStack()
-	settings.scroll = newKineticVScroll(container.New(columnLayout{width: 760, inset: 28}, settings.column))
+	view.column = container.NewStack()
+	view.scroll = newKineticVScroll(container.New(columnLayout{width: 760, inset: 28}, view.column))
 	rule := canvas.NewRectangle(colBorderSoft)
 	rule.SetMinSize(fyne.NewSize(0, 1))
-	settings.barRow = container.New(layout.NewCustomPaddedHBoxLayout(8))
-	settings.bar = container.NewVBox(rule, container.New(columnLayout{width: 760, inset: 12}, container.NewHBox(layout.NewSpacer(), settings.barRow)))
-	settings.bar.Hide()
-	settings.view = container.NewBorder(nil, settings.bar, nil, nil, container.NewThemeOverride(settings.scroll, flatScrollTheme{loopTheme{theme.DefaultTheme()}}))
-	settings.view.Hide()
-	ui.prefs = settings
+	view.barRow = container.New(layout.NewCustomPaddedHBoxLayout(8))
+	view.bar = container.NewVBox(rule, container.New(columnLayout{width: 760, inset: 12}, container.NewHBox(layout.NewSpacer(), view.barRow)))
+	view.bar.Hide()
+	view.view = container.NewBorder(nil, view.bar, nil, nil, container.NewThemeOverride(view.scroll, flatScrollTheme{loopTheme{theme.DefaultTheme()}}))
+	view.view.Hide()
+	ui.prefs = view
 }
 
 // settings opens the page (the sidebar's Settings row).
 func (ui *desktopUI) settings() { ui.prefs.openOn("") }
 
-func (settings *settingsView) openOn(section string) {
-	ui := settings.ui
-	if section == "" {
-		section = settings.section
+// openOn opens the settings on a page: a section's title or a sub-page's.
+func (view *settingsView) openOn(page string) {
+	ui := view.ui
+	if page == "" {
+		page = view.page
 	}
-	if !settings.open {
+	if !view.open {
 		platform.Devf("ui", "settings opened")
-		settings.open = true
+		view.open = true
 		ui.clearSelection()
-		settings.panelOn = ui.panelToggle.Visible()
+		view.panelOn = ui.panelToggle.Visible()
 		ui.panelToggle.Hide()
 		ui.sideApp.Hide()
-		settings.side.Show()
+		view.side.Show()
 		ui.split.Hide()
-		settings.view.Show()
+		view.view.Show()
 		ui.header.SetText("Settings")
 	}
-	settings.show(section)
+	view.show(page)
 }
 
 // close goes back to the conversation.
-func (settings *settingsView) close() {
-	if !settings.open {
+func (view *settingsView) close() {
+	if !view.open {
 		return
 	}
-	settings.confirmLeave(0, settings.closeNow)
+	view.confirmLeave(0, view.closeNow)
 }
 
-func (settings *settingsView) closeNow() {
-	ui := settings.ui
-	for len(settings.frames) > 0 {
-		settings.drop()
+func (view *settingsView) closeNow() {
+	ui := view.ui
+	for len(view.frames) > 0 {
+		view.drop()
 	}
-	settings.open = false
-	settings.side.Hide()
+	view.open = false
+	view.clearSearch()
+	view.side.Hide()
 	ui.sideApp.Show()
-	settings.view.Hide()
+	view.view.Hide()
 	ui.split.Show()
-	if settings.panelOn {
+	if view.panelOn {
 		ui.panelToggle.Show()
 	}
 	ui.updateHeader()
@@ -178,73 +217,116 @@ func (settings *settingsView) closeNow() {
 	ui.window.Canvas().Focus(ui.prompt)
 }
 
-// show opens a section, leaving whatever was open.
-func (settings *settingsView) show(section string) {
-	settings.confirmLeave(0, func() { settings.showNow(section) })
+// show opens a page, leaving whatever was open.
+func (view *settingsView) show(page string) {
+	view.confirmLeave(0, func() { view.showNow(page) })
 }
 
-func (settings *settingsView) showNow(section string) {
-	for len(settings.frames) > 0 {
-		settings.drop()
+// base is how many frames the page shown has of its own: a sub-page is
+// opened over its section.
+func (view *settingsView) base() int {
+	if _, ok := subPages[view.page]; ok {
+		return 2
 	}
-	settings.section = section
-	for name, row := range settings.rows {
+	return 1
+}
+
+// at tells whether a page is on screen, with nothing opened over it.
+func (view *settingsView) at(page string) bool {
+	return view.open && view.page == page && len(view.frames) == view.base()
+}
+
+// on tells whether a page is the one shown, or under what is.
+func (view *settingsView) on(page string) bool { return view.open && view.page == page }
+
+func (view *settingsView) showNow(page string) {
+	for len(view.frames) > 0 {
+		view.drop()
+	}
+	view.clearSearch()
+	if alias, ok := pageAliases[page]; ok {
+		page = alias
+	}
+	section := pageSection(page)
+	if _, ok := view.rows[section]; !ok {
+		section, page = "General", "General"
+	}
+	view.section, view.page = section, page
+	for name, row := range view.rows {
 		row.SetSelected(name == section)
 	}
-	var page fyne.CanvasObject
-	switch section {
-	case "Connections":
-		page = settings.ui.connectionSettings()
-	case "SSH machines":
-		page = settings.ui.sshSettings()
-	case "Instructions":
-		page = settings.ui.instructionSettings()
-	case "Extensions":
-		page = settings.ui.extensionSettings()
-	case "Connectors":
-		page = settings.ui.connectorSettings()
-	case "Phone remote":
-		page = settings.ui.remoteSettings()
-	case "Updates":
-		page = settings.ui.updateSettings()
-	default:
-		page = settings.ui.generalSettings()
+	view.anchors = map[string]*settingAnchor{}
+	view.frames = []settingsFrame{{content: view.build(section)}}
+	if page != section {
+		view.frames = append(view.frames, settingsFrame{content: view.build(page)})
 	}
-	settings.frames = []settingsFrame{{content: page}}
-	settings.present()
+	view.present()
+}
+
+// build makes a page from what is stored now.
+func (view *settingsView) build(page string) fyne.CanvasObject {
+	ui := view.ui
+	switch page {
+	case "Models & accounts":
+		return ui.modelSettings()
+	case "Agent & approvals":
+		return ui.agentSettings()
+	case "Tools & extensions":
+		return ui.toolSettings()
+	case "Phone":
+		return ui.remoteSettings()
+	case "Updates":
+		return ui.updateSettings()
+	case "Advanced":
+		return ui.advancedSettings()
+	case "Extensions":
+		return ui.extensionSettings()
+	case "Connectors":
+		return ui.connectorSettings()
+	}
+	return ui.generalSettings()
+}
+
+// link shows a sub-page over its section, from one of the section's rows.
+func (view *settingsView) link(page string) func() {
+	return func() { view.show(page) }
 }
 
 // push opens a page over the current one.
-func (settings *settingsView) push(frame settingsFrame) {
-	settings.frames = append(settings.frames, frame)
-	settings.present()
+func (view *settingsView) push(frame settingsFrame) {
+	view.frames = append(view.frames, frame)
+	view.present()
 }
 
 // drop leaves the page on top.
-func (settings *settingsView) drop() {
-	if n := len(settings.frames); n > 0 {
-		if leave := settings.frames[n-1].leave; leave != nil {
+func (view *settingsView) drop() {
+	if n := len(view.frames); n > 0 {
+		if leave := view.frames[n-1].leave; leave != nil {
 			leave()
 		}
-		settings.frames = settings.frames[:n-1]
+		view.frames = view.frames[:n-1]
 	}
 }
 
 // back returns to the page below, or to the conversation from a section.
-func (settings *settingsView) back() {
-	if len(settings.frames) <= 1 {
-		settings.close()
+func (view *settingsView) back() {
+	if len(view.frames) <= 1 {
+		view.close()
 		return
 	}
-	settings.confirmLeave(len(settings.frames)-1, func() {
-		settings.drop()
-		settings.present()
+	if len(view.frames) == view.base() { // from a sub-page to its section, built again
+		view.show(view.section)
+		return
+	}
+	view.confirmLeave(len(view.frames)-1, func() {
+		view.drop()
+		view.present()
 	})
 }
 
-func (settings *settingsView) confirmLeave(keep int, next func()) {
-	for i := len(settings.frames) - 1; i >= keep; i-- {
-		if ask := settings.frames[i].beforeLeave; ask != nil {
+func (view *settingsView) confirmLeave(keep int, next func()) {
+	for i := len(view.frames) - 1; i >= keep; i-- {
+		if ask := view.frames[i].beforeLeave; ask != nil {
 			ask(next)
 			return
 		}
@@ -254,31 +336,32 @@ func (settings *settingsView) confirmLeave(keep int, next func()) {
 
 // done leaves the page on top after it saved: the one below is built again
 // from what is now stored.
-func (settings *settingsView) done() {
-	if n := len(settings.frames); n > 1 {
-		settings.frames[n-1].leave = nil
-		settings.frames[n-1].beforeLeave = nil
+func (view *settingsView) done() {
+	if n := len(view.frames); n > 1 {
+		view.frames[n-1].leave = nil
+		view.frames[n-1].beforeLeave = nil
 	}
-	if len(settings.frames) == 2 {
-		settings.show(settings.section)
+	if len(view.frames) == view.base()+1 {
+		view.show(view.page)
 		return
 	}
-	settings.back()
+	view.back()
 }
 
-func (settings *settingsView) present() {
-	frame := settings.frames[len(settings.frames)-1]
-	settings.column.Objects = []fyne.CanvasObject{frame.content}
-	settings.column.Refresh()
-	settings.barRow.Objects = frame.actions
+func (view *settingsView) present() {
+	view.searching = false
+	frame := view.frames[len(view.frames)-1]
+	view.column.Objects = []fyne.CanvasObject{frame.content}
+	view.column.Refresh()
+	view.barRow.Objects = frame.actions
 	if len(frame.actions) > 0 {
-		settings.bar.Show()
+		view.bar.Show()
 	} else {
-		settings.bar.Hide()
+		view.bar.Hide()
 	}
-	settings.view.Refresh()
-	settings.scroll.ScrollToTop()
-	settings.ui.curtain.reveal()
+	view.view.Refresh()
+	view.scroll.ScrollToTop()
+	view.ui.curtain.reveal()
 }
 
 // ---------------------------------------------------------------------------
@@ -433,7 +516,7 @@ func (renderer *toggleRenderer) Destroy() {}
 // General.
 
 func (ui *desktopUI) generalSettings() fyne.CanvasObject {
-	settings := ui.prefs
+	view := ui.prefs
 	change := newRow("Change…", nil, styleOutline, func() {
 		ui.pick(pickRequest{title: "Choose the workspace", start: ui.cfg.Workspace, folder: true}, func(paths []string) {
 			root, err := agent.ResolveWorkspace(paths[0])
@@ -443,10 +526,133 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 			}
 			if root != ui.cfg.Workspace {
 				ui.selectProject(root) // shows the project's start screen: come back here
-				settings.openOn("General")
+				view.openOn("General")
 			}
 		})
 	})
+	sortPicker := newPicker(ui.window, "Worktree order", styleField, nil)
+	order, _ := registry.Lookup(registry.KeyWorktreeSort)
+	for _, value := range order.Values {
+		sortPicker.Options = append(sortPicker.Options, value.Label)
+	}
+	current := ui.worktreeSort
+	if sortLabels[current] == "" {
+		current = gitrepo.SortRecent
+	}
+	sortPicker.SetSelected(order.Label(current))
+	sortPicker.onChanged = func(label string) {
+		for _, value := range order.Values {
+			if value.Label == label {
+				ui.setWorktreeSort(value.ID)
+			}
+		}
+	}
+	worktrees := view.mark(registry.KeyWorktreeSort, settingRow(order.Title, "How the sidebar and the Repository window order a project's git worktrees.", sized(230, sortPicker.row)))
+	page := container.NewVBox(view.pageTitle("General", "", nil), view.intro(registry.General), sectionTitle("Workspace"))
+	if ui.server == nil { // on a server, its projects are chosen in the sidebar
+		page.Add(card(view.mark("general.workspace", ui.projectFolderRow(change)), worktrees))
+	} else {
+		page.Add(card(worktrees))
+	}
+	for _, object := range ui.targetRows() {
+		page.Add(object)
+	}
+	if ui.server == nil {
+		page.Add(sectionTitle("Window"))
+		page.Add(card(view.mark("general.close_to_tray", settingRow("Close to tray",
+			"On: closing the window keeps 1loop running in the system tray, so running tasks and the phone connection go on. Quit from the tray icon's menu or with Ctrl+Q. Off: closing the window quits. Without a tray (GNOME without an AppIndicator extension, a bar that shows no tray items) closing always quits.",
+			newToggle(!ui.closeQuits, func(on bool) {
+				ui.closeQuits = !on
+				platform.Devf("ui", "close to tray %v", on)
+				ui.save()
+			})))))
+	}
+	page.Add(sectionTitle("Import"))
+	page.Add(card(view.mark("general.import", ui.importRow())))
+	return page
+}
+
+// setWorktreeSort orders the worktrees, in the sidebar and the Repository
+// window.
+func (ui *desktopUI) setWorktreeSort(id string) {
+	if id == ui.worktreeSort {
+		return
+	}
+	ui.worktreeSort = id
+	ui.save()
+	ui.renderChats()
+	if ui.repoWindow != nil {
+		ui.repoWindow.render()
+	}
+}
+
+// pageButton opens a sub-page of the section.
+func (view *settingsView) pageButton(page string) fyne.CanvasObject {
+	open := newRow("Open", iconChevronRight, styleChip, view.link(page))
+	open.iconAfter = true
+	return open
+}
+
+// intro is the line under a section's title, from the shared list.
+func (view *settingsView) intro(section string) fyne.CanvasObject {
+	for _, entry := range registry.Sections() {
+		if entry.ID == section {
+			return padded(0, 4, 2, 0, plainFlow(entry.Intro, 13, colMuted))
+		}
+	}
+	return layout.NewSpacer()
+}
+
+// modelSettings is Models & accounts: the connections, and what happens at
+// a rate limit.
+func (ui *desktopUI) modelSettings() fyne.CanvasObject {
+	view := ui.prefs
+	if ui.server != nil {
+		return container.NewVBox(view.pageTitle("Models & accounts", "", nil), view.mark("models.connections", ui.server.defaultPresetSettings()))
+	}
+	add := newRow("Add connection", iconPlus, stylePrimary, func() {
+		id := core.Identifier()
+		ui.connectionEditor(agent.Connection{ID: id, AuthProfile: id, Name: "New connection", Provider: "compatible", Enabled: true, AllModels: true})
+	})
+	resume := ui.autoResume != nil && ui.autoResume.Enabled
+	resumeToggle := newToggle(resume, nil)
+	resumeToggle.onChange = func(on bool) {
+		if err := ui.setAutoResume(on); err != nil {
+			resumeToggle.set(!on)
+			ui.configureAutoResume() // no steps yet: they are chosen there
+		}
+	}
+	return container.NewVBox(
+		view.pageTitle("Models & accounts", "", nil),
+		view.intro(registry.Models),
+		container.NewBorder(nil, nil, nil, padded(14, 4, 0, 0, add), sectionTitle("Connections")),
+		padded(0, 10, 2, 0, plainFlow("Connect several services and accounts at once. The models of every enabled connection appear together in the composer.", 13, colMuted)),
+		view.mark("models.connections", ui.connectionRows()),
+		sectionTitle("Rate limits"),
+		card(view.mark(registry.KeyAutoResume, settingRow("Automatic resumption",
+			"What 1loop does when a conversation reaches a rate limit: wait for the reset, or go on with another model, in the order you choose.",
+			container.New(layout.NewCustomPaddedHBoxLayout(14), container.NewCenter(resumeToggle), newRow("Configure…", nil, styleOutline, ui.configureAutoResume))))),
+	)
+}
+
+// setAutoResume turns automatic resumption on or off; on needs steps.
+func (ui *desktopUI) setAutoResume(on bool) error {
+	if on && (ui.autoResume == nil || len(ui.autoResume.Steps) == 0) {
+		return errors.New("automatic resumption has no steps yet: choose them in Settings first")
+	}
+	if ui.autoResume == nil {
+		ui.autoResume = &agent.AutoResume{}
+	}
+	ui.autoResume.Enabled = on
+	ui.save()
+	ui.remote.settingsChanged()
+	return nil
+}
+
+// agentSettings is Agent & approvals: permissions, what the agent is told
+// and what it remembers, and its context.
+func (ui *desktopUI) agentSettings() fyne.CanvasObject {
+	view := ui.prefs
 	mode := newPicker(ui.window, "Tool permissions", styleField, nil)
 	mode.Options = []string{"Approval required", "YOLO mode"}
 	modes := []string{"approval", "yolo"}
@@ -470,38 +676,93 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		ui.updateApprovalControl()
 		ui.save()
 	}
-	return container.NewVBox(
-		settings.pageTitle("General", "", nil),
-		sectionTitle("Workspace"),
-		card(ui.projectFolderRow(change)),
-		sectionTitle("Remote server"),
-		card(settingRow("HTTPS server", "Work on a headless 1loop server with its own models, files, browser and terminals. Approve this device in the server console.", newRow("Connect…", nil, styleOutline, ui.connectServer))),
+	entry := widget.NewMultiLineEntry()
+	entry.Wrapping = fyne.TextWrapWord
+	entry.SetMinRowsVisible(10)
+	entry.SetText(ui.userInstructions)
+	entry.SetPlaceHolder("Describe your preferences: language, tone, coding conventions, level of detail…")
+	entry.OnChanged = func(text string) {
+		ui.userInstructions = strings.TrimSpace(text)
+		ui.save()
+	}
+	ui.preferencesEntry = entry
+	page := container.NewVBox(
+		view.pageTitle("Agent & approvals", "", nil),
+		view.intro(registry.Agent),
 		sectionTitle("Permissions"),
-		card(settingRow("Tool permissions",
+		card(view.mark(registry.KeyApprovalMode, settingRow("Tool permissions",
 			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto works as Codex: reads run at once, other commands run in a sandbox that writes only the workspace, and destructive ones go to Codex's review (ChatGPT account) or Claude Code's own Auto mode; other connections have no Auto mode and ask.",
-			sized(230, mode.row))),
-		sectionTitle("Import"),
-		card(ui.importRow()),
-		sectionTitle("Hooks"),
-		card(ui.hooksRow()),
+			sized(230, mode.row)))),
+		sectionTitle("Instructions and memory"),
+		card(view.mark("agent.preferences", settingStack("Your preferences",
+			"Added to 1loop's own system prompt, whose workspace and tool rules stay in place, in every chat. Saved as you type; they apply from the next turn.",
+			entry)),
+			view.mark(registry.KeyMemory, settingRow("Memory",
+				"The agent adds what it learns about you to these preferences, each change shown to you for approval. Off: it is not offered the memory tool.",
+				newToggle(!ui.memoryOff, func(on bool) { ui.setMemory(on) })))),
+		sectionTitle("Project memory"),
+	)
+	var rows []fyne.CanvasObject
+	for _, project := range ui.projects {
+		rows = append(rows, ui.projectMemoryRow(project))
+	}
+	if len(rows) == 0 {
+		rows = append(rows, settingRow("No projects yet", "Each project's AGENTS.md shows here once you add a project.", nil))
+	}
+	page.Add(view.mark("agent.project_memory", card(rows...)))
+	page.Add(sectionTitle("Context"))
+	page.Add(card(view.mark(registry.KeyDynamicCompaction, settingRow("Dynamic compaction",
+		"On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way.",
+		newToggle(!ui.classicCompaction, func(on bool) { ui.setDynamicCompaction(on) })))))
+	return page
+}
+
+func (ui *desktopUI) setMemory(on bool) {
+	ui.memoryOff = !on
+	ui.save()
+	ui.remote.settingsChanged()
+}
+
+func (ui *desktopUI) setDynamicCompaction(on bool) {
+	ui.classicCompaction = !on
+	platform.Devf("ui", "dynamic compaction %v", on)
+	ui.save()
+}
+
+// toolSettings is Tools & extensions: what extends the agent, and its
+// browser and screen.
+func (ui *desktopUI) toolSettings() fyne.CanvasObject {
+	view := ui.prefs
+	github := "Not connected."
+	if state := githubconnector.Default.Status(); state.Connected {
+		github = "Connected as @" + state.Login + "."
+	}
+	return container.NewVBox(
+		view.pageTitle("Tools & extensions", "", nil),
+		view.intro(registry.Tools),
+		sectionTitle("Extensions"),
+		card(view.mark("tools.extensions", settingRow("Skills, plugins and MCP servers", "Skills and plugins from GitHub, and the MCP servers the agent uses.", view.pageButton("Extensions"))),
+			view.mark("tools.github", settingRow("GitHub connector", "Lets the agent use your GitHub repositories, issues and pull requests. "+github, view.pageButton("Connectors")))),
 		sectionTitle("Browser"),
-		card(settingRow("Browsing data",
+		card(view.mark("tools.browser_data", settingRow("Browsing data",
 			"The agents' browser keeps its cookies and logins, cache, site data and history from one session to the next, in "+browser.ProfileDir()+". Clear erases all of it.",
-			ui.clearBrowserButton()),
-			settingRow("Import cookies",
+			ui.clearBrowserButton())),
+			view.mark("tools.import_cookies", settingRow("Import cookies",
 				"Import a cookie JSON export or a compatible local browser profile into Browser Use. Review the accounts you are sharing before confirming.",
-				newRow("Import…", nil, styleOutline, ui.importCookies))),
+				newRow("Import…", nil, styleOutline, ui.importCookies)))),
 		sectionTitle("Computer Use"),
-		card(ui.computerScreenRow()),
-		sectionTitle("Context"),
-		card(settingRow("Automatic resumption", "What 1loop does when a conversation reaches a rate limit: wait for the reset, or go on with another model, in the order you choose.", newRow("Configure…", nil, styleOutline, ui.configureAutoResume))),
-		card(settingRow("Dynamic compaction",
-			"On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way.",
-			newToggle(!ui.classicCompaction, func(on bool) {
-				ui.classicCompaction = !on
-				platform.Devf("ui", "dynamic compaction %v", on)
-				ui.save()
-			}))),
+		card(view.mark("tools.computer_screen", ui.computerScreenRow())),
+	)
+}
+
+// advancedSettings is Advanced: the hooks.
+func (ui *desktopUI) advancedSettings() fyne.CanvasObject {
+	view := ui.prefs
+	return container.NewVBox(
+		view.pageTitle("Advanced", "", nil),
+		view.intro(registry.Advanced),
+		sectionTitle("Hooks"),
+		card(view.mark("advanced.hooks", ui.hooksRow())),
 	)
 }
 
@@ -547,8 +808,8 @@ func (ui *desktopUI) editHooks() {
 			return
 		}
 		dialog.dismiss()
-		if ui.prefs.open && ui.prefs.section == "General" {
-			ui.prefs.show("General") // the count follows
+		if ui.prefs.on("Advanced") {
+			ui.prefs.show("Advanced") // the count follows
 		}
 	})
 	dialog = ui.modal("Hooks", body, 640, nil, cancel, save)
@@ -582,8 +843,8 @@ func (ui *desktopUI) computerScreenRow() fyne.CanvasObject {
 			grant.Width, grant.Height, grant.X, grant.Y)
 	}
 	refresh := func() { // the page, if it is still the one on screen
-		if ui.prefs.open && ui.prefs.section == "General" {
-			ui.prefs.show("General")
+		if ui.prefs.on("Tools & extensions") {
+			ui.prefs.show("Tools & extensions")
 		}
 	}
 	var change *tapRow
@@ -610,47 +871,7 @@ func (ui *desktopUI) computerScreenRow() fyne.CanvasObject {
 }
 
 // ---------------------------------------------------------------------------
-// Instructions.
-
-// instructionSettings shows what the agent is told in every chat and
-// what its memory tool changes: the user's preferences, and each project's
-// AGENTS.md.
-func (ui *desktopUI) instructionSettings() fyne.CanvasObject {
-	entry := widget.NewMultiLineEntry()
-	entry.Wrapping = fyne.TextWrapWord
-	entry.SetMinRowsVisible(14)
-	entry.SetText(ui.userInstructions)
-	entry.SetPlaceHolder("Describe your preferences: language, tone, coding conventions, level of detail…")
-	entry.OnChanged = func(text string) {
-		ui.userInstructions = strings.TrimSpace(text)
-		ui.save()
-	}
-	ui.preferencesEntry = entry
-	page := container.NewVBox(
-		ui.prefs.pageTitle("Instructions", "", nil),
-		card(settingStack("Your preferences",
-			"Added to 1loop's own system prompt, whose workspace and tool rules stay in place, in every chat. Saved as you type; they apply from the next turn.",
-			entry),
-			settingRow("Memory",
-				"The agent adds what it learns about you to these preferences, each change shown to you for approval. Off: it is not offered the memory tool.",
-				newToggle(!ui.memoryOff, func(on bool) {
-					ui.memoryOff = !on
-					ui.save()
-					ui.remote.settingsChanged()
-				}))),
-		sectionTitle("Project memory"),
-	)
-	if len(ui.projects) == 0 {
-		page.Add(card(settingRow("No projects yet", "Each project's AGENTS.md shows here once you add a project.", nil)))
-		return page
-	}
-	var rows []fyne.CanvasObject
-	for _, project := range ui.projects {
-		rows = append(rows, ui.projectMemoryRow(project))
-	}
-	page.Add(card(rows...))
-	return page
-}
+// Project memory.
 
 // projectMemoryRow edits a project's AGENTS.md, the instructions every agent
 // reads there and where the agent saves what it learns about the project.
@@ -698,11 +919,8 @@ func (ui *desktopUI) projectMemoryRow(project string) fyne.CanvasObject {
 // ---------------------------------------------------------------------------
 // Connections.
 
-func (ui *desktopUI) connectionSettings() fyne.CanvasObject {
-	if ui.server != nil {
-		return ui.server.defaultPresetSettings()
-	}
-	settings := ui.prefs
+// connectionRows is the card of the connections, each with its switch.
+func (ui *desktopUI) connectionRows() fyne.CanvasObject {
 	var rows []fyne.CanvasObject
 	for _, conn := range ui.connectionsList {
 		connectionValue := conn
@@ -724,17 +942,10 @@ func (ui *desktopUI) connectionSettings() fyne.CanvasObject {
 		}
 		rows = append(rows, settingRow(connectionValue.Name, detail, container.New(layout.NewCustomPaddedHBoxLayout(14), container.NewCenter(enabled), edit)))
 	}
-	add := newRow("Add connection", iconPlus, stylePrimary, func() {
-		id := core.Identifier()
-		ui.connectionEditor(agent.Connection{ID: id, AuthProfile: id, Name: "New connection", Provider: "compatible", Enabled: true, AllModels: true})
-	})
-	page := container.NewVBox(settings.pageTitle("Connections", "", container.NewCenter(add)),
-		padded(0, 10, 2, 0, plainFlow("Connect several services and accounts at once. The models of every enabled connection appear together in the composer.", 13, colMuted)))
 	if len(rows) == 0 {
 		rows = append(rows, settingRow("No connection yet", "Add one to get started.", nil))
 	}
-	page.Add(card(rows...))
-	return page
+	return card(rows...)
 }
 
 // removeConnection forgets a connection (and signs a ChatGPT account out).
@@ -1134,7 +1345,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		title = "New connection"
 	}
 	page := container.NewVBox(
-		settings.pageTitle(title, "Connections", nil),
+		settings.pageTitle(title, "Models & accounts", nil),
 		card(
 			settingRow("Name", "As it appears in the settings.", sized(340, name)),
 			settingRow("Type", "", sized(340, typePicker.row)),

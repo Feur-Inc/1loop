@@ -253,6 +253,9 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 	}
 	chat.queue, chat.steer = nil, nil
 	chat.tasks.StopAll()
+	if chat.Config.Scratch != "" {
+		go func(path string) { _ = agent.RemoveScratchWorkspace(server.scratchBase(), path) }(chat.Config.Scratch)
+	}
 	tabs := chat.tabs
 	chat.tabs = nil
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
@@ -351,6 +354,7 @@ func (server *headlessServer) events(w http.ResponseWriter, r *http.Request) {
 func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 	var args struct {
 		Chat, Text, Mode, Workspace string
+		NoFolder                    bool // a new chat in a folder 1loop makes for it
 		Attachments                 []agent.FileAttachment
 		Images                      []core.ImagePart
 		Handoff                     *agent.HandoffChoice // the answer to a handoff the server asked for
@@ -375,8 +379,15 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		core.Fail(w, 404, "Chat not found")
 		return
 	}
-	workspace, err := server.workspaceLocked(workspace)
+	var err error
+	scratch := args.NoFolder && chat == nil
+	if !scratch {
+		workspace, err = server.workspaceLocked(workspace)
+	}
 	server.mu.Unlock()
+	if scratch {
+		workspace, err = agent.NewScratchWorkspace(server.scratchBase())
+	}
 	if err != nil {
 		core.Fail(w, 403, err.Error())
 		return
@@ -407,7 +418,10 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 			title = title[:50]
 		}
 		cfg := server.cfg
-		cfg.Workspace = workspace
+		cfg.Workspace, cfg.Scratch = workspace, ""
+		if scratch {
+			cfg.Scratch = workspace
+		}
 		cfg.ClearSessions()
 		cfg.RanWith = nil
 		chat = server.panelHomes["home:"+workspace]

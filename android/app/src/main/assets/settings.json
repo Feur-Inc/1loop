@@ -1,0 +1,609 @@
+{
+  "sections": [
+    {
+      "id": "general",
+      "title": "General",
+      "intro": "Where the agent works, and what comes from elsewhere."
+    },
+    {
+      "id": "models",
+      "title": "Models \u0026 accounts",
+      "intro": "The services and accounts the models come from, and what happens at a rate limit."
+    },
+    {
+      "id": "agent",
+      "title": "Agent \u0026 approvals",
+      "intro": "What the agent may do without asking, what it is told in every chat and what it remembers."
+    },
+    {
+      "id": "tools",
+      "title": "Tools \u0026 extensions",
+      "intro": "What extends the agent, and its browser and screen."
+    },
+    {
+      "id": "phone",
+      "title": "Phone",
+      "intro": "The 1loop phone app: pairing, sharing and what it may do."
+    },
+    {
+      "id": "updates",
+      "title": "Updates",
+      "intro": "This version of 1loop, and the newer ones."
+    },
+    {
+      "id": "advanced",
+      "title": "Advanced",
+      "intro": "Commands around the agent's work."
+    }
+  ],
+  "settings": [
+    {
+      "key": "general.workspace",
+      "section": "general",
+      "title": "Project folder",
+      "description": "The folder the agent works in, with its files, terminals and git.",
+      "keywords": [
+        "workspace",
+        "directory",
+        "project",
+        "folder",
+        "path",
+        "cwd"
+      ],
+      "kind": "action",
+      "where": "desktop",
+      "protected": true
+    },
+    {
+      "key": "general.target",
+      "section": "general",
+      "title": "Execution target",
+      "description": "Where the agent works: this computer, an SSH machine, a server or this phone.",
+      "keywords": [
+        "server",
+        "computer",
+        "desktop",
+        "switch",
+        "machine",
+        "local",
+        "connect",
+        "this computer"
+      ],
+      "kind": "action",
+      "where": "both",
+      "protected": true
+    },
+    {
+      "key": "general.remote_server",
+      "section": "general",
+      "title": "Connect a server",
+      "description": "Pair this computer with a headless 1loop server, then work on it.",
+      "keywords": [
+        "remote",
+        "server",
+        "headless",
+        "connect",
+        "pair",
+        "pairing",
+        "https",
+        "fingerprint",
+        "certificate",
+        "docker"
+      ],
+      "kind": "action",
+      "where": "desktop",
+      "protected": true
+    },
+    {
+      "key": "general.ssh",
+      "section": "general",
+      "title": "SSH machines",
+      "description": "Other computers the agent can work on over SSH.",
+      "keywords": [
+        "ssh",
+        "remote",
+        "machine",
+        "host",
+        "server",
+        "computer",
+        "vm"
+      ],
+      "kind": "action",
+      "where": "desktop",
+      "protected": true
+    },
+    {
+      "key": "general.worktree_sort",
+      "section": "general",
+      "title": "Worktree order",
+      "description": "How the sidebar and the Repository window order a project's git worktrees.",
+      "keywords": [
+        "worktree",
+        "sort",
+        "order",
+        "branch",
+        "git",
+        "sidebar"
+      ],
+      "kind": "choice",
+      "values": [
+        {
+          "id": "recent",
+          "label": "Latest commit"
+        },
+        {
+          "id": "name",
+          "label": "Name"
+        },
+        {
+          "id": "pull",
+          "label": "Pull requests first"
+        }
+      ],
+      "where": "desktop"
+    },
+    {
+      "key": "general.close_to_tray",
+      "section": "general",
+      "title": "Close to tray",
+      "description": "Closing the window keeps 1loop running in the system tray; quit from the tray menu or with Ctrl+Q.",
+      "keywords": [
+        "tray",
+        "close",
+        "quit",
+        "background",
+        "minimize",
+        "window"
+      ],
+      "kind": "action",
+      "where": "desktop"
+    },
+    {
+      "key": "general.import",
+      "section": "general",
+      "title": "Import chats",
+      "description": "Bring conversations over from Claude Code, Codex and other apps.",
+      "keywords": [
+        "import",
+        "history",
+        "migrate",
+        "conversations",
+        "codex",
+        "claude"
+      ],
+      "kind": "action",
+      "where": "desktop"
+    },
+    {
+      "key": "models.connections",
+      "section": "models",
+      "title": "Connections",
+      "description": "The services and accounts the models come from, with their keys and sign-ins.",
+      "keywords": [
+        "accounts",
+        "api key",
+        "provider",
+        "openai",
+        "chatgpt",
+        "claude",
+        "openrouter",
+        "vllm",
+        "login",
+        "sign in",
+        "models"
+      ],
+      "kind": "action",
+      "where": "both",
+      "protected": true
+    },
+    {
+      "key": "models.default_preset",
+      "section": "models",
+      "title": "Default model preset",
+      "description": "For each account, a model per level, used when Default is selected in the composer.",
+      "keywords": [
+        "default",
+        "preset",
+        "model",
+        "level"
+      ],
+      "kind": "action",
+      "where": "phone"
+    },
+    {
+      "key": "models.context",
+      "section": "models",
+      "title": "Model context",
+      "description": "For each model, the size in tokens at which 1loop compacts a conversation.",
+      "keywords": [
+        "context",
+        "tokens",
+        "compact",
+        "window",
+        "limit"
+      ],
+      "kind": "action",
+      "where": "phone"
+    },
+    {
+      "key": "models.auto_resume",
+      "section": "models",
+      "title": "Automatic resumption",
+      "description": "At a rate limit, wait for the reset or go on with another model, in the order you choose.",
+      "keywords": [
+        "rate limit",
+        "quota",
+        "resume",
+        "fallback",
+        "wait",
+        "retry",
+        "switch model",
+        "usage"
+      ],
+      "kind": "toggle",
+      "where": "both"
+    },
+    {
+      "key": "agent.approval_mode",
+      "section": "agent",
+      "title": "Tool permissions",
+      "description": "Ask before each command and edit, run safe ones on their own (Auto), or run everything (YOLO).",
+      "keywords": [
+        "approval",
+        "approve",
+        "yolo",
+        "auto",
+        "sudo",
+        "permissions",
+        "confirm",
+        "ask",
+        "security",
+        "safe"
+      ],
+      "kind": "choice",
+      "values": [
+        {
+          "id": "approval",
+          "label": "Approval required"
+        },
+        {
+          "id": "auto",
+          "label": "Auto mode"
+        },
+        {
+          "id": "yolo",
+          "label": "YOLO mode"
+        }
+      ],
+      "where": "both",
+      "protected": true
+    },
+    {
+      "key": "agent.preferences",
+      "section": "agent",
+      "title": "Your preferences",
+      "description": "Added to 1loop's system prompt in every chat: language, tone, conventions.",
+      "keywords": [
+        "instructions",
+        "system prompt",
+        "personalization",
+        "custom",
+        "tone",
+        "language",
+        "rules",
+        "claude.md"
+      ],
+      "kind": "text",
+      "where": "both"
+    },
+    {
+      "key": "agent.memory",
+      "section": "agent",
+      "title": "Memory",
+      "description": "The agent adds what it learns about you to your preferences, each change approved by you.",
+      "keywords": [
+        "memory",
+        "remember",
+        "learn",
+        "preferences"
+      ],
+      "kind": "toggle",
+      "where": "both"
+    },
+    {
+      "key": "agent.project_memory",
+      "section": "agent",
+      "title": "Project memory",
+      "description": "Each project's AGENTS.md, which every agent reads there.",
+      "keywords": [
+        "agents.md",
+        "project",
+        "instructions",
+        "memory",
+        "claude.md"
+      ],
+      "kind": "action",
+      "where": "desktop"
+    },
+    {
+      "key": "agent.dynamic_compaction",
+      "section": "agent",
+      "title": "Dynamic compaction",
+      "description": "Compact the context at natural breaks in the work instead of once when it is nearly full.",
+      "keywords": [
+        "context",
+        "compact",
+        "summary",
+        "summarize",
+        "tokens",
+        "window"
+      ],
+      "kind": "toggle",
+      "where": "desktop"
+    },
+    {
+      "key": "tools.extensions",
+      "section": "tools",
+      "page": "Extensions",
+      "title": "Skills, plugins and MCP servers",
+      "description": "Skills and plugins from GitHub, and the MCP servers the agent uses.",
+      "keywords": [
+        "extensions",
+        "skills",
+        "plugins",
+        "mcp",
+        "servers",
+        "tools"
+      ],
+      "kind": "action",
+      "where": "both"
+    },
+    {
+      "key": "tools.github",
+      "section": "tools",
+      "page": "Connectors",
+      "title": "GitHub connector",
+      "description": "Lets the agent read and act on your GitHub repositories, issues and pull requests.",
+      "keywords": [
+        "github",
+        "git",
+        "connector",
+        "token",
+        "oauth",
+        "pull request",
+        "issues"
+      ],
+      "kind": "action",
+      "where": "both",
+      "protected": true
+    },
+    {
+      "key": "tools.browser_data",
+      "section": "tools",
+      "title": "Browsing data",
+      "description": "The agent's browser keeps its cookies, logins and history. Clear erases all of it.",
+      "keywords": [
+        "browser",
+        "cookies",
+        "cache",
+        "history",
+        "clear",
+        "logins",
+        "web"
+      ],
+      "kind": "action",
+      "where": "both"
+    },
+    {
+      "key": "tools.import_cookies",
+      "section": "tools",
+      "title": "Import cookies",
+      "description": "Import a cookie export or a local browser profile into the agent's browser.",
+      "keywords": [
+        "cookies",
+        "browser",
+        "login",
+        "import",
+        "session"
+      ],
+      "kind": "action",
+      "where": "desktop",
+      "protected": true
+    },
+    {
+      "key": "tools.computer_screen",
+      "section": "tools",
+      "title": "Shared screen",
+      "description": "The screen Computer Use sees, remembered between restarts.",
+      "keywords": [
+        "computer use",
+        "screen",
+        "display",
+        "monitor",
+        "screenshot",
+        "share"
+      ],
+      "kind": "action",
+      "where": "desktop",
+      "protected": true
+    },
+    {
+      "key": "tools.linux",
+      "section": "tools",
+      "title": "Linux",
+      "description": "The Debian the local agent works in: storage, packages, a terminal and a reset.",
+      "keywords": [
+        "linux",
+        "debian",
+        "terminal",
+        "packages",
+        "proot",
+        "storage"
+      ],
+      "kind": "action",
+      "where": "phone"
+    },
+    {
+      "key": "phone.remote",
+      "section": "phone",
+      "title": "Phone app on this network",
+      "description": "Lets the 1loop phone app find and reach this computer, once paired.",
+      "keywords": [
+        "phone",
+        "mobile",
+        "android",
+        "remote",
+        "network",
+        "lan"
+      ],
+      "kind": "toggle",
+      "where": "desktop",
+      "protected": true
+    },
+    {
+      "key": "phone.pairing",
+      "section": "phone",
+      "title": "Paired phones",
+      "description": "Pair a phone with a QR code, or forget one.",
+      "keywords": [
+        "pair",
+        "qr",
+        "code",
+        "phone",
+        "devices",
+        "forget"
+      ],
+      "kind": "action",
+      "where": "desktop",
+      "protected": true
+    },
+    {
+      "key": "phone.status",
+      "section": "phone",
+      "title": "While a model runs",
+      "description": "What shows over your other apps while the agent works: a small badge, a Live Update or nothing.",
+      "keywords": [
+        "badge",
+        "status",
+        "overlay",
+        "notification",
+        "live update",
+        "bubble",
+        "floating"
+      ],
+      "kind": "choice",
+      "values": [
+        {
+          "id": "badge",
+          "label": "Badge"
+        },
+        {
+          "id": "live",
+          "label": "Live Update"
+        },
+        {
+          "id": "off",
+          "label": "Off"
+        }
+      ],
+      "where": "phone"
+    },
+    {
+      "key": "phone.adb",
+      "section": "phone",
+      "title": "Phone access",
+      "description": "Lets the local agent use this phone through Shizuku and local ADB.",
+      "keywords": [
+        "shizuku",
+        "adb",
+        "phone use",
+        "permissions",
+        "control"
+      ],
+      "kind": "action",
+      "where": "phone",
+      "protected": true
+    },
+    {
+      "key": "phone.work_profile",
+      "section": "phone",
+      "title": "Work profile for the agent",
+      "description": "A separate Android profile where the agent installs and uses its apps.",
+      "keywords": [
+        "work profile",
+        "profile",
+        "apps",
+        "isolation",
+        "sandbox"
+      ],
+      "kind": "action",
+      "where": "phone",
+      "protected": true
+    },
+    {
+      "key": "phone.background",
+      "section": "phone",
+      "title": "Background execution",
+      "description": "Keeps long local tasks running when 1loop is not on screen.",
+      "keywords": [
+        "battery",
+        "background",
+        "optimization",
+        "doze",
+        "sleep",
+        "unrestricted"
+      ],
+      "kind": "action",
+      "where": "phone"
+    },
+    {
+      "key": "phone.sharing",
+      "section": "phone",
+      "title": "Share this phone",
+      "description": "Lets the desktop or another phone on this network use this phone's agent.",
+      "keywords": [
+        "share",
+        "pair",
+        "remote",
+        "network",
+        "devices",
+        "fingerprint"
+      ],
+      "kind": "action",
+      "where": "phone",
+      "protected": true
+    },
+    {
+      "key": "updates.check",
+      "section": "updates",
+      "title": "1loop updates",
+      "description": "Check the release page now, and update to the newest version.",
+      "keywords": [
+        "update",
+        "upgrade",
+        "version",
+        "release",
+        "new",
+        "download"
+      ],
+      "kind": "action",
+      "where": "both"
+    },
+    {
+      "key": "advanced.hooks",
+      "section": "advanced",
+      "title": "Hook commands",
+      "description": "Your commands around the agent's work, in Claude Code's format: before and after tools, on a prompt, when it stops.",
+      "keywords": [
+        "hooks",
+        "pretooluse",
+        "posttooluse",
+        "scripts",
+        "commands",
+        "automation"
+      ],
+      "kind": "action",
+      "where": "both"
+    }
+  ]
+}

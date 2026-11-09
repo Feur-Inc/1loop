@@ -58,6 +58,14 @@ finish-args:
   # user's approval, and the metainfo and docs say plainly that it runs on
   # the host.
   - --talk-name=org.freedesktop.Flatpak
+  # The tray icon (ui/tray.go): 1loop registers its StatusNotifierItem with
+  # the desktop's watcher, and asks it whether a tray host is there before
+  # closing the window hides it in the tray (without one, closing quits).
+  - --talk-name=org.kde.StatusNotifierWatcher
+  # The item's own bus name, which fyne.io/systray takes after its process
+  # ID: 2 in the sandbox, where 1loop-flatpak execs 1loop. The item is
+  # registered by its object path too, so the tray works without the name.
+  - --own-name=org.kde.StatusNotifierItem-2-1
 modules:
   - name: 1loop
     buildsystem: simple

@@ -3,6 +3,7 @@
 package server
 
 import (
+	"1loop/internal/agent"
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
 	"fmt"
@@ -22,6 +23,9 @@ func (server *headlessServer) projectBase() string {
 func (server *headlessServer) workspaceLocked(requested string) (string, error) {
 	if requested == "" {
 		requested = server.root
+	}
+	if server.scratchChatLocked(requested) { // outside the projects folder on a server
+		return agent.ResolveWorkspace(requested)
 	}
 	if !slices.Contains(server.projects, requested) && !server.worktreeLocked(requested) {
 		return "", fmt.Errorf("Choose a registered project")

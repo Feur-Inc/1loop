@@ -255,15 +255,23 @@ func (ui *desktopUI) worktreeLabel(folder string) string {
 	return path.Base(filepath.ToSlash(folder))
 }
 
-// worktreeRows are a project's other worktrees under it in the sidebar.
+// worktreeRows are a project's other worktrees under it in the sidebar:
+// folded into one "N worktrees" row until it is unfolded, the open one
+// still showing. A project can have dozens; its chats come first.
 func (ui *desktopUI) worktreeRows(project string, open func(folder string)) []fyne.CanvasObject {
 	state := ui.repoFor(project)
 	if state.repo == nil {
 		return nil
 	}
+	shown := ui.worktreesShown[project]
 	var rows []fyne.CanvasObject
+	count := 0
 	for _, worktree := range gitrepo.Sorted(state.repo.Worktrees, ui.worktreeSort) {
 		if worktree.Main {
+			continue
+		}
+		count++
+		if !shown && worktree.Path != ui.cfg.Workspace {
 			continue
 		}
 		worktree := worktree
@@ -279,13 +287,34 @@ func (ui *desktopUI) worktreeRows(project string, open func(folder string)) []fy
 		if ui.worktreeRunning(worktree.Path) {
 			row.badge = iconDot // the agent works in it
 		}
-		rows = append(rows, padded(0, 0, 14, 0, ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
+		rows = append(rows, padded(0, 0, 28, 0, ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, ui.worktreeActions(project, worktree, open))
 		})))
 	}
-	add := newRow("New worktree", iconPlus, styleNav, func() { ui.newWorktreeDialog(project) })
-	add.ink = colFaint
-	rows = append(rows, padded(0, 0, 14, 0, add))
+	if count == 0 {
+		return nil // "New worktree…" is in the project's menu
+	}
+	label := fmt.Sprintf("%d worktrees", count)
+	if count == 1 {
+		label = "1 worktree"
+	}
+	icon := iconChevronRight
+	if shown {
+		icon = iconChevron
+	}
+	toggle := newRow(label, icon, styleNav, func() {
+		ui.worktreesShown[project] = !shown
+		ui.renderChats()
+	})
+	toggle.ink = colFaint
+	toggle.size = 13
+	rows = append([]fyne.CanvasObject{padded(0, 0, 14, 0, toggle)}, rows...)
+	if shown {
+		add := newRow("New worktree", iconPlus, styleNav, func() { ui.newWorktreeDialog(project) })
+		add.ink = colFaint
+		add.size = 13
+		rows = append(rows, padded(0, 0, 28, 0, add))
+	}
 	return rows
 }
 
@@ -614,7 +643,7 @@ func (ui *desktopUI) worktreeChoices(project string, open func(string)) []menuAc
 		if folder == ui.cfg.Workspace {
 			icon = iconCheck
 		}
-		actions = append(actions, menuAction{label: "    " + worktree.Label(), icon: icon, run: func() { open(folder) }})
+		actions = append(actions, menuAction{label: "    " + worktree.Label(), icon: icon, group: project, run: func() { open(folder) }})
 	}
 	return actions
 }

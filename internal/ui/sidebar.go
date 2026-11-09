@@ -361,7 +361,7 @@ func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
 		if p == ui.cfg.Workspace {
 			icon = iconCheck
 		}
-		actions = append(actions, menuAction{label: ui.projectName(p), icon: icon, run: func() { ui.selectProject(p) }})
+		actions = append(actions, menuAction{label: ui.projectName(p), icon: icon, group: p, run: func() { ui.selectProject(p) }})
 		actions = append(actions, ui.worktreeChoices(p, ui.selectProject)...)
 	}
 	add := "Add folder…"
@@ -501,7 +501,7 @@ func (ui *desktopUI) confirm(title, text, verb string, run func()) {
 	dialog = ui.modal(title, label, 440, nil, cancel, row)
 }
 
-// renderChats redraws the project list and the current project's conversations.
+// renderChats redraws the projects and their chats.
 func (ui *desktopUI) renderChats() {
 	if ui.cachedChat != nil && !slices.Contains(ui.chats, ui.cachedChat.chat) {
 		ui.cachedChat = nil
@@ -515,63 +515,46 @@ func (ui *desktopUI) renderChats() {
 	if worktrees[ui.cfg.Workspace] == "" {
 		ui.ensureTargetProject(ui.cfg.Workspace)
 	}
-	ui.projectList.RemoveAll()
-	opened := ui.projectOf(ui.cfg.Workspace)
-	for _, p := range ui.targetProjects() {
-		p := p
-		if worktrees[p] != "" {
-			continue // shown under its project
+	var chats []sideChat
+	for _, chat := range ui.chats {
+		if chat.Config.MachineID != ui.cfg.MachineID {
+			continue
 		}
-		row := newRow(ui.projectName(p), iconFolder, styleNav, func() { ui.selectProject(p) })
-		row.selected = p == ui.cfg.Workspace
-		row.accent = true
-		row.truncate = true
-		if state := ui.repoFor(p); state.repo != nil {
-			row.trailing = state.repo.Current // the branch of the project's folder
-		}
-		ui.projectList.Add(ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
-			actions := []menuAction{{label: "New chat", icon: iconPlus, run: func() { ui.selectProject(p); ui.startNew() }}}
-			actions = append(actions, ui.repositoryActions(p)...)
-			if ui.cfg.MachineID == "" { // a machine's folder is renamed there, in its terminal
-				actions = append(actions, menuAction{label: "Rename", icon: iconRename, run: func() { ui.renameProject(p) }})
-			}
-			actions = append(actions, menuAction{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { ui.removeProject(p) }})
-			return showMenu(ui.window, anchor, actions)
-		}))
-		if p == opened {
-			for _, object := range ui.worktreeRows(p, ui.selectProject) {
-				ui.projectList.Add(object)
-			}
-			ui.loadRepo(p, true, 20*time.Second)
-		}
-	}
-	ui.chatList.RemoveAll()
-	chats := ui.chatsIn(ui.cfg.Workspace)
-	for _, chat := range chats {
 		chat := chat
-		row := newRow(chat.Title, nil, styleNav, func() { ui.openChat(chat) })
-		row.accent = true
-		row.selected = chat == ui.current
-		if chat.run != nil {
-			row.badge = iconDot // the agent works on it in the background
+		chats = append(chats, sideChat{
+			title: chat.Title, folder: chat.Config.Workspace, running: chat.run != nil, selected: chat == ui.current,
+			open: func() { ui.openChat(chat) },
+			menu: []menuAction{
+				{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
+				{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
+			},
+			text: func() []string { return chatTexts(chat.Items) },
+		})
+	}
+	ui.renderSidebar(ui.targetProjects(), chats, ui.selectProject, func(p string) []menuAction {
+		actions := ui.repositoryActions(p)
+		if ui.cfg.MachineID == "" { // a machine's folder is renamed there, in its terminal
+			actions = append(actions, menuAction{label: "Rename", icon: iconRename, run: func() { ui.renameProject(p) }})
 		}
-		ui.chatList.Add(ui.withMore(row, func(anchor fyne.CanvasObject) *sheet { return ui.chatMenu(chat, anchor) }))
+		return append(actions, menuAction{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { ui.removeProject(p) }})
+	})
+}
+
+// chatTexts are a chat's messages, what search reads: not tool output.
+func chatTexts(items []agent.ChatItem) []string {
+	var texts []string
+	for _, item := range items {
+		if item.Kind == "user" || item.Kind == "assistant" {
+			texts = append(texts, item.Text)
+		}
 	}
-	if len(chats) == 0 {
-		ui.chatList.Add(padded(4, 0, 10, 0, textLine("No chats yet", 13, colFaint)))
-	}
-	if ui.sideLists != nil {
-		ui.sideLists.Refresh() // both lists changed height: lay the column out again
-	}
+	return texts
 }
 
 // buildSidebar assembles the sidebar column.
 func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
-	ui.newChat = newRow("New chat", theme.ContentAddIcon(), styleNav, ui.startNew)
-	ui.newChat.trailing = "Ctrl K"
 	ui.connections = newRow("Settings", theme.SettingsIcon(), styleNav, ui.settings)
 	ui.projectList = container.New(layout.NewCustomPaddedVBoxLayout(1))
-	ui.chatList = container.New(layout.NewCustomPaddedVBoxLayout(1))
 
 	logo := brandImage("1loop-logo.png", 30*1483.0/512.0, 30)
 	collapse := newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
@@ -579,10 +562,7 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	if ui.chrome {
 		brand = container.NewStack(newDragArea(ui.window), brand)
 	}
-	addProject := newRow("", iconPlus, styleWindow, ui.addProject)
-	ui.sideLists = container.NewVBox(
-		sectionHeader("Projects", addProject), ui.projectList,
-		sectionHeader("Conversations", nil), ui.chatList)
+	ui.sideLists = container.NewVBox(sectionHeader("Projects", nil), ui.projectList)
 	lists := ui.sideLists
 	divider := canvas.NewRectangle(colBorderSoft)
 	divider.SetMinSize(fyne.NewSize(0, 1))
@@ -591,7 +571,7 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	ui.updateRow.Hide()
 	bottom := container.NewVBox(divider, padded(6, 0, 0, 0, ui.updateRow), padded(0, 8, 0, 0, ui.connections))
 	// Under the logo: the chats, or the settings' sections while they are open.
-	ui.sideApp = container.NewBorder(ui.newChat, bottom, nil, nil, newKineticVScroll(lists))
+	ui.sideApp = container.NewBorder(ui.sideActions(), bottom, nil, nil, newKineticVScroll(lists))
 	content := padded(0, 0, 12, 12, container.NewBorder(brand, nil, nil, nil, container.NewStack(ui.sideApp, ui.prefs.side)))
 	return container.NewStack(canvas.NewRectangle(colSidebar), content)
 }

@@ -11,9 +11,11 @@ import (
 	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
+	"maps"
 	"net"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -225,19 +227,22 @@ type desktopUI struct {
 	tips              *tipLayer
 
 	// Window and sidebar
-	header       *fitLabel
-	headerBar    *fyne.Container
-	expand       *tapRow
-	newChat      *tapRow
-	connections  *tapRow
-	projectList  *fyne.Container
-	chatList     *fyne.Container
-	sideLists    *fyne.Container
-	pane         *paneLayout
-	sideHandle   *sidebarHandle
-	sidebarWidth float32 // dragged to, independent of window size; 0: the default
-	paneAnim     *fyne.Animation
-	root         *fyne.Container
+	header         *fitLabel
+	headerBar      *fyne.Container
+	expand         *tapRow
+	newChat        *tapRow
+	connections    *tapRow
+	projectList    *fyne.Container
+	sideLists      *fyne.Container
+	sideChats      []sideChat      // the chats listed, for search
+	allChatsShown  map[string]bool // projects whose every chat is listed
+	worktreesShown map[string]bool // projects whose worktrees are unfolded
+	foldedProjects map[string]bool
+	pane           *paneLayout
+	sideHandle     *sidebarHandle
+	sidebarWidth   float32 // dragged to, independent of window size; 0: the default
+	paneAnim       *fyne.Animation
+	root           *fyne.Container
 }
 
 // Fyne snapshots its built-in dialog language when loading translations.
@@ -273,7 +278,7 @@ func runDesktop(backend *agent.App, root string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	backend.EnableChatGPTWeb(ctx)
 	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), statePath: statePath(root),
-		cfg: agent.Config{Provider: "compatible", Workspace: root}}
+		cfg: agent.Config{Provider: "compatible", Workspace: root}, foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}}
 	ui.load()
 	ui.initializeConnections()
 	// Our own title bar on X11 and native Wayland; the system bar elsewhere.
@@ -304,6 +309,7 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.SetCloseIntercept(ui.quit)
 	for _, s := range []*desktop.CustomShortcut{
 		{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierControl},
+		{KeyName: fyne.KeyF, Modifier: fyne.KeyModifierControl},
 		{KeyName: fyne.KeyR, Modifier: fyne.KeyModifierControl | fyne.KeyModifierShift},
 		{KeyName: fyne.KeyB, Modifier: fyne.KeyModifierControl},
 	} {
@@ -419,6 +425,8 @@ func (ui *desktopUI) shortcut(s fyne.Shortcut) bool {
 	switch {
 	case c.KeyName == fyne.KeyK && c.Modifier == fyne.KeyModifierControl:
 		ui.startNew()
+	case c.KeyName == fyne.KeyF && c.Modifier == fyne.KeyModifierControl:
+		ui.search()
 	case c.KeyName == fyne.KeyR && c.Modifier == fyne.KeyModifierControl|fyne.KeyModifierShift:
 		ui.restart()
 	case c.KeyName == fyne.KeyB && c.Modifier == fyne.KeyModifierControl:
@@ -1722,6 +1730,7 @@ type savedState struct {
 	LocalWorkspace    string                `json:"localWorkspace,omitempty"` // while an SSH machine is the target
 	Worktrees         map[string]string     `json:"worktrees,omitempty"`      // folder → project
 	WorktreeSort      string                `json:"worktreeSort,omitempty"`
+	FoldedProjects    []string              `json:"foldedProjects,omitempty"` // sidebar groups folded
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1776,6 +1785,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.localWorkspace,
 		ui.worktrees,
 		ui.worktreeSort,
+		slices.Sorted(maps.Keys(ui.foldedProjects)),
 	})
 	if ui.panel != nil {
 		ui.panel.stash() // the open chat's panel, as it is now
@@ -1884,6 +1894,9 @@ func (ui *desktopUI) load() {
 	ui.projects = state.Projects
 	ui.sshMachines, ui.machineProjects, ui.localWorkspace = state.SSHMachines, state.MachineProjects, state.LocalWorkspace
 	ui.worktrees, ui.worktreeSort = state.Worktrees, state.WorktreeSort
+	for _, project := range state.FoldedProjects {
+		ui.foldedProjects[project] = true
+	}
 	if _, ok := ui.machineSettings(ui.cfg.MachineID); ui.cfg.MachineID != "" && !ok { // the machine was removed
 		ui.cfg.MachineID, ui.cfg.Workspace = "", ui.lastLocalWorkspace()
 	}

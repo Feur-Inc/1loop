@@ -49,7 +49,7 @@ type Setting struct {
 	Key     string `json:"key"`
 	Section string `json:"section"`
 	// Page is the desktop page that holds it, when it is not the section's
-	// own (SSH machines, Extensions, Connectors).
+	// own (Extensions, Connectors).
 	Page        string   `json:"page,omitempty"`
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
@@ -127,15 +127,15 @@ var list = []Setting{
 	{Key: "general.workspace", Section: General, Title: "Project folder", Where: OnDesktop, Kind: Action, Protected: true,
 		Description: "The folder the agent works in, with its files, terminals and git.",
 		Keywords:    []string{"workspace", "directory", "project", "folder", "path", "cwd"}},
-	{Key: "general.target", Section: General, Title: "Execution target", Where: OnPhone, Kind: Action, Protected: true,
-		Description: "The computer, server or this phone the agent runs on.",
-		Keywords:    []string{"server", "computer", "desktop", "switch", "machine", "local", "connect"}},
-	{Key: "general.remote_server", Section: General, Title: "HTTPS server", Where: OnDesktop, Kind: Action, Protected: true,
-		Description: "Work on a headless 1loop server with its own models, files, browser and terminals.",
-		Keywords:    []string{"remote", "server", "headless", "connect", "pair", "https"}},
-	{Key: "general.ssh", Section: General, Page: "SSH machines", Title: "SSH machines", Where: OnDesktop, Kind: Action, Protected: true,
+	{Key: "general.target", Section: General, Title: "Execution target", Where: OnBoth, Kind: Action, Protected: true,
+		Description: "Where the agent works: this computer, an SSH machine, a server or this phone.",
+		Keywords:    []string{"server", "computer", "desktop", "switch", "machine", "local", "connect", "this computer"}},
+	{Key: "general.remote_server", Section: General, Title: "Connect a server", Where: OnDesktop, Kind: Action, Protected: true,
+		Description: "Pair this computer with a headless 1loop server, then work on it.",
+		Keywords:    []string{"remote", "server", "headless", "connect", "pair", "pairing", "https", "fingerprint", "certificate", "docker"}},
+	{Key: "general.ssh", Section: General, Title: "SSH machines", Where: OnDesktop, Kind: Action, Protected: true,
 		Description: "Other computers the agent can work on over SSH.",
-		Keywords:    []string{"ssh", "remote", "machine", "host", "server", "computer"}},
+		Keywords:    []string{"ssh", "remote", "machine", "host", "server", "computer", "vm"}},
 	{Key: KeyWorktreeSort, Section: General, Title: "Worktree order", Where: OnDesktop, Kind: Choice,
 		Description: "How the sidebar and the Repository window order a project's git worktrees.",
 		Keywords:    []string{"worktree", "sort", "order", "branch", "git", "sidebar"},

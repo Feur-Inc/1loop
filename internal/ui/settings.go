@@ -82,9 +82,17 @@ var sectionIcons = map[string]fyne.Resource{
 
 // subPages are pages of their own, opened from a row of their section.
 var subPages = map[string]string{
-	"SSH machines": registry.General,
-	"Extensions":   registry.Tools,
-	"Connectors":   registry.Tools,
+	"Extensions": registry.Tools,
+	"Connectors": registry.Tools,
+}
+
+// pageAliases are pages of earlier versions, still named by links and
+// messages: they open where their settings went.
+var pageAliases = map[string]string{
+	"SSH machines": "General",
+	"Connections":  "Models & accounts",
+	"Instructions": "Agent & approvals",
+	"Phone remote": "Phone",
 }
 
 // pageSection is the title of the section a page belongs to.
@@ -205,6 +213,7 @@ func (view *settingsView) closeNow() {
 	}
 	ui.updateHeader()
 	ui.relayoutColumn()
+	ui.curtain.reveal()
 	ui.window.Canvas().Focus(ui.prompt)
 }
 
@@ -235,6 +244,9 @@ func (view *settingsView) showNow(page string) {
 		view.drop()
 	}
 	view.clearSearch()
+	if alias, ok := pageAliases[page]; ok {
+		page = alias
+	}
 	section := pageSection(page)
 	if _, ok := view.rows[section]; !ok {
 		section, page = "General", "General"
@@ -267,8 +279,6 @@ func (view *settingsView) build(page string) fyne.CanvasObject {
 		return ui.updateSettings()
 	case "Advanced":
 		return ui.advancedSettings()
-	case "SSH machines":
-		return ui.sshSettings()
 	case "Extensions":
 		return ui.extensionSettings()
 	case "Connectors":
@@ -351,6 +361,7 @@ func (view *settingsView) present() {
 	}
 	view.view.Refresh()
 	view.scroll.ScrollToTop()
+	view.ui.curtain.reveal()
 }
 
 // ---------------------------------------------------------------------------
@@ -519,12 +530,6 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 			}
 		})
 	})
-	machines := "None yet: add one to work on another computer."
-	if n := len(ui.sshMachines); n == 1 {
-		machines = "1 machine. Choose it in the target menu, under the composer."
-	} else if n > 1 {
-		machines = fmt.Sprintf("%d machines. Choose one in the target menu, under the composer.", n)
-	}
 	sortPicker := newPicker(ui.window, "Worktree order", styleField, nil)
 	order, _ := registry.Lookup(registry.KeyWorktreeSort)
 	for _, value := range order.Values {
@@ -542,18 +547,19 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 			}
 		}
 	}
-	return container.NewVBox(
-		view.pageTitle("General", "", nil),
-		view.intro(registry.General),
-		sectionTitle("Workspace"),
-		card(view.mark("general.workspace", ui.projectFolderRow(change)),
-			view.mark(registry.KeyWorktreeSort, settingRow(order.Title, "How the sidebar and the Repository window order a project's git worktrees.", sized(230, sortPicker.row)))),
-		sectionTitle("Where the agent runs"),
-		card(view.mark("general.remote_server", settingRow("HTTPS server", "Work on a headless 1loop server with its own models, files, browser and terminals. Approve this device in the server console.", newRow("Connect…", nil, styleOutline, ui.connectServer))),
-			view.mark("general.ssh", settingRow("SSH machines", "Other computers the agent can work on over SSH. "+machines, view.pageButton("SSH machines")))),
-		sectionTitle("Import"),
-		card(view.mark("general.import", ui.importRow())),
-	)
+	worktrees := view.mark(registry.KeyWorktreeSort, settingRow(order.Title, "How the sidebar and the Repository window order a project's git worktrees.", sized(230, sortPicker.row)))
+	page := container.NewVBox(view.pageTitle("General", "", nil), view.intro(registry.General), sectionTitle("Workspace"))
+	if ui.server == nil { // on a server, its projects are chosen in the sidebar
+		page.Add(card(view.mark("general.workspace", ui.projectFolderRow(change)), worktrees))
+	} else {
+		page.Add(card(worktrees))
+	}
+	for _, object := range ui.targetRows() {
+		page.Add(object)
+	}
+	page.Add(sectionTitle("Import"))
+	page.Add(card(view.mark("general.import", ui.importRow())))
+	return page
 }
 
 // setWorktreeSort orders the worktrees, in the sidebar and the Repository

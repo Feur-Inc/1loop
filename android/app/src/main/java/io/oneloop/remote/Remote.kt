@@ -275,6 +275,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var projectActions by mutableStateOf(false)
     var projectsOpen by mutableStateOf(false)
     var settingsOpen by mutableStateOf(false)
+    var settingsSection by mutableStateOf<String?>(null) // the section open in Settings (its id): kept while Extensions or Linux covers it
     var extensionsOpen by mutableStateOf(false) // Settings → Extensions (Extensions.kt)
     var linuxOpen by mutableStateOf(false) // Settings → Linux (LinuxScreen.kt)
     // Its work outlives the screen: a reset stops the agent, which leaves the chat screen.
@@ -622,6 +623,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         clearAttachments() // picked for the previous target
         connectionsOpen = false
         settingsOpen = false
+        settingsSection = null
         extensionsOpen = false
         linuxOpen = false
         sharing = null

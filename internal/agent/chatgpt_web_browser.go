@@ -244,7 +244,7 @@ func (backend *App) webHandoffNote(ctx context.Context, cfg Config, prompt strin
 	release := bridge.Retain()
 	defer release()
 	if cfg.WebSettings == nil {
-		return "", fmt.Errorf("Finish ChatGPT (Web) setup in Settings → Connections")
+		return "", fmt.Errorf("Finish ChatGPT (Web) setup in Settings → Models & accounts")
 	}
 	project, err := bridge.project(ctx, cfg.WebSettings.ProjectURL)
 	if err != nil {
@@ -381,7 +381,7 @@ func (backend *App) webTurn(ctx context.Context, cfg Config, history []Message, 
 	release := bridge.Retain()
 	defer release()
 	if cfg.WebSettings == nil {
-		return fmt.Errorf("Finish ChatGPT (Web) setup in Settings → Connections")
+		return fmt.Errorf("Finish ChatGPT (Web) setup in Settings → Models & accounts")
 	}
 	settings := *cfg.WebSettings
 	if settings.ProjectURL, err = bridge.project(ctx, settings.ProjectURL); err != nil {
@@ -983,7 +983,7 @@ func webAttachConnector(ctx context.Context, tab *browser.Page, name string) err
 		}
 	}
 	if !point.Found {
-		return fmt.Errorf("ChatGPT does not list the %s app: check that the %s plugin is connected (Settings → ChatGPT (Web))", name, name)
+		return fmt.Errorf("ChatGPT does not list the %s app: check that the %s plugin is connected (Settings → Models & accounts → ChatGPT (Web))", name, name)
 	}
 	if err := tab.Run(ctx, chromedp.MouseClickXY(point.X, point.Y)); err != nil {
 		return err

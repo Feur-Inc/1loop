@@ -69,7 +69,7 @@ func coreToolDefinitions() []map[string]any {
 			"parameters":  map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false},
 		}})
 	}
-	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), recallToolDefinition(), memoryToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition())
+	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), recallToolDefinition(), memoryToolDefinition(), settingsToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition())
 }
 
 // allToolDefinitions are every tool, loaded or not.
@@ -451,6 +451,10 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	if call.Function.Name == "memory" {
 		return backend.editMemory(ctx, call.Function.Arguments, begin, emit)
 	}
+	if call.Function.Name == "settings" {
+		output, err = backend.changeSettings(ctx, call.Function.Arguments, begin, emit)
+		return
+	}
 	if call.Function.Name == "skill" {
 		begin()
 		output, err = loadSkill(call.Function.Arguments)
@@ -465,6 +469,11 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	}
 	if call.Function.Name == "request_user_input" {
 		output, err = backend.askUser(ctx, call.Function.Arguments, begin, emit)
+		return
+	}
+	if call.Function.Name == "change_directory" || call.Function.Name == "request_directory" {
+		cfg, _ := ctx.Value(configContextKey{}).(Config)
+		output, err = backend.moveTool(ctx, cfg, call, begin, emit)
 		return
 	}
 	if call.Function.Name == "request_permissions" {

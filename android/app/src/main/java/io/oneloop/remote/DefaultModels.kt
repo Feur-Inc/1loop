@@ -2,6 +2,7 @@
 
 package io.oneloop.remote
 
+import androidx.compose.ui.graphics.Color
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -32,11 +33,12 @@ fun DefaultModelsSection(app: RemoteApp) {
     var saving by remember { mutableStateOf(false) }
     var notice by remember(account?.id) { mutableStateOf<String?>(null) }
     val models = app.models.filter { it.account == account?.id && it.id != "default" }
-    Text("Default model preset", style = Type.headline)
+    Text("Default model preset", style = Type.title)
     Text("Optional, for each account. Choose a model per level, then select Default in the composer. Only configured levels appear. Accounts never switch.", style = Type.small)
     Box {
         Pill(account?.name ?: "No account", enabled = !saving && app.accounts.isNotEmpty()) { expanded = true }
-        DropdownMenu(expanded, onDismissRequest = { expanded = false }) {
+        if (expanded) GlassMenuOpen()
+        DropdownMenu(expanded, onDismissRequest = { expanded = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover), border = GlassEdge, shape = GlassMenuShape) {
             app.accounts.forEach { choice ->
                 DropdownMenuItem(text = { Text(choice.name) }, onClick = { selected = choice.id; expanded = false })
             }
@@ -73,6 +75,7 @@ fun DefaultModelsSection(app: RemoteApp) {
     notice?.let { Text(it, style = Type.small) }
     editing?.let { level ->
         var search by remember(level) { mutableStateOf("") }
+        GlassBackdrop()
         AlertDialog(
             onDismissRequest = { editing = null },
             title = { Text("${levels.first { it.first == level }.second} · ${account.name}") },
@@ -91,7 +94,7 @@ fun DefaultModelsSection(app: RemoteApp) {
                 }
             },
             confirmButton = { Pill("Close") { editing = null } },
-            containerColor = Palette.surface,
+            containerColor = GlassSurface, modifier = GlassDialogEdge,
             titleContentColor = Palette.text,
             textContentColor = Palette.text,
         )

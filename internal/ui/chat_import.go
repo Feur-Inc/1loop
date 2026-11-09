@@ -2,7 +2,7 @@
 
 package ui
 
-// Import from Claude Code and Codex (Settings > General): their sessions on
+// Import from Claude Code and Codex (Settings → General): their sessions on
 // this computer, grouped by the folder they worked in, copied into 1loop as
 // chats of that folder's project. A whole project or single chats can be
 // chosen; a chat imported once is marked and not imported twice.

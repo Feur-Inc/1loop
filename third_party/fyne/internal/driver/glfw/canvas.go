@@ -39,6 +39,24 @@ type glCanvas struct {
 	webExtraWindows *container.MultipleWindows
 }
 
+// CaptureNow paints the canvas into the back buffer and reads it there,
+// without showing it (1loop's frosted glass): what the front buffer holds
+// after a swap, which Capture reads, is undefined on many drivers. The next
+// frame paints over it.
+func (c *glCanvas) CaptureNow() image.Image {
+	var img image.Image
+	w, ok := c.context.(*window)
+	if !ok {
+		return nil
+	}
+	w.RunWithContext(func() {
+		updateGLContext(w)
+		c.paint(c.Size())
+		img = c.Painter().CaptureFrame(c)
+	})
+	return img
+}
+
 func (c *glCanvas) Capture() image.Image {
 	var img image.Image
 	c.context.(*window).RunWithContext(func() {

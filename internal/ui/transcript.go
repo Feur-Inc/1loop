@@ -1104,6 +1104,7 @@ func (currentTurn *turn) showRun(outcome agent.ToolOutcome) {
 // applyActivity shows a turn's activity when its chat is on screen.
 func (ui *desktopUI) applyActivity(currentTurn *turn) {
 	ui.remote.metaChanged(currentTurn.chat)
+	ui.syncPresence()
 	if currentTurn.chat != ui.current || currentTurn.mark == "" {
 		return
 	}

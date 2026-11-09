@@ -37,6 +37,7 @@ import (
 	"1loop/internal/browser"
 	"1loop/internal/computeruse"
 	"1loop/internal/core"
+	"1loop/internal/discord"
 	"1loop/internal/extensions"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
@@ -229,6 +230,9 @@ type desktopUI struct {
 	closeQuits        bool              // settings: closing the window quits rather than hiding it in the tray
 	trayNoticeShown   bool              // the first close said that 1loop stays in the tray
 	tray              *trayIcon         // the system tray icon (tray.go), nil without one
+	discordPresence   bool              // settings: show on Discord what the agent is doing
+	discordDetails    bool              // settings: with the chat, project and tool
+	presence          *discord.Presence // while discordPresence is on
 	tips              *tipLayer
 
 	// Window and sidebar
@@ -467,6 +471,7 @@ func (ui *desktopUI) release() {
 	extensions.Servers.CloseAll() // the MCP servers 1loop started
 	ui.mark.stop()
 	ui.workMark.stop()
+	ui.presence.Close()
 	ui.persist(true)
 	ui.browser.WaitClosed() // Chrome writes its profile as it closes
 	ui.backend.CloseChatGPTWeb()
@@ -1049,6 +1054,7 @@ func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
 	chat.run = run
 	chat.failed = false
 	ui.remote.metaChanged(chat)
+	ui.syncPresence()
 	if chat == ui.current {
 		ui.syncRun()
 	}
@@ -1067,6 +1073,7 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	}
 	chat.run = nil
 	ui.remote.metaChanged(chat)
+	ui.syncPresence()
 	ui.staleAccountLimits(chat.Config.ConnectionID)
 	if run != nil && run.approval != nil {
 		run.approval.dismiss()
@@ -1776,6 +1783,8 @@ type savedState struct {
 	FoldedProjects    []string              `json:"foldedProjects,omitempty"` // sidebar groups folded
 	CloseQuits        bool                  `json:"closeQuits,omitempty"`
 	TrayNoticeShown   bool                  `json:"trayNoticeShown,omitempty"`
+	DiscordPresence   bool                  `json:"discordPresence,omitempty"`
+	DiscordDetails    bool                  `json:"discordDetails,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1836,6 +1845,8 @@ func (ui *desktopUI) persist(wait bool) {
 		slices.Sorted(maps.Keys(ui.foldedProjects)),
 		ui.closeQuits,
 		ui.trayNoticeShown,
+		ui.discordPresence,
+		ui.discordDetails,
 	})
 	if ui.panel != nil {
 		ui.panel.stash() // the open chat's panel, as it is now
@@ -1957,6 +1968,8 @@ func (ui *desktopUI) load() {
 	ui.memoryOff = state.MemoryOff
 	ui.closeQuits, ui.trayNoticeShown = state.CloseQuits, state.TrayNoticeShown
 	ui.autoResume = state.AutoResume
+	ui.discordPresence, ui.discordDetails = state.DiscordPresence, state.DiscordDetails
+	ui.syncPresence()
 	for _, chat := range state.Chats {
 		if chat == nil {
 			continue

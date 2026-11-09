@@ -159,6 +159,42 @@
       "where": "desktop"
     },
     {
+      "key": "general.discord_presence",
+      "section": "general",
+      "title": "Discord status",
+      "description": "Shows on your Discord profile that 1loop is working: the model, what it is doing and for how long.",
+      "keywords": [
+        "discord",
+        "rich presence",
+        "status",
+        "activity",
+        "profile",
+        "playing",
+        "rpc"
+      ],
+      "kind": "toggle",
+      "where": "desktop",
+      "protected": true
+    },
+    {
+      "key": "general.discord_details",
+      "section": "general",
+      "title": "Share the chat on Discord",
+      "description": "Adds the chat's title, its project and the current command or file to the Discord status.",
+      "keywords": [
+        "discord",
+        "rich presence",
+        "privacy",
+        "project",
+        "chat",
+        "details",
+        "share"
+      ],
+      "kind": "toggle",
+      "where": "desktop",
+      "protected": true
+    },
+    {
       "key": "general.import",
       "section": "general",
       "title": "Import chats",

@@ -89,7 +89,11 @@ func (ui *desktopUI) connectServer() {
 			})
 		}()
 	}
-	sheet = ui.modal("Connect to a remote server", container.NewVBox(note("The server runs your model, browser and terminal on its machine. For a private certificate, copy its SHA-256 fingerprint from the VM console before connecting."), widget.NewLabel("HTTPS address"), address, widget.NewLabel("Certificate fingerprint"), pin), 620, nil, connect)
+	sheet = ui.modal("Connect a server", container.NewVBox(
+		note("A headless 1loop server runs the agent, its files, browser and terminals on its own machine. Start it there and keep its console open: the next step asks you to approve this computer in it."),
+		widget.NewLabel("HTTPS address"), address,
+		widget.NewLabel("Certificate fingerprint (only for a self-signed certificate)"), pin,
+		note("The server's console prints this SHA-256 fingerprint when it starts.")), 620, nil, connect)
 }
 
 func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code string, phone bool) {
@@ -131,7 +135,7 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 	if phone { // a phone shared on the network: its user types the code in 1loop's request
 		body = container.NewVBox(note("On the phone, type this code in 1loop's request, then tap Allow. The pairing expires after two minutes."), codeBlock(code, 80), status)
 	}
-	sheet = ui.modal("Approve this desktop on the server", body, 620, nil, confirm)
+	sheet = ui.modal("Approve this computer on the server", body, 620, nil, confirm)
 }
 
 // remoteDesktop is a server in use: the window's execution target.
@@ -281,7 +285,7 @@ func (ui *desktopUI) targetMenu() {
 		actions = append(actions, menuAction{label: machine.Label(), detail: "SSH · " + machine.User + "@" + machine.Host, icon: iconTerminal,
 			checked: ui.server == nil && ui.cfg.MachineID == id, run: func() { ui.useMachine(id) }})
 	}
-	actions = append(actions, menuAction{label: "Add an SSH machine…", icon: iconPlus, run: func() { ui.prefs.openOn("SSH machines") }})
+	actions = append(actions, menuAction{label: "Add an SSH machine…", icon: iconPlus, run: func() { ui.prefs.openOn("General") }})
 	if saved.URL != "" && saved.Token != "" {
 		server := menuAction{label: serverName(saved.URL), detail: saved.URL, icon: iconBrowser, checked: ui.server != nil && ui.server.client.address.URL == saved.URL, run: func() {
 			if ui.server != nil && ui.server.client.address.URL == saved.URL {
@@ -690,58 +694,20 @@ func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat
 	ui.renderChats()
 }
 
-// renderChats is the sidebar for a server: its projects, and the chats of
-// the selected one.
+// renderChats is the sidebar for a server: its projects and their chats.
 func (remote *remoteDesktop) renderChats() {
 	ui := remote.parent
-	ui.projectList.RemoveAll()
-	opened := ui.projectOf(ui.cfg.Workspace)
-	for _, p := range remote.projects {
-		p := p
-		row := newRow(path.Base(filepath.ToSlash(p)), iconFolder, styleNav, func() { remote.selectProject(p) })
-		row.selected = p == ui.cfg.Workspace
-		row.accent = true
-		row.truncate = true
-		if state := ui.repoFor(p); state.repo != nil {
-			row.trailing = state.repo.Current
-		}
-		ui.projectList.Add(ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
-			actions := []menuAction{{label: "New chat", icon: iconPlus, run: func() { remote.selectProject(p); ui.startNew() }}}
-			return showMenu(ui.window, anchor, append(actions, ui.repositoryActions(p)...))
-		}))
-		if p == opened {
-			for _, object := range ui.worktreeRows(p, remote.selectProject) {
-				ui.projectList.Add(object)
-			}
-			ui.loadRepo(p, true, 20*time.Second)
-		}
-	}
-	ui.chatList.RemoveAll()
-	shown := 0
+	var chats []sideChat
 	for _, chat := range remote.chats {
-		if chat.Workspace != ui.cfg.Workspace && ui.cfg.Workspace != "" {
-			continue
-		}
 		chat := chat
-		shown++
-		row := newRow(chat.Title, nil, styleNav, func() { remote.openChat(chat.ID) })
-		row.accent = true
-		row.selected = ui.current != nil && ui.current.server == remote && ui.current.serverID == chat.ID
-		if chat.Running {
-			row.badge = iconDot // the agent works on it on the server
-		}
-		ui.chatList.Add(ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
-			return showMenu(ui.window, anchor, []menuAction{
-				{label: "Delete", icon: iconTrash, danger: true, run: func() { remote.deleteChat(chat) }},
-			})
-		}))
+		chats = append(chats, sideChat{
+			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
+			selected: ui.current != nil && ui.current.server == remote && ui.current.serverID == chat.ID,
+			open:     func() { remote.openChat(chat.ID) },
+			menu:     []menuAction{{label: "Delete", icon: iconTrash, danger: true, run: func() { remote.deleteChat(chat) }}},
+		})
 	}
-	if shown == 0 {
-		ui.chatList.Add(padded(4, 0, 10, 0, textLine("No chats yet", 13, colFaint)))
-	}
-	if ui.sideLists != nil {
-		ui.sideLists.Refresh()
-	}
+	ui.renderSidebar(remote.projects, chats, remote.selectProject, ui.repositoryActions)
 }
 
 // projectMenu is the composer's folder chip for a server: its projects.
@@ -750,7 +716,7 @@ func (remote *remoteDesktop) projectMenu(anchor fyne.CanvasObject) {
 	var actions []menuAction
 	for _, p := range remote.projects {
 		p := p
-		actions = append(actions, menuAction{label: path.Base(filepath.ToSlash(p)), detail: p, checked: p == ui.cfg.Workspace, run: func() { remote.selectProject(p) }})
+		actions = append(actions, menuAction{label: path.Base(filepath.ToSlash(p)), detail: p, checked: p == ui.cfg.Workspace, group: p, run: func() { remote.selectProject(p) }})
 		actions = append(actions, ui.worktreeChoices(p, remote.selectProject)...)
 	}
 	if len(actions) == 0 {

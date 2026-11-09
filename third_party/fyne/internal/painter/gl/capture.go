@@ -25,13 +25,28 @@ func (c *captureImage) At(x, y int) color.Color {
 	return color.RGBA{R: c.pix[start], G: c.pix[start+1], B: c.pix[start+2], A: c.pix[start+3]}
 }
 
+// RawRGBA gives the captured pixels without a copy, rows from the bottom
+// up as OpenGL reads them: reading a whole window through At allocates a
+// colour per pixel. Added for 1loop's frosted glass.
+func (c *captureImage) RawRGBA() (pix []uint8, width, height int) {
+	return c.pix, c.width, c.height
+}
+
 func (p *painter) Capture(c fyne.Canvas) image.Image {
+	return p.capture(c, front)
+}
+
+func (p *painter) CaptureFrame(c fyne.Canvas) image.Image {
+	return p.capture(c, back)
+}
+
+func (p *painter) capture(c fyne.Canvas, buffer uint32) image.Image {
 	pos := fyne.NewPos(c.Size().Width, c.Size().Height)
 	width, height := c.PixelCoordinateForPosition(pos)
 	pixels := make([]uint8, width*height*4)
 
 	p.contextProvider.RunWithContext(func() {
-		p.ctx.ReadBuffer(front)
+		p.ctx.ReadBuffer(buffer)
 		p.logError()
 		p.ctx.ReadPixels(0, 0, width, height, colorFormatRGBA, unsignedByte, pixels)
 		p.logError()

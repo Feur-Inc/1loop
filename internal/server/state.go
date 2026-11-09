@@ -217,7 +217,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		if chat.Config.Workspace == "" {
 			chat.Config.Workspace = root
 		}
-		if !slices.Contains(server.projects, chat.Config.Workspace) && server.worktrees[chat.Config.Workspace] == "" {
+		if !chat.Config.InScratch() && !slices.Contains(server.projects, chat.Config.Workspace) && server.worktrees[chat.Config.Workspace] == "" {
 			server.projects = append(server.projects, chat.Config.Workspace)
 		}
 		if chat.Todo == nil {
@@ -502,7 +502,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 func (server *headlessServer) summariesLocked() []remoteapi.Chat {
 	out := []remoteapi.Chat{}
 	for _, chat := range server.chats {
-		out = append(out, remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Running: chat.run != nil, Items: len(chat.Items)})
+		out = append(out, remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Running: chat.run != nil, Items: len(chat.Items)})
 	}
 	return out
 }
@@ -715,7 +715,15 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	if !server.memoryOff {
 		cfg.Preferences = server.updatePreferences
 	}
+	cfg.Settings = server.settingsAccess()
 	cfg.ApprovalMode = agent.ApprovalFor(server.approvalMode, cfg)
+	if cfg.InScratch() { // change_directory; the phone has no folder picker for request_directory yet
+		cfg.Move = &agent.WorkspaceMove{}
+		if server.local {
+			cfg.Move.Within = server.projectBase()
+		}
+		cfg.RecentProjects = append([]string(nil), server.projects...)
+	}
 	cfg.ClassicCompaction = server.classic
 	cfg.Todo = chat.Todo
 	cfg.Tasks = server.chatTasksLocked(chat)
@@ -863,11 +871,31 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		if err != nil {
 			server.addLocked(chat, agent.ChatItem{Kind: "error", Text: err.Error()})
 		}
+		moved := server.finishMoveLocked(chat, cfg.Move)
 		server.broadcastLocked("replace", map[string]string{"chat": chat.ID})
 		server.broadcastLocked("meta", server.metaLocked(chat))
 		server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
 		server.scheduleSaveLocked()
-		if len(chat.queue) > 0 && server.ctx.Err() == nil {
+		// The turn used the account: its limits are asked again the next
+		// time someone looks at them, as on the desktop.
+		if limits, ok := server.limitsCache[chat.Config.ConnectionID]; ok {
+			limits.Checked = time.Time{}
+			server.limitsCache[chat.Config.ConnectionID] = limits
+		}
+		if server.ctx.Err() != nil {
+			return
+		}
+		if moved != "" { // the agent goes on in the new folder
+			server.runLocked(chat, agent.Message{Role: "user", Internal: true, Content: moved})
+			return
+		}
+		// A message can arrive after the agent's last look at its inbox and
+		// before this: it starts the next turn rather than wait unseen.
+		if len(chat.steer) > 0 && err == nil {
+			next := chat.steer[0]
+			chat.steer = chat.steer[1:]
+			server.runLocked(chat, next)
+		} else if len(chat.queue) > 0 {
 			next := chat.queue[0]
 			chat.queue = chat.queue[1:]
 			server.runLocked(chat, next)

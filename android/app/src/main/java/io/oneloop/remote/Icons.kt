@@ -66,6 +66,8 @@ object Icons {
     val star = lineIcon("star", line("M8 2.3l1.7 3.6 3.9.5-2.9 2.7.7 3.9L8 11.1 4.6 13l.7-3.9-2.9-2.7 3.9-.5z"))
     val trash = lineIcon("trash", line("M3 4.5h10M6.5 4.5V3.2h3v1.3M4.5 4.5l.6 8.3h5.8l.6-8.3M7 7v3.6M9 7v3.6"))
     val tasks = lineIcon("tasks", line("M2.8 4.6l1.3 1.3 2.3-2.4M8.5 4.7h4.7M2.8 10.6l1.3 1.3 2.3-2.4M8.5 10.7h4.7"))
+    val sliders = lineIcon("sliders", line("M2.5 5h6M11.5 5h2M2.5 11h2M7.5 11h6"), line("M10 3.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3z"), line("M6 9.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3z"))
+    val puzzle = lineIcon("puzzle", line("M3 5.5h2.6a1.4 1.4 0 1 1 2.8 0H11v2.6a1.4 1.4 0 1 1 0 2.8V13.5H8.4a1.4 1.4 0 1 0-2.8 0H3v-2.6a1.4 1.4 0 1 0 0-2.8z"))
 
     // The same choice as agent.PhoneTool and toolGlyph on the desktop.
     fun forTool(tool: String) = when (tool.removePrefix("mcp__1loop_todo__")) {

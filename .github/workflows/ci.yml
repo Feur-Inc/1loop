@@ -122,6 +122,13 @@ jobs:
         if: matrix.platform == 'linux'
         env:
           DEB_MAINTAINER: TPM28 <77407722+tpm28@users.noreply.github.com>
+          # The self-hosted runner's VM has 7 GB, no swap, shared with other
+          # services: two packages at a time, the Go tools collect garbage
+          # early, and xz compresses on one thread, so neither the linker nor
+          # dpkg-deb is killed for memory.
+          GOFLAGS: -p=2
+          GOMEMLIMIT: 2GiB
+          DPKG_DEB_THREADS_MAX: "1"
         run: |
           set -euo pipefail
           sudo -n apt-get update -q
@@ -146,6 +153,9 @@ jobs:
 
       - name: Windows — desktop, cross-compiled with MinGW
         if: matrix.platform == 'windows'
+        env:
+          GOFLAGS: -p=2 # the runner's memory: see the Linux step
+          GOMEMLIMIT: 2GiB
         run: |
           set -euo pipefail
           sudo -n apt-get update -q

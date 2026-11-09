@@ -199,6 +199,12 @@ func readResponses(stream io.Reader, emit emitter) (Message, error) {
 				if what == "" {
 					what = search.Action.URL
 				}
+				// OpenAI's search also computes ("calculator: 2*3"): the
+				// chat says it was a calculation, not a search.
+				if expression, ok := strings.CutPrefix(what, "calculator:"); ok {
+					emit("note", strings.TrimSpace("Calculated with web search · "+strings.TrimSpace(expression)))
+					break
+				}
 				emit("note", strings.TrimSpace("Searched the web · "+what))
 			case "tool_search_output":
 				var loaded struct {

@@ -29,7 +29,7 @@ func (ui *desktopUI) connectorSettings() fyne.CanvasObject {
 			content.Refresh()
 		})
 	}()
-	return container.NewVBox(ui.prefs.pageTitle("Connectors", "", nil), content)
+	return container.NewVBox(ui.prefs.pageTitle("Connectors", "Tools & extensions", nil), content)
 }
 
 // githubChange runs a change of the connector, then shows the page again.

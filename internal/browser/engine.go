@@ -137,7 +137,7 @@ func (engine *Engine) start() error {
 		var contextOptions []chromedp.ContextOption
 		// One profile, kept between sessions: the agent's browser stays
 		// logged in, with its cookies and history, until the user clears
-		// it (Settings → General → Browser).
+		// it (Settings → Tools & extensions → Browser).
 		dir := engine.Profile
 		if dir == "" {
 			dir = ProfileDir()

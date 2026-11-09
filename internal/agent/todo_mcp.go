@@ -81,6 +81,16 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 			if cfg.ProjectTools == nil && cfg.toolAvailable("memory") {
 				definitions = append(definitions, memoryToolDefinition())
 			}
+			// Moving a chat without a folder; 1loop asks the user itself.
+			if cfg.ProjectTools == nil && cfg.toolAvailable("change_directory") {
+				definitions = append(definitions, changeDirectoryToolDefinition())
+			}
+			if cfg.ProjectTools == nil && cfg.toolAvailable("request_directory") {
+				definitions = append(definitions, requestDirectoryToolDefinition())
+			}
+			if cfg.ProjectTools == nil && cfg.toolAvailable("settings") {
+				definitions = append(definitions, settingsToolDefinition())
+			}
 			for _, group := range builtinToolGroups(cfg) {
 				definitions = append(definitions, group.tools()...)
 			}
@@ -121,6 +131,19 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 				response["result"] = map[string]any{"isError": err != nil, "content": []any{map[string]string{"type": "text", "text": text}}}
 				break
 			}
+			if call.Name == "settings" {
+				// Like memory: let through by Claude Code, asked here.
+				operation, cancel := context.WithCancel(ctx)
+				stop := context.AfterFunc(requestValue.Context(), cancel)
+				text, err := backend.changeSettings(context.WithValue(operation, configContextKey{}, cfg), string(call.Arguments), func() {}, emit)
+				stop()
+				cancel()
+				if err != nil {
+					text = err.Error()
+				}
+				response["result"] = map[string]any{"isError": err != nil, "content": []any{map[string]string{"type": "text", "text": text}}}
+				break
+			}
 			if call.Name != "update_todo" {
 				var handler PanelToolHandler
 				switch {
@@ -134,6 +157,17 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 					handler = cfg.Phone
 				case call.Name == "install_packages":
 					handler = cfg.Packages
+				case call.Name == "change_directory" || call.Name == "request_directory":
+					handler = func(operation context.Context, name string, arguments json.RawMessage) (PanelToolResult, error) {
+						call := ToolCall{ID: core.Identifier()}
+						call.Function.Name, call.Function.Arguments = name, string(arguments)
+						result := backend.executeTool(operation, cfg.Workspace, call, func(event string, value any) {
+							if event != "tool" && event != "tool_exec" && event != "tool_output" {
+								emit(event, value)
+							}
+						})
+						return PanelToolResult{Text: result.Output}, result.Err
+					}
 				case isGitHubTool(call.Name):
 					handler = func(operation context.Context, name string, arguments json.RawMessage) (PanelToolResult, error) {
 						// Keep Claude's approved call bound to the connection of this run.

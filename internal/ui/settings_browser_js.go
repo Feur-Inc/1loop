@@ -22,7 +22,7 @@ import (
 
 // SSH machines and the phone remote are this computer's: a page has neither.
 func settingsSectionShown(name string) bool {
-	return name != "SSH machines" && name != "Phone remote"
+	return name != "SSH machines" && name != "Phone"
 }
 
 func (ui *desktopUI) browserSettings(section string) fyne.CanvasObject {
@@ -32,9 +32,9 @@ func (ui *desktopUI) browserSettings(section string) fyne.CanvasObject {
 			card(settingRow("Not connected", "Settings are the server's: they show once this page is connected to it.", nil)))
 	}
 	switch section {
-	case "Instructions":
+	case "Agent & approvals":
 		return remote.instructionSettings()
-	case "Connections", "Extensions", "Connectors":
+	case "Models & accounts", "Tools & extensions", "Extensions", "Connectors":
 		return nil // the server's, as in the desktop's remote mode (settings.go)
 	case "Updates":
 		return remote.updateSettings()

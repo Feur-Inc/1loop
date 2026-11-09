@@ -3,12 +3,13 @@
 package ui
 
 // Notifications: a chat that finishes or waits for the user says so through
-// the desktop's notifications, unless the user is looking at it. In the
-// Flatpak they go through the notification portal, which needs no D-Bus
+// the desktop's notifications, unless the user is looking at it, and also
+// while the window is hidden in the tray. Clicking one opens its chat. In
+// the Flatpak they go through the notification portal, which needs no D-Bus
 // permission (Fyne itself would call org.freedesktop.Notifications).
 
 import (
-	"os"
+	"slices"
 
 	"fyne.io/fyne/v2"
 )
@@ -21,10 +22,15 @@ func (ui *desktopUI) notifyUser(chat *conversation, text string) {
 	if title == "" {
 		title = "1loop"
 	}
-	if os.Getenv("ONELOOP_FLATPAK") != "" {
-		// The portal shows the application's own icon.
-		go portalNotify(title, text)
+	open := func() {
+		if slices.Contains(ui.chats, chat) { // not removed since
+			ui.openChat(chat)
+		}
+		ui.showWindow()
+	}
+	if sendClickableNotification(title, text, open) {
 		return
 	}
+	// Elsewhere (Windows) a click on it opens nothing.
 	fyne.CurrentApp().SendNotification(fyne.NewNotification(title, text))
 }

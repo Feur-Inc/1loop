@@ -83,7 +83,7 @@ fun GitHubConnectorSection(app: RemoteApp) {
             refresh()
         }
     }
-    Text("Connectors · GitHub", style = Type.headline)
+    Text("GitHub connector", style = Type.title)
     Text("Connect the account whose repositories the agent may use. GitHub tools are offered only while this connector is connected and enabled, and follow the current approval mode.", style = Type.small)
     problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }
     val view = state

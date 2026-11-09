@@ -461,6 +461,12 @@ func scrollGesture() (finger, released, ok bool) {
 	return C.loop_scroll_finger() == 1, C.loop_take_release() == 1, C.loop_listening() == 1
 }
 
+// scrollFinger tells, without taking the release, whether the scroll events
+// come from fingers on a touchpad (ok: the display says).
+func scrollFinger() (finger, ok bool) {
+	return C.loop_scroll_finger() == 1, C.loop_listening() == 1
+}
+
 // scrollEventTime is when the last scroll event happened, in milliseconds
 // on the compositor's clock: steadier than the time 1loop hears of it,
 // since events reach it in batches, one per turn of the loop.

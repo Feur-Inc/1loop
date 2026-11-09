@@ -36,8 +36,8 @@ func (server *remoteServer) setMemory(w http.ResponseWriter, r *http.Request) {
 		server.ui.memoryOff = !args.Enabled
 		server.ui.save()
 		server.settingsChanged()
-		if server.ui.prefs != nil && server.ui.prefs.open && server.ui.prefs.section == "Instructions" {
-			server.ui.prefs.showNow("Instructions") // its switch shows the change
+		if server.ui.prefs != nil && server.ui.prefs.on("Agent & approvals") {
+			server.ui.prefs.showNow("Agent & approvals") // its switch shows the change
 		}
 	})
 	core.WriteJSON(w, 200, map[string]bool{"memory": args.Enabled})

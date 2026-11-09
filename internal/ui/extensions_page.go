@@ -73,13 +73,13 @@ func (ui *desktopUI) extensionSettings() fyne.CanvasObject {
 	}
 	intro := note("Skills teach the agent a task; plugins bundle skills, MCP servers and hooks. Both work with 1loop's agent and with Claude Code. MCP servers give the agent the tools of other apps.")
 	page.show("store")
-	return container.NewVBox(ui.prefs.pageTitle("Extensions", "", nil), intro, padded(6, 10, 0, 0, tabs), page.body)
+	return container.NewVBox(ui.prefs.pageTitle("Extensions", "Tools & extensions", nil), intro, padded(6, 10, 0, 0, tabs), page.body)
 }
 
 // extensionsChanged redraws the section after a change made elsewhere
 // (the phone).
 func (ui *desktopUI) extensionsChanged() {
-	if page := ui.extPage; page != nil && ui.prefs.open && ui.prefs.section == "Extensions" && len(ui.prefs.frames) == 1 {
+	if page := ui.extPage; page != nil && ui.prefs.at("Extensions") {
 		page.show(page.tab)
 	}
 }
@@ -409,7 +409,7 @@ func (ui *desktopUI) confirmInstall(plan *extensions.Plan) {
 						}
 					}
 				}
-				if ui.prefs.open && ui.prefs.section == "Extensions" {
+				if ui.prefs.on("Extensions") {
 					ui.prefs.show("Extensions")
 					if page := ui.extPage; page != nil {
 						page.show("installed")
@@ -631,7 +631,7 @@ func (page *extensionsPage) checkMCP() {
 			for _, status := range statuses {
 				page.statuses[status.Name+"\x00"+status.Plugin] = status
 			}
-			if page.tab == "mcp" && page.ui.prefs.open && page.ui.prefs.section == "Extensions" && len(page.ui.prefs.frames) == 1 {
+			if page.tab == "mcp" && page.ui.prefs.at("Extensions") {
 				page.show("mcp")
 			}
 		})

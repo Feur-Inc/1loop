@@ -110,7 +110,7 @@ func authMethods(settings Settings, secrets Secrets) ([]ssh.AuthMethod, func(), 
 	switch settings.Auth {
 	case "password":
 		if secrets.Password == "" {
-			return nil, nil, fmt.Errorf("Enter the password of %s in Settings → SSH machines", settings.Label())
+			return nil, nil, fmt.Errorf("Enter the password of %s in Settings → General", settings.Label())
 		}
 		// Servers that only offer keyboard-interactive ask for the same password.
 		answer := func(user, instruction string, questions []string, echos []bool) ([]string, error) {
@@ -130,7 +130,7 @@ func authMethods(settings Settings, secrets Secrets) ([]ssh.AuthMethod, func(), 
 		var missing *ssh.PassphraseMissingError
 		if errors.As(err, &missing) {
 			if secrets.Passphrase == "" {
-				return nil, nil, fmt.Errorf("The private key of %s is protected: enter its passphrase in Settings → SSH machines", settings.Label())
+				return nil, nil, fmt.Errorf("The private key of %s is protected: enter its passphrase in Settings → General", settings.Label())
 			}
 			signer, err = ssh.ParsePrivateKeyWithPassphrase(data, []byte(secrets.Passphrase))
 		}

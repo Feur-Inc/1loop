@@ -177,8 +177,10 @@ silently install it on users' devices.
    **Deploy from a branch**, branch **gh-pages**, folder **/ (root)**.
    The site is <https://feur-inc.github.io/1loop/>. This uses GitHub's Pages
    deployment; no custom GitHub Actions CI workflow is required.
-2. **Prepare the release.** Increase `VERSION` (for example, `0.3.2` to
-   `0.3.3`) and write `docs/releases/0.3.3.md` with the release notes.
+2. **Prepare the release.** Run `bash release-prepare.sh` (see
+   [the end of a sprint](#the-end-of-a-sprint)): it raises `VERSION` and
+   drafts `docs/releases/VERSION.md` from the merged pull requests. Reword
+   the notes for users.
    Commit, review and merge the changes, then publish from the intended clean
    source commit. Use the build requirements above and a GitHub account with
    repository, release and Pages publishing access.
@@ -204,6 +206,26 @@ silently install it on users' devices.
    than plain release notes; let an installed app verify it with
    **Settings → Updates → Check now**. Confirm the offered version and try
    the update. On Android, complete the system install confirmation yourself.
+
+### The end of a sprint
+
+A release closes each sprint. Its version and notes come from the pull
+requests merged into `dev` since the last stable tag, so they depend on what
+the PRs already carry: a clear title and a type label (`enhancement`, `bug`,
+`documentation`).
+
+1. On `dev`, run `bash release-prepare.sh` (or `bash release-prepare.sh
+   0.5.0` to choose the version). It picks a **minor** version when a PR
+   labelled `enhancement` was merged, a **patch** otherwise, writes it in
+   `VERSION`, and drafts `docs/releases/VERSION.md`: a section per label, a
+   line per PR, then the previous release's Install section.
+2. Reword the draft for users: what changes for them, not how. Merge the
+   lines that are one change, drop internal ones (CI, refactors), and place
+   the PRs listed under *Also in*, which have no type label.
+3. Commit `VERSION` and the notes in a pull request into `dev`, then open
+   the pull request from `dev` into `main` and merge it.
+4. From `main`, publish with `release.sh` as above. CI keeps building the
+   alphas on `dev` meanwhile.
 
 The published files live at `updates/VERSION/`; `updates/latest.json` selects
 the release offered to apps. Creating only a GitHub release, or uploading an

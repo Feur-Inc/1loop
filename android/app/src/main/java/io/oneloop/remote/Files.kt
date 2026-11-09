@@ -144,7 +144,7 @@ fun FilesView(app: RemoteApp, workspace: String) {
 
 @Composable
 private fun FilePreview(app: RemoteApp, workspace: String, file: ProjectFile, cited: IntRange?, onBack: () -> Unit, onStatus: (String?) -> Unit) {
-    BackHandler(onBack = onBack)
+    val back = predictiveBack(onBack = onBack)
     val scope = rememberCoroutineScope()
     var preview by remember(file) { mutableStateOf<JSONObject?>(null) }
     var picture by remember(file) { mutableStateOf<android.graphics.Bitmap?>(null) }
@@ -162,7 +162,7 @@ private fun FilePreview(app: RemoteApp, workspace: String, file: ProjectFile, ci
             preview = loaded
         } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { problem = failure.message }
     }
-    Column(Modifier.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = {}) }) {
+    Column(back.fillMaxSize().pointerInput(Unit) { detectTapGestures(onTap = {}) }) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {
             RoundButton(Icons.back, Color.Transparent, Palette.muted, size = 36.dp, description = "Back to the folder", onClick = onBack)
             Text(file.name, style = Type.body.copy(fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f).padding(horizontal = 8.dp))
@@ -209,9 +209,10 @@ fun SharedFilesDialog(app: RemoteApp) {
     var problem by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
     val workspace = app.chats.firstOrNull { it.id == app.current }?.workspace ?: app.selectedProject ?: app.workspace
+    GlassBackdrop()
     AlertDialog(
         onDismissRequest = { if (!busy) app.shared.clear() },
-        containerColor = Palette.surface,
+        containerColor = GlassSurface, modifier = GlassDialogEdge,
         title = { Text("${app.shared.size} file(s) shared to 1loop", style = Type.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -276,9 +277,10 @@ private fun CopyProjectDialog(app: RemoteApp, workspace: String, onDone: () -> U
             } catch (cancelled: CancellationException) { throw cancelled } catch (failure: Exception) { status = failure.message } finally { busy = false }
         }
     }
+    GlassBackdrop()
     AlertDialog(
         onDismissRequest = { if (!busy) onDone() },
-        containerColor = Palette.surface,
+        containerColor = GlassSurface, modifier = GlassDialogEdge,
         title = { Text("Copy “$name”", style = Type.title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -312,8 +314,9 @@ private fun SendFileDialog(app: RemoteApp, workspace: String, file: ProjectFile,
     var destination by remember { mutableStateOf("") }
     var busy by remember { mutableStateOf(false) }
     var status by remember { mutableStateOf<String?>(null) }
+    GlassBackdrop()
     AlertDialog(
-        onDismissRequest = { if (!busy) close() }, containerColor = Palette.surface,
+        onDismissRequest = { if (!busy) close() }, containerColor = GlassSurface, modifier = GlassDialogEdge,
         title = { Text("Send “${file.name}”", style = Type.title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {

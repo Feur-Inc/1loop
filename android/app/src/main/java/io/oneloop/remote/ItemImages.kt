@@ -91,6 +91,7 @@ fun ItemImages(app: RemoteApp, index: Int, count: Int, modifier: Modifier = Modi
         }
     }
     open?.let { image ->
+        GlassBackdrop()
         Dialog(onDismissRequest = { open = null }, properties = DialogProperties(usePlatformDefaultWidth = false)) {
             Box(Modifier.fillMaxSize().background(Color.Black).clickable { open = null }.padding(8.dp), contentAlignment = Alignment.Center) {
                 Image(image, contentDescription = "Image the model saw", contentScale = ContentScale.Fit, modifier = Modifier.fillMaxSize())

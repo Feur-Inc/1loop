@@ -8,6 +8,9 @@ package ui
 // the first one.
 
 import (
+	"context"
+	"errors"
+	"fmt"
 	"image/color"
 	"strings"
 	"time"
@@ -17,6 +20,8 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 
+	"1loop/internal/agent"
+	"1loop/internal/gitrepo"
 	registry "1loop/internal/settings"
 )
 
@@ -51,7 +56,7 @@ func (view *settingsView) find(query string) {
 	matches := registry.Search(registry.On(registry.OnDesktop), query)
 	page := container.NewVBox(view.pageTitle("Search", "", nil))
 	if len(matches) == 0 {
-		page.Add(card(settingRow("No setting matches “"+strings.TrimSpace(query)+"”", "Try another word: its name, what it does, or a synonym.", nil)))
+		page.Add(card(settingRow("No setting matches “"+strings.TrimSpace(query)+"”", "Try another word, such as server, model, phone or browser: its name, what it does, or a synonym.", nil)))
 	} else {
 		rows := make([]fyne.CanvasObject, 0, len(matches))
 		for _, match := range matches {
@@ -138,4 +143,65 @@ func (view *settingsView) reveal(anchor *settingAnchor) {
 		anchor.glow.Refresh()
 	})
 	anchor.anim.Start()
+}
+
+// settingsAccess is the settings tool's way to this computer's settings:
+// those of the shared list it has, changed as their rows change them, on
+// the interface's thread, the page shown again if it is open.
+func (ui *desktopUI) settingsAccess() *agent.SettingsAccess {
+	onOff := func(on bool) string {
+		if on {
+			return "on"
+		}
+		return "off"
+	}
+	return &agent.SettingsAccess{
+		Get: func(ctx context.Context, key string) (value string, ok bool) {
+			ui.onUI(ctx, func() {
+				ok = true
+				switch key {
+				case registry.KeyMemory:
+					value = onOff(!ui.memoryOff)
+				case registry.KeyDynamicCompaction:
+					value = onOff(!ui.classicCompaction)
+				case registry.KeyAutoResume:
+					value = onOff(ui.autoResume != nil && ui.autoResume.Enabled)
+				case registry.KeyWorktreeSort:
+					value = ui.worktreeSort
+					if sortLabels[value] == "" {
+						value = gitrepo.SortRecent
+					}
+				default:
+					ok = false
+				}
+			})
+			return value, ok && ctx.Err() == nil
+		},
+		Set: func(ctx context.Context, key, value string) (err error) {
+			ui.onUI(ctx, func() {
+				on := value == "on"
+				switch key {
+				case registry.KeyMemory:
+					ui.setMemory(on)
+				case registry.KeyDynamicCompaction:
+					ui.setDynamicCompaction(on)
+				case registry.KeyAutoResume:
+					if err = ui.setAutoResume(on); err != nil {
+						err = errors.New("Automatic resumption has no steps yet: the user chooses them in Settings first")
+					}
+				case registry.KeyWorktreeSort:
+					ui.setWorktreeSort(value)
+				default:
+					err = fmt.Errorf("%s is not a setting of this computer", key)
+				}
+				if setting, ok := registry.Lookup(key); ok && err == nil && ui.prefs.at(registry.SectionTitle(setting.Section)) {
+					ui.prefs.show(ui.prefs.page) // the row shows the change
+				}
+			})
+			if err == nil {
+				err = ctx.Err()
+			}
+			return err
+		},
+	}
 }

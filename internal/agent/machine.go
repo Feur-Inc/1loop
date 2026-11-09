@@ -60,7 +60,7 @@ func machineErr(cfg Config) error {
 		return nil
 	}
 	if cfg.Machine == nil {
-		return fmt.Errorf("This conversation's SSH machine is no longer in Settings → SSH machines")
+		return fmt.Errorf("This conversation's SSH machine is no longer in Settings → General")
 	}
 	switch cfg.Provider {
 	case "claudecode":

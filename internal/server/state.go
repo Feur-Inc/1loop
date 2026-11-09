@@ -714,6 +714,7 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	if !server.memoryOff {
 		cfg.Preferences = server.updatePreferences
 	}
+	cfg.Settings = server.settingsAccess()
 	cfg.ApprovalMode = agent.ApprovalFor(server.approvalMode, cfg)
 	cfg.ClassicCompaction = server.classic
 	cfg.Todo = chat.Todo

@@ -69,7 +69,7 @@ func coreToolDefinitions() []map[string]any {
 			"parameters":  map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false},
 		}})
 	}
-	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), recallToolDefinition(), memoryToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition())
+	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), recallToolDefinition(), memoryToolDefinition(), settingsToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition())
 }
 
 // allToolDefinitions are every tool, loaded or not.
@@ -450,6 +450,10 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	}
 	if call.Function.Name == "memory" {
 		return backend.editMemory(ctx, call.Function.Arguments, begin, emit)
+	}
+	if call.Function.Name == "settings" {
+		output, err = backend.changeSettings(ctx, call.Function.Arguments, begin, emit)
+		return
 	}
 	if call.Function.Name == "skill" {
 		begin()

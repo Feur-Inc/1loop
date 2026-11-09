@@ -398,6 +398,9 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 	ui.prompt.switchDraft(chat.ID)
 	ui.followTail = true
 	ui.panel.switchTo(chat)
+	if reuse {
+		ui.curtain.reveal() // another chat takes the page: not a reload of this one
+	}
 	ui.transcript.RemoveAll()
 	ui.items.reset()
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}

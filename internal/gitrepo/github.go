@@ -258,7 +258,7 @@ func call(request *http.Request, into any) error {
 		var reply struct{ Message string }
 		_ = json.Unmarshal(data, &reply)
 		if response.StatusCode == http.StatusForbidden && response.Header.Get("X-RateLimit-Remaining") == "0" {
-			return fmt.Errorf("GitHub's limit for requests without an account is reached. Connect GitHub in Settings → Connectors")
+			return fmt.Errorf("GitHub's limit for requests without an account is reached. Connect GitHub in Settings → Tools & extensions → GitHub connector")
 		}
 		if reply.Message != "" {
 			return fmt.Errorf("GitHub (HTTP %d): %s", response.StatusCode, reply.Message)

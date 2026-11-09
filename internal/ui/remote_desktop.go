@@ -98,7 +98,11 @@ func (ui *desktopUI) connectServer() {
 			})
 		}()
 	}
-	sheet = ui.modal("Connect to a remote server", container.NewVBox(note("The server runs your model, browser and terminal on its machine. For a private certificate, copy its SHA-256 fingerprint from the VM console before connecting."), widget.NewLabel("HTTPS address"), address, widget.NewLabel("Certificate fingerprint"), pin), 620, nil, connect)
+	sheet = ui.modal("Connect a server", container.NewVBox(
+		note("A headless 1loop server runs the agent, its files, browser and terminals on its own machine. Start it there and keep its console open: the next step asks you to approve this computer in it."),
+		widget.NewLabel("HTTPS address"), address,
+		widget.NewLabel("Certificate fingerprint (only for a self-signed certificate)"), pin,
+		note("The server's console prints this SHA-256 fingerprint when it starts.")), 620, nil, connect)
 }
 
 func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code string, phone bool) {
@@ -148,7 +152,7 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 	if phone { // a phone shared on the network: its user types the code in 1loop's request
 		body = container.NewVBox(note("On the phone, type this code in 1loop's request, then tap Allow. The pairing expires after two minutes."), codeBlock(code, 80), status)
 	}
-	sheet = ui.modal("Approve this desktop on the server", body, 620, nil, confirm)
+	sheet = ui.modal("Approve this computer on the server", body, 620, nil, confirm)
 }
 
 // remoteDesktop is a server in use: the window's execution target.
@@ -299,7 +303,7 @@ func (ui *desktopUI) targetMenu() {
 		actions = append(actions, menuAction{label: machine.Label(), detail: "SSH · " + machine.User + "@" + machine.Host, icon: iconTerminal,
 			checked: ui.server == nil && ui.cfg.MachineID == id, run: func() { ui.useMachine(id) }})
 	}
-	actions = append(actions, menuAction{label: "Add an SSH machine…", icon: iconPlus, run: func() { ui.prefs.openOn("SSH machines") }})
+	actions = append(actions, menuAction{label: "Add an SSH machine…", icon: iconPlus, run: func() { ui.prefs.openOn("General") }})
 	if saved.URL != "" && saved.Token != "" {
 		server := menuAction{label: serverName(saved.URL), detail: saved.URL, icon: iconBrowser, checked: ui.server != nil && ui.server.client.address.URL == saved.URL, run: func() {
 			if ui.server != nil && ui.server.client.address.URL == saved.URL {

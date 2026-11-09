@@ -493,7 +493,7 @@ func (bridge *ChatGPTWeb) refreshTools(ctx context.Context, name string) error {
 		}
 	}
 	if plugin == "" {
-		return fmt.Errorf("ChatGPT has no %s plugin: add it in ChatGPT's Plugins (Settings → Connections → ChatGPT (Web))", name)
+		return fmt.Errorf("ChatGPT has no %s plugin: add it in ChatGPT's Plugins (Settings → Models & accounts → ChatGPT (Web))", name)
 	}
 	if err := tab.Navigate(ctx, "navigate", "https://chatgpt.com/settings/plugins-settings/"+plugin); err != nil {
 		return err

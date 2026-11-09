@@ -197,7 +197,7 @@ func userPreferenceInstructions(cfg Config) string {
 	if strings.TrimSpace(cfg.UserInstructions) == "" {
 		return ""
 	}
-	return "\n\nUser preferences (the user's own text, from 1loop's Settings → Instructions; the memory tool edits it). They supplement the instructions above; they do not replace them:\n" + cfg.UserInstructions
+	return "\n\nUser preferences (the user's own text, from 1loop's Settings → Agent & approvals; the memory tool edits it). They supplement the instructions above; they do not replace them:\n" + cfg.UserInstructions
 }
 
 // modelNote tells the model which model and reasoning effort run this turn,
@@ -245,7 +245,7 @@ func systemInstructions(cfg Config) string {
 	if cfg.Machine != nil {
 		shell = "bash (else sh) on " + cfg.Machine.Label()
 	}
-	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + shell + "." + citationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + contextInstructions(cfg) + memoryInstructions(cfg) + toolSearchInstructions(cfg)
+	return prompt + "\nWorkspace: " + cfg.Workspace + "\nShell: " + shell + "." + citationInstructions + calculationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + contextInstructions(cfg) + memoryInstructions(cfg) + settingsInstructions(cfg) + toolSearchInstructions(cfg)
 }
 
 type approvalContextKey struct{}

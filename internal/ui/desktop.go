@@ -115,7 +115,7 @@ type desktopUI struct {
 	chats            []*conversation
 	current          *conversation
 	projects         []string
-	sshMachines      []sshmachine.Settings          // Settings → SSH machines
+	sshMachines      []sshmachine.Settings          // Settings → General
 	machineProjects  map[string][]string            // each SSH machine's projects (paths there), by machine ID
 	machines         map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
 	localWorkspace   string                         // this computer's project while an SSH machine is the target
@@ -184,12 +184,15 @@ type desktopUI struct {
 
 	// Conversation
 	transcript        *fyne.Container
+	footerSpace       *canvas.Rectangle // room left at the end for the floating composer
+	footerGlass       *footerGlass
 	column            *fyne.Container
 	scroll            *kineticScroll
 	followTail        bool
 	items             *transcriptLayout
 	frames            *frameHook
 	prefs             *settingsView     // the settings page
+	curtain           *pageCurtain      // fades the main area's new page in
 	sideApp           fyne.CanvasObject // the sidebar's usual content, hidden while settings are open
 	selected          textSelection     // what holds the selected text, if anything does
 	building          bool              // openChat is adding a whole chat's items (see place)
@@ -547,7 +550,8 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.inlineRow.Hide()
 	ui.dockRow = container.NewStack()
 	ui.dockRow.Hide()
-	ui.column = container.NewVBox(ui.transcript, ui.inlineRow)
+	ui.footerSpace = canvas.NewRectangle(color.Transparent) // the composer floats over the end (glassFooterLayout)
+	ui.column = container.NewVBox(ui.transcript, ui.inlineRow, ui.footerSpace)
 	ui.scroll = newKineticVScroll(container.New(columnLayout{width: 760, inset: 24}, ui.column))
 	ui.followTail = true
 	ui.scroll.OnScrolled = func(position fyne.Position) {
@@ -575,7 +579,10 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.chatViewport = container.NewStack(ui.welcome, scroll, ui.chatWaitView)
 	ui.scroll.Hide()
 
-	conversation := container.NewBorder(nil, ui.buildFooter(), nil, nil, ui.chatViewport)
+	ui.footerGlass = newFooterGlass()
+	footer := ui.buildFooter()
+	conversation := container.New(&glassFooterLayout{ui: ui, glass: ui.footerGlass},
+		ui.chatViewport, ui.footerGlass.fade, ui.footerGlass.floor, footer)
 	// The activity line may sit beside the composer (dockActivity): the
 	// dock layer floats over the conversation's bottom left corner.
 	conversation = container.New(dockLayout{ui}, conversation, ui.dockRow)
@@ -611,7 +618,8 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, ui.headerBar))
 	}
 	// The settings page takes the conversation's place while it is open.
-	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view)))
+	ui.curtain = newPageCurtain()
+	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view, ui.curtain.cover)))
 	// No rule between the panes: the sidebar only casts a faint shadow.
 	shade := canvas.NewHorizontalGradient(color.NRGBA{A: 0x2a}, color.NRGBA{})
 	ui.pane = &paneLayout{shown: 1, shade: 14, chosen: &ui.sidebarWidth}
@@ -737,15 +745,23 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	// The settings sit on the left and the run controls on the right, send
 	// last: Steer and Stop come and go in the free space between the two,
 	// so nothing else moves when a task starts or ends.
-	settings := container.New(layout.NewCustomPaddedHBoxLayout(4), container.NewCenter(ui.approvalControl), ui.model.row, ui.contextRing)
+	ui.model.row.truncate = true // a long model name is cut short rather than pushed out of the card
+	settings := container.New(composerSettingsLayout{model: ui.model.row}, container.NewCenter(ui.approvalControl), ui.model.row, ui.contextRing)
 	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), ui.steer, ui.stop, ui.send)
 	ui.controls = container.New(&composerControlsLayout{transient: []fyne.CanvasObject{ui.steer, ui.stop, ui.send}}, settings, actions)
 	ui.model.relayout = ui.controls.Refresh
 
+	// The card catches the light from above: a hairline of light along its
+	// top edge. (Fyne's gradients have square corners: none under the card.)
 	card := canvas.NewRectangle(colSurface)
-	card.CornerRadius = 16
+	card.CornerRadius = 18
 	card.StrokeColor = colBorder
 	card.StrokeWidth = 1
+	shine := canvas.NewRectangle(color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x1c})
+	// The card floats on a soft shadow; focused, an amber halo lights up around it.
+	drop, glow := newShadow(2.2), newGlow(colAmber, 0.32)
+	var glowAnim *fyne.Animation
+	glowLevel := float32(0)
 	ui.prompt.onFocus = func(focused bool) {
 		from, to := colBorder, colBorderHot
 		if !focused {
@@ -755,6 +771,20 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 			card.StrokeColor = c
 			card.Refresh()
 		}).Start()
+		if glowAnim != nil {
+			glowAnim.Stop()
+		}
+		start, target := glowLevel, float32(0)
+		if focused {
+			target = 1
+		}
+		glowAnim = fyne.NewAnimation(220*time.Millisecond, func(p float32) {
+			glowLevel = start + (target-start)*p
+			glow.setOpacity(glowLevel)
+			glow.refresh()
+		})
+		glowAnim.Curve = fyne.AnimationEaseOut
+		glowAnim.Start()
 	}
 	ui.attachRow = container.New(layout.NewCustomPaddedHBoxLayout(8))
 	// The optional rows are hidden with their margins: a hidden child inside
@@ -771,7 +801,8 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		container.NewHBox(container.NewCenter(pencil), textLine("Editing a queued message", 12.5, colAmber)),
 		container.NewHBox(container.NewCenter(textLine("Enter to save · Esc to cancel", 12, colFaint)), cancelEdit)))
 	ui.editBar.Hide()
-	composer := container.NewStack(card, padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
+	body := container.NewStack(card, container.New(shineLayout{}, shine), padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
+	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: card.CornerRadius}, append(append(glow.objects(), drop.objects()...), body)...)
 	ui.composer = composer
 
 	// Messages waiting for the running task sit in a tray on top of the card.
@@ -840,6 +871,7 @@ func (ui *desktopUI) startNew() {
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
 	ui.panel.switchTo(nil)
 	ui.showTranscript(false)
+	ui.curtain.reveal()
 	ui.syncRun()
 	ui.mark.intro()
 	ui.updateHeader()
@@ -1167,7 +1199,7 @@ func (ui *desktopUI) notReady() string {
 	}
 	if ui.cfg.MachineID != "" { // the project is on the machine: it is checked there
 		if ui.machineFor(ui.cfg.MachineID) == nil {
-			return "This SSH machine is no longer in Settings → SSH machines."
+			return "This SSH machine is no longer in Settings → General."
 		}
 		if ui.cfg.Workspace == "" {
 			return "Create a project on " + ui.targetLabel() + " first (Projects, +)."
@@ -1425,6 +1457,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 			return err
 		}
 	}
+	cfg.Settings = ui.settingsAccess()
 	cfg.ApprovalMode = agent.ApprovalFor(ui.approvalMode, cfg)
 	cfg.ClassicCompaction = ui.classicCompaction
 	cfg.AutoResume = ui.autoResume

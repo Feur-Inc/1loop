@@ -202,7 +202,8 @@ fun NewWorktreeSheet(app: RemoteApp, project: String, onDone: () -> Unit) {
     var busy by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
     val scope = rememberCoroutineScope()
-    ModalBottomSheet(onDismissRequest = { if (!busy) onDone() }, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    GlassBackdrop()
+    ModalBottomSheet(onDismissRequest = { if (!busy) onDone() }, containerColor = Palette.surface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text("New worktree · ${projectName(project)}", style = Type.title)
             Text("A new branch, checked out in its own folder of the project (.worktrees/), with its own chats. The project's folder keeps its branch.", style = Type.small)
@@ -261,7 +262,8 @@ fun WorktreeSheet(app: RemoteApp, project: String, start: Worktree, onDone: () -
     val repo = app.repositories[project] ?: Repository()
     val pull = repo.worktreePulls[worktree.path]?.let { number -> repo.pulls.firstOrNull { it.number == number } }
     fun open(address: String) = runCatching { context.startActivity(android.content.Intent(android.content.Intent.ACTION_VIEW, android.net.Uri.parse(address))) }
-    ModalBottomSheet(onDismissRequest = { if (!busy) onDone() }, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    GlassBackdrop()
+    ModalBottomSheet(onDismissRequest = { if (!busy) onDone() }, containerColor = Palette.surface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(24.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Text(if (removing) "Remove worktree ${worktree.label}?" else worktree.label, style = Type.title)
             Text(worktree.path, style = Type.small)
@@ -397,7 +399,7 @@ fun RepositoryScreen(app: RemoteApp, project: String, onBack: () -> Unit) {
                     else -> null
                 }
                 if (text != null) item { Text(text, style = Type.small) }
-                else if (!repo.signed) item { Text("Read without a GitHub account: checks are unknown and private repositories are hidden. Connect GitHub in Settings → Connectors.", style = Type.small) }
+                else if (!repo.signed) item { Text("Read without a GitHub account: checks are unknown and private repositories are hidden. Connect GitHub in Settings → Tools & extensions → GitHub connector.", style = Type.small) }
                 return text != null
             }
             when (tab) {

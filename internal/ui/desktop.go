@@ -257,6 +257,9 @@ func useEnglishUI() {
 func runDesktop(backend *agent.App, root string) {
 	useEnglishUI()
 	switchBackend()
+	// Once this is the process that stays (the build for the display, past
+	// its probe), and before any state is read.
+	instance := claimInstance()
 	if platform.DevWanted {
 		platform.StartDevLog()
 	}
@@ -345,6 +348,7 @@ func runDesktop(backend *agent.App, root string) {
 		time.AfterFunc(180*time.Millisecond, func() { fyne.Do(launch.play) })
 	})
 	ui.startTray(a)
+	serveInstance(instance, func() { fyne.Do(ui.showWindow) })
 	// Shown, named, then run: the desktop learns which application this is
 	// before the window's first frame, when it picks its name and icon.
 	ui.window.Show()

@@ -239,26 +239,87 @@ func (layoutSpec *composerControlsLayout) widths(o []fyne.CanvasObject) (left, r
 	return left, right, wide
 }
 
+// MinSize keeps the controls on one line: the settings shrink first
+// (composerSettingsLayout), so the send button always ends the line.
 func (layoutSpec *composerControlsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
-	size, sizeValue, wide := layoutSpec.widths(o)
-	if layoutSpec.available > 0 && wide > layoutSpec.available {
-		return fyne.NewSize(fyne.Max(size.Width, sizeValue.Width), size.Height+sizeValue.Height+4)
-	}
-	return fyne.NewSize(size.Width+sizeValue.Width+8, fyne.Max(size.Height, sizeValue.Height))
+	right := o[1].MinSize()
+	return fyne.NewSize(right.Width+8+80, fyne.Max(o[0].MinSize().Height, right.Height))
 }
 
 func (layoutSpec *composerControlsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
-	sizeValue, b, wide := layoutSpec.widths(o)
-	y := (size.Height - b.Height) / 2
-	if wide > size.Width {
-		o[0].Move(fyne.NewPos(0, 0))
-		y = sizeValue.Height + 4
-	} else {
-		o[0].Move(fyne.NewPos(0, (size.Height-sizeValue.Height)/2))
+	left, right := o[0].MinSize(), o[1].MinSize()
+	width := fyne.Max(0, fyne.Min(left.Width, size.Width-right.Width-8))
+	o[0].Resize(fyne.NewSize(width, left.Height))
+	o[0].Move(fyne.NewPos(0, (size.Height-left.Height)/2))
+	o[1].Resize(right)
+	o[1].Move(fyne.NewPos(size.Width-right.Width, (size.Height-right.Height)/2))
+}
+
+// haloLayout sizes its last object to the whole area and lays a glow and a
+// drop shadow out around it, past its edges.
+type haloLayout struct {
+	drop, glow *shadow
+	radius     float32
+}
+
+func (layoutSpec *haloLayout) MinSize(o []fyne.CanvasObject) fyne.Size { return o[len(o)-1].MinSize() }
+
+func (layoutSpec *haloLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
+	layoutSpec.glow.layout(fyne.NewPos(0, -2), size, layoutSpec.radius)
+	layoutSpec.drop.layout(fyne.NewPos(0, 3), size, layoutSpec.radius)
+	o[len(o)-1].Move(fyne.Position{})
+	o[len(o)-1].Resize(size)
+}
+
+// composerSettingsLayout lines up the approval mode, the model and the
+// context ring. Its minimum is their natural width, which decides whether
+// the controls take two lines; given less, the model's name is cut short so
+// that nothing leaves the card.
+type composerSettingsLayout struct{ model *tapRow }
+
+const composerSettingsGap = 4
+
+func (layoutSpec composerSettingsLayout) natural() float32 {
+	layoutSpec.model.truncate = false
+	defer func() { layoutSpec.model.truncate = true }()
+	return layoutSpec.model.MinSize().Width
+}
+
+func (layoutSpec composerSettingsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
+	width := o[0].MinSize().Width + layoutSpec.natural() + 2*composerSettingsGap
+	height := fyne.Max(o[0].MinSize().Height, o[1].MinSize().Height)
+	if o[2].Visible() {
+		width += o[2].MinSize().Width
+		height = fyne.Max(height, o[2].MinSize().Height)
 	}
-	o[0].Resize(sizeValue)
-	o[1].Move(fyne.NewPos(fyne.Max(0, size.Width-b.Width), y))
-	o[1].Resize(b)
+	return fyne.NewSize(width, height)
+}
+
+func (layoutSpec composerSettingsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
+	approval, ring := o[0].MinSize(), fyne.Size{}
+	if o[2].Visible() {
+		ring = o[2].MinSize()
+	}
+	gaps := float32(2 * composerSettingsGap)
+	natural := layoutSpec.natural()
+	// Room is given up in this order: the model's name is cut short, then the
+	// context ring goes (its figure is in the side panel too).
+	model := fyne.Min(natural, size.Width-approval.Width-ring.Width-gaps)
+	if model < 70 && ring.Width > 0 {
+		ring = fyne.Size{}
+		model = fyne.Min(natural, size.Width-approval.Width-gaps)
+	}
+	model = fyne.Max(36, model)
+	o[2].Move(fyne.NewPos(-10000, 0)) // out of sight unless placed below
+	x := float32(0)
+	for i, s := range []fyne.Size{approval, fyne.NewSize(model, o[1].MinSize().Height), ring} {
+		if s.Width == 0 {
+			continue
+		}
+		o[i].Resize(s)
+		o[i].Move(fyne.NewPos(x, (size.Height-s.Height)/2))
+		x += s.Width + composerSettingsGap
+	}
 }
 
 // attachButtonLayout puts the "+" button at the left of the prompt, centred

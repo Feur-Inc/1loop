@@ -174,6 +174,7 @@ func (settings *settingsView) closeNow() {
 	}
 	ui.updateHeader()
 	ui.relayoutColumn()
+	ui.curtain.reveal()
 	ui.window.Canvas().Focus(ui.prompt)
 }
 
@@ -277,6 +278,7 @@ func (settings *settingsView) present() {
 	}
 	settings.view.Refresh()
 	settings.scroll.ScrollToTop()
+	settings.ui.curtain.reveal()
 }
 
 // ---------------------------------------------------------------------------

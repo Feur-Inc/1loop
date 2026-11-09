@@ -182,11 +182,8 @@ func (window *repoWindow) worktrees(state *repoState) {
 	// Set after the first choice: SetSelected calls it, and it redraws the list.
 	order.onChanged = func(choice string) {
 		for id, label := range sortLabels {
-			if label == choice && id != ui.worktreeSort {
-				ui.worktreeSort = id
-				ui.save()
-				ui.renderChats()
-				window.render()
+			if label == choice {
+				ui.setWorktreeSort(id)
 			}
 		}
 	}
@@ -276,7 +273,7 @@ func (window *repoWindow) hubProblem(state *repoState) bool {
 		window.body.Add(note("Reading GitHub…"))
 	default:
 		if !state.hub.Signed {
-			window.body.Add(note("Read without a GitHub account: checks are unknown and private repositories are hidden. Connect GitHub in Settings → Connectors."))
+			window.body.Add(note("Read without a GitHub account: checks are unknown and private repositories are hidden. Connect GitHub in Settings → Tools & extensions → GitHub connector."))
 		}
 		return false
 	}

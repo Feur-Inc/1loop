@@ -14,7 +14,7 @@ package ui
 // the config folder), which phones pin by its SHA-256 fingerprint.
 //
 // Pairing (remoteapi.PairingBook): the user opens a QR code on the computer
-// (Settings → Phone remote), which gives the phone the address, the
+// (Settings → Phone), which gives the phone the address, the
 // fingerprint and a secret; or a phone asks and the user types the six
 // digits the computer shows, after checking the fingerprint's start shown
 // on both. The phone then gets a token; only its hash is kept. Every other
@@ -60,7 +60,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 	"github.com/skip2/go-qrcode"
 
@@ -71,6 +70,7 @@ import (
 	"1loop/internal/gitrepo"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
+	registry "1loop/internal/settings"
 )
 
 const (
@@ -330,7 +330,7 @@ func (server *remoteServer) confirmPair(writer http.ResponseWriter, req *http.Re
 			server.showPairSheet(nil)
 		}
 		if errors.Is(err, remoteapi.ErrPairingLocked) {
-			server.ui.notice("Phone pairing paused", "Too many wrong pairing codes were typed. To pair a phone, open Settings → Phone remote and choose Pair a phone.")
+			server.ui.notice("Phone pairing paused", "Too many wrong pairing codes were typed. To pair a phone, open Settings → Phone and choose Pair a phone.")
 		}
 		if err != nil {
 			return
@@ -338,8 +338,8 @@ func (server *remoteServer) confirmPair(writer http.ResponseWriter, req *http.Re
 		token = core.Identifier()
 		server.ui.devices = append(server.ui.devices, remoteapi.PairedDevice{Name: paired.Device, TokenHash: remoteapi.TokenHash(token), Added: time.Now()})
 		server.ui.save()
-		if server.ui.prefs.open && server.ui.prefs.section == "Phone remote" {
-			server.ui.prefs.show("Phone remote")
+		if server.ui.prefs.on("Phone") {
+			server.ui.prefs.show("Phone")
 		}
 	})
 	if err != nil {
@@ -642,7 +642,7 @@ func (server *remoteServer) deleteChat(writer http.ResponseWriter, req *http.Req
 	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// clearBrowser is Settings → Browser → Clear, asked from the phone.
+// clearBrowser is Settings → Tools & extensions → Browsing data → Clear, asked from the phone.
 func (server *remoteServer) clearBrowser(writer http.ResponseWriter, _ *http.Request) {
 	result := make(chan error, 1)
 	server.onUI(func() { server.ui.clearBrowserData(func(err error) { result <- err }) })
@@ -1282,7 +1282,7 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 			ui.remote = nil
 		}
 		ui.save()
-		ui.prefs.show("Phone remote") // the state line and the list follow
+		ui.prefs.show("Phone") // the state line and the list follow
 	})
 	var phones []fyne.CanvasObject
 	for i, pairedDevice := range ui.devices {
@@ -1293,24 +1293,25 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 			if ui.remote != nil {
 				ui.remote.disconnectAll()
 			}
-			ui.prefs.show("Phone remote")
+			ui.prefs.show("Phone")
 		})
 		phones = append(phones, settingRow(pairedDevice.Name, "Paired "+pairedDevice.Added.Format("2 Jan 2006 15:04"), remove))
 	}
 	if len(phones) == 0 {
 		phones = append(phones, settingRow("No paired phone yet", "Open the 1loop app on a phone connected to the same network.", nil))
 	}
-	var pairing fyne.CanvasObject = layout.NewSpacer()
-	if ui.remote != nil {
-		pairing = card(settingRow("Pair a phone", "Shows a QR code to scan with the 1loop app.", newRow("Pair a phone", iconPhone, styleChip, ui.showPairingQR)))
+	view := ui.prefs
+	page := container.NewVBox(
+		view.pageTitle("Phone", "", nil),
+		view.intro(registry.Phone),
+		sectionTitle("Phone app"),
+		card(view.mark("phone.remote", settingRow("Allow the 1loop phone app on this network", describe(), enabled))))
+	if ui.remote != nil { // a spacer here stretched and pushed the list to the bottom
+		page.Add(card(settingRow("Pair a phone", "Shows a QR code to scan with the 1loop app.", newRow("Pair a phone", iconPhone, styleChip, ui.showPairingQR))))
 	}
-	return container.NewVBox(
-		ui.prefs.pageTitle("Phone remote", "", nil),
-		card(settingRow("Allow the 1loop phone app on this network", describe(), enabled)),
-		pairing,
-		sectionTitle("Paired phones"),
-		card(phones...),
-	)
+	page.Add(sectionTitle("Paired phones"))
+	page.Add(view.mark("phone.pairing", card(phones...)))
+	return page
 }
 
 // remoteDefaults gives conversations saved before the remote an id.

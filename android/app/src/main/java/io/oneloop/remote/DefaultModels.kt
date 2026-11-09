@@ -33,7 +33,7 @@ fun DefaultModelsSection(app: RemoteApp) {
     var saving by remember { mutableStateOf(false) }
     var notice by remember(account?.id) { mutableStateOf<String?>(null) }
     val models = app.models.filter { it.account == account?.id && it.id != "default" }
-    Text("Default model preset", style = Type.headline)
+    Text("Default model preset", style = Type.title)
     Text("Optional, for each account. Choose a model per level, then select Default in the composer. Only configured levels appear. Accounts never switch.", style = Type.small)
     Box {
         Pill(account?.name ?: "No account", enabled = !saving && app.accounts.isNotEmpty()) { expanded = true }

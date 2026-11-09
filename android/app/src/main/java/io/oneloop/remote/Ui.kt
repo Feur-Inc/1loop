@@ -354,7 +354,7 @@ fun ServersScreen(app: RemoteApp) {
                 }
             } else if (shown.isEmpty()) {
                 Text(
-                    if (desktop) "No 1loop found. Open 1loop on your computer, on the same Wi-Fi, and check Settings → Phone remote."
+                    if (desktop) "No 1loop found. Open 1loop on your computer, on the same Wi-Fi, and check Settings → Phone."
                     else "No server yet. Add one by its address.",
                     style = Type.small, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
                 )
@@ -372,7 +372,7 @@ fun ServersScreen(app: RemoteApp) {
         if (desktop) {
             Spacer(Modifier.height(10.dp))
             Pill("Scan QR code", primary = true, enabled = !app.busy) {
-                scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the code shown in 1loop on the computer: Settings → Phone remote → Pair a phone").setBeepEnabled(false).setOrientationLocked(false))
+                scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the code shown in 1loop on the computer: Settings → Phone → Pair a phone").setBeepEnabled(false).setOrientationLocked(false))
             }
             if (app.busy) {
                 Spacer(Modifier.height(12.dp))

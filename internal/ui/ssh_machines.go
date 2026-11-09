@@ -2,7 +2,7 @@
 
 package ui
 
-// SSH machines (internal/sshmachine): Settings → SSH machines adds them,
+// SSH machines (internal/sshmachine): Settings → General adds them,
 // the target menu chooses one, and its projects are folders in its
 // projects folder there. The agent keeps running here; its files,
 // commands, terminal and Git changes are on the machine (agent.Machine).
@@ -33,7 +33,6 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/agent"
-	"1loop/internal/core"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	"1loop/internal/sshmachine"
@@ -580,30 +579,6 @@ func (panel *toolPanel) machineFilesTab(machine *sshmachine.Machine, root string
 	return panelTab{kind: "files", title: "Files", icon: iconFolder, cancel: cancel, workspace: root, content: files.content, files: files}
 }
 
-// ---------------------------------------------------------------------------
-// Settings → SSH machines.
-
-func (ui *desktopUI) sshSettings() fyne.CanvasObject {
-	settings := ui.prefs
-	var rows []fyne.CanvasObject
-	for _, machine := range ui.sshMachines {
-		machine := machine
-		edit := newRow("Edit", iconChevronRight, styleChip, func() { ui.sshEditor(machine) })
-		edit.iconAfter = true
-		rows = append(rows, settingRow(machine.Label(), machine.User+"@"+machine.Address()+" · projects in "+machine.Projects, edit))
-	}
-	add := newRow("Add machine", iconPlus, stylePrimary, func() {
-		ui.sshEditor(sshmachine.Settings{ID: core.Identifier(), Port: 22, Auth: "key", KeyPath: "~/.ssh/id_ed25519", Projects: "~/1loop-projects"})
-	})
-	page := container.NewVBox(settings.pageTitle("SSH machines", "", container.NewCenter(add)),
-		padded(0, 10, 2, 0, plainFlow("Computers the agent can work on over SSH: choose one in the target menu, under the composer. Its projects are folders there; the agent edits files, runs commands and opens its terminal there, while this computer keeps its models, Browser Use and Computer Use.", 13, colMuted)))
-	if len(rows) == 0 {
-		rows = append(rows, settingRow("No machine yet", "Add one to work on it over SSH.", nil))
-	}
-	page.Add(card(rows...))
-	return page
-}
-
 // sshEditor is a machine's page: saved as a whole, tested on demand.
 func (ui *desktopUI) sshEditor(original sshmachine.Settings) {
 	settings := ui.prefs
@@ -734,7 +709,7 @@ func (ui *desktopUI) sshEditor(original sshmachine.Settings) {
 		title = "New SSH machine"
 	}
 	page := container.NewVBox(
-		settings.pageTitle(title, "SSH machines", nil),
+		settings.pageTitle(title, "General", nil),
 		card(
 			settingRow("Name", "As the target menu shows it.", sized(340, name)),
 			settingRow("Host", "Its name or IP address.", sized(340, host)),

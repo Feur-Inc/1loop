@@ -26,6 +26,9 @@ type Question struct {
 	Header   string           `json:"header"`
 	Question string           `json:"question"`
 	Options  []QuestionOption `json:"options"`
+	// MultiSelect: several options may be picked (Claude Code's
+	// AskUserQuestion). The answer lists them, joined by ", ".
+	MultiSelect bool `json:"multiSelect,omitempty"`
 }
 
 // QuestionRequest is the "question" event: the run waits for Answer(ID, …).
@@ -121,9 +124,10 @@ func (backend *App) Answer(id string, answers map[string]string) bool {
 func (backend *App) claudeAskUser(ctx context.Context, input json.RawMessage, emit emitter) map[string]any {
 	var in struct {
 		Questions []struct {
-			Question string           `json:"question"`
-			Header   string           `json:"header"`
-			Options  []QuestionOption `json:"options"`
+			Question    string           `json:"question"`
+			Header      string           `json:"header"`
+			Options     []QuestionOption `json:"options"`
+			MultiSelect bool             `json:"multiSelect"`
 		} `json:"questions"`
 	}
 	updated := map[string]any{}
@@ -132,7 +136,7 @@ func (backend *App) claudeAskUser(ctx context.Context, input json.RawMessage, em
 	}
 	questions := make([]Question, len(in.Questions))
 	for i, question := range in.Questions {
-		questions[i] = Question{ID: fmt.Sprintf("q%d", i+1), Header: question.Header, Question: question.Question, Options: question.Options}
+		questions[i] = Question{ID: fmt.Sprintf("q%d", i+1), Header: question.Header, Question: question.Question, Options: question.Options, MultiSelect: question.MultiSelect}
 	}
 	arguments, _ := json.Marshal(map[string]any{"questions": questions})
 	output, err := backend.askUser(ctx, string(arguments), func() {}, emit)

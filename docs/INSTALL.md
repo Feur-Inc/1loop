@@ -141,6 +141,8 @@ plays or records sound, so it has no audio access.
 | --- | --- | --- |
 | `--filesystem=host` | Reading and editing your projects wherever they are, with the same paths the host commands and Claude Code use. | Only folders granted in another way are visible; projects elsewhere cannot be opened or edited. `--filesystem=home` is enough if all your projects are in your home folder. Read-only (`host:ro`) makes every edit fail. |
 | `--talk-name=org.freedesktop.Flatpak` | Commands, Terminal Use, Git, Browser Use, Computer Use's helper and Claude Code, which run on the host through `flatpak-spawn --host`. | None of them can run: commands print a message naming this permission, and Claude Code shows as not installed. Chats with API providers and file edits still work. |
+| `--talk-name=org.kde.StatusNotifierWatcher` | The tray icon: 1loop registers it with the desktop's tray, and asks whether a tray is there before closing the window hides it in the tray. | No tray icon, and closing the window quits 1loop. |
+| `--own-name=org.kde.StatusNotifierItem-2-1` | The tray icon's own bus name (`StatusNotifierItem-<process ID>-1`; 1loop is process 2 in the sandbox). | Nothing visible: the icon is also registered by its object path. |
 | `--share=network` | Model providers, MCP servers, SSH machines, Browser Use, the remote app. | No model can be reached. |
 | `--socket=ssh-auth` | SSH machines that sign in with your SSH agent. | Use a key file or a password for SSH machines. |
 | `--socket=wayland`, `--socket=fallback-x11`, `--share=ipc`, `--device=dri` | The window and its OpenGL rendering. | 1loop cannot open its window. |

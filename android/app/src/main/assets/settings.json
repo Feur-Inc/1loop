@@ -143,6 +143,22 @@
       "where": "desktop"
     },
     {
+      "key": "general.close_to_tray",
+      "section": "general",
+      "title": "Close to tray",
+      "description": "Closing the window keeps 1loop running in the system tray; quit from the tray menu or with Ctrl+Q.",
+      "keywords": [
+        "tray",
+        "close",
+        "quit",
+        "background",
+        "minimize",
+        "window"
+      ],
+      "kind": "action",
+      "where": "desktop"
+    },
+    {
       "key": "general.import",
       "section": "general",
       "title": "Import chats",

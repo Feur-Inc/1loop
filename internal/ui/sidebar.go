@@ -404,6 +404,10 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 	ui.prefs.close()
 	ui.clearSelection()
 	ui.current = chat
+	if chat.failed { // seen now
+		chat.failed = false
+		ui.syncTray()
+	}
 	ui.cfg = chat.Config
 	ui.prompt.switchDraft(chat.ID)
 	ui.followTail = true
@@ -522,6 +526,7 @@ func (ui *desktopUI) renderChats() {
 		ui.cachedChat = nil
 	}
 	ui.remote.chatsChanged()
+	ui.syncTray() // a chat removed, or its run started or ended
 	if ui.server != nil {
 		ui.server.renderChats()
 		return

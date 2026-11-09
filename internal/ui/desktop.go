@@ -864,6 +864,7 @@ func (ui *desktopUI) startNew() {
 	ui.current = nil
 	ui.cfg.ClearSessions()
 	ui.cfg.RanWith = nil
+	ui.leaveScratch()
 	ui.prompt.switchDraft(ui.draftKey())
 	ui.followTail = true
 	ui.transcript.RemoveAll()
@@ -1288,6 +1289,9 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 			chat = &conversation{}
 		}
 		chat.ID, chat.Title, chat.Config = core.Identifier()[:16], string(title), ui.cfg
+		if !ui.scratchChat(chat) {
+			return
+		}
 		ui.chats = append([]*conversation{chat}, ui.chats...)
 		ui.current = chat
 		ui.prompt.renameDraft(chat.ID)
@@ -1373,6 +1377,7 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 				return
 			}
 			turn.finish()
+			defer ui.finishMove(chat, cfg.Move) // after runEnded: its note starts the next turn
 			ended := "done"
 			if err != nil {
 				ended = "stopped"
@@ -1459,6 +1464,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	}
 	cfg.Settings = ui.settingsAccess()
 	cfg.ApprovalMode = agent.ApprovalFor(ui.approvalMode, cfg)
+	ui.scratchMove(&cfg)
 	cfg.ClassicCompaction = ui.classicCompaction
 	cfg.AutoResume = ui.autoResume
 	cfg.ResumeModel = func(ctx context.Context, step agent.ResumeStep) (next agent.Config, err error) {
@@ -1920,7 +1926,7 @@ func (ui *desktopUI) load() {
 		ui.chats = append(ui.chats, chat)
 		if chat.Config.MachineID != "" {
 			ui.ensureMachineProject(chat.Config.MachineID, chat.Config.Workspace)
-		} else {
+		} else if !chat.Config.InScratch() {
 			ui.ensureProject(chat.Config.Workspace)
 		}
 	}

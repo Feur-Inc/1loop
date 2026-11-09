@@ -490,7 +490,7 @@ func phoneChats(all []*conversation) []remoteapi.Chat {
 }
 
 func chatSummary(chat *conversation) remoteapi.Chat {
-	return remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Running: chat.run != nil, Items: len(chat.Items)}
+	return remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Running: chat.run != nil, Items: len(chat.Items)}
 }
 
 func itemForPhone(chat *conversation, index int) remoteapi.Item {
@@ -847,6 +847,7 @@ func (server *remoteServer) send(writer http.ResponseWriter, req *http.Request) 
 		Text        string                 `json:"text"`
 		Mode        string                 `json:"mode"`
 		Workspace   string                 `json:"workspace"`
+		NoFolder    bool                   `json:"noFolder"` // a new chat in a folder 1loop makes for it
 		Attachments []agent.FileAttachment `json:"attachments"`
 	}
 	if core.ReadJSON(req, &body) != nil || strings.TrimSpace(body.Text) == "" && len(body.Attachments) == 0 {
@@ -857,6 +858,8 @@ func (server *remoteServer) send(writer http.ResponseWriter, req *http.Request) 
 	server.onUI(func() {
 		if chat := server.ui.chatByID(body.Chat); chat != nil {
 			root = chat.Config.Workspace
+		} else if body.NoFolder {
+			root = server.ui.scratchBase()
 		}
 		if root == "" {
 			root = server.ui.cfg.Workspace
@@ -894,7 +897,10 @@ func (ui *desktopUI) remoteSend(chatID, mode, workspace string, messageValue age
 		}
 		ui.openChat(chat)
 	} else {
-		if workspace != "" && workspace != ui.cfg.Workspace {
+		if workspace == ui.scratchBase() { // the phone's "No folder"
+			ui.cfg.Workspace, ui.cfg.Scratch = workspace, workspace
+		} else if workspace != "" && workspace != ui.cfg.Workspace {
+			ui.cfg.Scratch = ""
 			if root, err := agent.ResolveWorkspace(workspace); err == nil {
 				ui.cfg.Workspace = root
 				ui.ensureProject(root)

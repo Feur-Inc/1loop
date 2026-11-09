@@ -64,9 +64,14 @@ type Config struct {
 	APIKey            string                                    `json:"-"`
 	Model             string                                    `json:"model"`
 	Workspace         string                                    `json:"workspace"`
-	MachineID         string                                    `json:"machine,omitempty"` // the SSH machine the workspace is on, "" for this computer
-	Machine           Machine                                   `json:"-"`                 // that machine, for a run (machine.go)
-	Session           string                                    `json:"session,omitempty"` // Claude Code connection: the chat's session there (see ClaudeSession)
+	// Scratch is the folder 1loop made for a chat started without one
+	// (scratch.go); the chat is in it while Workspace is the same.
+	Scratch        string         `json:"scratch,omitempty"`
+	Move           *WorkspaceMove `json:"-"`                 // where the chat asked to move, for this run
+	RecentProjects []string       `json:"-"`                 // the user's project folders, for a scratch chat's prompt
+	MachineID      string         `json:"machine,omitempty"` // the SSH machine the workspace is on, "" for this computer
+	Machine        Machine        `json:"-"`                 // that machine, for a run (machine.go)
+	Session        string         `json:"session,omitempty"` // Claude Code connection: the chat's session there (see ClaudeSession)
 	// ClaudeHome is the Claude Code connection's CLAUDE_CONFIG_DIR, "" for
 	// the system Claude Code login (claude_accounts.go).
 	ClaudeHome string `json:"claudeHome,omitempty"`

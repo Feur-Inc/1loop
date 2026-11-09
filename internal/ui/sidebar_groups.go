@@ -5,6 +5,7 @@ package ui
 import (
 	"fmt"
 	"path"
+	"slices"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -20,6 +21,7 @@ const groupChatLimit = 5
 type sideChat struct {
 	title    string
 	folder   string // its project, or a worktree of it
+	scratch  bool   // in a folder 1loop made for it: listed under No folder
 	running  bool
 	selected bool
 	open     func()
@@ -71,6 +73,16 @@ func (ui *desktopUI) renderSidebar(projects []string, chats []sideChat, selectPr
 	}
 	opened := ui.projectOf(ui.cfg.Workspace)
 	ui.projectList.RemoveAll()
+	var scratch []sideChat
+	chats = slices.DeleteFunc(slices.Clone(chats), func(chat sideChat) bool {
+		if chat.scratch {
+			scratch = append(scratch, chat)
+		}
+		return chat.scratch
+	})
+	if ui.server == nil && ui.cfg.MachineID == "" && (ui.cfg.InScratch() || len(scratch) > 0) {
+		ui.addScratchGroup(scratch)
+	}
 	for _, group := range groupByProject(listed, chats, func(chat sideChat) string { return chat.folder }, ui.projectOf) {
 		p := group.project
 		folded := ui.foldedProjects[p]
@@ -116,6 +128,32 @@ func (ui *desktopUI) renderSidebar(projects []string, chats []sideChat, selectPr
 	}
 }
 
+// scratchGroup is the No folder group's key in foldedProjects and
+// allChatsShown, which no folder path can be.
+const scratchGroup = ":scratch"
+
+// addScratchGroup lists the chats with no folder of the user's first:
+// selecting the group starts one.
+func (ui *desktopUI) addScratchGroup(chats []sideChat) {
+	folded := ui.foldedProjects[scratchGroup]
+	icon := iconChevron
+	if folded {
+		icon = iconChevronRight
+	}
+	header := newRow(noFolderLabel, icon, styleNav, func() { ui.foldProject(scratchGroup, !folded) })
+	header.accent = true
+	header.selected = ui.cfg.InScratch() && ui.current == nil
+	if folded && groupRunning(chats) {
+		header.badge = iconDot
+	}
+	ui.projectList.Add(ui.withMore(header, func(anchor fyne.CanvasObject) *sheet {
+		return showMenu(ui.window, anchor, []menuAction{{label: "New chat with no folder", icon: iconPlus, run: ui.chooseNoFolder}})
+	}))
+	if !folded {
+		ui.addGroupChats(scratchGroup, chats)
+	}
+}
+
 // addGroupChats lists a project's chats under it, the first few unless it
 // was unfolded in full or the open chat is further down.
 func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
@@ -138,7 +176,7 @@ func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 		row.accent = true
 		row.truncate = true
 		row.selected = chat.selected
-		if chat.folder != project && project != "" {
+		if chat.folder != project && project != "" && !chat.scratch {
 			row.trailing = path.Base(ui.worktreeLabel(chat.folder)) // a worktree's chat: its branch's last part, short
 		}
 		if chat.running {

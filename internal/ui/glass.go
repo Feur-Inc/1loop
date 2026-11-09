@@ -12,6 +12,7 @@ package ui
 import (
 	"image"
 	"image/color"
+	"runtime"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -28,7 +29,9 @@ const glassWidth = 240
 // frostedBackdrop is the window as it is on screen, blurred and tinted for
 // text to stay readable over it; nil when the canvas cannot be read.
 func frostedBackdrop(c fyne.Canvas) (*image.NRGBA, image.Image) {
-	if c == nil || c.Size().Width <= 0 {
+	// In the browser, Fyne's WebGL ReadPixels panics (gl-js hands JS a Go
+	// slice): the glass there is the tint alone.
+	if c == nil || c.Size().Width <= 0 || runtime.GOOS == "js" {
 		return nil, nil
 	}
 	started := time.Now()

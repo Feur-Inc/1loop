@@ -212,9 +212,10 @@ fun LinuxScreen(app: RemoteApp, onBack: () -> Unit) {
         }
     }
     ask?.let { shown ->
+        GlassBackdrop()
         AlertDialog(
             onDismissRequest = { ask = null },
-            containerColor = Palette.surface,
+            containerColor = GlassSurface, modifier = GlassDialogEdge,
             title = { Text(shown.title, style = Type.title) },
             text = { Text(shown.text, style = Type.small, modifier = Modifier.heightIn(max = 360.dp).verticalScroll(rememberScrollState())) },
             confirmButton = { Pill(shown.verb, primary = true) { ask = null; work(shown.verb + "…", shown.run) } },
@@ -223,9 +224,10 @@ fun LinuxScreen(app: RemoteApp, onBack: () -> Unit) {
     }
     if (resetAsked) {
         var keep by remember { mutableStateOf(true) }
+        GlassBackdrop()
         AlertDialog(
             onDismissRequest = { resetAsked = false },
-            containerColor = Palette.surface,
+            containerColor = GlassSurface, modifier = GlassDialogEdge,
             title = { Text("Reset Linux?", style = Type.title) },
             text = {
                 Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {

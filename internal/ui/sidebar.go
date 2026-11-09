@@ -399,6 +399,9 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 	ui.scroll.rest() // what the wheel still owed the last chat
 	ui.followTail = true
 	ui.panel.switchTo(chat)
+	if reuse {
+		ui.curtain.reveal() // another chat takes the page: not a reload of this one
+	}
 	ui.transcript.RemoveAll()
 	ui.items.reset()
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}

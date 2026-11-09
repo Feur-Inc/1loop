@@ -2,6 +2,8 @@
 
 package io.oneloop.remote
 
+import androidx.compose.material3.ripple
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
@@ -140,7 +142,8 @@ fun ContextRing(used: Int, window: Int) {
                 if (sweep > 0f) drawArc(Palette.amber, -90f, sweep, false, Offset(inset, inset), arc, style = Stroke(stroke))
             }
         }
-        DropdownMenu(open, { open = false }, containerColor = Palette.raised) {
+        if (open) GlassMenuOpen()
+        DropdownMenu(open, { open = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.raised), border = GlassEdge, shape = GlassMenuShape) {
             Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
                 if (window <= 0) {
                     Text("Context usage", style = Type.body.copy(fontSize = 14.sp))
@@ -198,7 +201,8 @@ fun ModelSheet(app: RemoteApp, onDone: () -> Unit) {
     // The account whose models show: the chosen model's, until another is tapped.
     var picked by remember { mutableStateOf<String?>(null) }
     val shown = picked ?: model?.account ?: app.accounts.firstOrNull()?.id.orEmpty()
-    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    GlassBackdrop()
+    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp)) {
             if (app.accounts.isNotEmpty()) {
                 SheetCaption("Account")
@@ -309,9 +313,10 @@ private fun SheetCaption(text: String) {
 @Composable
 private fun AccountRow(account: Account, limits: AccountLimits?, selected: Boolean, onClick: () -> Unit) {
     val enabled = !(account.provider == "vllm" && account.problem.isNotEmpty())
+    val press = remember { MutableInteractionSource() }
     Column(
-        Modifier.fillMaxWidth().heightIn(min = 64.dp).clip(RoundedCornerShape(12.dp)).background(if (selected) Palette.selected else Color.Transparent)
-            .clickable(enabled = enabled, onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
+        Modifier.pressScale(press, 0.98f).fillMaxWidth().heightIn(min = 64.dp).clip(RoundedCornerShape(12.dp)).background(if (selected) Palette.selected else Color.Transparent)
+            .clickable(press, ripple(), enabled = enabled, onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
     ) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             AccountIcon(account.provider, enabled)
@@ -395,7 +400,8 @@ fun ApprovalChip(app: RemoteApp) {
             Spacer(Modifier.width(6.dp))
             Text(if (yolo) "YOLO" else if (auto) "Auto" else "Approval", style = Type.small.copy(color = ink))
         }
-        DropdownMenu(open, { open = false }, containerColor = Palette.popover) {
+        if (open) GlassMenuOpen()
+        DropdownMenu(open, { open = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover), border = GlassEdge, shape = GlassMenuShape) {
             ModeItem(Icons.shield, "Approval required", "Ask before each command and edit", !yolo && !auto) { app.chooseApprovalMode("approval"); open = false }
             if (app.autoMode) { // a computer older than this app may not offer it
                 ModeItem(Icons.shieldCheck, "Auto mode", "Approves safe actions, asks you for risky ones", auto) { app.chooseApprovalMode("auto"); open = false }

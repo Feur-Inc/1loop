@@ -229,6 +229,11 @@ func main() {
 	case <-time.After(30 * time.Second):
 		log.Printf("the page never asked to pair")
 		shot(ctx, "02-no-pairing")
+		streamMu.Lock()
+		for _, line := range consoleLines { // why, often a panic
+			log.Printf("console: %s", line)
+		}
+		streamMu.Unlock()
 		failIf(*check, "the page never asked to pair")
 	}
 	firstFrame := time.Since(start)

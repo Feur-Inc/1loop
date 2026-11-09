@@ -27,6 +27,7 @@ func framePaceWait(bool)         {}
 
 func scrollGesture() (finger, released, ok bool)      { return false, false, false }
 func scrollEventTime() (milliseconds uint32, ok bool) { return 0, false }
+func scrollFinger() (finger, ok bool)                 { return false, false }
 func switchBackend()                                  {}
 func customChromeSupported() bool                     { return false }
 func systemScale() float32                            { return 0 }

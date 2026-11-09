@@ -875,11 +875,26 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		server.broadcastLocked("meta", server.metaLocked(chat))
 		server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
 		server.scheduleSaveLocked()
-		if moved != "" && server.ctx.Err() == nil { // the agent goes on in the new folder
+		// The turn used the account: its limits are asked again the next
+		// time someone looks at them, as on the desktop.
+		if limits, ok := server.limitsCache[chat.Config.ConnectionID]; ok {
+			limits.Checked = time.Time{}
+			server.limitsCache[chat.Config.ConnectionID] = limits
+		}
+		if server.ctx.Err() != nil {
+			return
+		}
+		if moved != "" { // the agent goes on in the new folder
 			server.runLocked(chat, agent.Message{Role: "user", Internal: true, Content: moved})
 			return
 		}
-		if len(chat.queue) > 0 && server.ctx.Err() == nil {
+		// A message can arrive after the agent's last look at its inbox and
+		// before this: it starts the next turn rather than wait unseen.
+		if len(chat.steer) > 0 && err == nil {
+			next := chat.steer[0]
+			chat.steer = chat.steer[1:]
+			server.runLocked(chat, next)
+		} else if len(chat.queue) > 0 {
 			next := chat.queue[0]
 			chat.queue = chat.queue[1:]
 			server.runLocked(chat, next)

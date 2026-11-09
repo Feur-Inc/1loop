@@ -163,6 +163,7 @@ type desktopUI struct {
 	editBar         *fyne.Container
 	queueTray       *fyne.Container
 	queueList       *fyne.Container
+	pendingBox      *fyne.Container // messages sent while the agent works, greyed at the conversation's end
 	// The slash command menu over the composer (slash_commands.go).
 	commandTray, commandList        *fyne.Container
 	commandMatches                  []commandOption
@@ -562,8 +563,9 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.inlineRow.Hide()
 	ui.dockRow = container.NewStack()
 	ui.dockRow.Hide()
+	ui.pendingBox = container.NewVBox()
 	ui.footerSpace = canvas.NewRectangle(color.Transparent) // the composer floats over the end (glassFooterLayout)
-	ui.column = container.NewVBox(ui.transcript, ui.inlineRow, ui.footerSpace)
+	ui.column = container.NewVBox(ui.transcript, ui.inlineRow, ui.pendingBox, ui.footerSpace)
 	ui.scroll = newKineticVScroll(container.New(columnLayout{width: 760, inset: 24}, ui.column))
 	ui.followTail = true
 	ui.scroll.OnScrolled = func(position fyne.Position) {
@@ -878,6 +880,7 @@ func (ui *desktopUI) startNew() {
 	ui.cfg.RanWith = nil
 	ui.leaveScratch()
 	ui.prompt.switchDraft(ui.draftKey())
+	ui.scroll.rest() // what the wheel still owed the last chat
 	ui.followTail = true
 	ui.transcript.RemoveAll()
 	ui.items.reset()
@@ -1152,9 +1155,14 @@ func (ui *desktopUI) submit() {
 		return
 	}
 	if chat != nil && chat.run != nil {
+		// Shown at once at the conversation's end, greyed, and given to the
+		// agent at its next step (between two tool calls), where it then
+		// takes its place in the conversation.
 		if message, ok := ui.promptMessage(); ok {
-			chat.queue = append(chat.queue, message)
+			chat.steer = append(chat.steer, message)
 			ui.renderQueue()
+			ui.followTail = true
+			ui.relayoutColumn()
 		}
 		return
 	}

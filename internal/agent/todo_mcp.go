@@ -109,7 +109,14 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 			tools := []any{}
 			for _, definition := range definitions {
 				f := definition["function"].(map[string]any)
-				tools = append(tools, map[string]any{"name": f["name"], "description": f["description"], "inputSchema": f["parameters"]})
+				tool := map[string]any{"name": f["name"], "description": f["description"], "inputSchema": f["parameters"]}
+				if f["name"] == "wrap_up" || f["name"] == "update_todo" {
+					// Called on most turns: in the prompt, not deferred
+					// behind Claude Code's tool search (a round trip the
+					// model tends to skip, and the call with it).
+					tool["_meta"] = map[string]any{"anthropic/alwaysLoad": true}
+				}
+				tools = append(tools, tool)
 			}
 			response["result"] = map[string]any{"tools": tools}
 		case "tools/call":

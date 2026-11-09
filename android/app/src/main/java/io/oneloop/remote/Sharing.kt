@@ -64,7 +64,7 @@ fun SharingSection(app: RemoteApp) {
     val scope = rememberCoroutineScope()
     val state = app.sharing
     var problem by remember { mutableStateOf<String?>(null) }
-    Text("Share this phone", style = Type.headline)
+    Text("Share this phone", style = Type.title)
     Text("Lets the 1loop desktop or another phone on this network use this phone's agent: there, add a Remote server with the address and fingerprint below, then type here the code it shows. Off each time the engine starts.", style = Type.small)
     Row(verticalAlignment = Alignment.CenterVertically) {
         Text(if (state?.enabled == true) "Shared on the network" else "Not shared", style = Type.body.copy(fontWeight = FontWeight.Medium), modifier = Modifier.weight(1f))
@@ -112,9 +112,10 @@ fun PairingRequestDialog(app: RemoteApp) {
             problem = failure.message
         }
     }
+    GlassBackdrop()
     AlertDialog(
         onDismissRequest = {},
-        containerColor = Palette.surface,
+        containerColor = GlassSurface, modifier = GlassDialogEdge,
         title = { Text("“${request.device}” wants to use this phone", style = Type.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {

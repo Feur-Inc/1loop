@@ -87,7 +87,8 @@ starts. You can instead supply a certificate and private key with
 
 1. On desktop, click **This computer** under the message box and choose
    **Connect a server…**, or open **Settings → General → Remote server →
-   Connect…**. On Android, choose **Add by address**.
+   Connect a server…**, which lists these steps too. On Android, choose
+   **Add by address**.
 2. Enter `https://your-server:47101`. For a generated/private certificate,
    enter the fingerprint read directly from the server console. Leave it
    empty only when using a certificate trusted by the client's normal CA

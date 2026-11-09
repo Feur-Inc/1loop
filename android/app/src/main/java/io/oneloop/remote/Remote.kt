@@ -76,7 +76,8 @@ data class Approval(val chat: String, val id: String, val title: String, val pre
 
 data class QuestionOption(val label: String, val description: String)
 
-data class Question(val id: String, val header: String, val text: String, val options: List<QuestionOption>)
+/** multiSelect: several options may be picked (Claude Code); the answer lists them, joined by ", ". */
+data class Question(val id: String, val header: String, val text: String, val options: List<QuestionOption>, val multiSelect: Boolean = false)
 
 /** The model's questions (request_user_input); answered with POST /api/answer. */
 data class Questions(val chat: String, val id: String, val questions: List<Question>) {
@@ -90,17 +91,77 @@ data class Questions(val chat: String, val id: String, val questions: List<Quest
                     val options = q.optJSONArray("options")
                     Question(q.optString("id"), q.optString("header"), q.optString("question"), (0 until (options?.length() ?: 0)).map { j ->
                         options!!.getJSONObject(j).let { QuestionOption(it.optString("label"), it.optString("description")) }
-                    })
+                    }, q.optBoolean("multiSelect"))
                 }
             }
         })
     }
 }
 
-/** What the user has picked or written for a request's questions, kept while its sheet is set aside. */
+/**
+ * What the user has picked or written for a request's questions, kept while
+ * its sheet is set aside. The answers are as the computer's own dialog sends
+ * them: an option's label, the user's words after [Questions.OTHER], or on a
+ * multi-select everything chosen, joined by ", ".
+ */
 class QuestionDraft {
-    val answers = mutableStateMapOf<String, String>()
-    val others = mutableStateMapOf<String, String>() // the "Other" lines, by question
+    val picked = mutableStateMapOf<String, Set<String>>() // option labels, by question
+    val others = mutableStateMapOf<String, String>() // the "Other" fields, by question
+    var page by mutableStateOf(0) // the question shown
+
+    /** An option: the answer on a single choice, one more (or one less) on a multi-select. */
+    fun pick(question: Question, label: String) {
+        val chosen = picked[question.id].orEmpty()
+        if (question.multiSelect) {
+            picked[question.id] = if (label in chosen) chosen - label else chosen + label
+        } else {
+            picked[question.id] = setOf(label)
+            others.remove(question.id)
+        }
+    }
+
+    /** The user's own words: on a single choice they take the place of the option picked. */
+    fun write(question: Question, text: String) {
+        others[question.id] = text
+        if (text.isNotBlank() && !question.multiSelect) picked.remove(question.id)
+    }
+
+    fun answer(question: Question): String {
+        val chosen = picked[question.id].orEmpty()
+        val parts = question.options.map { it.label }.filter { it in chosen }
+        val own = others[question.id].orEmpty().trim()
+        return when {
+            own.isEmpty() -> parts.joinToString(", ")
+            parts.isEmpty() -> Questions.OTHER + own
+            else -> (parts + own).joinToString(", ")
+        }
+    }
+
+    fun answers(request: Questions) = request.questions.associate { it.id to answer(it) }.filterValues { it.isNotEmpty() }
+
+    /** The first question without an answer, -1 when none. */
+    fun firstMissing(request: Questions) = request.questions.indexOfFirst { answer(it).isEmpty() }
+
+    /** The send button: what is still missing, until nothing is. */
+    fun sendLabel(request: Questions): String {
+        val missing = request.questions.count { answer(it).isEmpty() }
+        val total = request.questions.size
+        return when {
+            missing == 0 && total == 1 -> "Send answer"
+            missing == 0 -> "Send answers"
+            total == 1 -> "Choose an answer"
+            missing == 1 -> "Answer 1 more question"
+            else -> "Answer $missing more questions"
+        }
+    }
+}
+
+/** An option's label without the "(Recommended)" the model adds, and whether it had it: a badge shows it instead. */
+fun recommendedLabel(label: String): Pair<String, Boolean> {
+    val mark = "(recommended)"
+    val trimmed = label.trim()
+    return if (trimmed.length > mark.length && trimmed.endsWith(mark, ignoreCase = true)) trimmed.dropLast(mark.length).trim() to true
+    else label to false
 }
 
 data class Effort(val value: String, val label: String, val about: String)
@@ -279,6 +340,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var projectActions by mutableStateOf(false)
     var projectsOpen by mutableStateOf(false)
     var settingsOpen by mutableStateOf(false)
+    var settingsSection by mutableStateOf<String?>(null) // the section open in Settings (its id): kept while Extensions or Linux covers it
     var extensionsOpen by mutableStateOf(false) // Settings → Extensions (Extensions.kt)
     var linuxOpen by mutableStateOf(false) // Settings → Linux (LinuxScreen.kt)
     // Its work outlives the screen: a reset stops the agent, which leaves the chat screen.
@@ -626,6 +688,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         clearAttachments() // picked for the previous target
         connectionsOpen = false
         settingsOpen = false
+        settingsSection = null
         extensionsOpen = false
         linuxOpen = false
         sharing = null

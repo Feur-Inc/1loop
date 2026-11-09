@@ -2,7 +2,8 @@
 
 package io.oneloop.remote
 
-import androidx.activity.compose.BackHandler
+import androidx.compose.material3.ripple
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.tween
@@ -88,9 +89,10 @@ fun ModeScreen(onSelect: (ExecutionTarget) -> Unit) {
 
 @Composable
 private fun ModeCard(icon: ImageVector, title: String, detail: String, onClick: () -> Unit) {
+    val press = remember { MutableInteractionSource() }
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface)
-            .border(1.dp, Palette.borderSoft, RoundedCornerShape(14.dp)).clickable(onClick = onClick)
+        Modifier.pressScale(press, 0.98f).fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface)
+            .border(1.dp, Palette.borderSoft, RoundedCornerShape(14.dp)).clickable(press, ripple(), onClick = onClick)
             .padding(horizontal = 16.dp, vertical = 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -111,10 +113,10 @@ fun LocalSetupScreen(
     status: LocalStatus, onPrepare: (String) -> Unit, onStart: () -> Unit, onBack: () -> Unit,
     starting: Boolean = false, problem: String? = null, onManageLinux: (() -> Unit)? = null,
 ) {
-    BackHandler(onBack = onBack)
+    val back = predictiveBack(onBack = onBack)
     val pending = status.steps.filter { it.state != StepState.Done }
     Column(
-        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState())
+        back.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -352,7 +354,8 @@ fun LocalPanelAdd(app: RemoteApp, chat: String) {
     }
     Box {
         RoundButton(Icons.plus, Color.Transparent, Palette.muted, description = "Open a tab") { menu = true }
-        DropdownMenu(menu, { menu = false }, containerColor = Palette.popover) {
+        if (menu) GlassMenuOpen()
+        DropdownMenu(menu, { menu = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover), border = GlassEdge, shape = GlassMenuShape) {
             Row(
                 Modifier.widthIn(min = 200.dp).clickable {
                     menu = false

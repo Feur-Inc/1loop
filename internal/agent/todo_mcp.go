@@ -88,6 +88,9 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 			if cfg.ProjectTools == nil && cfg.toolAvailable("request_directory") {
 				definitions = append(definitions, requestDirectoryToolDefinition())
 			}
+			if cfg.ProjectTools == nil && cfg.toolAvailable("settings") {
+				definitions = append(definitions, settingsToolDefinition())
+			}
 			for _, group := range builtinToolGroups(cfg) {
 				definitions = append(definitions, group.tools()...)
 			}
@@ -120,6 +123,19 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 				operation, cancel := context.WithCancel(ctx)
 				stop := context.AfterFunc(requestValue.Context(), cancel)
 				text, _, err := backend.editMemory(operation, string(call.Arguments), func() {}, emit)
+				stop()
+				cancel()
+				if err != nil {
+					text = err.Error()
+				}
+				response["result"] = map[string]any{"isError": err != nil, "content": []any{map[string]string{"type": "text", "text": text}}}
+				break
+			}
+			if call.Name == "settings" {
+				// Like memory: let through by Claude Code, asked here.
+				operation, cancel := context.WithCancel(ctx)
+				stop := context.AfterFunc(requestValue.Context(), cancel)
+				text, err := backend.changeSettings(context.WithValue(operation, configContextKey{}, cfg), string(call.Arguments), func() {}, emit)
 				stop()
 				cancel()
 				if err != nil {

@@ -4,14 +4,17 @@ go 1.23
 
 require (
 	fyne.io/fyne/v2 v2.7.4
+	fyne.io/systray v1.12.1
 	github.com/ActiveState/termtest/conpty v0.5.0
 	github.com/alecthomas/chroma/v2 v2.15.0
 	github.com/chromedp/cdproto v0.0.0-20250403032234-65de8f5d025b
 	github.com/chromedp/chromedp v0.13.7
 	github.com/creack/pty v1.1.21
+	github.com/fyne-io/glfw-js v0.3.0
 	github.com/fyne-io/oksvg v0.2.0
 	github.com/fyne-io/terminal v0.0.0-20251106165109-867da7c64268
 	github.com/go-gl/glfw/v3.3/glfw v0.0.0-20240506104042-037f3cc74f2a
+	github.com/godbus/dbus/v5 v5.1.0
 	github.com/hinshun/vt10x v0.0.0-20220301184237-5011da428d02
 	github.com/klauspost/compress v1.18.0
 	github.com/pkg/sftp v1.13.7
@@ -27,7 +30,6 @@ require (
 )
 
 require (
-	fyne.io/systray v1.12.1 // indirect
 	github.com/Azure/go-ansiterm v0.0.0-20170929234023-d6e3b3328b78 // indirect
 	github.com/BurntSushi/toml v1.5.0 // indirect
 	github.com/chromedp/sysutil v1.1.0 // indirect
@@ -37,7 +39,6 @@ require (
 	github.com/fredbi/uri v1.1.1 // indirect
 	github.com/fsnotify/fsnotify v1.9.0 // indirect
 	github.com/fyne-io/gl-js v0.2.0 // indirect
-	github.com/fyne-io/glfw-js v0.3.0 // indirect
 	github.com/fyne-io/image v0.1.1 // indirect
 	github.com/go-gl/gl v0.0.0-20231021071112-07e5d0ea2e71 // indirect
 	github.com/go-json-experiment/json v0.0.0-20250211171154-1ae217ad3535 // indirect
@@ -46,7 +47,6 @@ require (
 	github.com/gobwas/httphead v0.1.0 // indirect
 	github.com/gobwas/pool v0.2.1 // indirect
 	github.com/gobwas/ws v1.4.0 // indirect
-	github.com/godbus/dbus/v5 v5.1.0 // indirect
 	github.com/google/uuid v1.6.0 // indirect
 	github.com/hack-pad/go-indexeddb v0.3.2 // indirect
 	github.com/hack-pad/safejs v0.1.0 // indirect
@@ -75,3 +75,5 @@ require (
 replace fyne.io/fyne/v2 => ./third_party/fyne
 
 replace github.com/go-gl/glfw/v3.3/glfw => ./third_party/glfw
+
+replace github.com/fyne-io/glfw-js => ./third_party/glfw-js

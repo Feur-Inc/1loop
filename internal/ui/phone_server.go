@@ -14,7 +14,7 @@ package ui
 // the config folder), which phones pin by its SHA-256 fingerprint.
 //
 // Pairing (remoteapi.PairingBook): the user opens a QR code on the computer
-// (Settings → Phone remote), which gives the phone the address, the
+// (Settings → Phone), which gives the phone the address, the
 // fingerprint and a secret; or a phone asks and the user types the six
 // digits the computer shows, after checking the fingerprint's start shown
 // on both. The phone then gets a token; only its hash is kept. Every other
@@ -60,7 +60,6 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 	"github.com/skip2/go-qrcode"
 
@@ -331,7 +330,7 @@ func (server *remoteServer) confirmPair(writer http.ResponseWriter, req *http.Re
 			server.showPairSheet(nil)
 		}
 		if errors.Is(err, remoteapi.ErrPairingLocked) {
-			server.ui.notice("Phone pairing paused", "Too many wrong pairing codes were typed. To pair a phone, open Settings → Phone remote and choose Pair a phone.")
+			server.ui.notice("Phone pairing paused", "Too many wrong pairing codes were typed. To pair a phone, open Settings → Phone and choose Pair a phone.")
 		}
 		if err != nil {
 			return
@@ -491,7 +490,7 @@ func phoneChats(all []*conversation) []remoteapi.Chat {
 }
 
 func chatSummary(chat *conversation) remoteapi.Chat {
-	return remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Running: chat.run != nil, Items: len(chat.Items)}
+	return remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Running: chat.run != nil, Items: len(chat.Items)}
 }
 
 func itemForPhone(chat *conversation, index int) remoteapi.Item {
@@ -643,7 +642,7 @@ func (server *remoteServer) deleteChat(writer http.ResponseWriter, req *http.Req
 	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
 }
 
-// clearBrowser is Settings → Browser → Clear, asked from the phone.
+// clearBrowser is Settings → Tools & extensions → Browsing data → Clear, asked from the phone.
 func (server *remoteServer) clearBrowser(writer http.ResponseWriter, _ *http.Request) {
 	result := make(chan error, 1)
 	server.onUI(func() { server.ui.clearBrowserData(func(err error) { result <- err }) })
@@ -848,6 +847,7 @@ func (server *remoteServer) send(writer http.ResponseWriter, req *http.Request) 
 		Text        string                 `json:"text"`
 		Mode        string                 `json:"mode"`
 		Workspace   string                 `json:"workspace"`
+		NoFolder    bool                   `json:"noFolder"` // a new chat in a folder 1loop makes for it
 		Attachments []agent.FileAttachment `json:"attachments"`
 	}
 	if core.ReadJSON(req, &body) != nil || strings.TrimSpace(body.Text) == "" && len(body.Attachments) == 0 {
@@ -858,6 +858,8 @@ func (server *remoteServer) send(writer http.ResponseWriter, req *http.Request) 
 	server.onUI(func() {
 		if chat := server.ui.chatByID(body.Chat); chat != nil {
 			root = chat.Config.Workspace
+		} else if body.NoFolder {
+			root = server.ui.scratchBase()
 		}
 		if root == "" {
 			root = server.ui.cfg.Workspace
@@ -895,7 +897,10 @@ func (ui *desktopUI) remoteSend(chatID, mode, workspace string, messageValue age
 		}
 		ui.openChat(chat)
 	} else {
-		if workspace != "" && workspace != ui.cfg.Workspace {
+		if workspace == ui.scratchBase() { // the phone's "No folder"
+			ui.cfg.Workspace, ui.cfg.Scratch = workspace, workspace
+		} else if workspace != "" && workspace != ui.cfg.Workspace {
+			ui.cfg.Scratch = ""
 			if root, err := agent.ResolveWorkspace(workspace); err == nil {
 				ui.cfg.Workspace = root
 				ui.ensureProject(root)
@@ -904,11 +909,10 @@ func (ui *desktopUI) remoteSend(chatID, mode, workspace string, messageValue age
 		ui.startNew()
 	}
 	if chat != nil && chat.run != nil {
-		if mode == "steer" {
-			chat.steer = append(chat.steer, messageValue)
-		} else {
-			chat.queue = append(chat.queue, messageValue)
-		}
+		// Whatever the phone asked (an older app still says "queue"), a
+		// message sent while the agent works joins it at its next step, as
+		// one typed in the window does.
+		chat.steer = append(chat.steer, messageValue)
 		ui.renderQueue()
 		ui.remote.metaChanged(chat)
 		return chat.ID, ""
@@ -1301,20 +1305,18 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 	if len(phones) == 0 {
 		phones = append(phones, settingRow("No paired phone yet", "Open the 1loop app on a phone connected to the same network.", nil))
 	}
-	var pairing fyne.CanvasObject = layout.NewSpacer()
-	if ui.remote != nil {
-		pairing = card(settingRow("Pair a phone", "Shows a QR code to scan with the 1loop app.", newRow("Pair a phone", iconPhone, styleChip, ui.showPairingQR)))
-	}
 	view := ui.prefs
-	return container.NewVBox(
+	page := container.NewVBox(
 		view.pageTitle("Phone", "", nil),
 		view.intro(registry.Phone),
 		sectionTitle("Phone app"),
-		card(view.mark("phone.remote", settingRow("Allow the 1loop phone app on this network", describe(), enabled))),
-		pairing,
-		sectionTitle("Paired phones"),
-		view.mark("phone.pairing", card(phones...)),
-	)
+		card(view.mark("phone.remote", settingRow("Allow the 1loop phone app on this network", describe(), enabled))))
+	if ui.remote != nil { // a spacer here stretched and pushed the list to the bottom
+		page.Add(card(settingRow("Pair a phone", "Shows a QR code to scan with the 1loop app.", newRow("Pair a phone", iconPhone, styleChip, ui.showPairingQR))))
+	}
+	page.Add(sectionTitle("Paired phones"))
+	page.Add(view.mark("phone.pairing", card(phones...)))
+	return page
 }
 
 // remoteDefaults gives conversations saved before the remote an id.

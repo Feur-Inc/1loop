@@ -42,6 +42,7 @@ type Chat struct {
 	ID        string `json:"id"`
 	Title     string `json:"title"`
 	Workspace string `json:"workspace"`
+	Scratch   bool   `json:"scratch,omitempty"` // a chat without a folder: show "No folder", never the path
 	Running   bool   `json:"running"`
 	Items     int    `json:"items"`
 }

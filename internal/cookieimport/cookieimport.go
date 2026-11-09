@@ -28,7 +28,6 @@ import (
 	"github.com/chromedp/cdproto/network"
 	"github.com/chromedp/cdproto/storage"
 	"github.com/chromedp/chromedp"
-	_ "modernc.org/sqlite"
 )
 
 // Profile is a browser profile cookies can come from.

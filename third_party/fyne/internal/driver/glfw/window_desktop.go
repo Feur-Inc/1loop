@@ -72,6 +72,10 @@ type window struct {
 	decorate  bool
 	closing   bool
 	fixedSize bool
+	// background windows are never shown (the systray's monitor): on
+	// Wayland too they get no toplevel, which the taskbar would list as
+	// an unnamed application.
+	background bool
 
 	cursor       desktop.Cursor
 	customCursor *glfw.Cursor
@@ -731,9 +735,11 @@ func (w *window) RescaleContext() {
 }
 
 func (w *window) create() {
-	if !build.IsWayland {
+	if !build.IsWayland || w.background {
 		// make the window hidden, we will set it up and then show it later
 		glfw.WindowHint(glfw.Visible, glfw.False)
+	} else {
+		glfw.WindowHint(glfw.Visible, glfw.True) // hints stay set: a background window may have come first
 	}
 	if w.decorate {
 		glfw.WindowHint(glfw.Decorated, glfw.True)

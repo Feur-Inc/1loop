@@ -3,10 +3,14 @@
 package server
 
 import (
-	"1loop/internal/core"
 	"context"
+	"fmt"
 	"net/http"
 	"strings"
+
+	"1loop/internal/agent"
+	"1loop/internal/core"
+	"1loop/internal/settings"
 )
 
 func (server *headlessServer) setPreferences(w http.ResponseWriter, r *http.Request) {
@@ -66,4 +70,63 @@ func (server *headlessServer) updatePreferences(ctx context.Context, update func
 	}
 	server.broadcastLocked("settings", server.settingsLocked())
 	return nil
+}
+
+// settingsAccess is the settings tool's way to this server's own settings
+// (internal/settings): those it has, each change saved and sent to the
+// connected apps like one made in their Settings.
+func (server *headlessServer) settingsAccess() *agent.SettingsAccess {
+	onOff := func(on bool) string {
+		if on {
+			return "on"
+		}
+		return "off"
+	}
+	return &agent.SettingsAccess{
+		Get: func(_ context.Context, key string) (string, bool) {
+			server.mu.Lock()
+			defer server.mu.Unlock()
+			switch key {
+			case settings.KeyMemory:
+				return onOff(!server.memoryOff), true
+			case settings.KeyDynamicCompaction:
+				return onOff(!server.classic), true
+			case settings.KeyAutoResume:
+				return onOff(server.autoResume != nil && server.autoResume.Enabled), true
+			}
+			return "", false
+		},
+		Set: func(ctx context.Context, key, value string) error {
+			server.mu.Lock()
+			defer server.mu.Unlock()
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			on := value == "on"
+			memoryOff, classic, resume := server.memoryOff, server.classic, server.autoResume
+			switch key {
+			case settings.KeyMemory:
+				server.memoryOff = !on
+			case settings.KeyDynamicCompaction:
+				server.classic = !on
+			case settings.KeyAutoResume:
+				if on && (resume == nil || len(resume.Steps) == 0) {
+					return fmt.Errorf("Automatic resumption has no steps yet: the user chooses them in Settings first")
+				}
+				next := agent.AutoResume{Enabled: on}
+				if resume != nil {
+					next.Steps = resume.Steps
+				}
+				server.autoResume = &next
+			default:
+				return fmt.Errorf("%s is not a setting of this server", key)
+			}
+			if err := server.saveSettingsLocked(); err != nil {
+				server.memoryOff, server.classic, server.autoResume = memoryOff, classic, resume
+				return err
+			}
+			server.broadcastLocked("settings", server.settingsLocked())
+			return nil
+		},
+	}
 }

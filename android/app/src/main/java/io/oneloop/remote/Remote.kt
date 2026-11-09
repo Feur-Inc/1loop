@@ -24,7 +24,11 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean)
+/** scratch: a chat without a folder, in one 1loop made for it; it shows as "No folder", never its path. */
+data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean, val scratch: Boolean = false)
+
+/** The project choice that starts a chat in a folder 1loop makes for it (#258). */
+const val NO_FOLDER = "\u0000no-folder"
 
 /** A file picked for the next message: sending, then the engine's copy (ready) or a problem. */
 data class Attachment(
@@ -72,7 +76,8 @@ data class Approval(val chat: String, val id: String, val title: String, val pre
 
 data class QuestionOption(val label: String, val description: String)
 
-data class Question(val id: String, val header: String, val text: String, val options: List<QuestionOption>)
+/** multiSelect: several options may be picked (Claude Code); the answer lists them, joined by ", ". */
+data class Question(val id: String, val header: String, val text: String, val options: List<QuestionOption>, val multiSelect: Boolean = false)
 
 /** The model's questions (request_user_input); answered with POST /api/answer. */
 data class Questions(val chat: String, val id: String, val questions: List<Question>) {
@@ -86,17 +91,77 @@ data class Questions(val chat: String, val id: String, val questions: List<Quest
                     val options = q.optJSONArray("options")
                     Question(q.optString("id"), q.optString("header"), q.optString("question"), (0 until (options?.length() ?: 0)).map { j ->
                         options!!.getJSONObject(j).let { QuestionOption(it.optString("label"), it.optString("description")) }
-                    })
+                    }, q.optBoolean("multiSelect"))
                 }
             }
         })
     }
 }
 
-/** What the user has picked or written for a request's questions, kept while its sheet is set aside. */
+/**
+ * What the user has picked or written for a request's questions, kept while
+ * its sheet is set aside. The answers are as the computer's own dialog sends
+ * them: an option's label, the user's words after [Questions.OTHER], or on a
+ * multi-select everything chosen, joined by ", ".
+ */
 class QuestionDraft {
-    val answers = mutableStateMapOf<String, String>()
-    val others = mutableStateMapOf<String, String>() // the "Other" lines, by question
+    val picked = mutableStateMapOf<String, Set<String>>() // option labels, by question
+    val others = mutableStateMapOf<String, String>() // the "Other" fields, by question
+    var page by mutableStateOf(0) // the question shown
+
+    /** An option: the answer on a single choice, one more (or one less) on a multi-select. */
+    fun pick(question: Question, label: String) {
+        val chosen = picked[question.id].orEmpty()
+        if (question.multiSelect) {
+            picked[question.id] = if (label in chosen) chosen - label else chosen + label
+        } else {
+            picked[question.id] = setOf(label)
+            others.remove(question.id)
+        }
+    }
+
+    /** The user's own words: on a single choice they take the place of the option picked. */
+    fun write(question: Question, text: String) {
+        others[question.id] = text
+        if (text.isNotBlank() && !question.multiSelect) picked.remove(question.id)
+    }
+
+    fun answer(question: Question): String {
+        val chosen = picked[question.id].orEmpty()
+        val parts = question.options.map { it.label }.filter { it in chosen }
+        val own = others[question.id].orEmpty().trim()
+        return when {
+            own.isEmpty() -> parts.joinToString(", ")
+            parts.isEmpty() -> Questions.OTHER + own
+            else -> (parts + own).joinToString(", ")
+        }
+    }
+
+    fun answers(request: Questions) = request.questions.associate { it.id to answer(it) }.filterValues { it.isNotEmpty() }
+
+    /** The first question without an answer, -1 when none. */
+    fun firstMissing(request: Questions) = request.questions.indexOfFirst { answer(it).isEmpty() }
+
+    /** The send button: what is still missing, until nothing is. */
+    fun sendLabel(request: Questions): String {
+        val missing = request.questions.count { answer(it).isEmpty() }
+        val total = request.questions.size
+        return when {
+            missing == 0 && total == 1 -> "Send answer"
+            missing == 0 -> "Send answers"
+            total == 1 -> "Choose an answer"
+            missing == 1 -> "Answer 1 more question"
+            else -> "Answer $missing more questions"
+        }
+    }
+}
+
+/** An option's label without the "(Recommended)" the model adds, and whether it had it: a badge shows it instead. */
+fun recommendedLabel(label: String): Pair<String, Boolean> {
+    val mark = "(recommended)"
+    val trimmed = label.trim()
+    return if (trimmed.length > mark.length && trimmed.endsWith(mark, ignoreCase = true)) trimmed.dropLast(mark.length).trim() to true
+    else label to false
 }
 
 data class Effort(val value: String, val label: String, val about: String)
@@ -275,6 +340,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var projectActions by mutableStateOf(false)
     var projectsOpen by mutableStateOf(false)
     var settingsOpen by mutableStateOf(false)
+    var settingsSection by mutableStateOf<String?>(null) // the section open in Settings (its id): kept while Extensions or Linux covers it
     var extensionsOpen by mutableStateOf(false) // Settings → Extensions (Extensions.kt)
     var linuxOpen by mutableStateOf(false) // Settings → Linux (LinuxScreen.kt)
     // Its work outlives the screen: a reset stops the agent, which leaves the chat screen.
@@ -622,6 +688,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         clearAttachments() // picked for the previous target
         connectionsOpen = false
         settingsOpen = false
+        settingsSection = null
         extensionsOpen = false
         linuxOpen = false
         sharing = null
@@ -751,13 +818,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             workspace = state.optString("workspace")
             projectManagement = state.optBoolean("projectManagement")
             projectActions = state.optBoolean("projectActions")
-            if (selectedProject !in projects && selectedProject !in worktrees) selectedProject = workspace
+            if (selectedProject !in projects && selectedProject !in worktrees && selectedProject != NO_FOLDER) selectedProject = workspace
             state.optJSONObject("settings")?.let { applySettings(it) }
             // Open or Talk to the agent started this activity: its chat, now that it is known.
             pendingChat?.let { chat -> if (chats.any { it.id == chat }) current = chat }
             pendingChat = null
             if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull { it.workspace == selectedProject }?.id
-            chats.firstOrNull { it.id == current }?.workspace?.let { selectedProject = it }
+            chats.firstOrNull { it.id == current }?.let { selectedProject = if (it.scratch) NO_FOLDER else it.workspace }
             current?.let { load(it, target, generation) }
             if (target.localPhone) refreshSharing() else scope.launch { refreshServerUpdate(target, generation) }
         } catch (cancelled: CancellationException) {
@@ -766,7 +833,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     private fun parseChats(array: JSONArray?) = (0 until (array?.length() ?: 0)).map { i ->
-        array!!.getJSONObject(i).let { ChatSummary(it.getString("id"), it.optString("title"), it.optString("workspace"), it.optBoolean("running")) }
+        array!!.getJSONObject(i).let { ChatSummary(it.getString("id"), it.optString("title"), it.optString("workspace"), it.optBoolean("running"), it.optBoolean("scratch")) }
     }
 
     private suspend fun load(id: String, target: Server, generation: Long) {
@@ -827,7 +894,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     fun open(id: String?) {
         current = id
-        chats.firstOrNull { it.id == id }?.workspace?.let {
+        chats.firstOrNull { it.id == id }?.let { if (it.scratch) NO_FOLDER else it.workspace }?.let {
             selectedProject = it
             server?.let { target -> prefs.edit { putString("project:${target.key}", it) } }
         }
@@ -961,6 +1028,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val sent = attachments.filter { it.ready != null }
         val body = JSONObject().put("chat", current.orEmpty()).put("text", text).put("mode", mode)
             .put("workspace", project ?: chats.firstOrNull { it.id == current }?.workspace ?: selectedProject ?: workspace)
+        if (current == null && body.optString("workspace") == NO_FOLDER) body.put("workspace", "").put("noFolder", true)
         if (sent.isNotEmpty()) body.put("attachments", JSONArray(sent.map { it.ready }))
         handoff?.let { body.put("handoff", it) }
         val pending = "sending:${java.util.UUID.randomUUID()}|$draft"
@@ -1066,7 +1134,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     fun selectProject(path: String) {
-        if (path !in projects && path !in worktrees) return
+        if (path !in projects && path !in worktrees && path != NO_FOLDER) return
         selectedProject = path
         server?.let { target -> prefs.edit { putString("project:${target.key}", path) } }
         open(null)
@@ -1112,7 +1180,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         if (previous.isNotEmpty() && (selected == previous || selected.startsWith("$previous/") || selected.startsWith("$previous\\"))) {
             selectedProject = if (destination.isEmpty()) null else destination + selected.removePrefix(previous)
         }
-        if (selectedProject !in projects && selectedProject !in worktrees) selectedProject = projects.firstOrNull()
+        if (selectedProject !in projects && selectedProject !in worktrees && selectedProject != NO_FOLDER) selectedProject = projects.firstOrNull()
         server?.let { target -> prefs.edit { putString("project:${target.key}", selectedProject) } }
     }
 

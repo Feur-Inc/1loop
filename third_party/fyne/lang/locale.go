@@ -28,13 +28,23 @@ func SystemLocale() fyne.Locale {
 func closestSupportedLocale(locs []string) fyne.Locale {
 	matcher := language.NewMatcher(translated)
 
-	tags := make([]language.Tag, len(locs))
-	for i, loc := range locs {
+	tags := make([]language.Tag, 0, len(locs))
+	for _, loc := range locs {
+		// go-locale turns LANG=C.UTF-8 (the default in containers and
+		// minimal installs) into "C", which is no language: fall back
+		// to English without logging an error at every start.
+		if loc == "" || loc == "C" || loc == "POSIX" {
+			continue
+		}
 		tag, err := language.Parse(loc)
 		if err != nil {
 			fyne.LogError("Error parsing user locale "+loc, err)
+			continue
 		}
-		tags[i] = tag
+		tags = append(tags, tag)
+	}
+	if len(tags) == 0 {
+		return localeFromTag(translated[0])
 	}
 	best, _, _ := matcher.Match(tags...)
 	return localeFromTag(best)

@@ -9,6 +9,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"slices"
 	"time"
 
 	"1loop/internal/core"
@@ -29,7 +30,76 @@ type Installed struct {
 	Skills  []Skill      `json:"skills"`
 	Plugins []PluginView `json:"plugins"`
 	MCP     []MCPServer  `json:"mcp"`
-	Dir     string       `json:"dir"`
+	// PluginMCP are the enabled plugins' servers, which their plugin brings.
+	PluginMCP []MCPServer `json:"pluginMcp"`
+	Dir       string      `json:"dir"`
+}
+
+// Hidden stands for an MCP server's environment or header value in what
+// the routes answer: those are often its token, which stays where the
+// extensions are. Saved back unchanged, it keeps the stored value.
+const Hidden = "••••••"
+
+func hide(server MCPServer) MCPServer {
+	hidden := func(values map[string]string) map[string]string {
+		if values == nil {
+			return nil
+		}
+		out := make(map[string]string, len(values))
+		for name, value := range values {
+			out[name] = value
+			if value != "" {
+				out[name] = Hidden
+			}
+		}
+		return out
+	}
+	server.Env, server.Headers = hidden(server.Env), hidden(server.Headers)
+	return server
+}
+
+// hidden is the view as the routes answer it.
+func (view Installed) hidden() Installed {
+	view.MCP = slices.Clone(view.MCP)
+	for i := range view.MCP {
+		view.MCP[i] = hide(view.MCP[i])
+	}
+	view.PluginMCP = slices.Clone(view.PluginMCP)
+	for i := range view.PluginMCP {
+		view.PluginMCP[i] = hide(view.PluginMCP[i])
+	}
+	return view
+}
+
+// reveal puts back the stored values a client saved as Hidden, from the
+// server saved as previous (or under the same name).
+func reveal(server MCPServer, previous string) MCPServer {
+	if previous == "" {
+		previous = server.Name
+	}
+	var saved MCPServer
+	if registry, err := Load(); err == nil {
+		for _, entry := range registry.MCP {
+			if entry.Name == previous {
+				saved = entry
+			}
+		}
+	}
+	restore := func(values, stored map[string]string) map[string]string {
+		if values == nil {
+			return nil
+		}
+		out := make(map[string]string, len(values))
+		for name, value := range values {
+			if value == Hidden {
+				value = stored[name]
+			}
+			out[name] = value
+		}
+		return out
+	}
+	server.Env, server.Headers = restore(server.Env, saved.Env), restore(server.Headers, saved.Headers)
+	return server
 }
 
 // View reads what is installed, for the settings.
@@ -38,12 +108,17 @@ func View() (Installed, error) {
 	if err != nil {
 		return Installed{}, err
 	}
-	view := Installed{Skills: registry.Skills, Plugins: []PluginView{}, MCP: registry.MCP, Dir: Dir()}
+	view := Installed{Skills: registry.Skills, Plugins: []PluginView{}, MCP: registry.MCP, PluginMCP: []MCPServer{}, Dir: Dir()}
 	if view.Skills == nil {
 		view.Skills = []Skill{}
 	}
 	if view.MCP == nil {
 		view.MCP = []MCPServer{}
+	}
+	for _, server := range Enabled().MCP {
+		if server.Plugin != "" {
+			view.PluginMCP = append(view.PluginMCP, server)
+		}
 	}
 	for _, plugin := range registry.Plugins {
 		contents := ReadPlugin(plugin.Dir)
@@ -75,7 +150,7 @@ func Handlers(changed func()) map[string]http.HandlerFunc {
 			core.Fail(w, 500, err.Error())
 			return
 		}
-		core.WriteJSON(w, 200, view)
+		core.WriteJSON(w, 200, view.hidden())
 	}
 	return map[string]http.HandlerFunc{
 		"GET /api/extensions": func(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +159,7 @@ func Handlers(changed func()) map[string]http.HandlerFunc {
 				core.Fail(w, 500, err.Error())
 				return
 			}
-			core.WriteJSON(w, 200, view)
+			core.WriteJSON(w, 200, view.hidden())
 		},
 		"POST /api/extensions/search": func(w http.ResponseWriter, r *http.Request) {
 			var args struct {
@@ -178,7 +253,7 @@ func Handlers(changed func()) map[string]http.HandlerFunc {
 				core.Fail(w, 400, "Invalid request")
 				return
 			}
-			err := SaveMCP(args.Server, args.Previous)
+			err := SaveMCP(reveal(args.Server, args.Previous), args.Previous)
 			Servers.Forget(args.Server.Name)
 			if args.Previous != "" {
 				Servers.Forget(args.Previous)
@@ -206,7 +281,11 @@ func Handlers(changed func()) map[string]http.HandlerFunc {
 			}
 			ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 			defer cancel()
-			core.WriteJSON(w, 200, map[string]any{"servers": Servers.Status(ctx, Enabled().MCP, dir)})
+			statuses := Servers.Status(ctx, Enabled().MCP, dir)
+			for i := range statuses {
+				statuses[i].MCPServer = hide(statuses[i].MCPServer)
+			}
+			core.WriteJSON(w, 200, map[string]any{"servers": statuses})
 		},
 	}
 }

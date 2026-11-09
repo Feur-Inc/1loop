@@ -117,7 +117,7 @@ func (manager *Manager) attachmentToken(ctx context.Context) (token, login, sour
 		return saved.AttachmentToken, saved.AttachmentLogin, "personal access token", nil
 	}
 	if token, err = cliToken(ctx); err != nil {
-		return "", "", "", fmt.Errorf("GitHub refuses the connector's app sign-in for attachments. Add a personal access token in Settings → Connectors → GitHub, or sign in to GitHub CLI on this execution target (gh auth login)")
+		return "", "", "", fmt.Errorf("GitHub refuses the connector's app sign-in for attachments. Add a personal access token in Settings → Tools & extensions → GitHub connector, or sign in to GitHub CLI on this execution target (gh auth login)")
 	}
 	if login, err = manager.user(ctx, token); err != nil {
 		return "", "", "", fmt.Errorf("GitHub did not accept GitHub CLI's sign-in. Run gh auth login again")

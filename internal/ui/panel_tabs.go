@@ -16,12 +16,12 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
-	fyneterm "github.com/fyne-io/terminal"
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
 	"1loop/internal/terminal"
+	fyneterm "1loop/internal/termwidget"
 )
 
 type panelTerminal struct {
@@ -64,7 +64,7 @@ func (panel *toolPanel) terminalTab(dir, machineID string) (panelTab, error) {
 		machine := panel.ui.machineFor(machineID)
 		if machine == nil {
 			cancel()
-			return panelTab{}, fmt.Errorf("This SSH machine is no longer in Settings → SSH machines")
+			return panelTab{}, fmt.Errorf("This SSH machine is no longer in Settings → General")
 		}
 		failed = make(chan error, 1)
 		file = newLazyTerminal(ctx, machine, dir, func(err error) { failed <- err })
@@ -167,7 +167,7 @@ func (panel *toolPanel) changesTab(root, machineID string) panelTab {
 			case machineID == "":
 				diff, err = agent.WorkspaceDiff(ctx, root, staged)
 			case machine == nil:
-				err = fmt.Errorf("This SSH machine is no longer in Settings → SSH machines")
+				err = fmt.Errorf("This SSH machine is no longer in Settings → General")
 			default:
 				diff, err = agent.MachineDiff(ctx, machine, root, staged)
 			}

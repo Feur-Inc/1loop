@@ -53,6 +53,33 @@ jobs:
           fi
           echo "tag=$tag" >> "$GITHUB_OUTPUT"
 
+  # The browser client (cmd/1loop-web) is the desktop's remote mode built for
+  # GOOS=js: the Linux job's vet and tests never compile those files. This
+  # builds it, vets it, and loads it in headless Chrome against a real
+  # server, which fails on a page that crashes or never reaches the server.
+  # GitHub's machine, for its Chrome: the self-hosted runner has none.
+  web:
+    name: Check the browser client
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@d35c59abb061a4a6fb18e82ac0862c26744d6ab5 # v5.5.0
+        with:
+          # Not go.mod's 1.23: its toolchain module has no wasm_exec.js, and
+          # the page needs the one of the Go that built it.
+          go-version: '1.27.x'
+
+      - name: Build, vet and load in Chrome
+        run: |
+          set -euo pipefail
+          GOOS=js GOARCH=wasm go vet ./cmd/1loop-web ./internal/ui/... ./internal/termwidget/...
+          make web server
+          CHROME="$(command -v google-chrome)" go run ./cmd/1loop-web-smoke -long 5 -check -out "$RUNNER_TEMP/web"
+
   build:
     name: Build ${{ matrix.platform }}
     needs: draft
@@ -95,6 +122,13 @@ jobs:
         if: matrix.platform == 'linux'
         env:
           DEB_MAINTAINER: TPM28 <77407722+tpm28@users.noreply.github.com>
+          # The self-hosted runner's VM has 7 GB, no swap, shared with other
+          # services: two packages at a time, the Go tools collect garbage
+          # early, and xz compresses on one thread, so neither the linker nor
+          # dpkg-deb is killed for memory.
+          GOFLAGS: -p=2
+          GOMEMLIMIT: 2GiB
+          DPKG_DEB_THREADS_MAX: "1"
         run: |
           set -euo pipefail
           sudo -n apt-get update -q
@@ -119,6 +153,9 @@ jobs:
 
       - name: Windows — desktop, cross-compiled with MinGW
         if: matrix.platform == 'windows'
+        env:
+          GOFLAGS: -p=2 # the runner's memory: see the Linux step
+          GOMEMLIMIT: 2GiB
         run: |
           set -euo pipefail
           sudo -n apt-get update -q

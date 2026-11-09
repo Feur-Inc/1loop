@@ -4,7 +4,9 @@ package ui
 
 import (
 	"fmt"
+	"image"
 	"image/color"
+	"image/draw"
 	"os"
 	"strings"
 	"time"
@@ -362,6 +364,8 @@ type tapRow struct {
 	hover     float32
 	alpha     float32 // whole-row opacity, used by menu fades
 	anim      *fyne.Animation
+	press     float32         // a click's flash of light, fading from 1
+	pressAnim *fyne.Animation // its fade
 }
 
 func newRow(text string, icon fyne.Resource, style rowStyle, onTap func()) *tapRow {
@@ -395,8 +399,23 @@ func (row *tapRow) Tapped(*fyne.PointEvent) {
 		row.tips.hide() // the sidebar is drawn again: the row may be gone before the pointer leaves it
 	}
 	if !row.disabled && row.onTap != nil {
+		row.flash()
 		row.onTap()
 	}
+}
+
+// flash lights the row up as it is clicked and lets the light fade: the
+// click is seen even when what it opens takes a moment.
+func (row *tapRow) flash() {
+	if row.pressAnim != nil {
+		row.pressAnim.Stop()
+	}
+	row.pressAnim = fyne.NewAnimation(300*time.Millisecond, func(p float32) {
+		row.press = 1 - p
+		row.Refresh()
+	})
+	row.pressAnim.Curve = fyne.AnimationEaseOut
+	row.pressAnim.Start()
 }
 
 // Rows are mouse targets of their own, so a title bar behind them never
@@ -725,6 +744,13 @@ func (renderer *tapRowRenderer) Refresh() {
 	shape := func(c color.NRGBA) color.NRGBA { c.A = uint8(float32(c.A) * row.alpha); return c }
 	textAlpha := quantize(row.alpha, 5)
 	text := func(c color.NRGBA) color.NRGBA { c.A = uint8(float32(c.A) * textAlpha); return c }
+	if row.press > 0 { // a click's light over the fill: shapes only, the text keeps its texture
+		light := color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x1c}
+		if fill.A > 0x80 {
+			light = mix(fill, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: fill.A}, 0.18)
+		}
+		fill = mix(fill, light, row.press)
+	}
 	renderer.bg.FillColor = shape(fill)
 	renderer.bg.StrokeColor = shape(stroke)
 	renderer.bg.StrokeWidth = 0
@@ -793,6 +819,7 @@ func (renderer *tapRowRenderer) Destroy() {}
 type shadow struct {
 	layers []*canvas.Rectangle
 	alphas []float32
+	tint   color.NRGBA // black for a shadow, a colour for a glow (newGlow)
 }
 
 func newShadow(strength float32) *shadow {
@@ -806,9 +833,26 @@ func newShadow(strength float32) *shadow {
 	return dropShadow
 }
 
+// newGlow is a halo of tint around a surface, like newShadow's layers.
+func newGlow(tint color.NRGBA, strength float32) *shadow {
+	glow := newShadow(strength)
+	glow.tint = tint
+	glow.setOpacity(0)
+	return glow
+}
+
 func (dropShadow *shadow) setOpacity(o float32) {
 	for i, r := range dropShadow.layers {
-		r.FillColor = color.NRGBA{A: uint8(255 * fyne.Min(1, dropShadow.alphas[i]) * o)}
+		c := dropShadow.tint
+		c.A = uint8(255 * fyne.Min(1, dropShadow.alphas[i]) * o)
+		r.FillColor = c
+		// A layer with nothing to show is not drawn at all: a translucent
+		// rectangle still costs its whole area on every frame.
+		if c.A == 0 {
+			r.Hide()
+		} else {
+			r.Show()
+		}
 	}
 }
 
@@ -854,12 +898,18 @@ type sheet struct {
 	onClosed   func()
 	afterClose func()                    // runs once the sheet is gone (menu actions)
 	onKey      func(*fyne.KeyEvent) bool // optional: content-specific keys, true when handled
+	onRune     func(rune)                // optional: typed characters (the questions' number keys)
 	canvas     fyne.Canvas
 	progress   float32
 	anim       *fyne.Animation
 	dim        *canvas.Rectangle
 	panel      *canvas.Rectangle
 	shadow     *shadow
+	glass      *image.NRGBA  // the window blurred as the sheet opened (glass.go), nil without
+	backdrop   *canvas.Image // a dialog's: the whole frosted window behind it
+	frost      *canvas.Image // a menu's: the frosted part of the window under its panel
+	frostAt    rect          // the panel rectangle frost was cut for
+	sharp      *canvas.Image // a dialog's: the window buttons as they were, over the frosted backdrop
 	open       bool
 	closing    bool
 	items      []*tapRow
@@ -898,11 +948,20 @@ func (dialog *sheet) Show() {
 		dialog.anchorSz = dialog.anchor.Size()
 	}
 	dialog.Resize(dialog.canvas.Size())
+	var shot image.Image
+	dialog.glass, shot = frostedBackdrop(dialog.canvas) // before the sheet is drawn: what it covers
+	if dialog.sharp != nil {
+		dialog.sharp.Image = nil
+		if !dialog.menu && shot != nil {
+			dialog.sharp.Image = windowControlsCut(dialog.canvas, shot)
+		}
+	}
+	dialog.frostAt = rect{}
 	dialog.canvas.Overlays().Add(dialog)
 	dialog.Refresh()
-	duration := 200 * time.Millisecond
+	duration := 220 * time.Millisecond
 	if dialog.menu {
-		duration = 170 * time.Millisecond
+		duration = 260 * time.Millisecond // long enough for the rows to cascade in
 	}
 	// Start on the next loop turn: the first frame of a new overlay builds its
 	// textures, and timing that frame would swallow the start of the motion.
@@ -940,6 +999,10 @@ func (dialog *sheet) Hide() {
 		found = found || object == dialog
 	}
 	stack.Remove(dialog)
+	dialog.glass = nil // the backdrop is only worth its memory while shown
+	if dialog.backdrop != nil {
+		dialog.backdrop.Image, dialog.frost.Image, dialog.sharp.Image = nil, nil, nil
+	}
 	for _, canvasObjectValue := range above {
 		stack.Add(canvasObjectValue)
 	}
@@ -974,6 +1037,16 @@ func (dialog *sheet) dismiss() {
 }
 
 func (dialog *sheet) Tapped(e *fyne.PointEvent) {
+	if !dialog.menu && dialog.sharp != nil && dialog.sharp.Visible() {
+		// The window buttons stay usable over a dialog.
+		for _, object := range windowControlsBox.Objects {
+			at := fyne.CurrentApp().Driver().AbsolutePositionForObject(object)
+			if button, ok := object.(*tapRow); ok && (rect{at, fyne.NewPos(object.Size().Width, object.Size().Height)}).contains(e.AbsolutePosition) {
+				button.Tapped(e)
+				return
+			}
+		}
+	}
 	if dialog.menu && !dialog.panelRect().contains(e.Position) {
 		dialog.dismiss()
 	}
@@ -1016,9 +1089,13 @@ func (dialog *sheet) highlight(index int) {
 }
 
 // Sheets take keyboard focus so Escape and arrows reach them.
-func (dialog *sheet) FocusGained()   {}
-func (dialog *sheet) FocusLost()     {}
-func (dialog *sheet) TypedRune(rune) {}
+func (dialog *sheet) FocusGained() {}
+func (dialog *sheet) FocusLost()   {}
+func (dialog *sheet) TypedRune(r rune) {
+	if dialog.onRune != nil {
+		dialog.onRune(r)
+	}
+}
 
 type rect struct{ pos, size fyne.Position }
 
@@ -1055,9 +1132,8 @@ func (dialog *sheet) panelRect() rect {
 		if y+height > size.Height-8 {
 			y = at.Y - height - 6 + shift
 		}
-		if dialog.columns {
-			y = fyne.Max(8, fyne.Min(y, size.Height-height-8))
-		}
+		// Neither below nor above fits: it stays inside the window.
+		y = fyne.Max(8, fyne.Min(y, size.Height-height-8))
 		return rect{fyne.NewPos(x, y), fyne.NewPos(width, height)}
 	}
 	shift := (1 - dialog.progress) * 12
@@ -1069,6 +1145,11 @@ func (dialog *sheet) CreateRenderer() fyne.WidgetRenderer {
 	dialog.panel = canvas.NewRectangle(colSurface)
 	dialog.panel.StrokeWidth = 1
 	dialog.shadow = newShadow(2.4)
+	dialog.backdrop, dialog.frost, dialog.sharp = canvas.NewImageFromImage(nil), canvas.NewImageFromImage(nil), canvas.NewImageFromImage(nil)
+	for _, glass := range []*canvas.Image{dialog.backdrop, dialog.frost, dialog.sharp} {
+		glass.FillMode, glass.ScaleMode = canvas.ImageFillStretch, canvas.ImageScaleSmooth
+		glass.Hide()
+	}
 	return &sheetRenderer{dialog}
 }
 
@@ -1089,13 +1170,65 @@ func (renderer *sheetRenderer) Layout(size fyne.Size) {
 		}
 		panelPos = fyne.NewPos(box.pos.X+(panelSize.Width-w)/2, originY+(box.pos.Y-originY)*k)
 		panelSize = fyne.NewSize(w, h)
+	} else {
+		// A dialog settles from slightly smaller, centred, as it rises.
+		k := 0.965 + 0.035*sheet.progress
+		w, h := panelSize.Width*k, panelSize.Height*k
+		panelPos = fyne.NewPos(box.pos.X+(panelSize.Width-w)/2, box.pos.Y+(panelSize.Height-h)/2)
+		panelSize = fyne.NewSize(w, h)
 	}
+	renderer.layoutGlass(size, box, panelPos, panelSize)
 	sheet.panel.Move(panelPos)
 	sheet.panel.Resize(panelSize)
 	sheet.shadow.layout(panelPos.AddXY(0, 2), panelSize, sheet.panel.CornerRadius)
 	pad := sheet.pad()
 	sheet.content.Move(box.pos.AddXY(pad, pad))
 	sheet.content.Resize(fyne.NewSize(box.size.X-2*pad, box.size.Y-2*pad))
+}
+
+// layoutGlass places the frosted window: all of it behind a dialog, the
+// part under the panel behind a menu (cut once for the panel's final place;
+// while it zooms in, the cut is only stretched).
+func (renderer *sheetRenderer) layoutGlass(size fyne.Size, box rect, panelPos fyne.Position, panelSize fyne.Size) {
+	sheet := renderer.dialog
+	if sheet.glass == nil || size.Width <= 0 {
+		sheet.backdrop.Hide()
+		sheet.frost.Hide()
+		return
+	}
+	if !sheet.menu {
+		if sheet.backdrop.Image != sheet.glass {
+			sheet.backdrop.Image = sheet.glass
+			sheet.backdrop.Refresh()
+		}
+		sheet.backdrop.Move(fyne.Position{})
+		sheet.backdrop.Resize(size)
+		sheet.backdrop.Show()
+		sheet.sharp.Hide()
+		if sheet.sharp.Image != nil && windowControlsBox != nil {
+			sheet.sharp.Move(fyne.CurrentApp().Driver().AbsolutePositionForObject(windowControlsBox))
+			sheet.sharp.Resize(windowControlsBox.Size())
+			sheet.sharp.CornerRadius = 8 // no square patch on the frosted window
+			sheet.sharp.Show()
+		}
+		return
+	}
+	if sheet.frostAt != box {
+		sheet.frostAt = box
+		scale := float32(sheet.glass.Rect.Dx()) / size.Width
+		cut := image.Rect(int(box.pos.X*scale), int(box.pos.Y*scale), int((box.pos.X+box.size.X)*scale)+1, int((box.pos.Y+box.size.Y)*scale)+1)
+		// A copy at the origin: Fyne draws a sub-image (its bounds elsewhere) as nothing.
+		cut = cut.Intersect(sheet.glass.Rect)
+		piece := image.NewNRGBA(image.Rect(0, 0, cut.Dx(), cut.Dy()))
+		draw.Draw(piece, piece.Rect, sheet.glass, cut.Min, draw.Src)
+		// Brighter than behind a dialog: what the menu covers shows through it.
+		vibrancy(piece, 1.15, 1.45)
+		sheet.frost.Image = piece
+		sheet.frost.Refresh()
+	}
+	sheet.frost.Move(panelPos)
+	sheet.frost.Resize(panelSize)
+	sheet.frost.Show()
 }
 
 func (renderer *sheetRenderer) MinSize() fyne.Size { return fyne.NewSize(0, 0) }
@@ -1119,10 +1252,25 @@ func (renderer *sheetRenderer) Refresh() {
 			sheet.panel.StrokeColor = withAlpha(colBorder, o)
 			sheet.panel.CornerRadius = 14
 		}
+		if sheet.glass != nil { // frosted glass: the tint lets the blurred window through
+			base := colPopover
+			if sheet.columns {
+				base = colSurface
+			}
+			sheet.panel.FillColor = glassTint(base, o)
+			sheet.panel.StrokeColor = withAlpha(glassEdge, o) // glass catching the light
+			sheet.panel.CornerRadius += 2
+			sheet.frost.Translucency = float64(1 - o)
+			sheet.frost.CornerRadius = sheet.panel.CornerRadius
+		}
 		sheet.shadow.setOpacity(o)
-		// Items follow the surface slightly later, so the panel leads.
-		itemAlpha := fyne.Min(1, fyne.Max(0, (o-0.25)/0.75))
-		for _, item := range sheet.items {
+		// Items follow the surface, one after the other, so the panel leads
+		// and the rows cascade in after it.
+		for i, item := range sheet.items {
+			itemAlpha := fyne.Min(1, fyne.Max(0, (o-0.2-0.07*float32(min(i, 6)))/0.5))
+			if sheet.closing {
+				itemAlpha = o // closing: everything fades together
+			}
 			if item.alpha != itemAlpha {
 				item.alpha = itemAlpha
 				item.Refresh()
@@ -1131,7 +1279,15 @@ func (renderer *sheetRenderer) Refresh() {
 	} else {
 		sheet.dim.FillColor = color.NRGBA{A: uint8(150 * o)}
 		sheet.panel.FillColor = colSurface
+		if sheet.glass != nil { // the frosted window, already darkened, fades in under a lighter dim
+			sheet.dim.FillColor = color.NRGBA{A: uint8(55 * o)}
+			sheet.backdrop.Translucency = float64(1 - o)
+			sheet.panel.FillColor = color.NRGBA{R: colSurface.R, G: colSurface.G, B: colSurface.B, A: 0xe0} // a pane of glass too
+		}
 		sheet.panel.StrokeColor = colBorder
+		if sheet.glass != nil {
+			sheet.panel.StrokeColor = glassEdge
+		}
 		sheet.panel.CornerRadius = 14
 		sheet.shadow.setOpacity(1)
 	}
@@ -1141,12 +1297,16 @@ func (renderer *sheetRenderer) Refresh() {
 	sheet.dim.Refresh()
 	sheet.shadow.refresh()
 	sheet.panel.Refresh()
+	if sheet.glass != nil {
+		canvas.Refresh(sheet.backdrop)
+		canvas.Refresh(sheet.frost)
+	}
 }
 
 func (renderer *sheetRenderer) Objects() []fyne.CanvasObject {
-	objects := []fyne.CanvasObject{renderer.dialog.dim}
+	objects := []fyne.CanvasObject{renderer.dialog.backdrop, renderer.dialog.dim, renderer.dialog.sharp}
 	objects = append(objects, renderer.dialog.shadow.objects()...)
-	objects = append(objects, renderer.dialog.panel, renderer.dialog.content)
+	objects = append(objects, renderer.dialog.frost, renderer.dialog.panel, renderer.dialog.content)
 	return objects
 }
 
@@ -1294,8 +1454,15 @@ type menuAction struct {
 	icon    fyne.Resource
 	checked bool // marks the active choice of a mode menu
 	danger  bool
+	group   string // actions sharing one form a group: the filter keeps the first with any of them
 	run     func()
 }
+
+// A menu longer than this gets a filter field, and scrolls past menuRows.
+const (
+	menuFilterAt = 12
+	menuRows     = 12
+)
 
 // showMenu opens a web-style popover menu of actions next to anchor.
 func showMenu(window fyne.Window, anchor fyne.CanvasObject, actions []menuAction) *sheet {
@@ -1327,13 +1494,81 @@ func showMenu(window fyne.Window, anchor fyne.CanvasObject, actions []menuAction
 		items = append(items, item)
 		list.Add(item)
 	}
-	menu = newSheet(window.Canvas(), list, fyne.Max(list.MinSize().Width+10, 200))
+	var content fyne.CanvasObject = list
+	var field *keyEntry
+	if len(items) > menuFilterAt {
+		scroll := newKineticVScroll(list)
+		scroll.SetMinSize(fyne.NewSize(0, menuRows*(items[0].MinSize().Height+2)))
+		field = newKeyEntry()
+		field.SetPlaceHolder("Filter")
+		field.OnChanged = func(text string) {
+			menu.items = filterMenu(actions, items, text)
+			list.Refresh()
+			scroll.ScrollToTop()
+			menu.highlight(0)
+		}
+		// The arrows, Enter and Escape still drive the menu while typing.
+		field.onKey = func(key *fyne.KeyEvent) bool {
+			switch key.Name {
+			case fyne.KeyUp, fyne.KeyDown, fyne.KeyReturn, fyne.KeyEnter, fyne.KeyEscape:
+				menu.TypedKey(key)
+				return true
+			}
+			return false
+		}
+		content = container.NewBorder(padded(2, 6, 2, 2, field), nil, nil, nil, scroll)
+	}
+	menu = newSheet(window.Canvas(), content, fyne.Max(list.MinSize().Width+10, 240))
 	menu.menu = true
 	menu.anchor = anchor
 	menu.items = items
 	menu.Show()
-	window.Canvas().Focus(menu)
+	if field != nil {
+		window.Canvas().Focus(field)
+	} else {
+		window.Canvas().Focus(menu)
+	}
 	return menu
+}
+
+// filterMenu shows the actions holding every word of text, with the first
+// action of their group, and returns the rows left.
+func filterMenu(actions []menuAction, items []*tapRow, text string) []*tapRow {
+	var shown []*tapRow
+	for i, keep := range menuMatches(actions, text) {
+		if keep {
+			items[i].alpha = 1 // hidden while the menu faded in, it missed the fade
+			items[i].Show()
+			shown = append(shown, items[i])
+		} else {
+			items[i].Hide()
+		}
+	}
+	return shown
+}
+
+// menuMatches says which actions a filter keeps: those whose label, detail
+// or group's first label hold every word, and the first of a group that
+// keeps any.
+func menuMatches(actions []menuAction, text string) []bool {
+	words := strings.Fields(strings.ToLower(text))
+	head := map[string]int{}
+	keep := make([]bool, len(actions))
+	for i, action := range actions {
+		match := strings.ToLower(action.label + " " + action.detail)
+		if action.group != "" {
+			first, seen := head[action.group]
+			if !seen {
+				head[action.group], first = i, i
+			}
+			match += " " + strings.ToLower(actions[first].label)
+		}
+		keep[i] = containsAll(match, words)
+		if keep[i] && action.group != "" {
+			keep[head[action.group]] = true
+		}
+	}
+	return keep
 }
 
 var blankIcon = fyne.NewStaticResource("1loop-blank.svg", []byte(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16"></svg>`))
@@ -1553,8 +1788,14 @@ func windowControls(window fyne.Window, quit func()) fyne.CanvasObject {
 	maximize := newRow("", iconMaximize, styleWindow, func() { windowToggleMaximize(window) })
 	closeButton := newRow("", iconClose, styleWindow, quit)
 	closeButton.hoverFill = colClose
-	return container.New(layout.NewCustomPaddedHBoxLayout(2), minimize, maximize, closeButton)
+	windowControlsBox = container.New(layout.NewCustomPaddedHBoxLayout(2), minimize, maximize, closeButton)
+	return windowControlsBox
 }
+
+// windowControlsBox holds the custom title bar's buttons: dialogs keep them
+// sharp and usable over their frosted backdrop (glass.go), so 1loop can
+// always be closed.
+var windowControlsBox *fyne.Container
 
 // tapArea makes what is under it clickable, without drawing anything.
 type tapArea struct {

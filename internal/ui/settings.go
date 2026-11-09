@@ -82,9 +82,17 @@ var sectionIcons = map[string]fyne.Resource{
 
 // subPages are pages of their own, opened from a row of their section.
 var subPages = map[string]string{
-	"SSH machines": registry.General,
-	"Extensions":   registry.Tools,
-	"Connectors":   registry.Tools,
+	"Extensions": registry.Tools,
+	"Connectors": registry.Tools,
+}
+
+// pageAliases are pages of earlier versions, still named by links and
+// messages: they open where their settings went.
+var pageAliases = map[string]string{
+	"SSH machines": "General",
+	"Connections":  "Models & accounts",
+	"Instructions": "Agent & approvals",
+	"Phone remote": "Phone",
 }
 
 // pageSection is the title of the section a page belongs to.
@@ -130,6 +138,9 @@ func (ui *desktopUI) buildSettings() {
 	nav := container.New(layout.NewCustomPaddedVBoxLayout(1))
 	for _, section := range registry.Sections() {
 		name := section.Title
+		if !settingsSectionShown(name) {
+			continue
+		}
 		row := newRow(name, sectionIcons[section.ID], styleNav, func() { view.show(name) })
 		view.rows[name] = row
 		nav.Add(row)
@@ -205,6 +216,7 @@ func (view *settingsView) closeNow() {
 	}
 	ui.updateHeader()
 	ui.relayoutColumn()
+	ui.curtain.reveal()
 	ui.window.Canvas().Focus(ui.prompt)
 }
 
@@ -235,6 +247,9 @@ func (view *settingsView) showNow(page string) {
 		view.drop()
 	}
 	view.clearSearch()
+	if alias, ok := pageAliases[page]; ok {
+		page = alias
+	}
 	section := pageSection(page)
 	if _, ok := view.rows[section]; !ok {
 		section, page = "General", "General"
@@ -254,6 +269,9 @@ func (view *settingsView) showNow(page string) {
 // build makes a page from what is stored now.
 func (view *settingsView) build(page string) fyne.CanvasObject {
 	ui := view.ui
+	if content := ui.browserSettings(page); content != nil {
+		return content
+	}
 	switch page {
 	case "Models & accounts":
 		return ui.modelSettings()
@@ -267,8 +285,6 @@ func (view *settingsView) build(page string) fyne.CanvasObject {
 		return ui.updateSettings()
 	case "Advanced":
 		return ui.advancedSettings()
-	case "SSH machines":
-		return ui.sshSettings()
 	case "Extensions":
 		return ui.extensionSettings()
 	case "Connectors":
@@ -351,6 +367,7 @@ func (view *settingsView) present() {
 	}
 	view.view.Refresh()
 	view.scroll.ScrollToTop()
+	view.ui.curtain.reveal()
 }
 
 // ---------------------------------------------------------------------------
@@ -519,12 +536,6 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 			}
 		})
 	})
-	machines := "None yet: add one to work on another computer."
-	if n := len(ui.sshMachines); n == 1 {
-		machines = "1 machine. Choose it in the target menu, under the composer."
-	} else if n > 1 {
-		machines = fmt.Sprintf("%d machines. Choose one in the target menu, under the composer.", n)
-	}
 	sortPicker := newPicker(ui.window, "Worktree order", styleField, nil)
 	order, _ := registry.Lookup(registry.KeyWorktreeSort)
 	for _, value := range order.Values {
@@ -542,25 +553,36 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 			}
 		}
 	}
-	return container.NewVBox(
-		view.pageTitle("General", "", nil),
-		view.intro(registry.General),
-		sectionTitle("Workspace"),
-		card(view.mark("general.workspace", ui.projectFolderRow(change)),
-			view.mark(registry.KeyWorktreeSort, settingRow(order.Title, "How the sidebar and the Repository window order a project's git worktrees.", sized(230, sortPicker.row)))),
-		sectionTitle("Where the agent runs"),
-		card(view.mark("general.remote_server", settingRow("HTTPS server", "Work on a headless 1loop server with its own models, files, browser and terminals. Approve this device in the server console.", newRow("Connect…", nil, styleOutline, ui.connectServer))),
-			view.mark("general.ssh", settingRow("SSH machines", "Other computers the agent can work on over SSH. "+machines, view.pageButton("SSH machines")))),
-		sectionTitle("Discord"),
-		card(view.mark(registry.KeyDiscordPresence, settingRow("Discord status",
-			"While the agent works, your Discord profile shows “Playing 1loop” with the model, what it is doing (thinking, running a command, editing files…) and for how long; “Idle” the rest of the time. Needs the Discord app open on this computer.",
-			newToggle(ui.discordPresence, func(on bool) { ui.setDiscordPresence(on, ui.discordDetails) }))),
-			view.mark(registry.KeyDiscordDetails, settingRow("Share the chat",
-				"Also shows the chat's title, its project and the command or file the agent is on. Off, they stay on this computer.",
-				newToggle(ui.discordDetails, func(on bool) { ui.setDiscordPresence(ui.discordPresence, on) })))),
-		sectionTitle("Import"),
-		card(view.mark("general.import", ui.importRow())),
-	)
+	worktrees := view.mark(registry.KeyWorktreeSort, settingRow(order.Title, "How the sidebar and the Repository window order a project's git worktrees.", sized(230, sortPicker.row)))
+	page := container.NewVBox(view.pageTitle("General", "", nil), view.intro(registry.General), sectionTitle("Workspace"))
+	if ui.server == nil { // on a server, its projects are chosen in the sidebar
+		page.Add(card(view.mark("general.workspace", ui.projectFolderRow(change)), worktrees))
+	} else {
+		page.Add(card(worktrees))
+	}
+	for _, object := range ui.targetRows() {
+		page.Add(object)
+	}
+	if ui.server == nil {
+		page.Add(sectionTitle("Window"))
+		page.Add(card(view.mark("general.close_to_tray", settingRow("Close to tray",
+			"On: closing the window keeps 1loop running in the system tray, so running tasks and the phone connection go on. Quit from the tray icon's menu or with Ctrl+Q. Off: closing the window quits. Without a tray (GNOME without an AppIndicator extension, a bar that shows no tray items) closing always quits.",
+			newToggle(!ui.closeQuits, func(on bool) {
+				ui.closeQuits = !on
+				platform.Devf("ui", "close to tray %v", on)
+				ui.save()
+			})))))
+	}
+	page.Add(sectionTitle("Discord"))
+	page.Add(card(view.mark(registry.KeyDiscordPresence, settingRow("Discord status",
+		"While the agent works, your Discord profile shows “Playing 1loop” with the model, what it is doing (thinking, running a command, editing files…) and for how long; “Idle” the rest of the time. Needs the Discord app open on this computer.",
+		newToggle(ui.discordPresence, func(on bool) { ui.setDiscordPresence(on, ui.discordDetails) }))),
+		view.mark(registry.KeyDiscordDetails, settingRow("Share the chat",
+			"Also shows the chat's title, its project and the command or file the agent is on. Off, they stay on this computer.",
+			newToggle(ui.discordDetails, func(on bool) { ui.setDiscordPresence(ui.discordPresence, on) })))))
+	page.Add(sectionTitle("Import"))
+	page.Add(card(view.mark("general.import", ui.importRow())))
+	return page
 }
 
 // setDiscordPresence turns the Discord status on or off, with or without
@@ -607,8 +629,8 @@ func (view *settingsView) intro(section string) fyne.CanvasObject {
 // a rate limit.
 func (ui *desktopUI) modelSettings() fyne.CanvasObject {
 	view := ui.prefs
-	if ui.server != nil {
-		return container.NewVBox(view.pageTitle("Models & accounts", "", nil), view.mark("models.connections", ui.server.defaultPresetSettings()))
+	if ui.server != nil { // the server's chats use the server's
+		return view.mark("models.connections", ui.server.connectionSettings())
 	}
 	add := newRow("Add connection", iconPlus, stylePrimary, func() {
 		id := core.Identifier()

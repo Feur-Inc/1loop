@@ -72,6 +72,17 @@ func (server *headlessServer) localConnections(w http.ResponseWriter, r *http.Re
 }
 
 func (server *headlessServer) saveLocalConnection(w http.ResponseWriter, r *http.Request) {
+	server.saveConnection(w, r, true)
+}
+
+// saveNetworkConnection is a paired device's: a ChatGPT sign-in comes back
+// to an address on the server itself (the account's) or rides the phone's
+// web view (ChatGPT (Web)), so neither is added from another device.
+func (server *headlessServer) saveNetworkConnection(w http.ResponseWriter, r *http.Request) {
+	server.saveConnection(w, r, false)
+}
+
+func (server *headlessServer) saveConnection(w http.ResponseWriter, r *http.Request, signIns bool) {
 	var args struct {
 		Connection agent.Connection `json:"connection"`
 		APIKey     *string          `json:"apiKey"`
@@ -99,6 +110,10 @@ func (server *headlessServer) saveLocalConnection(w http.ResponseWriter, r *http
 	} else {
 		if connection.ID != "" && !found {
 			core.Fail(w, 404, "Connection not found")
+			return
+		}
+		if !signIns && (connection.Provider == "openai" || connection.Provider == "chatgptweb") && (!found || existing.Provider != connection.Provider) {
+			core.Fail(w, 400, "Add a ChatGPT connection where the server runs: its sign-in returns there")
 			return
 		}
 		if strings.TrimSpace(connection.Name) == "" || !agent.Contains([]string{"openai", "claudecode", "antigravity", "compatible", "openrouter", "vllm", "chatgptweb"}, connection.Provider) {

@@ -12,7 +12,10 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.Crossfade
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.togetherWith
+import androidx.compose.animation.scaleIn
+import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
@@ -29,11 +32,16 @@ import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.awaitHorizontalTouchSlopOrCancellation
 import androidx.compose.foundation.gestures.horizontalDrag
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.material3.ripple
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ColumnScope
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -141,8 +149,9 @@ fun Pill(text: String, primary: Boolean = false, enabled: Boolean = true, icon: 
     val shape = RoundedCornerShape(50)
     val base = if (primary) Modifier.background(if (enabled) Palette.amber else Palette.raised, shape)
     else Modifier.border(1.dp, Palette.border, shape)
+    val press = remember { MutableInteractionSource() }
     Row(
-        base.clip(shape).clickable(enabled = enabled, onClick = onClick).height(44.dp).padding(horizontal = 20.dp),
+        Modifier.pressScale(press).then(base).clip(shape).clickable(press, ripple(), enabled = enabled, onClick = onClick).height(44.dp).padding(horizontal = 20.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
         val ink = if (primary) Palette.ink else Palette.muted
@@ -153,8 +162,9 @@ fun Pill(text: String, primary: Boolean = false, enabled: Boolean = true, icon: 
 
 @Composable
 fun RoundButton(icon: ImageVector, fill: Color, ink: Color, description: String, modifier: Modifier = Modifier, size: Dp = 40.dp, iconSize: Dp = 20.dp, onClick: () -> Unit) {
+    val press = remember { MutableInteractionSource() }
     Box(
-        modifier.size(size).clip(CircleShape).background(fill).clickable(onClick = onClick),
+        modifier.pressScale(press, 0.9f).size(size).clip(CircleShape).background(fill).clickable(press, ripple(), onClick = onClick),
         contentAlignment = Alignment.Center,
     ) { Icon(icon, description, tint = ink, modifier = Modifier.size(iconSize)) }
 }
@@ -201,8 +211,12 @@ fun Root(app: RemoteApp) {
             app.updateAsked = true
         }
     }
-    Box(Modifier.fillMaxSize().background(Palette.background)) {
-        Crossfade(app.screen::class, animationSpec = tween(220), label = "screen") { kind ->
+    FrostedBox(glassCover(), Modifier.fillMaxSize().background(Palette.background), read = Glass.open > 0 || Glass.menus > 0, publish = true) {
+        AnimatedContent(
+            app.screen::class, label = "screen",
+            // A new step settles into place as the last one fades.
+            transitionSpec = { (fadeIn(tween(260, 60)) + scaleIn(tween(320, 60, FastOutSlowInEasing), initialScale = 0.96f)) togetherWith fadeOut(tween(160)) },
+        ) { kind ->
             when (kind) {
                 Screen.Mode::class -> ModeScreen(app::chooseTarget)
                 Screen.Servers::class -> ServersScreen(app)
@@ -341,7 +355,7 @@ fun ServersScreen(app: RemoteApp) {
                 }
             } else if (shown.isEmpty()) {
                 Text(
-                    if (desktop) "No 1loop found. Open 1loop on your computer, on the same Wi-Fi, and check Settings → Phone remote."
+                    if (desktop) "No 1loop found. Open 1loop on your computer, on the same Wi-Fi, and check Settings → Phone."
                     else "No server yet. Add one by its address.",
                     style = Type.small, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
                 )
@@ -359,7 +373,7 @@ fun ServersScreen(app: RemoteApp) {
         if (desktop) {
             Spacer(Modifier.height(10.dp))
             Pill("Scan QR code", primary = true, enabled = !app.busy) {
-                scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the code shown in 1loop on the computer: Settings → Phone remote → Pair a phone").setBeepEnabled(false).setOrientationLocked(false))
+                scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the code shown in 1loop on the computer: Settings → Phone → Pair a phone").setBeepEnabled(false).setOrientationLocked(false))
             }
             if (app.busy) {
                 Spacer(Modifier.height(12.dp))
@@ -377,7 +391,8 @@ private fun AddressSheet(onDone: () -> Unit, onAdd: (Pair<String, String>) -> Un
     var address by remember { mutableStateOf("") }
     var fingerprint by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
-    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    GlassBackdrop()
+    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp).imePadding()) {
             Text("Add by address", style = Type.title)
             Spacer(Modifier.height(6.dp))
@@ -423,9 +438,9 @@ fun Field(value: String, onChange: (String) -> Unit, placeholder: String, keyboa
 fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
     var code by remember { mutableStateOf("") }
     val focus = remember { FocusRequester() }
-    BackHandler { app.screen = Screen.Servers }
+    val back = predictiveBack { app.screen = Screen.Servers }
     Column(
-        Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(horizontal = 24.dp),
+        back.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).imePadding().padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
@@ -488,23 +503,48 @@ fun ChatScreen(app: RemoteApp) {
     if (app.server?.localPhone == true) PairingRequestDialog(app) // a device asking to use this phone
     app.handoffAsk?.let { HandoffDialog(it) } // the chat continues with another model
     SharedFilesDialog(app) // files shared to 1loop from another app
-    app.repositoryOpen?.let { project ->
-        RepositoryScreen(app, project) { app.repositoryOpen = null }
-        return
-    }
-    if (app.settingsOpen) {
-        if (app.extensionsOpen) {
-            ExtensionsScreen(app) { app.extensionsOpen = false }
-            return
+    val page = app.repositoryOpen?.let { ChatPage("repository", it) }
+        ?: if (!app.settingsOpen) ChatPage("chat")
+        else if (app.extensionsOpen) ChatPage("extensions")
+        else if (app.linuxOpen) ChatPage("linux")
+        else ChatPage("settings")
+    AnimatedContent(
+        page, label = "page",
+        // Deeper pages slide in from the right, and back out the way they came.
+        transitionSpec = {
+            val deeper = targetState.depth > initialState.depth
+            val enter = slideInHorizontally(tween(300, easing = FastOutSlowInEasing)) { if (deeper) it / 5 else -it / 5 } + fadeIn(tween(240, 40))
+            val exit = slideOutHorizontally(tween(300, easing = FastOutSlowInEasing)) { if (deeper) -it / 10 else it / 10 } + fadeOut(tween(160))
+            enter togetherWith exit
+        },
+    ) { shown ->
+        when (shown.name) {
+            "repository" -> RepositoryScreen(app, shown.project!!) { app.repositoryOpen = null }
+            "extensions" -> ExtensionsScreen(app) { app.extensionsOpen = false }
+            "linux" -> LinuxScreen(app) { app.linuxOpen = false }
+            "settings" -> MobileSettings(app) { app.settingsOpen = false }
+            else -> ChatMain(app)
         }
-        if (app.linuxOpen) {
-            LinuxScreen(app) { app.linuxOpen = false }
-            return
-        }
-        MobileSettings(app) { app.settingsOpen = false }
-        if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
-        return
     }
+    // Sheets open over a page: outside its animation, shown for the page they belong to.
+    if (page.name == "settings" && app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
+    if (page.name != "chat") return
+    val approval = app.approvals.values.firstOrNull()
+    if (approval != null) ApprovalSheet(app, approval)
+    val question = app.questions.values.firstOrNull { it.id !in app.questionsAside }
+    // A sheet per request: closing one shows the next with its own state, not the last one's Hidden.
+    if (approval == null && question != null) key(question.id) { QuestionSheet(app, question) }
+    if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
+    if (app.projectsOpen) ProjectsSheet(app) { app.projectsOpen = false }
+}
+
+/** A page of the connected app: the chat, Settings or one of its pages, a project's repository. */
+private data class ChatPage(val name: String, val project: String? = null) {
+    val depth get() = when (name) { "chat" -> 0; "settings", "repository" -> 1; else -> 2 }
+}
+
+@Composable
+private fun ChatMain(app: RemoteApp) {
     var panel by remember(app.current, app.selectedProject, app.server?.key) { mutableStateOf(false) }
     ChatGPTWebLease(app)
     BoxWithConstraints(Modifier.fillMaxSize()) {
@@ -521,22 +561,20 @@ fun ChatScreen(app: RemoteApp) {
                 drawerState = drawer,
                 gesturesEnabled = drawer.isOpen || !panel,
                 drawerContent = {
-                    ModalDrawerSheet(drawerContainerColor = Palette.sidebar, drawerShape = RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp)) {
+                    ModalDrawerSheet(drawerContainerColor = Palette.sidebar.copy(alpha = 0.9f), drawerShape = RoundedCornerShape(topEnd = 18.dp, bottomEnd = 18.dp)) {
                         ChatsPane(app, Modifier.fillMaxHeight()) { scope.launch { drawer.close() } }
                     }
                 },
             ) {
-                Conversation(app, onMenu = { scope.launch { drawer.open() } }, Modifier.fillMaxSize(), panel) { panel = it }
+                // The conversation frosts as the drawer slides over it, following the finger.
+                val width = with(LocalDensity.current) { 300.dp.toPx() }
+                val cover = { (1f + drawer.currentOffset / width).takeIf { !it.isNaN() }?.coerceIn(0f, 1f) ?: 0f }
+                FrostedBox(cover, Modifier.fillMaxSize(), hidden = { width * cover() }) { // the drawer covers its left part
+                    Conversation(app, onMenu = { scope.launch { drawer.open() } }, Modifier.fillMaxSize(), panel) { panel = it }
+                }
             }
         }
     }
-    val approval = app.approvals.values.firstOrNull()
-    if (approval != null) ApprovalSheet(app, approval)
-    val question = app.questions.values.firstOrNull { it.id !in app.questionsAside }
-    // A sheet per request: closing one shows the next with its own state, not the last one's Hidden.
-    if (approval == null && question != null) key(question.id) { QuestionSheet(app, question) }
-    if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
-    if (app.projectsOpen) ProjectsSheet(app) { app.projectsOpen = false }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -563,8 +601,20 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                 ) { app.open(chat.id); onPicked() }
                 if (chats.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
             }
+            // Chats without a folder: one "No folder" entry, never their paths.
+            val scratch = app.chats.filter { it.scratch }
+            if (scratch.isNotEmpty() || app.selectedProject == NO_FOLDER) {
+                NavRow("No folder", Icons.folder, selected = app.selectedProject == NO_FOLDER) { app.selectProject(NO_FOLDER) }
+                if (app.selectedProject == NO_FOLDER) Column(Modifier.padding(start = 16.dp)) {
+                    for (chat in scratch) NavRow(
+                        chat.title, null, selected = chat.id == app.current, running = chat.running,
+                        onLongClick = { deleting = chat },
+                    ) { app.open(chat.id); onPicked() }
+                    if (scratch.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
+                }
+            }
             // A worktree shows under its project, not as a project of its own.
-            for (workspace in (app.projects + app.chats.map { app.projectOf(it.workspace) ?: it.workspace }).distinct().filter { it !in app.worktrees }) {
+            for (workspace in (app.projects + app.chats.filter { !it.scratch }.map { app.projectOf(it.workspace) ?: it.workspace }).distinct().filter { it !in app.worktrees }) {
                 val selected = workspace == app.selectedProject
                 val git = app.repositories[workspace]?.takeIf { it.loaded && it.error == null }
                 NavRow(
@@ -605,15 +655,20 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
     worktreeActions?.let { (project, worktree) -> WorktreeSheet(app, project, worktree) { worktreeActions = null } }
     newWorktree?.let { project -> NewWorktreeSheet(app, project) { newWorktree = null } }
     deleting?.let { chat ->
+        GlassBackdrop()
         ModalBottomSheet(
             onDismissRequest = { deleting = null },
-            containerColor = Palette.surface,
+            containerColor = Palette.surface, scrimColor = GlassScrim,
             sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
         ) {
             Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
                 Text("Delete chat?", style = Type.title)
                 Spacer(Modifier.height(12.dp))
-                Text("“${chat.title}” will be permanently deleted. Its running tasks and tabs will stop. Project files are kept.", style = Type.body)
+                Text(
+                    if (chat.scratch) "“${chat.title}” and the folder 1loop made for it will be permanently deleted. Its running tasks and tabs will stop."
+                    else "“${chat.title}” will be permanently deleted. Its running tasks and tabs will stop. Project files are kept.",
+                    style = Type.body,
+                )
                 Spacer(Modifier.height(20.dp))
                 Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
                     Pill("Cancel") { deleting = null }
@@ -630,9 +685,11 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
 
 @Composable
 internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", trailing: String? = null, onClick: () -> Unit) {
+    val press = remember { MutableInteractionSource() }
+    val fill by animateColorAsState(if (selected) Palette.selected else Color.Transparent, tween(180), label = "row")
     Row(
-        Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(if (selected) Palette.selected else Color.Transparent)
-            .combinedClickable(onClick = onClick, onLongClick = onLongClick, onLongClickLabel = longClickLabel).padding(horizontal = 10.dp, vertical = 10.dp),
+        Modifier.pressScale(press, 0.97f).fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(fill)
+            .combinedClickable(press, ripple(), onClick = onClick, onLongClick = onLongClick, onLongClickLabel = longClickLabel).padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         if (icon != null) {
@@ -782,9 +839,16 @@ private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> U
         }
     }
     val tail by remember { derivedStateOf { items.size to (items.lastOrNull()?.text?.length ?: 0) } }
-    LaunchedEffect(tail, running, app.meta?.label) {
-        if (follow && items.isNotEmpty()) list.scrollToItem(items.size + 1, 0)
+    // Sent while the agent works: greyed at the end until the agent takes them in.
+    val pending = app.meta?.let { it.steer + it.queue }.orEmpty()
+    LaunchedEffect(tail, running, app.meta?.label, pending.size) {
+        if (follow && items.isNotEmpty()) list.scrollToItem(items.size + 1 + pending.size, 0)
     }
+    // Items from fresh on arrived after the chat opened; older ones loaded above reset it.
+    var fresh by remember(app.current) { mutableIntStateOf(items.size) }
+    val appeared = remember(app.current) { mutableSetOf<Int>() }
+    val first = items.firstOrNull()
+    LaunchedEffect(first) { fresh = items.size; appeared.clear() }
     LazyColumn(
         state = list, modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
@@ -792,44 +856,49 @@ private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> U
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         itemsIndexed(items, contentType = { _, item -> item.kind }) { index, item ->
-            Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
-                when (item.kind) {
-                    "user" -> UserBubble(item, images = { if (item.images > 0) ItemImages(app, app.firstItem + index, item.images) }) {
-                        MessageActions(app, item, running) { editing = app.firstItem + index to item.text }
-                    }
-                    "assistant" -> Column {
-                        Markdown(item.text, onCite = onCite)
-                        // One Copy per finished answer: under its last text, not while it runs.
-                        val endsTurn = (index + 1 until items.size).takeWhile { items[it].kind != "user" }.none { items[it].kind == "assistant" }
-                        if (endsTurn && !(running && index > lastUser)) {
-                            Row(verticalAlignment = Alignment.CenterVertically) {
-                                CopyChip { answerText(items, index) }
-                                MessageActions(app, item, running) { app.retryMessage(index) }
+            // A message that arrives while the chat is on screen rises into place; those already there do not move.
+            val rise = remember { index >= fresh && appeared.add(index) }
+            Box(Modifier.fillMaxWidth().appear(rise), contentAlignment = Alignment.TopCenter) {
+                Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
+                    when (item.kind) {
+                        "user" -> UserBubble(item, images = { if (item.images > 0) ItemImages(app, app.firstItem + index, item.images) }) {
+                            MessageActions(app, item, running) { editing = app.firstItem + index to item.text }
+                        }
+                        "assistant" -> Column {
+                            Markdown(item.text, onCite = onCite)
+                            // One Copy per finished answer: under its last text, not while it runs.
+                            val endsTurn = (index + 1 until items.size).takeWhile { items[it].kind != "user" }.none { items[it].kind == "assistant" }
+                            if (endsTurn && !(running && index > lastUser)) {
+                                Row(verticalAlignment = Alignment.CenterVertically) {
+                                    CopyChip { answerText(items, index) }
+                                    MessageActions(app, item, running) { app.retryMessage(index) }
+                                }
                             }
                         }
-                    }
-                    "tool" -> Column {
-                        ToolRow(item) { onTool(item) }
-                        if (item.tool == "imagegen" && item.state == "running") {
-                            Row(
-                                Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
-                                    .background(Palette.code).padding(20.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(12.dp),
-                            ) {
-                                WorkRing("wait", 28.dp)
-                                Text("Creating your image…", style = Type.body)
+                        "tool" -> Column {
+                            ToolRow(item) { onTool(item) }
+                            if (item.tool == "imagegen" && item.state == "running") {
+                                Row(
+                                    Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp))
+                                        .background(Palette.code).padding(20.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(12.dp),
+                                ) {
+                                    WorkRing("wait", 28.dp)
+                                    Text("Creating your image…", style = Type.body)
+                                }
                             }
+                            // What the tool showed the model (a screenshot), as Codex shows it.
+                            if (item.images > 0) ItemImages(app, app.firstItem + index, item.images, Modifier.padding(start = 32.dp, top = 2.dp))
                         }
-                        // What the tool showed the model (a screenshot), as Codex shows it.
-                        if (item.images > 0) ItemImages(app, app.firstItem + index, item.images, Modifier.padding(start = 32.dp, top = 2.dp))
+                        "error" -> Column {
+                            Text(item.text, style = Type.body.copy(color = Palette.danger))
+                            if (!(running && index > lastUser)) MessageActions(app, item, running) { app.retryMessage(index) }
+                        }
+                        "note" -> Text(item.text, style = Type.caption, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                     }
-                    "error" -> Column {
-                        Text(item.text, style = Type.body.copy(color = Palette.danger))
-                        if (!(running && index > lastUser)) MessageActions(app, item, running) { app.retryMessage(index) }
-                    }
-                    "note" -> Text(item.text, style = Type.caption, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
                 }
+        
             }
         }
         item {
@@ -840,6 +909,9 @@ private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> U
                     Text(app.meta?.label.orEmpty(), style = Type.body.copy(color = Palette.muted), maxLines = 2, overflow = TextOverflow.Ellipsis)
                 }
             }
+        }
+        items(pending.size) { i ->
+            Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) { PendingBubble(pending[i], running) }
         }
     }
     editing?.let { (index, text) -> EditSheet(text, onSend = { app.editMessage(index, it) }) { editing = null } }
@@ -853,6 +925,25 @@ private fun answerText(items: List<Item>, index: Int): String {
         i--
     }
     return parts.joinToString("\n\n")
+}
+
+/** A message sent while the agent works: greyed until the agent takes it in at its next step. */
+@Composable
+private fun PendingBubble(text: String, running: Boolean) {
+    Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.End) {
+        Box(Modifier.widthIn(max = 560.dp).fillMaxWidth(0.85f), contentAlignment = Alignment.CenterEnd) {
+            Text(
+                text,
+                style = Type.body.copy(color = Palette.muted),
+                modifier = Modifier.background(Palette.raised.copy(alpha = 0.5f), RoundedCornerShape(18.dp))
+                    .border(1.dp, Palette.borderSoft, RoundedCornerShape(18.dp)).padding(horizontal = 14.dp, vertical = 10.dp),
+            )
+        }
+        Text(
+            if (running) "Sent at the next step" else "Not sent yet",
+            style = Type.caption.copy(color = Palette.faint), modifier = Modifier.padding(top = 4.dp, end = 4.dp),
+        )
+    }
 }
 
 @Composable
@@ -964,7 +1055,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
     }
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    val border by animateColorAsState(if (focused) Palette.borderHot else Palette.border, tween(160), label = "card")
+    val border by animateColorAsState(if (focused) Palette.borderHot else Color.White.copy(alpha = 0.11f), tween(160), label = "card")
     Column(
         Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 12.dp).padding(bottom = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -980,7 +1071,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 }
             }
         }
-        if (meta != null && (meta.queue.isNotEmpty() || meta.steer.isNotEmpty())) QueueTray(meta)
+        if (meta != null && meta.queue.isNotEmpty()) QueueTray(meta)
         // Questions closed without an answer: the run still waits for them.
         app.current?.let { app.questions[it] }?.takeIf { it.id in app.questionsAside }?.let { request ->
             QuestionTray(request) { app.questionsAside.remove(request.id) }
@@ -998,7 +1089,12 @@ private fun Composer(app: RemoteApp, running: Boolean) {
             Text(app.server?.name.orEmpty(), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         Column(
-            Modifier.widthIn(max = 760.dp).fillMaxWidth().background(Palette.surface, RoundedCornerShape(18.dp))
+            // Focused, the card lifts in a soft amber glow.
+            Modifier.widthIn(max = 760.dp).fillMaxWidth()
+                .shadow(animateDpAsState(if (focused) 14.dp else 0.dp, tween(220), label = "glow").value, RoundedCornerShape(18.dp), ambientColor = Palette.amber, spotColor = Palette.amber)
+                .background(Palette.surface, RoundedCornerShape(18.dp))
+                // Glass catching the light: a sheen over its upper half, a hairline edge.
+                .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.06f), Color.Transparent)), RoundedCornerShape(18.dp))
                 .border(1.dp, border, RoundedCornerShape(18.dp)).padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
         ) {
             if (app.attachments.isNotEmpty()) AttachmentTray(app)
@@ -1054,9 +1150,8 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 }
                 if (running) {
                     if (ready) {
-                        RoundButton(Icons.arrowTurn, Palette.raised, Palette.amber, size = 36.dp, iconSize = 18.dp, description = "Steer now") { send("steer") }
-                        Spacer(Modifier.width(8.dp))
-                        RoundButton(Icons.send, Palette.amber, Palette.ink, size = 36.dp, description = "Queue") { send("queue") }
+                        // Joins the running task at its next step, shown greyed until then.
+                        RoundButton(Icons.send, Palette.amber, Palette.ink, size = 36.dp, description = "Send at the next step") { send("steer") }
                         Spacer(Modifier.width(8.dp))
                     }
                     RoundButton(Icons.close, Palette.text, Palette.ink, size = 36.dp, iconSize = 18.dp, description = "Stop") { app.stop() }
@@ -1085,11 +1180,17 @@ private fun ProjectChip(app: RemoteApp, chosen: String?, onChoose: (String) -> U
             Spacer(Modifier.width(6.dp))
             Text(app.folderName(path), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
         }
-        DropdownMenu(open, { open = false }, containerColor = Palette.popover) {
+        if (open) GlassMenuOpen()
+        DropdownMenu(open, { open = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover), border = GlassEdge, shape = GlassMenuShape) {
             for (p in app.projects) DropdownMenuItem(
                 text = { Text(projectName(p), style = Type.body) },
                 onClick = { onChoose(p); open = false },
                 leadingIcon = { Icon(if (p == path) Icons.check else Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp)) },
+            )
+            DropdownMenuItem(
+                text = { Text("No folder", style = Type.body) },
+                onClick = { onChoose(NO_FOLDER); open = false },
+                leadingIcon = { Icon(if (path == NO_FOLDER) Icons.check else Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp)) },
             )
             if (app.projectManagement) DropdownMenuItem(text = { Text("Add project…", style = Type.body) }, onClick = { open = false; app.projectsOpen = true })
         }
@@ -1103,11 +1204,7 @@ private fun QueueTray(meta: Meta) {
             .border(1.dp, Palette.borderSoft, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)).padding(horizontal = 12.dp, vertical = 8.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
-        Text(
-            if (meta.queue.isEmpty()) "Steering the current task" else "${meta.queue.size} queued" + if (meta.steer.isNotEmpty()) " · ${meta.steer.size} steering" else "",
-            style = Type.caption.copy(color = Palette.muted),
-        )
-        for (s in meta.steer) QueueLine(s, null)
+        Text("${meta.queue.size} queued for the next turn", style = Type.caption.copy(color = Palette.muted))
         meta.queue.forEachIndexed { i, q -> QueueLine(q, i + 1) }
     }
 }
@@ -1147,7 +1244,8 @@ private fun QueueLine(text: String, number: Int?) {
 @Composable
 private fun ToolSheet(app: RemoteApp, item: Item, onDone: () -> Unit) {
     val args = remember(item.args) { runCatching { JSONObject(item.args) }.getOrDefault(JSONObject()) }
-    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    GlassBackdrop()
+    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 28.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(Icons.forTool(item.tool), null, tint = Palette.text, modifier = Modifier.size(20.dp))
@@ -1198,19 +1296,21 @@ private fun elapsed(ms: Long) = when {
     else -> "${ms / 60000}m ${(ms / 1000 % 60).toString().padStart(2, '0')}s"
 }
 
-// The model's questions: an option per question, or the user's own words
-// on the "Other" line; sent once every question has an answer.
+// The model's questions, one at a time: each option a choice card, then the
+// user's own words in the "Other" field; the send button says what is still
+// missing until every question has an answer.
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun QuestionSheet(app: RemoteApp, request: Questions) {
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { true })
     val title = app.chats.firstOrNull { it.id == request.chat }?.title.orEmpty()
     val draft = app.questionDraft(request) // survives the sheet being set aside
-    val answers = draft.answers
-    val others = draft.others
+    val index = draft.page.coerceIn(0, (request.questions.size - 1).coerceAtLeast(0))
+    val question = request.questions.getOrNull(index) ?: return
     // Closing (swipe, back, outside tap) sets the questions aside, to answer
     // from the composer: the run keeps waiting for them.
-    ModalBottomSheet(onDismissRequest = { app.questionsAside.add(request.id) }, sheetState = state, containerColor = Palette.surface) {
+    GlassBackdrop()
+    ModalBottomSheet(onDismissRequest = { app.questionsAside.add(request.id) }, sheetState = state, containerColor = Palette.surface, scrimColor = GlassScrim) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 WorkRing("approval", 34.dp)
@@ -1220,33 +1320,87 @@ private fun QuestionSheet(app: RemoteApp, request: Questions) {
                     Text(title, style = Type.caption.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            for (question in request.questions) {
-                Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                    if (question.header.isNotEmpty()) Text(question.header.uppercase(), style = Type.caption.copy(color = Palette.faint, fontWeight = FontWeight.SemiBold))
-                    Text(question.text, style = Type.body)
-                    for (option in question.options) {
-                        val selected = answers[question.id] == option.label
-                        Row(
-                            Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(if (selected) Palette.selected else Color.Transparent)
-                                .clickable { answers[question.id] = option.label; others.remove(question.id) }.padding(horizontal = 12.dp, vertical = 10.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Column(Modifier.weight(1f)) {
-                                Text(option.label, style = Type.body.copy(fontSize = 14.5.sp))
-                                if (option.description.isNotEmpty()) Text(option.description, style = Type.caption.copy(color = Palette.muted))
-                            }
-                            if (selected) Icon(Icons.check, null, tint = Palette.amber, modifier = Modifier.size(18.dp))
-                        }
-                    }
-                    Field(others[question.id].orEmpty(), { text ->
-                        others[question.id] = text
-                        if (text.isNotBlank()) answers[question.id] = Questions.OTHER + text.trim() else if (answers[question.id]?.startsWith(Questions.OTHER) == true) answers.remove(question.id)
-                    }, "Other: your own answer", KeyboardType.Text)
+            QuestionPage(request, question, index, draft)
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp), verticalAlignment = Alignment.CenterVertically) {
+                if (index > 0) Pill("Back") { draft.page = index - 1 }
+                Spacer(Modifier.weight(1f))
+                if (index + 1 < request.questions.size) Pill("Next") { draft.page = index + 1 }
+                val missing = draft.firstMissing(request)
+                // Until all are answered it names what is missing, and takes the user there.
+                Pill(draft.sendLabel(request), primary = missing < 0) {
+                    if (missing >= 0) draft.page = missing else app.answer(request, draft.answers(request))
                 }
             }
-            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                Pill("Send answers", primary = true, enabled = request.questions.all { answers.containsKey(it.id) }) { app.answer(request, answers.toMap()) }
+        }
+    }
+}
+
+/** A question: its header as a tag and its place among the others, the question, its options and Other. */
+@Composable
+private fun QuestionPage(request: Questions, question: Question, index: Int, draft: QuestionDraft) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            if (question.header.isNotEmpty()) Tag(question.header, Palette.muted, Palette.selected)
+            Spacer(Modifier.weight(1f))
+            if (request.questions.size > 1) Text("${index + 1}/${request.questions.size}", style = Type.caption.copy(color = Palette.muted))
+        }
+        Text(question.text, style = Type.body.copy(fontWeight = FontWeight.SemiBold))
+        Text(if (question.multiSelect) "Pick any that apply, or add your own" else "Pick one, or write your own", style = Type.caption.copy(color = Palette.faint))
+        val chosen = draft.picked[question.id].orEmpty()
+        for (option in question.options) {
+            val (label, recommended) = recommendedLabel(option.label)
+            ChoiceCard(option.label in chosen, question.multiSelect, onClick = { draft.pick(question, option.label) }) {
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Text(label, style = Type.body.copy(fontSize = 14.5.sp), modifier = Modifier.weight(1f, fill = false))
+                    if (recommended) Tag("Recommended", Palette.amber, Palette.amber.copy(alpha = 0.14f))
+                }
+                if (option.description.isNotEmpty()) Text(option.description, style = Type.caption.copy(color = Palette.muted))
             }
+        }
+        val own = draft.others[question.id].orEmpty()
+        val focus = remember { FocusRequester() }
+        ChoiceCard(own.isNotBlank(), question.multiSelect, onClick = { focus.requestFocus() }) {
+            Field(own, { draft.write(question, it) }, "Other: type your own answer", KeyboardType.Text, Modifier.focusRequester(focus))
+        }
+    }
+}
+
+/** A small rounded label: a question's header, the Recommended badge. */
+@Composable
+fun Tag(text: String, ink: Color, fill: Color) {
+    Text(
+        text, style = Type.caption.copy(fontSize = 11.sp, color = ink, fontWeight = FontWeight.SemiBold),
+        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(fill).padding(horizontal = 7.dp, vertical = 2.dp),
+    )
+}
+
+/** An option: a radio (a checkbox on a multi-select) beside its content, lit with the accent once picked. */
+@Composable
+fun ChoiceCard(picked: Boolean, multi: Boolean, onClick: () -> Unit, content: @Composable ColumnScope.() -> Unit) {
+    val shape = RoundedCornerShape(10.dp)
+    Row(
+        Modifier.fillMaxWidth().clip(shape).background(if (picked) Palette.amber.copy(alpha = 0.10f) else Palette.code)
+            .border(1.dp, if (picked) Palette.amber else Palette.border, shape)
+            .clickable(onClick = onClick).padding(horizontal = 12.dp, vertical = 10.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        ChoiceMark(picked, multi)
+        Spacer(Modifier.width(12.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp), content = content)
+    }
+}
+
+@Composable
+private fun ChoiceMark(picked: Boolean, multi: Boolean) {
+    val shape = if (multi) RoundedCornerShape(4.dp) else CircleShape
+    Box(
+        Modifier.size(18.dp).clip(shape).background(if (multi && picked) Palette.amber else Color.Transparent)
+            .border(1.5.dp, if (picked) Palette.amber else Palette.borderHot, shape),
+        contentAlignment = Alignment.Center,
+    ) {
+        when {
+            multi && picked -> Icon(Icons.check, null, tint = Palette.ink, modifier = Modifier.size(14.dp))
+            picked -> Box(Modifier.size(9.dp).clip(CircleShape).background(Palette.amber))
         }
     }
 }
@@ -1257,7 +1411,8 @@ private fun ApprovalSheet(app: RemoteApp, approval: Approval) {
     // Only Deny or Allow close it: a hidden sheet left in place would block every touch.
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { it != SheetValue.Hidden })
     val title = app.chats.firstOrNull { it.id == approval.chat }?.title.orEmpty()
-    ModalBottomSheet(onDismissRequest = {}, sheetState = state, containerColor = Palette.surface) {
+    GlassBackdrop()
+    ModalBottomSheet(onDismissRequest = {}, sheetState = state, containerColor = Palette.surface, scrimColor = GlassScrim) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 WorkRing("approval", 34.dp)
@@ -1317,7 +1472,8 @@ private fun ActionChip(icon: ImageVector, label: String, onClick: () -> Unit) {
 private fun EditSheet(original: String, onSend: (String) -> Unit, onDone: () -> Unit) {
     var text by remember { mutableStateOf(original) }
     val focus = remember { FocusRequester() }
-    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
+    GlassBackdrop()
+    ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp).imePadding()) {
             Text("Edit message", style = Type.title)
             Spacer(Modifier.height(6.dp))

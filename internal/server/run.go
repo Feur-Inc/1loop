@@ -44,6 +44,7 @@ func Main() {
 	localReady := flag.String("local-ready-file", "", "Private local-phone startup endpoint JSON")
 	localBridge := flag.String("local-bridge-config", "", "Private local-phone native bridge configuration")
 	installDebian := flag.String("install-mobile-debian", "", "Install the pinned mobile Debian filesystem into a new directory, then exit")
+	webDir := flag.String("web-dir", "", "Folder with the browser client (index.html, 1loop.wasm, wasm_exec.js), served at /app/")
 	installClaude := flag.Bool("install-mobile-claude", false, "Install Claude Code from its signed Debian repository, then exit")
 	flag.Parse()
 	if *installClaude {
@@ -89,6 +90,7 @@ func Main() {
 		log.Fatal(err)
 	}
 	server.shutdown = stop
+	server.webDir = *webDir
 	if *localToken != "" {
 		if err := server.authorizeLocalClient(*localToken, *listen); err != nil {
 			log.Fatal(err)
@@ -117,24 +119,26 @@ func Main() {
 		if *base != "" {
 			server.cfg.BaseURL = *base
 		}
+		// The flags' account is enabled, beside those added from the clients.
 		existing := ""
-		for _, conn := range server.connections {
+		for i, conn := range server.connections {
 			if conn.Provider == server.cfg.Provider && conn.BaseURL == server.cfg.BaseURL {
 				existing = conn.ID
+				server.connections[i].Enabled = true
 				break
 			}
 		}
 		if existing == "" {
 			existing = core.Identifier()
+			server.connections = append(server.connections, agent.Connection{
+				ID:        existing,
+				Name:      agent.ProviderName(server.cfg.Provider),
+				Provider:  server.cfg.Provider,
+				BaseURL:   server.cfg.BaseURL,
+				Enabled:   true,
+				AllModels: true,
+			})
 		}
-		server.connections = []agent.Connection{{
-			ID:        existing,
-			Name:      agent.ProviderName(server.cfg.Provider),
-			Provider:  server.cfg.Provider,
-			BaseURL:   server.cfg.BaseURL,
-			Enabled:   true,
-			AllModels: true,
-		}}
 		server.cfg.ConnectionID = existing
 	}
 	if err = server.saveSettingsLocked(); err != nil {

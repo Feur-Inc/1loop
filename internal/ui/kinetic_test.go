@@ -34,10 +34,19 @@ func scrollFixture(t *testing.T, wide bool) (*kineticScroll, *sideScroll) {
 	return outer, side
 }
 
+// settle runs a second of frames: a wheel's motion is eased over them.
+func settle() {
+	now := time.Now()
+	for frame := range 60 {
+		kineticFrame(now.Add(time.Duration(frame)*16*time.Millisecond), 16*time.Millisecond)
+	}
+}
+
 func TestSideScrollGivesTheWheelToTheConversation(t *testing.T) {
 	for _, wide := range []bool{false, true} {
 		outer, side := scrollFixture(t, wide)
 		side.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DY: 50}}) // up
+		settle()
 		if outer.Offset.Y != 950 {
 			t.Errorf("wide %v: the conversation is at %v after a wheel up over the code, want 950", wide, outer.Offset.Y)
 		}
@@ -50,6 +59,7 @@ func TestSideScrollGivesTheWheelToTheConversation(t *testing.T) {
 func TestSideScrollKeepsTheSidewaysMotionItCanMake(t *testing.T) {
 	outer, side := scrollFixture(t, true)
 	side.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DX: -60, DY: -20}}) // a diagonal swipe
+	settle()
 	if side.Offset.X != 60 || outer.Offset.Y != 1020 {
 		t.Fatalf("code at %v, conversation at %v; want 60 and 1020", side.Offset.X, outer.Offset.Y)
 	}
@@ -59,29 +69,55 @@ func TestSideScrollKeepsTheSidewaysMotionItCanMake(t *testing.T) {
 		t.Fatalf("code at %v, want 0", side.Offset.X)
 	}
 	side.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DX: 10}})
+	settle()
 	if side.Offset.X != 0 || outer.Offset.Y != 1020 {
 		t.Fatalf("code at %v, conversation at %v after a swipe past the start", side.Offset.X, outer.Offset.Y)
 	}
 }
 
 // Without the display saying when fingers lift (X11, Windows, macOS), a
-// quick turn of the wheel stops where the wheel did.
-func TestWheelDoesNotGlideWithoutReleaseEvents(t *testing.T) {
-	if _, _, told := scrollGesture(); told {
+// quick turn of the wheel is eased into place and stops where the wheel did.
+func TestWheelEasesAndStopsWhereTheWheelDid(t *testing.T) {
+	if _, told := scrollFinger(); told {
 		t.Skip("this display reports touchpad gestures")
 	}
 	outer, _ := scrollFixture(t, false)
 	for range 6 {
 		outer.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DY: 25}})
 	}
-	if outer.Offset.Y != 850 {
-		t.Fatalf("the conversation is at %v after six notches, want 850", outer.Offset.Y)
+	if outer.Offset.Y != 1000 {
+		t.Fatalf("the conversation jumped to %v before any frame", outer.Offset.Y)
 	}
 	now := time.Now()
-	for frame := range 30 {
-		kineticFrame(now.Add(time.Duration(frame)*16*time.Millisecond), 16*time.Millisecond)
+	kineticFrame(now, 16*time.Millisecond)
+	first := outer.Offset.Y
+	if first >= 1000 || first <= 850 {
+		t.Fatalf("after one frame the conversation is at %v, want part of the way to 850", first)
 	}
+	kineticFrame(now.Add(16*time.Millisecond), 16*time.Millisecond)
+	if step := first - outer.Offset.Y; step <= 0 || step >= 1000-first {
+		t.Fatalf("the second frame moved %v after %v: the motion should slow down", step, 1000-first)
+	}
+	settle()
 	if outer.gliding || outer.Offset.Y != 850 {
-		t.Fatalf("the conversation glided on to %v", outer.Offset.Y)
+		t.Fatalf("the conversation settled at %v, want 850", outer.Offset.Y)
+	}
+}
+
+// At an edge, what the wheel still owed is dropped: turning back moves at once.
+func TestWheelAtAnEdgeDropsTheRest(t *testing.T) {
+	if _, told := scrollFinger(); told {
+		t.Skip("this display reports touchpad gestures")
+	}
+	outer, _ := scrollFixture(t, false)
+	outer.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DY: 5000}}) // far past the top
+	settle()
+	if outer.Offset.Y != 0 || outer.aheadY != 0 {
+		t.Fatalf("at the top with %v left to travel (offset %v)", outer.aheadY, outer.Offset.Y)
+	}
+	outer.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DY: -100}})
+	settle()
+	if outer.Offset.Y != 100 {
+		t.Fatalf("turning back down reached %v, want 100", outer.Offset.Y)
 	}
 }

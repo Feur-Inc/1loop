@@ -58,7 +58,7 @@
       "key": "general.target",
       "section": "general",
       "title": "Execution target",
-      "description": "The computer, server or this phone the agent runs on.",
+      "description": "Where the agent works: this computer, an SSH machine, a server or this phone.",
       "keywords": [
         "server",
         "computer",
@@ -66,24 +66,29 @@
         "switch",
         "machine",
         "local",
-        "connect"
+        "connect",
+        "this computer"
       ],
       "kind": "action",
-      "where": "phone",
+      "where": "both",
       "protected": true
     },
     {
       "key": "general.remote_server",
       "section": "general",
-      "title": "HTTPS server",
-      "description": "Work on a headless 1loop server with its own models, files, browser and terminals.",
+      "title": "Connect a server",
+      "description": "Pair this computer with a headless 1loop server, then work on it.",
       "keywords": [
         "remote",
         "server",
         "headless",
         "connect",
         "pair",
-        "https"
+        "pairing",
+        "https",
+        "fingerprint",
+        "certificate",
+        "docker"
       ],
       "kind": "action",
       "where": "desktop",
@@ -92,7 +97,6 @@
     {
       "key": "general.ssh",
       "section": "general",
-      "page": "SSH machines",
       "title": "SSH machines",
       "description": "Other computers the agent can work on over SSH.",
       "keywords": [
@@ -101,7 +105,8 @@
         "machine",
         "host",
         "server",
-        "computer"
+        "computer",
+        "vm"
       ],
       "kind": "action",
       "where": "desktop",
@@ -135,6 +140,22 @@
           "label": "Pull requests first"
         }
       ],
+      "where": "desktop"
+    },
+    {
+      "key": "general.close_to_tray",
+      "section": "general",
+      "title": "Close to tray",
+      "description": "Closing the window keeps 1loop running in the system tray; quit from the tray menu or with Ctrl+Q.",
+      "keywords": [
+        "tray",
+        "close",
+        "quit",
+        "background",
+        "minimize",
+        "window"
+      ],
+      "kind": "action",
       "where": "desktop"
     },
     {

@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"1loop/internal/core"
+	"1loop/internal/settings"
 )
 
 type ChatItem struct {
@@ -126,6 +127,17 @@ func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) 
 		return pick("Recalled", "Recalling"), "conversation history", false
 	case "checkpoint":
 		return pick("Recorded", "Recording"), "a context checkpoint", false
+	case "settings":
+		var change struct{ Action, Key string }
+		_ = json.Unmarshal([]byte(item.Args), &change)
+		target = "1loop's settings"
+		if setting, ok := settings.Lookup(change.Key); ok {
+			target = setting.Title
+		}
+		if change.Action == "set" {
+			return pick("Changed", "Changing"), target, false
+		}
+		return pick("Read", "Reading"), target, false
 	case "memory":
 		var memory struct{ Action string }
 		_ = json.Unmarshal([]byte(item.Args), &memory)

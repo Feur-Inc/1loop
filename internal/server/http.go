@@ -27,6 +27,10 @@ func (server *headlessServer) routes() http.Handler {
 	mux.HandleFunc("GET /api/info", func(w http.ResponseWriter, r *http.Request) {
 		core.WriteJSON(w, 200, map[string]any{"name": server.name, "protocol": 1, "headless": true, "secure": true, "consolePairing": !server.local})
 	})
+	if server.webDir != "" && !server.local {
+		mux.Handle("GET /app/", webClient(server.webDir))
+		mux.Handle("GET /{$}", http.RedirectHandler("/app/", http.StatusFound))
+	}
 	if !server.local {
 		mux.HandleFunc("POST /api/pair", server.pair)
 		mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)
@@ -115,6 +119,16 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/hooks":                               remoteapi.GetHooks,
 		"POST /api/hooks":                              remoteapi.SaveHooks,
 		"GET /api/chats/{id}/items/{index}/images/{n}": server.itemImage,
+	}
+	if !server.local {
+		// The server's accounts, for its paired devices; the phone app's own
+		// engine keeps its accounts to the phone (/api/local/connections).
+		endpoints["GET /api/connections"] = server.localConnections
+		endpoints["POST /api/connections"] = server.saveNetworkConnection
+		endpoints["POST /api/connections/models"] = server.draftLocalConnectionModels
+		endpoints["GET /api/connections/{id}/models"] = server.localConnectionModels
+		endpoints["POST /api/connections/{id}/disconnect"] = server.localConnectionDisconnect
+		endpoints["POST /api/connections/refresh"] = server.refreshLocalModels
 	}
 	syncEngine := server.syncEngine()
 	syncManifest, syncExport, syncImport := syncEngine.Routes()
@@ -253,6 +267,9 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 	}
 	chat.queue, chat.steer = nil, nil
 	chat.tasks.StopAll()
+	if chat.Config.Scratch != "" {
+		go func(path string) { _ = agent.RemoveScratchWorkspace(server.scratchBase(), path) }(chat.Config.Scratch)
+	}
 	tabs := chat.tabs
 	chat.tabs = nil
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
@@ -351,6 +368,7 @@ func (server *headlessServer) events(w http.ResponseWriter, r *http.Request) {
 func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 	var args struct {
 		Chat, Text, Mode, Workspace string
+		NoFolder                    bool // a new chat in a folder 1loop makes for it
 		Attachments                 []agent.FileAttachment
 		Images                      []core.ImagePart
 		Handoff                     *agent.HandoffChoice // the answer to a handoff the server asked for
@@ -375,8 +393,15 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		core.Fail(w, 404, "Chat not found")
 		return
 	}
-	workspace, err := server.workspaceLocked(workspace)
+	var err error
+	scratch := args.NoFolder && chat == nil
+	if !scratch {
+		workspace, err = server.workspaceLocked(workspace)
+	}
 	server.mu.Unlock()
+	if scratch {
+		workspace, err = agent.NewScratchWorkspace(server.scratchBase())
+	}
 	if err != nil {
 		core.Fail(w, 403, err.Error())
 		return
@@ -407,7 +432,10 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 			title = title[:50]
 		}
 		cfg := server.cfg
-		cfg.Workspace = workspace
+		cfg.Workspace, cfg.Scratch = workspace, ""
+		if scratch {
+			cfg.Scratch = workspace
+		}
 		cfg.ClearSessions()
 		cfg.RanWith = nil
 		chat = server.panelHomes["home:"+workspace]
@@ -419,7 +447,7 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		server.chats = append([]*serverChat{chat}, server.chats...)
 	}
 
-	if chat.handoff == nil && !(chat.run != nil && args.Mode == "steer") {
+	if chat.handoff == nil && chat.run == nil {
 		// Another provider, account or model than the chat's last turn: the
 		// client first asks the user how the new one receives the chat.
 		if cfg := server.runConfigLocked(chat, nil); agent.HandoffNeeded(cfg, chat.History) {
@@ -437,11 +465,10 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if chat.run != nil {
-		if args.Mode == "steer" {
-			chat.steer = append(chat.steer, m)
-		} else {
-			chat.queue = append(chat.queue, m)
-		}
+		// A message sent while the agent works joins it at its next step,
+		// whatever the client asked (older clients say "queue" or "send"):
+		// clients show it greyed at the conversation's end until then.
+		chat.steer = append(chat.steer, m)
 		server.changedLocked(chat, -1)
 	} else {
 		server.runLocked(chat, m)

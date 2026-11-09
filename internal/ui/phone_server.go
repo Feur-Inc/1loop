@@ -490,7 +490,8 @@ func phoneChats(all []*conversation) []remoteapi.Chat {
 }
 
 func chatSummary(chat *conversation) remoteapi.Chat {
-	return remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Running: chat.run != nil, Items: len(chat.Items)}
+	status, blocked := agent.WrapUpStatus(chat.Items)
+	return remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Running: chat.run != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
 }
 
 func itemForPhone(chat *conversation, index int) remoteapi.Item {

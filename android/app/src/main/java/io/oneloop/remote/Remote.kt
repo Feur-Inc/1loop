@@ -25,7 +25,8 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** scratch: a chat without a folder, in one 1loop made for it; it shows as "No folder", never its path. */
-data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean, val scratch: Boolean = false)
+/** status and blocked come from the chat's last wrap_up: its recap's first sentence, and whether it waits on the user. */
+data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean, val scratch: Boolean = false, val status: String = "", val blocked: Boolean = false)
 
 /** The project choice that starts a chat in a folder 1loop makes for it (#258). */
 const val NO_FOLDER = "\u0000no-folder"
@@ -833,7 +834,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     private fun parseChats(array: JSONArray?) = (0 until (array?.length() ?: 0)).map { i ->
-        array!!.getJSONObject(i).let { ChatSummary(it.getString("id"), it.optString("title"), it.optString("workspace"), it.optBoolean("running"), it.optBoolean("scratch")) }
+        array!!.getJSONObject(i).let { ChatSummary(it.getString("id"), it.optString("title"), it.optString("workspace"), it.optBoolean("running"), it.optBoolean("scratch"), it.optString("status"), it.optBoolean("blocked")) }
     }
 
     private suspend fun load(id: String, target: Server, generation: Long) {

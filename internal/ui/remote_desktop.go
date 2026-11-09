@@ -702,6 +702,7 @@ func (remote *remoteDesktop) renderChats() {
 		chat := chat
 		chats = append(chats, sideChat{
 			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
+			status: chat.Status, blocked: chat.Blocked,
 			selected: ui.current != nil && ui.current.server == remote && ui.current.serverID == chat.ID,
 			open:     func() { remote.openChat(chat.ID) },
 			menu:     []menuAction{{label: "Delete", icon: iconTrash, danger: true, run: func() { remote.deleteChat(chat) }}},

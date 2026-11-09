@@ -600,7 +600,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
             fun chatRows(folder: String) {
                 val chats = app.chats.filter { it.workspace == folder }
                 for (chat in chats) NavRow(
-                    chat.title, null, selected = chat.id == app.current, running = chat.running,
+                    chat.title, null, selected = chat.id == app.current, running = chat.running, status = chat.status, blocked = chat.blocked,
                     onLongClick = { deleting = chat },
                 ) { app.open(chat.id); onPicked() }
                 if (chats.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
@@ -611,7 +611,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                 NavRow("No folder", Icons.folder, selected = app.selectedProject == NO_FOLDER) { app.selectProject(NO_FOLDER) }
                 if (app.selectedProject == NO_FOLDER) Column(Modifier.padding(start = 16.dp)) {
                     for (chat in scratch) NavRow(
-                        chat.title, null, selected = chat.id == app.current, running = chat.running,
+                        chat.title, null, selected = chat.id == app.current, running = chat.running, status = chat.status, blocked = chat.blocked,
                         onLongClick = { deleting = chat },
                     ) { app.open(chat.id); onPicked() }
                     if (scratch.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
@@ -688,7 +688,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
 }
 
 @Composable
-internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", trailing: String? = null, onClick: () -> Unit) {
+internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", trailing: String? = null, status: String = "", blocked: Boolean = false, onClick: () -> Unit) {
     val press = remember { MutableInteractionSource() }
     val fill by animateColorAsState(if (selected) Palette.selected else Color.Transparent, tween(180), label = "row")
     Row(
@@ -700,9 +700,14 @@ internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running
             Icon(icon, null, tint = Palette.text, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(10.dp))
         }
-        Text(text, style = Type.body.copy(fontSize = 14.sp, color = if (selected) Palette.text else Color(0xFFB4B4B4)), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+        Column(Modifier.weight(1f)) {
+            Text(text, style = Type.body.copy(fontSize = 14.sp, color = if (selected) Palette.text else Color(0xFFB4B4B4)), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            // Its last wrap-up's recap, while the agent is not at work on it.
+            if (status.isNotEmpty() && !running) Text(status, style = Type.caption.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
         trailing?.let { Text(it, style = Type.caption, maxLines = 1, modifier = Modifier.padding(start = 8.dp)) }
         if (running) Box(Modifier.padding(start = 8.dp).size(7.dp).clip(CircleShape).background(Palette.amber))
+        else if (blocked) Box(Modifier.padding(start = 8.dp).size(8.dp).border(1.5.dp, Palette.amber, CircleShape)) // waits on the user
     }
 }
 
@@ -863,8 +868,12 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
             Box(Modifier.fillMaxWidth().appear(rise), contentAlignment = Alignment.TopCenter) {
                 Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
                     when (item.kind) {
-                        "user" -> UserBubble(item, images = { if (item.images > 0) ItemImages(app, app.firstItem + index, item.images) }) {
-                            MessageActions(app, item, running) { editing = app.firstItem + index to item.text }
+                        "user" -> Column {
+                            // The question this message answers stays above it.
+                            WrapUp.answered(items, index)?.let { NextStepCard(it, null, item.text); Spacer(Modifier.height(12.dp)) }
+                            UserBubble(item, images = { if (item.images > 0) ItemImages(app, app.firstItem + index, item.images) }) {
+                                MessageActions(app, item, running) { editing = app.firstItem + index to item.text }
+                            }
                         }
                         "assistant" -> Column {
                             Markdown(item.text, onCite = onCite)
@@ -877,7 +886,7 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
                                 }
                             }
                         }
-                        "tool" -> Column {
+                        "tool" -> if (!WrapUp.isTool(item.tool)) Column { // a wrap_up is drawn as the next-step card
                             ToolRow(item) { onTool(item) }
                             if (item.tool == "imagegen" && item.state == "running") {
                                 Row(
@@ -902,6 +911,11 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
                 }
         
             }
+        }
+        // The turn's next-step card, under its last message until the user answers.
+        val live = WrapUp.live(items)
+        if (live != null) item {
+            Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) { NextStepCard(live, onReply = { app.send(it) }) }
         }
         item {
             AnimatedVisibility(running, enter = fadeIn(), exit = fadeOut()) {

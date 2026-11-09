@@ -166,6 +166,8 @@ type desktopUI struct {
 	queueTray       *fyne.Container
 	queueList       *fyne.Container
 	pendingBox      *fyne.Container // messages sent while the agent works, greyed at the conversation's end
+	nextStep        *fyne.Container // the turn's next-step card, while it waits on the user (next_step.go)
+	nextStepKey     string          // the call it shows
 	// The slash command menu over the composer (slash_commands.go).
 	commandTray, commandList        *fyne.Container
 	commandMatches                  []commandOption
@@ -553,7 +555,8 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.dockRow.Hide()
 	ui.pendingBox = container.NewVBox()
 	ui.footerSpace = canvas.NewRectangle(color.Transparent) // the composer floats over the end (glassFooterLayout)
-	ui.column = container.NewVBox(ui.transcript, ui.inlineRow, ui.pendingBox, ui.footerSpace)
+	ui.nextStep = container.NewVBox()
+	ui.column = container.NewVBox(ui.transcript, ui.nextStep, ui.inlineRow, ui.pendingBox, ui.footerSpace)
 	ui.scroll = newKineticVScroll(container.New(columnLayout{width: 760, inset: 24}, ui.column))
 	ui.followTail = true
 	ui.scroll.OnScrolled = func(position fyne.Position) {

@@ -543,8 +543,10 @@ func (ui *desktopUI) renderChats() {
 			continue
 		}
 		chat := chat
+		status, blocked := agent.WrapUpStatus(chat.Items)
 		chats = append(chats, sideChat{
 			title: chat.Title, folder: chat.Config.Workspace, scratch: chat.Config.InScratch(), running: chat.run != nil, selected: chat == ui.current,
+			status: status, blocked: blocked,
 			open: func() { ui.openChat(chat) },
 			menu: []menuAction{
 				{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},

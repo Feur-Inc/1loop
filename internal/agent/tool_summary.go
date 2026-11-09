@@ -499,6 +499,8 @@ func toolNoun(tool string) string {
 		return "a background task"
 	case "update_todo":
 		return "the task list"
+	case "wrap_up":
+		return "the turn's wrap-up"
 	case "request_user_input":
 		return "a question"
 	case "request_permissions":

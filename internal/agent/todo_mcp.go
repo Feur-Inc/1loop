@@ -29,6 +29,15 @@ func projectMCPTools(cfg Config) []map[string]any {
 	return definitions
 }
 
+func hasTool(definitions []map[string]any, name string) bool {
+	for _, definition := range definitions {
+		if definition["function"].(map[string]any)["name"] == name {
+			return true
+		}
+	}
+	return false
+}
+
 // Claude Code keeps its own harness. Its MCP transport exposes the same
 // TODO store, memory, browser tabs and terminals used by 1loop's other
 // providers.
@@ -77,6 +86,9 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 			definitions := projectMCPTools(cfg)
 			if cfg.ProjectTools == nil && cfg.toolAvailable("update_todo") {
 				definitions = append(definitions, todoToolDefinition())
+			}
+			if cfg.toolAvailable("wrap_up") && !hasTool(definitions, "wrap_up") {
+				definitions = append(definitions, wrapUpToolDefinition())
 			}
 			if cfg.ProjectTools == nil && cfg.toolAvailable("memory") {
 				definitions = append(definitions, memoryToolDefinition())
@@ -138,6 +150,14 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 				text, err := backend.changeSettings(context.WithValue(operation, configContextKey{}, cfg), string(call.Arguments), func() {}, emit)
 				stop()
 				cancel()
+				if err != nil {
+					text = err.Error()
+				}
+				response["result"] = map[string]any{"isError": err != nil, "content": []any{map[string]string{"type": "text", "text": text}}}
+				break
+			}
+			if call.Name == "wrap_up" {
+				text, err := wrapUp(state, string(call.Arguments), emit)
 				if err != nil {
 					text = err.Error()
 				}

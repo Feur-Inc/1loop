@@ -45,6 +45,10 @@ type Chat struct {
 	Scratch   bool   `json:"scratch,omitempty"` // a chat without a folder: show "No folder", never the path
 	Running   bool   `json:"running"`
 	Items     int    `json:"items"`
+	// From its last wrap_up: the recap's first sentence, and whether the
+	// chat waits on the user.
+	Status  string `json:"status,omitempty"`
+	Blocked bool   `json:"blocked,omitempty"`
 }
 
 type Item struct {

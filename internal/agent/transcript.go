@@ -123,6 +123,8 @@ func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) 
 		return pick("Ran an agent:", "Running an agent:"), target, false
 	case "TodoWrite", "update_todo", "mcp__1loop_todo__update_todo":
 		return pick("Updated", "Updating"), "the task list", false
+	case "wrap_up", "mcp__1loop_todo__wrap_up":
+		return pick("Wrapped up", "Wrapping up"), "the turn", false
 	case "recall":
 		return pick("Recalled", "Recalling"), "conversation history", false
 	case "checkpoint":

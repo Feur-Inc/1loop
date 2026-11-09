@@ -51,7 +51,7 @@ func (view *settingsView) find(query string) {
 	matches := registry.Search(registry.On(registry.OnDesktop), query)
 	page := container.NewVBox(view.pageTitle("Search", "", nil))
 	if len(matches) == 0 {
-		page.Add(card(settingRow("No setting matches “"+strings.TrimSpace(query)+"”", "Try another word: its name, what it does, or a synonym.", nil)))
+		page.Add(card(settingRow("No setting matches “"+strings.TrimSpace(query)+"”", "Try another word, such as server, model, phone or browser: its name, what it does, or a synonym.", nil)))
 	} else {
 		rows := make([]fyne.CanvasObject, 0, len(matches))
 		for _, match := range matches {

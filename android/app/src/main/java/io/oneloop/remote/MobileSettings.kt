@@ -22,16 +22,20 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
+import androidx.compose.material3.Icon
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.positionInParent
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.platform.LocalContext
 import androidx.core.net.toUri
 import androidx.compose.ui.unit.dp
@@ -43,22 +47,23 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 
-// The settings: the sections of the shared list (SettingsSearch.kt), the
-// same as the desktop's, one under the other. The search above them finds a
-// setting by its name, what it does or a synonym, and a result scrolls to it,
-// glowing a moment.
+// The settings: a home with the search and the sections of the shared list
+// (SettingsSearch.kt), the same as the desktop's and in its order, each
+// section a page of its own (Android's settings pattern: an overview, then
+// subscreens). The search finds a setting by its name, what it does or a
+// synonym, and a result opens its section, scrolled to it, glowing a moment.
 @Composable
 fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
-    BackHandler(onBack = onBack)
     val context = LocalContext.current
     val list = remember { SettingsList.load(context) }
-    val scope = rememberCoroutineScope()
-    val scroll = rememberScrollState()
-    val anchors = remember { SettingAnchors() }
-    var query by remember { mutableStateOf("") }
+    var section by app::settingsSection
+    var query by rememberSaveable { mutableStateOf("") }
+    var reveal by remember { mutableStateOf<String?>(null) } // the setting a search opened the section on
+    val leave = { if (section != null) { section = null; reveal = null } else onBack() }
+    BackHandler(onBack = leave)
     val local = app.server?.localPhone == true
     val adb = if (local) app.local.adb.collectAsState().value else null
-    // What the page shows now: the search finds only those.
+    // What the pages show now: the search finds only those.
     val shown = list.onPhone().filter { setting ->
         when (setting.key) {
             "models.connections", "tools.linux", "phone.adb", "phone.background", "phone.sharing" -> local
@@ -68,72 +73,99 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
             else -> true
         }
     }
-    val keys = shown.map { it.key }.toSet()
-    fun jump(key: String) {
-        query = ""
-        scope.launch {
-            withFrameNanos { } // the page is back on screen a frame later, with its places
-            withFrameNanos { }
-            anchors.places[key]?.let { scroll.animateScrollTo((it - 12).coerceAtLeast(0)) }
-            anchors.glowing = key
-            delay(2200)
-            if (anchors.glowing == key) anchors.glowing = null
-        }
-    }
+    val open = section?.let { id -> list.sections.firstOrNull { it.id == id } }
     Column(Modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
-            RoundButton(Icons.back, Color.Transparent, Palette.muted, description = "Back", onClick = onBack)
-            Text("Settings", style = Type.title, modifier = Modifier.padding(start = 12.dp))
+            RoundButton(Icons.back, Color.Transparent, Palette.muted, description = "Back", onClick = leave)
+            Text(open?.title ?: "Settings", style = Type.title, modifier = Modifier.padding(start = 12.dp))
         }
-        Field(query, { query = it }, "Search settings", KeyboardType.Text, Modifier.fillMaxWidth().padding(horizontal = 20.dp))
+        if (open == null) {
+            SettingsHome(app, list, shown, query, { query = it }) { id, key -> section = id; reveal = key }
+        } else {
+            SettingsSectionPage(app, open, shown.filter { it.section == open.id }, adb, reveal)
+        }
+    }
+}
+
+/** The home: the search field, then the sections with what each holds, or what matches the search. */
+@Composable
+private fun SettingsHome(app: RemoteApp, list: SettingsList, shown: List<SettingEntry>, query: String, onQuery: (String) -> Unit, onOpen: (String, String?) -> Unit) {
+    Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 16.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        Field(query, onQuery, "Search settings", KeyboardType.Text, Modifier.fillMaxWidth())
         if (query.isBlank()) {
-            // The sections, to go straight to one.
-            Row(Modifier.horizontalScroll(rememberScrollState()).padding(horizontal = 20.dp, vertical = 10.dp), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface)) {
                 list.sections.filter { section -> shown.any { it.section == section.id } }.forEach { section ->
-                    Pill(section.title) { scope.launch { anchors.places["section:" + section.id]?.let { scroll.animateScrollTo(it) } } }
-                }
-            }
-        }
-        if (query.isNotBlank()) {
-            val results = SettingsSearch.search(list, shown, query)
-            Column(Modifier.weight(1f).verticalScroll(rememberScrollState()).padding(20.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                if (results.isEmpty()) {
-                    Text("No setting matches “${query.trim()}”", style = Type.body)
-                    Text("Try another word: its name, what it does, or a synonym.", style = Type.small)
-                }
-                results.forEach { setting ->
-                    Column(
-                        Modifier.fillMaxWidth().clip(RoundedCornerShape(12.dp)).background(Palette.surface).clickable { jump(setting.key) }
-                            .border(1.dp, Palette.borderSoft, RoundedCornerShape(12.dp)).padding(14.dp),
-                        verticalArrangement = Arrangement.spacedBy(3.dp),
-                    ) {
-                        Text(setting.title, style = Type.body.copy(fontWeight = FontWeight.Medium))
-                        Text(list.sectionTitle(setting.section), style = Type.caption)
-                        Text(setting.description, style = Type.small)
-                    }
+                    val summary = if (section.id == "general") app.server?.name?.let { "Now: $it" } ?: section.intro else section.intro
+                    SettingsRow(sectionIcon(section.id), section.title, summary) { onOpen(section.id, null) }
                 }
             }
             return@Column
         }
-        Column(Modifier.weight(1f).verticalScroll(scroll).padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-            for (section in list.sections) {
-                val inSection = shown.filter { it.section == section.id }
-                if (inSection.isEmpty()) continue
-                Column(
-                    Modifier.fillMaxWidth().onGloballyPositioned { anchors.places["section:" + section.id] = it.positionInParent().y.toInt() }
-                        .padding(start = 8.dp, end = 8.dp, top = 18.dp),
-                    verticalArrangement = Arrangement.spacedBy(4.dp),
-                ) {
-                    Text(section.title, style = Type.headline)
-                    Text(section.intro, style = Type.small)
-                }
-                for (setting in inSection) {
-                    SettingBlock(setting.key, anchors) { SettingContent(app, setting.key, adb) }
-                }
+        val results = SettingsSearch.search(list, shown, query)
+        if (results.isEmpty()) {
+            Column(Modifier.fillMaxWidth().background(Palette.surface, RoundedCornerShape(14.dp)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                Text("No setting matches “${query.trim()}”", style = Type.body)
+                Text("Try another word, such as server, model, phone or browser: its name, what it does, or a synonym.", style = Type.small)
             }
-            Spacer(Modifier.height(24.dp))
+            return@Column
         }
-        LaunchedEffect(keys) { anchors.places.keys.retainAll { it.startsWith("section:") || it in keys } }
+        Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface)) {
+            results.forEach { setting ->
+                SettingsRow(sectionIcon(setting.section), setting.title, "${list.sectionTitle(setting.section)} · ${setting.description}") { onOpen(setting.section, setting.key) }
+            }
+        }
+    }
+}
+
+/** The desktop's icon for each section (settings.go). */
+private fun sectionIcon(id: String) = when (id) {
+    "general" -> Icons.sliders
+    "models" -> Icons.plug
+    "agent" -> Icons.shield
+    "tools" -> Icons.puzzle
+    "phone" -> Icons.phone
+    "updates" -> Icons.arrowTurn
+    "advanced" -> Icons.terminal
+    else -> Icons.settings
+}
+
+/** A row that opens a page: its icon, title, one line saying what is there, and a chevron. */
+@Composable
+private fun SettingsRow(icon: ImageVector, title: String, summary: String, onClick: () -> Unit) {
+    Row(
+        Modifier.fillMaxWidth().clickable(onClick = onClick).padding(horizontal = 16.dp, vertical = 14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        Icon(icon, null, tint = Palette.muted, modifier = Modifier.size(20.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+            Text(title, style = Type.body)
+            Text(summary, style = Type.small, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        Icon(Icons.chevronRight, null, tint = Palette.faint, modifier = Modifier.size(18.dp))
+    }
+}
+
+/** One section's page; [reveal] is the setting a search opened it on. */
+@Composable
+private fun SettingsSectionPage(app: RemoteApp, section: SettingsSection, settings: List<SettingEntry>, adb: LocalAdbState?, reveal: String?) {
+    val scroll = rememberScrollState()
+    val anchors = remember(section.id) { SettingAnchors() }
+    LaunchedEffect(section.id, reveal) {
+        val key = reveal ?: return@LaunchedEffect
+        withFrameNanos { } // the page is laid out a frame later, with its places
+        withFrameNanos { }
+        anchors.places[key]?.let { scroll.animateScrollTo((it - 12).coerceAtLeast(0)) }
+        anchors.glowing = key
+        delay(2200)
+        if (anchors.glowing == key) anchors.glowing = null
+    }
+    Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(section.intro, style = Type.small, modifier = Modifier.padding(horizontal = 8.dp))
+        for (setting in settings) {
+            SettingBlock(setting.key, anchors) { SettingContent(app, setting.key, adb) }
+        }
+        Spacer(Modifier.height(24.dp))
     }
 }
 
@@ -161,6 +193,7 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
     when (key) {
         "general.target" -> {
             Text("Execution target", style = Type.title)
+            Text("Where the agent works: it runs commands, edits files and keeps its projects there.", style = Type.small)
             Text(app.server?.name.orEmpty(), style = Type.body)
             Pill("Switch execution target") { app.switchTarget() }
         }

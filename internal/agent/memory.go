@@ -4,7 +4,7 @@ package agent
 
 // The memory tool: what the agent keeps about the user from one chat to the
 // next, in the preferences 1loop already puts in every prompt (Settings →
-// Instructions) rather than a store of its own. What it learns about a
+// Agent & approvals) rather than a store of its own. What it learns about a
 // project goes in the workspace's AGENTS.md with the file tools, where Codex
 // and the other agents read it too. A change is shown as a diff and approved
 // like a file edit: memory outlives the chat, so a prompt injection must not
@@ -48,7 +48,7 @@ func memoryInstructions(cfg Config) string {
 // given: refused when they changed since before was read.
 func preferencesMemory(ctx context.Context, cfg Config) (read func() (string, error), write func(before, after string) error, err error) {
 	if cfg.Preferences == nil {
-		return nil, nil, fmt.Errorf("Memory is turned off in Settings → Instructions")
+		return nil, nil, fmt.Errorf("Memory is turned off in Settings → Agent & approvals")
 	}
 	read = func() (text string, err error) {
 		err = cfg.Preferences(ctx, func(current string) (string, error) { text = current; return current, nil })

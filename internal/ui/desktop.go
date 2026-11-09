@@ -113,7 +113,7 @@ type desktopUI struct {
 	chats            []*conversation
 	current          *conversation
 	projects         []string
-	sshMachines      []sshmachine.Settings          // Settings → SSH machines
+	sshMachines      []sshmachine.Settings          // Settings → General
 	machineProjects  map[string][]string            // each SSH machine's projects (paths there), by machine ID
 	machines         map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
 	localWorkspace   string                         // this computer's project while an SSH machine is the target
@@ -1159,7 +1159,7 @@ func (ui *desktopUI) notReady() string {
 	}
 	if ui.cfg.MachineID != "" { // the project is on the machine: it is checked there
 		if ui.machineFor(ui.cfg.MachineID) == nil {
-			return "This SSH machine is no longer in Settings → SSH machines."
+			return "This SSH machine is no longer in Settings → General."
 		}
 		if ui.cfg.Workspace == "" {
 			return "Create a project on " + ui.targetLabel() + " first (Projects, +)."

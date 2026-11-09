@@ -17,7 +17,7 @@ import (
 	"sync"
 )
 
-// Settings is an SSH machine as Settings → SSH machines saves it. Its
+// Settings is an SSH machine as Settings → General saves it. Its
 // password and key passphrase are kept apart (Secrets).
 type Settings struct {
 	ID       string `json:"id"`

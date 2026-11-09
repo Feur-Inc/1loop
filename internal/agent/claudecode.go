@@ -260,7 +260,7 @@ func (backend *App) claudeHandshake(ctx context.Context, home, dir string, extra
 		}
 		if claudeEventValue.Type == "control_response" && claudeEventValue.Response != nil {
 			if account := claudeEventValue.Response.Response.Account; account != nil && account.TokenSource == "none" {
-				return answer, fmt.Errorf("Claude Code is not signed in. Open Settings → Connections → Claude Code → Sign in")
+				return answer, fmt.Errorf("Claude Code is not signed in. Open Settings → Models & accounts → Claude Code → Sign in")
 			}
 			return claudeEventValue.Response.Response, nil
 		}

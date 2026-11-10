@@ -419,6 +419,7 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 	ui.transcript.RemoveAll()
 	ui.items.reset()
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
+	ui.find.reset()
 	if reuse && ui.restoreChatView(chat) {
 		ui.finishChatLoad()
 		return

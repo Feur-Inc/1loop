@@ -27,6 +27,9 @@ const (
 	Number Kind = "number" // a whole number from Min to Max
 	Text   Kind = "text"   // free text
 	Action Kind = "action" // a button, a list or a page: no value of its own
+	// A keyboard shortcut: a key with its modifiers, as ShortcutValue gives
+	// it ("Ctrl+Shift+F"), or "off".
+	Shortcut Kind = "shortcut"
 )
 
 // Value is one of a choice's values, with how it is shown.
@@ -56,6 +59,7 @@ type Setting struct {
 	Keywords    []string `json:"keywords,omitempty"`
 	Kind        Kind     `json:"kind"`
 	Values      []Value  `json:"values,omitempty"`
+	Default     string   `json:"default,omitempty"` // a shortcut's own key
 	Min         int      `json:"min,omitempty"`
 	Max         int      `json:"max,omitempty"`
 	Where       Where    `json:"where"`
@@ -243,12 +247,12 @@ var list = []Setting{
 }
 
 // All lists every setting, in the order they are shown.
-func All() []Setting { return append([]Setting(nil), list...) }
+func All() []Setting { return append(append([]Setting(nil), list...), shortcuts...) }
 
 // On lists the settings a platform's page shows.
 func On(platform Where) []Setting {
 	var shown []Setting
-	for _, setting := range list {
+	for _, setting := range All() {
 		if setting.On(platform) {
 			shown = append(shown, setting)
 		}
@@ -259,7 +263,7 @@ func On(platform Where) []Setting {
 // Lookup finds a setting by its key.
 func Lookup(key string) (Setting, bool) {
 	key = strings.TrimSpace(key)
-	for _, setting := range list {
+	for _, setting := range All() {
 		if setting.Key == key {
 			return setting, true
 		}

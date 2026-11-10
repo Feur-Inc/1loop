@@ -4,14 +4,11 @@ package agent
 
 import (
 	"context"
-	"crypto"
-	"crypto/rsa"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
-	"math/big"
 	"net"
 	"net/http"
 	"net/url"
@@ -21,6 +18,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/coreos/go-oidc/v3/oidc"
 
 	"1loop/internal/core"
 )
@@ -284,100 +283,37 @@ func (auth *openAIAuth) begin(ctx context.Context) (string, <-chan error, error)
 	return openAIIssuer + "/oauth/authorize?" + q.Encode(), done, nil
 }
 
+// openAIKeys are OpenAI's signing keys, fetched once and again when a token
+// names a key they lack. A test replaces them.
+var (
+	openAIKeysOnce sync.Once
+	openAIKeys     oidc.KeySet
+)
+
+// validateOpenAIID checks an ID token from OpenAI's sign-in (signature,
+// issuer, audience, expiry and nonce) and gives its subject and email.
 func validateOpenAIID(ctx context.Context, token, clientID, nonce string) (string, string, error) {
-	parts := strings.Split(token, ".")
-	if len(parts) != 3 {
-		return "", "", fmt.Errorf("Invalid OpenAI ID token")
-	}
-	decode := func(s string, v any) error {
-		b, errorValue := base64.RawURLEncoding.DecodeString(s)
-		if errorValue != nil {
-			return errorValue
+	openAIKeysOnce.Do(func() {
+		if openAIKeys == nil {
+			fetch := oidc.ClientContext(context.Background(), &http.Client{Timeout: 20 * time.Second})
+			openAIKeys = oidc.NewRemoteKeySet(fetch, openAIIssuer+"/.well-known/jwks.json")
 		}
-		return json.Unmarshal(b, v)
-	}
-	var header struct {
-		Alg string `json:"alg"`
-		Kid string `json:"kid"`
-	}
-	if err := decode(parts[0], &header); err != nil || header.Alg != "RS256" {
-		return "", "", fmt.Errorf("Unsupported OpenAI signature")
-	}
-	req, err := http.NewRequestWithContext(ctx, "GET", openAIIssuer+"/.well-known/jwks.json", nil)
+	})
+	verifier := oidc.NewVerifier(openAIIssuer, openAIKeys, &oidc.Config{ClientID: clientID})
+	idToken, err := verifier.Verify(ctx, token)
 	if err != nil {
-		return "", "", err
-	}
-	resp, err := (&http.Client{Timeout: 20 * time.Second}).Do(req)
-	if err != nil {
-		return "", "", err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != 200 {
-		return "", "", fmt.Errorf("OpenAI signing keys are unavailable")
-	}
-	var jwks struct {
-		Keys []struct {
-			Kid string `json:"kid"`
-			Kty string `json:"kty"`
-			N   string `json:"n"`
-			E   string `json:"e"`
-		} `json:"keys"`
-	}
-	if err = json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(&jwks); err != nil {
-		return "", "", err
-	}
-	signature, err := base64.RawURLEncoding.DecodeString(parts[2])
-	if err != nil {
-		return "", "", err
-	}
-	hash := sha256.Sum256([]byte(parts[0] + "." + parts[1]))
-	valid := false
-	for _, key := range jwks.Keys {
-		if key.Kid != header.Kid || key.Kty != "RSA" {
-			continue
-		}
-		n, e1 := base64.RawURLEncoding.DecodeString(key.N)
-		e, e2 := base64.RawURLEncoding.DecodeString(key.E)
-		exponent := new(big.Int).SetBytes(e)
-		if e1 != nil || e2 != nil || !exponent.IsInt64() {
-			continue
-		}
-		valid = rsa.VerifyPKCS1v15(&rsa.PublicKey{N: new(big.Int).SetBytes(n), E: int(exponent.Int64())}, crypto.SHA256, hash[:], signature) == nil
-		if valid {
-			break
-		}
-	}
-	if !valid {
-		return "", "", fmt.Errorf("Invalid OpenAI account signature")
+		return "", "", fmt.Errorf("Invalid or expired OpenAI identity: %w", err)
 	}
 	var claims struct {
-		Iss   string          `json:"iss"`
-		Sub   string          `json:"sub"`
-		Email string          `json:"email"`
-		Nonce string          `json:"nonce"`
-		Exp   int64           `json:"exp"`
-		Aud   json.RawMessage `json:"aud"`
+		Email string `json:"email"`
 	}
-	if err = decode(parts[1], &claims); err != nil {
+	if err := idToken.Claims(&claims); err != nil {
 		return "", "", err
 	}
-	var audiences []string
-	var single string
-	if json.Unmarshal(claims.Aud, &single) == nil {
-		audiences = []string{single}
-	} else {
-		_ = json.Unmarshal(claims.Aud, &audiences)
-	}
-	audienceOK := false
-	for _, v := range audiences {
-		if v == clientID {
-			audienceOK = true
-		}
-	}
-	if claims.Iss != openAIIssuer || claims.Sub == "" || (nonce != "" && claims.Nonce != nonce) || claims.Exp <= time.Now().Unix() || !audienceOK {
+	if idToken.Subject == "" || (nonce != "" && idToken.Nonce != nonce) {
 		return "", "", fmt.Errorf("Invalid or expired OpenAI identity")
 	}
-	return claims.Sub, claims.Email, nil
+	return idToken.Subject, claims.Email, nil
 }
 
 func (backend *App) GetOpenAI(profile string) (*openAIAuth, error) {

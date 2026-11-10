@@ -274,16 +274,23 @@ func (selection *selectLayer) MouseMoved(e *desktop.MouseEvent) {
 		}
 	}
 	selection.hand = false
+	link := ""
 	if tap != nil {
 		if links, ok := tap.object.(linkSource); ok {
-			selection.hand = links.linkAt(e.Position.Subtract(tap.at)) != ""
+			link = links.linkAt(e.Position.Subtract(tap.at))
+			selection.hand = link != ""
 		} else if _, ok := tap.object.(fyne.Tappable); ok {
 			selection.hand = true
 		}
 	}
+	hoverReference(link, e.AbsolutePosition)
 }
 
-func (selection *selectLayer) MouseOut() { selection.leave(); selection.hand = false }
+func (selection *selectLayer) MouseOut() {
+	selection.leave()
+	selection.hand = false
+	hoverReference("", fyne.Position{})
+}
 
 func (selection *selectLayer) leave() {
 	if selection.over != nil {

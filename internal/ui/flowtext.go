@@ -101,7 +101,7 @@ func (flow *flowText) look(spanValue span) (fyne.TextStyle, float32, color.Color
 		size, ink = flow.size*flowCodeScale, colCodeInk
 	case spanValue.cite:
 		size, ink = flow.size*0.85, colMuted
-	case spanValue.link != "":
+	case spanValue.target() != "":
 		ink = colLink
 	}
 	return style, size, ink
@@ -421,14 +421,14 @@ func (flow *flowText) flow(width float32) {
 					chip.Resize(fyne.NewSize(runWidth, first.height+2))
 					chips = append(chips, chip)
 				}
-				if span.link != "" {
+				if link := span.target(); link != "" {
 					if !span.cite { // a citation is a chip, not underlined
 						rule := canvas.NewRectangle(withAlpha(colLink, 0x70))
 						rule.Move(fyne.NewPos(at.X, top+first.base+2))
 						rule.Resize(fyne.NewSize(textWidth, 1))
 						marks = append(marks, rule)
 					}
-					flow.links = append(flow.links, flowLink{fyne.NewPos(x, top), size, span.link})
+					flow.links = append(flow.links, flowLink{fyne.NewPos(x, top), size, link})
 				}
 				if span.strike {
 					rule := canvas.NewRectangle(first.ink)
@@ -489,6 +489,10 @@ func openLink(address string) {
 	}
 	if strings.HasPrefix(address, citeScheme) {
 		openCitation(address)
+		return
+	}
+	if _, ok := referenceOf(address); ok { // an issue or pull request: the side panel shows it
+		openReference(address)
 		return
 	}
 	target, err := url.Parse(address)

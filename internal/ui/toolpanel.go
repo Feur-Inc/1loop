@@ -51,7 +51,7 @@ type toolPanel struct {
 }
 
 type panelTab struct {
-	kind            string // "tool", "todo", "changes", "files", "terminal" or "browser": what to open again with the chat
+	kind            string // "tool", "todo", "changes", "files", "terminal", "browser" or "github": what to open again with the chat
 	chat            *conversation
 	index           int
 	title           string
@@ -73,6 +73,7 @@ type panelTab struct {
 	webPage         *browser.Page
 	workspace       string // manual tabs belong to a workspace, not a transcript item
 	files           *fileBrowser
+	ref             string // github: the issue or pull request shown, owner/name#N
 }
 
 const panelWidth = 840

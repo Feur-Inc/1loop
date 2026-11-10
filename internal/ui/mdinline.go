@@ -192,7 +192,7 @@ func (parser *inlineParser) parse(s string, style span) {
 					flush(i)
 					in := style
 					in.link = inside
-					parser.text(inside, in)
+					parser.text(refLabel(inside), in)
 					i += end + 1
 					plain = i
 					continue
@@ -210,8 +210,37 @@ func (parser *inlineParser) parse(s string, style span) {
 				flush(i)
 				in := style
 				in.link = url
-				parser.text(url, in)
+				parser.text(refLabel(url), in)
 				i += len(url)
+				plain = i
+				continue
+			}
+			if n := refAt(rest, true); n > 0 { // owner/name#12 whose owner starts with h
+				flush(i)
+				in := style
+				in.link = refScheme + rest[:n]
+				parser.text(rest[:n], in)
+				i += n
+				plain = i
+				continue
+			}
+		case c == '#' && style.link == "" && (i == 0 || !isWordByte(s[i-1]) && strings.IndexByte("&/#", s[i-1]) < 0):
+			if n := refAt(rest, false); n > 0 {
+				flush(i)
+				in := style
+				in.link = refScheme + rest[:n]
+				parser.text(rest[:n], in)
+				i += n
+				plain = i
+				continue
+			}
+		case style.link == "" && isWordByte(c) && c < 0x80 && (i == 0 || !isWordByte(s[i-1]) && strings.IndexByte("/.-_", s[i-1]) < 0):
+			if n := refAt(rest, true); n > 0 {
+				flush(i)
+				in := style
+				in.link = refScheme + rest[:n]
+				parser.text(rest[:n], in)
+				i += n
 				plain = i
 				continue
 			}

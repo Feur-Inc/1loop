@@ -1609,9 +1609,30 @@ func (tooltip *tipLayer) show(anchor fyne.CanvasObject, text string) {
 	})
 }
 
+// showAt is show for a point of the window rather than a control: the
+// hint sits above it.
+func (tooltip *tipLayer) showAt(at fyne.Position, text string) {
+	if tooltip.layer.Visible() && tooltip.anchor == nil { // already up: change its text at once
+		tooltip.placeAt(at, fyne.NewSize(1, 14), text)
+		return
+	}
+	if tooltip.delay != nil {
+		tooltip.delay.Stop()
+	}
+	tooltip.delay = time.AfterFunc(220*time.Millisecond, func() {
+		fyne.Do(func() { tooltip.placeAt(at, fyne.NewSize(1, 14), text) })
+	})
+}
+
 func (tooltip *tipLayer) place(anchor fyne.CanvasObject, text string) {
-	tooltip.bg.Move(fyne.NewPos(0, 0))
+	tooltip.placeAt(fyne.CurrentApp().Driver().AbsolutePositionForObject(anchor), anchor.Size(), text)
 	tooltip.anchor = anchor
+}
+
+// placeAt puts the hint over the area at (absolute) of the given size.
+func (tooltip *tipLayer) placeAt(at fyne.Position, area fyne.Size, text string) {
+	tooltip.bg.Move(fyne.NewPos(0, 0))
+	tooltip.anchor = nil
 	tooltip.layer.Objects = []fyne.CanvasObject{tooltip.bg}
 	tooltip.lines = nil
 	width, height := float32(0), float32(0)
@@ -1629,14 +1650,13 @@ func (tooltip *tipLayer) place(anchor fyne.CanvasObject, text string) {
 		tooltip.layer.Objects = append(tooltip.layer.Objects, label)
 	}
 	box := fyne.NewSize(width+20, height+12)
-	at := fyne.CurrentApp().Driver().AbsolutePositionForObject(anchor)
 	origin := fyne.CurrentApp().Driver().AbsolutePositionForObject(tooltip.layer)
 	limit := tooltip.layer.Size()
-	x := at.X - origin.X + (anchor.Size().Width-box.Width)/2
+	x := at.X - origin.X + (area.Width-box.Width)/2
 	x = fyne.Max(8, fyne.Min(x, limit.Width-box.Width-8))
 	y := at.Y - origin.Y - box.Height - 8
 	if y < 8 {
-		y = at.Y - origin.Y + anchor.Size().Height + 8
+		y = at.Y - origin.Y + area.Height + 8
 	}
 	tooltip.bg.Resize(box)
 	for _, object := range tooltip.layer.Objects {

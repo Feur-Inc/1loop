@@ -4,6 +4,7 @@ package ui
 
 import (
 	"1loop/internal/browser"
+	"1loop/internal/gitrepo"
 	"1loop/internal/platform"
 )
 
@@ -66,9 +67,10 @@ type savedPanel struct {
 }
 
 type savedTab struct {
-	Kind    string        `json:"kind"` // "tool", "todo", "changes", "terminal" or "browser"
+	Kind    string        `json:"kind"` // "tool", "todo", "changes", "terminal", "browser" or "github"
 	Browser *browser.Info `json:"browser,omitempty"`
 	Index   int           `json:"index,omitempty"` // tool: the call's item in the conversation
+	Ref     string        `json:"ref,omitempty"`   // github: owner/name#N
 }
 
 // saved describes a state for the chat's file. A new value each time: the
@@ -79,7 +81,7 @@ func (state *panelState) saved() *savedPanel {
 	}
 	out := &savedPanel{Open: state.open, Width: state.width, Active: state.active}
 	for _, tab := range state.tabs {
-		saved := savedTab{Kind: tab.kind, Index: tab.index}
+		saved := savedTab{Kind: tab.kind, Index: tab.index, Ref: tab.ref}
 		if tab.browser != nil {
 			info := tab.browser.Snapshot()
 			saved.Browser = &info
@@ -116,6 +118,12 @@ func (panel *toolPanel) stateOf(chat *conversation) *panelState {
 			opened = panel.changesTab(chat.Config.Workspace, chat.Config.MachineID)
 		case "files":
 			opened = panel.filesTab(chat.Config.Workspace, chat.Config.MachineID)
+		case "github":
+			ref, ok := gitrepo.ParseRef(tab.Ref)
+			if !ok || ref.Owner == "" {
+				continue
+			}
+			opened = panel.referenceTab(ref, panel.ui.projectOf(chat.Config.Workspace))
 		case "browser":
 			info := browser.Info{Adaptive: true}
 			if tab.Browser != nil {

@@ -166,6 +166,10 @@ var glassEdge = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x2a}
 type footerGlass struct {
 	fade  *fyne.Container   // the conversation fading out above the composer
 	floor *canvas.Rectangle // the background under it
+
+	more  bool    // more of the conversation lies below: the fade is wanted
+	shown float32 // the fade's opacity, 0 at the conversation's end
+	anim  *fyne.Animation
 }
 
 const glassFade = 72 // how far above the composer the conversation fades out
@@ -179,13 +183,50 @@ func newFooterGlass() *footerGlass {
 	// truncated, premultiplied integers, so over the background itself it
 	// showed as stripes one level darker. A rectangle's colour reaches the
 	// shader exactly, and the background over itself stays the background.
-	steps := glassFade / fadeStrip
-	strips := make([]fyne.CanvasObject, steps)
+	strips := make([]fyne.CanvasObject, glassFade/fadeStrip)
 	for i := range strips {
-		alpha := uint8((float32(i) + 0.5) / float32(steps) * 0xff)
-		strips[i] = canvas.NewRectangle(color.NRGBA{R: colBackground.R, G: colBackground.G, B: colBackground.B, A: alpha})
+		strips[i] = canvas.NewRectangle(color.Transparent)
 	}
-	return &footerGlass{fade: container.New(fadeLayout{}, strips...), floor: canvas.NewRectangle(colBackground)}
+	glass := &footerGlass{fade: container.New(fadeLayout{}, strips...), floor: canvas.NewRectangle(colBackground)}
+	glass.paint(0) // nothing below yet: veil brings it in
+	return glass
+}
+
+// veil shows the fade while more of the conversation lies below the
+// composer, and clears it at the conversation's end: nothing is hidden
+// there, and the fade only dimmed the last message.
+func (glass *footerGlass) veil(more bool) {
+	if glass == nil || glass.more == more { // nil before the window is built
+		return
+	}
+	glass.more = more
+	if glass.anim != nil {
+		glass.anim.Stop()
+	}
+	from, to := glass.shown, float32(0)
+	if more {
+		to = 1
+	}
+	glass.anim = fyne.NewAnimation(120*time.Millisecond, func(p float32) { glass.paint(from + (to-from)*p) })
+	glass.anim.Curve = fyne.AnimationEaseOut
+	glass.anim.Start()
+}
+
+// paint draws the fade at an opacity from 0 to 1. Hidden at 0, so nothing
+// is drawn for it at the conversation's end.
+func (glass *footerGlass) paint(opacity float32) {
+	glass.shown = opacity
+	if opacity <= 0 {
+		glass.fade.Hide()
+		return
+	}
+	steps := len(glass.fade.Objects)
+	for i, strip := range glass.fade.Objects {
+		alpha := uint8((float32(i) + 0.5) / float32(steps) * 0xff * opacity)
+		strip.(*canvas.Rectangle).FillColor = color.NRGBA{R: colBackground.R, G: colBackground.G, B: colBackground.B, A: alpha}
+	}
+	glass.fade.Show()
+	glass.fade.Refresh()
 }
 
 // fadeLayout stacks the fade's strips from top to bottom.

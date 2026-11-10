@@ -715,6 +715,7 @@ func (ui *desktopUI) relayoutColumn() {
 	} else {
 		ui.scroll.ScrollToOffset(ui.scroll.Offset) // the bars follow the new height
 	}
+	ui.syncFooterFade()     // the height changed without a scroll event
 	relayout(ui.transcript) // the view moved without a scroll event: bring its items in
 }
 

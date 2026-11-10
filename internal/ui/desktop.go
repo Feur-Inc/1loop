@@ -561,6 +561,7 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 		// Content.Size, not MinSize: MinSize walks the whole chat on every event.
 		bottom := fyne.Max(0, ui.scroll.Content.Size().Height-ui.scroll.Size().Height)
 		ui.followTail = bottom-position.Y <= 2
+		ui.syncFooterFade()
 		relayout(ui.transcript) // items entering the view come back, those leaving it rest
 	}
 	ui.mark = newLoopMark(60)
@@ -568,10 +569,9 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 		container.NewCenter(ui.mark.image), spacer(0, 18),
 		container.NewCenter(textLine("What shall we build today?", 24, colText)), spacer(0, 4),
 		container.NewCenter(textLine("Your project. Your model. One loop.", 14, colMuted)), spacer(0, 40)))
-	// Nothing is drawn between the conversation and the composer: no rule,
-	// no fade (a gradient of the background over itself showed as darker
-	// bands, 8 bits being too few for so dark a colour). The messages just
-	// end where the composer's block begins.
+	// No scroll edge shadow between the conversation and the composer: the
+	// conversation fades under the composer while more of it lies below
+	// (footerGlass).
 	scroll := container.NewThemeOverride(ui.scroll, flatScrollTheme{loopTheme{theme.DefaultTheme()}})
 	ui.chatWait = newLoopMark(56)
 	ui.chatWaitView = container.NewStack(canvas.NewRectangle(colBackground), container.NewCenter(container.NewVBox(
@@ -893,6 +893,15 @@ func (ui *desktopUI) showTranscript(show bool) {
 		ui.scroll.Hide()
 		ui.welcome.Show()
 	}
+	ui.syncFooterFade()
+}
+
+// syncFooterFade shows the fade above the composer only while more of the
+// conversation lies below it, with the tolerance followTail is told with.
+// Called wherever the view or the conversation's height changes.
+func (ui *desktopUI) syncFooterFade() {
+	bottom := fyne.Max(0, ui.scroll.Content.Size().Height-ui.scroll.Size().Height)
+	ui.footerGlass.veil(ui.scroll.Visible() && bottom-ui.scroll.Offset.Y > 2)
 }
 
 func codeText(text string) fyne.CanvasObject {

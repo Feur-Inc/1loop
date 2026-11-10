@@ -17,6 +17,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -39,6 +40,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -61,6 +63,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -98,6 +101,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -781,8 +785,6 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
                     }
                 }
             }) { tool = it }
-            // The conversation fades under the composer instead of a hard edge.
-            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(18.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Palette.background))))
         }
         Composer(app, running)
     }
@@ -815,7 +817,7 @@ private fun Welcome(app: RemoteApp) {
 }
 
 @Composable
-private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> Unit, onTool: (Item) -> Unit) {
+private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> Unit, onTool: (Item) -> Unit) {
     val list = rememberLazyListState()
     var follow by remember { mutableStateOf(true) }
     val items = app.items
@@ -914,7 +916,21 @@ private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> U
             Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) { PendingBubble(pending[i], running) }
         }
     }
+    TranscriptFade(list)
     editing?.let { (index, text) -> EditSheet(text, onSend = { app.editMessage(index, it) }) { editing = null } }
+}
+
+// The conversation fades under the composer instead of a hard edge, while
+// more of it lies below: scrolled to the end, nothing is hidden and nothing
+// is veiled. The fade waits a moment before it comes in: an answer being
+// written grows a frame before the view follows it, which must not flicker.
+@Composable
+private fun BoxScope.TranscriptFade(list: LazyListState) {
+    val more = list.canScrollForward
+    val shown = animateFloatAsState(if (more) 1f else 0f, if (more) tween(160, delayMillis = 90) else tween(120), label = "fade")
+    val fade = remember { Brush.verticalGradient(listOf(Color.Transparent, Palette.background)) }
+    // Drawn, not recomposed, at each frame of the transition.
+    Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(18.dp).drawBehind { if (shown.value > 0f) drawRect(fade, alpha = shown.value) })
 }
 
 private fun answerText(items: List<Item>, index: Int): String {

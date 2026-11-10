@@ -350,7 +350,7 @@
       "key": "agent.project_memory",
       "section": "agent",
       "title": "Project memory",
-      "description": "Each project's AGENTS.md, which every agent reads there.",
+      "description": "Each project's AGENTS.md, which every agent reads there, edited from the project's … menu in the sidebar.",
       "keywords": [
         "agents.md",
         "project",

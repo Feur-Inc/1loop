@@ -8,9 +8,11 @@ package agent
 // --append-system-prompt argument.
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 )
@@ -83,4 +85,34 @@ func SaveProjectMemory(workspace, before, after string) error {
 		writeErr = closeErr
 	}
 	return writeErr
+}
+
+// ProjectMemoryExists says whether the workspace has an AGENTS.md yet.
+func ProjectMemoryExists(workspace string) bool {
+	path, err := WorkspacePath(workspace, "AGENTS.md")
+	if err != nil {
+		return false
+	}
+	_, err = os.Stat(path)
+	return err == nil
+}
+
+// MachineProjectMemory is ProjectMemory for a workspace on an SSH machine,
+// with whether the file exists there.
+func MachineProjectMemory(ctx context.Context, machine Machine, workspace string) (string, bool, error) {
+	name := path.Join(workspace, "AGENTS.md")
+	if !machineExists(ctx, machine, name) {
+		return "", false, nil
+	}
+	text, err := machineText(ctx, machine, name)
+	return text, true, err
+}
+
+// SaveMachineProjectMemory is SaveProjectMemory on an SSH machine.
+func SaveMachineProjectMemory(ctx context.Context, machine Machine, workspace, before, after string) error {
+	current, exists, err := MachineProjectMemory(ctx, machine, workspace)
+	if err != nil || current != before {
+		return fmt.Errorf("AGENTS.md changed since it was read; read it again")
+	}
+	return machine.WriteFile(ctx, path.Join(workspace, "AGENTS.md"), []byte(after), !exists)
 }

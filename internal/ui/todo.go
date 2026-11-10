@@ -82,6 +82,7 @@ func (panel *toolPanel) todoChanged(chat *conversation) {
 			box.Add(title)
 			box.Add(padded(8, 0, 0, 0, plainFlow("No tasks yet. The agent lists them here when it plans your request, and ticks them off as it goes.", 13, colMuted)))
 			panel.addBackgroundTasks(box, chat)
+			panel.addSubchats(box, chat)
 			box.Refresh()
 			panel.refreshTodoStatus()
 			continue
@@ -115,6 +116,7 @@ func (panel *toolPanel) todoChanged(chat *conversation) {
 			box.Add(padded(7, 7, 0, 0, container.NewBorder(nil, nil, container.NewVBox(mark), container.NewVBox(slot), padded(1, 0, 12, 8, text))))
 		}
 		panel.addBackgroundTasks(box, chat)
+		panel.addSubchats(box, chat)
 		box.Refresh()
 	}
 	panel.refreshTodoStatus()

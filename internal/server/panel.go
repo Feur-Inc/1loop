@@ -37,7 +37,7 @@ func (server *headlessServer) panelChatLocked(id string) *serverChat {
 		server.panelHomes = map[string]*serverChat{}
 	}
 	config := server.cfg
-	config.Workspace, config.RanWith = workspace, nil
+	config.Workspace, config.RanWith, config.MachineID = workspace, nil, server.projectMachines[workspace]
 	config.ClearSessions()
 	home := &serverChat{ID: id, Config: config, Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}
 	server.panelHomes[id] = home
@@ -116,7 +116,16 @@ func (server *headlessServer) panelTab(w http.ResponseWriter, r *http.Request) {
 	if key == "changes" {
 		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
 		defer cancel()
-		output, err := agent.WorkspaceDiff(ctx, chat.Config.Workspace, r.URL.Query().Get("staged") == "1")
+		server.mu.Lock()
+		machine := server.machineLocked(chat.Config.MachineID)
+		server.mu.Unlock()
+		var output string
+		var err error
+		if machine != nil {
+			output, err = agent.MachineDiff(ctx, machine, chat.Config.Workspace, r.URL.Query().Get("staged") == "1")
+		} else {
+			output, err = agent.WorkspaceDiff(ctx, chat.Config.Workspace, r.URL.Query().Get("staged") == "1")
+		}
 		if err != nil {
 			core.Fail(w, 400, err.Error())
 			return

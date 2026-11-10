@@ -23,6 +23,7 @@ import (
 	"1loop/internal/browser"
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
+	"1loop/internal/sshmachine"
 )
 
 type serverChat struct {
@@ -73,6 +74,9 @@ type serverSettings struct {
 	AutoResume        *agent.AutoResume  `json:"autoResume,omitempty"`
 	// Worktrees of the projects, by folder: their chats belong to the project.
 	Worktrees map[string]string `json:"worktrees,omitempty"`
+	// SSH machines (machines.go), and the projects that are folders of one.
+	SSHMachines     []serverMachine   `json:"sshMachines,omitempty"`
+	ProjectMachines map[string]string `json:"projectMachines,omitempty"`
 }
 
 type headlessServer struct {
@@ -85,7 +89,11 @@ type headlessServer struct {
 	engine                     *browser.Engine
 	name, root, dir            string
 	projects                   []string
-	worktrees                  map[string]string // worktree folder → project (worktrees.go)
+	worktrees                  map[string]string              // worktree folder → project (worktrees.go)
+	machines                   []serverMachine                // SSH machines (machines.go)
+	projectMachines            map[string]string              // project folder there → machine ID
+	connected                  map[string]*sshmachine.Machine // machines used since the start, by ID
+	trust                      *hostTrust
 	cfg                        agent.Config
 	connections                []agent.Connection
 	keys                       map[string]string
@@ -149,6 +157,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		choices:      map[string]agent.ModelChoice{},
 		approvalMode: "approval",
 		loading:      true,
+		trust:        &hostTrust{out: os.Stderr},
 		cfg:          agent.Config{Provider: "compatible", Workspace: root},
 	}
 	var saved struct {
@@ -176,6 +185,8 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		}
 		server.projects = settings.Projects
 		server.worktrees = settings.Worktrees
+		server.machines = settings.SSHMachines
+		server.projectMachines = settings.ProjectMachines
 		server.cfg = settings.Config
 		server.connections = settings.Connections
 		if settings.Keys != nil {
@@ -502,7 +513,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 func (server *headlessServer) summariesLocked() []remoteapi.Chat {
 	out := []remoteapi.Chat{}
 	for _, chat := range server.chats {
-		out = append(out, remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Running: chat.run != nil, Items: len(chat.Items)})
+		out = append(out, remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Items: len(chat.Items)})
 	}
 	return out
 }
@@ -711,6 +722,9 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 		cfg.CompactAt = connection.ModelOptions[cfg.Model].CompactAt
 	}
 	cfg.APIKey = server.keys[cfg.ConnectionID]
+	if machine := server.machineLocked(cfg.MachineID); machine != nil {
+		cfg.Machine = machine // else the run refuses: its machine was removed
+	}
 	cfg.UserInstructions = server.instructions
 	if !server.memoryOff {
 		cfg.Preferences = server.updatePreferences
@@ -1020,6 +1034,8 @@ func (server *headlessServer) saveSettingsLocked() error {
 		MemoryOff:         server.memoryOff,
 		AutoResume:        server.autoResume,
 		Worktrees:         server.worktrees,
+		SSHMachines:       server.machines,
+		ProjectMachines:   server.projectMachines,
 	})
 }
 

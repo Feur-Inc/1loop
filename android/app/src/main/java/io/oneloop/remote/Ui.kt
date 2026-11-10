@@ -625,7 +625,9 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                     projectName(workspace), Icons.folder, selected = selected,
                     onLongClick = if (app.projectActions || git != null) ({ projectActions = workspace }) else null,
                     longClickLabel = "Project actions",
-                    trailing = git?.current?.takeIf { it.isNotEmpty() },
+                    // A project on an SSH machine says so, beside its branch.
+                    trailing = listOfNotNull(git?.current?.takeIf { it.isNotEmpty() }, app.machineOf(workspace)?.let { "on ${it.label}" })
+                        .joinToString(" · ").ifEmpty { null },
                 ) { app.selectProject(workspace) }
                 if (app.projectOf(app.selectedProject) == workspace) {
                     Column(Modifier.padding(start = 16.dp)) {
@@ -1194,12 +1196,13 @@ private fun ProjectChip(app: RemoteApp, chosen: String?, onChoose: (String) -> U
         ) {
             Icon(Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
-            Text(app.folderName(path), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
+            val machine = app.machineOf(path.takeIf { it != NO_FOLDER })
+            Text(app.folderName(path) + (machine?.let { " · on ${it.label}" } ?: ""), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
         }
         if (open) GlassMenuOpen()
         DropdownMenu(open, { open = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover), border = GlassEdge, shape = GlassMenuShape) {
             for (p in app.projects) DropdownMenuItem(
-                text = { Text(projectName(p), style = Type.body) },
+                text = { Text(projectName(p) + (app.machineOf(p)?.let { " · on ${it.label}" } ?: ""), style = Type.body) },
                 onClick = { onChoose(p); open = false },
                 leadingIcon = { Icon(if (p == path) Icons.check else Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp)) },
             )

@@ -82,8 +82,9 @@ var sectionIcons = map[string]fyne.Resource{
 
 // subPages are pages of their own, opened from a row of their section.
 var subPages = map[string]string{
-	"Extensions": registry.Tools,
-	"Connectors": registry.Tools,
+	"Extensions":           registry.Tools,
+	"Connectors":           registry.Tools,
+	registry.ShortcutsPage: registry.General,
 }
 
 // pageAliases are pages of earlier versions, still named by links and
@@ -285,6 +286,8 @@ func (view *settingsView) build(page string) fyne.CanvasObject {
 		return ui.updateSettings()
 	case "Advanced":
 		return ui.advancedSettings()
+	case registry.ShortcutsPage:
+		return ui.shortcutSettings()
 	case "Extensions":
 		return ui.extensionSettings()
 	case "Connectors":
@@ -580,6 +583,10 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		view.mark(registry.KeyDiscordDetails, settingRow("Share the chat",
 			"Also shows the chat's title, its project and the command or file the agent is on. Off, they stay on this computer.",
 			newToggle(ui.discordDetails, func(on bool) { ui.setDiscordPresence(ui.discordPresence, on) })))))
+	if ui.server == nil {
+		page.Add(sectionTitle("Keyboard"))
+		page.Add(card(settingRow(registry.ShortcutsPage, "New chat, search, find in the chat and more: see their keys, and change them.", view.pageButton(registry.ShortcutsPage))))
+	}
 	page.Add(sectionTitle("Import"))
 	page.Add(card(view.mark("general.import", ui.importRow())))
 	return page

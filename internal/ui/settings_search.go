@@ -172,7 +172,11 @@ func (ui *desktopUI) settingsAccess() *agent.SettingsAccess {
 						value = gitrepo.SortRecent
 					}
 				default:
-					ok = false
+					if setting, known := registry.Lookup(key); known && setting.Kind == registry.Shortcut {
+						value = ui.shortcutFor(key)
+					} else {
+						ok = false
+					}
 				}
 			})
 			return value, ok && ctx.Err() == nil
@@ -192,10 +196,20 @@ func (ui *desktopUI) settingsAccess() *agent.SettingsAccess {
 				case registry.KeyWorktreeSort:
 					ui.setWorktreeSort(value)
 				default:
-					err = fmt.Errorf("%s is not a setting of this computer", key)
+					if setting, known := registry.Lookup(key); known && setting.Kind == registry.Shortcut {
+						err = ui.setShortcut(key, value, false)
+					} else {
+						err = fmt.Errorf("%s is not a setting of this computer", key)
+					}
 				}
-				if setting, ok := registry.Lookup(key); ok && err == nil && ui.prefs.at(registry.SectionTitle(setting.Section)) {
-					ui.prefs.show(ui.prefs.page) // the row shows the change
+				if setting, ok := registry.Lookup(key); ok && err == nil {
+					page := registry.SectionTitle(setting.Section)
+					if setting.Page != "" {
+						page = setting.Page
+					}
+					if ui.prefs.at(page) {
+						ui.prefs.show(ui.prefs.page) // the row shows the change
+					}
 				}
 			})
 			if err == nil {

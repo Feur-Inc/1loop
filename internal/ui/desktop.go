@@ -41,6 +41,7 @@ import (
 	"1loop/internal/extensions"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
+	registry "1loop/internal/settings"
 	"1loop/internal/sshmachine"
 )
 
@@ -243,9 +244,14 @@ type desktopUI struct {
 	connections    *tapRow
 	projectList    *fyne.Container
 	sideLists      *fyne.Container
-	sideChats      []sideChat      // the chats listed, for search
-	allChatsShown  map[string]bool // projects whose every chat is listed
-	worktreesShown map[string]bool // projects whose worktrees are unfolded
+	sideChats      []sideChat // the chats listed, for search
+	sideOrder      []sideChat // the same in the sidebar's order, for the previous and next chat
+	searchRow      *tapRow
+	find           *chatFind
+	shortcutKeys   map[string]string         // shortcut → key, where the user chose another than its default
+	registered     []*desktop.CustomShortcut // the shortcuts' keys the window has
+	allChatsShown  map[string]bool           // projects whose every chat is listed
+	worktreesShown map[string]bool           // projects whose worktrees are unfolded
 	foldedProjects map[string]bool
 	pane           *paneLayout
 	sideHandle     *sidebarHandle
@@ -289,7 +295,7 @@ func runDesktop(backend *agent.App, root string) {
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
 	backend.EnableChatGPTWeb(ctx)
-	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), statePath: statePath(root),
+	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), shortcutKeys: map[string]string{}, statePath: statePath(root),
 		cfg: agent.Config{Provider: "compatible", Workspace: root}, foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}}
 	ui.load()
 	ui.initializeConnections()
@@ -319,15 +325,7 @@ func runDesktop(backend *agent.App, root string) {
 	})
 	ui.prompt.switchDraft(ui.draftKey())
 	ui.window.SetCloseIntercept(ui.closeWindow)
-	for _, s := range []*desktop.CustomShortcut{
-		{KeyName: fyne.KeyQ, Modifier: fyne.KeyModifierControl},
-		{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierControl},
-		{KeyName: fyne.KeyF, Modifier: fyne.KeyModifierControl},
-		{KeyName: fyne.KeyR, Modifier: fyne.KeyModifierControl | fyne.KeyModifierShift},
-		{KeyName: fyne.KeyB, Modifier: fyne.KeyModifierControl},
-	} {
-		ui.window.Canvas().AddShortcut(s, func(s fyne.Shortcut) { ui.shortcut(s) })
-	}
+	ui.registerShortcuts()
 	ui.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { ui.copySelection() })
 	ui.updateHeader()
 	ui.renderChats()
@@ -433,25 +431,10 @@ func (ui *desktopUI) shortcut(s fyne.Shortcut) bool {
 		// text selected in the conversation is what is meant.
 		return (ui.prompt == nil || ui.prompt.SelectedText() == "") && ui.copySelection()
 	}
-	c, ok := s.(*desktop.CustomShortcut)
-	if !ok {
+	if _, custom := s.(*desktop.CustomShortcut); !custom {
 		return false
 	}
-	switch {
-	case c.KeyName == fyne.KeyQ && c.Modifier == fyne.KeyModifierControl:
-		ui.quit() // really quits, even when closing hides the window in the tray
-	case c.KeyName == fyne.KeyK && c.Modifier == fyne.KeyModifierControl:
-		ui.startNew()
-	case c.KeyName == fyne.KeyF && c.Modifier == fyne.KeyModifierControl:
-		ui.search()
-	case c.KeyName == fyne.KeyR && c.Modifier == fyne.KeyModifierControl|fyne.KeyModifierShift:
-		ui.restart()
-	case c.KeyName == fyne.KeyB && c.Modifier == fyne.KeyModifierControl:
-		ui.toggleSidebar()
-	default:
-		return false
-	}
-	return true
+	return ui.runShortcut(s) // keybindings.go
 }
 
 // release stops background work and saves, before closing or restarting.
@@ -595,7 +578,7 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 		container.NewCenter(ui.chatWait.image), spacer(0, 12),
 		container.NewCenter(textLine("Loading conversation…", 14, colMuted)))))
 	ui.chatWaitView.Hide()
-	ui.chatViewport = container.NewStack(ui.welcome, scroll, ui.chatWaitView)
+	ui.chatViewport = container.NewStack(ui.welcome, scroll, ui.chatWaitView, ui.buildFind())
 	ui.scroll.Hide()
 
 	ui.footerGlass = newFooterGlass()
@@ -716,14 +699,10 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	}
 	ui.steer.Hide()
 	ui.stop = newIconButton(iconStop, colText, colInk, func() {
-		if ui.current != nil && ui.current.server != nil {
-			ui.current.server.stop()
-			return
-		}
-		if ui.current != nil && ui.current.run != nil {
+		if ui.current != nil {
 			platform.Devf("ui", "stop pressed for %q", ui.current.Title)
-			ui.current.run.cancel()
 		}
+		ui.stopRun()
 	})
 	ui.stop.iconPx = 20
 	ui.stop.onHover = func(in bool) {
@@ -894,6 +873,7 @@ func (ui *desktopUI) startNew() {
 	ui.items.reset()
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
 	ui.panel.switchTo(nil)
+	ui.find.reset()
 	ui.showTranscript(false)
 	ui.curtain.reveal()
 	ui.syncRun()
@@ -1785,6 +1765,7 @@ type savedState struct {
 	TrayNoticeShown   bool                  `json:"trayNoticeShown,omitempty"`
 	DiscordPresence   bool                  `json:"discordPresence,omitempty"`
 	DiscordDetails    bool                  `json:"discordDetails,omitempty"`
+	Shortcuts         map[string]string     `json:"shortcuts,omitempty"` // the keys chosen in Settings
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1847,6 +1828,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.trayNoticeShown,
 		ui.discordPresence,
 		ui.discordDetails,
+		ui.shortcutKeys,
 	})
 	if ui.panel != nil {
 		ui.panel.stash() // the open chat's panel, as it is now
@@ -1957,6 +1939,13 @@ func (ui *desktopUI) load() {
 	ui.worktrees, ui.worktreeSort = state.Worktrees, state.WorktreeSort
 	for _, project := range state.FoldedProjects {
 		ui.foldedProjects[project] = true
+	}
+	for key, value := range state.Shortcuts {
+		if setting, ok := registry.Lookup(key); ok && setting.Kind == registry.Shortcut {
+			if value, err := registry.ShortcutValue(value); err == nil {
+				ui.shortcutKeys[key] = value
+			}
+		}
 	}
 	if _, ok := ui.machineSettings(ui.cfg.MachineID); ui.cfg.MachineID != "" && !ok { // the machine was removed
 		ui.cfg.MachineID, ui.cfg.Workspace = "", ui.lastLocalWorkspace()

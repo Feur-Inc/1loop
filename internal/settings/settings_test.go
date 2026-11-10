@@ -131,3 +131,30 @@ func TestPhoneCopy(t *testing.T) {
 		t.Fatalf("%s is out of date: run go test ./internal/settings with UPDATE_SETTINGS=1", phoneCopy)
 	}
 }
+
+func TestShortcuts(t *testing.T) {
+	used := map[string]string{}
+	for _, setting := range Shortcuts() {
+		value, err := ShortcutValue(setting.Default)
+		if err != nil || value != setting.Default {
+			t.Errorf("%s: default %q reads as %q, %v", setting.Key, setting.Default, value, err)
+		}
+		if other, taken := used[value]; taken {
+			t.Errorf("%s and %s both default to %s", setting.Key, other, value)
+		}
+		used[value] = setting.Key
+		if found, _ := Lookup(setting.Key); found.Kind != Shortcut {
+			t.Errorf("%s is not listed", setting.Key)
+		}
+	}
+	for text, want := range map[string]string{"ctrl+shift+f": "Ctrl+Shift+F", "Alt+up": "Alt+ArrowUp", "cmd+k": "Meta+K", "Off": ShortcutOff, "": ShortcutOff, "Ctrl+,": "Ctrl+,"} {
+		if got, err := ShortcutValue(text); err != nil || got != want {
+			t.Errorf("ShortcutValue(%q) = %q, %v; want %q", text, got, err, want)
+		}
+	}
+	for _, text := range []string{"F", "Shift+F", "Ctrl+C", "ctrl+v", "Ctrl+Enter", "Ctrl+Bogus", "Ctrl++"} {
+		if got, err := ShortcutValue(text); err == nil {
+			t.Errorf("ShortcutValue(%q) = %q, want an error", text, got)
+		}
+	}
+}

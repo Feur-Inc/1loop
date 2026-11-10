@@ -166,7 +166,7 @@ func findAll(query string, chosen searchKind, chats []searchEntry, settings []re
 	return kind, found
 }
 
-// search finds chats of the target and settings in one list (Ctrl+F):
+// search finds chats of the target and settings in one list (Ctrl+K):
 // Up and Down choose, Enter opens, Tab changes the tag, Escape closes.
 func (ui *desktopUI) search() {
 	chats := ui.sideChats
@@ -330,8 +330,16 @@ func (ui *desktopUI) search() {
 // keyEntry is a one-line entry whose keys a list beneath it can take first.
 type keyEntry struct {
 	widget.Entry
-	onKey func(*fyne.KeyEvent) bool
-	tabs  bool // Tab goes to onKey instead of moving the focus
+	onKey    func(*fyne.KeyEvent) bool
+	tabs     bool                     // Tab goes to onKey instead of moving the focus
+	shortcut func(fyne.Shortcut) bool // the app's shortcuts, before the entry's own
+}
+
+func (entry *keyEntry) TypedShortcut(s fyne.Shortcut) {
+	if entry.shortcut != nil && entry.shortcut(s) {
+		return
+	}
+	entry.Entry.TypedShortcut(s)
 }
 
 func (entry *keyEntry) AcceptsTab() bool { return entry.tabs }

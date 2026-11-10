@@ -11,6 +11,8 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
+
+	registry "1loop/internal/settings"
 )
 
 // A project shows this many chats until "Show more" is pressed.
@@ -83,7 +85,9 @@ func (ui *desktopUI) renderSidebar(projects []string, chats []sideChat, selectPr
 	if ui.server == nil && ui.cfg.MachineID == "" && (ui.cfg.InScratch() || len(scratch) > 0) {
 		ui.addScratchGroup(scratch)
 	}
+	ui.sideOrder = append(ui.sideOrder[:0], scratch...)
 	for _, group := range groupByProject(listed, chats, func(chat sideChat) string { return chat.folder }, ui.projectOf) {
+		ui.sideOrder = append(ui.sideOrder, group.chats...)
 		p := group.project
 		folded := ui.foldedProjects[p]
 		name := "Other chats"
@@ -224,9 +228,10 @@ func (ui *desktopUI) foldProject(project string, folded bool) {
 // sideActions is the labelled block at the top of the sidebar.
 func (ui *desktopUI) sideActions() fyne.CanvasObject {
 	ui.newChat = newRow("New chat", iconPlus, styleNav, ui.startNew)
-	ui.newChat.trailing = "Ctrl K"
-	search := newRow("Search", iconSearch, styleNav, ui.search)
-	search.trailing = "Ctrl F"
+	ui.newChat.trailing = ui.shortcutLabel(registry.ShortcutNewChat)
+	ui.searchRow = newRow("Search", iconSearch, styleNav, ui.search)
+	ui.searchRow.trailing = ui.shortcutLabel(registry.ShortcutSearch)
 	add := newRow("Add project", iconFolderAdd, styleNav, ui.addProject)
-	return container.New(layout.NewCustomPaddedVBoxLayout(1), ui.newChat, search, add)
+	add.trailing = ui.shortcutLabel(registry.ShortcutNewProject)
+	return container.New(layout.NewCustomPaddedVBoxLayout(1), ui.newChat, ui.searchRow, add)
 }

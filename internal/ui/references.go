@@ -192,7 +192,7 @@ func (ui *desktopUI) hoverReference(link string, at fyne.Position) {
 	ui.refHover = link
 	ref, err := ui.resolve(ref)
 	if err != nil {
-		ui.tips.showAt(at, err.Error())
+		ui.tips.showAt(at, [][]tipRun{{{ref.String(), colAmber}}, {{err.Error(), colMuted}}})
 		return
 	}
 	key := ref.String()
@@ -224,13 +224,15 @@ func (ui *desktopUI) hoverReference(link string, at fyne.Position) {
 	ui.tips.showAt(at, referenceCard(ref, entry))
 }
 
-// referenceCard is the hover card's text: the title, then what it is.
-func referenceCard(ref gitrepo.Ref, entry *referenceCache) string {
+// referenceCard is the hover card: the title in the accent, then what it
+// is, its state in its colour and, for a pull request, its lines added in
+// green and removed in red.
+func referenceCard(ref gitrepo.Ref, entry *referenceCache) [][]tipRun {
 	switch {
 	case entry.loading:
-		return ref.String() + "\nLoading from GitHub…"
+		return [][]tipRun{{{ref.String(), colAmber}}, {{"Loading from GitHub…", colMuted}}}
 	case entry.err != "":
-		return ref.String() + "\n" + entry.err
+		return [][]tipRun{{{ref.String(), colAmber}}, {{entry.err, colDanger}}}
 	}
 	item := entry.item
 	title := item.Title
@@ -241,18 +243,25 @@ func referenceCard(ref gitrepo.Ref, entry *referenceCache) string {
 	if item.Pull {
 		kind = "Pull request"
 	}
-	lines := []string{title, fmt.Sprintf("%s %s · %s · by %s", kind, ref, stateName(item.State), item.Author)}
+	lines := [][]tipRun{{{title, colAmber}}, {
+		{kind + " " + ref.String() + " · ", colMuted},
+		{stateName(item.State), stateColor(item.State)},
+		{" · by " + item.Author, colMuted},
+	}}
 	if item.Pull {
-		lines = append(lines, fmt.Sprintf("+%d −%d · %s · %s · %s ← %s", item.Additions, item.Deletions,
-			plural(item.Files, "file"), plural(item.Commits, "commit"), item.Base, item.Head))
+		lines = append(lines, []tipRun{
+			{fmt.Sprintf("+%d", item.Additions), colAdded},
+			{fmt.Sprintf(" −%d", item.Deletions), colDanger},
+			{fmt.Sprintf(" · %s · %s · %s ← %s", plural(item.Files, "file"), plural(item.Commits, "commit"), item.Base, item.Head), colMuted},
+		})
 	} else {
 		line := plural(item.Comments, "comment")
 		if len(item.Labels) > 0 {
 			line += " · " + strings.Join(item.Labels, ", ")
 		}
-		lines = append(lines, line)
+		lines = append(lines, []tipRun{{line, colMuted}})
 	}
-	return strings.Join(lines, "\n")
+	return lines
 }
 
 func stateName(state string) string {
@@ -397,7 +406,7 @@ func referenceView(detail *gitrepo.Detail, refresh func()) fyne.CanvasObject {
 }
 
 // stateColor is GitHub's meaning of each state, in 1loop's colours.
-func stateColor(state string) color.Color {
+func stateColor(state string) color.NRGBA {
 	switch state {
 	case "open":
 		return colAdded

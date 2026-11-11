@@ -729,6 +729,9 @@ func (ui *desktopUI) agentSettings() fyne.CanvasObject {
 			view.mark(registry.KeyMemory, settingRow("Memory",
 				"The agent adds what it learns about you to these preferences, each change shown to you for approval. Off: it is not offered the memory tool.",
 				newToggle(!ui.memoryOff, func(on bool) { ui.setMemory(on) })))),
+		card(view.mark(registry.KeyWrapUp, settingRow("Next-step card",
+			"At the end of a turn that did work, the agent sums it up in a card and, when the next move is yours, asks with one or two reply buttons. Off: it is not offered the wrap_up tool.",
+			newToggle(!ui.wrapUpOff, func(on bool) { ui.setWrapUp(on) })))),
 		sectionTitle("Project memory"),
 	)
 	var rows []fyne.CanvasObject
@@ -748,6 +751,12 @@ func (ui *desktopUI) agentSettings() fyne.CanvasObject {
 
 func (ui *desktopUI) setMemory(on bool) {
 	ui.memoryOff = !on
+	ui.save()
+	ui.remote.settingsChanged()
+}
+
+func (ui *desktopUI) setWrapUp(on bool) {
+	ui.wrapUpOff = !on
 	ui.save()
 	ui.remote.settingsChanged()
 }

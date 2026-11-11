@@ -38,6 +38,9 @@ type Config struct {
 	// lock: update receives the saved text and returns the new one. Nil
 	// where the memory tool cannot change them.
 	Preferences func(ctx context.Context, update func(string) (string, error)) error `json:"-"`
+	// WrapUpOff: the next-step card is turned off in Settings, so the
+	// wrap_up tool is not offered.
+	WrapUpOff bool `json:"-"`
 	// Settings reads and changes 1loop's own settings for the settings
 	// tool. Nil where the tool is not offered.
 	Settings *SettingsAccess `json:"-"`

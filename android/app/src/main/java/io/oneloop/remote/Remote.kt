@@ -384,6 +384,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var preferencesEditable by mutableStateOf(false)
     /** Whether the agent may save memories to the preferences; null when the target cannot say. */
     var memoryEnabled by mutableStateOf<Boolean?>(null)
+    var wrapUpEnabled by mutableStateOf<Boolean?>(null) // the next-step card; null: the computer has no such setting
     var defaultAutoResume by mutableStateOf<JSONObject?>(null)
     val models = mutableStateListOf<ModelOption>()
     val accounts = mutableStateListOf<Account>()
@@ -732,6 +733,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         projectActions = false
         preferencesEditable = false
         memoryEnabled = null
+        wrapUpEnabled = null
         userPreferences = ""
         running.clear()
         AgentStatus.clear(context)
@@ -929,6 +931,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         userPreferences = settings.optString("userPreferences")
         preferencesEditable = settings.optBoolean("preferencesEditable")
         memoryEnabled = if (settings.has("memory")) settings.optBoolean("memory") else null
+        wrapUpEnabled = if (settings.has("wrapUp")) settings.optBoolean("wrapUp") else null
         messageVersions = settings.optBoolean("messageVersions")
         attachmentsEnabled = settings.optBoolean("attachments")
         val array = settings.optJSONArray("models")
@@ -1228,6 +1231,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val reply = onConnection(target, generation) { it.post("/api/memory", JSONObject().put("enabled", enabled)) }
         memoryEnabled = reply.optBoolean("memory")
+    }
+
+    suspend fun setWrapUp(enabled: Boolean) {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        val reply = onConnection(target, generation) { it.post("/api/wrap-up", JSONObject().put("enabled", enabled)) }
+        wrapUpEnabled = reply.optBoolean("wrapUp")
     }
 
     suspend fun saveAutoResume(policy: JSONObject) {

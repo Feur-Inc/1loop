@@ -32,7 +32,7 @@ func TestEverySettingIsMarked(t *testing.T) {
 		source.Write(data)
 	}
 	constants := map[string]string{"KeyApprovalMode": registry.KeyApprovalMode, "KeyDynamicCompaction": registry.KeyDynamicCompaction,
-		"KeyMemory": registry.KeyMemory, "KeyAutoResume": registry.KeyAutoResume, "KeyWorktreeSort": registry.KeyWorktreeSort,
+		"KeyMemory": registry.KeyMemory, "KeyWrapUp": registry.KeyWrapUp, "KeyAutoResume": registry.KeyAutoResume, "KeyWorktreeSort": registry.KeyWorktreeSort,
 		"KeyDiscordPresence": registry.KeyDiscordPresence, "KeyDiscordDetails": registry.KeyDiscordDetails}
 	marked := map[string]bool{}
 	for _, match := range regexp.MustCompile(`\.mark\((?:"([^"]+)"|registry\.(\w+))`).FindAllStringSubmatch(source.String(), -1) {

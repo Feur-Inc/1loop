@@ -72,6 +72,7 @@ type serverSettings struct {
 	ApprovalMode      string             `json:"approvalMode"`
 	ClassicCompaction bool               `json:"classicCompaction"`
 	MemoryOff         bool               `json:"memoryOff,omitempty"`
+	WrapUpOff         bool               `json:"wrapUpOff,omitempty"`
 	AutoResume        *agent.AutoResume  `json:"autoResume,omitempty"`
 	// Worktrees of the projects, by folder: their chats belong to the project.
 	Worktrees map[string]string `json:"worktrees,omitempty"`
@@ -94,6 +95,7 @@ type headlessServer struct {
 	instructions, approvalMode string
 	classic                    bool
 	memoryOff                  bool                   // the agent's memory tool turned off
+	wrapUpOff                  bool                   // the next-step card (wrap_up tool) turned off
 	autoResume                 *agent.AutoResume      // what a rate limit does to a run, for every chat
 	panelHomes                 map[string]*serverChat // project panels before the first prompt; not persisted
 	chats                      []*serverChat
@@ -186,6 +188,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		server.instructions = settings.UserInstructions
 		server.classic = settings.ClassicCompaction
 		server.memoryOff = settings.MemoryOff
+		server.wrapUpOff = settings.WrapUpOff
 		server.autoResume = settings.AutoResume
 		if settings.ApprovalMode != "" {
 			server.approvalMode = settings.ApprovalMode
@@ -486,6 +489,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 		"userPreferences":     server.instructions,
 		"preferencesEditable": true,
 		"memory":              !server.memoryOff,
+		"wrapUp":              !server.wrapUpOff,
 		"models":              models,
 		"accounts":            accounts,
 		"model":               server.labelLocked(server.cfg),
@@ -717,6 +721,7 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	}
 	cfg.APIKey = server.keys[cfg.ConnectionID]
 	cfg.UserInstructions = server.instructions
+	cfg.WrapUpOff = server.wrapUpOff
 	if !server.memoryOff {
 		cfg.Preferences = server.updatePreferences
 	}
@@ -1035,6 +1040,7 @@ func (server *headlessServer) saveSettingsLocked() error {
 		ApprovalMode:      server.approvalMode,
 		ClassicCompaction: server.classic,
 		MemoryOff:         server.memoryOff,
+		WrapUpOff:         server.wrapUpOff,
 		AutoResume:        server.autoResume,
 		Worktrees:         server.worktrees,
 	})

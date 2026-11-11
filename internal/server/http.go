@@ -103,6 +103,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/answer":                             server.answer,
 		"POST /api/preferences":                        server.setPreferences,
 		"POST /api/memory":                             server.setMemory,
+		"POST /api/wrap-up":                            server.setWrapUp,
 		"POST /api/model":                              server.setModel,
 		"POST /api/auto-resume":                        server.setAutoResume,
 		"POST /api/model/compaction":                   server.setModelCompaction,

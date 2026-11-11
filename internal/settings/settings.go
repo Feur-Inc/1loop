@@ -122,6 +122,7 @@ const (
 	KeyApprovalMode      = "agent.approval_mode"
 	KeyDynamicCompaction = "agent.dynamic_compaction"
 	KeyMemory            = "agent.memory"
+	KeyWrapUp            = "agent.wrap_up"
 	KeyAutoResume        = "models.auto_resume"
 	KeyWorktreeSort      = "general.worktree_sort"
 	KeyDiscordPresence   = "general.discord_presence"
@@ -184,6 +185,9 @@ var list = []Setting{
 	{Key: KeyMemory, Section: Agent, Title: "Memory", Where: OnBoth, Kind: Toggle,
 		Description: "The agent adds what it learns about you to your preferences, each change approved by you.",
 		Keywords:    []string{"memory", "remember", "learn", "preferences"}},
+	{Key: KeyWrapUp, Section: Agent, Title: "Next-step card", Where: OnBoth, Kind: Toggle,
+		Description: "At the end of a turn that did work, the agent sums it up in a card and, when the next move is yours, asks with one or two reply buttons. Off: it is not offered the wrap_up tool.",
+		Keywords:    []string{"wrap up", "next step", "recap", "card", "buttons", "end of turn"}},
 	{Key: "agent.project_memory", Section: Agent, Title: "Project memory", Where: OnDesktop, Kind: Action,
 		Description: "Each project's AGENTS.md, which every agent reads there.",
 		Keywords:    []string{"agents.md", "project", "instructions", "memory", "claude.md"}},

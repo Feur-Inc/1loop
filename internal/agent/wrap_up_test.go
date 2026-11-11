@@ -89,3 +89,21 @@ func TestWrapUpChecksOffTheStep(t *testing.T) {
 		t.Fatalf("recap alone: %q, %d events", result, events)
 	}
 }
+
+func TestWrapUpOffInSettings(t *testing.T) {
+	offered := func(cfg Config) bool {
+		for _, definition := range availableCoreTools(cfg) {
+			if definition["function"].(map[string]any)["name"] == "wrap_up" {
+				return true
+			}
+		}
+		return false
+	}
+	on, off := Config{}, Config{WrapUpOff: true}
+	if !offered(on) || wrapUpInstructions(on) == "" {
+		t.Fatal("the next-step card is on by default: wrap_up and its instructions are offered")
+	}
+	if offered(off) || wrapUpInstructions(off) != "" || off.toolAvailable("wrap_up") {
+		t.Fatal("turned off in Settings, wrap_up and its instructions must not be offered")
+	}
+}

@@ -80,7 +80,8 @@ func (remote *remoteDesktop) generalSettings() fyne.CanvasObject {
 	)
 }
 
-// instructionSettings edits the server's preferences and memory switch.
+// instructionSettings edits the server's preferences, memory switch and
+// next-step card switch.
 func (remote *remoteDesktop) instructionSettings() fyne.CanvasObject {
 	ui := remote.parent
 	entry := widget.NewMultiLineEntry()
@@ -89,12 +90,14 @@ func (remote *remoteDesktop) instructionSettings() fyne.CanvasObject {
 	entry.SetPlaceHolder("Describe your preferences: language, tone, coding conventions, level of detail…")
 	entry.Disable() // until the server's text is in
 	memory := container.NewStack()
+	wrapUp := container.NewStack()
 	page := container.NewVBox(
 		ui.prefs.pageTitle("Instructions", "", nil),
 		card(settingStack("Your preferences",
 			"Added to the server agent's system prompt in every chat. Saved as you type; they apply from the next turn.",
 			entry),
 			settingRow("Memory", "The agent adds what it learns about you to these preferences, each change shown to you for approval.", memory)),
+		card(settingRow("Next-step card", "At the end of a turn that did work, the agent sums it up in a card and, when the next move is yours, asks with one or two reply buttons. Off: it is not offered the wrap_up tool.", wrapUp)),
 	)
 	go func() {
 		ctx, cancel := context.WithTimeout(remote.ctx, 15*time.Second)
@@ -103,6 +106,7 @@ func (remote *remoteDesktop) instructionSettings() fyne.CanvasObject {
 			Settings struct {
 				UserPreferences string
 				Memory          bool
+				WrapUp          bool
 			}
 		}
 		err := remote.client.json(ctx, "GET", "/api/state", nil, &state)
@@ -126,6 +130,10 @@ func (remote *remoteDesktop) instructionSettings() fyne.CanvasObject {
 				remote.action("/api/memory", map[string]bool{"enabled": on})
 			})}
 			memory.Refresh()
+			wrapUp.Objects = []fyne.CanvasObject{newToggle(state.Settings.WrapUp, func(on bool) {
+				remote.action("/api/wrap-up", map[string]bool{"enabled": on})
+			})}
+			wrapUp.Refresh()
 		})
 	}()
 	return page

@@ -8,7 +8,7 @@ does not stop its conversations; Stop does.
 
 ## Build and run on Debian
 
-Build with Go 1.23 or newer:
+Build with Go 1.24 or newer:
 
 ```sh
 make server

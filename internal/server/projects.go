@@ -6,11 +6,13 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
+	"context"
 	"fmt"
 	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
+	"time"
 )
 
 func (server *headlessServer) projectBase() string {
@@ -30,10 +32,28 @@ func (server *headlessServer) workspaceLocked(requested string) (string, error) 
 	if !slices.Contains(server.projects, requested) && !server.worktreeLocked(requested) {
 		return "", fmt.Errorf("Choose a registered project")
 	}
+	if server.projectMachines[requested] != "" { // a folder of an SSH machine, checked when it was added
+		return requested, nil
+	}
 	return remoteapi.ProjectFolder(server.projectBase(), requested, false)
 }
 
 func (server *headlessServer) projectFolders(w http.ResponseWriter, r *http.Request) {
+	if id := r.URL.Query().Get("machine"); id != "" {
+		machine, ok := server.requestMachine(w, id)
+		if !ok {
+			return
+		}
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+		defer cancel()
+		folders, err := machineProjectFolders(ctx, machine, r.URL.Query().Get("path"))
+		if err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		core.WriteJSON(w, 200, folders)
+		return
+	}
 	folders, err := remoteapi.ProjectFolders(server.projectBase(), r.URL.Query().Get("path"))
 	if err != nil {
 		core.Fail(w, 400, err.Error())
@@ -44,11 +64,16 @@ func (server *headlessServer) projectFolders(w http.ResponseWriter, r *http.Requ
 
 func (server *headlessServer) addProject(w http.ResponseWriter, r *http.Request) {
 	var args struct {
-		Path   string
-		Create bool
+		Path    string
+		Create  bool
+		Machine string // an SSH machine's ID: the folder is there (machines.go)
 	}
 	if core.ReadJSON(r, &args) != nil || args.Path == "" {
 		core.Fail(w, 400, "Choose a project folder")
+		return
+	}
+	if args.Machine != "" {
+		server.addMachineProject(w, r, args.Machine, args.Path, args.Create)
 		return
 	}
 	if server.local && filepath.Clean(args.Path) == server.projectBase() {
@@ -76,8 +101,10 @@ func (server *headlessServer) addProject(w http.ResponseWriter, r *http.Request)
 			return
 		}
 	}
-	server.broadcastLocked("projects", map[string]any{"projects": server.projects})
-	core.WriteJSON(w, 200, map[string]any{"workspace": folder, "projects": server.projects})
+	reply := server.projectsReplyLocked()
+	server.broadcastLocked("projects", reply)
+	reply["workspace"] = folder
+	core.WriteJSON(w, 200, reply)
 }
 
 func (server *headlessServer) changeProject(w http.ResponseWriter, r *http.Request) {
@@ -91,6 +118,12 @@ func (server *headlessServer) changeProject(w http.ResponseWriter, r *http.Reque
 	if !server.local && args.Path == server.root {
 		server.mu.Unlock()
 		core.Fail(w, 400, "The server's authorized root cannot be renamed or deleted")
+		return
+	}
+	if id := server.projectMachines[args.Path]; id != "" {
+		label := server.machineLabelLocked(id)
+		server.mu.Unlock()
+		core.Fail(w, 400, "This project is on "+label+": rename or delete its folder there. ssh remove on the server's console forgets the machine and its projects")
 		return
 	}
 	for _, chat := range server.chats {

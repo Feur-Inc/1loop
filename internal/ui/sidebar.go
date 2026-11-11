@@ -185,6 +185,19 @@ func (ui *desktopUI) withMore(row *tapRow, open func(anchor fyne.CanvasObject) *
 	row.tips = ui.tips
 	row.endInset = more.MinSize().Width + 4
 	more.Hide()
+	// The ⋯ sits over the row's trailing text (a project's branch): that text
+	// hides while the ⋯ shows, also when the pointer has left the row for it.
+	showMore := func(on bool) {
+		if on {
+			more.Show()
+		} else {
+			more.Hide()
+		}
+		if row.covered != on {
+			row.covered = on
+			row.Refresh()
+		}
+	}
 	var rowIn, moreIn, menuOpen bool
 	var hide *time.Timer
 	sync := func() {
@@ -192,14 +205,14 @@ func (ui *desktopUI) withMore(row *tapRow, open func(anchor fyne.CanvasObject) *
 			hide.Stop()
 		}
 		if (rowIn || moreIn || menuOpen) && !row.disabled {
-			more.Show()
+			showMore(true)
 			return
 		}
 		// Small grace period so the pointer can travel from the row to the button.
 		hide = time.AfterFunc(90*time.Millisecond, func() {
 			fyne.Do(func() {
 				if !rowIn && !moreIn && !menuOpen {
-					more.Hide()
+					showMore(false)
 				}
 			})
 		})
@@ -209,7 +222,7 @@ func (ui *desktopUI) withMore(row *tapRow, open func(anchor fyne.CanvasObject) *
 	// Anchor to the always-visible row: the hidden button may not have been laid out yet.
 	show := func() {
 		menuOpen = true
-		more.Show()
+		showMore(true)
 		if menu := open(row); menu != nil {
 			menu.onClosed = func() { menuOpen = false; sync() }
 		} else {

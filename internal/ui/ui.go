@@ -363,6 +363,7 @@ type tapRow struct {
 	truncate  bool          // fills its column: truncates instead of forcing it wider
 	tips      *tipLayer     // optional: shows the whole text while hovered, when it is cut short
 	clipped   bool          // the text was cut short at the last layout
+	covered   bool          // its ⋯ is shown over the trailing text (withMore)
 	hover     float32
 	alpha     float32 // whole-row opacity, used by menu fades
 	anim      *fyne.Animation
@@ -765,6 +766,9 @@ func (renderer *tapRowRenderer) Refresh() {
 	trailingInk := text(colFaint)
 	if row.endInset > 0 { // the row's ⋯ takes its place while hovered
 		trailingInk.A = uint8(float32(trailingInk.A) * (1 - row.hover))
+		if row.covered { // the pointer is on the ⋯ itself, so off the row
+			trailingInk.A = 0
+		}
 	}
 	renderer.trailing.Color = trailingInk
 	renderer.detail.Text = row.detail

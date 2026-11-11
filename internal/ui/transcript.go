@@ -245,7 +245,7 @@ func (renderer *toolRowRenderer) Refresh() {
 	renderer.verb.Color = mix(colMuted, colText, h*0.5)
 	renderer.bg.FillColor = mix(color.NRGBA{}, colHover, row.hover)
 	if row.selected {
-		renderer.bg.FillColor = mix(colSelected, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x18}, row.hover)
+		renderer.bg.FillColor = mix(colSelected, overlay(0x18), row.hover)
 	}
 	if glyph := toolGlyph(item.Tool); glyph != renderer.glyph {
 		renderer.glyph = glyph

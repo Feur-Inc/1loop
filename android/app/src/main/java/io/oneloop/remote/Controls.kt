@@ -110,12 +110,12 @@ fun EffortSlider(steps: Int, index: Int, onChange: (Int) -> Unit) {
         val span = size.width - 2 * inset
         fun stopX(i: Float) = if (steps < 2) inset else inset + span * i / (steps - 1)
         val radius = CornerRadius(h / 2, h / 2)
-        drawRoundRect(Color(0xFF333333), cornerRadius = radius)
+        drawRoundRect(Palette.track, cornerRadius = radius)
         val x = stopX(position.value)
         drawRoundRect(Palette.amber, size = Size(x + inset, h), cornerRadius = radius)
         for (i in 0 until steps) {
             val passed = i <= position.value + 0.01f
-            drawCircle(if (passed) Palette.ink.copy(alpha = 0.35f) else Color.White.copy(alpha = 0.33f), 3.dp.toPx(), Offset(stopX(i.toFloat()), h / 2))
+            drawCircle(if (passed) Palette.ink.copy(alpha = 0.35f) else Palette.overlay.copy(alpha = 0.33f), 3.dp.toPx(), Offset(stopX(i.toFloat()), h / 2))
         }
         val thumb = 18.dp.toPx() + grow.dp.toPx()
         drawCircle(Color.Black.copy(alpha = 0.18f), thumb + 1.dp.toPx(), Offset(x, h / 2 + 1.dp.toPx()))
@@ -375,7 +375,7 @@ private fun LimitGauge(window: LimitWindow) {
                 style = Type.caption.copy(color = if (low) Palette.danger else Palette.text, fontWeight = FontWeight.SemiBold),
             )
         }
-        Box(Modifier.padding(vertical = 5.dp).fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Color(0xFF333333))) {
+        Box(Modifier.padding(vertical = 5.dp).fillMaxWidth().height(4.dp).clip(RoundedCornerShape(2.dp)).background(Palette.track)) {
             Box(Modifier.fillMaxWidth((window.left / 100f).coerceIn(0f, 1f)).fillMaxHeight().background(if (low) Palette.danger else Palette.amber))
         }
         Text(if (window.reset > 0) "↻ " + resetFormat.format(Date(window.reset)) else "Reset not provided", style = Type.caption, maxLines = 1)

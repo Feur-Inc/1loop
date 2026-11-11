@@ -41,6 +41,42 @@ func brandImage(name string, width, height float32) *canvas.Image {
 	return image
 }
 
+// inkedArtwork redraws the artwork's white (the wordmark's letters) in the
+// theme's text colour: dark letters on the light theme. The accent's amber
+// is the brand's and stays.
+func inkedArtwork(art image.Image) *image.NRGBA {
+	b := art.Bounds()
+	out := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	xdraw.Draw(out, out.Rect, art, b.Min, xdraw.Src)
+	if themeTokens.Dark {
+		return out
+	}
+	for i := 0; i < len(out.Pix); i += 4 {
+		r, g, bl := out.Pix[i], out.Pix[i+1], out.Pix[i+2]
+		if min(r, g, bl) > 0xc0 && max(r, g, bl)-min(r, g, bl) < 0x20 { // white, or its antialiased edge
+			out.Pix[i], out.Pix[i+1], out.Pix[i+2] = colText.R, colText.G, colText.B
+		}
+	}
+	return out
+}
+
+// brandLogo is the logo with its letters in the theme's text colour, drawn
+// again when the theme changes.
+func brandLogo(width, height float32) *canvas.Image {
+	art, err := png.Decode(bytes.NewReader(brandResource("1loop-logo.png").Content()))
+	if err != nil {
+		return brandImage("1loop-logo.png", width, height)
+	}
+	logo := canvas.NewImageFromImage(inkedArtwork(art))
+	logo.FillMode = canvas.ImageFillContain
+	logo.SetMinSize(fyne.NewSize(width, height))
+	onRepaint = append(onRepaint, func() {
+		logo.Image = inkedArtwork(art)
+		logo.Refresh()
+	})
+	return logo
+}
+
 // The intro sheet is an 8×8 grid of 144 px cells. It is decoded only when it
 // is first shown, and the full-size sheet is dropped again once every frame
 // has been resampled for the screen (see loopMark.frame), so the large pixel
@@ -590,6 +626,7 @@ func newLaunchScreen(canvasValue fyne.Canvas, done func()) *launchScreen {
 	if err != nil {
 		panic(err)
 	}
+	sheet = inkedArtwork(sheet)
 	src := sheet.(interface {
 		SubImage(image.Rectangle) image.Image
 	})

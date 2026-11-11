@@ -18,40 +18,63 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+
+	"1loop/internal/palette"
 )
 
-// One neutral palette shared by every surface, popup and dialog.
+// One neutral palette shared by every surface, popup and dialog: the dark
+// theme's until the saved theme is applied (theming.go sets them all).
 var (
-	colBackground = color.NRGBA{R: 0x12, G: 0x12, B: 0x12, A: 0xff}
-	colSidebar    = color.NRGBA{R: 0x0c, G: 0x0c, B: 0x0c, A: 0xff}
-	colSurface    = color.NRGBA{R: 0x1a, G: 0x1a, B: 0x1a, A: 0xff}
-	colPopover    = color.NRGBA{R: 0x21, G: 0x21, B: 0x21, A: 0xff}
-	colRaised     = color.NRGBA{R: 0x24, G: 0x24, B: 0x24, A: 0xff}
-	colField      = color.NRGBA{R: 0x14, G: 0x14, B: 0x14, A: 0xff}
-	colCode       = color.NRGBA{R: 0x0e, G: 0x0e, B: 0x0e, A: 0xff}
-	colBorder     = color.NRGBA{R: 0x2a, G: 0x2a, B: 0x2a, A: 0xff}
-	colBorderSoft = color.NRGBA{R: 0x1e, G: 0x1e, B: 0x1e, A: 0xff}
-	colBorderHot  = color.NRGBA{R: 0x55, G: 0x55, B: 0x55, A: 0xff}
-	colPopBorder  = color.NRGBA{R: 0x34, G: 0x34, B: 0x34, A: 0xff}
-	colText       = color.NRGBA{R: 0xf4, G: 0xf4, B: 0xf4, A: 0xff}
-	colMuted      = color.NRGBA{R: 0x8c, G: 0x8c, B: 0x8c, A: 0xff}
-	colFaint      = color.NRGBA{R: 0x5c, G: 0x5c, B: 0x5c, A: 0xff}
-	colAmber      = color.NRGBA{R: 0xff, G: 0xb0, B: 0x00, A: 0xff}
-	colAmberHot   = color.NRGBA{R: 0xff, G: 0xc4, B: 0x3d, A: 0xff}
-	colInk        = color.NRGBA{R: 0x11, G: 0x11, B: 0x11, A: 0xff}
-	colHover      = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x0c}
-	colSelected   = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x12}
-	colMenuHover  = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x10}
-	colDanger     = color.NRGBA{R: 0xe8, G: 0x6a, B: 0x5f, A: 0xff}
-	colClose      = color.NRGBA{R: 0xc4, G: 0x2b, B: 0x1c, A: 0xff}
-	colAdded      = color.NRGBA{R: 0x7f, G: 0xc8, B: 0x8f, A: 0xff}
+	colBackground  = palette.Dark.Background
+	colSidebar     = palette.Dark.Sidebar
+	colSurface     = palette.Dark.Surface
+	colPopover     = palette.Dark.Popover
+	colRaised      = palette.Dark.Raised
+	colField       = palette.Dark.Field
+	colCode        = palette.Dark.Code
+	colBorder      = palette.Dark.Border
+	colBorderSoft  = palette.Dark.BorderSoft
+	colBorderHot   = palette.Dark.BorderHot
+	colBorderHover = palette.Dark.BorderHover
+	colPopBorder   = palette.Dark.PopBorder
+	colText        = palette.Dark.Text
+	colTextSoft    = palette.Dark.TextSoft
+	colMuted       = palette.Dark.Muted
+	colPlaceholder = palette.Dark.Placeholder
+	colFaint       = palette.Dark.Faint
+	colTrack       = palette.Dark.Track
+	colKnobOff     = palette.Dark.KnobOff
+	colHover       = palette.Dark.Hover
+	colSelected    = palette.Dark.Selected
+	colMenuHover   = palette.Dark.MenuHover
+	colPressed     = palette.Dark.Pressed
+	colScrollBar   = palette.Dark.ScrollBar
+	colOverlay     = palette.Dark.Overlay
+	colDanger      = palette.Dark.Danger
+	colClose       = palette.Dark.Close
+	colCloseHot    = palette.Dark.CloseHot
+	colAdded       = palette.Dark.Added
+	colDiffAdded   = palette.Dark.DiffAdded
+	colDiffRemoved = palette.Dark.DiffRemoved
+
+	// The accent and what is made from it (palette.Derive).
+	colAmber     = darkAccent.Accent
+	colAmberHot  = darkAccent.AccentHot
+	colInk       = darkAccent.OnAccent // text and icons on the accent
+	colFocus     = darkAccent.Focus
+	colSelection = darkAccent.Selection
+	colRing      = darkAccent.Ring
 )
+
+var darkAccent = palette.Derive(palette.Dark, palette.AccentColor(palette.DefaultAccent))
 
 // Sizes are CSS-like pixels: the window scale follows the desktop (Xft.dpi),
 // so 13 here renders like 13px text in a browser on the same screen.
 type loopTheme struct{ fyne.Theme }
 
 func (themeSpec loopTheme) Color(name fyne.ThemeColorName, _ fyne.ThemeVariant) color.Color {
+	// The variant is the system's: the theme setting chose the colours
+	// already (theming.go).
 	if c, ok := tintColors[name]; ok {
 		return c
 	}
@@ -67,7 +90,7 @@ func (themeSpec loopTheme) Color(name fyne.ThemeColorName, _ fyne.ThemeVariant) 
 	case theme.ColorNameDisabled:
 		return colFaint
 	case theme.ColorNamePlaceHolder:
-		return color.NRGBA{R: 0x6c, G: 0x6c, B: 0x6c, A: 0xff}
+		return colPlaceholder
 	case theme.ColorNameInputBackground:
 		return colField
 	case theme.ColorNameInputBorder:
@@ -90,21 +113,25 @@ func (themeSpec loopTheme) Color(name fyne.ThemeColorName, _ fyne.ThemeVariant) 
 	case theme.ColorNameHover:
 		return colHover
 	case theme.ColorNamePressed:
-		return color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x1a}
+		return colPressed
 	case theme.ColorNameFocus:
-		return color.NRGBA{R: 0xff, G: 0xb0, B: 0x00, A: 0x2a}
+		return colFocus
 	case theme.ColorNameSelection:
-		return color.NRGBA{R: 0xff, G: 0xb0, B: 0x00, A: 0x40}
+		return colSelection
 	case theme.ColorNameSeparator:
 		return colBorderSoft
 	case theme.ColorNameScrollBar:
-		return color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x30}
+		return colScrollBar
 	case theme.ColorNameScrollBarBackground:
 		return color.Transparent
 	case theme.ColorNameShadow:
 		return color.NRGBA{A: 0x30} // scroll edge fades; dialog dims are drawn by our sheets
 	}
-	return themeSpec.Theme.Color(name, theme.VariantDark)
+	variant := theme.VariantDark
+	if !themeTokens.Dark {
+		variant = theme.VariantLight
+	}
+	return themeSpec.Theme.Color(name, variant)
 }
 
 // Inter is the face Codex and GNOME use; it is read from the system when
@@ -308,6 +335,10 @@ func tinted(icon fyne.Resource, c color.NRGBA) fyne.Resource {
 		body := strings.ReplaceAll(string(icon.Content()), "currentColor", hex)
 		res := fyne.NewStaticResource(key+".svg", []byte(body))
 		lineCache[key] = res
+		tintedFrom[res] = struct {
+			icon fyne.Resource
+			ink  color.NRGBA
+		}{icon, c}
 		return res
 	}
 	name, ok := tintCache[c]
@@ -647,11 +678,11 @@ func (renderer *tapRowRenderer) colorsAt(h float32) (fill, stroke, ink color.NRG
 	case styleNav:
 		fill = mix(clear, colHover, h)
 		if row.selected {
-			fill = mix(colSelected, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x18}, h)
+			fill = mix(colSelected, overlay(0x18), h)
 		}
 		ink = colText
 		if !row.selected && row.accent {
-			ink = mix(color.NRGBA{R: 0xb4, G: 0xb4, B: 0xb4, A: 0xff}, colText, h)
+			ink = mix(colTextSoft, colText, h)
 		}
 	case styleChip:
 		fill = mix(clear, colHover, h)
@@ -672,8 +703,8 @@ func (renderer *tapRowRenderer) colorsAt(h float32) (fill, stroke, ink color.NRG
 		fill = mix(colAmber, colAmberHot, h)
 		ink = colInk
 		if row.danger {
-			fill = mix(colClose, color.NRGBA{R: 0xd9, G: 0x3b, B: 0x2b, A: 0xff}, h)
-			ink = colText
+			fill = mix(colClose, colCloseHot, h)
+			ink = palette.Dark.Text // light on red in either theme
 		}
 	case styleIcon:
 		hot := mix(row.fill, colText, 0.22)
@@ -694,7 +725,7 @@ func (renderer *tapRowRenderer) colorsAt(h float32) (fill, stroke, ink color.NRG
 	case styleMenu:
 		base := clear
 		if row.selected {
-			base = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x09}
+			base = overlay(0x09)
 		}
 		fill = mix(base, colMenuHover, h)
 		ink = colText
@@ -709,9 +740,9 @@ func (renderer *tapRowRenderer) colorsAt(h float32) (fill, stroke, ink color.NRG
 		}
 	case styleField:
 		fill = colField
-		stroke = mix(colBorder, color.NRGBA{R: 0x3c, G: 0x3c, B: 0x3c, A: 0xff}, h)
+		stroke = mix(colBorder, colBorderHover, h)
 		if row.selected { // open: focus ring like a web select
-			stroke = color.NRGBA{R: 0xff, G: 0xb0, B: 0x00, A: 0x99}
+			stroke = colRing
 		}
 		ink = colText
 	case styleWindow:
@@ -747,7 +778,7 @@ func (renderer *tapRowRenderer) Refresh() {
 	textAlpha := quantize(row.alpha, 5)
 	text := func(c color.NRGBA) color.NRGBA { c.A = uint8(float32(c.A) * textAlpha); return c }
 	if row.press > 0 { // a click's light over the fill: shapes only, the text keeps its texture
-		light := color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x1c}
+		light := overlay(0x1c)
 		if fill.A > 0x80 {
 			light = mix(fill, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: fill.A}, 0.18)
 		}
@@ -832,6 +863,7 @@ func newShadow(strength float32) *shadow {
 		dropShadow.layers = append(dropShadow.layers, r)
 		dropShadow.alphas = append(dropShadow.alphas, alpha*strength)
 	}
+	dropShadow.setOpacity(1) // lighter on the light theme
 	return dropShadow
 }
 
@@ -840,13 +872,18 @@ func newGlow(tint color.NRGBA, strength float32) *shadow {
 	glow := newShadow(strength)
 	glow.tint = tint
 	glow.setOpacity(0)
+	glows = append(glows, glow)
 	return glow
 }
 
 func (dropShadow *shadow) setOpacity(o float32) {
 	for i, r := range dropShadow.layers {
 		c := dropShadow.tint
-		c.A = uint8(255 * fyne.Min(1, dropShadow.alphas[i]) * o)
+		strength := float32(1)
+		if !themeTokens.Dark && c.R == 0 && c.G == 0 && c.B == 0 {
+			strength = 0.4 // a shadow, not a glow: on white a dark one reads as a grey band
+		}
+		c.A = uint8(255 * fyne.Min(1, dropShadow.alphas[i]) * o * strength)
 		r.FillColor = c
 		// A layer with nothing to show is not drawn at all: a translucent
 		// rectangle still costs its whole area on every frame.
@@ -1224,7 +1261,7 @@ func (renderer *sheetRenderer) layoutGlass(size fyne.Size, box rect, panelPos fy
 		piece := image.NewNRGBA(image.Rect(0, 0, cut.Dx(), cut.Dy()))
 		draw.Draw(piece, piece.Rect, sheet.glass, cut.Min, draw.Src)
 		// Brighter than behind a dialog: what the menu covers shows through it.
-		vibrancy(piece, 1.15, 1.45)
+		vibrancy(piece, 1.15, glassBrightness(1.45))
 		sheet.frost.Image = piece
 		sheet.frost.Refresh()
 	}
@@ -1279,10 +1316,10 @@ func (renderer *sheetRenderer) Refresh() {
 			}
 		}
 	} else {
-		sheet.dim.FillColor = color.NRGBA{A: uint8(150 * o)}
+		sheet.dim.FillColor = color.NRGBA{A: uint8(dimAlpha(150) * o)}
 		sheet.panel.FillColor = colSurface
 		if sheet.glass != nil { // the frosted window, already darkened, fades in under a lighter dim
-			sheet.dim.FillColor = color.NRGBA{A: uint8(55 * o)}
+			sheet.dim.FillColor = color.NRGBA{A: uint8(dimAlpha(55) * o)}
 			sheet.backdrop.Translucency = float64(1 - o)
 			sheet.panel.FillColor = color.NRGBA{R: colSurface.R, G: colSurface.G, B: colSurface.B, A: 0xe0} // a pane of glass too
 		}

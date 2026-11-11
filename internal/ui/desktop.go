@@ -126,6 +126,7 @@ type desktopUI struct {
 	localWorkspace   string                         // this computer's project while an SSH machine is the target
 	worktrees        map[string]string              // this computer's worktrees: folder → project (worktrees.go)
 	worktreeSort     string                         // how the sidebar and Repository order worktrees
+	theme            themeChoice                    // dark, light or the system's, and the accent
 	repos            map[string]*repoState          // repositories read, by target and project
 	repoWindow       *repoWindow                    // the open Repository window
 	statePath        string
@@ -307,6 +308,7 @@ func runDesktop(backend *agent.App, root string) {
 	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), shortcutKeys: map[string]string{}, statePath: statePath(root),
 		cfg: agent.Config{Provider: "compatible", Workspace: root}, foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}}
 	ui.load()
+	ui.followTheme()
 	ui.initializeConnections()
 	// Our own title bar on X11 and native Wayland; the system bar elsewhere.
 	ui.chrome = customChromeSupported() && os.Getenv("ONELOOP_SYSTEM_TITLEBAR") == ""
@@ -718,7 +720,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		}
 	}
 	ui.steer.Hide()
-	ui.stop = newIconButton(iconStop, colText, colInk, func() {
+	ui.stop = newIconButton(iconStop, colText, colBackground, func() {
 		if ui.current != nil {
 			platform.Devf("ui", "stop pressed for %q", ui.current.Title)
 		}
@@ -742,7 +744,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	})
 	ui.updateApprovalControl()
 	ui.contextRing = newContextRing(ui.tips)
-	ui.attach = newIconButton(iconPlus, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x0d}, color.NRGBA{}, nil)
+	ui.attach = newIconButton(iconPlus, overlay(0x0d), color.NRGBA{}, nil)
 	ui.attach.iconPx, ui.attach.padPx = 18, 6
 	ui.attach.onTap = func() {
 		showMenu(ui.window, ui.attach, []menuAction{
@@ -780,6 +782,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	card.StrokeWidth = 1
 	// The card floats on a soft shadow; focused, an amber halo lights up around it.
 	drop, glow := newShadow(2.2), newGlow(colAmber, 0.32)
+	onRepaint = append(onRepaint, func() { drop.setOpacity(1); drop.refresh() }) // its strength is the theme's
 	var glowAnim *fyne.Animation
 	glowLevel := float32(0)
 	ui.prompt.onFocus = func(focused bool) {
@@ -1818,6 +1821,8 @@ type savedState struct {
 	DiscordPresence   bool                  `json:"discordPresence,omitempty"`
 	DiscordDetails    bool                  `json:"discordDetails,omitempty"`
 	Shortcuts         map[string]string     `json:"shortcuts,omitempty"` // the keys chosen in Settings
+	Theme             string                `json:"theme,omitempty"`     // dark when unset
+	Accent            string                `json:"accent,omitempty"`    // a preset or #rrggbb; amber when unset
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1882,6 +1887,8 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.discordPresence,
 		ui.discordDetails,
 		ui.shortcutKeys,
+		ui.theme.theme,
+		ui.theme.accent,
 	})
 	if ui.panel != nil {
 		ui.panel.stash() // the open chat's panel, as it is now
@@ -1990,6 +1997,7 @@ func (ui *desktopUI) load() {
 	ui.projects = state.Projects
 	ui.sshMachines, ui.machineProjects, ui.localWorkspace = state.SSHMachines, state.MachineProjects, state.LocalWorkspace
 	ui.worktrees, ui.worktreeSort = state.Worktrees, state.WorktreeSort
+	ui.theme = themeChoice{theme: state.Theme, accent: state.Accent}
 	for _, project := range state.FoldedProjects {
 		ui.foldedProjects[project] = true
 	}

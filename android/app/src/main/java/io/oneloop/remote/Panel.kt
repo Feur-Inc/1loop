@@ -209,7 +209,7 @@ private fun TabChip(text: String, icon: ImageVector, selected: Boolean, onClose:
     val shape = RoundedCornerShape(50)
     Row(
         Modifier.clip(shape).background(if (selected) Palette.raised else Color.Transparent)
-            .border(1.dp, if (selected) Palette.borderHot else Palette.border, shape)
+            .border(1.dp, if (selected) Palette.borderHover else Palette.border, shape)
             .clickable(onClick = onClick).height(36.dp).padding(horizontal = 14.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
@@ -272,7 +272,7 @@ private fun TasksView(
                     style = Type.body.copy(color = when (task.status) {
                         "completed" -> Palette.muted
                         "in_progress" -> Palette.text
-                        else -> Color(0xFFB4B4B4)
+                        else -> Palette.textSoft
                     }),
                 )
                 val time = when {

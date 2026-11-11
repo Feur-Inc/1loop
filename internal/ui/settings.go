@@ -566,6 +566,8 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 	for _, object := range ui.targetRows() {
 		page.Add(object)
 	}
+	page.Add(sectionTitle("Appearance"))
+	page.Add(card(ui.appearanceRows(view)...))
 	if ui.server == nil {
 		page.Add(sectionTitle("Window"))
 		page.Add(card(view.mark("general.close_to_tray", settingRow("Close to tray",

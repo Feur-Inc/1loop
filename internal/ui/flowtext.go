@@ -22,14 +22,15 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/widget"
 
+	"1loop/internal/palette"
 	"1loop/internal/platform"
 )
 
 var (
-	colLink     = color.NRGBA{R: 0xff, G: 0xc2, B: 0x3d, A: 0xff} // the accent, a little softer for reading
-	colCodeChip = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x14}
-	colCodeEdge = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x12}
-	colCodeInk  = color.NRGBA{R: 0xea, G: 0xea, B: 0xea, A: 0xff}
+	colLink     = darkAccent.Link // the accent, a little softer for reading
+	colCodeChip = palette.Dark.CodeChip
+	colCodeEdge = palette.Dark.CodeEdge
+	colCodeInk  = palette.Dark.CodeInk
 )
 
 const (

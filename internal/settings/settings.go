@@ -127,6 +127,8 @@ const (
 	KeyWorktreeSort      = "general.worktree_sort"
 	KeyDiscordPresence   = "general.discord_presence"
 	KeyDiscordDetails    = "general.discord_details"
+	KeyTheme             = "general.theme"
+	KeyAccent            = "general.accent"
 )
 
 var list = []Setting{
@@ -147,6 +149,15 @@ var list = []Setting{
 		Description: "How the sidebar and the Repository window order a project's git worktrees.",
 		Keywords:    []string{"worktree", "sort", "order", "branch", "git", "sidebar"},
 		Values:      []Value{{"recent", "Latest commit"}, {"name", "Name"}, {"pull", "Pull requests first"}}},
+	{Key: KeyTheme, Section: General, Title: "Theme", Where: OnBoth, Kind: Choice,
+		Description: "Dark, light, or the system's: follows the computer's or the phone's dark mode as it changes.",
+		Keywords:    []string{"theme", "dark", "light", "mode", "appearance", "colors", "colours", "night", "system"},
+		Values:      []Value{{"dark", "Dark"}, {"light", "Light"}, {"system", "System"}}},
+	{Key: KeyAccent, Section: General, Title: "Accent colour", Where: OnBoth, Kind: Choice,
+		Description: "The colour of buttons, links and highlights: amber, another preset or a colour of your own.",
+		Keywords:    []string{"accent", "color", "colour", "highlight", "amber", "theme", "appearance", "custom"},
+		Values: []Value{{"amber", "Amber"}, {"orange", "Orange"}, {"pink", "Pink"}, {"purple", "Purple"}, {"blue", "Blue"},
+			{"teal", "Teal"}, {"green", "Green"}, {"custom", "Custom colour"}}},
 	{Key: "general.close_to_tray", Section: General, Title: "Close to tray", Where: OnDesktop, Kind: Action,
 		Description: "Closing the window keeps 1loop running in the system tray; quit from the tray menu or with Ctrl+Q.",
 		Keywords:    []string{"tray", "close", "quit", "background", "minimize", "window"}},

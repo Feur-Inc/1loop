@@ -257,6 +257,8 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
             Text("The Debian the local agent works in: storage, packages, a terminal and a reset.", style = Type.small)
             Pill("Manage Linux", icon = Icons.terminal) { app.linuxOpen = true }
         }
+        "general.theme" -> ThemeSection()
+        "general.accent" -> AccentSection()
         "phone.status" -> RunStatusSection()
         "phone.adb" -> if (adb != null) {
             Text("Phone access", style = Type.title)
@@ -303,6 +305,58 @@ private fun PreferencesSection(app: RemoteApp) {
         }
     } else Text("Update the connected desktop or server to edit preferences here.", style = Type.small)
     notice?.let { Text(it, style = Type.small) }
+}
+
+// The theme: dark (1loop's own), light, or Android's dark theme as it changes.
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun ThemeSection() {
+    val context = LocalContext.current
+    Text("Theme", style = Type.title)
+    Text("Dark is 1loop's own look. System follows the phone's dark theme, and changes with it.", style = Type.small)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for ((id, label) in listOf("dark" to "Dark", "light" to "Light", "system" to "System")) {
+            Pill(label, primary = ThemeChoice.theme == id) { ThemeChoice.set(context, theme = id) }
+        }
+    }
+}
+
+// The accent: a preset, or a colour of the user's own as #rrggbb.
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun AccentSection() {
+    val context = LocalContext.current
+    var custom by remember { mutableStateOf(if (ThemeChoice.accentSetting == "custom") ThemeChoice.accent else "") }
+    Text("Accent colour", style = Type.title)
+    Text("Buttons, links and highlights. On the light theme it is darkened until it reads on white.", style = Type.small)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        for (preset in PaletteTokens.accents) {
+            Swatch(preset.color, preset.label, ThemeChoice.accent == preset.id) { ThemeChoice.set(context, accent = preset.id) }
+        }
+    }
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        val typed = parseHex(custom)
+        Swatch(typed ?: Palette.raised, "Custom colour", ThemeChoice.accentSetting == "custom") {
+            typed?.let { ThemeChoice.set(context, accent = hex(it)) }
+        }
+        BasicTextField(
+            custom, { if (it.length <= 7) custom = it },
+            modifier = Modifier.width(120.dp).background(Palette.field, RoundedCornerShape(10.dp))
+                .border(1.dp, if (custom.isNotBlank() && typed == null) Palette.danger else Palette.border, RoundedCornerShape(10.dp))
+                .padding(horizontal = 12.dp, vertical = 9.dp),
+            textStyle = Type.mono, singleLine = true,
+            decorationBox = { inner -> Box { if (custom.isEmpty()) Text("#rrggbb", style = Type.small); inner() } },
+        )
+        Pill("Use", enabled = typed != null) { typed?.let { ThemeChoice.set(context, accent = hex(it)) } }
+    }
+}
+
+@Composable
+private fun Swatch(color: Color, label: String, selected: Boolean, onClick: () -> Unit) {
+    Box(
+        Modifier.size(36.dp).clip(RoundedCornerShape(50)).border(2.dp, if (selected) Palette.text else Color.Transparent, RoundedCornerShape(50))
+            .clickable(onClickLabel = label, onClick = onClick).padding(6.dp).clip(RoundedCornerShape(50)).background(color),
+    )
 }
 
 // While a model runs and 1loop is not on screen: the floating badge (it needs

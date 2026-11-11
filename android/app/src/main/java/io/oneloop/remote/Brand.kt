@@ -221,7 +221,7 @@ fun WorkRing(state: String, size: Dp, modifier: Modifier = Modifier) {
                 drawPath(ringOpen, Palette.amber, alpha = open, style = Stroke(12f, cap = StrokeCap.Round))
                 if (!closed) drawCircle(Palette.text, 6f, Offset(83f, 20.2f)) // .dot has no transition
             }
-            val fullColor = if (shown == "stopped") Color(0xFF5C5C5C) else Palette.amber
+            val fullColor = if (shown == "stopped") Palette.faint else Palette.amber
             drawCircle(fullColor, 46f, Offset(60f, 60f), alpha = full, style = Stroke(12f))
             for (layer in layers) {
                 val since = if (layer.leaving >= 0) elapsedMilliseconds - layer.leaving else elapsedMilliseconds - layer.at

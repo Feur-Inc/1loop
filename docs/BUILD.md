@@ -21,7 +21,7 @@ keeps the plain version.
 
 ## Development
 
-Requirements: Go 1.23+, a C compiler, and the OpenGL, EGL, X11 and Wayland
+Requirements: Go 1.24+, a C compiler, and the OpenGL, EGL, X11 and Wayland
 development libraries (`libgl-dev`, `libegl-dev`, `xorg-dev`,
 `libwayland-dev`, `libxkbcommon-dev`) for the desktop.
 
@@ -87,6 +87,14 @@ nix build .#default --no-write-lock-file
 ./result/libexec/1loop/1loop-wayland --help
 ./result/libexec/1loop/computer-python -c 'import gi, dbus, PIL; gi.require_version("Gst", "1.0"); from gi.repository import Gst; Gst.init(None); assert Gst.ElementFactory.find("pipewiresrc")'
 ```
+
+`vendorHash` in `packaging/nix/package.nix` is the hash of the Go modules
+Nix downloads. It changes only with `go.sum`, not with `third_party`,
+since the package uses Go's module cache (`proxyVendor`). On a pull
+request, the "Nix vendor hash" workflow commits the right one to the branch
+itself, so nobody has to compute it by hand. To compute it locally, set it
+to `sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=` and run
+`nix build .#default.goModules`: the error names the real one.
 
 CI evaluates and builds the locked flake and checks this Python helper.
 It does not publish a Nix binary archive. These checks do not replace a

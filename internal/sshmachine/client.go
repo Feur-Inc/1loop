@@ -24,9 +24,16 @@ import (
 // time; fingerprint is its SHA256 form, as ssh shows it.
 type TrustFunc func(ctx context.Context, machine, address, keyType, fingerprint string) bool
 
+// KnownHostsFile, when set, replaces 1loop's own list of trusted host keys:
+// the headless server keeps it in its data directory.
+var KnownHostsFile string
+
 // knownHostsPath is 1loop's own list of trusted host keys. The user's
 // ~/.ssh/known_hosts is read too, never written.
 func knownHostsPath() (string, error) {
+	if KnownHostsFile != "" {
+		return KnownHostsFile, nil
+	}
 	dir, err := os.UserConfigDir()
 	if err != nil {
 		return "", err

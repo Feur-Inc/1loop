@@ -308,14 +308,3 @@ func (curtain *pageCurtain) reveal() {
 	curtain.anim.Curve = fyne.AnimationEaseOut
 	curtain.anim.Start()
 }
-
-// shineLayout lays a glass card's light along its top edge: a hairline
-// inset from the rounded corners.
-type shineLayout struct{}
-
-func (shineLayout) MinSize([]fyne.CanvasObject) fyne.Size { return fyne.Size{} }
-
-func (shineLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
-	o[0].Move(fyne.NewPos(18, 1)) // clear of the rounded corners
-	o[0].Resize(fyne.NewSize(fyne.Max(0, size.Width-36), 1))
-}

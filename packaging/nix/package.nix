@@ -68,7 +68,12 @@ buildGoModule {
       ../../third_party
     ];
   };
-  vendorHash = "sha256-TZmSKrcJIaXtckL2fS9WbHwQGUOAIqgUfa0cVVP8tBA=";
+  # The module cache rather than a vendor folder: the local replace
+  # modules (third_party) are not part of it, so the hash changes only
+  # with go.sum. CI commits a new one to a pull request when it does
+  # (.github/workflows/nix-hash.yml).
+  proxyVendor = true;
+  vendorHash = "sha256-Zf4MT7dGROY13OS9mmp8UHade5bCVa9DL/IhASpwhV4=";
 
   nativeBuildInputs = [
     pkg-config

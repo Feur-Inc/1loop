@@ -1073,9 +1073,6 @@ private fun Composer(app: RemoteApp, running: Boolean) {
             runCatching { app.mentions(app.current) }.onSuccess { mentions = it }.onFailure { mentionsFailed = true }
         }
     }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) app.attach(uris, project)
-    }
     // Another chat may be in another project: keep only the files its message can carry.
     // An open chat is judged by its own workspace, once known; a new one by the project chosen.
     val chatWorkspace = app.current?.let { id -> app.chats.firstOrNull { it.id == id }?.workspace }
@@ -1155,7 +1152,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 // against the right edge: a long model name shrinks, not them.
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                     if (app.attachmentsEnabled) {
-                        RoundButton(Icons.plus, Color.Transparent, Palette.muted, size = 32.dp, iconSize = 18.dp, description = "Attach files") { picker.launch(arrayOf("*/*")) }
+                        AttachButton(app, project) // the media sheet (MediaSheet.kt)
                     }
                     ApprovalChip(app)
                     Spacer(Modifier.width(4.dp))

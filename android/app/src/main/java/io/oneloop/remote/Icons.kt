@@ -55,6 +55,11 @@ object Icons {
     val redo = lineIcon("redo", line("M10.5 4 13 6.5 10.5 9"), line("M13 6.5H6.5a3.5 3.5 0 0 0 0 7H9"))
     val settings = lineIcon("settings", line("M7 4.1L7 2.5L9 2.5L9 4.1A4 4 0 0 1 10.8 5.2L12.3 4.4L13.3 6.1L11.9 7A4 4 0 0 1 11.9 9L13.3 9.9L12.3 11.6L10.8 10.8A4 4 0 0 1 9 11.9L9 13.5L7 13.5L7 11.9A4 4 0 0 1 5.2 10.8L3.7 11.6L2.7 9.9L4.1 9A4 4 0 0 1 4.1 7L2.7 6.1L3.7 4.4L5.2 5.2A4 4 0 0 1 7 4.1z"),
         line("M8 6.4a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2z"))
+    val image = lineIcon("image", line("M3.5 3h9a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"), line("M2.8 11.2 6 8l3 3 1.5-1.5 2.7 2.7"),
+        line("M10.3 5.2a1 1 0 1 0 0 2a1 1 0 1 0 0-2z"))
+    val camera = lineIcon("camera", line("M2.5 5.8a1 1 0 0 1 1-1h1.9l1-1.6h3.2l1 1.6h1.9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"),
+        line("M8 6.4a2.3 2.3 0 1 0 0 4.6a2.3 2.3 0 1 0 0-4.6z"))
+    val play = lineIcon("play", line("M5.5 3.8v8.4L12 8z", 1.8f))
     val refresh = lineIcon("refresh", line("M12.8 7.2A4.9 4.9 0 1 0 11.4 11"), line("M13 3.6v3.6H9.4"))
 
     val panel = lineIcon("panel", line("M2.5 2.5h4v4h-4zM9.5 2.5h4v4h-4zM2.5 9.5h4v4h-4zM9.5 9.5h4v4h-4z"))

@@ -26,6 +26,7 @@ import (
 	"1loop/internal/core"
 	"1loop/internal/extensions"
 	"1loop/internal/remoteapi"
+	"1loop/internal/sshmachine"
 )
 
 // Main runs the headless server.
@@ -46,6 +47,8 @@ func Main() {
 	installDebian := flag.String("install-mobile-debian", "", "Install the pinned mobile Debian filesystem into a new directory, then exit")
 	webDir := flag.String("web-dir", "", "Folder with the browser client (index.html, 1loop.wasm, wasm_exec.js), served at /app/")
 	installClaude := flag.Bool("install-mobile-claude", false, "Install Claude Code from its signed Debian repository, then exit")
+	var sshFlags machineFlags
+	flag.Var(&sshFlags, "ssh-machine", "SSH machine projects can be on, as "+machineSpecUsage+" (repeatable; also ONELOOP_SSH_MACHINE, several separated by ;)")
 	flag.Parse()
 	if *installClaude {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
@@ -83,6 +86,13 @@ func Main() {
 	if err = os.MkdirAll(*dir, 0700); err != nil {
 		log.Fatal(err)
 	}
+	startupMachines, err := machineSpecs(os.Getenv("ONELOOP_SSH_MACHINE"), sshFlags)
+	if err != nil {
+		log.Fatal(err)
+	}
+	// Host keys trusted on the console are kept with the server's state: in a
+	// container, the home folder is not.
+	sshmachine.KnownHostsFile = filepath.Join(*dir, "known_hosts")
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 	server, err := newHeadlessServer(ctx, root, *dir, *settings)
@@ -91,6 +101,9 @@ func Main() {
 	}
 	server.shutdown = stop
 	server.webDir = *webDir
+	if err := server.useStartupMachines(startupMachines); err != nil {
+		log.Fatal(err)
+	}
 	if *localToken != "" {
 		if err := server.authorizeLocalClient(*localToken, *listen); err != nil {
 			log.Fatal(err)
@@ -169,7 +182,7 @@ func Main() {
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}},
 	}
 	server.tlsConfig = httpServer.TLSConfig
-	fmt.Fprintf(os.Stderr, "1loop server listening on https://%s\nCertificate SHA-256: %s\nWorkspace: %s\nCommands: pair <id> <code>, devices, revoke <number>\n", listener.Addr(), remoteapi.Fingerprint(certificate), root)
+	fmt.Fprintf(os.Stderr, "1loop server listening on https://%s\nCertificate SHA-256: %s\nWorkspace: %s\nCommands: pair <id> <code>, devices, revoke <number>, ssh\n", listener.Addr(), remoteapi.Fingerprint(certificate), root)
 	if server.local {
 		if err := saveServerJSON(*localReady, map[string]any{
 			"port":        listener.Addr().(*net.TCPAddr).Port,
@@ -179,6 +192,7 @@ func Main() {
 		}
 	} else {
 		go server.console()
+		go server.checkMachines()
 	}
 	go server.loadModels()
 	go func() {

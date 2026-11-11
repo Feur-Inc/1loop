@@ -188,8 +188,16 @@ type serverTerminal struct {
 }
 
 func newServerTerminal(parent context.Context, dir string, host terminal.NativeHost) (*serverTerminal, error) {
+	return startServerTerminal(parent, dir, func(ctx context.Context) (terminal.Process, error) {
+		return terminal.NewTerminalProcess(ctx, dir, host)
+	})
+}
+
+// startServerTerminal keeps a terminal process start opened: the server's
+// own shell, or an SSH machine's.
+func startServerTerminal(parent context.Context, dir string, start func(context.Context) (terminal.Process, error)) (*serverTerminal, error) {
 	ctx, cancel := context.WithCancel(parent)
-	file, err := terminal.NewTerminalProcess(ctx, dir, host)
+	file, err := start(ctx)
 	if err != nil {
 		cancel()
 		return nil, err
@@ -451,15 +459,25 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 				dir, revision := chat.Config.Workspace, server.terminalRevision
 				parent := platform.WithWorkspaceMode(server.ctx, server.approvalMode == "yolo")
 				host := mobileTerminalHost(server.bridge, ctx)
+				machine := server.machineLocked(chat.Config.MachineID)
 				server.mu.Unlock()
 				var err error
-				if args.Cwd != "" {
-					dir, err = agent.WorkspacePath(dir, args.Cwd)
+				if machine == nil && chat.Config.MachineID != "" {
+					err = fmt.Errorf("This project's SSH machine is no longer on the server")
+				}
+				if err == nil && args.Cwd != "" {
+					if machine != nil {
+						dir, err = agent.MachinePath(ctx, machine, dir, args.Cwd)
+					} else {
+						dir, err = agent.WorkspacePath(dir, args.Cwd)
+					}
 				}
 				if err == nil {
 					err = ctx.Err()
 				}
-				if err == nil {
+				if err == nil && machine != nil {
+					terminal, err = machineTerminal(parent, machine, dir)
+				} else if err == nil {
 					terminal, err = newServerTerminal(parent, dir, host)
 				}
 				if err != nil {

@@ -65,16 +65,25 @@ func AttachedMessage(workspace, text string, files []agent.FileAttachment) (agen
 			if err != nil {
 				return message, err
 			}
-			format, _, err := image.DecodeConfig(bytes.NewReader(data))
-			mime := http.DetectContentType(data)
-			if err == nil && format.Width*format.Height <= 20_000_000 && (mime == "image/png" || mime == "image/jpeg" || mime == "image/gif") {
+			if part, ok := AttachmentImage(data); ok {
 				imageBytes += len(data)
-				message.Images = append(message.Images, core.ImagePart{Mime: mime, Data: base64.StdEncoding.EncodeToString(data)})
+				message.Images = append(message.Images, part)
 				validated[len(validated)-1].Image = true
 			}
 		}
 	}
 	return agent.PromptMessage(text, message.Images, validated), nil
+}
+
+// AttachmentImage is an attached file the model is shown as a picture: a
+// PNG, JPEG or GIF of at most 20 megapixels.
+func AttachmentImage(data []byte) (core.ImagePart, bool) {
+	format, _, err := image.DecodeConfig(bytes.NewReader(data))
+	mime := http.DetectContentType(data)
+	if err == nil && format.Width*format.Height <= 20_000_000 && (mime == "image/png" || mime == "image/jpeg" || mime == "image/gif") {
+		return core.ImagePart{Mime: mime, Data: base64.StdEncoding.EncodeToString(data)}, true
+	}
+	return core.ImagePart{}, false
 }
 
 // FileNames are the names a transcript shows for a prompt's attached files:

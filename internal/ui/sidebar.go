@@ -568,7 +568,7 @@ func (ui *desktopUI) renderChats() {
 		})
 	}
 	ui.renderSidebar(ui.targetProjects(), chats, ui.selectProject, func(p string) []menuAction {
-		actions := ui.repositoryActions(p)
+		actions := append(ui.repositoryActions(p), ui.projectMemoryAction(p))
 		if ui.cfg.MachineID == "" { // a machine's folder is renamed there, in its terminal
 			actions = append(actions, menuAction{label: "Rename", icon: iconRename, run: func() { ui.renameProject(p) }})
 		}

@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//go:build !windows && (!linux || !cgo)
+//go:build !windows && !linux
 
 package ui
 
-// Without cgo 1loop cannot speak to the display itself.
+// Elsewhere (macOS, the BSDs) 1loop asks the clipboard tools.
 func clipboardReady() {}
 
 func imageClipboardData() ([]byte, error) { return externalImageClipboardData() }

@@ -94,7 +94,11 @@ func (builder *spanBuilder) walk(parent ast.Node, style span) {
 				value = util.ResolveNumericReferences(value)
 				value = util.ResolveEntityNames(value)
 			}
-			builder.text(string(value), style)
+			if style.link == "" && !style.code {
+				builder.refText(string(value), style)
+			} else {
+				builder.text(string(value), style)
+			}
 			switch {
 			case node.HardLineBreak():
 				builder.out = append(builder.out, span{hard: true})
@@ -134,7 +138,7 @@ func (builder *spanBuilder) walk(parent ast.Node, style span) {
 		case *ast.AutoLink:
 			inner := style
 			inner.link = string(node.URL(builder.source))
-			builder.text(string(node.Label(builder.source)), inner)
+			builder.text(refLabel(string(node.Label(builder.source))), inner)
 		case *ast.RawHTML:
 			builder.html(rawHTML(node, builder.source), style)
 		case *mathInline:
@@ -144,6 +148,32 @@ func (builder *spanBuilder) walk(parent ast.Node, style span) {
 			builder.walk(node, style)
 		}
 	}
+}
+
+// refText appends plain text, with the pull requests and issues it names
+// (#12, owner/name#12) as links to them (references.go).
+func (builder *spanBuilder) refText(s string, style span) {
+	plain := 0 // start of the text not yet written
+	for i := 0; i < len(s); {
+		c, n := s[i], 0
+		switch {
+		case c == '#' && (i == 0 || !isWordByte(s[i-1]) && strings.IndexByte("&/#", s[i-1]) < 0):
+			n = refAt(s[i:], false)
+		case isWordByte(c) && c < 0x80 && (i == 0 || !isWordByte(s[i-1]) && strings.IndexByte("/.-_", s[i-1]) < 0):
+			n = refAt(s[i:], true)
+		}
+		if n == 0 {
+			i++
+			continue
+		}
+		builder.text(s[plain:i], style)
+		ref := style
+		ref.link = refScheme + s[i:i+n]
+		builder.text(s[i:i+n], ref)
+		i += n
+		plain = i
+	}
+	builder.text(s[plain:], style)
 }
 
 // html reads an inline tag: a citation becomes its chip, <br> a line

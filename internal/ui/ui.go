@@ -1584,6 +1584,7 @@ type tipLayer struct {
 	layer  *fyne.Container
 	bg     *canvas.Rectangle
 	lines  []*canvas.Text
+	inks   []color.NRGBA // each text's colour at full opacity
 	anchor fyne.CanvasObject
 	alpha  float32
 	anim   *fyne.Animation
@@ -1611,34 +1612,75 @@ func (tooltip *tipLayer) show(anchor fyne.CanvasObject, text string) {
 	})
 }
 
-func (tooltip *tipLayer) place(anchor fyne.CanvasObject, text string) {
-	tooltip.bg.Move(fyne.NewPos(0, 0))
-	tooltip.anchor = anchor
-	tooltip.layer.Objects = []fyne.CanvasObject{tooltip.bg}
-	tooltip.lines = nil
-	width, height := float32(0), float32(0)
+// tipRun is a piece of a hint's line in its own colour.
+type tipRun struct {
+	text string
+	ink  color.NRGBA
+}
+
+// tipLines is a plain hint: its first line bright, the others muted.
+func tipLines(text string) [][]tipRun {
+	var lines [][]tipRun
 	for i, line := range strings.Split(text, "\n") {
 		ink := colText
 		if i > 0 {
 			ink = colMuted
 		}
-		label := textLine(line, 12.5, withAlpha(ink, quantize(tooltip.alpha, 4))) // the fade brings it up
-		size := label.MinSize()
-		label.Move(fyne.NewPos(10, 6+height))
-		width = fyne.Max(width, size.Width)
-		height += size.Height
-		tooltip.lines = append(tooltip.lines, label)
-		tooltip.layer.Objects = append(tooltip.layer.Objects, label)
+		lines = append(lines, []tipRun{{line, ink}})
+	}
+	return lines
+}
+
+// showAt is show for a point of the window rather than a control, with
+// coloured lines: the hint sits above it.
+func (tooltip *tipLayer) showAt(at fyne.Position, lines [][]tipRun) {
+	if tooltip.layer.Visible() && tooltip.anchor == nil { // already up: change its text at once
+		tooltip.placeAt(at, fyne.NewSize(1, 14), lines)
+		return
+	}
+	if tooltip.delay != nil {
+		tooltip.delay.Stop()
+	}
+	tooltip.delay = time.AfterFunc(220*time.Millisecond, func() {
+		fyne.Do(func() { tooltip.placeAt(at, fyne.NewSize(1, 14), lines) })
+	})
+}
+
+func (tooltip *tipLayer) place(anchor fyne.CanvasObject, text string) {
+	tooltip.placeAt(fyne.CurrentApp().Driver().AbsolutePositionForObject(anchor), anchor.Size(), tipLines(text))
+	tooltip.anchor = anchor
+}
+
+// placeAt puts the hint over the area at (absolute) of the given size.
+func (tooltip *tipLayer) placeAt(at fyne.Position, area fyne.Size, lines [][]tipRun) {
+	tooltip.bg.Move(fyne.NewPos(0, 0))
+	tooltip.anchor = nil
+	tooltip.layer.Objects = []fyne.CanvasObject{tooltip.bg}
+	tooltip.lines, tooltip.inks = nil, nil
+	width, height := float32(0), float32(0)
+	for _, line := range lines {
+		x, tall := float32(0), float32(0)
+		for _, run := range line {
+			label := textLine(run.text, 12.5, withAlpha(run.ink, quantize(tooltip.alpha, 4))) // the fade brings it up
+			size := label.MinSize()
+			label.Move(fyne.NewPos(10+x, 6+height))
+			x += size.Width
+			tall = fyne.Max(tall, size.Height)
+			tooltip.lines = append(tooltip.lines, label)
+			tooltip.inks = append(tooltip.inks, run.ink)
+			tooltip.layer.Objects = append(tooltip.layer.Objects, label)
+		}
+		width = fyne.Max(width, x)
+		height += tall
 	}
 	box := fyne.NewSize(width+20, height+12)
-	at := fyne.CurrentApp().Driver().AbsolutePositionForObject(anchor)
 	origin := fyne.CurrentApp().Driver().AbsolutePositionForObject(tooltip.layer)
 	limit := tooltip.layer.Size()
-	x := at.X - origin.X + (anchor.Size().Width-box.Width)/2
+	x := at.X - origin.X + (area.Width-box.Width)/2
 	x = fyne.Max(8, fyne.Min(x, limit.Width-box.Width-8))
 	y := at.Y - origin.Y - box.Height - 8
 	if y < 8 {
-		y = at.Y - origin.Y + anchor.Size().Height + 8
+		y = at.Y - origin.Y + area.Height + 8
 	}
 	tooltip.bg.Resize(box)
 	for _, object := range tooltip.layer.Objects {
@@ -1673,11 +1715,7 @@ func (tooltip *tipLayer) fade(to float32) {
 		tooltip.bg.Refresh()
 		step := quantize(tooltip.alpha, 4)
 		for i, line := range tooltip.lines {
-			ink := colText
-			if i > 0 {
-				ink = colMuted
-			}
-			if c := withAlpha(ink, step); line.Color != c {
+			if c := withAlpha(tooltip.inks[i], step); line.Color != c {
 				line.Color = c
 				line.Refresh()
 			}

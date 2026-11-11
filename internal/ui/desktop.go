@@ -238,6 +238,8 @@ type desktopUI struct {
 	discordDetails    bool              // settings: with the chat, project and tool
 	presence          *discord.Presence // while discordPresence is on
 	tips              *tipLayer
+	refHover          string                     // the issue or pull request link under the pointer
+	refCache          map[string]*referenceCache // what was read of each, by owner/name#N
 
 	// Window and sidebar
 	header         *fitLabel
@@ -614,6 +616,7 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	}
 	ui.panel = newToolPanel(ui)
 	openCitation = ui.openCitation
+	openReference, hoverReference, refRepository = ui.openReference, ui.hoverReference, ui.chatRepository
 	ui.split = container.New(splitLayout{ui.panel}, conversation, ui.panel.view, newPanelResizeHandle(ui.panel), ui.panelToggle)
 
 	// Title bar: conversation title, drag region and window controls.

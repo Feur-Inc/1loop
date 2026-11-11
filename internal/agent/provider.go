@@ -24,6 +24,7 @@ import (
 	"1loop/internal/core"
 	"1loop/internal/platform"
 	"1loop/internal/sse"
+	"1loop/internal/usage"
 )
 
 type ToolCall struct {
@@ -50,6 +51,7 @@ type Message struct {
 	CachedTokens     *int              `json:"cachedTokens,omitempty"`
 	UsageEstimated   bool              `json:"usageEstimated,omitempty"`
 	Usage            int               `json:"usage,omitempty"` // input tokens, or the whole context when UsageEstimated
+	spent            *spentTokens      // what the call that wrote it used, for the usage ledger
 }
 
 // DefaultVLLMURL is the local vLLM server a fresh install points at.
@@ -347,10 +349,24 @@ func completion(ctx context.Context, cfg Config, messages []Message, tools bool,
 	})
 }
 
+// completionOnce makes one model call and keeps what it used in the
+// usage ledger, whether or not it ended well.
 func completionOnce(ctx context.Context, cfg Config, messages []Message, tools bool, emit emitter) (Message, error) {
+	var out Message
+	var err error
 	if cfg.Provider == "openai" {
-		return responsesCompletion(ctx, cfg, messages, tools, emit)
+		out, err = responsesCompletion(ctx, cfg, messages, tools, emit)
+	} else {
+		out, err = chatCompletion(ctx, cfg, messages, tools, emit)
 	}
+	if out.spent != nil {
+		recordUsage(cfg, *out.spent)
+		out.spent = nil
+	}
+	return out, err
+}
+
+func chatCompletion(ctx context.Context, cfg Config, messages []Message, tools bool, emit emitter) (Message, error) {
 	wireMessages := append([]Message(nil), messages...)
 	for i := range wireMessages {
 		wireMessages[i].Responses = nil
@@ -429,11 +445,18 @@ func completionOnce(ctx context.Context, cfg Config, messages []Message, tools b
 			Error *struct {
 				Message string `json:"message"`
 			} `json:"error"`
+			Model string `json:"model"`
 			Usage *struct {
-				PromptTokens int `json:"prompt_tokens"`
-				Details      struct {
-					CachedTokens *int `json:"cached_tokens"`
+				PromptTokens     int `json:"prompt_tokens"`
+				CompletionTokens int `json:"completion_tokens"`
+				Details          struct {
+					CachedTokens     *int `json:"cached_tokens"`
+					CacheWriteTokens int  `json:"cache_write_tokens"`
 				} `json:"prompt_tokens_details"`
+				Completion struct {
+					ReasoningTokens int `json:"reasoning_tokens"`
+				} `json:"completion_tokens_details"`
+				Cost *float64 `json:"cost"` // OpenRouter: what the call cost
 			} `json:"usage"`
 			Choices []struct {
 				FinishReason *string `json:"finish_reason"`
@@ -462,6 +485,17 @@ func completionOnce(ctx context.Context, cfg Config, messages []Message, tools b
 		if chunk.Usage != nil {
 			out.Usage = chunk.Usage.PromptTokens
 			out.CachedTokens = chunk.Usage.Details.CachedTokens
+			cached := 0
+			if out.CachedTokens != nil {
+				cached = *out.CachedTokens
+			}
+			out.spent = &spentTokens{model: chunk.Model, cost: chunk.Usage.Cost, tokens: usage.Tokens{
+				Input:      max(0, chunk.Usage.PromptTokens-cached-chunk.Usage.Details.CacheWriteTokens),
+				Output:     chunk.Usage.CompletionTokens,
+				CacheRead:  cached,
+				CacheWrite: chunk.Usage.Details.CacheWriteTokens,
+				Reasoning:  chunk.Usage.Completion.ReasoningTokens,
+			}}
 		}
 		if len(chunk.Choices) == 0 {
 			continue
@@ -670,6 +704,7 @@ func (backend *App) Run(ctx context.Context, cfg Config, history []Message, inbo
 	if err := machineErr(cfg); err != nil {
 		return err
 	}
+	cfg = withTurn(cfg)
 	if cfg.AutoResume != nil && cfg.AutoResume.Enabled {
 		return backend.runWithResume(ctx, cfg, history, inboxValue, emit)
 	}

@@ -24,6 +24,7 @@ import (
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
 	"1loop/internal/sshmachine"
+	"1loop/internal/usage"
 )
 
 type serverChat struct {
@@ -84,6 +85,8 @@ type serverSettings struct {
 
 type headlessServer struct {
 	mu                         sync.Mutex
+	usage                      *usage.Ledger // every model call's tokens (internal/usage)
+	prices                     *usage.Prices
 	terminalRevision           uint64
 	closing                    bool
 	ctx                        context.Context
@@ -157,6 +160,8 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		name:         host,
 		root:         root,
 		dir:          dir,
+		usage:        usage.Open(filepath.Join(dir, "usage.jsonl")),
+		prices:       usage.OpenPrices(filepath.Join(dir, "usage-prices.json")),
 		backend:      &agent.App{Approvals: map[string]chan bool{}},
 		keys:         map[string]string{},
 		pairs:        map[string]*serverPair{},
@@ -584,6 +589,7 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 	}
 	meta.ContextStatus = agent.TaskContextText(chat.Config, meta.Used, meta.Window, server.classic, meta.Mark)
 	meta.ContextUsage = agent.ChatContextUsage(chat.Config, chat.History, chat.ContextUsage, server.classic).Summary()
+	meta.Spent = server.usage.ChatSpend(server.prices, chat.ID)
 	return meta
 }
 
@@ -769,6 +775,10 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	}
 	cfg.Review = chat.review
 	cfg.ContextKey = chat.ID + chat.Version
+	cfg.Usage = &agent.UsageTag{Ledger: server.usage, Chat: chat.ID}
+	if chat.Subchat != nil {
+		cfg.Usage.Parent = chat.Subchat.Parent
+	}
 	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok && cfg.Provider == "chatgptweb" {
 		cfg.WebSettings = connection.WebSettings // the tunnel as last saved, not as when the model was chosen
 	}
@@ -1074,4 +1084,20 @@ func (server *headlessServer) resolveModelLocked(cfg agent.Config) agent.Config 
 		return agent.ResolveDefault(cfg, connection, server.choices)
 	}
 	return cfg
+}
+
+// usageNames names the chats and connections the usage ledger keeps by id.
+func (server *headlessServer) usageNames(group, key string) string {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if group == "connection" {
+		if connection, ok := server.connectionLocked(key); ok {
+			return connection.Name
+		}
+		return ""
+	}
+	if chat := server.chatLocked(key); chat != nil {
+		return chat.Title
+	}
+	return ""
 }

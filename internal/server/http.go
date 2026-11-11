@@ -21,6 +21,7 @@ import (
 	"1loop/internal/githubconnector"
 	"1loop/internal/gitrepo"
 	"1loop/internal/remoteapi"
+	"1loop/internal/usage"
 )
 
 func (server *headlessServer) routes() http.Handler {
@@ -153,6 +154,9 @@ func (server *headlessServer) routes() http.Handler {
 		endpoints[path] = handler
 	}
 	for path, handler := range githubconnector.Handlers() {
+		endpoints[path] = handler
+	}
+	for path, handler := range usage.Handlers(server.usage, server.prices, server.usageNames, nil) {
 		endpoints[path] = handler
 	}
 	for path, handler := range gitrepo.Handlers(gitTarget{server}, githubconnector.Default.Authorizations) {

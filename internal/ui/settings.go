@@ -85,6 +85,7 @@ var subPages = map[string]string{
 	"Extensions":           registry.Tools,
 	"Connectors":           registry.Tools,
 	registry.ShortcutsPage: registry.General,
+	UsagePage:              registry.General,
 }
 
 // pageAliases are pages of earlier versions, still named by links and
@@ -292,6 +293,8 @@ func (view *settingsView) build(page string) fyne.CanvasObject {
 		return ui.extensionSettings()
 	case "Connectors":
 		return ui.connectorSettings()
+	case UsagePage:
+		return ui.usageSettings()
 	}
 	return ui.generalSettings()
 }

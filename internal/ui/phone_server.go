@@ -542,6 +542,7 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 	remoteMetaValue.Window = agent.ModelContextWindow(ui.resolveModel(chat.Config))
 	remoteMetaValue.Todo = todoForPhone(chat)
 	remoteMetaValue.ContextUsage = ui.contextUsage(chat).Summary()
+	remoteMetaValue.Spent = ui.usage.ChatSpend(ui.prices, chat.ID)
 	remoteMetaValue.Tasks = append([]agent.BackgroundTaskInfo{}, chat.tasks.Snapshot()...)
 	if parent := ui.parentOf(chat); parent != nil {
 		remoteMetaValue.Parent, remoteMetaValue.ParentTitle = parent.ID, parent.Title

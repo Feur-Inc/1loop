@@ -318,6 +318,7 @@ type agyEvent struct {
 
 type agyUsage struct {
 	Input     int `json:"input_tokens"`
+	Output    int `json:"output_tokens"`
 	CacheRead int `json:"cache_read_tokens"`
 }
 
@@ -757,6 +758,7 @@ func (backend *App) agyProcess(ctx context.Context, cfg Config, session *string,
 				break
 			}
 			turns--
+			recordUsage(cfg, spentTokens{tokens: usageTokens(result.Usage.Input, result.Usage.Output, result.Usage.CacheRead)})
 			if text != "" { // an answer cut short: keep what was written
 				*messages = append(*messages, Message{Role: "assistant", Content: text, Usage: usage})
 				emit("message_end", nil)

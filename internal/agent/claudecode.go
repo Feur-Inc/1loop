@@ -64,16 +64,10 @@ type claudeEvent struct {
 			Text        string `json:"text"`
 			PartialJSON string `json:"partial_json"`
 		} `json:"delta"`
+		Message *claudeMessage `json:"message"` // message_start
+		Usage   *claudeUsage   `json:"usage"`   // message_delta: the final output count
 	} `json:"event"`
-	Message *struct {
-		ID      string          `json:"id"`
-		Content json.RawMessage `json:"content"`
-		Usage   struct {
-			Input         int `json:"input_tokens"`
-			CacheCreation int `json:"cache_creation_input_tokens"`
-			CacheRead     int `json:"cache_read_input_tokens"`
-		} `json:"usage"`
-	} `json:"message"`
+	Message       *claudeMessage  `json:"message"`
 	ToolUseResult json.RawMessage `json:"tool_use_result"`
 	RequestID     string          `json:"request_id"`
 	Request       *struct {
@@ -98,6 +92,26 @@ type claudeEvent struct {
 	ModelUsage  map[string]struct {
 		ContextWindow int `json:"contextWindow"`
 	} `json:"modelUsage"`
+}
+
+type claudeMessage struct {
+	ID      string          `json:"id"`
+	Model   string          `json:"model"`
+	Content json.RawMessage `json:"content"`
+	Usage   claudeUsage     `json:"usage"`
+}
+
+type claudeUsage struct {
+	Input         int `json:"input_tokens"`
+	Output        int `json:"output_tokens"`
+	CacheCreation int `json:"cache_creation_input_tokens"`
+	CacheRead     int `json:"cache_read_input_tokens"`
+}
+
+func (tally *callTally) seeClaude(message *claudeMessage) {
+	if message != nil {
+		tally.see(message.ID, message.Model, message.Usage.Input, message.Usage.Output, message.Usage.CacheRead, message.Usage.CacheCreation)
+	}
 }
 
 type claudeBlock struct {
@@ -808,6 +822,8 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	sawText := false                 // the current text arrived as deltas
 	status := &announcer{emit: emit}
 	usage := 0
+	tally := &callTally{cfg: cfg}
+	defer tally.flush()
 	answered := false // a turn ended: commands such as /rename answer nothing
 	// Between two turns Claude Code is idle: either the task is over, or it
 	// waits for what it left running in the background (a command started
@@ -1024,11 +1040,17 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				}
 			case "message_start":
 				streaming = map[int]*ToolCall{}
+				tally.seeClaude(claudeEventValue.Event.Message)
+			case "message_delta":
+				if u := claudeEventValue.Event.Usage; u != nil {
+					tally.see(tally.id, "", u.Input, u.Output, u.CacheRead, u.CacheCreation)
+				}
 			}
 		case "assistant":
 			if claudeEventValue.Message == nil {
 				break
 			}
+			tally.seeClaude(claudeEventValue.Message)
 			if n := claudeEventValue.Message.Usage.Input + claudeEventValue.Message.Usage.CacheCreation + claudeEventValue.Message.Usage.CacheRead; n > 0 {
 				usage = n
 				emit("usage", n)
@@ -1114,6 +1136,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			}
 		case "result":
 			answered = true
+			tally.flush()
 			// Claude Code says how large the model's window really is.
 			for model, u := range claudeEventValue.ModelUsage {
 				if u.ContextWindow > 0 && (len(claudeEventValue.ModelUsage) == 1 || strings.Contains(model, cfg.Model)) {

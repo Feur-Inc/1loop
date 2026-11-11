@@ -43,6 +43,7 @@ import (
 	"1loop/internal/remoteapi"
 	registry "1loop/internal/settings"
 	"1loop/internal/sshmachine"
+	"1loop/internal/usage"
 )
 
 type conversation struct {
@@ -102,6 +103,10 @@ type chatRun struct {
 }
 
 type desktopUI struct {
+	usage            *usage.Ledger // every model call this computer made (internal/usage)
+	prices           *usage.Prices
+	usageQuery       usage.Query // what the Usage page shows, kept while 1loop runs
+	usageRow         *tapRow     // the sidebar's Usage row, with today's spend
 	computer         *computeruse.ComputerSession
 	browser          *browser.Engine
 	window           fyne.Window
@@ -309,6 +314,7 @@ func runDesktop(backend *agent.App, root string) {
 	backend.EnableChatGPTWeb(ctx)
 	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), shortcutKeys: map[string]string{}, statePath: statePath(root),
 		cfg: agent.Config{Provider: "compatible", Workspace: root}, foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}}
+	ui.usage, ui.prices = openUsage(ui.statePath)
 	ui.load()
 	ui.followTheme()
 	ui.initializeConnections()
@@ -327,6 +333,7 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.CenterOnScreen()
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
 	ui.window.SetContent(ui.build())
+	ui.followUsage()
 	ui.window.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
 		var files []string
 		for _, uri := range uris {
@@ -1548,6 +1555,10 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	}
 	cfg.Review = chat.review
 	cfg.ContextKey = chat.ID + ":" + chat.Version
+	cfg.Usage = &agent.UsageTag{Ledger: ui.usage, Chat: chat.ID}
+	if chat.Subchat != nil {
+		cfg.Usage.Parent = chat.Subchat.Parent
+	}
 	cfg.Recall = func(ctx context.Context) ([]agent.ChatItem, error) {
 		var items []agent.ChatItem
 		ui.onUI(ctx, func() { items = append([]agent.ChatItem{}, chat.Items...) })

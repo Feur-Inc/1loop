@@ -53,7 +53,9 @@ Chromium, and runs it as a non-root user (uid 1000). Its data directory is
 `/data` (keys, certificate, pairings, configuration and chats) and its
 workspace is `/projects`: keep both on volumes. Browser Use runs Chromium
 without its own sandbox (`ONELOOP_CHROMIUM_NO_SANDBOX=1`): Docker's default
-profile allows none of them, so the container is what isolates it. Pairing happens in the
+profile allows none of them, so the container is what isolates it. The image
+also serves the browser client: open `https://your-server:47101/` and pair it
+like any other client. Pairing happens in the
 server's console, so start it with a terminal (`-it`):
 
 ```sh
@@ -201,10 +203,13 @@ starts. You can instead supply a certificate and private key with
    clients never silently accept a replacement certificate or downgrade to
    HTTP. Existing Android-to-desktop LAN connections still support their
    explicit `http://` address.
-3. The client displays `pair <pairing-ID> <six-digit-code>`. Type that command
-   in the server process's console, then click **Connect after approval** on
-   the client. Pairings expire after two minutes and allow five failed code
-   attempts. At most eight may be pending.
+3. The client shows a six-digit code. Approve it from a device already paired
+   with the server: 1loop there (desktop, web or Android) shows "<device>
+   wants to use this server" and asks for that code. Or type the
+   `pair <pairing-ID> <six-digit-code>` command the client also shows in the
+   server process's console. The client connects by itself once approved.
+   Pairings expire after two minutes and allow five failed code attempts. At
+   most eight may be pending.
 4. The paired client retains a random bearer token. The server persists only
    its hash. Tokens travel in the Authorization header, including streams;
    redirects are not followed with credentials.
@@ -216,10 +221,26 @@ tasks, changes and files). The same menu lists the server for the next time,
 its hooks, copying a project to it and its update; **This computer** goes back
 to the desktop's own projects.
 
+**The first device.** While no device is paired and the server serves the
+browser client (`-web-dir`, as in the Docker image), it prints a one-time
+setup link at startup, which also shows in `docker logs`:
+
+```
+https://<server>:47101/app/#setup=<secret>
+```
+
+Open it with the server's address in place of `<server>`: that browser pairs
+without the console, and can then approve the next devices. The secret is
+random, travels in the URL's fragment (browsers never send it in a request
+line, so proxies do not log it), works once, and stops working as soon as a
+device is paired. Revoking the last device prints a new one.
+
 The console also accepts `devices` and `revoke <number>`. Revocation rejects
 new requests and disconnects active event/browser streams. It does not undo
-an operation already accepted by the server. Keep access to this console;
-for a detached deployment, use a terminal multiplexer such as tmux.
+an operation already accepted by the server. The console stays the fallback
+when no paired device is at hand: for a detached deployment, use a terminal
+multiplexer such as tmux, or `docker attach` with a container started with
+`-it` (Compose: `stdin_open` and `tty`).
 
 Certificate replacement requires verifying and entering the new fingerprint
 on each client. A private certificate's fingerprint replaces normal hostname

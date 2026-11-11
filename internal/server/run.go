@@ -191,6 +191,10 @@ func Main() {
 			log.Fatal(err)
 		}
 	} else {
+		server.mu.Lock()
+		server.setupPort = listener.Addr().(*net.TCPAddr).Port
+		server.offerSetupLocked()
+		server.mu.Unlock()
 		go server.console()
 		go server.checkMachines()
 	}

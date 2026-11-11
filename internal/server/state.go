@@ -135,6 +135,10 @@ type headlessServer struct {
 	handler     http.Handler
 	tlsConfig   *tls.Config
 	webDir      string // the browser client, served at /app/ (web.go)
+	// While no device is paired: the secret of the one-time setup link,
+	// which pairs the first device without the console (security.go).
+	setup     string
+	setupPort int
 	// Changes waiting for the next flush to the clients: a streamed answer
 	// reaches them at most ten times a second, as the desktop sends it.
 	pending  map[*serverChat]map[int]bool
@@ -523,6 +527,9 @@ func (server *headlessServer) summariesLocked() []remoteapi.Chat {
 		summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
 		if chat.Subchat != nil {
 			summary.Parent = chat.Subchat.Parent
+			if server.subchatWorktreeLocked(chat) != "" {
+				summary.Branch = chat.Subchat.Branch
+			}
 		}
 		out = append(out, summary)
 	}

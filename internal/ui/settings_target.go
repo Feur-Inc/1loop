@@ -91,9 +91,9 @@ func (ui *desktopUI) serverRows() []fyne.CanvasObject {
 	}
 	steps := container.New(layout.NewCustomPaddedVBoxLayout(4))
 	for i, step := range []string{
-		"Start the server on its machine (1loop-server, or its Docker image) and keep its console open.",
+		"Start the server on its machine (1loop-server, or its Docker image).",
 		"Enter its HTTPS address. For a self-signed certificate, also paste the SHA-256 fingerprint the console prints.",
-		"Approve this computer: type the pairing command 1loop shows in the server's console.",
+		"Approve this computer in 1loop on a device already paired with the server, or type the pairing command in the server's console.",
 	} {
 		number := textLine(string(rune('1'+i))+".", 12.5, colAmber)
 		steps.Add(container.NewBorder(nil, nil, padded(0, 0, 0, 8, number), nil, plainFlow(step, 12.5, colMuted)))

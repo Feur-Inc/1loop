@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -187,6 +188,11 @@ func TestSubchatFollow(t *testing.T) {
 	if _, err, _ := runSubchat(t, access, false, false, map[string]any{"action": "stop", "id": "parent"}); err == nil {
 		t.Fatal("stopped the parent")
 	}
+	// A host's refusal (the subchat is not working) reaches the model (#325).
+	access.Stop = func(context.Context, string) error { return SubchatNotWorking(host.list[0]) }
+	if output, err, _ := runSubchat(t, access, false, false, map[string]any{"action": "stop", "id": "s1"}); err == nil || !strings.Contains(err.Error(), "s1 is not working (done): nothing to stop") {
+		t.Fatalf("stop a done subchat: %q %v", output, err)
+	}
 }
 
 func TestSubchatReport(t *testing.T) {
@@ -207,8 +213,67 @@ func TestSubchatReport(t *testing.T) {
 	if got := SubchatState(false, false, SubchatStopped); got != SubchatStopped {
 		t.Fatalf("stopped: %q", got)
 	}
-	if got := SubchatBranch("Fix the Parser: edge cases!"); got != "subchat/fix-the-parser-edge-cases" {
+	if got := SubchatBranch("Fix the Parser: edge cases!", "168740675f50de73"); got != "subchat/fix-the-parser-edge-cases" {
 		t.Fatalf("branch %q", got)
+	}
+	// A title without a letter or digit a branch keeps: named after the id (#327).
+	if got := SubchatBranch("日本語のタスク 🚀", "168740675f50de73"); got != "subchat/16874067" {
+		t.Fatalf("non-Latin branch %q", got)
+	}
+	if got := SubchatBranch("日本語 fix 2", "168740675f50de73"); got != "subchat/fix-2" {
+		t.Fatalf("mixed branch %q", got)
+	}
+}
+
+// A title is one line: newlines, tabs and runs of spaces become one space
+// before the cut (#326).
+func TestSubchatTitle(t *testing.T) {
+	for title, want := range map[string]string{
+		"line one\nline two":       "line one line two",
+		"  tabs\tand\r\n  spaces ": "tabs and spaces",
+		strings.Repeat("ab ", 30):  strings.TrimSpace(strings.Repeat("ab ", 20)),
+	} {
+		if got := SubchatTitle(title); got != want {
+			t.Errorf("SubchatTitle(%q) = %q, want %q", title, got, want)
+		}
+	}
+	host := &fakeSubchats{}
+	output, err, _ := runSubchat(t, host.access(""), true, true, map[string]any{"action": "start", "title": "line one\nline two", "brief": "Do it."})
+	if err != nil || host.started[0].Title != "line one line two" || !strings.Contains(output, "“line one line two”") {
+		t.Fatalf("start = %q, %v; started %+v", output, err, host.started)
+	}
+}
+
+// A model is checked before the user is asked, and the preview names it
+// (#330).
+func TestSubchatModelChecked(t *testing.T) {
+	host := &fakeSubchats{}
+	access := host.access("")
+	access.Model = func(_ context.Context, name string) (string, error) {
+		if name != "haiku" {
+			return "", fmt.Errorf("No model %q: use one of haiku", name)
+		}
+		return "Claude Haiku 5.5", nil
+	}
+	_, err, asked := runSubchat(t, access, false, true, map[string]any{"action": "start", "brief": "x", "model": "no-such-model-xyz"})
+	if err == nil || !strings.Contains(err.Error(), "No model") || len(asked) != 0 || len(host.started) != 0 {
+		t.Fatalf("an unknown model: %v, asked %q, started %v", err, asked, host.started)
+	}
+	_, err, asked = runSubchat(t, access, false, true, map[string]any{"action": "start", "brief": "x", "model": "haiku"})
+	if err != nil || len(asked) != 1 || !strings.Contains(asked[0], "with Claude Haiku 5.5.") || host.started[0].Model != "haiku" {
+		t.Fatalf("a known model: %v, asked %q, started %v", err, asked, host.started)
+	}
+}
+
+// The context a chat takes: its last measured turn, then an estimate (#329).
+func TestContextUsed(t *testing.T) {
+	history := []Message{{Role: "user", Content: "hi"}, {Role: "assistant", Content: "hello", Usage: 24000}}
+	if got := ContextUsed(history); got != 24000+HistoryEstimate(history[1:]) {
+		t.Fatalf("measured: %d", got)
+	}
+	estimated := []Message{{Role: "user", Content: "hi"}, {Role: "assistant", Content: "hello", Usage: 50, UsageEstimated: true}}
+	if got := ContextUsed(estimated); got != HistoryEstimate(estimated) {
+		t.Fatalf("estimated: %d", got)
 	}
 }
 
@@ -261,7 +326,7 @@ func TestSubchatWorktree(t *testing.T) {
 	}
 	ctx := context.Background()
 	// Not a repository yet: shared, said so.
-	created, note, err := SubchatWorktree(ctx, gitrepo.Local, dir, "Fix")
+	created, note, err := SubchatWorktree(ctx, gitrepo.Local, dir, "Fix", "s1")
 	if err != nil || created.Path != "" || !strings.Contains(note, "shares it") {
 		t.Fatalf("outside Git: %+v %q %v", created, note, err)
 	}
@@ -270,7 +335,7 @@ func TestSubchatWorktree(t *testing.T) {
 	git("add", ".")
 	git("commit", "-qm", "a")
 	os.WriteFile(filepath.Join(dir, "b.txt"), []byte("b"), 0o644) // uncommitted
-	created, note, err = SubchatWorktree(ctx, gitrepo.Local, dir, "Fix")
+	created, note, err = SubchatWorktree(ctx, gitrepo.Local, dir, "Fix", "s1")
 	if err != nil || created.Branch != "subchat/fix" || !strings.Contains(note, "uncommitted") {
 		t.Fatalf("first: %+v %q %v", created, note, err)
 	}
@@ -281,8 +346,23 @@ func TestSubchatWorktree(t *testing.T) {
 		t.Fatal("the worktree has the uncommitted file")
 	}
 	// The same title again: the next free branch.
-	again, _, err := SubchatWorktree(ctx, gitrepo.Local, dir, "Fix")
+	again, _, err := SubchatWorktree(ctx, gitrepo.Local, dir, "Fix", "s1")
 	if err != nil || again.Branch != "subchat/fix-2" || again.Path == created.Path {
 		t.Fatalf("second: %+v %v", again, err)
+	}
+	// A deleted subchat's worktree goes with its branch, which has no
+	// commits of its own (#328); one with uncommitted changes stays.
+	if note, err := RemoveSubchatWorktree(ctx, gitrepo.Local, again.Path, false); err != nil || note != "" {
+		t.Fatalf("remove: %q %v", note, err)
+	}
+	if _, err := os.Stat(again.Path); err == nil {
+		t.Fatal("the worktree is still there")
+	}
+	if out, _ := exec.Command("git", "-C", dir, "branch", "--list", "subchat/fix-2").Output(); strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("the branch is still there: %s", out)
+	}
+	os.WriteFile(filepath.Join(created.Path, "c.txt"), []byte("c"), 0o644)
+	if _, err := RemoveSubchatWorktree(ctx, gitrepo.Local, created.Path, false); err == nil || !strings.Contains(err.Error(), "uncommitted") {
+		t.Fatalf("removed a worktree with changes: %v", err)
 	}
 }

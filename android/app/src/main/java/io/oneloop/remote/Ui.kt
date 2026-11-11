@@ -145,6 +145,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -423,7 +424,7 @@ private fun AddressSheet(onDone: () -> Unit, onAdd: (Pair<String, String>) -> Un
 fun Field(value: String, onChange: (String) -> Unit, placeholder: String, keyboard: KeyboardType, modifier: Modifier = Modifier, password: Boolean = false) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    val border by animateColorAsState(if (focused) Palette.borderHot.copy(alpha = 1f) else Palette.border, tween(160), label = "border")
+    val border by animateColorAsState(if (focused) Palette.borderHover.copy(alpha = 1f) else Palette.border, tween(160), label = "border")
     BasicTextField(
         value, onChange, modifier.fillMaxWidth(), singleLine = true, textStyle = Type.body,
         cursorBrush = SolidColor(Palette.amber), keyboardOptions = KeyboardOptions(keyboardType = keyboard), interactionSource = interaction,
@@ -460,7 +461,12 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
         Spacer(Modifier.height(20.dp))
         Text("Pair with ${pair.server.name}", style = Type.headline, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
-        Text(if (pair.phone) "On that phone, type this code in 1loop's request and tap Allow, then tap Connect:\n${pair.consoleCode}" else if (pair.consoleCode.isNotEmpty()) "Enter this command in the server console, then tap Connect:\npair ${pair.pairing} ${pair.consoleCode}" else "Type the code 1loop shows on your computer.", style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center)
+        Text(
+            if (pair.phone) "On that phone, type this code in 1loop's request and tap Allow:\n${pair.consoleCode}"
+            else if (pair.consoleCode.isNotEmpty()) "Approve this phone in 1loop on a device already paired with the server: it asks for ${pair.consoleCode}. Or enter this command in the server console:\npair ${pair.pairing} ${pair.consoleCode}\nThis connects by itself once approved."
+            else "Type the code 1loop shows on your computer.",
+            style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center,
+        )
         if (pair.server.desktop && pair.server.fingerprint.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             Text("The computer must show the same check:\n${fingerprintCheck(pair.server.fingerprint)}", style = Type.small.copy(fontFamily = Type.mono.fontFamily), textAlign = TextAlign.Center)
@@ -501,6 +507,19 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
         )
     }
     LaunchedEffect(Unit) { if (pair.consoleCode.isEmpty()) focus.requestFocus() }
+    LaunchedEffect(pair) { // connects as soon as the pairing is approved
+        while (pair.consoleCode.isNotEmpty()) {
+            delay(2000)
+            try {
+                if (app.awaitApproval(pair)) break
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                app.problem = failure.message
+                break
+            }
+        }
+    }
     LaunchedEffect(app.problem) { if (app.problem != null) code = "" }
 }
 
@@ -509,7 +528,7 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
 
 @Composable
 fun ChatScreen(app: RemoteApp) {
-    if (app.server?.localPhone == true) PairingRequestDialog(app) // a device asking to use this phone
+    PairingRequestDialog(app) // a device asking to use this phone, or the server
     app.handoffAsk?.let { HandoffDialog(it) } // the chat continues with another model
     SharedFilesDialog(app) // files shared to 1loop from another app
     val page = app.repositoryOpen?.let { ChatPage("repository", it) }
@@ -594,7 +613,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
     var worktreeActions by remember(app.server) { mutableStateOf<Pair<String, Worktree>?>(null) }
     var newWorktree by remember(app.server) { mutableStateOf<String?>(null) }
     Column(modifier.background(Palette.sidebar).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
-        Image(painterResource(R.drawable.logo), "1loop", modifier = Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp))
+        Image(painterResource(if (Palette.dark) R.drawable.logo else R.drawable.logo_light), "1loop", modifier = Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp))
         NavRow("New chat", Icons.plus, selected = app.current == null) { app.open(null); onPicked() }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -732,7 +751,7 @@ internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running
             Spacer(Modifier.width(10.dp))
         }
         Column(Modifier.weight(1f)) {
-            Text(text, style = Type.body.copy(fontSize = 14.sp, color = if (selected) Palette.text else Color(0xFFB4B4B4)), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text, style = Type.body.copy(fontSize = 14.sp, color = if (selected) Palette.text else Palette.textSoft), maxLines = 1, overflow = TextOverflow.Ellipsis)
             // Its last wrap-up's recap, while the agent is not at work on it.
             if (status.isNotEmpty() && !running) Text(status, style = Type.caption.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -1134,7 +1153,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
     }
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    val border by animateColorAsState(if (focused) Palette.borderHot else Color.White.copy(alpha = 0.11f), tween(160), label = "card")
+    val border by animateColorAsState(if (focused) Palette.borderHover else Palette.overlay.copy(alpha = 0.11f), tween(160), label = "card")
     Column(
         Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 12.dp).padding(bottom = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1173,7 +1192,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 .shadow(animateDpAsState(if (focused) 14.dp else 0.dp, tween(220), label = "glow").value, RoundedCornerShape(18.dp), ambientColor = Palette.amber, spotColor = Palette.amber)
                 .background(Palette.surface, RoundedCornerShape(18.dp))
                 // Glass catching the light: a sheen over its upper half, a hairline edge.
-                .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.06f), Color.Transparent)), RoundedCornerShape(18.dp))
+                .background(Brush.verticalGradient(listOf(Palette.overlay.copy(alpha = 0.06f), Color.Transparent)), RoundedCornerShape(18.dp))
                 .border(1.dp, border, RoundedCornerShape(18.dp)).padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
         ) {
             if (app.attachments.isNotEmpty()) AttachmentTray(app)
@@ -1293,7 +1312,7 @@ private fun QueueTray(meta: Meta) {
 private fun QuestionTray(request: Questions, onOpen: () -> Unit) {
     Row(
         Modifier.widthIn(max = 728.dp).fillMaxWidth().background(Palette.popover, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
-            .border(1.dp, Palette.borderHot, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)).padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            .border(1.dp, Palette.borderHover, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)).padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -1475,7 +1494,7 @@ private fun ChoiceMark(picked: Boolean, multi: Boolean) {
     val shape = if (multi) RoundedCornerShape(4.dp) else CircleShape
     Box(
         Modifier.size(18.dp).clip(shape).background(if (multi && picked) Palette.amber else Color.Transparent)
-            .border(1.5.dp, if (picked) Palette.amber else Palette.borderHot, shape),
+            .border(1.5.dp, if (picked) Palette.amber else Palette.borderHover, shape),
         contentAlignment = Alignment.Center,
     ) {
         when {

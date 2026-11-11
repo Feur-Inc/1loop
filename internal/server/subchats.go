@@ -36,9 +36,27 @@ func (server *headlessServer) parentLocked(chat *serverChat) *serverChat {
 
 func (server *headlessServer) subchatInfoLocked(chat *serverChat) agent.SubchatInfo {
 	waiting := chat.run != nil && (chat.run.approval != nil || chat.run.question != nil)
+	used := agent.ContextUsed(chat.History)
+	if chat.run != nil && chat.run.used > 0 {
+		used = chat.run.used
+	}
 	return agent.SubchatInfo{ID: chat.ID, Title: chat.Title, State: agent.SubchatState(chat.run != nil, waiting, chat.Subchat.Ended),
 		Folder: chat.Config.Workspace, Branch: chat.Subchat.Branch, Model: server.labelLocked(chat.Config),
-		Used: agent.HistoryEstimate(chat.History), Last: agent.LastAnswer(chat.Items)}
+		Used: used, Last: agent.LastAnswer(chat.Items)}
+}
+
+// subchatWorktreeLocked is the worktree a subchat was given, "" when it
+// shares a folder or another chat works there too.
+func (server *headlessServer) subchatWorktreeLocked(chat *serverChat) string {
+	if chat.Subchat == nil || chat.Subchat.Branch == "" { // a branch: it was given a worktree
+		return ""
+	}
+	for _, other := range server.chats {
+		if other != chat && other.Config.Workspace == chat.Config.Workspace {
+			return ""
+		}
+	}
+	return chat.Config.Workspace
 }
 
 // wakeLocked gives chat a message from 1loop (a task's end, a subchat's
@@ -82,9 +100,10 @@ func (server *headlessServer) subchatAccess(chat *serverChat) *agent.SubchatAcce
 			if sub == nil || sub.Subchat == nil || sub.Subchat.Parent != chat.ID {
 				return fmt.Errorf("No subchat %s here", id)
 			}
-			if sub.run != nil {
-				sub.run.cancel()
+			if sub.run == nil {
+				return agent.SubchatNotWorking(server.subchatInfoLocked(sub))
 			}
+			sub.run.cancel()
 			return nil
 		},
 	}
@@ -97,6 +116,12 @@ func (server *headlessServer) subchatAccess(chat *serverChat) *agent.SubchatAcce
 	}
 	access.Start = func(ctx context.Context, request agent.SubchatRequest) (agent.SubchatInfo, error) {
 		return server.startSubchat(ctx, chat, request)
+	}
+	access.Model = func(_ context.Context, name string) (string, error) {
+		server.mu.Lock()
+		defer server.mu.Unlock()
+		found, err := agent.ChooseSubchatModel(server.choices, name, chat.Config)
+		return found.Display(), err
 	}
 	return access
 }
@@ -149,11 +174,12 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 	}
 	server.mu.Unlock()
 
+	id := core.Identifier()[:16]
 	var created gitrepo.Created
 	note := ""
 	if request.Isolation == "worktree" {
 		var err error
-		if created, note, err = agent.SubchatWorktree(ctx, gitrepo.Local, cfg.Workspace, request.Title); err != nil {
+		if created, note, err = agent.SubchatWorktree(ctx, gitrepo.Local, cfg.Workspace, request.Title, id); err != nil {
 			return agent.SubchatInfo{}, fmt.Errorf("Could not make the subchat's worktree: %v", err)
 		}
 		if created.Path != "" {
@@ -165,9 +191,16 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	if server.chatLocked(parent.ID) != parent {
+		if created.Path != "" { // no subchat works in it: it goes
+			go func() {
+				if _, err := agent.RemoveSubchatWorktree(context.WithoutCancel(ctx), gitrepo.Local, created.Path, true); err == nil {
+					gitTarget{server}.Removed(project, created.Path)
+				}
+			}()
+		}
 		return agent.SubchatInfo{}, fmt.Errorf("The conversation was deleted")
 	}
-	sub := &serverChat{ID: core.Identifier()[:16], Title: request.Title, Config: cfg, History: history, Items: items,
+	sub := &serverChat{ID: id, Title: request.Title, Config: cfg, History: history, Items: items,
 		Todo: &agent.TodoState{}, Cache: &agent.ContextCache{},
 		Subchat: &agent.SubchatLink{Parent: parent.ID, Branch: created.Branch, Report: true}}
 	if request.Context == "fork" {

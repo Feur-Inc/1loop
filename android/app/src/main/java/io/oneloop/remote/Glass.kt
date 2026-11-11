@@ -107,7 +107,7 @@ fun Modifier.glassMenu(tint: Color): Modifier {
     val picture = Glass.picture
     val shown by animateFloatAsState(if (picture != null) 1f else 0f, tween(120), label = "menu glass")
     return onGloballyPositioned { at = it.positionOnScreen() }.drawBehind {
-        val sheen = Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.10f), Color.White.copy(alpha = 0.02f)))
+        val sheen = Brush.verticalGradient(listOf(Palette.overlay.copy(alpha = if (Palette.dark) 0.10f else 0.03f), Palette.overlay.copy(alpha = 0.02f)))
         if (picture == null || shown <= 0f) {
             drawRect(tint.copy(alpha = 0.82f)) // the app shows through, sharp, until the frost is ready
             drawRect(sheen)
@@ -174,7 +174,7 @@ fun FrostedBox(
         if (publish) Glass.picture = runCatching { frosted(source, 135, 12) }.getOrNull()
         // Dimmed for what covers the whole app (baked in: no dimming layer
         // redrawn on every frame of a slide); a menu alone does not need it.
-        if (!publish || dialogs) frost = runCatching { frosted(source, 90, 9) }.getOrNull()
+        if (!publish || dialogs) frost = runCatching { frosted(source, 90, if (Palette.dark) 9 else 11) }.getOrNull()
     }
     Box(if (publish) modifier.onGloballyPositioned { Glass.origin = it.positionOnScreen(); Glass.extent = it.size } else modifier) {
         Box(
@@ -284,7 +284,10 @@ fun Modifier.appear(animate: Boolean): Modifier {
 }
 
 /** The glass surfaces' edge: a hairline of light, brightest at the top, as glass catches it. */
-val GlassEdge = BorderStroke(1.dp, Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.26f), Color.White.copy(alpha = 0.06f))))
+val GlassEdge: BorderStroke get() = BorderStroke(1.dp, Brush.verticalGradient(
+    if (Palette.dark) listOf(Color.White.copy(alpha = 0.26f), Color.White.copy(alpha = 0.06f))
+    else listOf(Color.Black.copy(alpha = 0.14f), Color.Black.copy(alpha = 0.08f)) // a shade's hairline on the light theme
+))
 
 /** A dialog's surface: translucent over the frosted app (a sheet stays opaque: it runs under the navigation bar, which shows light through it). */
 val GlassSurface: Color get() = Palette.surface.copy(alpha = 0.84f)
@@ -293,7 +296,7 @@ val GlassSurface: Color get() = Palette.surface.copy(alpha = 0.84f)
 val GlassMenuShape = RoundedCornerShape(16.dp)
 
 /** A dialog's light edge (its shape is Material's 28 dp). */
-val GlassDialogEdge = Modifier.border(GlassEdge, RoundedCornerShape(28.dp))
+val GlassDialogEdge: Modifier get() = Modifier.border(GlassEdge, RoundedCornerShape(28.dp))
 
 /** Under a sheet: a lighter shade than Material's, so the frosted app shows. */
 val GlassScrim = Color.Black.copy(alpha = 0.18f)

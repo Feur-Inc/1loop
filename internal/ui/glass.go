@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 
+	"1loop/internal/palette"
 	"1loop/internal/platform"
 )
 
@@ -81,7 +82,7 @@ func frostedBackdrop(c fyne.Canvas) (*image.NRGBA, image.Image) {
 	for pass := 0; pass < 3; pass++ { // three box blurs make a near-Gaussian one
 		boxBlur(small, 3)
 	}
-	vibrancy(small, 1.35, 0.72)
+	vibrancy(small, 1.35, glassBrightness(0.72))
 	platform.Devf("perf", "glass backdrop %dx%d in %s", w, h, time.Since(started).Round(100*time.Microsecond))
 	return small, shot
 }
@@ -157,8 +158,28 @@ func glassTint(base color.NRGBA, opacity float32) color.NRGBA {
 	return withAlpha(color.NRGBA{R: base.R, G: base.G, B: base.B, A: 0x80}, opacity)
 }
 
-// glassEdge outlines a pane of glass: a hairline of light rather than a border.
-var glassEdge = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x2a}
+// glassEdge outlines a pane of glass: a hairline of light rather than a
+// border (of shade, on the light theme).
+var glassEdge = palette.Dark.GlassEdge
+
+// glassBrightness is how much the frosted window is brightened (above 1)
+// or darkened for the dark theme; on the light one it is brightened
+// rather than darkened, so dark text keeps its contrast over it.
+func glassBrightness(dark float32) float32 {
+	if themeTokens.Dark {
+		return dark
+	}
+	return max(dark, 1.12)
+}
+
+// dimAlpha is the black laid over the window behind a dialog: lighter on
+// the light theme, where a heavy dim turns the window grey.
+func dimAlpha(dark float32) float32 {
+	if themeTokens.Dark {
+		return dark
+	}
+	return dark * 0.55
+}
 
 // footerGlass lays the composer over the conversation's end: above it the
 // conversation fades into the background, which is opaque under it, so the

@@ -521,12 +521,12 @@ func (renderer *choiceCardRenderer) MinSize() fyne.Size {
 
 func (renderer *choiceCardRenderer) Refresh() {
 	card := renderer.card
-	fill, stroke, ring := color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x05}, colBorder, colBorderHot
+	fill, stroke, ring := overlay(0x05), colBorder, colBorderHot
 	switch {
 	case card.picked:
 		fill, stroke, ring = withAlpha(colAmber, 0.10), colAmber, colAmber
 	case card.pressed:
-		fill, stroke = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x16}, colBorderHot
+		fill, stroke = overlay(0x16), colBorderHot
 	case card.hovered:
 		fill, stroke = colHover, colBorderHot
 	}

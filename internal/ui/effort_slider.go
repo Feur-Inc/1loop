@@ -152,7 +152,7 @@ func (slider *stepSlider) key(e *fyne.KeyEvent) bool {
 }
 
 func (slider *stepSlider) CreateRenderer() fyne.WidgetRenderer {
-	renderer := &stepSliderRenderer{slider: slider, track: canvas.NewRectangle(color.NRGBA{R: 0x33, G: 0x33, B: 0x33, A: 0xff}),
+	renderer := &stepSliderRenderer{slider: slider, track: canvas.NewRectangle(colTrack),
 		fill: canvas.NewRectangle(colAmber), thumb: canvas.NewCircle(colText), shadow: canvas.NewCircle(color.NRGBA{A: 0x33})}
 	renderer.track.CornerRadius = sliderWidth / 2
 	renderer.fill.CornerRadius = sliderWidth / 2
@@ -202,7 +202,7 @@ func (renderer *stepSliderRenderer) Refresh() {
 	renderer.thumb.FillColor = colText
 	renderer.shadow.Hidden = slider.disabled
 	if slider.disabled {
-		renderer.thumb.FillColor = color.NRGBA{R: 0x77, G: 0x77, B: 0x77, A: 0xff}
+		renderer.thumb.FillColor = colKnobOff
 	}
 	for i, dot := range renderer.dots {
 		// Dots under the amber part read as darker amber, the others as
@@ -210,7 +210,7 @@ func (renderer *stepSliderRenderer) Refresh() {
 		if !slider.disabled && float32(i) <= slider.pos+0.01 {
 			dot.FillColor = withAlpha(colInk, 0.35)
 		} else {
-			dot.FillColor = color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x55}
+			dot.FillColor = overlay(0x55)
 		}
 		dot.Refresh()
 	}

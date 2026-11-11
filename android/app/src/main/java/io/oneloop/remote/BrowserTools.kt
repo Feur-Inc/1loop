@@ -130,7 +130,7 @@ private fun ToolChip(text: String, selected: Boolean, icon: androidx.compose.ui.
     val shape = RoundedCornerShape(50)
     Row(
         Modifier.clip(shape).background(if (selected) Palette.raised else Palette.background)
-            .border(1.dp, if (selected) Palette.borderHot else Palette.border, shape)
+            .border(1.dp, if (selected) Palette.borderHover else Palette.border, shape)
             .clickable(enabled = enabled, onClick = onClick).height(32.dp).padding(horizontal = 12.dp),
         verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp),
     ) {

@@ -472,6 +472,10 @@ func (ui *desktopUI) deleteChat(chat *conversation) {
 	if chat.Config.Scratch != "" {
 		text = fmt.Sprintf("“%s” and the folder 1loop made for it will be permanently deleted.", chat.Title)
 	}
+	if ui.subchatWorktree(chat) != "" {
+		ui.confirmDeleteSubchat(chat, text)
+		return
+	}
 	ui.confirm("Delete chat?", text, "Delete", func() {
 		ui.removeChat(chat)
 	})
@@ -592,7 +596,7 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	ui.sideGlide = newGlideLayout()
 	ui.projectList = container.New(ui.sideGlide)
 
-	logo := brandImage("1loop-logo.png", 30*1483.0/512.0, 30)
+	logo := brandLogo(30*1483.0/512.0, 30)
 	collapse := newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
 	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, logo, container.NewCenter(collapse)))
 	if ui.chrome {

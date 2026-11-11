@@ -34,22 +34,29 @@ type contextUsageState struct {
 
 // contextColors are the categories' colors; the others are greys.
 var contextColors = map[string]color.Color{
-	"messages":           color.NRGBA{R: 0x4c, G: 0x8d, B: 0xff, A: 0xff},
-	"system_tools":       color.NRGBA{R: 0xe8, G: 0x81, B: 0x3a, A: 0xff},
-	"mcp_tools":          color.NRGBA{R: 0x2f, G: 0xb5, B: 0x9b, A: 0xff},
-	"autocompact_buffer": color.NRGBA{R: 0x4a, G: 0x4a, B: 0x4a, A: 0xff},
-	"compact_buffer":     color.NRGBA{R: 0x4a, G: 0x4a, B: 0x4a, A: 0xff},
-	"free_space":         color.NRGBA{R: 0x2a, G: 0x2a, B: 0x2a, A: 0xff},
+	"messages":     color.NRGBA{R: 0x4c, G: 0x8d, B: 0xff, A: 0xff},
+	"system_tools": color.NRGBA{R: 0xe8, G: 0x81, B: 0x3a, A: 0xff},
+	"mcp_tools":    color.NRGBA{R: 0x2f, G: 0xb5, B: 0x9b, A: 0xff},
 }
+
+// contextGrey is a grey between the border's (0) and the muted text's (1)
+// in the theme in use.
+func contextGrey(f float32) color.Color { return mix(colBorder, colMuted, f) }
 
 func contextColor(category agent.ContextCategory) color.Color {
 	if c, ok := contextColors[category.ID]; ok {
 		return c
 	}
-	if category.Kind == "deferred" {
-		return color.NRGBA{R: 0x3a, G: 0x3a, B: 0x3a, A: 0xff}
+	switch category.ID {
+	case "autocompact_buffer", "compact_buffer":
+		return contextGrey(0.33)
+	case "free_space":
+		return contextGrey(0)
 	}
-	return color.NRGBA{R: 0x9a, G: 0x9a, B: 0x9a, A: 0xff}
+	if category.Kind == "deferred" {
+		return contextGrey(0.17)
+	}
+	return contextGrey(1.15)
 }
 
 // contextBarLayout gives each segment its share of the width.

@@ -9,8 +9,10 @@ package ui
 import (
 	"context"
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -45,9 +47,13 @@ func (ui *desktopUI) parentOf(chat *conversation) *conversation {
 func (ui *desktopUI) subchatInfo(chat *conversation) agent.SubchatInfo {
 	link := chat.Subchat
 	waiting := chat.run != nil && (chat.run.approvalID != "" || chat.run.questionID != "")
+	used := agent.ContextUsed(chat.History)
+	if chat.run != nil && chat.run.turn != nil && chat.run.turn.usage > 0 {
+		used = chat.run.turn.usage
+	}
 	return agent.SubchatInfo{ID: chat.ID, Title: chat.Title, State: agent.SubchatState(chat.run != nil, waiting, link.Ended),
 		Folder: chat.Config.Workspace, Branch: link.Branch, Model: ui.modelName(chat.Config),
-		Used: agent.HistoryEstimate(chat.History), Last: agent.LastAnswer(chat.Items)}
+		Used: used, Last: agent.LastAnswer(chat.Items)}
 }
 
 // subchatAccess is what the chat's subchat tool reaches: its subchats, or
@@ -73,6 +79,10 @@ func (ui *desktopUI) subchatAccess(chat *conversation) *agent.SubchatAccess {
 					err = fmt.Errorf("No subchat %s here", id)
 					return
 				}
+				if sub.run == nil {
+					err = agent.SubchatNotWorking(ui.subchatInfo(sub))
+					return
+				}
 				ui.stopSubchat(sub)
 			})
 			return err
@@ -87,6 +97,15 @@ func (ui *desktopUI) subchatAccess(chat *conversation) *agent.SubchatAccess {
 	}
 	access.Start = func(ctx context.Context, request agent.SubchatRequest) (agent.SubchatInfo, error) {
 		return ui.startSubchat(ctx, chat, request)
+	}
+	access.Model = func(ctx context.Context, name string) (display string, err error) {
+		ui.onUI(ctx, func() {
+			var found agent.ModelChoice
+			if found, err = agent.ChooseSubchatModel(ui.choices, name, chat.Config); err == nil {
+				display = found.Display()
+			}
+		})
+		return display, err
 	}
 	return access
 }
@@ -123,12 +142,13 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 	if err != nil {
 		return info, err
 	}
+	id := core.Identifier()[:16]
 	var created gitrepo.Created
 	note := ""
 	if request.Isolation == "worktree" {
 		if cfg.MachineID != "" {
 			note = "Worktrees are not made on SSH machines yet, so the subchat shares this folder."
-		} else if created, note, err = agent.SubchatWorktree(ctx, gitrepo.Local, cfg.Workspace, request.Title); err != nil {
+		} else if created, note, err = agent.SubchatWorktree(ctx, gitrepo.Local, cfg.Workspace, request.Title, id); err != nil {
 			return info, fmt.Errorf("Could not make the subchat's worktree: %v", err)
 		}
 	}
@@ -137,7 +157,7 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 			err = fmt.Errorf("The conversation was deleted")
 			return
 		}
-		sub := &conversation{ID: core.Identifier()[:16], Title: request.Title, Config: cfg, History: history, Items: items,
+		sub := &conversation{ID: id, Title: request.Title, Config: cfg, History: history, Items: items,
 			Subchat: &agent.SubchatLink{Parent: parent.ID, Branch: created.Branch, Report: true}}
 		if created.Path != "" {
 			if ui.worktrees == nil {
@@ -158,6 +178,11 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 	})
 	if err == nil {
 		err = ctx.Err()
+	}
+	if err != nil && created.Path != "" && info.ID == "" { // no subchat works in it: it goes
+		go func() {
+			_, _ = agent.RemoveSubchatWorktree(context.WithoutCancel(ctx), gitrepo.Local, created.Path, true)
+		}()
 	}
 	return info, err
 }
@@ -194,6 +219,67 @@ func (ui *desktopUI) stopSubchat(sub *conversation) {
 	if sub.run != nil {
 		sub.run.cancel()
 	}
+}
+
+// subchatWorktree is the worktree a subchat of this computer was given,
+// "" when it shares a folder or another chat works there too.
+func (ui *desktopUI) subchatWorktree(chat *conversation) string {
+	if chat.Subchat == nil || chat.Subchat.Branch == "" || chat.Config.MachineID != "" || ui.worktrees[chat.Config.Workspace] == "" {
+		return ""
+	}
+	for _, other := range ui.chats {
+		if other != chat && other.Config.Workspace == chat.Config.Workspace && other.Config.MachineID == "" {
+			return ""
+		}
+	}
+	return chat.Config.Workspace
+}
+
+// confirmDeleteSubchat asks before deleting a subchat with its own
+// worktree, and removes the worktree and its branch with it unless the
+// user keeps them.
+func (ui *desktopUI) confirmDeleteSubchat(chat *conversation, text string) {
+	folder := ui.subchatWorktree(chat)
+	project := ui.worktrees[folder]
+	removeWorktree := true
+	body := container.New(layout.NewCustomPaddedVBoxLayout(10), note(text),
+		card(settingRow("Also remove its worktree and branch "+chat.Subchat.Branch,
+			"The folder "+worktreeFolder(folder)+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own.",
+			newToggle(true, func(on bool) { removeWorktree = on }))))
+	var dialog *sheet
+	remove := newRow("Delete", nil, stylePrimary, func() {
+		dialog.Hide()
+		ui.removeChat(chat)
+		if !removeWorktree {
+			return
+		}
+		go func() {
+			ctx, cancel := context.WithTimeout(ui.ctx, time.Minute)
+			kept, err := agent.RemoveSubchatWorktree(ctx, gitrepo.Local, folder, false)
+			cancel()
+			fyne.Do(func() {
+				if err != nil {
+					ui.notice("Worktree kept", folder+": "+err.Error())
+					return
+				}
+				ui.forgetLocalWorktree(project, folder)
+				if kept != "" {
+					ui.notice("Worktree removed", kept)
+				}
+			})
+		}()
+	})
+	remove.danger = true
+	dialog = ui.modal("Delete chat?", body, 500, nil, newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() }), remove)
+}
+
+// worktreeFolder is a worktree's folder from its project's: .worktrees/…
+func worktreeFolder(folder string) string {
+	marker := string(filepath.Separator) + gitrepo.Folder + string(filepath.Separator)
+	if i := strings.LastIndex(folder, marker); i >= 0 {
+		return folder[i+1:]
+	}
+	return folder
 }
 
 // subchatEnded notes how a subchat's turn ended and, when the parent caused
@@ -289,7 +375,7 @@ func (panel *toolPanel) addSubchats(box *fyne.Container, chat *conversation) {
 	title.TextStyle = fyne.TextStyle{Bold: true}
 	total := 0
 	for _, sub := range subs {
-		total += agent.HistoryEstimate(sub.History)
+		total += ui.subchatInfo(sub).Used
 	}
 	box.Add(padded(22, 6, 0, 0, container.NewBorder(nil, nil, title, textLine(fmt.Sprintf("%s tokens together", compactTokens(total)), 12.5, colMuted))))
 	for _, sub := range subs {

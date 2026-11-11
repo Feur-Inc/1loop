@@ -263,10 +263,10 @@ func (renderer *diffRowRenderer) Refresh() {
 	}
 	switch line.kind {
 	case '+':
-		renderer.bg.FillColor = color.NRGBA{R: 0x1c, G: 0x33, B: 0x23, A: 0xff}
+		renderer.bg.FillColor = colDiffAdded
 		renderer.mark.FillColor, renderer.next.Color = colAdded, colAdded
 	case '-':
-		renderer.bg.FillColor = color.NRGBA{R: 0x40, G: 0x21, B: 0x1d, A: 0xff}
+		renderer.bg.FillColor = colDiffRemoved
 		renderer.mark.FillColor, renderer.old.Color = colDanger, colDanger
 	case 'c':
 		renderer.bg.FillColor = colRaised
@@ -288,7 +288,7 @@ func (renderer *diffRowRenderer) Refresh() {
 	for len(renderer.code) < len(tokens) {
 		renderer.code = append(renderer.code, textLine("", outputTextSize, colText))
 	}
-	style := styles.Get("monokai")
+	style := styles.Get(syntaxStyle())
 	for i, text := range renderer.code {
 		if i >= len(tokens) {
 			text.Hide()

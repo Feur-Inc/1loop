@@ -4,6 +4,7 @@ package io.oneloop.remote
 
 import android.Manifest
 import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
 import android.content.ContentUris
 import android.content.Context
 import android.content.Intent
@@ -14,6 +15,7 @@ import android.os.Build
 import android.provider.MediaStore
 import android.util.LruCache
 import android.util.Size
+import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
@@ -169,17 +171,50 @@ fun AttachButton(app: RemoteApp, project: String?) {
         if (taken && uri != null) app.attach(listOf(uri), project)
         shot = null
     }
+    val takePhoto = {
+        val folder = File(context.cacheDir, "camera").apply { mkdirs() }
+        val file = File(folder, "Photo-${System.currentTimeMillis()}.jpg")
+        val uri = FileProvider.getUriForFile(context, context.packageName + ".updates", file)
+        shot = uri.toString()
+        try {
+            camera.launch(uri)
+        } catch (e: SecurityException) {
+            shot = null
+            Toast.makeText(context, "1loop needs the camera permission to take a photo.", Toast.LENGTH_LONG).show()
+        } catch (e: ActivityNotFoundException) {
+            shot = null
+            Toast.makeText(context, "No camera app could take the photo.", Toast.LENGTH_LONG).show()
+        }
+    }
+    // The QR scanner library declares CAMERA in the manifest: Android then lets
+    // the app start the camera app only once the permission is granted, and
+    // otherwise throws instead of opening it.
+    val cameraAccess = rememberLauncherForActivityResult(ActivityResultContracts.RequestPermission()) { granted ->
+        if (granted) {
+            takePhoto()
+        } else {
+            Toast.makeText(context, "1loop needs the camera permission to take a photo.", Toast.LENGTH_LONG).show()
+        }
+    }
     RoundButton(Icons.plus, Color.Transparent, Palette.muted, size = 32.dp, iconSize = 18.dp, description = "Attach files") { open = true }
     if (open) MediaSheet(
         onFiles = { open = false; files.launch(arrayOf("*/*")) },
         onPhotos = { open = false; photos.launch(PickVisualMediaRequest(ActivityResultContracts.PickVisualMedia.ImageAndVideo)) },
         onCamera = if (Intent(MediaStore.ACTION_IMAGE_CAPTURE).resolveActivity(context.packageManager) == null) null else ({
             open = false
-            val folder = File(context.cacheDir, "camera").apply { mkdirs() }
-            val file = File(folder, "Photo-${System.currentTimeMillis()}.jpg")
-            val uri = FileProvider.getUriForFile(context, context.packageName + ".updates", file)
-            shot = uri.toString()
-            camera.launch(uri)
+            val prefs = context.getSharedPreferences("1loop-media", Context.MODE_PRIVATE)
+            val asked = prefs.getInt("cameraAsked", 0)
+            when {
+                context.checkSelfPermission(Manifest.permission.CAMERA) == PackageManager.PERMISSION_GRANTED -> takePhoto()
+                asked < 2 -> { // Android stops asking after two refusals, as for the photos
+                    prefs.edit { putInt("cameraAsked", asked + 1) }
+                    cameraAccess.launch(Manifest.permission.CAMERA)
+                }
+                else -> {
+                    Toast.makeText(context, "Allow the camera in 1loop's permissions to take a photo.", Toast.LENGTH_LONG).show()
+                    context.startActivity(Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null)))
+                }
+            }
         }),
         onPicked = { open = false; app.attach(it, project) },
         onDone = { open = false },

@@ -487,11 +487,19 @@ func summarizeConversation(ctx context.Context, cfg Config, rounds []Message, fo
 	if cfg.Provider == "openai" {
 		summaryCfg.Parameters["max_output_tokens"] = max(2048, budget*2)
 	} else if cfg.Provider == "vllm" || cfg.Provider == "openrouter" {
-		summaryCfg.Parameters["max_tokens"] = max(512, budget)
+		// A reasoning model spends part of max_tokens thinking before it
+		// writes: with the summary's budget alone, the summary was cut off
+		// and the compaction failed, until the context overflowed.
+		summaryCfg.Parameters["max_tokens"] = max(4096, budget*4)
 	}
 	// Arbitrary compatible servers differ on token-limit parameters; retain
 	// their configuration and enforce the reduction budget on the result.
 	out, err := completion(ctx, summaryCfg, input, false, func(string, any) {})
+	if err != nil && strings.Contains(err.Error(), "token limit reached") && strings.TrimSpace(out.Content) != "" {
+		// A summary cut short still frees the context; failing here kept
+		// the whole history and the next request no longer fit.
+		return out.Content, nil
+	}
 	return out.Content, err
 }
 

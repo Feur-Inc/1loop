@@ -381,6 +381,16 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 	}
 	server.mu.Lock()
 	chat := server.chatLocked(args.Chat)
+	if text := strings.TrimSpace(args.Text); text == "/subchat" || strings.HasPrefix(text, "/subchat ") {
+		err := server.subchatCommandLocked(chat, strings.TrimPrefix(text, "/subchat"))
+		server.mu.Unlock()
+		if err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		core.WriteJSON(w, 200, map[string]string{"chat": args.Chat})
+		return
+	}
 	workspace := args.Workspace
 	if chat != nil {
 		if workspace != "" && workspace != chat.Config.Workspace {

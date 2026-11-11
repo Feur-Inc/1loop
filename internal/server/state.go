@@ -42,6 +42,8 @@ type serverChat struct {
 	review       *agent.ReviewSession    // the Auto mode reviewer's conversation, until the server stops
 	tasks        *agent.BackgroundTasks  // shell commands run in the background, until the server stops
 	Browsers     []browser.Info          `json:"browsers,omitempty"`
+	// Subchat links a subchat to the chat that started it (subchats.go).
+	Subchat      *agent.SubchatLink `json:"subchat,omitempty"`
 	run          *serverRun
 	tabs         []*serverTab
 	session      *browser.Session
@@ -513,7 +515,11 @@ func (server *headlessServer) settingsLocked() map[string]any {
 func (server *headlessServer) summariesLocked() []remoteapi.Chat {
 	out := []remoteapi.Chat{}
 	for _, chat := range server.chats {
-		out = append(out, remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Items: len(chat.Items)})
+		summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Items: len(chat.Items)}
+		if chat.Subchat != nil {
+			summary.Parent = chat.Subchat.Parent
+		}
+		out = append(out, summary)
 	}
 	return out
 }
@@ -557,6 +563,12 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		if chat.run.used > 0 {
 			meta.Used = chat.run.used
 		}
+	}
+	if parent := server.parentLocked(chat); parent != nil {
+		meta.Parent, meta.ParentTitle = parent.ID, parent.Title
+	}
+	for _, sub := range server.subchatsLocked(chat) {
+		meta.Subchats = append(meta.Subchats, server.subchatInfoLocked(sub))
 	}
 	meta.ContextStatus = agent.TaskContextText(chat.Config, meta.Used, meta.Window, server.classic, meta.Mark)
 	meta.ContextUsage = agent.ChatContextUsage(chat.Config, chat.History, chat.ContextUsage, server.classic).Summary()
@@ -691,15 +703,7 @@ func (server *headlessServer) chatTasksLocked(chat *serverChat) *agent.Backgroun
 			OnFinish: func(_ agent.BackgroundTaskInfo, message agent.Message) {
 				server.mu.Lock()
 				defer server.mu.Unlock()
-				if server.chatLocked(chat.ID) != chat || server.closing || server.ctx.Err() != nil {
-					return
-				}
-				if chat.run != nil {
-					chat.steer = append(chat.steer, message)
-					server.changedLocked(chat, -1)
-					return
-				}
-				server.runLocked(chat, message)
+				server.wakeLocked(chat, message)
 			},
 			OnChange: func() {
 				server.mu.Lock()
@@ -730,6 +734,7 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 		cfg.Preferences = server.updatePreferences
 	}
 	cfg.Settings = server.settingsAccess()
+	cfg.Subchats = server.subchatAccess(chat)
 	cfg.ApprovalMode = agent.ApprovalFor(server.approvalMode, cfg)
 	if cfg.InScratch() { // change_directory; the phone has no folder picker for request_directory yet
 		cfg.Move = &agent.WorkspaceMove{}
@@ -823,6 +828,9 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 	ctx, cancel := context.WithCancel(server.ctx)
 	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait"}
 	chat.run = run
+	if parent := server.parentLocked(chat); parent != nil { // its state in the parent's Tasks
+		server.broadcastLocked("meta", server.metaLocked(parent))
+	}
 	cfg := server.runConfigLocked(chat, run.capabilities)
 	history := append([]agent.Message{}, chat.History...)
 	server.changedLocked(chat, index)
@@ -882,8 +890,13 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			return
 		}
 		chat.run = nil
+		ended := agent.SubchatDone
 		if err != nil {
 			server.addLocked(chat, agent.ChatItem{Kind: "error", Text: err.Error()})
+			ended = agent.SubchatFailed
+			if ctx.Err() == context.Canceled {
+				ended = agent.SubchatStopped
+			}
 		}
 		moved := server.finishMoveLocked(chat, cfg.Move)
 		server.broadcastLocked("replace", map[string]string{"chat": chat.ID})
@@ -913,6 +926,9 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			next := chat.queue[0]
 			chat.queue = chat.queue[1:]
 			server.runLocked(chat, next)
+		}
+		if chat.run == nil { // the last turn of the chain: a subchat reports
+			server.subchatEndedLocked(chat, ended)
 		}
 	}()
 }

@@ -24,8 +24,19 @@ import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
 
-/** scratch: a chat without a folder, in one 1loop made for it; it shows as "No folder", never its path. */
-data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean, val scratch: Boolean = false)
+/**
+ * scratch: a chat without a folder, in one 1loop made for it; it shows as "No folder", never its path.
+ * parent: a subchat's parent chat, listed above it.
+ */
+data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean, val scratch: Boolean = false, val parent: String = "")
+
+/** A subchat as its parent's meta lists it; state is working, waiting, done, failed or stopped. */
+data class Subchat(val id: String, val title: String, val state: String, val branch: String, val used: Int) {
+    val active get() = state == "working" || state == "waiting"
+    companion object {
+        fun from(o: JSONObject) = Subchat(o.optString("id"), o.optString("title"), o.optString("state"), o.optString("branch"), o.optInt("used"))
+    }
+}
 
 /** The project choice that starts a chat in a folder 1loop makes for it (#258). */
 const val NO_FOLDER = "\u0000no-folder"
@@ -209,6 +220,8 @@ data class Meta(
     val provider: String = "", // the chat's account type
     val tool: String = "", // executing now, whatever the label says (an approval replaces it)
     val contextUsage: ContextUsage? = null, // the window by category, without the MCP tools' list
+    val parent: String = "", val parentTitle: String = "", // a subchat's parent
+    val subchats: List<Subchat> = emptyList(), // the chat's own, newest first
 ) {
     companion object {
         fun from(o: JSONObject) = Meta(
@@ -229,6 +242,10 @@ data class Meta(
             o.optString("provider"),
             o.optString("tool"),
             o.optJSONObject("contextUsage")?.let { ContextUsage.from(it) },
+            o.optString("parent"), o.optString("parentTitle"),
+            o.optJSONArray("subchats").let { array ->
+                (0 until (array?.length() ?: 0)).map { i -> Subchat.from(array!!.getJSONObject(i)) }
+            },
         )
     }
 }
@@ -840,7 +857,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     private fun parseChats(array: JSONArray?) = (0 until (array?.length() ?: 0)).map { i ->
-        array!!.getJSONObject(i).let { ChatSummary(it.getString("id"), it.optString("title"), it.optString("workspace"), it.optBoolean("running"), it.optBoolean("scratch")) }
+        array!!.getJSONObject(i).let { ChatSummary(it.getString("id"), it.optString("title"), it.optString("workspace"), it.optBoolean("running"), it.optBoolean("scratch"), it.optString("parent")) }
     }
 
     private suspend fun load(id: String, target: Server, generation: Long) {

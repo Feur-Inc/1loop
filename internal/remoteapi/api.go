@@ -46,6 +46,7 @@ type Chat struct {
 	Machine   string `json:"machine,omitempty"` // the SSH machine its project is on, by its label
 	Running   bool   `json:"running"`
 	Items     int    `json:"items"`
+	Parent    string `json:"parent,omitempty"` // a subchat's parent chat (agent/subchats.go)
 }
 
 type Item struct {
@@ -97,6 +98,11 @@ type Meta struct {
 	Tasks []agent.BackgroundTaskInfo `json:"tasks"`
 	// Its account's type: a local phone keeps a ChatGPT (Web) chat's page open.
 	Provider string `json:"provider,omitempty"`
+	// A subchat's parent, by ID and title; a chat's own subchats, the newest
+	// first. POST /api/stop stops one, as any chat.
+	Parent      string              `json:"parent,omitempty"`
+	ParentTitle string              `json:"parentTitle,omitempty"`
+	Subchats    []agent.SubchatInfo `json:"subchats,omitempty"`
 }
 
 // Page is the part of a chat's items GET /api/chats/{id} returns: all of

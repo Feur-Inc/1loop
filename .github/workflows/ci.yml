@@ -119,6 +119,32 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # GitHub's Ubuntu machines fetch packages through Azure's mirror and
+      # Canonical's archive. On 2026-11-11 their DNS stopped resolving
+      # Canonical's names (azure.archive, archive and security.ubuntu.com)
+      # while others resolved: every download failed after long retries, and
+      # the Linux build failed after 51 minutes. A name that doesn't resolve
+      # is then looked up over HTTPS at 1.1.1.1 (an address, no lookup
+      # needed) and pinned in /etc/hosts; apt also gives up on a dead server
+      # sooner.
+      - name: Ubuntu archive fallback (GitHub's machines)
+        if: runner.environment == 'github-hosted'
+        run: |
+          set -euo pipefail
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' |
+            sudo tee /etc/apt/apt.conf.d/99-1loop-ci >/dev/null
+          for host in azure.archive.ubuntu.com archive.ubuntu.com security.ubuntu.com; do
+            timeout 10 getent hosts "$host" >/dev/null && continue
+            address=$(curl -fsS -m 10 -H 'accept: application/dns-json' "https://1.1.1.1/dns-query?name=$host&type=A" |
+              jq -r '[.Answer[]? | select(.type == 1) | .data][0] // empty' || true)
+            if [ -n "$address" ]; then
+              echo "::warning::$host doesn't resolve here: pinned to $address (DNS over HTTPS)"
+              echo "$address $host" | sudo tee -a /etc/hosts >/dev/null
+            else
+              echo "::warning::$host doesn't resolve here, nor over HTTPS"
+            fi
+          done
+
       - name: Linux — checks, desktop packages and servers
         if: matrix.platform == 'linux'
         env:

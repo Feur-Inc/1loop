@@ -700,6 +700,7 @@ func (remote *remoteDesktop) renderChats() {
 	for _, chat := range remote.chats {
 		chat := chat
 		chats = append(chats, sideChat{
+			id: chat.ID, parent: chat.Parent,
 			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
 			selected: ui.current != nil && ui.current.server == remote && ui.current.serverID == chat.ID,
 			open:     func() { remote.openChat(chat.ID) },
@@ -869,6 +870,7 @@ func (remote *remoteDesktop) showMeta(conv *conversation) {
 	ui := remote.parent
 	meta := remote.meta
 	ui.syncRun()
+	ui.showParentLink()
 	ui.setContextUsage(meta.Used, meta.Window)
 	approvalID := ""
 	if meta.Approval != nil {
@@ -1100,7 +1102,7 @@ func (remote *remoteDesktop) renderTasks() {
 	if remote.tabViews["todo"] == nil || remote.todoTasks == nil {
 		return
 	}
-	signature, _ := json.Marshal([]any{remote.meta.Todo, remote.meta.Tasks})
+	signature, _ := json.Marshal([]any{remote.meta.Todo, remote.meta.Tasks, remote.meta.Subchats})
 	if string(signature) != remote.todoSignature {
 		remote.todoSignature = string(signature)
 		remote.todoTasks.RemoveAll()
@@ -1140,6 +1142,7 @@ func (remote *remoteDesktop) renderTasks() {
 			})
 			remote.todoTasks.Add(container.NewBorder(nil, nil, nil, stop, container.NewVBox(command, textLine(state, 11.5, colMuted))))
 		}
+		remote.addSubchats()
 	}
 	for _, task := range remote.meta.Todo {
 		item := agent.TodoItem{ID: task.ID, Text: task.Text, Status: task.Status}

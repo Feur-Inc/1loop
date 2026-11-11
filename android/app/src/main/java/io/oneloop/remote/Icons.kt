@@ -65,6 +65,8 @@ object Icons {
     val unlock = lineIcon("unlock", line("M4.6 7.4h6.8a1.1 1.1 0 0 1 1.1 1.1v4a1.1 1.1 0 0 1-1.1 1.1H4.6a1.1 1.1 0 0 1-1.1-1.1v-4a1.1 1.1 0 0 1 1.1-1.1z"), line("M5.6 7.4V5.5a2.4 2.4 0 0 1 4.6-1"))
     val star = lineIcon("star", line("M8 2.3l1.7 3.6 3.9.5-2.9 2.7.7 3.9L8 11.1 4.6 13l.7-3.9-2.9-2.7 3.9-.5z"))
     val trash = lineIcon("trash", line("M3 4.5h10M6.5 4.5V3.2h3v1.3M4.5 4.5l.6 8.3h5.8l.6-8.3M7 7v3.6M9 7v3.6"))
+    // A conversation with a smaller one under it, as on the desktop (ui/subchats.go).
+    val subchat = lineIcon("subchat", line("M3 3.5h7.5a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1-1.5 1.5H7l-2.5 2v-2H3A1.5 1.5 0 0 1 1.5 8V5A1.5 1.5 0 0 1 3 3.5z"), line("M9 12.5h2.5l2 1.5v-1.5h.5a1 1 0 0 0 1-1v-2"))
     val tasks = lineIcon("tasks", line("M2.8 4.6l1.3 1.3 2.3-2.4M8.5 4.7h4.7M2.8 10.6l1.3 1.3 2.3-2.4M8.5 10.7h4.7"))
     val sliders = lineIcon("sliders", line("M2.5 5h6M11.5 5h2M2.5 11h2M7.5 11h6"), line("M10 3.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3z"), line("M6 9.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3z"))
     val puzzle = lineIcon("puzzle", line("M3 5.5h2.6a1.4 1.4 0 1 1 2.8 0H11v2.6a1.4 1.4 0 1 1 0 2.8V13.5H8.4a1.4 1.4 0 1 0-2.8 0H3v-2.6a1.4 1.4 0 1 0 0-2.8z"))

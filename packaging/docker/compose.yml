@@ -2,13 +2,20 @@
 #
 #   docker compose -f packaging/docker/compose.yml up -d
 #   docker compose -f packaging/docker/compose.yml logs server   # the certificate's fingerprint
-#   docker attach 1loop-server                                    # pair, devices, revoke; detach with Ctrl+P Ctrl+Q
+#   docker attach 1loop-server                                    # pair, devices, revoke, ssh; detach with Ctrl+P Ctrl+Q
+#
+# How much of the host the agent reaches (docs/SERVER.md#how-much-of-the-host-the-agent-reaches):
+#   1. Isolated, as below: only the volumes, commands in the container's Debian.
+#   2. Host folders: uncomment bind mounts under volumes.
+#   3. Host over SSH: uncomment extra_hosts, secrets and ONELOOP_SSH_MACHINE.
+# Never --privileged, pid: host or the Docker socket: each gives the agent
+# root on the host.
 services:
   server:
     image: ghcr.io/feur-inc/1loop-server:latest
     container_name: 1loop-server
     restart: unless-stopped
-    # The console reads commands (pair, devices, revoke): keep it open.
+    # The console reads commands (pair, devices, revoke, ssh): keep it open.
     stdin_open: true
     tty: true
     ports:
@@ -16,6 +23,10 @@ services:
     environment:
       # Read by -api-key-env in command, if the first connection needs a key.
       MODEL_API_KEY: ${MODEL_API_KEY:-}
+      # Level 3: the host as an SSH machine. Its first connection shows the
+      # host key in the console (docker attach): type trust <number>, or pin
+      # it here with host-key=SHA256:… from ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub.
+      # ONELOOP_SSH_MACHINE: "you@host.docker.internal key=/run/secrets/1loop_ssh_key projects=~/dev"
     # Arguments after the image's own (-data-dir /data -workspace /projects
     # -listen :47101). The first connection, as in docs/SERVER.md:
     # command: ["-provider", "compatible", "-base-url", "https://api.example.com/v1",
@@ -23,6 +34,23 @@ services:
     volumes:
       - data:/data            # keys, certificate, pairings, configuration, chats
       - ./projects:/projects  # the agent's workspace
+      # Level 2: host folders, as projects under /projects. The agent reads
+      # and writes them as uid 1000 (see docs/SERVER.md): mount only what it
+      # may change, and add :ro to what it should only read.
+      # - ~/dev:/projects/dev
+      # - /srv/www:/projects/www
+      # - ~/notes:/projects/notes:ro
+    # Level 3: host.docker.internal is the host, on Linux too.
+    # extra_hosts:
+    #   - "host.docker.internal:host-gateway"
+    # secrets:
+    #   - 1loop_ssh_key
+
+# Level 3: the private key the server signs in with, read-only at
+# /run/secrets/1loop_ssh_key. Without a passphrase, and readable by uid 1000.
+# secrets:
+#   1loop_ssh_key:
+#     file: ~/.ssh/1loop_ed25519
 
 volumes:
   data:

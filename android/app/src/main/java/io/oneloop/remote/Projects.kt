@@ -3,6 +3,7 @@
 package io.oneloop.remote
 
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
@@ -28,18 +29,20 @@ fun ProjectsSheet(app: RemoteApp, onDone: () -> Unit) {
     var name by remember { mutableStateOf("") }
     var problem by remember { mutableStateOf<String?>(null) }
     var busy by remember { mutableStateOf(false) }
+    // Where the folder is: the target itself, or one of the server's SSH machines.
+    var machine by remember { mutableStateOf<SshMachine?>(null) }
     val scope = rememberCoroutineScope()
-    LaunchedEffect(app.server, requested) {
+    LaunchedEffect(app.server, requested, machine) {
         problem = null
         page = null
-        try { page = app.projectFolders(requested) }
+        try { page = app.projectFolders(requested, machine?.id) }
         catch (cancelled: CancellationException) { throw cancelled }
         catch (failure: Exception) { problem = failure.message ?: "Could not load folders." }
     }
     fun choose(path: String, create: Boolean) {
         busy = true
         scope.launch {
-            try { app.addProject(path, create); onDone() }
+            try { app.addProject(path, create, machine?.id); onDone() }
             catch (cancelled: CancellationException) { throw cancelled }
             catch (failure: Exception) { problem = failure.message ?: "Could not add the project." }
             finally { busy = false }
@@ -49,7 +52,17 @@ fun ProjectsSheet(app: RemoteApp, onDone: () -> Unit) {
     ModalBottomSheet(onDismissRequest = onDone, containerColor = Palette.surface, scrimColor = GlassScrim, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Text("Choose a project folder", style = Type.title)
-            Text("Folders are on the selected phone, desktop or server. Browsing stays within its authorized project area.", style = Type.small)
+            if (app.machines.isNotEmpty()) {
+                Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Pill(app.server?.name?.ifEmpty { null } ?: "This server", primary = machine == null, enabled = !busy, icon = Icons.computer) { machine = null; requested = "" }
+                    for (option in app.machines) Pill(option.label, primary = machine == option, enabled = !busy, icon = Icons.terminal) { machine = option; requested = "" }
+                }
+            }
+            Text(
+                machine?.let { "Folders are on the SSH machine ${it.label}, in ${it.projects}. The agent's commands, files and terminals run there, as its user, without a sandbox." }
+                    ?: "Folders are on the selected phone, desktop or server. Browsing stays within its authorized project area.",
+                style = Type.small,
+            )
             page?.let { folders ->
                 val path = folders.getString("path")
                 Text(path, style = Type.small)

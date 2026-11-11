@@ -55,6 +55,11 @@ object Icons {
     val redo = lineIcon("redo", line("M10.5 4 13 6.5 10.5 9"), line("M13 6.5H6.5a3.5 3.5 0 0 0 0 7H9"))
     val settings = lineIcon("settings", line("M7 4.1L7 2.5L9 2.5L9 4.1A4 4 0 0 1 10.8 5.2L12.3 4.4L13.3 6.1L11.9 7A4 4 0 0 1 11.9 9L13.3 9.9L12.3 11.6L10.8 10.8A4 4 0 0 1 9 11.9L9 13.5L7 13.5L7 11.9A4 4 0 0 1 5.2 10.8L3.7 11.6L2.7 9.9L4.1 9A4 4 0 0 1 4.1 7L2.7 6.1L3.7 4.4L5.2 5.2A4 4 0 0 1 7 4.1z"),
         line("M8 6.4a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2z"))
+    val image = lineIcon("image", line("M3.5 3h9a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"), line("M2.8 11.2 6 8l3 3 1.5-1.5 2.7 2.7"),
+        line("M10.3 5.2a1 1 0 1 0 0 2a1 1 0 1 0 0-2z"))
+    val camera = lineIcon("camera", line("M2.5 5.8a1 1 0 0 1 1-1h1.9l1-1.6h3.2l1 1.6h1.9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"),
+        line("M8 6.4a2.3 2.3 0 1 0 0 4.6a2.3 2.3 0 1 0 0-4.6z"))
+    val play = lineIcon("play", line("M5.5 3.8v8.4L12 8z", 1.8f))
     val refresh = lineIcon("refresh", line("M12.8 7.2A4.9 4.9 0 1 0 11.4 11"), line("M13 3.6v3.6H9.4"))
 
     val panel = lineIcon("panel", line("M2.5 2.5h4v4h-4zM9.5 2.5h4v4h-4zM2.5 9.5h4v4h-4zM9.5 9.5h4v4h-4z"))
@@ -65,6 +70,8 @@ object Icons {
     val unlock = lineIcon("unlock", line("M4.6 7.4h6.8a1.1 1.1 0 0 1 1.1 1.1v4a1.1 1.1 0 0 1-1.1 1.1H4.6a1.1 1.1 0 0 1-1.1-1.1v-4a1.1 1.1 0 0 1 1.1-1.1z"), line("M5.6 7.4V5.5a2.4 2.4 0 0 1 4.6-1"))
     val star = lineIcon("star", line("M8 2.3l1.7 3.6 3.9.5-2.9 2.7.7 3.9L8 11.1 4.6 13l.7-3.9-2.9-2.7 3.9-.5z"))
     val trash = lineIcon("trash", line("M3 4.5h10M6.5 4.5V3.2h3v1.3M4.5 4.5l.6 8.3h5.8l.6-8.3M7 7v3.6M9 7v3.6"))
+    // A conversation with a smaller one under it, as on the desktop (ui/subchats.go).
+    val subchat = lineIcon("subchat", line("M3 3.5h7.5a1.5 1.5 0 0 1 1.5 1.5v3a1.5 1.5 0 0 1-1.5 1.5H7l-2.5 2v-2H3A1.5 1.5 0 0 1 1.5 8V5A1.5 1.5 0 0 1 3 3.5z"), line("M9 12.5h2.5l2 1.5v-1.5h.5a1 1 0 0 0 1-1v-2"))
     val tasks = lineIcon("tasks", line("M2.8 4.6l1.3 1.3 2.3-2.4M8.5 4.7h4.7M2.8 10.6l1.3 1.3 2.3-2.4M8.5 10.7h4.7"))
     val sliders = lineIcon("sliders", line("M2.5 5h6M11.5 5h2M2.5 11h2M7.5 11h6"), line("M10 3.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3z"), line("M6 9.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3z"))
     val puzzle = lineIcon("puzzle", line("M3 5.5h2.6a1.4 1.4 0 1 1 2.8 0H11v2.6a1.4 1.4 0 1 1 0 2.8V13.5H8.4a1.4 1.4 0 1 0-2.8 0H3v-2.6a1.4 1.4 0 1 0 0-2.8z"))

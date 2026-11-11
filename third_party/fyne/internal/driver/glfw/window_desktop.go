@@ -403,10 +403,12 @@ func (w *window) setCustomCursor(rawCursor *glfw.Cursor, isCustomCursor bool) {
 }
 
 func (w *window) mouseMoved(_ *glfw.Window, xpos, ypos float64) {
+	inputAt = time.Now() // the loop speeds up (loop.go)
 	w.processMouseMoved(xpos, ypos)
 }
 
 func (w *window) mouseClicked(_ *glfw.Window, btn glfw.MouseButton, action glfw.Action, mods glfw.ModifierKey) {
+	inputAt = time.Now() // the loop speeds up (loop.go)
 	button, modifiers := convertMouseButton(btn, mods)
 	mouseAction := convertAction(action)
 
@@ -414,6 +416,7 @@ func (w *window) mouseClicked(_ *glfw.Window, btn glfw.MouseButton, action glfw.
 }
 
 func (w *window) mouseScrolled(viewport *glfw.Window, xoff float64, yoff float64) {
+	inputAt = time.Now() // the loop speeds up (loop.go)
 	if runtime.GOOS != "darwin" && xoff == 0 &&
 		(viewport.GetKey(glfw.KeyLeftShift) == glfw.Press ||
 			viewport.GetKey(glfw.KeyRightShift) == glfw.Press) {
@@ -639,6 +642,7 @@ func convertASCII(key glfw.Key) fyne.KeyName {
 }
 
 func (w *window) keyPressed(_ *glfw.Window, key glfw.Key, scancode int, action glfw.Action, mods glfw.ModifierKey) {
+	inputAt = time.Now() // the loop speeds up (loop.go)
 	keyName := keyToName(key, scancode)
 	keyDesktopModifier := desktopModifier(mods)
 	w.driver.currentKeyModifiers = desktopModifierCorrected(mods, key, action)
@@ -696,6 +700,7 @@ func glfwKeyToModifier(key glfw.Key) glfw.ModifierKey {
 //
 // Characters do not map 1:1 to physical keys, as a key may produce zero, one or more characters.
 func (w *window) charInput(viewport *glfw.Window, char rune) {
+	inputAt = time.Now() // the loop speeds up (loop.go)
 	w.processCharInput(char)
 }
 

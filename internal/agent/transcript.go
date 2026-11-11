@@ -138,6 +138,25 @@ func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) 
 			return pick("Changed", "Changing"), target, false
 		}
 		return pick("Read", "Reading"), target, false
+	case "subchat":
+		var call struct{ Action, ID, Title, Brief string }
+		_ = json.Unmarshal([]byte(item.Args), &call)
+		switch call.Action {
+		case "start":
+			target = call.Title
+			if target == "" {
+				target = FirstLine(call.Brief)
+			}
+			return pick("Started a subchat:", "Starting a subchat:"), target, false
+		case "message":
+			if call.ID == "parent" {
+				return pick("Asked", "Asking"), "the parent conversation", false
+			}
+			return pick("Messaged", "Messaging"), "subchat " + call.ID, false
+		case "stop":
+			return pick("Stopped", "Stopping"), "subchat " + call.ID, false
+		}
+		return pick("Checked", "Checking"), "the subchats", false
 	case "memory":
 		var memory struct{ Action string }
 		_ = json.Unmarshal([]byte(item.Args), &memory)

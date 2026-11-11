@@ -61,6 +61,8 @@ type conversation struct {
 	Panel        *savedPanel             `json:"panel,omitempty"` // its side panel, to open it again as it was
 	Version      string                  `json:"version,omitempty"`
 	Versions     []chatVersion           `json:"versions,omitempty"`
+	// Subchat links a subchat to the chat that started it (subchats.go).
+	Subchat *agent.SubchatLink `json:"subchat,omitempty"`
 
 	panel     *panelState // its side panel while 1loop runs (live tabs, terminals included)
 	failed    bool        // its last run failed and the user has not looked at it since: the tray says so
@@ -239,6 +241,7 @@ type desktopUI struct {
 	// Window and sidebar
 	header         *fitLabel
 	headerBar      *fyne.Container
+	parentLink     *tapRow // a subchat's way back to its parent, beside the title
 	expand         *tapRow
 	newChat        *tapRow
 	connections    *tapRow
@@ -614,7 +617,10 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	if ui.chrome {
 		right.Add(windowControls(ui.window, ui.closeWindow))
 	}
-	ui.headerBar = container.NewBorder(nil, nil, padded(0, 0, 0, 8, container.NewCenter(ui.expand)), right, ui.header)
+	ui.parentLink = newRow("", iconSubchat, styleChip, ui.openParent)
+	ui.parentLink.Hide()
+	ui.headerBar = container.NewBorder(nil, nil, padded(0, 0, 0, 8, container.NewCenter(ui.expand)), right,
+		container.NewBorder(nil, nil, nil, container.NewCenter(ui.parentLink), ui.header))
 	var header fyne.CanvasObject = padded(14, 8, 24, 24, ui.headerBar)
 	if ui.chrome {
 		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, ui.headerBar))
@@ -839,6 +845,7 @@ func (ui *desktopUI) updateHeader() {
 		title = "Settings"
 	}
 	ui.header.SetText(title)
+	ui.showParentLink()
 }
 
 // draftKey names the draft the prompt shows: the open chat's, or the start
@@ -1043,6 +1050,9 @@ func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
 	chat.run = run
 	chat.failed = false
 	ui.remote.metaChanged(chat)
+	if parent := ui.parentOf(chat); parent != nil { // its state in the parent's Tasks
+		ui.panel.todoChanged(parent)
+	}
 	ui.syncPresence()
 	if chat == ui.current {
 		ui.syncRun()
@@ -1081,6 +1091,16 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	}
 	if run != nil && ended == "done" {
 		ui.notifyUser(chat, "Done.")
+	}
+	if run != nil {
+		state := agent.SubchatDone
+		if ended == "stopped" {
+			state = agent.SubchatFailed
+			if run.stopped {
+				state = agent.SubchatStopped
+			}
+		}
+		ui.subchatEnded(chat, state)
 	}
 	ui.renderChats()
 	ui.save()
@@ -1174,6 +1194,10 @@ func (ui *desktopUI) submit() {
 		}
 		return
 	}
+	if text == "/subchat" || strings.HasPrefix(text, "/subchat ") {
+		ui.subchatCommand(strings.TrimPrefix(text, "/subchat"))
+		return
+	}
 	// Claude Code and Antigravity compact their own session: there /compact
 	// is sent as it is.
 	if !agent.CLIHarness(ui.cfg.Provider) && (text == "/compact" || strings.HasPrefix(text, "/compact ")) {
@@ -1261,6 +1285,9 @@ func (ui *desktopUI) startWithID(messageValue agent.Message, id string) {
 func (ui *desktopUI) wake(chat *conversation, message agent.Message) {
 	if ui.chatByID(chat.ID) != chat || ui.ctx.Err() != nil {
 		return // deleted meanwhile, or 1loop is closing
+	}
+	if chat.Subchat != nil && message.Internal { // its own task: the parent hears how the turn ends
+		chat.Subchat.Report = true
 	}
 	if chat.run != nil {
 		chat.steer = append(chat.steer, message)
@@ -1491,6 +1518,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 		}
 	}
 	cfg.Settings = ui.settingsAccess()
+	cfg.Subchats = ui.subchatAccess(chat)
 	cfg.ApprovalMode = agent.ApprovalFor(ui.approvalMode, cfg)
 	ui.scratchMove(&cfg)
 	cfg.ClassicCompaction = ui.classicCompaction

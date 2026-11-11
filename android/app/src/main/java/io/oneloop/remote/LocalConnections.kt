@@ -132,6 +132,8 @@ private class ConnectionDraft(val original: LocalConnection?) {
 
     fun chooseProvider(id: String) {
         if (id == provider) return
+        // A name left empty or still the type's own follows the type, so Save is not held back by it.
+        if (name.isBlank() || name == providerName(provider)) name = providerName(id)
         provider = id
         baseURL = if (id == "openrouter") OPENROUTER else if (base.optString("provider") == id) base.optString("baseURL") else ""
         allModels = true // another service: another catalog
@@ -266,16 +268,21 @@ private fun ConnectionEditor(
         onClose()
     }
     fun say(text: String?, error: Boolean = false) { message = text; failed = error }
+    /** Sends the draft, key included, and gives the connection as stored. */
+    suspend fun persist(): JSONObject {
+        val body = JSONObject().put("connection", draft.json())
+        if (draft.apiKey.isNotEmpty()) body.put("apiKey", draft.apiKey)
+        val saved = app.localCall("/api/local/connections", body).optJSONObject("connection") ?: JSONObject()
+        draft.apiKey = ""
+        return saved
+    }
     fun save(closeAfter: Boolean = false) {
         busy = true
         say(null)
         scope.launch {
             try {
-                val body = JSONObject().put("connection", draft.json())
-                if (draft.apiKey.isNotEmpty()) body.put("apiKey", draft.apiKey)
-                val saved = app.localCall("/api/local/connections", body).optJSONObject("connection")
-                draft.apiKey = ""
-                if (closeAfter) leave() else onSaved(saved?.optString("id").orEmpty())
+                val saved = persist()
+                if (closeAfter) leave() else onSaved(saved.optString("id"))
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -285,10 +292,45 @@ private fun ConnectionEditor(
             }
         }
     }
+    /**
+     * Runs a sign-in step on the stored connection. A sign-in needs the
+     * connection saved, so a new one, or one whose type or access changed,
+     * is saved first; the editor then stays on it as saved, even if the step
+     * fails, so trying again does not add it twice.
+     */
+    fun withSaved(step: suspend (id: String, authProfile: String) -> Unit) {
+        busy = true
+        say(null)
+        scope.launch {
+            var savedId: String? = null
+            try {
+                var id = draft.original?.id.orEmpty()
+                var authProfile = current?.json?.optString("authProfile").orEmpty()
+                if (draft.accessChanged) {
+                    if (draft.name.isBlank()) draft.name = providerName(draft.provider)
+                    val saved = persist()
+                    id = saved.optString("id")
+                    authProfile = saved.optString("authProfile")
+                    savedId = id
+                }
+                step(id, authProfile)
+                if (savedId == null) reload()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                say(e.message ?: "Unable to sign in.", error = true)
+            } finally {
+                busy = false
+                savedId?.let(onSaved)
+            }
+        }
+    }
     val close = { if (draft.changed) leaving = true else leave() }
     BackHandler(onBack = close)
     // A sign-in finishes in the browser: follow it until it ends.
     val pending = current?.login?.state == "pending"
+    // The saved connection's sign-in, while the type chosen is still its own.
+    val account = current?.takeIf { it.provider == draft.provider }
     LaunchedEffect(pending) {
         while (pending) {
             delay(2000)
@@ -321,33 +363,22 @@ private fun ConnectionEditor(
         Spacer(Modifier.height(22.dp))
         Caption("Access")
         when (draft.provider) {
-            "openai" -> ChatGPTAccess(draft, current, busy) { action ->
-                busy = true
-                say(null)
-                scope.launch {
-                    try {
-                        when (action) {
-                            "login" -> {
-                                val url = app.localCall("/api/local/connections/${draft.original!!.id}/login", JSONObject()).optString("url")
-                                if (url.isNotEmpty()) openLink(context, url)
-                            }
-                            "open" -> current?.login?.url?.takeIf { it.isNotEmpty() }?.let { openLink(context, it) }
-                            "disconnect" -> app.localCall("/api/local/connections/${draft.original!!.id}/disconnect", JSONObject())
-                                .optString("warning").takeIf { it.isNotEmpty() }?.let { say(it) }
+            "openai" -> ChatGPTAccess(draft, account, busy) { action ->
+                withSaved { id, _ ->
+                    when (action) {
+                        "login" -> {
+                            val url = app.localCall("/api/local/connections/$id/login", JSONObject()).optString("url")
+                            if (url.isNotEmpty()) openLink(context, url)
                         }
-                        reload()
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        say(e.message, error = true)
-                    } finally {
-                        busy = false
+                        "open" -> account?.login?.url?.takeIf { it.isNotEmpty() }?.let { openLink(context, it) }
+                        "disconnect" -> app.localCall("/api/local/connections/$id/disconnect", JSONObject())
+                            .optString("warning").takeIf { it.isNotEmpty() }?.let { say(it) }
                     }
                 }
             }
             "claudecode" -> ClaudeAccess(app, claudeInstalled, current, reload) { claudePending = it }
             "antigravity" -> Text("Uses the Antigravity CLI (agy) installed where the 1loop agent runs, with its own Google sign-in: run agy once there in a terminal to sign in. 1loop never reads its sign-in and runs it for you only.", style = Type.small)
-            "chatgptweb" -> WebAccess(app, draft, current)
+            "chatgptweb" -> WebAccess(app, draft, account, busy) { step -> withSaved(step) }
             else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (draft.provider == "openrouter") {
                     Text("Address: $OPENROUTER", style = Type.small)
@@ -378,9 +409,9 @@ private fun ConnectionEditor(
         }
         Spacer(Modifier.height(10.dp))
         // The draft's catalog, as on the desktop, before any Save; a ChatGPT
-        // account needs its sign-in first, so it must be saved.
-        if (draft.provider in listOf("openai", "chatgptweb") && (draft.original == null || draft.original.provider != draft.provider)) {
-            Text("Save the connection and sign in to load its models.", style = Type.caption)
+        // account's comes from its sign-in.
+        if (draft.provider in listOf("openai", "chatgptweb") && account == null) {
+            Text("Sign in under Access to load its models.", style = Type.caption)
         } else {
             Pill("Load models", enabled = !busy) {
                 busy = true
@@ -496,13 +527,17 @@ private fun ChatGPTAccess(draft: ConnectionDraft, current: LocalConnection?, bus
         Spacer(Modifier.height(10.dp))
         val login = current?.login
         when {
-            draft.original == null || draft.provider != draft.original.provider -> Text("Save the connection, then sign in.", style = Type.caption)
+            current == null || draft.accessChanged -> {
+                Text("Continuing saves this connection, then opens the ChatGPT sign-in in your browser.", style = Type.caption)
+                Spacer(Modifier.height(10.dp))
+                Pill("Continue with ChatGPT", primary = true, enabled = !busy) { act("login") }
+            }
             login?.state == "pending" -> {
                 Text("Waiting for the sign-in in your browser…", style = Type.small.copy(color = Palette.amber))
                 Spacer(Modifier.height(10.dp))
                 Pill("Open the sign-in page", enabled = !busy) { act("open") }
             }
-            current?.signedIn == true -> {
+            current.signedIn -> {
                 Text("Signed in" + current.email.takeIf { it.isNotEmpty() }?.let { " as $it" }.orEmpty(), style = Type.small.copy(color = Palette.added))
                 Spacer(Modifier.height(10.dp))
                 Pill("Disconnect", enabled = !busy) { act("disconnect") }
@@ -512,7 +547,7 @@ private fun ChatGPTAccess(draft: ConnectionDraft, current: LocalConnection?, bus
                     Text(login.problem, style = Type.small.copy(color = Palette.danger))
                     Spacer(Modifier.height(10.dp))
                 }
-                Pill("Continue with ChatGPT", enabled = !busy) { act("login") }
+                Pill("Continue with ChatGPT", primary = true, enabled = !busy) { act("login") }
             }
         }
     }
@@ -524,17 +559,17 @@ private fun ChatGPTAccess(draft: ConnectionDraft, current: LocalConnection?, bus
  * plugin added in ChatGPT.
  */
 @Composable
-private fun WebAccess(app: RemoteApp, draft: ConnectionDraft, current: LocalConnection?) {
-    val scope = rememberCoroutineScope()
+private fun WebAccess(
+    app: RemoteApp, draft: ConnectionDraft, current: LocalConnection?, busy: Boolean,
+    withSaved: (suspend (id: String, authProfile: String) -> Unit) -> Unit,
+) {
     val context = LocalContext.current
-    val saved = draft.original != null && draft.original.provider == "chatgptweb"
-    val profile = "chatgpt-" + current?.json?.optString("authProfile").orEmpty()
+    val saved = current != null
     var tunnel by remember { mutableStateOf<String?>(null) }
-    var starting by remember { mutableStateOf(false) }
-    val path = "/api/local/connections/${draft.original?.id}/web"
-    LaunchedEffect(saved) {
-        while (saved) { // the tunnel's state, while it is set up
-            tunnel = runCatching { app.localCall(path).optString("tunnel") }.getOrNull()
+    LaunchedEffect(current?.id) {
+        val id = current?.id ?: return@LaunchedEffect
+        while (true) { // the tunnel's state, while it is set up
+            tunnel = runCatching { app.localCall("/api/local/connections/$id/web").optString("tunnel") }.getOrNull()
             delay(3000)
         }
     }
@@ -546,12 +581,14 @@ private fun WebAccess(app: RemoteApp, draft: ConnectionDraft, current: LocalConn
         )
         Spacer(Modifier.height(12.dp))
         if (!saved) {
-            Text("Enter the tunnel below, save the connection, then sign in.", style = Type.caption)
+            Text("Signing in saves this connection first. The tunnel and its key can come after.", style = Type.caption)
             Spacer(Modifier.height(10.dp))
         }
         Text("1. Sign in to ChatGPT.", style = Type.small)
         Spacer(Modifier.height(8.dp))
-        Pill("Open ChatGPT sign-in", enabled = saved) { ChatGPTWebActivity.open(context, profile) }
+        Pill("Open ChatGPT sign-in", primary = !saved, enabled = !busy) {
+            withSaved { _, authProfile -> ChatGPTWebActivity.open(context, "chatgpt-$authProfile") }
+        }
         Spacer(Modifier.height(14.dp))
         Text("2. Create a Secure MCP Tunnel in your OpenAI organization, for this ChatGPT workspace. Use one for this phone only: one 1loop answers per tunnel.", style = Type.small)
         Spacer(Modifier.height(8.dp))
@@ -570,7 +607,7 @@ private fun WebAccess(app: RemoteApp, draft: ConnectionDraft, current: LocalConn
         )
         Spacer(Modifier.height(14.dp))
         Text(
-            "4. Save, start the tunnel, then open ChatGPT Plugins: Add → Add custom MCP server. Name: ${draft.plugin.trim().ifEmpty { "1loop" }}. " +
+            "4. Start the tunnel (this saves the connection), then open ChatGPT Plugins: Add → Add custom MCP server. Name: ${draft.plugin.trim().ifEmpty { "1loop" }}. " +
                 "Connection: Tunnel, with the ID above. Authentication: No authentication. Tick \"I understand and want to continue\", choose Create as a plugin, then Connect.",
             style = Type.small,
         )
@@ -578,21 +615,20 @@ private fun WebAccess(app: RemoteApp, draft: ConnectionDraft, current: LocalConn
         Field(draft.plugin, { draft.plugin = it }, "Plugin name · 1loop", KeyboardType.Text)
         Spacer(Modifier.height(8.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            Pill("Start tunnel", enabled = saved && current?.hasKey == true && !starting) {
-                starting = true
-                scope.launch {
+            Pill("Start tunnel", enabled = !busy && (current?.hasKey == true || draft.apiKey.isNotEmpty())) {
+                withSaved { id, _ ->
                     tunnel = try {
-                        app.localCall(path, JSONObject()).optString("tunnel")
+                        app.localCall("/api/local/connections/$id/web", JSONObject()).optString("tunnel")
                     } catch (e: CancellationException) {
                         throw e
                     } catch (e: Exception) {
                         e.message
-                    } finally {
-                        starting = false
                     }
                 }
             }
-            Pill("Open ChatGPT Plugins", enabled = saved) { ChatGPTWebActivity.open(context, profile, "https://chatgpt.com/plugins") }
+            Pill("Open ChatGPT Plugins", enabled = !busy) {
+                withSaved { _, authProfile -> ChatGPTWebActivity.open(context, "chatgpt-$authProfile", "https://chatgpt.com/plugins") }
+            }
         }
         tunnel?.let { Text(it, style = Type.caption, modifier = Modifier.padding(top = 8.dp)) }
         Spacer(Modifier.height(14.dp))

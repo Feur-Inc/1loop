@@ -3,7 +3,6 @@
 package agent
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -11,6 +10,7 @@ import (
 	"strings"
 
 	"1loop/internal/platform"
+	"1loop/internal/sse"
 )
 
 // responsesInput converts stored messages into Responses API input items.
@@ -116,19 +116,14 @@ func responsesCompletion(ctx context.Context, cfg Config, messages []Message, to
 // tool call or text was dropped without a word.
 func readResponses(stream io.Reader, emit emitter) (Message, error) {
 	out := Message{Role: "assistant"}
-	scanner := bufio.NewScanner(stream)
-	scanner.Buffer(make([]byte, 4096), 8<<20)
-	var data []string
 	var arrived []json.RawMessage // the items, as each was completed
 	completed := false
 	status := &announcer{emit: emit}
 	calls := map[string]*struct{ name, args string }{} // function calls being streamed, by item id
-	consume := func() error {
-		if len(data) == 0 {
+	consume := func(raw string) error {
+		if strings.TrimSpace(raw) == "" {
 			return nil
 		}
-		raw := strings.Join(data, "\n")
-		data = nil
 		var event struct {
 			Type    string          `json:"type"`
 			Delta   string          `json:"delta"`
@@ -282,24 +277,16 @@ func readResponses(stream io.Reader, emit emitter) (Message, error) {
 		}
 		return nil
 	}
-	for scanner.Scan() {
-		line := scanner.Text()
-		if line == "" {
-			if err := consume(); err != nil {
-				return out, err
-			}
-			if completed {
-				return out, nil
-			}
-		} else if strings.HasPrefix(line, "data:") {
-			data = append(data, strings.TrimSpace(strings.TrimPrefix(line, "data:")))
+	for event, err := range sse.Events(stream, 8<<20) {
+		if err != nil {
+			return out, err
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return out, err
-	}
-	if err := consume(); err != nil {
-		return out, err
+		if err := consume(event.Data); err != nil {
+			return out, err
+		}
+		if completed {
+			return out, nil
+		}
 	}
 	if !completed {
 		return out, fmt.Errorf("OpenAI stream interrupted before the response completed")

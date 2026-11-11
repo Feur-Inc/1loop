@@ -17,9 +17,13 @@ func (target gitTarget) Project(path string) (string, error) {
 	server := target.server
 	server.mu.Lock()
 	registered := slices.Contains(server.projects, path)
+	label := server.machineLabelLocked(server.projectMachines[path])
 	server.mu.Unlock()
 	if !registered {
 		return "", fmt.Errorf("Choose a registered project")
+	}
+	if label != "" {
+		return "", fmt.Errorf("This project is on %s: its repository is used there, by the agent or a terminal", label)
 	}
 	return remoteapi.ProjectFolder(server.projectBase(), path, false)
 }

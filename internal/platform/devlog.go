@@ -63,7 +63,7 @@ func StartDevLog() {
 		if os.MkdirAll(dir, 0700) == nil {
 			os.Rename(path, path+".1")
 			if file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600); err == nil {
-				out = io.MultiWriter(os.Stderr, file)
+				out = everyWriter{file, os.Stderr}
 			} else {
 				path = ""
 			}
@@ -112,6 +112,18 @@ func devProfile(span time.Duration) {
 	time.Sleep(span)
 	pprof.StopCPUProfile()
 	Devf("perf", "CPU profile written to %s", path)
+}
+
+// everyWriter writes to each of its writers, whatever the others do. A
+// Windows build has no stderr (it is a GUI program): io.MultiWriter would
+// stop there and leave the file empty.
+type everyWriter []io.Writer
+
+func (writers everyWriter) Write(p []byte) (int, error) {
+	for _, writer := range writers {
+		writer.Write(p)
+	}
+	return len(p), nil
 }
 
 // Devf writes one line of the developer log.

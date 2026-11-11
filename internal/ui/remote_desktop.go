@@ -218,6 +218,7 @@ func (remote *remoteDesktop) askPairing(data string) {
 		sheet = remote.parent.modal("“"+asked.Device+"” wants to use this server", container.NewVBox(
 			note("It will run the agent, its commands and files on the server, like this device. Type the six-digit code that device shows."),
 			entry, status), 560, nil, refuse, allow)
+		remote.parent.window.Canvas().Focus(entry)
 		remote.pairingSheet, remote.pairingID = sheet, asked.ID
 	})
 }

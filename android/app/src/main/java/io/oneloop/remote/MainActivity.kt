@@ -19,8 +19,10 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         enableEdgeToEdge(SystemBarStyle.dark(android.graphics.Color.TRANSPARENT), SystemBarStyle.dark(android.graphics.Color.TRANSPARENT))
         super.onCreate(savedInstanceState)
+        CrashReports.install(applicationContext)
         Motion.load(applicationContext)
         app = RemoteApp(applicationContext, lifecycleScope)
+        app.crashReport = CrashReports.take(applicationContext)
         setContent { OneLoopTheme { Root(app) } }
         if (Build.VERSION.SDK_INT >= 33) requestPermissions(arrayOf(android.Manifest.permission.POST_NOTIFICATIONS), 1)
         UpdateCheckJob.schedule(applicationContext)

@@ -37,6 +37,7 @@ import (
 	"1loop/internal/browser"
 	"1loop/internal/computeruse"
 	"1loop/internal/core"
+	"1loop/internal/crash"
 	"1loop/internal/discord"
 	"1loop/internal/extensions"
 	"1loop/internal/platform"
@@ -237,6 +238,8 @@ type desktopUI struct {
 	wrapUpOff         bool              // settings: the next-step card (wrap_up tool) turned off
 	autoResume        *agent.AutoResume // settings: what a rate limit does to a run
 	closeQuits        bool              // settings: closing the window quits rather than hiding it in the tray
+	crashReportsOff   bool              // settings: Don't ask again, after a crash
+	lastCrash         *crash.Crash      // the last run's, offered once the window is up
 	trayNoticeShown   bool              // the first close said that 1loop stays in the tray
 	tray              *trayIcon         // the system tray icon (tray.go), nil without one
 	discordPresence   bool              // settings: show on Discord what the agent is doing
@@ -291,6 +294,7 @@ func runDesktop(backend *agent.App, root string) {
 	// Once this is the process that stays (the build for the display, past
 	// its probe), and before any state is read.
 	instance := claimInstance()
+	lastCrash := watchCrashes(statePath(root)) // crash_report.go
 	if platform.DevWanted {
 		platform.StartDevLog()
 	}
@@ -308,7 +312,7 @@ func runDesktop(backend *agent.App, root string) {
 	ctx, cancel := context.WithCancel(context.Background())
 	backend.EnableChatGPTWeb(ctx)
 	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), shortcutKeys: map[string]string{}, statePath: statePath(root),
-		cfg: agent.Config{Provider: "compatible", Workspace: root}, foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}}
+		cfg: agent.Config{Provider: "compatible", Workspace: root}, foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}, lastCrash: lastCrash}
 	ui.load()
 	ui.followTheme()
 	ui.initializeConnections()
@@ -355,6 +359,7 @@ func runDesktop(backend *agent.App, root string) {
 		if ui.stateProblem != "" {
 			ui.notice("Saved state unreadable", ui.stateProblem)
 		}
+		ui.offerCrashReport()
 	})
 	launch.show()
 	// Notifications are for chats the user is not looking at (notify.go).
@@ -471,6 +476,7 @@ func (ui *desktopUI) release() {
 	ui.persist(true)
 	ui.browser.WaitClosed() // Chrome writes its profile as it closes
 	ui.backend.CloseChatGPTWeb()
+	crash.Clean() // a clean quit or restart: nothing to report next time
 }
 
 // fitLabel is a single line of text that ellipsises to the space it gets.
@@ -1859,6 +1865,7 @@ type savedState struct {
 	WorktreeSort      string                `json:"worktreeSort,omitempty"`
 	FoldedProjects    []string              `json:"foldedProjects,omitempty"` // sidebar groups folded
 	CloseQuits        bool                  `json:"closeQuits,omitempty"`
+	CrashReportsOff   bool                  `json:"crashReportsOff,omitempty"`
 	AnimationsOff     bool                  `json:"animationsOff,omitempty"`
 	TrayNoticeShown   bool                  `json:"trayNoticeShown,omitempty"`
 	DiscordPresence   bool                  `json:"discordPresence,omitempty"`
@@ -1926,6 +1933,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.worktreeSort,
 		slices.Sorted(maps.Keys(ui.foldedProjects)),
 		ui.closeQuits,
+		ui.crashReportsOff,
 		animationsOff,
 		ui.trayNoticeShown,
 		ui.discordPresence,
@@ -2062,6 +2070,7 @@ func (ui *desktopUI) load() {
 	ui.memoryOff = state.MemoryOff
 	ui.wrapUpOff = state.WrapUpOff
 	ui.closeQuits, ui.trayNoticeShown = state.CloseQuits, state.TrayNoticeShown
+	ui.crashReportsOff = state.CrashReportsOff
 	animationsOff = state.AnimationsOff
 	ui.autoResume = state.AutoResume
 	ui.discordPresence, ui.discordDetails = state.DiscordPresence, state.DiscordDetails

@@ -14,6 +14,7 @@ import (
 	"syscall"
 
 	"1loop/internal/agent"
+	"1loop/internal/crash"
 	"1loop/internal/platform"
 )
 
@@ -35,6 +36,7 @@ func Main() {
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 		<-stop
 		agent.StopEveryTask()
+		crash.Clean() // ended on purpose (logout, Ctrl+C): no crash
 		os.Exit(130)
 	}()
 	backend := &agent.App{Approvals: make(map[string]chan bool)}

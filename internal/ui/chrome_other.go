@@ -29,6 +29,7 @@ func scrollGesture() (finger, released, ok bool)      { return false, false, fal
 func scrollEventTime() (milliseconds uint32, ok bool) { return 0, false }
 func scrollFinger() (finger, ok bool)                 { return false, false }
 func switchBackend()                                  {}
+func backendLabel() string                            { return "" }
 func customChromeSupported() bool                     { return false }
 func systemScale() float32                            { return 0 }
 func windowMoveResize(fyne.Window, int)               {}

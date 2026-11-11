@@ -282,6 +282,7 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
         }
         "updates.check" -> UpdatesSection(app)
         "advanced.hooks" -> HooksSection(app)
+        "advanced.crash_reports" -> CrashReportsSection()
     }
 }
 

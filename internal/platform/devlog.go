@@ -54,19 +54,24 @@ var DevWanted bool
 // nanoseconds since the Unix epoch.
 var FrameBeat atomic.Int64
 
+// DevLogPath is the developer log's file, "" without a cache folder.
+func DevLogPath() string {
+	dir, err := os.UserCacheDir()
+	if err != nil {
+		return ""
+	}
+	return filepath.Join(dir, "1loop", "dev.log")
+}
+
 func StartDevLog() {
 	out := io.Writer(os.Stderr)
-	path := ""
-	if dir, err := os.UserCacheDir(); err == nil {
-		dir = filepath.Join(dir, "1loop")
-		path = filepath.Join(dir, "dev.log")
-		if os.MkdirAll(dir, 0700) == nil {
-			os.Rename(path, path+".1")
-			if file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600); err == nil {
-				out = io.MultiWriter(os.Stderr, file)
-			} else {
-				path = ""
-			}
+	path := DevLogPath()
+	if path != "" && os.MkdirAll(filepath.Dir(path), 0700) == nil {
+		os.Rename(path, path+".1")
+		if file, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0600); err == nil {
+			out = io.MultiWriter(os.Stderr, file)
+		} else {
+			path = ""
 		}
 	}
 	Dev = &devLog{out: out, path: path}

@@ -119,6 +119,23 @@ jobs:
         with:
           go-version-file: go.mod
 
+      # GitHub's Ubuntu machines fetch packages through Azure's mirror
+      # (mirror+file:/etc/apt/apt-mirrors.txt). When its name doesn't resolve,
+      # apt doesn't fall back: every download fails after long retries (on
+      # 2026-11-11 the Linux build failed after 51 minutes). Use Ubuntu's own
+      # archive then, and give up on a dead server sooner.
+      - name: Ubuntu mirror fallback (GitHub's machines)
+        if: runner.environment == 'github-hosted'
+        run: |
+          set -euo pipefail
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' |
+            sudo tee /etc/apt/apt.conf.d/99-1loop-ci >/dev/null
+          if ! getent hosts azure.archive.ubuntu.com >/dev/null; then
+            echo "::warning::azure.archive.ubuntu.com doesn't resolve: apt uses archive.ubuntu.com"
+            sudo sed -i 's|mirror+file:/etc/apt/apt-mirrors.txt|http://archive.ubuntu.com/ubuntu/|; s|azure\.archive\.ubuntu\.com|archive.ubuntu.com|g' \
+              /etc/apt/sources.list.d/*.sources /etc/apt/sources.list 2>/dev/null || true
+          fi
+
       - name: Linux — checks, desktop packages and servers
         if: matrix.platform == 'linux'
         env:

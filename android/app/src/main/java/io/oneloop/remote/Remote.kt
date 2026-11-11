@@ -1464,6 +1464,26 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         }
     }
 
+    /** Sends a project file to another app of the phone through Android's share sheet (#105). */
+    suspend fun shareWithApp(workspace: String, file: ProjectFile) {
+        val target = server ?: throw ApiError("Connect first.")
+        // A folder of its own in the opened files' cache, which their FileProvider already serves.
+        val folder = java.io.File(java.io.File(context.cacheDir, "opened"), "shared").apply { mkdirs() }
+        val copy = java.io.File(folder, file.name)
+        onConnection(target, connectionGeneration) { api -> copy.outputStream().use { api.download("/api/files/download?" + fileQuery(workspace, file.path), it) } }
+        val type = android.webkit.MimeTypeMap.getSingleton().getMimeTypeFromExtension(file.name.substringAfterLast('.', "").lowercase()) ?: "application/octet-stream"
+        val uri = androidx.core.content.FileProvider.getUriForFile(context, "${context.packageName}.opened", copy)
+        val send = android.content.Intent(android.content.Intent.ACTION_SEND).setType(type)
+            .putExtra(android.content.Intent.EXTRA_STREAM, uri)
+            .addFlags(android.content.Intent.FLAG_GRANT_READ_URI_PERMISSION)
+        send.clipData = android.content.ClipData.newRawUri(file.name, uri) // the chooser's preview, and the grant to the app picked
+        try {
+            context.startActivity(android.content.Intent.createChooser(send, "Send ${file.name}").addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK))
+        } catch (e: android.content.ActivityNotFoundException) {
+            throw ApiError("No app on this phone can receive ${file.name}.")
+        }
+    }
+
     /** Saves a project file in the phone's Downloads; returns where. */
     suspend fun downloadFile(workspace: String, file: ProjectFile): String {
         val target = server ?: throw ApiError("Connect first.")

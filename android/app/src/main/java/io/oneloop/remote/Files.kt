@@ -320,7 +320,17 @@ private fun SendFileDialog(app: RemoteApp, workspace: String, file: ProjectFile,
         title = { Text("Send “${file.name}”", style = Type.title) },
         text = {
             Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-                Text("Copies this file to a paired device. Existing names get a number.", style = Type.small)
+                Text("Sends this file to another app on this phone, or copies it to a paired device. Existing names get a number there.", style = Type.small)
+                Pill("Another app…", icon = Icons.send, enabled = !busy) {
+                    busy = true
+                    scope.launch {
+                        try { app.shareWithApp(workspace, file); close() }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { status = failure.message }
+                        finally { busy = false }
+                    }
+                }
+                Text("Paired devices", style = Type.small.copy(color = Palette.muted))
                 if (peers.isEmpty()) Text("Pair a destination first, or start Local phone to copy here.", style = Type.small)
                 peers.forEach { peer -> Pill(peer.name, primary = selected?.key == peer.key, enabled = !busy) { selected = peer } }
                 Field(destination, { destination = it }, "Destination project folder (empty: current project)", KeyboardType.Text)

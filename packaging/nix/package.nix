@@ -68,7 +68,7 @@ buildGoModule {
       ../../third_party
     ];
   };
-  vendorHash = "sha256-Cy6ZLeBARhJSjdfy+RhBL7I8/ymjTq3rweJaizZC/Gw=";
+  vendorHash = "sha256-TC2MKgytbBf5+E5MxfJqC/UUGvjkDAQOnQhmRM64pzU=";
 
   nativeBuildInputs = [
     pkg-config

@@ -35,6 +35,7 @@ func WebMain() {
 		cfg: agent.Config{Provider: "compatible"}}
 	ui.window = a.NewWindow("1loop")
 	ui.window.SetPadded(false)
+	ui.followTheme()
 	ui.window.SetContent(ui.build())
 	ui.prompt.switchDraft(ui.draftKey())
 	ui.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { ui.copySelection() })

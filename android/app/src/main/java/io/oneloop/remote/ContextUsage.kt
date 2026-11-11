@@ -66,9 +66,10 @@ private fun contextColor(category: ContextCategory) = when (category.id) {
     "messages" -> Color(0xFF4C8DFF)
     "system_tools" -> Color(0xFFE8813A)
     "mcp_tools" -> Color(0xFF2FB59B)
-    "autocompact_buffer", "compact_buffer" -> Color(0xFF4A4A4A)
-    "free_space" -> Color(0xFF2A2A2A)
-    else -> if (category.kind == "deferred") Color(0xFF3A3A3A) else Color(0xFF9A9A9A)
+    // Greys between the border and the muted text, as on the desktop (contextGrey).
+    "autocompact_buffer", "compact_buffer" -> mix(Palette.border, Palette.muted, 0.33)
+    "free_space" -> Palette.border
+    else -> mix(Palette.border, Palette.muted, if (category.kind == "deferred") 0.17 else 1.15)
 }
 
 private fun share(tokens: Int, window: Int) = String.format(Locale.ROOT, "%.1f%%", tokens * 100.0 / window)

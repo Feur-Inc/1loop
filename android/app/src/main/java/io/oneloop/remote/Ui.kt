@@ -419,7 +419,7 @@ private fun AddressSheet(onDone: () -> Unit, onAdd: (Pair<String, String>) -> Un
 fun Field(value: String, onChange: (String) -> Unit, placeholder: String, keyboard: KeyboardType, modifier: Modifier = Modifier, password: Boolean = false) {
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    val border by animateColorAsState(if (focused) Palette.borderHot.copy(alpha = 1f) else Palette.border, tween(160), label = "border")
+    val border by animateColorAsState(if (focused) Palette.borderHover.copy(alpha = 1f) else Palette.border, tween(160), label = "border")
     BasicTextField(
         value, onChange, modifier.fillMaxWidth(), singleLine = true, textStyle = Type.body,
         cursorBrush = SolidColor(Palette.amber), keyboardOptions = KeyboardOptions(keyboardType = keyboard), interactionSource = interaction,
@@ -608,7 +608,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
     var worktreeActions by remember(app.server) { mutableStateOf<Pair<String, Worktree>?>(null) }
     var newWorktree by remember(app.server) { mutableStateOf<String?>(null) }
     Column(modifier.background(Palette.sidebar).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
-        Image(painterResource(R.drawable.logo), "1loop", modifier = Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp))
+        Image(painterResource(if (Palette.dark) R.drawable.logo else R.drawable.logo_light), "1loop", modifier = Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp))
         NavRow("New chat", Icons.plus, selected = app.current == null) { app.open(null); onPicked() }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -735,7 +735,7 @@ internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running
             Spacer(Modifier.width(10.dp))
         }
         Column(Modifier.weight(1f)) {
-            Text(text, style = Type.body.copy(fontSize = 14.sp, color = if (selected) Palette.text else Color(0xFFB4B4B4)), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Text(text, style = Type.body.copy(fontSize = 14.sp, color = if (selected) Palette.text else Palette.textSoft), maxLines = 1, overflow = TextOverflow.Ellipsis)
             // Its last wrap-up's recap, while the agent is not at work on it.
             if (status.isNotEmpty() && !running) Text(status, style = Type.caption.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -1120,7 +1120,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
     }
     val interaction = remember { MutableInteractionSource() }
     val focused by interaction.collectIsFocusedAsState()
-    val border by animateColorAsState(if (focused) Palette.borderHot else Color.White.copy(alpha = 0.11f), tween(160), label = "card")
+    val border by animateColorAsState(if (focused) Palette.borderHover else Palette.overlay.copy(alpha = 0.11f), tween(160), label = "card")
     Column(
         Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 12.dp).padding(bottom = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1159,7 +1159,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 .shadow(animateDpAsState(if (focused) 14.dp else 0.dp, tween(220), label = "glow").value, RoundedCornerShape(18.dp), ambientColor = Palette.amber, spotColor = Palette.amber)
                 .background(Palette.surface, RoundedCornerShape(18.dp))
                 // Glass catching the light: a sheen over its upper half, a hairline edge.
-                .background(Brush.verticalGradient(listOf(Color.White.copy(alpha = 0.06f), Color.Transparent)), RoundedCornerShape(18.dp))
+                .background(Brush.verticalGradient(listOf(Palette.overlay.copy(alpha = 0.06f), Color.Transparent)), RoundedCornerShape(18.dp))
                 .border(1.dp, border, RoundedCornerShape(18.dp)).padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
         ) {
             if (app.attachments.isNotEmpty()) AttachmentTray(app)
@@ -1279,7 +1279,7 @@ private fun QueueTray(meta: Meta) {
 private fun QuestionTray(request: Questions, onOpen: () -> Unit) {
     Row(
         Modifier.widthIn(max = 728.dp).fillMaxWidth().background(Palette.popover, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp))
-            .border(1.dp, Palette.borderHot, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)).padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
+            .border(1.dp, Palette.borderHover, RoundedCornerShape(topStart = 12.dp, topEnd = 12.dp)).padding(start = 12.dp, end = 8.dp, top = 6.dp, bottom = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         Text(
@@ -1461,7 +1461,7 @@ private fun ChoiceMark(picked: Boolean, multi: Boolean) {
     val shape = if (multi) RoundedCornerShape(4.dp) else CircleShape
     Box(
         Modifier.size(18.dp).clip(shape).background(if (multi && picked) Palette.amber else Color.Transparent)
-            .border(1.5.dp, if (picked) Palette.amber else Palette.borderHot, shape),
+            .border(1.5.dp, if (picked) Palette.amber else Palette.borderHover, shape),
         contentAlignment = Alignment.Center,
     ) {
         when {

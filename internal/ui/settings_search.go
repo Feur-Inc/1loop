@@ -168,6 +168,10 @@ func (ui *desktopUI) settingsAccess() *agent.SettingsAccess {
 					value = onOff(!ui.classicCompaction)
 				case registry.KeyAutoResume:
 					value = onOff(ui.autoResume != nil && ui.autoResume.Enabled)
+				case registry.KeyTheme:
+					value = ui.theme.themeSetting()
+				case registry.KeyAccent:
+					value = ui.theme.accentSetting()
 				case registry.KeyWorktreeSort:
 					value = ui.worktreeSort
 					if sortLabels[value] == "" {
@@ -197,6 +201,10 @@ func (ui *desktopUI) settingsAccess() *agent.SettingsAccess {
 					if err = ui.setAutoResume(on); err != nil {
 						err = errors.New("Automatic resumption has no steps yet: the user chooses them in Settings first")
 					}
+				case registry.KeyTheme:
+					ui.setTheme(value)
+				case registry.KeyAccent:
+					ui.setAccent(value)
 				case registry.KeyWorktreeSort:
 					ui.setWorktreeSort(value)
 				default:

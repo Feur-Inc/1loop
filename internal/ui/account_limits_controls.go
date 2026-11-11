@@ -6,7 +6,6 @@ package ui
 
 import (
 	"fmt"
-	"image/color"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -36,7 +35,7 @@ func newLimitGauge(window agent.AccountLimitWindow) fyne.CanvasObject {
 	// is 60 % left here), and a bare figure read as a wrong one.
 	value := textLine(fmt.Sprintf("%.0f %% left", window.Remaining()), 11, colText)
 	value.TextStyle = fyne.TextStyle{Bold: true}
-	track := canvas.NewRectangle(color.NRGBA{R: 0x33, G: 0x33, B: 0x33, A: 0xff})
+	track := canvas.NewRectangle(colTrack)
 	fill := canvas.NewRectangle(colAmber)
 	track.CornerRadius, fill.CornerRadius = 2, 2
 	if window.Remaining() <= 20 {

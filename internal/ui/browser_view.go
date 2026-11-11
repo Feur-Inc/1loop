@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"image"
-	"image/color"
 	"strconv"
 	"strings"
 	"sync"
@@ -403,7 +402,7 @@ func newBrowserScreen(view *browserView) *browserScreen {
 	screen := &browserScreen{
 		view:        view,
 		image:       canvas.NewImageFromImage(nil),
-		background:  canvas.NewRectangle(color.NRGBA{R: 18, G: 18, B: 18, A: 255}),
+		background:  canvas.NewRectangle(colBackground),
 		modelCursor: newAgentCursor(),
 	}
 	screen.image.FillMode = canvas.ImageFillStretch
@@ -690,7 +689,7 @@ func newAgentCursor() *fyne.Container {
 	arrow := canvas.NewImageFromResource(iconModelCursor)
 	arrow.Move(fyne.NewPos(-1, -1))
 	arrow.Resize(fyne.NewSize(26, 26))
-	label := canvas.NewText("1loop", color.NRGBA{R: 0x11, G: 0x11, B: 0x11, A: 0xff})
+	label := canvas.NewText("1loop", colInk)
 	label.TextSize, label.TextStyle = 9.5, fyne.TextStyle{Bold: true}
 	size := textSize(label.Text, label.TextSize, label.TextStyle)
 	pill := canvas.NewRectangle(colAmber)

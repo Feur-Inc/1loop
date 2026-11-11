@@ -598,7 +598,7 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	ui.connections = newRow("Settings", theme.SettingsIcon(), styleNav, ui.settings)
 	ui.projectList = container.New(layout.NewCustomPaddedVBoxLayout(1))
 
-	logo := brandImage("1loop-logo.png", 30*1483.0/512.0, 30)
+	logo := brandLogo(30*1483.0/512.0, 30)
 	collapse := newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
 	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, logo, container.NewCenter(collapse)))
 	if ui.chrome {

@@ -143,6 +143,91 @@
       "where": "desktop"
     },
     {
+      "key": "general.theme",
+      "section": "general",
+      "title": "Theme",
+      "description": "Dark, light, or the system's: follows the computer's or the phone's dark mode as it changes.",
+      "keywords": [
+        "theme",
+        "dark",
+        "light",
+        "mode",
+        "appearance",
+        "colors",
+        "colours",
+        "night",
+        "system"
+      ],
+      "kind": "choice",
+      "values": [
+        {
+          "id": "dark",
+          "label": "Dark"
+        },
+        {
+          "id": "light",
+          "label": "Light"
+        },
+        {
+          "id": "system",
+          "label": "System"
+        }
+      ],
+      "where": "both"
+    },
+    {
+      "key": "general.accent",
+      "section": "general",
+      "title": "Accent colour",
+      "description": "The colour of buttons, links and highlights: amber, another preset or a colour of your own.",
+      "keywords": [
+        "accent",
+        "color",
+        "colour",
+        "highlight",
+        "amber",
+        "theme",
+        "appearance",
+        "custom"
+      ],
+      "kind": "choice",
+      "values": [
+        {
+          "id": "amber",
+          "label": "Amber"
+        },
+        {
+          "id": "orange",
+          "label": "Orange"
+        },
+        {
+          "id": "pink",
+          "label": "Pink"
+        },
+        {
+          "id": "purple",
+          "label": "Purple"
+        },
+        {
+          "id": "blue",
+          "label": "Blue"
+        },
+        {
+          "id": "teal",
+          "label": "Teal"
+        },
+        {
+          "id": "green",
+          "label": "Green"
+        },
+        {
+          "id": "custom",
+          "label": "Custom colour"
+        }
+      ],
+      "where": "both"
+    },
+    {
       "key": "general.close_to_tray",
       "section": "general",
       "title": "Close to tray",

@@ -2,19 +2,23 @@
 
 package ui
 
-// Inline Markdown: the styles inside a paragraph, a heading, a list item or
-// a table cell. parseInline turns the source into spans, each a run of text
-// in one style.
-//
-// Supported: **bold**, *italic*, ***both***, __bold__, _italic_ (not inside
-// a word), ~~strikethrough~~, `code` (any number of backticks), links
-// [text](url), images shown as links, <https://…> and bare URLs, inline
-// math $…$ and \(…\), backslash escapes, <br> and hard line breaks.
+// Markdown parsing. goldmark (CommonMark, with GitHub's tables, task lists
+// and bare links) reads the answer into a tree; this file adds what models
+// write and CommonMark lacks, formulas ($…$, \(…\), $$…$$, \[…\]) and
+// strikethrough with two tildes only (one tilde is "about": ~5 minutes),
+// and turns the tree's inline nodes into spans, each a run of text in one
+// style, that flowText lays out.
 
 import (
-	"regexp"
 	"strings"
-	"unicode"
+
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	east "github.com/yuin/goldmark/extension/ast"
+	"github.com/yuin/goldmark/parser"
+	"github.com/yuin/goldmark/text"
+	"github.com/yuin/goldmark/util"
 )
 
 type span struct {
@@ -29,45 +33,47 @@ type span struct {
 	hard   bool   // a line break
 }
 
-var bareURL = regexp.MustCompile(`^https?://[^\s<>"'` + "`" + `]+`)
+// markdownParser reads answers. A goldmark parser is safe for concurrent use.
+var markdownParser = goldmark.New(
+	goldmark.WithExtensions(extension.Table, extension.TaskList, extension.Linkify),
+	goldmark.WithParserOptions(
+		parser.WithBlockParsers(util.Prioritized(mathBlockParser{}, 150)),
+		parser.WithInlineParsers(
+			util.Prioritized(mathInlineParser{}, 90), // before code spans and escapes
+			util.Prioritized(strikeParser{}, 500),
+		),
+	),
+).Parser()
 
-// parseInline parses one block's inline source.
-func parseInline(source string) []span {
-	parser := &inlineParser{}
-	// A line ending with two spaces or a backslash breaks the line; any
-	// other line ending inside a paragraph is a space.
-	lines := strings.Split(source, "\n")
-	for i, line := range lines {
-		hard := strings.HasSuffix(line, "  ") || strings.HasSuffix(line, "\\")
-		line = strings.TrimRight(strings.TrimSuffix(strings.TrimRight(line, " "), "\\"), " ")
-		if i > 0 {
-			line = strings.TrimLeft(line, " \t")
-		}
-		parser.parse(line, span{})
-		if i < len(lines)-1 {
-			if hard {
-				parser.out = append(parser.out, span{hard: true})
-			} else {
-				parser.text(" ", span{})
-			}
-		}
-	}
-	return parser.out
+func parseMarkdown(source []byte) ast.Node {
+	return markdownParser.Parse(text.NewReader(source))
 }
 
-type inlineParser struct {
-	out []span
+// inlineSpans turns a block's inline nodes into spans.
+func inlineSpans(block ast.Node, source []byte) []span {
+	builder := &spanBuilder{source: source}
+	builder.walk(block, span{})
+	// A line break at the very end draws nothing.
+	for len(builder.out) > 0 && builder.out[len(builder.out)-1].hard {
+		builder.out = builder.out[:len(builder.out)-1]
+	}
+	return builder.out
+}
+
+type spanBuilder struct {
+	source []byte
+	out    []span
 }
 
 // text appends plain text in a style, joining it to the previous span when
 // that one has the same style.
-func (parser *inlineParser) text(text string, style span) {
+func (builder *spanBuilder) text(text string, style span) {
 	if text == "" {
 		return
 	}
 	style.text = text
-	if n := len(parser.out); n > 0 {
-		last := &parser.out[n-1]
+	if n := len(builder.out); n > 0 {
+		last := &builder.out[n-1]
 		same := *last
 		same.text = text
 		if same == style && !last.hard && last.math == "" {
@@ -75,168 +81,187 @@ func (parser *inlineParser) text(text string, style span) {
 			return
 		}
 	}
-	parser.out = append(parser.out, style)
+	builder.out = append(builder.out, style)
 }
 
-// parse reads s in the given style (what the enclosing emphasis set).
-func (parser *inlineParser) parse(s string, style span) {
-	plain := 0 // start of the plain text not yet written
-	flush := func(end int) {
-		parser.text(s[plain:end], style)
-	}
-	for i := 0; i < len(s); {
-		c := s[i]
-		rest := s[i:]
-		switch {
-		case c == '\\' && i+1 < len(s) && strings.IndexByte("\\`*_{}[]()#+-.!~$<>|", s[i+1]) >= 0:
-			if s[i+1] == '(' { // \( … \): inline math
-				if end := strings.Index(rest, `\)`); end > 2 {
-					flush(i)
-					parser.out = append(parser.out, span{math: strings.TrimSpace(rest[2:end]), text: rest[:end+2]})
-					i += end + 2
-					plain = i
-					continue
-				}
+func (builder *spanBuilder) walk(parent ast.Node, style span) {
+	for node := parent.FirstChild(); node != nil; node = node.NextSibling() {
+		switch node := node.(type) {
+		case *ast.Text:
+			value := node.Segment.Value(builder.source)
+			if !node.IsRaw() {
+				value = util.UnescapePunctuations(value)
+				value = util.ResolveNumericReferences(value)
+				value = util.ResolveEntityNames(value)
 			}
-			flush(i)
-			parser.text(s[i+1:i+2], style)
-			i += 2
-			plain = i
-			continue
-		case c == '`':
-			ticks := 0
-			for ticks < len(rest) && rest[ticks] == '`' {
-				ticks++
+			builder.text(string(value), style)
+			switch {
+			case node.HardLineBreak():
+				builder.out = append(builder.out, span{hard: true})
+			case node.SoftLineBreak():
+				builder.text(" ", style)
 			}
-			fence := rest[:ticks]
-			if end := strings.Index(rest[ticks:], fence); end >= 0 {
-				flush(i)
-				code := style
-				code.code = true
-				parser.text(strings.TrimSpace(rest[ticks:ticks+end]), code)
-				i += ticks + end + ticks
-				plain = i
-				continue
-			}
-		case c == '$':
-			if end := mathEnd(rest); end > 0 {
-				flush(i)
-				parser.out = append(parser.out, span{math: strings.TrimSpace(rest[1:end]), text: rest[:end+1]})
-				i += end + 1
-				plain = i
-				continue
-			}
-		case c == '*' || c == '_' || c == '~':
-			run := 0
-			for run < len(rest) && rest[run] == c {
-				run++
-			}
-			if n, inner, ok := emphasis(s, i, run); ok {
-				flush(i)
-				spanValue := style
-				switch {
-				case c == '~':
-					spanValue.strike = true
-				case n == 1:
-					spanValue.italic = true
-				case n == 2:
-					spanValue.bold = true
-				default:
-					spanValue.bold, spanValue.italic = true, true
-				}
-				parser.parse(inner, spanValue)
-				i += n + len(inner) + n
-				plain = i
-				continue
-			}
-			i += run // not emphasis: the marks are text
-			continue
-		case c == '!' && strings.HasPrefix(rest, "!["):
-			if label, url, n, ok := linkAt(rest[1:]); ok {
-				flush(i)
-				in := style
-				in.link = url
-				if label == "" {
-					label = url
-				}
-				parser.text(label, in)
-				i += 1 + n
-				plain = i
-				continue
-			}
-		case c == '[':
-			if label, url, n, ok := linkAt(rest); ok {
-				flush(i)
-				in := style
-				in.link = url
-				parser.parse(label, in)
-				i += n
-				plain = i
-				continue
-			}
-		case c == '<' && strings.HasPrefix(rest, "<cite"):
-			flush(i)
-			if cited, n, ok := citeAt(rest); ok {
-				parser.out = append(parser.out, cited)
-				i += n
+		case *ast.String:
+			builder.text(string(node.Value), style)
+		case *ast.CodeSpan:
+			code := style
+			code.code = true
+			builder.text(strings.TrimSpace(plainText(node, builder.source)), code)
+		case *ast.Emphasis:
+			inner := style
+			if node.Level >= 2 {
+				inner.bold = true
 			} else {
-				i = len(s) // a tag still arriving: shown once whole
+				inner.italic = true
 			}
-			plain = i
-			continue
-		case c == '<':
-			if end := strings.IndexByte(rest, '>'); end > 0 {
-				inside := rest[1:end]
-				switch {
-				case bareURL.MatchString(inside) && bareURL.FindString(inside) == inside:
-					flush(i)
-					in := style
-					in.link = inside
-					parser.text(inside, in)
-					i += end + 1
-					plain = i
-					continue
-				case strings.EqualFold(strings.TrimSuffix(strings.TrimSpace(inside), "/"), "br"):
-					flush(i)
-					parser.out = append(parser.out, span{hard: true})
-					i += end + 1
-					plain = i
-					continue
-				}
+			builder.walk(node, inner)
+		case *east.Strikethrough:
+			inner := style
+			inner.strike = true
+			builder.walk(node, inner)
+		case *ast.Link:
+			inner := style
+			inner.link = string(node.Destination)
+			builder.walk(node, inner)
+		case *ast.Image: // shown as a link to it
+			inner := style
+			inner.link = string(node.Destination)
+			label := plainText(node, builder.source)
+			if label == "" {
+				label = inner.link
 			}
-		case c == 'h' && style.link == "" && (i == 0 || !isWordByte(s[i-1])):
-			if url := bareURL.FindString(rest); url != "" {
-				url = trimURL(url)
-				flush(i)
-				in := style
-				in.link = url
-				parser.text(url, in)
-				i += len(url)
-				plain = i
-				continue
-			}
+			builder.text(label, inner)
+		case *ast.AutoLink:
+			inner := style
+			inner.link = string(node.URL(builder.source))
+			builder.text(string(node.Label(builder.source)), inner)
+		case *ast.RawHTML:
+			builder.html(rawHTML(node, builder.source), style)
+		case *mathInline:
+			builder.out = append(builder.out, span{math: node.formula, text: node.source})
+		case *east.TaskCheckBox: // the list item's marker shows it
+		default:
+			builder.walk(node, style)
 		}
-		i++
 	}
-	flush(len(s))
 }
 
-func isWordByte(b byte) bool {
-	return b >= 0x80 || unicode.IsLetter(rune(b)) || unicode.IsDigit(rune(b))
+// html reads an inline tag: a citation becomes its chip, <br> a line
+// break; any other tag is shown as written.
+func (builder *spanBuilder) html(raw string, style span) {
+	if cited, n, ok := citeAt(raw); ok && n == len(raw) {
+		builder.out = append(builder.out, cited)
+		return
+	}
+	if inside := strings.TrimSpace(strings.Trim(raw, "<>/")); strings.EqualFold(inside, "br") {
+		builder.out = append(builder.out, span{hard: true})
+		return
+	}
+	builder.text(raw, style)
 }
 
-// trimURL drops the punctuation that ends a sentence rather than the URL.
-func trimURL(url string) string {
-	for len(url) > 0 {
-		last := url[len(url)-1]
-		if strings.IndexByte(".,;:!?*_~", last) >= 0 ||
-			(last == ')' && strings.Count(url, "(") < strings.Count(url, ")")) {
-			url = url[:len(url)-1]
-			continue
+// htmlSpans reads a block of HTML (a citation alone on its line is one)
+// as text whose tags are read by html.
+func htmlSpans(source string) []span {
+	builder := &spanBuilder{}
+	for i, line := range strings.Split(strings.TrimSpace(source), "\n") {
+		if i > 0 {
+			builder.text(" ", span{})
 		}
-		break
+		for line != "" {
+			at := strings.IndexByte(line, '<')
+			if at < 0 {
+				builder.text(line, span{})
+				break
+			}
+			builder.text(line[:at], span{})
+			end := strings.IndexByte(line[at:], '>')
+			if end < 0 {
+				builder.text(line[at:], span{})
+				break
+			}
+			builder.html(line[at:at+end+1], span{})
+			line = line[at+end+1:]
+		}
 	}
-	return url
+	return builder.out
+}
+
+func rawHTML(node *ast.RawHTML, source []byte) string {
+	var raw strings.Builder
+	for i := 0; i < node.Segments.Len(); i++ {
+		segment := node.Segments.At(i)
+		raw.Write(segment.Value(source))
+	}
+	return raw.String()
+}
+
+// plainText is the text inside a node, without its styles.
+func plainText(parent ast.Node, source []byte) string {
+	var out strings.Builder
+	for node := parent.FirstChild(); node != nil; node = node.NextSibling() {
+		switch node := node.(type) {
+		case *ast.Text:
+			out.Write(node.Segment.Value(source))
+			if node.SoftLineBreak() || node.HardLineBreak() {
+				out.WriteByte(' ')
+			}
+		case *ast.String:
+			out.Write(node.Value)
+		default:
+			out.WriteString(plainText(node, source))
+		}
+	}
+	return out.String()
+}
+
+// ---------------------------------------------------------------------------
+// Formulas.
+
+var (
+	kindMathInline = ast.NewNodeKind("MathInline")
+	kindMathBlock  = ast.NewNodeKind("MathBlock")
+)
+
+// mathInline is $…$ or \(…\) inside a line.
+type mathInline struct {
+	ast.BaseInline
+	formula string // the LaTeX
+	source  string // as written, for copying
+}
+
+func (node *mathInline) Kind() ast.NodeKind { return kindMathInline }
+func (node *mathInline) Dump(source []byte, level int) {
+	ast.DumpHelper(node, source, level, map[string]string{"formula": node.formula}, nil)
+}
+
+type mathInlineParser struct{}
+
+func (mathInlineParser) Trigger() []byte { return []byte{'$', '\\'} }
+
+func (mathInlineParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) ast.Node {
+	line, _ := block.PeekLine()
+	s := strings.TrimRight(string(line), "\r\n")
+	var formula string
+	var n int
+	switch {
+	case strings.HasPrefix(s, `\(`):
+		end := strings.Index(s, `\)`)
+		if end <= 2 {
+			return nil
+		}
+		formula, n = s[2:end], end+2
+	case strings.HasPrefix(s, "$"):
+		end := mathEnd(s)
+		if end == 0 {
+			return nil
+		}
+		formula, n = s[1:end], end+1
+	default:
+		return nil
+	}
+	block.Advance(n)
+	return &mathInline{formula: strings.TrimSpace(formula), source: s[:n]}
 }
 
 // mathEnd finds the closing $ of inline math starting at s[0] == '$', or 0.
@@ -262,128 +287,99 @@ func mathEnd(s string) int {
 	return 0
 }
 
-// emphasis looks for what closes the run of marks of length run starting
-// at s[at]. It returns how many marks delimit and what is between them.
-// Runs of marks met on the way that open an emphasis of their own are
-// matched with their closers first, so "*a **b** c*" and "**a *b***" nest.
-func emphasis(s string, at, run int) (n int, inner string, ok bool) {
-	c := s[at]
-	n = run
-	if c == '~' {
-		if run < 2 {
-			return 0, "", false
-		}
-		n = 2
-	} else if n > 3 {
-		n = 3
-	}
-	open := at + run
-	if open >= len(s) || s[open] == ' ' {
-		return 0, "", false // "2 * 3": marks before a space open nothing
-	}
-	if c == '_' && at > 0 && isWordByte(s[at-1]) {
-		return 0, "", false // snake_case is not emphasis
-	}
-	var nested []int // lengths of the runs opened inside and not closed yet
-	for j := open; j < len(s); j++ {
-		switch s[j] {
-		case '\\':
-			j++
-			continue
-		case '`': // code hides marks
-			if end := strings.IndexByte(s[j+1:], '`'); end >= 0 {
-				j += end + 1
-			}
-			continue
-		case c:
-		default:
-			continue
-		}
-		length := 1
-		for j+length < len(s) && s[j+length] == c {
-			length++
-		}
-		before, after := s[j-1], byte(' ')
-		if j+length < len(s) {
-			after = s[j+length]
-		}
-		closes := before != ' '
-		opens := after != ' ' && (before == ' ' || strings.IndexByte("([{\"'", before) >= 0)
-		if c == '_' {
-			closes = closes && !isWordByte(after)
-			opens = opens && !isWordByte(before)
-		}
-		switch {
-		case opens && !closes:
-			nested = append(nested, length)
-		case closes:
-			left := length
-			for left > 0 && len(nested) > 0 {
-				top := nested[len(nested)-1]
-				if top > left {
-					nested[len(nested)-1] = top - left
-					left = 0
-				} else {
-					left -= top
-					nested = nested[:len(nested)-1]
-				}
-			}
-			if len(nested) == 0 && left >= n {
-				end := j + length - n // its last marks are ours
-				if end > at+n {
-					return n, s[at+n : end], true
-				}
-			}
-		}
-		j += length - 1
-	}
-	return 0, "", false
+// mathBlock is a formula on its own lines: $$ … $$ or \[ … \].
+type mathBlock struct {
+	ast.BaseBlock
+	closing string
+	lines   []string
+	closed  bool // false while its end is not written yet
 }
 
-// linkAt parses [label](url "title") at the start of s.
-func linkAt(s string) (label, url string, n int, ok bool) {
-	depth := 0
-	closing := -1
-	for i := 0; i < len(s); i++ {
-		switch s[i] {
-		case '\\':
-			i++
-		case '[':
-			depth++
-		case ']':
-			depth--
-			if depth == 0 {
-				closing = i
-			}
-		}
-		if closing >= 0 {
-			break
-		}
-	}
-	if closing < 0 || closing+1 >= len(s) || s[closing+1] != '(' {
-		return "", "", 0, false
-	}
-	depth = 0
-	for i := closing + 1; i < len(s); i++ {
-		switch s[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-			if depth == 0 {
-				target := strings.TrimSpace(s[closing+2 : i])
-				if space := strings.IndexAny(target, " \t"); space > 0 {
-					target = target[:space] // a title follows the address
-				}
-				target = strings.Trim(target, "<>")
-				if target == "" {
-					return "", "", 0, false
-				}
-				return s[1:closing], target, i + 1, true
-			}
-		case '\n':
-			return "", "", 0, false
-		}
-	}
-	return "", "", 0, false
+func (node *mathBlock) Kind() ast.NodeKind { return kindMathBlock }
+func (node *mathBlock) Dump(source []byte, level int) {
+	ast.DumpHelper(node, source, level, map[string]string{"formula": node.formula()}, nil)
 }
+func (node *mathBlock) formula() string { return strings.TrimSpace(strings.Join(node.lines, "\n")) }
+
+// add reads a line of the formula; it reports whether the line ends it.
+func (node *mathBlock) add(line string) bool {
+	if end := strings.Index(line, node.closing); end >= 0 {
+		node.lines = append(node.lines, line[:end])
+		node.closed = true
+		return true
+	}
+	node.lines = append(node.lines, line)
+	return false
+}
+
+type mathBlockParser struct{}
+
+func (mathBlockParser) Trigger() []byte { return []byte{'$', '\\'} }
+
+func (mathBlockParser) Open(parent ast.Node, reader text.Reader, pc parser.Context) (ast.Node, parser.State) {
+	line, _ := reader.PeekLine()
+	at := pc.BlockOffset()
+	if at < 0 {
+		return nil, parser.NoChildren
+	}
+	rest := strings.TrimRight(string(line[at:]), "\r\n")
+	var node *mathBlock
+	switch {
+	case strings.HasPrefix(rest, "$$"):
+		node = &mathBlock{closing: "$$"}
+	case strings.HasPrefix(rest, `\[`):
+		node = &mathBlock{closing: `\]`}
+	default:
+		return nil, parser.NoChildren
+	}
+	reader.AdvanceToEOL()
+	node.add(rest[2:]) // when it closes on this line, Continue ends it
+	return node, parser.NoChildren
+}
+
+func (mathBlockParser) Continue(node ast.Node, reader text.Reader, pc parser.Context) parser.State {
+	line, _ := reader.PeekLine()
+	if line == nil || node.(*mathBlock).closed { // a formula on one line ended where it opened
+		return parser.Close
+	}
+	done := node.(*mathBlock).add(strings.TrimRight(string(line), "\r\n"))
+	reader.AdvanceToEOL()
+	if done {
+		return parser.Close
+	}
+	return parser.Continue | parser.NoChildren
+}
+
+func (mathBlockParser) Close(node ast.Node, reader text.Reader, pc parser.Context) {}
+func (mathBlockParser) CanInterruptParagraph() bool                                { return true }
+func (mathBlockParser) CanAcceptIndentedLine() bool                                { return false }
+
+// ---------------------------------------------------------------------------
+// ~~strikethrough~~: GitHub's, without the single tilde.
+
+type strikeDelimiter struct{}
+
+func (strikeDelimiter) IsDelimiter(b byte) bool { return b == '~' }
+func (strikeDelimiter) CanOpenCloser(opener, closer *parser.Delimiter) bool {
+	return opener.Char == closer.Char && opener.OriginalLength == closer.OriginalLength
+}
+func (strikeDelimiter) OnMatch(consumes int) ast.Node { return east.NewStrikethrough() }
+
+type strikeParser struct{}
+
+func (strikeParser) Trigger() []byte { return []byte{'~'} }
+
+func (strikeParser) Parse(parent ast.Node, block text.Reader, pc parser.Context) ast.Node {
+	before := block.PrecendingCharacter()
+	line, segment := block.PeekLine()
+	node := parser.ScanDelimiter(line, before, 1, strikeDelimiter{})
+	if node == nil || node.OriginalLength != 2 || before == '~' {
+		return nil
+	}
+	node.Segment = segment.WithStop(segment.Start + node.OriginalLength)
+	block.Advance(node.OriginalLength)
+	pc.PushDelimiter(node)
+	return node
+}
+
+func (strikeParser) CloseBlock(parent ast.Node, pc parser.Context) {}

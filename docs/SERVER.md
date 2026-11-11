@@ -70,13 +70,118 @@ example the first connection: `-provider compatible -base-url … -model …
 -api-key-env MODEL_API_KEY` with `-e MODEL_API_KEY=…`.
 [`packaging/docker/compose.yml`](../packaging/docker/compose.yml) does the same
 with Docker Compose. A bind-mounted projects folder must be writable by uid
-1000.
+1000. To let the agent reach more of the host, see
+[How much of the host the agent reaches](#how-much-of-the-host-the-agent-reaches).
 
 Tags: `latest` and the version (`0.3.3`) for a stable release, `alpha` and
 `alpha-N` for the newest builds of `dev`. The server does not update itself
 in a container: pull the new image and recreate the container, and the
 volumes keep everything. To build it yourself: `docker build -t 1loop-server .`
 from the repository root.
+
+## How much of the host the agent reaches
+
+In the image, the agent's commands run in the container's own Debian as
+`oneloop` (uid 1000), and its files are `/projects`. Choose one of three
+levels; [`compose.yml`](../packaging/docker/compose.yml) has each one as
+comments to uncomment.
+
+1. **Isolated** (the default): only the `/data` and `/projects` volumes.
+   Nothing else of the host is visible.
+2. **Host folders**: bind-mount host folders under `/projects`, for example
+   `- ~/dev:/projects/dev`. Each one is then a folder the phone can add as a
+   project, and the agent changes the host's files directly, still with the
+   container's tools.
+3. **Host over SSH**: the server signs in to the host as an SSH machine. A
+   project can be a folder there, and the agent's commands, files, terminals
+   and Git changes run on the host itself, as that user, with the host's
+   tools. The server, its models and Chromium stay in the container.
+
+Not offered, at any level: `--privileged`, `--pid host` or mounting the Docker
+socket (`/var/run/docker.sock`). Each one gives whoever drives the agent root on
+the host, without anything in 1loop showing that a line was crossed. Use
+level 3 with a user whose rights you chose instead.
+
+### Host folders: users and permissions
+
+The container runs as uid 1000 and gid 1000, whatever user owns a mounted
+folder on the host:
+
+- A folder owned by another uid is read-only to the agent (or unreadable,
+  depending on its mode). Give uid 1000 access (`chown`, a group, or an ACL:
+  `setfacl -R -m u:1000:rwX ~/dev`) rather than making it world-writable.
+- Files the agent creates belong to uid 1000 on the host. If your host user is
+  not uid 1000, they are not yours: `id -u` tells.
+- Mount only what the agent may change, and add `:ro` to what it should only
+  read. A mount outside `/projects` is not a project: the phone browses and
+  adds projects inside `/projects` only.
+- Rootless Docker and Podman map uids: uid 1000 in the container is a
+  subordinate uid on the host, so the folder needs that one's access.
+- With SELinux (Fedora, RHEL), add `:z` to the mount, or the container cannot
+  read it.
+
+### Host over SSH
+
+1. Make a key for the server, without a passphrase, and allow it on the host
+   (for the user the agent should act as; a dedicated user limits what it
+   reaches):
+
+   ```sh
+   ssh-keygen -t ed25519 -N '' -f ~/.ssh/1loop_ed25519 -C 1loop-server
+   cat ~/.ssh/1loop_ed25519.pub >> ~/.ssh/authorized_keys
+   ```
+
+   The host needs an SSH server with SFTP (OpenSSH has both) listening where
+   the container reaches it. The key file must be readable by uid 1000: Compose
+   bind-mounts a secret with the file's own owner and mode.
+
+2. Give the server the machine, in `compose.yml` (uncomment `extra_hosts`,
+   `secrets` and `ONELOOP_SSH_MACHINE`), or with `docker run`:
+
+   ```sh
+   docker run -d -it --name 1loop-server -p 47101:47101 \
+     --add-host host.docker.internal:host-gateway \
+     -v ~/.ssh/1loop_ed25519:/run/secrets/1loop_ssh_key:ro \
+     -v 1loop-data:/data -v ~/projects:/projects \
+     -e ONELOOP_SSH_MACHINE="you@host.docker.internal key=/run/secrets/1loop_ssh_key projects=~/dev" \
+     ghcr.io/feur-inc/1loop-server:latest
+   ```
+
+   A machine is `user@host[:port]` then options: `key=` the private key file
+   (required), `projects=` the folder projects go in (absolute or `~/…`,
+   default `~`), `name=` how clients name it, and `host-key=SHA256:…` to pin
+   its host key. Separate them with spaces, or with commas when a name has
+   spaces. `-ssh-machine` takes the same text, once per machine;
+   `ONELOOP_SSH_MACHINE` takes several separated by `;`. Outside Docker, the
+   same flags work with any host the server reaches.
+
+3. Confirm the host key. On its first connection the server prints the
+   machine's host key in its console (`docker attach 1loop-server`):
+
+   ```text
+   SSH machine you@host.docker.internal (host.docker.internal:22) has never been connected to. Its host key is ssh-ed25519 SHA256:….
+   Type trust 1 to accept it, refuse 1 otherwise.
+   ```
+
+   Compare it with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the
+   host, then type `trust 1`. The key is kept in `/data/known_hosts`, and a
+   different key later is refused. To skip this step, pin the key with
+   `host-key=` instead: the server then accepts that key only.
+
+4. On the phone, **Add project** shows the machine beside the server: choose
+   it, then a folder in its projects folder or a new one. The project shows
+   *on* the machine in the sidebar and under the composer, and its chats run
+   there. Claude Code, Antigravity and ChatGPT (Web) work on the server's own
+   projects only; choose another model for a machine's projects. The file
+   browser shows the server's own projects only for now: use a terminal on
+   the machine, or ask the agent.
+
+The console's `ssh` lists the machines and the host keys waiting for an
+answer; `ssh add <machine>` adds one (the same text as `ONELOOP_SSH_MACHINE`,
+kept in the server's configuration), and `ssh remove <number>` forgets a
+machine and its projects (their chats stay, unable to run; the files stay on
+the machine). A machine from the environment or a flag is added again at each
+start, with its options then.
 
 ## HTTPS and pairing
 

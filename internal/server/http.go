@@ -10,6 +10,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -97,6 +98,8 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/files/content":                       server.projectFiles(remoteapi.FileContent),
 		"GET /api/files/download":                      server.projectFiles(remoteapi.DownloadFile),
 		"POST /api/files/upload":                       server.projectFiles(remoteapi.UploadFile),
+		"GET /api/projects/memory":                     server.projectFiles(projectMemory),
+		"POST /api/projects/memory":                    server.projectFiles(saveProjectMemory),
 		"POST /api/send":                               server.send,
 		"POST /api/stop":                               server.stop,
 		"POST /api/approve":                            server.approve,
@@ -176,6 +179,8 @@ func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 		"name":              server.name,
 		"projects":          server.projects,
 		"worktrees":         server.worktrees,
+		"machines":          server.machinesLocked(),
+		"projectMachines":   server.projectMachinesLocked(),
 		"workspace":         server.cfg.Workspace,
 		"projectManagement": true,
 		"projectActions":    true,
@@ -198,7 +203,7 @@ func (server *headlessServer) chat(w http.ResponseWriter, r *http.Request) {
 		items = append(items, server.itemLocked(chat, i))
 	}
 	core.WriteJSON(w, 200, map[string]any{
-		"chat":  remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Running: chat.run != nil, Items: len(chat.Items)},
+		"chat":  remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Items: len(chat.Items)},
 		"items": items,
 		"first": first,
 		"total": len(chat.Items),
@@ -404,9 +409,23 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var err error
+	var machine agent.Machine
+	machineID := ""
 	scratch := args.NoFolder && chat == nil
 	if !scratch {
-		workspace, err = server.workspaceLocked(workspace)
+		if chat != nil {
+			machineID = chat.Config.MachineID
+		} else {
+			machineID = server.projectMachines[workspace]
+		}
+		if found := server.machineLocked(machineID); found != nil {
+			machine = found
+			workspace, err = server.workspaceLocked(workspace)
+		} else if machineID != "" {
+			err = fmt.Errorf("This project's SSH machine is no longer on the server: ssh on its console lists them")
+		} else {
+			workspace, err = server.workspaceLocked(workspace)
+		}
 	}
 	server.mu.Unlock()
 	if scratch {
@@ -416,7 +435,14 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		core.Fail(w, 403, err.Error())
 		return
 	}
-	m, err := remoteapi.AttachedMessage(workspace, args.Text, args.Attachments)
+	var m agent.Message
+	if machine != nil {
+		ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+		m, err = machineAttachedMessage(ctx, machine, workspace, args.Text, args.Attachments)
+		cancel()
+	} else {
+		m, err = remoteapi.AttachedMessage(workspace, args.Text, args.Attachments)
+	}
 	if err != nil {
 		core.Fail(w, 400, err.Error())
 		return
@@ -442,7 +468,7 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 			title = title[:50]
 		}
 		cfg := server.cfg
-		cfg.Workspace, cfg.Scratch = workspace, ""
+		cfg.Workspace, cfg.Scratch, cfg.MachineID = workspace, "", machineID
 		if scratch {
 			cfg.Scratch = workspace
 		}
@@ -775,21 +801,57 @@ func (server *headlessServer) projectFiles(handler func(http.ResponseWriter, *ht
 	return func(w http.ResponseWriter, r *http.Request) {
 		server.mu.Lock()
 		workspace, err := server.workspaceLocked(r.URL.Query().Get("workspace"))
+		label := server.machineLabelLocked(server.projectMachines[workspace])
 		server.mu.Unlock()
 		if err != nil {
 			core.Fail(w, 403, err.Error())
+			return
+		}
+		if label != "" {
+			noMachineFiles(w, label)
 			return
 		}
 		handler(w, r, workspace)
 	}
 }
 
+// projectMemory is GET /api/projects/memory?workspace=: the project's
+// AGENTS.md, for the desktop's Project memory dialog.
+func projectMemory(w http.ResponseWriter, r *http.Request, workspace string) {
+	text, err := agent.ProjectMemory(workspace)
+	if err != nil {
+		core.Fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	core.WriteJSON(w, http.StatusOK, map[string]any{"text": text, "exists": agent.ProjectMemoryExists(workspace), "path": filepath.Join(workspace, "AGENTS.md")})
+}
+
+// saveProjectMemory is POST /api/projects/memory?workspace= with
+// {before, after}: refused when the file changed since it was read.
+func saveProjectMemory(w http.ResponseWriter, r *http.Request, workspace string) {
+	var args struct{ Before, After string }
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	if err := agent.SaveProjectMemory(workspace, args.Before, args.After); err != nil {
+		core.Fail(w, http.StatusConflict, err.Error())
+		return
+	}
+	core.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
+}
+
 func (server *headlessServer) uploadAttachment(w http.ResponseWriter, r *http.Request) {
 	server.mu.Lock()
 	workspace, err := server.workspaceLocked(r.URL.Query().Get("workspace"))
+	machine := server.projectMachineLocked(workspace)
 	server.mu.Unlock()
 	if err != nil {
 		core.Fail(w, 403, err.Error())
+		return
+	}
+	if machine != nil {
+		uploadMachineAttachment(w, r, machine, workspace)
 		return
 	}
 	remoteapi.UploadAttachment(w, r, workspace)

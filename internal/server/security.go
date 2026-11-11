@@ -174,8 +174,10 @@ func (server *headlessServer) console() {
 				server.disconnectStreamsLocked()
 				fmt.Fprintln(os.Stderr, "Device revoked")
 			}
+		case "ssh", "trust", "refuse":
+			server.machineConsole(parts)
 		default:
-			fmt.Fprintln(os.Stderr, "Commands: pair <id> <code>, devices, revoke <number>")
+			fmt.Fprintln(os.Stderr, "Commands: pair <id> <code>, devices, revoke <number>, ssh, trust <number>, refuse <number>")
 		}
 		server.mu.Unlock()
 	}

@@ -374,7 +374,8 @@ func usageChart(report usage.Report) fyne.CanvasObject {
 	for _, day := range report.Days {
 		highest = math.Max(highest, value(day))
 	}
-	bars := container.New(&barsLayout{height: 96})
+	shape := &barsLayout{height: 96}
+	bars := container.New(shape)
 	for _, day := range report.Days {
 		date, _ := time.ParseInLocation("2006-01-02", day.Date, time.Local)
 		lit := report.Period == "all" || !date.Before(report.From) && date.Before(report.To)
@@ -388,7 +389,8 @@ func usageChart(report usage.Report) fyne.CanvasObject {
 		if highest > 0 {
 			share = value(day) / highest
 		}
-		bars.Add(&usageBar{Rectangle: bar, share: share})
+		shape.shares = append(shape.shares, share)
+		bars.Add(bar)
 	}
 	top := "Last 30 days"
 	if highest > 0 {
@@ -415,14 +417,12 @@ func shortDate(text string) string {
 	return date.Format("2 Jan")
 }
 
-// usageBar is one day's bar: its share of the tallest day.
-type usageBar struct {
-	*canvas.Rectangle
-	share float64
+// barsLayout sets bars side by side, standing on the bottom, each as tall
+// as its share of the tallest.
+type barsLayout struct {
+	height float32
+	shares []float64
 }
-
-// barsLayout sets bars side by side, standing on the bottom.
-type barsLayout struct{ height float32 }
 
 func (bars *barsLayout) MinSize([]fyne.CanvasObject) fyne.Size { return fyne.NewSize(120, bars.height) }
 
@@ -433,10 +433,9 @@ func (bars *barsLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	slot := size.Width / float32(len(objects))
 	gap := float32(math.Min(4, float64(slot)/3))
 	for i, object := range objects {
-		bar, _ := object.(*usageBar)
 		height := float32(2)
-		if bar != nil && bar.share > 0 {
-			height = float32(math.Max(3, bar.share*float64(size.Height)))
+		if i < len(bars.shares) && bars.shares[i] > 0 {
+			height = float32(math.Max(3, bars.shares[i]*float64(size.Height)))
 		}
 		object.Resize(fyne.NewSize(slot-gap, height))
 		object.Move(fyne.NewPos(float32(i)*slot, size.Height-height))

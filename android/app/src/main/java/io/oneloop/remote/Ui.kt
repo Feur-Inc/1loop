@@ -535,6 +535,7 @@ fun ChatScreen(app: RemoteApp) {
         ?: if (!app.settingsOpen) ChatPage("chat")
         else if (app.extensionsOpen) ChatPage("extensions")
         else if (app.linuxOpen) ChatPage("linux")
+        else if (app.usageOpen) ChatPage("usage")
         else ChatPage("settings")
     AnimatedContent(
         page, label = "page",
@@ -550,6 +551,7 @@ fun ChatScreen(app: RemoteApp) {
             "repository" -> RepositoryScreen(app, shown.project!!) { app.repositoryOpen = null }
             "extensions" -> ExtensionsScreen(app) { app.extensionsOpen = false }
             "linux" -> LinuxScreen(app) { app.linuxOpen = false }
+            "usage" -> UsageScreen(app) { app.usageOpen = false }
             "settings" -> MobileSettings(app) { app.settingsOpen = false }
             else -> ChatMain(app)
         }

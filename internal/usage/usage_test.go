@@ -328,6 +328,15 @@ func TestChatSpend(t *testing.T) {
 	if spend == nil || !near(spend.Cost, 3) || spend.Subchats == nil || !near(spend.Subchats.Cost, 1.25) {
 		t.Fatalf("spend %+v", spend)
 	}
+	local := Record{Provider: "vllm", Model: "gpt-5", Tokens: Tokens{Input: 1_000_000}}
+	if _, ok := prices.Cost(local); ok {
+		t.Error("a local model got the shipped price")
+	}
+	own := OpenPrices("")
+	own.Set("gpt-5", &Price{Input: 0.5})
+	if cost, ok := own.Cost(local); !ok || !near(cost, 0.5) {
+		t.Errorf("a local model with the user's price: %v %v", cost, ok)
+	}
 	if text := spend.Text(); !strings.Contains(text, "$3.00 API-equivalent") || !strings.Contains(text, "subchats: $1.25") {
 		t.Errorf("text %q", text)
 	}

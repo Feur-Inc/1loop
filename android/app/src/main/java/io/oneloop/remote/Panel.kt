@@ -964,6 +964,7 @@ private fun ContextFooter(app: RemoteApp, chat: String, meta: Meta?) {
         Column(Modifier.padding(horizontal = 18.dp, vertical = 12.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             if (usage != null) ContextBreakdown(app, chat, usage)
             if (text.isNotEmpty()) Text(text, style = Type.caption.copy(color = Palette.muted))
+            if (meta?.spent?.isNotEmpty() == true) Text(meta.spent, style = Type.caption.copy(color = Palette.muted))
         }
     }
 }

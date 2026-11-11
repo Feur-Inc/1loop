@@ -222,13 +222,19 @@ func (prices *Prices) Set(model string, price *Price) error {
 
 // Cost prices a call: what its provider reported, else the table's price
 // for a provider paid by the token or by a plan. ok is false when the call
-// cannot be priced (an unknown model, a local one).
+// cannot be priced: an unknown model, or a local one the user gave no price.
 func (prices *Prices) Cost(record Record) (cost float64, ok bool) {
 	if record.Cost != nil {
 		return *record.Cost, true
 	}
-	if Billing(record.Provider) == "local" {
-		return 0, false
+	if Billing(record.Provider) == "local" { // only a price the user set
+		if prices == nil {
+			return 0, false
+		}
+		prices.mu.Lock()
+		_, price, ok := match(prices.overrides, Key(record.Model))
+		prices.mu.Unlock()
+		return price.Cost(record.Tokens), ok
 	}
 	price, ok := prices.For(record.Model)
 	if !ok {

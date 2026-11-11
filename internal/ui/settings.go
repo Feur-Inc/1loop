@@ -594,6 +594,8 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		page.Add(sectionTitle("Keyboard"))
 		page.Add(card(settingRow(registry.ShortcutsPage, "New chat, search, find in the chat and more: see their keys, and change them.", view.pageButton(registry.ShortcutsPage))))
 	}
+	page.Add(sectionTitle("Usage"))
+	page.Add(card(view.mark("general.usage", settingRow("Usage & spend", "Where the tokens and the money went, by model, connection, project, branch and chat, and the prices behind it.", view.pageButton(UsagePage)))))
 	page.Add(sectionTitle("Import"))
 	page.Add(card(view.mark("general.import", ui.importRow())))
 	return page

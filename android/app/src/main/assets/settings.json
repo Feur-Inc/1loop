@@ -298,6 +298,28 @@
       "where": "both"
     },
     {
+      "key": "general.usage",
+      "section": "general",
+      "page": "Usage",
+      "title": "Usage \u0026 spend",
+      "description": "Where the tokens and the money went, by model, connection, project, branch and chat, and the prices behind it.",
+      "keywords": [
+        "usage",
+        "spend",
+        "cost",
+        "costs",
+        "tokens",
+        "price",
+        "prices",
+        "money",
+        "billing",
+        "budget",
+        "dollars"
+      ],
+      "kind": "action",
+      "where": "both"
+    },
+    {
       "key": "general.import",
       "section": "general",
       "title": "Import chats",

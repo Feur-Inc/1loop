@@ -136,14 +136,13 @@ class Report(val version: String, val system: String, val arch: String, val ranF
     }
 
     fun body(traceLines: Int = -1): String = buildString {
-        append("1loop closed unexpectedly. This report was made by 1loop after the crash and anonymized: paths, names, addresses, secrets and everything written in the chats were taken out.\n\n")
         append("- **1loop:** phone $version, APK\n")
         append("- **System:** $system, $arch\n")
         if (ranFor > 0) append("- **Ran for:** ${duration(ranFor)}\n")
         if (lines.any { it.isNotBlank() }) {
             val shown = if (traceLines in 0 until lines.size) lines.take(traceLines) else lines
             append("\n### Trace\n\n```text\n").append(shown.joinToString("\n")).append("\n```\n")
-            if (shown.size < lines.size) append("\n_${lines.size - shown.size} more lines were cut to fit the link._\n")
+            if (shown.size < lines.size) append("\n_${lines.size - shown.size} lines cut._\n")
         }
     }
 

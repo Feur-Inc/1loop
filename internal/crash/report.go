@@ -124,7 +124,6 @@ type Report struct {
 func NewReport(crash Crash, scrubber Scrubber) Report {
 	env := crash.Env
 	var head strings.Builder
-	head.WriteString("1loop closed unexpectedly. This report was made by 1loop after the crash and anonymized: paths, names, addresses, secrets and everything written in the chats were taken out.\n\n")
 	version := env.Version
 	if env.Commit != "" {
 		version += " (" + env.Commit + ")"
@@ -155,7 +154,7 @@ func NewReport(crash Crash, scrubber Scrubber) Report {
 	trace := scrubber.Trace(crash.Trace)
 	if trace == "" {
 		report.Title = "Crash: 1loop closed without a trace"
-		report.head += "\nNo Go trace was left: the crash was in native code (a graphics driver, a C library), or the system or a signal ended 1loop (out of memory, for one).\n"
+		report.head += "\nNo Go trace: a native crash, or killed by the system.\n"
 	} else {
 		report.trace = strings.Split(trace, "\n")
 		report.Title = "Crash: " + title(report.trace)
@@ -211,11 +210,11 @@ func (r Report) Body(withLog bool, traceLines int) string {
 		}
 		body.WriteString("\n### Trace\n\n```text\n" + strings.Join(lines, "\n") + "\n```\n")
 		if cut > 0 {
-			fmt.Fprintf(&body, "\n_%d more lines were cut to fit the link._\n", cut)
+			fmt.Fprintf(&body, "\n_%d lines cut._\n", cut)
 		}
 	}
 	if withLog && len(r.log) > 0 {
-		body.WriteString("\n### Developer log (last lines)\n\n```text\n" + strings.Join(r.log, "\n") + "\n```\n")
+		body.WriteString("\n### Developer log\n\n```text\n" + strings.Join(r.log, "\n") + "\n```\n")
 	}
 	return body.String()
 }

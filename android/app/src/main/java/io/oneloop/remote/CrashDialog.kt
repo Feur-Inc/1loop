@@ -34,12 +34,11 @@ fun CrashReportDialog(crash: CrashReport, onDismiss: () -> Unit) {
         title = { Text("1loop closed unexpectedly", style = Type.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("You can report it on GitHub: this opens a new issue in your browser with the report below, which you check and submit from your own account. 1loop sends nothing by itself. Paths, names, addresses, secrets and everything written in your chats were taken out.", style = Type.small)
                 SelectionContainer(
                     Modifier.fillMaxWidth().heightIn(max = 260.dp).background(Palette.code, RoundedCornerShape(10.dp))
                         .verticalScroll(rememberScrollState()).padding(10.dp),
                 ) { Text(report.text, style = Type.mono) }
-                if (cut) Text("The trace is too long for a link: the issue gets its first lines. Copy report copies all of it.", style = Type.small)
+                if (cut) Text("Trace cut to fit the link; Copy report has all of it.", style = Type.small)
                 FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
                     Pill("Copy report") { copy() }
                     Pill("Don't ask again") { CrashReports.setEnabled(context, false); onDismiss() }

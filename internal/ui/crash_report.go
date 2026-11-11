@@ -41,7 +41,6 @@ func (ui *desktopUI) offerCrashReport() {
 	platform.Devf("app", "the last run crashed: offering its report")
 	report := crash.NewReport(*last, crash.NewScrubber())
 	withLog := false
-	intro := plainFlow("1loop closed unexpectedly the last time. You can report it on GitHub: this opens a new issue in your browser with the report below, which you check and submit from your own account. 1loop sends nothing by itself. Paths, names, addresses, secrets and everything written in your chats were taken out.", 13, colMuted)
 	well := container.NewStack()
 	note := container.NewVBox()
 	show := func() {
@@ -49,14 +48,14 @@ func (ui *desktopUI) offerCrashReport() {
 		well.Refresh()
 		note.Objects = nil
 		if _, cut := report.URL(withLog); cut {
-			note.Add(plainFlow("The trace is too long for a link: the issue gets its first lines. Copy report copies all of it, to paste into the issue.", 12.5, colMuted))
+			note.Add(plainFlow("Trace cut to fit the link; Copy report has all of it.", 12.5, colMuted))
 		}
 		note.Refresh()
 	}
 	show()
-	body := container.New(layout.NewCustomPaddedVBoxLayout(10), intro, well, note)
+	body := container.New(layout.NewCustomPaddedVBoxLayout(10), well, note)
 	if report.HasLog() {
-		body.Add(settingRow("Add the developer log's last lines", "Scrubbed like the rest; what the agent did and said is left out.",
+		body.Add(settingRow("Add the developer log", "",
 			newToggle(false, func(on bool) { withLog = on; show() })))
 	}
 	var dialog *sheet

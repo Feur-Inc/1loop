@@ -70,7 +70,7 @@ class CrashReportTest {
         val (link, cut) = report.url()
         assertTrue(cut)
         assertTrue(link.length <= CrashReports.MAX_URL)
-        assertTrue(URLDecoder.decode(link, "UTF-8").contains("more lines were cut to fit the link"))
+        assertTrue(URLDecoder.decode(link, "UTF-8").contains("lines cut."))
         assertTrue(report.text.contains("Markdown.kt:600"))
     }
 }

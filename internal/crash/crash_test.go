@@ -191,7 +191,7 @@ func TestReportCut(t *testing.T) {
 		t.Fatalf("cut %v, %d bytes", cut, len(link))
 	}
 	query, _ := url.ParseQuery(strings.SplitN(link, "?", 2)[1])
-	if !strings.Contains(query.Get("body"), "more lines were cut to fit the link") {
+	if !strings.Contains(query.Get("body"), "lines cut.") {
 		t.Error("the cut is not said")
 	}
 	if full := report.Text(false); strings.Contains(full, "were cut") || strings.Count(full, "loop.go:512") != 80 {
@@ -203,7 +203,7 @@ func TestNoTrace(t *testing.T) {
 	crash := testCrash()
 	crash.Trace = ""
 	report := NewReport(crash, Scrubber{})
-	if report.Title != "Crash: 1loop closed without a trace" || !strings.Contains(report.Body(false, -1), "No Go trace was left") {
+	if report.Title != "Crash: 1loop closed without a trace" || !strings.Contains(report.Body(false, -1), "No Go trace") {
 		t.Errorf("%s\n%s", report.Title, report.Body(false, -1))
 	}
 }

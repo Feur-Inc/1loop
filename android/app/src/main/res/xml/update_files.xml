@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- The checked update APK, shown to Android's installer only (Updates.kt). -->
+<!-- The checked update APK, shown to Android's installer only (Updates.kt),
+     and the photo the camera app writes for the next message (MediaSheet.kt). -->
 <paths>
     <cache-path name="updates" path="updates/" />
+    <cache-path name="camera" path="camera/" />
 </paths>

@@ -3,7 +3,6 @@
 package agent
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -24,6 +23,7 @@ import (
 
 	"1loop/internal/core"
 	"1loop/internal/platform"
+	"1loop/internal/sse"
 )
 
 type ToolCall struct {
@@ -408,20 +408,20 @@ func completionOnce(ctx context.Context, cfg Config, messages []Message, tools b
 		return Message{}, err
 	}
 	defer r.Body.Close()
-	scanner := bufio.NewScanner(r.Body)
-	scanner.Buffer(make([]byte, 4096), 2<<20)
 	out := Message{Role: "assistant"}
 	calls := map[int]*ToolCall{}
 	maxIndex := -1
 	finished := false
 	status := &announcer{emit: emit}
 	targeted := map[int]bool{}
-	for scanner.Scan() {
-		line := scanner.Text()
-		if !strings.HasPrefix(line, "data:") {
+	for event, err := range sse.Events(r.Body, 2<<20) {
+		if err != nil {
+			return out, err
+		}
+		data := strings.TrimSpace(event.Data)
+		if data == "" {
 			continue
 		}
-		data := strings.TrimSpace(strings.TrimPrefix(line, "data:"))
 		if data == "[DONE]" {
 			break
 		}
@@ -515,9 +515,6 @@ func completionOnce(ctx context.Context, cfg Config, messages []Message, tools b
 				status.set(Activity{State: "call", Tool: name, Detail: detail})
 			}
 		}
-	}
-	if err := scanner.Err(); err != nil {
-		return out, err
 	}
 	if !finished {
 		return out, fmt.Errorf("The provider stream was interrupted")

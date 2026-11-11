@@ -8,7 +8,6 @@ package ui
 // show in the same conversation, composer and side panel as this computer's.
 
 import (
-	"bufio"
 	"cmp"
 	"context"
 	"encoding/base64"
@@ -35,6 +34,7 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
+	"1loop/internal/sse"
 	"1loop/internal/update"
 )
 
@@ -553,12 +553,11 @@ func (remote *remoteDesktop) events() {
 	for remote.ctx.Err() == nil {
 		response, err := remote.client.request(remote.ctx, "GET", "/api/events", nil)
 		if err == nil {
-			scanner := bufio.NewScanner(response.Body)
-			scanner.Buffer(make([]byte, 8192), 32<<20)
-			for scanner.Scan() {
-				if strings.HasPrefix(scanner.Text(), "data:") {
-					remote.notify()
+			for _, err := range sse.Events(response.Body, 32<<20) {
+				if err != nil {
+					break
 				}
+				remote.notify()
 			}
 			response.Body.Close()
 		}

@@ -13,7 +13,6 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -151,7 +150,7 @@ func (ui *desktopUI) toggleSidebar() {
 	if ui.paneAnim != nil {
 		ui.paneAnim.Stop()
 	}
-	ui.paneAnim = fyne.NewAnimation(240*time.Millisecond, func(p float32) {
+	ui.paneAnim = motion(200*time.Millisecond, easeOutQuint, func(p float32) {
 		ui.pane.shown = from + (to-from)*p
 		relayout(ui.root) // never Refresh: it would redraw the whole conversation on every frame
 		if p >= 1 && to == 0 {
@@ -159,8 +158,6 @@ func (ui *desktopUI) toggleSidebar() {
 			shade.Hide()
 		}
 	})
-	ui.paneAnim.Curve = easeOutQuint
-	ui.paneAnim.Start()
 	if to == 0 {
 		ui.expand.Show()
 	} else {
@@ -596,7 +593,8 @@ func chatTexts(items []agent.ChatItem) []string {
 // buildSidebar assembles the sidebar column.
 func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	ui.connections = newRow("Settings", theme.SettingsIcon(), styleNav, ui.settings)
-	ui.projectList = container.New(layout.NewCustomPaddedVBoxLayout(1))
+	ui.sideGlide = newGlideLayout()
+	ui.projectList = container.New(ui.sideGlide)
 
 	logo := brandLogo(30*1483.0/512.0, 30)
 	collapse := newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
@@ -604,7 +602,7 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	if ui.chrome {
 		brand = container.NewStack(newDragArea(ui.window), brand)
 	}
-	ui.sideLists = container.NewVBox(sectionHeader("Projects", nil), ui.projectList)
+	ui.sideLists = container.NewVBox(sectionHeader("Projects", nil), container.NewStack(container.NewWithoutLayout(ui.sideGlide.pill), ui.projectList))
 	lists := ui.sideLists
 	divider := canvas.NewRectangle(colBorderSoft)
 	divider.SetMinSize(fyne.NewSize(0, 1))

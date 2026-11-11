@@ -113,6 +113,7 @@ func (ui *desktopUI) renderSidebar(projects []string, chats []sideChat, selectPr
 	}
 	opened := ui.projectOf(ui.cfg.Workspace)
 	ui.projectList.RemoveAll()
+	ui.sideGlide.begin()
 	var scratch []sideChat
 	chats = slices.DeleteFunc(nestSubchats(chats), func(chat sideChat) bool {
 		if chat.scratch {
@@ -147,9 +148,9 @@ func (ui *desktopUI) renderSidebar(projects []string, chats []sideChat, selectPr
 			header.badge = iconDot // a hidden chat is at work
 		}
 		if p == "" {
-			ui.projectList.Add(header)
+			ui.addSide("project:", header)
 		} else {
-			ui.projectList.Add(ui.withMore(header, func(anchor fyne.CanvasObject) *sheet {
+			ui.addSide("project:"+p, ui.withMore(header, func(anchor fyne.CanvasObject) *sheet {
 				actions := []menuAction{{label: "New chat in " + name, icon: iconPlus, run: func() { selectProject(p); ui.startNew() }}}
 				return showMenu(ui.window, anchor, append(actions, projectActions(p)...))
 			}))
@@ -160,14 +161,27 @@ func (ui *desktopUI) renderSidebar(projects []string, chats []sideChat, selectPr
 		ui.addGroupChats(p, group.chats)
 		if p != "" && p == opened { // its worktrees, after its chats
 			for _, object := range ui.worktreeRows(p, selectProject) {
-				ui.projectList.Add(object)
+				key := "worktree:" + p
+				if row := firstRow(object); row != nil {
+					key += ":" + row.text
+				}
+				ui.addSide(key, object)
 			}
 			ui.loadRepo(p, true, 20*time.Second)
 		}
 	}
+	ui.sideGlide.end(ui.projectList)
 	if ui.sideLists != nil {
 		ui.sideLists.Refresh() // the groups changed height: lay the column out again
 	}
+}
+
+// addSide adds a sidebar entry under its key: the same chat or project
+// keeps its key from one rendering to the next, so it glides to its new
+// place instead of jumping there.
+func (ui *desktopUI) addSide(key string, object fyne.CanvasObject) {
+	ui.sideGlide.key(object, key)
+	ui.projectList.Add(object)
 }
 
 // scratchGroup is the No folder group's key in foldedProjects and
@@ -188,7 +202,7 @@ func (ui *desktopUI) addScratchGroup(chats []sideChat) {
 	if folded && groupRunning(chats) {
 		header.badge = iconDot
 	}
-	ui.projectList.Add(ui.withMore(header, func(anchor fyne.CanvasObject) *sheet {
+	ui.addSide("project:"+scratchGroup, ui.withMore(header, func(anchor fyne.CanvasObject) *sheet {
 		return showMenu(ui.window, anchor, []menuAction{{label: "New chat with no folder", icon: iconPlus, run: ui.chooseNoFolder}})
 	}))
 	if !folded {
@@ -200,7 +214,7 @@ func (ui *desktopUI) addScratchGroup(chats []sideChat) {
 // was unfolded in full or the open chat is further down.
 func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 	if len(chats) == 0 {
-		ui.projectList.Add(padded(4, 4, 38, 0, textLine("No chats yet", 13, colFaint)))
+		ui.addSide("empty:"+project, padded(4, 4, 38, 0, textLine("No chats yet", 13, colFaint)))
 		return
 	}
 	shown := chats
@@ -230,7 +244,7 @@ func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 		case chat.blocked:
 			row.badge = iconWaiting // its wrap-up waits on the user
 		}
-		ui.projectList.Add(padded(0, 0, 28, 0, ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
+		ui.addSide("chat:"+chat.id, padded(0, 0, 28, 0, ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, chat.menu)
 		})))
 		for _, sub := range chat.subchats { // indented under it, with the subchat mark
@@ -241,7 +255,7 @@ func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 			if sub.running {
 				subRow.badge = iconDot
 			}
-			ui.projectList.Add(padded(0, 0, 44, 0, ui.withMore(subRow, func(anchor fyne.CanvasObject) *sheet {
+			ui.addSide("chat:"+sub.id, padded(0, 0, 44, 0, ui.withMore(subRow, func(anchor fyne.CanvasObject) *sheet {
 				return showMenu(ui.window, anchor, sub.menu)
 			})))
 		}
@@ -257,7 +271,7 @@ func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 		})
 		more.ink = colFaint
 		more.size = 13
-		ui.projectList.Add(padded(0, 0, 28, 0, more))
+		ui.addSide("more:"+project, padded(0, 0, 28, 0, more))
 	}
 }
 

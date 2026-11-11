@@ -264,7 +264,7 @@ private fun boxBlur(pixels: IntArray, width: Int, height: Int, radius: Int) {
 @Composable
 fun Modifier.pressScale(source: MutableInteractionSource, depth: Float = 0.96f): Modifier {
     val pressed by source.collectIsPressedAsState()
-    val scale by animateFloatAsState(if (pressed) depth else 1f, spring(dampingRatio = 0.55f, stiffness = 900f), label = "press")
+    val scale by animateFloatAsState(if (pressed) depth else 1f, motion(spring(dampingRatio = 0.55f, stiffness = 900f)), label = "press")
     return graphicsLayer {
         scaleX = scale
         scaleY = scale
@@ -274,9 +274,9 @@ fun Modifier.pressScale(source: MutableInteractionSource, depth: Float = 0.96f):
 /** Fades and rises into place once when [animate], as a new message does. */
 @Composable
 fun Modifier.appear(animate: Boolean): Modifier {
-    if (!animate) return this
+    if (!animate || !Motion.enabled) return this
     val progress = remember { Animatable(0f) }
-    LaunchedEffect(Unit) { progress.animateTo(1f, tween(320, easing = FastOutSlowInEasing)) }
+    LaunchedEffect(Unit) { progress.animateTo(1f, tween(200, easing = FastOutSlowInEasing)) }
     return graphicsLayer {
         alpha = progress.value
         translationY = (1f - progress.value) * 14.dp.toPx()

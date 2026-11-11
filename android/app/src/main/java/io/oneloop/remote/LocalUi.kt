@@ -320,8 +320,8 @@ internal fun GuideStep(number: String, title: String, detail: String) {
 
 @Composable
 internal fun Toggle(checked: Boolean, enabled: Boolean, onChange: (Boolean) -> Unit) {
-    val track by animateColorAsState(if (checked) Palette.amber else Palette.raised, tween(160), label = "track")
-    val knob by animateDpAsState(if (checked) 22.dp else 3.dp, tween(160), label = "knob")
+    val track by animateColorAsState(if (checked) Palette.amber else Palette.raised, motion(tween(160)), label = "track")
+    val knob by animateDpAsState(if (checked) 22.dp else 3.dp, motion(tween(160)), label = "knob")
     Box(
         Modifier.size(48.dp, 28.dp).clip(RoundedCornerShape(50)).background(track)
             .border(1.dp, if (checked) Color.Transparent else Palette.border, RoundedCornerShape(50))

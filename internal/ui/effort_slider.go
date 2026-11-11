@@ -80,12 +80,10 @@ func (slider *stepSlider) glide(to float32) {
 		slider.anim.Stop()
 	}
 	from := slider.pos
-	slider.anim = fyne.NewAnimation(240*time.Millisecond, func(p float32) {
+	slider.anim = motion(200*time.Millisecond, easeOutQuint, func(p float32) {
 		slider.pos = from + (to-from)*p
 		slider.Refresh()
 	})
-	slider.anim.Curve = easeOutQuint
-	slider.anim.Start()
 }
 
 func (slider *stepSlider) Tapped(e *fyne.PointEvent) {
@@ -130,11 +128,10 @@ func (slider *stepSlider) fadeHover(to float32) {
 		slider.hoverAnim.Stop()
 	}
 	from := slider.hover
-	slider.hoverAnim = fyne.NewAnimation(140*time.Millisecond, func(p float32) {
+	slider.hoverAnim = motion(140*time.Millisecond, fyne.AnimationEaseInOut, func(p float32) {
 		slider.hover = from + (to-from)*p
 		slider.Refresh()
 	})
-	slider.hoverAnim.Start()
 }
 
 // key handles the arrow keys of the popover that holds the slider.

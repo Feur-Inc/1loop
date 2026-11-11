@@ -228,9 +228,7 @@ func (glass *footerGlass) veil(more bool) {
 	if more {
 		to = 1
 	}
-	glass.anim = fyne.NewAnimation(120*time.Millisecond, func(p float32) { glass.paint(from + (to-from)*p) })
-	glass.anim.Curve = fyne.AnimationEaseOut
-	glass.anim.Start()
+	glass.anim = motion(120*time.Millisecond, fyne.AnimationEaseOut, func(p float32) { glass.paint(from + (to-from)*p) })
 }
 
 // paint draws the fade at an opacity from 0 to 1. Hidden at 0, so nothing
@@ -319,13 +317,11 @@ func (curtain *pageCurtain) reveal() {
 	curtain.cover.FillColor = colBackground
 	curtain.cover.Show()
 	curtain.cover.Refresh()
-	curtain.anim = fyne.NewAnimation(220*time.Millisecond, func(p float32) {
+	curtain.anim = motion(200*time.Millisecond, fyne.AnimationEaseOut, func(p float32) {
 		curtain.cover.FillColor = withAlpha(colBackground, 1-p)
 		if p >= 1 {
 			curtain.cover.Hide()
 		}
 		curtain.cover.Refresh()
 	})
-	curtain.anim.Curve = fyne.AnimationEaseOut
-	curtain.anim.Start()
 }

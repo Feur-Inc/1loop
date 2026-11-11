@@ -104,16 +104,27 @@ type toolRow struct {
 	onTap    func()
 	hover    float32
 	anim     *fyne.Animation
+	settle   float32         // how far its outcome (+3 −1, 2 s, Failed) has come in, once the call ends
+	settling *fyne.Animation // its slide
 	preview  *generatedImagePreview
 }
 
 func newToolRow(item agent.ChatItem, state string, onTap func()) *toolRow {
-	row := &toolRow{item: item, state: state, onTap: onTap}
+	row := &toolRow{item: item, state: state, onTap: onTap, settle: 1}
 	row.ExtendBaseWidget(row)
 	return row
 }
 
 func (row *toolRow) update(item agent.ChatItem, state string) {
+	if row.state != state && state == "done" && row.Visible() {
+		// The call ended while seen: its outcome slides in beside it.
+		stopMotion(&row.settling)
+		row.settle = 0
+		row.settling = motion(180*time.Millisecond, fyne.AnimationEaseOut, func(p float32) {
+			row.settle = p
+			row.Refresh()
+		})
+	}
 	row.item, row.state = item, state
 	if row.preview != nil {
 		row.preview.update(item, state)
@@ -144,12 +155,10 @@ func (row *toolRow) fade(to float32) {
 		row.anim.Stop()
 	}
 	from := row.hover
-	row.anim = fyne.NewAnimation(130*time.Millisecond, func(p float32) {
+	row.anim = motion(130*time.Millisecond, fyne.AnimationEaseOut, func(p float32) {
 		row.hover = from + (to-from)*p
 		row.Refresh()
 	})
-	row.anim.Curve = fyne.AnimationEaseOut
-	row.anim.Start()
 }
 
 func (row *toolRow) CreateRenderer() fyne.WidgetRenderer {
@@ -201,7 +210,7 @@ func (renderer *toolRowRenderer) Layout(size fyne.Size) {
 	}
 	renderer.target.Text = fitText(renderer.full, renderer.target.TextSize, renderer.target.TextStyle, size.Width-x-metaWidth-toolRowPadX)
 	renderer.target.Move(fyne.NewPos(x, middle(renderer.target)))
-	x += renderer.target.MinSize().Width + 10
+	x += renderer.target.MinSize().Width + 10 - (1-renderer.row.settle)*6
 	renderer.meta.Move(fyne.NewPos(x, middle(renderer.meta)))
 	renderer.minus.Move(fyne.NewPos(x+renderer.meta.MinSize().Width+5, middle(renderer.minus)))
 }
@@ -240,6 +249,12 @@ func (renderer *toolRowRenderer) Refresh() {
 		renderer.minus.Text = fmt.Sprintf("−%d", removed)
 	case item.Tool == "shell" && item.Millis > 0:
 		renderer.meta.Text = elapsed(item.Millis)
+	}
+	if row.settle < 1 { // fading in, in steps: each colour of a text is a texture
+		renderer.meta.Color = withAlpha(color.NRGBAModel.Convert(renderer.meta.Color).(color.NRGBA), quantize(row.settle, 4))
+		renderer.minus.Color = withAlpha(colDanger, quantize(row.settle, 4))
+	} else {
+		renderer.minus.Color = colDanger
 	}
 	h := quantize(row.hover, 4)
 	renderer.verb.Color = mix(colMuted, colText, h*0.5)
@@ -433,6 +448,7 @@ func (ui *desktopUI) place(view fyne.CanvasObject) {
 		ui.transcript.Objects = append(ui.transcript.Objects, view)
 		return
 	}
+	ui.items.arrive(view)
 	ui.transcript.Add(view)
 }
 
@@ -449,6 +465,75 @@ type transcriptLayout struct {
 	width  float32                         // the column's width
 	stale  bool                            // items out of sight keep an earlier width's size (remeasure)
 	shift  float32                         // how much the items above the view grew since the scroll last moved
+	// Items that just came in rise a few points into place while a veil of
+	// the background over them clears: Fyne can't fade a whole message, but
+	// it can fade one rectangle over it.
+	arrivals map[fyne.CanvasObject]*arrival
+	veils    *fyne.Container // over the transcript, in its coordinates
+}
+
+// arrival is an item coming into the conversation.
+type arrival struct {
+	progress float32
+	y        float32 // its place, once laid out
+	laid     bool
+	veil     *canvas.Rectangle
+	anim     *fyne.Animation
+}
+
+const arrivalRise = 8
+
+// arrive lets a new item rise and come out of the background as it is
+// placed. A whole chat being built does not: only what arrives while it
+// is on screen.
+func (layoutSpec *transcriptLayout) arrive(object fyne.CanvasObject) {
+	if !motionOn() || layoutSpec.veils == nil {
+		return
+	}
+	if layoutSpec.arrivals == nil {
+		layoutSpec.arrivals = map[fyne.CanvasObject]*arrival{}
+	}
+	coming := &arrival{veil: canvas.NewRectangle(colBackground)}
+	coming.veil.Hide()
+	layoutSpec.arrivals[object] = coming
+	layoutSpec.veils.Add(coming.veil)
+	coming.anim = motion(200*time.Millisecond, fyne.AnimationEaseOut, func(p float32) {
+		coming.progress = p
+		if p >= 1 {
+			delete(layoutSpec.arrivals, object)
+			layoutSpec.veils.Remove(coming.veil)
+		}
+		layoutSpec.placeArrival(object, coming)
+	})
+}
+
+// placeArrival draws an arriving item where it is in its rise.
+func (layoutSpec *transcriptLayout) placeArrival(object fyne.CanvasObject, coming *arrival) {
+	if !coming.laid {
+		return
+	}
+	at := fyne.NewPos(0, coming.y+(1-coming.progress)*arrivalRise)
+	object.Move(at)
+	if coming.progress >= 1 || !object.Visible() {
+		coming.veil.Hide()
+		return
+	}
+	coming.veil.FillColor = withAlpha(colBackground, 1-coming.progress)
+	coming.veil.Move(at)
+	coming.veil.Resize(object.Size())
+	coming.veil.Show()
+	coming.veil.Refresh()
+}
+
+// settle ends the arrivals at once (a chat cleared or another opened).
+func (layoutSpec *transcriptLayout) settle() {
+	for object, coming := range layoutSpec.arrivals {
+		stopMotion(&coming.anim)
+		delete(layoutSpec.arrivals, object)
+	}
+	if layoutSpec.veils != nil {
+		layoutSpec.veils.RemoveAll()
+	}
 }
 
 const transcriptGap = 14
@@ -456,6 +541,7 @@ const transcriptGap = 14
 func (layoutSpec *transcriptLayout) reset() {
 	layoutSpec.sizes, layoutSpec.widths = map[fyne.CanvasObject]fyne.Size{}, map[fyne.CanvasObject]float32{}
 	layoutSpec.stale, layoutSpec.shift = false, 0
+	layoutSpec.settle()
 }
 
 // changed forgets the size of the item that holds part: it changed while
@@ -581,6 +667,10 @@ func (layoutSpec *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyn
 		object.Move(fyne.NewPos(0, y))
 		if near {
 			object.Resize(fyne.NewSize(size.Width, min.Height))
+		}
+		if coming := layoutSpec.arrivals[object]; coming != nil {
+			coming.y, coming.laid = y, true
+			layoutSpec.placeArrival(object, coming)
 		}
 		y += min.Height + transcriptGap
 	}
@@ -724,7 +814,10 @@ func (ui *desktopUI) relayoutColumn() {
 	column := content.Objects[len(content.Objects)-1].(*fyne.Container)
 	relayout(ui.transcript) // first: it measures the items the sizes below are made of
 	content.Resize(content.MinSize().Max(ui.scroll.Size()))
-	for _, c := range []*fyne.Container{content, column, ui.column, ui.transcript} {
+	for _, c := range []*fyne.Container{content, column, ui.column, ui.transcriptBox, ui.transcript} {
+		if c == nil {
+			continue
+		}
 		c.Layout.Layout(c.Objects, c.Size())
 	}
 	if ui.followTail {
@@ -1127,7 +1220,7 @@ func (ui *desktopUI) applyActivity(currentTurn *turn) {
 		return
 	}
 	label := currentTurn.label
-	if run := currentTurn.chat.run; run != nil && run.questions != nil && !run.questions.open {
+	if run := currentTurn.chat.run; run != nil && run.questions != nil && !run.questions.shown() {
 		label = "Waiting for your answer: click here to see the questions"
 	}
 	ui.thinkLabel.SetText(label)

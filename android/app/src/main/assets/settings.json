@@ -280,6 +280,24 @@
       "protected": true
     },
     {
+      "key": "general.animations",
+      "section": "general",
+      "title": "Animations",
+      "description": "Short animations as you click, hover and as things change. Also off while the system asks for reduced motion.",
+      "keywords": [
+        "animation",
+        "motion",
+        "reduce motion",
+        "reduced motion",
+        "transitions",
+        "effects",
+        "accessibility",
+        "fade"
+      ],
+      "kind": "toggle",
+      "where": "both"
+    },
+    {
       "key": "general.import",
       "section": "general",
       "title": "Import chats",

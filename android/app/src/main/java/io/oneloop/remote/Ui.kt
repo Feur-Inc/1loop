@@ -140,6 +140,7 @@ import androidx.lifecycle.compose.LifecycleResumeEffect
 import androidx.lifecycle.compose.LocalLifecycleOwner
 import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import org.json.JSONObject
@@ -455,7 +456,12 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
         Spacer(Modifier.height(20.dp))
         Text("Pair with ${pair.server.name}", style = Type.headline, textAlign = TextAlign.Center)
         Spacer(Modifier.height(8.dp))
-        Text(if (pair.phone) "On that phone, type this code in 1loop's request and tap Allow, then tap Connect:\n${pair.consoleCode}" else if (pair.consoleCode.isNotEmpty()) "Enter this command in the server console, then tap Connect:\npair ${pair.pairing} ${pair.consoleCode}" else "Type the code 1loop shows on your computer.", style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center)
+        Text(
+            if (pair.phone) "On that phone, type this code in 1loop's request and tap Allow:\n${pair.consoleCode}"
+            else if (pair.consoleCode.isNotEmpty()) "Approve this phone in 1loop on a device already paired with the server: it asks for ${pair.consoleCode}. Or enter this command in the server console:\npair ${pair.pairing} ${pair.consoleCode}\nThis connects by itself once approved."
+            else "Type the code 1loop shows on your computer.",
+            style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center,
+        )
         if (pair.server.desktop && pair.server.fingerprint.isNotEmpty()) {
             Spacer(Modifier.height(10.dp))
             Text("The computer must show the same check:\n${fingerprintCheck(pair.server.fingerprint)}", style = Type.small.copy(fontFamily = Type.mono.fontFamily), textAlign = TextAlign.Center)
@@ -496,6 +502,19 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
         )
     }
     LaunchedEffect(Unit) { if (pair.consoleCode.isEmpty()) focus.requestFocus() }
+    LaunchedEffect(pair) { // connects as soon as the pairing is approved
+        while (pair.consoleCode.isNotEmpty()) {
+            delay(2000)
+            try {
+                if (app.awaitApproval(pair)) break
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                app.problem = failure.message
+                break
+            }
+        }
+    }
     LaunchedEffect(app.problem) { if (app.problem != null) code = "" }
 }
 
@@ -504,7 +523,7 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
 
 @Composable
 fun ChatScreen(app: RemoteApp) {
-    if (app.server?.localPhone == true) PairingRequestDialog(app) // a device asking to use this phone
+    PairingRequestDialog(app) // a device asking to use this phone, or the server
     app.handoffAsk?.let { HandoffDialog(it) } // the chat continues with another model
     SharedFilesDialog(app) // files shared to 1loop from another app
     val page = app.repositoryOpen?.let { ChatPage("repository", it) }

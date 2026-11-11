@@ -422,6 +422,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
     var busy by mutableStateOf(false)
     var sharing by mutableStateOf<SharingState?>(null) // local mode: this phone shared on the network
+    var serverPairings by mutableStateOf<List<PendingPairing>>(emptyList()) // devices asking to use a headless server
 
     private var events: Job? = null
     @Volatile private var connectionGeneration = 0L // Address equality cannot distinguish reconnects.
@@ -672,6 +673,23 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 if (generation == connectionGeneration) busy = false
             }
         }
+    }
+
+    /** Asks whether the pairing was approved: true once connected, false while it still waits (409). */
+    suspend fun awaitApproval(pair: Screen.Pair): Boolean {
+        val generation = connectionGeneration
+        val reply = try {
+            onConnection(pair.server, generation) {
+                it.post("/api/pair/confirm", JSONObject().put("pairing", pair.pairing).put("code", pair.consoleCode).put("device", deviceName()))
+            }
+        } catch (waiting: ApiError) {
+            if (waiting.status == 409) return false
+            throw waiting
+        }
+        val server = pair.server.copy(token = reply.getString("token"))
+        upsert(server)
+        connect(server)
+        return true
     }
 
     /** A desktop's pairing QR code: its addresses are tried in turn, its certificate pinned. */
@@ -1035,6 +1053,14 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                     actionFailed(generation, failure)
                 }
             }
+            "pairing" -> if (!target.localPhone) {
+                val pending = pendingPairings(data)
+                val asked = pending.firstOrNull()
+                if (!foreground && asked != null && serverPairings.none { it.id == asked.id }) {
+                    notifier.show("sharing", "1loop", "“${asked.device}” asks to use ${target.name}. Open 1loop to type its code.")
+                }
+                serverPairings = pending
+            }
         }
     }
 
@@ -1298,7 +1324,12 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     suspend fun answerPairing(id: String, code: String, approve: Boolean) {
-        val target = server?.takeIf { it.localPhone } ?: return
+        val target = server ?: return
+        if (!target.localPhone) { // a headless server this phone is paired with
+            onConnection(target, connectionGeneration) { it.post("/api/pairings/$id", JSONObject().put("code", code).put("approve", approve)) }
+            serverPairings = serverPairings.filter { it.id != id }
+            return
+        }
         try {
             onConnection(target, connectionGeneration) { it.post("/api/local/pairings/$id", JSONObject().put("code", code).put("approve", approve)) }
         } finally {

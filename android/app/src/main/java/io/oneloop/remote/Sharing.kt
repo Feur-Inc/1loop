@@ -44,10 +44,14 @@ data class SharingState(val enabled: Boolean, val port: Int, val fingerprint: St
         fun from(o: JSONObject) = SharingState(
             o.optBoolean("enabled"), o.optInt("port"), o.optString("fingerprint"),
             o.optJSONArray("devices").let { a -> (0 until (a?.length() ?: 0)).map { PairedDevice(a!!.getJSONObject(it).optString("name")) } },
-            o.optJSONArray("pending").let { a -> (0 until (a?.length() ?: 0)).map { a!!.getJSONObject(it).let { p -> PendingPairing(p.optString("id"), p.optString("device"), p.getLong("expiresAt")) } } },
+            pendingPairings(o),
         )
     }
 }
+
+/** The pairings waiting for approval, in a sharing state or a headless server's "pairing" event. */
+fun pendingPairings(o: JSONObject): List<PendingPairing> =
+    o.optJSONArray("pending").let { a -> (0 until (a?.length() ?: 0)).map { a!!.getJSONObject(it).let { p -> PendingPairing(p.optString("id"), p.optString("device"), p.getLong("expiresAt")) } } }
 
 /** This phone's IPv4 addresses on its networks, for the other device to type. */
 fun localAddresses(context: Context): List<String> {
@@ -95,15 +99,20 @@ fun SharingSection(app: RemoteApp) {
     problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }
 }
 
-/** A device asking to use this phone: its user types the code it shows. */
+/** A device asking to use this phone, or the headless server it is paired with: its user types the code it shows. */
 @Composable
 fun PairingRequestDialog(app: RemoteApp) {
-    val request = app.sharing?.pending?.firstOrNull() ?: return
+    val local = app.server?.localPhone == true
+    val request = (if (local) app.sharing?.pending?.firstOrNull() else app.serverPairings.firstOrNull()) ?: return
     val scope = rememberCoroutineScope()
     var code by remember(request.id) { mutableStateOf("") }
     var problem by remember(request.id) { mutableStateOf<String?>(null) }
     LaunchedEffect(request.id) {
         delay((request.expiresAt - System.currentTimeMillis()).coerceAtLeast(0))
+        if (!local) {
+            app.serverPairings = app.serverPairings.filter { it.id != request.id }
+            return@LaunchedEffect
+        }
         try {
             app.refreshSharing()
         } catch (cancelled: CancellationException) {
@@ -116,10 +125,14 @@ fun PairingRequestDialog(app: RemoteApp) {
     AlertDialog(
         onDismissRequest = {},
         containerColor = GlassSurface, modifier = GlassDialogEdge,
-        title = { Text("“${request.device}” wants to use this phone", style = Type.title) },
+        title = { Text("“${request.device}” wants to use ${if (local) "this phone" else "this server"}", style = Type.title) },
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                Text("It will send messages to the agent on this phone and approve its actions. Type the six-digit code that device shows.", style = Type.small)
+                Text(
+                    if (local) "It will send messages to the agent on this phone and approve its actions. Type the six-digit code that device shows."
+                    else "It will run the agent, its commands and files on the server, like this phone. Type the six-digit code that device shows.",
+                    style = Type.small,
+                )
                 Field(code, { code = it.filter(Char::isDigit).take(6); problem = null }, "Code shown on that device", KeyboardType.Number)
                 problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }
             }

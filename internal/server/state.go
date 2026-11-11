@@ -135,6 +135,10 @@ type headlessServer struct {
 	handler     http.Handler
 	tlsConfig   *tls.Config
 	webDir      string // the browser client, served at /app/ (web.go)
+	// While no device is paired: the secret of the one-time setup link,
+	// which pairs the first device without the console (security.go).
+	setup     string
+	setupPort int
 	// Changes waiting for the next flush to the clients: a streamed answer
 	// reaches them at most ten times a second, as the desktop sends it.
 	pending  map[*serverChat]map[int]bool

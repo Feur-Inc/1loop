@@ -12,11 +12,13 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
 	"maps"
+	"net/http"
 	"net/url"
 	"path"
 	"path/filepath"
@@ -85,49 +87,73 @@ func (ui *desktopUI) connectServer() {
 					return
 				}
 				sheet.dismiss()
-				ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone)
+				ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone, false)
 			})
 		}()
 	}
 	sheet = ui.modal("Connect a server", container.NewVBox(
-		note("A headless 1loop server runs the agent, its files, browser and terminals on its own machine. Start it there and keep its console open: the next step asks you to approve this computer in it."),
+		note("A headless 1loop server runs the agent, its files, browser and terminals on its own machine. The next step asks you to approve this computer from a device already paired with it, or in its console."),
 		widget.NewLabel("HTTPS address"), address,
 		widget.NewLabel("Certificate fingerprint (only for a self-signed certificate)"), pin,
 		note("The server's console prints this SHA-256 fingerprint when it starts.")), 620, nil, connect)
 }
 
-func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code string, phone bool) {
-	var sheet *sheet
-	status := widget.NewLabel("")
+// confirmServerPair waits for the pairing's approval, and connects as soon
+// as it comes: from a paired device, the server's console or, in local mode,
+// the phone. A pairing the setup link approved connects at once.
+func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code string, phone, approved bool) {
+	ctx, stop := context.WithCancel(ui.ctx)
+	status := widget.NewLabel("Waiting for approval…")
 	status.Wrapping = fyne.TextWrapWord
-	command := "pair " + pairingID + " " + code
-	confirm := newRow("Connect after approval", nil, stylePrimary, nil)
-	confirm.onTap = func() {
-		confirm.Disable()
-		go func() {
-			ctx, cancel := context.WithTimeout(ui.ctx, 10*time.Second)
-			defer cancel()
+	var sheet *sheet
+	go func() {
+		defer stop()
+		for {
+			attempt, cancel := context.WithTimeout(ctx, 10*time.Second)
 			var reply struct{ Token string }
-			err := client.json(ctx, "POST", "/api/pair/confirm", map[string]string{"pairing": pairingID, "code": code}, &reply)
-			fyne.Do(func() {
-				confirm.Enable()
-				if err != nil {
-					status.SetText(err.Error())
-					return
-				}
-				client.address.Token = reply.Token
-				if err := saveServerAddress(client.address); err != nil {
-					status.SetText(err.Error())
-					return
-				}
-				sheet.dismiss()
-				ui.useServer(client)
-			})
-		}()
+			err := client.json(attempt, "POST", "/api/pair/confirm", map[string]string{"pairing": pairingID, "code": code}, &reply)
+			cancel()
+			if ctx.Err() != nil {
+				return
+			}
+			var refused remoteError
+			if err == nil || !errors.As(err, &refused) || refused.status != http.StatusConflict { // 409: not approved yet
+				fyne.Do(func() {
+					if err == nil {
+						client.address.Token = reply.Token
+						err = saveServerAddress(client.address)
+					}
+					if err != nil {
+						if sheet == nil { // the setup link: no sheet shown yet
+							ui.notice("Remote server", err.Error())
+						} else {
+							status.SetText(err.Error())
+						}
+						return
+					}
+					if sheet != nil {
+						sheet.dismiss()
+					}
+					ui.useServer(client)
+				})
+				return
+			}
+			select {
+			case <-ctx.Done():
+				return
+			case <-time.After(2 * time.Second):
+			}
+		}
+	}()
+	if approved {
+		return
 	}
+	command := "pair " + pairingID + " " + code
 	copyCommand := newRow("Copy command", nil, styleChip, func() { fyne.CurrentApp().Clipboard().SetContent(command) })
 	body := container.NewVBox(
-		note("Type this command in the VM's server console. The pairing expires after two minutes."),
+		note("Approve it in 1loop on a device already paired with this server: it asks for this code. This connects by itself once approved; the pairing expires after two minutes."),
+		codeBlock(code, 80),
+		note("Or type this command in the server's console:"),
 		codeBlock(command, 80),
 		copyCommand,
 		status,
@@ -135,7 +161,66 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 	if phone { // a phone shared on the network: its user types the code in 1loop's request
 		body = container.NewVBox(note("On the phone, type this code in 1loop's request, then tap Allow. The pairing expires after two minutes."), codeBlock(code, 80), status)
 	}
-	sheet = ui.modal("Approve this computer on the server", body, 620, nil, confirm)
+	sheet = ui.modal("Approve this device", body, 620, stop)
+}
+
+// askPairing shows a device asking to use the server (the "pairing" event):
+// this device's user types the code it shows, or refuses it.
+func (remote *remoteDesktop) askPairing(data string) {
+	var event struct {
+		Pending []struct{ ID, Device string }
+	}
+	if json.Unmarshal([]byte(data), &event) != nil {
+		return
+	}
+	fyne.Do(func() {
+		if remote.ctx.Err() != nil {
+			return
+		}
+		for _, pending := range event.Pending {
+			if pending.ID == remote.pairingID {
+				return // already asked
+			}
+		}
+		if remote.pairingSheet != nil {
+			remote.pairingSheet.dismiss() // answered here or elsewhere, or expired
+			remote.pairingSheet, remote.pairingID = nil, ""
+		}
+		if len(event.Pending) == 0 {
+			return
+		}
+		asked := event.Pending[0]
+		entry := widget.NewEntry()
+		entry.SetPlaceHolder("Code shown on that device")
+		status := widget.NewLabel("")
+		status.Wrapping = fyne.TextWrapWord
+		var sheet *sheet
+		answer := func(approve bool) {
+			go func() {
+				ctx, cancel := context.WithTimeout(remote.ctx, 10*time.Second)
+				defer cancel()
+				err := remote.client.json(ctx, "POST", "/api/pairings/"+asked.ID, map[string]any{"code": strings.TrimSpace(entry.Text), "approve": approve}, nil)
+				fyne.Do(func() {
+					if err != nil {
+						status.SetText(err.Error())
+						return
+					}
+					if remote.pairingSheet == sheet {
+						remote.pairingSheet = nil // the next event shows the next request
+					}
+					sheet.dismiss()
+				})
+			}()
+		}
+		refuse := newRow("Refuse", nil, styleOutline, func() { answer(false) })
+		allow := newRow("Allow", nil, stylePrimary, func() { answer(true) })
+		entry.OnSubmitted = func(string) { answer(true) }
+		sheet = remote.parent.modal("“"+asked.Device+"” wants to use this server", container.NewVBox(
+			note("It will run the agent, its commands and files on the server, like this device. Type the six-digit code that device shows."),
+			entry, status), 560, nil, refuse, allow)
+		remote.parent.window.Canvas().Focus(entry)
+		remote.pairingSheet, remote.pairingID = sheet, asked.ID
+	})
 }
 
 // remoteDesktop is a server in use: the window's execution target.
@@ -168,6 +253,8 @@ type remoteDesktop struct {
 	update           *update.Status // the server runs an older version (remote_desktop_update.go)
 	approvalID       string
 	approvalSheet    *sheet
+	pairingID        string // a device asking to use the server (askPairing)
+	pairingSheet     *sheet
 	questionID       string
 	questionSheet    *sheet
 	// The open chat's server tabs (browser, terminal, tasks, files).
@@ -265,6 +352,9 @@ func (remote *remoteDesktop) close() {
 	remote.cancel()
 	if remote.approvalSheet != nil {
 		remote.approvalSheet.dismiss()
+	}
+	if remote.pairingSheet != nil {
+		remote.pairingSheet.dismiss()
 	}
 	if remote.questionSheet != nil {
 		remote.questionSheet.dismiss()
@@ -553,9 +643,13 @@ func (remote *remoteDesktop) events() {
 	for remote.ctx.Err() == nil {
 		response, err := remote.client.request(remote.ctx, "GET", "/api/events", nil)
 		if err == nil {
-			for _, err := range sse.Events(response.Body, 32<<20) {
+			for event, err := range sse.Events(response.Body, 32<<20) {
 				if err != nil {
 					break
+				}
+				if event.Type == "pairing" {
+					remote.askPairing(event.Data)
+					continue
 				}
 				remote.notify()
 			}

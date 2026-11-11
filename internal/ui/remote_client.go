@@ -81,10 +81,19 @@ func (client *remoteClient) request(ctx context.Context, method, path string, bo
 		if problem.Handoff != nil {
 			return nil, handoffRequired{problem.Error, *problem.Handoff}
 		}
-		return nil, fmt.Errorf("%s", problem.Error)
+		return nil, remoteError{response.StatusCode, problem.Error}
 	}
 	return response, nil
 }
+
+// remoteError is a server's refusal: its message, and its HTTP status for
+// the callers that tell them apart.
+type remoteError struct {
+	status  int
+	message string
+}
+
+func (err remoteError) Error() string { return err.message }
 
 func (client *remoteClient) json(ctx context.Context, method, path string, body, result any) error {
 	response, err := client.request(ctx, method, path, body)

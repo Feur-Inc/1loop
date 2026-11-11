@@ -127,6 +127,8 @@ func (server *headlessServer) routes() http.Handler {
 	if !server.local {
 		// The server's accounts, for its paired devices; the phone app's own
 		// engine keeps its accounts to the phone (/api/local/connections).
+		endpoints["GET /api/pairings"] = server.pairings
+		endpoints["POST /api/pairings/{id}"] = server.answerPairing
 		endpoints["GET /api/connections"] = server.localConnections
 		endpoints["POST /api/connections"] = server.saveNetworkConnection
 		endpoints["POST /api/connections/models"] = server.draftLocalConnectionModels

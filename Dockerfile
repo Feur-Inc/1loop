@@ -22,6 +22,14 @@ COPY assets assets
 RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH go build -trimpath \
       -ldflags="-s -w -X 1loop/internal/update.Version=$(cat VERSION) -X 1loop/internal/update.Packaged=Docker" \
       -o /out/1loop-server ./cmd/1loop-server
+# The browser client (make web), served at /app/: the same wasm on every
+# platform, with its gzipped copy for the browsers that accept it.
+RUN mkdir -p /out/web \
+ && GOOS=js GOARCH=wasm go build -trimpath \
+      -ldflags="-s -w -X 1loop/internal/update.Version=$(cat VERSION) -X 1loop/internal/update.Packaged=Docker" \
+      -o /out/web/1loop.wasm ./cmd/1loop-web \
+ && cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" cmd/1loop-web/index.html /out/web/ \
+ && gzip -9kf /out/web/1loop.wasm
 
 FROM debian:trixie-slim
 # What the server runs besides itself: Bash and Git for the agent's commands,
@@ -34,6 +42,7 @@ RUN apt-get update \
  && chown oneloop:oneloop /data /projects \
  && chmod 0700 /data
 COPY --from=build /out/1loop-server /usr/local/bin/1loop-server
+COPY --from=build /out/web /usr/local/share/1loop/web
 # Docker's default profile allows none of Chromium's sandboxes: the container
 # isolates the browser instead.
 ENV ONELOOP_CHROMIUM_NO_SANDBOX=1
@@ -41,4 +50,4 @@ USER oneloop
 WORKDIR /projects
 VOLUME ["/data", "/projects"]
 EXPOSE 47101
-ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/1loop-server", "-data-dir", "/data", "-workspace", "/projects", "-listen", ":47101"]
+ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/1loop-server", "-data-dir", "/data", "-workspace", "/projects", "-listen", ":47101", "-web-dir", "/usr/local/share/1loop/web"]

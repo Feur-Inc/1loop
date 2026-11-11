@@ -53,7 +53,9 @@ Chromium, and runs it as a non-root user (uid 1000). Its data directory is
 `/data` (keys, certificate, pairings, configuration and chats) and its
 workspace is `/projects`: keep both on volumes. Browser Use runs Chromium
 without its own sandbox (`ONELOOP_CHROMIUM_NO_SANDBOX=1`): Docker's default
-profile allows none of them, so the container is what isolates it. Pairing happens in the
+profile allows none of them, so the container is what isolates it. The image
+also serves the browser client: open `https://your-server:47101/` and pair it
+like any other client. Pairing happens in the
 server's console, so start it with a terminal (`-it`):
 
 ```sh

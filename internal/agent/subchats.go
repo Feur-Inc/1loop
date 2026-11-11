@@ -19,6 +19,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
 	"unicode/utf8"
 
 	"1loop/internal/core"
@@ -70,10 +71,13 @@ type SubchatLink struct {
 
 // SubchatAccess is the host's side of the subchat tool. ParentTitle is set
 // in a subchat, whose Start is nil; Message there reaches the parent as
-// "parent".
+// "parent". Model finds a model of the picker before the user is asked to
+// start a subchat with it, and gives its name; Stop fails for a subchat
+// that is not working.
 type SubchatAccess struct {
 	ParentTitle string
 	Start       func(ctx context.Context, request SubchatRequest) (SubchatInfo, error)
+	Model       func(ctx context.Context, name string) (string, error)
 	Message     func(ctx context.Context, id, text string) error
 	List        func(ctx context.Context) []SubchatInfo
 	Stop        func(ctx context.Context, id string) error
@@ -97,13 +101,51 @@ func SubchatActive(info SubchatInfo) bool {
 	return info.State == SubchatWorking || info.State == SubchatWaiting
 }
 
-// SubchatBranch is the branch of a subchat's worktree.
-func SubchatBranch(title string) string {
+// SubchatTitle is a subchat's title on one line: control characters and
+// runs of spaces become one space, cut at 60 characters.
+func SubchatTitle(title string) string {
+	title = strings.Join(strings.Fields(strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return ' '
+		}
+		return r
+	}, title)), " ")
+	if runes := []rune(title); len(runes) > 60 {
+		title = strings.TrimSpace(string(runes[:60]))
+	}
+	return title
+}
+
+// SubchatBranch is the branch of a subchat's worktree, named after its
+// title, or after its id when the title has no letter or digit a branch
+// can keep (日本語のタスク).
+func SubchatBranch(title, id string) string {
+	if !strings.ContainsFunc(title, func(r rune) bool { return r < utf8.RuneSelf && (unicode.IsLetter(r) || unicode.IsDigit(r)) }) {
+		return "subchat/" + id[:min(8, len(id))]
+	}
 	slug := strings.ToLower(gitrepo.Slug(title))
 	if len(slug) > 40 {
 		slug = strings.TrimRight(slug[:40], "-.")
 	}
 	return "subchat/" + slug
+}
+
+// SubchatNotWorking is Stop's error for a subchat with no turn to stop.
+func SubchatNotWorking(info SubchatInfo) error {
+	return fmt.Errorf("Subchat %s is not working (%s): nothing to stop", info.ID, info.State)
+}
+
+// ContextUsed is the context a chat's history takes: what its last turn
+// measured (the system prompt, the tools and a Claude Code session
+// included) and an estimate of what came after, or the estimate of it all
+// when no turn measured it.
+func ContextUsed(history []Message) int {
+	for i := len(history) - 1; i >= 0; i-- {
+		if history[i].Usage > 0 && !history[i].UsageEstimated {
+			return history[i].Usage + HistoryEstimate(history[i:])
+		}
+	}
+	return HistoryEstimate(history)
 }
 
 // LastAnswer is a chat's last answer, for its report.
@@ -292,11 +334,9 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 		if request.Brief == "" {
 			return "", fmt.Errorf("Give the subchat a brief: the task, the files and what done means")
 		}
+		request.Title = SubchatTitle(request.Title)
 		if request.Title == "" {
-			request.Title = FirstLine(request.Brief)
-		}
-		if runes := []rune(request.Title); len(runes) > 60 {
-			request.Title = string(runes[:60])
+			request.Title = SubchatTitle(FirstLine(request.Brief))
 		}
 		if request.Context == "" {
 			request.Context = "fresh"
@@ -329,6 +369,15 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 		model := "this chat's model"
 		if request.Model != "" {
 			model = request.Model
+			if access.Model != nil { // checked now: the user only approves a start that can run
+				name, err := access.Model(ctx, request.Model)
+				if err != nil {
+					return "", err
+				}
+				if name != "" {
+					model = name
+				}
+			}
 		}
 		start := "fresh, with the brief only"
 		if request.Context == "fork" {
@@ -416,10 +465,10 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 	return "", fmt.Errorf("Unknown action %q", args.Action)
 }
 
-// SubchatWorktree makes a subchat's worktree: a new branch named after its
-// title, from the commit folder is on. A folder outside Git, or without a
-// commit yet, is shared instead: the note says so.
-func SubchatWorktree(ctx context.Context, host gitrepo.Host, folder, title string) (created gitrepo.Created, note string, err error) {
+// SubchatWorktree makes the worktree of subchat id: a new branch named
+// after its title, from the commit folder is on. A folder outside Git, or
+// without a commit yet, is shared instead: the note says so.
+func SubchatWorktree(ctx context.Context, host gitrepo.Host, folder, title, id string) (created gitrepo.Created, note string, err error) {
 	head, err := host.Git(ctx, folder, "rev-parse", "HEAD")
 	if err != nil {
 		return gitrepo.Created{}, "This folder is not a Git repository with a commit, so the subchat shares it.", nil
@@ -427,7 +476,7 @@ func SubchatWorktree(ctx context.Context, host gitrepo.Host, folder, title strin
 	if status, err := host.Git(ctx, folder, "status", "--porcelain"); err == nil && strings.TrimSpace(status) != "" {
 		note = "This folder has uncommitted changes, which the subchat's worktree does not have."
 	}
-	base := SubchatBranch(title)
+	base := SubchatBranch(title, id)
 	for n := 1; n <= 20; n++ {
 		branch := base
 		if n > 1 {
@@ -440,4 +489,11 @@ func SubchatWorktree(ctx context.Context, host gitrepo.Host, folder, title strin
 		return created, note, err
 	}
 	return gitrepo.Created{}, "", fmt.Errorf("No free branch name for %s", base)
+}
+
+// RemoveSubchatWorktree removes a deleted subchat's worktree and its
+// branch. Without force, a worktree with uncommitted changes stays, and so
+// does a branch with commits not merged: the note says what was kept.
+func RemoveSubchatWorktree(ctx context.Context, host gitrepo.Host, folder string, force bool) (string, error) {
+	return gitrepo.RemoveWorktree(ctx, host, folder, gitrepo.Removal{Path: folder, Force: force, DeleteBranch: true})
 }

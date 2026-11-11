@@ -475,6 +475,10 @@ func (ui *desktopUI) deleteChat(chat *conversation) {
 	if chat.Config.Scratch != "" {
 		text = fmt.Sprintf("“%s” and the folder 1loop made for it will be permanently deleted.", chat.Title)
 	}
+	if ui.subchatWorktree(chat) != "" {
+		ui.confirmDeleteSubchat(chat, text)
+		return
+	}
 	ui.confirm("Delete chat?", text, "Delete", func() {
 		ui.removeChat(chat)
 	})

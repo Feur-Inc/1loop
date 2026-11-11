@@ -212,4 +212,46 @@ func TestSubchatLifecycle(t *testing.T) {
 	if subAccess.Start != nil || subAccess.ParentTitle != "Main" {
 		t.Fatalf("subchat access: start %v, parent %q", subAccess.Start != nil, subAccess.ParentTitle)
 	}
+
+	// Stopping a subchat that is not working says so (#325); an unknown
+	// model is refused before any approval (#330).
+	if err := access.Stop(ctx, sub.ID); err == nil || !strings.Contains(err.Error(), "is not working (done)") {
+		t.Fatalf("stop a done subchat: %v", err)
+	}
+	if _, err := access.Model(ctx, "no-such-model-xyz"); err == nil || !strings.Contains(err.Error(), "No model") {
+		t.Fatalf("an unknown model: %v", err)
+	}
+
+	// Deleting it can remove its worktree and branch (#328).
+	server.mu.Lock()
+	folder := sub.Config.Workspace
+	branch := ""
+	for _, summary := range server.summariesLocked() {
+		if summary.ID == sub.ID {
+			branch = summary.Branch
+		}
+	}
+	server.mu.Unlock()
+	if branch != "subchat/fix-parser" {
+		t.Fatalf("the summary's branch: %q", branch)
+	}
+	request := httptest.NewRequest("POST", "/api/chats/"+sub.ID+"/delete", strings.NewReader(`{"worktree":true}`))
+	request.SetPathValue("id", sub.ID)
+	response := httptest.NewRecorder()
+	server.deleteChat(response, request)
+	if response.Code != 200 || strings.Contains(response.Body.String(), "note") {
+		t.Fatalf("delete: %d %s", response.Code, response.Body)
+	}
+	if _, err := os.Stat(folder); err == nil {
+		t.Fatal("the subchat's worktree is still there")
+	}
+	if out, _ := exec.Command("git", "-C", project, "branch", "--list", branch).Output(); strings.TrimSpace(string(out)) != "" {
+		t.Fatalf("the branch is still there: %s", out)
+	}
+	server.mu.Lock()
+	_, kept := server.worktrees[folder]
+	server.mu.Unlock()
+	if kept {
+		t.Fatal("the server still lists the worktree")
+	}
 }

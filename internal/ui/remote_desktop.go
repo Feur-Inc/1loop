@@ -740,7 +740,9 @@ func (remote *remoteDesktop) selectProject(path string) {
 
 func (remote *remoteDesktop) deleteChat(chat remoteapi.Chat) {
 	ui := remote.parent
-	ui.confirm("Delete chat?", fmt.Sprintf("“%s” will be permanently deleted from the server.", chat.Title), "Delete", func() {
+	text := fmt.Sprintf("“%s” will be permanently deleted from the server.", chat.Title)
+	removeWorktree := chat.Branch != "" // a subchat's own worktree: it goes too unless kept
+	run := func() {
 		if remote.current == chat.ID {
 			ui.startNew()
 		}
@@ -748,8 +750,35 @@ func (remote *remoteDesktop) deleteChat(chat remoteapi.Chat) {
 			conv.disposePanel()
 			delete(remote.convs, chat.ID)
 		}
-		remote.action("/api/chats/"+chat.ID+"/delete", map[string]any{})
-	})
+		go func() {
+			ctx, cancel := context.WithTimeout(remote.ctx, time.Minute)
+			defer cancel()
+			var reply struct {
+				Note string `json:"note"`
+			}
+			err := remote.client.json(ctx, "POST", "/api/chats/"+chat.ID+"/delete", map[string]any{"worktree": removeWorktree}, &reply)
+			fyne.Do(func() {
+				if err != nil {
+					remote.status.SetText(err.Error())
+				} else if reply.Note != "" {
+					ui.notice("Worktree", reply.Note)
+				}
+			})
+			remote.notify()
+		}()
+	}
+	if chat.Branch == "" {
+		ui.confirm("Delete chat?", text, "Delete", run)
+		return
+	}
+	body := container.New(layout.NewCustomPaddedVBoxLayout(10), note(text),
+		card(settingRow("Also remove its worktree and branch "+chat.Branch,
+			"The folder "+worktreeFolder(chat.Workspace)+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own.",
+			newToggle(true, func(on bool) { removeWorktree = on }))))
+	var dialog *sheet
+	remove := newRow("Delete", nil, stylePrimary, func() { dialog.Hide(); run() })
+	remove.danger = true
+	dialog = ui.modal("Delete chat?", body, 500, nil, newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() }), remove)
 }
 
 // chatItem is a server item as this window's conversation holds it.

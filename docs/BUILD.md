@@ -21,7 +21,7 @@ keeps the plain version.
 
 ## Development
 
-Requirements: Go 1.24+, a C compiler, and the OpenGL, EGL, X11 and Wayland
+Requirements: Go 1.25+, a C compiler, and the OpenGL, EGL, X11 and Wayland
 development libraries (`libgl-dev`, `libegl-dev`, `xorg-dev`,
 `libwayland-dev`, `libxkbcommon-dev`) for the desktop.
 

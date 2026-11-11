@@ -81,6 +81,8 @@ func toolGlyph(tool string) fyne.Resource {
 		return iconBookmark
 	case "settings":
 		return iconSliders
+	case "subchat":
+		return iconSubchat
 	}
 	return iconDocument
 }
@@ -385,6 +387,9 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		if strings.HasPrefix(item.Text, "Background task ") { // agent.WakeSummary
 			glyph = iconTaskEnded
 		}
+		if strings.HasPrefix(item.Text, "Subchat ") || strings.HasPrefix(item.Text, "Forked from ") {
+			glyph = iconSubchat
+		}
 		icon := canvas.NewImageFromResource(tinted(glyph, colFaint))
 		icon.SetMinSize(fyne.NewSquareSize(15))
 		ui.place(container.NewBorder(nil, nil, container.NewCenter(icon), nil, newFlowText([]span{{text: item.Text}}, 12.5, colFaint)))
@@ -399,6 +404,9 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		row := newToolRow(item, state, nil)
 		row.chat, row.index = chat, index
 		row.onTap = func() { ui.panel.open(chat, index) }
+		if id := startedSubchat(item); id != "" { // the subchat itself, rather than the call
+			row.onTap = func() { ui.openSubchat(chat, id) }
+		}
 		row.selected = ui.panel.showing(chat, index)
 		ui.views[index] = row
 		if item.Tool == "imagegen" {
@@ -705,9 +713,11 @@ func (ui *desktopUI) relayoutColumn() {
 	}
 	defer platform.DevSlow("laying the conversation out", 6*time.Millisecond, time.Now())
 	content := ui.scroll.Content.(*fyne.Container)
+	// The column, over the selectCatcher.
+	column := content.Objects[len(content.Objects)-1].(*fyne.Container)
 	relayout(ui.transcript) // first: it measures the items the sizes below are made of
 	content.Resize(content.MinSize().Max(ui.scroll.Size()))
-	for _, c := range []*fyne.Container{content, ui.column, ui.transcript} {
+	for _, c := range []*fyne.Container{content, column, ui.column, ui.transcript} {
 		c.Layout.Layout(c.Objects, c.Size())
 	}
 	if ui.followTail {
@@ -715,6 +725,7 @@ func (ui *desktopUI) relayoutColumn() {
 	} else {
 		ui.scroll.ScrollToOffset(ui.scroll.Offset) // the bars follow the new height
 	}
+	ui.syncFooterFade()     // the height changed without a scroll event
 	relayout(ui.transcript) // the view moved without a scroll event: bring its items in
 }
 

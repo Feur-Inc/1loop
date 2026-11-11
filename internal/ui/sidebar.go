@@ -419,6 +419,7 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 	ui.transcript.RemoveAll()
 	ui.items.reset()
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
+	ui.find.reset()
 	if reuse && ui.restoreChatView(chat) {
 		ui.finishChatLoad()
 		return
@@ -542,18 +543,32 @@ func (ui *desktopUI) renderChats() {
 			continue
 		}
 		chat := chat
+		menu := []menuAction{
+			{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
+			{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
+		}
+		parent := ""
+		if chat.Subchat != nil {
+			parent = chat.Subchat.Parent
+			menu = append([]menuAction{{label: "Open parent", icon: iconSubchat, run: func() {
+				if parent := ui.parentOf(chat); parent != nil {
+					ui.openChat(parent)
+				}
+			}}}, menu...)
+			if chat.run != nil {
+				menu = append([]menuAction{{label: "Stop", icon: iconStop, run: func() { ui.stopSubchat(chat) }}}, menu...)
+			}
+		}
 		chats = append(chats, sideChat{
+			id: chat.ID, parent: parent,
 			title: chat.Title, folder: chat.Config.Workspace, scratch: chat.Config.InScratch(), running: chat.run != nil, selected: chat == ui.current,
 			open: func() { ui.openChat(chat) },
-			menu: []menuAction{
-				{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
-				{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
-			},
+			menu: menu,
 			text: func() []string { return chatTexts(chat.Items) },
 		})
 	}
 	ui.renderSidebar(ui.targetProjects(), chats, ui.selectProject, func(p string) []menuAction {
-		actions := ui.repositoryActions(p)
+		actions := append(ui.repositoryActions(p), ui.projectMemoryAction(p))
 		if ui.cfg.MachineID == "" { // a machine's folder is renamed there, in its terminal
 			actions = append(actions, menuAction{label: "Rename", icon: iconRename, run: func() { ui.renameProject(p) }})
 		}

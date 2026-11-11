@@ -8,7 +8,6 @@ package ui
 // show in the same conversation, composer and side panel as this computer's.
 
 import (
-	"bufio"
 	"cmp"
 	"context"
 	"encoding/base64"
@@ -35,6 +34,7 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
+	"1loop/internal/sse"
 	"1loop/internal/update"
 )
 
@@ -553,12 +553,11 @@ func (remote *remoteDesktop) events() {
 	for remote.ctx.Err() == nil {
 		response, err := remote.client.request(remote.ctx, "GET", "/api/events", nil)
 		if err == nil {
-			scanner := bufio.NewScanner(response.Body)
-			scanner.Buffer(make([]byte, 8192), 32<<20)
-			for scanner.Scan() {
-				if strings.HasPrefix(scanner.Text(), "data:") {
-					remote.notify()
+			for _, err := range sse.Events(response.Body, 32<<20) {
+				if err != nil {
+					break
 				}
+				remote.notify()
 			}
 			response.Body.Close()
 		}
@@ -701,13 +700,16 @@ func (remote *remoteDesktop) renderChats() {
 	for _, chat := range remote.chats {
 		chat := chat
 		chats = append(chats, sideChat{
+			id: chat.ID, parent: chat.Parent,
 			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
 			selected: ui.current != nil && ui.current.server == remote && ui.current.serverID == chat.ID,
 			open:     func() { remote.openChat(chat.ID) },
 			menu:     []menuAction{{label: "Delete", icon: iconTrash, danger: true, run: func() { remote.deleteChat(chat) }}},
 		})
 	}
-	ui.renderSidebar(remote.projects, chats, remote.selectProject, ui.repositoryActions)
+	ui.renderSidebar(remote.projects, chats, remote.selectProject, func(p string) []menuAction {
+		return append(ui.repositoryActions(p), ui.projectMemoryAction(p))
+	})
 }
 
 // projectMenu is the composer's folder chip for a server: its projects.
@@ -870,6 +872,7 @@ func (remote *remoteDesktop) showMeta(conv *conversation) {
 	ui := remote.parent
 	meta := remote.meta
 	ui.syncRun()
+	ui.showParentLink()
 	ui.setContextUsage(meta.Used, meta.Window)
 	approvalID := ""
 	if meta.Approval != nil {
@@ -1101,7 +1104,7 @@ func (remote *remoteDesktop) renderTasks() {
 	if remote.tabViews["todo"] == nil || remote.todoTasks == nil {
 		return
 	}
-	signature, _ := json.Marshal([]any{remote.meta.Todo, remote.meta.Tasks})
+	signature, _ := json.Marshal([]any{remote.meta.Todo, remote.meta.Tasks, remote.meta.Subchats})
 	if string(signature) != remote.todoSignature {
 		remote.todoSignature = string(signature)
 		remote.todoTasks.RemoveAll()
@@ -1141,6 +1144,7 @@ func (remote *remoteDesktop) renderTasks() {
 			})
 			remote.todoTasks.Add(container.NewBorder(nil, nil, nil, stop, container.NewVBox(command, textLine(state, 11.5, colMuted))))
 		}
+		remote.addSubchats()
 	}
 	for _, task := range remote.meta.Todo {
 		item := agent.TodoItem{ID: task.ID, Text: task.Text, Status: task.Status}

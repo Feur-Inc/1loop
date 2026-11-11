@@ -17,6 +17,7 @@ import (
 	"net/url"
 	"strings"
 	"time"
+	"unicode"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -512,4 +513,10 @@ func filesView(detail *gitrepo.Detail) fyne.CanvasObject {
 		return container.NewBorder(padded(0, 6, 18, 18, note(fmt.Sprintf("The first %d of %d files: open it on GitHub for the others.", len(detail.FileList), detail.Files))), nil, nil, nil, view)
 	}
 	return view
+}
+
+// isWordByte tells whether b is part of a word (any byte of a UTF-8
+// sequence counts): a reference starts only after one that isn't.
+func isWordByte(b byte) bool {
+	return b >= 0x80 || unicode.IsLetter(rune(b)) || unicode.IsDigit(rune(b))
 }

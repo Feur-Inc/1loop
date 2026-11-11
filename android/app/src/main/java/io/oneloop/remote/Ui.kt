@@ -17,6 +17,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.animation.scaleIn
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
@@ -39,6 +40,7 @@ import androidx.compose.ui.draw.shadow
 import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxScope
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ColumnScope
@@ -61,6 +63,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
@@ -98,6 +101,7 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Brush
@@ -592,36 +596,51 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                 Text("Projects", style = Type.small.copy(color = Palette.faint), modifier = Modifier.weight(1f).padding(start = 10.dp))
                 if (app.projectManagement) RoundButton(Icons.plus, Color.Transparent, Palette.muted, description = "Add project") { app.projectsOpen = true }
             }
+            // A subchat is listed under its parent, wherever its folder is (its worktree).
+            val listed = app.chats.map { it.id }.toSet()
+            val nested = app.chats.filter { it.parent.isNotEmpty() && it.parent in listed }.groupBy { it.parent }
+            val topLevel = app.chats.filter { it.parent.isEmpty() || it.parent !in listed }
             @Composable
-            fun chatRows(folder: String) {
-                val chats = app.chats.filter { it.workspace == folder }
-                for (chat in chats) NavRow(
+            fun chatRow(chat: ChatSummary) {
+                NavRow(
                     chat.title, null, selected = chat.id == app.current, running = chat.running,
                     onLongClick = { deleting = chat },
                 ) { app.open(chat.id); onPicked() }
+                nested[chat.id]?.let { subs ->
+                    Column(Modifier.padding(start = 16.dp)) {
+                        for (sub in subs) NavRow(
+                            sub.title, Icons.subchat, selected = sub.id == app.current, running = sub.running,
+                            onLongClick = { deleting = sub },
+                        ) { app.open(sub.id); onPicked() }
+                    }
+                }
+            }
+            @Composable
+            fun chatRows(folder: String) {
+                val chats = topLevel.filter { it.workspace == folder }
+                for (chat in chats) chatRow(chat)
                 if (chats.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
             }
             // Chats without a folder: one "No folder" entry, never their paths.
-            val scratch = app.chats.filter { it.scratch }
+            val scratch = topLevel.filter { it.scratch }
             if (scratch.isNotEmpty() || app.selectedProject == NO_FOLDER) {
                 NavRow("No folder", Icons.folder, selected = app.selectedProject == NO_FOLDER) { app.selectProject(NO_FOLDER) }
                 if (app.selectedProject == NO_FOLDER) Column(Modifier.padding(start = 16.dp)) {
-                    for (chat in scratch) NavRow(
-                        chat.title, null, selected = chat.id == app.current, running = chat.running,
-                        onLongClick = { deleting = chat },
-                    ) { app.open(chat.id); onPicked() }
+                    for (chat in scratch) chatRow(chat)
                     if (scratch.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
                 }
             }
             // A worktree shows under its project, not as a project of its own.
-            for (workspace in (app.projects + app.chats.filter { !it.scratch }.map { app.projectOf(it.workspace) ?: it.workspace }).distinct().filter { it !in app.worktrees }) {
+            for (workspace in (app.projects + topLevel.filter { !it.scratch }.map { app.projectOf(it.workspace) ?: it.workspace }).distinct().filter { it !in app.worktrees }) {
                 val selected = workspace == app.selectedProject
                 val git = app.repositories[workspace]?.takeIf { it.loaded && it.error == null }
                 NavRow(
                     projectName(workspace), Icons.folder, selected = selected,
                     onLongClick = if (app.projectActions || git != null) ({ projectActions = workspace }) else null,
                     longClickLabel = "Project actions",
-                    trailing = git?.current?.takeIf { it.isNotEmpty() },
+                    // A project on an SSH machine says so, beside its branch.
+                    trailing = listOfNotNull(git?.current?.takeIf { it.isNotEmpty() }, app.machineOf(workspace)?.let { "on ${it.label}" })
+                        .joinToString(" · ").ifEmpty { null },
                 ) { app.selectProject(workspace) }
                 if (app.projectOf(app.selectedProject) == workspace) {
                     Column(Modifier.padding(start = 16.dp)) {
@@ -746,7 +765,11 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
             Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                 val title = app.chats.firstOrNull { it.id == app.current }?.title ?: "New chat"
                 Text(title, style = Type.body.copy(fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
+                val parent = meta?.takeIf { it.chat == app.current && it.parent.isNotEmpty() }
+                if (parent != null && app.connected) Text(
+                    "Subchat of ${parent.parentTitle}", style = Type.caption.copy(color = Palette.amber), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable(onClickLabel = "Open the parent chat") { app.open(parent.parent) },
+                ) else Text(
                     if (app.connected) app.chatModel?.name ?: app.server?.name.orEmpty() else "Reconnecting to ${app.server?.name}…",
                     style = Type.caption.copy(color = if (app.connected) Palette.faint else Palette.amber), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
@@ -781,8 +804,6 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
                     }
                 }
             }) { tool = it }
-            // The conversation fades under the composer instead of a hard edge.
-            Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(18.dp).background(Brush.verticalGradient(listOf(Color.Transparent, Palette.background))))
         }
         Composer(app, running)
     }
@@ -815,7 +836,7 @@ private fun Welcome(app: RemoteApp) {
 }
 
 @Composable
-private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> Unit, onTool: (Item) -> Unit) {
+private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> Unit, onTool: (Item) -> Unit) {
     val list = rememberLazyListState()
     var follow by remember { mutableStateOf(true) }
     val items = app.items
@@ -914,7 +935,21 @@ private fun Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> U
             Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) { PendingBubble(pending[i], running) }
         }
     }
+    TranscriptFade(list)
     editing?.let { (index, text) -> EditSheet(text, onSend = { app.editMessage(index, it) }) { editing = null } }
+}
+
+// The conversation fades under the composer instead of a hard edge, while
+// more of it lies below: scrolled to the end, nothing is hidden and nothing
+// is veiled. The fade waits a moment before it comes in: an answer being
+// written grows a frame before the view follows it, which must not flicker.
+@Composable
+private fun BoxScope.TranscriptFade(list: LazyListState) {
+    val more = list.canScrollForward
+    val shown = animateFloatAsState(if (more) 1f else 0f, if (more) tween(160, delayMillis = 90) else tween(120), label = "fade")
+    val fade = remember { Brush.verticalGradient(listOf(Color.Transparent, Palette.background)) }
+    // Drawn, not recomposed, at each frame of the transition.
+    Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(18.dp).drawBehind { if (shown.value > 0f) drawRect(fade, alpha = shown.value) })
 }
 
 private fun answerText(items: List<Item>, index: Int): String {
@@ -1040,9 +1075,6 @@ private fun Composer(app: RemoteApp, running: Boolean) {
             runCatching { app.mentions(app.current) }.onSuccess { mentions = it }.onFailure { mentionsFailed = true }
         }
     }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) app.attach(uris, project)
-    }
     // Another chat may be in another project: keep only the files its message can carry.
     // An open chat is judged by its own workspace, once known; a new one by the project chosen.
     val chatWorkspace = app.current?.let { id -> app.chats.firstOrNull { it.id == id }?.workspace }
@@ -1122,7 +1154,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 // against the right edge: a long model name shrinks, not them.
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                     if (app.attachmentsEnabled) {
-                        RoundButton(Icons.plus, Color.Transparent, Palette.muted, size = 32.dp, iconSize = 18.dp, description = "Attach files") { picker.launch(arrayOf("*/*")) }
+                        AttachButton(app, project) // the media sheet (MediaSheet.kt)
                     }
                     ApprovalChip(app)
                     Spacer(Modifier.width(4.dp))
@@ -1178,12 +1210,13 @@ private fun ProjectChip(app: RemoteApp, chosen: String?, onChoose: (String) -> U
         ) {
             Icon(Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp))
             Spacer(Modifier.width(6.dp))
-            Text(app.folderName(path), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
+            val machine = app.machineOf(path.takeIf { it != NO_FOLDER })
+            Text(app.folderName(path) + (machine?.let { " · on ${it.label}" } ?: ""), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.widthIn(max = 220.dp))
         }
         if (open) GlassMenuOpen()
         DropdownMenu(open, { open = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover), border = GlassEdge, shape = GlassMenuShape) {
             for (p in app.projects) DropdownMenuItem(
-                text = { Text(projectName(p), style = Type.body) },
+                text = { Text(projectName(p) + (app.machineOf(p)?.let { " · on ${it.label}" } ?: ""), style = Type.body) },
                 onClick = { onChoose(p); open = false },
                 leadingIcon = { Icon(if (p == path) Icons.check else Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp)) },
             )

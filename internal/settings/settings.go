@@ -27,6 +27,9 @@ const (
 	Number Kind = "number" // a whole number from Min to Max
 	Text   Kind = "text"   // free text
 	Action Kind = "action" // a button, a list or a page: no value of its own
+	// A keyboard shortcut: a key with its modifiers, as ShortcutValue gives
+	// it ("Ctrl+Shift+F"), or "off".
+	Shortcut Kind = "shortcut"
 )
 
 // Value is one of a choice's values, with how it is shown.
@@ -56,6 +59,7 @@ type Setting struct {
 	Keywords    []string `json:"keywords,omitempty"`
 	Kind        Kind     `json:"kind"`
 	Values      []Value  `json:"values,omitempty"`
+	Default     string   `json:"default,omitempty"` // a shortcut's own key
 	Min         int      `json:"min,omitempty"`
 	Max         int      `json:"max,omitempty"`
 	Where       Where    `json:"where"`
@@ -181,7 +185,7 @@ var list = []Setting{
 		Description: "The agent adds what it learns about you to your preferences, each change approved by you.",
 		Keywords:    []string{"memory", "remember", "learn", "preferences"}},
 	{Key: "agent.project_memory", Section: Agent, Title: "Project memory", Where: OnDesktop, Kind: Action,
-		Description: "Each project's AGENTS.md, which every agent reads there.",
+		Description: "Each project's AGENTS.md, which every agent reads there, edited from the project's … menu in the sidebar.",
 		Keywords:    []string{"agents.md", "project", "instructions", "memory", "claude.md"}},
 	{Key: KeyDynamicCompaction, Section: Agent, Title: "Dynamic compaction", Where: OnDesktop, Kind: Toggle,
 		Description: "Compact the context at natural breaks in the work instead of once when it is nearly full.",
@@ -243,12 +247,12 @@ var list = []Setting{
 }
 
 // All lists every setting, in the order they are shown.
-func All() []Setting { return append([]Setting(nil), list...) }
+func All() []Setting { return append(append([]Setting(nil), list...), shortcuts...) }
 
 // On lists the settings a platform's page shows.
 func On(platform Where) []Setting {
 	var shown []Setting
-	for _, setting := range list {
+	for _, setting := range All() {
 		if setting.On(platform) {
 			shown = append(shown, setting)
 		}
@@ -259,7 +263,7 @@ func On(platform Where) []Setting {
 // Lookup finds a setting by its key.
 func Lookup(key string) (Setting, bool) {
 	key = strings.TrimSpace(key)
-	for _, setting := range list {
+	for _, setting := range All() {
 		if setting.Key == key {
 			return setting, true
 		}

@@ -19,6 +19,7 @@ func fakeSettings() (map[string]string, *SettingsAccess) {
 		settings.KeyMemory:            "on",
 		settings.KeyWorktreeSort:      "recent",
 		settings.KeyApprovalMode:      "approval",
+		settings.ShortcutNewChat:      "Ctrl+N",
 	}
 	return stored, &SettingsAccess{
 		Get: func(_ context.Context, key string) (string, bool) { value, ok := stored[key]; return value, ok },
@@ -103,6 +104,14 @@ func TestSettingsTool(t *testing.T) {
 	}
 	if stored[settings.KeyApprovalMode] != "approval" || stored[settings.KeyDynamicCompaction] != "on" {
 		t.Fatalf("a refused change was made: %v", stored)
+	}
+
+	// A shortcut takes a key as typed, stored in one spelling.
+	if output, err, asked = runSettings(t, access, true, map[string]string{"action": "set", "key": settings.ShortcutNewChat, "value": "ctrl+shift+n"}); err != nil || len(asked) != 1 || stored[settings.ShortcutNewChat] != "Ctrl+Shift+N" {
+		t.Fatalf("a shortcut: %q, %v, stored %q", output, err, stored[settings.ShortcutNewChat])
+	}
+	if _, err, asked = runSettings(t, access, true, map[string]string{"action": "set", "key": settings.ShortcutNewChat, "value": "Ctrl+V"}); err == nil || len(asked) > 0 {
+		t.Fatalf("Paste's key was taken for a shortcut: %v", err)
 	}
 
 	// A value already set asks nothing; true is on.

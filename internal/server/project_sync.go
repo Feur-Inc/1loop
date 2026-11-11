@@ -31,6 +31,9 @@ func (server *headlessServer) syncEngine() *projectsync.Local {
 			server.mu.Lock()
 			var found string
 			for _, folder := range server.projects {
+				if server.projectMachines[folder] != "" { // on an SSH machine, not here
+					continue
+				}
 				if folder == project {
 					found = folder
 					break
@@ -38,6 +41,9 @@ func (server *headlessServer) syncEngine() *projectsync.Local {
 			}
 			if found == "" && project == filepath.Base(project) {
 				for _, folder := range server.projects {
+					if server.projectMachines[folder] != "" {
+						continue
+					}
 					if filepath.Base(folder) == project {
 						if found != "" {
 							server.mu.Unlock()

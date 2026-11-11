@@ -41,6 +41,7 @@ import (
 	"1loop/internal/extensions"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
+	registry "1loop/internal/settings"
 	"1loop/internal/sshmachine"
 )
 
@@ -60,6 +61,8 @@ type conversation struct {
 	Panel        *savedPanel             `json:"panel,omitempty"` // its side panel, to open it again as it was
 	Version      string                  `json:"version,omitempty"`
 	Versions     []chatVersion           `json:"versions,omitempty"`
+	// Subchat links a subchat to the chat that started it (subchats.go).
+	Subchat *agent.SubchatLink `json:"subchat,omitempty"`
 
 	panel     *panelState // its side panel while 1loop runs (live tabs, terminals included)
 	failed    bool        // its last run failed and the user has not looked at it since: the tray says so
@@ -198,6 +201,7 @@ type desktopUI struct {
 	curtain           *pageCurtain      // fades the main area's new page in
 	sideApp           fyne.CanvasObject // the sidebar's usual content, hidden while settings are open
 	selected          textSelection     // what holds the selected text, if anything does
+	chatSel           chatSelection     // the selection across the conversation's messages
 	building          bool              // openChat is adding a whole chat's items (see place)
 	welcome           fyne.CanvasObject
 	thinking          *fyne.Container
@@ -240,14 +244,20 @@ type desktopUI struct {
 	// Window and sidebar
 	header         *fitLabel
 	headerBar      *fyne.Container
+	parentLink     *tapRow // a subchat's way back to its parent, beside the title
 	expand         *tapRow
 	newChat        *tapRow
 	connections    *tapRow
 	projectList    *fyne.Container
 	sideLists      *fyne.Container
-	sideChats      []sideChat      // the chats listed, for search
-	allChatsShown  map[string]bool // projects whose every chat is listed
-	worktreesShown map[string]bool // projects whose worktrees are unfolded
+	sideChats      []sideChat // the chats listed, for search
+	sideOrder      []sideChat // the same in the sidebar's order, for the previous and next chat
+	searchRow      *tapRow
+	find           *chatFind
+	shortcutKeys   map[string]string         // shortcut → key, where the user chose another than its default
+	registered     []*desktop.CustomShortcut // the shortcuts' keys the window has
+	allChatsShown  map[string]bool           // projects whose every chat is listed
+	worktreesShown map[string]bool           // projects whose worktrees are unfolded
 	foldedProjects map[string]bool
 	pane           *paneLayout
 	sideHandle     *sidebarHandle
@@ -291,7 +301,7 @@ func runDesktop(backend *agent.App, root string) {
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
 	backend.EnableChatGPTWeb(ctx)
-	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), statePath: statePath(root),
+	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), shortcutKeys: map[string]string{}, statePath: statePath(root),
 		cfg: agent.Config{Provider: "compatible", Workspace: root}, foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}}
 	ui.load()
 	ui.initializeConnections()
@@ -321,15 +331,7 @@ func runDesktop(backend *agent.App, root string) {
 	})
 	ui.prompt.switchDraft(ui.draftKey())
 	ui.window.SetCloseIntercept(ui.closeWindow)
-	for _, s := range []*desktop.CustomShortcut{
-		{KeyName: fyne.KeyQ, Modifier: fyne.KeyModifierControl},
-		{KeyName: fyne.KeyK, Modifier: fyne.KeyModifierControl},
-		{KeyName: fyne.KeyF, Modifier: fyne.KeyModifierControl},
-		{KeyName: fyne.KeyR, Modifier: fyne.KeyModifierControl | fyne.KeyModifierShift},
-		{KeyName: fyne.KeyB, Modifier: fyne.KeyModifierControl},
-	} {
-		ui.window.Canvas().AddShortcut(s, func(s fyne.Shortcut) { ui.shortcut(s) })
-	}
+	ui.registerShortcuts()
 	ui.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { ui.copySelection() })
 	ui.updateHeader()
 	ui.renderChats()
@@ -435,25 +437,10 @@ func (ui *desktopUI) shortcut(s fyne.Shortcut) bool {
 		// text selected in the conversation is what is meant.
 		return (ui.prompt == nil || ui.prompt.SelectedText() == "") && ui.copySelection()
 	}
-	c, ok := s.(*desktop.CustomShortcut)
-	if !ok {
+	if _, custom := s.(*desktop.CustomShortcut); !custom {
 		return false
 	}
-	switch {
-	case c.KeyName == fyne.KeyQ && c.Modifier == fyne.KeyModifierControl:
-		ui.quit() // really quits, even when closing hides the window in the tray
-	case c.KeyName == fyne.KeyK && c.Modifier == fyne.KeyModifierControl:
-		ui.startNew()
-	case c.KeyName == fyne.KeyF && c.Modifier == fyne.KeyModifierControl:
-		ui.search()
-	case c.KeyName == fyne.KeyR && c.Modifier == fyne.KeyModifierControl|fyne.KeyModifierShift:
-		ui.restart()
-	case c.KeyName == fyne.KeyB && c.Modifier == fyne.KeyModifierControl:
-		ui.toggleSidebar()
-	default:
-		return false
-	}
-	return true
+	return ui.runShortcut(s) // keybindings.go
 }
 
 // release stops background work and saves, before closing or restarting.
@@ -540,6 +527,7 @@ func (themeSpec flatScrollTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVar
 
 func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.tips = newTipLayer()
+	ui.chatSel.ui = ui
 	ui.buildSettings()
 	sidebar := ui.buildSidebar()
 
@@ -573,13 +561,16 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.pendingBox = container.NewVBox()
 	ui.footerSpace = canvas.NewRectangle(color.Transparent) // the composer floats over the end (glassFooterLayout)
 	ui.column = container.NewVBox(ui.transcript, ui.inlineRow, ui.pendingBox, ui.footerSpace)
-	ui.scroll = newKineticVScroll(container.New(columnLayout{width: 760, inset: 24}, ui.column))
+	// Behind the column, over the whole width: a press in the margins starts
+	// a selection too (selectCatcher).
+	ui.scroll = newKineticVScroll(container.NewStack(newSelectCatcher(ui), container.New(columnLayout{width: 760, inset: 24}, ui.column)))
 	ui.followTail = true
 	ui.scroll.OnScrolled = func(position fyne.Position) {
 		// A small tolerance absorbs fractional pixel rounding at the bottom.
 		// Content.Size, not MinSize: MinSize walks the whole chat on every event.
 		bottom := fyne.Max(0, ui.scroll.Content.Size().Height-ui.scroll.Size().Height)
 		ui.followTail = bottom-position.Y <= 2
+		ui.syncFooterFade()
 		relayout(ui.transcript) // items entering the view come back, those leaving it rest
 	}
 	ui.mark = newLoopMark(60)
@@ -587,17 +578,16 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 		container.NewCenter(ui.mark.image), spacer(0, 18),
 		container.NewCenter(textLine("What shall we build today?", 24, colText)), spacer(0, 4),
 		container.NewCenter(textLine("Your project. Your model. One loop.", 14, colMuted)), spacer(0, 40)))
-	// Nothing is drawn between the conversation and the composer: no rule,
-	// no fade (a gradient of the background over itself showed as darker
-	// bands, 8 bits being too few for so dark a colour). The messages just
-	// end where the composer's block begins.
+	// No scroll edge shadow between the conversation and the composer: the
+	// conversation fades under the composer while more of it lies below
+	// (footerGlass).
 	scroll := container.NewThemeOverride(ui.scroll, flatScrollTheme{loopTheme{theme.DefaultTheme()}})
 	ui.chatWait = newLoopMark(56)
 	ui.chatWaitView = container.NewStack(canvas.NewRectangle(colBackground), container.NewCenter(container.NewVBox(
 		container.NewCenter(ui.chatWait.image), spacer(0, 12),
 		container.NewCenter(textLine("Loading conversation…", 14, colMuted)))))
 	ui.chatWaitView.Hide()
-	ui.chatViewport = container.NewStack(ui.welcome, scroll, ui.chatWaitView)
+	ui.chatViewport = container.NewStack(ui.welcome, scroll, ui.chatWaitView, ui.buildFind())
 	ui.scroll.Hide()
 
 	ui.footerGlass = newFooterGlass()
@@ -607,15 +597,9 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	// The activity line may sit beside the composer (dockActivity): the
 	// dock layer floats over the conversation's bottom left corner.
 	conversation = container.New(dockLayout{ui}, conversation, ui.dockRow)
-	ui.panel = newToolPanel(ui)
-	openCitation = ui.openCitation
-	openReference, hoverReference, refRepository = ui.openReference, ui.hoverReference, ui.chatRepository
-	ui.split = container.New(splitLayout{ui.panel}, conversation, ui.panel.view, newPanelResizeHandle(ui.panel))
-
-	// Title bar: conversation title, drag region and window controls.
-	ui.header = newFitLabel("New chat", 14, colMuted)
-	ui.expand = newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
-	ui.expand.Hide()
+	// One button opens and folds the side panel: in the panel's header when
+	// it is open, at the same place over the conversation when it is folded
+	// (splitLayout). The title bar has none.
 	ui.panelToggle = newRow("", iconPanel, styleWindow, func() {
 		if ui.panel.target > 0 {
 			ui.panel.fold()
@@ -630,11 +614,23 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 			ui.tips.hide()
 		}
 	}
-	right := container.New(layout.NewCustomPaddedHBoxLayout(2), container.NewCenter(ui.panelToggle))
+	ui.panel = newToolPanel(ui)
+	openCitation = ui.openCitation
+	openReference, hoverReference, refRepository = ui.openReference, ui.hoverReference, ui.chatRepository
+	ui.split = container.New(splitLayout{ui.panel}, conversation, ui.panel.view, newPanelResizeHandle(ui.panel), ui.panelToggle)
+
+	// Title bar: conversation title, drag region and window controls.
+	ui.header = newFitLabel("New chat", 14, colMuted)
+	ui.expand = newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
+	ui.expand.Hide()
+	right := container.New(layout.NewCustomPaddedHBoxLayout(2))
 	if ui.chrome {
 		right.Add(windowControls(ui.window, ui.closeWindow))
 	}
-	ui.headerBar = container.NewBorder(nil, nil, padded(0, 0, 0, 8, container.NewCenter(ui.expand)), right, ui.header)
+	ui.parentLink = newRow("", iconSubchat, styleChip, ui.openParent)
+	ui.parentLink.Hide()
+	ui.headerBar = container.NewBorder(nil, nil, padded(0, 0, 0, 8, container.NewCenter(ui.expand)), right,
+		container.NewBorder(nil, nil, nil, container.NewCenter(ui.parentLink), ui.header))
 	var header fyne.CanvasObject = padded(14, 8, 24, 24, ui.headerBar)
 	if ui.chrome {
 		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, ui.headerBar))
@@ -719,14 +715,10 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	}
 	ui.steer.Hide()
 	ui.stop = newIconButton(iconStop, colText, colInk, func() {
-		if ui.current != nil && ui.current.server != nil {
-			ui.current.server.stop()
-			return
-		}
-		if ui.current != nil && ui.current.run != nil {
+		if ui.current != nil {
 			platform.Devf("ui", "stop pressed for %q", ui.current.Title)
-			ui.current.run.cancel()
 		}
+		ui.stopRun()
 	})
 	ui.stop.iconPx = 20
 	ui.stop.onHover = func(in bool) {
@@ -776,13 +768,12 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.controls = container.New(&composerControlsLayout{transient: []fyne.CanvasObject{ui.steer, ui.stop, ui.send}}, settings, actions)
 	ui.model.relayout = ui.controls.Refresh
 
-	// The card catches the light from above: a hairline of light along its
-	// top edge. (Fyne's gradients have square corners: none under the card.)
+	// The card: no line of light along its top edge, which showed as a
+	// brighter pixel row above the prompt.
 	card := canvas.NewRectangle(colSurface)
 	card.CornerRadius = 18
 	card.StrokeColor = colBorder
 	card.StrokeWidth = 1
-	shine := canvas.NewRectangle(color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x1c})
 	// The card floats on a soft shadow; focused, an amber halo lights up around it.
 	drop, glow := newShadow(2.2), newGlow(colAmber, 0.32)
 	var glowAnim *fyne.Animation
@@ -826,7 +817,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		container.NewHBox(container.NewCenter(pencil), textLine("Editing a queued message", 12.5, colAmber)),
 		container.NewHBox(container.NewCenter(textLine("Enter to save · Esc to cancel", 12, colFaint)), cancelEdit)))
 	ui.editBar.Hide()
-	body := container.NewStack(card, container.New(shineLayout{}, shine), padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
+	body := container.NewStack(card, padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
 	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: card.CornerRadius}, append(append(glow.objects(), drop.objects()...), body)...)
 	ui.composer = composer
 
@@ -863,6 +854,7 @@ func (ui *desktopUI) updateHeader() {
 		title = "Settings"
 	}
 	ui.header.SetText(title)
+	ui.showParentLink()
 }
 
 // draftKey names the draft the prompt shows: the open chat's, or the start
@@ -897,6 +889,7 @@ func (ui *desktopUI) startNew() {
 	ui.items.reset()
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
 	ui.panel.switchTo(nil)
+	ui.find.reset()
 	ui.showTranscript(false)
 	ui.curtain.reveal()
 	ui.syncRun()
@@ -916,6 +909,15 @@ func (ui *desktopUI) showTranscript(show bool) {
 		ui.scroll.Hide()
 		ui.welcome.Show()
 	}
+	ui.syncFooterFade()
+}
+
+// syncFooterFade shows the fade above the composer only while more of the
+// conversation lies below it, with the tolerance followTail is told with.
+// Called wherever the view or the conversation's height changes.
+func (ui *desktopUI) syncFooterFade() {
+	bottom := fyne.Max(0, ui.scroll.Content.Size().Height-ui.scroll.Size().Height)
+	ui.footerGlass.veil(ui.scroll.Visible() && bottom-ui.scroll.Offset.Y > 2)
 }
 
 func codeText(text string) fyne.CanvasObject {
@@ -1057,6 +1059,9 @@ func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
 	chat.run = run
 	chat.failed = false
 	ui.remote.metaChanged(chat)
+	if parent := ui.parentOf(chat); parent != nil { // its state in the parent's Tasks
+		ui.panel.todoChanged(parent)
+	}
 	ui.syncPresence()
 	if chat == ui.current {
 		ui.syncRun()
@@ -1095,6 +1100,16 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	}
 	if run != nil && ended == "done" {
 		ui.notifyUser(chat, "Done.")
+	}
+	if run != nil {
+		state := agent.SubchatDone
+		if ended == "stopped" {
+			state = agent.SubchatFailed
+			if run.stopped {
+				state = agent.SubchatStopped
+			}
+		}
+		ui.subchatEnded(chat, state)
 	}
 	ui.renderChats()
 	ui.save()
@@ -1188,6 +1203,10 @@ func (ui *desktopUI) submit() {
 		}
 		return
 	}
+	if text == "/subchat" || strings.HasPrefix(text, "/subchat ") {
+		ui.subchatCommand(strings.TrimPrefix(text, "/subchat"))
+		return
+	}
 	// Claude Code and Antigravity compact their own session: there /compact
 	// is sent as it is.
 	if !agent.CLIHarness(ui.cfg.Provider) && (text == "/compact" || strings.HasPrefix(text, "/compact ")) {
@@ -1275,6 +1294,9 @@ func (ui *desktopUI) startWithID(messageValue agent.Message, id string) {
 func (ui *desktopUI) wake(chat *conversation, message agent.Message) {
 	if ui.chatByID(chat.ID) != chat || ui.ctx.Err() != nil {
 		return // deleted meanwhile, or 1loop is closing
+	}
+	if chat.Subchat != nil && message.Internal { // its own task: the parent hears how the turn ends
+		chat.Subchat.Report = true
 	}
 	if chat.run != nil {
 		chat.steer = append(chat.steer, message)
@@ -1505,6 +1527,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 		}
 	}
 	cfg.Settings = ui.settingsAccess()
+	cfg.Subchats = ui.subchatAccess(chat)
 	cfg.ApprovalMode = agent.ApprovalFor(ui.approvalMode, cfg)
 	ui.scratchMove(&cfg)
 	cfg.ClassicCompaction = ui.classicCompaction
@@ -1788,6 +1811,7 @@ type savedState struct {
 	TrayNoticeShown   bool                  `json:"trayNoticeShown,omitempty"`
 	DiscordPresence   bool                  `json:"discordPresence,omitempty"`
 	DiscordDetails    bool                  `json:"discordDetails,omitempty"`
+	Shortcuts         map[string]string     `json:"shortcuts,omitempty"` // the keys chosen in Settings
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1850,6 +1874,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.trayNoticeShown,
 		ui.discordPresence,
 		ui.discordDetails,
+		ui.shortcutKeys,
 	})
 	if ui.panel != nil {
 		ui.panel.stash() // the open chat's panel, as it is now
@@ -1960,6 +1985,13 @@ func (ui *desktopUI) load() {
 	ui.worktrees, ui.worktreeSort = state.Worktrees, state.WorktreeSort
 	for _, project := range state.FoldedProjects {
 		ui.foldedProjects[project] = true
+	}
+	for key, value := range state.Shortcuts {
+		if setting, ok := registry.Lookup(key); ok && setting.Kind == registry.Shortcut {
+			if value, err := registry.ShortcutValue(value); err == nil {
+				ui.shortcutKeys[key] = value
+			}
+		}
 	}
 	if _, ok := ui.machineSettings(ui.cfg.MachineID); ui.cfg.MachineID != "" && !ok { // the machine was removed
 		ui.cfg.MachineID, ui.cfg.Workspace = "", ui.lastLocalWorkspace()

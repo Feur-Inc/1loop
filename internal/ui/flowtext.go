@@ -3,7 +3,7 @@
 package ui
 
 // flowText draws one block of styled text (a paragraph, a heading, a list
-// item, a table cell): it wraps the spans parseInline produced in the width
+// item, a table cell): it wraps the spans the Markdown parser produced in the width
 // it is given, and draws what Fyne's rich text does not: inline code on a
 // tinted chip, links that look and act like links, struck text, typeset
 // formulas sitting on the text's baseline.

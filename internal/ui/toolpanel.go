@@ -45,6 +45,7 @@ type toolPanel struct {
 	target float32       // where the slide is going
 	snap   bool          // the conversation is too long to follow the slide frame by frame
 	anim   *fyne.Animation
+	header *fyne.Container // the tabs and buttons on top: the panel toggle lies over its end
 
 	resizePending bool
 	openCommands  map[string]bool // the background commands shown in full in the Tasks tab, by task
@@ -110,7 +111,10 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 			{label: "Files", icon: iconFolder, run: panel.openFiles},
 		})
 	}
-	fold := newRow("", iconPanel, styleWindow, panel.fold)
+	// The fold button is the window's panel toggle, laid over this slot
+	// (splitLayout), so it stays where it is when the panel folds.
+	fold := canvas.NewRectangle(color.Transparent)
+	fold.SetMinSize(ui.panelToggle.MinSize())
 	todo := newRow("Tasks", iconCheck, styleChip, func() {
 		if ui.server != nil { // a server chat's tasks are the server's (remote_desktop.go)
 			ui.server.showTab("todo")
@@ -120,6 +124,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	})
 	panel.strips = container.NewHScroll(panel.strip)
 	header := container.NewBorder(nil, nil, nil, container.NewHBox(todo, add, fold), panel.strips)
+	panel.header = header
 	rule := canvas.NewRectangle(colBorderSoft)
 	rule.SetMinSize(fyne.NewSize(0, 1))
 	panel.body = newKineticVScroll(spacer(0, 0))
@@ -191,6 +196,12 @@ func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size
 	} else {
 		objects[2].Hide()
 	}
+	// The panel toggle, at the end of the panel's header (its view's and
+	// header's margins), open or folded alike.
+	toggle := objects[3].MinSize()
+	row := layoutSpec.toolPanel.header.MinSize().Height
+	objects[3].Resize(toggle)
+	objects[3].Move(fyne.NewPos(size.Width-12-toggle.Width, 8+(row-toggle.Height)/2))
 }
 
 type panelResizeHandle struct {

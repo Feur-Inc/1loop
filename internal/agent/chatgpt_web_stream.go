@@ -9,7 +9,6 @@ package agent
 // summaries, and ends with message_stream_complete.
 
 import (
-	"bytes"
 	"context"
 	"encoding/base64"
 	"encoding/json"
@@ -22,6 +21,7 @@ import (
 
 	"1loop/internal/browser"
 	"1loop/internal/platform"
+	"1loop/internal/sse"
 )
 
 // webStreamSink receives one turn's stream: text the model writes (with the
@@ -40,7 +40,7 @@ type webStreamSink struct {
 // being written; an event without "p" or "o" reuses the previous ones.
 type webStream struct {
 	sink         webStreamSink
-	pending      []byte
+	events       *sse.Parser
 	path, op     string
 	message      webMessage
 	object       int
@@ -55,37 +55,18 @@ type webMessage struct {
 	visible, final bool
 }
 
+// write adds the next bytes of the server-sent event stream.
 func (stream *webStream) write(data []byte) {
-	stream.pending = append(stream.pending, data...)
-	// Lines may end with CRLF or CR as well (the SSE format); a CR at the
-	// end may be the first half of a CRLF split across two writes.
-	if bytes.IndexByte(stream.pending, '\r') >= 0 {
-		tail := bytes.HasSuffix(stream.pending, []byte("\r"))
-		if tail {
-			stream.pending = stream.pending[:len(stream.pending)-1]
-		}
-		stream.pending = bytes.ReplaceAll(stream.pending, []byte("\r\n"), []byte("\n"))
-		stream.pending = bytes.ReplaceAll(stream.pending, []byte("\r"), []byte("\n"))
-		if tail {
-			stream.pending = append(stream.pending, '\r')
-		}
+	if stream.events == nil {
+		stream.events = &sse.Parser{OnEvent: func(event sse.Event) { stream.event(event.Data) }}
 	}
-	for {
-		end := bytes.Index(stream.pending, []byte("\n\n"))
-		if end < 0 {
-			return
-		}
-		block := string(stream.pending[:end])
-		stream.pending = stream.pending[end+2:]
-		var payload []string
-		for _, line := range strings.Split(block, "\n") {
-			if value, ok := strings.CutPrefix(line, "data:"); ok {
-				payload = append(payload, strings.TrimPrefix(value, " "))
-			}
-		}
-		if len(payload) > 0 {
-			stream.event(strings.Join(payload, "\n"))
-		}
+	stream.events.Write(data)
+}
+
+// flush delivers an event the stream ended without its blank line.
+func (stream *webStream) flush() {
+	if stream.events != nil {
+		stream.events.Close()
 	}
 }
 
@@ -317,7 +298,7 @@ func (streams *webStreams) event(ev any) {
 			}
 			watch.ready, watch.queued = true, nil
 			if watch.finished {
-				watch.stream.write([]byte("\n\n"))
+				watch.stream.flush()
 				watch.stream.finish(watch.failure)
 				delete(streams.watching, id)
 			}
@@ -361,7 +342,7 @@ func (streams *webStreams) end(id network.RequestID, failure error) {
 		watch.finished, watch.failure = true, failure
 		return
 	}
-	watch.stream.write([]byte("\n\n"))
+	watch.stream.flush()
 	watch.stream.finish(failure)
 	delete(streams.watching, id)
 }

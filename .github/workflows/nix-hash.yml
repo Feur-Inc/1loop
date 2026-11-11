@@ -1,0 +1,117 @@
+name: Nix vendor hash
+
+# packaging/nix/package.nix declares the hash of the Go modules Nix
+# downloads (vendorHash). It changes whenever go.sum does, and a wrong one
+# fails the Nix build. This job computes it and puts the right one in:
+#   - on a pull request from this repository, as a commit on its branch;
+#   - on dev (two merged pull requests changed go.sum each), as a pull
+#     request of its own, since dev takes changes only through one.
+# Pull requests from forks get a read-only token: there the job only says
+# which hash to use.
+# A commit pushed with the workflow's token doesn't start new workflow
+# runs, so the pull request's other checks stay on the commit before; the
+# next push runs them all again.
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths: [go.mod, go.sum, flake.nix, flake.lock, packaging/nix/**]
+  push:
+    branches: [dev]
+    paths: [go.mod, go.sum, flake.nix, flake.lock, packaging/nix/**]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nix-hash-${{ github.head_ref || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  hash:
+    name: Check the Nix vendor hash
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          # The branch itself, not GitHub's merge of it: the fix is committed there.
+          ref: ${{ github.head_ref || github.ref }}
+
+      - uses: cachix/install-nix-action@13d8dd58da0234aa297dedd986986ccb8e7f3e24 # v31.11.1
+
+      - name: Compute the hash
+        id: hash
+        run: |
+          set -euo pipefail
+          file=packaging/nix/package.nix
+          old=$(grep -oE 'vendorHash = "sha256-[^"]+"' "$file" | grep -oE 'sha256-[^"]+')
+          # With a placeholder, Nix fails and prints the real hash.
+          sed -i "s|$old|sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=|" "$file"
+          new=$(nix build .#default.goModules --no-write-lock-file --no-link 2>&1 | grep -oE 'got: +sha256-[^ ]+' | awk '{print $2}' || true)
+          git checkout -- "$file"
+          if [ -z "$new" ]; then
+            echo "::error::Nix did not report the vendor hash: the modules' derivation failed for another reason."
+            nix build .#default.goModules --no-write-lock-file --no-link
+            exit 1
+          fi
+          echo "old=$old" >> "$GITHUB_OUTPUT"
+          echo "new=$new" >> "$GITHUB_OUTPUT"
+          if [ "$old" = "$new" ]; then
+            echo "The vendor hash is right: $old"
+          else
+            echo "The vendor hash should be $new (it is $old)."
+            sed -i "s|$old|$new|" "$file"
+          fi
+
+      - name: Commit it to the pull request
+        if: steps.hash.outputs.old != steps.hash.outputs.new && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "Nix: vendorHash for this branch's go.sum" -- packaging/nix/package.nix
+          git push origin "HEAD:${{ github.head_ref }}"
+          echo "::notice::Committed vendorHash ${{ steps.hash.outputs.new }} to ${{ github.head_ref }}."
+
+      - name: Say which hash to use (fork)
+        if: steps.hash.outputs.old != steps.hash.outputs.new && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository
+        run: |
+          echo "::error file=packaging/nix/package.nix::Set vendorHash = \"${{ steps.hash.outputs.new }}\";"
+          exit 1
+
+      - name: Open a pull request for dev
+        if: steps.hash.outputs.old != steps.hash.outputs.new && github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch=bot/nix-vendor-hash
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git switch -C "$branch"
+          git commit -m "Nix: vendorHash for dev's go.sum" -- packaging/nix/package.nix
+          git push --force origin "$branch"
+          if ! gh pr view "$branch" --json state -q .state 2>/dev/null | grep -q OPEN; then
+            gh pr create --base dev --head "$branch" \
+              --title "Nix: vendorHash for dev's go.sum" \
+              --body "No related issue.
+
+          ## Summary
+
+          - dev's \`go.sum\` changed, and the Nix package's \`vendorHash\` no longer matched it: \`nix build\` would fail. This sets the hash Nix computed, \`${{ steps.hash.outputs.new }}\`.
+
+          ## Screenshots
+
+          No visible change.
+
+          ## Technical details
+
+          - Opened by \`.github/workflows/nix-hash.yml\` after a push to dev.
+
+          Assisted-by: None"
+          fi

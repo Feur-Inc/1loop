@@ -79,6 +79,10 @@ type selPiece struct {
 	style    fyne.TextStyle
 	solid    bool   // selected whole or not at all (a formula, a list mark)
 	after    string // what separates it from the next piece in copied text
+	// clipped: the piece is inside a side scroll (a code block), which shows
+	// it only between left and right, in the layer's coordinates.
+	clipped     bool
+	left, right float32
 }
 
 // selSource is a widget whose text can be selected.
@@ -130,10 +134,12 @@ func newSelectLayer(ui *desktopUI, under fyne.CanvasObject) *selectLayer {
 // mouse there.
 func (selection *selectLayer) gather() {
 	selection.pieces, selection.taps, selection.stale, selection.over = selection.pieces[:0], selection.taps[:0], false, nil
-	selection.collect(selection.under, fyne.Position{})
+	selection.collect(selection.under, fyne.Position{}, nil)
 }
 
-func (selection *selectLayer) collect(object fyne.CanvasObject, origin fyne.Position) {
+// collect walks what is drawn under the layer. clip is the horizontal span
+// a side scroll shows of what is inside it, nil outside one.
+func (selection *selectLayer) collect(object fyne.CanvasObject, origin fyne.Position, clip *[2]float32) {
 	if object == nil || !object.Visible() {
 		return
 	}
@@ -145,6 +151,9 @@ func (selection *selectLayer) collect(object fyne.CanvasObject, origin fyne.Posi
 	if source, ok := object.(selSource); ok {
 		for _, piece := range source.selPieces() {
 			piece.at = piece.at.Add(origin)
+			if clip != nil {
+				piece.clipped, piece.left, piece.right = true, clip[0], clip[1]
+			}
 			selection.pieces = append(selection.pieces, piece)
 		}
 		return
@@ -152,12 +161,18 @@ func (selection *selectLayer) collect(object fyne.CanvasObject, origin fyne.Posi
 	switch o := object.(type) {
 	case *fyne.Container:
 		for _, child := range o.Objects {
-			selection.collect(child, origin.Add(child.Position()))
+			selection.collect(child, origin.Add(child.Position()), clip)
 		}
 	case *kineticScroll:
-		selection.collect(o.Content, origin.Add(o.Content.Position()))
+		selection.collect(o.Content, origin.Add(o.Content.Position()), clip)
 	case *container.Scroll:
-		selection.collect(o.Content, origin.Add(o.Content.Position()))
+		selection.collect(o.Content, origin.Add(o.Content.Position()), clip)
+	case *sideScroll: // a code block: its lines scroll sideways
+		shown := [2]float32{origin.X, origin.X + o.Size().Width}
+		if clip != nil {
+			shown = [2]float32{fyne.Max(shown[0], clip[0]), fyne.Min(shown[1], clip[1])}
+		}
+		selection.collect(o.Content, origin.Add(o.Content.Position()), &shown)
 	}
 }
 
@@ -318,7 +333,7 @@ func (selection *selectLayer) MouseDown(e *desktop.MouseEvent) {
 	if e.Button != desktop.MouseButtonPrimary {
 		return
 	}
-	selection.ui.selectIn(selection)
+	selection.ui.chatSel.start(selection)
 	selection.gather()
 	now := time.Now()
 	again := now.Sub(selection.pressed) < 400*time.Millisecond && distance(e.Position, selection.pressAt) < 4
@@ -360,12 +375,27 @@ func (selection *selectLayer) MouseUp(e *desktop.MouseEvent) {
 	}
 }
 
+// Dragged follows the pointer, into the other messages too (chatSelection).
 func (selection *selectLayer) Dragged(d *fyne.DragEvent) {
 	if !selection.active {
 		return
 	}
 	selection.dragged = true
-	selection.point = selection.locate(d.Position)
+	selection.ui.chatSel.drag(selection, d)
+}
+
+// edge is where the layer's text starts, or ends.
+func (selection *selectLayer) edge(end bool) selPoint {
+	if !end || len(selection.pieces) == 0 {
+		return selPoint{}
+	}
+	last := len(selection.pieces) - 1
+	return selPoint{last, len(selection.pieces[last].runes)}
+}
+
+// mark selects from from to point and shows it.
+func (selection *selectLayer) mark(from, point selPoint) {
+	selection.from, selection.point, selection.active = from, point, len(selection.pieces) > 0
 	selection.Refresh()
 }
 
@@ -477,10 +507,13 @@ func (renderer *selectRenderer) Refresh() {
 			}
 			mark := renderer.marks[used]
 			used++
-			left, right := piece.width(a), piece.width(z)
+			left, right := piece.at.X+piece.width(a), piece.at.X+piece.width(z)
+			if piece.clipped { // only what the code block shows
+				left, right = fyne.Max(left, piece.left), fyne.Min(right, piece.right)
+			}
 			mark.FillColor = ink
-			mark.Move(fyne.NewPos(piece.at.X+left, piece.at.Y-1))
-			mark.Resize(fyne.NewSize(right-left, piece.size.Height+2))
+			mark.Move(fyne.NewPos(left, piece.at.Y-1))
+			mark.Resize(fyne.NewSize(fyne.Max(0, right-left), piece.size.Height+2))
 			mark.Show()
 			mark.Refresh()
 		}

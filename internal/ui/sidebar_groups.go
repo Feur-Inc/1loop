@@ -11,6 +11,8 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
+
+	registry "1loop/internal/settings"
 )
 
 // A project shows this many chats until "Show more" is pressed.
@@ -19,6 +21,8 @@ const groupChatLimit = 5
 // sideChat is a chat as the sidebar lists it: this computer's, a machine's
 // or a server's.
 type sideChat struct {
+	id       string
+	parent   string // a subchat's parent, "" for another chat
 	title    string
 	folder   string // its project, or a worktree of it
 	scratch  bool   // in a folder 1loop made for it: listed under No folder
@@ -27,6 +31,40 @@ type sideChat struct {
 	open     func()
 	menu     []menuAction
 	text     func() []string // its messages, for search; nil when they are not at hand
+	subchats []sideChat      // listed under it, whatever their folder (nestSubchats)
+}
+
+// nestSubchats puts each subchat under its parent, wherever its folder is
+// (its worktree, or a parent's scratch folder). One whose parent is not
+// listed stays a chat of its own.
+func nestSubchats(chats []sideChat) []sideChat {
+	listed := map[string]bool{}
+	for _, chat := range chats {
+		listed[chat.id] = true
+	}
+	children := map[string][]sideChat{}
+	var top []sideChat
+	for _, chat := range chats {
+		if chat.parent != "" && chat.parent != chat.id && listed[chat.parent] {
+			children[chat.parent] = append(children[chat.parent], chat)
+			continue
+		}
+		top = append(top, chat)
+	}
+	for i := range top {
+		top[i].subchats = children[top[i].id]
+	}
+	return top
+}
+
+// openHere says whether the chat or one of its subchats is open.
+func (chat sideChat) openHere() bool {
+	return chat.selected || slices.ContainsFunc(chat.subchats, func(sub sideChat) bool { return sub.selected })
+}
+
+// workingHere says whether the chat or one of its subchats is at work.
+func (chat sideChat) workingHere() bool {
+	return chat.running || slices.ContainsFunc(chat.subchats, func(sub sideChat) bool { return sub.running })
 }
 
 // projectGroup is a project of the sidebar and the chats under it. The
@@ -74,7 +112,7 @@ func (ui *desktopUI) renderSidebar(projects []string, chats []sideChat, selectPr
 	opened := ui.projectOf(ui.cfg.Workspace)
 	ui.projectList.RemoveAll()
 	var scratch []sideChat
-	chats = slices.DeleteFunc(slices.Clone(chats), func(chat sideChat) bool {
+	chats = slices.DeleteFunc(nestSubchats(chats), func(chat sideChat) bool {
 		if chat.scratch {
 			scratch = append(scratch, chat)
 		}
@@ -83,7 +121,9 @@ func (ui *desktopUI) renderSidebar(projects []string, chats []sideChat, selectPr
 	if ui.server == nil && ui.cfg.MachineID == "" && (ui.cfg.InScratch() || len(scratch) > 0) {
 		ui.addScratchGroup(scratch)
 	}
+	ui.sideOrder = append(ui.sideOrder[:0], scratch...)
 	for _, group := range groupByProject(listed, chats, func(chat sideChat) string { return chat.folder }, ui.projectOf) {
+		ui.sideOrder = append(ui.sideOrder, group.chats...)
 		p := group.project
 		folded := ui.foldedProjects[p]
 		name := "Other chats"
@@ -165,7 +205,7 @@ func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 	if !ui.allChatsShown[project] && len(chats) > groupChatLimit {
 		shown = chats[:groupChatLimit]
 		for _, chat := range chats[groupChatLimit:] {
-			if chat.selected {
+			if chat.openHere() {
 				shown = chats
 			}
 		}
@@ -185,6 +225,18 @@ func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 		ui.projectList.Add(padded(0, 0, 28, 0, ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, chat.menu)
 		})))
+		for _, sub := range chat.subchats { // indented under it, with the subchat mark
+			sub := sub
+			subRow := newRow(sub.title, iconSubchat, styleNav, sub.open)
+			subRow.accent, subRow.truncate, subRow.selected = true, true, sub.selected
+			subRow.size = 13
+			if sub.running {
+				subRow.badge = iconDot
+			}
+			ui.projectList.Add(padded(0, 0, 44, 0, ui.withMore(subRow, func(anchor fyne.CanvasObject) *sheet {
+				return showMenu(ui.window, anchor, sub.menu)
+			})))
+		}
 	}
 	if len(chats) > groupChatLimit {
 		label := fmt.Sprintf("Show %d more", len(chats)-len(shown))
@@ -202,12 +254,7 @@ func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 }
 
 func groupRunning(chats []sideChat) bool {
-	for _, chat := range chats {
-		if chat.running {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(chats, sideChat.workingHere)
 }
 
 // foldProject folds or unfolds a project's group, kept for the next start.
@@ -224,9 +271,10 @@ func (ui *desktopUI) foldProject(project string, folded bool) {
 // sideActions is the labelled block at the top of the sidebar.
 func (ui *desktopUI) sideActions() fyne.CanvasObject {
 	ui.newChat = newRow("New chat", iconPlus, styleNav, ui.startNew)
-	ui.newChat.trailing = "Ctrl K"
-	search := newRow("Search", iconSearch, styleNav, ui.search)
-	search.trailing = "Ctrl F"
+	ui.newChat.trailing = ui.shortcutLabel(registry.ShortcutNewChat)
+	ui.searchRow = newRow("Search", iconSearch, styleNav, ui.search)
+	ui.searchRow.trailing = ui.shortcutLabel(registry.ShortcutSearch)
 	add := newRow("Add project", iconFolderAdd, styleNav, ui.addProject)
-	return container.New(layout.NewCustomPaddedVBoxLayout(1), ui.newChat, search, add)
+	add.trailing = ui.shortcutLabel(registry.ShortcutNewProject)
+	return container.New(layout.NewCustomPaddedVBoxLayout(1), ui.newChat, ui.searchRow, add)
 }

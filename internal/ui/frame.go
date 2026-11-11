@@ -3,7 +3,7 @@
 package ui
 
 // The frame hook: one function that runs on the interface thread at every
-// turn of Fyne's loop (about sixty times a second, drawing or not), just
+// turn of Fyne's loop (at the screen's refresh rate, drawing or not), just
 // before a frame may be drawn. It carries what must follow the loop itself:
 //
 //   - frame pacing on Wayland (see framePaceWait in chrome_wayland.go);

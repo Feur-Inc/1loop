@@ -125,7 +125,8 @@ func (d *gLDriver) runGL() {
 		f()
 	}
 
-	eventTick := time.NewTicker(time.Second / 60)
+	rate := d.refreshRate()
+	eventTick := time.NewTicker(time.Second / time.Duration(rate))
 	for {
 		select {
 		case <-d.done:
@@ -155,6 +156,10 @@ func (d *gLDriver) runGL() {
 		case <-eventTick.C:
 			cache.Tick(time.Now())
 			d.pollEvents()
+			if r := d.refreshRate(); r != rate { // a screen plugged, unplugged or changed
+				rate = r
+				eventTick.Reset(time.Second / time.Duration(rate))
+			}
 			for i := 0; i < len(d.windows); i++ {
 				w := d.windows[i].(*window)
 				if w.viewport == nil {

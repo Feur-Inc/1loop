@@ -31,3 +31,8 @@ shows every change.
   where the kernel times with HPET: half of an idle window's CPU). This
   replaces 1loop's former clock.go, which reached the same variable with
   go:linkname.
+- `internal/driver/glfw/loop.go`, `loop_desktop.go`, `loop_wasm.go`: the
+  driver's loop turns at the fastest screen's refresh rate (glfw video
+  modes, read again when a screen is plugged or unplugged, 60 to 360 Hz)
+  instead of a fixed 60 Hz, so animations and scrolling use a 120 or 165 Hz
+  screen's every refresh. The browser keeps 60.

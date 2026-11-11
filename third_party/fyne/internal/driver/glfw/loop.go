@@ -15,6 +15,17 @@ import (
 	"fyne.io/fyne/v2/internal/scale"
 )
 
+const (
+	idleRate  = 60                     // turns a second while nothing moves
+	busyFor   = 500 * time.Millisecond // how long the loop keeps the screen's rate after input or motion
+	movingGap = 50 * time.Millisecond  // frames this close together are something moving
+	motionMin = 150 * time.Millisecond // how long it must move to count without input
+)
+
+// inputAt is when the user last moved the pointer, scrolled or typed; set
+// by the window's callbacks, on the loop's own goroutine.
+var inputAt time.Time
+
 type funcData struct {
 	f    func()
 	done chan struct{} // Zero allocation signalling channel
@@ -57,7 +68,8 @@ func runOnMainWithWait(f func(), wait bool) {
 	}
 }
 
-func (d *gLDriver) drawSingleFrame() {
+// drawSingleFrame tells whether it drew a window (1loop: the loop's pace).
+func (d *gLDriver) drawSingleFrame() bool {
 	refreshed := false
 	for _, win := range d.windowList() {
 		w := win.(*window)
@@ -96,6 +108,7 @@ func (d *gLDriver) drawSingleFrame() {
 		})
 	}
 	cache.Clean(refreshed)
+	return refreshed
 }
 
 func (d *gLDriver) runGL() {
@@ -125,7 +138,15 @@ func (d *gLDriver) runGL() {
 		f()
 	}
 
-	eventTick := time.NewTicker(time.Second / 60)
+	// The loop turns at the screen's refresh rate while the user acts
+	// (pointer, wheel, keys: hovers, presses, scrolling follow) or
+	// something has been moving for a while (frames drawn back to back
+	// for longer than motionMin: the work ring, a long transition), and at
+	// 60 Hz otherwise (1loop). The caret's 100 ms fade, twice a second,
+	// stays at 60: turning faster for it cost ten times the idle CPU.
+	rate := idleRate
+	var drawn, moving, busy time.Time
+	eventTick := time.NewTicker(time.Second / time.Duration(rate))
 	for {
 		select {
 		case <-d.done:
@@ -155,6 +176,7 @@ func (d *gLDriver) runGL() {
 		case <-eventTick.C:
 			cache.Tick(time.Now())
 			d.pollEvents()
+
 			for i := 0; i < len(d.windows); i++ {
 				w := d.windows[i].(*window)
 				if w.viewport == nil {
@@ -183,7 +205,29 @@ func (d *gLDriver) runGL() {
 			}
 
 			d.animation.TickAnimations()
-			d.drawSingleFrame()
+			now := time.Now()
+			if d.drawSingleFrame() {
+				switch {
+				case now.Sub(drawn) >= movingGap:
+					moving = time.Time{}
+				case moving.IsZero():
+					moving = drawn
+				case now.Sub(moving) >= motionMin:
+					busy = now
+				}
+				drawn = now
+			}
+			if inputAt.After(busy) {
+				busy = inputAt
+			}
+			want := idleRate
+			if now.Sub(busy) < busyFor {
+				want = d.refreshRate()
+			}
+			if want != rate {
+				rate = want
+				eventTick.Reset(time.Second / time.Duration(rate))
+			}
 		}
 	}
 }

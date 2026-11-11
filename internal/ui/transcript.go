@@ -705,9 +705,11 @@ func (ui *desktopUI) relayoutColumn() {
 	}
 	defer platform.DevSlow("laying the conversation out", 6*time.Millisecond, time.Now())
 	content := ui.scroll.Content.(*fyne.Container)
+	// The column, over the selectCatcher.
+	column := content.Objects[len(content.Objects)-1].(*fyne.Container)
 	relayout(ui.transcript) // first: it measures the items the sizes below are made of
 	content.Resize(content.MinSize().Max(ui.scroll.Size()))
-	for _, c := range []*fyne.Container{content, ui.column, ui.transcript} {
+	for _, c := range []*fyne.Container{content, column, ui.column, ui.transcript} {
 		c.Layout.Layout(c.Objects, c.Size())
 	}
 	if ui.followTail {

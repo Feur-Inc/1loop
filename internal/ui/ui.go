@@ -179,7 +179,9 @@ func (themeSpec loopTheme) Size(name fyne.ThemeSizeName) float32 {
 type bareInputTheme struct{ fyne.Theme }
 
 func (themeSpec bareInputTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
-	if name == theme.ColorNameInputBackground || name == theme.ColorNameInputBorder {
+	// No shadow either where a long prompt scrolls: it darkened the card's
+	// top and bottom in bands.
+	if name == theme.ColorNameInputBackground || name == theme.ColorNameInputBorder || name == theme.ColorNameShadow {
 		return color.Transparent
 	}
 	return themeSpec.Theme.Color(name, v)

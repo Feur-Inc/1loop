@@ -127,6 +127,7 @@ const (
 	KeyWorktreeSort      = "general.worktree_sort"
 	KeyDiscordPresence   = "general.discord_presence"
 	KeyDiscordDetails    = "general.discord_details"
+	KeyAnimations        = "general.animations"
 )
 
 var list = []Setting{
@@ -156,6 +157,9 @@ var list = []Setting{
 	{Key: KeyDiscordDetails, Section: General, Title: "Share the chat on Discord", Where: OnDesktop, Kind: Toggle, Protected: true,
 		Description: "Adds the chat's title, its project and the current command or file to the Discord status.",
 		Keywords:    []string{"discord", "rich presence", "privacy", "project", "chat", "details", "share"}},
+	{Key: KeyAnimations, Section: General, Title: "Animations", Where: OnBoth, Kind: Toggle,
+		Description: "Short animations as you click, hover and as things change. Also off while the system asks for reduced motion.",
+		Keywords:    []string{"animation", "motion", "reduce motion", "reduced motion", "transitions", "effects", "accessibility", "fade"}},
 	{Key: "general.import", Section: General, Title: "Import chats", Where: OnDesktop, Kind: Action,
 		Description: "Bring conversations over from Claude Code, Codex and other apps.",
 		Keywords:    []string{"import", "history", "migrate", "conversations", "codex", "claude"}},

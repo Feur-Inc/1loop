@@ -12,6 +12,11 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateContentSize
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.shrinkVertically
+import androidx.compose.animation.slideInVertically
+import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.togetherWith
 import androidx.compose.animation.scaleIn
@@ -625,9 +630,15 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
             val scratch = topLevel.filter { it.scratch }
             if (scratch.isNotEmpty() || app.selectedProject == NO_FOLDER) {
                 NavRow("No folder", Icons.folder, selected = app.selectedProject == NO_FOLDER) { app.selectProject(NO_FOLDER) }
-                if (app.selectedProject == NO_FOLDER) Column(Modifier.padding(start = 16.dp)) {
-                    for (chat in scratch) chatRow(chat)
-                    if (scratch.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
+                AnimatedVisibility(
+                    app.selectedProject == NO_FOLDER,
+                    enter = expandVertically(motion(tween(200, easing = CssEase))) + fadeIn(motion(tween(160, 40))),
+                    exit = shrinkVertically(motion(tween(180, easing = CssEase))) + fadeOut(motion(tween(120))),
+                ) {
+                    Column(Modifier.padding(start = 16.dp).animateContentSize(motion(tween(200, easing = CssEase)))) {
+                        for (chat in scratch) chatRow(chat)
+                        if (scratch.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
+                    }
                 }
             }
             // A worktree shows under its project, not as a project of its own.
@@ -642,8 +653,13 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                     trailing = listOfNotNull(git?.current?.takeIf { it.isNotEmpty() }, app.machineOf(workspace)?.let { "on ${it.label}" })
                         .joinToString(" · ").ifEmpty { null },
                 ) { app.selectProject(workspace) }
-                if (app.projectOf(app.selectedProject) == workspace) {
-                    Column(Modifier.padding(start = 16.dp)) {
+                // A project's chats unfold under it, and slide as chats come and go.
+                AnimatedVisibility(
+                    app.projectOf(app.selectedProject) == workspace,
+                    enter = expandVertically(motion(tween(200, easing = CssEase))) + fadeIn(motion(tween(160, 40))),
+                    exit = shrinkVertically(motion(tween(180, easing = CssEase))) + fadeOut(motion(tween(120))),
+                ) {
+                    Column(Modifier.padding(start = 16.dp).animateContentSize(motion(tween(200, easing = CssEase)))) {
                         if (selected) chatRows(workspace)
                         WorktreeEntries(app, workspace, { chatRows(it) }, { worktreeActions = workspace to it }) { newWorktree = workspace }
                     }
@@ -705,7 +721,7 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
 @Composable
 internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", trailing: String? = null, status: String = "", blocked: Boolean = false, onClick: () -> Unit) {
     val press = remember { MutableInteractionSource() }
-    val fill by animateColorAsState(if (selected) Palette.selected else Color.Transparent, tween(180), label = "row")
+    val fill by animateColorAsState(if (selected) Palette.selected else Color.Transparent, motion(tween(180)), label = "row")
     Row(
         Modifier.pressScale(press, 0.97f).fillMaxWidth().clip(RoundedCornerShape(8.dp)).background(fill)
             .combinedClickable(press, ripple(), onClick = onClick, onLongClick = onLongClick, onLongClickLabel = longClickLabel).padding(horizontal = 10.dp, vertical = 10.dp),
@@ -937,11 +953,24 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
             Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) { NextStepCard(live, onReply = { app.send(it) }) }
         }
         item {
-            AnimatedVisibility(running, enter = fadeIn(), exit = fadeOut()) {
+            AnimatedVisibility(
+                running,
+                enter = fadeIn(motion(tween(180))) + expandVertically(motion(tween(180, easing = CssEase))),
+                exit = fadeOut(motion(tween(140))) + shrinkVertically(motion(tween(180, easing = CssEase))),
+            ) {
                 Row(Modifier.widthIn(max = 760.dp).fillMaxWidth().padding(top = 4.dp), verticalAlignment = Alignment.CenterVertically) {
                     WorkRing(app.meta?.mark?.ifEmpty { "wait" } ?: "wait", 38.dp)
                     Spacer(Modifier.width(12.dp))
-                    Text(app.meta?.label.orEmpty(), style = Type.body.copy(color = Palette.muted), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    // Each new activity rises in as the last one rises out.
+                    AnimatedContent(
+                        app.meta?.label.orEmpty(), label = "status",
+                        transitionSpec = {
+                            (slideInVertically(motion(tween(180, easing = CssEase))) { it / 3 } + fadeIn(motion(tween(180)))) togetherWith
+                                (slideOutVertically(motion(tween(180, easing = CssEase))) { -it / 3 } + fadeOut(motion(tween(120))))
+                        },
+                    ) { label ->
+                        Text(label, style = Type.body.copy(color = Palette.muted), maxLines = 2, overflow = TextOverflow.Ellipsis)
+                    }
                 }
             }
         }
@@ -1035,9 +1064,13 @@ private fun ToolRow(item: Item, onClick: () -> Unit) {
             item.target, style = if (item.mono) Type.mono else Type.body.copy(fontSize = 14.sp), maxLines = 1,
             overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false),
         )
-        if (item.meta.isNotEmpty()) {
-            Spacer(Modifier.width(10.dp))
-            Text(item.meta, style = Type.caption.copy(fontSize = 12.5.sp, color = toneColor(item.tone)), maxLines = 1)
+        // The call's outcome (+3 −1, 2 s, Failed) slides in beside it as it ends.
+        AnimatedVisibility(
+            item.meta.isNotEmpty(),
+            enter = fadeIn(motion(tween(180))) + slideInHorizontally(motion(tween(180, easing = CssEase))) { -it / 4 },
+            exit = fadeOut(motion(tween(120))),
+        ) {
+            Text(item.meta, style = Type.caption.copy(fontSize = 12.5.sp, color = toneColor(item.tone)), maxLines = 1, modifier = Modifier.padding(start = 10.dp))
         }
     }
 }

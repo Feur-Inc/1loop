@@ -174,7 +174,7 @@ func (mark *loopMark) showBrand() {
 func (mark *loopMark) intro() {
 	mark.stop()
 	mark.state = "intro"
-	mark.anim = fyne.NewAnimation(1240*time.Millisecond, func(progress float32) {
+	mark.anim = motion(1240*time.Millisecond, fyne.AnimationLinear, func(progress float32) {
 		if mark.state != "intro" {
 			return
 		}
@@ -195,8 +195,6 @@ func (mark *loopMark) intro() {
 		}
 		mark.show(mark.introAt[index])
 	})
-	mark.anim.Curve = fyne.AnimationLinear
-	mark.anim.Start()
 }
 
 // setState moves the ring to a work state ("brand" puts the artwork back).
@@ -616,15 +614,13 @@ func (screen *launchScreen) show() {
 }
 
 func (screen *launchScreen) play() {
-	screen.anim = fyne.NewAnimation(launchLength*time.Millisecond, func(p float32) {
+	screen.anim = motion(launchLength*time.Millisecond, fyne.AnimationLinear, func(p float32) {
 		screen.t = p * launchLength
 		screen.Refresh()
 		if p >= 1 {
 			screen.finish()
 		}
 	})
-	screen.anim.Curve = fyne.AnimationLinear
-	screen.anim.Start()
 }
 
 func (screen *launchScreen) Tapped(*fyne.PointEvent) { screen.finish() }

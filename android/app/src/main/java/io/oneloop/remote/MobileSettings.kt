@@ -258,6 +258,16 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
             Pill("Manage Linux", icon = Icons.terminal) { app.linuxOpen = true }
         }
         "phone.status" -> RunStatusSection()
+        "general.animations" -> {
+            val context = LocalContext.current
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Animations", style = Type.title)
+                    Text("Short animations as you tap, as menus open, as messages arrive and the chats change. Off, every change shows at once. They are off too while the system's Remove animations is on.", style = Type.small)
+                }
+                Toggle(Motion.enabled, enabled = true) { Motion.set(context, it) }
+            }
+        }
         "phone.adb" -> if (adb != null) {
             Text("Phone access", style = Type.title)
             LocalAdbSection(adb, app::setAdbAllowed, app.local::openShizuku, manualApproval = app.approvalMode == "approval")

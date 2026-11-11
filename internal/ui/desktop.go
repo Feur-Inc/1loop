@@ -208,6 +208,7 @@ type desktopUI struct {
 	welcome           fyne.CanvasObject
 	thinking          *fyne.Container
 	thinkLabel        *fitLabel
+	transcriptBox     *fyne.Container   // the transcript with its arrivals' veils over it
 	inlineRow         fyne.CanvasObject // the activity line's place under the last message
 	inlineSlot        *fyne.Container
 	dockRow           *fyne.Container // its place beside the composer (see dockActivity)
@@ -252,6 +253,7 @@ type desktopUI struct {
 	newChat        *tapRow
 	connections    *tapRow
 	projectList    *fyne.Container
+	sideGlide      *glideLayout // projectList's layout: its rows glide between renderings
 	sideLists      *fyne.Container
 	sideChats      []sideChat // the chats listed, for search
 	sideOrder      []sideChat // the same in the sidebar's order, for the previous and next chat
@@ -476,10 +478,16 @@ type fitLabel struct {
 	size  float32
 	color color.Color
 	label *canvas.Text
+	// roll: a new text rises in as the last one rises out (the run's
+	// status line), instead of replacing it in place.
+	roll     bool
+	leaving  *canvas.Text
+	progress float32 // of the roll, 1 when still
+	anim     *fyne.Animation
 }
 
 func newFitLabel(text string, size float32, c color.Color) *fitLabel {
-	label := &fitLabel{text: text, size: size, color: c, label: textLine(text, size, c)}
+	label := &fitLabel{text: text, size: size, color: c, label: textLine(text, size, c), progress: 1}
 	label.ExtendBaseWidget(label)
 	return label
 }
@@ -487,6 +495,17 @@ func newFitLabel(text string, size float32, c color.Color) *fitLabel {
 func (label *fitLabel) SetText(text string) {
 	if text == label.text {
 		return
+	}
+	if label.roll && label.text != "" && text != "" && label.Visible() && motionOn() {
+		if label.leaving == nil {
+			label.leaving = textLine("", label.size, label.color)
+		}
+		label.leaving.Text = label.label.Text
+		stopMotion(&label.anim)
+		label.anim = motion(180*time.Millisecond, fyne.AnimationEaseOut, func(p float32) {
+			label.progress = p
+			label.Refresh()
+		})
 	}
 	label.text = text
 	label.Refresh()
@@ -496,23 +515,44 @@ func (label *fitLabel) CreateRenderer() fyne.WidgetRenderer { return &fitLabelRe
 
 type fitLabelRenderer struct{ fitLabel *fitLabel }
 
+const fitLabelRoll = 7 // how far a rolled text travels, in points
+
 func (renderer *fitLabelRenderer) Layout(size fyne.Size) {
-	renderer.fitLabel.label.Text = fitText(renderer.fitLabel.text, renderer.fitLabel.size, fyne.TextStyle{}, size.Width)
-	renderer.fitLabel.label.Move(fyne.NewPos(0, (size.Height-renderer.fitLabel.label.MinSize().Height)/2))
+	label := renderer.fitLabel
+	label.label.Text = fitText(label.text, label.size, fyne.TextStyle{}, size.Width)
+	y := (size.Height - label.label.MinSize().Height) / 2
+	label.label.Move(fyne.NewPos(0, y+(1-label.progress)*fitLabelRoll))
+	if label.leaving != nil {
+		label.leaving.Move(fyne.NewPos(0, y-label.progress*fitLabelRoll))
+	}
 }
 
 func (renderer *fitLabelRenderer) MinSize() fyne.Size {
 	return fyne.NewSize(24, textSize("Ag", renderer.fitLabel.size, fyne.TextStyle{}).Height)
 }
 
+// Refresh fades the rolling texts in a few steps of opacity: each colour
+// of a text is a texture of its own.
 func (renderer *fitLabelRenderer) Refresh() {
-	renderer.fitLabel.label.Color = renderer.fitLabel.color
-	renderer.Layout(renderer.fitLabel.Size())
-	renderer.fitLabel.label.Refresh()
+	label := renderer.fitLabel
+	ink := color.NRGBAModel.Convert(label.color).(color.NRGBA)
+	label.label.Color = withAlpha(ink, quantize(label.progress, 4))
+	if label.leaving != nil {
+		label.leaving.Color = withAlpha(ink, quantize(1-label.progress, 4))
+		if label.progress >= 1 {
+			label.leaving.Text = ""
+		}
+		label.leaving.Refresh()
+	}
+	renderer.Layout(label.Size())
+	label.label.Refresh()
 }
 
 func (renderer *fitLabelRenderer) Objects() []fyne.CanvasObject {
-	return []fyne.CanvasObject{renderer.fitLabel.label}
+	if renderer.fitLabel.leaving == nil {
+		return []fyne.CanvasObject{renderer.fitLabel.label}
+	}
+	return []fyne.CanvasObject{renderer.fitLabel.leaving, renderer.fitLabel.label}
 }
 
 func (renderer *fitLabelRenderer) Destroy() {}
@@ -529,6 +569,7 @@ func (themeSpec flatScrollTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVar
 }
 
 func (ui *desktopUI) build() fyne.CanvasObject {
+	watchReducedMotion()
 	ui.tips = newTipLayer()
 	ui.chatSel.ui = ui
 	ui.buildSettings()
@@ -549,9 +590,12 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.items = &transcriptLayout{ui: ui}
 	ui.items.reset()
 	ui.transcript = container.New(ui.items)
+	ui.items.veils = container.NewWithoutLayout()
+	ui.transcriptBox = container.NewStack(ui.transcript, ui.items.veils)
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
 	ui.workMark = newLoopMark(inlineMarkSize)
 	ui.thinkLabel = newFitLabel("", 14, colMuted)
+	ui.thinkLabel.roll = true
 	// A tap on the line brings back questions closed without an answer.
 	ui.thinking = container.NewStack(
 		container.NewBorder(nil, nil, container.NewCenter(ui.workMark.image), nil, padded(0, 0, 12, 0, ui.thinkLabel)),
@@ -564,7 +608,7 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.pendingBox = container.NewVBox()
 	ui.footerSpace = canvas.NewRectangle(color.Transparent) // the composer floats over the end (glassFooterLayout)
 	ui.nextStep = container.NewVBox()
-	ui.column = container.NewVBox(ui.transcript, ui.nextStep, ui.inlineRow, ui.pendingBox, ui.footerSpace)
+	ui.column = container.NewVBox(ui.transcriptBox, ui.nextStep, ui.inlineRow, ui.pendingBox, ui.footerSpace)
 	// Behind the column, over the whole width: a press in the margins starts
 	// a selection too (selectCatcher).
 	ui.scroll = newKineticVScroll(container.NewStack(newSelectCatcher(ui), container.New(columnLayout{width: 760, inset: 24}, ui.column)))
@@ -798,13 +842,11 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		if focused {
 			target = 1
 		}
-		glowAnim = fyne.NewAnimation(220*time.Millisecond, func(p float32) {
+		glowAnim = motion(200*time.Millisecond, fyne.AnimationEaseOut, func(p float32) {
 			glowLevel = start + (target-start)*p
 			glow.setOpacity(glowLevel)
 			glow.refresh()
 		})
-		glowAnim.Curve = fyne.AnimationEaseOut
-		glowAnim.Start()
 	}
 	ui.attachRow = container.New(layout.NewCustomPaddedHBoxLayout(8))
 	// The optional rows are hidden with their margins: a hidden child inside
@@ -1814,6 +1856,7 @@ type savedState struct {
 	WorktreeSort      string                `json:"worktreeSort,omitempty"`
 	FoldedProjects    []string              `json:"foldedProjects,omitempty"` // sidebar groups folded
 	CloseQuits        bool                  `json:"closeQuits,omitempty"`
+	AnimationsOff     bool                  `json:"animationsOff,omitempty"`
 	TrayNoticeShown   bool                  `json:"trayNoticeShown,omitempty"`
 	DiscordPresence   bool                  `json:"discordPresence,omitempty"`
 	DiscordDetails    bool                  `json:"discordDetails,omitempty"`
@@ -1878,6 +1921,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.worktreeSort,
 		slices.Sorted(maps.Keys(ui.foldedProjects)),
 		ui.closeQuits,
+		animationsOff,
 		ui.trayNoticeShown,
 		ui.discordPresence,
 		ui.discordDetails,
@@ -2010,6 +2054,7 @@ func (ui *desktopUI) load() {
 	ui.memoryOff = state.MemoryOff
 	ui.wrapUpOff = state.WrapUpOff
 	ui.closeQuits, ui.trayNoticeShown = state.CloseQuits, state.TrayNoticeShown
+	animationsOff = state.AnimationsOff
 	ui.autoResume = state.AutoResume
 	ui.discordPresence, ui.discordDetails = state.DiscordPresence, state.DiscordDetails
 	ui.syncPresence()

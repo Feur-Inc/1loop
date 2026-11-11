@@ -472,12 +472,10 @@ func (switchControl *toggle) set(on bool) {
 	if on {
 		to = 1
 	}
-	switchControl.anim = fyne.NewAnimation(130*time.Millisecond, func(p float32) {
+	switchControl.anim = motion(130*time.Millisecond, fyne.AnimationEaseOut, func(p float32) {
 		switchControl.at = from + (to-from)*p
 		switchControl.Refresh()
 	})
-	switchControl.anim.Curve = fyne.AnimationEaseOut
-	switchControl.anim.Start()
 }
 
 func (switchControl *toggle) Tapped(*fyne.PointEvent) {
@@ -576,6 +574,10 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 				ui.save()
 			})))))
 	}
+	page.Add(sectionTitle("Motion"))
+	page.Add(card(view.mark(registry.KeyAnimations, settingRow("Animations",
+		"Short animations as you click and hover, as menus and dialogs open, as messages arrive and the sidebar changes. Off, every change shows at once. They are off too while the system asks for reduced motion.",
+		newToggle(!animationsOff, ui.setAnimations)))))
 	page.Add(sectionTitle("Discord"))
 	page.Add(card(view.mark(registry.KeyDiscordPresence, settingRow("Discord status",
 		"While the agent works, your Discord profile shows “Playing 1loop” with the model, what it is doing (thinking, running a command, editing files…) and for how long; “Idle” the rest of the time. Needs the Discord app open on this computer.",
@@ -598,6 +600,13 @@ func (ui *desktopUI) setDiscordPresence(on, details bool) {
 	ui.discordPresence, ui.discordDetails = on, details
 	platform.Devf("ui", "discord status %v, details %v", on, details)
 	ui.syncPresence()
+	ui.save()
+}
+
+// setAnimations turns the interface's animations on or off.
+func (ui *desktopUI) setAnimations(on bool) {
+	animationsOff = !on
+	platform.Devf("ui", "animations %v", on)
 	ui.save()
 }
 

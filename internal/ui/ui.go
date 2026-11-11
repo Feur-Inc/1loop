@@ -365,9 +365,12 @@ type tapRow struct {
 	clipped   bool          // the text was cut short at the last layout
 	hover     float32
 	alpha     float32 // whole-row opacity, used by menu fades
+	pill      bool    // selected, with the fill drawn by its list (glideLayout), which slides it from row to row
 	anim      *fyne.Animation
 	press     float32         // a click's flash of light, fading from 1
 	pressAnim *fyne.Animation // its fade
+	sink      float32         // how far the row is pressed in, while the button is down
+	sinkAnim  *fyne.Animation
 }
 
 func newRow(text string, icon fyne.Resource, style rowStyle, onTap func()) *tapRow {
@@ -412,18 +415,39 @@ func (row *tapRow) flash() {
 	if row.pressAnim != nil {
 		row.pressAnim.Stop()
 	}
-	row.pressAnim = fyne.NewAnimation(300*time.Millisecond, func(p float32) {
+	row.pressAnim = motion(200*time.Millisecond, fyne.AnimationEaseOut, func(p float32) {
 		row.press = 1 - p
 		row.Refresh()
 	})
-	row.pressAnim.Curve = fyne.AnimationEaseOut
-	row.pressAnim.Start()
 }
 
 // Rows are mouse targets of their own, so a title bar behind them never
-// mistakes a click on a control for the start of a window move.
-func (row *tapRow) MouseDown(*desktop.MouseEvent) {}
-func (row *tapRow) MouseUp(*desktop.MouseEvent)   {}
+// mistakes a click on a control for the start of a window move. While the
+// button is down the row sinks a little; the click itself acts on release,
+// as before, so nothing waits for the motion.
+func (row *tapRow) MouseDown(e *desktop.MouseEvent) {
+	if e.Button == desktop.MouseButtonPrimary && !row.disabled && row.onTap != nil {
+		row.setSink(1)
+	}
+}
+func (row *tapRow) MouseUp(*desktop.MouseEvent) { row.setSink(0) }
+
+// setSink presses the row in (1) or lets it back out (0): in quickly, out
+// a little slower, like a key.
+func (row *tapRow) setSink(to float32) {
+	if row.sink == to {
+		return
+	}
+	stopMotion(&row.sinkAnim)
+	from, length := row.sink, 160*time.Millisecond
+	if to > from {
+		length = 90 * time.Millisecond
+	}
+	row.sinkAnim = motion(length, fyne.AnimationEaseOut, func(p float32) {
+		row.sink = from + (to-from)*p
+		row.Refresh()
+	})
+}
 
 func (row *tapRow) Cursor() desktop.Cursor {
 	if row.disabled || row.onTap == nil {
@@ -447,6 +471,7 @@ func (row *tapRow) MouseIn(*desktop.MouseEvent) {
 func (row *tapRow) MouseMoved(*desktop.MouseEvent) {}
 func (row *tapRow) MouseOut() {
 	row.setHover(0, true)
+	row.setSink(0)
 	if row.onHover != nil {
 		row.onHover(false)
 	}
@@ -472,12 +497,10 @@ func (row *tapRow) setHover(target float32, animate bool) {
 		return
 	}
 	from := row.hover
-	row.anim = fyne.NewAnimation(130*time.Millisecond, func(p float32) {
+	row.anim = motion(130*time.Millisecond, fyne.AnimationEaseOut, func(p float32) {
 		row.hover = from + (target-from)*p
 		row.Refresh()
 	})
-	row.anim.Curve = fyne.AnimationEaseOut
-	row.anim.Start()
 }
 
 func (row *tapRow) CreateRenderer() fyne.WidgetRenderer {
@@ -507,6 +530,7 @@ type tapRowRenderer struct {
 	badge    *canvas.Image
 	tint     color.NRGBA
 	source   fyne.Resource
+	turn     float32 // the angle source is drawn at
 	marked   fyne.Resource
 }
 
@@ -571,11 +595,15 @@ func (renderer *tapRowRenderer) MinSize() fyne.Size {
 
 func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 	padX, _, iconSize, gap := renderer.metrics()
-	renderer.bg.Resize(size)
-	renderer.bg.Move(fyne.NewPos(0, 0))
+	// Pressed, the shape shrinks into itself by up to 2 points a side; the
+	// text and icon keep their place and their textures.
+	inset := renderer.row.sink * fyne.Min(2, fyne.Min(size.Width, size.Height)*0.06)
+	renderer.bg.Resize(size.SubtractWidthHeight(2*inset, 2*inset))
+	renderer.bg.Move(fyne.NewPos(inset, inset))
+	defer renderer.nudgeIcon()
 	switch renderer.row.style {
 	case styleOutline, styleIcon:
-		renderer.bg.CornerRadius = size.Height / 2
+		renderer.bg.CornerRadius = size.Height/2 - inset
 	case styleWindow:
 		renderer.bg.CornerRadius = 6
 	case stylePrimary, styleField:
@@ -640,6 +668,46 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 	renderer.detail.Move(fyne.NewPos(x, textY+renderer.label.MinSize().Height+1))
 }
 
+// iconNudges are the icons that lean the way they point while hovered.
+var iconNudges = map[fyne.Resource]fyne.Position{
+	iconChevron:      {X: 0, Y: 1.5},
+	iconChevronUp:    {X: 0, Y: -1.5},
+	iconChevronLeft:  {X: -1.5, Y: 0},
+	iconChevronRight: {X: 1.5, Y: 0},
+	iconArrowTurn:    {X: 1.5, Y: 0},
+}
+
+// nudgeIcon moves a pointing icon a little its way as the row is hovered.
+func (renderer *tapRowRenderer) nudgeIcon() {
+	row := renderer.row
+	if nudge, ok := iconNudges[row.icon]; ok && row.hover > 0 && !row.disabled {
+		renderer.icon.Move(renderer.icon.Position().AddXY(nudge.X*row.hover, nudge.Y*row.hover))
+	}
+}
+
+// iconTurns are the icons that turn while hovered, by how many degrees.
+var iconTurns = map[fyne.Resource]float32{iconPlus: 90}
+
+// turnCache holds the turned icons: a few angles each, rasterised once.
+var turnCache = map[string]fyne.Resource{}
+
+// turned is a line icon rotated about its centre. Its name keeps the
+// line icons' prefix, so tinted recolours it like the others.
+func turned(icon fyne.Resource, degrees float32) fyne.Resource {
+	if degrees == 0 {
+		return icon
+	}
+	name := fmt.Sprintf("%s-turned%g.svg", strings.TrimSuffix(icon.Name(), ".svg"), degrees)
+	if res, ok := turnCache[name]; ok {
+		return res
+	}
+	body := string(icon.Content())
+	open, end := strings.Index(body, ">")+1, strings.LastIndex(body, "</svg>")
+	res := fyne.NewStaticResource(name, []byte(fmt.Sprintf(`%s<g transform="rotate(%g 8 8)">%s</g></svg>`, body[:open], degrees, body[open:end])))
+	turnCache[name] = res
+	return res
+}
+
 func (renderer *tapRowRenderer) colorsAt(h float32) (fill, stroke, ink color.NRGBA) {
 	row := renderer.row
 	clear := color.NRGBA{}
@@ -648,6 +716,9 @@ func (renderer *tapRowRenderer) colorsAt(h float32) (fill, stroke, ink color.NRG
 		fill = mix(clear, colHover, h)
 		if row.selected {
 			fill = mix(colSelected, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x18}, h)
+			if row.pill { // over the list's own fill: only the hover's light
+				fill = mix(clear, color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x0c}, h)
+			}
 		}
 		ink = colText
 		if !row.selected && row.accent {
@@ -777,9 +848,15 @@ func (renderer *tapRowRenderer) Refresh() {
 	if row.style == styleField || row.style == styleChip && !row.accent && row.iconAfter {
 		iconInk = colMuted
 	}
-	if row.icon != nil && (renderer.source != row.icon || renderer.tint != iconInk) {
-		renderer.source, renderer.tint = row.icon, iconInk
-		renderer.icon.Resource = tinted(row.icon, iconInk)
+	// A turning icon steps through a few angles, like the ink: each is a
+	// texture of its own.
+	turn := iconTurns[row.icon] * quantize(row.hover, 6)
+	if row.disabled {
+		turn = 0
+	}
+	if row.icon != nil && (renderer.source != row.icon || renderer.tint != iconInk || renderer.turn != turn) {
+		renderer.source, renderer.tint, renderer.turn = row.icon, iconInk, turn
+		renderer.icon.Resource = tinted(turned(row.icon, turn), iconInk)
 		renderer.icon.Refresh()
 	}
 	if row.badge != nil && renderer.marked != row.badge {
@@ -928,15 +1005,13 @@ func (dialog *sheet) animate(from, to float32, duration time.Duration, curve fyn
 	if dialog.anim != nil {
 		dialog.anim.Stop()
 	}
-	dialog.anim = fyne.NewAnimation(duration, func(p float32) {
+	dialog.anim = motion(duration, curve, func(p float32) {
 		dialog.progress = from + (to-from)*p
 		dialog.Refresh()
 		if p >= 1 && done != nil {
 			done()
 		}
 	})
-	dialog.anim.Curve = curve
-	dialog.anim.Start()
 }
 
 func (dialog *sheet) Show() {
@@ -961,9 +1036,9 @@ func (dialog *sheet) Show() {
 	dialog.frostAt = rect{}
 	dialog.canvas.Overlays().Add(dialog)
 	dialog.Refresh()
-	duration := 220 * time.Millisecond
+	duration := 180 * time.Millisecond
 	if dialog.menu {
-		duration = 260 * time.Millisecond // long enough for the rows to cascade in
+		duration = 200 * time.Millisecond // long enough for the rows to cascade in
 	}
 	// Start on the next loop turn: the first frame of a new overlay builds its
 	// textures, and timing that frame would swallow the start of the motion.
@@ -1017,6 +1092,9 @@ func (dialog *sheet) Hide() {
 	}
 }
 
+// shown says the sheet is open and not on its way out.
+func (dialog *sheet) shown() bool { return dialog.open && !dialog.closing }
+
 // close fades the sheet out before removing it, like a web popover.
 func (dialog *sheet) close() {
 	if !dialog.open || dialog.closing {
@@ -1026,13 +1104,10 @@ func (dialog *sheet) close() {
 	dialog.animate(dialog.progress, 0, 120*time.Millisecond, fyne.AnimationEaseIn, dialog.Hide)
 }
 
-// dismiss closes the sheet as a cancellation (outside tap or Escape).
+// dismiss closes the sheet as a cancellation (outside tap, Escape or a
+// dialog's ✕): it fades out, menu or dialog, since nothing waits on it.
 func (dialog *sheet) dismiss() {
-	if dialog.menu {
-		dialog.close()
-	} else {
-		dialog.Hide()
-	}
+	dialog.close()
 	if dialog.onDismiss != nil {
 		dialog.onDismiss()
 	}
@@ -1441,12 +1516,10 @@ func fadeRow(row *tapRow, to float32, anim **fyne.Animation) {
 		(*anim).Stop()
 	}
 	from := row.alpha
-	*anim = fyne.NewAnimation(140*time.Millisecond, func(p float32) {
+	*anim = motion(140*time.Millisecond, fyne.AnimationEaseOut, func(p float32) {
 		row.alpha = from + (to-from)*p
 		row.Refresh()
 	})
-	(*anim).Curve = fyne.AnimationEaseOut
-	(*anim).Start()
 }
 
 // menuAction is one entry of a context menu.
@@ -1708,7 +1781,7 @@ func (tooltip *tipLayer) fade(to float32) {
 		tooltip.anim.Stop()
 	}
 	from := tooltip.alpha
-	tooltip.anim = fyne.NewAnimation(120*time.Millisecond, func(p float32) {
+	tooltip.anim = motion(120*time.Millisecond, fyne.AnimationEaseOut, func(p float32) {
 		tooltip.alpha = from + (to-from)*p
 		tooltip.bg.FillColor = withAlpha(colRaised, tooltip.alpha)
 		tooltip.bg.StrokeColor = withAlpha(colPopBorder, tooltip.alpha)
@@ -1724,8 +1797,6 @@ func (tooltip *tipLayer) fade(to float32) {
 			tooltip.layer.Hide()
 		}
 	})
-	tooltip.anim.Curve = fyne.AnimationEaseOut
-	tooltip.anim.Start()
 }
 
 // ---------------------------------------------------------------------------

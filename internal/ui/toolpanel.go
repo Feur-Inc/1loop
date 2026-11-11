@@ -267,7 +267,7 @@ func (panel *toolPanel) slide(to float32) {
 	from := panel.shown
 	panel.target, panel.snap = to, false
 	panel.syncBrowsers()
-	panel.anim = fyne.NewAnimation(240*time.Millisecond, func(t float32) {
+	panel.anim = motion(200*time.Millisecond, easeOutQuint, func(t float32) {
 		panel.shown = from + (to-from)*t
 		started := time.Now()
 		relayout(panel.ui.split) // never Refresh: it would redraw the whole conversation on every frame
@@ -278,8 +278,6 @@ func (panel *toolPanel) slide(to float32) {
 			panel.snap = false
 		}
 	})
-	panel.anim.Curve = easeOutQuint
-	panel.anim.Start()
 	panel.ui.panelToggle.SetSelected(to > 0)
 	panel.syncRows()
 	panel.ui.save() // open or folded is part of what the chat remembers

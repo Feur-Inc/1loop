@@ -138,7 +138,7 @@ func (ui *desktopUI) connectGitHub(source githubSource, current githubconnector.
 			}
 			if err != nil || state.Error != "" || state.Connected {
 				fyne.Do(func() {
-					if !dialog.open {
+					if !dialog.shown() {
 						return
 					}
 					dialog.dismiss()
@@ -152,7 +152,7 @@ func (ui *desktopUI) connectGitHub(source githubSource, current githubconnector.
 				return
 			}
 			fyne.Do(func() {
-				if !dialog.open {
+				if !dialog.shown() {
 					cancel()
 					return
 				}

@@ -3,7 +3,8 @@
 package server
 
 // The headless server's security: its TLS certificate, device pairing
-// approved from the console, and the tokens paired devices carry.
+// (the first device from a one-time setup link, the next ones approved from
+// a paired device or the console), and the tokens paired devices carry.
 
 import (
 	"bufio"
@@ -54,7 +55,7 @@ func (server *headlessServer) authorized(next http.HandlerFunc) http.HandlerFunc
 }
 
 func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request) {
-	var args struct{ Device string }
+	var args struct{ Device, Setup string }
 	if core.ReadJSON(req, &args) != nil || strings.TrimSpace(args.Device) == "" || len(args.Device) > 120 {
 		core.Fail(writer, 400, "Provide a device name")
 		return
@@ -77,12 +78,56 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 	}
 	id := core.Identifier()[:12]
 	code := fmt.Sprintf("%06d", number)
-	server.pairs[id] = &serverPair{Device: args.Device, Code: remoteapi.TokenHash(code), Expires: time.Now().Add(2 * time.Minute)}
-	fmt.Fprintf(os.Stderr, "\nPairing requested by %q. Type: pair %s <code shown on that device>\n", args.Device, id)
-	if server.local { // the phone's app shows it, to type the code
-		server.broadcastLocked("sharing", map[string]bool{"enabled": server.sharing != nil})
+	pair := &serverPair{Device: args.Device, Code: remoteapi.TokenHash(code), Expires: time.Now().Add(2 * time.Minute)}
+	server.pairs[id] = pair
+	if server.setup != "" && len(server.devices) == 0 && subtle.ConstantTimeCompare([]byte(server.setup), []byte(args.Setup)) == 1 {
+		// The setup link: approved at once, and used up.
+		pair.Approved, server.setup = true, ""
+		fmt.Fprintf(os.Stderr, "\n%q paired with the setup link.\n", args.Device)
+	} else {
+		fmt.Fprintf(os.Stderr, "\nPairing requested by %q. Approve it in 1loop on a paired device, or type: pair %s <code shown on that device>\n", args.Device, id)
+		server.pairingChangedLocked()
 	}
-	core.WriteJSON(writer, 200, map[string]any{"pairing": id, "code": code, "console": true, "phone": server.local, "expiresIn": 120})
+	core.WriteJSON(writer, 200, map[string]any{"pairing": id, "code": code, "console": true, "phone": server.local, "approved": pair.Approved, "expiresIn": 120})
+}
+
+// pairingChangedLocked tells the clients that can approve pairings: the
+// phone's app in local mode, the paired devices otherwise.
+func (server *headlessServer) pairingChangedLocked() {
+	if server.local {
+		server.broadcastLocked("sharing", map[string]bool{"enabled": server.sharing != nil})
+	} else {
+		server.broadcastLocked("pairing", map[string]any{"pending": server.pendingPairsLocked()})
+	}
+}
+
+// pendingPairsLocked are the pairings waiting for approval.
+func (server *headlessServer) pendingPairsLocked() []map[string]any {
+	pending := []map[string]any{}
+	for id, pair := range server.pairs {
+		if time.Now().Before(pair.Expires) && !pair.Approved && pair.Tries < 5 {
+			pending = append(pending, map[string]any{"id": id, "device": pair.Device, "expiresAt": pair.Expires.UnixMilli()})
+		}
+	}
+	return pending
+}
+
+// pairings is GET /api/pairings: the pairings a paired device can approve.
+func (server *headlessServer) pairings(w http.ResponseWriter, r *http.Request) {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	core.WriteJSON(w, 200, map[string]any{"pending": server.pendingPairsLocked()})
+}
+
+// offerSetupLocked prints a one-time setup link while no device is paired:
+// opening it in a browser pairs that browser without the console. The
+// secret is in the URL's fragment, which browsers never send in a request.
+func (server *headlessServer) offerSetupLocked() {
+	if server.local || server.webDir == "" || len(server.devices) > 0 {
+		return
+	}
+	server.setup = core.Identifier()
+	fmt.Fprintf(os.Stderr, "\nNo device is paired yet. To pair the first one, open this link in a browser,\nwith this server's address in place of <server> (it works once):\n\n  https://<server>:%d/app/#setup=%s\n\n", server.setupPort, server.setup)
 }
 
 func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.Request) {
@@ -105,7 +150,7 @@ func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.
 		return
 	}
 	if !pair.Approved {
-		core.Fail(writer, 409, "Waiting for approval in the server console")
+		core.Fail(writer, 409, "Waiting for approval on a paired device or in the server console")
 		return
 	}
 	token := core.Identifier()
@@ -117,6 +162,7 @@ func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.
 		return
 	}
 	delete(server.pairs, args.Pairing)
+	server.setup = "" // a device is paired: no more setup link
 	if server.local {
 		server.broadcastLocked("sharing", map[string]bool{"enabled": server.sharing != nil})
 	}
@@ -149,6 +195,7 @@ func (server *headlessServer) console() {
 				break
 			}
 			pair.Approved = true
+			server.pairingChangedLocked()
 			fmt.Fprintf(os.Stderr, "Approved %q. Finish connecting on that device.\n", pair.Device)
 		case "devices":
 			for index, device := range server.devices {
@@ -173,6 +220,7 @@ func (server *headlessServer) console() {
 			} else {
 				server.disconnectStreamsLocked()
 				fmt.Fprintln(os.Stderr, "Device revoked")
+				server.offerSetupLocked()
 			}
 		case "ssh", "trust", "refuse":
 			server.machineConsole(parts)

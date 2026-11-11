@@ -15,6 +15,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -78,12 +79,7 @@ func (server *headlessServer) sharingState(w http.ResponseWriter, r *http.Reques
 	for _, device := range server.devices {
 		devices = append(devices, map[string]any{"name": device.Name, "added": device.Added})
 	}
-	pending := []map[string]any{}
-	for id, pair := range server.pairs {
-		if time.Now().Before(pair.Expires) && !pair.Approved && pair.Tries < 5 {
-			pending = append(pending, map[string]any{"id": id, "device": pair.Device, "expiresAt": pair.Expires.UnixMilli()})
-		}
-	}
+	pending := server.pendingPairsLocked()
 	port := 0
 	if server.sharing != nil {
 		port = server.sharingPort
@@ -138,7 +134,8 @@ func (server *headlessServer) setSharing(w http.ResponseWriter, r *http.Request)
 
 // answerPairing is POST /api/local/pairings/{id} {code, approve}: the phone's
 // user typed the code the device shows (as in the server console), or
-// refused it.
+// refused it. A headless server's paired devices answer the same way at
+// POST /api/pairings/{id}.
 func (server *headlessServer) answerPairing(w http.ResponseWriter, r *http.Request) {
 	var args struct {
 		Code    string
@@ -158,7 +155,7 @@ func (server *headlessServer) answerPairing(w http.ResponseWriter, r *http.Reque
 	}
 	if !args.Approve {
 		delete(server.pairs, id)
-		server.broadcastLocked("sharing", map[string]bool{"enabled": server.sharing != nil})
+		server.pairingChangedLocked()
 		core.WriteJSON(w, 200, map[string]bool{"ok": true})
 		return
 	}
@@ -168,7 +165,10 @@ func (server *headlessServer) answerPairing(w http.ResponseWriter, r *http.Reque
 		return
 	}
 	pair.Approved = true
-	server.broadcastLocked("sharing", map[string]bool{"enabled": server.sharing != nil})
+	if !server.local {
+		fmt.Fprintf(os.Stderr, "Approved %q from a paired device.\n", pair.Device)
+	}
+	server.pairingChangedLocked()
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }
 

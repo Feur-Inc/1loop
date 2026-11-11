@@ -5,13 +5,14 @@ package ui
 // The browser client (cmd/1loop-web, issue #267): the desktop's remote mode
 // alone, built for GOOS=js and served by 1loop-server at /app/. It has no
 // computer of its own to run agents on, so it skips everything local at
-// startup and drives the server the page came from, pairing from its
-// console as the desktop does. The browser already checked the server's
-// certificate, so there is no fingerprint to pin: requests go through
-// fetch, which never sees Go's TLS settings.
+// startup and drives the server the page came from, pairing as the desktop
+// does or with the server's setup link. The browser already checked the
+// server's certificate, so there is no fingerprint to pin: requests go
+// through fetch, which never sees Go's TLS settings.
 
 import (
 	"context"
+	"strings"
 	"syscall/js"
 	"time"
 
@@ -49,9 +50,17 @@ func WebMain() {
 	ui.window.ShowAndRun()
 }
 
-// connectOrigin uses the token saved for this server, or pairs.
+// connectOrigin uses the token saved for this server, or pairs: at once
+// with the server's one-time setup link (#setup=… in the address).
 func (ui *desktopUI) connectOrigin() {
-	origin := js.Global().Get("location").Get("origin").String()
+	location := js.Global().Get("location")
+	origin := location.Get("origin").String()
+	setup := ""
+	if hash := location.Get("hash").String(); strings.HasPrefix(hash, "#setup=") {
+		setup = strings.TrimPrefix(hash, "#setup=")
+		// Out of the address bar and the history: it is used up.
+		js.Global().Get("history").Call("replaceState", nil, "", location.Get("pathname").String())
+	}
 	saved := loadServerAddress()
 	target := serverAddress{URL: origin}
 	if saved.URL == origin {
@@ -76,17 +85,17 @@ func (ui *desktopUI) connectOrigin() {
 			client.address.Token = ""
 		}
 		var reply struct {
-			Pairing, Code  string
-			Console, Phone bool
+			Pairing, Code            string
+			Console, Phone, Approved bool
 		}
-		err := client.json(ctx, "POST", "/api/pair", map[string]string{"device": "1loop web"}, &reply)
+		err := client.json(ctx, "POST", "/api/pair", map[string]string{"device": "1loop web", "setup": setup}, &reply)
 		fyne.Do(func() {
 			if err != nil {
 				status.SetText(err.Error())
 				return
 			}
 			sheet.dismiss()
-			ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone)
+			ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone, reply.Approved)
 		})
 	}()
 }

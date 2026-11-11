@@ -90,3 +90,15 @@ func TestWheelFactorIgnoresAcceleration(t *testing.T) {
 		t.Fatalf("an accelerated notch zooms %v, a notch %v", wheelFactor(25*125), wheelFactor(25))
 	}
 }
+
+func TestFitFrameKeepsTheFramesProportions(t *testing.T) {
+	// A 754 × 471 frame shown while the page is already 754 × 770: drawn
+	// as it is, letterboxed, not stretched to the page's new proportions.
+	pos, rendered := fitFrame(fyne.NewSize(760, 700), fyne.NewSize(754, 471))
+	if !near(rendered.Width/rendered.Height, 754.0/471) || !near(rendered.Width, 760) {
+		t.Fatalf("rendered %v", rendered)
+	}
+	if !near(pos.X, 0) || !near(pos.Y, (700-rendered.Height)/2) {
+		t.Fatalf("not centred: %v", pos)
+	}
+}

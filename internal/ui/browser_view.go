@@ -455,14 +455,18 @@ func (renderer *browserScreenRenderer) Layout(size fyne.Size) {
 	screen := renderer.screen
 	info := screen.view.page.Snapshot()
 	screen.background.Resize(size)
-	scale := fyne.Min(size.Width/float32(info.Width), size.Height/float32(info.Height))
-	screen.rendered = fyne.NewSize(float32(info.Width)*scale, float32(info.Height)*scale)
-	screen.position = fyne.NewPos((size.Width-screen.rendered.Width)/2, (size.Height-screen.rendered.Height)/2)
+	// Drawn at the frame's own proportions: a frame from before a resize
+	// is shown as it is until the next one, never stretched to the new size.
+	frame := fyne.NewSize(float32(info.Width), float32(info.Height))
+	if img := screen.image.Image; img != nil && img.Bounds().Dx() > 0 && img.Bounds().Dy() > 0 {
+		frame = fyne.NewSize(float32(img.Bounds().Dx()), float32(img.Bounds().Dy()))
+	}
+	screen.position, screen.rendered = fitFrame(size, frame)
 	screen.zoom.clamp(size)
 	screen.image.Move(screen.zoom.at(screen.position))
 	screen.image.Resize(screen.zoom.sized(screen.rendered))
 	if screen.cursorGlide == nil {
-		screen.modelCursor.Move(screen.cursorTarget(scale))
+		screen.modelCursor.Move(screen.cursorTarget())
 	}
 	placeZoomBadge(screen.zoomBadge, screen.zoomText, &screen.zoom, size)
 	width, height := max(240, min(3840, int(size.Width))), max(200, min(2160, int(size.Height)))
@@ -755,17 +759,21 @@ func newAgentCursor() *fyne.Container {
 	return cursor
 }
 
-func (screen *browserScreen) cursorTarget(scale float32) fyne.Position {
-	return screen.zoom.at(screen.position.Add(fyne.NewPos(float32(screen.cursorX)*scale, float32(screen.cursorY)*scale)))
+func (screen *browserScreen) cursorTarget() fyne.Position {
+	info := screen.view.page.Snapshot()
+	if info.Width <= 0 || info.Height <= 0 {
+		return screen.zoom.at(screen.position)
+	}
+	x := float32(screen.cursorX) * screen.rendered.Width / float32(info.Width)
+	y := float32(screen.cursorY) * screen.rendered.Height / float32(info.Height)
+	return screen.zoom.at(screen.position.Add(fyne.NewPos(x, y)))
 }
 
 // glide moves the agent's pointer to a point of the page, smoothly, as a
 // hand would; the first time it appears there.
 func (screen *browserScreen) glide(x, y float64) {
 	screen.cursorX, screen.cursorY = x, y
-	info := screen.view.page.Snapshot()
-	scale := fyne.Min(screen.Size().Width/float32(info.Width), screen.Size().Height/float32(info.Height))
-	to := screen.cursorTarget(scale)
+	to := screen.cursorTarget()
 	if screen.cursorGlide != nil {
 		screen.cursorGlide.Stop()
 		screen.cursorGlide = nil

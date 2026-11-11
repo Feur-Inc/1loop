@@ -87,6 +87,17 @@ func wheelFactor(dy float32) float32 {
 	return float32(math.Exp(float64(min(25, max(-25, dy))) * 0.006))
 }
 
+// fitFrame places a frame of the given proportions in the view, as large as
+// it fits, centred.
+func fitFrame(size, frame fyne.Size) (fyne.Position, fyne.Size) {
+	if frame.Width <= 0 || frame.Height <= 0 {
+		return fyne.NewPos(0, 0), size
+	}
+	scale := fyne.Min(size.Width/frame.Width, size.Height/frame.Height)
+	rendered := fyne.NewSize(frame.Width*scale, frame.Height*scale)
+	return fyne.NewPos((size.Width-rendered.Width)/2, (size.Height-rendered.Height)/2), rendered
+}
+
 // zoomModifier: Ctrl (or Cmd) is held, from the screen's own tracking or
 // the driver's, so a scroll zooms the view.
 func zoomModifier(held bool) bool {
@@ -101,13 +112,11 @@ func zoomModifier(held bool) bool {
 // newZoomBadge is the sign that the view is zoomed, shown over its corner,
 // with the way back to the agent's view.
 func newZoomBadge(reset func()) (*fyne.Container, *canvas.Text) {
-	text := textLine("100%", 11.5, colText)
+	text := textLine("100%", 11.5, colAmber)
 	text.TextStyle = fyne.TextStyle{Bold: true}
-	icon := canvas.NewImageFromResource(tinted(iconSearch, colAmber))
-	icon.SetMinSize(fyne.NewSquareSize(14))
 	background := canvas.NewRectangle(colPopover)
 	background.StrokeColor, background.StrokeWidth, background.CornerRadius = colPopBorder, 1, 15
-	row := container.NewHBox(icon, text, spacer(2, 0), textLine("View only", 11.5, colMuted), newRow("Reset view", iconReload, styleChip, reset))
+	row := container.NewHBox(text, spacer(2, 0), textLine("View only", 11.5, colMuted), newRow("Reset view", iconReload, styleChip, reset))
 	badge := container.NewStack(background, padded(1, 1, 10, 4, row))
 	badge.Hide()
 	return badge, text

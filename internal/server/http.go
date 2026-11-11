@@ -248,6 +248,10 @@ func (server *headlessServer) mentions(w http.ResponseWriter, r *http.Request) {
 }
 
 func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		Worktree bool `json:"worktree"` // a subchat's: remove its worktree and branch too
+	}
+	_ = core.ReadJSON(r, &args)
 	server.mu.Lock()
 	chat := server.chatLocked(r.PathValue("id"))
 	if chat == nil {
@@ -255,6 +259,11 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 		core.Fail(w, 404, "Chat not found")
 		return
 	}
+	worktree := ""
+	if args.Worktree {
+		worktree = server.subchatWorktreeLocked(chat)
+	}
+	project := server.worktrees[worktree]
 	previous := server.chats
 	kept := make([]*serverChat, 0, len(previous)-1)
 	for _, candidate := range previous {
@@ -285,7 +294,21 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 	for _, tab := range tabs {
 		tab.close()
 	}
-	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+	reply := map[string]any{"ok": true}
+	if worktree != "" {
+		ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
+		kept, err := agent.RemoveSubchatWorktree(ctx, gitrepo.Local, worktree, false)
+		cancel()
+		if err != nil {
+			kept = "The worktree " + worktree + " was kept: " + err.Error()
+		} else {
+			gitTarget{server}.Removed(project, worktree)
+		}
+		if kept != "" {
+			reply["note"] = kept
+		}
+	}
+	core.WriteJSON(w, 200, reply)
 }
 
 // clearBrowser erases what the agent's browser keeps: cookies and logins,

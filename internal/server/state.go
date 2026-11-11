@@ -527,6 +527,9 @@ func (server *headlessServer) summariesLocked() []remoteapi.Chat {
 		summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
 		if chat.Subchat != nil {
 			summary.Parent = chat.Subchat.Parent
+			if server.subchatWorktreeLocked(chat) != "" {
+				summary.Branch = chat.Subchat.Branch
+			}
 		}
 		out = append(out, summary)
 	}

@@ -47,6 +47,7 @@ type Chat struct {
 	Running   bool   `json:"running"`
 	Items     int    `json:"items"`
 	Parent    string `json:"parent,omitempty"` // a subchat's parent chat (agent/subchats.go)
+	Branch    string `json:"branch,omitempty"` // a subchat's own worktree's branch, removable with it
 	// From its last wrap_up: the recap's first sentence, and whether the
 	// chat waits on the user.
 	Status  string `json:"status,omitempty"`

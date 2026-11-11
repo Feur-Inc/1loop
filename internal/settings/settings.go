@@ -189,7 +189,7 @@ var list = []Setting{
 		Description: "At the end of a turn that did work, the agent sums it up in a card and, when the next move is yours, asks with one or two reply buttons. Off: it is not offered the wrap_up tool.",
 		Keywords:    []string{"wrap up", "next step", "recap", "card", "buttons", "end of turn"}},
 	{Key: "agent.project_memory", Section: Agent, Title: "Project memory", Where: OnDesktop, Kind: Action,
-		Description: "Each project's AGENTS.md, which every agent reads there.",
+		Description: "Each project's AGENTS.md, which every agent reads there, edited from the project's … menu in the sidebar.",
 		Keywords:    []string{"agents.md", "project", "instructions", "memory", "claude.md"}},
 	{Key: KeyDynamicCompaction, Section: Agent, Title: "Dynamic compaction", Where: OnDesktop, Kind: Toggle,
 		Description: "Compact the context at natural breaks in the work instead of once when it is nearly full.",

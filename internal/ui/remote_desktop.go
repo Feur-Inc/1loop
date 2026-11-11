@@ -708,7 +708,9 @@ func (remote *remoteDesktop) renderChats() {
 			menu:     []menuAction{{label: "Delete", icon: iconTrash, danger: true, run: func() { remote.deleteChat(chat) }}},
 		})
 	}
-	ui.renderSidebar(remote.projects, chats, remote.selectProject, ui.repositoryActions)
+	ui.renderSidebar(remote.projects, chats, remote.selectProject, func(p string) []menuAction {
+		return append(ui.repositoryActions(p), ui.projectMemoryAction(p))
+	})
 }
 
 // projectMenu is the composer's folder chip for a server: its projects.

@@ -43,6 +43,7 @@ type Chat struct {
 	Title     string `json:"title"`
 	Workspace string `json:"workspace"`
 	Scratch   bool   `json:"scratch,omitempty"` // a chat without a folder: show "No folder", never the path
+	Machine   string `json:"machine,omitempty"` // the SSH machine its project is on, by its label
 	Running   bool   `json:"running"`
 	Items     int    `json:"items"`
 	Parent    string `json:"parent,omitempty"` // a subchat's parent chat (agent/subchats.go)

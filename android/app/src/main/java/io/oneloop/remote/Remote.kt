@@ -343,6 +343,9 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var projects by mutableStateOf(listOf<String>())
     // The target's worktrees, folder → project: their chats belong to the project (Worktrees.kt).
     var worktrees by mutableStateOf(mapOf<String, String>())
+    // The headless server's SSH machines, and the projects that are folders of one (Machines.kt).
+    var machines by mutableStateOf(listOf<SshMachine>())
+    var projectMachines by mutableStateOf(mapOf<String, String>())
     val repositories = mutableStateMapOf<String, Repository>() // by project
     var repositoryOpen by mutableStateOf<String?>(null) // the project the Repository screen shows
     var worktreeSort by mutableStateOf(prefs.getString("worktreeSort", null) ?: "recent")
@@ -722,6 +725,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         loadingEarlier = false
         scrolls.clear()
         projects = emptyList()
+        machines = emptyList()
+        projectMachines = emptyMap()
         workspace = ""
         models.clear()
         accounts.clear()
@@ -835,6 +840,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             chats.addAll(parseChats(state.optJSONArray("chats")))
             projects = strings(state.optJSONArray("projects"))
             worktrees = stringMap(state.optJSONObject("worktrees"))
+            machines = parseMachines(state.optJSONArray("machines"))
+            projectMachines = stringMap(state.optJSONObject("projectMachines"))
             workspace = state.optString("workspace")
             projectManagement = state.optBoolean("projectManagement")
             projectActions = state.optBoolean("projectActions")
@@ -1161,18 +1168,32 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         open(null)
     }
 
-    suspend fun projectFolders(path: String): JSONObject {
+    /** Folders to choose a project from: the target's own, or an SSH machine's (its ID). */
+    suspend fun projectFolders(path: String, machine: String? = null): JSONObject {
         val target = server ?: error("Connect first.")
         val generation = connectionGeneration
-        return onConnection(target, generation) { it.get("/api/projects?path=" + java.net.URLEncoder.encode(path, "UTF-8")) }
+        val query = "/api/projects?path=" + java.net.URLEncoder.encode(path, "UTF-8") +
+            (machine?.let { "&machine=" + java.net.URLEncoder.encode(it, "UTF-8") } ?: "")
+        return onConnection(target, generation) { it.get(query) }
     }
 
-    suspend fun addProject(path: String, create: Boolean) {
+    suspend fun addProject(path: String, create: Boolean, machine: String? = null) {
         val target = server ?: error("Connect first.")
         val generation = connectionGeneration
-        val reply = onConnection(target, generation) { it.post("/api/projects", JSONObject().put("path", path).put("create", create)) }
+        val body = JSONObject().put("path", path).put("create", create)
+        machine?.let { body.put("machine", it) }
+        val reply = onConnection(target, generation) { it.post("/api/projects", body) }
         projects = strings(reply.optJSONArray("projects"))
+        applyMachines(reply)
         selectProject(reply.getString("workspace"))
+    }
+
+    /** The machine a project is on, null for the target's own folders. */
+    fun machineOf(project: String?): SshMachine? = projectMachine(machines, projectMachines, projectOf(project))
+
+    private fun applyMachines(data: JSONObject) {
+        data.optJSONArray("machines")?.let { machines = parseMachines(it) }
+        data.optJSONObject("projectMachines")?.let { projectMachines = stringMap(it) }
     }
 
     suspend fun changeProject(path: String, name: String? = null) {
@@ -1195,6 +1216,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     private fun applyProjects(data: JSONObject) {
         projects = strings(data.optJSONArray("projects"))
         data.optJSONObject("worktrees")?.let { worktrees = stringMap(it) }
+        applyMachines(data)
         val previous = data.optString("previous")
         val destination = data.optString("workspace")
         val selected = selectedProject.orEmpty()

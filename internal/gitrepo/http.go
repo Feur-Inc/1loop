@@ -90,6 +90,49 @@ func Handlers(target Target, authorizations func(context.Context) []string) map[
 			}
 			core.WriteJSON(w, http.StatusOK, map[string]any{"hub": hub, "worktreePulls": pulls})
 		},
+		// An issue or pull request the conversation cites: ref is #N (the
+		// project's repository), owner/name#N or its address; detail asks
+		// for the whole page, else the summary.
+		"GET /api/git/github/item": func(w http.ResponseWriter, r *http.Request) {
+			path, ok := project(w, r.URL.Query().Get("project"))
+			if !ok {
+				return
+			}
+			ref, valid := ParseRef(r.URL.Query().Get("ref"))
+			if !valid {
+				core.Fail(w, http.StatusBadRequest, "Invalid reference")
+				return
+			}
+			if ref.Owner == "" {
+				repo, ok := open(w, r, path)
+				if !ok {
+					return
+				}
+				if repo.Owner == "" {
+					core.Fail(w, http.StatusNotFound, "This repository has no GitHub remote named origin")
+					return
+				}
+				ref.Owner, ref.Name = repo.Owner, repo.Name
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 40*time.Second)
+			defer cancel()
+			var reply any
+			var err error
+			if r.URL.Query().Get("detail") != "" {
+				reply, err = Details(ctx, ref, authorizations(ctx))
+			} else {
+				reply, err = Summary(ctx, ref, authorizations(ctx))
+			}
+			if errors.Is(err, ErrNoItem) {
+				core.Fail(w, http.StatusNotFound, err.Error())
+				return
+			}
+			if err != nil {
+				core.Fail(w, http.StatusBadGateway, err.Error())
+				return
+			}
+			core.WriteJSON(w, http.StatusOK, reply)
+		},
 		"POST /api/git/worktrees": func(w http.ResponseWriter, r *http.Request) {
 			var body struct {
 				Project string

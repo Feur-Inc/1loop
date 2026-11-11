@@ -3,7 +3,7 @@
 package ui
 
 import (
-	"regexp"
+	"image/color"
 	"strconv"
 	"strings"
 	"time"
@@ -14,13 +14,15 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
+	"github.com/yuin/goldmark/ast"
+	east "github.com/yuin/goldmark/extension/ast"
 )
 
-// markdownView renders a model answer. The text is cut into blocks
-// (splitMarkdown: prose, fenced code, tables, formulas on their own line);
-// prose is cut again into headings, paragraphs, lists, quotes and rules
-// (renderText), and every line of text is laid out by flowText, which draws
-// the inline styles and knows where each word is, for links and selection.
+// markdownView renders a model answer. goldmark parses it (mdinline.go);
+// each top-level block (a paragraph, a heading, a list, a quote, code, a
+// table, a formula) becomes widgets, and every run of text is laid out by
+// flowText, which draws the inline styles and knows where each word is,
+// for links and selection.
 type markdownView struct {
 	layer  *selectLayer // over the box: selects its text with the mouse
 	box    *fyne.Container
@@ -28,10 +30,12 @@ type markdownView struct {
 	objs   []fyne.CanvasObject
 }
 
+// mdBlock identifies a top-level block: while an answer streams, a block
+// whose source did not change keeps its widgets.
 type mdBlock struct {
 	kind string // "text", "code", "table", "math"
-	lang string // code: its language; math: "open" while its end is not written yet
-	text string
+	lang string // math: "open" while its end is not written yet
+	text string // its source
 }
 
 func newMarkdownView(text string) *markdownView {
@@ -43,15 +47,16 @@ func newMarkdownView(text string) *markdownView {
 // ParseMarkdown re-renders the text. Unchanged blocks keep their widgets:
 // while an answer streams, only its last block is built again.
 func (view *markdownView) ParseMarkdown(text string) {
-	blocks := splitMarkdown(text)
+	source := []byte(hideOpenTag(text))
+	nodes, blocks := splitMarkdown(source)
 	objs := make([]fyne.CanvasObject, len(blocks))
 	reshaped := len(blocks) != len(view.blocks)
-	for i, mdBlock := range blocks {
-		if i < len(view.blocks) && view.blocks[i] == mdBlock {
+	for i, block := range blocks {
+		if i < len(view.blocks) && view.blocks[i] == block {
 			objs[i] = view.objs[i]
 			continue
 		}
-		objs[i] = renderBlock(mdBlock)
+		objs[i] = renderNode(nodes[i], source, colText)
 		reshaped = true
 	}
 	view.blocks, view.objs = blocks, objs
@@ -67,222 +72,124 @@ func (view *markdownView) ParseMarkdown(text string) {
 	}
 }
 
-func renderBlock(mdBlockValue mdBlock) fyne.CanvasObject {
-	switch mdBlockValue.kind {
-	case "code":
-		return markdownCode(mdBlockValue.lang, mdBlockValue.text)
-	case "table":
-		return newMarkdownTable(mdBlockValue.text)
-	case "math":
-		if mdBlockValue.lang == "open" { // still being written: not worth composing yet
-			return markdownCode("latex", mdBlockValue.text)
-		}
-		formula := newFlowText([]span{{math: mdBlockValue.text, text: mdBlockValue.text}}, theme.TextSize(), colText)
-		formula.center = true
-		return padded(4, 4, 0, 0, formula)
+// hideOpenTag cuts a citation tag still arriving at the end of a streamed
+// answer: it shows once whole.
+func hideOpenTag(text string) string {
+	if at := strings.LastIndex(text, "<cite"); at >= 0 && !strings.Contains(text[at:], ">") {
+		return text[:at]
 	}
-	return renderText(mdBlockValue.text)
+	return text
 }
 
-var tableRule = regexp.MustCompile(`^\s*\|?\s*:?-{2,}:?\s*(\|\s*:?-{2,}:?\s*)*\|?\s*$`)
-
-// splitMarkdown cuts the text into prose, fenced code, table and formula
-// blocks. An unterminated fence (still streaming) is code up to the end.
-func splitMarkdown(text string) []mdBlock {
-	lines := strings.Split(text, "\n")
-	var blocks []mdBlock
-	var plain []string
-	flush := func() {
-		for _, part := range paragraphs(plain) {
-			blocks = append(blocks, mdBlock{kind: "text", text: part})
-		}
-		plain = nil
+// splitMarkdown parses the text and gives its top-level blocks, each with
+// its source.
+func splitMarkdown(source []byte) ([]ast.Node, []mdBlock) {
+	var nodes []ast.Node
+	for node := parseMarkdown(source).FirstChild(); node != nil; node = node.NextSibling() {
+		nodes = append(nodes, node)
 	}
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "```") || strings.HasPrefix(trimmed, "~~~") {
-			flush()
-			fence := trimmed[:3]
-			lang := strings.TrimSpace(strings.TrimLeft(trimmed, "`~"))
-			indent := len(line) - len(strings.TrimLeft(line, " \t"))
-			var code []string
-			for i++; i < len(lines) && !strings.HasPrefix(strings.TrimSpace(lines[i]), fence); i++ {
-				row := lines[i]
-				for n := 0; n < indent && len(row) > 0 && (row[0] == ' ' || row[0] == '\t'); n++ {
-					row = row[1:] // a fence indented in a list: its code is too
-				}
-				code = append(code, row)
-			}
-			blocks = append(blocks, mdBlock{kind: "code", lang: lang, text: strings.Join(code, "\n")})
-			continue
+	starts := make([]int, len(nodes)+1)
+	starts[len(nodes)] = len(source)
+	for i, node := range nodes {
+		starts[i] = blockStart(node)
+		if i > 0 && starts[i] < starts[i-1] {
+			starts[i] = starts[i-1] // unknown: right after the previous block
 		}
-		// A formula on its own lines: $$ … $$ or \[ … \].
-		if opening, closing := mathFence(trimmed); opening != "" {
-			flush()
-			body := strings.TrimPrefix(trimmed, opening)
-			state := "open"
-			var formula []string
-			for {
-				if end := strings.Index(body, closing); end >= 0 {
-					formula = append(formula, body[:end])
-					state = ""
-					break
-				}
-				formula = append(formula, body)
-				if i++; i >= len(lines) {
-					break
-				}
-				body = lines[i]
-			}
-			blocks = append(blocks, mdBlock{kind: "math", lang: state, text: strings.TrimSpace(strings.Join(formula, "\n"))})
-			continue
-		}
-		if strings.Contains(line, "|") && i+1 < len(lines) && tableRule.MatchString(lines[i+1]) {
-			flush()
-			rows := []string{line}
-			for i += 2; i < len(lines) && strings.Contains(lines[i], "|") && strings.TrimSpace(lines[i]) != ""; i++ {
-				rows = append(rows, lines[i])
-			}
-			i--
-			blocks = append(blocks, mdBlock{kind: "table", text: strings.Join(rows, "\n")})
-			continue
-		}
-		plain = append(plain, line)
+		starts[i] = max(starts[i], 0)
 	}
-	flush()
-	return blocks
+	blocks := make([]mdBlock, len(nodes))
+	for i, node := range nodes {
+		block := mdBlock{kind: "text", text: strings.TrimRight(string(source[starts[i]:max(starts[i], starts[i+1])]), " \t\n")}
+		switch node := node.(type) {
+		case *ast.FencedCodeBlock, *ast.CodeBlock:
+			block.kind = "code"
+		case *east.Table:
+			block.kind = "table"
+		case *mathBlock:
+			block.kind = "math"
+			if !node.closed {
+				block.lang = "open"
+			}
+		}
+		blocks[i] = block
+	}
+	return nodes, blocks
 }
 
-func mathFence(line string) (opening, closing string) {
-	switch {
-	case strings.HasPrefix(line, "$$"):
-		return "$$", "$$"
-	case strings.HasPrefix(line, `\[`):
-		return `\[`, `\]`
+// blockStart is where a block starts in the source, or -1.
+func blockStart(node ast.Node) int {
+	if node.Pos() >= 0 {
+		return node.Pos()
 	}
-	return "", ""
-}
-
-var (
-	listItem   = regexp.MustCompile(`^(\s*)([-*+]|\d+[.)])\s+(.*)$`)
-	headingRow = regexp.MustCompile(`^(#{1,6})\s+(.*?)\s*#*\s*$`)
-	ruleRow    = regexp.MustCompile(`^\s*([-*_])(\s*[-*_]){2,}\s*$`)
-)
-
-// paragraphs splits prose at blank lines and around headings, so the view
-// can space blocks like a page; a list stays in one piece.
-func paragraphs(lines []string) []string {
-	var parts []string
-	var current []string
-	flush := func() {
-		if text := strings.Trim(strings.Join(current, "\n"), "\n"); strings.TrimSpace(text) != "" {
-			parts = append(parts, text)
-		}
-		current = nil
+	if node.Type() == ast.TypeBlock && node.Lines().Len() > 0 {
+		return node.Lines().At(0).Start
 	}
-	lastContent := ""
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "" {
-			next := ""
-			for _, l := range lines[i+1:] {
-				if strings.TrimSpace(l) != "" {
-					next = l
-					break
-				}
-			}
-			inList := listItem.MatchString(lastContent) || strings.HasPrefix(lastContent, "  ")
-			if !(inList && (listItem.MatchString(next) || strings.HasPrefix(next, "  "))) {
-				flush()
-				continue
-			}
-		}
-		if strings.HasPrefix(trimmed, "#") && len(current) > 0 {
-			flush()
-		}
-		current = append(current, line)
-		if trimmed != "" {
-			lastContent = line
-		}
-		if strings.HasPrefix(trimmed, "#") {
-			flush() // a heading is its own block
+	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+		if at := blockStart(child); at >= 0 {
+			return at
 		}
 	}
-	flush()
-	return parts
+	return -1
 }
 
 var headingSizes = [...]float32{22, 19, 16.5, 15, 14, 14}
 
-// renderText lays one block of prose out: its headings, paragraphs, lists,
-// quotes and rules, top to bottom.
-func renderText(text string) fyne.CanvasObject {
+// renderNode lays one block out, its own blocks inside it top to bottom.
+func renderNode(node ast.Node, source []byte, ink color.Color) fyne.CanvasObject {
 	size := theme.TextSize()
-	lines := strings.Split(text, "\n")
+	switch node := node.(type) {
+	case *ast.Heading:
+		heading := newFlowText(inlineSpans(node, source), headingSizes[min(max(node.Level, 1), 6)-1], ink)
+		heading.bold = true
+		return padded(6, 0, 0, 0, heading)
+	case *ast.Paragraph, *ast.TextBlock:
+		return newFlowText(inlineSpans(node, source), size, ink)
+	case *ast.HTMLBlock:
+		var raw strings.Builder
+		for i := 0; i < node.Lines().Len(); i++ {
+			line := node.Lines().At(i)
+			raw.Write(line.Value(source))
+		}
+		return newFlowText(htmlSpans(raw.String()), size, ink)
+	case *ast.ThematicBreak:
+		rule := canvas.NewRectangle(colBorder)
+		rule.SetMinSize(fyne.NewSize(0, 1))
+		return padded(4, 4, 0, 0, rule)
+	case *ast.Blockquote:
+		bar := canvas.NewRectangle(colBorder)
+		bar.SetMinSize(fyne.NewSize(3, 0))
+		bar.CornerRadius = 1.5
+		return container.NewBorder(nil, nil, bar, nil, padded(1, 1, 12, 0, renderChildren(node, source, colMuted)))
+	case *ast.List:
+		var last *flowText
+		list := renderList(node, source, 0, ink, &last)
+		if last != nil {
+			last.tail = "\n\n"
+		}
+		return list
+	case *ast.FencedCodeBlock:
+		return markdownCode(string(node.Language(source)), codeBlockText(node, source))
+	case *ast.CodeBlock:
+		return markdownCode("", codeBlockText(node, source))
+	case *east.Table:
+		return newMarkdownTable(tableSpans(node, source))
+	case *mathBlock:
+		if !node.closed { // still being written: not worth composing yet
+			return markdownCode("latex", node.formula())
+		}
+		formula := newFlowText([]span{{math: node.formula(), text: node.formula()}}, size, colText)
+		formula.center = true
+		return padded(4, 4, 0, 0, formula)
+	}
+	return renderChildren(node, source, ink)
+}
+
+// renderChildren stacks a container block's blocks.
+func renderChildren(node ast.Node, source []byte, ink color.Color) fyne.CanvasObject {
 	var out []fyne.CanvasObject
-	var para []string
-	flush := func() {
-		if len(para) > 0 {
-			out = append(out, newFlowText(parseInline(strings.Join(para, "\n")), size, colText))
-			para = nil
-		}
+	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
+		out = append(out, renderNode(child, source, ink))
 	}
-	for i := 0; i < len(lines); i++ {
-		line := lines[i]
-		trimmed := strings.TrimSpace(line)
-		switch {
-		case trimmed == "":
-			flush()
-		case headingRow.MatchString(trimmed):
-			flush()
-			found := headingRow.FindStringSubmatch(trimmed)
-			heading := newFlowText(parseInline(found[2]), headingSizes[len(found[1])-1], colText)
-			heading.bold = true
-			out = append(out, padded(6, 0, 0, 0, heading))
-		case len(para) > 0 && (strings.Trim(trimmed, "=") == "" || strings.Trim(trimmed, "-") == "") && len(trimmed) >= 2:
-			// A line of = or - under a paragraph makes it a heading.
-			level := 1
-			if trimmed[0] == '-' {
-				level = 2
-			}
-			heading := newFlowText(parseInline(strings.Join(para, " ")), headingSizes[level-1], colText)
-			heading.bold = true
-			para = nil
-			out = append(out, padded(6, 0, 0, 0, heading))
-		case ruleRow.MatchString(line):
-			rule := canvas.NewRectangle(colBorder)
-			rule.SetMinSize(fyne.NewSize(0, 1))
-			out = append(out, padded(4, 4, 0, 0, rule))
-		case strings.HasPrefix(trimmed, ">"):
-			flush()
-			var quoted []string
-			for ; i < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i]), ">"); i++ {
-				quoted = append(quoted, strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(lines[i]), ">"), " "))
-			}
-			i--
-			bar := canvas.NewRectangle(colBorder)
-			bar.SetMinSize(fyne.NewSize(3, 0))
-			bar.CornerRadius = 1.5
-			body := newFlowText(parseInline(strings.Join(quoted, "\n")), size, colMuted)
-			out = append(out, container.NewBorder(nil, nil, bar, nil, padded(1, 1, 12, 0, body)))
-		case listItem.MatchString(line):
-			flush()
-			start := i
-			for i+1 < len(lines) {
-				next := lines[i+1]
-				if listItem.MatchString(next) || strings.TrimSpace(next) == "" || strings.HasPrefix(next, " ") || strings.HasPrefix(next, "\t") {
-					i++
-					continue
-				}
-				break
-			}
-			out = append(out, renderList(lines[start:i+1], size))
-		default:
-			para = append(para, line)
-		}
-	}
-	flush()
 	if len(out) == 1 {
 		return out[0]
 	}
@@ -290,63 +197,73 @@ func renderText(text string) fyne.CanvasObject {
 }
 
 // renderList lays a list out: bullets or numbers in a margin, items that
-// wrap under themselves, sublists indented under their item.
-func renderList(lines []string, size float32) fyne.CanvasObject {
-	type item struct {
-		level  int
-		marker string
-		text   []string
-	}
-	var items []item
-	var indents []int // the indentation of each open level
-	for _, line := range lines {
-		found := listItem.FindStringSubmatch(line)
-		if found == nil {
-			if len(items) > 0 && strings.TrimSpace(line) != "" { // an item going on
-				items[len(items)-1].text = append(items[len(items)-1].text, strings.TrimSpace(line))
-			}
-			continue
-		}
-		indent := len(strings.ReplaceAll(found[1], "\t", "    "))
-		for len(indents) > 0 && indent < indents[len(indents)-1] {
-			indents = indents[:len(indents)-1]
-		}
-		if len(indents) == 0 || indent > indents[len(indents)-1]+1 {
-			indents = append(indents, indent)
-		}
-		level := len(indents) - 1
-		marker, content := found[2], found[3]
-		switch {
-		case strings.HasPrefix(content, "[ ] "):
-			marker, content = "☐", content[4:]
-		case strings.HasPrefix(content, "[x] "), strings.HasPrefix(content, "[X] "):
-			marker, content = "☑", content[4:]
-		case len(marker) == 1: // a bullet
-			marker = [...]string{"•", "◦", "▪"}[min(level, 2)]
-		default:
-			if _, err := strconv.Atoi(marker[:len(marker)-1]); err == nil {
-				marker = marker[:len(marker)-1] + "."
-			}
-		}
-		items = append(items, item{level, marker, []string{content}})
-	}
+// wrap under themselves, sublists and the items' other blocks indented
+// under their item. last is the list's last line of text, which ends it
+// in copied text.
+func renderList(list *ast.List, source []byte, level int, ink color.Color, last **flowText) fyne.CanvasObject {
+	size := theme.TextSize()
 	box := container.New(layout.NewCustomPaddedVBoxLayout(6))
-	for n, itemValue := range items {
-		text := strings.TrimSpace(strings.Join(itemValue.text, "\n"))
-		if text == "" {
-			continue // a bullet whose text is not written yet
+	indent := float32(level) * 20
+	number := list.Start
+	for item := list.FirstChild(); item != nil; item = item.NextSibling() {
+		marker := [...]string{"•", "◦", "▪"}[min(level, 2)]
+		if list.IsOrdered() {
+			marker = strconv.Itoa(number) + "."
+			number++
 		}
-		entry := newFlowText(parseInline(text), size, colText)
-		entry.marker, entry.hang, entry.tail = itemValue.marker, 24, "\n"
-		if w, _, _ := measureText(itemValue.marker, size, fyne.TextStyle{}); w+10 > entry.hang {
-			entry.hang = w + 10 // a long number
+		child := item.FirstChild()
+		switch child.(type) {
+		case *ast.Paragraph, *ast.TextBlock:
+			if box, ok := child.FirstChild().(*east.TaskCheckBox); ok {
+				marker = "☐"
+				if box.IsChecked {
+					marker = "☑"
+				}
+			}
+			if spans := inlineSpans(child, source); len(spans) > 0 { // a bullet whose text is not written yet waits
+				entry := newFlowText(spans, size, ink)
+				entry.marker, entry.hang, entry.tail = marker, 24, "\n"
+				if w, _, _ := measureText(marker, size, fyne.TextStyle{}); w+10 > entry.hang {
+					entry.hang = w + 10 // a long number
+				}
+				box.Add(padded(0, 0, indent, 0, entry))
+				*last = entry
+			}
+			child = child.NextSibling()
 		}
-		if n == len(items)-1 {
-			entry.tail = "\n\n"
+		for ; child != nil; child = child.NextSibling() {
+			if sublist, ok := child.(*ast.List); ok {
+				box.Add(renderList(sublist, source, level+1, ink, last))
+				continue
+			}
+			box.Add(padded(0, 0, indent+24, 0, renderNode(child, source, ink)))
+			*last = nil
 		}
-		box.Add(padded(0, 0, float32(itemValue.level)*20, 0, entry))
 	}
 	return box
+}
+
+// codeBlockText is a code block's text.
+func codeBlockText(node ast.Node, source []byte) string {
+	var code strings.Builder
+	for i := 0; i < node.Lines().Len(); i++ {
+		line := node.Lines().At(i)
+		code.Write(line.Value(source))
+	}
+	return strings.TrimSuffix(code.String(), "\n")
+}
+
+// tableSpans are a table's cells, row by row, the header first.
+func tableSpans(table *east.Table, source []byte) [][][]span {
+	var rows [][][]span
+	for row := table.FirstChild(); row != nil; row = row.NextSibling() {
+		var cells [][]span
+		for cell := row.FirstChild(); cell != nil; cell = cell.NextSibling() {
+			cells = append(cells, inlineSpans(cell, source))
+		}
+		rows = append(rows, cells)
+	}
+	return rows
 }
 
 // markdownCode frames a fenced block with its language and a copy button.
@@ -388,17 +305,6 @@ type markdownTable struct {
 	width   float32   // last laid out width, used to size wrapped rows
 }
 
-func splitRow(line string) []string {
-	line = strings.TrimSpace(line)
-	line = strings.TrimPrefix(line, "|")
-	line = strings.TrimSuffix(line, "|")
-	parts := strings.Split(line, "|")
-	for i := range parts {
-		parts[i] = strings.TrimSpace(parts[i])
-	}
-	return parts
-}
-
 // selPieces gives the selection layer the cells' text, row by row, as
 // tab-separated columns.
 func (table *markdownTable) selPieces() []selPiece {
@@ -428,21 +334,19 @@ func (table *markdownTable) linkAt(at fyne.Position) string {
 
 func (table *markdownTable) Tapped(e *fyne.PointEvent) { openLink(table.linkAt(e.Position)) }
 
-func newMarkdownTable(text string) *markdownTable {
+func newMarkdownTable(rows [][][]span) *markdownTable {
 	table := &markdownTable{width: 600}
-	rows := strings.Split(text, "\n")
-	columns := len(splitRow(rows[0]))
+	columns := len(rows[0])
 	table.weights = make([]float32, columns)
 	table.minimum = make([]float32, columns)
-	for r, line := range rows {
-		cells := splitRow(line)
+	for r, cells := range rows {
 		var row []*flowText
 		for c := 0; c < columns; c++ {
-			cell := ""
+			var cell []span
 			if c < len(cells) {
 				cell = cells[c]
 			}
-			flow := newFlowText(parseInline(cell), theme.TextSize(), colText)
+			flow := newFlowText(cell, theme.TextSize(), colText)
 			flow.bold = r == 0 // the header row
 			flow.tail = "\t"
 			if c == columns-1 {

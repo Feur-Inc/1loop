@@ -733,15 +733,9 @@ func (ui *desktopUI) agentSettings() fyne.CanvasObject {
 			"At the end of a turn that did work, the agent sums it up in a card and, when the next move is yours, asks with one or two reply buttons. Off: it is not offered the wrap_up tool.",
 			newToggle(!ui.wrapUpOff, func(on bool) { ui.setWrapUp(on) })))),
 		sectionTitle("Project memory"),
+		view.mark("agent.project_memory", card(settingRow("Project memory",
+			"Each project's AGENTS.md, which 1loop and the other agents read there. Open it with Project memory… in the project's … menu in the sidebar.", nil))),
 	)
-	var rows []fyne.CanvasObject
-	for _, project := range ui.projects {
-		rows = append(rows, ui.projectMemoryRow(project))
-	}
-	if len(rows) == 0 {
-		rows = append(rows, settingRow("No projects yet", "Each project's AGENTS.md shows here once you add a project.", nil))
-	}
-	page.Add(view.mark("agent.project_memory", card(rows...)))
 	page.Add(sectionTitle("Context"))
 	page.Add(card(view.mark(registry.KeyDynamicCompaction, settingRow("Dynamic compaction",
 		"On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way.",
@@ -906,52 +900,6 @@ func (ui *desktopUI) computerScreenRow() fyne.CanvasObject {
 		forget.Disable()
 	}
 	return settingRow("Shared screen", detail, container.NewHBox(change, forget))
-}
-
-// ---------------------------------------------------------------------------
-// Project memory.
-
-// projectMemoryRow edits a project's AGENTS.md, the instructions every agent
-// reads there and where the agent saves what it learns about the project.
-// It is a file of the project, so it is written only with Save.
-func (ui *desktopUI) projectMemoryRow(project string) fyne.CanvasObject {
-	saved, err := agent.ProjectMemory(project)
-	entry := widget.NewMultiLineEntry()
-	entry.Wrapping = fyne.TextWrapWord
-	entry.SetMinRowsVisible(6)
-	entry.SetText(saved)
-	entry.SetPlaceHolder("Nothing saved yet: build and test commands, layout, the project's rules…")
-	path := filepath.Join(project, "AGENTS.md")
-	if home, homeErr := os.UserHomeDir(); homeErr == nil && strings.HasPrefix(path, home+string(filepath.Separator)) {
-		path = "~" + strings.TrimPrefix(path, home)
-	}
-	detail := path + " · read by 1loop and the other agents in this project."
-	if err != nil {
-		entry.Disable()
-		detail = path + ": " + err.Error()
-	}
-	var save *tapRow
-	save = newRow("Save", nil, stylePrimary, func() {
-		text := entry.Text
-		if text = strings.TrimRight(text, "\n"); text != "" {
-			text += "\n"
-		}
-		if err := agent.SaveProjectMemory(project, saved, text); err != nil {
-			ui.notice("Project memory", err.Error())
-			return
-		}
-		saved = text
-		save.Disable()
-	})
-	save.Disable()
-	entry.OnChanged = func(text string) {
-		if text == saved {
-			save.Disable()
-		} else {
-			save.Enable()
-		}
-	}
-	return settingStack(filepath.Base(project), detail, container.NewVBox(entry, container.NewHBox(layout.NewSpacer(), save)))
 }
 
 // ---------------------------------------------------------------------------

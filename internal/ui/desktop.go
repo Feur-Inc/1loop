@@ -203,6 +203,7 @@ type desktopUI struct {
 	curtain           *pageCurtain      // fades the main area's new page in
 	sideApp           fyne.CanvasObject // the sidebar's usual content, hidden while settings are open
 	selected          textSelection     // what holds the selected text, if anything does
+	chatSel           chatSelection     // the selection across the conversation's messages
 	building          bool              // openChat is adding a whole chat's items (see place)
 	welcome           fyne.CanvasObject
 	thinking          *fyne.Container
@@ -240,6 +241,8 @@ type desktopUI struct {
 	discordDetails    bool              // settings: with the chat, project and tool
 	presence          *discord.Presence // while discordPresence is on
 	tips              *tipLayer
+	refHover          string                     // the issue or pull request link under the pointer
+	refCache          map[string]*referenceCache // what was read of each, by owner/name#N
 
 	// Window and sidebar
 	header         *fitLabel
@@ -527,6 +530,7 @@ func (themeSpec flatScrollTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVar
 
 func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.tips = newTipLayer()
+	ui.chatSel.ui = ui
 	ui.buildSettings()
 	sidebar := ui.buildSidebar()
 
@@ -561,7 +565,9 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.footerSpace = canvas.NewRectangle(color.Transparent) // the composer floats over the end (glassFooterLayout)
 	ui.nextStep = container.NewVBox()
 	ui.column = container.NewVBox(ui.transcript, ui.nextStep, ui.inlineRow, ui.pendingBox, ui.footerSpace)
-	ui.scroll = newKineticVScroll(container.New(columnLayout{width: 760, inset: 24}, ui.column))
+	// Behind the column, over the whole width: a press in the margins starts
+	// a selection too (selectCatcher).
+	ui.scroll = newKineticVScroll(container.NewStack(newSelectCatcher(ui), container.New(columnLayout{width: 760, inset: 24}, ui.column)))
 	ui.followTail = true
 	ui.scroll.OnScrolled = func(position fyne.Position) {
 		// A small tolerance absorbs fractional pixel rounding at the bottom.
@@ -595,14 +601,9 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	// The activity line may sit beside the composer (dockActivity): the
 	// dock layer floats over the conversation's bottom left corner.
 	conversation = container.New(dockLayout{ui}, conversation, ui.dockRow)
-	ui.panel = newToolPanel(ui)
-	openCitation = ui.openCitation
-	ui.split = container.New(splitLayout{ui.panel}, conversation, ui.panel.view, newPanelResizeHandle(ui.panel))
-
-	// Title bar: conversation title, drag region and window controls.
-	ui.header = newFitLabel("New chat", 14, colMuted)
-	ui.expand = newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
-	ui.expand.Hide()
+	// One button opens and folds the side panel: in the panel's header when
+	// it is open, at the same place over the conversation when it is folded
+	// (splitLayout). The title bar has none.
 	ui.panelToggle = newRow("", iconPanel, styleWindow, func() {
 		if ui.panel.target > 0 {
 			ui.panel.fold()
@@ -617,7 +618,16 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 			ui.tips.hide()
 		}
 	}
-	right := container.New(layout.NewCustomPaddedHBoxLayout(2), container.NewCenter(ui.panelToggle))
+	ui.panel = newToolPanel(ui)
+	openCitation = ui.openCitation
+	openReference, hoverReference, refRepository = ui.openReference, ui.hoverReference, ui.chatRepository
+	ui.split = container.New(splitLayout{ui.panel}, conversation, ui.panel.view, newPanelResizeHandle(ui.panel), ui.panelToggle)
+
+	// Title bar: conversation title, drag region and window controls.
+	ui.header = newFitLabel("New chat", 14, colMuted)
+	ui.expand = newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
+	ui.expand.Hide()
+	right := container.New(layout.NewCustomPaddedHBoxLayout(2))
 	if ui.chrome {
 		right.Add(windowControls(ui.window, ui.closeWindow))
 	}
@@ -762,13 +772,12 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.controls = container.New(&composerControlsLayout{transient: []fyne.CanvasObject{ui.steer, ui.stop, ui.send}}, settings, actions)
 	ui.model.relayout = ui.controls.Refresh
 
-	// The card catches the light from above: a hairline of light along its
-	// top edge. (Fyne's gradients have square corners: none under the card.)
+	// The card: no line of light along its top edge, which showed as a
+	// brighter pixel row above the prompt.
 	card := canvas.NewRectangle(colSurface)
 	card.CornerRadius = 18
 	card.StrokeColor = colBorder
 	card.StrokeWidth = 1
-	shine := canvas.NewRectangle(color.NRGBA{R: 0xff, G: 0xff, B: 0xff, A: 0x1c})
 	// The card floats on a soft shadow; focused, an amber halo lights up around it.
 	drop, glow := newShadow(2.2), newGlow(colAmber, 0.32)
 	var glowAnim *fyne.Animation
@@ -812,7 +821,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		container.NewHBox(container.NewCenter(pencil), textLine("Editing a queued message", 12.5, colAmber)),
 		container.NewHBox(container.NewCenter(textLine("Enter to save · Esc to cancel", 12, colFaint)), cancelEdit)))
 	ui.editBar.Hide()
-	body := container.NewStack(card, container.New(shineLayout{}, shine), padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
+	body := container.NewStack(card, padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
 	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: card.CornerRadius}, append(append(glow.objects(), drop.objects()...), body)...)
 	ui.composer = composer
 

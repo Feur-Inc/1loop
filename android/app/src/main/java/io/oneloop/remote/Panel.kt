@@ -188,7 +188,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
                     "changes" -> ChangesView(app, chat, tab)
                     "tool" -> ToolView(app, app.items.getOrNull(tab.index))
                     else -> Column {
-                        Box(Modifier.weight(1f)) { TasksView(tasks, app.meta?.background.orEmpty(), app::stopTask) }
+                        Box(Modifier.weight(1f)) { TasksView(tasks, app.meta?.background.orEmpty(), app::stopTask, app.meta?.subchats.orEmpty(), { app.open(it) }, { app.stop(it) }) }
                         ContextFooter(app, chat, app.meta)
                     }
                 }
@@ -237,8 +237,11 @@ private fun Empty(title: String, detail: String) {
 // Task list
 
 @Composable
-private fun TasksView(tasks: List<Task>, background: List<BackgroundTask> = emptyList(), onStop: (String) -> Unit = {}) {
-    if (tasks.isEmpty() && background.isEmpty()) {
+private fun TasksView(
+    tasks: List<Task>, background: List<BackgroundTask> = emptyList(), onStop: (String) -> Unit = {},
+    subchats: List<Subchat> = emptyList(), onOpenSubchat: (String) -> Unit = {}, onStopSubchat: (String) -> Unit = {},
+) {
+    if (tasks.isEmpty() && background.isEmpty() && subchats.isEmpty()) {
         Empty("No tasks yet", "When the agent plans its work, its task list shows here and follows its progress.")
         return
     }
@@ -309,6 +312,36 @@ private fun TasksView(tasks: List<Task>, background: List<BackgroundTask> = empt
                     )
                 }
                 if (task.running) Pill("Stop") { onStop(task.id) }
+            }
+        }
+        // The chat's subchats: their state, a tap opens one, Stop ends its turn.
+        if (subchats.isNotEmpty()) item {
+            Row(Modifier.padding(top = if (tasks.isEmpty() && background.isEmpty()) 0.dp else 18.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically) {
+                Text("Subchats", style = Type.body.copy(fontWeight = FontWeight.Medium), modifier = Modifier.weight(1f))
+                Text("${tokens(subchats.sumOf { it.used })} tokens together", style = Type.caption.copy(color = Palette.faint))
+            }
+        }
+        items(subchats, key = { "sub-" + it.id }) { sub ->
+            Row(Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { onOpenSubchat(sub.id) }.padding(vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+                Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
+                    if (sub.active) WorkRing("think", 22.dp) else TaskMark(sub.state == "done")
+                }
+                Spacer(Modifier.width(12.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(sub.title, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    val state = when (sub.state) {
+                        "working" -> "Working"
+                        "waiting" -> "Waiting for you"
+                        "failed" -> "Failed"
+                        "stopped" -> "Stopped"
+                        else -> "Done"
+                    }
+                    Text(
+                        if (sub.branch.isEmpty()) state else "$state · ${sub.branch}", maxLines = 1, overflow = TextOverflow.Ellipsis,
+                        style = Type.caption.copy(color = if (sub.active) Palette.amber else Palette.faint),
+                    )
+                }
+                if (sub.active) Pill("Stop") { onStopSubchat(sub.id) }
             }
         }
     }

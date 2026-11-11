@@ -45,6 +45,7 @@ type Chat struct {
 	Scratch   bool   `json:"scratch,omitempty"` // a chat without a folder: show "No folder", never the path
 	Running   bool   `json:"running"`
 	Items     int    `json:"items"`
+	Parent    string `json:"parent,omitempty"` // a subchat's parent chat (agent/subchats.go)
 	// From its last wrap_up: the recap's first sentence, and whether the
 	// chat waits on the user.
 	Status  string `json:"status,omitempty"`
@@ -100,6 +101,11 @@ type Meta struct {
 	Tasks []agent.BackgroundTaskInfo `json:"tasks"`
 	// Its account's type: a local phone keeps a ChatGPT (Web) chat's page open.
 	Provider string `json:"provider,omitempty"`
+	// A subchat's parent, by ID and title; a chat's own subchats, the newest
+	// first. POST /api/stop stops one, as any chat.
+	Parent      string              `json:"parent,omitempty"`
+	ParentTitle string              `json:"parentTitle,omitempty"`
+	Subchats    []agent.SubchatInfo `json:"subchats,omitempty"`
 }
 
 // Page is the part of a chat's items GET /api/chats/{id} returns: all of

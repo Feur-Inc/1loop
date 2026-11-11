@@ -596,29 +596,42 @@ private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) 
                 Text("Projects", style = Type.small.copy(color = Palette.faint), modifier = Modifier.weight(1f).padding(start = 10.dp))
                 if (app.projectManagement) RoundButton(Icons.plus, Color.Transparent, Palette.muted, description = "Add project") { app.projectsOpen = true }
             }
+            // A subchat is listed under its parent, wherever its folder is (its worktree).
+            val listed = app.chats.map { it.id }.toSet()
+            val nested = app.chats.filter { it.parent.isNotEmpty() && it.parent in listed }.groupBy { it.parent }
+            val topLevel = app.chats.filter { it.parent.isEmpty() || it.parent !in listed }
             @Composable
-            fun chatRows(folder: String) {
-                val chats = app.chats.filter { it.workspace == folder }
-                for (chat in chats) NavRow(
+            fun chatRow(chat: ChatSummary) {
+                NavRow(
                     chat.title, null, selected = chat.id == app.current, running = chat.running, status = chat.status, blocked = chat.blocked,
                     onLongClick = { deleting = chat },
                 ) { app.open(chat.id); onPicked() }
+                nested[chat.id]?.let { subs ->
+                    Column(Modifier.padding(start = 16.dp)) {
+                        for (sub in subs) NavRow(
+                            sub.title, Icons.subchat, selected = sub.id == app.current, running = sub.running,
+                            onLongClick = { deleting = sub },
+                        ) { app.open(sub.id); onPicked() }
+                    }
+                }
+            }
+            @Composable
+            fun chatRows(folder: String) {
+                val chats = topLevel.filter { it.workspace == folder }
+                for (chat in chats) chatRow(chat)
                 if (chats.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
             }
             // Chats without a folder: one "No folder" entry, never their paths.
-            val scratch = app.chats.filter { it.scratch }
+            val scratch = topLevel.filter { it.scratch }
             if (scratch.isNotEmpty() || app.selectedProject == NO_FOLDER) {
                 NavRow("No folder", Icons.folder, selected = app.selectedProject == NO_FOLDER) { app.selectProject(NO_FOLDER) }
                 if (app.selectedProject == NO_FOLDER) Column(Modifier.padding(start = 16.dp)) {
-                    for (chat in scratch) NavRow(
-                        chat.title, null, selected = chat.id == app.current, running = chat.running, status = chat.status, blocked = chat.blocked,
-                        onLongClick = { deleting = chat },
-                    ) { app.open(chat.id); onPicked() }
+                    for (chat in scratch) chatRow(chat)
                     if (scratch.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
                 }
             }
             // A worktree shows under its project, not as a project of its own.
-            for (workspace in (app.projects + app.chats.filter { !it.scratch }.map { app.projectOf(it.workspace) ?: it.workspace }).distinct().filter { it !in app.worktrees }) {
+            for (workspace in (app.projects + topLevel.filter { !it.scratch }.map { app.projectOf(it.workspace) ?: it.workspace }).distinct().filter { it !in app.worktrees }) {
                 val selected = workspace == app.selectedProject
                 val git = app.repositories[workspace]?.takeIf { it.loaded && it.error == null }
                 NavRow(
@@ -755,7 +768,11 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
             Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                 val title = app.chats.firstOrNull { it.id == app.current }?.title ?: "New chat"
                 Text(title, style = Type.body.copy(fontWeight = FontWeight.Medium), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
+                val parent = meta?.takeIf { it.chat == app.current && it.parent.isNotEmpty() }
+                if (parent != null && app.connected) Text(
+                    "Subchat of ${parent.parentTitle}", style = Type.caption.copy(color = Palette.amber), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.clickable(onClickLabel = "Open the parent chat") { app.open(parent.parent) },
+                ) else Text(
                     if (app.connected) app.chatModel?.name ?: app.server?.name.orEmpty() else "Reconnecting to ${app.server?.name}…",
                     style = Type.caption.copy(color = if (app.connected) Palette.faint else Palette.amber), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
@@ -1070,9 +1087,6 @@ private fun Composer(app: RemoteApp, running: Boolean) {
             runCatching { app.mentions(app.current) }.onSuccess { mentions = it }.onFailure { mentionsFailed = true }
         }
     }
-    val picker = rememberLauncherForActivityResult(ActivityResultContracts.OpenMultipleDocuments()) { uris ->
-        if (uris.isNotEmpty()) app.attach(uris, project)
-    }
     // Another chat may be in another project: keep only the files its message can carry.
     // An open chat is judged by its own workspace, once known; a new one by the project chosen.
     val chatWorkspace = app.current?.let { id -> app.chats.firstOrNull { it.id == id }?.workspace }
@@ -1152,7 +1166,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 // against the right edge: a long model name shrinks, not them.
                 Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically) {
                     if (app.attachmentsEnabled) {
-                        RoundButton(Icons.plus, Color.Transparent, Palette.muted, size = 32.dp, iconSize = 18.dp, description = "Attach files") { picker.launch(arrayOf("*/*")) }
+                        AttachButton(app, project) // the media sheet (MediaSheet.kt)
                     }
                     ApprovalChip(app)
                     Spacer(Modifier.width(4.dp))

@@ -491,7 +491,11 @@ func phoneChats(all []*conversation) []remoteapi.Chat {
 
 func chatSummary(chat *conversation) remoteapi.Chat {
 	status, blocked := agent.WrapUpStatus(chat.Items)
-	return remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Running: chat.run != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
+	summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Running: chat.run != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
+	if chat.Subchat != nil {
+		summary.Parent = chat.Subchat.Parent
+	}
+	return summary
 }
 
 func itemForPhone(chat *conversation, index int) remoteapi.Item {
@@ -538,6 +542,12 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 	remoteMetaValue.Todo = todoForPhone(chat)
 	remoteMetaValue.ContextUsage = ui.contextUsage(chat).Summary()
 	remoteMetaValue.Tasks = append([]agent.BackgroundTaskInfo{}, chat.tasks.Snapshot()...)
+	if parent := ui.parentOf(chat); parent != nil {
+		remoteMetaValue.Parent, remoteMetaValue.ParentTitle = parent.ID, parent.Title
+	}
+	for _, sub := range ui.subchatsOf(chat) {
+		remoteMetaValue.Subchats = append(remoteMetaValue.Subchats, ui.subchatInfo(sub))
+	}
 	for _, h := range chat.History {
 		remoteMetaValue.Used = max(remoteMetaValue.Used, h.Usage)
 	}
@@ -853,6 +863,18 @@ func (server *remoteServer) send(writer http.ResponseWriter, req *http.Request) 
 	}
 	if core.ReadJSON(req, &body) != nil || strings.TrimSpace(body.Text) == "" && len(body.Attachments) == 0 {
 		core.Fail(writer, http.StatusBadRequest, "Nothing to send")
+		return
+	}
+	if text := strings.TrimSpace(body.Text); text == "/subchat" || strings.HasPrefix(text, "/subchat ") {
+		problem := ""
+		server.onUI(func() {
+			problem = server.ui.splitOff(server.ui.chatByID(body.Chat), strings.TrimPrefix(text, "/subchat"))
+		})
+		if problem != "" {
+			core.Fail(writer, http.StatusBadRequest, problem)
+			return
+		}
+		core.WriteJSON(writer, http.StatusOK, map[string]string{"chat": body.Chat})
 		return
 	}
 	root := body.Workspace

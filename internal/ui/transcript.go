@@ -81,6 +81,8 @@ func toolGlyph(tool string) fyne.Resource {
 		return iconBookmark
 	case "settings":
 		return iconSliders
+	case "subchat":
+		return iconSubchat
 	}
 	return iconDocument
 }
@@ -388,6 +390,9 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		if strings.HasPrefix(item.Text, "Background task ") { // agent.WakeSummary
 			glyph = iconTaskEnded
 		}
+		if strings.HasPrefix(item.Text, "Subchat ") || strings.HasPrefix(item.Text, "Forked from ") {
+			glyph = iconSubchat
+		}
 		icon := canvas.NewImageFromResource(tinted(glyph, colFaint))
 		icon.SetMinSize(fyne.NewSquareSize(15))
 		ui.place(container.NewBorder(nil, nil, container.NewCenter(icon), nil, newFlowText([]span{{text: item.Text}}, 12.5, colFaint)))
@@ -405,6 +410,9 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		row := newToolRow(item, state, nil)
 		row.chat, row.index = chat, index
 		row.onTap = func() { ui.panel.open(chat, index) }
+		if id := startedSubchat(item); id != "" { // the subchat itself, rather than the call
+			row.onTap = func() { ui.openSubchat(chat, id) }
+		}
 		row.selected = ui.panel.showing(chat, index)
 		ui.views[index] = row
 		if item.Tool == "imagegen" {

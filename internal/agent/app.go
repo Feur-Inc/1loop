@@ -41,6 +41,9 @@ type Config struct {
 	// Settings reads and changes 1loop's own settings for the settings
 	// tool. Nil where the tool is not offered.
 	Settings *SettingsAccess `json:"-"`
+	// Subchats starts and follows the chat's subchats (subchats.go), or
+	// its parent in a subchat. Nil where the tool is not offered.
+	Subchats *SubchatAccess `json:"-"`
 	// ClassicCompaction turns the staged context policy off: one compaction
 	// when the window is nearly full, tool outputs kept as they come.
 	ClassicCompaction bool                                      `json:"-"`

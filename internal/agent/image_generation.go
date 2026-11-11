@@ -3,7 +3,6 @@
 package agent
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/base64"
@@ -18,6 +17,7 @@ import (
 	"strings"
 
 	"1loop/internal/core"
+	"1loop/internal/sse"
 )
 
 func imageGenerationToolDefinition() map[string]any {
@@ -210,15 +210,15 @@ func readGeneratedImage(response *http.Response) (string, error) {
 		Error json.RawMessage `json:"error"`
 	}
 	if strings.Contains(response.Header.Get("Content-Type"), "text/event-stream") {
-		scanner := bufio.NewScanner(response.Body)
-		scanner.Buffer(make([]byte, 4096), 48<<20)
-		for scanner.Scan() {
-			line := scanner.Text()
-			if !strings.HasPrefix(line, "data:") {
+		for event, err := range sse.Events(response.Body, 48<<20) {
+			if err != nil {
+				return "", err
+			}
+			if strings.TrimSpace(event.Data) == "" {
 				continue
 			}
 			result.Type, result.Image, result.Error = "", "", nil
-			if err := json.Unmarshal([]byte(strings.TrimSpace(strings.TrimPrefix(line, "data:"))), &result); err != nil {
+			if err := json.Unmarshal([]byte(event.Data), &result); err != nil {
 				return "", err
 			}
 			if result.Type == "image_generation.completed" && result.Image != "" {
@@ -227,9 +227,6 @@ func readGeneratedImage(response *http.Response) (string, error) {
 			if result.Type == "error" || result.Type == "image_generation.failed" {
 				return "", fmt.Errorf("Image generation failed: %s", result.Error)
 			}
-		}
-		if err := scanner.Err(); err != nil {
-			return "", err
 		}
 	} else {
 		if err := json.NewDecoder(io.LimitReader(response.Body, 48<<20)).Decode(&result); err != nil {

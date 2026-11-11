@@ -17,6 +17,9 @@ func (d *gLDriver) initGLFW() {
 	}
 }
 
+// refreshRate: the browser draws at its own pace (requestAnimationFrame).
+func (d *gLDriver) refreshRate() int { return 60 }
+
 func (d *gLDriver) pollEvents() {
 	glfw.PollEvents() // This call blocks while window is being resized, which prevents freeDirtyTextures from being called
 }

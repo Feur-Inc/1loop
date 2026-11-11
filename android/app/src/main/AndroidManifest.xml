@@ -22,7 +22,18 @@
          which no <queries> list can name in advance. Not distributed through the Play Store. -->
     <uses-permission android:name="android.permission.QUERY_ALL_PACKAGES" tools:ignore="QueryAllPackagesPermission" />
 
-    <queries><package android:name="moe.shizuku.privileged.api" /></queries>
+    <!-- The composer's + lists the recent photos and videos (MediaSheet.kt); Android 14+
+         may grant only the ones the user selects. -->
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VIDEO" />
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" android:maxSdkVersion="32" />
+
+    <queries>
+        <package android:name="moe.shizuku.privileged.api" />
+        <!-- The media sheet's Camera, when the phone has a camera app. -->
+        <intent><action android:name="android.media.action.IMAGE_CAPTURE" /></intent>
+    </queries>
 
     <application
         android:allowBackup="false"
@@ -90,7 +101,8 @@
             android:name=".UpdateCheckJob"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
-        <!-- The checked update APK, readable by Android's installer only (Updates.kt). -->
+        <!-- The checked update APK, readable by Android's installer only (Updates.kt),
+             and the camera's photo for the next message (MediaSheet.kt). -->
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.updates"

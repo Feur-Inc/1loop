@@ -27,6 +27,8 @@ type sideChat struct {
 	folder   string // its project, or a worktree of it
 	scratch  bool   // in a folder 1loop made for it: listed under No folder
 	running  bool
+	status   string // its last wrap-up's recap, first sentence
+	blocked  bool   // that wrap-up waits on the user
 	selected bool
 	open     func()
 	menu     []menuAction
@@ -219,8 +221,14 @@ func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 		if chat.folder != project && project != "" && !chat.scratch {
 			row.trailing = path.Base(ui.worktreeLabel(chat.folder)) // a worktree's chat: its branch's last part, short
 		}
-		if chat.running {
+		if !chat.running {
+			row.detail = chat.status
+		}
+		switch {
+		case chat.running:
 			row.badge = iconDot // the agent works on it in the background
+		case chat.blocked:
+			row.badge = iconWaiting // its wrap-up waits on the user
 		}
 		ui.projectList.Add(padded(0, 0, 28, 0, ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, chat.menu)

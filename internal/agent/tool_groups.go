@@ -52,6 +52,9 @@ func (cfg Config) toolAvailable(name string) bool {
 	if isGitHubTool(name) {
 		return githubconnector.Default.Available()
 	}
+	if name == "wrap_up" { // the next-step card, off in the settings
+		return !cfg.WrapUpOff
+	}
 	if name == "memory" { // off in the settings, or no preferences here
 		return cfg.Preferences != nil
 	}

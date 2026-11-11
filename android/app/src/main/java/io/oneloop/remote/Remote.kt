@@ -27,8 +27,9 @@ import org.json.JSONObject
 /**
  * scratch: a chat without a folder, in one 1loop made for it; it shows as "No folder", never its path.
  * parent: a subchat's parent chat, listed above it.
+ * status and blocked come from the chat's last wrap_up: its recap's first sentence, and whether it waits on the user.
  */
-data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean, val scratch: Boolean = false, val parent: String = "")
+data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean, val scratch: Boolean = false, val parent: String = "", val status: String = "", val blocked: Boolean = false)
 
 /** A subchat as its parent's meta lists it; state is working, waiting, done, failed or stopped. */
 data class Subchat(val id: String, val title: String, val state: String, val branch: String, val used: Int) {
@@ -386,6 +387,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var preferencesEditable by mutableStateOf(false)
     /** Whether the agent may save memories to the preferences; null when the target cannot say. */
     var memoryEnabled by mutableStateOf<Boolean?>(null)
+    var wrapUpEnabled by mutableStateOf<Boolean?>(null) // the next-step card; null: the computer has no such setting
     var defaultAutoResume by mutableStateOf<JSONObject?>(null)
     val models = mutableStateListOf<ModelOption>()
     val accounts = mutableStateListOf<Account>()
@@ -736,6 +738,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         projectActions = false
         preferencesEditable = false
         memoryEnabled = null
+        wrapUpEnabled = null
         userPreferences = ""
         running.clear()
         AgentStatus.clear(context)
@@ -857,7 +860,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     private fun parseChats(array: JSONArray?) = (0 until (array?.length() ?: 0)).map { i ->
-        array!!.getJSONObject(i).let { ChatSummary(it.getString("id"), it.optString("title"), it.optString("workspace"), it.optBoolean("running"), it.optBoolean("scratch"), it.optString("parent")) }
+        array!!.getJSONObject(i).let { ChatSummary(it.getString("id"), it.optString("title"), it.optString("workspace"), it.optBoolean("running"), it.optBoolean("scratch"), it.optString("parent"), it.optString("status"), it.optBoolean("blocked")) }
     }
 
     private suspend fun load(id: String, target: Server, generation: Long) {
@@ -935,6 +938,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         userPreferences = settings.optString("userPreferences")
         preferencesEditable = settings.optBoolean("preferencesEditable")
         memoryEnabled = if (settings.has("memory")) settings.optBoolean("memory") else null
+        wrapUpEnabled = if (settings.has("wrapUp")) settings.optBoolean("wrapUp") else null
         messageVersions = settings.optBoolean("messageVersions")
         attachmentsEnabled = settings.optBoolean("attachments")
         val array = settings.optJSONArray("models")
@@ -1249,6 +1253,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val reply = onConnection(target, generation) { it.post("/api/memory", JSONObject().put("enabled", enabled)) }
         memoryEnabled = reply.optBoolean("memory")
+    }
+
+    suspend fun setWrapUp(enabled: Boolean) {
+        val target = server ?: error("Connect first.")
+        val generation = connectionGeneration
+        val reply = onConnection(target, generation) { it.post("/api/wrap-up", JSONObject().put("enabled", enabled)) }
+        wrapUpEnabled = reply.optBoolean("wrapUp")
     }
 
     suspend fun saveAutoResume(policy: JSONObject) {

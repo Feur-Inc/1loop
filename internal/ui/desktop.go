@@ -168,6 +168,8 @@ type desktopUI struct {
 	queueTray       *fyne.Container
 	queueList       *fyne.Container
 	pendingBox      *fyne.Container // messages sent while the agent works, greyed at the conversation's end
+	nextStep        *fyne.Container // the turn's next-step card, while it waits on the user (next_step.go)
+	nextStepKey     string          // the call it shows
 	// The slash command menu over the composer (slash_commands.go).
 	commandTray, commandList        *fyne.Container
 	commandMatches                  []commandOption
@@ -230,6 +232,7 @@ type desktopUI struct {
 	panelWidth        float32           // last width chosen by dragging, independent of window size
 	classicCompaction bool              // settings: dynamic context compaction turned off
 	memoryOff         bool              // settings: the agent's memory tool turned off
+	wrapUpOff         bool              // settings: the next-step card (wrap_up tool) turned off
 	autoResume        *agent.AutoResume // settings: what a rate limit does to a run
 	closeQuits        bool              // settings: closing the window quits rather than hiding it in the tray
 	trayNoticeShown   bool              // the first close said that 1loop stays in the tray
@@ -560,7 +563,8 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.dockRow.Hide()
 	ui.pendingBox = container.NewVBox()
 	ui.footerSpace = canvas.NewRectangle(color.Transparent) // the composer floats over the end (glassFooterLayout)
-	ui.column = container.NewVBox(ui.transcript, ui.inlineRow, ui.pendingBox, ui.footerSpace)
+	ui.nextStep = container.NewVBox()
+	ui.column = container.NewVBox(ui.transcript, ui.nextStep, ui.inlineRow, ui.pendingBox, ui.footerSpace)
 	// Behind the column, over the whole width: a press in the margins starts
 	// a selection too (selectCatcher).
 	ui.scroll = newKineticVScroll(container.NewStack(newSelectCatcher(ui), container.New(columnLayout{width: 760, inset: 24}, ui.column)))
@@ -1506,6 +1510,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	}
 	cfg.APIKey = ui.keys[cfg.ConnectionID]
 	cfg.UserInstructions = ui.userInstructions
+	cfg.WrapUpOff = ui.wrapUpOff
 	if !ui.memoryOff { // the memory tool changes the preferences
 		cfg.Preferences = func(ctx context.Context, update func(string) (string, error)) (err error) {
 			ui.onUI(ctx, func() {
@@ -1800,6 +1805,7 @@ type savedState struct {
 	// Saved as its opposite so that a state file without it means dynamic.
 	ClassicCompaction bool                  `json:"classicCompaction,omitempty"`
 	MemoryOff         bool                  `json:"memoryOff,omitempty"`
+	WrapUpOff         bool                  `json:"wrapUpOff,omitempty"`
 	AutoResume        *agent.AutoResume     `json:"autoResume,omitempty"`
 	SSHMachines       []sshmachine.Settings `json:"sshMachines,omitempty"`
 	MachineProjects   map[string][]string   `json:"machineProjects,omitempty"`
@@ -1863,6 +1869,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.sidebarWidth,
 		ui.classicCompaction,
 		ui.memoryOff,
+		ui.wrapUpOff,
 		ui.autoResume,
 		ui.sshMachines,
 		ui.machineProjects,
@@ -2001,6 +2008,7 @@ func (ui *desktopUI) load() {
 	ui.approvalMode = state.ApprovalMode
 	ui.classicCompaction = state.ClassicCompaction
 	ui.memoryOff = state.MemoryOff
+	ui.wrapUpOff = state.WrapUpOff
 	ui.closeQuits, ui.trayNoticeShown = state.CloseQuits, state.TrayNoticeShown
 	ui.autoResume = state.AutoResume
 	ui.discordPresence, ui.discordDetails = state.DiscordPresence, state.DiscordDetails

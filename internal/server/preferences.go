@@ -50,6 +50,24 @@ func (server *headlessServer) setMemory(w http.ResponseWriter, r *http.Request) 
 	core.WriteJSON(w, 200, map[string]any{"memory": args.Enabled})
 }
 
+func (server *headlessServer) setWrapUp(w http.ResponseWriter, r *http.Request) {
+	var args struct{ Enabled bool }
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Say whether the next-step card is on")
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	server.wrapUpOff = !args.Enabled
+	if err := server.saveSettingsLocked(); err != nil {
+		server.wrapUpOff = args.Enabled
+		core.Fail(w, 500, "Unable to save the setting")
+		return
+	}
+	server.broadcastLocked("settings", server.settingsLocked())
+	core.WriteJSON(w, 200, map[string]any{"wrapUp": args.Enabled})
+}
+
 // updatePreferences is the memory tool's way to the preferences: saved and
 // sent to the phone like a change made in its settings.
 func (server *headlessServer) updatePreferences(ctx context.Context, update func(string) (string, error)) error {
@@ -89,6 +107,8 @@ func (server *headlessServer) settingsAccess() *agent.SettingsAccess {
 			switch key {
 			case settings.KeyMemory:
 				return onOff(!server.memoryOff), true
+			case settings.KeyWrapUp:
+				return onOff(!server.wrapUpOff), true
 			case settings.KeyDynamicCompaction:
 				return onOff(!server.classic), true
 			case settings.KeyAutoResume:
@@ -103,10 +123,12 @@ func (server *headlessServer) settingsAccess() *agent.SettingsAccess {
 				return err
 			}
 			on := value == "on"
-			memoryOff, classic, resume := server.memoryOff, server.classic, server.autoResume
+			memoryOff, wrapUpOff, classic, resume := server.memoryOff, server.wrapUpOff, server.classic, server.autoResume
 			switch key {
 			case settings.KeyMemory:
 				server.memoryOff = !on
+			case settings.KeyWrapUp:
+				server.wrapUpOff = !on
 			case settings.KeyDynamicCompaction:
 				server.classic = !on
 			case settings.KeyAutoResume:
@@ -122,7 +144,7 @@ func (server *headlessServer) settingsAccess() *agent.SettingsAccess {
 				return fmt.Errorf("%s is not a setting of this server", key)
 			}
 			if err := server.saveSettingsLocked(); err != nil {
-				server.memoryOff, server.classic, server.autoResume = memoryOff, classic, resume
+				server.memoryOff, server.wrapUpOff, server.classic, server.autoResume = memoryOff, wrapUpOff, classic, resume
 				return err
 			}
 			server.broadcastLocked("settings", server.settingsLocked())

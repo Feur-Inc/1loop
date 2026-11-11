@@ -375,6 +375,9 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		copyRow := container.NewHBox(layout.NewSpacer(), copyChip(func() string { return item.Text }),
 			newRow("Edit", iconPencil, styleChip, func() { ui.editMessage(chat, index) }), ui.versionControls(chat, item.ID))
 		view.box = container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, copyRow)
+		if wrap, ok := answeredWrapUp(chat.Items, index); ok { // the question this message answers
+			view.box = container.NewVBox(padded(0, transcriptGap-4, 0, 0, nextStepCard(wrap, nil, item.Text)), view.box)
+		}
 		ui.views[index] = view
 		ui.place(view.box)
 	case "error":
@@ -394,6 +397,9 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		icon.SetMinSize(fyne.NewSquareSize(15))
 		ui.place(container.NewBorder(nil, nil, container.NewCenter(icon), nil, newFlowText([]span{{text: item.Text}}, 12.5, colFaint)))
 	case "tool":
+		if agent.WrapUpTool(item.Tool) {
+			return // drawn as the next-step card
+		}
 		state := "done"
 		if currentTurn != nil && currentTurn.states[index] != "" {
 			state = currentTurn.states[index]
@@ -712,6 +718,7 @@ func (ui *desktopUI) relayoutColumn() {
 		return
 	}
 	defer platform.DevSlow("laying the conversation out", 6*time.Millisecond, time.Now())
+	ui.syncNextStep()
 	content := ui.scroll.Content.(*fyne.Container)
 	// The column, over the selectCatcher.
 	column := content.Objects[len(content.Objects)-1].(*fyne.Container)

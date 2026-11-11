@@ -69,6 +69,7 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
             "phone.work_profile" -> adb?.allowed == true && adb.connected
             "models.default_preset" -> app.defaultPresets
             "agent.memory" -> app.memoryEnabled != null
+            "agent.wrap_up" -> app.wrapUpEnabled != null
             else -> true
         }
     }
@@ -222,6 +223,23 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
                         try { app.setMemory(on); notice = null }
                         catch (cancelled: CancellationException) { throw cancelled }
                         catch (failure: Exception) { notice = failure.message ?: "Could not change memory." }
+                    }
+                }
+            }
+            notice?.let { Text(it, style = Type.small) }
+        }
+        "agent.wrap_up" -> app.wrapUpEnabled?.let { enabled ->
+            var notice by remember { mutableStateOf<String?>(null) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Next-step card", style = Type.title)
+                    Text("At the end of a turn that did work, the agent sums it up in a card and, when the next move is yours, asks with one or two reply buttons. Off: it is not offered the wrap_up tool.", style = Type.small)
+                }
+                Toggle(enabled, enabled = app.connected) { on ->
+                    scope.launch {
+                        try { app.setWrapUp(on); notice = null }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { notice = failure.message ?: "Could not change the next-step card." }
                     }
                 }
             }

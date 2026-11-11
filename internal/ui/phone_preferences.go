@@ -43,6 +43,23 @@ func (server *remoteServer) setMemory(w http.ResponseWriter, r *http.Request) {
 	core.WriteJSON(w, 200, map[string]bool{"memory": args.Enabled})
 }
 
+func (server *remoteServer) setWrapUp(w http.ResponseWriter, r *http.Request) {
+	var args struct{ Enabled bool }
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Say whether the next-step card is on")
+		return
+	}
+	server.onUI(func() {
+		server.ui.wrapUpOff = !args.Enabled
+		server.ui.save()
+		server.settingsChanged()
+		if server.ui.prefs != nil && server.ui.prefs.on("Agent & approvals") {
+			server.ui.prefs.showNow("Agent & approvals") // its switch shows the change
+		}
+	})
+	core.WriteJSON(w, 200, map[string]bool{"wrapUp": args.Enabled})
+}
+
 func (server *remoteServer) projectFolders(w http.ResponseWriter, r *http.Request) {
 	var roots []string
 	var path string

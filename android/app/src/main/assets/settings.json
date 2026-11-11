@@ -347,6 +347,22 @@
       "where": "both"
     },
     {
+      "key": "agent.wrap_up",
+      "section": "agent",
+      "title": "Next-step card",
+      "description": "At the end of a turn that did work, the agent sums it up in a card and, when the next move is yours, asks with one or two reply buttons. Off: it is not offered the wrap_up tool.",
+      "keywords": [
+        "wrap up",
+        "next step",
+        "recap",
+        "card",
+        "buttons",
+        "end of turn"
+      ],
+      "kind": "toggle",
+      "where": "both"
+    },
+    {
       "key": "agent.project_memory",
       "section": "agent",
       "title": "Project memory",

@@ -260,7 +260,7 @@ func (ui *desktopUI) search() {
 				row.badge = iconDot
 			}
 			add(row, func() {
-				delete(ui.foldedProjects, ui.projectOf(chat.folder)) // show where it is
+				delete(ui.foldedProjects, chat.group) // show where it is
 				chat.open()
 				ui.renderChats()
 			})

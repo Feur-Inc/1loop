@@ -303,7 +303,7 @@ func (ui *desktopUI) stepChat(step int) {
 		return
 	}
 	chat := chats[next]
-	delete(ui.foldedProjects, ui.projectOf(chat.folder)) // show where it is
+	delete(ui.foldedProjects, chat.group) // show where it is
 	chat.open()
 	ui.renderChats()
 }

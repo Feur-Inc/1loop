@@ -278,11 +278,11 @@ func (ui *desktopUI) addProject() {
 			return
 		}
 		ui.ensureProject(root)
-		if root == ui.cfg.Workspace {
+		if ui.server == nil && root == ui.cfg.Workspace {
 			ui.renderChats()
 			return
 		}
-		ui.selectProject(root)
+		ui.openProjectOn(localTarget, root) // a folder of this computer, even while a server is in use
 	})
 }
 
@@ -321,17 +321,25 @@ func (ui *desktopUI) renameProject(path string) {
 	ui.window.Canvas().Focus(entry)
 }
 
-func (ui *desktopUI) removeProject(path string) {
-	chats := ui.chatsIn(path)
-	text := fmt.Sprintf("“%s” will no longer be listed in 1loop.", ui.projectName(path))
-	if len(chats) > 0 {
-		text += fmt.Sprintf(" Its %d chat(s) will be removed from 1loop.", len(chats))
+// removeProject forgets a project of this computer or of an SSH machine,
+// and its chats.
+func (ui *desktopUI) removeProject(target projectTarget, path string) {
+	machine := target.id // "" for this computer
+	chats := 0
+	for _, chat := range ui.chats {
+		if chat.Config.Workspace == path && chat.Config.MachineID == machine {
+			chats++
+		}
+	}
+	text := fmt.Sprintf("“%s” will no longer be listed in 1loop.", targetProjectName(target, path))
+	if chats > 0 {
+		text += fmt.Sprintf(" Its %d chat(s) will be removed from 1loop.", chats)
 	}
 	text += " No files in the directory will be changed."
 	ui.confirm("Remove project?", text, "Remove", func() {
 		var kept []*conversation
 		for _, chat := range ui.chats {
-			if chat.Config.Workspace != path || chat.Config.MachineID != ui.cfg.MachineID {
+			if chat.Config.Workspace != path || chat.Config.MachineID != machine {
 				kept = append(kept, chat)
 			} else if chat.run != nil {
 				chat.run.cancel()
@@ -339,13 +347,13 @@ func (ui *desktopUI) removeProject(path string) {
 		}
 		ui.chats = kept
 		var projects []string
-		for _, p := range ui.targetProjects() {
+		for _, p := range ui.projectsOn(target) {
 			if p != path {
 				projects = append(projects, p)
 			}
 		}
-		ui.setTargetProjects(projects)
-		if ui.cfg.Workspace == path {
+		ui.setProjectsOn(target, projects)
+		if ui.server == nil && ui.cfg.MachineID == machine && ui.cfg.Workspace == path {
 			next := ""
 			if len(projects) > 0 {
 				next = projects[0]
@@ -533,60 +541,17 @@ func (ui *desktopUI) confirm(title, text, verb string, run func()) {
 	dialog = ui.modal(title, label, 440, nil, cancel, row)
 }
 
-// renderChats redraws the projects and their chats.
+// renderChats redraws every target's projects and their chats.
 func (ui *desktopUI) renderChats() {
 	if ui.cachedChat != nil && !slices.Contains(ui.chats, ui.cachedChat.chat) {
 		ui.cachedChat = nil
 	}
 	ui.remote.chatsChanged()
 	ui.syncTray() // a chat removed, or its run started or ended
-	if ui.server != nil {
-		ui.server.renderChats()
-		return
-	}
-	worktrees := ui.worktreeMap()
-	if worktrees[ui.cfg.Workspace] == "" && !ui.cfg.InScratch() {
+	if ui.server == nil && ui.worktreeMap()[ui.cfg.Workspace] == "" && !ui.cfg.InScratch() {
 		ui.ensureTargetProject(ui.cfg.Workspace)
 	}
-	var chats []sideChat
-	for _, chat := range ui.chats {
-		if chat.Config.MachineID != ui.cfg.MachineID {
-			continue
-		}
-		chat := chat
-		status, blocked := agent.WrapUpStatus(chat.Items)
-		menu := []menuAction{
-			{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
-			{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
-		}
-		parent := ""
-		if chat.Subchat != nil {
-			parent = chat.Subchat.Parent
-			menu = append([]menuAction{{label: "Open parent", icon: iconSubchat, run: func() {
-				if parent := ui.parentOf(chat); parent != nil {
-					ui.openChat(parent)
-				}
-			}}}, menu...)
-			if chat.run != nil {
-				menu = append([]menuAction{{label: "Stop", icon: iconStop, run: func() { ui.stopSubchat(chat) }}}, menu...)
-			}
-		}
-		chats = append(chats, sideChat{
-			id: chat.ID, parent: parent,
-			title: chat.Title, folder: chat.Config.Workspace, scratch: chat.Config.InScratch(), running: chat.run != nil, selected: chat == ui.current,
-			status: status, blocked: blocked,
-			open: func() { ui.openChat(chat) },
-			menu: menu,
-			text: func() []string { return chatTexts(chat.Items) },
-		})
-	}
-	ui.renderSidebar(ui.targetProjects(), chats, ui.selectProject, func(p string) []menuAction {
-		actions := append(ui.repositoryActions(p), ui.projectMemoryAction(p))
-		if ui.cfg.MachineID == "" { // a machine's folder is renamed there, in its terminal
-			actions = append(actions, menuAction{label: "Rename", icon: iconRename, run: func() { ui.renameProject(p) }})
-		}
-		return append(actions, menuAction{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { ui.removeProject(p) }})
-	})
+	ui.renderSidebar(ui.sidebarGroups())
 }
 
 // chatTexts are a chat's messages, what search reads: not tool output.

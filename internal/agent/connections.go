@@ -229,6 +229,9 @@ func modelNote(cfg Config) string {
 
 func systemInstructions(cfg Config) string {
 	prompt := instructions
+	if cfg.Assistant != nil && cfg.Assistant.Prompt != "" {
+		prompt = cfg.Assistant.Prompt + "\n\n# How your tools work\n" + prompt
+	}
 	if cfg.ApprovalMode == "yolo" {
 		prompt = strings.Replace(prompt, "Shell commands and file edits require user approval; never bypass a refusal.", "The user enabled YOLO mode: shell commands (deletions included) and edits run without asking. Stay inside the workspace.", 1)
 	}

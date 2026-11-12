@@ -99,6 +99,8 @@ type Config struct {
 	ToolAllowed         func(string) bool `json:"-"`
 	CapabilitiesChanged <-chan struct{}   `json:"-"`
 	WebConversation     *WebConversation  `json:"webConversation,omitempty"`
+	// Assistant are a host's own tools and prompt for this run (Loopy).
+	Assistant *AssistantTools `json:"-"`
 	WebSettings         *WebSettings      `json:"webSettings,omitempty"`
 }
 

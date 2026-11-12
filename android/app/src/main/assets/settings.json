@@ -33,7 +33,7 @@
     {
       "id": "advanced",
       "title": "Advanced",
-      "intro": "Commands around the agent's work."
+      "intro": "Commands around the agent's work, and crash reports."
     }
   ],
   "settings": [
@@ -758,6 +758,24 @@
         "automation"
       ],
       "kind": "action",
+      "where": "both"
+    },
+    {
+      "key": "advanced.crash_reports",
+      "section": "advanced",
+      "title": "Offer to report crashes",
+      "description": "After 1loop closes unexpectedly, the next start shows an anonymous report you can file on GitHub from your own account. Nothing is sent by 1loop itself.",
+      "keywords": [
+        "crash",
+        "report",
+        "bug",
+        "issue",
+        "github",
+        "closed unexpectedly",
+        "don't ask again",
+        "feedback"
+      ],
+      "kind": "toggle",
       "where": "both"
     },
     {

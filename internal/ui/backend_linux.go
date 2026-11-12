@@ -21,6 +21,14 @@ import (
 // build still runs when the Wayland compositor is gone. Without the other
 // build beside it, this one tries its own display. With no display at all
 // it stops here with a message, instead of a GLFW panic.
+// backendLabel names the build that runs, for a crash report.
+func backendLabel() string {
+	if builtBackend == backendWayland {
+		return "Wayland"
+	}
+	return "X11"
+}
+
 func switchBackend() {
 	// A probe must never hand over to X11 and start the actual application
 	// if its Wayland socket disappears between the parent's check and exec.

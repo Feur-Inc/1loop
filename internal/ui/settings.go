@@ -85,6 +85,7 @@ var subPages = map[string]string{
 	"Extensions":           registry.Tools,
 	"Connectors":           registry.Tools,
 	registry.ShortcutsPage: registry.General,
+	UsagePage:              registry.General,
 }
 
 // pageAliases are pages of earlier versions, still named by links and
@@ -292,6 +293,8 @@ func (view *settingsView) build(page string) fyne.CanvasObject {
 		return ui.extensionSettings()
 	case "Connectors":
 		return ui.connectorSettings()
+	case UsagePage:
+		return ui.usageSettings()
 	}
 	return ui.generalSettings()
 }
@@ -591,6 +594,8 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		page.Add(sectionTitle("Keyboard"))
 		page.Add(card(settingRow(registry.ShortcutsPage, "New chat, search, find in the chat and more: see their keys, and change them.", view.pageButton(registry.ShortcutsPage))))
 	}
+	page.Add(sectionTitle("Usage"))
+	page.Add(card(view.mark("general.usage", settingRow("Usage & spend", "Where the tokens and the money went, by model, connection, project, branch and chat, and the prices behind it.", view.pageButton(UsagePage)))))
 	page.Add(sectionTitle("Import"))
 	page.Add(card(view.mark("general.import", ui.importRow())))
 	return page

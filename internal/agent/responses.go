@@ -11,6 +11,7 @@ import (
 
 	"1loop/internal/platform"
 	"1loop/internal/sse"
+	"1loop/internal/usage"
 )
 
 // responsesInput converts stored messages into Responses API input items.
@@ -140,11 +141,16 @@ func readResponses(stream io.Reader, emit emitter) (Message, error) {
 					Code    string `json:"code"`
 					Message string `json:"message"`
 				} `json:"error"`
+				Model string `json:"model"`
 				Usage struct {
-					InputTokens int `json:"input_tokens"`
-					Details     struct {
+					InputTokens  int `json:"input_tokens"`
+					OutputTokens int `json:"output_tokens"`
+					Details      struct {
 						CachedTokens *int `json:"cached_tokens"`
 					} `json:"input_tokens_details"`
+					Output struct {
+						ReasoningTokens int `json:"reasoning_tokens"`
+					} `json:"output_tokens_details"`
 				} `json:"usage"`
 			} `json:"response"`
 		}
@@ -245,6 +251,15 @@ func readResponses(stream io.Reader, emit emitter) (Message, error) {
 			out.Responses = output
 			out.Usage = event.Response.Usage.InputTokens
 			out.CachedTokens = event.Response.Usage.Details.CachedTokens
+			cached := 0
+			if out.CachedTokens != nil {
+				cached = *out.CachedTokens
+			}
+			spent := event.Response.Usage
+			out.spent = &spentTokens{model: event.Response.Model, tokens: usage.Tokens{
+				Input: max(0, spent.InputTokens-cached), CacheRead: cached,
+				Output: spent.OutputTokens, Reasoning: spent.Output.ReasoningTokens,
+			}}
 			for _, rawItem := range output {
 				var item struct {
 					Type      string          `json:"type"`

@@ -102,7 +102,9 @@ type Config struct {
 	ToolAllowed         func(string) bool `json:"-"`
 	CapabilitiesChanged <-chan struct{}   `json:"-"`
 	WebConversation     *WebConversation  `json:"webConversation,omitempty"`
-	WebSettings         *WebSettings      `json:"webSettings,omitempty"`
+	// Usage keeps the run's model calls in the usage ledger; nil keeps none.
+	Usage       *UsageTag    `json:"-"`
+	WebSettings *WebSettings `json:"webSettings,omitempty"`
 }
 
 type emitter func(string, any)

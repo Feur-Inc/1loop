@@ -10,8 +10,11 @@ import (
 	"net/url"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
+
+	"1loop/internal/usage"
 )
 
 var EffortOrder = []string{"none", "enabled", "minimal", "low", "medium", "high", "xhigh", "max"}
@@ -281,7 +284,7 @@ func (backend *App) ConnectionModels(ctx context.Context, conn Connection, key s
 		if conn.Provider == "vllm" && len(efforts) == 0 {
 			efforts, def, mode, source = backend.localCapabilities(ctx, cfg, row)
 		}
-		choice := ModelChoice{Connection: conn, ID: id, Name: name, Efforts: efforts, DefaultEffort: def, ReasoningMode: mode, Source: source}
+		choice := ModelChoice{Connection: conn, ID: id, Name: name, Efforts: efforts, DefaultEffort: def, ReasoningMode: mode, Source: source, Price: catalogPrice(row)}
 		learnWindow(conn.ID, id, catalogWindow(row))
 		if conn.Provider == "openai" {
 			// Only the speeds the account's plan offers are listed.
@@ -331,4 +334,38 @@ func (backend *App) UpstreamProviders(ctx context.Context, conn Connection, key,
 	}
 	sort.Strings(names)
 	return names, nil
+}
+
+// catalogPrice is a model's price as a catalog lists it, per token in
+// strings (OpenRouter: "pricing": {"prompt": "0.000003", "completion":
+// …, "input_cache_read": …, "input_cache_write": …}), per million tokens;
+// nil when the catalog says none. A free model is priced at zero.
+func catalogPrice(row map[string]any) *usage.Price {
+	pricing, ok := row["pricing"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	read := func(field string) (float64, bool) {
+		switch value := pricing[field].(type) {
+		case string:
+			n, err := strconv.ParseFloat(strings.TrimSpace(value), 64)
+			return n * 1e6, err == nil && n >= 0
+		case float64:
+			return value * 1e6, value >= 0
+		}
+		return 0, false
+	}
+	input, okIn := read("prompt")
+	output, okOut := read("completion")
+	if !okIn || !okOut {
+		return nil
+	}
+	price := &usage.Price{Input: input, Output: output, CacheRead: input, CacheWrite: input}
+	if n, ok := read("input_cache_read"); ok {
+		price.CacheRead = n
+	}
+	if n, ok := read("input_cache_write"); ok {
+		price.CacheWrite = n
+	}
+	return price
 }

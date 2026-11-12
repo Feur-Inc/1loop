@@ -226,6 +226,7 @@ data class Meta(
     val contextUsage: ContextUsage? = null, // the window by category, without the MCP tools' list
     val parent: String = "", val parentTitle: String = "", // a subchat's parent
     val subchats: List<Subchat> = emptyList(), // the chat's own, newest first
+    val spent: String = "", // what the chat and its subchats spent (Usage.kt)
 ) {
     companion object {
         fun from(o: JSONObject) = Meta(
@@ -250,6 +251,7 @@ data class Meta(
             o.optJSONArray("subchats").let { array ->
                 (0 until (array?.length() ?: 0)).map { i -> Subchat.from(array!!.getJSONObject(i)) }
             },
+            spentText(o.optJSONObject("spent")),
         )
     }
 }
@@ -380,6 +382,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var settingsSection by mutableStateOf<String?>(null) // the section open in Settings (its id): kept while Extensions or Linux covers it
     var extensionsOpen by mutableStateOf(false) // Settings → Extensions (Extensions.kt)
     var linuxOpen by mutableStateOf(false) // Settings → Linux (LinuxScreen.kt)
+    var usageOpen by mutableStateOf(false) // Settings → Usage (Usage.kt)
     // Its work outlives the screen: a reset stops the agent, which leaves the chat screen.
     var linuxBusy by mutableStateOf<String?>(null)
     var linuxNotice by mutableStateOf<Pair<String, Boolean>?>(null) // text, failed
@@ -750,6 +753,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         searchOpen = false
         extensionsOpen = false
         linuxOpen = false
+        usageOpen = false
         sharing = null
         projectsOpen = false
         events?.cancel()

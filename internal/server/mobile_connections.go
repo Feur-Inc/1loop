@@ -375,6 +375,9 @@ func (server *headlessServer) limits(w http.ResponseWriter, r *http.Request) {
 				value = agent.AccountLimits{Note: "Limits unavailable"}
 			}
 			value.Checked = time.Now()
+			if agent.SubscriptionLimits(connection.Provider) {
+				server.usage.NoteLimits(connection.ID, value.UsageWindows(), value.Checked)
+			}
 			results[index] = value
 		}()
 	}

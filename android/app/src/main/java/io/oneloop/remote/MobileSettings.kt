@@ -257,6 +257,11 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
             Pill("Open extensions", enabled = app.connected) { app.extensionsOpen = true }
         }
         "tools.github" -> GitHubConnectorSection(app)
+        "general.usage" -> {
+            Text("Usage & spend", style = Type.title)
+            Text("Where the tokens and the money went, by model, connection, project, branch and chat.", style = Type.small)
+            Pill("Open usage", enabled = app.connected) { app.usageOpen = true }
+        }
         "tools.browser_data" -> BrowserDataSection(app)
         "tools.linux" -> {
             Text("Linux", style = Type.title)

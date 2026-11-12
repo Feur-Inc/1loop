@@ -154,14 +154,19 @@ func (ui *desktopUI) syncTray() {
 		tray.app.SetSystemTrayIcon(trayIconFor(status.state))
 	}
 	work := status.label(title)
-	if menu := fmt.Sprint(work, tray.hidden); menu != tray.menu {
+	today := todayText(ui.todayUsage())
+	if menu := fmt.Sprint(work, tray.hidden, today); menu != tray.menu {
 		tray.menu = menu
-		traySetTooltip("1loop · " + work)
-		ui.buildTrayMenu(work, status.chat >= 0)
+		tooltip := "1loop · " + work
+		if today != "" {
+			tooltip += " · today " + today
+		}
+		traySetTooltip(tooltip)
+		ui.buildTrayMenu(work, status.chat >= 0, today)
 	}
 }
 
-func (ui *desktopUI) buildTrayMenu(work string, chat bool) {
+func (ui *desktopUI) buildTrayMenu(work string, chat bool, today string) {
 	tray := ui.tray
 	toggle := fyne.NewMenuItem("Hide window", ui.hideWindow)
 	if tray.hidden {
@@ -178,9 +183,16 @@ func (ui *desktopUI) buildTrayMenu(work string, chat bool) {
 		ui.startNew()
 		ui.showWindow()
 	})
+	if today == "" {
+		today = "nothing yet"
+	}
+	spent := fyne.NewMenuItem("Spent today: "+today, func() {
+		ui.showUsage()
+		ui.showWindow()
+	})
 	quit := fyne.NewMenuItem("Quit", ui.quit)
 	quit.IsQuit = true
-	tray.app.SetSystemTrayMenu(fyne.NewMenu("1loop", toggle, fyne.NewMenuItemSeparator(), status, newChat, fyne.NewMenuItemSeparator(), quit))
+	tray.app.SetSystemTrayMenu(fyne.NewMenu("1loop", toggle, fyne.NewMenuItemSeparator(), status, newChat, spent, fyne.NewMenuItemSeparator(), quit))
 }
 
 // closeWindow is the window's close button: hidden in the tray when the

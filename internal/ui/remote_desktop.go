@@ -1294,7 +1294,8 @@ func (remote *remoteDesktop) refreshTodoFooter() {
 		return
 	}
 	usage := remote.meta.ContextUsage
-	key := remote.meta.ContextStatus + fmt.Sprintf("%v", *remote.todoUsage)
+	spent := remote.meta.Spent.Text()
+	key := remote.meta.ContextStatus + spent + fmt.Sprintf("%v", *remote.todoUsage)
 	if usage != nil {
 		key += fmt.Sprintf("%v", *usage)
 	}
@@ -1324,6 +1325,9 @@ func (remote *remoteDesktop) refreshTodoFooter() {
 		if line != "" {
 			remote.todoFooter.Add(plainFlow(line, 12, colMuted))
 		}
+	}
+	if spent != "" {
+		remote.todoFooter.Add(plainFlow(spent, 12, colMuted))
 	}
 	remote.todoFooter.Refresh()
 }

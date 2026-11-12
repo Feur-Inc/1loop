@@ -16,6 +16,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"1loop/internal/usage"
 )
 
 type AccountLimitWindow struct {
@@ -238,4 +240,41 @@ func (window AccountLimitWindow) appliesTo(model string, all []AccountLimitWindo
 		return named
 	}
 	return family
+}
+
+// Windows are the limits as the usage ledger keeps them over time
+// (usage.Ledger.NoteLimits): the Usage page's pace of each window.
+func (limits AccountLimits) UsageWindows() []usage.LimitWindow {
+	var windows []usage.LimitWindow
+	for _, window := range limits.Windows {
+		label := window.Label
+		if window.Group != "" && !strings.HasPrefix(label, window.Group) {
+			label = window.Group + " · " + label
+		}
+		windows = append(windows, usage.LimitWindow{Label: label, Left: window.Remaining(), Reset: window.ResetAt})
+	}
+	return windows
+}
+
+// SubscriptionLimits says whether a connection's provider reports the usage
+// windows of a subscription (a week, 5 hours…).
+func SubscriptionLimits(provider string) bool {
+	return provider == "openai" || provider == "claudecode" || provider == "antigravity"
+}
+
+// NoteLimits reads a subscription's limits into the usage ledger, at most
+// every interval for a connection: after a turn, or when the Usage page
+// opens. ok is false when nothing was read (not due, not a subscription,
+// or the provider did not answer).
+func (backend *App) NoteLimits(ctx context.Context, conn Connection, key string, ledger *usage.Ledger, every time.Duration) (limits AccountLimits, ok bool) {
+	if ledger == nil || !conn.Enabled || !SubscriptionLimits(conn.Provider) || !ledger.LimitsDue(conn.ID, every, time.Now()) {
+		return limits, false
+	}
+	limits, err := backend.ConnectionLimits(ctx, conn, key)
+	if err != nil || len(limits.Windows) == 0 {
+		return limits, false
+	}
+	limits.Checked = time.Now()
+	ledger.NoteLimits(conn.ID, limits.UsageWindows(), limits.Checked)
+	return limits, true
 }

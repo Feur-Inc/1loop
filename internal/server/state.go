@@ -24,6 +24,7 @@ import (
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
 	"1loop/internal/sshmachine"
+	"1loop/internal/usage"
 )
 
 type serverChat struct {
@@ -88,6 +89,8 @@ type serverSettings struct {
 
 type headlessServer struct {
 	mu                         sync.Mutex
+	usage                      *usage.Ledger // every model call's tokens (internal/usage)
+	prices                     *usage.Prices
 	terminalRevision           uint64
 	closing                    bool
 	ctx                        context.Context
@@ -161,6 +164,8 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		name:         host,
 		root:         root,
 		dir:          dir,
+		usage:        usage.Open(filepath.Join(dir, "usage.jsonl")),
+		prices:       usage.OpenPrices(filepath.Join(dir, "usage-prices.json")),
 		backend:      &agent.App{Approvals: map[string]chan bool{}},
 		keys:         map[string]string{},
 		pairs:        map[string]*serverPair{},
@@ -382,6 +387,7 @@ func (server *headlessServer) loadModels() {
 			continue
 		}
 		rows, err := server.backend.ConnectionModels(server.ctx, connection, keys[connection.ID])
+		server.prices.Learn(agent.ListedPrices(rows)) // what the catalog says its models cost
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Models unavailable for %q: %v\n", connection.Name, err)
 			problems[connection.ID] = "Models unavailable"
@@ -591,6 +597,7 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 	}
 	meta.ContextStatus = agent.TaskContextText(chat.Config, meta.Used, meta.Window, server.classic, meta.Mark)
 	meta.ContextUsage = agent.ChatContextUsage(chat.Config, chat.History, chat.ContextUsage, server.classic).Summary()
+	meta.Spent = server.usage.ChatSpend(server.prices, chat.ID)
 	return meta
 }
 
@@ -778,6 +785,10 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	}
 	cfg.Review = chat.review
 	cfg.ContextKey = chat.ID + chat.Version
+	cfg.Usage = &agent.UsageTag{Ledger: server.usage, Chat: chat.ID}
+	if chat.Subchat != nil {
+		cfg.Usage.Parent = chat.Subchat.Parent
+	}
 	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok && cfg.Provider == "chatgptweb" {
 		cfg.WebSettings = connection.WebSettings // the tunnel as last saved, not as when the model was chosen
 	}
@@ -930,6 +941,10 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			limits.Checked = time.Time{}
 			server.limitsCache[chat.Config.ConnectionID] = limits
 		}
+		// And noted for the Usage page's pace, at most every 10 minutes.
+		if connection, ok := server.connectionLocked(chat.Config.ConnectionID); ok {
+			go server.noteLimits(connection, server.keys[connection.ID], 10*time.Minute)
+		}
 		if server.ctx.Err() != nil {
 			return
 		}
@@ -1079,4 +1094,58 @@ func (server *headlessServer) resolveModelLocked(cfg agent.Config) agent.Config 
 		return agent.ResolveDefault(cfg, connection, server.choices)
 	}
 	return cfg
+}
+
+// usageNames names the chats and connections the usage ledger keeps by id.
+func (server *headlessServer) usageNames(group, key string) string {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if group == "connection" {
+		if connection, ok := server.connectionLocked(key); ok {
+			return connection.Name
+		}
+		return ""
+	}
+	if chat := server.chatLocked(key); chat != nil {
+		return chat.Title
+	}
+	return ""
+}
+
+// noteLimits reads a subscription's usage windows into the usage ledger
+// (agent.App.NoteLimits) and keeps them as the account's current limits.
+func (server *headlessServer) noteLimits(connection agent.Connection, key string, every time.Duration) {
+	ctx, cancel := context.WithTimeout(server.ctx, 15*time.Second)
+	defer cancel()
+	limits, ok := server.backend.NoteLimits(ctx, connection, key, server.usage, every)
+	if !ok {
+		return
+	}
+	server.mu.Lock()
+	if server.limitsCache == nil {
+		server.limitsCache = map[string]agent.AccountLimits{}
+	}
+	server.limitsCache[connection.ID] = limits
+	server.mu.Unlock()
+}
+
+// noteAllLimits reads every subscription's windows that were not read in
+// the last minutes, before the Usage page shows their pace.
+func (server *headlessServer) noteAllLimits() {
+	server.mu.Lock()
+	connections := append([]agent.Connection(nil), server.connections...)
+	keys := make(map[string]string, len(server.keys))
+	for id, key := range server.keys {
+		keys[id] = key
+	}
+	server.mu.Unlock()
+	var wait sync.WaitGroup
+	for _, connection := range connections {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			server.noteLimits(connection, keys[connection.ID], 2*time.Minute)
+		}()
+	}
+	wait.Wait()
 }

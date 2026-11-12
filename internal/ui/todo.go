@@ -364,7 +364,11 @@ func (panel *toolPanel) refreshTodoStatus() {
 	}
 	// The breakdown replaces the first line (Context · % · tokens); the
 	// compaction lines stay under it.
-	key := text + fmt.Sprintf("%v", *tab.todoUsage)
+	spent := ""
+	if panel.owner != nil {
+		spent = panel.ui.usage.ChatSpend(panel.ui.prices, panel.owner.ID).Text()
+	}
+	key := text + spent + fmt.Sprintf("%v", *tab.todoUsage)
 	if usage != nil {
 		key += fmt.Sprintf("%v", *usage)
 	}
@@ -380,6 +384,9 @@ func (panel *toolPanel) refreshTodoStatus() {
 		}
 		for _, line := range lines {
 			tab.todoContext.Objects = append(tab.todoContext.Objects, plainFlow(line, 12, colMuted))
+		}
+		if spent != "" {
+			tab.todoContext.Objects = append(tab.todoContext.Objects, plainFlow(spent, 12, colMuted))
 		}
 		tab.todoContext.Refresh()
 	}

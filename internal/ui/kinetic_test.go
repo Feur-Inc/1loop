@@ -34,10 +34,11 @@ func scrollFixture(t *testing.T, wide bool) (*kineticScroll, *sideScroll) {
 	return outer, side
 }
 
-// settle runs a second of frames: a wheel's motion is eased over them.
+// settle runs four seconds of frames: a wheel's motion is eased over them,
+// and a flick's glide slows down over a few seconds.
 func settle() {
 	now := time.Now()
-	for frame := range 60 {
+	for frame := range 240 {
 		kineticFrame(now.Add(time.Duration(frame)*16*time.Millisecond), 16*time.Millisecond)
 	}
 }
@@ -75,14 +76,14 @@ func TestSideScrollKeepsTheSidewaysMotionItCanMake(t *testing.T) {
 	}
 }
 
-// Without the display saying when fingers lift (X11, Windows, macOS), a
-// quick turn of the wheel is eased into place and stops where the wheel did.
+// Without the display saying when fingers lift (X11, Windows, macOS), two
+// notches are eased into place and stop where the wheel did.
 func TestWheelEasesAndStopsWhereTheWheelDid(t *testing.T) {
 	if _, told := scrollFinger(); told {
 		t.Skip("this display reports touchpad gestures")
 	}
 	outer, _ := scrollFixture(t, false)
-	for range 6 {
+	for range 2 {
 		outer.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DY: 25}})
 	}
 	if outer.Offset.Y != 1000 {
@@ -91,16 +92,16 @@ func TestWheelEasesAndStopsWhereTheWheelDid(t *testing.T) {
 	now := time.Now()
 	kineticFrame(now, 16*time.Millisecond)
 	first := outer.Offset.Y
-	if first >= 1000 || first <= 850 {
-		t.Fatalf("after one frame the conversation is at %v, want part of the way to 850", first)
+	if first >= 1000 || first <= 950 {
+		t.Fatalf("after one frame the conversation is at %v, want part of the way to 950", first)
 	}
 	kineticFrame(now.Add(16*time.Millisecond), 16*time.Millisecond)
 	if step := first - outer.Offset.Y; step <= 0 || step >= 1000-first {
 		t.Fatalf("the second frame moved %v after %v: the motion should slow down", step, 1000-first)
 	}
 	settle()
-	if outer.gliding || outer.Offset.Y != 850 {
-		t.Fatalf("the conversation settled at %v, want 850", outer.Offset.Y)
+	if outer.gliding || outer.Offset.Y != 950 {
+		t.Fatalf("the conversation settled at %v, want 950", outer.Offset.Y)
 	}
 }
 

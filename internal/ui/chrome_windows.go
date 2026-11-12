@@ -47,6 +47,10 @@ var (
 	procGetSystemMetrics   = user32.NewProc("GetSystemMetrics")
 	procGetSystemMetricDpi = user32.NewProc("GetSystemMetricsForDpi")
 	procGetDpiForWindow    = user32.NewProc("GetDpiForWindow")
+
+	dwmapi                    = syscall.NewLazyDLL("dwmapi.dll")
+	procDwmSetWindowAttribute = dwmapi.NewProc("DwmSetWindowAttribute")
+	procDwmExtendFrame        = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
 )
 
 const (
@@ -88,6 +92,9 @@ const (
 	htBottom      = 15
 	htBottomLeft  = 16
 	htBottomRight = 17
+
+	dwmwaWindowCornerPreference = 33
+	dwmwcpRound                 = 2
 )
 
 func customChromeSupported() bool { return true }
@@ -145,6 +152,23 @@ func windowIdentity(window fyne.Window) {
 		procSetWindowLongPtr.Call(hwnd, toUintptr(gwlpWndProc), chromeProc)
 		procSetWindowLongPtr.Call(hwnd, toUintptr(gwlStyle), style)
 		procSetWindowPos.Call(hwnd, 0, 0, 0, 0, 0, swpNoMove|swpNoSize|swpNoZOrder|swpNoActivate|swpFrameChanged)
+		// Windows 11 rounds the four corners of a window that asks for it,
+		// and squares them again while it is maximised. With no frame left,
+		// it cut only the top corners round and filled the bottom ones
+		// black: 1 px of frame extended into the window at the bottom lets
+		// the compositor round those too. That frame blends the window
+		// with what is behind it by alpha, which is why the framebuffer has
+		// none on Windows (third_party/fyne, glfw_core.go). Windows 10
+		// refuses the attribute (it has no rounded corners): nothing more
+		// is done there.
+		if procDwmSetWindowAttribute.Find() == nil && procDwmExtendFrame.Find() == nil {
+			round := uint32(dwmwcpRound)
+			hr, _, _ := procDwmSetWindowAttribute.Call(hwnd, dwmwaWindowCornerPreference, uintptr(unsafe.Pointer(&round)), unsafe.Sizeof(round))
+			if hr == 0 { // S_OK
+				margins := [4]int32{0, 0, 0, 1} // left, right, top, bottom
+				procDwmExtendFrame.Call(hwnd, uintptr(unsafe.Pointer(&margins)))
+			}
+		}
 	})
 }
 

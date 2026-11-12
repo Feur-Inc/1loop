@@ -134,7 +134,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	card.CornerRadius = 12
 	card.StrokeColor = colBorderSoft
 	card.StrokeWidth = 1
-	content := container.NewBorder(container.NewVBox(padded(8, 8, 8, 6, header), rule), nil, nil, nil, panel.page)
+	content := container.NewBorder(container.NewVBox(padded(6, 2, 8, 6, header), rule), nil, nil, nil, panel.page)
 	// The panel goes nearly to the window's edges: only a thin margin, which
 	// also leaves the window's own resize border within reach.
 	panel.view = padded(0, 6, 0, 6, container.NewStack(card, content))
@@ -490,21 +490,76 @@ func (panel *toolPanel) tabView(i int, tab panelTab) fyne.CanvasObject {
 		}
 		icon = toolGlyph(item.Tool)
 	}
-	label := newRow(fitText(target, 13, fyne.TextStyle{}, 190), icon, styleChip, func() { panel.choose(i) })
-	label.selected = i == panel.active
-	label.ink = colText
+	tabFrame := newPanelTabFrame(fitText(target, 13, fyne.TextStyle{}, 190), icon, i == panel.active, func() { panel.choose(i) })
 	closeTab := newIconButton(iconClose, color.NRGBA{}, color.NRGBA{}, func() { panel.close(i) })
 	closeTab.iconPx, closeTab.padPx = 14, 6
+	closeTab.onHover = func(on bool) { tabFrame.closeHovered = on; tabFrame.paint() }
 	if tab.web && panel.ui.cfg.Provider == "chatgptweb" {
 		closeTab.Hide()
 	}
-	bg := canvas.NewRectangle(color.Transparent)
-	bg.CornerRadius = 10
-	if i == panel.active {
-		bg.FillColor = colRaised
-		bg.StrokeColor, bg.StrokeWidth = colBorder, 1
+	return container.NewStack(tabFrame, padded(4, 4, 10, 4, container.New(layout.NewCustomPaddedHBoxLayout(6),
+		container.NewCenter(tabFrame.icon), container.NewCenter(tabFrame.label), container.NewCenter(closeTab))))
+}
+
+// panelTabFrame is a tab of the side panel as a whole: the pointer over any
+// part of it lights it up, a click anywhere on it but its close button
+// opens it, and the open tab stands out as one raised block.
+type panelTabFrame struct {
+	widget.BaseWidget
+	active, hovered, closeHovered bool
+	onTap                         func()
+	back                          *canvas.Rectangle
+	icon                          *canvas.Image
+	label                         *canvas.Text
+	glyph                         fyne.Resource
+}
+
+func newPanelTabFrame(text string, glyph fyne.Resource, active bool, onTap func()) *panelTabFrame {
+	tab := &panelTabFrame{active: active, onTap: onTap, glyph: glyph, back: canvas.NewRectangle(color.Transparent), label: textLine(text, 13, colMuted)}
+	tab.back.CornerRadius = 10
+	tab.icon = canvas.NewImageFromResource(nil)
+	tab.icon.SetMinSize(fyne.NewSquareSize(15))
+	if glyph == nil {
+		tab.icon.Hide()
 	}
-	return container.NewStack(bg, padded(4, 4, 5, 4, container.New(layout.NewCustomPaddedHBoxLayout(2), label, container.NewCenter(closeTab))))
+	tab.ExtendBaseWidget(tab)
+	tab.paint()
+	return tab
+}
+
+func (tab *panelTabFrame) paint() {
+	lit := tab.hovered || tab.closeHovered
+	tab.back.FillColor, tab.back.StrokeColor, tab.back.StrokeWidth = color.Transparent, color.Transparent, 0
+	ink := colMuted
+	switch {
+	case tab.active:
+		tab.back.FillColor = colRaised
+		tab.back.StrokeColor, tab.back.StrokeWidth = colBorder, 1
+		if lit {
+			tab.back.StrokeColor = colBorderHot
+		}
+		ink = colText
+	case lit:
+		tab.back.FillColor = colHover
+		ink = colText
+	}
+	tab.label.Color = ink
+	if tab.glyph != nil {
+		tab.icon.Resource = tinted(tab.glyph, ink)
+	}
+	tab.back.Refresh()
+	tab.label.Refresh()
+	tab.icon.Refresh()
+}
+
+func (tab *panelTabFrame) Tapped(*fyne.PointEvent)        { tab.onTap() }
+func (tab *panelTabFrame) Cursor() desktop.Cursor         { return desktop.PointerCursor }
+func (tab *panelTabFrame) MouseIn(*desktop.MouseEvent)    { tab.hovered = true; tab.paint() }
+func (tab *panelTabFrame) MouseMoved(*desktop.MouseEvent) {}
+func (tab *panelTabFrame) MouseOut()                      { tab.hovered = false; tab.paint() }
+
+func (tab *panelTabFrame) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(tab.back)
 }
 
 // details lays out one call: a heading with its outcome, then the call and

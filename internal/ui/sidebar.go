@@ -609,9 +609,9 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	ui.sideGlide = newGlideLayout()
 	ui.projectList = container.New(ui.sideGlide)
 
-	logo := brandLogo(30*1483.0/512.0, 30)
+	ui.brand = newBrandMark(false)
 	collapse := newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
-	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, ui.spaceSwitch(logo, ""), container.NewCenter(collapse)))
+	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, ui.spaceSwitch(ui.brand.object()), container.NewCenter(collapse)))
 	if ui.chrome {
 		brand = container.NewStack(newDragArea(ui.window), brand)
 	}

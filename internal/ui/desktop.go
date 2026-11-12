@@ -107,6 +107,7 @@ type desktopUI struct {
 	// The Loopy space (loopy_view.go): built once opened, on screen while
 	// inLoopy, with 1loop's own sidebar and page kept aside meanwhile.
 	loopy                    *loopyMode
+	brand                    *brandMark // 1loop's logo in its sidebar
 	inLoopy                  bool
 	oneloopSide, oneloopMain fyne.CanvasObject
 

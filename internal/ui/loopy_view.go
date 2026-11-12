@@ -52,6 +52,7 @@ type loopyMode struct {
 	body        *fyne.Container // the conversation, or the memory page over it
 	typing      *fyne.Container
 	typeFace    *loopyFace
+	brand       *brandMark
 	typeLabel   *canvas.Text
 	prompt      *chatEntry
 	sendBtn     *tapRow
@@ -89,13 +90,20 @@ func (ui *desktopUI) showSpace(loopySpace bool) {
 		ui.oneloopSide, ui.oneloopMain = ui.root.Objects[0], ui.root.Objects[1]
 	}
 	mode := ui.loopy
+	switched := ui.inLoopy != (loopySpace && mode != nil)
 	if loopySpace && mode != nil {
 		ui.root.Objects[0], ui.root.Objects[1] = mode.sidebar, mode.main
 		mode.shown(true)
+		if switched {
+			mode.brand.reveal()
+		}
 	} else {
 		ui.root.Objects[0], ui.root.Objects[1] = ui.oneloopSide, ui.oneloopMain
 		if mode != nil {
 			mode.shown(false)
+		}
+		if switched && ui.brand != nil {
+			ui.brand.reveal()
 		}
 	}
 	ui.inLoopy = loopySpace && mode != nil
@@ -113,18 +121,10 @@ func (ui *desktopUI) showSpace(loopySpace bool) {
 
 // spaceSwitch is the logo at the top of the sidebar, with its menu: 1loop
 // or Loopy, as ChatGPT or Codex in OpenAI's app.
-func (ui *desktopUI) spaceSwitch(mark fyne.CanvasObject, name string) fyne.CanvasObject {
+func (ui *desktopUI) spaceSwitch(mark fyne.CanvasObject) fyne.CanvasObject {
 	chevron := canvas.NewImageFromResource(tinted(iconChevron, colMuted))
 	chevron.SetMinSize(fyne.NewSquareSize(14))
-	var parts []fyne.CanvasObject
-	parts = append(parts, container.NewCenter(mark))
-	if name != "" {
-		title := textLine(name, 18, colText)
-		title.TextStyle = fyne.TextStyle{Bold: true}
-		parts = append(parts, container.NewCenter(title))
-	}
-	parts = append(parts, container.NewCenter(chevron))
-	row := container.New(layout.NewCustomPaddedHBoxLayout(6), parts...)
+	row := container.New(layout.NewCustomPaddedHBoxLayout(6), container.NewCenter(mark), container.NewCenter(chevron))
 	var anchor fyne.CanvasObject
 	tap := newTapArea(func() {
 		inLoopy := ui.inLoopy
@@ -213,9 +213,9 @@ func (mode *loopyMode) buildSidebar() {
 		sectionHeader("Routines", nil), mode.routines,
 		sectionHeader("Loopy", nil), mode.memoryRow, newConversation)
 
-	face := newLoopyFace(26, "idle", true, true)
+	mode.brand = newBrandMark(true)
 	collapse := newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
-	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, ui.spaceSwitch(face.image, "Loopy"), container.NewCenter(collapse)))
+	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, ui.spaceSwitch(mode.brand.object()), container.NewCenter(collapse)))
 	if ui.chrome {
 		brand = container.NewStack(newDragArea(ui.window), brand)
 	}

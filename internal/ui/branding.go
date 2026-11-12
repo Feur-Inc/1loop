@@ -63,9 +63,15 @@ func inkedArtwork(art image.Image) *image.NRGBA {
 // brandLogo is the logo with its letters in the theme's text colour, drawn
 // again when the theme changes.
 func brandLogo(width, height float32) *canvas.Image {
-	art, err := png.Decode(bytes.NewReader(brandResource("1loop-logo.png").Content()))
+	return inkedBrand("1loop-logo.png", width, height)
+}
+
+// inkedBrand is a logo's artwork with its letters in the theme's text
+// colour.
+func inkedBrand(name string, width, height float32) *canvas.Image {
+	art, err := png.Decode(bytes.NewReader(brandResource(name).Content()))
 	if err != nil {
-		return brandImage("1loop-logo.png", width, height)
+		return brandImage(name, width, height)
 	}
 	logo := canvas.NewImageFromImage(inkedArtwork(art))
 	logo.FillMode = canvas.ImageFillContain

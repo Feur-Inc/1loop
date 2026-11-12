@@ -3,10 +3,11 @@
 package ui
 
 import (
+	"encoding/json"
+
 	"1loop/internal/agent"
 	"1loop/internal/core"
 	"1loop/internal/platform"
-	"encoding/json"
 )
 
 // offerClaudeCode adds a Claude Code connection the first time 1loop finds

@@ -1853,10 +1853,15 @@ static void dataOfferHandleOffer(void* userData,
     {
         if (_glfw.wl.offers[i].offer == offer)
         {
+            char* image = _glfw.wl.offers[i].image;
             if (strcmp(mimeType, "text/plain;charset=utf-8") == 0)
                 _glfw.wl.offers[i].text_plain_utf8 = GLFW_TRUE;
             else if (strcmp(mimeType, "text/uri-list") == 0)
                 _glfw.wl.offers[i].text_uri_list = GLFW_TRUE;
+            else if (strncmp(mimeType, "image/", 6) == 0 && strcmp(image, "image/png") != 0 &&
+                     (!image[0] || strcmp(mimeType, "image/png") == 0) &&
+                     strlen(mimeType) < sizeof(_glfw.wl.offers[i].image))
+                strcpy(image, mimeType);
 
             break;
         }
@@ -2012,12 +2017,23 @@ static void dataDeviceHandleSelection(void* userData,
         _glfw.wl.selectionOffer = NULL;
     }
 
+    _glfw.wl.selectionText = GLFW_FALSE;
+    _glfw.wl.selectionImage[0] = '\0';
+
     for (unsigned int i = 0; i < _glfw.wl.offerCount; i++)
     {
         if (_glfw.wl.offers[i].offer == offer)
         {
-            if (_glfw.wl.offers[i].text_plain_utf8)
+            // 1loop: an image is kept too, for 1loop to paste. Mutter tells
+            // the selection to only one data device of a client, so 1loop
+            // reads images through this one instead of a device of its own,
+            // which left this one, and the text clipboard, empty (#334).
+            if (_glfw.wl.offers[i].text_plain_utf8 || _glfw.wl.offers[i].image[0])
+            {
                 _glfw.wl.selectionOffer = offer;
+                _glfw.wl.selectionText = _glfw.wl.offers[i].text_plain_utf8;
+                strcpy(_glfw.wl.selectionImage, _glfw.wl.offers[i].image);
+            }
             else
                 wl_data_offer_destroy(offer);
 
@@ -2981,6 +2997,13 @@ const char* _glfwPlatformGetClipboardString(void)
     if (_glfw.wl.selectionSource)
         return _glfw.wl.clipboardString;
 
+    if (!_glfw.wl.selectionText) // 1loop: an image alone
+    {
+        _glfwInputError(GLFW_FORMAT_UNAVAILABLE,
+                        "Wayland: No text in the clipboard");
+        return NULL;
+    }
+
     free(_glfw.wl.clipboardString);
     _glfw.wl.clipboardString =
         readDataOfferAsString(_glfw.wl.selectionOffer, "text/plain;charset=utf-8");
@@ -3059,6 +3082,28 @@ GLFWAPI struct wl_display* glfwGetWaylandDisplay(void)
 {
     _GLFW_REQUIRE_INIT_OR_RETURN(NULL);
     return _glfw.wl.display;
+}
+
+// 1loop: the image type the clipboard can be read as (image/png when it is
+// offered), or NULL when it holds no image.
+GLFWAPI const char* glfwGetWaylandClipboardImageType(void)
+{
+    _GLFW_REQUIRE_INIT_OR_RETURN(NULL);
+    if (!_glfw.wl.selectionOffer || !_glfw.wl.selectionImage[0])
+        return NULL;
+    return _glfw.wl.selectionImage;
+}
+
+// 1loop: asks the clipboard's owner to write it, as mimeType, into fd, which
+// the caller still closes; GLFW_FALSE when the clipboard is empty.
+GLFWAPI int glfwReceiveWaylandClipboard(const char* mimeType, int fd)
+{
+    _GLFW_REQUIRE_INIT_OR_RETURN(GLFW_FALSE);
+    if (!_glfw.wl.selectionOffer)
+        return GLFW_FALSE;
+    wl_data_offer_receive(_glfw.wl.selectionOffer, mimeType, fd);
+    flushDisplay();
+    return GLFW_TRUE;
 }
 
 GLFWAPI struct wl_surface* glfwGetWaylandWindow(GLFWwindow* handle)

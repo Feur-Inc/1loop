@@ -471,6 +471,11 @@ GLFWAPI GLXWindow glfwGetGLXWindow(GLFWwindow* window);
  */
 GLFWAPI struct wl_display* glfwGetWaylandDisplay(void);
 
+/* 1loop: the clipboard's image type, or NULL, and reading it into a file
+ * descriptor, through GLFW's own data device. */
+GLFWAPI const char* glfwGetWaylandClipboardImageType(void);
+GLFWAPI int glfwReceiveWaylandClipboard(const char* mimeType, int fd);
+
 /*! @brief Returns the `struct wl_output*` of the specified monitor.
  *
  *  @return The `struct wl_output*` of the specified monitor, or `NULL` if an

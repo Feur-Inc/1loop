@@ -15,6 +15,9 @@ import (
 	"1loop/internal/gitrepo"
 )
 
+// fakeChats is the chats tool of each fake host's subchat access.
+var fakeChats = map[*SubchatAccess]*ChatAccess{}
+
 // fakeSubchats is a host with subchats kept in memory.
 type fakeSubchats struct {
 	list     []SubchatInfo
@@ -27,12 +30,9 @@ func (host *fakeSubchats) access(parentTitle string) *SubchatAccess {
 	access := &SubchatAccess{
 		ParentTitle: parentTitle,
 		List:        func(context.Context) []SubchatInfo { return host.list },
-		Message: func(_ context.Context, id, text string) error {
-			host.messages = append(host.messages, id+": "+text)
-			return nil
-		},
-		Stop: func(_ context.Context, id string) error { host.stopped = append(host.stopped, id); return nil },
+		Stop:        func(_ context.Context, id string) error { host.stopped = append(host.stopped, id); return nil },
 	}
+	fakeChats[access] = host.chats(parentTitle)
 	if parentTitle == "" {
 		access.Start = func(_ context.Context, request SubchatRequest) (SubchatInfo, error) {
 			host.started = append(host.started, request)
@@ -44,12 +44,50 @@ func (host *fakeSubchats) access(parentTitle string) *SubchatAccess {
 	return access
 }
 
+// chats is the host's chats tool: its subchats, its parent ("parent", in a
+// subchat), and one other chat, "other".
+func (host *fakeSubchats) chats(parentTitle string) *ChatAccess {
+	find := func(_ context.Context, id string) (ChatInfo, error) {
+		if id == "parent" && parentTitle != "" {
+			return ChatInfo{ID: "p1", Title: parentTitle, State: ChatIdle, Relation: RelationParent}, nil
+		}
+		if id == "other" {
+			return ChatInfo{ID: "other", Title: "Docs", Project: "site", State: ChatWorking}, nil
+		}
+		for _, info := range host.list {
+			if info.ID == id {
+				return ChatInfo{ID: id, Title: info.Title, State: ChatIdle, Relation: RelationSubchat}, nil
+			}
+		}
+		return ChatInfo{}, fmt.Errorf("No chat %s", id)
+	}
+	return &ChatAccess{Find: find,
+		List: func(ctx context.Context) []ChatInfo {
+			other, _ := find(ctx, "other")
+			return []ChatInfo{other}
+		},
+		Send: func(ctx context.Context, id, text string) error {
+			if _, err := find(ctx, id); err != nil {
+				return err
+			}
+			host.messages = append(host.messages, id+": "+text)
+			return nil
+		}}
+}
+
 // runSubchat calls the tool with a policy (YOLO, or asking the user, who
 // answers allow) and returns what the user was asked.
 func runSubchat(t *testing.T, access *SubchatAccess, yolo, allow bool, arguments map[string]any) (output string, err error, asked []string) {
 	t.Helper()
+	return runTool(t, "subchat", Config{Subchats: access, Chats: fakeChats[access]}, yolo, allow, arguments)
+}
+
+// runTool calls a tool with a policy (YOLO, or asking the user, who answers
+// allow) and returns what the user was asked.
+func runTool(t *testing.T, tool string, cfg Config, yolo, allow bool, arguments map[string]any) (output string, err error, asked []string) {
+	t.Helper()
 	ctx := context.WithValue(context.Background(), approvalContextKey{}, approvalPolicy{yolo: yolo})
-	ctx = context.WithValue(ctx, configContextKey{}, Config{Subchats: access})
+	ctx = context.WithValue(ctx, configContextKey{}, cfg)
 	for _, field := range []string{"id", "title", "brief", "text", "context", "isolation", "model"} {
 		if _, ok := arguments[field]; !ok {
 			arguments[field] = nil
@@ -57,7 +95,7 @@ func runSubchat(t *testing.T, access *SubchatAccess, yolo, allow bool, arguments
 	}
 	raw, _ := json.Marshal(arguments)
 	call := ToolCall{ID: "call"}
-	call.Function.Name, call.Function.Arguments = "subchat", string(raw)
+	call.Function.Name, call.Function.Arguments = tool, string(raw)
 	backend := &App{Approvals: map[string]chan bool{}}
 	output, _, err = backend.runTool(ctx, t.TempDir(), call, func() {}, func(event string, value any) {
 		if event == "approval" {

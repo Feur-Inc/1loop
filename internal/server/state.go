@@ -43,7 +43,11 @@ type serverChat struct {
 	tasks        *agent.BackgroundTasks  // shell commands run in the background, until the server stops
 	Browsers     []browser.Info          `json:"browsers,omitempty"`
 	// Subchat links a subchat to the chat that started it (subchats.go).
-	Subchat      *agent.SubchatLink `json:"subchat,omitempty"`
+	Subchat *agent.SubchatLink `json:"subchat,omitempty"`
+	// ReportTo: the chats whose message caused the running turn, told when
+	// it ends (chats.go). Saved, so a turn cut off by a restart shows so.
+	ReportTo     []string `json:"reportTo,omitempty"`
+	hops         int      // messages between chats since the user last wrote (agent.TurnHops)
 	run          *serverRun
 	tabs         []*serverTab
 	session      *browser.Session
@@ -247,7 +251,8 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 			chat.Cache = &agent.ContextCache{}
 		}
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
-		chat.Subchat.Restored()
+		chat.Subchat.Restored(len(chat.ReportTo) > 0)
+		chat.ReportTo = nil
 	}
 	return server, nil
 }
@@ -278,7 +283,7 @@ func (server *headlessServer) stateLocked() (write func() error) {
 		chats[i] = &serverChat{ID: chat.ID, Title: chat.Title, Config: chat.Config, History: append([]agent.Message{}, chat.History...),
 			Items: append([]agent.ChatItem{}, chat.Items...), Version: chat.Version, Versions: agent.CopyVersions(chat.Versions),
 			Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
-			Subchat: chat.Subchat.Copy()} // its parent: forgetting it detached every subchat on restart (#356)
+			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...)} // its parent: forgetting it detached every subchat on restart (#356)
 	}
 	devices := append([]remoteapi.PairedDevice{}, server.devices...)
 	server.saveCount++
@@ -608,6 +613,7 @@ func (server *headlessServer) itemLocked(chat *serverChat, index int) remoteapi.
 		Diff:     item.Diff,
 		Millis:   item.Millis,
 		Failed:   item.Failed,
+		From:     item.From,
 		State:    "done",
 	}
 	if chat.run != nil {
@@ -750,6 +756,7 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	}
 	cfg.Settings = server.settingsAccess()
 	cfg.Subchats = server.subchatAccess(chat)
+	cfg.Chats = server.chatAccess(chat)
 	cfg.ApprovalMode = agent.ApprovalFor(server.approvalMode, cfg)
 	if cfg.InScratch() { // change_directory; the phone has no folder picker for request_directory yet
 		cfg.Move = &agent.WorkspaceMove{}
@@ -835,11 +842,10 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 
 func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message, id string) {
 	chat.History = append(chat.History, m)
-	item := agent.PromptItem(id, m)
-	if m.Internal { // a background task's end: a note, not the user's words
-		item = agent.ChatItem{ID: id, Kind: "note", Text: agent.WakeSummary(m)}
-	}
-	index := server.addLocked(chat, item)
+	chat.hops = agent.TurnHops(chat.hops, false, m)
+	// The user's words, another chat's under its name, or a note for
+	// 1loop's own (a task's end, a report).
+	index := server.addLocked(chat, agent.MessageItem(id, m))
 	ctx, cancel := context.WithCancel(server.ctx)
 	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait"}
 	chat.run = run
@@ -942,8 +948,8 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			chat.queue = chat.queue[1:]
 			server.runLocked(chat, next)
 		}
-		if chat.run == nil { // the last turn of the chain: a subchat reports
-			server.subchatEndedLocked(chat, ended)
+		if chat.run == nil { // the last turn of the chain: it reports to who caused it
+			server.turnEndedLocked(chat, ended)
 		}
 	}()
 }
@@ -975,11 +981,8 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		chat.History = value.([]agent.Message)
 	case "injected":
 		m := value.(agent.Message)
-		if m.Internal {
-			index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: agent.WakeSummary(m)})
-		} else {
-			index = server.addLocked(chat, agent.PromptItem("", m))
-		}
+		chat.hops = agent.TurnHops(chat.hops, true, m)
+		index = server.addLocked(chat, agent.MessageItem("", m))
 	case "activity":
 		status := value.(agent.Activity)
 		run.mark = status.State

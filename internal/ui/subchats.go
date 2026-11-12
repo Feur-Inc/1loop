@@ -68,10 +68,6 @@ func (ui *desktopUI) subchatAccess(chat *conversation) *agent.SubchatAccess {
 			})
 			return list
 		},
-		Message: func(ctx context.Context, id, text string) (err error) {
-			ui.onUI(ctx, func() { err = ui.messageSubchat(chat, id, text) })
-			return err
-		},
 		Stop: func(ctx context.Context, id string) (err error) {
 			ui.onUI(ctx, func() {
 				sub := ui.chatByID(id)
@@ -158,7 +154,7 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 			return
 		}
 		sub := &conversation{ID: id, Title: request.Title, Config: cfg, History: history, Items: items,
-			Subchat: &agent.SubchatLink{Parent: parent.ID, Branch: created.Branch, Report: true}}
+			Subchat: &agent.SubchatLink{Parent: parent.ID, Branch: created.Branch}, ReportTo: []string{parent.ID}}
 		if created.Path != "" {
 			if ui.worktrees == nil {
 				ui.worktrees = map[string]string{}
@@ -185,34 +181,6 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 		}()
 	}
 	return info, err
-}
-
-// messageSubchat sends text from chat to its subchat id, or to its parent
-// for "parent".
-func (ui *desktopUI) messageSubchat(chat *conversation, id, text string) error {
-	if id == "parent" {
-		parent := ui.parentOf(chat)
-		if parent == nil {
-			return fmt.Errorf("This chat has no parent conversation")
-		}
-		ui.wake(parent, agent.SubchatQuestion(chat.ID, chat.Title, text))
-		return nil
-	}
-	sub := ui.chatByID(id)
-	if sub == nil || sub.Subchat == nil || sub.Subchat.Parent != chat.ID {
-		return fmt.Errorf("No subchat %s here", id)
-	}
-	sub.Subchat.Report = true
-	message := agent.FromParent(text)
-	if sub.run != nil {
-		sub.steer = append(sub.steer, message)
-		if sub == ui.current {
-			ui.renderQueue()
-		}
-		return nil
-	}
-	ui.wake(sub, message)
-	return nil
 }
 
 func (ui *desktopUI) stopSubchat(sub *conversation) {
@@ -280,24 +248,6 @@ func worktreeFolder(folder string) string {
 		return folder[i+1:]
 	}
 	return folder
-}
-
-// subchatEnded notes how a subchat's turn ended and, when the parent caused
-// it, reports to the parent: its message joins the parent's turn or starts
-// one, as a background task's end does.
-func (ui *desktopUI) subchatEnded(chat *conversation, ended string) {
-	if chat.Subchat == nil {
-		return
-	}
-	chat.Subchat.Ended = ended
-	if parent := ui.parentOf(chat); parent != nil {
-		ui.panel.todoChanged(parent)
-		ui.remote.metaChanged(parent)
-		if chat.Subchat.Report {
-			chat.Subchat.Report = false
-			ui.wake(parent, agent.SubchatReport(ui.subchatInfo(chat)))
-		}
-	}
 }
 
 // subchatCommand is /subchat <brief> in the composer.

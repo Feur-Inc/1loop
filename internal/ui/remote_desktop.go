@@ -878,7 +878,7 @@ func (remote *remoteDesktop) deleteChat(chat remoteapi.Chat) {
 // chatItem is a server item as this window's conversation holds it.
 func chatItem(item remoteapi.Item) agent.ChatItem {
 	converted := agent.ChatItem{ID: item.ID, Kind: item.Kind, Text: item.Text, Tool: item.Tool, Args: item.Args,
-		Diff: item.Diff, Millis: item.Millis, Failed: item.Failed}
+		Diff: item.Diff, Millis: item.Millis, Failed: item.Failed, From: item.From}
 	for _, name := range item.Files {
 		converted.Files = append(converted.Files, agent.FileAttachment{Name: name})
 	}

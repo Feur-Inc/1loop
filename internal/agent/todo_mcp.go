@@ -106,6 +106,9 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 			if cfg.ProjectTools == nil && cfg.toolAvailable("subchat") {
 				definitions = append(definitions, subchatToolDefinition())
 			}
+			if cfg.ProjectTools == nil && cfg.toolAvailable("chats") {
+				definitions = append(definitions, chatsToolDefinition())
+			}
 			for _, group := range builtinToolGroups(cfg) {
 				definitions = append(definitions, group.tools()...)
 			}
@@ -153,13 +156,15 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 				response["result"] = map[string]any{"isError": err != nil, "content": []any{map[string]string{"type": "text", "text": text}}}
 				break
 			}
-			if call.Name == "settings" || call.Name == "subchat" {
+			if call.Name == "settings" || call.Name == "subchat" || call.Name == "chats" {
 				// Like memory: let through by Claude Code, asked here.
 				operation, cancel := context.WithCancel(ctx)
 				stop := context.AfterFunc(requestValue.Context(), cancel)
 				answer := backend.changeSettings
 				if call.Name == "subchat" {
 					answer = backend.subchatTool
+				} else if call.Name == "chats" {
+					answer = backend.chatsTool
 				}
 				text, err := answer(context.WithValue(operation, configContextKey{}, cfg), string(call.Arguments), func() {}, emit)
 				stop()

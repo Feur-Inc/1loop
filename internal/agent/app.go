@@ -47,6 +47,9 @@ type Config struct {
 	// Subchats starts and follows the chat's subchats (subchats.go), or
 	// its parent in a subchat. Nil where the tool is not offered.
 	Subchats *SubchatAccess `json:"-"`
+	// Chats lists the other chats of this 1loop and sends them messages
+	// (chats.go). Nil where the tool is not offered.
+	Chats *ChatAccess `json:"-"`
 	// ClassicCompaction turns the staged context policy off: one compaction
 	// when the window is nearly full, tool outputs kept as they come.
 	ClassicCompaction bool                                      `json:"-"`

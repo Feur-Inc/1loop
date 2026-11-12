@@ -66,6 +66,8 @@ data class Item(
     val args: String, val diff: String, val millis: Long, val failed: String,
     val id: String = "", val versions: MessageVersions? = null,
     val files: List<String> = emptyList(), // a prompt's attached files not shown as images
+    // Another chat's message or report: the chat that sent it, shown under its title rather than as the user's.
+    val fromId: String = "", val fromTitle: String = "",
 ) {
     companion object {
         fun from(o: JSONObject) = Item(
@@ -75,6 +77,7 @@ data class Item(
             o.optString("args"), o.optString("diff"), o.optLong("millis"), o.optString("failed"),
             o.optString("id"), o.optJSONObject("versions")?.let { MessageVersions(it.optString("anchor"), it.optInt("current"), it.optInt("total")) },
             o.optJSONArray("files")?.let { names -> List(names.length()) { names.optString(it) } } ?: emptyList(),
+            o.optJSONObject("from")?.optString("id").orEmpty(), o.optJSONObject("from")?.optString("title").orEmpty(),
         )
     }
 }

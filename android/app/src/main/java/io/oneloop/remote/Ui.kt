@@ -923,7 +923,7 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
             Box(Modifier.fillMaxWidth().appear(rise), contentAlignment = Alignment.TopCenter) {
                 Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
                     when (item.kind) {
-                        "user" -> Column {
+                        "user" -> if (item.fromId.isNotEmpty()) FromChatCard(item) { app.open(item.fromId) } else Column {
                             // The question this message answers stays above it.
                             WrapUp.answered(items, index)?.let { NextStepCard(it, null, item.text); Spacer(Modifier.height(12.dp)) }
                             UserBubble(item, images = { if (item.images > 0) ItemImages(app, app.firstItem + index, item.images) }) {
@@ -961,7 +961,13 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
                             Text(item.text, style = Type.body.copy(color = Palette.danger))
                             if (!(running && index > lastUser)) MessageActions(app, item, running) { app.retryMessage(index) }
                         }
-                        "note" -> Text(item.text, style = Type.caption, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                        "note" -> Text(
+                            item.text, style = Type.caption, textAlign = TextAlign.Center,
+                            // Another chat's report opens that chat.
+                            modifier = Modifier.fillMaxWidth().then(
+                                if (item.fromId.isEmpty()) Modifier else Modifier.clickable(onClickLabel = "Open the chat") { app.open(item.fromId) }
+                            ),
+                        )
                     }
                 }
         
@@ -1602,3 +1608,22 @@ internal fun toolPreviewText(text: String): String = runCatching {
         else -> text
     }
 }.getOrDefault(text)
+
+/** Another chat's message: a card under its sender's title, which opens the sender, apart from the user's own bubbles (no Edit, no Retry). */
+@Composable
+private fun FromChatCard(item: Item, onOpen: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.code)
+                .border(1.dp, Palette.borderSoft, RoundedCornerShape(14.dp)).padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                "From the chat “${item.fromTitle}”", style = Type.caption.copy(color = Palette.amber), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clickable(onClickLabel = "Open the chat that sent it", onClick = onOpen),
+            )
+            Text(item.text, style = Type.body)
+        }
+        CopyChip { item.text }
+    }
+}

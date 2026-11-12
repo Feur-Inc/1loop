@@ -24,9 +24,11 @@ func TestSubchatLinkSurvivesRestart(t *testing.T) {
 	chat := func(id, title string, link *agent.SubchatLink) *serverChat {
 		return &serverChat{ID: id, Title: title, Subchat: link, Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}, Config: agent.Config{Workspace: root}}
 	}
+	cut := chat("cut", "Docs", &agent.SubchatLink{Parent: "parent"})
+	cut.ReportTo = []string{"parent"} // its turn was working for the parent when the server stopped
 	server.mu.Lock()
 	server.chats = []*serverChat{
-		chat("cut", "Docs", &agent.SubchatLink{Parent: "parent", Report: true}),
+		cut,
 		chat("done", "Fix parser", &agent.SubchatLink{Parent: "parent", Branch: "subchat/fix-parser", Ended: agent.SubchatDone}),
 		chat("parent", "Main", nil),
 	}
@@ -47,8 +49,8 @@ func TestSubchatLinkSurvivesRestart(t *testing.T) {
 	if link := again.chatLocked("done").Subchat; link == nil || *link != (agent.SubchatLink{Parent: "parent", Branch: "subchat/fix-parser", Ended: agent.SubchatDone}) {
 		t.Fatalf("link %+v", link)
 	}
-	if link := again.chatLocked("cut").Subchat; link == nil || link.Report || link.Ended != agent.SubchatStopped {
-		t.Fatalf("a turn cut off by the restart: %+v", link)
+	if cut := again.chatLocked("cut"); cut.Subchat == nil || cut.Subchat.Ended != agent.SubchatStopped || cut.ReportTo != nil {
+		t.Fatalf("a turn cut off by the restart: %+v, reports to %v", cut.Subchat, cut.ReportTo)
 	}
 	for _, summary := range again.summariesLocked() {
 		want := map[string]string{"cut": "parent", "done": "parent"}[summary.ID]

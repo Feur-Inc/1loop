@@ -72,6 +72,9 @@ type Item struct {
 	Diff     string    `json:"diff,omitempty"`
 	Millis   int64     `json:"millis,omitempty"`
 	Failed   string    `json:"failed,omitempty"`
+	// From: user and note rows another chat sent (agent/chats.go), shown
+	// under its title rather than as the user's.
+	From *agent.ChatSender `json:"from,omitempty"`
 }
 
 type Meta struct {

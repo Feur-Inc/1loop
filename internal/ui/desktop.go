@@ -64,6 +64,10 @@ type conversation struct {
 	Versions     []chatVersion           `json:"versions,omitempty"`
 	// Subchat links a subchat to the chat that started it (subchats.go).
 	Subchat *agent.SubchatLink `json:"subchat,omitempty"`
+	// ReportTo: the chats whose message caused the running turn, told when
+	// it ends (chats.go). Saved, so a turn cut off by a restart shows so.
+	ReportTo []string `json:"reportTo,omitempty"`
+	hops     int      // messages between chats since the user last wrote (agent.TurnHops)
 
 	panel     *panelState // its side panel while 1loop runs (live tabs, terminals included)
 	failed    bool        // its last run failed and the user has not looked at it since: the tray says so
@@ -1164,7 +1168,7 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 				state = agent.SubchatStopped
 			}
 		}
-		ui.subchatEnded(chat, state)
+		ui.turnEnded(chat, state)
 	}
 	ui.renderChats()
 	ui.save()
@@ -1350,9 +1354,11 @@ func (ui *desktopUI) wake(chat *conversation, message agent.Message) {
 	if ui.chatByID(chat.ID) != chat || ui.ctx.Err() != nil {
 		return // deleted meanwhile, or 1loop is closing
 	}
-	if chat.Subchat != nil && message.Internal { // its own task: the parent hears how the turn ends
-		chat.Subchat.Report = true
+	parent := ""
+	if chat.Subchat != nil {
+		parent = chat.Subchat.Parent
 	}
+	chat.ReportTo = agent.ReportTo(chat.ReportTo, message, parent) // they hear how the turn ends
 	if chat.run != nil {
 		chat.steer = append(chat.steer, message)
 		ui.remote.metaChanged(chat)
@@ -1424,11 +1430,10 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		ui.showTranscript(true)
 		ui.followTail = true // Sending a message explicitly returns to the live answer.
 	}
-	if messageValue.Internal { // a background task's end: a note, not the user's words
-		ui.addItem(chat, agent.ChatItem{ID: id, Kind: "note", Text: agent.WakeSummary(messageValue)})
-	} else {
-		ui.addItem(chat, agent.PromptItem(id, messageValue))
-	}
+	chat.hops = agent.TurnHops(chat.hops, false, messageValue)
+	// The user's words, another chat's under its name, or a note for
+	// 1loop's own (a task's end, a report).
+	ui.addItem(chat, agent.MessageItem(id, messageValue))
 	ui.updateHeader()
 	// No deadline: a long task (long shell runs, many tool rounds) must not
 	// die on a timer. Only the Stop button or a dead network ends it.
@@ -1584,6 +1589,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	}
 	cfg.Settings = ui.settingsAccess()
 	cfg.Subchats = ui.subchatAccess(chat)
+	cfg.Chats = ui.chatAccess(chat)
 	cfg.ApprovalMode = agent.ApprovalFor(ui.approvalMode, cfg)
 	ui.scratchMove(&cfg)
 	cfg.ClassicCompaction = ui.classicCompaction
@@ -1950,7 +1956,7 @@ func (ui *desktopUI) persist(wait bool) {
 		chats[i] = &conversation{ID: chat.ID, Title: chat.Title, Config: chat.Config, Panel: chat.Panel,
 			History: append([]agent.Message{}, chat.History...), Items: append([]agent.ChatItem{}, chat.Items...), Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(),
 			Version: chat.Version, Versions: copyVersions(chat.Versions), ContextUsage: chat.ContextUsage,
-			Subchat: chat.Subchat.Copy()} // its parent: forgetting it detached every subchat on restart (#356)
+			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...)} // its parent: forgetting it detached every subchat on restart (#356)
 	}
 	ui.saveCount++
 	count, path := ui.saveCount, ui.statePath
@@ -2087,7 +2093,8 @@ func (ui *desktopUI) load() {
 		chat.Items = upgradeItems(chat.Items)
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
 		chat.todoCount = len(chat.Todo.Snapshot())
-		chat.Subchat.Restored()
+		chat.Subchat.Restored(len(chat.ReportTo) > 0)
+		chat.ReportTo = nil
 		ui.chats = append(ui.chats, chat)
 		if chat.Config.MachineID != "" {
 			ui.ensureMachineProject(chat.Config.MachineID, chat.Config.Workspace)

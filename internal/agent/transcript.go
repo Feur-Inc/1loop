@@ -26,6 +26,7 @@ type ChatItem struct {
 	Diff   string           `json:"diff,omitempty"`   // edit_file rows: the diff, once shown for approval
 	Millis int64            `json:"millis,omitempty"` // tool rows: execution time
 	Failed string           `json:"failed,omitempty"` // tool rows: the error, when the call failed
+	From   *ChatSender      `json:"from,omitempty"`   // user and note rows: the chat that sent it (chats.go)
 }
 
 func ToolArgs(raw string) (path, command string, creates bool) {
@@ -151,14 +152,18 @@ func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) 
 			}
 			return pick("Started a subchat:", "Starting a subchat:"), target, false
 		case "message":
-			if call.ID == "parent" {
-				return pick("Asked", "Asking"), "the parent conversation", false
-			}
-			return pick("Messaged", "Messaging"), "subchat " + call.ID, false
+			return describeChatMessage(call.ID, pick)
 		case "stop":
 			return pick("Stopped", "Stopping"), "subchat " + call.ID, false
 		}
 		return pick("Checked", "Checking"), "the subchats", false
+	case "chats":
+		var call struct{ Action, ID string }
+		_ = json.Unmarshal([]byte(item.Args), &call)
+		if call.Action == "message" {
+			return describeChatMessage(call.ID, pick)
+		}
+		return pick("Listed", "Listing"), "the other chats", false
 	case "memory":
 		var memory struct{ Action string }
 		_ = json.Unmarshal([]byte(item.Args), &memory)
@@ -189,4 +194,12 @@ func diffPath(diff string) string {
 func FirstLine(text string) string {
 	first, _, _ := strings.Cut(strings.TrimSpace(text), "\n")
 	return first
+}
+
+// describeChatMessage is a message sent to another chat, in a tool row.
+func describeChatMessage(id string, pick func(done, doing string) string) (verb, target string, mono bool) {
+	if id == "parent" {
+		return pick("Asked", "Asking"), "the parent conversation", false
+	}
+	return pick("Messaged", "Messaging"), "chat " + id, false
 }

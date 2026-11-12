@@ -69,7 +69,7 @@ func coreToolDefinitions() []map[string]any {
 			"parameters":  map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false},
 		}})
 	}
-	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), wrapUpToolDefinition(), recallToolDefinition(), memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition())
+	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), wrapUpToolDefinition(), recallToolDefinition(), memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), chatsToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition())
 }
 
 // allToolDefinitions are every tool, loaded or not.
@@ -457,6 +457,10 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	}
 	if call.Function.Name == "subchat" {
 		output, err = backend.subchatTool(ctx, call.Function.Arguments, begin, emit)
+		return
+	}
+	if call.Function.Name == "chats" {
+		output, err = backend.chatsTool(ctx, call.Function.Arguments, begin, emit)
 		return
 	}
 	if call.Function.Name == "skill" {

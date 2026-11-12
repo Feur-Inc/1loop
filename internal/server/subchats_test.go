@@ -144,7 +144,7 @@ func TestSubchatLifecycle(t *testing.T) {
 	})
 
 	server.mu.Lock()
-	if sub.Subchat.Parent != "parent" || sub.Subchat.Branch != "subchat/fix-parser" || sub.Subchat.Ended != agent.SubchatDone || sub.Subchat.Report {
+	if sub.Subchat.Parent != "parent" || sub.Subchat.Branch != "subchat/fix-parser" || sub.Subchat.Ended != agent.SubchatDone || sub.ReportTo != nil {
 		t.Fatalf("link %+v", *sub.Subchat)
 	}
 	if !strings.HasPrefix(sub.Config.Workspace, filepath.Join(project, ".worktrees")) {
@@ -183,10 +183,15 @@ func TestSubchatLifecycle(t *testing.T) {
 		t.Fatalf("the user's turn reported: %+v", parent.Items)
 	}
 
-	// The parent's message: the subchat answers, and reports again.
+	// The parent's message, through the chats tool's path (#357): the
+	// subchat shows it under the parent's name, answers, and reports again.
 	access := server.subchatAccess(parent)
+	chats := server.chatAccess(parent)
 	server.mu.Unlock()
-	if err := access.Message(ctx, sub.ID, "check the edge cases"); err != nil {
+	if info, err := chats.Find(ctx, sub.ID); err != nil || info.Relation != agent.RelationSubchat || info.State != agent.ChatIdle {
+		t.Fatalf("find the subchat: %+v %v", info, err)
+	}
+	if err := chats.Send(ctx, sub.ID, "check the edge cases"); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, server, "the second report", func() bool {
@@ -194,9 +199,13 @@ func TestSubchatLifecycle(t *testing.T) {
 	})
 	server.mu.Lock()
 	last := sub.Items[len(sub.Items)-1].Text
+	message := sub.Items[len(sub.Items)-2]
 	server.mu.Unlock()
-	if !strings.Contains(last, "[From the parent conversation] check the edge cases") {
+	if !strings.Contains(last, "[Message from the parent conversation “Main” (chat parent)]\ncheck the edge cases") {
 		t.Fatalf("the subchat's last answer: %q", last)
+	}
+	if message.Kind != "user" || message.Text != "check the edge cases" || message.From == nil || message.From.ID != "parent" || message.From.Title != "Main" {
+		t.Fatalf("the parent's message in the subchat: %+v", message)
 	}
 	if list := access.List(ctx); len(list) != 1 || list[0].State != agent.SubchatDone {
 		t.Fatalf("list %+v", list)

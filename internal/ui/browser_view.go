@@ -586,6 +586,7 @@ func (screen *browserScreen) MouseMoved(e *desktop.MouseEvent) {
 
 func (screen *browserScreen) MouseDown(e *desktop.MouseEvent) {
 	if screen.zoom.active() && e.Button == desktop.MouseButtonPrimary {
+		screen.view.window.Canvas().Focus(screen)         // so Escape resets the view; nothing reaches the page
 		screen.panning, screen.panFrom = true, e.Position // a drag moves the zoomed view
 		return
 	}
@@ -642,6 +643,12 @@ func (screen *browserScreen) Scrolled(e *fyne.ScrollEvent) {
 	// Ctrl+scroll (and a trackpad's pinch, where the system reports it so)
 	// zooms the view; scrolling a zoomed view pans it. Neither reaches the page.
 	if zoomModifier(screen.modifiers&2 != 0) {
+		if screen.buttons != 0 {
+			// A button pressed on the page: zooming now would make the view
+			// read-only before its release reaches the page, leaving it held.
+			return
+		}
+		screen.view.window.Canvas().Focus(screen) // so Escape resets the view
 		screen.zoom.zoomAt(wheelFactor(e.Scrolled.DY), e.Position, screen.Size())
 		screen.panning = false
 		screen.Refresh()

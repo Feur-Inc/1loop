@@ -441,6 +441,7 @@ func (screen *remoteBrowserScreen) Tapped(event *fyne.PointEvent) {
 // or a scroll pans it while zoomed: none of it reaches the page.
 func (screen *remoteBrowserScreen) Scrolled(event *fyne.ScrollEvent) {
 	if zoomModifier(screen.modifiers&(fyne.KeyModifierControl|fyne.KeyModifierSuper) != 0) {
+		screen.remote.window.Canvas().Focus(screen) // so Escape resets the view
 		screen.zoom.zoomAt(wheelFactor(event.Scrolled.DY), event.Position, screen.Size())
 		screen.Refresh()
 		return

@@ -1328,30 +1328,33 @@ func (renderer *sheetRenderer) Layout(size fyne.Size) {
 
 // windowResized follows the window's new size while the sheet is open: a
 // menu goes back beside its trigger, wherever the new layout put it (one
-// that is hidden meanwhile keeps the place it had), and the frosted copy
-// of the window, which no longer matches it, gives way to the plain
-// surface.
+// that is hidden meanwhile keeps the place it had), and the frosted copy of
+// the window is taken again, since the old one no longer matches it.
 func (renderer *sheetRenderer) windowResized(size fyne.Size) {
 	sheet := renderer.dialog
 	sheet.openSize = size
-	if sheet.anchor != nil {
-		// Fyne resizes the overlays before the window's content: the
-		// trigger has its new place on the next turn of the loop.
-		go fyne.Do(func() {
-			if sheet.open && sheet.anchor.Visible() && sheet.anchor.Size().Width > 0 {
-				sheet.anchorAt = fyne.CurrentApp().Driver().AbsolutePositionForObject(sheet.anchor)
-				sheet.anchorSz = sheet.anchor.Size()
-				renderer.Refresh()
+	// Fyne resizes the overlays before the window's content: the trigger
+	// and what the glass shows have their new place on the next turn.
+	go fyne.Do(func() {
+		if !sheet.open || sheet.openSize != size {
+			return
+		}
+		if sheet.anchor != nil && sheet.anchor.Visible() && sheet.anchor.Size().Width > 0 {
+			sheet.anchorAt = fyne.CurrentApp().Driver().AbsolutePositionForObject(sheet.anchor)
+			sheet.anchorSz = sheet.anchor.Size()
+		}
+		if sheet.glass != nil {
+			// The capture draws the whole window: the sheet steps out of it.
+			sheet.BaseWidget.Hide()
+			glass, shot := frostedBackdrop(sheet.canvas)
+			sheet.BaseWidget.Show()
+			sheet.glass, sheet.frostAt = glass, rect{}
+			if sheet.sharp.Image != nil && !sheet.menu && shot != nil {
+				sheet.sharp.Image = windowControlsCut(sheet.canvas, shot)
 			}
-		})
-	}
-	if sheet.glass != nil {
-		sheet.glass = nil
-		sheet.backdrop.Hide()
-		sheet.frost.Hide()
-		sheet.sharp.Hide()
+		}
 		renderer.Refresh()
-	}
+	})
 }
 
 // layoutGlass places the frosted window: all of it behind a dialog, the

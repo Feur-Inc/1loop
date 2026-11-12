@@ -1949,7 +1949,8 @@ func (ui *desktopUI) persist(wait bool) {
 	for i, chat := range ui.chats { // messages are never edited in place: copying the lists is enough
 		chats[i] = &conversation{ID: chat.ID, Title: chat.Title, Config: chat.Config, Panel: chat.Panel,
 			History: append([]agent.Message{}, chat.History...), Items: append([]agent.ChatItem{}, chat.Items...), Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(),
-			Version: chat.Version, Versions: copyVersions(chat.Versions), ContextUsage: chat.ContextUsage}
+			Version: chat.Version, Versions: copyVersions(chat.Versions), ContextUsage: chat.ContextUsage,
+			Subchat: chat.Subchat.Copy()} // its parent: forgetting it detached every subchat on restart (#356)
 	}
 	ui.saveCount++
 	count, path := ui.saveCount, ui.statePath
@@ -2086,6 +2087,7 @@ func (ui *desktopUI) load() {
 		chat.Items = upgradeItems(chat.Items)
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
 		chat.todoCount = len(chat.Todo.Snapshot())
+		chat.Subchat.Restored()
 		ui.chats = append(ui.chats, chat)
 		if chat.Config.MachineID != "" {
 			ui.ensureMachineProject(chat.Config.MachineID, chat.Config.Workspace)

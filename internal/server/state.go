@@ -247,6 +247,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 			chat.Cache = &agent.ContextCache{}
 		}
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
+		chat.Subchat.Restored()
 	}
 	return server, nil
 }
@@ -276,7 +277,8 @@ func (server *headlessServer) stateLocked() (write func() error) {
 	for i, chat := range server.chats {
 		chats[i] = &serverChat{ID: chat.ID, Title: chat.Title, Config: chat.Config, History: append([]agent.Message{}, chat.History...),
 			Items: append([]agent.ChatItem{}, chat.Items...), Version: chat.Version, Versions: agent.CopyVersions(chat.Versions),
-			Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...)}
+			Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
+			Subchat: chat.Subchat.Copy()} // its parent: forgetting it detached every subchat on restart (#356)
 	}
 	devices := append([]remoteapi.PairedDevice{}, server.devices...)
 	server.saveCount++

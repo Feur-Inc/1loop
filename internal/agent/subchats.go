@@ -69,6 +69,16 @@ type SubchatLink struct {
 	Ended  string `json:"ended,omitempty"` // how its last turn ended: done, stopped or failed
 }
 
+// Copy is the link as it is now, for a save encoded beside the chat's
+// thread; nil for a chat that is no subchat.
+func (link *SubchatLink) Copy() *SubchatLink {
+	if link == nil {
+		return nil
+	}
+	saved := *link
+	return &saved
+}
+
 // SubchatAccess is the host's side of the subchat tool. ParentTitle is set
 // in a subchat, whose Start is nil; Message there reaches the parent as
 // "parent". Model finds a model of the picker before the user is asked to
@@ -81,6 +91,15 @@ type SubchatAccess struct {
 	Message     func(ctx context.Context, id, text string) error
 	List        func(ctx context.Context) []SubchatInfo
 	Stop        func(ctx context.Context, id string) error
+}
+
+// Restored is the link as loaded at start: a turn that was to report when
+// 1loop closed was cut off, so it shows stopped, and a turn the user starts
+// later does not report in its place.
+func (link *SubchatLink) Restored() {
+	if link != nil && link.Report {
+		link.Report, link.Ended = false, SubchatStopped
+	}
 }
 
 // SubchatState is a subchat's state from its chat's.

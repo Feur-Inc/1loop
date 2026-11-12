@@ -323,8 +323,31 @@ func newLoopyFace(size float32, state string, plate, frozen bool) *loopyFace {
 	face.image.FillMode = canvas.ImageFillContain
 	face.image.ScaleMode = canvas.ImageScaleSmooth
 	face.image.SetMinSize(fyne.NewSquareSize(size))
+	if frozen {
+		// The avatars of past messages are all the same picture: drawn once
+		// for each size and state.
+		face.state, face.pose = state, faceStates[state].pose(1.5)
+		face.pose.blink = 1
+		face.image.Image = frozenFace(face.pose, int(2*size), state, plate)
+		return face
+	}
 	face.set(state)
 	return face
+}
+
+var (
+	frozenMu    sync.Mutex
+	frozenFaces = map[string]image.Image{}
+)
+
+func frozenFace(pose facePose, px int, state string, plate bool) image.Image {
+	key := fmt.Sprintf("%s/%d/%v", state, px, plate)
+	frozenMu.Lock()
+	defer frozenMu.Unlock()
+	if frozenFaces[key] == nil {
+		frozenFaces[key] = drawLoopy(pose, px, plate)
+	}
+	return frozenFaces[key]
 }
 
 // set moves the face to a state; the springs carry it there.

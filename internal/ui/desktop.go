@@ -104,59 +104,62 @@ type chatRun struct {
 }
 
 type desktopUI struct {
-	loopy                    *loopyMode        // the Loopy space, once opened (loopy_view.go)
-	inLoopy                  bool              // it is on screen
-	oneloopSide, oneloopMain fyne.CanvasObject // 1loop's own sidebar and page, while Loopy's are shown
-	computer                 *computeruse.ComputerSession
-	browser                  *browser.Engine
-	window                   fyne.Window
-	backend                  *agent.App
-	cfg                      agent.Config
-	keys                     map[string]string
-	connectionsList          []agent.Connection
-	webSetupWindows          map[*agent.ChatGPTWeb]fyne.Window
-	choices                  map[string]agent.ModelChoice
-	modelUnavailable         map[string]string // model catalog problems, displayed inside the selector
-	accountLimits            map[string]agent.AccountLimits
-	userInstructions         string
-	preferencesEntry         *widget.Entry // the settings' editor of userInstructions, once shown
-	approvalMode             string
-	inForeground             bool // the window has the focus
-	chats                    []*conversation
-	current                  *conversation
-	projects                 []string
-	sshMachines              []sshmachine.Settings          // Settings → General
-	machineProjects          map[string][]string            // each SSH machine's projects (paths there), by machine ID
-	machines                 map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
-	localWorkspace           string                         // this computer's project while an SSH machine is the target
-	worktrees                map[string]string              // this computer's worktrees: folder → project (worktrees.go)
-	worktreeSort             string                         // how the sidebar and Repository order worktrees
-	theme                    themeChoice                    // dark, light or the system's, and the accent
-	repos                    map[string]*repoState          // repositories read, by target and project
-	repoWindow               *repoWindow                    // the open Repository window
-	statePath                string
-	saveTimer                *time.Timer
-	saveLock                 sync.Mutex // one write at a time, the newest state last
-	saveCount                int        // states handed to persist
-	saveDone                 int        // the newest one written (under saveLock)
-	saveError                string
-	stateProblem             string // why the saved state could not be read, said once the window is up
-	stateBlocked             bool   // the unreadable state could not be put aside: never write over it
-	ctx                      context.Context
-	shutdown                 context.CancelFunc
-	modelLoad                int
-	plan                     agent.PlanUsage          // Claude Code connection: the subscription windows in use
-	claudeOffered            bool                     // the Claude Code connection was proposed once
-	remote                   *remoteServer            // the phone remote, nil when off
-	extPage                  *extensionsPage          // Settings → Extensions, while it was last built
-	server                   *remoteDesktop           // the server the window works on, nil for this computer (remote_desktop.go)
-	localCfg                 agent.Config             // this computer's settings while a server is the target
-	machine                  *tapRow                  // the target: this computer, an SSH machine or a server
-	serverStatus             *fitLabel                // the server's state beside it
-	remoteEnabled            bool                     // see phone_server.go
-	devices                  []remoteapi.PairedDevice // phones paired with the remote
-	modelsLoading            bool
-	chrome                   bool
+	// The Loopy space (loopy_view.go): built once opened, on screen while
+	// inLoopy, with 1loop's own sidebar and page kept aside meanwhile.
+	loopy                    *loopyMode
+	inLoopy                  bool
+	oneloopSide, oneloopMain fyne.CanvasObject
+
+	computer         *computeruse.ComputerSession
+	browser          *browser.Engine
+	window           fyne.Window
+	backend          *agent.App
+	cfg              agent.Config
+	keys             map[string]string
+	connectionsList  []agent.Connection
+	webSetupWindows  map[*agent.ChatGPTWeb]fyne.Window
+	choices          map[string]agent.ModelChoice
+	modelUnavailable map[string]string // model catalog problems, displayed inside the selector
+	accountLimits    map[string]agent.AccountLimits
+	userInstructions string
+	preferencesEntry *widget.Entry // the settings' editor of userInstructions, once shown
+	approvalMode     string
+	inForeground     bool // the window has the focus
+	chats            []*conversation
+	current          *conversation
+	projects         []string
+	sshMachines      []sshmachine.Settings          // Settings → General
+	machineProjects  map[string][]string            // each SSH machine's projects (paths there), by machine ID
+	machines         map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
+	localWorkspace   string                         // this computer's project while an SSH machine is the target
+	worktrees        map[string]string              // this computer's worktrees: folder → project (worktrees.go)
+	worktreeSort     string                         // how the sidebar and Repository order worktrees
+	theme            themeChoice                    // dark, light or the system's, and the accent
+	repos            map[string]*repoState          // repositories read, by target and project
+	repoWindow       *repoWindow                    // the open Repository window
+	statePath        string
+	saveTimer        *time.Timer
+	saveLock         sync.Mutex // one write at a time, the newest state last
+	saveCount        int        // states handed to persist
+	saveDone         int        // the newest one written (under saveLock)
+	saveError        string
+	stateProblem     string // why the saved state could not be read, said once the window is up
+	stateBlocked     bool   // the unreadable state could not be put aside: never write over it
+	ctx              context.Context
+	shutdown         context.CancelFunc
+	modelLoad        int
+	plan             agent.PlanUsage          // Claude Code connection: the subscription windows in use
+	claudeOffered    bool                     // the Claude Code connection was proposed once
+	remote           *remoteServer            // the phone remote, nil when off
+	extPage          *extensionsPage          // Settings → Extensions, while it was last built
+	server           *remoteDesktop           // the server the window works on, nil for this computer (remote_desktop.go)
+	localCfg         agent.Config             // this computer's settings while a server is the target
+	machine          *tapRow                  // the target: this computer, an SSH machine or a server
+	serverStatus     *fitLabel                // the server's state beside it
+	remoteEnabled    bool                     // see phone_server.go
+	devices          []remoteapi.PairedDevice // phones paired with the remote
+	modelsLoading    bool
+	chrome           bool
 
 	updates   updateState // the release page's latest version (updates.go)
 	updateRow *tapRow     // the sidebar's "Update available" row

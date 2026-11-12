@@ -85,6 +85,7 @@ var subPages = map[string]string{
 	"Extensions":           registry.Tools,
 	"Connectors":           registry.Tools,
 	registry.ShortcutsPage: registry.General,
+	loopySettingsPage:      registry.Agent,
 }
 
 // pageAliases are pages of earlier versions, still named by links and

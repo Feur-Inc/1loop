@@ -191,14 +191,24 @@ func (mode *loopyMode) event(kind string, data any) {
 			mode.renderFeed()
 			mode.stream = &loopyBubble{id: message.ID}
 		}
+		var now string
 		mode.store.Update(mode.stream.id, func(m *loopy.Message) {
 			if kind == "text" {
 				m.Text = text
 			} else {
 				m.Text += text
 			}
+			now = m.Text
 		})
-		mode.renderFeed()
+		// Only the bubble being written changes: the conversation is not
+		// laid out again for every word.
+		if bubble := mode.bubbles[mode.stream.id]; bubble != nil {
+			bubble.setText(now)
+			mode.feed.Refresh()
+			mode.toEnd()
+		} else {
+			mode.renderFeed()
+		}
 		mode.setState("typing", "Writing to you")
 		mode.typeLabel.Text = "Loopy is writing…"
 		mode.typeLabel.Refresh()

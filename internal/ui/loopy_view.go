@@ -64,11 +64,12 @@ type loopyMode struct {
 	contextUsed int  // its last request's input tokens
 	window      int  // its model's context window
 
-	run    *loopyRun
-	events chan func()  // the run's events, applied in order on the interface's thread
-	stream *loopyBubble // the bubble Loopy is writing
-	queued []string     // messages sent while it was busy
-	timer  *time.Ticker
+	bubbles map[string]*loopyBubble // Loopy's bubbles on screen, by message
+	run     *loopyRun
+	events  chan func()  // the run's events, applied in order on the interface's thread
+	stream  *loopyBubble // the bubble Loopy is writing
+	queued  []string     // messages sent while it was busy
+	timer   *time.Ticker
 }
 
 // openLoopy is the switch's Loopy: built once, then shown.
@@ -291,14 +292,14 @@ func (mode *loopyMode) renderFeed() {
 	}
 	var rows []fyne.CanvasObject
 	var day time.Time
-	for i, message := range messages {
+	mode.bubbles = map[string]*loopyBubble{}
+	for _, message := range messages {
 		local := message.Time.Local()
 		if day.IsZero() || local.YearDay() != day.YearDay() || local.Year() != day.Year() {
 			day = local
 			rows = append(rows, loopyDay(local))
 		}
-		last := i == len(messages)-1
-		rows = append(rows, mode.messageRow(message, last))
+		rows = append(rows, mode.messageRow(message))
 	}
 	mode.feed.Objects = rows
 	mode.feed.Refresh()
@@ -350,7 +351,7 @@ func (dayRuleLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 }
 
 // messageRow is one message: a bubble, a note or a card.
-func (mode *loopyMode) messageRow(message loopy.Message, last bool) fyne.CanvasObject {
+func (mode *loopyMode) messageRow(message loopy.Message) fyne.CanvasObject {
 	switch {
 	case message.Card != nil:
 		return padded(4, 4, 34, 0, mode.cardView(message))
@@ -367,10 +368,8 @@ func (mode *loopyMode) messageRow(message loopy.Message, last bool) fyne.CanvasO
 	}
 	bubble := newLoopyBubble(message.Text, false, message.Reaction)
 	bubble.onMenu = func() { mode.reactMenu(message, bubble) }
-	if last && mode.run != nil && mode.stream != nil && mode.stream.id == message.ID {
-		mode.stream = bubble
-	}
 	bubble.id = message.ID
+	mode.bubbles[message.ID] = bubble
 	return padded(3, 3, 0, 0, bubble.row)
 }
 

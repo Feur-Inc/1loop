@@ -155,6 +155,7 @@ type Settings struct {
 // Store is Loopy's saved state.
 type Store struct {
 	mu       sync.Mutex
+	saving   sync.Mutex // one save at a time: they share the temporary file
 	path     string
 	Messages []Message       `json:"messages"`
 	Memory   []Fact          `json:"memory"`
@@ -177,6 +178,8 @@ func Open(path string) *Store {
 
 // Save writes the state, whole or not at all.
 func (store *Store) Save() error {
+	store.saving.Lock()
+	defer store.saving.Unlock()
 	store.mu.Lock()
 	data, err := json.MarshalIndent(store, "", "  ")
 	path := store.path

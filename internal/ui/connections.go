@@ -6,6 +6,7 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/core"
 	"1loop/internal/platform"
+	"encoding/json"
 )
 
 // offerClaudeCode adds a Claude Code connection the first time 1loop finds
@@ -87,6 +88,10 @@ func (ui *desktopUI) initializeConnections() {
 
 func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 	previous := ui.cfg
+	// The catalog, loaded again at each start, selects the model already
+	// chosen: nothing then changes in what is saved, and the whole state
+	// file (megabytes of chats) need not be written again.
+	before := savedConfigs(ui)
 	platform.Devf("ui", "model %s (%s)", choice.ID, choice.Display())
 	cfg := choice.Connection.Config(previous.Workspace)
 	cfg.MachineID = previous.MachineID // the project stays on its SSH machine
@@ -126,9 +131,22 @@ func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 	} else if ui.releaseWebTabs() {
 		ui.panel.render()
 	}
-	ui.save()
+	if savedConfigs(ui) != before {
+		ui.save()
+	}
 	ui.remote.settingsChanged()
 	ui.remote.metaChanged(ui.current)
+}
+
+// savedConfigs is the window's and the open chat's settings as the state
+// file holds them.
+func savedConfigs(ui *desktopUI) string {
+	global, _ := json.Marshal(ui.cfg)
+	if ui.current == nil {
+		return string(global)
+	}
+	chat, _ := json.Marshal(ui.current.Config)
+	return string(global) + "\n" + string(chat)
 }
 
 // showChatModel puts the open chat's model in the picker, from the catalog

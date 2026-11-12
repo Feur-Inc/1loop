@@ -48,9 +48,10 @@ server-side project directory through the remote API.
 
 ## Docker
 
-The image `ghcr.io/feur-inc/1loop-server` holds the server with Bash, Git and
-Chromium, and runs it as a non-root user (uid 1000). Its data directory is
-`/data` (keys, certificate, pairings, configuration and chats) and its
+The image `ghcr.io/feur-inc/1loop-server` holds the server with Bash, Git,
+Chromium and [Claude Code](#claude-code-in-the-image), and runs it as a
+non-root user (uid 1000). Its data directory is `/data` (keys, certificate,
+pairings, configuration, chats and Claude Code's sign-in) and its
 workspace is `/projects`: keep both on volumes. Browser Use runs Chromium
 without its own sandbox (`ONELOOP_CHROMIUM_NO_SANDBOX=1`): Docker's default
 profile allows none of them, so the container is what isolates it. The image
@@ -80,6 +81,39 @@ Tags: `latest` and the version (`0.3.3`) for a stable release, `alpha` and
 in a container: pull the new image and recreate the container, and the
 volumes keep everything. To build it yourself: `docker build -t 1loop-server .`
 from the repository root.
+
+### Claude Code in the image
+
+The image includes the Claude Code CLI (`claude`, Anthropic's native build),
+so a Claude Code connection works in a new container without installing
+anything. Its sign-in and settings are kept in the data volume, in
+`/data/claude` (`CLAUDE_CONFIG_DIR`, which holds both its `.claude` folder and
+its `.claude.json`): sign in once, and you stay signed in when the image is
+updated. Sign in with your Claude subscription (Pro or Max), in the container:
+
+```sh
+docker exec -it 1loop-server claude auth login
+```
+
+It prints a link: open it in any browser, sign in, and paste the code it
+shows back into the terminal. `docker exec -it 1loop-server claude` also works,
+with `/login` in Claude Code's own screen. The Claude Code sign-in a paired
+1loop client starts on the server goes to the same place. `docker exec
+1loop-server claude auth status` tells whether it is signed in.
+
+An API key is not used: 1loop runs Claude Code on the subscription only, so it
+does not pass `ANTHROPIC_API_KEY` to it, and it stops a run that would be
+billed to an API key. Without an interactive sign-in, give the container a
+long-lived subscription token instead: run `claude setup-token` on any computer
+where you are signed in, and pass it with `-e CLAUDE_CODE_OAUTH_TOKEN=…`.
+
+Claude Code's version is the image's: it does not update itself in the
+container, and a new image brings a new version. To build one with another
+version: `docker build --build-arg CLAUDE_CODE_VERSION=2.1.311 -t 1loop-server .`
+(a version from `https://downloads.claude.ai/claude-code-releases/stable`).
+A Claude Code connection with its own login (`"claudeLogin": "own"`) keeps its
+folder in the home folder instead, which an image update does not keep: use
+the shared login in a container.
 
 ## How much of the host the agent reaches
 

@@ -32,7 +32,7 @@ services:
     # command: ["-provider", "compatible", "-base-url", "https://api.example.com/v1",
     #           "-model", "your-model-id", "-api-key-env", "MODEL_API_KEY"]
     volumes:
-      - data:/data            # keys, certificate, pairings, configuration, chats
+      - data:/data            # keys, certificate, pairings, configuration, chats, Claude Code's sign-in
       - ./projects:/projects  # the agent's workspace
       # Level 2: host folders, as projects under /projects. The agent reads
       # and writes them as uid 1000 (see docs/SERVER.md): mount only what it

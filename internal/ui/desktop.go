@@ -326,7 +326,8 @@ func runDesktop(backend *agent.App, root string) {
 	ui.load()
 	ui.followTheme()
 	ui.initializeConnections()
-	// Our own title bar on X11 and native Wayland; the system bar elsewhere.
+	// Our own title bar on X11, native Wayland and Windows; the system bar
+	// elsewhere.
 	ui.chrome = customChromeSupported() && os.Getenv("ONELOOP_SYSTEM_TITLEBAR") == ""
 	if drv, ok := a.Driver().(desktop.Driver); ok && ui.chrome {
 		ui.window = drv.CreateSplashWindow()

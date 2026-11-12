@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//go:build !linux || !cgo
+//go:build !windows && (!linux || !cgo)
 
 package ui
 
-// Without cgo or outside Linux the window keeps the system title bar.
+// Without cgo on Linux, and on other systems than Linux and Windows, the
+// window keeps the system title bar.
 
 import "fyne.io/fyne/v2"
 

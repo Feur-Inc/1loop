@@ -318,6 +318,10 @@ If the window stays blank (no OpenGL driver), start `1loop-software.cmd`: it
 uses the bundled Mesa CPU renderer. It needs the Microsoft Visual C++
 2015–2022 x64 runtime.
 
+1loop draws its own title bar, as on Linux; Windows still moves, resizes and
+maximises the window. Set the environment variable
+`ONELOOP_SYSTEM_TITLEBAR=1` to keep the system's title bar instead.
+
 Pairing a phone can trigger a Windows firewall prompt; desktop-only use does
 not need inbound access. Git is needed for the *Git changes* tab; Browser Use
 finds Chrome, Chromium or Microsoft Edge, or downloads its own Chromium into

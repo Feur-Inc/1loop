@@ -691,7 +691,11 @@ type launchScreen struct {
 }
 
 const (
-	launchLength = 2200
+	launchLength = 2200 // the sequence's own timeline, in milliseconds, as the DA times it
+	// launchPlay is how long it plays: about as long as 1loop takes to load,
+	// not longer, so the intro never keeps the user waiting. The whole
+	// timeline plays faster, in the same proportions.
+	launchPlay   = 1300 * time.Millisecond
 	launchHeight = 132 // display height of the wordmark
 )
 
@@ -729,7 +733,7 @@ func (screen *launchScreen) show() {
 }
 
 func (screen *launchScreen) play() {
-	screen.anim = motion(launchLength*time.Millisecond, fyne.AnimationLinear, func(p float32) {
+	screen.anim = motion(launchPlay, fyne.AnimationLinear, func(p float32) {
 		screen.t = p * launchLength
 		screen.Refresh()
 		if p >= 1 {

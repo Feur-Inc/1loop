@@ -150,8 +150,14 @@ func findLines(lines, want []string, start int, atEnd bool) int {
 	return -1
 }
 
-// applyHunks returns the file's new text.
+// applyHunks returns the file's new text. A file whose lines end mostly
+// with \r\n (Windows) is patched as \n and written back with \r\n: the
+// patch's lines carry no \r.
 func applyHunks(path, text string, hunks []patchHunk) (string, error) {
+	crlf := strings.Count(text, "\r\n") > strings.Count(text, "\n")/2
+	if crlf {
+		text = strings.ReplaceAll(text, "\r\n", "\n")
+	}
 	lines := strings.Split(text, "\n")
 	trailingNewline := strings.HasSuffix(text, "\n")
 	if trailingNewline {
@@ -185,6 +191,9 @@ func applyHunks(path, text string, hunks []patchHunk) (string, error) {
 	result := strings.Join(lines, "\n")
 	if trailingNewline || len(lines) > 0 {
 		result += "\n"
+	}
+	if crlf {
+		result = strings.ReplaceAll(result, "\n", "\r\n")
 	}
 	return result, nil
 }

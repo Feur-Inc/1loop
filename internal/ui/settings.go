@@ -441,7 +441,7 @@ func settingStack(title, detail string, below fyne.CanvasObject) fyne.CanvasObje
 // needs at that width, as it changes: a message that wraps.
 type widthLayout struct{ width float32 }
 
-func (wide widthLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+func (wide *widthLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	height := float32(0)
 	for _, object := range objects {
 		height = fyne.Max(height, object.MinSize().Height)
@@ -449,7 +449,7 @@ func (wide widthLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	return fyne.NewSize(wide.width, height)
 }
 
-func (wide widthLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+func (wide *widthLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	for _, object := range objects {
 		object.Move(fyne.NewPos(0, 0))
 		object.Resize(size)
@@ -1060,9 +1060,14 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		"ChatGPT (Web)":         "chatgptweb",
 	}
 	status := plainFlow("", 13, colMuted)
+	statusWidth := &widthLayout{}
 	say := func(text string) {
 		status.spans, status.cut = []span{{text: text}}, nil
-		status.flow(status.Size().Width)
+		// As wide as the message, on one line while it fits beside the
+		// buttons; longer ones wrap.
+		natural, _ := status.extent()
+		statusWidth.width = fyne.Min(natural+2, 440)
+		status.flow(statusWidth.width)
 		status.Refresh()
 		// The bar under the page takes the text's new height: two lines
 		// would otherwise run out of the window.
@@ -1489,7 +1494,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	}
 	cancel := newRow("Cancel", nil, styleOutline, settings.back)
 	settings.push(settingsFrame{content: page, actions: []fyne.CanvasObject{
-		container.NewCenter(container.New(widthLayout{360}, status)),
+		container.NewCenter(container.New(statusWidth, status)),
 		cancel,
 		save,
 	}, beforeLeave: beforeLeave, leave: func() {

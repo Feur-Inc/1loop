@@ -34,6 +34,7 @@ type sideChat struct {
 	menu     []menuAction
 	text     func() []string // its messages, for search; nil when they are not at hand
 	subchats []sideChat      // listed under it, whatever their folder (nestSubchats)
+	group    string          // the key of the group it is listed in (groupKey), once listed
 }
 
 // nestSubchats puts each subchat under its parent, wherever its folder is
@@ -99,69 +100,111 @@ func groupByProject[T any](projects []string, chats []T, folder func(T) string, 
 	return groups
 }
 
-// renderSidebar lists the projects as groups that fold, each with its own
-// chats. selectProject opens the new chat screen in a project or worktree;
-// projectActions are a project's menu after "New chat".
-func (ui *desktopUI) renderSidebar(projects []string, chats []sideChat, selectProject func(string), projectActions func(string) []menuAction) {
-	ui.sideChats = chats
-	worktrees := ui.worktreeMap()
-	var listed []string
-	for _, p := range projects {
-		if worktrees[p] == "" { // a worktree shows under its project
-			listed = append(listed, p)
-		}
-	}
-	opened := ui.projectOf(ui.cfg.Workspace)
+// renderSidebar lists every target's projects as groups that fold, each
+// with its own chats (#359): this computer's chats with no folder first,
+// then this computer's projects, each SSH machine's and the server's.
+func (ui *desktopUI) renderSidebar(groups []targetGroup) {
 	ui.projectList.RemoveAll()
 	ui.sideGlide.begin()
-	var scratch []sideChat
-	chats = slices.DeleteFunc(nestSubchats(chats), func(chat sideChat) bool {
-		if chat.scratch {
-			scratch = append(scratch, chat)
+	var all, scratch []sideChat
+	for i := range groups {
+		listed := groups[i].listed()
+		for j := range groups[i].chats {
+			groups[i].chats[j].group = groups[i].keyOf(listed, groups[i].chats[j])
 		}
-		return chat.scratch
-	})
-	if ui.server == nil && ui.cfg.MachineID == "" && (ui.cfg.InScratch() || len(scratch) > 0) {
+		all = append(all, groups[i].chats...)
+		groups[i].chats = slices.DeleteFunc(nestSubchats(groups[i].chats), func(chat sideChat) bool {
+			if chat.scratch {
+				scratch = append(scratch, chat)
+			}
+			return chat.scratch
+		})
+	}
+	ui.sideChats = all
+	if len(scratch) > 0 || ui.server == nil && ui.cfg.MachineID == "" && ui.cfg.InScratch() {
 		ui.addScratchGroup(scratch)
 	}
 	ui.sideOrder = append(ui.sideOrder[:0], scratch...)
-	for _, group := range groupByProject(listed, chats, func(chat sideChat) string { return chat.folder }, ui.projectOf) {
-		ui.sideOrder = append(ui.sideOrder, group.chats...)
-		p := group.project
-		folded := ui.foldedProjects[p]
+	for _, group := range groups {
+		ui.addTargetGroup(group)
+	}
+	ui.sideGlide.end(ui.projectList)
+	if ui.sideLists != nil {
+		ui.sideLists.Refresh() // the groups changed height: lay the column out again
+	}
+}
+
+// offlineMark is what a project shows, in place of its branch, while
+// its target cannot be reached: down, out of the network or refusing the
+// sign-in. Short, for a narrow sidebar.
+const offlineMark = "offline"
+
+// addTargetGroup lists a target's projects, each with its chats, then its
+// chats of no listed project. A project of another target than this
+// computer shows the target's icon after its name, and offlineMark
+// while the target does not answer.
+func (ui *desktopUI) addTargetGroup(group targetGroup) {
+	target := group.target
+	open := func(folder string) { ui.openProjectOn(target, folder) }
+	opened := ""
+	if group.active {
+		opened = ui.projectOf(ui.cfg.Workspace)
+	}
+	for _, chats := range groupByProject(group.listed(), group.chats, func(chat sideChat) string { return chat.folder }, group.projectOf) {
+		ui.sideOrder = append(ui.sideOrder, chats.chats...)
+		p := chats.project
+		key := groupKey(target, p)
+		folded := ui.foldedProjects[key]
 		name := "Other chats"
 		if p != "" {
-			name = ui.projectName(p)
+			name = targetProjectName(target, p)
 		}
 		icon := iconChevron
 		if folded {
 			icon = iconChevronRight
 		}
-		header := newRow(name, icon, styleNav, func() { ui.foldProject(p, !folded) })
+		header := newRow(name, icon, styleNav, func() { ui.foldProject(key, !folded) })
 		header.accent = true
 		header.truncate = true
-		header.selected = p != "" && p == ui.cfg.Workspace && ui.current == nil
-		if state := ui.repoFor(p); p != "" && state.repo != nil {
+		header.mark = target.mark()
+		header.selected = group.active && p != "" && p == ui.cfg.Workspace && ui.current == nil
+		if group.reach.state == reachOffline {
+			header.trailing = offlineMark
+		} else if state := ui.repoStateOn(target, p); p != "" && state != nil && state.repo != nil {
 			header.trailing = state.repo.Current // the branch of the project's folder
 		}
-		if folded && groupRunning(group.chats) {
+		if folded && groupRunning(chats.chats) {
 			header.badge = iconDot // a hidden chat is at work
 		}
 		if p == "" {
-			ui.addSide("project:", header)
+			ui.addSide("project:"+key, header)
 		} else {
-			ui.addSide("project:"+p, ui.withMore(header, func(anchor fyne.CanvasObject) *sheet {
-				actions := []menuAction{{label: "New chat in " + name, icon: iconPlus, run: func() { selectProject(p); ui.startNew() }}}
-				return showMenu(ui.window, anchor, append(actions, projectActions(p)...))
+			ui.addSide("project:"+key, ui.withMore(header, func(anchor fyne.CanvasObject) *sheet {
+				actions := []menuAction{{label: "New chat in " + name, icon: iconPlus, run: func() {
+					open(p)
+					if group.active {
+						ui.startNew() // the project may be open already, with a chat on screen
+					}
+				}}}
+				return showMenu(ui.window, anchor, append(actions, ui.projectActionsOn(group, p)...))
 			}))
 		}
 		if folded {
 			continue
 		}
-		ui.addGroupChats(p, group.chats)
+		if !group.known { // a server that has not answered: its chats are not at hand
+			placeholder := "Connecting…"
+			if group.reach.state == reachOffline {
+				placeholder = "Chats show once it's back"
+			}
+			// Cut short rather than widen the sidebar when it is narrow.
+			ui.addSide("empty:"+key, padded(4, 4, 38, 0, newFitLabel(placeholder, 13, colFaint)))
+			continue
+		}
+		ui.addGroupChats(key, p, chats.chats)
 		if p != "" && p == opened { // its worktrees, after its chats
-			for _, object := range ui.worktreeRows(p, selectProject) {
-				key := "worktree:" + p
+			for _, object := range ui.worktreeRows(p, open) {
+				key := "worktree:" + key
 				if row := firstRow(object); row != nil {
 					key += ":" + row.text
 				}
@@ -169,10 +212,6 @@ func (ui *desktopUI) renderSidebar(projects []string, chats []sideChat, selectPr
 			}
 			ui.loadRepo(p, true, 20*time.Second)
 		}
-	}
-	ui.sideGlide.end(ui.projectList)
-	if ui.sideLists != nil {
-		ui.sideLists.Refresh() // the groups changed height: lay the column out again
 	}
 }
 
@@ -206,19 +245,20 @@ func (ui *desktopUI) addScratchGroup(chats []sideChat) {
 		return showMenu(ui.window, anchor, []menuAction{{label: "New chat with no folder", icon: iconPlus, run: ui.chooseNoFolder}})
 	}))
 	if !folded {
-		ui.addGroupChats(scratchGroup, chats)
+		ui.addGroupChats(scratchGroup, scratchGroup, chats)
 	}
 }
 
 // addGroupChats lists a project's chats under it, the first few unless it
-// was unfolded in full or the open chat is further down.
-func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
+// was unfolded in full or the open chat is further down. key is the
+// group's (groupKey).
+func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 	if len(chats) == 0 {
-		ui.addSide("empty:"+project, padded(4, 4, 38, 0, textLine("No chats yet", 13, colFaint)))
+		ui.addSide("empty:"+key, padded(4, 4, 38, 0, textLine("No chats yet", 13, colFaint)))
 		return
 	}
 	shown := chats
-	if !ui.allChatsShown[project] && len(chats) > groupChatLimit {
+	if !ui.allChatsShown[key] && len(chats) > groupChatLimit {
 		shown = chats[:groupChatLimit]
 		for _, chat := range chats[groupChatLimit:] {
 			if chat.openHere() {
@@ -266,12 +306,12 @@ func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 			label = "Show less"
 		}
 		more := newRow(label, nil, styleNav, func() {
-			ui.allChatsShown[project] = len(shown) < len(chats)
+			ui.allChatsShown[key] = len(shown) < len(chats)
 			ui.renderChats()
 		})
 		more.ink = colFaint
 		more.size = 13
-		ui.addSide("more:"+project, padded(0, 0, 28, 0, more))
+		ui.addSide("more:"+key, padded(0, 0, 28, 0, more))
 	}
 }
 

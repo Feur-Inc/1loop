@@ -276,6 +276,7 @@ type remoteDesktop struct {
 // projects and chats, and what is sent runs there.
 func (ui *desktopUI) useServer(client *remoteClient) {
 	if ui.server != nil {
+		ui.handOver(ui.server)
 		ui.server.close()
 	} else {
 		ui.localCfg = ui.cfg
@@ -290,6 +291,7 @@ func (ui *desktopUI) useServer(client *remoteClient) {
 	}
 	remote.resetTabs()
 	ui.server = remote
+	ui.linkServer() // a server just paired is followed from now on
 	ui.machine.SetText(serverName(client.address.URL))
 	ui.serverStatus.SetText("Connecting…")
 	ui.serverStatus.Show()
@@ -327,6 +329,7 @@ func (ui *desktopUI) useComputer() {
 		}
 		return
 	}
+	ui.handOver(ui.server)
 	ui.server.close()
 	ui.server = nil
 	ui.cfg = ui.localCfg
@@ -697,6 +700,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			}
 		}
 		err := remote.client.json(ctx, "GET", "/api/state", nil, &state)
+		stateErr := err // whether the server answers (an open chat's error may only be the chat's)
 		var projects struct{ Projects []string }
 		if err == nil {
 			remote.client.json(ctx, "GET", "/api/projects", nil, &projects) // an older server has none to list
@@ -719,6 +723,12 @@ func (remote *remoteDesktop) refreshLoop() {
 		fyne.Do(func() {
 			if remote.current != id || remote.ctx.Err() != nil || remote.parent.server != remote {
 				return
+			}
+			target := serverTarget(remote.client.address.URL)
+			if stateErr != nil {
+				remote.parent.setReach(target, reachOffline, stateErr.Error())
+			} else {
+				remote.parent.setReach(target, reachOnline, "")
 			}
 			if err != nil {
 				remote.status.SetText(err.Error())
@@ -750,19 +760,8 @@ func (remote *remoteDesktop) refreshLoop() {
 func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat, listed []string) {
 	ui := remote.parent
 	remote.name, remote.defaultWorkspace = name, workspace
-	projects := []string{}
-	add := func(path string) {
-		if path != "" && !slices.Contains(projects, path) && remote.worktrees[path] == "" {
-			projects = append(projects, path)
-		}
-	}
-	add(workspace)
-	for _, path := range listed {
-		add(path)
-	}
-	for _, chat := range chats {
-		add(chat.Workspace)
-	}
+	projects := serverProjectList(workspace, listed, chats, remote.worktrees)
+	ui.rememberServerProjects(remote.client.address.URL, projects)
 	if ui.cfg.Workspace == "" {
 		ui.cfg.Workspace = workspace
 		ui.updateHeader()
@@ -785,26 +784,6 @@ func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat
 		}
 	}
 	ui.renderChats()
-}
-
-// renderChats is the sidebar for a server: its projects and their chats.
-func (remote *remoteDesktop) renderChats() {
-	ui := remote.parent
-	var chats []sideChat
-	for _, chat := range remote.chats {
-		chat := chat
-		chats = append(chats, sideChat{
-			id: chat.ID, parent: chat.Parent,
-			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
-			status: chat.Status, blocked: chat.Blocked,
-			selected: ui.current != nil && ui.current.server == remote && ui.current.serverID == chat.ID,
-			open:     func() { remote.openChat(chat.ID) },
-			menu:     []menuAction{{label: "Delete", icon: iconTrash, danger: true, run: func() { remote.deleteChat(chat) }}},
-		})
-	}
-	ui.renderSidebar(remote.projects, chats, remote.selectProject, func(p string) []menuAction {
-		return append(ui.repositoryActions(p), ui.projectMemoryAction(p))
-	})
 }
 
 // projectMenu is the composer's folder chip for a server: its projects.

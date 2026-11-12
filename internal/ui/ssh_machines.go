@@ -129,7 +129,11 @@ func (ui *desktopUI) targetLabel() string { return ui.targetLabelOf(ui.cfg.Machi
 
 // useMachine makes an SSH machine the target: connected first, then its
 // first project, or none until one is made.
-func (ui *desktopUI) useMachine(id string) {
+func (ui *desktopUI) useMachine(id string) { ui.useMachineOn(id, "") }
+
+// useMachineOn makes an SSH machine the target on one of its projects ("":
+// its first). The sidebar marks it offline when it cannot be reached.
+func (ui *desktopUI) useMachineOn(id, project string) {
 	machine := ui.machineFor(id)
 	if machine == nil || ui.server == nil && ui.cfg.MachineID == id {
 		return
@@ -142,17 +146,19 @@ func (ui *desktopUI) useMachine(id string) {
 		fyne.Do(func() {
 			if err != nil {
 				ui.machine.SetText(ui.targetLabel())
+				ui.setReach(sshTarget(id), reachOffline, err.Error())
 				ui.notice(machine.Label(), err.Error())
 				return
 			}
+			ui.setReach(sshTarget(id), reachOnline, "")
 			if ui.server != nil {
 				ui.useComputer()
 			}
 			if ui.cfg.MachineID == "" {
 				ui.localWorkspace = ui.cfg.Workspace
 			}
-			workspace := ""
-			if projects := ui.machineProjects[id]; len(projects) > 0 {
+			workspace := project
+			if projects := ui.machineProjects[id]; workspace == "" && len(projects) > 0 {
 				workspace = projects[0]
 			}
 			platform.Devf("ui", "target: SSH machine %s, project %s", machine.Label(), workspace)

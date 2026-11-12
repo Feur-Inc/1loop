@@ -310,6 +310,17 @@ func runDesktop(backend *agent.App, root string) {
 	if platform.DevWanted {
 		platform.StartDevLog()
 	}
+	// The saved state is read and decoded while the window is created: the
+	// window (the display, OpenGL) does not need it and takes longer.
+	type stateRead struct {
+		state savedState
+		err   error
+	}
+	saved := make(chan stateRead, 1)
+	go func() {
+		state, err := readSavedState(statePath(root))
+		saved <- stateRead{state, err}
+	}()
 	// Follow the desktop's own scale (Xft.dpi) instead of Fyne's guess from
 	// the panel's physical DPI, which made everything ~40 % larger than other
 	// apps. An explicit FYNE_SCALE from the user still wins.
@@ -325,12 +336,9 @@ func runDesktop(backend *agent.App, root string) {
 	backend.EnableChatGPTWeb(ctx)
 	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), shortcutKeys: map[string]string{}, statePath: statePath(root),
 		cfg: agent.Config{Provider: "compatible", Workspace: root}, foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}, lastCrash: lastCrash}
-	ui.usage, ui.prices = openUsage(ui.statePath)
-	ui.load()
-	ui.followTheme()
-	ui.initializeConnections()
 	// Our own title bar on X11, native Wayland and Windows; the system bar
-	// elsewhere.
+	// elsewhere. Nothing is drawn in the window before its content is set
+	// below, once the state is loaded.
 	ui.chrome = customChromeSupported() && os.Getenv("ONELOOP_SYSTEM_TITLEBAR") == ""
 	if drv, ok := a.Driver().(desktop.Driver); ok && ui.chrome {
 		ui.window = drv.CreateSplashWindow()
@@ -340,6 +348,11 @@ func runDesktop(backend *agent.App, root string) {
 		ui.chrome = false
 		ui.window = a.NewWindow("1loop")
 	}
+	ui.usage, ui.prices = openUsage(ui.statePath)
+	read := <-saved
+	ui.loadFrom(read.state, read.err)
+	ui.followTheme()
+	ui.initializeConnections()
 	ui.window.SetPadded(false)
 	ui.window.Resize(fyne.NewSize(1180, 760))
 	ui.window.CenterOnScreen()
@@ -2027,13 +2040,25 @@ func (ui *desktopUI) persist(wait bool) {
 }
 
 func (ui *desktopUI) load() {
-	ui.remoteEnabled = true // the remote is on until the user turns it off
-	defer ui.remoteDefaults()
-	var state savedState
-	data, err := os.ReadFile(ui.statePath)
+	state, err := readSavedState(ui.statePath)
+	ui.loadFrom(state, err)
+}
+
+// readSavedState reads and decodes the saved state, the long part of loading
+// it (a large state takes a few hundred milliseconds): it touches nothing
+// else, so it can run while the window is being created.
+func readSavedState(path string) (state savedState, err error) {
+	data, err := os.ReadFile(path)
 	if err == nil {
 		err = json.Unmarshal(data, &state)
 	}
+	return state, err
+}
+
+// loadFrom sets 1loop up from the saved state readSavedState read.
+func (ui *desktopUI) loadFrom(state savedState, err error) {
+	ui.remoteEnabled = true // the remote is on until the user turns it off
+	defer ui.remoteDefaults()
 	if os.IsNotExist(err) {
 		return // a first launch, or the user removed it to start afresh
 	}
@@ -2053,7 +2078,6 @@ func (ui *desktopUI) load() {
 		}
 		ui.stateProblem = fmt.Sprintf("1loop could not read its saved chats and settings (%v). The file was kept as %s, and the save before it was restored: the latest changes may be missing.", err, aside)
 	}
-	data = nil // the file's bytes (the whole state) can go before the chats are set up
 	if state.RemoteEnabled != nil {
 		ui.remoteEnabled = *state.RemoteEnabled
 	}

@@ -134,7 +134,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	card.CornerRadius = 12
 	card.StrokeColor = colBorderSoft
 	card.StrokeWidth = 1
-	content := container.NewBorder(container.NewVBox(padded(8, 8, 8, 6, header), rule), nil, nil, nil, panel.page)
+	content := container.NewBorder(container.NewVBox(padded(6, 6, 8, 6, header), rule), nil, nil, nil, panel.page)
 	// The panel goes nearly to the window's edges: only a thin margin, which
 	// also leaves the window's own resize border within reach.
 	panel.view = padded(0, 6, 0, 6, container.NewStack(card, content))

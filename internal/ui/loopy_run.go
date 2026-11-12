@@ -27,6 +27,7 @@ import (
 // loopyRun is a run in progress.
 type loopyRun struct {
 	cancel func()
+	own    bool // Loopy started it itself: a routine, the morning summary
 }
 
 // submit sends what the user typed.
@@ -300,6 +301,7 @@ func loopyActivity(activity agent.Activity) (state, text string) {
 
 // ended closes a run; a message sent meanwhile starts the next one.
 func (mode *loopyMode) ended(err error, stopped bool) {
+	own := mode.run != nil && mode.run.own
 	mode.run, mode.stream = nil, nil
 	mode.typing.Hide()
 	switch {
@@ -307,6 +309,8 @@ func (mode *loopyMode) ended(err error, stopped bool) {
 		mode.store.Add(loopy.Message{From: "loopy", Text: "Something went wrong: " + agent.FirstLine(err.Error())})
 		mode.setState("blocked", "Something went wrong")
 		time.AfterFunc(5*time.Second, func() { fyne.Do(mode.settle) })
+	case own:
+		mode.ding()
 	default:
 		mode.setState("done", "Done")
 		time.AfterFunc(3400*time.Millisecond, func() { fyne.Do(mode.settle) })
@@ -676,6 +680,15 @@ func (mode *loopyMode) runRoutine(routine loopy.Routine) {
 		return
 	}
 	mode.start(text)
+	if mode.run != nil {
+		mode.run.own = true
+	}
+}
+
+// ding is the face when Loopy brings something on its own, unasked.
+func (mode *loopyMode) ding() {
+	mode.setState("ding", "Something new for you")
+	time.AfterFunc(3*time.Second, func() { fyne.Do(mode.settle) })
 }
 
 // startClock checks the routines and the morning summary every half minute.
@@ -717,6 +730,9 @@ func (mode *loopyMode) clock() {
 				mode.store.Settings.LastSummary = now
 				mode.store.Unlock()
 				mode.start("[Morning summary] Give the user their morning summary with loopy_card kind summary: what is in progress (your tasks and routines) and what needs them, one line per topic in body. Only what you know; say so when there is nothing.")
+				if mode.run != nil {
+					mode.run.own = true
+				}
 			}
 		}
 	}
@@ -827,6 +843,9 @@ func (mode *loopyMode) taskEnded(chat *conversation, ended string) {
 	go mode.store.Save()
 	mode.renderFeed()
 	mode.renderSide()
+	if mode.run == nil {
+		mode.ding()
+	}
 	mode.notify(found.Title)
 }
 

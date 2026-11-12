@@ -278,16 +278,6 @@ var faceStates = map[string]faceState{
 		p.blink = math.Min(1-.5*faceBump(t, 1.3, 1.46), 1-.5*faceBump(t, 1.55, 1.71))
 		return p
 	}},
-	"listening": {name: "listening", period: 6, pose: func(t float64) facePose {
-		v := math.Abs(math.Sin(t*7.3))*.6 + math.Abs(math.Sin(t*11.7))*.4
-		nod := faceBump(t, 1.6, 1.9) + faceBump(t, 1.95, 2.25) + faceBump(t, 4.4, 4.7) + faceBump(t, 4.75, 5.05)
-		p := hold(t, restPose(),
-			keyframe{0, func(p *facePose) { p.rot, p.tx = -11, -2 }},
-			keyframe{3, func(p *facePose) { p.rot, p.tx = 9, 2 }})
-		p.ty, p.ly, p.ew, p.eh = 4*nod, 1-1.5*v+3*nod, 1.12, 1.2+.1*v-.25*nod
-		p.ringScale, p.lx, p.blink = 1+.05*v*(1-nod), -1, faceBlink(t+3, 6, false)
-		return p
-	}},
 	"sleep": {name: "sleep", period: 7, pose: func(t float64) facePose {
 		p := hold(t, restPose(),
 			keyframe{0, func(p *facePose) { p.lid, p.ly, p.rot = .72, 3, -14 }},

@@ -304,6 +304,7 @@ func (view *browserView) changed(info browser.Info) {
 		view.status.Color = colMuted
 	}
 	view.status.Refresh()
+	view.screen.zoom.follow(info.URL)
 	view.screen.Refresh()
 	tabs := view.panel.tabs
 	if view.chat != view.panel.owner && view.chat != nil && view.chat.panel != nil {
@@ -396,6 +397,11 @@ type browserScreen struct {
 	buttons          int64
 	modifiers        int64
 	altGr            bool
+	zoom             viewZoom // the reader's own zoom and pan: read-only while zoomed
+	zoomBadge        *fyne.Container
+	zoomText         *canvas.Text
+	panning          bool
+	panFrom          fyne.Position
 }
 
 func newBrowserScreen(view *browserView) *browserScreen {
@@ -407,12 +413,24 @@ func newBrowserScreen(view *browserView) *browserScreen {
 	}
 	screen.image.FillMode = canvas.ImageFillStretch
 	screen.modelCursor.Hide()
+	screen.zoomBadge, screen.zoomText = newZoomBadge(screen.resetZoom)
 	screen.ExtendBaseWidget(screen)
 	return screen
 }
 
+// viewOnly: nothing reaches the page, while it is locked or zoomed.
+func (screen *browserScreen) viewOnly() bool {
+	return screen.zoom.active() || screen.view.inputAllowed != nil && !screen.view.inputAllowed()
+}
+
+func (screen *browserScreen) resetZoom() {
+	screen.zoom.reset()
+	screen.panning = false
+	screen.Refresh()
+}
+
 func (screen *browserScreen) CreateRenderer() fyne.WidgetRenderer {
-	return &browserScreenRenderer{screen: screen, objects: []fyne.CanvasObject{screen.background, screen.image, screen.modelCursor}}
+	return &browserScreenRenderer{screen: screen, objects: []fyne.CanvasObject{screen.background, screen.image, screen.modelCursor, screen.zoomBadge}}
 }
 
 type browserScreenRenderer struct {
@@ -437,14 +455,20 @@ func (renderer *browserScreenRenderer) Layout(size fyne.Size) {
 	screen := renderer.screen
 	info := screen.view.page.Snapshot()
 	screen.background.Resize(size)
-	scale := fyne.Min(size.Width/float32(info.Width), size.Height/float32(info.Height))
-	screen.rendered = fyne.NewSize(float32(info.Width)*scale, float32(info.Height)*scale)
-	screen.position = fyne.NewPos((size.Width-screen.rendered.Width)/2, (size.Height-screen.rendered.Height)/2)
-	screen.image.Move(screen.position)
-	screen.image.Resize(screen.rendered)
-	if screen.cursorGlide == nil {
-		screen.modelCursor.Move(screen.cursorTarget(scale))
+	// Drawn at the frame's own proportions: a frame from before a resize
+	// is shown as it is until the next one, never stretched to the new size.
+	frame := fyne.NewSize(float32(info.Width), float32(info.Height))
+	if img := screen.image.Image; img != nil && img.Bounds().Dx() > 0 && img.Bounds().Dy() > 0 {
+		frame = fyne.NewSize(float32(img.Bounds().Dx()), float32(img.Bounds().Dy()))
 	}
+	screen.position, screen.rendered = fitFrame(size, frame)
+	screen.zoom.clamp(size)
+	screen.image.Move(screen.zoom.at(screen.position))
+	screen.image.Resize(screen.zoom.sized(screen.rendered))
+	if screen.cursorGlide == nil {
+		screen.modelCursor.Move(screen.cursorTarget())
+	}
+	placeZoomBadge(screen.zoomBadge, screen.zoomText, &screen.zoom, size)
 	width, height := max(240, min(3840, int(size.Width))), max(200, min(2160, int(size.Height)))
 	ratio := float64(screen.view.window.Canvas().Scale())
 	if ratio != info.PixelRatio || (info.Adaptive && (width != info.Width || height != info.Height)) {
@@ -466,7 +490,7 @@ func (renderer *browserScreenRenderer) Layout(size fyne.Size) {
 }
 
 func (screen *browserScreen) coords(pos fyne.Position) (float64, float64, bool) {
-	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+	if screen.viewOnly() { // the reader's zoom never moves the agent's coordinates: no input at all
 		return 0, 0, false
 	}
 	if screen.rendered.Width <= 0 || screen.rendered.Height <= 0 {
@@ -482,7 +506,7 @@ func (screen *browserScreen) FocusGained()     {}
 func (screen *browserScreen) FocusLost()       { screen.modifiers = 0; screen.altGr = false }
 func (screen *browserScreen) AcceptsTab() bool { return true }
 func (screen *browserScreen) TypedRune(r rune) {
-	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+	if screen.viewOnly() {
 		return
 	}
 	if screen.modifiers&7 != 0 && !screen.altGr {
@@ -494,7 +518,11 @@ func (screen *browserScreen) TypedRune(r rune) {
 
 func browserKey(key fyne.KeyName) string { return browser.NamedKey(string(key)) }
 func (screen *browserScreen) TypedKey(e *fyne.KeyEvent) {
-	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+	if screen.zoom.active() && e.Name == fyne.KeyEscape {
+		screen.resetZoom()
+		return
+	}
+	if screen.viewOnly() {
 		return
 	}
 	if key := browserKey(e.Name); key != "" {
@@ -507,7 +535,7 @@ func (screen *browserScreen) TypedKey(e *fyne.KeyEvent) {
 }
 
 func (screen *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
-	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+	if screen.viewOnly() {
 		return
 	}
 	switch value := shortcut.(type) {
@@ -543,6 +571,12 @@ func (screen *browserScreen) TypedShortcut(shortcut fyne.Shortcut) {
 func (screen *browserScreen) MouseIn(e *desktop.MouseEvent) { screen.MouseMoved(e) }
 func (screen *browserScreen) MouseOut()                     {}
 func (screen *browserScreen) MouseMoved(e *desktop.MouseEvent) {
+	if screen.panning {
+		screen.zoom.pan(fyne.NewDelta(e.Position.X-screen.panFrom.X, e.Position.Y-screen.panFrom.Y), screen.Size())
+		screen.panFrom = e.Position
+		screen.Refresh()
+		return
+	}
 	x, y, ok := screen.coords(e.Position)
 	if !ok {
 		return
@@ -551,7 +585,12 @@ func (screen *browserScreen) MouseMoved(e *desktop.MouseEvent) {
 }
 
 func (screen *browserScreen) MouseDown(e *desktop.MouseEvent) {
-	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+	if screen.zoom.active() && e.Button == desktop.MouseButtonPrimary {
+		screen.view.window.Canvas().Focus(screen)         // so Escape resets the view; nothing reaches the page
+		screen.panning, screen.panFrom = true, e.Position // a drag moves the zoomed view
+		return
+	}
+	if screen.viewOnly() {
 		return
 	}
 	screen.view.window.Canvas().Focus(screen)
@@ -571,10 +610,14 @@ func (screen *browserScreen) MouseDown(e *desktop.MouseEvent) {
 }
 
 func (screen *browserScreen) MouseUp(e *desktop.MouseEvent) {
+	if screen.panning {
+		screen.panning = false
+		return
+	}
 	if e.Button == desktop.MouseButtonSecondary && screen.view.clipboardMenu {
 		return
 	}
-	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+	if screen.viewOnly() {
 		return
 	}
 	screen.mouse(e, input.MouseReleased)
@@ -597,7 +640,26 @@ func (screen *browserScreen) mouse(e *desktop.MouseEvent, kind input.MouseType) 
 }
 
 func (screen *browserScreen) Scrolled(e *fyne.ScrollEvent) {
-	if screen.view.inputAllowed != nil && !screen.view.inputAllowed() {
+	// Ctrl+scroll (and a trackpad's pinch, where the system reports it so)
+	// zooms the view; scrolling a zoomed view pans it. Neither reaches the page.
+	if zoomModifier(screen.modifiers&2 != 0) {
+		if screen.buttons != 0 {
+			// A button pressed on the page: zooming now would make the view
+			// read-only before its release reaches the page, leaving it held.
+			return
+		}
+		screen.view.window.Canvas().Focus(screen) // so Escape resets the view
+		screen.zoom.zoomAt(wheelFactor(e.Scrolled.DY), e.Position, screen.Size())
+		screen.panning = false
+		screen.Refresh()
+		return
+	}
+	if screen.zoom.active() {
+		screen.zoom.pan(fyne.NewDelta(e.Scrolled.DX, e.Scrolled.DY), screen.Size())
+		screen.Refresh()
+		return
+	}
+	if screen.viewOnly() {
 		return
 	}
 	x, y, ok := screen.coords(e.Position)
@@ -704,17 +766,21 @@ func newAgentCursor() *fyne.Container {
 	return cursor
 }
 
-func (screen *browserScreen) cursorTarget(scale float32) fyne.Position {
-	return screen.position.Add(fyne.NewPos(float32(screen.cursorX)*scale, float32(screen.cursorY)*scale))
+func (screen *browserScreen) cursorTarget() fyne.Position {
+	info := screen.view.page.Snapshot()
+	if info.Width <= 0 || info.Height <= 0 {
+		return screen.zoom.at(screen.position)
+	}
+	x := float32(screen.cursorX) * screen.rendered.Width / float32(info.Width)
+	y := float32(screen.cursorY) * screen.rendered.Height / float32(info.Height)
+	return screen.zoom.at(screen.position.Add(fyne.NewPos(x, y)))
 }
 
 // glide moves the agent's pointer to a point of the page, smoothly, as a
 // hand would; the first time it appears there.
 func (screen *browserScreen) glide(x, y float64) {
 	screen.cursorX, screen.cursorY = x, y
-	info := screen.view.page.Snapshot()
-	scale := fyne.Min(screen.Size().Width/float32(info.Width), screen.Size().Height/float32(info.Height))
-	to := screen.cursorTarget(scale)
+	to := screen.cursorTarget()
 	if screen.cursorGlide != nil {
 		screen.cursorGlide.Stop()
 		screen.cursorGlide = nil

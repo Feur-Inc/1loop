@@ -42,6 +42,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
@@ -85,6 +86,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.ImageBitmap
@@ -380,6 +382,8 @@ private fun span(ms: Long): String {
 // easily touched by mistake. The lock opens it; it closes again after 15
 // minutes without input, and whenever the reader leaves the tab or panel
 // (this view is then disposed, and starts locked the next time).
+// Locked, the picture can be pinched and dragged: the reader's own zoom
+// (ViewZoom), which never reaches the page and resets when it navigates.
 private const val RELOCK_MS = 15 * 60 * 1000L
 
 /** What the computer says about the page, with each change. */
@@ -410,6 +414,7 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
     var locked by remember { mutableStateOf(true) }
     var used by remember { mutableLongStateOf(0L) } // the last input, for the relock
     var nudge by remember { mutableIntStateOf(0) } // a touch while locked: the lock shakes
+    var zoom by remember(tab.key) { mutableStateOf(ViewZoom()) }
     val touches = remember { mutableStateListOf<Touch>() }
     val scope = rememberCoroutineScope()
     var viewport by remember { mutableStateOf<Viewport?>(null) } // null: an older 1loop, without viewport or console
@@ -479,7 +484,9 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
         val url = page?.url ?: return@LaunchedEffect
         if (url != leaving) leaving = null
         if (!addressFocused && leaving == null) address = url
+        zoom = zoom.follow(url)
     }
+    LaunchedEffect(locked) { if (!locked) zoom = zoom.reset() } // control acts on the page as the agent sees it
     LaunchedEffect(locked, used) {
         if (!locked) {
             delay(RELOCK_MS)
@@ -549,7 +556,11 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
             val ratio by remember { derivedStateOf { picture?.let { it.width / it.height.toFloat() } } }
             val shown = if (native && nativeView != null) viewport?.let { it.width / it.height.toFloat() } else ratio
             if (shown == null) WorkRing("wait", 34.dp, Modifier.align(Alignment.Center))
-            else Box(Modifier.aspectRatio(shown)) {
+            else Box(Modifier.aspectRatio(shown).clipToBounds()) {
+              Box(Modifier.fillMaxSize().graphicsLayer {
+                  scaleX = zoom.scale; scaleY = zoom.scale; translationX = zoom.x; translationY = zoom.y
+                  transformOrigin = TransformOrigin(0f, 0f)
+              }) {
                 var pending by remember { mutableFloatStateOf(0f) }
                 if (native && nativeView != null) {
                     NativeBrowserSurface(nativeView!!, viewport!!, locked) {
@@ -602,14 +613,54 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
                         val target = Offset(cursor.x / state.width * constraints.maxWidth, cursor.y / state.height * constraints.maxHeight)
                         val moving = remember { Animatable(target, Offset.VectorConverter) }
                         LaunchedEffect(target) { moving.animateTo(target, tween(260, easing = CssEase)) }
-                        AgentCursor(Modifier.graphicsLayer { translationX = moving.value.x; translationY = moving.value.y })
+                        // Kept its size in a zoomed view, its tip where the agent acts.
+                        AgentCursor(Modifier.graphicsLayer {
+                            translationX = moving.value.x; translationY = moving.value.y
+                            scaleX = 1 / zoom.scale; scaleY = 1 / zoom.scale; transformOrigin = TransformOrigin(0f, 0f)
+                        })
                     }
                 }
+              }
+                // Locked: pinch and drag zoom the picture, a double tap zooms
+                // in or back out; nothing reaches the page, a tap shakes the lock.
+                if (locked) Box(
+                    Modifier.fillMaxSize()
+                        .pointerInput(tab.key) {
+                            detectTransformGestures { centroid, pan, gesture, _ ->
+                                val w = size.width.toFloat()
+                                val h = size.height.toFloat()
+                                zoom = zoom.zoomAt(gesture, centroid.x, centroid.y, w, h).pan(pan.x, pan.y, w, h)
+                            }
+                        }
+                        .pointerInput(tab.key) {
+                            detectTapGestures(
+                                onDoubleTap = { at ->
+                                    zoom = if (zoom.active) zoom.reset()
+                                    else zoom.zoomAt(2f, at.x, at.y, size.width.toFloat(), size.height.toFloat())
+                                },
+                                onTap = { nudge++ },
+                            )
+                        },
+                )
                 // Loading: a thin line along the top, as in a browser.
-                if (state?.loading == true) LoadingLine(Modifier.align(Alignment.TopCenter))
+                if (page?.loading == true) LoadingLine(Modifier.align(Alignment.TopCenter))
             }
             androidx.compose.animation.AnimatedVisibility(
-                visible = locked && shown != null, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp),
+                visible = zoom.active && shown != null, modifier = Modifier.align(Alignment.TopEnd).padding(10.dp),
+                enter = fadeIn(tween(160)), exit = fadeOut(tween(160)),
+            ) {
+                Row(
+                    Modifier.clip(RoundedCornerShape(50)).background(Palette.popover.copy(alpha = 0.94f))
+                        .border(1.dp, Palette.border, RoundedCornerShape(50)).padding(start = 12.dp, end = 4.dp, top = 4.dp, bottom = 4.dp),
+                    verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
+                    Text(zoom.label, style = Type.small.copy(color = Palette.amber, fontWeight = androidx.compose.ui.text.font.FontWeight.SemiBold))
+                    Text("Your view", style = Type.small.copy(color = Palette.muted))
+                    Pill("Reset view") { zoom = zoom.reset() }
+                }
+            }
+            androidx.compose.animation.AnimatedVisibility(
+                visible = locked && !zoom.active && shown != null, modifier = Modifier.align(Alignment.BottomCenter).padding(bottom = 14.dp),
                 enter = fadeIn(tween(180)) + slideInVertically(tween(220)) { it / 2 }, exit = fadeOut(tween(160)),
             ) {
                 Row(
@@ -619,7 +670,7 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
                     verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp),
                 ) {
                     Icon(Icons.lock, null, tint = Palette.amber, modifier = Modifier.size(15.dp))
-                    Text("View only · unlock to control", style = Type.small.copy(color = Palette.text))
+                    Text("View only · pinch to zoom · unlock to control", style = Type.small.copy(color = Palette.text))
                 }
             }
             if (!live && shown != null) Text(

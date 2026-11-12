@@ -259,13 +259,16 @@ type remoteBrowserScreen struct {
 	viewportEntry *widget.Entry
 	active        context.CancelFunc
 	widget.BaseWidget
-	remote   *remoteDesktop
-	ctx      context.Context
-	path     string
-	image    *canvas.Image
-	cursor   *canvas.Circle
-	viewport browser.PhoneState
-	commands chan map[string]any
+	remote    *remoteDesktop
+	ctx       context.Context
+	path      string
+	image     *canvas.Image
+	cursor    *canvas.Circle
+	viewport  browser.PhoneState
+	commands  chan map[string]any
+	zoom      viewZoom // the reader's own zoom and pan: read-only while zoomed
+	zoomBadge *fyne.Container
+	zoomText  *canvas.Text
 }
 
 func newRemoteBrowserScreen(remote *remoteDesktop, ctx context.Context, path string) *remoteBrowserScreen {
@@ -279,6 +282,7 @@ func newRemoteBrowserScreen(remote *remoteDesktop, ctx context.Context, path str
 	}
 	screen.image.FillMode = canvas.ImageFillContain
 	screen.cursor.Hide()
+	screen.zoomBadge, screen.zoomText = newZoomBadge(func() { screen.zoom.reset(); screen.Refresh() })
 	screen.ExtendBaseWidget(screen)
 	go func() {
 		for {
@@ -354,6 +358,7 @@ func (screen *remoteBrowserScreen) stream(ctx context.Context, address *widget.E
 						fyne.DoAndWait(func() {
 							if ctx.Err() == nil {
 								screen.viewport = state
+								screen.zoom.follow(state.URL)
 								if entry := screen.viewportEntry; entry != nil && screen.remote.window.Canvas().Focused() != entry {
 									entry.SetText(fmt.Sprintf("%d × %d", state.Width, state.Height))
 								}
@@ -423,21 +428,46 @@ func (screen *remoteBrowserScreen) coords(position fyne.Position) (float64, floa
 
 func (screen *remoteBrowserScreen) Tapped(event *fyne.PointEvent) {
 	screen.remote.window.Canvas().Focus(screen)
+	if screen.zoom.active() {
+		return // a zoomed view is read-only: the reader's zoom never moves the page's coordinates
+	}
 	x, y, ok := screen.coords(event.Position)
 	if ok {
 		screen.input(map[string]any{"action": "tap", "x": x, "y": y})
 	}
 }
 
+// Ctrl+scroll (and a pinch the system reports as one) zooms the view, a drag
+// or a scroll pans it while zoomed: none of it reaches the page.
 func (screen *remoteBrowserScreen) Scrolled(event *fyne.ScrollEvent) {
+	if zoomModifier(screen.modifiers&(fyne.KeyModifierControl|fyne.KeyModifierSuper) != 0) {
+		screen.remote.window.Canvas().Focus(screen) // so Escape resets the view
+		screen.zoom.zoomAt(wheelFactor(event.Scrolled.DY), event.Position, screen.Size())
+		screen.Refresh()
+		return
+	}
+	if screen.zoom.active() {
+		screen.zoom.pan(event.Scrolled, screen.Size())
+		screen.Refresh()
+		return
+	}
 	x, y, ok := screen.coords(event.Position)
 	if ok {
 		screen.input(map[string]any{"action": "scroll", "x": x, "y": y, "dy": -float64(event.Scrolled.DY) * .1, "dx": -float64(event.Scrolled.DX) * .1})
 	}
 }
 
+func (screen *remoteBrowserScreen) Dragged(event *fyne.DragEvent) {
+	if screen.zoom.active() {
+		screen.zoom.pan(event.Dragged, screen.Size())
+		screen.Refresh()
+	}
+}
+
+func (screen *remoteBrowserScreen) DragEnd() {}
+
 func (screen *remoteBrowserScreen) TypedRune(value rune) {
-	if screen.modifiers&(fyne.KeyModifierControl|fyne.KeyModifierAlt|fyne.KeyModifierSuper) != 0 {
+	if screen.zoom.active() || screen.modifiers&(fyne.KeyModifierControl|fyne.KeyModifierAlt|fyne.KeyModifierSuper) != 0 {
 		return
 	}
 	screen.input(map[string]any{"action": "text", "text": string(value)})
@@ -457,6 +487,13 @@ func browserRemoteChord(key fyne.KeyName, modifiers fyne.KeyModifier) string {
 }
 
 func (screen *remoteBrowserScreen) TypedKey(event *fyne.KeyEvent) {
+	if screen.zoom.active() {
+		if event.Name == fyne.KeyEscape {
+			screen.zoom.reset()
+			screen.Refresh()
+		}
+		return
+	}
 	// Printable characters arrive through TypedRune; forwarding both doubles text.
 	if browser.NamedKey(string(event.Name)) != "" {
 		screen.input(map[string]any{"action": "key", "text": browserRemoteChord(event.Name, screen.modifiers)})
@@ -464,6 +501,9 @@ func (screen *remoteBrowserScreen) TypedKey(event *fyne.KeyEvent) {
 }
 
 func (screen *remoteBrowserScreen) TypedShortcut(shortcut fyne.Shortcut) {
+	if screen.zoom.active() {
+		return
+	}
 	switch shortcut.(type) {
 	case *fyne.ShortcutPaste:
 		screen.input(map[string]any{"action": "text", "text": fyne.CurrentApp().Clipboard().Content()})
@@ -522,11 +562,14 @@ type remoteBrowserRenderer struct{ screen *remoteBrowserScreen }
 func (renderer *remoteBrowserRenderer) MinSize() fyne.Size { return fyne.NewSize(300, 300) }
 func (renderer *remoteBrowserRenderer) Layout(size fyne.Size) {
 	screen := renderer.screen
-	screen.image.Resize(size)
+	screen.zoom.clamp(size)
+	screen.image.Move(screen.zoom.at(fyne.NewPos(0, 0)))
+	screen.image.Resize(screen.zoom.sized(size))
+	placeZoomBadge(screen.zoomBadge, screen.zoomText, &screen.zoom, size)
 	x, y, width, height := screen.frame()
 	if cursor := screen.viewport.Cursor; cursor != nil && screen.viewport.Width > 0 && screen.viewport.Height > 0 {
 		screen.cursor.Resize(fyne.NewSquareSize(9))
-		screen.cursor.Move(fyne.NewPos(x+float32(cursor.X)*width/float32(screen.viewport.Width)-4, y+float32(cursor.Y)*height/float32(screen.viewport.Height)-4))
+		screen.cursor.Move(screen.zoom.at(fyne.NewPos(x+float32(cursor.X)*width/float32(screen.viewport.Width), y+float32(cursor.Y)*height/float32(screen.viewport.Height))).SubtractXY(4, 4))
 		screen.cursor.Show()
 	} else {
 		screen.cursor.Hide()
@@ -540,7 +583,7 @@ func (renderer *remoteBrowserRenderer) Refresh() {
 }
 
 func (renderer *remoteBrowserRenderer) Objects() []fyne.CanvasObject {
-	return []fyne.CanvasObject{renderer.screen.image, renderer.screen.cursor}
+	return []fyne.CanvasObject{renderer.screen.image, renderer.screen.cursor, renderer.screen.zoomBadge}
 }
 
 func (renderer *remoteBrowserRenderer) Destroy() {}

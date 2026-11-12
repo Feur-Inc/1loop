@@ -26,6 +26,19 @@ import (
 	"1loop/internal/core"
 )
 
+// ChatTitleLimit is how many characters a chat's title keeps.
+const ChatTitleLimit = 80
+
+// CleanChatTitle is a title as a chat keeps it: on one line, without spaces
+// around it and cut to ChatTitleLimit characters. Empty when nothing is left.
+func CleanChatTitle(title string) string {
+	runes := []rune(strings.Join(strings.Fields(title), " "))
+	if len(runes) > ChatTitleLimit {
+		runes = runes[:ChatTitleLimit]
+	}
+	return strings.TrimSpace(string(runes))
+}
+
 func TokenHash(token string) string {
 	sum := sha256.Sum256([]byte(token))
 	return hex.EncodeToString(sum[:])

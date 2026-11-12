@@ -145,6 +145,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("GET /api/chats/{id}/context", server.authorized(server.chatContext))
 	mux.HandleFunc("GET /api/mentions", server.authorized(server.mentions))
 	mux.HandleFunc("POST /api/chats/{id}/delete", server.authorized(server.deleteChat))
+	mux.HandleFunc("POST /api/chats/{id}/rename", server.authorized(server.renameChat))
 	mux.HandleFunc("POST /api/chats/{id}/tasks/{task}/stop", server.authorized(server.stopTask))
 	mux.HandleFunc("POST /api/browser/clear", server.authorized(server.clearBrowser))
 	for path, handler := range extensions.Handlers(func() {
@@ -633,6 +634,39 @@ func (server *remoteServer) chat(writer http.ResponseWriter, req *http.Request) 
 		return
 	}
 	core.WriteJSON(writer, http.StatusOK, out)
+}
+
+// renameChat gives a chat the title typed on the phone, as Rename in the sidebar does.
+func (server *remoteServer) renameChat(writer http.ResponseWriter, req *http.Request) {
+	var args struct {
+		Title string `json:"title"`
+	}
+	if core.ReadJSON(req, &args) != nil {
+		core.Fail(writer, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	title := remoteapi.CleanChatTitle(args.Title)
+	if title == "" {
+		core.Fail(writer, http.StatusBadRequest, "A chat needs a title")
+		return
+	}
+	found := false
+	server.onUI(func() {
+		chat := server.ui.chatByID(req.PathValue("id"))
+		if chat == nil {
+			return
+		}
+		found = true
+		chat.Title = title
+		server.ui.save()
+		server.ui.updateHeader()
+		server.ui.renderChats()
+	})
+	if !found {
+		core.Fail(writer, http.StatusNotFound, "This chat no longer exists")
+		return
+	}
+	core.WriteJSON(writer, http.StatusOK, map[string]any{"ok": true, "title": title})
 }
 
 func (server *remoteServer) deleteChat(writer http.ResponseWriter, req *http.Request) {

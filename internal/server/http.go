@@ -86,6 +86,7 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/limits":                              server.limits,
 		"GET /api/chats/{id}":                          server.chat,
 		"POST /api/chats/{id}/delete":                  server.deleteChat,
+		"POST /api/chats/{id}/rename":                  server.renameChat,
 		"POST /api/chats/{id}/tasks/{task}/stop":       server.stopTask,
 		"POST /api/browser/clear":                      server.clearBrowser,
 		"GET /api/events":                              server.events,
@@ -245,6 +246,36 @@ func (server *headlessServer) mentions(w http.ResponseWriter, r *http.Request) {
 		mentions = []agent.Mention{}
 	}
 	core.WriteJSON(w, 200, map[string]any{"mentions": mentions})
+}
+
+// renameChat gives a chat the title typed on a phone or in the web client.
+func (server *headlessServer) renameChat(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		Title string `json:"title"`
+	}
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	title := remoteapi.CleanChatTitle(args.Title)
+	if title == "" {
+		core.Fail(w, 400, "A chat needs a title")
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	chat := server.chatLocked(r.PathValue("id"))
+	if chat == nil {
+		core.Fail(w, 404, "Chat not found")
+		return
+	}
+	chat.Title = title
+	if err := server.saveLocked(); err != nil {
+		core.Fail(w, 500, err.Error())
+		return
+	}
+	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	core.WriteJSON(w, 200, map[string]any{"ok": true, "title": title})
 }
 
 func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request) {

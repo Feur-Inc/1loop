@@ -141,14 +141,14 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
     // -- the floating badge ---------------------------------------------------
 
     // Put away on the ✕ ring while it ran: gone for this chat until 1loop is back on
-    // screen, or until the agent asks a new question there.
+    // screen, or until something new waits on the user there (a question, an approval, a next-step card).
     private var hiddenChat: String? = null
-    private var hiddenQuestion: String? = null
+    private var hiddenWaiting: String? = null
 
     private fun showBadge(status: RunStatus, shown: Boolean) {
         if (shown) hiddenChat = null
-        val question = status.question?.id
-        if (status.chat == hiddenChat && question != null && question != hiddenQuestion) hiddenChat = null
+        val waiting = status.waiting
+        if (status.chat == hiddenChat && waiting != null && waiting != hiddenWaiting) hiddenChat = null
         val wanted = !shown && status.chat != hiddenChat && AgentStatus.style(this) == StatusStyle.Badge && AgentStatus.canDrawOverlays(this)
         if (!wanted) return removeBadge()
         val window = badge ?: BadgeWindow(this, ::composeView, onRemove = ::removedByUser) { ui ->
@@ -159,6 +159,8 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
                 onTyping = ::setTyping,
                 onTalk = { chat -> startActivity(openIntent(this@AgentStatusService, chat).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) },
                 onDismiss = { chat -> AgentStatus.dismiss(this@AgentStatusService, chat) },
+                onApprove = AgentStatus::approve,
+                onReply = { chat, text -> AgentStatus.reply(this@AgentStatusService, chat, text) },
             )
         }.also { badge = it }
         // Phone use: translucent and click-through, so the agent sees and taps behind it.
@@ -181,7 +183,7 @@ class AgentStatusService : Service(), LifecycleOwner, SavedStateRegistryOwner {
         if (status.finished) AgentStatus.dismiss(this, status.chat)
         else {
             hiddenChat = status.chat
-            hiddenQuestion = status.question?.id
+            hiddenWaiting = status.waiting
         }
     }
 

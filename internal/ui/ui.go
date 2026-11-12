@@ -1028,6 +1028,7 @@ type sheet struct {
 	anchor     fyne.CanvasObject
 	anchorAt   fyne.Position // anchor geometry captured when the menu opens:
 	anchorSz   fyne.Size     // the trigger may move or hide while it is open
+	openSize   fyne.Size     // the window's size the anchor and glass were taken at
 	menu       bool
 	alignLeft  bool
 	columns    bool // the model selector uses the HTML demo's surface and radius
@@ -1083,6 +1084,7 @@ func (dialog *sheet) Show() {
 		dialog.anchorSz = dialog.anchor.Size()
 	}
 	dialog.Resize(dialog.canvas.Size())
+	dialog.openSize = dialog.canvas.Size()
 	var shot image.Image
 	dialog.glass, shot = frostedBackdrop(dialog.canvas) // before the sheet is drawn: what it covers
 	if dialog.sharp != nil {
@@ -1292,6 +1294,9 @@ type sheetRenderer struct{ dialog *sheet }
 
 func (renderer *sheetRenderer) Layout(size fyne.Size) {
 	sheet := renderer.dialog
+	if sheet.open && size != sheet.openSize && size.Width > 0 {
+		renderer.windowResized(size)
+	}
 	sheet.dim.Resize(size)
 	box := sheet.panelRect()
 	panelPos, panelSize := box.pos, fyne.NewSize(box.size.X, box.size.Y)
@@ -1319,6 +1324,37 @@ func (renderer *sheetRenderer) Layout(size fyne.Size) {
 	pad := sheet.pad()
 	sheet.content.Move(box.pos.AddXY(pad, pad))
 	sheet.content.Resize(fyne.NewSize(box.size.X-2*pad, box.size.Y-2*pad))
+}
+
+// windowResized follows the window's new size while the sheet is open: a
+// menu goes back beside its trigger, wherever the new layout put it (one
+// that is hidden meanwhile keeps the place it had), and the frosted copy of
+// the window is taken again, since the old one no longer matches it.
+func (renderer *sheetRenderer) windowResized(size fyne.Size) {
+	sheet := renderer.dialog
+	sheet.openSize = size
+	// Fyne resizes the overlays before the window's content: the trigger
+	// and what the glass shows have their new place on the next turn.
+	go fyne.Do(func() {
+		if !sheet.open || sheet.openSize != size {
+			return
+		}
+		if sheet.anchor != nil && sheet.anchor.Visible() && sheet.anchor.Size().Width > 0 {
+			sheet.anchorAt = fyne.CurrentApp().Driver().AbsolutePositionForObject(sheet.anchor)
+			sheet.anchorSz = sheet.anchor.Size()
+		}
+		if sheet.glass != nil {
+			// The capture draws the whole window: the sheet steps out of it.
+			sheet.BaseWidget.Hide()
+			glass, shot := frostedBackdrop(sheet.canvas)
+			sheet.BaseWidget.Show()
+			sheet.glass, sheet.frostAt = glass, rect{}
+			if sheet.sharp.Image != nil && !sheet.menu && shot != nil {
+				sheet.sharp.Image = windowControlsCut(sheet.canvas, shot)
+			}
+		}
+		renderer.Refresh()
+	})
 }
 
 // layoutGlass places the frosted window: all of it behind a dialog, the

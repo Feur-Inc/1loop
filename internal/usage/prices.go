@@ -126,18 +126,26 @@ type Prices struct {
 	mu        sync.Mutex
 	path      string
 	overrides map[string]Price
+	// catalog are the prices a provider lists with its models (OpenRouter,
+	// a compatible API that says them), by model id exactly as called:
+	// "deepseek/deepseek-chat-v3:free" is not "deepseek/deepseek-chat-v3".
+	catalog map[string]Price
 }
 
 // OpenPrices reads the user's prices at path.
 func OpenPrices(path string) *Prices {
-	prices := &Prices{path: path, overrides: map[string]Price{}}
+	prices := &Prices{path: path, overrides: map[string]Price{}, catalog: map[string]Price{}}
 	if data, err := os.ReadFile(path); err == nil {
 		var saved struct {
 			Overrides map[string]Price `json:"overrides"`
+			Catalog   map[string]Price `json:"catalog"`
 		}
-		if json.Unmarshal(data, &saved) == nil && saved.Overrides != nil {
+		if json.Unmarshal(data, &saved) == nil {
 			for model, price := range saved.Overrides {
 				prices.overrides[Key(model)] = price
+			}
+			for model, price := range saved.Catalog {
+				prices.catalog[catalogKey(model)] = price
 			}
 		}
 	}
@@ -148,9 +156,15 @@ func OpenPrices(path string) *Prices {
 // the shipped table, the user's on a tie; ok is false for a model 1loop
 // does not know, which is shown in tokens only.
 func (prices *Prices) For(model string) (price Price, ok bool) {
+	price, _, ok = prices.listed(model)
+	return price, ok
+}
+
+// listed is For with where the price comes from: "yours" or "list".
+func (prices *Prices) listed(model string) (Price, string, bool) {
 	key := Key(model)
 	if key == "" {
-		return Price{}, false
+		return Price{}, "", false
 	}
 	entry, price, ok := match(shipped, key)
 	if prices != nil {
@@ -158,10 +172,67 @@ func (prices *Prices) For(model string) (price Price, ok bool) {
 		own, ownPrice, found := match(prices.overrides, key)
 		prices.mu.Unlock()
 		if found && len(own) >= len(entry) {
-			return ownPrice, true
+			return ownPrice, "yours", true
 		}
 	}
-	return price, ok
+	return price, "list", ok
+}
+
+func catalogKey(model string) string { return strings.ToLower(strings.TrimSpace(model)) }
+
+// Learn keeps the prices a provider listed with its models, for the calls
+// it does not cost itself; they are saved, so past calls keep them.
+func (prices *Prices) Learn(listed map[string]Price) {
+	if prices == nil || len(listed) == 0 {
+		return
+	}
+	prices.mu.Lock()
+	changed := false
+	for model, price := range listed {
+		key := catalogKey(model)
+		if key != "" && prices.catalog[key] != price {
+			prices.catalog[key] = price
+			changed = true
+		}
+	}
+	prices.mu.Unlock()
+	if changed {
+		prices.save()
+	}
+}
+
+// PriceSource says how a call is costed: "reported" (its provider said
+// what it cost), "yours", "provider" (its catalog's price), "free" (a
+// ":free" model), "list" (1loop's table), or "" when it cannot be.
+func (prices *Prices) PriceSource(record Record) string {
+	if record.Cost != nil {
+		return "reported"
+	}
+	_, source, _ := prices.price(record)
+	return source
+}
+
+// price is the price a call is costed at, and where it comes from.
+func (prices *Prices) price(record Record) (Price, string, bool) {
+	own, source, ok := prices.listed(record.Model)
+	if ok && source == "yours" {
+		return own, source, true
+	}
+	if prices != nil {
+		prices.mu.Lock()
+		price, found := prices.catalog[catalogKey(record.Model)]
+		prices.mu.Unlock()
+		if found {
+			return price, "provider", true
+		}
+	}
+	if strings.HasSuffix(catalogKey(record.Model), ":free") {
+		return Price{}, "free", true
+	}
+	if !ok || Billing(record.Provider) == "local" { // a local model has only a price the user set
+		return Price{}, "", false
+	}
+	return own, source, true
 }
 
 func lookup(table map[string]Price, key string) (Price, bool) {
@@ -205,7 +276,14 @@ func (prices *Prices) Set(model string, price *Price) error {
 	} else {
 		prices.overrides[key] = *price
 	}
-	data, _ := json.MarshalIndent(map[string]any{"overrides": prices.overrides}, "", "  ")
+	prices.mu.Unlock()
+	return prices.save()
+}
+
+// save writes the user's prices and the providers' listed ones.
+func (prices *Prices) save() error {
+	prices.mu.Lock()
+	data, _ := json.MarshalIndent(map[string]any{"overrides": prices.overrides, "catalog": prices.catalog}, "", "  ")
 	path := prices.path
 	prices.mu.Unlock()
 	if path == "" {
@@ -220,23 +298,16 @@ func (prices *Prices) Set(model string, price *Price) error {
 	return os.Rename(path+".tmp", path)
 }
 
-// Cost prices a call: what its provider reported, else the table's price
-// for a provider paid by the token or by a plan. ok is false when the call
-// cannot be priced: an unknown model, or a local one the user gave no price.
+// Cost prices a call: what its provider reported; else the user's price,
+// the provider's listed price for that exact model, nothing for a ":free"
+// model, or the table's price (for a plan, what the API would have cost).
+// ok is false when the call cannot be priced: an unknown model, or a local
+// one the user gave no price.
 func (prices *Prices) Cost(record Record) (cost float64, ok bool) {
 	if record.Cost != nil {
 		return *record.Cost, true
 	}
-	if Billing(record.Provider) == "local" { // only a price the user set
-		if prices == nil {
-			return 0, false
-		}
-		prices.mu.Lock()
-		_, price, ok := match(prices.overrides, Key(record.Model))
-		prices.mu.Unlock()
-		return price.Cost(record.Tokens), ok
-	}
-	price, ok := prices.For(record.Model)
+	price, _, ok := prices.price(record)
 	if !ok {
 		return 0, false
 	}
@@ -249,6 +320,8 @@ type PriceRow struct {
 	Price   *Price `json:"price,omitempty"`   // nil: unknown, tokens only
 	Shipped *Price `json:"shipped,omitempty"` // 1loop's own, when the user changed it
 	Custom  bool   `json:"custom,omitempty"`
+	// Listed: the price is the one the provider lists for the model.
+	Listed bool `json:"listed,omitempty"`
 }
 
 // Table lists the models used (from the ledger) and the user's own, with
@@ -268,6 +341,14 @@ func (prices *Prices) Table(used []string) []PriceRow {
 		}
 		prices.mu.Lock()
 		_, row.Custom = prices.overrides[key]
+		if row.Price == nil {
+			for model, price := range prices.catalog {
+				if Key(model) == key && !strings.HasSuffix(model, ":free") {
+					row.Price, row.Listed = &price, true
+					break
+				}
+			}
+		}
 		prices.mu.Unlock()
 		if shippedPrice, ok := Shipped(key); ok && row.Custom {
 			row.Shipped = &shippedPrice

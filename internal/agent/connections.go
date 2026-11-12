@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"1loop/internal/platform"
+
+	"1loop/internal/usage"
 )
 
 type ModelPreferences struct {
@@ -74,6 +76,22 @@ type ModelChoice struct {
 	// none on most plans; DefaultServiceTier is the one used unless told.
 	ServiceTiers       []ServiceTier
 	DefaultServiceTier string
+	// Price is what the provider's catalog says the model costs, per
+	// million tokens (OpenRouter lists it, and a compatible API may): the
+	// usage ledger prices its calls with it (usage.Prices.Learn).
+	Price *usage.Price
+}
+
+// ListedPrices are the prices of the models a connection listed, for
+// usage.Prices.Learn.
+func ListedPrices(choices []ModelChoice) map[string]usage.Price {
+	listed := map[string]usage.Price{}
+	for _, choice := range choices {
+		if choice.Price != nil {
+			listed[choice.ID] = *choice.Price
+		}
+	}
+	return listed
 }
 
 // ServiceTier is a speed of a ChatGPT model, as its catalog lists it.

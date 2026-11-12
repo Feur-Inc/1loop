@@ -59,7 +59,7 @@ data class UsageLimit(
     val connection: String, val name: String, val window: String, val hours: Double,
     val start: Long, val reset: Long, val checked: Long, val left: Double, val even: Double, val leftAtReset: Double, val emptyAt: Long?,
     val points: List<Pair<Long, Double>>, val title: String, val status: String, val statusText: String,
-    val advice: String, val budget: String, val resetText: String,
+    val advice: String, val budget: String, val resetText: String, val days: List<UsageLimitDay>,
 ) {
     companion object {
         private fun time(text: String?): Long? =
@@ -73,10 +73,18 @@ data class UsageLimit(
                 o.optDouble("left", 0.0), o.optDouble("even", 0.0), o.optDouble("leftAtReset", 0.0), time(o.optString("emptyAt")),
                 (0 until (points?.length() ?: 0)).mapNotNull { i -> points!!.getJSONObject(i).let { p -> time(p.optString("t"))?.let { it to p.optDouble("left", 0.0) } } },
                 o.optString("title"), o.optString("status"), o.optString("statusText"), o.optString("advice"), o.optString("budget"), o.optString("resetText"),
+                o.optJSONArray("days").let { a ->
+                    (0 until (a?.length() ?: 0)).map { i ->
+                        a!!.getJSONObject(i).let { d -> UsageLimitDay(d.optString("label"), d.optDouble("used", 0.0), d.optDouble("even", 0.0), d.optDouble("plan", 0.0), d.optBoolean("today"), d.optBoolean("ahead")) }
+                    }
+                },
             )
         }
     }
 }
+
+/** One calendar day of a window: used, an even share, and the most to use for it to last (usage.LimitDay). */
+data class UsageLimitDay(val label: String, val used: Double, val even: Double, val plan: Double, val today: Boolean, val ahead: Boolean)
 
 data class UsageReport(
     val period: String, val offset: Int, val group: String, val label: String, val from: String, val to: String,
@@ -162,7 +170,7 @@ suspend fun RemoteApp.usageReport(period: String, offset: Int, group: String, ch
 }
 
 private val periodNames = listOf("day" to "Today", "week" to "Week", "month" to "Month", "all" to "All time")
-private val groupNames = listOf("model" to "Model", "connection" to "Connection", "project" to "Project", "branch" to "Branch", "chat" to "Chat")
+private val groupNames = listOf("day" to "Day", "model" to "Model", "connection" to "Connection", "project" to "Project", "branch" to "Branch", "chat" to "Chat")
 
 @Composable
 private fun Chip(text: String, selected: Boolean, onClick: () -> Unit) {
@@ -286,7 +294,7 @@ fun UsageScreen(app: RemoteApp, onBack: () -> Unit) {
             }
             item {
                 Text(
-                    "Costs are each model's API list price (as of ${shown.pricesAsOf}), or the price set on the desktop. Subscriptions are not billed by the token: their cost is what the same tokens would cost on the API.",
+                    "A call costs what its provider reported (OpenRouter), else the price set on the desktop, else the price its provider lists, else the model's API list price (as of ${shown.pricesAsOf}); \":free\" models cost nothing. Subscriptions are not billed by the token: their cost is what the same tokens would cost on the API.",
                     style = Type.caption, modifier = Modifier.padding(top = 4.dp, bottom = 24.dp),
                 )
             }
@@ -474,10 +482,15 @@ private fun LimitsCard(windows: List<UsageLimit>) {
 
 @Composable
 private fun LimitPace(limit: UsageLimit) {
+    var byDay by rememberSaveable(limit.connection + "/" + limit.window) { mutableStateOf(false) }
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(verticalAlignment = Alignment.CenterVertically) {
             Text(limit.title, style = Type.body, modifier = Modifier.weight(1f))
             StatusPill(limit)
+        }
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Chip("Curve", !byDay) { byDay = false }
+            Chip("By day", byDay) { byDay = true }
         }
         val gap = limit.left - limit.even
         val evenUnder = when {
@@ -491,7 +504,7 @@ private fun LimitPace(limit: UsageLimit) {
             { m -> StatTile("To last until reset", limit.budget, "at most", modifier = m) },
             { m -> StatTile("Resets", limit.resetText.substringBefore(" · "), limit.resetText, modifier = m) },
         ))
-        PaceChart(limit)
+        if (byDay) DayBars(limit) else PaceChart(limit)
         Text(limit.advice, style = Type.small.copy(color = Palette.textSoft))
     }
 }
@@ -516,6 +529,7 @@ private fun PaceChart(limit: UsageLimit) {
     val grid = Palette.borderSoft
     val faint = Palette.faint
     val nowInk = Palette.border
+    val planInk = Palette.text
     val measurer = androidx.compose.ui.text.rememberTextMeasurer()
     val small = Type.caption.copy(color = faint, fontSize = 10.sp)
     val nowStyle = Type.caption.copy(color = Palette.muted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
@@ -524,6 +538,7 @@ private fun PaceChart(limit: UsageLimit) {
         Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
             LegendKey("Recorded", ink, false)
             LegendKey("Forecast", ink, true)
+            LegendKey("To last", planInk, true)
             LegendKey("Even pace", faint, true)
         }
         Canvas(Modifier.fillMaxWidth().height(180.dp)) {
@@ -557,6 +572,7 @@ private fun PaceChart(limit: UsageLimit) {
             val from = Offset(x(limit.checked), y(limit.left))
             val end = limit.emptyAt?.let { Offset(x(it), y(0.0)) } ?: Offset(x(limit.reset), y(limit.leftAtReset))
             drawLine(ink, from, end, 2.dp.toPx(), pathEffect = dash)
+            drawLine(planInk, from, Offset(x(limit.reset), y(0.0)), 1.5.dp.toPx(), pathEffect = dash) // the even pace from now that lasts exactly
             val nowX = x(now)
             drawLine(nowInk, Offset(nowX, top - 2.dp.toPx()), Offset(nowX, top + plotH), 1.dp.toPx())
             val nowLabel = measurer.measure("Now", nowStyle)
@@ -574,5 +590,56 @@ private fun LegendKey(name: String, ink: Color, dashed: Boolean) {
             drawLine(ink, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 2.dp.toPx(), pathEffect = effect)
         }
         Text(name, style = Type.caption.copy(color = Palette.muted))
+    }
+}
+
+/** A window day by day: used (solid), the most each day still to come can use (outlined, green), an even day's share (white tick). */
+@Composable
+private fun DayBars(limit: UsageLimit) {
+    val amber = Palette.amber
+    val danger = Palette.danger
+    val green = Palette.added
+    val tick = Palette.text
+    val muted = Palette.muted
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val small = Type.caption.copy(color = muted, fontSize = 10.sp)
+    val bold = Type.caption.copy(color = Palette.text, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+    val faint = Type.caption.copy(color = Palette.faint, fontSize = 10.sp)
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(9.dp).clip(RoundedCornerShape(2.dp)).background(amber)); Text("Used", style = Type.caption.copy(color = muted), modifier = Modifier.padding(start = 5.dp)) }
+            Row(verticalAlignment = Alignment.CenterVertically) { Box(Modifier.size(9.dp).border(1.5.dp, green, RoundedCornerShape(2.dp))); Text("Most to use", style = Type.caption.copy(color = muted), modifier = Modifier.padding(start = 5.dp)) }
+            LegendKey("Even share", tick, false)
+        }
+        Canvas(Modifier.fillMaxWidth().height(180.dp)) {
+            val days = limit.days
+            if (days.isEmpty()) return@Canvas
+            val top = 16.dp.toPx()
+            val bottom = 18.dp.toPx()
+            val plotH = size.height - top - bottom
+            val highest = maxOf(1.0, days.maxOf { maxOf(it.even, it.used + it.plan) })
+            fun h(v: Double) = (plotH * v / highest).toFloat()
+            val slot = size.width / days.size
+            val width = minOf(40.dp.toPx(), slot * 0.62f)
+            days.forEachIndexed { i, day ->
+                val x = i * slot + (slot - width) / 2
+                val base = top + plotH
+                val used = h(day.used)
+                if (!day.ahead) drawRoundRect(if (day.used > day.even * 1.15) danger else amber, Offset(x, base - maxOf(used, 2f)), Size(width, maxOf(used, 2f)), CornerRadius(3.dp.toPx()))
+                val plan = h(day.plan)
+                if (day.plan > 0) drawRoundRect(green, Offset(x, base - used - plan), Size(width, plan), CornerRadius(3.dp.toPx()), style = androidx.compose.ui.graphics.drawscope.Stroke(1.5.dp.toPx()))
+                val evenY = base - h(day.even)
+                drawLine(tick, Offset(x - 3.dp.toPx(), evenY), Offset(x + width + 3.dp.toPx(), evenY), 2.dp.toPx())
+                val value = when {
+                    day.today -> percent(day.used) + "+" + percent(day.plan)
+                    day.ahead -> "≤" + percent(day.plan)
+                    else -> percent(day.used)
+                }
+                val text = measurer.measure(value, small)
+                drawText(text, topLeft = Offset(i * slot + (slot - text.size.width) / 2, minOf(base - used - plan, evenY) - text.size.height - 2.dp.toPx()))
+                val label = measurer.measure(if (day.today) "Today" else day.label, if (day.today) bold else faint)
+                drawText(label, topLeft = Offset(i * slot + (slot - label.size.width) / 2, base + 4.dp.toPx()))
+            }
+        }
     }
 }

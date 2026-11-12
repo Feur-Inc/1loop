@@ -1775,6 +1775,7 @@ func (ui *desktopUI) refreshModels() {
 				if connectionValue.Provider == "openai" && errors.As(results[i].err, &timeout) && timeout.Timeout() && ui.ctx.Err() == nil {
 					results[i].choices, results[i].err = ui.backend.ConnectionModels(ui.ctx, connectionValue, keys[connectionValue.ID])
 				}
+				ui.prices.Learn(agent.ListedPrices(results[i].choices)) // what the catalog says its models cost
 			}(i, conn)
 		}
 		wg.Wait()

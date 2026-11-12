@@ -112,7 +112,7 @@ type Names func(group, key string) string
 // Periods and groups, as the page offers them.
 var (
 	Periods = []string{"day", "week", "month", "all"}
-	Groups  = []string{"model", "connection", "project", "branch", "chat"}
+	Groups  = []string{"day", "model", "connection", "project", "branch", "chat"}
 )
 
 // Range is a period's bounds in the time zone of now, and its name.
@@ -184,7 +184,7 @@ func Build(ledger *Ledger, prices *Prices, names Names, query Query, now time.Ti
 		if row == nil {
 			row = &Row{Key: key}
 			rows[key] = row
-			row.Label, row.Detail = rowLabel(query.Group, record, names, now)
+			row.Label, row.Detail = rowLabel(query.Group, record, names, prices, now)
 		} else if query.Group == "turn" && !strings.Contains(row.Detail, record.Model) {
 			row.Detail += ", " + record.Model
 		}
@@ -209,7 +209,7 @@ func Build(ledger *Ledger, prices *Prices, names Names, query Query, now time.Ti
 			previous[key].add(prices, record)
 			if rows[key] == nil && query.Group != "turn" {
 				row := &Row{Key: key}
-				row.Label, row.Detail = rowLabel(query.Group, record, names, now)
+				row.Label, row.Detail = rowLabel(query.Group, record, names, prices, now)
 				rows[key] = row
 			}
 		}
@@ -228,6 +228,9 @@ func Build(ledger *Ledger, prices *Prices, names Names, query Query, now time.Ti
 		a, b := report.Rows[i], report.Rows[j]
 		if query.Group == "turn" {
 			return a.Last.After(b.Last)
+		}
+		if query.Group == "day" { // the latest day first
+			return a.Key > b.Key
 		}
 		if a.Cost != b.Cost {
 			return a.Cost > b.Cost
@@ -262,11 +265,22 @@ func groupKey(group string, record Record) string {
 		return record.Chat
 	case "turn":
 		return record.Turn
+	case "day":
+		return record.Time.In(time.Local).Format("2006-01-02")
 	}
-	return Key(record.Model)
+	return modelKey(record.Model)
 }
 
-func rowLabel(group string, record Record, names Names, now time.Time) (label, detail string) {
+// modelKey is a model as the page lists it: as prices name it, its free
+// variant apart (OpenRouter's ":free" is another model, at no cost).
+func modelKey(model string) string {
+	if strings.HasSuffix(catalogKey(model), ":free") {
+		return Key(model) + ":free"
+	}
+	return Key(model)
+}
+
+func rowLabel(group string, record Record, names Names, prices *Prices, now time.Time) (label, detail string) {
 	name := func(key string) string {
 		if names == nil {
 			return ""
@@ -307,6 +321,16 @@ func rowLabel(group string, record Record, names Names, now time.Time) (label, d
 				detail = "Subchat"
 			}
 		}
+	case "day":
+		local := record.Time.In(now.Location())
+		switch {
+		case local.Year() == now.Year() && local.YearDay() == now.YearDay():
+			label = "Today"
+		case local.Year() == now.Year() && local.YearDay() == now.YearDay()-1:
+			label = "Yesterday"
+		default:
+			label = local.Format("Mon 2 Jan")
+		}
 	case "turn":
 		local := record.Time.In(now.Location())
 		if local.Year() == now.Year() && local.YearDay() == now.YearDay() {
@@ -316,13 +340,11 @@ func rowLabel(group string, record Record, names Names, now time.Time) (label, d
 		}
 		detail = record.Model
 	default:
-		label = Key(record.Model)
+		label = modelKey(record.Model)
 		if label == "" {
 			label = "Unknown model"
 		}
-		if _, ok := Shipped(record.Model); !ok && Billing(record.Provider) != "local" {
-			detail = "No price known: tokens only"
-		}
+		detail = priceDetail(prices, record)
 	}
 	return label, detail
 }
@@ -397,4 +419,27 @@ func Count(tokens int) string {
 		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(tokens)/1e3), ".0") + "k"
 	}
 	return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(tokens)/1e6), ".0") + "M"
+}
+
+// priceDetail says how a model's calls are costed.
+func priceDetail(prices *Prices, record Record) string {
+	switch prices.PriceSource(record) {
+	case "reported":
+		return "Cost reported by the provider"
+	case "yours":
+		return "Your price"
+	case "provider":
+		return "The provider's listed price"
+	case "free":
+		return "Free model"
+	case "list":
+		if Billing(record.Provider) == "plan" {
+			return "Subscription: what the API would cost"
+		}
+		return "API list price"
+	}
+	if Billing(record.Provider) == "local" {
+		return "Local: no price set"
+	}
+	return "No price known: tokens only"
 }

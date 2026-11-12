@@ -380,6 +380,7 @@ func (server *headlessServer) loadModels() {
 			continue
 		}
 		rows, err := server.backend.ConnectionModels(server.ctx, connection, keys[connection.ID])
+		server.prices.Learn(agent.ListedPrices(rows)) // what the catalog says its models cost
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Models unavailable for %q: %v\n", connection.Name, err)
 			problems[connection.ID] = "Models unavailable"

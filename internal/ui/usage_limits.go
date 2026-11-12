@@ -120,10 +120,27 @@ func limitPace(limit usage.Limit) fyne.CanvasObject {
 		statTile("To last until reset", limit.Budget, "at most", colText),
 		statTile("Resets", shortReset(limit), limit.ResetText, colText),
 	)
-	chart := newPaceChart(limit)
+	key := limit.Connection + "\x00" + limit.Window
+	curve, days := newPaceChart(limit), newDayBars(limit)
+	view := container.NewStack(curve, days)
+	var curveChip, daysChip *tapRow
+	show := func(byDay bool) {
+		limitByDay[key] = byDay
+		curve.Hidden, days.Hidden = byDay, !byDay
+		curveChip.SetSelected(!byDay)
+		daysChip.SetSelected(byDay)
+		view.Refresh()
+	}
+	curveChip = newRow("Curve", nil, styleChip, func() { show(false) })
+	daysChip = newRow("By day", nil, styleChip, func() { show(true) })
+	show(limitByDay[key])
+	head = container.NewBorder(nil, nil, container.NewCenter(name), container.NewHBox(curveChip, daysChip, spacer(8, 0), container.NewCenter(statusPill(limit))))
 	return padded(12, 16, 16, 16, container.New(layout.NewCustomPaddedVBoxLayout(12),
-		head, tiles, chart, plainFlow(limit.Advice, 13, colTextSoft)))
+		head, tiles, view, plainFlow(limit.Advice, 13, colTextSoft)))
 }
+
+// limitByDay keeps which windows are shown day by day while 1loop runs.
+var limitByDay = map[string]bool{}
 
 // shortReset is the reset's first words: "Sun 14:00" of "Sun 14:00 · in 2 d".
 func shortReset(limit usage.Limit) string {
@@ -219,6 +236,7 @@ type paceRenderer struct {
 	even     []*canvas.Line
 	recorded []*canvas.Line
 	forecast []*canvas.Line
+	plan     []*canvas.Line
 	nowLine  *canvas.Line
 	nowText  *canvas.Text
 	dot      *canvas.Circle
@@ -262,13 +280,14 @@ func (chart *paceChart) CreateRenderer() fyne.WidgetRenderer {
 		r.recorded = append(r.recorded, line)
 	}
 	r.forecast = dashes(statusInk(limit.Status), 2)
+	r.plan = dashes(colText, 1.5)
 	r.nowLine = canvas.NewLine(colBorder)
 	r.nowLine.StrokeWidth = 1
 	r.nowText = textLine("Now", 11, colMuted)
 	r.nowText.TextStyle = fyne.TextStyle{Bold: true}
 	r.dot = canvas.NewCircle(statusInk(limit.Status))
 	r.legend = container.NewHBox(legendKey("Recorded", statusInk(limit.Status), false), spacer(10, 0),
-		legendKey("Forecast", statusInk(limit.Status), true), spacer(10, 0), legendKey("Even pace", colFaint, true))
+		legendKey("Forecast", statusInk(limit.Status), true), spacer(10, 0), legendKey("To last", colText, true), spacer(10, 0), legendKey("Even pace", colFaint, true))
 	for _, line := range r.grid {
 		r.objects = append(r.objects, line)
 	}
@@ -279,7 +298,7 @@ func (chart *paceChart) CreateRenderer() fyne.WidgetRenderer {
 		r.objects = append(r.objects, text)
 	}
 	r.objects = append(r.objects, r.nowLine, r.nowText)
-	for _, group := range [][]*canvas.Line{r.even, r.forecast, r.recorded} {
+	for _, group := range [][]*canvas.Line{r.even, r.plan, r.forecast, r.recorded} {
 		for _, line := range group {
 			r.objects = append(r.objects, line)
 		}
@@ -355,6 +374,7 @@ func (r *paceRenderer) Layout(size fyne.Size) {
 		end = fyne.NewPos(x(limit.EmptyAt), y(0))
 	}
 	dashed(r.forecast, from, end)
+	dashed(r.plan, from, fyne.NewPos(x(limit.Reset), y(0))) // the even pace from now that lasts exactly
 	now := x(r.chart.now)
 	r.nowLine.Position1, r.nowLine.Position2 = fyne.NewPos(now, top-4), fyne.NewPos(now, top+plot.Height)
 	r.nowText.Move(fyne.NewPos(now-r.nowText.MinSize().Width/2, top-paceTop))
@@ -365,3 +385,112 @@ func (r *paceRenderer) Layout(size fyne.Size) {
 func (r *paceRenderer) Refresh()                     { r.Layout(r.chart.Size()) }
 func (r *paceRenderer) Destroy()                     {}
 func (r *paceRenderer) Objects() []fyne.CanvasObject { return r.objects }
+
+// dayBars is a window day by day: what each day used (solid), the most each
+// day still to come can use for the window to last (outlined, in green),
+// and a tick at an even pace's share of the day.
+type dayBars struct {
+	widget.BaseWidget
+	limit usage.Limit
+}
+
+func newDayBars(limit usage.Limit) *dayBars {
+	bars := &dayBars{limit: limit}
+	bars.ExtendBaseWidget(bars)
+	return bars
+}
+
+type dayBarsRenderer struct {
+	bars    *dayBars
+	used    []*canvas.Rectangle
+	plan    []*canvas.Rectangle
+	even    []*canvas.Line
+	values  []*canvas.Text
+	labels  []*canvas.Text
+	legend  *fyne.Container
+	objects []fyne.CanvasObject
+}
+
+func (bars *dayBars) CreateRenderer() fyne.WidgetRenderer {
+	r := &dayBarsRenderer{bars: bars}
+	for _, day := range bars.limit.Days {
+		ink := colAmber
+		if day.Used > day.Even*1.15 {
+			ink = colDanger
+		}
+		used := canvas.NewRectangle(ink)
+		used.CornerRadius = 3
+		plan := canvas.NewRectangle(color.Transparent)
+		plan.StrokeColor, plan.StrokeWidth, plan.CornerRadius = colAdded, 1.5, 3
+		even := canvas.NewLine(colText)
+		even.StrokeWidth = 2
+		value := ""
+		switch {
+		case day.Today:
+			value = usage.Percent(day.Used) + " + " + usage.Percent(day.Plan)
+		case day.Ahead:
+			value = "≤ " + usage.Percent(day.Plan)
+		default:
+			value = usage.Percent(day.Used)
+		}
+		text := textLine(value, 11, colMuted)
+		text.Alignment = fyne.TextAlignCenter
+		name := day.Label
+		if day.Today {
+			name = "Today"
+		}
+		label := textLine(name, 11, colFaint)
+		label.Alignment = fyne.TextAlignCenter
+		if day.Today {
+			label.Color, label.TextStyle = colText, fyne.TextStyle{Bold: true}
+		}
+		r.used, r.plan, r.even = append(r.used, used), append(r.plan, plan), append(r.even, even)
+		r.values, r.labels = append(r.values, text), append(r.labels, label)
+		r.objects = append(r.objects, plan, used, even, text, label)
+	}
+	r.legend = container.NewHBox(legendSwatch(colAmber, "Used"), spacer(10, 0), legendSwatch(colAdded, "Most to use, to last"), spacer(10, 0), legendKey("Even share of the day", colText, false))
+	r.objects = append(r.objects, r.legend)
+	return r
+}
+
+func (r *dayBarsRenderer) MinSize() fyne.Size { return fyne.NewSize(320, 210) }
+
+func (r *dayBarsRenderer) Layout(size fyne.Size) {
+	days := r.bars.limit.Days
+	r.legend.Move(fyne.NewPos(0, 0))
+	r.legend.Resize(r.legend.MinSize())
+	if len(days) == 0 {
+		return
+	}
+	top := r.legend.MinSize().Height + 22
+	plotHeight := size.Height - top - 20
+	highest := 1.0
+	for _, day := range days {
+		highest = math.Max(highest, math.Max(day.Even, day.Used+day.Plan))
+	}
+	height := func(value float64) float32 { return plotHeight * float32(value/highest) }
+	slot := size.Width / float32(len(days))
+	width := fyne.Min(56, slot*0.6)
+	for i, day := range days {
+		x := float32(i)*slot + (slot-width)/2
+		bottom := top + plotHeight
+		used := height(day.Used)
+		r.used[i].Hidden = day.Ahead // nothing used yet
+		r.used[i].Move(fyne.NewPos(x, bottom-used))
+		r.used[i].Resize(fyne.NewSize(width, fyne.Max(used, 2)))
+		plan := height(day.Plan)
+		r.plan[i].Hidden = day.Plan <= 0
+		r.plan[i].Move(fyne.NewPos(x, bottom-used-plan))
+		r.plan[i].Resize(fyne.NewSize(width, plan))
+		evenY := bottom - height(day.Even)
+		r.even[i].Position1, r.even[i].Position2 = fyne.NewPos(x-4, evenY), fyne.NewPos(x+width+4, evenY)
+		r.values[i].Resize(fyne.NewSize(slot, 14))
+		r.values[i].Move(fyne.NewPos(float32(i)*slot, fyne.Min(bottom-used-plan, evenY)-18))
+		r.labels[i].Resize(fyne.NewSize(slot, 14))
+		r.labels[i].Move(fyne.NewPos(float32(i)*slot, bottom+5))
+	}
+}
+
+func (r *dayBarsRenderer) Refresh()                     { r.Layout(r.bars.Size()) }
+func (r *dayBarsRenderer) Destroy()                     {}
+func (r *dayBarsRenderer) Objects() []fyne.CanvasObject { return r.objects }

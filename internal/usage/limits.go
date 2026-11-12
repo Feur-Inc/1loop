@@ -186,6 +186,26 @@ type Limit struct {
 	Advice     string `json:"advice"`     // where the pace leads, and how much to use
 	Budget     string `json:"budget"`     // "21% a day", "9% an hour": what lasts until the reset
 	ResetText  string `json:"resetText"`  // "Sun 14:00 · in 2 d 6 h"
+	// CatchUp is when an even pace comes down to what is left now, for a
+	// window used faster than even: pausing until then puts it back on pace.
+	CatchUp time.Time `json:"catchUp,omitzero"`
+	// Days are the window's calendar days: what each used, and from now
+	// on the most each can use for the window to last.
+	Days []LimitDay `json:"days"`
+}
+
+// LimitDay is one calendar day of a window. Percents are of the window's
+// whole allowance.
+type LimitDay struct {
+	Date  string  `json:"date"`  // 2006-01-02
+	Label string  `json:"label"` // "Thu"
+	Used  float64 `json:"used"`  // used that day, from the readings
+	Even  float64 `json:"even"`  // an even pace's share of the day
+	// Plan is the most to use that day (the rest of it, today) for the
+	// window to last until the reset, at an even pace from now on.
+	Plan  float64 `json:"plan"`
+	Today bool    `json:"today,omitempty"`
+	Ahead bool    `json:"ahead,omitempty"` // the day is still to come
 }
 
 // LimitPoint is one reading drawn on the chart.
@@ -241,6 +261,7 @@ func (ledger *Ledger) Limits(names Names, now time.Time) []Limit {
 			}
 		}
 		limit.pace(now)
+		limit.days(now)
 		limit.describe(now)
 		limits = append(limits, limit)
 	}
@@ -320,6 +341,23 @@ func (limit *Limit) describe(now time.Time) {
 		limit.Status, limit.StatusText = "on", "On pace"
 		limit.Advice = fmt.Sprintf("Close to an even pace: about %s is left at the reset. Up to %s lasts until then.", Percent(limit.LeftAtReset), limit.Budget)
 	}
+	// Used faster than even: the even pace comes down to what is left at
+	// the moment the window has that much of its time left.
+	if total := limit.Reset.Sub(limit.Start); gap > 0.5 && total > 0 {
+		catchUp := limit.Reset.Add(-time.Duration(limit.Left / 100 * float64(total)))
+		if catchUp.After(limit.Checked) {
+			limit.CatchUp = catchUp.UTC().Truncate(time.Minute)
+			limit.Advice += " Or pause until " + clock(catchUp.In(now.Location()), now) + ": the even pace catches up with you then."
+		}
+	}
+	if daily && limit.Status != "spare" {
+		for _, day := range limit.Days {
+			if day.Today && day.Plan > 0 {
+				limit.Advice += " Today, up to " + Percent(day.Plan) + " more; then up to " + Percent(limit.PerHour*24) + " a full day."
+				break
+			}
+		}
+	}
 	if limit.Recent > 0 {
 		limit.Advice += " Over the last day of readings: " + rate(limit.Recent) + "."
 	}
@@ -384,4 +422,64 @@ func span(d time.Duration) string {
 		return fmt.Sprintf("%d h", hours)
 	}
 	return fmt.Sprintf("%d min", minutes)
+}
+
+// leftAt is what the readings say was left at a moment: the window starts
+// whole, and is straight between two readings.
+func (limit *Limit) leftAt(at time.Time) float64 {
+	previous := LimitPoint{Time: limit.Start, Left: 100}
+	for _, point := range limit.Points {
+		if !point.Time.After(at) {
+			previous = point
+			continue
+		}
+		span := point.Time.Sub(previous.Time).Seconds()
+		if span <= 0 {
+			return point.Left
+		}
+		share := at.Sub(previous.Time).Seconds() / span
+		return previous.Left + (point.Left-previous.Left)*share
+	}
+	if limit.Renewed {
+		return 100
+	}
+	return math.Min(previous.Left, limit.Left)
+}
+
+// days cuts the window into calendar days (in now's time zone).
+func (limit *Limit) days(now time.Time) {
+	total := limit.Reset.Sub(limit.Start)
+	if total <= 0 || limit.Hours < 24 {
+		return
+	}
+	start := limit.Start.In(now.Location())
+	day := time.Date(start.Year(), start.Month(), start.Day(), 0, 0, 0, 0, now.Location())
+	for ; day.Before(limit.Reset); day = day.AddDate(0, 0, 1) {
+		from, to := day, day.AddDate(0, 0, 1)
+		if from.Before(limit.Start) {
+			from = limit.Start
+		}
+		if to.After(limit.Reset) {
+			to = limit.Reset
+		}
+		entry := LimitDay{Date: day.Format("2006-01-02"), Label: day.Format("Mon"),
+			Even: 100 * to.Sub(from).Seconds() / total.Seconds()}
+		if from.Before(limit.Checked) {
+			end := to
+			if end.After(limit.Checked) {
+				end = limit.Checked
+			}
+			entry.Used = math.Max(0, limit.leftAt(from)-limit.leftAt(end))
+		}
+		if to.After(limit.Checked) {
+			planFrom := from
+			if planFrom.Before(limit.Checked) {
+				planFrom = limit.Checked
+			}
+			entry.Plan = limit.PerHour * to.Sub(planFrom).Hours()
+			entry.Today = !from.After(limit.Checked)
+			entry.Ahead = from.After(limit.Checked)
+		}
+		limit.Days = append(limit.Days, entry)
+	}
 }

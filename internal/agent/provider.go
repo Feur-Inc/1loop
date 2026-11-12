@@ -396,6 +396,10 @@ func chatCompletion(ctx context.Context, cfg Config, messages []Message, tools b
 			body["parallel_tool_calls"] = true
 		}
 	}
+	if cfg.Provider == "openrouter" {
+		// The call's own cost in its last chunk, for the usage ledger.
+		body["usage"] = map[string]any{"include": true}
+	}
 	if cfg.Provider == "openrouter" && len(cfg.Routing) > 0 {
 		body["provider"] = cfg.Routing
 	}

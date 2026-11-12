@@ -185,7 +185,7 @@ func (page *usagePage) show(report usage.Report) {
 		usageChart(report),
 		page.groupBar(report.Group),
 		page.rows(report),
-		padded(10, 24, 2, 2, note(fmt.Sprintf("Costs are each model's API list price (as of %s), or the price you set under Prices. Subscriptions are not billed by the token: their cost is what the same tokens would cost on the API.", report.AsOf))),
+		padded(10, 24, 2, 2, note(fmt.Sprintf("A call costs what its provider reported (OpenRouter), else your price under Prices, else the price its provider lists, else the model's API list price (as of %s); \":free\" models cost nothing. Subscriptions are not billed by the token: their cost is what the same tokens would cost on the API.", report.AsOf))),
 	)
 	page.body.Refresh()
 }
@@ -226,7 +226,7 @@ func (page *usagePage) periodBar(report usage.Report) fyne.CanvasObject {
 }
 
 func (page *usagePage) groupBar(group string) fyne.CanvasObject {
-	names := map[string]string{"model": "Model", "connection": "Connection", "project": "Project", "branch": "Branch", "chat": "Chat"}
+	names := map[string]string{"day": "Day", "model": "Model", "connection": "Connection", "project": "Project", "branch": "Branch", "chat": "Chat"}
 	bar := container.NewHBox()
 	for _, name := range usage.Groups {
 		chip := newRow(names[name], nil, styleChip, func() { page.change(func(query *usage.Query) { query.Group = name }) })
@@ -642,6 +642,8 @@ func (page *usagePage) openPrices() {
 				detail = priceText(*row.Price)
 				if row.Custom {
 					detail = "Your price · " + detail
+				} else if row.Listed {
+					detail = "The provider's listed price · " + detail
 				}
 			}
 			edit := newRow("Edit", nil, styleChip, func() { page.editPrice(row, refresh) })
@@ -652,7 +654,7 @@ func (page *usagePage) openPrices() {
 		}
 		add := newRow("Price another model", iconPlus, styleChip, func() { page.editPrice(usage.PriceRow{}, refresh) })
 		body.Objects = []fyne.CanvasObject{
-			note("In US dollars per million tokens. 1loop ships the providers' list prices; a price you set here wins over them, and applies to past calls too."),
+			note("In US dollars per million tokens. A call is costed at what its provider reported (OpenRouter), else at your price here, else at the price its provider lists (OpenRouter's catalog, or a compatible API that lists prices), else at 1loop's list prices. \":free\" models cost nothing. Your prices apply to past calls too."),
 			spacer(0, 8), card(items...), padded(10, 0, 0, 0, container.NewHBox(add)),
 		}
 		body.Refresh()

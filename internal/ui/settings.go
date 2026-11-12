@@ -437,6 +437,25 @@ func settingStack(title, detail string, below fyne.CanvasObject) fyne.CanvasObje
 	return padded(13, 14, 16, 16, container.New(layout.NewCustomPaddedVBoxLayout(9), text, below))
 }
 
+// widthLayout gives its content a width of its own and the height it
+// needs at that width, as it changes: a message that wraps.
+type widthLayout struct{ width float32 }
+
+func (wide widthLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	height := float32(0)
+	for _, object := range objects {
+		height = fyne.Max(height, object.MinSize().Height)
+	}
+	return fyne.NewSize(wide.width, height)
+}
+
+func (wide widthLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	for _, object := range objects {
+		object.Move(fyne.NewPos(0, 0))
+		object.Resize(size)
+	}
+}
+
 // sized gives a control (an entry, a picker) a width of its own.
 func sized(width float32, object fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewGridWrap(fyne.NewSize(width, object.MinSize().Height), object)
@@ -1045,7 +1064,11 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		status.spans, status.cut = []span{{text: text}}, nil
 		status.flow(status.Size().Width)
 		status.Refresh()
+		// The bar under the page takes the text's new height: two lines
+		// would otherwise run out of the window.
+		settings.view.Refresh()
 	}
+	var loadModels func() // set once its button is built
 
 	// Access: an address and a key, a ChatGPT sign-in, or nothing (Claude Code).
 	apiFields := card(
@@ -1105,13 +1128,15 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 					say(err.Error())
 					return
 				}
-				say("Account connected. Load its models to choose which ones to show.")
+				say("Account connected.")
+				email := ""
 				if auth, errorValue := ui.backend.GetOpenAI(profile); errorValue == nil {
 					auth.Mu.Lock()
-					email := auth.Account.Email
+					email = auth.Account.Email
 					auth.Mu.Unlock()
 					showAccount(email)
 				}
+				ui.chatGPTConnected(email, loadModels)
 			})
 		}()
 	}
@@ -1293,6 +1318,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 			})
 		}()
 	}
+	loadModels = load.onTap
 
 	typePicker.onChanged = func(label string) {
 		previous := draft.Provider
@@ -1463,7 +1489,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	}
 	cancel := newRow("Cancel", nil, styleOutline, settings.back)
 	settings.push(settingsFrame{content: page, actions: []fyne.CanvasObject{
-		container.NewCenter(sized(360, status)),
+		container.NewCenter(container.New(widthLayout{360}, status)),
 		cancel,
 		save,
 	}, beforeLeave: beforeLeave, leave: func() {
@@ -1629,4 +1655,36 @@ func requestParameters(raw string) (map[string]any, error) {
 		}
 	}
 	return params, nil
+}
+
+// chatGPTConnected says the sign-in worked, and what is left to do: the
+// connection is not saved yet, and its models are not loaded.
+func (ui *desktopUI) chatGPTConnected(email string, loadModels func()) {
+	who := "Your ChatGPT account is connected."
+	if email != "" {
+		who = "Your ChatGPT account " + email + " is connected."
+	}
+	next := textLine("What's next", 13.5, colText)
+	next.TextStyle = fyne.TextStyle{Bold: true}
+	step := func(number, text string) fyne.CanvasObject {
+		digit := textLine(number, 13, colAmber)
+		digit.TextStyle = fyne.TextStyle{Bold: true}
+		return padded(6, 0, 0, 0, container.NewBorder(nil, nil, container.NewVBox(sized(18, digit)), nil, plainFlow(text, 13, colMuted)))
+	}
+	body := container.NewVBox(
+		plainFlow(who, 13.5, colText),
+		padded(16, 2, 0, 0, next),
+		step("1", "Load models: 1loop asks this account which models it can use."),
+		step("2", "Choose the models to show and, if you like, one for each level."),
+		step("3", "Save connection, at the bottom of the page. Its models then show in the model menu under the message box."),
+	)
+	var dialog *sheet
+	later := newRow("Later", nil, styleOutline, func() { dialog.dismiss() })
+	load := newRow("Load models", nil, stylePrimary, func() {
+		dialog.dismiss()
+		if loadModels != nil {
+			loadModels()
+		}
+	})
+	dialog = ui.modal("ChatGPT account connected", body, 480, nil, later, load)
 }

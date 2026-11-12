@@ -611,7 +611,7 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 
 	logo := brandLogo(30*1483.0/512.0, 30)
 	collapse := newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
-	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, logo, container.NewCenter(collapse)))
+	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, ui.spaceSwitch(logo, ""), container.NewCenter(collapse)))
 	if ui.chrome {
 		brand = container.NewStack(newDragArea(ui.window), brand)
 	}

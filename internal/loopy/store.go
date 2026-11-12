@@ -124,6 +124,8 @@ type Settings struct {
 	// Summary is when the morning summary comes, "08:00", "" for never.
 	Summary     string    `json:"summary,omitempty"`
 	LastSummary time.Time `json:"lastSummary,omitzero"`
+	// Shown: the Loopy space was on screen when 1loop closed.
+	Shown bool `json:"shown,omitempty"`
 }
 
 // Store is Loopy's saved state.

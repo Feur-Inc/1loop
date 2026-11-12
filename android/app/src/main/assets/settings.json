@@ -481,6 +481,52 @@
       "where": "desktop"
     },
     {
+      "key": "loopy.model",
+      "section": "agent",
+      "page": "Loopy",
+      "title": "Loopy's model",
+      "description": "The model Loopy, the personal agent, works with: its own, or the one chosen in your projects.",
+      "keywords": [
+        "loopy",
+        "assistant",
+        "personal agent",
+        "model"
+      ],
+      "kind": "action",
+      "where": "desktop"
+    },
+    {
+      "key": "loopy.summary",
+      "section": "agent",
+      "page": "Loopy",
+      "title": "Morning summary",
+      "description": "When Loopy sums up each morning what is in progress and what needs you, or never.",
+      "keywords": [
+        "loopy",
+        "morning",
+        "summary",
+        "brief"
+      ],
+      "kind": "action",
+      "where": "desktop"
+    },
+    {
+      "key": "loopy.memory",
+      "section": "agent",
+      "page": "Loopy",
+      "title": "Loopy's memory",
+      "description": "What Loopy remembers about you, by kind, and its journal; whether it remembers on its own or only when asked.",
+      "keywords": [
+        "loopy",
+        "memory",
+        "remember",
+        "journal",
+        "forget"
+      ],
+      "kind": "action",
+      "where": "desktop"
+    },
+    {
       "key": "agent.dynamic_compaction",
       "section": "agent",
       "title": "Dynamic compaction",

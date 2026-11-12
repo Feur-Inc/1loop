@@ -85,6 +85,7 @@ var subPages = map[string]string{
 	"Extensions":           registry.Tools,
 	"Connectors":           registry.Tools,
 	registry.ShortcutsPage: registry.General,
+	loopySettingsPage:      registry.Agent,
 }
 
 // pageAliases are pages of earlier versions, still named by links and
@@ -288,6 +289,8 @@ func (view *settingsView) build(page string) fyne.CanvasObject {
 		return ui.advancedSettings()
 	case registry.ShortcutsPage:
 		return ui.shortcutSettings()
+	case loopySettingsPage:
+		return ui.loopySettings()
 	case "Extensions":
 		return ui.extensionSettings()
 	case "Connectors":
@@ -747,6 +750,8 @@ func (ui *desktopUI) agentSettings() fyne.CanvasObject {
 		view.mark("agent.project_memory", card(settingRow("Project memory",
 			"Each project's AGENTS.md, which 1loop and the other agents read there. Open it with Project memory… in the project's … menu in the sidebar.", nil))),
 	)
+	page.Add(sectionTitle("Loopy"))
+	page.Add(card(settingRow("Loopy, the personal agent", "Its model, its morning summary, its context and its memory.", newRow("Open", iconChevronRight, styleChip, view.link(loopySettingsPage)))))
 	page.Add(sectionTitle("Context"))
 	page.Add(card(view.mark(registry.KeyDynamicCompaction, settingRow("Dynamic compaction",
 		"On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way.",

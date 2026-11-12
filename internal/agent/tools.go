@@ -87,6 +87,9 @@ func availableCoreTools(cfg Config) []map[string]any {
 	if skill := skillToolDefinition(); skill != nil && cfg.toolAvailable("skill") {
 		definitions = append(definitions, skill)
 	}
+	if cfg.Assistant != nil {
+		definitions = append(definitions, cfg.Assistant.Definitions...)
+	}
 	return definitions
 }
 
@@ -433,6 +436,11 @@ type toolArgs struct {
 }
 
 func (backend *App) runTool(ctx context.Context, root string, call ToolCall, begin func(), emit emitter) (output, diff string, err error) {
+	if assistant := assistantOf(ctx); assistant.has(call.Function.Name) {
+		begin()
+		output, err = assistant.Run(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
+		return
+	}
 	if call.Function.Name == "search_files" {
 		begin()
 		output, err = searchFiles(ctx, root, call.Function.Arguments)

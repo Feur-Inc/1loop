@@ -100,6 +100,9 @@ type Config struct {
 	CapabilitiesChanged <-chan struct{}   `json:"-"`
 	WebConversation     *WebConversation  `json:"webConversation,omitempty"`
 	WebSettings         *WebSettings      `json:"webSettings,omitempty"`
+
+	// Assistant are a host's own tools and prompt for this run (Loopy).
+	Assistant *AssistantTools `json:"-"`
 }
 
 type emitter func(string, any)

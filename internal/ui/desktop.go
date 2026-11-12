@@ -40,6 +40,7 @@ import (
 	"1loop/internal/crash"
 	"1loop/internal/discord"
 	"1loop/internal/extensions"
+	"1loop/internal/loopy"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	registry "1loop/internal/settings"
@@ -103,6 +104,12 @@ type chatRun struct {
 }
 
 type desktopUI struct {
+	// The Loopy space (loopy_view.go): built once opened, on screen while
+	// inLoopy, with 1loop's own sidebar and page kept aside meanwhile.
+	loopy                    *loopyMode
+	inLoopy                  bool
+	oneloopSide, oneloopMain fyne.CanvasObject
+
 	computer         *computeruse.ComputerSession
 	browser          *browser.Engine
 	window           fyne.Window
@@ -331,6 +338,9 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.CenterOnScreen()
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
 	ui.window.SetContent(ui.build())
+	if loopy.Open(filepath.Join(filepath.Dir(ui.statePath), "loopy.json")).Settings.Shown {
+		ui.openLoopy() // Loopy was on screen when 1loop closed
+	}
 	ui.window.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
 		var files []string
 		for _, uri := range uris {
@@ -1138,6 +1148,9 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	ui.remote.metaChanged(chat)
 	ui.syncPresence()
 	ui.staleAccountLimits(chat.Config.ConnectionID)
+	if ui.loopy != nil {
+		ui.loopy.taskEnded(chat, ended) // a coding task Loopy handed over
+	}
 	if run != nil && run.approval != nil {
 		run.approval.dismiss()
 	}

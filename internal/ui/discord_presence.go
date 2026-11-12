@@ -169,6 +169,7 @@ func discordPalette() color.Palette {
 // discordGIF is the loop of a state, 24 frames.
 func discordGIF(state string, px int) *gif.GIF {
 	art := newRingArt(px)
+	art.brand, art.ink = true, brandHex // Discord shows the brand's amber
 	const frames = 24
 	animation := &gif.GIF{LoopCount: 0}
 	for i := 0; i < frames; i++ {

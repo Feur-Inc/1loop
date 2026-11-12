@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- DA/1loop-logo.svg, its accent-coloured paths only (white, tinted in code; see logo.xml). -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="86.9226dp" android:height="30dp"
+    android:viewportWidth="718.56" android:viewportHeight="248">
+  <group android:translateX="24" android:translateY="24">
+    <group android:scaleX="1.66667" android:scaleY="1.66667">
+        <path android:pathData="M95.24 30.43 A46 46 0 1 1 67.99 14.70" android:strokeColor="#FFFFFF" android:strokeWidth="12" android:strokeLineCap="round" />
+    </group>
+    <path android:pathData="M287.472 164.4V52.896H284.15999999999997L266.864 93.744H242.208L268.52 35.599999999999994H311.024V164.4Z" android:fillColor="#FFFFFF" />
+  </group>
+</vector>

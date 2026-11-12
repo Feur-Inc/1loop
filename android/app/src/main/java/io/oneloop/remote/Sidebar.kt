@@ -13,6 +13,7 @@ import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -86,7 +87,11 @@ internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit)
     val shownInFull = remember(app.server) { mutableStateListOf<String>() } // groups whose every chat is listed
     val side = SideChats(app.chats)
     Column(modifier.background(Palette.sidebar).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
-        Image(painterResource(if (Palette.dark) R.drawable.logo else R.drawable.logo_light), "1loop", modifier = Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp))
+        // The ring and the "1" take the accent, drawn over the rest of the logo.
+        Box(Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp)) {
+            Image(painterResource(if (Palette.dark) R.drawable.logo else R.drawable.logo_light), "1loop", modifier = Modifier.height(28.dp))
+            Image(painterResource(R.drawable.logo_accent), null, modifier = Modifier.height(28.dp), colorFilter = ColorFilter.tint(Palette.amber))
+        }
         // The labelled actions, in the desktop's order.
         NavRow("New chat", Icons.plus, selected = false) { app.open(null); onPicked() }
         NavRow("Search", Icons.search, selected = false) { app.searchOpen = true; onPicked() }

@@ -355,12 +355,25 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         worktreeSort = id
         prefs.edit { putString("worktreeSort", id) }
     }
+    // The drawer's project groups that were folded, as "server key, group": kept for the next start, as the desktop keeps its own.
+    private val foldedGroups = mutableStateListOf<String>().apply { addAll(prefs.getStringSet("folded", emptySet()).orEmpty()) }
+
+    fun folded(group: String) = "${server?.key}\u0000$group" in foldedGroups
+
+    fun fold(group: String, on: Boolean) {
+        val key = "${server?.key}\u0000$group"
+        if (on) { if (key !in foldedGroups) foldedGroups.add(key) } else foldedGroups.remove(key)
+        prefs.edit { putStringSet("folded", foldedGroups.toSet()) }
+    }
+
     var workspace by mutableStateOf("")
     var selectedProject by mutableStateOf<String?>(null)
     var projectManagement by mutableStateOf(false)
     var projectActions by mutableStateOf(false)
     var projectsOpen by mutableStateOf(false)
+    var searchOpen by mutableStateOf(false) // the search over chats and settings (Search.kt)
     var settingsOpen by mutableStateOf(false)
+    var settingsReveal by mutableStateOf<String?>(null) // the setting a search opened Settings on (its key)
     var settingsSection by mutableStateOf<String?>(null) // the section open in Settings (its id): kept while Extensions or Linux covers it
     var extensionsOpen by mutableStateOf(false) // Settings → Extensions (Extensions.kt)
     var linuxOpen by mutableStateOf(false) // Settings → Linux (LinuxScreen.kt)
@@ -730,6 +743,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         connectionsOpen = false
         settingsOpen = false
         settingsSection = null
+        settingsReveal = null
+        searchOpen = false
         extensionsOpen = false
         linuxOpen = false
         sharing = null
@@ -916,6 +931,17 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         } finally {
             if (generation == connectionGeneration) loadingEarlier = false
         }
+    }
+
+    /** Gives a chat a new title; the server keeps it on one line, 80 characters at most. */
+    suspend fun renameChat(id: String, title: String) {
+        val generation = connectionGeneration
+        val target = server ?: error("Connect first.")
+        val reply = onConnection(target, generation) { it.post("/api/chats/$id/rename", JSONObject().put("title", title)) }
+        if (generation != connectionGeneration) return
+        val kept = reply.optString("title").ifEmpty { title }
+        val index = chats.indexOfFirst { it.id == id }
+        if (index >= 0) chats[index] = chats[index].copy(title = kept)
     }
 
     fun deleteChat(id: String) {

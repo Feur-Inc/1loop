@@ -57,22 +57,13 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
     val list = remember { SettingsList.load(context) }
     var section by app::settingsSection
     var query by rememberSaveable { mutableStateOf("") }
-    var reveal by remember { mutableStateOf<String?>(null) } // the setting a search opened the section on
+    var reveal by app::settingsReveal // the setting a search opened the section on (the sidebar's too)
     val leave = { if (section != null) { section = null; reveal = null } else onBack() }
     val back = predictiveBack(onBack = leave)
     val local = app.server?.localPhone == true
     val adb = if (local) app.local.adb.collectAsState().value else null
     // What the pages show now: the search finds only those.
-    val shown = list.onPhone().filter { setting ->
-        when (setting.key) {
-            "models.connections", "tools.linux", "phone.adb", "phone.background", "phone.sharing" -> local
-            "phone.work_profile" -> adb?.allowed == true && adb.connected
-            "models.default_preset" -> app.defaultPresets
-            "agent.memory" -> app.memoryEnabled != null
-            "agent.wrap_up" -> app.wrapUpEnabled != null
-            else -> true
-        }
-    }
+    val shown = phoneSettingsShown(app, list, adb?.let { it.allowed && it.connected } == true)
     val open = section?.let { id -> list.sections.firstOrNull { it.id == id } }
     Column(back.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -83,6 +74,21 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
             SettingsHome(app, list, shown, query, { query = it }) { id, key -> section = id; reveal = key }
         } else {
             SettingsSectionPage(app, open, shown.filter { it.section == open.id }, adb, reveal)
+        }
+    }
+}
+
+/** The settings the phone's pages show now, which the search finds (here and from the drawer). */
+fun phoneSettingsShown(app: RemoteApp, list: SettingsList, workProfile: Boolean): List<SettingEntry> {
+    val local = app.server?.localPhone == true
+    return list.onPhone().filter { setting ->
+        when (setting.key) {
+            "models.connections", "tools.linux", "phone.adb", "phone.background", "phone.sharing" -> local
+            "phone.work_profile" -> workProfile
+            "models.default_preset" -> app.defaultPresets
+            "agent.memory" -> app.memoryEnabled != null
+            "agent.wrap_up" -> app.wrapUpEnabled != null
+            else -> true
         }
     }
 }

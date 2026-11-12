@@ -134,8 +134,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -533,7 +535,8 @@ fun ChatScreen(app: RemoteApp) {
     app.handoffAsk?.let { HandoffDialog(it) } // the chat continues with another model
     SharedFilesDialog(app) // files shared to 1loop from another app
     val page = app.repositoryOpen?.let { ChatPage("repository", it) }
-        ?: if (!app.settingsOpen) ChatPage("chat")
+        ?: if (app.searchOpen) ChatPage("search")
+        else if (!app.settingsOpen) ChatPage("chat")
         else if (app.extensionsOpen) ChatPage("extensions")
         else if (app.linuxOpen) ChatPage("linux")
         else ChatPage("settings")
@@ -552,6 +555,7 @@ fun ChatScreen(app: RemoteApp) {
             "extensions" -> ExtensionsScreen(app) { app.extensionsOpen = false }
             "linux" -> LinuxScreen(app) { app.linuxOpen = false }
             "settings" -> MobileSettings(app) { app.settingsOpen = false }
+            "search" -> SearchScreen(app) { app.searchOpen = false }
             else -> ChatMain(app)
         }
     }
@@ -569,7 +573,7 @@ fun ChatScreen(app: RemoteApp) {
 
 /** A page of the connected app: the chat, Settings or one of its pages, a project's repository. */
 private data class ChatPage(val name: String, val project: String? = null) {
-    val depth get() = when (name) { "chat" -> 0; "settings", "repository" -> 1; else -> 2 }
+    val depth get() = when (name) { "chat" -> 0; "settings", "repository", "search" -> 1; else -> 2 }
 }
 
 @Composable
@@ -606,140 +610,8 @@ private fun ChatMain(app: RemoteApp) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) {
-    var deleting by remember(app.server) { mutableStateOf<ChatSummary?>(null) }
-    var projectActions by remember(app.server) { mutableStateOf<String?>(null) }
-    var worktreeActions by remember(app.server) { mutableStateOf<Pair<String, Worktree>?>(null) }
-    var newWorktree by remember(app.server) { mutableStateOf<String?>(null) }
-    Column(modifier.background(Palette.sidebar).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
-        Image(painterResource(if (Palette.dark) R.drawable.logo else R.drawable.logo_light), "1loop", modifier = Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp))
-        NavRow("New chat", Icons.plus, selected = app.current == null) { app.open(null); onPicked() }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Projects", style = Type.small.copy(color = Palette.faint), modifier = Modifier.weight(1f).padding(start = 10.dp))
-                if (app.projectManagement) RoundButton(Icons.plus, Color.Transparent, Palette.muted, description = "Add project") { app.projectsOpen = true }
-            }
-            // A subchat is listed under its parent, wherever its folder is (its worktree).
-            val listed = app.chats.map { it.id }.toSet()
-            val nested = app.chats.filter { it.parent.isNotEmpty() && it.parent in listed }.groupBy { it.parent }
-            val topLevel = app.chats.filter { it.parent.isEmpty() || it.parent !in listed }
-            @Composable
-            fun chatRow(chat: ChatSummary) {
-                NavRow(
-                    chat.title, null, selected = chat.id == app.current, running = chat.running, status = chat.status, blocked = chat.blocked,
-                    onLongClick = { deleting = chat },
-                ) { app.open(chat.id); onPicked() }
-                nested[chat.id]?.let { subs ->
-                    Column(Modifier.padding(start = 16.dp)) {
-                        for (sub in subs) NavRow(
-                            sub.title, Icons.subchat, selected = sub.id == app.current, running = sub.running,
-                            onLongClick = { deleting = sub },
-                        ) { app.open(sub.id); onPicked() }
-                    }
-                }
-            }
-            @Composable
-            fun chatRows(folder: String) {
-                val chats = topLevel.filter { it.workspace == folder }
-                for (chat in chats) chatRow(chat)
-                if (chats.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
-            }
-            // Chats without a folder: one "No folder" entry, never their paths.
-            val scratch = topLevel.filter { it.scratch }
-            if (scratch.isNotEmpty() || app.selectedProject == NO_FOLDER) {
-                NavRow("No folder", Icons.folder, selected = app.selectedProject == NO_FOLDER) { app.selectProject(NO_FOLDER) }
-                AnimatedVisibility(
-                    app.selectedProject == NO_FOLDER,
-                    enter = expandVertically(motion(tween(200, easing = CssEase))) + fadeIn(motion(tween(160, 40))),
-                    exit = shrinkVertically(motion(tween(180, easing = CssEase))) + fadeOut(motion(tween(120))),
-                ) {
-                    Column(Modifier.padding(start = 16.dp).animateContentSize(motion(tween(200, easing = CssEase)))) {
-                        for (chat in scratch) chatRow(chat)
-                        if (scratch.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
-                    }
-                }
-            }
-            // A worktree shows under its project, not as a project of its own.
-            for (workspace in (app.projects + topLevel.filter { !it.scratch }.map { app.projectOf(it.workspace) ?: it.workspace }).distinct().filter { it !in app.worktrees }) {
-                val selected = workspace == app.selectedProject
-                val git = app.repositories[workspace]?.takeIf { it.loaded && it.error == null }
-                NavRow(
-                    projectName(workspace), Icons.folder, selected = selected,
-                    onLongClick = if (app.projectActions || git != null) ({ projectActions = workspace }) else null,
-                    longClickLabel = "Project actions",
-                    // A project on an SSH machine says so, beside its branch.
-                    trailing = listOfNotNull(git?.current?.takeIf { it.isNotEmpty() }, app.machineOf(workspace)?.let { "on ${it.label}" })
-                        .joinToString(" · ").ifEmpty { null },
-                ) { app.selectProject(workspace) }
-                // A project's chats unfold under it, and slide as chats come and go.
-                AnimatedVisibility(
-                    app.projectOf(app.selectedProject) == workspace,
-                    enter = expandVertically(motion(tween(200, easing = CssEase))) + fadeIn(motion(tween(160, 40))),
-                    exit = shrinkVertically(motion(tween(180, easing = CssEase))) + fadeOut(motion(tween(120))),
-                ) {
-                    Column(Modifier.padding(start = 16.dp).animateContentSize(motion(tween(200, easing = CssEase)))) {
-                        if (selected) chatRows(workspace)
-                        WorktreeEntries(app, workspace, { chatRows(it) }, { worktreeActions = workspace to it }) { newWorktree = workspace }
-                    }
-                }
-            }
-        }
-        val localPhone = app.server?.localPhone == true
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.borderSoft))
-        Row(
-            Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(8.dp)).clickable { if (localPhone) app.switchTarget() else app.leave() }
-                .padding(horizontal = 10.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(if (localPhone) Icons.phone else Icons.computer, null, tint = Palette.muted, modifier = Modifier.size(18.dp))
-            Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                Text(app.server?.name.orEmpty(), style = Type.body.copy(fontSize = 14.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    if (!app.connected) "Reconnecting…" else if (localPhone) "Connected" else "Connected · change computer",
-                    style = Type.caption.copy(color = if (app.connected) Palette.muted else Palette.amber),
-                )
-            }
-        }
-        NavRow("Settings", Icons.settings, selected = false) { app.settingsOpen = true; onPicked() }
-        NavRow("Switch execution target", Icons.refresh, selected = false) { app.switchTarget() }
-        Spacer(Modifier.height(8.dp))
-    }
-    projectActions?.let { path -> ProjectActionsSheet(app, path, onNewWorktree = { newWorktree = path }) { projectActions = null } }
-    worktreeActions?.let { (project, worktree) -> WorktreeSheet(app, project, worktree) { worktreeActions = null } }
-    newWorktree?.let { project -> NewWorktreeSheet(app, project) { newWorktree = null } }
-    deleting?.let { chat ->
-        GlassBackdrop()
-        ModalBottomSheet(
-            onDismissRequest = { deleting = null },
-            containerColor = Palette.surface, scrimColor = GlassScrim,
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        ) {
-            Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
-                Text("Delete chat?", style = Type.title)
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    if (chat.scratch) "“${chat.title}” and the folder 1loop made for it will be permanently deleted. Its running tasks and tabs will stop."
-                    else "“${chat.title}” will be permanently deleted. Its running tasks and tabs will stop. Project files are kept.",
-                    style = Type.body,
-                )
-                Spacer(Modifier.height(20.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    Pill("Cancel") { deleting = null }
-                    Spacer(Modifier.width(10.dp))
-                    Pill("Delete", primary = true) {
-                        app.deleteChat(chat.id)
-                        deleting = null
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", trailing: String? = null, status: String = "", blocked: Boolean = false, onClick: () -> Unit) {
+internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", trailing: String? = null, status: String = "", blocked: Boolean = false, chevron: ImageVector? = null, onMore: (() -> Unit)? = null, moreLabel: String = "More", onClick: () -> Unit) {
     val press = remember { MutableInteractionSource() }
     val fill by animateColorAsState(if (selected) Palette.selected else Color.Transparent, motion(tween(180)), label = "row")
     Row(
@@ -747,6 +619,10 @@ internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running
             .combinedClickable(press, ripple(), onClick = onClick, onLongClick = onLongClick, onLongClickLabel = longClickLabel).padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (chevron != null) {
+            Icon(chevron, null, tint = Palette.faint, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+        }
         if (icon != null) {
             Icon(icon, null, tint = Palette.text, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(10.dp))
@@ -759,6 +635,17 @@ internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running
         trailing?.let { Text(it, style = Type.caption, maxLines = 1, modifier = Modifier.padding(start = 8.dp)) }
         if (running) Box(Modifier.padding(start = 8.dp).size(7.dp).clip(CircleShape).background(Palette.amber))
         else if (blocked) Box(Modifier.padding(start = 8.dp).size(8.dp).border(1.5.dp, Palette.amber, CircleShape)) // waits on the user
+        // The row's menu, as the desktop's "…": a long press opens it too.
+        onMore?.let { more ->
+            Icon(
+                Icons.more, moreLabel, tint = Palette.faint,
+                // Its 28 dp target overlaps the row's padding instead of making the row taller.
+                modifier = Modifier.padding(start = 4.dp).layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+                    layout(placeable.width, 0) { placeable.place(0, -placeable.height / 2) }
+                }.size(28.dp).clip(CircleShape).clickable(onClick = more).padding(5.dp),
+            )
+        }
     }
 }
 

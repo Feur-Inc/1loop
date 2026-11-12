@@ -462,11 +462,8 @@ func (ui *desktopUI) renameChat(chat *conversation) {
 	entry.SetText(chat.Title)
 	var dialog *sheet
 	apply := func() {
-		if title := []rune(entry.Text); len(title) > 0 {
-			if len(title) > 80 {
-				title = title[:80]
-			}
-			chat.Title = string(title)
+		if title := remoteapi.CleanChatTitle(entry.Text); title != "" {
+			chat.Title = title
 			ui.save()
 			ui.updateHeader()
 			ui.renderChats()

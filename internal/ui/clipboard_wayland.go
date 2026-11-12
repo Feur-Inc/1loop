@@ -7,9 +7,9 @@ package ui
 // Images from the Wayland clipboard. Fyne's clipboard (GLFW's) is text-only,
 // so GLFW's data device also notes the image type the selection is offered
 // in (third_party/glfw, wl_window.c), and 1loop reads that type through a
-// pipe when the user pastes. It has no data device of its own: Mutter tells
-// the selection to only one data device per client, and a second one left
-// GLFW's without it, so text could not be pasted on GNOME (#334).
+// pipe when the user pastes. It has no data device of its own: with a second
+// one, GNOME (Mutter) most often left GLFW's without the selection, so text
+// could not be pasted (#334).
 
 /*
 #include <stdlib.h>

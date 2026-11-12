@@ -2024,10 +2024,10 @@ static void dataDeviceHandleSelection(void* userData,
     {
         if (_glfw.wl.offers[i].offer == offer)
         {
-            // 1loop: an image is kept too, for 1loop to paste. Mutter tells
-            // the selection to only one data device of a client, so 1loop
-            // reads images through this one instead of a device of its own,
-            // which left this one, and the text clipboard, empty (#334).
+            // 1loop: an image is kept too, for 1loop to paste. 1loop reads
+            // images through this device: with a second data device of its
+            // own, GNOME (Mutter) most often left this one without the
+            // selection, and the text clipboard empty (#334).
             if (_glfw.wl.offers[i].text_plain_utf8 || _glfw.wl.offers[i].image[0])
             {
                 _glfw.wl.selectionOffer = offer;

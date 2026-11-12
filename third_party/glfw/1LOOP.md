@@ -20,9 +20,8 @@ untouched upstream copy, so `git diff` against it shows every change.
   in (image/png first), keeps a selection that is only an image, and two
   native functions read it: `glfwGetWaylandClipboardImageType` and
   `glfwReceiveWaylandClipboard`. 1loop pastes images through them instead of
-  a data device of its own: Mutter (GNOME) tells the selection to only one
-  data device per client, and the second one left GLFW's without it, so
-  text could not be pasted on GNOME. `glfwGetClipboardString` returns no
+  a data device of its own: with that second device, GNOME (Mutter) most
+  often left GLFW's without the selection, so text could not be pasted. `glfwGetClipboardString` returns no
   text for a selection that is only an image.
 - `glfw_tree_rebuild.go`: `upstreamTreeSHA` is the git tree of `glfw/` after
   the change above, so that a build cache made before it compiles the C

@@ -36,7 +36,8 @@ type serverLink struct {
 // linkServer follows the server last paired, and stops following one that
 // is no longer: called at start and when the window takes a server.
 func (ui *desktopUI) linkServer() {
-	if browserClient { // the page's server is the window's only target
+	if browserClient { // the page's own server and those it linked
+		ui.linkWebServers()
 		return
 	}
 	saved := loadServerAddress()
@@ -77,7 +78,7 @@ func (ui *desktopUI) followServer(ctx context.Context, link *serverLink, client 
 				wait = linkRetry
 			}
 			fyne.Do(func() {
-				if ui.link != link || ui.server != nil && ui.server.client.address.URL == link.address.URL {
+				if !ui.follows(link) || ui.server != nil && ui.server.client.address.URL == link.address.URL {
 					return
 				}
 				if err != nil {
@@ -128,8 +129,8 @@ func (listing serverListing) equal(other serverListing) bool {
 // listed, as the window leaves the server: its projects and chats stay
 // listed as they were until the link reads them again, at once.
 func (ui *desktopUI) handOver(remote *remoteDesktop) {
-	link := ui.link
-	if link == nil || link.address.URL != remote.client.address.URL || remote.name == "" {
+	link := ui.linkTo(remote.client.address.URL)
+	if link == nil || remote.name == "" {
 		return
 	}
 	link.answered = true

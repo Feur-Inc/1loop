@@ -87,7 +87,7 @@ func (ui *desktopUI) connectServer() {
 					return
 				}
 				sheet.dismiss()
-				ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone, false)
+				ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone, false, ui.useNewServer)
 			})
 		}()
 	}
@@ -101,7 +101,9 @@ func (ui *desktopUI) connectServer() {
 // confirmServerPair waits for the pairing's approval, and connects as soon
 // as it comes: from a paired device, the server's console or, in local mode,
 // the phone. A pairing the setup link approved connects at once.
-func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code string, phone, approved bool) {
+// paired keeps the server once paired: useNewServer, or the browser
+// client's linkPairedServer.
+func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code string, phone, approved bool, paired func(*remoteClient) error) {
 	ctx, stop := context.WithCancel(ui.ctx)
 	status := widget.NewLabel("Waiting for approval…")
 	status.Wrapping = fyne.TextWrapWord
@@ -121,7 +123,7 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 				fyne.Do(func() {
 					if err == nil {
 						client.address.Token = reply.Token
-						err = saveServerAddress(client.address)
+						err = paired(client)
 					}
 					if err != nil {
 						if sheet == nil { // the setup link: no sheet shown yet
@@ -134,7 +136,6 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 					if sheet != nil {
 						sheet.dismiss()
 					}
-					ui.useServer(client)
 				})
 				return
 			}
@@ -162,6 +163,16 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 		body = container.NewVBox(note("On the phone, type this code in 1loop's request, then tap Allow. The pairing expires after two minutes."), codeBlock(code, 80), status)
 	}
 	sheet = ui.modal("Approve this device", body, 620, stop)
+}
+
+// useNewServer saves the server just paired as the one to come back to,
+// and makes it the window's target.
+func (ui *desktopUI) useNewServer(client *remoteClient) error {
+	if err := saveServerAddress(client.address); err != nil {
+		return err
+	}
+	ui.useServer(client)
+	return nil
 }
 
 // askPairing shows a device asking to use the server (the "pairing" event):
@@ -370,6 +381,10 @@ func (remote *remoteDesktop) close() {
 // targetMenu chooses where the agent works, as on the phone: this
 // computer, the server last used, or another one.
 func (ui *desktopUI) targetMenu() {
+	if ui.home != "" {
+		ui.browserTargetMenu()
+		return
+	}
 	saved := loadServerAddress()
 	computer := menuAction{label: "This computer", icon: theme.ComputerIcon(), checked: ui.server == nil && ui.cfg.MachineID == "", run: ui.useComputer}
 	actions := []menuAction{computer}

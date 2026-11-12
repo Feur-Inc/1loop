@@ -32,7 +32,7 @@ func WebMain() {
 	ctx, cancel := context.WithCancel(context.Background())
 	backend := &agent.App{Approvals: make(map[string]chan bool)}
 	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string),
-		cfg: agent.Config{Provider: "compatible"}}
+		cfg: agent.Config{Provider: "compatible"}, home: js.Global().Get("location").Get("origin").String(), serverProjects: loadWebProjects()}
 	ui.window = a.NewWindow("1loop")
 	ui.window.SetPadded(false)
 	ui.followTheme()
@@ -46,6 +46,7 @@ func WebMain() {
 	a.Lifecycle().SetOnStarted(func() {
 		ui.startFrames()
 		ui.watchTextInput()
+		ui.linkWebServers() // listed at once, those that do not answer marked offline
 		ui.connectOrigin()
 	})
 	ui.window.ShowAndRun()
@@ -96,7 +97,7 @@ func (ui *desktopUI) connectOrigin() {
 				return
 			}
 			sheet.dismiss()
-			ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone, reply.Approved)
+			ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone, reply.Approved, ui.useNewServer)
 		})
 	}()
 }

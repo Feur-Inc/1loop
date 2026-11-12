@@ -34,3 +34,10 @@ func saveServerAddress(address serverAddress) error {
 	}
 	return os.WriteFile(path, data, 0600)
 }
+
+// The browser client's other servers and their projects are the page's
+// (remote_address_js.go): the desktop has its one paired server.
+func loadLinkedServers() []serverAddress      { return nil }
+func saveLinkedServers([]serverAddress) error { return nil }
+func loadWebProjects() map[string][]string    { return map[string][]string{} }
+func saveWebProjects(map[string][]string)     {}

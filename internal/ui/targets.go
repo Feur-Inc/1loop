@@ -81,13 +81,14 @@ func groupKey(target projectTarget, project string) string {
 }
 
 // mark is the small icon after the name of the target's projects: none
-// for the device in use; the same icons as the target menu's otherwise.
-func (target projectTarget) mark() fyne.Resource {
+// for the device in use, nor for home, the server the browser client's
+// page came from; the same icons as the target menu's otherwise.
+func (target projectTarget) mark(home string) fyne.Resource {
 	switch target.kind {
 	case targetSSH:
 		return iconTerminal
 	case targetServer:
-		if browserClient {
+		if target.id == home {
 			return nil
 		}
 		return iconBrowser
@@ -202,6 +203,15 @@ func (ui *desktopUI) sidebarGroups() []targetGroup {
 	for _, machine := range ui.sshMachines {
 		add(ui.machineGroup(machine.ID))
 	}
+	if ui.home != "" { // the browser client: each of its servers (web_targets.go)
+		for _, link := range ui.webLinks {
+			add(ui.serverGroupOf(link.address.URL, link))
+		}
+		if remote := ui.server; remote != nil && ui.linkTo(remote.client.address.URL) == nil {
+			add(ui.serverGroupOf(remote.client.address.URL, nil))
+		}
+		return groups
+	}
 	if group, ok := ui.serverGroup(); ok {
 		add(group)
 	}
@@ -238,21 +248,27 @@ func (ui *desktopUI) machineGroup(id string) targetGroup {
 // its projects are those remembered from the last time it did, and its
 // chats are not at hand.
 func (ui *desktopUI) serverGroup() (targetGroup, bool) {
-	var address string
+	switch {
+	case ui.server != nil:
+		return ui.serverGroupOf(ui.server.client.address.URL, nil), true
+	case ui.link != nil:
+		return ui.serverGroupOf(ui.link.address.URL, ui.link), true
+	}
+	return targetGroup{}, false
+}
+
+// serverGroupOf is a server's group: the window's connection's listing
+// while it works on it, else what link last read, if it answered.
+func (ui *desktopUI) serverGroupOf(address string, link *serverLink) targetGroup {
 	var listing *serverListing
 	active := false
 	switch {
-	case ui.server != nil:
+	case ui.server != nil && ui.server.client.address.URL == address:
 		remote := ui.server
-		address, active = remote.client.address.URL, true
+		active = true
 		listing = &serverListing{name: remote.name, projects: remote.projects, chats: remote.chats, worktrees: remote.worktrees}
-	case ui.link != nil:
-		address = ui.link.address.URL
-		if ui.link.answered {
-			listing = &ui.link.listing
-		}
-	default:
-		return targetGroup{}, false
+	case link != nil && link.answered:
+		listing = &link.listing
 	}
 	target := serverTarget(address)
 	group := targetGroup{target: target, reach: ui.reaches[target.key()], active: active, projects: ui.serverProjects[address]}
@@ -263,7 +279,7 @@ func (ui *desktopUI) serverGroup() (targetGroup, bool) {
 			group.projects = listing.projects
 		}
 	}
-	return group, true
+	return group
 }
 
 // serverListing is what a server lists of itself for the sidebar.
@@ -296,8 +312,13 @@ func serverProjectList(workspace string, listed []string, chats []remoteapi.Chat
 
 // rememberServerProjects keeps the server's projects for the next start,
 // when it may not answer: they are listed then, marked offline. Only
-// the server paired now is remembered.
+// the server paired now is remembered; the browser client remembers each
+// of its servers' (web_targets.go).
 func (ui *desktopUI) rememberServerProjects(address string, projects []string) {
+	if ui.home != "" {
+		ui.rememberWebProjects(address, projects)
+		return
+	}
 	if len(ui.serverProjects) == 1 && slices.Equal(ui.serverProjects[address], projects) {
 		return
 	}
@@ -408,7 +429,7 @@ func (ui *desktopUI) openProjectOn(target projectTarget, project string) {
 // on it. When its link does not know it to answer, it is tried first: if
 // it still does not, the window stays where it is and says why.
 func (ui *desktopUI) reachServer(target projectTarget, then func(*remoteDesktop)) {
-	saved := loadServerAddress()
+	saved := ui.pairedServer(target.id)
 	if saved.URL != target.id || saved.Token == "" {
 		ui.notice("Remote server", "This server is no longer paired. Connect it again with the target menu under the conversation.")
 		return

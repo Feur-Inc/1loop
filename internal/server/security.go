@@ -60,6 +60,9 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 		core.Fail(writer, 400, "Provide a device name")
 		return
 	}
+	if origin := foreignOrigin(req); origin != "" { // a page of another server (cors.go)
+		args.Device += " · " + origin
+	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	for id, pair := range server.pairs {

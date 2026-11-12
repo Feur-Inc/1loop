@@ -185,6 +185,9 @@ func (server *headlessServer) routes() http.Handler {
 			r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if !server.local && crossOrigin(w, r) {
+			return
+		}
 		mux.ServeHTTP(w, r)
 	})
 }

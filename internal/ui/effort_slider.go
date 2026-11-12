@@ -184,15 +184,32 @@ func (renderer *stepSliderRenderer) Layout(size fyne.Size) {
 		dot.Move(fyne.NewPos(size.Width/2-sliderDot/2, slider.stopY(float32(i))-sliderDot/2))
 		dot.Resize(fyne.NewSquareSize(sliderDot))
 	}
+	// The thumb sits inside the amber ring, the fill's round top. Fyne snaps
+	// each object's position and size to device pixels on their own, so a
+	// thumb that is a fraction of a pixel smaller than the ring on each side
+	// (hovered, dragged, at a 1.25 scale) lands up to a pixel off its centre.
+	// Its inset from the ring is kept to whole pixels, so both snap alike.
+	scale := slider.pixelScale()
 	thumb := sliderThumb + slider.hover
 	if slider.dragging {
 		thumb = sliderThumb + 1.5
 	}
-	at := fyne.NewPos(size.Width/2-thumb/2, y-thumb/2)
+	inset := float32(math.Round(float64((sliderWidth-thumb)/2*scale))) / scale
+	at := renderer.fill.Position().AddXY(inset, inset)
+	thumb = sliderWidth - 2*inset
 	renderer.thumb.Move(at)
 	renderer.thumb.Resize(fyne.NewSquareSize(thumb))
-	renderer.shadow.Move(at.AddXY(0, 2))
+	renderer.shadow.Move(at.AddXY(0, float32(math.Round(float64(2*scale)))/scale))
 	renderer.shadow.Resize(fyne.NewSquareSize(thumb))
+}
+
+// pixelScale is the number of device pixels per point where the slider is
+// shown, 1 before it is.
+func (slider *stepSlider) pixelScale() float32 {
+	if c := fyne.CurrentApp().Driver().CanvasForObject(slider); c != nil && c.Scale() > 0 {
+		return c.Scale()
+	}
+	return 1
 }
 
 func (renderer *stepSliderRenderer) Refresh() {

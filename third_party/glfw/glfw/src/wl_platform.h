@@ -285,6 +285,9 @@ typedef struct _GLFWofferWayland
     struct wl_data_offer*       offer;
     GLFWbool                    text_plain_utf8;
     GLFWbool                    text_uri_list;
+    // 1loop: the image type the offer can be read as, image/png when it is
+    // offered, else the first image/* type (glfwGetWaylandClipboardImageType).
+    char                        image[128];
 } _GLFWofferWayland;
 
 typedef struct _GLFWscaleWayland
@@ -381,6 +384,9 @@ typedef struct _GLFWlibraryWayland
 
     struct wl_data_offer*       selectionOffer;
     struct wl_data_source*      selectionSource;
+    // 1loop: what the selection offers: text, and the image type, if any.
+    GLFWbool                    selectionText;
+    char                        selectionImage[128];
 
     struct wl_data_offer*       dragOffer;
     _GLFWwindow*                dragFocus;

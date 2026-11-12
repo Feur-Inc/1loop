@@ -15,3 +15,14 @@ untouched upstream copy, so `git diff` against it shows every change.
   handler: dragging anything into the window killed 1loop. The drag enter
   handler also no longer dereferences a NULL window (a surface that is not
   GLFW's) or a NULL surface.
+- `glfw/src/wl_window.c`, `wl_platform.h`, `include/GLFW/glfw3native.h`
+  (#334): the data device also notes the image type a selection is offered
+  in (image/png first), keeps a selection that is only an image, and two
+  native functions read it: `glfwGetWaylandClipboardImageType` and
+  `glfwReceiveWaylandClipboard`. 1loop pastes images through them instead of
+  a data device of its own: with that second device, GNOME (Mutter) most
+  often left GLFW's without the selection, so text could not be pasted. `glfwGetClipboardString` returns no
+  text for a selection that is only an image.
+- `glfw_tree_rebuild.go`: `upstreamTreeSHA` is the git tree of `glfw/` after
+  the change above, so that a build cache made before it compiles the C
+  sources again (Go does not hash them).

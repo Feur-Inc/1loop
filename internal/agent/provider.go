@@ -38,6 +38,7 @@ type ToolCall struct {
 type Message struct {
 	RecallID         string            `json:"recallId,omitempty"`
 	Internal         bool              `json:"internal,omitempty"` // host control or handoff, never a user request
+	From             *ChatSender       `json:"from,omitempty"`     // another chat's message or report (chats.go), not the user's
 	Responses        []json.RawMessage `json:"responses,omitempty"`
 	ReasoningContent string            `json:"reasoning_content,omitempty"`
 	ReasoningDetails []map[string]any  `json:"reasoning_details,omitempty"`

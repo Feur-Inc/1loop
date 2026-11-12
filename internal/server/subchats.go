@@ -59,15 +59,18 @@ func (server *headlessServer) subchatWorktreeLocked(chat *serverChat) string {
 	return chat.Config.Workspace
 }
 
-// wakeLocked gives chat a message from 1loop (a task's end, a subchat's
-// report): it joins the running turn, or starts one.
+// wakeLocked gives chat a message that is not its user's: a task's end,
+// another chat's message or a turn's report (chats.go). It joins the
+// running turn, or starts one, which reports to the chats that caused it.
 func (server *headlessServer) wakeLocked(chat *serverChat, message agent.Message) {
 	if server.chatLocked(chat.ID) != chat || server.closing || server.ctx.Err() != nil {
 		return
 	}
-	if chat.Subchat != nil && message.Internal { // its own task: the parent hears how the turn ends
-		chat.Subchat.Report = true
+	parent := ""
+	if chat.Subchat != nil {
+		parent = chat.Subchat.Parent
 	}
+	chat.ReportTo = agent.ReportTo(chat.ReportTo, message, parent)
 	if chat.run != nil {
 		chat.steer = append(chat.steer, message)
 		server.changedLocked(chat, -1)
@@ -87,11 +90,6 @@ func (server *headlessServer) subchatAccess(chat *serverChat) *agent.SubchatAcce
 				list = append(list, server.subchatInfoLocked(sub))
 			}
 			return list
-		},
-		Message: func(_ context.Context, id, text string) error {
-			server.mu.Lock()
-			defer server.mu.Unlock()
-			return server.messageSubchatLocked(chat, id, text)
 		},
 		Stop: func(_ context.Context, id string) error {
 			server.mu.Lock()
@@ -124,24 +122,6 @@ func (server *headlessServer) subchatAccess(chat *serverChat) *agent.SubchatAcce
 		return found.Display(), err
 	}
 	return access
-}
-
-func (server *headlessServer) messageSubchatLocked(chat *serverChat, id, text string) error {
-	if id == "parent" {
-		parent := server.parentLocked(chat)
-		if parent == nil {
-			return fmt.Errorf("This chat has no parent conversation")
-		}
-		server.wakeLocked(parent, agent.SubchatQuestion(chat.ID, chat.Title, text))
-		return nil
-	}
-	sub := server.chatLocked(id)
-	if sub == nil || sub.Subchat == nil || sub.Subchat.Parent != chat.ID {
-		return fmt.Errorf("No subchat %s here", id)
-	}
-	sub.Subchat.Report = true
-	server.wakeLocked(sub, agent.FromParent(text))
-	return nil
 }
 
 // startSubchat makes and starts a subchat of parent, in a worktree of the
@@ -202,7 +182,7 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 	}
 	sub := &serverChat{ID: id, Title: request.Title, Config: cfg, History: history, Items: items,
 		Todo: &agent.TodoState{}, Cache: &agent.ContextCache{},
-		Subchat: &agent.SubchatLink{Parent: parent.ID, Branch: created.Branch, Report: true}}
+		Subchat: &agent.SubchatLink{Parent: parent.ID, Branch: created.Branch}, ReportTo: []string{parent.ID}}
 	if request.Context == "fork" {
 		server.addLocked(sub, agent.ChatItem{Kind: "note", Text: "Forked from “" + parent.Title + "”"})
 	}
@@ -213,24 +193,6 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 	info := server.subchatInfoLocked(sub)
 	info.Note = note
 	return info, nil
-}
-
-// subchatEndedLocked notes how a subchat's turn ended and, when the parent
-// caused it, reports to the parent.
-func (server *headlessServer) subchatEndedLocked(chat *serverChat, ended string) {
-	if chat.Subchat == nil {
-		return
-	}
-	chat.Subchat.Ended = ended
-	parent := server.parentLocked(chat)
-	if parent == nil {
-		return
-	}
-	server.broadcastLocked("meta", server.metaLocked(parent))
-	if chat.Subchat.Report {
-		chat.Subchat.Report = false
-		server.wakeLocked(parent, agent.SubchatReport(server.subchatInfoLocked(chat)))
-	}
 }
 
 // subchatCommandLocked is /subchat <brief> sent in a chat: the user splits

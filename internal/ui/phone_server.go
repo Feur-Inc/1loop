@@ -505,7 +505,7 @@ func itemForPhone(chat *conversation, index int) remoteapi.Item {
 	}
 	versions := chat.branching()
 	item := chat.Items[index]
-	out := remoteapi.Item{ID: item.ID, Versions: remoteapi.ItemVersions(&versions, index), Kind: item.Kind, Text: agent.ToolText(item), Images: agent.ToolImageCount(item), Files: remoteapi.FileNames(item.Files)}
+	out := remoteapi.Item{ID: item.ID, Versions: remoteapi.ItemVersions(&versions, index), Kind: item.Kind, Text: agent.ToolText(item), Images: agent.ToolImageCount(item), Files: remoteapi.FileNames(item.Files), From: item.From}
 	if item.Kind != "tool" {
 		return out
 	}

@@ -67,6 +67,9 @@ func (cfg Config) toolAvailable(name string) bool {
 	if name == "subchat" {
 		return cfg.Subchats != nil
 	}
+	if name == "chats" {
+		return cfg.Chats != nil
+	}
 	switch groupOfTool(name) {
 	case "panel_browser":
 		return cfg.Browser != nil

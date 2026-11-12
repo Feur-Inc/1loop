@@ -365,6 +365,10 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		view.layer = newSelectLayer(ui, view.box)
 		ui.place(container.NewVBox(container.NewStack(view.box, view.layer), copyRow))
 	case "user":
+		if item.From != nil { // another chat's message, not the user's
+			ui.appendChatMessage(chat, item)
+			return
+		}
 		view := &userImageView{pictures: container.New(layout.NewCustomPaddedHBoxLayout(6))}
 		ui.setUserImages(view, item.Images)
 		content := container.NewVBox(view.pictures)
@@ -405,7 +409,7 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		if strings.HasPrefix(item.Text, "Background task ") { // agent.WakeSummary
 			glyph = iconTaskEnded
 		}
-		if strings.HasPrefix(item.Text, "Subchat ") || strings.HasPrefix(item.Text, "Forked from ") {
+		if item.From != nil || strings.HasPrefix(item.Text, "Subchat ") || strings.HasPrefix(item.Text, "Forked from ") {
 			glyph = iconSubchat
 		}
 		icon := canvas.NewImageFromResource(tinted(glyph, colFaint))
@@ -1056,11 +1060,8 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		currentTurn.show(agent.Activity{State: "wait"})
 	case "injected":
 		messageValue := uiEventValue.data.(agent.Message)
-		if messageValue.Internal {
-			ui.addItem(currentTurn.chat, agent.ChatItem{Kind: "note", Text: agent.WakeSummary(messageValue)})
-		} else {
-			ui.addItem(currentTurn.chat, agent.PromptItem("", messageValue))
-		}
+		currentTurn.chat.hops = agent.TurnHops(currentTurn.chat.hops, true, messageValue)
+		ui.addItem(currentTurn.chat, agent.MessageItem("", messageValue))
 		if currentTurn.chat == ui.current { // the answer before it is now complete
 			ui.syncCopies()
 			ui.relayoutColumn()

@@ -327,7 +327,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var foreground = true
 
     var screen by mutableStateOf<Screen>(Screen.Launch)
-    var target by mutableStateOf<ExecutionTarget?>(null)
+    var target by mutableStateOf<ExecutionTarget?>(null) // the kind of target being linked
     var fileFocus by mutableStateOf<Citation?>(null) // a citation to show in the panel's Files tab
     val local = AndroidLocalRuntime.get(context)
     var starting by mutableStateOf(false) // the local engine is starting
@@ -342,8 +342,131 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var scanning by mutableStateOf(false)
     var problem by mutableStateOf<String?>(null)
 
-    var server by mutableStateOf<Server?>(null)
+    var server by mutableStateOf<Server?>(null) // the target open now
     var connected by mutableStateOf(false)
+
+    // -- linked targets (Targets.kt) ----------------------------------------
+    // Before targets were linked, the phone was the one execution target once picked.
+    var phoneLinked by mutableStateOf(prefs.getBoolean("phoneLinked", prefs.getString("target", null) == ExecutionTarget.LocalPhone.name))
+        private set
+    val listings = mutableStateMapOf<String, TargetListing>() // what the other targets last answered, by key
+    val reaches = mutableStateMapOf<String, Reach>()
+    private var remembered by mutableStateOf(parseRemembered(prefs.getString("targetProjects", null)))
+    private var liveLoaded by mutableStateOf(false) // the open target's own listing was read
+    var returnTo by mutableStateOf<String?>(null) // the target open before linking another: Back goes there
+        private set
+    private var pendingNew = false // a new chat was asked for: the target's current chat is not opened
+    private val targetsRead = Mutex()
+
+    val linked: List<LinkedTarget> get() = linkedTargets(phoneLinked, "This phone", servers)
+
+    /** Every linked target as the drawer lists it. */
+    fun drawerTargets(): List<TargetGroup> = targetGroups(
+        linked, server?.key, if (liveLoaded) TargetListing(projects, chats.toList(), worktrees) else null,
+        listings, reaches, remembered,
+    )
+
+    private fun remember(key: String, list: List<String>) {
+        if (remembered[key] == list) return
+        remembered = remembered + (key to list)
+        prefs.edit { putString("targetProjects", rememberedText(remembered)) }
+    }
+
+    /** The open target's listing, kept for the drawer while another one opens. */
+    private fun keepListing() {
+        val open = server ?: return
+        if (liveLoaded) listings[open.key] = TargetListing(projects, chats.toList(), worktrees)
+        liveLoaded = false
+    }
+
+    /** Reads what every other linked target lists, for the drawer: an offline one keeps its remembered projects. */
+    private suspend fun readTargets() = targetsRead.withLock {
+        for (linkedTarget in linked) {
+            val key = linkedTarget.key
+            if (key == server?.key) continue
+            val reached = if (linkedTarget.kind == TargetKind.Phone) local.activeServer.value else servers.firstOrNull { it.key == key && it.paired }
+            if (reached == null) { // this phone's engine is stopped
+                reaches[key] = Reach.Offline
+                listings.remove(key)
+                continue
+            }
+            try {
+                val state = withContext(Dispatchers.IO) { Api(reached).get("/api/state") }
+                if (key == server?.key) continue // opened meanwhile: its own listing counts
+                val listing = TargetListing(strings(state.optJSONArray("projects")), parseChats(state.optJSONArray("chats")), stringMap(state.optJSONObject("worktrees")))
+                listings[key] = listing
+                reaches[key] = Reach.Online
+                remember(key, listing.projects)
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (_: Exception) {
+                if (key == server?.key) continue
+                reaches[key] = Reach.Offline
+                listings.remove(key)
+            }
+        }
+    }
+
+    /** Reads the other targets now, and again every 15 seconds while the chats are on screen. */
+    private fun watchTargets() {
+        scope.launch {
+            while (true) {
+                if (foreground && screen == Screen.Chat) runCatching { readTargets() }.onFailure { if (it is CancellationException) throw it }
+                delay(15_000)
+            }
+        }
+    }
+
+    fun readTargetsNow() {
+        scope.launch { runCatching { readTargets() }.onFailure { if (it is CancellationException) throw it } }
+    }
+
+    /**
+     * Opens a target's project (a new chat in it), one of its chats, or a new
+     * chat with no folder ([NO_FOLDER]): the target opens first when it is not
+     * the open one.
+     */
+    fun openOn(key: String, project: String? = null, chat: String? = null) {
+        if (key == server?.key) {
+            when {
+                chat != null -> open(chat)
+                project != null -> selectProject(project)
+                else -> open(null)
+            }
+            return
+        }
+        project?.let { prefs.edit { putString("project:$key", it) } }
+        pendingChat = chat
+        pendingNew = chat == null
+        if (key == PHONE_TARGET) {
+            local.activeServer.value?.let { return connect(it) }
+            returnTo = server?.key
+            keepListing()
+            disconnect()
+            openLocal()
+            return
+        }
+        servers.firstOrNull { it.key == key && it.paired }?.let { connect(it) }
+    }
+
+    /** Where a new chat with no folder runs (noFolderTarget): opened there, with no folder. */
+    fun newChatWithNoFolder() {
+        val key = noFolderTarget(linked, server?.key) ?: return
+        if (key == server?.key) selectProject(NO_FOLDER) else openOn(key, NO_FOLDER)
+    }
+
+    /** Unlinks a target that is not the open one: a computer is forgotten, this phone's projects leave the drawer. */
+    fun unlink(key: String) {
+        if (key == server?.key) return
+        if (key == PHONE_TARGET) {
+            phoneLinked = false
+            prefs.edit { putBoolean("phoneLinked", false) }
+        } else servers.firstOrNull { it.key == key }?.let { forget(it) }
+        listings.remove(key)
+        reaches.remove(key)
+        remembered = remembered - key
+        prefs.edit { putString("targetProjects", rememberedText(remembered)) }
+    }
     val chats = mutableStateListOf<ChatSummary>()
     var projects by mutableStateOf(listOf<String>())
     // The target's worktrees, folder → project: their chats belong to the project (Worktrees.kt).
@@ -363,10 +486,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     // The drawer's project groups that were folded, as "server key, group": kept for the next start, as the desktop keeps its own.
     private val foldedGroups = mutableStateListOf<String>().apply { addAll(prefs.getStringSet("folded", emptySet()).orEmpty()) }
 
-    fun folded(group: String) = "${server?.key}\u0000$group" in foldedGroups
+    // A group's fold, by its target's key and its own (the key it had before targets: kept).
+    fun folded(target: String?, group: String) = "$target\u0000$group" in foldedGroups
 
-    fun fold(group: String, on: Boolean) {
-        val key = "${server?.key}\u0000$group"
+    fun fold(target: String?, group: String, on: Boolean) {
+        val key = "$target\u0000$group"
         if (on) { if (key !in foldedGroups) foldedGroups.add(key) } else foldedGroups.remove(key)
         prefs.edit { putStringSet("folded", foldedGroups.toSet()) }
     }
@@ -461,6 +585,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     init {
         servers.addAll(saved())
+        watchTargets()
         // The local engine stopped (from its notification, or on its own): back to its setup.
         scope.launch {
             local.activeServer.collect { active ->
@@ -501,38 +626,27 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     fun forget(server: Server) {
         servers.removeAll { it.key == server.key }
         store()
+        listings.remove(server.key)
+        reaches.remove(server.key)
     }
 
-    /** After the launch animation: back to the last place 1loop worked, or the choice. */
+    /** After the launch animation: back to the last target open, else the device in use; first-time setup when nothing is linked. */
     fun started() {
-        val last = prefs.getString("last", null)
-        val known = servers.firstOrNull { it.key == last && it.paired }
-        // Before the choice existed, the last computer told it.
-        val saved = prefs.getString("target", null)?.let { name -> ExecutionTarget.entries.firstOrNull { it.name == name } }
-            ?: known?.let { if (it.desktop) ExecutionTarget.RemoteDesktop else ExecutionTarget.RemoteServer }
-        if (saved == null) {
-            screen = Screen.Mode
-            return
-        }
-        target = saved
-        if (saved == ExecutionTarget.LocalPhone) {
-            // Stopped while idle: started again, also when Android ended the app meanwhile.
-            local.activeServer.value?.let { connect(it) } ?: run { if (local.stoppedWhenIdle) openLocal() else screen = Screen.Mode }
-            return
-        }
-        if (known != null) connect(known) else {
-            screen = Screen.Servers
-            scan()
+        val phoneReady = local.activeServer.value != null || local.stoppedWhenIdle || local.status.value.ready
+        when (val start = startTarget(linked, prefs.getString("last", null), phoneReady)) {
+            null -> screen = Screen.Mode
+            PHONE_TARGET -> local.activeServer.value?.let { connect(it) } ?: openLocal()
+            else -> servers.firstOrNull { it.key == start }?.let { connect(it) } ?: run { screen = Screen.Mode }
         }
     }
 
     // -- where 1loop works -----------------------------------------------------
 
+    /** Links another target: this phone, a desktop or a server. The ones already linked stay listed. */
     fun chooseTarget(chosen: ExecutionTarget) {
         connectionGeneration++
         target = chosen
         problem = null
-        prefs.edit { putString("target", chosen.name) }
         when (chosen) {
             ExecutionTarget.LocalPhone -> openLocal()
             ExecutionTarget.RemoteDesktop -> { screen = Screen.Servers; scan() }
@@ -540,11 +654,24 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         }
     }
 
-    /** Back to the choice; a local engine keeps running until stopped from its notification. */
+    /** Back to the choice of a target to link; a local engine keeps running until stopped from its notification. */
     fun switchTarget() {
+        keepListing()
         disconnect()
         problem = null
         screen = Screen.Mode
+    }
+
+    /** Link a target, from the drawer or Settings: Back on the choice comes back to the one open now. */
+    fun linkTarget() {
+        returnTo = server?.key
+        switchTarget()
+    }
+
+    /** Back from the choice of a target to link: the target open before, when still linked. */
+    fun backFromLinking(): (() -> Unit)? {
+        val back = returnTo?.takeIf { key -> linked.any { it.key == key } } ?: return null
+        return { returnTo = null; openOn(back) }
     }
 
     /** Shown again after the engine stopped while idle: it starts again, on the same chat. */
@@ -757,6 +884,12 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         sharing = null
         projectsOpen = false
         events?.cancel()
+        keepListing()
+        if (target.localPhone && !phoneLinked) {
+            phoneLinked = true // its engine ran: this phone is a linked target
+            prefs.edit { putBoolean("phoneLinked", true) }
+        }
+        returnTo = null
         val generation = ++connectionGeneration
         server = target
         connected = false
@@ -799,6 +932,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         questionDrafts.clear()
         prefs.edit { putString("last", target.key) }
         screen = Screen.Chat
+        readTargetsNow() // the target open before is read as the others now
         events = scope.launch {
             val eventScope = this
             var wait = 500L
@@ -853,6 +987,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     private fun disconnect() {
         handoffAsk?.cancel?.invoke()
+        keepListing()
         connectionGeneration++
         server = null
         sharing = null
@@ -891,7 +1026,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             // Open or Talk to the agent started this activity: its chat, now that it is known.
             pendingChat?.let { chat -> if (chats.any { it.id == chat }) current = chat }
             pendingChat = null
-            if (current == null) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull { it.workspace == selectedProject }?.id
+            // Opened for a new chat (a project's, or one with no folder): none of its chats is opened.
+            if (current == null && !pendingNew) current = state.optString("current").ifEmpty { null } ?: chats.firstOrNull { it.workspace == selectedProject }?.id
+            pendingNew = false
+            liveLoaded = true
+            reaches[target.key] = Reach.Online
+            listings.remove(target.key)
+            remember(target.key, projects)
             chats.firstOrNull { it.id == current }?.let { selectedProject = if (it.scratch) NO_FOLDER else it.workspace }
             current?.let { load(it, target, generation) }
             if (target.localPhone) refreshSharing() else scope.launch { refreshServerUpdate(target, generation) }

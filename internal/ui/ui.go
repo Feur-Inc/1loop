@@ -392,6 +392,7 @@ type tapRow struct {
 	iconPx    float32       // optional icon size (styleIcon), 0 = style default
 	padPx     float32       // optional padding around the icon (styleIcon), 0 = style default
 	badge     fyne.Resource // optional mark on the far edge (styleMenu: the active choice)
+	mark      fyne.Resource // optional small icon right after the text (a project's target, #359)
 	truncate  bool          // fills its column: truncates instead of forcing it wider
 	tips      *tipLayer     // optional: shows the whole text while hovered, when it is cut short
 	clipped   bool          // the text was cut short at the last layout
@@ -552,7 +553,9 @@ func (row *tapRow) CreateRenderer() fyne.WidgetRenderer {
 	detail.TextSize = 12
 	badge := canvas.NewImageFromResource(nil)
 	badge.FillMode = canvas.ImageFillContain
-	renderer := &tapRowRenderer{row: row, bg: bg, label: label, trailing: trailing, icon: icon, detail: detail, badge: badge}
+	mark := canvas.NewImageFromResource(nil)
+	mark.FillMode = canvas.ImageFillContain
+	renderer := &tapRowRenderer{row: row, bg: bg, label: label, trailing: trailing, icon: icon, detail: detail, badge: badge, mark: mark}
 	renderer.Refresh()
 	return renderer
 }
@@ -565,10 +568,21 @@ type tapRowRenderer struct {
 	detail   *canvas.Text
 	icon     *canvas.Image
 	badge    *canvas.Image
+	mark     *canvas.Image
 	tint     color.NRGBA
 	source   fyne.Resource
 	marked   fyne.Resource
+	markedBy fyne.Resource // the mark's resource, as tinted
+	markTint color.NRGBA
 }
+
+// The mark after a row's text: its size, the gap before it, and the room
+// it leaves the text at least; with less, it steps aside for the text.
+const (
+	rowMarkSize    = 13
+	rowMarkGap     = 6
+	rowMarkMinText = 32
+)
 
 func (renderer *tapRowRenderer) metrics() (padX, padY, iconSize, gap float32) {
 	switch renderer.row.style {
@@ -620,6 +634,9 @@ func (renderer *tapRowRenderer) MinSize() fyne.Size {
 	}
 	width += fyne.Max(textSize(renderer.row.text, renderer.row.size, fyne.TextStyle{}).Width,
 		textSize(renderer.row.detail, 12, fyne.TextStyle{}).Width) + 2
+	if renderer.row.mark != nil {
+		width += rowMarkGap + rowMarkSize
+	}
 	if renderer.row.trailing != "" {
 		width += gap + textSize(renderer.row.trailing, renderer.row.size-1, fyne.TextStyle{}).Width
 	}
@@ -673,6 +690,10 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 		}
 	}
 	room := size.Width - 2*padX - iconRoom - trailingWidth - renderer.row.endInset
+	marked := renderer.row.mark != nil && room >= rowMarkGap+rowMarkSize+rowMarkMinText
+	if marked {
+		room -= rowMarkGap + rowMarkSize
+	}
 	renderer.label.Text = fitText(renderer.row.text, renderer.row.size, fyne.TextStyle{}, room)
 	renderer.row.clipped = renderer.label.Text != renderer.row.text
 	textWidth := renderer.label.MinSize().Width
@@ -700,6 +721,13 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 		}
 	}
 	renderer.label.Move(fyne.NewPos(x, textY))
+	if marked {
+		renderer.mark.Resize(fyne.NewSquareSize(rowMarkSize))
+		renderer.mark.Move(fyne.NewPos(x+textWidth+rowMarkGap, textY+(renderer.label.MinSize().Height-rowMarkSize)/2))
+		renderer.mark.Show()
+	} else {
+		renderer.mark.Hide()
+	}
 	// The second line starts under the label, past any leading icon.
 	renderer.detail.Move(fyne.NewPos(x, textY+renderer.label.MinSize().Height+1))
 }
@@ -916,6 +944,11 @@ func (renderer *tapRowRenderer) Refresh() {
 		renderer.badge.Resource = tinted(row.badge, colAmber)
 		renderer.badge.Refresh()
 	}
+	if row.mark != nil && (renderer.markedBy != row.mark || renderer.markTint != colMuted) {
+		renderer.markedBy, renderer.markTint = row.mark, colMuted
+		renderer.mark.Resource = tinted(row.mark, colMuted)
+		renderer.mark.Refresh()
+	}
 	// Translucency is read at draw time; refreshing the image would only
 	// throw its texture away.
 	iconAlpha := row.alpha
@@ -924,6 +957,7 @@ func (renderer *tapRowRenderer) Refresh() {
 	}
 	renderer.icon.Translucency = float64(1 - iconAlpha)
 	renderer.badge.Translucency = renderer.icon.Translucency
+	renderer.mark.Translucency = renderer.icon.Translucency
 	renderer.Layout(row.Size())
 	renderer.bg.Refresh()
 	renderer.label.Refresh()
@@ -938,6 +972,9 @@ func (renderer *tapRowRenderer) Objects() []fyne.CanvasObject {
 	}
 	if renderer.row.badge != nil {
 		objects = append(objects, renderer.badge)
+	}
+	if renderer.row.mark != nil {
+		objects = append(objects, renderer.mark)
 	}
 	return objects
 }

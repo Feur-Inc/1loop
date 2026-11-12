@@ -249,6 +249,7 @@ fun Root(app: RemoteApp) {
             UpdateCard(app, Modifier.align(Alignment.BottomCenter))
         }
         if (app.updateAsked) UpdateDialog(app) { app.updateAsked = false }
+        if (app.screen != Screen.Launch) app.crashReport?.let { CrashReportDialog(it) { app.crashReport = null } }
     }
 }
 

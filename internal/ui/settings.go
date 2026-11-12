@@ -803,7 +803,7 @@ func (ui *desktopUI) toolSettings() fyne.CanvasObject {
 	)
 }
 
-// advancedSettings is Advanced: the hooks.
+// advancedSettings is Advanced: the hooks and crash reports.
 func (ui *desktopUI) advancedSettings() fyne.CanvasObject {
 	view := ui.prefs
 	return container.NewVBox(
@@ -811,7 +811,18 @@ func (ui *desktopUI) advancedSettings() fyne.CanvasObject {
 		view.intro(registry.Advanced),
 		sectionTitle("Hooks"),
 		card(view.mark("advanced.hooks", ui.hooksRow())),
+		sectionTitle("Crashes"),
+		card(view.mark(registry.KeyCrashReports, settingRow("Offer to report crashes",
+			"After 1loop closes unexpectedly, the next start shows what happened, anonymized, and offers to open a GitHub issue with it that you check and submit from your own account. 1loop sends nothing by itself. Off after Don't ask again.",
+			newToggle(!ui.crashReportsOff, ui.setCrashReports)))),
 	)
+}
+
+// setCrashReports turns the offer after a crash on or off.
+func (ui *desktopUI) setCrashReports(on bool) {
+	ui.crashReportsOff = !on
+	platform.Devf("ui", "crash reports %v", on)
+	ui.save()
 }
 
 // hooksRow edits the user's hooks file in 1loop, or opens it (made with an

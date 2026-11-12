@@ -239,7 +239,14 @@ func (mode *loopyMode) cardView(message loopy.Message) fyne.CanvasObject {
 		headParts = append(headParts, container.NewCenter(textLine(c.Subtitle, 12.5, colMuted)))
 	}
 	var status fyne.CanvasObject = layout.NewSpacer()
+	task, isTask := mode.task(c.Task)
 	switch {
+	case isTask && task.Status != "proposed":
+		ink := map[string]color.Color{"running": colAmber, "done": colAdded}[task.Status]
+		if ink == nil {
+			ink = colMuted
+		}
+		status = container.NewCenter(loopyPill(map[string]string{"running": "Working", "done": "Done", "failed": "Failed", "cancelled": "Cancelled"}[task.Status], ink))
 	case c.Answer != "":
 		status = container.NewCenter(loopyPill(c.Answer, colAdded))
 	case c.Waiting():
@@ -351,7 +358,8 @@ func (mode *loopyMode) taskProgress(task loopy.Task) fyne.CanvasObject {
 			ink = colAmber
 		}
 		dot := canvas.NewCircle(ink)
-		steps.Add(container.NewBorder(nil, nil, sized(10, container.NewCenter(sized(8, container.NewGridWrap(fyne.NewSquareSize(8), dot)))), nil, plainFlow(step, 13, colTextSoft)))
+		mark := padded(3, 0, 0, 0, container.NewGridWrap(fyne.NewSquareSize(8), dot)) // level with the text's middle
+		steps.Add(container.NewHBox(container.NewCenter(mark), container.NewCenter(textLine(step, 13, colTextSoft))))
 	}
 	actions := container.NewHBox(newRow("Open the chat", nil, styleOutline, func() { mode.openTask(task) }))
 	if task.Status == "running" {
@@ -359,4 +367,3 @@ func (mode *loopyMode) taskProgress(task loopy.Task) fyne.CanvasObject {
 	}
 	return container.NewVBox(steps, spacer(0, 6), actions)
 }
-

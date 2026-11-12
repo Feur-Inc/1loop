@@ -23,7 +23,9 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
 
+	"1loop/internal/browser"
 	"1loop/internal/loopy"
 )
 
@@ -43,16 +45,24 @@ type loopyMode struct {
 	tasks         *fyne.Container
 	routines      *fyne.Container
 	memoryRow     *tapRow
+	sideList      *fyne.Container // everything under the face, laid out again when a list changes
 
-	feed      *fyne.Container
-	scroll    *kineticScroll
-	body      *fyne.Container // the conversation, or the memory page over it
-	typing    *fyne.Container
-	typeFace  *loopyFace
-	typeLabel *canvas.Text
-	prompt    *chatEntry
-	sendBtn   *tapRow
-	modelChip *tapRow
+	feed        *fyne.Container
+	scroll      *kineticScroll
+	body        *fyne.Container // the conversation, or the memory page over it
+	typing      *fyne.Container
+	typeFace    *loopyFace
+	typeLabel   *canvas.Text
+	prompt      *chatEntry
+	sendBtn     *tapRow
+	modelChip   *tapRow
+	contextChip *tapRow // how full Loopy's context is, compacted as 1loop's chats are
+	browserBtn  *tapRow
+	browserPane *fyne.Container // Loopy's browser tab, 1loop's own view, beside the conversation
+	browserTab  fyne.CanvasObject
+	browserOn   bool // the user wants the pane while there is a page
+	contextUsed int  // its last request's input tokens
+	window      int  // its model's context window
 
 	run    *loopyRun
 	events chan func()  // the run's events, applied in order on the interface's thread
@@ -143,6 +153,7 @@ func newLoopyMode(ui *desktopUI) *loopyMode {
 
 // shown starts or stops what only moves on screen.
 func (mode *loopyMode) shown(on bool) {
+	defer mode.syncBrowser()
 	for _, face := range []*loopyFace{mode.bigFace, mode.typeFace} {
 		if on {
 			face.start()
@@ -195,7 +206,7 @@ func (mode *loopyMode) buildSidebar() {
 	mode.routines = container.NewVBox()
 	mode.memoryRow = newRow("What I remember", iconMemory, styleNav, mode.openMemory)
 	newConversation := newRow("Start fresh", iconPlus, styleNav, mode.askClear)
-	lists := container.NewVBox(hero,
+	mode.sideList = container.NewVBox(hero,
 		sectionHeader("Waiting for you", nil), mode.waiting,
 		sectionHeader("Delegated tasks", nil), mode.tasks,
 		sectionHeader("Routines", nil), mode.routines,
@@ -211,7 +222,7 @@ func (mode *loopyMode) buildSidebar() {
 	divider.SetMinSize(fyne.NewSize(0, 1))
 	settings := newRow("Settings", theme.SettingsIcon(), styleNav, func() { ui.showSpace(false); ui.settings() })
 	bottom := container.NewVBox(divider, padded(6, 8, 0, 0, settings))
-	content := padded(0, 0, 12, 12, container.NewBorder(brand, bottom, nil, nil, newKineticVScroll(lists)))
+	content := padded(0, 0, 12, 12, container.NewBorder(brand, bottom, nil, nil, newKineticVScroll(mode.sideList)))
 	mode.sidebar = container.NewStack(canvas.NewRectangle(colSidebar), content)
 }
 
@@ -235,13 +246,24 @@ func (mode *loopyMode) buildMain() {
 	}
 	mode.sendBtn = newIconButton(iconSend, colAmber, colInk, mode.submit)
 	mode.sendBtn.iconPx = 20
-	composer := surface(padded(6, 6, 12, 8, container.NewBorder(nil, nil, nil, container.NewCenter(mode.sendBtn), mode.prompt)), colSurface, colBorder, 20, 0)
+	// The field has no fill of its own: the card is its only background.
+	input := container.NewThemeOverride(mode.prompt, bareInputTheme{loopTheme{theme.DefaultTheme()}})
+	composer := surface(padded(6, 6, 12, 8, container.NewBorder(nil, nil, nil, container.NewCenter(mode.sendBtn), input)), colSurface, colBorder, 20, 0)
 	footer := container.New(columnLayout{width: 720, inset: 24}, container.NewVBox(padded(0, 6, 4, 0, mode.typing), padded(0, 16, 0, 0, composer)))
 
 	mode.body = container.NewStack(mode.scroll)
 	mode.modelChip = newRow(mode.modelLabel(), nil, styleChip, mode.chooseModel)
+	mode.contextChip = newRow("", nil, styleChip, func() { ui.showSpace(false); ui.settings(); ui.prefs.openOn(loopySettingsPage) })
+	mode.contextChip.Hide()
 	title := textLine("Loopy", 14, colMuted)
 	right := container.New(layout.NewCustomPaddedHBoxLayout(2))
+	mode.browserBtn = newRow("Browser", iconBrowser, styleChip, func() {
+		mode.browserOn = !mode.browserOn
+		mode.syncBrowser()
+	})
+	mode.browserBtn.Hide()
+	right.Add(container.NewCenter(mode.browserBtn))
+	right.Add(container.NewCenter(mode.contextChip))
 	right.Add(container.NewCenter(mode.modelChip))
 	if ui.chrome {
 		right.Add(windowControls(ui.window, ui.closeWindow))
@@ -251,7 +273,11 @@ func (mode *loopyMode) buildMain() {
 	if ui.chrome {
 		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, bar))
 	}
-	mode.main = container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, footer, nil, nil, mode.body))
+	mode.browserPane = container.NewStack()
+	mode.browserPane.Hide()
+	conversation := container.NewBorder(nil, footer, nil, nil, mode.body)
+	mode.main = container.NewStack(canvas.NewRectangle(colBackground),
+		container.NewBorder(header, nil, nil, nil, container.New(&loopySplit{pane: mode.browserPane}, conversation, mode.browserPane)))
 }
 
 // ---------------------------------------------------------------------------
@@ -330,6 +356,8 @@ func (mode *loopyMode) messageRow(message loopy.Message, last bool) fyne.CanvasO
 		return padded(4, 4, 34, 0, mode.cardView(message))
 	case message.Memory != "":
 		return mode.memoryNote(message)
+	case message.Note != "":
+		return padded(2, 6, 34, 0, plainFlow(message.Note, 12, colFaint))
 	case message.From == "me":
 		bubble := newLoopyBubble(message.Text, true, message.Reaction)
 		if message.Pending {
@@ -449,6 +477,7 @@ func (mode *loopyMode) renderSide() {
 	mode.routines.Refresh()
 
 	mode.memoryRow.SetTrailing(fmt.Sprint(len(mode.store.Facts())))
+	mode.sideList.Refresh()
 }
 
 // scrollTo brings the conversation back to its end, where cards wait.
@@ -491,32 +520,180 @@ func (mode *loopyMode) setRoutine(id string, on bool) {
 
 func (mode *loopyMode) openMemory() {
 	facts := mode.store.Facts()
-	list := container.NewVBox()
-	for i := len(facts) - 1; i >= 0; i-- {
-		fact := facts[i]
-		forget := newRow("Forget", nil, styleChip, func() {
-			mode.store.Forget(fact.ID, "")
-			go mode.store.Save()
-			mode.renderSide()
-			mode.openMemory()
-		})
-		list.Add(settingRow(fact.Text, "Since "+fact.Time.Local().Format("2 Jan 2006"), forget))
-	}
-	var content fyne.CanvasObject = card(list)
+	page := container.NewVBox(container.NewHBox(newRow("Back to the conversation", iconChevronLeft, styleChip, mode.closeMemory)),
+		padded(6, 6, 0, 0, textLine("What Loopy remembers", 24, colText)),
+		plainFlow("Loopy's own memory, apart from your projects: facts about you, by kind, and its journal of what it did. Pinned facts are in every conversation; it searches the others, its journal and your past conversation when it needs them. Passwords and card numbers never go here.", 13, colMuted))
 	if len(facts) == 0 {
-		content = card(padded(16, 16, 16, 16, note("Nothing yet. Tell Loopy \"remember that…\", or it notes what matters as you talk.")))
+		page.Add(spacer(0, 12))
+		page.Add(card(padded(16, 16, 16, 16, note("Nothing yet. Tell Loopy \"remember that…\", or it notes what matters as you talk."))))
 	}
-	back := newRow("Back to the conversation", iconChevronLeft, styleChip, mode.closeMemory)
-	heading := textLine("What Loopy remembers", 24, colText)
-	page := container.NewVBox(container.NewHBox(back), padded(6, 6, 0, 0, heading),
-		plainFlow("Loopy's own memory, apart from your projects. It tells you when it remembers something. Passwords and card numbers never go here.", 13, colMuted),
-		spacer(0, 12), content)
+	names := map[string]string{"preference": "Preferences", "person": "People", "place": "Places", "work": "Work", "routine": "Habits", "other": "Other"}
+	for _, category := range loopy.Categories {
+		var rows []fyne.CanvasObject
+		for i := len(facts) - 1; i >= 0; i-- {
+			fact := facts[i]
+			if fact.Category != category && !(category == "other" && fact.Category == "") {
+				continue
+			}
+			detail := "Since " + fact.Time.Local().Format("2 Jan 2006")
+			if fact.Pinned {
+				detail = "Pinned · " + detail
+			}
+			pin := "Pin"
+			if fact.Pinned {
+				pin = "Unpin"
+			}
+			controls := container.NewHBox(
+				newRow(pin, nil, styleChip, func() { mode.changeFact(fact.ID, func(f *loopy.Fact) { f.Pinned = !f.Pinned }) }),
+				newRow("Edit", nil, styleChip, func() { mode.editFact(fact) }),
+				newRow("Forget", nil, styleChip, func() {
+					mode.store.Forget(fact.ID, "")
+					mode.store.Log("Forgot: " + fact.Text)
+					go mode.store.Save()
+					mode.renderSide()
+					mode.openMemory()
+				}))
+			rows = append(rows, settingRow(fact.Text, detail, controls))
+		}
+		if len(rows) > 0 {
+			page.Add(sectionTitle(names[category]))
+			page.Add(card(rows...))
+		}
+	}
+	if entries := mode.store.Entries(); len(entries) > 0 {
+		page.Add(sectionTitle("Journal"))
+		var rows []fyne.CanvasObject
+		for i := len(entries) - 1; i >= 0 && i >= len(entries)-60; i-- {
+			rows = append(rows, settingRow(entries[i].Text, entries[i].Time.Local().Format("Mon 2 Jan 2006, 15:04"), nil))
+		}
+		page.Add(card(rows...))
+	}
 	scroll := newKineticVScroll(container.New(columnLayout{width: 720, inset: 24}, padded(18, 24, 0, 0, page)))
 	mode.body.Objects = []fyne.CanvasObject{mode.scroll, container.NewStack(canvas.NewRectangle(colBackground), scroll)}
 	mode.body.Refresh()
 }
 
+// changeFact changes a fact from the memory page.
+func (mode *loopyMode) changeFact(id string, change func(*loopy.Fact)) {
+	mode.store.UpdateFact(id, change)
+	go mode.store.Save()
+	mode.renderSide()
+	mode.openMemory()
+}
+
+// editFact lets the user correct a fact and its kind.
+func (mode *loopyMode) editFact(fact loopy.Fact) {
+	entry := widget.NewMultiLineEntry()
+	entry.Wrapping = fyne.TextWrapWord
+	entry.SetText(fact.Text)
+	labels := []string{"Preference", "Person", "Place", "Work", "Habit", "Other"}
+	kind := widget.NewSelect(labels, nil)
+	for i, category := range loopy.Categories {
+		if category == fact.Category {
+			kind.SetSelected(labels[i])
+		}
+	}
+	if kind.Selected == "" {
+		kind.SetSelected("Other")
+	}
+	var dialog *sheet
+	dialog = mode.ui.modal("Edit what Loopy remembers", container.NewVBox(sized(420, entry), container.NewBorder(nil, nil, container.NewCenter(textLine("Kind", 13, colMuted)), nil, kind)), 480, nil,
+		newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() }),
+		newRow("Save", nil, stylePrimary, func() {
+			dialog.dismiss()
+			text := strings.TrimSpace(entry.Text)
+			if text == "" {
+				return
+			}
+			mode.changeFact(fact.ID, func(f *loopy.Fact) {
+				f.Text = text
+				for i, label := range labels {
+					if label == kind.Selected {
+						f.Category = loopy.Categories[i]
+					}
+				}
+			})
+		}))
+}
+
+// syncContext shows how full Loopy's context is, as the chat's context line
+// does in 1loop.
+func (mode *loopyMode) syncContext() {
+	if mode.window <= 0 || mode.contextUsed <= 0 {
+		mode.contextChip.Hide()
+		return
+	}
+	percent := fmt.Sprintf("%d%%", min(100, mode.contextUsed*100/mode.window))
+	if mode.contextUsed*100 < mode.window {
+		percent = "<1%"
+	}
+	mode.contextChip.SetText("Context " + percent)
+	mode.contextChip.Show()
+}
+
 func (mode *loopyMode) closeMemory() {
 	mode.body.Objects = []fyne.CanvasObject{mode.scroll}
 	mode.body.Refresh()
+}
+
+// syncBrowser shows Loopy's active browser tab beside the conversation:
+// the same view as in a project chat's side panel, live, which the user
+// unlocks to take over.
+func (mode *loopyMode) syncBrowser() {
+	state := mode.ui.panel.stateOf(mode.chat)
+	var view fyne.CanvasObject
+	var page *browser.Page
+	for i := len(state.tabs) - 1; i >= 0; i-- {
+		tab := state.tabs[i]
+		if tab.browser != nil && tab.content != nil {
+			view, page = tab.content, tab.browser
+			if i == state.active {
+				break
+			}
+		}
+	}
+	// Chromium sends frames only for a page shown, as the side panel does
+	// for a project chat's tab (syncBrowsers).
+	for _, tab := range state.tabs {
+		if tab.browser != nil {
+			tab.browser.SetVisible(tab.browser == page && mode.browserOn && mode.ui.inLoopy)
+		}
+	}
+	if view == nil {
+		mode.browserBtn.Hide()
+		mode.browserPane.Hide()
+		return
+	}
+	mode.browserBtn.Show()
+	mode.browserBtn.SetSelected(mode.browserOn)
+	if view != mode.browserTab {
+		mode.browserTab = view
+		frame := canvas.NewRectangle(colSidebar)
+		mode.browserPane.Objects = []fyne.CanvasObject{frame, padded(0, 12, 0, 12, view)}
+	}
+	if mode.browserOn {
+		mode.browserPane.Show()
+	} else {
+		mode.browserPane.Hide()
+	}
+	mode.browserPane.Refresh()
+	mode.main.Refresh()
+}
+
+// loopySplit puts the browser pane on the right, about half the width,
+// when it shows.
+type loopySplit struct{ pane *fyne.Container }
+
+func (s *loopySplit) MinSize(objects []fyne.CanvasObject) fyne.Size { return objects[0].MinSize() }
+
+func (s *loopySplit) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	width := size.Width
+	if s.pane.Visible() {
+		pane := fyne.Max(380, size.Width*.48)
+		width = size.Width - pane
+		objects[1].Resize(fyne.NewSize(pane, size.Height))
+		objects[1].Move(fyne.NewPos(width, 0))
+	}
+	objects[0].Resize(fyne.NewSize(width, size.Height))
+	objects[0].Move(fyne.NewPos(0, 0))
 }

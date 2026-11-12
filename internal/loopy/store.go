@@ -36,6 +36,9 @@ type Message struct {
 	// (with its fact's id, for Forget).
 	Memory   string `json:"memory,omitempty"`
 	MemoryID string `json:"memoryId,omitempty"`
+	// Note is a quiet line in the conversation: a compaction, a routine
+	// that ran.
+	Note string `json:"note,omitempty"`
 	// Pending: the user's message waits for the run in progress.
 	Pending bool `json:"pending,omitempty"`
 }
@@ -88,6 +91,22 @@ type Fact struct {
 	ID   string    `json:"id"`
 	Text string    `json:"text"`
 	Time time.Time `json:"t"`
+	// Category is "preference", "person", "place", "work", "routine" or
+	// "other".
+	Category string `json:"category,omitempty"`
+	// Pinned facts are always in Loopy's prompt; the others, the most
+	// recent first, while they fit.
+	Pinned  bool      `json:"pinned,omitempty"`
+	Updated time.Time `json:"updated,omitzero"`
+}
+
+// Categories of facts, in the order the memory page lists them.
+var Categories = []string{"preference", "person", "place", "work", "routine", "other"}
+
+// Entry is one line of Loopy's journal: what it did, dated.
+type Entry struct {
+	Time time.Time `json:"t"`
+	Text string    `json:"text"`
 }
 
 // Task is a coding task Loopy handed to an agent in a project: a normal
@@ -126,6 +145,11 @@ type Settings struct {
 	LastSummary time.Time `json:"lastSummary,omitzero"`
 	// Shown: the Loopy space was on screen when 1loop closed.
 	Shown bool `json:"shown,omitempty"`
+	// AskToRemember: Loopy remembers only what the user asks it to; else it
+	// also keeps what clearly matters, and says so.
+	AskToRemember bool `json:"askToRemember,omitempty"`
+	// JournalOff: Loopy keeps no journal of what it did.
+	JournalOff bool `json:"journalOff,omitempty"`
 }
 
 // Store is Loopy's saved state.
@@ -137,6 +161,7 @@ type Store struct {
 	Tasks    []Task          `json:"tasks"`
 	Routines []Routine       `json:"routines"`
 	Settings Settings        `json:"settings"`
+	Journal  []Entry         `json:"journal,omitempty"`
 	History  json.RawMessage `json:"history,omitempty"` // the agent's own conversation
 }
 
@@ -239,8 +264,11 @@ func (store *Store) Waiting() []Message {
 }
 
 // Remember keeps a fact; one already known is not kept twice.
-func (store *Store) Remember(text string) Fact {
+func (store *Store) Remember(text, category string) Fact {
 	text = strings.TrimSpace(text)
+	if !validCategory(category) {
+		category = "other"
+	}
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	for _, fact := range store.Memory {
@@ -248,9 +276,57 @@ func (store *Store) Remember(text string) Fact {
 			return fact
 		}
 	}
-	fact := Fact{ID: NewID(), Text: text, Time: time.Now()}
+	fact := Fact{ID: NewID(), Text: text, Time: time.Now(), Category: category}
 	store.Memory = append(store.Memory, fact)
 	return fact
+}
+
+func validCategory(category string) bool {
+	for _, c := range Categories {
+		if c == category {
+			return true
+		}
+	}
+	return false
+}
+
+// UpdateFact changes a fact's text, category or pin; false when there is
+// no fact with id.
+func (store *Store) UpdateFact(id string, change func(*Fact)) (Fact, bool) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	for i := range store.Memory {
+		if store.Memory[i].ID == id {
+			change(&store.Memory[i])
+			if !validCategory(store.Memory[i].Category) {
+				store.Memory[i].Category = "other"
+			}
+			store.Memory[i].Updated = time.Now()
+			return store.Memory[i], true
+		}
+	}
+	return Fact{}, false
+}
+
+// Log adds a line to the journal, unless it is off; it keeps the last
+// thousand.
+func (store *Store) Log(text string) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	if store.Settings.JournalOff || strings.TrimSpace(text) == "" {
+		return
+	}
+	store.Journal = append(store.Journal, Entry{Time: time.Now(), Text: strings.TrimSpace(text)})
+	if len(store.Journal) > 1000 {
+		store.Journal = store.Journal[len(store.Journal)-1000:]
+	}
+}
+
+// Entries is a copy of the journal, oldest first.
+func (store *Store) Entries() []Entry {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	return append([]Entry(nil), store.Journal...)
 }
 
 // Forget removes the fact with id, or the facts whose text holds what (case

@@ -1042,6 +1042,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         // On this phone, LocalRuntimeService notifies: it runs even without the app.
         val notify = !foreground && server?.localPhone != true
         if (notify && wasRunning == true && !m.running) notifier.show(m.chat, m.title, "Done.")
+        if (!foreground && wasRunning == true && !m.running) loadNextStep(m.chat)
         if (notify) {
             if (m.approval != null && approvals[m.chat]?.id != m.approval.id) notifier.show(m.chat, m.title, "Waiting for your approval: " + m.approval.title)
             if (m.question != null && questions[m.chat]?.id != m.question.id) notifier.show(m.chat, m.title, m.question.questions.firstOrNull()?.text ?: "1loop has a question")
@@ -1759,6 +1760,31 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 val body = JSONObject().put("id", request.id).put("answers", JSONObject(answers))
                 onConnection(target, generation) { it.post("/api/answer", body) }
             }.onFailure { actionFailed(generation, it) }
+        }
+    }
+
+    /** The turn that just ended in the background: its next-step card, for the badge (AgentStatus). */
+    private fun loadNextStep(chat: String) {
+        val generation = connectionGeneration
+        val target = server ?: return
+        scope.launch {
+            val list = if (chat == current) items.toList() else runCatching {
+                val array = onConnection(target, generation) { it.get("/api/chats/$chat?limit=20") }.optJSONArray("items")
+                (0 until (array?.length() ?: 0)).map { Item.from(array!!.getJSONObject(it)) }
+            }.getOrNull() ?: return@launch
+            if (generation == connectionGeneration) AgentStatus.nextStep(context, chat, WrapUp.live(list))
+        }
+    }
+
+    /** A reply from the badge's next-step card, to its chat whichever is on screen. */
+    fun reply(chat: String, text: String) {
+        if (chat == current) return send(text)
+        val generation = connectionGeneration
+        val target = server ?: return
+        val body = JSONObject().put("chat", chat).put("text", text).put("mode", "send")
+            .put("workspace", chats.firstOrNull { it.id == chat }?.workspace.orEmpty())
+        scope.launch {
+            runCatching { onConnection(target, generation) { it.post("/api/send", body) } }.onFailure { actionFailed(generation, it) }
         }
     }
 

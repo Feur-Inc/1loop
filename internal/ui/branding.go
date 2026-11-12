@@ -41,13 +41,20 @@ func brandImage(name string, width, height float32) *canvas.Image {
 	return image
 }
 
+// brandHex is the brand's amber. Outside the app (window and tray icons,
+// the Discord status) the artwork keeps it; inside, it takes the accent.
+const brandHex = "#FFB000"
+
+// accentHex is the accent colour as the SVG markup writes it.
+func accentHex() string {
+	return fmt.Sprintf("#%02X%02X%02X", colAmber.R, colAmber.G, colAmber.B)
+}
+
 // inkedArtwork redraws the artwork's white (the wordmark's letters) in the
-// theme's text colour: dark letters on the light theme. The accent's amber
-// is the brand's and stays.
+// theme's text colour: dark letters on the light theme. Its amber takes the
+// accent colour.
 func inkedArtwork(art image.Image) *image.NRGBA {
-	b := art.Bounds()
-	out := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
-	xdraw.Draw(out, out.Rect, art, b.Min, xdraw.Src)
+	out := accentedArtwork(art)
 	if themeTokens.Dark {
 		return out
 	}
@@ -56,6 +63,31 @@ func inkedArtwork(art image.Image) *image.NRGBA {
 		if min(r, g, bl) > 0xc0 && max(r, g, bl)-min(r, g, bl) < 0x20 { // white, or its antialiased edge
 			out.Pix[i], out.Pix[i+1], out.Pix[i+2] = colText.R, colText.G, colText.B
 		}
+	}
+	return out
+}
+
+// accentedArtwork copies the artwork with its amber in the accent colour.
+// An amber pixel keeps its brightness against the brand's amber, so the
+// antialiased edges, dark or blended, stay smooth.
+func accentedArtwork(art image.Image) *image.NRGBA {
+	b := art.Bounds()
+	out := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
+	xdraw.Draw(out, out.Rect, art, b.Min, xdraw.Src)
+	accent := colAmber
+	if accentHex() == brandHex {
+		return out
+	}
+	for i := 0; i < len(out.Pix); i += 4 {
+		r, g, bl := int(out.Pix[i]), int(out.Pix[i+1]), int(out.Pix[i+2])
+		// Amber: red highest, blue well below green (white and grey are not).
+		if r == 0 || r < g || r-bl < 0x40 || g < bl {
+			continue
+		}
+		level := float64(r) / 0xFF
+		out.Pix[i] = uint8(float64(accent.R)*level + 0.5)
+		out.Pix[i+1] = uint8(float64(accent.G)*level + 0.5)
+		out.Pix[i+2] = uint8(float64(accent.B)*level + 0.5)
 	}
 	return out
 }
@@ -95,6 +127,10 @@ func introFrame(index int) image.Image {
 		source := sheet.(interface {
 			SubImage(image.Rectangle) image.Image
 		})
+		sheet = accentedArtwork(sheet)
+		source = sheet.(interface {
+			SubImage(image.Rectangle) image.Image
+		})
 		introSheet = make([]image.Image, introFrames)
 		for i := range introSheet {
 			x, y := (i%8)*144, (i/8)*144
@@ -104,7 +140,11 @@ func introFrame(index int) image.Image {
 	return introSheet[index]
 }
 
-var brandRingImage image.Image
+var (
+	brandRingImage    image.Image
+	brandRingAccented image.Image // in the accent colour of brandRingInk
+	brandRingInk      string
+)
 
 func brandRing() image.Image {
 	if brandRingImage == nil {
@@ -115,7 +155,10 @@ func brandRing() image.Image {
 		}
 		brandRingImage = img
 	}
-	return brandRingImage
+	if brandRingInk != accentHex() {
+		brandRingInk, brandRingAccented = accentHex(), accentedArtwork(brandRingImage)
+	}
+	return brandRingAccented
 }
 
 // scaleTo resamples once with a high quality filter; Fyne then uploads the
@@ -152,7 +195,22 @@ type loopMark struct {
 }
 
 func newLoopMark(size float32) *loopMark {
-	return &loopMark{image: brandImage("1loop-ring.png", size, size), state: "brand", size: size}
+	mark := &loopMark{image: brandImage("1loop-ring.png", size, size), state: "brand", size: size}
+	onRepaint = append(onRepaint, mark.recolour)
+	return mark
+}
+
+// recolour draws the mark again in a new accent colour.
+func (mark *loopMark) recolour() {
+	mark.brand, mark.introAt, introSheet = nil, nil, nil
+	switch mark.state {
+	case "brand":
+		mark.showBrand()
+	case "intro":
+	default:
+		mark.work.drawn = time.Time{}
+		mark.tick()
+	}
 }
 
 // pixels is the mark's size on screen; before it is attached to a window,
@@ -348,6 +406,8 @@ func drawLayer(markup string, px int, scale float64) image.Image {
 // ringArt caches the layers drawn for one screen size.
 type ringArt struct {
 	px     int
+	brand  bool          // keeps the brand's amber (the Discord status)
+	ink    string        // the amber the layers below were drawn in
 	spin   []image.Image // the open ring, every 5 degrees
 	dots   []image.Image // its dot, which the page shows and hides without a fade
 	closed map[string]image.Image
@@ -359,6 +419,7 @@ const spinSteps = 72
 func newRingArt(px int) *ringArt {
 	return &ringArt{
 		px:     px,
+		ink:    accentHex(),
 		spin:   make([]image.Image, spinSteps),
 		dots:   make([]image.Image, spinSteps),
 		closed: map[string]image.Image{},
@@ -367,6 +428,20 @@ func newRingArt(px int) *ringArt {
 }
 
 // open and dot draw the page's .spin group at a rotation.
+// inked drops the layers when the accent changed, and returns markup's
+// amber in the accent (or the brand's, for a brand ring).
+func (art *ringArt) inked(markup string) string {
+	ink := brandHex
+	if !art.brand {
+		ink = accentHex()
+	}
+	if ink != art.ink {
+		fresh := newRingArt(art.px)
+		art.spin, art.dots, art.closed, art.icons, art.ink = fresh.spin, fresh.dots, fresh.closed, fresh.icons, ink
+	}
+	return strings.ReplaceAll(markup, brandHex, ink)
+}
+
 func (art *ringArt) open(angle float64) image.Image {
 	return art.turned(art.spin, angle, `<path d="M95.24 30.43 A46 46 0 1 1 67.99 14.70" stroke="#FFB000" stroke-width="12" stroke-linecap="round"/>`)
 }
@@ -376,6 +451,7 @@ func (art *ringArt) dot(angle float64) image.Image {
 }
 
 func (art *ringArt) turned(cache []image.Image, angle float64, markup string) image.Image {
+	markup = art.inked(markup)
 	step := int(math.Round(angle/360*spinSteps)) % spinSteps
 	if cache[step] == nil {
 		cache[step] = drawLayer(fmt.Sprintf(`<g transform="rotate(%.1f 60 60)">%s</g>`, float64(step)*360/spinSteps, markup), art.px, 1)
@@ -384,6 +460,7 @@ func (art *ringArt) turned(cache []image.Image, angle float64, markup string) im
 }
 
 func (art *ringArt) full(color string) image.Image {
+	color = art.inked(color)
 	if art.closed[color] == nil {
 		art.closed[color] = drawLayer(`<circle cx="60" cy="60" r="46" stroke="`+color+`" stroke-width="12"/>`, art.px, 1)
 	}
@@ -395,12 +472,13 @@ func (art *ringArt) full(color string) image.Image {
 func (art *ringArt) icon(name string, scale float64) image.Image {
 	scale = math.Round(scale*100) / 100
 	key := fmt.Sprintf("%s@%.2f", name, scale)
+	art.inked("")
 	if art.icons[key] == nil {
 		markup := glyphMarkup(name)
 		if strings.HasPrefix(name, "dot") { // one of the three thinking dots
 			markup = fmt.Sprintf(`<circle cx="%s" cy="60" r="5" fill="#F4F4F4"/>`, strings.TrimPrefix(name, "dot"))
 		}
-		art.icons[key] = drawLayer(`<g `+glyphStyle+`>`+markup+`</g>`, art.px, scale)
+		art.icons[key] = drawLayer(art.inked(`<g `+glyphStyle+`>`+markup+`</g>`), art.px, scale)
 	}
 	return art.icons[key]
 }
@@ -487,7 +565,7 @@ func (ring *workRing) change(state string, fresh bool, now time.Time) {
 		ring.open = fade{from: ring.open.value(now), to: target(!closed), at: now, length: 250 * time.Millisecond}
 		ring.full = fade{from: ring.full.value(now), to: target(closed), at: now, length: 250 * time.Millisecond}
 	}
-	ring.fullColor = "#FFB000"
+	ring.fullColor = brandHex // drawn in the accent
 	if state == "stopped" {
 		ring.fullColor = "#5C5C5C"
 	}

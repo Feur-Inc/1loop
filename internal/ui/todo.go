@@ -259,7 +259,7 @@ func (mark *taskMark) draw() {
 	layer := func(src image.Image) { draw.Draw(out, out.Bounds(), src, image.Point{}, draw.Over) }
 	switch mark.status {
 	case "completed":
-		layer(art.full("#FFB000"))
+		layer(art.full(brandHex))
 		layer(art.icon("done", 1))
 	case "in_progress":
 		angle := 0.0

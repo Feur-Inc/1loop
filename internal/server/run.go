@@ -24,6 +24,7 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/browser"
 	"1loop/internal/core"
+	"1loop/internal/crash"
 	"1loop/internal/extensions"
 	"1loop/internal/remoteapi"
 	"1loop/internal/sshmachine"
@@ -199,6 +200,7 @@ func Main() {
 		go server.checkMachines()
 	}
 	go server.loadModels()
+	reportLastCrash(*dir)
 	go func() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -208,7 +210,25 @@ func Main() {
 	err = httpServer.Serve(tls.NewListener(listener, httpServer.TLSConfig))
 	server.close()
 	extensions.Servers.CloseAll() // the MCP servers it started
+	crash.Clean()
 	if err != nil && err != http.ErrServerClosed {
 		log.Fatal(err)
 	}
+}
+
+// reportLastCrash watches this run and, when the last one crashed, says so
+// and leaves its anonymized report beside the server's state: with no
+// screen, the server only tells; the user files it if they wish.
+func reportLastCrash(dir string) {
+	last := crash.Start(dir, crash.Environment("server"), "")
+	if last == nil {
+		return
+	}
+	report := crash.NewReport(*last, crash.NewScrubber())
+	path := filepath.Join(dir, "crash-report.md")
+	if err := os.WriteFile(path, []byte(report.Text(false)), 0600); err != nil {
+		log.Printf("The last run of the 1loop server crashed (%s); its report could not be saved: %v", last.Ended.Format(time.DateTime), err)
+		return
+	}
+	log.Printf("The last run of the 1loop server crashed (%s). An anonymized report is in %s: check it, then file it at %s if you wish.", last.Ended.Format(time.DateTime), path, crash.NewIssue)
 }

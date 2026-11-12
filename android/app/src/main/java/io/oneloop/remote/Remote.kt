@@ -381,6 +381,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
     var extensionsRevision by mutableIntStateOf(0) // something was installed, removed or switched
     var updateAsked by mutableStateOf(false) // the update dialog, over any screen
+    var crashReport by mutableStateOf<CrashReport?>(null) // the last run's crash, offered once
     var updateOffered: Int? = null // one automatic dialog per release while this app instance runs
     var updateLater by mutableStateOf(false) // the update card was put away until the next start
     var userPreferences by mutableStateOf("")

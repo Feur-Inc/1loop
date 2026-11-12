@@ -101,7 +101,7 @@ var sections = []Section{
 	{Tools, "Tools & extensions", "What extends the agent, and its browser and screen."},
 	{Phone, "Phone", "The 1loop phone app: pairing, sharing and what it may do."},
 	{Updates, "Updates", "This version of 1loop, and the newer ones."},
-	{Advanced, "Advanced", "Commands around the agent's work."},
+	{Advanced, "Advanced", "Commands around the agent's work, and crash reports."},
 }
 
 // Sections lists the sections in order.
@@ -130,6 +130,7 @@ const (
 	KeyTheme             = "general.theme"
 	KeyAccent            = "general.accent"
 	KeyAnimations        = "general.animations"
+	KeyCrashReports      = "advanced.crash_reports"
 )
 
 var list = []Setting{
@@ -263,6 +264,9 @@ var list = []Setting{
 	{Key: "advanced.hooks", Section: Advanced, Title: "Hook commands", Where: OnBoth, Kind: Action,
 		Description: "Your commands around the agent's work, in Claude Code's format: before and after tools, on a prompt, when it stops.",
 		Keywords:    []string{"hooks", "pretooluse", "posttooluse", "scripts", "commands", "automation"}},
+	{Key: KeyCrashReports, Section: Advanced, Title: "Offer to report crashes", Where: OnBoth, Kind: Toggle,
+		Description: "After 1loop closes unexpectedly, the next start shows an anonymous report you can file on GitHub from your own account. Nothing is sent by 1loop itself.",
+		Keywords:    []string{"crash", "report", "bug", "issue", "github", "closed unexpectedly", "don't ask again", "feedback"}},
 }
 
 // All lists every setting, in the order they are shown.

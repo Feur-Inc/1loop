@@ -100,6 +100,9 @@ type Report struct {
 	Pace    *Pace       `json:"pace,omitempty"`
 	Compare *Comparison `json:"compare,omitempty"`
 	AsOf    string      `json:"pricesAsOf"`
+	// Limits are the subscriptions' usage windows and their pace (limits.go),
+	// whatever the period: they are about now.
+	Limits []Limit `json:"limits,omitempty"`
 }
 
 // Names gives what the ledger keeps by id a name: a chat's title, a
@@ -237,6 +240,9 @@ func Build(ledger *Ledger, prices *Prices, names Names, query Query, now time.Ti
 	report.Days = days(ledger, prices, keep, to, now)
 	if query.Period == "month" {
 		report.Pace = pace(report.Totals.Cost, from, to, now)
+	}
+	if query.Chat == "" {
+		report.Limits = ledger.Limits(names, now)
 	}
 	return report
 }

@@ -23,6 +23,7 @@ import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.text.drawText
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -53,11 +54,35 @@ data class UsageTotals(
 
 data class UsageRow(val key: String, val label: String, val detail: String, val totals: UsageTotals, val previous: UsageTotals?)
 
+/** One subscription window and its pace, worded by the computer (internal/usage/limits.go). Times in epoch milliseconds. */
+data class UsageLimit(
+    val connection: String, val name: String, val window: String, val hours: Double,
+    val start: Long, val reset: Long, val checked: Long, val left: Double, val even: Double, val leftAtReset: Double, val emptyAt: Long?,
+    val points: List<Pair<Long, Double>>, val title: String, val status: String, val statusText: String,
+    val advice: String, val budget: String, val resetText: String,
+) {
+    companion object {
+        private fun time(text: String?): Long? =
+            if (text.isNullOrEmpty()) null else runCatching { java.time.Instant.parse(text).toEpochMilli() }.getOrNull()
+
+        fun from(o: JSONObject): UsageLimit {
+            val points = o.optJSONArray("points")
+            return UsageLimit(
+                o.optString("connection"), o.optString("name"), o.optString("window"), o.optDouble("hours", 0.0),
+                time(o.optString("start")) ?: 0, time(o.optString("reset")) ?: 0, time(o.optString("checked")) ?: 0,
+                o.optDouble("left", 0.0), o.optDouble("even", 0.0), o.optDouble("leftAtReset", 0.0), time(o.optString("emptyAt")),
+                (0 until (points?.length() ?: 0)).mapNotNull { i -> points!!.getJSONObject(i).let { p -> time(p.optString("t"))?.let { it to p.optDouble("left", 0.0) } } },
+                o.optString("title"), o.optString("status"), o.optString("statusText"), o.optString("advice"), o.optString("budget"), o.optString("resetText"),
+            )
+        }
+    }
+}
+
 data class UsageReport(
     val period: String, val offset: Int, val group: String, val label: String, val from: String, val to: String,
     val totals: UsageTotals, val rows: List<UsageRow>, val days: List<Pair<String, Double>>, val dayTokens: List<Int>,
     val compareLabel: String?, val compare: UsageTotals?, val paceSpent: Double, val paceProjected: Double, val paceDay: Int, val paceDays: Int,
-    val pricesAsOf: String,
+    val pricesAsOf: String, val limits: List<UsageLimit>,
 ) {
     companion object {
         fun from(o: JSONObject): UsageReport {
@@ -76,6 +101,7 @@ data class UsageReport(
                 compare?.optString("label"), compare?.optJSONObject("totals")?.let(UsageTotals::from),
                 pace?.optDouble("spent", 0.0) ?: 0.0, pace?.optDouble("projected", 0.0) ?: 0.0, pace?.optInt("day") ?: 0, pace?.optInt("days") ?: 0,
                 o.optString("pricesAsOf"),
+                o.optJSONArray("limits").let { a -> (0 until (a?.length() ?: 0)).map { i -> UsageLimit.from(a!!.getJSONObject(i)) } },
             )
         }
     }
@@ -186,6 +212,17 @@ fun UsageScreen(app: RemoteApp, onBack: () -> Unit) {
             Text(chat?.label ?: "Usage", style = Type.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 12.dp))
         }
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            val limits = report?.limits.orEmpty()
+            if (chat == null && limits.isNotEmpty()) {
+                item {
+                    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text("Subscription limits", style = Type.title.copy(fontSize = 15.sp))
+                        Text("How much of each subscription window is left, and the pace that makes it last until it resets.", style = Type.caption.copy(color = Palette.muted))
+                    }
+                }
+                items(limits.groupBy { it.connection }.values.toList(), key = { "limits/" + it.first().connection }) { windows -> LimitsCard(windows) }
+            }
+            if (chat == null) item { Text("Spend", style = Type.title.copy(fontSize = 15.sp), modifier = Modifier.padding(top = if (limits.isEmpty()) 0.dp else 8.dp)) }
             if (chat == null) item {
                 Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     for ((id, name) in periodNames) Chip(name, period == id) { period = id; offset = 0 }
@@ -225,10 +262,20 @@ fun UsageScreen(app: RemoteApp, onBack: () -> Unit) {
                         .then(if (opens) Modifier.clickable { chat = row } else Modifier).padding(horizontal = 14.dp, vertical = 12.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
-                    Column(Modifier.weight(1f)) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(3.dp)) {
                         Text(row.label, style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis)
-                        val calls = if (chat != null) (if (row.totals.calls == 1) "1 model call" else "${row.totals.calls} model calls") + " · " else ""
-                        Text(calls + listOf(row.detail, breakdown(row.totals)).filter { it.isNotEmpty() }.joinToString(" · "), style = Type.caption.copy(color = Palette.muted))
+                        if (chat != null) {
+                            val calls = (if (row.totals.calls == 1) "1 model call" else "${row.totals.calls} model calls") + " · "
+                            Text(calls + listOf(row.detail, breakdown(row.totals)).filter { it.isNotEmpty() }.joinToString(" · "), style = Type.caption.copy(color = Palette.muted))
+                        } else {
+                            val calls = if (row.totals.calls == 1) "1 call" else "${row.totals.calls} calls"
+                            Text(listOf(row.detail, "${tokenCount(row.totals.total)} tokens", calls).filter { it.isNotEmpty() }.joinToString(" · "), style = Type.caption.copy(color = Palette.muted))
+                            val part = share(row.totals, shown.totals)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                LeftBar(part * 100, null, Palette.amber, Modifier.weight(1f))
+                                Text(percent(part * 100), style = Type.caption.copy(color = Palette.muted), modifier = Modifier.width(44.dp).padding(start = 8.dp))
+                            }
+                        }
                     }
                     Column(horizontalAlignment = Alignment.End, modifier = Modifier.padding(start = 12.dp)) {
                         Text(costText(row.totals), style = Type.body.copy(fontWeight = FontWeight.SemiBold))
@@ -239,9 +286,45 @@ fun UsageScreen(app: RemoteApp, onBack: () -> Unit) {
             }
             item {
                 Text(
-                    "Costs use each model's API list price (as of ${shown.pricesAsOf}) or the price set on the desktop. Subscription connections show what the same tokens would cost on the API; they are not billed by the token. Models with no known price count in tokens only.",
+                    "Costs are each model's API list price (as of ${shown.pricesAsOf}), or the price set on the desktop. Subscriptions are not billed by the token: their cost is what the same tokens would cost on the API.",
                     style = Type.caption, modifier = Modifier.padding(top = 4.dp, bottom = 24.dp),
                 )
+            }
+        }
+    }
+}
+
+/** A row's part of the period: of the cost, or of the tokens when nothing has a price. */
+private fun share(row: UsageTotals, total: UsageTotals): Double = when {
+    total.cost > 0 -> row.cost / total.cost
+    total.total > 0 -> row.total.toDouble() / total.total
+    else -> 0.0
+}
+
+/** A share of a window as the desktop writes it (usage.Percent): "64%", "0.5%". */
+fun percent(value: Double): String =
+    if (value > 0 && value < 1) String.format(Locale.US, "%.1f%%", value) else String.format(Locale.US, "%.0f%%", value)
+
+private fun points(value: Double): String =
+    if (value < 1.5) String.format(Locale.US, "%.1f points", value) else String.format(Locale.US, "%.0f points", value)
+
+@Composable
+private fun StatTile(label: String, value: String, under: String, ink: Color = Palette.text, modifier: Modifier = Modifier) {
+    Column(modifier, verticalArrangement = Arrangement.spacedBy(2.dp)) {
+        Text(label, style = Type.caption.copy(color = Palette.muted))
+        Text(value, style = Type.headline.copy(fontSize = 21.sp, fontWeight = FontWeight.SemiBold, color = ink), maxLines = 1)
+        if (under.isNotEmpty()) Text(under, style = Type.caption.copy(color = Palette.muted))
+    }
+}
+
+/** Tiles two by two, as the phone has room for. */
+@Composable
+private fun Tiles(tiles: List<@Composable (Modifier) -> Unit>) {
+    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+        tiles.chunked(2).forEach { pair ->
+            Row(horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                pair.forEach { tile -> tile(Modifier.weight(1f)) }
+                if (pair.size == 1) Spacer(Modifier.weight(1f))
             }
         }
     }
@@ -250,19 +333,44 @@ fun UsageScreen(app: RemoteApp, onBack: () -> Unit) {
 @Composable
 private fun UsageSummary(report: UsageReport) {
     val t = report.totals
-    UsageCard {
-        Row(verticalAlignment = Alignment.Bottom) {
-            Text(money(t.cost), style = Type.headline.copy(fontSize = 30.sp, fontWeight = FontWeight.SemiBold))
-            Text("${tokenCount(t.total)} tokens · ${t.calls} calls", style = Type.small, modifier = Modifier.padding(start = 10.dp, bottom = 4.dp))
-        }
-        Text(breakdown(t), style = Type.caption.copy(color = Palette.muted))
-        if (t.planCost > 0) Text("${money(t.planCost)} of it is API-equivalent: subscription calls, priced as if they had been made on the API.", style = Type.caption.copy(color = Palette.muted))
-        if (t.unpriced > 0) Text("${tokenCount(t.unpriced)} tokens are on models with no known price and are not in the cost.", style = Type.caption.copy(color = Palette.muted))
-        if (report.compare != null) Text("${report.compareLabel}: ${money(report.compare.cost)}, ${tokenCount(report.compare.total)} tokens${change(t.cost, report.compare.cost)}", style = Type.small.copy(color = Palette.text))
-        if (report.paceDays > 0 && report.paceDay < report.paceDays) {
-            Text("Pace: ${money(report.paceSpent)} by day ${report.paceDay} of ${report.paceDays}, heading for ${money(report.paceProjected)} this month.", style = Type.small.copy(color = Palette.text))
-        }
+    val spentUnder = when {
+        t.cost > 0 && t.planCost >= t.cost * 0.99 -> "API-equivalent: subscriptions"
+        t.planCost > 0 -> "${money(t.planCost)} of it API-equivalent"
+        t.cost == 0.0 && t.calls == 0 -> "no model calls"
+        else -> "billed by the token"
     }
+    val read = t.input + t.cacheRead + t.cacheWrite
+    val cache = if (read > 0) percent(100.0 * t.cacheRead / read) else "—"
+    val compare = report.compare
+    val fourth: @Composable (Modifier) -> Unit = when {
+        compare != null -> { m ->
+            val moved = if (compare.cost > 0 && t.cost != compare.cost) String.format(Locale.US, "%+.0f%%", (t.cost - compare.cost) / compare.cost * 100) else "same as"
+            StatTile("Against " + (report.compareLabel ?: "").replaceFirstChar { it.lowercase() }, moved, "was " + money(compare.cost), if (t.cost > compare.cost && compare.cost > 0) Palette.amber else Palette.text, m)
+        }
+        report.paceDays > 0 && report.paceDay < report.paceDays -> { m -> StatTile("Month forecast", money(report.paceProjected), "at this pace · day ${report.paceDay} of ${report.paceDays}", modifier = m) }
+        else -> { m -> StatTile("A day", money(t.cost / periodDays(report)), "on average", modifier = m) }
+    }
+    UsageCard {
+        Tiles(listOf(
+            { m -> StatTile("Spent", money(t.cost), spentUnder, modifier = m) },
+            { m -> StatTile("Tokens", tokenCount(t.total), if (t.calls == 1) "in 1 model call" else "in ${t.calls} model calls", modifier = m) },
+            { m -> StatTile("From the cache", cache, "of the prompt tokens read", modifier = m) },
+            fourth,
+        ))
+        if (t.unpriced > 0) Text("${tokenCount(t.unpriced)} tokens are on models with no known price and are not in the cost.", style = Type.caption.copy(color = Palette.muted))
+    }
+}
+
+/** How many days of the period have begun, at least one (as the desktop counts them). */
+private fun periodDays(report: UsageReport): Double {
+    val day = SimpleDateFormat("yyyy-MM-dd", Locale.US)
+    val now = System.currentTimeMillis()
+    val to = runCatching { java.time.Instant.parse(report.to).toEpochMilli() }.getOrNull()
+    val end = if (to != null && to < now) to else now
+    val from = runCatching { java.time.Instant.parse(report.from).toEpochMilli() }.getOrNull()
+        ?: report.days.firstOrNull { it.second > 0 }?.let { runCatching { day.parse(it.first)!!.time }.getOrNull() }
+        ?: return 1.0
+    return maxOf(1.0, kotlin.math.ceil((end - from) / 86_400_000.0))
 }
 
 @Composable
@@ -270,29 +378,201 @@ private fun UsageChart(report: UsageReport) {
     val byTokens = report.days.none { it.second > 0 }
     val values = if (byTokens) report.dayTokens.map { it.toDouble() } else report.days.map { it.second }
     val highest = values.maxOrNull() ?: 0.0
+    val active = values.filter { it > 0 }
+    fun scale(v: Double) = if (byTokens) tokenCount(v.toInt()) else money(v)
     val day = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     val from = report.from.take(10)
     val to = report.to.take(10)
     val lit = report.days.map { (date, _) -> report.period == "all" || (date >= from && date < to) }
     val accent = Palette.amber
     val dim = Palette.border
+    val grid = Palette.borderSoft
+    val faint = Palette.faint
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val small = Type.caption.copy(color = faint, fontSize = 10.sp)
     UsageCard {
-        val peak = if (highest <= 0) "" else if (byTokens) " · peak ${tokenCount(highest.toInt())} tokens a day" else " · peak ${money(highest)} a day"
-        Text("Last 30 days$peak", style = Type.caption.copy(color = Palette.muted))
-        Canvas(Modifier.fillMaxWidth().height(88.dp)) {
-            if (values.isEmpty()) return@Canvas
-            val slot = size.width / values.size
-            val gap = minOf(4.dp.toPx(), slot / 3)
-            values.forEachIndexed { i, value ->
-                val height = if (highest > 0 && value > 0) maxOf(3.dp.toPx(), (value / highest * size.height).toFloat()) else 2.dp.toPx()
-                drawRoundRect(if (lit[i]) accent else dim, Offset(i * slot, size.height - height), Size(slot - gap, height), CornerRadius(2.dp.toPx()))
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text((if (byTokens) "Tokens a day" else "Cost a day") + " · last 30 days", style = Type.small.copy(color = Palette.text, fontWeight = FontWeight.SemiBold), modifier = Modifier.weight(1f))
+            if (report.period != "all") {
+                Box(Modifier.size(9.dp).clip(RoundedCornerShape(2.dp)).background(accent))
+                Text(report.label.replaceFirstChar { it.lowercase() }, style = Type.caption.copy(color = Palette.muted), modifier = Modifier.padding(start = 5.dp))
             }
         }
+        if (active.isNotEmpty()) Text("peak ${scale(highest)} · ${scale(active.sum() / active.size)} on an active day", style = Type.caption.copy(color = Palette.muted))
         fun short(text: String) = runCatching { SimpleDateFormat("d MMM", Locale.US).format(day.parse(text)!!) }.getOrDefault(text)
-        Row {
-            Text(short(report.days.firstOrNull()?.first ?: ""), style = Type.caption)
-            Spacer(Modifier.weight(1f))
-            Text(short(report.days.lastOrNull()?.first ?: ""), style = Type.caption)
+        Canvas(Modifier.fillMaxWidth().height(132.dp)) {
+            if (values.isEmpty()) return@Canvas
+            val axis = 44.dp.toPx()
+            val top = 8.dp.toPx()
+            val bottom = 18.dp.toPx()
+            val plotH = size.height - top - bottom
+            val plotW = size.width - axis
+            for (i in 0..2) {
+                val y = top + plotH * i / 2
+                drawLine(grid, Offset(axis, y), Offset(size.width, y), 1.dp.toPx())
+                if (i < 2 && highest > 0) {
+                    val label = measurer.measure(scale(if (i == 0) highest else highest / 2), small)
+                    drawText(label, topLeft = Offset(axis - 6.dp.toPx() - label.size.width, y - label.size.height / 2f))
+                }
+            }
+            val slot = plotW / values.size
+            val gap = minOf(3.dp.toPx(), slot / 3)
+            values.forEachIndexed { i, value ->
+                val height = if (highest > 0 && value > 0) maxOf(3.dp.toPx(), (value / highest * plotH).toFloat()) else 2.dp.toPx()
+                drawRoundRect(if (lit[i]) accent else dim, Offset(axis + i * slot, top + plotH - height), Size(slot - gap, height), CornerRadius(2.dp.toPx()))
+                if ((values.size - 1 - i) % 7 == 0) {
+                    val label = measurer.measure(short(report.days[i].first), small)
+                    val x = (axis + i * slot + (slot - gap) / 2 - label.size.width / 2f).coerceIn(axis, size.width - label.size.width)
+                    drawText(label, topLeft = Offset(x, top + plotH + 4.dp.toPx()))
+                }
+            }
         }
+    }
+}
+
+/** A track filled to [value] percent, with a tick at [mark] percent when there is one. */
+@Composable
+private fun LeftBar(value: Double, mark: Double?, ink: Color, modifier: Modifier = Modifier) {
+    val track = Palette.track
+    val tick = Palette.text
+    Canvas(modifier.height(10.dp)) {
+        val h = 6.dp.toPx()
+        val y = (size.height - h) / 2
+        drawRoundRect(track, Offset(0f, y), Size(size.width, h), CornerRadius(h / 2))
+        drawRoundRect(ink, Offset(0f, y), Size((size.width * value / 100).toFloat().coerceIn(0f, size.width), h), CornerRadius(h / 2))
+        if (mark != null) drawRect(tick, Offset((size.width * mark / 100).toFloat() - 1.dp.toPx(), 0f), Size(2.dp.toPx(), size.height))
+    }
+}
+
+@Composable
+private fun statusInk(status: String): Color = when (status) {
+    "out" -> Palette.danger
+    "fast" -> Palette.amber
+    "spare" -> Palette.added
+    else -> Palette.textSoft
+}
+
+@Composable
+private fun StatusPill(limit: UsageLimit) {
+    val ink = statusInk(limit.status)
+    Box(Modifier.clip(RoundedCornerShape(50)).background(ink.copy(alpha = 0.15f)).padding(horizontal = 10.dp, vertical = 3.dp)) {
+        Text(limit.statusText, style = Type.caption.copy(color = ink, fontWeight = FontWeight.SemiBold))
+    }
+}
+
+/** A subscription's windows: the long ones with their chart, the short ones as a bar. */
+@Composable
+private fun LimitsCard(windows: List<UsageLimit>) {
+    UsageCard {
+        Text(windows.first().name.ifEmpty { "Subscription" }, style = Type.body.copy(fontWeight = FontWeight.SemiBold))
+        windows.forEachIndexed { i, limit ->
+            if (i > 0) Box(Modifier.fillMaxWidth().padding(vertical = 6.dp).height(1.dp).background(Palette.borderSoft))
+            if (limit.hours >= 24) LimitPace(limit) else LimitLine(limit)
+        }
+    }
+}
+
+@Composable
+private fun LimitPace(limit: UsageLimit) {
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(limit.title, style = Type.body, modifier = Modifier.weight(1f))
+            StatusPill(limit)
+        }
+        val gap = limit.left - limit.even
+        val evenUnder = when {
+            gap <= -1 -> points(-gap) + " more used than even"
+            gap >= 1 -> points(gap) + " less used than even"
+            else -> "where an even pace would be"
+        }
+        Tiles(listOf(
+            { m -> StatTile("Left", percent(limit.left), "of the window", if (limit.status == "out") Palette.danger else Palette.text, m) },
+            { m -> StatTile("Even pace", percent(limit.even), evenUnder, modifier = m) },
+            { m -> StatTile("To last until reset", limit.budget, "at most", modifier = m) },
+            { m -> StatTile("Resets", limit.resetText.substringBefore(" · "), limit.resetText, modifier = m) },
+        ))
+        PaceChart(limit)
+        Text(limit.advice, style = Type.small.copy(color = Palette.textSoft))
+    }
+}
+
+@Composable
+private fun LimitLine(limit: UsageLimit) {
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            Text(limit.title, style = Type.body, modifier = Modifier.weight(1f))
+            StatusPill(limit)
+        }
+        LeftBar(limit.left, limit.even, statusInk(limit.status), Modifier.fillMaxWidth())
+        val reset = limit.resetText.split(" · ")
+        Text("${percent(limit.left)} left · even pace ${percent(limit.even)} · up to ${limit.budget} · resets ${reset.first()}" + (reset.getOrNull(1)?.let { " ($it)" } ?: ""), style = Type.caption.copy(color = Palette.muted))
+    }
+}
+
+/** The window from its start to its reset, on 0–100%: the readings, where the pace leads, and the even pace (the desktop's paceChart). */
+@Composable
+private fun PaceChart(limit: UsageLimit) {
+    val ink = statusInk(limit.status)
+    val grid = Palette.borderSoft
+    val faint = Palette.faint
+    val nowInk = Palette.border
+    val measurer = androidx.compose.ui.text.rememberTextMeasurer()
+    val small = Type.caption.copy(color = faint, fontSize = 10.sp)
+    val nowStyle = Type.caption.copy(color = Palette.muted, fontSize = 10.sp, fontWeight = FontWeight.SemiBold)
+    val now = remember(limit) { System.currentTimeMillis() }
+    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+        Row(horizontalArrangement = Arrangement.spacedBy(12.dp), verticalAlignment = Alignment.CenterVertically) {
+            LegendKey("Recorded", ink, false)
+            LegendKey("Forecast", ink, true)
+            LegendKey("Even pace", faint, true)
+        }
+        Canvas(Modifier.fillMaxWidth().height(180.dp)) {
+            val axis = 36.dp.toPx()
+            val top = 16.dp.toPx()
+            val bottom = 18.dp.toPx()
+            val plotW = size.width - axis - 4.dp.toPx()
+            val plotH = size.height - top - bottom
+            val total = (limit.reset - limit.start).toFloat().coerceAtLeast(1f)
+            fun x(at: Long) = axis + plotW * ((at - limit.start) / total).coerceIn(0f, 1f)
+            fun y(left: Double) = top + plotH * (1f - (left / 100).toFloat().coerceIn(0f, 1f))
+            val dash = androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(5.dp.toPx(), 4.dp.toPx()))
+            for (value in listOf(100.0, 75.0, 50.0, 25.0, 0.0)) {
+                drawLine(grid, Offset(axis, y(value)), Offset(axis + plotW, y(value)), 1.dp.toPx())
+                val label = measurer.measure(percent(value), small)
+                drawText(label, topLeft = Offset(axis - 6.dp.toPx() - label.size.width, y(value) - label.size.height / 2f))
+            }
+            // A day's name at each midnight inside the window, at most eight.
+            val zone = java.time.ZoneId.systemDefault()
+            val step = maxOf(1L, kotlin.math.ceil(limit.hours / 24 / 8).toLong())
+            var midnight = java.time.Instant.ofEpochMilli(limit.start).atZone(zone).toLocalDate().plusDays(1)
+            while (true) {
+                val at = midnight.atStartOfDay(zone).toInstant().toEpochMilli()
+                if (at >= limit.reset) break
+                val label = measurer.measure(midnight.dayOfWeek.getDisplayName(java.time.format.TextStyle.SHORT, Locale.US), small)
+                drawText(label, topLeft = Offset(x(at) - label.size.width / 2f, top + plotH + 4.dp.toPx()))
+                midnight = midnight.plusDays(step)
+            }
+            drawLine(faint, Offset(x(limit.start), y(100.0)), Offset(x(limit.reset), y(0.0)), 1.5.dp.toPx(), pathEffect = dash)
+            limit.points.zipWithNext().forEach { (a, b) -> drawLine(ink, Offset(x(a.first), y(a.second)), Offset(x(b.first), y(b.second)), 2.5.dp.toPx(), cap = androidx.compose.ui.graphics.StrokeCap.Round) }
+            val from = Offset(x(limit.checked), y(limit.left))
+            val end = limit.emptyAt?.let { Offset(x(it), y(0.0)) } ?: Offset(x(limit.reset), y(limit.leftAtReset))
+            drawLine(ink, from, end, 2.dp.toPx(), pathEffect = dash)
+            val nowX = x(now)
+            drawLine(nowInk, Offset(nowX, top - 2.dp.toPx()), Offset(nowX, top + plotH), 1.dp.toPx())
+            val nowLabel = measurer.measure("Now", nowStyle)
+            drawText(nowLabel, topLeft = Offset((nowX - nowLabel.size.width / 2f).coerceIn(axis, size.width - nowLabel.size.width), 0f))
+            drawCircle(ink, 4.5.dp.toPx(), from)
+        }
+    }
+}
+
+@Composable
+private fun LegendKey(name: String, ink: Color, dashed: Boolean) {
+    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(5.dp)) {
+        Canvas(Modifier.width(16.dp).height(8.dp)) {
+            val effect = if (dashed) androidx.compose.ui.graphics.PathEffect.dashPathEffect(floatArrayOf(4.dp.toPx(), 3.dp.toPx())) else null
+            drawLine(ink, Offset(0f, size.height / 2), Offset(size.width, size.height / 2), 2.dp.toPx(), pathEffect = effect)
+        }
+        Text(name, style = Type.caption.copy(color = Palette.muted))
     }
 }

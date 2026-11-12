@@ -157,6 +157,15 @@ func (server *headlessServer) routes() http.Handler {
 		endpoints[path] = handler
 	}
 	for path, handler := range usage.Handlers(server.usage, server.prices, server.usageNames, nil) {
+		if path == "GET /api/usage" {
+			serve := handler
+			handler = func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("chat") == "" {
+					server.noteAllLimits() // the subscriptions' pace, read fresh
+				}
+				serve(w, r)
+			}
+		}
 		endpoints[path] = handler
 	}
 	for path, handler := range gitrepo.Handlers(gitTarget{server}, githubconnector.Default.Authorizations) {

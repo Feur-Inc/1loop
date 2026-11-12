@@ -13,6 +13,7 @@ package ui
 import (
 	"context"
 	"fmt"
+	"image/color"
 	"math"
 	"path/filepath"
 	"strconv"
@@ -31,7 +32,8 @@ import (
 // UsagePage is the page's name among the settings' pages.
 const UsagePage = "Usage"
 
-var iconChart = lineIcon("chart", `<path d="M2.5 13.5h11"/><path d="M4.5 11V8.5"/><path d="M8 11V4.5"/><path d="M11.5 11V6.5"/>`)
+// iconUsage is a gauge: how much is used, and how fast.
+var iconUsage = lineIcon("usage", `<path d="M2.4 12.2A6 6 0 1 1 13.6 12.2"/><path d="M8 9.8 10.9 6.6"/><circle cx="8" cy="9.9" r="1.1" fill="currentColor" stroke="none"/>`)
 
 // usageSource is where the page reads its report and prices.
 type usageSource interface {
@@ -124,6 +126,15 @@ func (ui *desktopUI) usageSettings() fyne.CanvasObject {
 	}
 	prices := newRow("Prices", iconPencil, styleChip, page.openPrices)
 	page.load()
+	if _, local := page.source.(localUsage); local {
+		// The subscriptions' windows as they are now, for their pace; a
+		// server reads its own when asked for the report.
+		for _, conn := range ui.connectionsList {
+			if conn.Enabled {
+				ui.noteLimits(conn.ID, 2*time.Minute, page.load)
+			}
+		}
+	}
 	return container.NewVBox(ui.prefs.pageTitle("Usage", "", prices), page.body)
 }
 
@@ -163,14 +174,19 @@ func (page *usagePage) change(edit func(query *usage.Query)) {
 }
 
 func (page *usagePage) show(report usage.Report) {
-	page.body.Objects = []fyne.CanvasObject{
+	page.body.Objects = nil
+	if limits := limitsSection(report.Limits); limits != nil {
+		page.body.Add(limits)
+	}
+	page.body.Objects = append(page.body.Objects,
+		sectionTitle("Spend"),
 		page.periodBar(report),
 		usageSummary(report),
 		usageChart(report),
 		page.groupBar(report.Group),
 		page.rows(report),
-		padded(10, 24, 2, 2, note(fmt.Sprintf("Costs use each model's API list price (as of %s) or the price you set. Subscription connections show what the same tokens would cost on the API; they are not billed by the token. Models with no known price count in tokens only.", report.AsOf))),
-	}
+		padded(10, 24, 2, 2, note(fmt.Sprintf("Costs are each model's API list price (as of %s), or the price you set under Prices. Subscriptions are not billed by the token: their cost is what the same tokens would cost on the API.", report.AsOf))),
+	)
 	page.body.Refresh()
 }
 
@@ -231,7 +247,7 @@ func (page *usagePage) rows(report usage.Report) fyne.CanvasObject {
 			open := newRow("", iconChevronRight, styleChip, func() { page.openTurns(row, report.Query) })
 			control = container.NewHBox(control, container.NewCenter(open))
 		}
-		rows = append(rows, settingRow(row.Label, usageDetail(row.Detail, row.Totals), control))
+		rows = append(rows, shareRow(row.Label, rowDetail(row), share(row.Totals, report.Totals), control))
 	}
 	return card(rows...)
 }
@@ -333,32 +349,118 @@ func tokenBreakdown(tokens usage.Tokens) string {
 	return strings.Join(parts, ", ")
 }
 
-// usageSummary is the period's total, with the compared one and the pace.
+// usageSummary is the period's figures side by side: what it cost, its
+// tokens, how much came from the cache, and the month's forecast (or the
+// compared period, or the average day).
 func usageSummary(report usage.Report) fyne.CanvasObject {
 	totals := report.Totals
-	big := textLine(usage.Money(totals.Cost), 30, colText)
-	big.TextStyle = fyne.TextStyle{Bold: true}
-	calls := fmt.Sprintf("%s tokens · %d model calls", usage.Count(totals.Total()), totals.Calls)
-	head := container.NewHBox(big, container.NewCenter(padded(8, 0, 10, 0, textLine(calls, 13, colMuted))))
-	lines := container.New(layout.NewCustomPaddedVBoxLayout(4), head, plainFlow(tokenBreakdown(totals.Tokens), 12.5, colMuted))
-	if totals.PlanCost > 0 {
-		lines.Add(plainFlow(usage.Money(totals.PlanCost)+" of it is API-equivalent: subscription calls, priced as if they had been made on the API.", 12.5, colMuted))
+	spentUnder := "billed by the token"
+	switch {
+	case totals.Cost > 0 && totals.PlanCost >= totals.Cost*0.99:
+		spentUnder = "API-equivalent: subscriptions"
+	case totals.PlanCost > 0:
+		spentUnder = usage.Money(totals.PlanCost) + " of it API-equivalent"
+	case totals.Cost == 0 && totals.Calls == 0:
+		spentUnder = "no model calls"
 	}
+	calls := fmt.Sprintf("in %d model calls", totals.Calls)
+	if totals.Calls == 1 {
+		calls = "in 1 model call"
+	}
+	read := totals.Input + totals.CacheRead + totals.CacheWrite
+	cache := "—"
+	if read > 0 {
+		cache = usage.Percent(100 * float64(totals.CacheRead) / float64(read))
+	}
+	tiles := []fyne.CanvasObject{
+		statTile("Spent", usage.Money(totals.Cost), spentUnder, colText),
+		statTile("Tokens", usage.Count(totals.Total()), calls, colText),
+		statTile("From the cache", cache, "of the prompt tokens read", colText),
+	}
+	switch pace, compare := report.Pace, report.Compare; {
+	case compare != nil:
+		ink, moved := colText, "same as"
+		if compare.Totals.Cost > 0 && totals.Cost != compare.Totals.Cost {
+			moved = fmt.Sprintf("%+.0f%%", (totals.Cost-compare.Totals.Cost)/compare.Totals.Cost*100)
+			if totals.Cost > compare.Totals.Cost {
+				ink = colAmber
+			}
+		}
+		tiles = append(tiles, statTile("Against "+strings.ToLower(compare.Label[:1])+compare.Label[1:], moved, "was "+usage.Money(compare.Totals.Cost), ink))
+	case pace != nil && pace.Day < pace.Days:
+		tiles = append(tiles, statTile("Month forecast", usage.Money(pace.Projected), fmt.Sprintf("at this pace · day %d of %d", pace.Day, pace.Days), colText))
+	default:
+		tiles = append(tiles, statTile("A day", usage.Money(totals.Cost/periodDays(report)), "on average", colText))
+	}
+	lines := container.New(layout.NewCustomPaddedVBoxLayout(10), container.NewGridWithColumns(4, tiles...))
 	if totals.Unpriced > 0 {
 		lines.Add(plainFlow(usage.Count(totals.Unpriced)+" tokens are on models with no known price and are not in the cost. Set a price under Prices.", 12.5, colMuted))
-	}
-	if compare := report.Compare; compare != nil {
-		lines.Add(plainFlow(fmt.Sprintf("%s: %s, %s tokens%s", compare.Label, usage.Money(compare.Totals.Cost), usage.Count(compare.Totals.Total()), change(totals.Cost, compare.Totals.Cost)), 13, colText))
-	}
-	if pace := report.Pace; pace != nil && pace.Day < pace.Days {
-		lines.Add(plainFlow(fmt.Sprintf("Pace: %s by day %d of %d, heading for %s this month.", usage.Money(pace.Spent), pace.Day, pace.Days, usage.Money(pace.Projected)), 13, colText))
 	}
 	return padded(0, 10, 0, 0, card(padded(14, 14, 16, 16, lines)))
 }
 
-// usageChart is the 30 days up to the period's end, its own days lit.
+// periodDays is how many days of the period have begun, at least one.
+func periodDays(report usage.Report) float64 {
+	end := time.Now()
+	if !report.To.IsZero() && report.To.Before(end) {
+		end = report.To
+	}
+	from := report.From
+	if from.IsZero() {
+		for _, day := range report.Days {
+			if day.Cost > 0 || day.Tokens > 0 {
+				from, _ = time.ParseInLocation("2006-01-02", day.Date, time.Local)
+				break
+			}
+		}
+	}
+	if from.IsZero() {
+		return 1
+	}
+	return math.Max(1, math.Ceil(end.Sub(from).Hours()/24))
+}
+
+// share is a row's part of the period: of the cost, or of the tokens when
+// nothing has a price.
+func share(row, total usage.Totals) float64 {
+	if total.Cost > 0 {
+		return row.Cost / total.Cost
+	}
+	if total.Total() > 0 {
+		return float64(row.Total()) / float64(total.Total())
+	}
+	return 0
+}
+
+// rowDetail is a row's second line: what it is, its tokens and calls.
+func rowDetail(row usage.Row) string {
+	parts := []string{}
+	if row.Detail != "" {
+		parts = append(parts, row.Detail)
+	}
+	calls := fmt.Sprintf("%d calls", row.Calls)
+	if row.Calls == 1 {
+		calls = "1 call"
+	}
+	return strings.Join(append(parts, usage.Count(row.Total())+" tokens", calls), " · ")
+}
+
+// shareRow is a breakdown row: its name and detail, a bar of its share of
+// the period with the percent, and its amount.
+func shareRow(title, detail string, part float64, control fyne.CanvasObject) fyne.CanvasObject {
+	name := plainFlow(title, 14, colText)
+	percent := textLine(usage.Percent(100*part), 12, colMuted)
+	percent.Alignment = fyne.TextAlignTrailing
+	bar := container.NewBorder(nil, nil, nil, sized(44, percent), container.NewVBox(layout.NewSpacer(), newLeftBar(100*part, -10, colAmber), layout.NewSpacer()))
+	text := container.New(layout.NewCustomPaddedVBoxLayout(4), name, plainFlow(detail, 12.5, colMuted), bar)
+	end := padded(0, 0, 20, 0, container.NewCenter(control))
+	return padded(12, 12, 16, 16, container.NewBorder(nil, nil, nil, end, text))
+}
+
+// usageChart is the 30 days up to the period's end, the period's own days
+// in the accent, on a scale with its peak and its middle marked, a date
+// under every seventh day.
 func usageChart(report usage.Report) fyne.CanvasObject {
-	highest := 0.0
 	byTokens := true
 	for _, day := range report.Days {
 		if day.Cost > 0 {
@@ -371,76 +473,161 @@ func usageChart(report usage.Report) fyne.CanvasObject {
 		}
 		return day.Cost
 	}
+	scale := func(v float64) string {
+		if byTokens {
+			return usage.Count(int(v))
+		}
+		return usage.Money(v)
+	}
+	highest, sum, active := 0.0, 0.0, 0
 	for _, day := range report.Days {
 		highest = math.Max(highest, value(day))
+		if value(day) > 0 {
+			sum += value(day)
+			active++
+		}
 	}
-	shape := &barsLayout{height: 96}
-	bars := container.New(shape)
+	chart := &dayChart{}
 	for _, day := range report.Days {
 		date, _ := time.ParseInLocation("2006-01-02", day.Date, time.Local)
 		lit := report.Period == "all" || !date.Before(report.From) && date.Before(report.To)
-		ink := colBorder
-		if lit {
-			ink = colAmber
-		}
-		bar := canvas.NewRectangle(ink)
-		bar.CornerRadius = 2
 		share := 0.0
 		if highest > 0 {
 			share = value(day) / highest
 		}
-		shape.shares = append(shape.shares, share)
-		bars.Add(bar)
+		chart.days = append(chart.days, chartDay{date: date, share: share, lit: lit})
 	}
-	top := "Last 30 days"
 	if highest > 0 {
-		if byTokens {
-			top += " · peak " + usage.Count(int(highest)) + " tokens a day"
-		} else {
-			top += " · peak " + usage.Money(highest) + " a day"
-		}
+		chart.top, chart.middle = scale(highest), scale(highest/2)
 	}
-	first, last := "", ""
-	if len(report.Days) > 0 {
-		first, last = shortDate(report.Days[0].Date), shortDate(report.Days[len(report.Days)-1].Date)
+	title := "Cost a day"
+	if byTokens {
+		title = "Tokens a day"
 	}
-	axis := container.NewBorder(nil, nil, textLine(first, 11.5, colFaint), textLine(last, 11.5, colFaint))
-	content := container.New(layout.NewCustomPaddedVBoxLayout(8), textLine(top, 12.5, colMuted), bars, axis)
+	heading := textLine(title+" · last 30 days", 13, colText)
+	heading.TextStyle = fyne.TextStyle{Bold: true}
+	facts := ""
+	if active > 0 {
+		facts = fmt.Sprintf("peak %s · %s on an active day", scale(highest), scale(sum/float64(active)))
+	}
+	period := legendSwatch(colAmber, strings.ToLower(report.Label[:1])+report.Label[1:])
+	if report.Period == "all" {
+		period = nil
+	}
+	top := container.NewBorder(nil, nil, heading, period, nil)
+	content := container.New(layout.NewCustomPaddedVBoxLayout(6), top, textLine(facts, 12, colMuted), newDayChart(chart))
 	return padded(0, 6, 0, 0, card(padded(14, 12, 16, 16, content)))
 }
 
-func shortDate(text string) string {
-	date, err := time.Parse("2006-01-02", text)
-	if err != nil {
-		return text
+// legendSwatch is a square of a colour and what it stands for.
+func legendSwatch(ink color.Color, name string) fyne.CanvasObject {
+	square := canvas.NewRectangle(ink)
+	square.CornerRadius = 2
+	return container.NewHBox(container.NewCenter(sized(10, container.NewGridWrap(fyne.NewSize(10, 10), square))), textLine(name, 12, colMuted))
+}
+
+type chartDay struct {
+	date  time.Time
+	share float64
+	lit   bool
+}
+
+// dayChart is the bars with their scale: lines at the peak, the middle and
+// zero, their values on the left, dates below.
+type dayChart struct {
+	widget.BaseWidget
+	days        []chartDay
+	top, middle string
+}
+
+func newDayChart(chart *dayChart) *dayChart {
+	chart.ExtendBaseWidget(chart)
+	return chart
+}
+
+const (
+	dayAxis   = 52
+	dayBottom = 20
+	dayHeight = 130
+)
+
+type dayChartRenderer struct {
+	chart   *dayChart
+	grid    [3]*canvas.Line
+	values  [2]*canvas.Text
+	bars    []*canvas.Rectangle
+	dates   []*canvas.Text
+	dateAt  []int
+	objects []fyne.CanvasObject
+}
+
+func (chart *dayChart) CreateRenderer() fyne.WidgetRenderer {
+	r := &dayChartRenderer{chart: chart}
+	for i := range r.grid {
+		r.grid[i] = canvas.NewLine(colBorderSoft)
+		r.grid[i].StrokeWidth = 1
+		r.objects = append(r.objects, r.grid[i])
 	}
-	return date.Format("2 Jan")
+	for i, text := range []string{chart.top, chart.middle} {
+		r.values[i] = textLine(text, 11, colFaint)
+		r.values[i].Alignment = fyne.TextAlignTrailing
+		r.objects = append(r.objects, r.values[i])
+	}
+	for i, day := range chart.days {
+		ink := colBorder
+		if day.lit {
+			ink = colAmber
+		}
+		bar := canvas.NewRectangle(ink)
+		bar.CornerRadius = 2
+		r.bars = append(r.bars, bar)
+		r.objects = append(r.objects, bar)
+		// A date under the last day and every seventh before it.
+		if (len(chart.days)-1-i)%7 == 0 {
+			text := textLine(day.date.Format("2 Jan"), 11, colFaint)
+			text.Alignment = fyne.TextAlignCenter
+			r.dates, r.dateAt = append(r.dates, text), append(r.dateAt, i)
+			r.objects = append(r.objects, text)
+		}
+	}
+	return r
 }
 
-// barsLayout sets bars side by side, standing on the bottom, each as tall
-// as its share of the tallest.
-type barsLayout struct {
-	height float32
-	shares []float64
-}
+func (r *dayChartRenderer) MinSize() fyne.Size { return fyne.NewSize(240, dayHeight+dayBottom) }
 
-func (bars *barsLayout) MinSize([]fyne.CanvasObject) fyne.Size { return fyne.NewSize(120, bars.height) }
-
-func (bars *barsLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	if len(objects) == 0 {
+func (r *dayChartRenderer) Layout(size fyne.Size) {
+	const top = 10 // the peak's value stands clear of the line above
+	plot := fyne.NewSize(size.Width-dayAxis, size.Height-dayBottom-top)
+	for i, line := range r.grid {
+		y := top + plot.Height*float32(i)/2
+		line.Position1, line.Position2 = fyne.NewPos(dayAxis, y), fyne.NewPos(size.Width, y)
+		if i < 2 {
+			r.values[i].Resize(fyne.NewSize(dayAxis-8, 14))
+			r.values[i].Move(fyne.NewPos(0, y-7))
+		}
+	}
+	if len(r.bars) == 0 {
 		return
 	}
-	slot := size.Width / float32(len(objects))
+	slot := plot.Width / float32(len(r.bars))
 	gap := float32(math.Min(4, float64(slot)/3))
-	for i, object := range objects {
+	for i, bar := range r.bars {
 		height := float32(2)
-		if i < len(bars.shares) && bars.shares[i] > 0 {
-			height = float32(math.Max(3, bars.shares[i]*float64(size.Height)))
+		if share := r.chart.days[i].share; share > 0 {
+			height = float32(math.Max(3, share*float64(plot.Height)))
 		}
-		object.Resize(fyne.NewSize(slot-gap, height))
-		object.Move(fyne.NewPos(float32(i)*slot, size.Height-height))
+		bar.Resize(fyne.NewSize(slot-gap, height))
+		bar.Move(fyne.NewPos(dayAxis+float32(i)*slot, top+plot.Height-height))
+	}
+	for i, text := range r.dates {
+		text.Resize(fyne.NewSize(50, 14))
+		text.Move(fyne.NewPos(dayAxis+float32(r.dateAt[i])*slot+(slot-gap)/2-25, top+plot.Height+5))
 	}
 }
+
+func (r *dayChartRenderer) Refresh()                     { r.Layout(r.chart.Size()) }
+func (r *dayChartRenderer) Destroy()                     {}
+func (r *dayChartRenderer) Objects() []fyne.CanvasObject { return r.objects }
 
 // openPrices lists the models used and their prices, each one editable.
 func (page *usagePage) openPrices() {

@@ -68,12 +68,16 @@ type Ledger struct {
 	records []Record            // by time
 	byChat  map[string][]Record // a chat's calls, and its subchats' under the parent's id with "/"
 	added   []func(Record)
+	limits  *limitLog // the subscription windows read over time (limits.go)
 }
 
 // Open reads the ledger at path; a missing file is an empty ledger, and a
 // line that cannot be read (a write cut short) is skipped.
 func Open(path string) *Ledger {
-	ledger := &Ledger{path: path}
+	ledger := &Ledger{path: path, limits: openLimits("")}
+	if path != "" {
+		ledger.limits = openLimits(filepath.Join(filepath.Dir(path), "usage-limits.jsonl"))
+	}
 	file, err := os.Open(path)
 	if err != nil {
 		return ledger

@@ -71,6 +71,7 @@ import (
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	registry "1loop/internal/settings"
+	"1loop/internal/usage"
 )
 
 const (
@@ -157,6 +158,23 @@ func (ui *desktopUI) startRemote() {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
 	for path, handler := range gitrepo.Handlers(phoneGitTarget{server}, githubconnector.Default.Authorizations) {
+		mux.HandleFunc(path, server.authorized(handler))
+	}
+	// The Usage screen: this computer's ledger, as a server serves its own.
+	names := func(group, key string) (name string) {
+		server.onUI(func() { name = server.ui.usageNames(group, key) })
+		return name
+	}
+	for path, handler := range usage.Handlers(ui.usage, ui.prices, names, func() { server.onUI(ui.usageChanged) }) {
+		if path == "GET /api/usage" {
+			serve := handler
+			handler = func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("chat") == "" {
+					server.ui.noteAllLimits(r.Context())
+				}
+				serve(w, r)
+			}
+		}
 		mux.HandleFunc(path, server.authorized(handler))
 	}
 	mux.HandleFunc("GET /api/hooks", server.authorized(remoteapi.GetHooks))

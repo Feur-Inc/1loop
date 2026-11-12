@@ -1145,6 +1145,7 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	ui.remote.metaChanged(chat)
 	ui.syncPresence()
 	ui.staleAccountLimits(chat.Config.ConnectionID)
+	ui.noteLimits(chat.Config.ConnectionID, 10*time.Minute, nil)
 	if run != nil && run.approval != nil {
 		run.approval.dismiss()
 	}

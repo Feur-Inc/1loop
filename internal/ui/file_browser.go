@@ -75,11 +75,10 @@ func buildFileBrowser(ctx context.Context, window fyne.Window, source fileSource
 		row := object.(*fyne.Container)
 		name, icon, size := row.Objects[0].(*canvas.Text), row.Objects[1].(*widget.Icon), row.Objects[2].(*canvas.Text)
 		name.Text = entry.Name
+		icon.SetResource(fileTypeIcon(entry.Name, entry.Dir))
 		if entry.Dir {
-			icon.SetResource(iconFolder)
 			size.Text = ""
 		} else {
-			icon.SetResource(iconDocument)
 			size.Text = byteSize(entry.Size)
 		}
 		name.Refresh()

@@ -211,19 +211,23 @@ type diffRowRenderer struct {
 	row       *diffRow
 	bg, mark  *canvas.Rectangle
 	old, next *canvas.Text
+	icon      *canvas.Image // the file's type, on a file row
 	code      []*canvas.Text
 }
 
 func (row *diffRow) CreateRenderer() fyne.WidgetRenderer {
 	old, next := textLine("", outputTextSize, colFaint), textLine("", outputTextSize, colFaint)
 	old.TextStyle.Monospace, next.TextStyle.Monospace = true, true
-	return &diffRowRenderer{row: row, bg: canvas.NewRectangle(colCode), mark: canvas.NewRectangle(color.Transparent), old: old, next: next}
+	icon := canvas.NewImageFromResource(nil)
+	icon.FillMode = canvas.ImageFillContain
+	icon.Hide()
+	return &diffRowRenderer{row: row, bg: canvas.NewRectangle(colCode), mark: canvas.NewRectangle(color.Transparent), old: old, next: next, icon: icon}
 }
 
 func (renderer *diffRowRenderer) MinSize() fyne.Size { return fyne.NewSize(renderer.row.width, 24) }
 func (renderer *diffRowRenderer) Destroy()           {}
 func (renderer *diffRowRenderer) Objects() []fyne.CanvasObject {
-	o := []fyne.CanvasObject{renderer.bg, renderer.mark, renderer.old, renderer.next}
+	o := []fyne.CanvasObject{renderer.bg, renderer.mark, renderer.old, renderer.next, renderer.icon}
 	for _, text := range renderer.code {
 		o = append(o, text)
 	}
@@ -240,6 +244,11 @@ func (renderer *diffRowRenderer) Layout(size fyne.Size) {
 	x := float32(102)
 	if renderer.row.line.kind == 'f' || renderer.row.line.kind == 'h' || renderer.row.line.kind == 'm' {
 		x = 14
+	}
+	if renderer.row.line.kind == 'f' {
+		renderer.icon.Resize(fyne.NewSize(18, 18))
+		renderer.icon.Move(fyne.NewPos(x, (size.Height-18)/2))
+		x += 26
 	}
 	for _, text := range renderer.code {
 		if !text.Visible() {
@@ -279,6 +288,13 @@ func (renderer *diffRowRenderer) Refresh() {
 	tokens := line.tokens
 	if len(tokens) == 0 {
 		tokens = []chroma.Token{{Type: chroma.Text, Value: line.text}}
+	}
+	if line.kind == 'f' {
+		renderer.icon.Resource = fileTypeIcon(line.text, false)
+		renderer.icon.Show()
+		renderer.icon.Refresh()
+	} else {
+		renderer.icon.Hide()
 	}
 	if line.kind == 'f' {
 		tokens = []chroma.Token{{Type: chroma.Text, Value: line.text + "   "},

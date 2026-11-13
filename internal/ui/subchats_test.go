@@ -18,7 +18,7 @@ import (
 func TestSubchatLinkSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	fresh := func() *desktopUI {
-		return &desktopUI{ctx: context.Background(), statePath: path, foldedProjects: map[string]bool{}, shortcutKeys: map[string]string{}}
+		return &desktopUI{desktopApp: &desktopApp{ctx: context.Background(), statePath: path, foldedProjects: map[string]bool{}, shortcutKeys: map[string]string{}}}
 	}
 	before := fresh()
 	parent := &conversation{ID: "parent", Title: "Main", Config: agent.Config{Workspace: "/src/app"}}
@@ -61,7 +61,7 @@ func TestSubchatLinkSurvivesRestart(t *testing.T) {
 // reached: unknown, itself, or on the 1loop server the window shows.
 // Past MaxChatHops nothing is sent.
 func TestChatAccessFinds(t *testing.T) {
-	ui := &desktopUI{ctx: context.Background(), server: &remoteDesktop{name: "build-box", chats: []remoteapi.Chat{{ID: "far", Title: "On the server"}}}}
+	ui := &desktopUI{desktopApp: &desktopApp{ctx: context.Background()}, server: &remoteDesktop{name: "build-box", chats: []remoteapi.Chat{{ID: "far", Title: "On the server"}}}}
 	parent := &conversation{ID: "parent", Title: "Main", Config: agent.Config{Workspace: "/src/app"}}
 	sub := &conversation{ID: "sub", Title: "Fix parser", Config: agent.Config{Workspace: "/src/app"}, Subchat: &agent.SubchatLink{Parent: "parent"}}
 	other := &conversation{ID: "other", Title: "Docs\nmore", Config: agent.Config{Workspace: "/src/docs"}}

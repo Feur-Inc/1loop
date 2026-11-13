@@ -9,13 +9,11 @@ package ui
 // permission (Fyne itself would call org.freedesktop.Notifications).
 
 import (
-	"slices"
-
 	"fyne.io/fyne/v2"
 )
 
 func (ui *desktopUI) notifyUser(chat *conversation, text string) {
-	if ui.inForeground && chat == ui.current {
+	if ui.inForeground && ui.showing(chat) { // on screen in one of the windows
 		return
 	}
 	title := chat.Title
@@ -23,10 +21,7 @@ func (ui *desktopUI) notifyUser(chat *conversation, text string) {
 		title = "1loop"
 	}
 	open := func() {
-		if slices.Contains(ui.chats, chat) { // not removed since
-			ui.openChat(chat)
-		}
-		ui.showWindow()
+		ui.openWhereShown(chat)
 	}
 	if sendClickableNotification(title, text, open) {
 		return

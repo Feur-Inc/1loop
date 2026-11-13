@@ -211,15 +211,12 @@ func TestSubchatLifecycle(t *testing.T) {
 		t.Fatalf("list %+v", list)
 	}
 
-	// /subchat from a subchat is refused; a subchat's tool has no start.
+	// A subchat's tool can start subchats of its own (#398), one level down.
 	server.mu.Lock()
-	if err := server.subchatCommandLocked(sub, "more"); err == nil {
-		t.Fatal("/subchat in a subchat")
-	}
 	subAccess := server.subchatAccess(sub)
 	server.mu.Unlock()
-	if subAccess.Start != nil || subAccess.ParentTitle != "Main" {
-		t.Fatalf("subchat access: start %v, parent %q", subAccess.Start != nil, subAccess.ParentTitle)
+	if subAccess.Start == nil || subAccess.ParentTitle != "Main" || subAccess.Depth != 1 {
+		t.Fatalf("subchat access: start %v, parent %q, depth %d", subAccess.Start != nil, subAccess.ParentTitle, subAccess.Depth)
 	}
 
 	// Stopping a subchat that is not working says so (#325); an unknown

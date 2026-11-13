@@ -272,11 +272,17 @@ type glassFooterLayout struct {
 
 func (layoutSpec *glassFooterLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
 	view, footer := o[0].MinSize(), o[3].MinSize()
+	// The open editor takes the room the conversation has: it never asks
+	// the window for more.
+	if editor := layoutSpec.ui.editor; editor != nil {
+		footer.Height -= editor.extra
+	}
 	return fyne.NewSize(fyne.Max(view.Width, footer.Width), view.Height+footer.Height)
 }
 
 func (layoutSpec *glassFooterLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
 	glass := layoutSpec.glass
+	layoutSpec.ui.editor.fit(size.Height, o[3].MinSize().Height)
 	footer := o[3].MinSize()
 	top := size.Height - footer.Height
 	o[0].Move(fyne.Position{})
@@ -287,7 +293,8 @@ func (layoutSpec *glassFooterLayout) Layout(o []fyne.CanvasObject, size fyne.Siz
 	glass.floor.Resize(fyne.NewSize(size.Width, footer.Height))
 	o[3].Move(fyne.NewPos(0, top))
 	o[3].Resize(fyne.NewSize(size.Width, footer.Height))
-	if space := layoutSpec.ui.footerSpace; space != nil && space.MinSize().Height != footer.Height {
+	// The open editor covers the conversation: its column keeps its room.
+	if space := layoutSpec.ui.footerSpace; space != nil && !layoutSpec.ui.editor.active() && space.MinSize().Height != footer.Height {
 		space.SetMinSize(fyne.NewSize(1, footer.Height))
 		fyne.Do(layoutSpec.ui.relayoutColumn) // after this layout: it lays the column out again
 	}

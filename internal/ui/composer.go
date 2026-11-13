@@ -53,6 +53,7 @@ type chatEntry struct {
 	measure  *widget.RichText
 	resized  func()
 	typing   func() // the text changed
+	sent     func() // the text was sent: the editor goes back to its place
 	fitting  bool
 	// Drafts (prompt_drafts.go): the conversation whose draft is shown, its
 	// undo history, and the last text seen.
@@ -322,29 +323,6 @@ func (layoutSpec composerSettingsLayout) Layout(o []fyne.CanvasObject, size fyne
 	}
 }
 
-// attachButtonLayout puts the "+" button at the left of the prompt, centred
-// on its first line however many lines the prompt grows to.
-type attachButtonLayout struct{}
-
-const attachButtonGap = 4.0 // between the "+" and the text field
-
-func (attachButtonLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
-	input, btn := objects[0], objects[1]
-	return fyne.NewSize(btn.MinSize().Width+attachButtonGap+input.MinSize().Width,
-		fyne.Max(input.MinSize().Height, btn.MinSize().Height))
-}
-
-func (attachButtonLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	input, btn := objects[0], objects[1]
-	btnSize := btn.MinSize()
-	btn.Resize(btnSize)
-	line := textSize("Ag", theme.TextSize(), fyne.TextStyle{}).Height
-	btn.Move(fyne.NewPos(0, fyne.Max(0, theme.InnerPadding()+line/2-btnSize.Height/2)))
-	reserved := btnSize.Width + attachButtonGap
-	input.Resize(fyne.NewSize(size.Width-reserved, size.Height))
-	input.Move(fyne.NewPos(reserved, 0))
-}
-
 // ---------------------------------------------------------------------------
 // Image attachments: pasted from the clipboard or picked from files, shown
 // as thumbnails above the prompt, and sent to the model as data URLs.
@@ -601,6 +579,7 @@ func (ui *desktopUI) takeAttachments() []core.ImagePart {
 // edited in the prompt, sent at once or dropped.
 
 func (ui *desktopUI) takeSteer(chat *conversation) []agent.Message {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	out := chat.steer
 	chat.steer = nil
 	if len(out) > 0 {
@@ -613,6 +592,7 @@ func (ui *desktopUI) takeSteer(chat *conversation) []agent.Message {
 }
 
 func (ui *desktopUI) takeNext(chat *conversation) (agent.Message, bool) {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	waiting := &chat.queue
 	if chat.run == nil && len(chat.steer) > 0 {
 		waiting = &chat.steer

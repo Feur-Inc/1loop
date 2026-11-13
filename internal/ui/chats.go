@@ -108,6 +108,7 @@ func (ui *desktopUI) chatAccess(chat *conversation) *agent.ChatAccess {
 
 // sendToChat delivers text from chat's agent to the chat id.
 func (ui *desktopUI) sendToChat(chat *conversation, id, text string) error {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	other, err := ui.findChat(chat, id)
 	if err != nil {
 		return err

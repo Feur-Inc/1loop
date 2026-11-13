@@ -7,8 +7,9 @@ package agent
 // in it. A subchat is an ordinary chat with a parent: the user opens, steers
 // or stops it like any other. Its turns that the parent caused (the brief, a
 // parent's message, its own background task) report to the parent when they
-// end, as a background task's end does. A subchat starts no subchat of its
-// own, and a chat runs at most MaxRunningSubchats at once.
+// end, as a background task's end does. A subchat can start subchats of its
+// own, down to MaxSubchatDepth levels below the chat the user started, and
+// a chat runs at most MaxRunningSubchats at once.
 //
 // The host (the desktop or the server) keeps the chats: SubchatAccess is
 // what the tool reaches of it.
@@ -28,6 +29,35 @@ import (
 
 // MaxRunningSubchats is how many subchats of one chat work at once.
 const MaxRunningSubchats = 4
+
+// MaxSubchatDepth is how deep subchats nest: the chat the user started is
+// level 0, its subchats level 1, theirs level 2, and so on. A chat at this
+// level starts no subchat.
+const MaxSubchatDepth = 3
+
+// SubchatDepth is a chat's level: how many parents it has, up to the first
+// one parentOf does not know (a deleted parent). It stops past
+// MaxSubchatDepth, so a loop of links cannot hang it.
+func SubchatDepth(id string, parentOf func(id string) string) int {
+	depth := 0
+	for depth <= MaxSubchatDepth {
+		parent := parentOf(id)
+		if parent == "" || parent == id {
+			break
+		}
+		depth++
+		id = parent
+	}
+	return depth
+}
+
+// SubchatLimit is why a chat at depth starts no subchat, "" when it can.
+func SubchatLimit(depth int) string {
+	if depth < MaxSubchatDepth {
+		return ""
+	}
+	return fmt.Sprintf("This chat is a subchat at level %d: the limit of %d levels of subchats is reached, so it cannot start another one. Do the work here, or ask the parent (chats tool, action message, id parent) to split it off", depth, MaxSubchatDepth)
+}
 
 // The states of a subchat, as the tool, the panel and the phone show them.
 const (
@@ -78,12 +108,14 @@ func (link *SubchatLink) Copy() *SubchatLink {
 }
 
 // SubchatAccess is the host's side of the subchat tool. ParentTitle is set
-// in a subchat, whose Start is nil. Messages go through the chats tool
+// in a subchat, and Depth is its level (SubchatDepth); Start is nil where
+// no subchat can start. Messages go through the chats tool
 // (chats.go). Model finds a model of the picker before the user is asked to
 // start a subchat with it, and gives its name; Stop fails for a subchat
 // that is not working.
 type SubchatAccess struct {
 	ParentTitle string
+	Depth       int
 	Start       func(ctx context.Context, request SubchatRequest) (SubchatInfo, error)
 	Model       func(ctx context.Context, name string) (string, error)
 	List        func(ctx context.Context) []SubchatInfo
@@ -267,8 +299,8 @@ func subchatToolDefinition() map[string]any {
 		"name": "subchat",
 		"description": "Start and follow subchats: separate conversations that run in parallel with this one, for work that should go on by itself (a separate fix, a follow-up, a long investigation) while the user keeps talking here. The user sees each subchat in the sidebar under this chat and can open, steer or stop it. " +
 			"start proposes one (the user approves it, depending on the approval mode) and returns at once with its id: title is short; brief is everything it needs, since it does not see this conversation unless context is fork: the task, the files, what done means. context: fresh (null) or fork (it gets this conversation so far). isolation: worktree (null: its own Git worktree and branch, from this folder's last commit; uncommitted changes are not in it) or shared (this folder, for read-only work). model: a model name from the model picker, null for this chat's. " +
-			"When a subchat's turn ends you receive its report (its last answer, branch) as a message: do not poll status in a loop. To send a subchat a follow-up, or in a subchat to ask the parent, use the chats tool (action message, id parent for the parent). status lists the subchats (id null) or one, with state, branch, last answer and context use. stop stops a subchat's turn. " +
-			"Use subchats for independent pieces of work, not for a quick step you can do here; a subchat cannot start subchats, and at most 4 work at once. Leave unused fields null.",
+			"When a subchat's turn ends you receive its report (its last answer, branch) as a message: do not poll status in a loop. To send a subchat a follow-up, or in a subchat to ask the parent, use the chats tool (action message, id parent for the parent). status lists the subchats (id null) or one, with state, branch, last answer and context use. stop stops a subchat's turn, and those of the subchats under it. " +
+			"Use subchats for independent pieces of work, not for a quick step you can do here; a subchat can start subchats of its own, down to " + fmt.Sprint(MaxSubchatDepth) + " levels below the chat the user started, and at most " + fmt.Sprint(MaxRunningSubchats) + " of one chat work at once. Leave unused fields null.",
 		"parameters": map[string]any{"type": "object", "additionalProperties": false,
 			"required": []string{"action", "id", "title", "brief", "text", "context", "isolation", "model"},
 			"properties": map[string]any{
@@ -293,7 +325,11 @@ func subchatInstructions(cfg Config) string {
 		tool, chats = "mcp__1loop_todo__subchat", "mcp__1loop_todo__chats"
 	}
 	if cfg.Subchats.ParentTitle != "" {
-		return "\n\nThis chat is a subchat of the conversation “" + cfg.Subchats.ParentTitle + "”: its first message is the brief from there. When a turn the parent asked for ends, your last answer is reported to it, so end with a short summary of what you did and where (branch, files). When you are blocked on something only the parent can decide, ask it with " + chats + " (action message, id parent) and end your turn: its answer comes back to you. Messages starting with [Message from the parent conversation come from it."
+		text := "\n\nThis chat is a subchat of the conversation “" + cfg.Subchats.ParentTitle + "”: its first message is the brief from there. When a turn the parent asked for ends, your last answer is reported to it, so end with a short summary of what you did and where (branch, files). When you are blocked on something only the parent can decide, ask it with " + chats + " (action message, id parent) and end your turn: its answer comes back to you. Messages starting with [Message from the parent conversation come from it."
+		if SubchatLimit(cfg.Subchats.Depth) == "" {
+			text += " It can start subchats of its own with " + tool + " for separate pieces of its work; you are told when their turns end."
+		}
+		return text
 	}
 	return "\n\nSubchats: for a separate piece of work that can run by itself while the user goes on here, start a subchat with " + tool + " rather than doing it in this chat; you are told when its turn ends."
 }
@@ -321,8 +357,11 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 	id := value(args.ID)
 	switch args.Action {
 	case "start":
+		if limit := SubchatLimit(access.Depth); limit != "" {
+			return "", fmt.Errorf("%s", limit)
+		}
 		if access.Start == nil {
-			return "", fmt.Errorf("A subchat cannot start subchats: ask the parent (chats tool, action message, id parent) if more work should split off")
+			return "", fmt.Errorf("This chat cannot start subchats: ask the parent (chats tool, action message, id parent) if more work should split off")
 		}
 		request := SubchatRequest{Title: value(args.Title), Brief: value(args.Brief), Context: value(args.Context), Isolation: value(args.Isolation), Model: value(args.Model)}
 		if request.Brief == "" {
@@ -397,8 +436,8 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 	case "status":
 		begin()
 		list := access.List(ctx)
-		if access.ParentTitle != "" && id == "" {
-			return "This chat is a subchat of “" + access.ParentTitle + "” and has no subchats of its own.", nil
+		if access.ParentTitle != "" && id == "" && len(list) == 0 {
+			return "This chat is a subchat of “" + access.ParentTitle + "” and has no subchats of its own yet.", nil
 		}
 		var lines []string
 		total := 0

@@ -26,8 +26,7 @@ const (
 func browserUI(t *testing.T) *desktopUI {
 	t.Helper()
 	test.NewTempApp(t)
-	ui := &desktopUI{ctx: context.Background(), home: testServer,
-		foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}}
+	ui := &desktopUI{desktopApp: &desktopApp{ctx: context.Background(), home: testServer, foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}}}
 	ui.sideGlide = newGlideLayout()
 	ui.projectList = container.New(ui.sideGlide)
 	ui.server = &remoteDesktop{parent: ui, client: &remoteClient{address: serverAddress{URL: testServer}}, name: "box",
@@ -112,7 +111,7 @@ func TestBrowserRemembersEachServersProjects(t *testing.T) {
 // in the order they were linked; unlinking one keeps the others.
 func TestBrowserServersArePairings(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
-	ui := &desktopUI{home: testServer}
+	ui := &desktopUI{desktopApp: &desktopApp{home: testServer}}
 	if got := ui.browserServers(); !slices.Equal(got, []serverAddress{{URL: testServer}}) {
 		t.Fatalf("before pairing: %v", got)
 	}

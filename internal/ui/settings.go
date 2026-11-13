@@ -187,7 +187,7 @@ func (view *settingsView) openOn(page string) {
 		ui.panelToggle.Hide()
 		ui.sideApp.Hide()
 		view.side.Show()
-		ui.split.Hide()
+		ui.paneArea().Hide()
 		view.view.Show()
 		ui.header.SetText("Settings")
 	}
@@ -212,10 +212,11 @@ func (view *settingsView) closeNow() {
 	view.side.Hide()
 	ui.sideApp.Show()
 	view.view.Hide()
-	ui.split.Show()
+	ui.paneArea().Show()
 	if view.panelOn {
 		ui.panelToggle.Show()
 	}
+	ui = ui.focused() // the pane with the focus, in a split window (panes.go)
 	ui.updateHeader()
 	ui.relayoutColumn()
 	ui.curtain.reveal()

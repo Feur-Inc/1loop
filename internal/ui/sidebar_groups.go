@@ -320,8 +320,7 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 		ui.addSide("chat:"+chat.id, padded(0, 0, 28, 0, ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, chat.menu)
 		})))
-		ui.addSubchatRows(chat.subchats, nil)
-
+		ui.addSubchatRows(chat.subchats, 1, trunkNone)
 	}
 	if len(chats) > groupChatLimit {
 		label := fmt.Sprintf("Show %d more", len(chats)-len(shown))
@@ -338,22 +337,34 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 	}
 }
 
-// addSubchatRows lists subchats under their parent's row as a tree:
-// each indented one step further than its parent, joined to it by a
-// connector line, with its own status dot. above says, for each level over
-// these rows, whether that level's line goes on below them.
-func (ui *desktopUI) addSubchatRows(subs []sideChat, above []bool) {
+// addSubchatRows lists subchats under their parent's row as a tree, as
+// Claude Code does: plain text, each level one step further in, a line down
+// the left of the first level that bends into its last subchat, and the
+// state's dot at the right. trunk is what that line does beside rows under
+// the first level.
+func (ui *desktopUI) addSubchatRows(subs []sideChat, depth int, trunk treeTrunk) {
 	for i, sub := range subs {
 		sub := sub
-		last := i == len(subs)-1
+		own := trunk // a deeper row: the line of its first-level ancestor
+		if depth == 1 {
+			own = trunkThrough
+			if i == len(subs)-1 {
+				own = trunkLast
+			}
+		}
 		subRow := newRow(sub.title, nil, styleNav, sub.open)
 		subRow.accent, subRow.truncate, subRow.selected = true, true, sub.selected
 		subRow.size = 13
-		guide := newSubchatGuide(append(slices.Clone(above), !last), sub.subchatState())
+		subRow.badge = subchatBadge(sub.subchatState())
+		guide := newSubchatGuide(depth, own)
 		ui.addSide("chat:"+sub.id, padded(0, 0, 28, 0, container.NewBorder(nil, nil, guide, nil, ui.withMore(subRow, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, sub.menu)
 		}))))
-		ui.addSubchatRows(sub.subchats, append(slices.Clone(above), !last))
+		below := own // under it, the line runs on only if more subchats follow
+		if own == trunkLast {
+			below = trunkNone
+		}
+		ui.addSubchatRows(sub.subchats, depth+1, below)
 	}
 }
 

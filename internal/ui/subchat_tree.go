@@ -2,12 +2,13 @@
 
 package ui
 
-// The tree of subchats in the sidebar (#398): each subchat sits one step
-// further in than its parent, joined to it by a connector line, with a dot
-// for its state, as Claude Code shows nested agents.
+// The tree of subchats in the sidebar (#398, #419), drawn as Claude Code
+// draws nested agents: each subchat is plain text one step further in than
+// its parent, a thin line runs down the left of a chat's subchats and bends
+// into the last one, and the state's dot sits at the right of the row.
 
 import (
-	"image/color"
+	"math"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -16,136 +17,128 @@ import (
 	"1loop/internal/agent"
 )
 
-// Where a subchat guide draws, in its own coordinates.
+// Where a subchat guide draws, in its own coordinates. The guide starts
+// where its parent chat's row does, whose text is 10 in.
 const (
-	treeStep   = 14  // from one level's line to the next
-	treeFirst  = 9   // the first level's line, from the guide's left edge
-	treeElbow  = 7   // the connector's run from its line toward the dot
-	treeDot    = 3.5 // the status dot's radius
+	treeStep   = 20 // each level's indent
+	treeLine   = 14 // the line, from the guide's left edge
+	treeReach  = 19 // where the bend into the last subchat ends
+	treeBend   = 4  // the bend's radius
 	treeStroke = 1
 )
 
-// subchatGuide is drawn left of a subchat's row: the lines of the levels
-// above it that go on below, its connector and its status dot. levels has
-// one entry per level down to the row's own: whether that level's line goes
-// on below the row (an ancestor, or the row itself, has a sibling after it).
+// treeTrunk is what the line down a chat's subchats does beside a row.
+type treeTrunk int
+
+const (
+	trunkNone    treeTrunk = iota // below the last subchat: the line has ended
+	trunkThrough                  // a subchat with another after it, or a row under one: the line runs past
+	trunkLast                     // the last subchat: the line bends into it
+)
+
+// subchatGuide is drawn left of a subchat's row: its indent, and beside it
+// the line down the subchats of the chat the user started.
 type subchatGuide struct {
 	widget.BaseWidget
-	levels []bool
-	state  string // agent.SubchatWorking, SubchatWaiting, SubchatDone, SubchatFailed, or "" when idle
+	depth int // the row's level: 1 under a chat the user started
+	trunk treeTrunk
 }
 
-func newSubchatGuide(levels []bool, state string) *subchatGuide {
-	guide := &subchatGuide{levels: levels, state: state}
+func newSubchatGuide(depth int, trunk treeTrunk) *subchatGuide {
+	guide := &subchatGuide{depth: depth, trunk: trunk}
 	guide.ExtendBaseWidget(guide)
 	return guide
 }
 
-// depth is the row's level: 1 under a chat the user started.
-func (guide *subchatGuide) depth() int { return len(guide.levels) }
-
-// lineX is where level's line runs, level counted from 1.
-func lineX(level int) float32 { return treeFirst + float32(level-1)*treeStep }
-
-// dotX is the centre of the status dot of a row at depth.
-func (guide *subchatGuide) dotX() float32 { return lineX(guide.depth()) + treeElbow + treeDot + 1 }
-
-// dotColor is the status dot's colour: amber while it works, green done,
-// red failed, grey idle.
-func (guide *subchatGuide) dotColor() color.NRGBA {
-	switch guide.state {
-	case agent.SubchatWorking, agent.SubchatWaiting:
-		return colAmber
-	case agent.SubchatDone:
-		return colAdded
-	case agent.SubchatFailed:
-		return colDanger
-	}
-	return colFaint
-}
-
 func (guide *subchatGuide) MinSize() fyne.Size {
-	return fyne.NewSize(guide.dotX()+treeDot+5, 1)
+	return fyne.NewSize(float32(guide.depth)*treeStep, 1)
 }
 
 func (guide *subchatGuide) CreateRenderer() fyne.WidgetRenderer {
 	renderer := &subchatGuideRenderer{guide: guide}
-	for range guide.levels {
-		renderer.lines = append(renderer.lines, canvas.NewLine(colBorder))
+	renderer.down = canvas.NewLine(colMuted)
+	renderer.across = canvas.NewLine(colMuted)
+	for i := 0; i < treeBendSegments; i++ {
+		renderer.bend = append(renderer.bend, canvas.NewLine(colMuted))
 	}
-	renderer.elbow = canvas.NewLine(colBorder)
-	renderer.below = canvas.NewLine(colBorder)
-	renderer.dot = canvas.NewCircle(colFaint)
 	renderer.Refresh()
 	return renderer
 }
 
+// treeBendSegments are the short lines the bend is made of.
+const treeBendSegments = 4
+
 type subchatGuideRenderer struct {
-	guide *subchatGuide
-	lines []*canvas.Line // one per level: the ones above the row, then its own down to the connector
-	elbow *canvas.Line   // from its line to the dot
-	below *canvas.Line   // its own line under the connector, toward the next sibling
-	dot   *canvas.Circle
+	guide  *subchatGuide
+	down   *canvas.Line   // the line down the left
+	bend   []*canvas.Line // its rounded corner into the last subchat
+	across *canvas.Line   // from the corner toward the row's text
 }
 
 func (renderer *subchatGuideRenderer) Layout(size fyne.Size) {
-	guide := renderer.guide
-	mid := size.Height / 2
-	depth := guide.depth()
-	for i, line := range renderer.lines {
-		x := lineX(i + 1)
-		line.Position1 = fyne.NewPos(x, 0)
-		line.Position2 = fyne.NewPos(x, size.Height)
-		if i == depth-1 { // its own: down to the connector
-			line.Position2 = fyne.NewPos(x, mid)
-		}
+	mid := float32(math.Round(float64(size.Height / 2)))
+	renderer.down.Position1 = fyne.NewPos(treeLine, 0)
+	renderer.down.Position2 = fyne.NewPos(treeLine, size.Height+1) // over the gap to the next row
+	if renderer.guide.trunk == trunkLast {
+		renderer.down.Position2 = fyne.NewPos(treeLine, mid-treeBend)
 	}
-	x := lineX(depth)
-	renderer.below.Position1, renderer.below.Position2 = fyne.NewPos(x, mid), fyne.NewPos(x, size.Height)
-	renderer.elbow.Position1, renderer.elbow.Position2 = fyne.NewPos(x, mid), fyne.NewPos(x+treeElbow, mid)
-	center := guide.dotX()
-	renderer.dot.Position1 = fyne.NewPos(center-treeDot, mid-treeDot)
-	renderer.dot.Position2 = fyne.NewPos(center+treeDot, mid+treeDot)
+	// a quarter circle from the line, going down, to the row, going right
+	centre := fyne.NewPos(treeLine+treeBend, mid-treeBend)
+	at := func(i int) fyne.Position {
+		angle := math.Pi - float64(i)*math.Pi/2/treeBendSegments
+		return fyne.NewPos(centre.X+treeBend*float32(math.Cos(angle)), centre.Y+treeBend*float32(math.Sin(angle)))
+	}
+	for i, line := range renderer.bend {
+		line.Position1, line.Position2 = at(i), at(i+1)
+	}
+	renderer.across.Position1 = fyne.NewPos(treeLine+treeBend, mid)
+	renderer.across.Position2 = fyne.NewPos(treeReach, mid)
 }
 
 func (renderer *subchatGuideRenderer) MinSize() fyne.Size { return renderer.guide.MinSize() }
 
 func (renderer *subchatGuideRenderer) Refresh() {
-	guide := renderer.guide
-	for i, line := range renderer.lines {
-		line.StrokeColor, line.StrokeWidth = colBorder, treeStroke
-		// a level above the row shows only while its line goes on below;
-		// the row's own always runs down to its connector
-		if i == guide.depth()-1 || guide.levels[i] {
-			line.Show()
-		} else {
-			line.Hide()
-		}
+	trunk := renderer.guide.trunk
+	for _, line := range renderer.lines() {
+		line.StrokeColor, line.StrokeWidth = colMuted, treeStroke
+		line.Hidden = trunk == trunkNone
 	}
-	renderer.elbow.StrokeColor, renderer.elbow.StrokeWidth = colBorder, treeStroke
-	renderer.below.StrokeColor, renderer.below.StrokeWidth = colBorder, treeStroke
-	if guide.depth() > 0 && guide.levels[guide.depth()-1] {
-		renderer.below.Show()
-	} else {
-		renderer.below.Hide()
+	for _, line := range append(renderer.bend, renderer.across) {
+		line.Hidden = trunk != trunkLast
 	}
-	ink := guide.dotColor()
-	renderer.dot.FillColor, renderer.dot.StrokeColor, renderer.dot.StrokeWidth = ink, ink, 0
-	if guide.state == agent.SubchatWaiting { // waiting on the user: a ring
-		renderer.dot.FillColor, renderer.dot.StrokeWidth = color.NRGBA{}, 1.5
+	renderer.Layout(renderer.guide.Size())
+	for _, line := range renderer.lines() {
+		line.Refresh()
 	}
-	renderer.Layout(guide.Size())
-	for _, object := range renderer.Objects() {
-		object.Refresh()
-	}
+}
+
+func (renderer *subchatGuideRenderer) lines() []*canvas.Line {
+	return append([]*canvas.Line{renderer.down, renderer.across}, renderer.bend...)
 }
 
 func (renderer *subchatGuideRenderer) Objects() []fyne.CanvasObject {
-	objects := make([]fyne.CanvasObject, 0, len(renderer.lines)+3)
-	for _, line := range renderer.lines {
+	objects := []fyne.CanvasObject{}
+	for _, line := range renderer.lines() {
 		objects = append(objects, line)
 	}
-	return append(objects, renderer.below, renderer.elbow, renderer.dot)
+	return objects
 }
 
 func (renderer *subchatGuideRenderer) Destroy() {}
+
+// subchatBadge is the dot at the right of a subchat's row for its state,
+// nil while it is idle: amber while it works, the waiting mark while it
+// waits on the user, green once done, red when it failed.
+func subchatBadge(state string) fyne.Resource {
+	switch state {
+	case agent.SubchatWorking:
+		return iconDot // tinted amber, as a chat at work
+	case agent.SubchatWaiting:
+		return iconWaiting
+	case agent.SubchatDone:
+		return tinted(iconDot, colAdded)
+	case agent.SubchatFailed:
+		return tinted(iconDot, colDanger)
+	}
+	return nil
+}

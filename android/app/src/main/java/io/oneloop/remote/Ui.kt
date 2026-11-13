@@ -1046,8 +1046,8 @@ private fun Composer(app: RemoteApp, running: Boolean) {
     val chatWorkspace = app.current?.let { id -> app.chats.firstOrNull { it.id == id }?.workspace }
     LaunchedEffect(app.current, chatWorkspace, project) {
         when {
-            app.current == null -> app.retainAttachments(project ?: app.workspace)
-            chatWorkspace != null -> app.retainAttachments(chatWorkspace)
+            app.current == null -> app.retainAttachments(draft, project ?: app.workspace)
+            chatWorkspace != null -> app.retainAttachments(draft, chatWorkspace)
             // Not listed yet: nothing is removed on a guess.
         }
     }
@@ -1078,8 +1078,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
         // The desktop's context line: the project and the computer.
         Row(Modifier.widthIn(max = 760.dp).fillMaxWidth().padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             ProjectChip(app, project) {
-                if (it != project) app.clearAttachments() // sent to the other project's folder
-                app.selectProject(it)
+                app.selectProject(it) // the files picked stay with this project's draft
             }
             Spacer(Modifier.width(4.dp))
             TargetChip(app)
@@ -1093,7 +1092,8 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 .background(Brush.verticalGradient(listOf(Palette.overlay.copy(alpha = 0.06f), Color.Transparent)), RoundedCornerShape(18.dp))
                 .border(1.dp, border, RoundedCornerShape(18.dp)).padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
         ) {
-            if (app.attachments.isNotEmpty()) AttachmentTray(app)
+            val staged = app.staged(draft)
+            if (staged.isNotEmpty()) AttachmentTray(app, staged)
             BasicTextField(
                 value, ::edit,
                 Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp, end = 6.dp).focusRequester(promptFocus).onPreviewKeyEvent { event ->
@@ -1132,8 +1132,9 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 val meta = app.meta
                 ContextRing(meta?.used?.takeIf { app.current != null } ?: 0, meta?.window?.takeIf { app.current != null && it > 0 } ?: app.defaultWindow)
                 // Not while a file is still on its way, or one failed and is still listed.
-                val blocked = app.attachments.any { it.sending || it.problem != null }
-                val ready = !blocked && (text.isNotBlank() || app.attachments.isNotEmpty())
+                val staged = app.staged(draft)
+                val blocked = staged.any { it.sending || it.problem != null }
+                val ready = !blocked && (text.isNotBlank() || staged.isNotEmpty())
                 val send = { mode: String ->
                     if (ready) {
                         app.send(text, mode, project)

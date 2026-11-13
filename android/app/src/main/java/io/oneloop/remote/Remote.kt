@@ -46,6 +46,7 @@ const val NO_FOLDER = "\u0000no-folder"
 data class Attachment(
     val key: String, val uri: android.net.Uri, val name: String, val size: Long, val image: Boolean,
     val folder: String, // the workspace it was sent to
+    val draft: String, // the draft it joins (RemoteApp.draftKey): other chats never show or send it
     val ready: JSONObject? = null, val problem: String? = null,
 ) {
     val sending get() = ready == null && problem == null
@@ -1255,7 +1256,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val target = server ?: return
         val draft = draftKey(project)
         // What this message carries, as it is now: files added meanwhile stay for the next one.
-        val sent = attachments.filter { it.ready != null }
+        val sent = attachments.filter { it.ready != null && it.draft == draft }
         val body = JSONObject().put("chat", current.orEmpty()).put("text", text).put("mode", mode)
             .put("workspace", project ?: chats.firstOrNull { it.id == current }?.workspace ?: selectedProject ?: workspace)
         if (current == null && body.optString("workspace") == NO_FOLDER) body.put("workspace", "").put("noFolder", true)
@@ -1591,6 +1592,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val target = server ?: return
         // The open chat's project, or the one a new chat starts in.
         val folder = project ?: chats.firstOrNull { it.id == current }?.workspace ?: selectedProject ?: workspace
+        val draft = draftKey(project)
         for (uri in uris) {
             var name = "file"
             var size = -1L
@@ -1605,10 +1607,10 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             val key = java.util.UUID.randomUUID().toString()
             val image = context.contentResolver.getType(uri)?.startsWith("image/") == true
             if (size > MAX_ATTACHMENT) {
-                attachments.add(Attachment(key, uri, name, size, image, folder, problem = "Larger than 64 MiB"))
+                attachments.add(Attachment(key, uri, name, size, image, folder, draft, problem = "Larger than 64 MiB"))
                 continue
             }
-            attachments.add(Attachment(key, uri, name, size, image, folder))
+            attachments.add(Attachment(key, uri, name, size, image, folder, draft))
             uploads[key] = scope.launch {
                 var reply: JSONObject? = null
                 var failure: String? = null
@@ -1745,7 +1747,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     /** A project file joins the next message, as an attached file does. */
     fun attachProjectFile(workspace: String, file: ProjectFile) {
         val ready = JSONObject().put("name", file.name).put("path", file.path).put("workspace", workspace)
-        attachments.add(Attachment(java.util.UUID.randomUUID().toString(), android.net.Uri.EMPTY, file.name, file.size, false, workspace, ready = ready))
+        attachments.add(Attachment(java.util.UUID.randomUUID().toString(), android.net.Uri.EMPTY, file.name, file.size, false, workspace, draftKey(null), ready = ready))
     }
 
     suspend fun sendProjectFile(workspace: String, file: ProjectFile, peer: Server, destination: String): String =
@@ -1787,9 +1789,12 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         attachments.removeAll { it.key == key }
     }
 
-    /** Leaves out the files sent to another workspace than the message's: it would refuse them. */
-    fun retainAttachments(workspace: String) {
-        attachments.filter { !it.belongsTo(workspace) }.forEach { removeAttachment(it.key) }
+    /** The files picked for the next message of this draft, kept while other chats are shown (#409). */
+    fun staged(draft: String) = attachments.filter { it.draft == draft }
+
+    /** Leaves out the draft's files sent to another workspace than the message's: it would refuse them. */
+    fun retainAttachments(draft: String, workspace: String) {
+        staged(draft).filter { !it.belongsTo(workspace) }.forEach { removeAttachment(it.key) }
     }
 
     fun clearAttachments() {

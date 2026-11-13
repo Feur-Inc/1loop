@@ -412,6 +412,17 @@ func runDesktop(backend *agent.App, root string) {
 	// Shown, named, then run: the desktop learns which application this is
 	// before the window's first frame, when it picks its name and icon.
 	ui.window.Show()
+	// Show makes the window; without an OpenGL driver it could not. On
+	// Windows the download's CPU-rendered copy then takes over
+	// (software_gl_windows.go).
+	if windowMissing(ui.window) && startSoftwareRenderer(func() {
+		if instance != nil {
+			instance.Close()
+		}
+		crash.Clean()
+	}) {
+		os.Exit(0)
+	}
 	if kind := os.Getenv("ONELOOP_BENCH"); kind != "" && platform.Dev != nil {
 		go ui.bench(kind)
 	}

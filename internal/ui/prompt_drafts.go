@@ -188,6 +188,9 @@ func (entry *chatEntry) switchDraft(key string) {
 	if entry.drafts == nil || (key == entry.draftKey && entry.draftBound) {
 		return
 	}
+	if entry.switched != nil && entry.draftBound {
+		entry.switched(entry.draftKey, key)
+	}
 	entry.draftKey, entry.draftBound = key, true
 	if draft := entry.drafts.get(key); entry.replace(draft) != draft {
 		entry.drafts.set(key, "") // attached instead: restored once

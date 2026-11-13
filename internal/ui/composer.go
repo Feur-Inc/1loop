@@ -47,8 +47,9 @@ type chatEntry struct {
 	keys     func(*fyne.KeyEvent) bool // the command menu's keys, true when it took one
 	onFocus  func(bool)
 	shortcut func(fyne.Shortcut) bool
-	paste    func() bool  // image-aware paste (Ctrl+V), true when it handled the key
-	oversize func(string) // takes a text too long for the prompt (textTooBig) as an attachment
+	paste    func() bool           // image-aware paste (Ctrl+V), true when it handled the key
+	oversize func(string)          // takes a text too long for the prompt (textTooBig) as an attachment
+	switched func(from, to string) // another conversation's draft is about to show
 	rows     int
 	measure  *widget.RichText
 	resized  func()
@@ -579,6 +580,35 @@ func (ui *desktopUI) renderAttachments() {
 	} else {
 		ui.attachTray.Show()
 	}
+}
+
+// parkedAttachments are the pictures and files staged in a draft that is
+// not shown: like its text, they wait for its conversation to come back.
+type parkedAttachments struct {
+	images []core.ImagePart
+	files  []fileAttachment
+}
+
+// switchAttachments sets aside the attachments of the draft being left and
+// brings back those of the draft about to show, so that a picture pasted in
+// one chat is never sent from another (#409). A server chat's own files are
+// dropped by remoteDesktop.selectChat.
+func (ui *desktopUI) switchAttachments(from, to string) {
+	if from == to {
+		return
+	}
+	if ui.parked == nil {
+		ui.parked = map[string]parkedAttachments{}
+	}
+	if len(ui.attachments)+len(ui.fileAttachments) > 0 {
+		ui.parked[from] = parkedAttachments{ui.attachments, ui.fileAttachments}
+	} else {
+		delete(ui.parked, from)
+	}
+	back := ui.parked[to]
+	delete(ui.parked, to)
+	ui.attachments, ui.fileAttachments = back.images, back.files
+	ui.renderAttachments()
 }
 
 // takeAttachments hands the staged pictures to a message and clears them.

@@ -208,6 +208,8 @@ func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 		"projectActions":    true,
 		"chats":             server.summariesLocked(),
 		"settings":          server.settingsLocked(),
+		"browser":           server.hasBrowser(), // false: no Browser Use here (the slim image)
+		"claudeCode":        hasClaudeCode(),     // false: no claude command (the slim image)
 	})
 }
 

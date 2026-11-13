@@ -4,11 +4,23 @@ package browser
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
+
+// NoBrowserProblem is what Browser Use answers where ONELOOP_BROWSER=none
+// turns it off: the slim server image, which has no Chromium.
+const NoBrowserProblem = "This server has no browser: it runs without Chromium (ONELOOP_BROWSER=none, as in the slim Docker image). Use the server image with Chromium for Browser Use."
+
+// Disabled says whether ONELOOP_BROWSER=none turns Browser Use off here:
+// no browser is looked for, and none is downloaded.
+func Disabled() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("ONELOOP_BROWSER")), "none")
+}
 
 // browserBinary is the browser to start, with what its process needs.
 type browserBinary struct {
@@ -19,8 +31,12 @@ type browserBinary struct {
 
 // findBrowser is the browser Browser Use starts: ONELOOP_CHROMIUM (the Nix
 // package sets it), else a Chromium, Chrome or Edge on the computer, else
-// 1loop's own Chromium, downloaded the first time.
+// 1loop's own Chromium, downloaded the first time. With ONELOOP_BROWSER=none,
+// none at all.
 func findBrowser(ctx context.Context) (browserBinary, error) {
+	if Disabled() {
+		return browserBinary{}, errors.New(NoBrowserProblem)
+	}
 	if path := os.Getenv("ONELOOP_CHROMIUM"); path != "" {
 		return browserBinary{path: path}, nil
 	}

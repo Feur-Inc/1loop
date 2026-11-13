@@ -1369,13 +1369,16 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 	var phones []fyne.CanvasObject
 	for i, pairedDevice := range ui.devices {
 		i := i
+		name := pairedDevice.Name
 		remove := newRow("Forget", iconTrash, styleChip, func() {
-			ui.devices = append(ui.devices[:i], ui.devices[i+1:]...)
-			ui.save()
-			if ui.remote != nil {
-				ui.remote.disconnectAll()
-			}
-			ui.prefs.show("Phone")
+			ui.confirm("Forget "+name+"?", name+" is unpaired from this computer: its access stops at once, and it must be paired again to use 1loop here.", "Forget", func() { // #428
+				ui.devices = append(ui.devices[:i], ui.devices[i+1:]...)
+				ui.save()
+				if ui.remote != nil {
+					ui.remote.disconnectAll()
+				}
+				ui.prefs.show("Phone")
+			})
 		})
 		phones = append(phones, settingRow(pairedDevice.Name, "Paired "+pairedDevice.Added.Format("2 Jan 2006 15:04"), remove))
 	}

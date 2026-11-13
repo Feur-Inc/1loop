@@ -52,6 +52,10 @@ func WebMain() {
 	ui.window.ShowAndRun()
 }
 
+// pairOriginAgain pairs with the page's own server again once this browser
+// forgot it (server_devices.go).
+func (ui *desktopUI) pairOriginAgain() { ui.connectOrigin() }
+
 // connectOrigin uses the token saved for this server, or pairs: at once
 // with the server's one-time setup link (#setup=… in the address).
 func (ui *desktopUI) connectOrigin() {

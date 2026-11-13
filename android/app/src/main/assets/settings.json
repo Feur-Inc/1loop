@@ -978,7 +978,7 @@
         "left"
       ],
       "kind": "shortcut",
-      "default": "Alt+Shift+ArrowLeft",
+      "default": "Shift+Alt+ArrowLeft",
       "where": "desktop"
     },
     {
@@ -1000,7 +1000,7 @@
         "right"
       ],
       "kind": "shortcut",
-      "default": "Alt+Shift+ArrowRight",
+      "default": "Shift+Alt+ArrowRight",
       "where": "desktop"
     },
     {
@@ -1022,7 +1022,7 @@
         "up"
       ],
       "kind": "shortcut",
-      "default": "Alt+Shift+ArrowUp",
+      "default": "Shift+Alt+ArrowUp",
       "where": "desktop"
     },
     {
@@ -1044,7 +1044,7 @@
         "down"
       ],
       "kind": "shortcut",
-      "default": "Alt+Shift+ArrowDown",
+      "default": "Shift+Alt+ArrowDown",
       "where": "desktop"
     },
     {

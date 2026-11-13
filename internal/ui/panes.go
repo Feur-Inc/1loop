@@ -27,6 +27,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/agent"
+	"1loop/internal/platform"
 )
 
 // splitNode is a window's layout: a pane, or two halves.
@@ -43,6 +44,7 @@ type splitNode struct {
 type savedSplit struct {
 	Chat     string      `json:"chat,omitempty"`
 	Window   bool        `json:"window,omitempty"`
+	Focus    bool        `json:"focus,omitempty"` // the pane had the focus
 	Vertical bool        `json:"vertical,omitempty"`
 	Ratio    float32     `json:"ratio,omitempty"`
 	First    *savedSplit `json:"first,omitempty"`
@@ -52,7 +54,7 @@ type savedSplit struct {
 const (
 	paneHeadHeight = 30
 	dividerSize    = 6
-	minPaneSize    = 260
+	minPaneSize    = 320
 )
 
 // windowOf is the first pane of ui's window.
@@ -160,11 +162,16 @@ func (ui *desktopUI) splitPane(chat *conversation, vertical bool) *desktopUI {
 		return nil
 	}
 	window := ui.windowOf()
+	if chat != nil && ui.viewOf(chat).current == chat && ui.viewOf(chat) == ui {
+		return ui // already there
+	}
+	vertical, fits := splitFits(ui.paneBox.Size(), vertical)
+	if !fits {
+		ui.notice("Split view", "This pane has no room for another beside it or under it. Make the window larger, or close a pane first.")
+		return nil
+	}
 	if chat != nil {
 		if from := ui.viewOf(chat); from.current == chat {
-			if from == ui {
-				return ui // already there
-			}
 			from.startNew()
 		}
 	}
@@ -185,6 +192,26 @@ func (ui *desktopUI) splitPane(chat *conversation, vertical bool) *desktopUI {
 	pane.window.Canvas().Focus(pane.prompt)
 	ui.save()
 	return pane
+}
+
+// splitFits is the way a pane of size splits: the one asked for when both
+// halves keep minPaneSize, else the other one, else none. A pane not laid
+// out yet (zero size) splits as asked.
+func splitFits(size fyne.Size, vertical bool) (bool, bool) {
+	room := func(vertical bool) bool {
+		length := size.Width
+		if vertical {
+			length = size.Height - paneHeadHeight // the new pane's header
+		}
+		return length >= 2*minPaneSize+dividerSize
+	}
+	switch {
+	case size.Width == 0 && size.Height == 0, room(vertical):
+		return vertical, true
+	case room(!vertical):
+		return !vertical, true
+	}
+	return vertical, false
 }
 
 // newPane builds a pane of window on the start screen of cfg's project.
@@ -508,6 +535,7 @@ func (ui *desktopUI) focusPane(dx, dy int) {
 			best, bestDistance = pane, distance
 		}
 	}
+	platform.Devf("ui", "focus %d,%d from %q: %v", dx, dy, from.paneTitle.text, best != nil)
 	if best != nil {
 		best.activate()
 		best.window.Canvas().Focus(best.prompt)
@@ -544,7 +572,7 @@ func (ui *desktopUI) savedLayout() *savedSplit {
 
 func (node *splitNode) saved(window *desktopUI) *savedSplit {
 	if node.pane != nil {
-		out := &savedSplit{Window: node.pane == window}
+		out := &savedSplit{Window: node.pane == window, Focus: node.pane == window.focused()}
 		if node.pane.current != nil && !out.Window {
 			out.Chat = node.pane.current.ID
 		}
@@ -560,8 +588,22 @@ func (window *desktopUI) restoreLayout(saved *savedSplit) {
 	if saved == nil || saved.First == nil || window.paneBox == nil || !saved.hasWindow() {
 		return
 	}
-	window.tree = window.restoreNode(saved, nil)
+	opens := map[*desktopUI]string{}
+	var focus *desktopUI
+	window.tree = window.restoreNode(saved, nil, opens, &focus)
 	window.layoutPanes()
+	// Once in the tree: a pane out of it is taken for a closed one (viewOf).
+	for _, pane := range window.panesOf() {
+		if chat := window.chatByID(opens[pane]); chat != nil && chat.server == nil && window.viewOf(chat).current != chat {
+			pane.openLocalChat(chat) // which gives it the focus
+		}
+	}
+	if focus == nil {
+		focus = window
+	}
+	focus.activate()
+	window.drawPaneFocus()
+	focus.window.Canvas().Focus(focus.prompt)
 }
 
 func (saved *savedSplit) hasWindow() bool {
@@ -571,31 +613,25 @@ func (saved *savedSplit) hasWindow() bool {
 	return saved.Window || saved.First.hasWindow() || saved.Second.hasWindow()
 }
 
-func (window *desktopUI) restoreNode(saved *savedSplit, parent *splitNode) *splitNode {
+func (window *desktopUI) restoreNode(saved *savedSplit, parent *splitNode, opens map[*desktopUI]string, focus **desktopUI) *splitNode {
 	node := &splitNode{parent: parent}
+	defer func() {
+		if saved.Focus && node.pane != nil {
+			*focus = node.pane
+		}
+	}()
 	switch {
 	case saved.Window:
 		node.pane = window
 	case saved.First == nil || saved.Second == nil:
 		node.pane = window.newPane(window.cfg)
-		if chat := window.chatByID(saved.Chat); chat != nil && chat.server == nil && window.viewOf(chat).current != chat {
-			node.pane.openLocalChat(chat)
-		}
+		opens[node.pane] = saved.Chat
 	default:
 		node.vertical, node.ratio = saved.Vertical, saved.Ratio
-		node.first = window.restoreNode(saved.First, node)
-		node.second = window.restoreNode(saved.Second, node)
+		node.first = window.restoreNode(saved.First, node, opens, focus)
+		node.second = window.restoreNode(saved.Second, node, opens, focus)
 	}
 	return node
-}
-
-// setColor gives the label another colour.
-func (label *fitLabel) setColor(c color.Color) {
-	if label.color == c {
-		return
-	}
-	label.color = c
-	label.Refresh()
 }
 
 // paneAt is the pane of ui's window under the point at (in the window),
@@ -621,4 +657,13 @@ func (ui *desktopUI) paneArea() fyne.CanvasObject {
 		return window.chatArea
 	}
 	return ui.split
+}
+
+// setColor gives the label another colour.
+func (label *fitLabel) setColor(c color.Color) {
+	if label.color == c {
+		return
+	}
+	label.color = c
+	label.Refresh()
 }

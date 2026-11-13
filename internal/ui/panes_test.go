@@ -96,7 +96,7 @@ func TestSplitSaved(t *testing.T) {
 	if err := json.Unmarshal(data, &saved); err != nil {
 		t.Fatal(err)
 	}
-	if !saved.First.Window || saved.First.Chat != "" || saved.Vertical || saved.Ratio != 0.5 {
+	if !saved.First.Window || !saved.First.Focus || saved.First.Chat != "" || saved.Vertical || saved.Ratio != 0.5 {
 		t.Fatalf("left = %s", data)
 	}
 	if second := saved.Second; !second.Vertical || second.Ratio != 0.3 || second.First.Chat != "r" || second.Second.Chat != "b" {
@@ -137,5 +137,26 @@ func TestPaneToward(t *testing.T) {
 	}
 	if ok, _ := paneToward(at, size, below, size, 1, 0); ok {
 		t.Error("the pane below is to the right")
+	}
+}
+
+// A pane splits the way asked while both halves keep their room, else the
+// other way, else not at all.
+func TestSplitFits(t *testing.T) {
+	for _, c := range []struct {
+		size           fyne.Size
+		asked          bool
+		vertical, fits bool
+	}{
+		{fyne.NewSize(1100, 760), false, false, true},
+		{fyne.NewSize(500, 760), false, true, true}, // too narrow: top and bottom
+		{fyne.NewSize(1100, 500), true, false, true},
+		{fyne.NewSize(500, 500), false, false, false},
+		{fyne.NewSize(0, 0), true, true, true}, // not laid out yet
+	} {
+		vertical, fits := splitFits(c.size, c.asked)
+		if vertical != c.vertical || fits != c.fits {
+			t.Errorf("splitFits(%v, %v) = %v, %v; want %v, %v", c.size, c.asked, vertical, fits, c.vertical, c.fits)
+		}
 	}
 }

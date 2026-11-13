@@ -415,7 +415,7 @@ func runDesktop(backend *agent.App, root string) {
 	// The launch sequence covers the first frames and only starts once the
 	// window is really on screen, otherwise it would play unseen.
 	launch := newLaunchScreen(ui.window.Canvas(), func() {
-		ui.window.Canvas().Focus(ui.prompt)
+		ui.window.Canvas().Focus(ui.focused().prompt) // a restored split's pane with the focus keeps it (panes.go)
 		ui.warnFlatpakPermissions()
 		if ui.stateProblem != "" {
 			ui.notice("Saved state unreadable", ui.stateProblem)

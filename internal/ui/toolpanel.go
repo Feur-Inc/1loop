@@ -186,9 +186,15 @@ func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size
 		ui.scroll.ScrollToBottom()
 		ui.followTail = true
 	}
-	// Folded, the panel waits just past the right edge of the window.
+	// Folded, the panel waits just past the right edge of the window,
+	// hidden: in a split window that is where the next pane is (panes.go).
 	objects[1].Move(fyne.NewPos(size.Width-width, 0))
 	objects[1].Resize(fyne.NewSize(full, size.Height))
+	if width <= 0 && layoutSpec.toolPanel.target <= 0 {
+		objects[1].Hide()
+	} else {
+		objects[1].Show()
+	}
 	objects[2].Move(fyne.NewPos(size.Width-width-4, 0))
 	objects[2].Resize(fyne.NewSize(8, size.Height-6))
 	if layoutSpec.toolPanel.target > 0 {

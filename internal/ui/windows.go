@@ -360,6 +360,7 @@ func (ui *desktopUI) adoptModels(from *desktopUI) {
 	if len(ui.model.Options) == 0 {
 		ui.model.placeholder = "No model available"
 		ui.model.refresh()
+		ui.send.Disable() // as in the main window: nothing to send to
 		return
 	}
 	selected := ui.model.Options[0]

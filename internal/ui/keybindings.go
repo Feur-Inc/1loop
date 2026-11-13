@@ -41,6 +41,7 @@ func (ui *desktopUI) shortcutActions() map[string]func() {
 			ui.window.Canvas().Focus(ui.prompt)
 		},
 		registry.ShortcutModel:        func() { ui.model.row.onTap() },
+		registry.ShortcutEditor:       func() { ui.editor.toggle() },
 		registry.ShortcutStop:         ui.stopRun,
 		registry.ShortcutCopyAnswer:   ui.copyLastAnswer,
 		registry.ShortcutPreviousChat: func() { ui.stepChat(-1) },

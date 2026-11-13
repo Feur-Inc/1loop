@@ -957,6 +957,31 @@
       "where": "desktop"
     },
     {
+      "key": "shortcuts.editor",
+      "section": "general",
+      "page": "Keyboard shortcuts",
+      "title": "Expand the message box",
+      "description": "Opens the message box as a large editor with line numbers over the conversation, or puts it back.",
+      "keywords": [
+        "shortcut",
+        "keyboard",
+        "hotkey",
+        "keybinding",
+        "keybind",
+        "key",
+        "editor",
+        "expand",
+        "prompt",
+        "composer",
+        "full",
+        "line numbers",
+        "multiline"
+      ],
+      "kind": "shortcut",
+      "default": "Ctrl+E",
+      "where": "desktop"
+    },
+    {
       "key": "shortcuts.model",
       "section": "general",
       "page": "Keyboard shortcuts",

@@ -171,6 +171,7 @@ type desktopUI struct {
 	updateRow *tapRow     // the sidebar's "Update available" row
 
 	// Composer
+	editor          *promptEditor // the message box as a tall editor (prompt_editor.go)
 	prompt          *chatEntry
 	attach          *tapRow
 	attachRow       *fyne.Container
@@ -750,7 +751,14 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		}
 		ui.updateCommandMenu()
 	}
-	ui.prompt.escape = func() { ui.finishEdit(false); ui.clearSelection() }
+	ui.prompt.escape = func() {
+		if ui.editor.open {
+			ui.editor.close()
+			return
+		}
+		ui.finishEdit(false)
+		ui.clearSelection()
+	}
 	ui.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
 		if key.Name == fyne.KeyEscape && ui.prefs.open { // Escape goes back a page, then to the conversation
 			ui.prefs.back()
@@ -893,7 +901,8 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.attachTray = padded(2, 4, 2, 0, container.NewHScroll(ui.attachRow))
 	ui.attachTray.Hide()
 	input := container.NewThemeOverride(ui.prompt, bareInputTheme{loopTheme{theme.DefaultTheme()}})
-	line := container.New(attachButtonLayout{}, input, ui.attach)
+	ui.editor = newPromptEditor(ui)
+	line := container.New(editorGrowLayout{ui.editor}, container.New(promptLineLayout{}, input, ui.attach, ui.editor.gutter, ui.editor.button))
 	pencil := canvas.NewImageFromResource(tinted(iconPencil, colAmber))
 	pencil.SetMinSize(fyne.NewSquareSize(14))
 	cancelEdit := newRow("Cancel", nil, styleChip, func() { ui.finishEdit(false) })

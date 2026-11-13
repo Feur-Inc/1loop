@@ -520,3 +520,43 @@ func SubchatWorktree(ctx context.Context, host gitrepo.Host, folder, title, id s
 func RemoveSubchatWorktree(ctx context.Context, host gitrepo.Host, folder string, force bool) (string, error) {
 	return gitrepo.RemoveWorktree(ctx, host, folder, gitrepo.Removal{Path: folder, Force: force, DeleteBranch: true})
 }
+
+// SubchatSubtree are the chats under root, its subchats and theirs at
+// every level, parents before their subchats; parents maps each chat to
+// its parent ("" for a chat the user started). A loop of links stops
+// where it comes back.
+func SubchatSubtree(root string, parents map[string]string) []string {
+	children := map[string][]string{}
+	for id, parent := range parents {
+		if parent != "" && parent != id {
+			children[parent] = append(children[parent], id)
+		}
+	}
+	for _, list := range children {
+		slices.Sort(list) // the same order on every call
+	}
+	seen := map[string]bool{root: true}
+	var out []string
+	for queue := []string{root}; len(queue) > 0; queue = queue[1:] {
+		for _, child := range children[queue[0]] {
+			if !seen[child] {
+				seen[child] = true
+				out = append(out, child)
+				queue = append(queue, child)
+			}
+		}
+	}
+	return out
+}
+
+// SubtreeNote is what deleting a chat with count chats under it says
+// about them, "" when it has none.
+func SubtreeNote(count int) string {
+	switch count {
+	case 0:
+		return ""
+	case 1:
+		return " Its subchat will be deleted with it."
+	}
+	return fmt.Sprintf(" Its %d subchats, at every level, will be deleted with it.", count)
+}

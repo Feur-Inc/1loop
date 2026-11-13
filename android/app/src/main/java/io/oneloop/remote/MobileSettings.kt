@@ -216,6 +216,7 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
                 }
             }
             Pill("Link a target") { app.linkTarget() }
+            if (app.server?.localPhone == false) ServerInstallSection(app) // Install Chromium / Claude Code (#406)
         }
         "models.connections" -> {
             Text("Connections", style = Type.title)

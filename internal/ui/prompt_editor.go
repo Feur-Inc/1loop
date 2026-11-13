@@ -63,6 +63,7 @@ func newPromptEditor(ui *desktopUI) *promptEditor {
 func (editor *promptEditor) active() bool { return editor != nil && (editor.open || editor.moving) }
 
 func (editor *promptEditor) toggle() {
+	editor.ui.tips.hide()
 	if editor.open {
 		editor.close()
 	} else {
@@ -282,7 +283,8 @@ func (gutter *lineGutter) update() {
 			ink = colMuted
 		}
 		label.Color = withAlpha(ink, gutter.alpha)
-		label.Move(fyne.NewPos(0, y+(row-textSize("0", label.TextSize, label.TextStyle).Height)/2))
+		// On the text's baseline, the digits being a little smaller.
+		label.Move(fyne.NewPos(0, y+(row-textSize("0", label.TextSize, label.TextStyle).Height)/2-2))
 		label.Resize(fyne.NewSize(gutter.width-10, row))
 		label.Show()
 		label.Refresh()

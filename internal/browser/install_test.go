@@ -109,3 +109,17 @@ func TestChromiumPackages(t *testing.T) {
 		t.Fatalf("packages: %q %v, want %q", got, err, want)
 	}
 }
+
+// Without /etc/fonts, Chromium's default fonts must still map to the
+// Liberation fonts of the same metrics, not to whichever font comes first.
+func TestFontAliases(t *testing.T) {
+	for _, want := range []string{
+		`<family>Times New Roman</family><prefer><family>Liberation Serif</family>`,
+		`<family>sans-serif</family><prefer><family>Liberation Sans</family>`,
+		`<family>monospace</family><prefer><family>Liberation Mono</family>`,
+	} {
+		if !strings.Contains(fontAliases, want) {
+			t.Fatalf("missing %s in\n%s", want, fontAliases)
+		}
+	}
+}

@@ -235,13 +235,28 @@ func installChromiumLibraries(ctx context.Context, dir, chrome string, progress 
   <include ignore_missing="yes">/etc/fonts/fonts.conf</include>
   <dir>` + xmlText(filepath.Join(target, "usr", "share", "fonts")) + `</dir>
   <cachedir>` + xmlText(filepath.Join(dir, "fontcache")) + `</cachedir>
-  <alias><family>sans-serif</family><prefer><family>Liberation Sans</family></prefer></alias>
-  <alias><family>serif</family><prefer><family>Liberation Serif</family></prefer></alias>
-  <alias><family>monospace</family><prefer><family>Liberation Mono</family></prefer></alias>
-</fontconfig>
+` + fontAliases + `</fontconfig>
 `
 	return os.WriteFile(filepath.Join(dir, "fonts.conf"), []byte(conf), 0644)
 }
+
+// fontAliases give the generic families, and the fonts pages name most
+// (Chromium's own defaults among them), the Liberation font of the same
+// metrics: without /etc/fonts, fontconfig would take any font, monospace
+// for a serif page.
+var fontAliases = func() string {
+	var aliases strings.Builder
+	for _, fonts := range [][]string{
+		{"Liberation Sans", "sans-serif", "Arial", "Helvetica", "Arimo"},
+		{"Liberation Serif", "serif", "Times New Roman", "Times", "Tinos"},
+		{"Liberation Mono", "monospace", "Courier New", "Courier", "Cousine"},
+	} {
+		for _, family := range fonts[1:] {
+			aliases.WriteString(`  <alias binding="same"><family>` + family + `</family><prefer><family>` + fonts[0] + `</family></prefer></alias>` + "\n")
+		}
+	}
+	return aliases.String()
+}()
 
 func xmlText(text string) string {
 	return strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;").Replace(text)

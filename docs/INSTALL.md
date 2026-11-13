@@ -314,9 +314,11 @@ and ScreenCast (GNOME and KDE do).
 3. Windows SmartScreen may say the app is unrecognized: choose
    **More info → Run anyway**.
 
-If the window stays blank (no OpenGL driver), start `1loop-software.cmd`: it
-uses the bundled Mesa CPU renderer. It needs the Microsoft Visual C++
-2015–2022 x64 runtime.
+On a PC without an OpenGL driver (a virtual machine, some remote desktops),
+1loop draws on the CPU by itself: the first time, it puts Mesa's
+`opengl32.dll` and `libgallium_wgl.dll` beside `1loop.exe` with a note,
+`1loop-software-gl.txt`, and starts again. Delete the three files to stop
+using them. Mesa needs the Microsoft Visual C++ 2015–2022 x64 runtime.
 
 1loop draws its own title bar, as on Linux; Windows still moves, resizes and
 maximises the window. Set the environment variable

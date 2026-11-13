@@ -450,7 +450,7 @@ func (server *headlessServer) requestMachine(w http.ResponseWriter, id string) (
 }
 
 // addMachineProject registers a folder of a machine as a project.
-func (server *headlessServer) addMachineProject(w http.ResponseWriter, r *http.Request, id, requested string, create bool, env map[string]string) {
+func (server *headlessServer) addMachineProject(w http.ResponseWriter, r *http.Request, id, requested string, create bool) {
 	machine, ok := server.requestMachine(w, id)
 	if !ok {
 		return
@@ -468,22 +468,13 @@ func (server *headlessServer) addMachineProject(w http.ResponseWriter, r *http.R
 		core.Fail(w, 409, "Another project already has the folder "+folder)
 		return
 	}
-	if listed := slices.Contains(server.projects, folder); !listed || env != nil {
-		before, previous := server.projectMachines, server.projectEnv[folder]
-		if !listed {
-			server.projects = append(server.projects, folder)
-			server.projectMachines = server.projectMachinesLocked()
-			server.projectMachines[folder] = id
-		}
-		if env != nil {
-			server.setProjectEnvLocked(folder, env)
-		}
+	if !slices.Contains(server.projects, folder) {
+		before := server.projectMachines
+		server.projects = append(server.projects, folder)
+		server.projectMachines = server.projectMachinesLocked()
+		server.projectMachines[folder] = id
 		if err := server.saveSettingsLocked(); err != nil {
-			if !listed {
-				server.projects = server.projects[:len(server.projects)-1]
-			}
-			server.projectMachines = before
-			server.setProjectEnvLocked(folder, previous)
+			server.projects, server.projectMachines = server.projects[:len(server.projects)-1], before
 			core.Fail(w, 500, "Unable to save the project")
 			return
 		}

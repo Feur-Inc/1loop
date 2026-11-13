@@ -169,7 +169,10 @@ func TestProjectOnSSHMachine(t *testing.T) {
 		body, _ := io.ReadAll(r.Body)
 		w.Header().Set("Content-Type", "text/event-stream")
 		if !strings.Contains(string(body), "made on the machine") { // the first turn: a command
-			fmt.Fprint(w, `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"shell","arguments":"{\"command\":\"echo made on the machine > made.txt && cat made.txt\"}"}}]}}]}`+"\n\n")
+			if strings.Contains(string(body), "proj-secret") {
+				t.Error("the project's variable was sent to the model")
+			}
+			fmt.Fprint(w, `data: {"choices":[{"index":0,"delta":{"tool_calls":[{"index":0,"id":"call_1","type":"function","function":{"name":"shell","arguments":"{\"command\":\"echo made on the machine \\\"$MADE_WITH\\\" > made.txt && cat made.txt\"}"}}]}}]}`+"\n\n")
 			fmt.Fprint(w, `data: {"choices":[{"index":0,"delta":{},"finish_reason":"tool_calls"}]}`+"\n\ndata: [DONE]\n\n")
 			return
 		}
@@ -236,6 +239,10 @@ func TestProjectOnSSHMachine(t *testing.T) {
 		t.Fatalf("the file browser refuses the machine's folder: %d %s", code, body)
 	}
 
+	// The project's variables (#408) reach its commands on the machine.
+	if code, body = call("POST", "/api/projects/env", map[string]any{"path": project, "env": map[string]string{"MADE_WITH": "proj-secret it's"}}, true); code != 200 {
+		t.Fatalf("set the project's variables: %d %s", code, body)
+	}
 	code, body = call("POST", "/api/send", map[string]any{"text": "make a file", "workspace": project}, true)
 	if code != 200 {
 		t.Fatalf("send: %d %s", code, body)
@@ -251,7 +258,7 @@ func TestProjectOnSSHMachine(t *testing.T) {
 			t.Fatal("the run did not finish")
 		}
 	}
-	if data, err := os.ReadFile(filepath.Join(project, "made.txt")); err != nil || string(data) != "made on the machine\n" {
+	if data, err := os.ReadFile(filepath.Join(project, "made.txt")); err != nil || string(data) != "made on the machine proj-secret it's\n" {
 		t.Fatalf("the command ran on the machine: %q, %v", data, err)
 	}
 	code, body = call("GET", "/api/state", nil, true)

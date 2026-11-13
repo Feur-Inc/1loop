@@ -404,3 +404,39 @@ func TestSubchatWorktree(t *testing.T) {
 		t.Fatalf("removed a worktree with changes: %v", err)
 	}
 }
+
+// A subchat starts subchats of its own (#398), down to MaxSubchatDepth: at
+// that level the tool refuses with the limit, before asking the user.
+func TestNestedSubchatStart(t *testing.T) {
+	host := &fakeSubchats{}
+	access := host.access("")
+	access.ParentTitle, access.Depth = "Main", 2
+	output, err, _ := runSubchat(t, access, true, true, map[string]any{"action": "start", "title": "Deeper", "brief": "Fix the lexer"})
+	if err != nil || !strings.Contains(output, "Started subchat s1") || len(host.started) != 1 {
+		t.Fatalf("a level-2 subchat's start: %q %v", output, err)
+	}
+	if text := subchatInstructions(Config{Subchats: access}); !strings.Contains(text, "start subchats of its own") {
+		t.Fatalf("level-2 instructions: %q", text)
+	}
+
+	access.Depth = MaxSubchatDepth
+	_, err, asked := runSubchat(t, access, false, true, map[string]any{"action": "start", "brief": "Fix more"})
+	if err == nil || !strings.Contains(err.Error(), "the limit of 3 levels") || len(asked) != 0 || len(host.started) != 1 {
+		t.Fatalf("a level-3 subchat's start: %v, asked %d", err, len(asked))
+	}
+	if text := subchatInstructions(Config{Subchats: access}); strings.Contains(text, "start subchats of its own") {
+		t.Fatalf("level-3 instructions: %q", text)
+	}
+	// The subchat lists its own subchats.
+	if output, _, _ := runSubchat(t, access, true, true, map[string]any{"action": "status"}); !strings.Contains(output, "s1 “Deeper”") {
+		t.Fatalf("status in a subchat: %q", output)
+	}
+
+	parents := map[string]string{"c3": "c2", "c2": "c1", "c1": "c0", "x": "y", "y": "x"}
+	if got := SubchatDepth("c3", func(id string) string { return parents[id] }); got != 3 {
+		t.Fatalf("depth %d", got)
+	}
+	if got := SubchatDepth("x", func(id string) string { return parents[id] }); got > MaxSubchatDepth+1 {
+		t.Fatalf("a loop's depth %d", got)
+	}
+}

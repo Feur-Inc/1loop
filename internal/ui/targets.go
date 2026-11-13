@@ -325,9 +325,9 @@ func (ui *desktopUI) sideChatOf(chat *conversation) sideChat {
 		{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
 		{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
 	}
-	parent := ""
+	parent, ended := "", ""
 	if chat.Subchat != nil {
-		parent = chat.Subchat.Parent
+		parent, ended = chat.Subchat.Parent, chat.Subchat.Ended
 		menu = append([]menuAction{{label: "Open parent", icon: iconSubchat, run: func() {
 			if parent := ui.parentOf(chat); parent != nil {
 				ui.openLocalChat(parent)
@@ -338,7 +338,7 @@ func (ui *desktopUI) sideChatOf(chat *conversation) sideChat {
 		}
 	}
 	return sideChat{
-		id: chat.ID, parent: parent,
+		id: chat.ID, parent: parent, ended: ended,
 		title: chat.Title, folder: chat.Config.Workspace, scratch: chat.Config.InScratch(), running: chat.run != nil, selected: chat == ui.current,
 		status: status, blocked: blocked,
 		open: func() { ui.openLocalChat(chat) },
@@ -364,7 +364,7 @@ func (ui *desktopUI) serverSideChats(target projectTarget, chats []remoteapi.Cha
 	for _, chat := range chats {
 		chat := chat
 		side = append(side, sideChat{
-			id: chat.ID, parent: chat.Parent,
+			id: chat.ID, parent: chat.Parent, ended: chat.Ended,
 			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
 			status: chat.Status, blocked: chat.Blocked,
 			selected: current != nil && current.server != nil && current.server.client.address.URL == target.id && current.serverID == chat.ID,

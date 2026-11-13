@@ -12,6 +12,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 
+	"1loop/internal/agent"
 	registry "1loop/internal/settings"
 )
 
@@ -23,6 +24,7 @@ const groupChatLimit = 5
 type sideChat struct {
 	id       string
 	parent   string // a subchat's parent, "" for another chat
+	ended    string // how a subchat's last turn ended: done, stopped or failed
 	title    string
 	folder   string // its project, or a worktree of it
 	scratch  bool   // in a folder 1loop made for it: listed under No folder
@@ -33,13 +35,14 @@ type sideChat struct {
 	open     func()
 	menu     []menuAction
 	text     func() []string // its messages, for search; nil when they are not at hand
-	subchats []sideChat      // listed under it, whatever their folder (nestSubchats)
+	subchats []sideChat      // listed under it, whatever their folder, each with its own (nestSubchats)
 	group    string          // the key of the group it is listed in (groupKey), once listed
 }
 
 // nestSubchats puts each subchat under its parent, wherever its folder is
-// (its worktree, or a parent's scratch folder). One whose parent is not
-// listed stays a chat of its own.
+// (its worktree, or a parent's scratch folder), as a tree: a subchat's own
+// subchats go under it, down to agent.MaxSubchatDepth. One whose parent is
+// not listed stays a chat of its own, and so does one of a loop of links.
 func nestSubchats(chats []sideChat) []sideChat {
 	listed := map[string]bool{}
 	for _, chat := range chats {
@@ -54,20 +57,50 @@ func nestSubchats(chats []sideChat) []sideChat {
 		}
 		top = append(top, chat)
 	}
+	placed := map[string]bool{}
+	var grow func(chat sideChat, depth int) sideChat
+	grow = func(chat sideChat, depth int) sideChat {
+		placed[chat.id] = true
+		chat.subchats = nil
+		for _, sub := range children[chat.id] {
+			if !placed[sub.id] && depth < agent.MaxSubchatDepth {
+				chat.subchats = append(chat.subchats, grow(sub, depth+1))
+			}
+		}
+		return chat
+	}
 	for i := range top {
-		top[i].subchats = children[top[i].id]
+		top[i] = grow(top[i], 0)
+	}
+	for _, chat := range chats { // in no tree from the top: listed on its own
+		if !placed[chat.id] {
+			top = append(top, grow(chat, 0))
+		}
 	}
 	return top
 }
 
-// openHere says whether the chat or one of its subchats is open.
+// openHere says whether the chat or a subchat under it is open.
 func (chat sideChat) openHere() bool {
-	return chat.selected || slices.ContainsFunc(chat.subchats, func(sub sideChat) bool { return sub.selected })
+	return chat.selected || slices.ContainsFunc(chat.subchats, sideChat.openHere)
 }
 
-// workingHere says whether the chat or one of its subchats is at work.
+// workingHere says whether the chat or a subchat under it is at work.
 func (chat sideChat) workingHere() bool {
-	return chat.running || slices.ContainsFunc(chat.subchats, func(sub sideChat) bool { return sub.running })
+	return chat.running || slices.ContainsFunc(chat.subchats, sideChat.workingHere)
+}
+
+// subchatState is a subchat's state as its dot in the sidebar shows it.
+func (chat sideChat) subchatState() string {
+	switch {
+	case chat.blocked && chat.running:
+		return agent.SubchatWaiting
+	case chat.running:
+		return agent.SubchatWorking
+	case chat.ended == agent.SubchatDone || chat.ended == agent.SubchatFailed:
+		return chat.ended
+	}
+	return "" // idle: not started yet, or stopped
 }
 
 // projectGroup is a project of the sidebar and the chats under it. The
@@ -287,18 +320,8 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 		ui.addSide("chat:"+chat.id, padded(0, 0, 28, 0, ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, chat.menu)
 		})))
-		for _, sub := range chat.subchats { // indented under it, with the subchat mark
-			sub := sub
-			subRow := newRow(sub.title, iconSubchat, styleNav, sub.open)
-			subRow.accent, subRow.truncate, subRow.selected = true, true, sub.selected
-			subRow.size = 13
-			if sub.running {
-				subRow.badge = iconDot
-			}
-			ui.addSide("chat:"+sub.id, padded(0, 0, 44, 0, ui.withMore(subRow, func(anchor fyne.CanvasObject) *sheet {
-				return showMenu(ui.window, anchor, sub.menu)
-			})))
-		}
+		ui.addSubchatRows(chat.subchats, nil)
+
 	}
 	if len(chats) > groupChatLimit {
 		label := fmt.Sprintf("Show %d more", len(chats)-len(shown))
@@ -312,6 +335,25 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 		more.ink = colFaint
 		more.size = 13
 		ui.addSide("more:"+key, padded(0, 0, 28, 0, more))
+	}
+}
+
+// addSubchatRows lists subchats under their parent's row as a tree:
+// each indented one step further than its parent, joined to it by a
+// connector line, with its own status dot. above says, for each level over
+// these rows, whether that level's line goes on below them.
+func (ui *desktopUI) addSubchatRows(subs []sideChat, above []bool) {
+	for i, sub := range subs {
+		sub := sub
+		last := i == len(subs)-1
+		subRow := newRow(sub.title, nil, styleNav, sub.open)
+		subRow.accent, subRow.truncate, subRow.selected = true, true, sub.selected
+		subRow.size = 13
+		guide := newSubchatGuide(append(slices.Clone(above), !last), sub.subchatState())
+		ui.addSide("chat:"+sub.id, padded(0, 0, 28, 0, container.NewBorder(nil, nil, guide, nil, ui.withMore(subRow, func(anchor fyne.CanvasObject) *sheet {
+			return showMenu(ui.window, anchor, sub.menu)
+		}))))
+		ui.addSubchatRows(sub.subchats, append(slices.Clone(above), !last))
 	}
 }
 

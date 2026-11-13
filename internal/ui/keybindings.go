@@ -263,6 +263,10 @@ func (ui *desktopUI) stopRun() {
 		ui.current.server.stop()
 		return
 	}
+	if ui.current != nil && ui.current.Subchat != nil { // a subchat stops with the subchats under it
+		ui.stopSubchat(ui.current)
+		return
+	}
 	if ui.current != nil && ui.current.run != nil {
 		ui.current.run.cancel()
 	}

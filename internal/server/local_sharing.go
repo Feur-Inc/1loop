@@ -182,13 +182,9 @@ func (server *headlessServer) revokeDevice(w http.ResponseWriter, r *http.Reques
 		core.Fail(w, 404, "Unknown device")
 		return
 	}
-	before := append([]remoteapi.PairedDevice{}, server.devices...)
-	server.devices = append(server.devices[:index], server.devices[index+1:]...)
-	if err := server.saveLocked(); err != nil {
-		server.devices = before
+	if err := server.removeDeviceLocked(index); err != nil { // the phone app reconnects at once
 		core.Fail(w, 500, err.Error())
 		return
 	}
-	server.disconnectStreamsLocked() // the phone app reconnects at once
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }

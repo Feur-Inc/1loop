@@ -269,6 +269,13 @@ random, travels in the URL's fragment (browsers never send it in a request
 line, so proxies do not log it), works once, and stops working as soon as a
 device is paired. Revoking the last device prints a new one.
 
+A paired device can also unpair devices: Settings → General on the desktop
+and in the browser (with the server in use) lists the devices paired with it,
+each with **Remove**, and **Forget** on a server unpairs this device there
+before forgetting it; the phone has the same under Settings → General →
+Linked targets. Both ask first. They use `GET /api/devices` and
+`POST /api/devices/{id}/revoke`.
+
 The console also accepts `devices` and `revoke <number>`. Revocation rejects
 new requests and disconnects active event/browser streams. It does not undo
 an operation already accepted by the server. The console stays the fallback

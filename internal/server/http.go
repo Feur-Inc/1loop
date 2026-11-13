@@ -125,6 +125,8 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/hooks":                               remoteapi.GetHooks,
 		"POST /api/hooks":                              remoteapi.SaveHooks,
 		"GET /api/chats/{id}/items/{index}/images/{n}": server.itemImage,
+		"GET /api/devices":                             server.pairedDevices,
+		"POST /api/devices/{id}/revoke":                server.revokePairedDevice,
 	}
 	if !server.local {
 		// The server's accounts, for its paired devices; the phone app's own

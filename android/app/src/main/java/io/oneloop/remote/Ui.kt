@@ -284,6 +284,7 @@ private fun localNetworkAllowed(context: Context) =
 @Composable
 fun ServersScreen(app: RemoteApp) {
     var adding by remember { mutableStateOf(false) }
+    var forgetting by remember { mutableStateOf<Server?>(null) } // a paired one, asked first (#428)
     val desktop = app.target != ExecutionTarget.RemoteServer
     val shown = app.servers.filter { it.desktop == desktop }
     val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> result.contents?.let(app::pairFromLink) }
@@ -334,7 +335,7 @@ fun ServersScreen(app: RemoteApp) {
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface)
                         .border(1.dp, Palette.borderSoft, RoundedCornerShape(14.dp))
-                        .combinedClickable(onClick = { app.choose(server) }, onLongClick = { app.forget(server) })
+                        .combinedClickable(onClick = { app.choose(server) }, onLongClick = { if (server.paired) forgetting = server else app.forget(server) })
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -378,6 +379,7 @@ fun ServersScreen(app: RemoteApp) {
             }
         }
         app.problem?.let { Text(it, style = Type.small.copy(color = Palette.danger), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 14.dp)) }
+        forgetting?.let { ForgetServerDialog(app, it) { forgetting = null } }
         Spacer(Modifier.height(24.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (desktop) Pill("Search again", icon = Icons.refresh, enabled = !app.scanning) { app.scan() }

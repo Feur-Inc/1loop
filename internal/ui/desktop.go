@@ -302,6 +302,7 @@ func useEnglishUI() {
 }
 
 func runDesktop(backend *agent.App, root string) {
+	softwareRendererStart() // Windows without an OpenGL driver (software_gl_windows.go)
 	useEnglishUI()
 	switchBackend()
 	// Once this is the process that stays (the build for the display, past
@@ -413,7 +414,7 @@ func runDesktop(backend *agent.App, root string) {
 	// before the window's first frame, when it picks its name and icon.
 	ui.window.Show()
 	// Show makes the window; without an OpenGL driver it could not. On
-	// Windows the download's CPU-rendered copy then takes over
+	// Windows 1loop then starts again drawing on the CPU
 	// (software_gl_windows.go).
 	if windowMissing(ui.window) && startSoftwareRenderer(func() {
 		if instance != nil {

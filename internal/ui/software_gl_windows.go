@@ -6,9 +6,9 @@ package ui
 
 // Without an OpenGL driver (a virtual machine, some remote desktops: only
 // "Microsoft Basic Display Adapter"), GLFW cannot make the window and 1loop
-// would run with nothing on screen. The Windows download carries a copy in
-// software\ that draws with Mesa on the CPU (packaging/windows/build.sh,
-// 1loop-software.cmd): 1loop starts it by itself instead.
+// would run with nothing on screen. The release carries Mesa, which draws on
+// the CPU (internal/softgl): 1loop puts it beside itself and starts again,
+// with nothing for the user to do.
 
 import (
 	"os"
@@ -18,7 +18,26 @@ import (
 	"unsafe"
 
 	"fyne.io/fyne/v2"
+
+	"1loop/internal/softgl"
 )
+
+// Mesa reads its driver once, as it loads with the exe: llvmpipe, its CPU
+// renderer, must be in the environment then. Without it Mesa picks a driver
+// this PC lacks and 1loop ends.
+const softwareDriver = "GALLIUM_DRIVER"
+
+// softwareRendererStart runs first: with Mesa beside the exe and no driver
+// chosen yet, 1loop starts again with llvmpipe, before anything is shown.
+func softwareRendererStart() {
+	dir, ok := exeDir()
+	if !ok || !softgl.Installed(dir) || os.Getenv(softwareDriver) != "" {
+		return
+	}
+	if relaunchSoftware() == nil {
+		os.Exit(0)
+	}
+}
 
 // windowMissing says the window could not be made: it has no handle.
 func windowMissing(window fyne.Window) bool {
@@ -27,31 +46,53 @@ func windowMissing(window fyne.Window) bool {
 	return missing
 }
 
-// startSoftwareRenderer starts the download's CPU-rendered copy, with the
-// same settings as 1loop-software.cmd, once release has let go of what the
-// copy needs (the one-instance claim) and noted a clean end. Without that
-// copy (the exe alone, out of the download), it says what is missing.
+// startSoftwareRenderer puts Mesa beside the exe and starts 1loop again
+// with it, once release has let go of what the next one needs (the
+// one-instance claim) and noted a clean end. When it cannot, it says why.
 // Either way this process has nothing left to show and should end: true.
 func startSoftwareRenderer(release func()) bool {
-	exe, err := os.Executable()
-	if err != nil {
+	dir, ok := exeDir()
+	if !ok {
 		return false
 	}
-	dir := filepath.Dir(exe)
-	software := filepath.Join(dir, "software", "1loop.exe")
 	release()
-	if _, err := os.Stat(filepath.Join(dir, "software", "opengl32.dll")); err != nil || filepath.Base(dir) == "software" {
-		messageBox("1loop cannot open its window",
-			"This PC has no OpenGL driver, which 1loop draws with (a virtual machine or a remote desktop often has none).\n\n"+
-				"Start 1loop from the full Windows download: its software folder draws without a driver.")
+	const title = "1loop cannot open its window"
+	switch {
+	case softgl.Installed(dir):
+		// Already drawn by Mesa, and still no window.
+		messageBox(title, "This PC has no OpenGL driver, and the renderer that draws without one failed too.")
+		return true
+	case !softgl.Available():
+		messageBox(title, "This PC has no OpenGL driver, which 1loop draws with (a virtual machine or a remote desktop often has none). This build of 1loop does not carry the renderer that draws without one: use the release from the download page.")
 		return true
 	}
-	command := exec.Command(software, os.Args[1:]...)
-	command.Env = append(os.Environ(), "GALLIUM_DRIVER=llvmpipe", "LP_NUM_THREADS=1")
-	if err := command.Start(); err != nil {
-		messageBox("1loop cannot open its window", "This PC has no OpenGL driver, and the copy that draws without one did not start:\n"+err.Error())
+	if err := softgl.Install(dir); err != nil {
+		messageBox(title, "This PC has no OpenGL driver, and 1loop could not put the renderer that draws without one in its folder:\n"+err.Error()+"\n\nMove the 1loop folder somewhere you can write, such as your user folder.")
+		return true
+	}
+	if err := relaunchSoftware(); err != nil {
+		messageBox(title, "1loop could not start again with the renderer that draws without a driver:\n"+err.Error())
 	}
 	return true
+}
+
+// relaunchSoftware starts this exe again, Mesa drawing on the CPU.
+func relaunchSoftware() error {
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	command := exec.Command(exe, os.Args[1:]...)
+	command.Env = append(os.Environ(), softwareDriver+"=llvmpipe")
+	return command.Start()
+}
+
+func exeDir() (string, bool) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", false
+	}
+	return filepath.Dir(exe), true
 }
 
 func messageBox(title, text string) {

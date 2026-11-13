@@ -82,11 +82,60 @@ in a container: pull the new image and recreate the container, and the
 volumes keep everything. To build it yourself: `docker build -t 1loop-server .`
 from the repository root.
 
+The slim image, without Chromium or Claude Code, is a much smaller download
+for a server that needs neither Browser Use nor Claude Code connections: tags
+`slim` and `0.3.3-slim`, `alpha-slim` and `alpha-slim-N`, or
+`docker build --target slim -t 1loop-server:slim .`. `/api/state` says what
+the server has: `"browser"` and `"claudeCode"` are `false` there. It sets `ONELOOP_BROWSER=none`: browser tabs do not open, and
+the agent's browser tools answer that this server has no browser instead of
+downloading one the image could not run. The same variable turns Browser Use
+off on any server.
+
+### Install Chromium and Claude Code later
+
+A server without them (the slim image, or any server without Chromium or
+`claude`) can download them when you need them: in a paired client, Settings →
+General shows **Install Chromium** and **Install Claude Code** for what the
+server lacks (desktop and browser client: under "On the server"; Android:
+under Linked targets). The server downloads them into its data folder, as its
+own user, without administrator rights, so they survive restarts and new
+images (`/data` in Docker):
+
+- **Chromium** goes to `<data>/chromium` (about 200 MB, plus the libraries
+  below): Google's Chrome for Testing, as
+  Browser Use downloads it on a desktop, checked against the MD5 checksum
+  Google's storage gives with the file (Google publishes no signature for
+  it), over HTTPS. It then has to start. The slim image lacks the system
+  libraries it needs (about 25, from GLib to NSS): the server then fetches
+  them with `apt-get` from the system's own Debian repositories, keeping
+  apt's lists and downloads in its data folder (no root, no lock); apt
+  checks the repositories' signatures and each package's checksum as for an
+  install. The packages are unpacked, not installed, into
+  `<data>/chromium/libraries` (about 250 MB, with the Liberation fonts), and
+  Chromium starts with them. A Chromium that still does not start is removed,
+  and the client shows why. Once installed, it overrides
+  `ONELOOP_BROWSER=none`, and it updates itself like the desktop's (once a
+  day, at most). Delete `<data>/chromium` to remove it.
+- **Claude Code** goes to `<data>/claude-code/claude` (about 350 MB): the latest release
+  from `downloads.claude.ai`, accepted only if its manifest carries
+  Anthropic's release signature (key `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`,
+  built into 1loop) and the binary its SHA-256, and if it starts. It is used
+  when there is no `claude` on `PATH` or in `~/.local/bin`. The slim image sets
+  `DISABLE_AUTOUPDATER=1`, so it keeps its version: delete the file and
+  install again to update it. Then sign in as above.
+
+The API: `POST /api/install/chromium` or `POST /api/install/claude-code`
+starts the download in the background (`202`, or `200` with
+`{"installed": true}` when it is there already). `/api/state` follows it under
+`"installs"`: `{"chromium": {"running": true, "text": "Downloading… 42% of
+193 MB"}}`, then `"error"` if it failed; `"browser"` and `"claudeCode"` turn
+`true` once installed. An `install` event says the same to the open clients.
+
 ### Claude Code in the image
 
-The image includes the Claude Code CLI (`claude`, Anthropic's native build),
-so a Claude Code connection works in a new container without installing
-anything. Its sign-in and settings are kept in the data volume, in
+The image (not the slim one) includes the Claude Code CLI (`claude`,
+Anthropic's native build), so a Claude Code connection works in a new
+container without installing anything. Its sign-in and settings are kept in the data volume, in
 `/data/claude` (`CLAUDE_CONFIG_DIR`, which holds both its `.claude` folder and
 its `.claude.json`): sign in once, and you stay signed in when the image is
 updated. Sign in with your Claude subscription (Pro or Max), in the container:

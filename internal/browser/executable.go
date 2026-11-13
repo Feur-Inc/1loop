@@ -4,11 +4,29 @@ package browser
 
 import (
 	"context"
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 )
+
+// NoBrowserProblem is what Browser Use answers where ONELOOP_BROWSER=none
+// turns it off: the slim server image, which has no Chromium.
+const NoBrowserProblem = "This server has no browser: it runs without Chromium (ONELOOP_BROWSER=none, as in the slim Docker image). Install Chromium from Settings, or use the server image with Chromium for Browser Use."
+
+// Disabled says whether Browser Use is off here: ONELOOP_BROWSER=none, and
+// no Chromium installed since with Install Chromium (InstallChromium). No
+// browser is looked for then, and none is downloaded.
+func Disabled() bool {
+	return noneAsked() && !Installed()
+}
+
+// noneAsked is ONELOOP_BROWSER=none, the slim image's.
+func noneAsked() bool {
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("ONELOOP_BROWSER")), "none")
+}
 
 // browserBinary is the browser to start, with what its process needs.
 type browserBinary struct {
@@ -19,8 +37,19 @@ type browserBinary struct {
 
 // findBrowser is the browser Browser Use starts: ONELOOP_CHROMIUM (the Nix
 // package sets it), else a Chromium, Chrome or Edge on the computer, else
-// 1loop's own Chromium, downloaded the first time.
+// 1loop's own Chromium, downloaded the first time. With ONELOOP_BROWSER=none,
+// only 1loop's Chromium once Install Chromium put it there, else none.
 func findBrowser(ctx context.Context) (browserBinary, error) {
+	own := func() (browserBinary, error) {
+		path, err := ownChromium(ctx)
+		return browserBinary{path: path, env: ownChromiumEnv(ChromiumDir()), own: true}, err
+	}
+	if noneAsked() {
+		if Installed() {
+			return own()
+		}
+		return browserBinary{}, errors.New(NoBrowserProblem)
+	}
 	if path := os.Getenv("ONELOOP_CHROMIUM"); path != "" {
 		return browserBinary{path: path}, nil
 	}
@@ -41,8 +70,7 @@ func findBrowser(ctx context.Context) (browserBinary, error) {
 	if path := browserExecutable(); path != "" {
 		return browserBinary{path: path}, nil
 	}
-	path, err := ownChromium(ctx)
-	return browserBinary{path: path, own: true}, err
+	return own()
 }
 
 func browserExecutable() string {

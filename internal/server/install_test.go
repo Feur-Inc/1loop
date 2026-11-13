@@ -77,7 +77,9 @@ func TestInstallRoutes(t *testing.T) {
 	if code, data := call("POST", "/api/install/chromium", nil); code != 202 {
 		t.Fatalf("install: %d %s", code, data)
 	}
-	until("progress", func(s state) bool { return s.Installs["chromium"].Text == "Downloading Chromium… 50%" && s.Installs["chromium"].Running })
+	until("progress", func(s state) bool {
+		return s.Installs["chromium"].Text == "Downloading Chromium… 50%" && s.Installs["chromium"].Running
+	})
 	if code, _ := call("POST", "/api/install/chromium", nil); code != 202 {
 		t.Fatalf("a second click joins the running install: %d", code)
 	}

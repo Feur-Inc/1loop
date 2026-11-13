@@ -689,22 +689,23 @@ func (server *remoteServer) renameChat(writer http.ResponseWriter, req *http.Req
 }
 
 func (server *remoteServer) deleteChat(writer http.ResponseWriter, req *http.Request) {
-	found := false
+	var deleted []string // the chat and its subchats at every level
 	server.onUI(func() {
 		chat := server.ui.chatByID(req.PathValue("id"))
 		if chat == nil {
 			return
 		}
-		found = true
-		server.ui.removeChat(chat)
-		delete(server.dirty, chat)
-		delete(server.meta, chat)
+		for _, gone := range server.ui.removeTree(chat) {
+			deleted = append(deleted, gone.ID)
+			delete(server.dirty, gone)
+			delete(server.meta, gone)
+		}
 	})
-	if !found {
+	if len(deleted) == 0 {
 		core.Fail(writer, http.StatusNotFound, "This chat no longer exists")
 		return
 	}
-	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
+	core.WriteJSON(writer, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
 }
 
 // clearBrowser is Settings → Tools & extensions → Browsing data → Clear, asked from the phone.

@@ -343,6 +343,7 @@ func startBackground(ctx context.Context, tasks *BackgroundTasks, root, dir, com
 	taskCtx, cancel := context.WithCancel(context.Background())
 	cmd := platform.ShellCommand(taskCtx, command)
 	platform.WorkspaceCommandIn(cmd, root, dir, platform.WorkspaceYOLO(ctx))
+	platform.ApplyProjectEnv(ctx, cmd)
 	if sandboxed {
 		if err := platform.SandboxCommand(cmd, root); err != nil {
 			cancel()
@@ -375,11 +376,13 @@ func backgroundStarted(id, command string) string {
 
 // startMachineBackground starts an approved command on the machine as a
 // task: stopping it ends the command and what it started there.
-func startMachineBackground(tasks *BackgroundTasks, machine Machine, root, command string) (string, error) {
+func startMachineBackground(ctx context.Context, tasks *BackgroundTasks, machine Machine, root, command string) (string, error) {
 	if tasks == nil {
 		return "", fmt.Errorf("Background tasks are not attached to this conversation")
 	}
+	// The task outlives the turn, but keeps the project's variables.
 	taskCtx, cancel := context.WithCancel(context.Background())
+	taskCtx = platform.WithProjectEnvPairs(taskCtx, platform.ProjectEnv(ctx))
 	begin := func(output io.Writer) (func() (int, error), error) {
 		return machine.Start(taskCtx, root, command, output)
 	}

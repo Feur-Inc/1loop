@@ -85,6 +85,8 @@ type serverSettings struct {
 	// SSH machines (machines.go), and the projects that are folders of one.
 	SSHMachines     []serverMachine   `json:"sshMachines,omitempty"`
 	ProjectMachines map[string]string `json:"projectMachines,omitempty"`
+	// Projects' environment variables (#408), by project folder.
+	ProjectEnv map[string]map[string]string `json:"projectEnv,omitempty"`
 }
 
 type headlessServer struct {
@@ -102,6 +104,7 @@ type headlessServer struct {
 	worktrees                  map[string]string              // worktree folder → project (worktrees.go)
 	machines                   []serverMachine                // SSH machines (machines.go)
 	projectMachines            map[string]string              // project folder there → machine ID
+	projectEnv                 map[string]map[string]string   // project folder → its environment variables (project_env.go)
 	connected                  map[string]*sshmachine.Machine // machines used since the start, by ID
 	trust                      *hostTrust
 	cfg                        agent.Config
@@ -204,6 +207,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		server.worktrees = settings.Worktrees
 		server.machines = settings.SSHMachines
 		server.projectMachines = settings.ProjectMachines
+		server.projectEnv = settings.ProjectEnv
 		server.cfg = settings.Config
 		server.connections = settings.Connections
 		if settings.Keys != nil {
@@ -756,6 +760,7 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	if machine := server.machineLocked(cfg.MachineID); machine != nil {
 		cfg.Machine = machine // else the run refuses: its machine was removed
 	}
+	cfg.Env = server.projectEnvLocked(cfg.Workspace)
 	cfg.UserInstructions = server.instructions
 	cfg.WrapUpOff = server.wrapUpOff
 	if !server.memoryOff {
@@ -1086,6 +1091,7 @@ func (server *headlessServer) saveSettingsLocked() error {
 		Worktrees:         server.worktrees,
 		SSHMachines:       server.machines,
 		ProjectMachines:   server.projectMachines,
+		ProjectEnv:        server.projectEnv,
 	})
 }
 

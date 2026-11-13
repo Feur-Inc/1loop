@@ -458,6 +458,7 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 			case "open":
 				dir, revision := chat.Config.Workspace, server.terminalRevision
 				parent := platform.WithWorkspaceMode(server.ctx, server.approvalMode == "yolo")
+				parent = platform.WithProjectEnv(parent, server.projectEnvLocked(chat.Config.Workspace))
 				host := mobileTerminalHost(server.bridge, ctx)
 				machine := server.machineLocked(chat.Config.MachineID)
 				server.mu.Unlock()

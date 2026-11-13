@@ -166,6 +166,8 @@ type desktopUI struct {
 	devices          []remoteapi.PairedDevice // phones paired with the remote
 	modelsLoading    bool
 	chrome           bool
+	// Projects' environment variables, by projectEnvKey (project_env.go).
+	projectEnv map[string]map[string]string
 
 	updates   updateState // the release page's latest version (updates.go)
 	updateRow *tapRow     // the sidebar's "Update available" row
@@ -1573,6 +1575,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 			cfg.Machine = machine
 		}
 	}
+	cfg.Env = ui.runEnv(cfg)
 	if chat.Cache == nil {
 		chat.Cache = &agent.ContextCache{}
 	}
@@ -1913,6 +1916,9 @@ type savedState struct {
 	Accent            string                `json:"accent,omitempty"`    // a preset or #rrggbb; amber when unset
 	// Each paired server's projects, as it last listed them (#359, #383).
 	ServerProjects map[string][]string `json:"serverProjects,omitempty"`
+	// Projects' environment variables (#408), by target and folder
+	// (projectEnvKey); a server's projects keep theirs on the server.
+	ProjectEnv map[string]map[string]string `json:"projectEnv,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1982,6 +1988,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.theme.theme,
 		ui.theme.accent,
 		ui.serverProjects,
+		ui.projectEnv,
 	})
 	if ui.panel != nil {
 		ui.panel.stash() // the open chat's panel, as it is now
@@ -2103,6 +2110,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.sshMachines, ui.machineProjects, ui.localWorkspace = state.SSHMachines, state.MachineProjects, state.LocalWorkspace
 	ui.worktrees, ui.worktreeSort = state.Worktrees, state.WorktreeSort
 	ui.serverProjects = state.ServerProjects
+	ui.projectEnv = state.ProjectEnv
 	ui.theme = themeChoice{theme: state.Theme, accent: state.Accent}
 	for _, project := range state.FoldedProjects {
 		ui.foldedProjects[project] = true

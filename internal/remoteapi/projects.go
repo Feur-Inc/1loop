@@ -67,6 +67,13 @@ func ProjectFolders(base, path string) (map[string]any, error) {
 	return map[string]any{"base": canonicalBase, "path": folder, "parent": parent, "separator": string(filepath.Separator), "folders": folders}, nil
 }
 
+// ProjectEnv is a project's environment variables (#408), as GET and
+// POST /api/projects/env read and replace them.
+type ProjectEnv struct {
+	Path string            `json:"path"`
+	Env  map[string]string `json:"env"`
+}
+
 type ProjectChange struct {
 	Path    string
 	Name    string

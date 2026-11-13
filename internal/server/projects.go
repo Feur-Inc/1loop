@@ -5,6 +5,7 @@ package server
 import (
 	"1loop/internal/agent"
 	"1loop/internal/core"
+	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	"context"
 	"fmt"
@@ -66,14 +67,21 @@ func (server *headlessServer) addProject(w http.ResponseWriter, r *http.Request)
 	var args struct {
 		Path    string
 		Create  bool
-		Machine string // an SSH machine's ID: the folder is there (machines.go)
+		Machine string            // an SSH machine's ID: the folder is there (machines.go)
+		Env     map[string]string // its environment variables (#408), when given
 	}
 	if core.ReadJSON(r, &args) != nil || args.Path == "" {
 		core.Fail(w, 400, "Choose a project folder")
 		return
 	}
+	for name := range args.Env {
+		if !platform.ValidEnvName(name) {
+			core.Fail(w, 400, "Not a variable name: "+name)
+			return
+		}
+	}
 	if args.Machine != "" {
-		server.addMachineProject(w, r, args.Machine, args.Path, args.Create)
+		server.addMachineProject(w, r, args.Machine, args.Path, args.Create, args.Env)
 		return
 	}
 	if server.local && filepath.Clean(args.Path) == server.projectBase() {
@@ -93,10 +101,24 @@ func (server *headlessServer) addProject(w http.ResponseWriter, r *http.Request)
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	if !slices.Contains(server.projects, folder) {
-		server.projects = append(server.projects, folder)
+	listed := slices.Contains(server.projects, folder)
+	if !listed || args.Env != nil {
+		if !listed {
+			server.projects = append(server.projects, folder)
+		}
+		previous, had := server.projectEnv[folder]
+		if args.Env != nil {
+			server.setProjectEnvLocked(folder, args.Env)
+		}
 		if err := server.saveSettingsLocked(); err != nil {
-			server.projects = server.projects[:len(server.projects)-1]
+			if !listed {
+				server.projects = server.projects[:len(server.projects)-1]
+			}
+			if had {
+				server.projectEnv[folder] = previous
+			} else {
+				delete(server.projectEnv, folder)
+			}
 			core.Fail(w, 500, "Unable to save the project")
 			return
 		}
@@ -158,6 +180,7 @@ func (server *headlessServer) changeProject(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	server.projects = projects
+	server.moveProjectEnvLocked(args.Path, destination)
 	kept := []*serverChat{}
 	var tabs []*serverTab
 	for _, chat := range server.chats {

@@ -206,6 +206,9 @@ func claudeCommand(ctx context.Context, home, dir string, extra ...string) (*exe
 	// One memory: 1loop's (its memory tool and AGENTS.md), which every model
 	// it runs reads.
 	cmd.Env = append(cmd.Env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
+	if machineOf(ctx) == nil { // its Bash tool runs here: the project's variables (#408)
+		cmd.Env = append(cmd.Env, platform.ProjectEnv(ctx)...)
+	}
 	// Keep the CLI and its children in a process group for bounded shutdown.
 	platform.PrepareProcess(cmd)
 	cmd.Cancel = func() error { return platform.InterruptProcess(cmd) }

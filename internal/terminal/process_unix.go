@@ -34,7 +34,7 @@ func NewTerminalProcess(ctx context.Context, dir string, hosts ...NativeHost) (P
 	}
 	command := exec.CommandContext(ctx, shell, "-i")
 	platform.WorkspaceCommand(command, dir, platform.WorkspaceYOLO(ctx))
-	command.Env = append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor")
+	command.Env = append(append(os.Environ(), "TERM=xterm-256color", "COLORTERM=truecolor"), platform.ProjectEnv(ctx)...)
 	file, err := pty.StartWithSize(command, &pty.Winsize{Rows: 30, Cols: 100})
 	if err != nil {
 		return nil, err

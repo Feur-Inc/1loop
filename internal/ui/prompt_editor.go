@@ -43,7 +43,8 @@ func newPromptEditor(ui *desktopUI) *promptEditor {
 	editor.gutter.Hide()
 	editor.button = newRow("", iconExpandEditor, styleWindow, editor.toggle)
 	editor.button.onHover = func(in bool) {
-		if !in {
+		// The button moves with the editor: no tip while it does.
+		if !in || editor.moving {
 			ui.tips.hide()
 			return
 		}
@@ -113,6 +114,7 @@ func (editor *promptEditor) animate(to float32) {
 		editor.gutter.fade(at)
 		if p >= 1 {
 			editor.moving = false
+			editor.ui.tips.hide() // asked for on the way, for where the button was
 			if to == 0 {
 				editor.gutter.Hide()
 			}

@@ -172,7 +172,7 @@ func (ui *desktopUI) envEditor(title string, env map[string]string, done func(ma
 	}
 	body := container.New(layout.NewCustomPaddedVBoxLayout(8),
 		note("Set for the shell commands, background tasks and terminals of this project's chats, where the project lives. They are not shown to the model, which reads one only by running a command that prints it."),
-		container.NewVScroll(list), container.NewHBox(addButton), problem)
+		list, container.NewHBox(addButton), problem)
 	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
 	dialog = ui.modal(title, body, 560, nil, cancel, newRow("Save", nil, stylePrimary, save))
 	if len(rows) > 0 && rows[0].name.Text == "" {

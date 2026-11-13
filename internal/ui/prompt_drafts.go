@@ -255,6 +255,9 @@ func (entry *chatEntry) changed(text string) {
 // clearSent empties the prompt once its message is on its way; Ctrl+Z
 // still brings the text back.
 func (entry *chatEntry) clearSent() {
+	if entry.sent != nil {
+		defer entry.sent()
+	}
 	if entry.drafts == nil {
 		entry.SetText("")
 		return

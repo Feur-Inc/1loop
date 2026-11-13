@@ -46,7 +46,7 @@ func TestPresenceKeepsTheChatPrivateUnlessShared(t *testing.T) {
 	started := time.Now().Add(-time.Minute)
 	chat := &conversation{Title: "Fix the login bug", Config: agent.Config{Model: "secret-model", Workspace: "/home/me/payroll"}}
 	chat.run = &chatRun{started: started, turn: &turn{chat: chat, label: "Running cat .env…", mark: "bash"}}
-	ui := &desktopUI{chats: []*conversation{{Title: "idle chat"}, chat}}
+	ui := &desktopUI{desktopApp: &desktopApp{chats: []*conversation{{Title: "idle chat"}, chat}}}
 
 	activity := ui.presenceActivity()
 	shown := activity.Details + " " + activity.State + " " + activity.LargeText

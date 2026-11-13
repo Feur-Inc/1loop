@@ -138,6 +138,7 @@ func (ui *desktopUI) attachmentMachine(id string) agent.Machine {
 // sendToChat delivers text, and the pictures and files (already in its
 // workspace) attached to it, from chat's agent to the chat id.
 func (ui *desktopUI) sendToChat(chat *conversation, id, text string, images []core.ImagePart, files []agent.FileAttachment) error {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	other, err := ui.findChat(chat, id)
 	if err != nil {
 		return err

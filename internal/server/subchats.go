@@ -79,8 +79,42 @@ func (server *headlessServer) wakeLocked(chat *serverChat, message agent.Message
 	server.runLocked(chat, message)
 }
 
-// subchatAccess is what the chat's subchat tool reaches: its subchats, or
-// in a subchat its parent.
+// subchatDepthLocked is a chat's level: 0 for a chat a user started, 1 for
+// its subchat, 2 for theirs (agent.MaxSubchatDepth).
+func (server *headlessServer) subchatDepthLocked(chat *serverChat) int {
+	return agent.SubchatDepth(chat.ID, func(id string) string {
+		if found := server.chatLocked(id); found != nil && found.Subchat != nil && server.chatLocked(found.Subchat.Parent) != nil {
+			return found.Subchat.Parent
+		}
+		return ""
+	})
+}
+
+// stopTreeLocked stops a chat's turn, and those of the subchats under it.
+func (server *headlessServer) stopTreeLocked(chat *serverChat, depth int) {
+	if chat.run != nil {
+		chat.run.cancel()
+	}
+	if depth > agent.MaxSubchatDepth { // a loop of links: stop there
+		return
+	}
+	for _, sub := range server.subchatsLocked(chat) {
+		server.stopTreeLocked(sub, depth+1)
+	}
+}
+
+// treeWorkingLocked says whether a subchat under chat, at any depth, works.
+func (server *headlessServer) treeWorkingLocked(chat *serverChat, depth int) bool {
+	for _, sub := range server.subchatsLocked(chat) {
+		if sub.run != nil || depth < agent.MaxSubchatDepth && server.treeWorkingLocked(sub, depth+1) {
+			return true
+		}
+	}
+	return false
+}
+
+// subchatAccess is what the chat's subchat tool reaches: its subchats, and
+// in a subchat its parent's title.
 func (server *headlessServer) subchatAccess(chat *serverChat) *agent.SubchatAccess {
 	access := &agent.SubchatAccess{
 		List: func(context.Context) (list []agent.SubchatInfo) {
@@ -98,18 +132,21 @@ func (server *headlessServer) subchatAccess(chat *serverChat) *agent.SubchatAcce
 			if sub == nil || sub.Subchat == nil || sub.Subchat.Parent != chat.ID {
 				return fmt.Errorf("No subchat %s here", id)
 			}
-			if sub.run == nil {
+			if sub.run == nil && !server.treeWorkingLocked(sub, 0) {
 				return agent.SubchatNotWorking(server.subchatInfoLocked(sub))
 			}
-			sub.run.cancel()
+			server.stopTreeLocked(sub, 0)
 			return nil
 		},
 	}
-	if chat.Subchat != nil { // one level: a subchat talks to its parent only
+	if chat.Subchat != nil {
 		access.ParentTitle = "(deleted)"
 		if parent := server.parentLocked(chat); parent != nil {
 			access.ParentTitle = parent.Title
 		}
+		access.Depth = server.subchatDepthLocked(chat)
+	}
+	if agent.SubchatLimit(access.Depth) != "" { // the deepest level: no subchat of its own
 		return access
 	}
 	access.Start = func(ctx context.Context, request agent.SubchatRequest) (agent.SubchatInfo, error) {
@@ -217,8 +254,8 @@ func (server *headlessServer) subchatCommandLocked(parent *serverChat, brief str
 		return fmt.Errorf("Write what the subchat should do after /subchat: the task, the files and what done means")
 	case parent == nil:
 		return fmt.Errorf("Open the conversation to start the subchat from first")
-	case parent.Subchat != nil:
-		return fmt.Errorf("A subchat cannot have subchats of its own")
+	case agent.SubchatLimit(server.subchatDepthLocked(parent)) != "":
+		return fmt.Errorf("This subchat is %d levels down, the most: start it from its parent", agent.MaxSubchatDepth)
 	}
 	running := 0
 	for _, sub := range server.subchatsLocked(parent) {

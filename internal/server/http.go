@@ -125,6 +125,8 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/hooks":                               remoteapi.GetHooks,
 		"POST /api/hooks":                              remoteapi.SaveHooks,
 		"GET /api/chats/{id}/items/{index}/images/{n}": server.itemImage,
+		"GET /api/devices":                             server.pairedDevices,
+		"POST /api/devices/{id}/revoke":                server.revokePairedDevice,
 	}
 	if !server.local {
 		// The server's accounts, for its paired devices; the phone app's own
@@ -206,6 +208,8 @@ func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 		"projectActions":    true,
 		"chats":             server.summariesLocked(),
 		"settings":          server.settingsLocked(),
+		"browser":           server.hasBrowser(), // false: no Browser Use here (the slim image)
+		"claudeCode":        hasClaudeCode(),     // false: no claude command (the slim image)
 	})
 }
 
@@ -593,7 +597,10 @@ func (server *headlessServer) stop(w http.ResponseWriter, r *http.Request) {
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	if chat := server.chatLocked(args.Chat); chat != nil && chat.run != nil {
+	if chat := server.chatLocked(args.Chat); chat != nil && chat.Subchat != nil { // a subchat stops with the subchats under it
+		server.stopTreeLocked(chat, 0)
+		chat.queue, chat.steer = nil, nil
+	} else if chat != nil && chat.run != nil {
 		chat.run.cancel()
 		chat.queue = nil
 		chat.steer = nil

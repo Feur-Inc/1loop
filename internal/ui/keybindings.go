@@ -24,10 +24,18 @@ import (
 // shortcutActions is what each shortcut does.
 func (ui *desktopUI) shortcutActions() map[string]func() {
 	return map[string]func(){
-		registry.ShortcutFind:       ui.findInChat,
-		registry.ShortcutSearch:     ui.search,
-		registry.ShortcutNewChat:    ui.startNew,
-		registry.ShortcutNewProject: ui.addProject,
+		registry.ShortcutFind:        ui.findInChat,
+		registry.ShortcutSearch:      ui.search,
+		registry.ShortcutNewChat:     ui.startNew,
+		registry.ShortcutNewProject:  ui.addProject,
+		registry.ShortcutNewWindow:   func() { ui.openWindow(nil) },
+		registry.ShortcutCloseWindow: ui.closePaneOrWindow,
+		registry.ShortcutSplitRight:  func() { ui.splitPane(nil, false) },
+		registry.ShortcutSplitDown:   func() { ui.splitPane(nil, true) },
+		registry.ShortcutPaneLeft:    func() { ui.focusPane(-1, 0) },
+		registry.ShortcutPaneRight:   func() { ui.focusPane(1, 0) },
+		registry.ShortcutPaneUp:      func() { ui.focusPane(0, -1) },
+		registry.ShortcutPaneDown:    func() { ui.focusPane(0, 1) },
 		registry.ShortcutSettings: func() {
 			if ui.prefs.open {
 				ui.prefs.close()
@@ -35,12 +43,13 @@ func (ui *desktopUI) shortcutActions() map[string]func() {
 				ui.settings()
 			}
 		},
-		registry.ShortcutSidebar: ui.toggleSidebar,
+		registry.ShortcutSidebar: ui.windowOf().toggleSidebar, // the window's (panes.go)
 		registry.ShortcutPrompt: func() {
 			ui.prefs.close()
 			ui.window.Canvas().Focus(ui.prompt)
 		},
 		registry.ShortcutModel:        func() { ui.model.row.onTap() },
+		registry.ShortcutEditor:       func() { ui.editor.toggle() },
 		registry.ShortcutStop:         ui.stopRun,
 		registry.ShortcutCopyAnswer:   ui.copyLastAnswer,
 		registry.ShortcutPreviousChat: func() { ui.stepChat(-1) },
@@ -174,7 +183,7 @@ func (ui *desktopUI) registerShortcuts() {
 	ui.registered = ui.registered[:0]
 	for _, setting := range registry.Shortcuts() {
 		if shortcut, ok := fyneShortcut(ui.shortcutFor(setting.Key)); ok {
-			canvas.AddShortcut(shortcut, func(s fyne.Shortcut) { ui.shortcut(s) })
+			canvas.AddShortcut(shortcut, func(s fyne.Shortcut) { ui.focused().shortcut(s) }) // the pane with the focus (panes.go)
 			ui.registered = append(ui.registered, shortcut)
 		}
 	}
@@ -261,6 +270,10 @@ func (ui *desktopUI) resetShortcuts() {
 func (ui *desktopUI) stopRun() {
 	if ui.current != nil && ui.current.server != nil {
 		ui.current.server.stop()
+		return
+	}
+	if ui.current != nil && ui.current.Subchat != nil { // a subchat stops with the subchats under it
+		ui.stopSubchat(ui.current)
 		return
 	}
 	if ui.current != nil && ui.current.run != nil {

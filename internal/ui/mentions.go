@@ -91,6 +91,7 @@ func (ui *desktopUI) chatMentions() []agent.Mention {
 // mentionsFor are a local chat's mentions (the new chat's when chat is
 // nil), with the tools a run of it gets.
 func (ui *desktopUI) mentionsFor(chat *conversation) []agent.Mention {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	cfg := ui.cfg
 	if chat != nil && ui.current != chat {
 		cfg = chat.Config // the composer's model is the open chat's

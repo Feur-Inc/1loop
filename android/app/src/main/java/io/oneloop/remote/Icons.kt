@@ -31,6 +31,8 @@ object Icons {
     val chevronRight = lineIcon("chevron-right", line("M6.5 4.5 10 8l-3.5 3.5"))
     val check = lineIcon("check", line("M3.5 8.4 6.6 11.4 12.5 4.8"))
     val close = lineIcon("close", line("M4.5 4.5l7 7M11.5 4.5l-7 7"))
+    val expandEditor = lineIcon("expand-editor", line("M9.5 2.5h4v4M13.5 2.5 9 7M6.5 13.5h-4v-4M2.5 13.5 7 9"))
+    val collapseEditor = lineIcon("collapse-editor", line("M13.5 6.5h-4v-4M9.5 6.5 14 2M2.5 9.5h4v4M6.5 9.5 2 14"))
     val chats = lineIcon("chats", line("M4 3h8a1.5 1.5 0 0 1 1.5 1.5v6A1.5 1.5 0 0 1 12 12H7l-3.5 2v-2A1.5 1.5 0 0 1 2 10.5v-6A1.5 1.5 0 0 1 4 3z"), line("M5 6h6M5 9h4"))
     val search = lineIcon("search", line("M7 2.7a4.3 4.3 0 1 0 0 8.6a4.3 4.3 0 1 0 0-8.6z"), line("M10.2 10.2 13.5 13.5"))
     val folderAdd = lineIcon("folder-add", line("M2.5 5c0-.8.6-1.5 1.4-1.5h2.7l1.3 1.4h4.2c.8 0 1.4.6 1.4 1.4v4.9c0 .8-.6 1.3-1.4 1.3H3.9c-.8 0-1.4-.5-1.4-1.3z"), line("M8 7.3v3.4M6.3 9h3.4"))

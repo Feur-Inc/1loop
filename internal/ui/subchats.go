@@ -56,8 +56,19 @@ func (ui *desktopUI) subchatInfo(chat *conversation) agent.SubchatInfo {
 		Used: used, Last: agent.LastAnswer(chat.Items), Provider: chat.Config.Provider}
 }
 
-// subchatAccess is what the chat's subchat tool reaches: its subchats, or
-// in a subchat its parent.
+// subchatDepth is a chat's level: 0 for a chat the user started, 1 for
+// its subchat, 2 for theirs (agent.MaxSubchatDepth).
+func (ui *desktopUI) subchatDepth(chat *conversation) int {
+	return agent.SubchatDepth(chat.ID, func(id string) string {
+		if found := ui.chatByID(id); found != nil && found.Subchat != nil && ui.chatByID(found.Subchat.Parent) != nil {
+			return found.Subchat.Parent
+		}
+		return ""
+	})
+}
+
+// subchatAccess is what the chat's subchat tool reaches: its subchats, and
+// in a subchat its parent's title.
 func (ui *desktopUI) subchatAccess(chat *conversation) *agent.SubchatAccess {
 	access := &agent.SubchatAccess{
 		List: func(ctx context.Context) (list []agent.SubchatInfo) {
@@ -75,7 +86,7 @@ func (ui *desktopUI) subchatAccess(chat *conversation) *agent.SubchatAccess {
 					err = fmt.Errorf("No subchat %s here", id)
 					return
 				}
-				if sub.run == nil {
+				if sub.run == nil && !ui.treeWorking(sub) {
 					err = agent.SubchatNotWorking(ui.subchatInfo(sub))
 					return
 				}
@@ -84,11 +95,14 @@ func (ui *desktopUI) subchatAccess(chat *conversation) *agent.SubchatAccess {
 			return err
 		},
 	}
-	if chat.Subchat != nil { // one level: a subchat talks to its parent only
+	if chat.Subchat != nil {
 		access.ParentTitle = "(deleted)"
 		if parent := ui.parentOf(chat); parent != nil {
 			access.ParentTitle = parent.Title
 		}
+		access.Depth = ui.subchatDepth(chat)
+	}
+	if agent.SubchatLimit(access.Depth) != "" { // the deepest level: no subchat of its own
 		return access
 	}
 	access.Start = func(ctx context.Context, request agent.SubchatRequest) (agent.SubchatInfo, error) {
@@ -196,9 +210,20 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 	return info, err
 }
 
+// stopSubchat stops a subchat's turn, and those of the subchats under it.
 func (ui *desktopUI) stopSubchat(sub *conversation) {
-	if sub.run != nil {
-		sub.run.cancel()
+	ui.stopTree(sub, 0)
+}
+
+func (ui *desktopUI) stopTree(chat *conversation, depth int) {
+	if chat.run != nil {
+		chat.run.cancel()
+	}
+	if depth > agent.MaxSubchatDepth { // a loop of links: stop there
+		return
+	}
+	for _, sub := range ui.subchatsOf(chat) {
+		ui.stopTree(sub, depth+1)
 	}
 }
 
@@ -281,8 +306,8 @@ func (ui *desktopUI) splitOff(parent *conversation, brief string) string {
 		return "Write what the subchat should do after /subchat: the task, the files and what done means."
 	case parent == nil:
 		return "Open the conversation to start the subchat from first."
-	case parent.Subchat != nil:
-		return "A subchat cannot have subchats of its own. Start it from “" + parentTitle(ui, parent) + "”."
+	case agent.SubchatLimit(ui.subchatDepth(parent)) != "":
+		return fmt.Sprintf("This subchat is %d levels down, the most: start it from “%s”.", agent.MaxSubchatDepth, parentTitle(ui, parent))
 	}
 	running := 0
 	for _, sub := range ui.subchatsOf(parent) {
@@ -304,6 +329,24 @@ func (ui *desktopUI) splitOff(parent *conversation, brief string) string {
 		}
 	}()
 	return ""
+}
+
+// treeWorking says whether a subchat under chat, at any depth, is working.
+func (ui *desktopUI) treeWorking(chat *conversation) bool {
+	working := false
+	var walk func(*conversation, int)
+	walk = func(parent *conversation, depth int) {
+		for _, sub := range ui.subchatsOf(parent) {
+			if sub.run != nil {
+				working = true
+			}
+			if depth < agent.MaxSubchatDepth {
+				walk(sub, depth+1)
+			}
+		}
+	}
+	walk(chat, 0)
+	return working
 }
 
 func parentTitle(ui *desktopUI, chat *conversation) string {

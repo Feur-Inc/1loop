@@ -42,7 +42,7 @@ func (server *headlessServer) subchatInfoLocked(chat *serverChat) agent.SubchatI
 	}
 	return agent.SubchatInfo{ID: chat.ID, Title: chat.Title, State: agent.SubchatState(chat.run != nil, waiting, chat.Subchat.Ended),
 		Folder: chat.Config.Workspace, Branch: chat.Subchat.Branch, Model: server.labelLocked(chat.Config),
-		Used: used, Last: agent.LastAnswer(chat.Items)}
+		Used: used, Last: agent.LastAnswer(chat.Items), Provider: chat.Config.Provider}
 }
 
 // subchatWorktreeLocked is the worktree a subchat was given, "" when it
@@ -148,6 +148,7 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 		history = agent.ForkHistory(parent.History)
 		items = slices.Clone(parent.Items)
 	}
+	machine := server.attachmentMachineLocked(cfg.MachineID)
 	project := cfg.Workspace
 	if server.worktreeLocked(project) {
 		project = server.worktrees[project]
@@ -166,6 +167,17 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 			gitTarget{server}.Opened(project, created.Path)
 			cfg.Workspace = created.Path
 		}
+	}
+	files, err := agent.DeliverFiles(ctx, machine, cfg.Workspace, request.Attachments.Files)
+	if err != nil {
+		if created.Path != "" { // no subchat works in it: it goes
+			go func() {
+				if _, err := agent.RemoveSubchatWorktree(context.WithoutCancel(ctx), gitrepo.Local, created.Path, true); err == nil {
+					gitTarget{server}.Removed(project, created.Path)
+				}
+			}()
+		}
+		return agent.SubchatInfo{}, err
 	}
 
 	server.mu.Lock()
@@ -187,7 +199,7 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 		server.addLocked(sub, agent.ChatItem{Kind: "note", Text: "Forked from “" + parent.Title + "”"})
 	}
 	server.chats = append([]*serverChat{sub}, server.chats...)
-	server.runLocked(sub, agent.Message{Role: "user", Content: request.Brief})
+	server.runLocked(sub, agent.PromptMessage(request.Brief, request.Attachments.Images, files))
 	server.broadcastLocked("meta", server.metaLocked(parent))
 	server.scheduleSaveLocked()
 	info := server.subchatInfoLocked(sub)

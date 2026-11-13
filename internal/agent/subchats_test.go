@@ -23,6 +23,7 @@ type fakeSubchats struct {
 	list     []SubchatInfo
 	started  []SubchatRequest
 	messages []string
+	attached []ChatAttachments // each message's
 	stopped  []string
 }
 
@@ -66,11 +67,12 @@ func (host *fakeSubchats) chats(parentTitle string) *ChatAccess {
 			other, _ := find(ctx, "other")
 			return []ChatInfo{other}
 		},
-		Send: func(ctx context.Context, id, text string) error {
+		Send: func(ctx context.Context, id, text string, attachments ChatAttachments) error {
 			if _, err := find(ctx, id); err != nil {
 				return err
 			}
 			host.messages = append(host.messages, id+": "+text)
+			host.attached = append(host.attached, attachments)
 			return nil
 		}}
 }
@@ -88,7 +90,7 @@ func runTool(t *testing.T, tool string, cfg Config, yolo, allow bool, arguments 
 	t.Helper()
 	ctx := context.WithValue(context.Background(), approvalContextKey{}, approvalPolicy{yolo: yolo})
 	ctx = context.WithValue(ctx, configContextKey{}, cfg)
-	for _, field := range []string{"id", "title", "brief", "text", "context", "isolation", "model"} {
+	for _, field := range []string{"id", "title", "brief", "text", "context", "isolation", "model", "files"} {
 		if _, ok := arguments[field]; !ok {
 			arguments[field] = nil
 		}

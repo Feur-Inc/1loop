@@ -11,11 +11,13 @@ import (
 	"fmt"
 	"path/filepath"
 
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
 
 	"1loop/internal/agent"
+	"1loop/internal/core"
 )
 
 // chatRelation is how chat stands to other: parent, subchat or "".
@@ -33,7 +35,7 @@ func chatRelation(chat, other *conversation) string {
 func (ui *desktopUI) chatInfo(chat, other *conversation) agent.ChatInfo {
 	waiting := other.run != nil && (other.run.approvalID != "" || other.run.questionID != "")
 	info := agent.ChatInfo{ID: other.ID, Title: agent.SubchatTitle(other.Title), State: agent.ChatState(other.run != nil, waiting),
-		Relation: chatRelation(chat, other)}
+		Relation: chatRelation(chat, other), Provider: other.Config.Provider}
 	if !other.Config.InScratch() {
 		info.Project = filepath.Base(ui.projectOf(other.Config.Workspace))
 	}
@@ -98,16 +100,44 @@ func (ui *desktopUI) chatAccess(chat *conversation) *agent.ChatAccess {
 			})
 			return list
 		},
-		Send: func(ctx context.Context, id, text string) (err error) {
+		Send: func(ctx context.Context, id, text string, attachments agent.ChatAttachments) (err error) {
+			var files []agent.FileAttachment
+			if len(attachments.Files) > 0 { // copied into its workspace first, off the interface thread
+				var workspace string
+				var machine agent.Machine
+				err = fmt.Errorf("1loop is closing")
+				ui.onUI(ctx, func() {
+					var other *conversation
+					if other, err = ui.findChat(chat, id); err == nil {
+						workspace, machine = other.Config.Workspace, ui.attachmentMachine(other.Config.MachineID)
+					}
+				})
+				if err != nil {
+					return err
+				}
+				if files, err = agent.DeliverFiles(ctx, machine, workspace, attachments.Files); err != nil {
+					return err
+				}
+			}
 			err = fmt.Errorf("1loop is closing")
-			ui.onUI(ctx, func() { err = ui.sendToChat(chat, id, text) })
+			ui.onUI(ctx, func() { err = ui.sendToChat(chat, id, text, attachments.Images, files) })
 			return err
 		},
 	}
 }
 
-// sendToChat delivers text from chat's agent to the chat id.
-func (ui *desktopUI) sendToChat(chat *conversation, id, text string) error {
+// attachmentMachine is the SSH machine of an ID files are copied to, nil
+// for this computer.
+func (ui *desktopUI) attachmentMachine(id string) agent.Machine {
+	if machine := ui.machineFor(id); machine != nil {
+		return machine
+	}
+	return nil
+}
+
+// sendToChat delivers text, and the pictures and files (already in its
+// workspace) attached to it, from chat's agent to the chat id.
+func (ui *desktopUI) sendToChat(chat *conversation, id, text string, images []core.ImagePart, files []agent.FileAttachment) error {
 	other, err := ui.findChat(chat, id)
 	if err != nil {
 		return err
@@ -117,7 +147,7 @@ func (ui *desktopUI) sendToChat(chat *conversation, id, text string) error {
 		return agent.TooManyHops(hops)
 	}
 	sender := agent.ChatSender{ID: chat.ID, Title: agent.SubchatTitle(chat.Title), Hops: hops}
-	ui.wake(other, agent.ChatMessage(sender, chatRelation(other, chat), text))
+	ui.wake(other, agent.ChatMessage(sender, chatRelation(other, chat), text, images, files))
 	if other == ui.current && other.run != nil { // it waits in the queue under the composer
 		ui.renderQueue()
 	}
@@ -152,8 +182,8 @@ func (ui *desktopUI) turnEnded(chat *conversation, ended string) {
 }
 
 // appendChatMessage draws another chat's message in chat's transcript: a
-// card under its sender's name, which opens the sender, apart from the
-// user's own bubbles (it has no Edit).
+// card under its sender's name, which opens the sender, with the pictures
+// it attached, apart from the user's own bubbles (it has no Edit).
 func (ui *desktopUI) appendChatMessage(chat *conversation, item agent.ChatItem) {
 	sender := item.From
 	title := []rune(sender.Title)
@@ -164,8 +194,32 @@ func (ui *desktopUI) appendChatMessage(chat *conversation, item agent.ChatItem) 
 	text := newFlowText(plainSpans(item.Text), theme.TextSize(), colText)
 	text.tail, text.tight = "", true
 	pad := theme.InnerPadding()
-	card := surface(container.NewVBox(container.NewHBox(from, layout.NewSpacer()),
-		padded(0, pad, pad, pad, container.NewStack(text, newSelectLayer(ui, text)))), colCode, colBorderSoft, 14, 2)
+	body := container.NewVBox(container.NewHBox(from, layout.NewSpacer()))
+	if len(item.Images) > 0 { // the pictures its agent attached
+		pictures := &userImageView{pictures: container.New(layout.NewCustomPaddedHBoxLayout(6))}
+		ui.setUserImages(pictures, item.Images)
+		body.Add(padded(0, 0, pad, pad, pictures.pictures))
+	}
+	if chips := fileChips(item.Files); chips != nil { // and the other files, as the user's show
+		body.Add(padded(0, 0, pad, pad, chips))
+	}
+	body.Add(padded(0, pad, pad, pad, container.NewStack(text, newSelectLayer(ui, text))))
+	card := surface(body, colCode, colBorderSoft, 14, 2)
 	copyRow := container.NewHBox(layout.NewSpacer(), copyChip(func() string { return item.Text }))
 	ui.place(container.New(layout.NewCustomPaddedVBoxLayout(2), card, copyRow))
+}
+
+// fileChips are a message's attached files as the transcript shows them, a
+// chip with each name; nil when there is none but pictures, shown apart.
+func fileChips(attached []agent.FileAttachment) *fyne.Container {
+	var files []fyne.CanvasObject
+	for _, file := range attached {
+		if !file.Image { // a picture already shows above
+			files = append(files, surface(textLine(fitText(file.Name, 12.5, fyne.TextStyle{}, 220), 12.5, colText), colCode, colBorderSoft, 8, 6))
+		}
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	return container.New(layout.NewCustomPaddedHBoxLayout(6), files...)
 }

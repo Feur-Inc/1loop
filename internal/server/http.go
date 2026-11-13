@@ -84,6 +84,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/projects":                           server.addProject,
 		"POST /api/projects/{action}":                  server.changeProject,
 		"GET /api/state":                               server.state,
+		"POST /api/install/{what}":                     server.install,
 		"GET /api/limits":                              server.limits,
 		"GET /api/chats/{id}":                          server.chat,
 		"POST /api/chats/{id}/delete":                  server.deleteChat,
@@ -208,6 +209,7 @@ func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 		"settings":          server.settingsLocked(),
 		"browser":           server.hasBrowser(), // false: no Browser Use here (the slim image)
 		"claudeCode":        hasClaudeCode(),     // false: no claude command (the slim image)
+		"installs":          server.installsLocked(),
 	})
 }
 

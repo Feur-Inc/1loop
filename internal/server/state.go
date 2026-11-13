@@ -150,6 +150,7 @@ type headlessServer struct {
 	// reaches them at most ten times a second, as the desktop sends it.
 	pending  map[*serverChat]map[int]bool
 	flushing bool
+	installs map[string]*installJob // Install Chromium / Claude Code (install.go)
 }
 
 type serverEvent struct {
@@ -240,7 +241,8 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		}}
 		server.cfg.ConnectionID = server.connections[0].ID
 	}
-	browser.BrowserProfileOverride = filepath.Join(dir, "browser")
+	browser.BrowserProfileOverride = filepath.Join(dir, "browser") // and Install Chromium's, beside it
+	agent.ClaudeInstallDir = filepath.Join(dir, "claude-code")
 	server.engine = browser.NewBrowserEngine(ctx)
 	for _, chat := range server.chats {
 		if chat.Config.Workspace == "" {

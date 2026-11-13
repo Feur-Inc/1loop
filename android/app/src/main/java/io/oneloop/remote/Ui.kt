@@ -466,7 +466,7 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
         Spacer(Modifier.height(8.dp))
         Text(
             if (pair.phone) "On that phone, type this code in 1loop's request and tap Allow:\n${pair.consoleCode}"
-            else if (pair.consoleCode.isNotEmpty()) "Approve this phone in 1loop on a device already paired with the server: it asks for ${pair.consoleCode}. Or enter this command in the server console:\npair ${pair.pairing} ${pair.consoleCode}\nThis connects by itself once approved."
+            else if (pair.consoleCode.isNotEmpty()) "Approve this phone in 1loop on a device already paired with the server: it asks for ${pair.consoleCode}. Or approve it on the server with:\n${pair.serverCommand}\nThis connects by itself once approved."
             else "Type the code 1loop shows on your computer.",
             style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center,
         )
@@ -476,7 +476,7 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
         }
         Spacer(Modifier.height(32.dp))
         if (pair.consoleCode.isNotEmpty()) {
-            if (!pair.phone) CopyChip { "pair ${pair.pairing} ${pair.consoleCode}" }
+            if (!pair.phone) CopyChip { pair.serverCommand }
             Spacer(Modifier.height(16.dp))
             Pill("Connect after approval", primary = true, enabled = !app.busy) { app.confirm(pair, pair.consoleCode) }
         } else BasicTextField(

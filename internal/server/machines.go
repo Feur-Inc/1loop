@@ -486,14 +486,13 @@ func (server *headlessServer) addMachineProject(w http.ResponseWriter, r *http.R
 }
 
 // machineConsole is the console's ssh, trust and refuse commands.
-func (server *headlessServer) machineConsole(parts []string) {
-	out := server.trust.out
+func (server *headlessServer) machineConsole(parts []string, out io.Writer) bool {
 	switch {
 	case parts[0] == "trust" || parts[0] == "refuse":
 		number, err := strconv.Atoi(strings.Join(parts[1:], ""))
 		if len(parts) != 2 || err != nil || !server.trust.answer(number, parts[0] == "trust") {
 			fmt.Fprintf(out, "Usage: %s <number of a host key waiting, from ssh>\n", parts[0])
-			return
+			return false
 		}
 		if parts[0] == "trust" {
 			fmt.Fprintln(out, "Host key trusted.")
@@ -523,7 +522,7 @@ func (server *headlessServer) machineConsole(parts []string) {
 		}
 		if err != nil {
 			fmt.Fprintln(out, err)
-			return
+			return false
 		}
 		fmt.Fprintf(out, "Added %s. Connecting…\n", machine.Label())
 		go server.checkMachine(machine.ID)
@@ -531,17 +530,19 @@ func (server *headlessServer) machineConsole(parts []string) {
 		index, err := strconv.Atoi(parts[2])
 		if err != nil || index < 1 || index > len(server.machines) {
 			fmt.Fprintln(out, "Unknown SSH machine: ssh lists them")
-			return
+			return false
 		}
 		machine := server.machines[index-1]
 		if err := server.removeMachineLocked(machine.ID); err != nil {
 			fmt.Fprintln(out, err)
-			return
+			return false
 		}
 		fmt.Fprintf(out, "Removed %s and its projects; their files stay on it.\n", machine.Label())
 	default:
 		fmt.Fprintf(out, "Usage: ssh, ssh add %s, ssh remove <number>\n", machineSpecUsage)
+		return false
 	}
+	return true
 }
 
 // machineFlags collects repeated -ssh-machine flags.

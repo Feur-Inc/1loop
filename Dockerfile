@@ -77,6 +77,9 @@ ENV ONELOOP_CHROMIUM_NO_SANDBOX=1
 # both go in CLAUDE_CONFIG_DIR) live in the data volume, so they survive
 # image updates.
 ENV CLAUDE_CONFIG_DIR=/data/claude DISABLE_AUTOUPDATER=1
+# "docker exec <container> 1loop-server pair <id> <code>" finds the running
+# server's admin socket in /data without -data-dir.
+ENV ONELOOP_DATA_DIR=/data
 USER oneloop
 WORKDIR /projects
 VOLUME ["/data", "/projects"]

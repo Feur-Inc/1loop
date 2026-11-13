@@ -192,7 +192,7 @@ func TestProjectOnSSHMachine(t *testing.T) {
 	console1 := func(line string) {
 		server.mu.Lock()
 		defer server.mu.Unlock()
-		server.machineConsole(strings.Fields(line))
+		server.machineConsole(strings.Fields(line), server.trust.out)
 	}
 	console1("ssh add tester@" + address + " key=" + keyFile + " projects=" + home + " name=Host")
 	request := waitRequest(t, server.trust)

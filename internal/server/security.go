@@ -12,6 +12,7 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
 	"net/http"
 	"os"
@@ -88,10 +89,10 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 		pair.Approved, server.setup = true, ""
 		fmt.Fprintf(os.Stderr, "\n%q paired with the setup link.\n", args.Device)
 	} else {
-		fmt.Fprintf(os.Stderr, "\nPairing requested by %q. Approve it in 1loop on a paired device, or type: pair %s <code shown on that device>\n", args.Device, id)
+		fmt.Fprintf(os.Stderr, "\nPairing requested by %q. Approve it in 1loop on a paired device, or type: pair %s <code shown on that device>\n(or from another shell: %s)\n", args.Device, id, server.pairCommand(id, "<code>"))
 		server.pairingChangedLocked()
 	}
-	core.WriteJSON(writer, 200, map[string]any{"pairing": id, "code": code, "console": true, "phone": server.local, "approved": pair.Approved, "expiresIn": 120})
+	core.WriteJSON(writer, 200, map[string]any{"pairing": id, "code": code, "console": true, "phone": server.local, "approved": pair.Approved, "expiresIn": 120, "command": server.pairCommand(id, code)})
 }
 
 // pairingChangedLocked tells the clients that can approve pairings: the
@@ -172,66 +173,78 @@ func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.
 	core.WriteJSON(writer, 200, map[string]string{"token": token})
 }
 
+// console reads the server's commands from its standard input.
 func (server *headlessServer) console() {
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
-		parts := strings.Fields(scanner.Text())
-		if len(parts) == 0 {
-			continue
-		}
-		server.mu.Lock()
-		switch parts[0] {
-		case "pair":
-			if len(parts) != 3 {
-				fmt.Fprintln(os.Stderr, "Usage: pair <pairing ID> <six-digit code>")
-				break
-			}
-			pair := server.pairs[parts[1]]
-			if pair == nil || time.Now().After(pair.Expires) || pair.Tries >= 5 {
-				fmt.Fprintln(os.Stderr, "Pairing expired or unknown")
-				break
-			}
-			hash := remoteapi.TokenHash(parts[2])
-			if subtle.ConstantTimeCompare([]byte(pair.Code), []byte(hash)) != 1 {
-				pair.Tries++
-				fmt.Fprintln(os.Stderr, "Incorrect code")
-				break
-			}
-			pair.Approved = true
-			server.pairingChangedLocked()
-			fmt.Fprintf(os.Stderr, "Approved %q. Finish connecting on that device.\n", pair.Device)
-		case "devices":
-			for index, device := range server.devices {
-				fmt.Fprintf(os.Stderr, "%d  %s  %s\n", index+1, device.Name, device.Added.Format(time.RFC3339))
-			}
-		case "revoke":
-			if len(parts) != 2 {
-				fmt.Fprintln(os.Stderr, "Usage: revoke <device number from devices>")
-				break
-			}
-			var index int
-			_, err := fmt.Sscan(parts[1], &index)
-			if err != nil || index < 1 || index > len(server.devices) {
-				fmt.Fprintln(os.Stderr, "Unknown device")
-				break
-			}
-			before := append([]remoteapi.PairedDevice{}, server.devices...)
-			server.devices = append(server.devices[:index-1], server.devices[index:]...)
-			if err := server.saveLocked(); err != nil {
-				server.devices = before
-				fmt.Fprintln(os.Stderr, err)
-			} else {
-				server.disconnectStreamsLocked()
-				fmt.Fprintln(os.Stderr, "Device revoked")
-				server.offerSetupLocked()
-			}
-		case "ssh", "trust", "refuse":
-			server.machineConsole(parts)
-		default:
-			fmt.Fprintln(os.Stderr, "Commands: pair <id> <code>, devices, revoke <number>, ssh, trust <number>, refuse <number>")
-		}
-		server.mu.Unlock()
+		server.command(strings.Fields(scanner.Text()), os.Stderr)
 	}
+}
+
+// command runs one of the console's commands (pair, devices, revoke, ssh,
+// trust, refuse), typed in the console or sent to the admin socket by
+// "1loop-server pair …" (admin.go), and tells whether it succeeded.
+func (server *headlessServer) command(parts []string, out io.Writer) bool {
+	if len(parts) == 0 {
+		return true
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	switch parts[0] {
+	case "pair":
+		if len(parts) != 3 {
+			fmt.Fprintln(out, "Usage: pair <pairing ID> <six-digit code>")
+			return false
+		}
+		pair := server.pairs[parts[1]]
+		if pair == nil || time.Now().After(pair.Expires) || pair.Tries >= 5 {
+			fmt.Fprintln(out, "Pairing expired or unknown")
+			return false
+		}
+		hash := remoteapi.TokenHash(parts[2])
+		if subtle.ConstantTimeCompare([]byte(pair.Code), []byte(hash)) != 1 {
+			pair.Tries++
+			fmt.Fprintln(out, "Incorrect code")
+			return false
+		}
+		pair.Approved = true
+		server.pairingChangedLocked()
+		fmt.Fprintf(out, "Approved %q. Finish connecting on that device.\n", pair.Device)
+	case "devices":
+		if len(server.devices) == 0 {
+			fmt.Fprintln(out, "No paired devices")
+		}
+		for index, device := range server.devices {
+			fmt.Fprintf(out, "%d  %s  %s\n", index+1, device.Name, device.Added.Format(time.RFC3339))
+		}
+	case "revoke":
+		if len(parts) != 2 {
+			fmt.Fprintln(out, "Usage: revoke <device number from devices>")
+			return false
+		}
+		var index int
+		_, err := fmt.Sscan(parts[1], &index)
+		if err != nil || index < 1 || index > len(server.devices) {
+			fmt.Fprintln(out, "Unknown device")
+			return false
+		}
+		before := append([]remoteapi.PairedDevice{}, server.devices...)
+		server.devices = append(server.devices[:index-1], server.devices[index:]...)
+		if err := server.saveLocked(); err != nil {
+			server.devices = before
+			fmt.Fprintln(out, err)
+			return false
+		}
+		server.disconnectStreamsLocked()
+		fmt.Fprintln(out, "Device revoked")
+		server.offerSetupLocked()
+	case "ssh", "trust", "refuse":
+		return server.machineConsole(parts, out)
+	default:
+		fmt.Fprintln(out, "Commands: pair <id> <code>, devices, revoke <number>, ssh, trust <number>, refuse <number>")
+		return false
+	}
+	return true
 }
 
 func saveServerJSON(path string, value any) error {

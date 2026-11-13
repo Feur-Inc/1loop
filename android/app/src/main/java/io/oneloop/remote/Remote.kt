@@ -276,7 +276,10 @@ sealed interface Screen {
     data object Mode : Screen // where 1loop works: server, desktop or this phone
     data object Servers : Screen
     data object LocalSetup : Screen
-    data class Pair(val server: Server, val pairing: String, val consoleCode: String = "", val phone: Boolean = false) : Screen
+    data class Pair(val server: Server, val pairing: String, val consoleCode: String = "", val phone: Boolean = false, val command: String = "") : Screen {
+        /** What approves it on the server's machine: the server's own command (docker exec in a container), or the console's for an older server. */
+        val serverCommand get() = command.ifEmpty { "pair $pairing $consoleCode" }
+    }
     data object Chat : Screen
 }
 
@@ -792,7 +795,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             busy = true
             try {
                 val reply = onConnection(server, generation) { it.post("/api/pair", JSONObject().put("device", deviceName())) }
-                screen = Screen.Pair(server, reply.getString("pairing"), reply.optString("code").takeIf { reply.optBoolean("console") }.orEmpty(), reply.optBoolean("phone"))
+                screen = Screen.Pair(server, reply.getString("pairing"), reply.optString("code").takeIf { reply.optBoolean("console") }.orEmpty(), reply.optBoolean("phone"), reply.optString("command"))
             } catch (e: Exception) {
                 actionFailed(generation, e)
             } finally {

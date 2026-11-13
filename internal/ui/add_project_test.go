@@ -76,7 +76,7 @@ func TestAddProjectOffersOnlyLinkedTargets(t *testing.T) {
 	if got := ui.addTargets(); !slices.Equal(got, want) {
 		t.Fatalf("targets %v, want %v", got, want)
 	}
-	ui.link = nil
+	ui.links = nil
 	if got := ui.addTargets(); !slices.Equal(got, want[:2]) {
 		t.Fatalf("with no server paired: %v, want %v", got, want[:2])
 	}

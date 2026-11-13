@@ -3,7 +3,7 @@
 package ui
 
 // Add project asks which target the project lives on (#381): this
-// computer, an SSH machine of Settings → General, or the paired server.
+// computer, an SSH machine of Settings → General, or a paired server.
 // The folder is then picked on that target, the project is kept under it,
 // and its chats run there. A folder of this computer is never sent to a
 // server, nor a server's opened here: the target is chosen, not implied
@@ -26,8 +26,8 @@ import (
 )
 
 // addTargets are the targets Add project offers, in the sidebar's order:
-// this computer, each SSH machine of Settings, then the paired server.
-// The browser client runs nothing itself, so it offers only its server.
+// this computer, each SSH machine of Settings, then the paired servers.
+// The browser client runs nothing itself, so it offers only its servers.
 func (ui *desktopUI) addTargets() []projectTarget {
 	var targets []projectTarget
 	if !browserClient {
@@ -36,22 +36,24 @@ func (ui *desktopUI) addTargets() []projectTarget {
 	for _, machine := range ui.sshMachines {
 		targets = append(targets, sshTarget(machine.ID))
 	}
-	if address := ui.pairedServer(); address != "" {
+	for _, address := range ui.serverAddresses() {
 		targets = append(targets, serverTarget(address))
 	}
 	return targets
 }
 
-// pairedServer is the address of the server the window works on or
-// follows, "" when none is paired.
-func (ui *desktopUI) pairedServer() string {
-	switch {
-	case ui.server != nil:
-		return ui.server.client.address.URL
-	case ui.link != nil:
-		return ui.link.address.URL
+// serverAddresses are the addresses of the servers the window follows,
+// in the order they were paired (#383), then the one it works on if it
+// is not among them: the order the sidebar lists them in (serverGroups).
+func (ui *desktopUI) serverAddresses() []string {
+	var addresses []string
+	for _, link := range ui.links {
+		addresses = append(addresses, link.address.URL)
 	}
-	return ""
+	if remote := ui.server; remote != nil && ui.linkTo(remote.client.address.URL) == nil {
+		addresses = append(addresses, remote.client.address.URL)
+	}
+	return addresses
 }
 
 // targetName names a target as Add project offers it.
@@ -156,15 +158,15 @@ func (ui *desktopUI) projectAdded(target projectTarget, folder string) {
 	ui.openProjectOn(target, folder)
 }
 
-// addServerProject makes a project on the paired server: a folder of its
+// addServerProject makes a project on a paired server: a folder of its
 // projects folder, made there unless it exists.
 func (ui *desktopUI) addServerProject(target projectTarget) {
 	client := (*remoteClient)(nil)
 	if remote := ui.server; remote != nil && remote.client.address.URL == target.id {
 		client = remote.client
 	} else {
-		saved := loadServerAddress()
-		if saved.URL != target.id || saved.Token == "" {
+		saved, ok := pairedServer(target.id)
+		if !ok {
 			ui.notice("Add project", "This server is no longer paired. Connect it again with the target menu under the conversation.")
 			return
 		}
@@ -189,7 +191,7 @@ func (ui *desktopUI) addServerProject(target projectTarget) {
 		},
 		func(project string) {
 			ui.setReach(target, reachOnline, "")
-			if link := ui.link; link != nil { // its listing is read again, at once
+			if link := ui.linkTo(target.id); link != nil { // its listing is read again, at once
 				select {
 				case link.wake <- struct{}{}:
 				default:

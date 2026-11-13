@@ -2,26 +2,28 @@
 
 package ui
 
-// The browser client's paired server: the page's localStorage, which only
+// The browser client's paired servers: the page's localStorage, which only
 // this origin (the server itself) can read.
 
-import (
-	"encoding/json"
-	"syscall/js"
-)
+import "syscall/js"
 
 const remoteAddressKey = "1loop.remote-server"
 
-func loadServerAddress() serverAddress {
-	var saved serverAddress
+func loadPairings() pairings {
+	var data []byte
 	if item := js.Global().Get("localStorage").Call("getItem", remoteAddressKey); item.Type() == js.TypeString {
-		json.Unmarshal([]byte(item.String()), &saved)
+		data = []byte(item.String())
 	}
-	return saved
+	return decodePairings(data)
 }
 
+func loadServerAddress() serverAddress { return loadPairings().serverAddress }
+
+func loadServerAddresses() []serverAddress { return loadPairings().all() }
+
 func saveServerAddress(address serverAddress) error {
-	data, _ := json.Marshal(address)
-	js.Global().Get("localStorage").Call("setItem", remoteAddressKey, string(data))
+	saved := loadPairings()
+	saved.add(address)
+	js.Global().Get("localStorage").Call("setItem", remoteAddressKey, string(saved.encode()))
 	return nil
 }

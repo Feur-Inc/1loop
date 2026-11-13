@@ -64,12 +64,11 @@ func (ui *desktopUI) sshRows() []fyne.CanvasObject {
 	return rows
 }
 
-// serverRows are the headless 1loop server last paired, if any, and how to
+// serverRows are the headless 1loop servers paired, if any, and how to
 // connect one.
 func (ui *desktopUI) serverRows() []fyne.CanvasObject {
-	saved := loadServerAddress()
 	var rows []fyne.CanvasObject
-	if saved.URL != "" && saved.Token != "" {
+	for _, saved := range loadServerAddresses() {
 		connected := ui.server != nil && ui.server.client.address.URL == saved.URL
 		var control fyne.CanvasObject = newRow("Use", nil, styleOutline, func() {
 			client, err := newRemoteClient(saved)

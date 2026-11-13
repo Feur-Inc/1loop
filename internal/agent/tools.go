@@ -565,6 +565,7 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		defer cancel()
 		cmd := platform.ShellCommand(timeout, args.Command)
 		platform.WorkspaceCommandIn(cmd, root, dir, platform.WorkspaceYOLO(ctx))
+		platform.ApplyProjectEnv(ctx, cmd)
 		if sandboxed {
 			if err := platform.SandboxCommand(cmd, root); err != nil {
 				return "", "", err

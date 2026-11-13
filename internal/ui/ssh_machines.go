@@ -284,31 +284,6 @@ func (ui *desktopUI) projectNameSeen(project string, seen map[string]bool) strin
 	return filepath.Base(project)
 }
 
-// addMachineProject makes a project on an SSH machine: a folder of its
-// projects folder, made there unless it exists. The machine need not be
-// the one in use: the project is opened on it once made.
-func (ui *desktopUI) addMachineProject(id string) {
-	machine := ui.machineFor(id)
-	if machine == nil {
-		return
-	}
-	settings := machine.Settings()
-	ui.projectNameDialog("New project on "+machine.Label(),
-		"A folder in "+settings.Projects+" on "+machine.Label()+". An existing folder of that name is opened as it is.",
-		func(ctx context.Context, name string) (string, error) {
-			folder, err := machine.ProjectsFolder(ctx)
-			project := path.Join(folder, name)
-			if err == nil {
-				err = machine.MkdirAll(ctx, project)
-			}
-			return project, err
-		},
-		func(project string) {
-			ui.setReach(sshTarget(id), reachOnline, "")
-			ui.projectAdded(sshTarget(id), project)
-		})
-}
-
 // ---------------------------------------------------------------------------
 // The panel: a terminal, the Files tab.
 

@@ -485,15 +485,16 @@ func (ui *desktopUI) setProjectsOn(target projectTarget, projects []string) {
 // window works on its target, else those that need no connection to it.
 func (ui *desktopUI) projectActionsOn(group targetGroup, project string) []menuAction {
 	remove := menuAction{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { ui.removeProject(group.target, project) }}
+	env := ui.projectEnvAction(group.target, project)
 	switch {
 	case group.target.kind == targetServer && group.active:
-		return append(ui.repositoryActions(project), ui.projectMemoryAction(project))
+		return append(ui.repositoryActions(project), ui.projectMemoryAction(project), env)
 	case group.target.kind == targetServer: // the server keeps its own list
-		return nil
+		return []menuAction{env}
 	case !group.active:
-		return []menuAction{remove}
+		return []menuAction{env, remove}
 	}
-	actions := append(ui.repositoryActions(project), ui.projectMemoryAction(project))
+	actions := append(ui.repositoryActions(project), ui.projectMemoryAction(project), env)
 	if group.target.kind == targetLocal { // a machine's folder is renamed there, in its terminal
 		actions = append(actions, menuAction{label: "Rename", icon: iconRename, run: func() { ui.renameProject(project) }})
 	}

@@ -35,7 +35,7 @@ func NewTerminalProcess(ctx context.Context, dir string, hosts ...NativeHost) (P
 	if err != nil {
 		return nil, err
 	}
-	pid, handle, err := console.Spawn(path, []string{path, "-NoLogo", "-NoProfile"}, &syscall.ProcAttr{Dir: dir, Env: os.Environ()})
+	pid, handle, err := console.Spawn(path, []string{path, "-NoLogo", "-NoProfile"}, &syscall.ProcAttr{Dir: dir, Env: append(os.Environ(), platform.ProjectEnv(ctx)...)})
 	if err != nil {
 		console.Close()
 		return nil, err

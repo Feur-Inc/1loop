@@ -19,6 +19,7 @@ import (
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
+	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	"1loop/internal/terminal"
 	fyneterm "1loop/internal/termwidget"
@@ -56,7 +57,7 @@ func (panel *toolPanel) openTerminal() {
 // terminalTab starts a shell in dir, on this computer or on an SSH
 // machine, and returns its tab.
 func (panel *toolPanel) terminalTab(dir, machineID string) (panelTab, error) {
-	ctx, cancel := context.WithCancel(panel.ui.ctx)
+	ctx, cancel := context.WithCancel(platform.WithProjectEnv(panel.ui.ctx, panel.ui.folderEnv(dir, machineID)))
 	var file terminal.Process
 	var err error
 	var failed chan error

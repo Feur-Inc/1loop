@@ -4,9 +4,12 @@ package ui
 
 import (
 	"slices"
+	"strings"
 	"testing"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/widget"
 )
@@ -49,22 +52,28 @@ func addProjectUI(t *testing.T) *desktopUI {
 	return ui
 }
 
-// Add project asks which target the project lives on, and offers every
-// linked target: this computer, the SSH machine, the paired server.
-// Before #381 it went straight to the target in use (here the machine's
-// "New project on build-box"), so a project could not be added on
-// another target without switching first.
-func TestAddProjectAsksWhichTarget(t *testing.T) {
+// Add project is one New project dialog (#408): where the project lives,
+// set to the target in use and offering every linked one, its name, its
+// folders, its environment variables, then Cancel and Create. Before it
+// was a list of targets (#381), then a second dialog for the folder.
+func TestAddProjectIsOneDialog(t *testing.T) {
 	ui := addProjectUI(t)
 	ui.addProject()
-	rows := overlayRows(t, ui)
-	for _, want := range []string{"This computer", "build-box", "box.lan"} {
-		if !slices.Contains(rows, want) {
-			t.Errorf("Add project does not offer %q: %q", want, rows)
+	top, ok := ui.window.Canvas().Overlays().Top().(*sheet)
+	if !ok {
+		t.Fatal("Add project opened no dialog")
+	}
+	texts := visibleTexts(top.content)
+	for _, want := range []string{"New project", "Location", "build-box", "Name", "Environment variables", "None", "Edit", "Cancel", "Create"} {
+		if !slices.Contains(texts, want) {
+			t.Errorf("the dialog lacks %q: %q", want, texts)
 		}
 	}
-	if slices.Contains(rows, "Create") {
-		t.Errorf("Add project went straight to the machine in use: %q", rows)
+	if slices.Contains(texts, "Folders (optional)") {
+		t.Error("an SSH machine's project lists folders of this computer")
+	}
+	if entries := visibleEntries(top.content); len(entries) != 1 || entries[0].PlaceHolder != "Project name" {
+		t.Errorf("the dialog's fields: %d", len(entries))
 	}
 }
 
@@ -117,4 +126,88 @@ func TestProjectAddedIsKeptUnderItsTarget(t *testing.T) {
 			}
 		}
 	}
+}
+
+// visibleTexts are the texts shown under object: its rows, lines and
+// paragraphs, hidden parts left out.
+func visibleTexts(object fyne.CanvasObject) (texts []string) {
+	var walk func(fyne.CanvasObject)
+	walk = func(object fyne.CanvasObject) {
+		if object == nil || !object.Visible() {
+			return
+		}
+		switch object := object.(type) {
+		case *tapRow:
+			texts = append(texts, object.text)
+		case *canvas.Text:
+			texts = append(texts, object.Text)
+		case *flowText:
+			var text strings.Builder
+			for _, span := range object.spans {
+				text.WriteString(span.text)
+			}
+			texts = append(texts, text.String())
+		case *widget.Check:
+			texts = append(texts, object.Text)
+		case *fyne.Container:
+			for _, child := range object.Objects {
+				walk(child)
+			}
+		case *container.Scroll:
+			walk(object.Content)
+		}
+	}
+	walk(object)
+	return texts
+}
+
+// visibleEntries are the text fields shown under object.
+func visibleEntries(object fyne.CanvasObject) (entries []*widget.Entry) {
+	var walk func(fyne.CanvasObject)
+	walk = func(object fyne.CanvasObject) {
+		if object == nil || !object.Visible() {
+			return
+		}
+		switch object := object.(type) {
+		case *widget.Entry:
+			entries = append(entries, object)
+		case *fyne.Container:
+			for _, child := range object.Objects {
+				walk(child)
+			}
+		case *container.Scroll:
+			walk(object.Content)
+		}
+	}
+	walk(object)
+	return entries
+}
+
+// tapText taps the visible row of that text under object.
+func tapText(t *testing.T, object fyne.CanvasObject, text string) {
+	t.Helper()
+	var found *tapRow
+	var walk func(fyne.CanvasObject)
+	walk = func(object fyne.CanvasObject) {
+		if object == nil || !object.Visible() || found != nil {
+			return
+		}
+		switch object := object.(type) {
+		case *tapRow:
+			if object.text == text {
+				found = object
+			}
+		case *fyne.Container:
+			for _, child := range object.Objects {
+				walk(child)
+			}
+		case *container.Scroll:
+			walk(object.Content)
+		}
+	}
+	walk(object)
+	if found == nil {
+		t.Fatalf("no %q to tap", text)
+	}
+	found.onTap()
 }

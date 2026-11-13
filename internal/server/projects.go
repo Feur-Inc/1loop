@@ -158,6 +158,7 @@ func (server *headlessServer) changeProject(w http.ResponseWriter, r *http.Reque
 		}
 	}
 	server.projects = projects
+	server.moveProjectEnvLocked(args.Path, destination)
 	kept := []*serverChat{}
 	var tabs []*serverTab
 	for _, chat := range server.chats {

@@ -17,6 +17,7 @@ import (
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
+	"1loop/internal/platform"
 	"1loop/internal/terminal"
 )
 
@@ -290,9 +291,10 @@ func quote(word string) string {
 // a time limit), the watcher ends the whole group, as closing a session
 // alone leaves the command running. The watcher reads that input from fd 3:
 // a background list without job control would get /dev/null instead.
-func commandScript(dir, command string) string {
+func commandScript(dir, command string, env ...string) string {
 	return "exec 3<&0\n" +
 		"cd " + quote(dir) + " || exit 1\n" +
+		strings.Join(env, "") +
 		"export PAGER=cat GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 TERM=dumb\n" +
 		"shell=sh; command -v bash >/dev/null 2>&1 && shell=bash\n" +
 		"if command -v setsid >/dev/null 2>&1; then setsid $shell -c " + quote(command) + " </dev/null &\n" +
@@ -327,7 +329,7 @@ func (machine *Machine) StartStreams(ctx context.Context, dir, command string, s
 		return nil, err
 	}
 	session.Stdout, session.Stderr = stdout, stderr
-	if err := session.Start("sh -c " + quote(commandScript(dir, command))); err != nil {
+	if err := session.Start("sh -c " + quote(commandScript(dir, command, platform.ExportScript(ctx)))); err != nil {
 		session.Close()
 		return nil, err
 	}
@@ -407,7 +409,9 @@ func (machine *Machine) Terminal(ctx context.Context, dir string) (terminal.Proc
 		return nil, err
 	}
 	session.Stderr = io.Discard // a pseudo-terminal sends both on one stream
-	shell := `cd ` + quote(dir) + ` 2>/dev/null; export COLORTERM=truecolor; exec "${SHELL:-/bin/sh}" -l`
+	// The project's variables (#408) are exported before the login shell,
+	// which inherits them.
+	shell := `cd ` + quote(dir) + ` 2>/dev/null; export COLORTERM=truecolor; ` + platform.ExportScript(ctx) + `exec "${SHELL:-/bin/sh}" -l`
 	if err := session.Start("sh -c " + quote(shell)); err != nil {
 		session.Close()
 		return nil, err

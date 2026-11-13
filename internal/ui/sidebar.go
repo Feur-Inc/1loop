@@ -332,6 +332,7 @@ func (ui *desktopUI) removeProject(target projectTarget, path string) {
 			}
 		}
 		ui.setProjectsOn(target, projects)
+		ui.keepProjectEnv(target, path, nil)
 		if ui.server == nil && ui.cfg.MachineID == machine && ui.cfg.Workspace == path {
 			next := ""
 			if len(projects) > 0 {

@@ -60,7 +60,7 @@ func TestStoppedIntroTakesNewAccent(t *testing.T) {
 	defer func() { colAmber, brandRingInk = saved, "" }()
 	colAmber = color.NRGBA{0xA8, 0x7B, 0xFF, 0xFF} // purple
 	mark := newLoopMark(60)
-	mark.showBrand() // a frame of the intro, in purple
+	mark.showBrand()     // a frame of the intro, in purple
 	mark.state = "intro" // as intro leaves it once stopped midway
 	mark.stop()
 	colAmber = color.NRGBA{0x2F, 0xC2, 0xA4, 0xFF} // teal

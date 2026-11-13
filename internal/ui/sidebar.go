@@ -265,27 +265,6 @@ func (ui *desktopUI) selectProject(path string) {
 	ui.startNew()
 }
 
-func (ui *desktopUI) addProject() {
-	if ui.server == nil && ui.cfg.MachineID != "" {
-		ui.addMachineProject()
-		return
-	}
-	start := filepath.Dir(ui.cfg.Workspace)
-	ui.pick(pickRequest{title: "Add a project folder", start: start, folder: true}, func(paths []string) {
-		root, err := agent.ResolveWorkspace(paths[0])
-		if err != nil {
-			ui.notice("Add project", err.Error())
-			return
-		}
-		ui.ensureProject(root)
-		if ui.server == nil && root == ui.cfg.Workspace {
-			ui.renderChats()
-			return
-		}
-		ui.openProjectOn(localTarget, root) // a folder of this computer, even while a server is in use
-	})
-}
-
 // chatsIn are the chats of a project of the target.
 func (ui *desktopUI) chatsIn(path string) []*conversation {
 	if ui.cfg.InScratch() && path == ui.cfg.Workspace {
@@ -396,7 +375,7 @@ func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
 	if ui.cfg.MachineID != "" {
 		add = "New project…"
 	}
-	actions = append(actions, menuAction{label: add, icon: iconPlus, run: ui.addProject})
+	actions = append(actions, menuAction{label: add, icon: iconPlus, run: func() { ui.addProjectOn(ui.activeTarget()) }}) // the chip's target
 	showMenu(ui.window, anchor, actions)
 }
 

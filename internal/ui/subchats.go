@@ -53,7 +53,7 @@ func (ui *desktopUI) subchatInfo(chat *conversation) agent.SubchatInfo {
 	}
 	return agent.SubchatInfo{ID: chat.ID, Title: chat.Title, State: agent.SubchatState(chat.run != nil, waiting, link.Ended),
 		Folder: chat.Config.Workspace, Branch: link.Branch, Model: ui.modelName(chat.Config),
-		Used: used, Last: agent.LastAnswer(chat.Items)}
+		Used: used, Last: agent.LastAnswer(chat.Items), Provider: chat.Config.Provider}
 }
 
 // subchatDepth is a chat's level: 0 for a chat the user started, 1 for
@@ -126,6 +126,7 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 	var cfg agent.Config
 	var history []agent.Message
 	var items []agent.ChatItem
+	var machine agent.Machine
 	ui.onUI(ctx, func() {
 		if ui.chatByID(parent.ID) != parent {
 			err = fmt.Errorf("The conversation was deleted")
@@ -141,6 +142,7 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 			choice = &found
 		}
 		cfg = agent.SubchatConfig(parent.Config, choice)
+		machine = ui.attachmentMachine(cfg.MachineID)
 		if request.Context == "fork" {
 			history = agent.ForkHistory(parent.History)
 			items = slices.Clone(parent.Items)
@@ -162,7 +164,18 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 			return info, fmt.Errorf("Could not make the subchat's worktree: %v", err)
 		}
 	}
+	var files []agent.FileAttachment
+	if err == nil && len(request.Attachments.Files) > 0 { // copied into its workspace, as the composer's
+		workspace := cfg.Workspace
+		if created.Path != "" {
+			workspace = created.Path
+		}
+		files, err = agent.DeliverFiles(ctx, machine, workspace, request.Attachments.Files)
+	}
 	ui.onUI(ctx, func() {
+		if err != nil {
+			return
+		}
 		if ui.chatByID(parent.ID) != parent {
 			err = fmt.Errorf("The conversation was deleted")
 			return
@@ -180,7 +193,7 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 			sub.Items = append(sub.Items, agent.ChatItem{Kind: "note", Text: "Forked from “" + parent.Title + "”"})
 		}
 		ui.chats = append([]*conversation{sub}, ui.chats...)
-		ui.startIn(sub, agent.Message{Role: "user", Content: request.Brief}, "")
+		ui.startIn(sub, agent.PromptMessage(request.Brief, request.Attachments.Images, files), "")
 		ui.panel.showTodo(parent) // its live state, beside the parent
 		ui.panel.todoChanged(parent)
 		info = ui.subchatInfo(sub)

@@ -62,11 +62,11 @@ func TestChatsTool(t *testing.T) {
 // message from another chat and of a report.
 func TestChatMessageFlow(t *testing.T) {
 	from := ChatSender{ID: "a", Title: "API", Hops: 3}
-	message := ChatMessage(from, "", "  hello\nthere ")
+	message := ChatMessage(from, "", "  hello\nthere ", nil, nil)
 	if message.Internal || message.From.Report || message.Content != "[Message from the chat a “API”]\nhello\nthere" {
 		t.Fatalf("message %+v", message)
 	}
-	if got := ChatMessage(from, RelationParent, "x").Content; !strings.HasPrefix(got, "[Message from the parent conversation “API” (chat a)]") {
+	if got := ChatMessage(from, RelationParent, "x", nil, nil).Content; !strings.HasPrefix(got, "[Message from the parent conversation “API” (chat a)]") {
 		t.Fatalf("from the parent: %q", got)
 	}
 	report := TurnReport(ChatSender{ID: "b", Title: "Docs", Hops: 4}, "", SubchatInfo{State: SubchatDone, Last: "Done it."})

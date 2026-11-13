@@ -225,24 +225,25 @@ type desktopUI struct {
 	refHover      string // the issue or pull request link under the pointer
 
 	// Window and sidebar
-	header      *fitLabel
-	headerBar   *fyne.Container
-	parentLink  *tapRow // a subchat's way back to its parent, beside the title
-	expand      *tapRow
-	newChat     *tapRow
-	connections *tapRow
-	projectList *fyne.Container
-	sideGlide   *glideLayout // projectList's layout: its rows glide between renderings
-	sideLists   *fyne.Container
-	sideChats   []sideChat // the chats listed, for search
-	sideOrder   []sideChat // the same in the sidebar's order, for the previous and next chat
-	searchRow   *tapRow
-	find        *chatFind
-	registered  []*desktop.CustomShortcut // the shortcuts' keys the window has
-	pane        *paneLayout
-	sideHandle  *sidebarHandle
-	paneAnim    *fyne.Animation
-	root        *fyne.Container
+	header        *fitLabel
+	headerBar     *fyne.Container
+	parentLink    *tapRow // a subchat's way back to its parent, beside the title
+	expand        *tapRow
+	newChat       *tapRow
+	connections   *tapRow
+	projectList   *fyne.Container
+	sideGlide     *glideLayout // projectList's layout: its rows glide between renderings
+	sideLists     *fyne.Container
+	sideChats     []sideChat // the chats listed, for search
+	sideOrder     []sideChat // the same in the sidebar's order, for the previous and next chat
+	searchRow     *tapRow
+	find          *chatFind
+	subchatsShown map[string]bool           // chats whose many subchats the user unfolded (true) or folded (false), by ID
+	registered    []*desktop.CustomShortcut // the shortcuts' keys the window has
+	pane          *paneLayout
+	sideHandle    *sidebarHandle
+	paneAnim      *fyne.Animation
+	root          *fyne.Container
 }
 
 // desktopApp is what the windows share: the backend, the chats and

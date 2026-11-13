@@ -316,6 +316,7 @@ var (
 	iconDot          = lineIcon("dot", `<circle cx="8" cy="8" r="3.2" fill="currentColor" stroke="none"/>`)
 	iconBookmark     = lineIcon("bookmark", `<path d="M4.5 2.5h7v11L8 10.8l-3.5 2.7z"/>`)
 	iconCompact      = lineIcon("compact", `<path d="M8 2.5v4M5.8 4.6 8 6.6l2.2-2M8 13.5v-4M5.8 11.4 8 9.4l2.2 2M3 8h10"/>`)
+	iconWarning      = lineIcon("warning", `<path d="M8 2.6 14 13H2z"/><path d="M8 6.6v3M8 11.3h.01" stroke-width="1.6"/>`)
 	iconTaskEnded    = lineIcon("task-ended", `<rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M5 6.3 6.8 8 5 9.7M8.4 10h2.6"/>`)
 )
 
@@ -395,6 +396,7 @@ type tapRow struct {
 	padPx     float32       // optional padding around the icon (styleIcon), 0 = style default
 	badge     fyne.Resource // optional mark on the far edge (styleMenu: the active choice)
 	mark      fyne.Resource // optional small icon right after the text (a project's target, #359)
+	markText  string        // optional short muted text after the mark (a chat's count of subchats, #426)
 	truncate  bool          // fills its column: truncates instead of forcing it wider
 	tips      *tipLayer     // optional: shows the whole text while hovered, when it is cut short
 	clipped   bool          // the text was cut short at the last layout
@@ -561,7 +563,9 @@ func (row *tapRow) CreateRenderer() fyne.WidgetRenderer {
 	badge.FillMode = canvas.ImageFillContain
 	mark := canvas.NewImageFromResource(nil)
 	mark.FillMode = canvas.ImageFillContain
-	renderer := &tapRowRenderer{row: row, bg: bg, label: label, trailing: trailing, icon: icon, detail: detail, badge: badge, mark: mark}
+	markText := canvas.NewText("", colMuted)
+	markText.TextSize = 12
+	renderer := &tapRowRenderer{row: row, bg: bg, label: label, trailing: trailing, icon: icon, detail: detail, badge: badge, mark: mark, markText: markText}
 	renderer.Refresh()
 	return renderer
 }
@@ -580,6 +584,7 @@ type tapRowRenderer struct {
 	marked   fyne.Resource
 	markedBy fyne.Resource // the mark's resource, as tinted
 	markTint color.NRGBA
+	markText *canvas.Text // row.markText
 }
 
 // The mark after a row's text: its size, the gap before it, and the room
@@ -588,7 +593,17 @@ const (
 	rowMarkSize    = 13
 	rowMarkGap     = 6
 	rowMarkMinText = 32
+	rowMarkTextGap = 3 // between the mark and its text
 )
+
+// markWidth is the room the mark and its text take after the row's text.
+func (renderer *tapRowRenderer) markWidth() float32 {
+	width := float32(rowMarkGap + rowMarkSize)
+	if renderer.row.markText != "" {
+		width += rowMarkTextGap + textSize(renderer.row.markText, 12, fyne.TextStyle{}).Width
+	}
+	return width
+}
 
 func (renderer *tapRowRenderer) metrics() (padX, padY, iconSize, gap float32) {
 	switch renderer.row.style {
@@ -641,7 +656,7 @@ func (renderer *tapRowRenderer) MinSize() fyne.Size {
 	width += fyne.Max(textSize(renderer.row.text, renderer.row.size, fyne.TextStyle{}).Width,
 		textSize(renderer.row.detail, 12, fyne.TextStyle{}).Width) + 2
 	if renderer.row.mark != nil {
-		width += rowMarkGap + rowMarkSize
+		width += renderer.markWidth()
 	}
 	if renderer.row.trailing != "" {
 		width += gap + textSize(renderer.row.trailing, renderer.row.size-1, fyne.TextStyle{}).Width
@@ -696,9 +711,9 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 		}
 	}
 	room := size.Width - 2*padX - iconRoom - trailingWidth - renderer.row.endInset
-	marked := renderer.row.mark != nil && room >= rowMarkGap+rowMarkSize+rowMarkMinText
+	marked := renderer.row.mark != nil && room >= renderer.markWidth()+rowMarkMinText
 	if marked {
-		room -= rowMarkGap + rowMarkSize
+		room -= renderer.markWidth()
 	}
 	renderer.label.Text = fitText(renderer.row.text, renderer.row.size, fyne.TextStyle{}, room)
 	renderer.row.clipped = renderer.label.Text != renderer.row.text
@@ -731,8 +746,12 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 		renderer.mark.Resize(fyne.NewSquareSize(rowMarkSize))
 		renderer.mark.Move(fyne.NewPos(x+textWidth+rowMarkGap, textY+(renderer.label.MinSize().Height-rowMarkSize)/2))
 		renderer.mark.Show()
+		renderer.markText.Text = renderer.row.markText
+		renderer.markText.Move(fyne.NewPos(x+textWidth+rowMarkGap+rowMarkSize+rowMarkTextGap, textY+(renderer.label.MinSize().Height-renderer.markText.MinSize().Height)/2))
+		renderer.markText.Hidden = renderer.row.markText == ""
 	} else {
 		renderer.mark.Hide()
+		renderer.markText.Hide()
 	}
 	// The second line starts under the label, past any leading icon.
 	renderer.detail.Move(fyne.NewPos(x, textY+renderer.label.MinSize().Height+1))
@@ -810,7 +829,11 @@ func (renderer *tapRowRenderer) colorsAt(h float32) (fill, stroke, ink color.NRG
 			}
 		}
 		ink = colText
-		if !row.selected && row.accent {
+		switch {
+		case row.selected:
+		case row.ink != (color.NRGBA{}): // an ink of its own, muted or faint: brightens on hover
+			ink = mix(row.ink, colText, h)
+		case row.accent:
 			ink = mix(colTextSoft, colText, h)
 		}
 	case styleChip:
@@ -964,11 +987,13 @@ func (renderer *tapRowRenderer) Refresh() {
 	renderer.icon.Translucency = float64(1 - iconAlpha)
 	renderer.badge.Translucency = renderer.icon.Translucency
 	renderer.mark.Translucency = renderer.icon.Translucency
+	renderer.markText.Color = text(colMuted)
 	renderer.Layout(row.Size())
 	renderer.bg.Refresh()
 	renderer.label.Refresh()
 	renderer.trailing.Refresh()
 	renderer.detail.Refresh()
+	renderer.markText.Refresh()
 }
 
 func (renderer *tapRowRenderer) Objects() []fyne.CanvasObject {
@@ -980,7 +1005,7 @@ func (renderer *tapRowRenderer) Objects() []fyne.CanvasObject {
 		objects = append(objects, renderer.badge)
 	}
 	if renderer.row.mark != nil {
-		objects = append(objects, renderer.mark)
+		objects = append(objects, renderer.mark, renderer.markText)
 	}
 	return objects
 }

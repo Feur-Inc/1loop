@@ -595,7 +595,10 @@ func (server *headlessServer) stop(w http.ResponseWriter, r *http.Request) {
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	if chat := server.chatLocked(args.Chat); chat != nil && chat.run != nil {
+	if chat := server.chatLocked(args.Chat); chat != nil && chat.Subchat != nil { // a subchat stops with the subchats under it
+		server.stopTreeLocked(chat, 0)
+		chat.queue, chat.steer = nil, nil
+	} else if chat != nil && chat.run != nil {
 		chat.run.cancel()
 		chat.queue = nil
 		chat.steer = nil

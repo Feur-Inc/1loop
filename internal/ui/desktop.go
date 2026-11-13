@@ -107,68 +107,28 @@ type chatRun struct {
 	started         time.Time
 }
 
+// desktopUI is one 1loop window: its widgets, the chat it shows, its
+// composer and side panel. What every window shares is desktopApp
+// (windows.go), embedded so that ui.chats and the like read the same data
+// from any window.
 type desktopUI struct {
-	usage            *usage.Ledger // every model call this computer made (internal/usage)
-	prices           *usage.Prices
-	usageQuery       usage.Query // what the Usage page shows, kept while 1loop runs
-	usageRow         *tapRow     // the sidebar's Usage row, with today's spend
-	computer         *computeruse.ComputerSession
-	browser          *browser.Engine
-	window           fyne.Window
-	backend          *agent.App
-	cfg              agent.Config
-	keys             map[string]string
-	connectionsList  []agent.Connection
-	webSetupWindows  map[*agent.ChatGPTWeb]fyne.Window
-	choices          map[string]agent.ModelChoice
-	modelUnavailable map[string]string // model catalog problems, displayed inside the selector
-	accountLimits    map[string]agent.AccountLimits
-	userInstructions string
-	preferencesEntry *widget.Entry // the settings' editor of userInstructions, once shown
-	approvalMode     string
-	inForeground     bool // the window has the focus
-	chats            []*conversation
-	current          *conversation
-	projects         []string
-	sshMachines      []sshmachine.Settings          // Settings → General
-	machineProjects  map[string][]string            // each SSH machine's projects (paths there), by machine ID
-	machines         map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
-	localWorkspace   string                         // this computer's project while an SSH machine is the target
-	worktrees        map[string]string              // this computer's worktrees: folder → project (worktrees.go)
-	worktreeSort     string                         // how the sidebar and Repository order worktrees
-	theme            themeChoice                    // dark, light or the system's, and the accent
-	repos            map[string]*repoState          // repositories read, by target and project
-	repoWindow       *repoWindow                    // the open Repository window
-	statePath        string
-	saveTimer        *time.Timer
-	saveLock         sync.Mutex // one write at a time, the newest state last
-	saveCount        int        // states handed to persist
-	saveDone         int        // the newest one written (under saveLock)
-	saveError        string
-	stateProblem     string // why the saved state could not be read, said once the window is up
-	stateBlocked     bool   // the unreadable state could not be put aside: never write over it
-	ctx              context.Context
-	shutdown         context.CancelFunc
-	modelLoad        int
-	plan             agent.PlanUsage          // Claude Code connection: the subscription windows in use
-	claudeOffered    bool                     // the Claude Code connection was proposed once
-	remote           *remoteServer            // the phone remote, nil when off
-	extPage          *extensionsPage          // Settings → Extensions, while it was last built
-	server           *remoteDesktop           // the server the window works on, nil for this computer (remote_desktop.go)
-	links            []*serverLink            // the paired servers, each followed for the sidebar (target_link.go)
-	home             string                   // the browser client's own server, the page's origin; "" on the desktop
-	serverProjects   map[string][]string      // their projects as last listed, by address: listed while it does not answer
-	reaches          map[string]targetReach   // whether each target answered, by its key (targets.go)
-	localCfg         agent.Config             // this computer's settings while a server is the target
-	machine          *tapRow                  // the target: this computer, an SSH machine or a server
-	serverStatus     *fitLabel                // the server's state beside it
-	remoteEnabled    bool                     // see phone_server.go
-	devices          []remoteapi.PairedDevice // phones paired with the remote
-	modelsLoading    bool
-	chrome           bool
+	*desktopApp
 
-	updates   updateState // the release page's latest version (updates.go)
-	updateRow *tapRow     // the sidebar's "Update available" row
+	usageRow         *tapRow // the sidebar's Usage row, with today's spend
+	window           fyne.Window
+	cfg              agent.Config
+	preferencesEntry *widget.Entry // the settings' editor of userInstructions, once shown
+	current          *conversation
+	localWorkspace   string // this computer's project while an SSH machine is the target
+	modelLoad        int
+	extPage          *extensionsPage // Settings → Extensions, while it was last built
+	server           *remoteDesktop  // the server the window works on, nil for this computer (remote_desktop.go)
+	localCfg         agent.Config    // this computer's settings while a server is the target
+	machine          *tapRow         // the target: this computer, an SSH machine or a server
+	serverStatus     *fitLabel       // the server's state beside it
+	modelsLoading    bool
+
+	updateRow *tapRow // the sidebar's "Update available" row
 
 	// Composer
 	prompt          *chatEntry
@@ -206,86 +166,139 @@ type desktopUI struct {
 	folder                          *tapRow
 
 	// Conversation
-	transcript        *fyne.Container
-	footerSpace       *canvas.Rectangle // room left at the end for the floating composer
-	footerGlass       *footerGlass
-	column            *fyne.Container
-	scroll            *kineticScroll
-	followTail        bool
-	items             *transcriptLayout
-	frames            *frameHook
-	prefs             *settingsView     // the settings page
-	curtain           *pageCurtain      // fades the main area's new page in
-	sideApp           fyne.CanvasObject // the sidebar's usual content, hidden while settings are open
-	selected          textSelection     // what holds the selected text, if anything does
-	chatSel           chatSelection     // the selection across the conversation's messages
-	building          bool              // openChat is adding a whole chat's items (see place)
-	welcome           fyne.CanvasObject
-	thinking          *fyne.Container
-	thinkLabel        *fitLabel
-	transcriptBox     *fyne.Container   // the transcript with its arrivals' veils over it
-	inlineRow         fyne.CanvasObject // the activity line's place under the last message
-	inlineSlot        *fyne.Container
-	dockRow           *fyne.Container // its place beside the composer (see dockActivity)
-	composer          fyne.CanvasObject
-	docked            bool
-	dockFits          bool // the margin beside the composer has room for the line (dockLayout)
-	lineShown         bool
-	mark              *loopMark
-	workMark          *loopMark
-	views             map[int]any             // live widgets of the chat on screen, by item index
-	copyRows          map[int]*fyne.Container // Copy buttons under its answers, by item index
-	thumbnails        transcriptThumbnailCache
-	loadingChat       *conversationLoad
-	cachedChat        *conversationViewCache
-	chatWait          *loopMark
-	chatWaitView      *fyne.Container
-	chatViewport      *fyne.Container
-	settled           *time.Timer
-	panel             *toolPanel
-	split             *fyne.Container
-	panelToggle       *tapRow
-	panelWidth        float32           // last width chosen by dragging, independent of window size
-	classicCompaction bool              // settings: dynamic context compaction turned off
-	memoryOff         bool              // settings: the agent's memory tool turned off
-	wrapUpOff         bool              // settings: the next-step card (wrap_up tool) turned off
-	autoResume        *agent.AutoResume // settings: what a rate limit does to a run
-	closeQuits        bool              // settings: closing the window quits rather than hiding it in the tray
-	crashReportsOff   bool              // settings: Don't ask again, after a crash
-	lastCrash         *crash.Crash      // the last run's, offered once the window is up
-	trayNoticeShown   bool              // the first close said that 1loop stays in the tray
-	tray              *trayIcon         // the system tray icon (tray.go), nil without one
-	discordPresence   bool              // settings: show on Discord what the agent is doing
-	discordDetails    bool              // settings: with the chat, project and tool
-	presence          *discord.Presence // while discordPresence is on
-	tips              *tipLayer
-	refHover          string                     // the issue or pull request link under the pointer
-	refCache          map[string]*referenceCache // what was read of each, by owner/name#N
+	transcript    *fyne.Container
+	footerSpace   *canvas.Rectangle // room left at the end for the floating composer
+	footerGlass   *footerGlass
+	column        *fyne.Container
+	scroll        *kineticScroll
+	followTail    bool
+	items         *transcriptLayout
+	frames        *frameHook
+	prefs         *settingsView     // the settings page
+	curtain       *pageCurtain      // fades the main area's new page in
+	sideApp       fyne.CanvasObject // the sidebar's usual content, hidden while settings are open
+	selected      textSelection     // what holds the selected text, if anything does
+	chatSel       chatSelection     // the selection across the conversation's messages
+	building      bool              // openChat is adding a whole chat's items (see place)
+	welcome       fyne.CanvasObject
+	thinking      *fyne.Container
+	thinkLabel    *fitLabel
+	transcriptBox *fyne.Container   // the transcript with its arrivals' veils over it
+	inlineRow     fyne.CanvasObject // the activity line's place under the last message
+	inlineSlot    *fyne.Container
+	dockRow       *fyne.Container // its place beside the composer (see dockActivity)
+	composer      fyne.CanvasObject
+	docked        bool
+	dockFits      bool // the margin beside the composer has room for the line (dockLayout)
+	lineShown     bool
+	mark          *loopMark
+	workMark      *loopMark
+	views         map[int]any             // live widgets of the chat on screen, by item index
+	copyRows      map[int]*fyne.Container // Copy buttons under its answers, by item index
+	thumbnails    transcriptThumbnailCache
+	loadingChat   *conversationLoad
+	cachedChat    *conversationViewCache
+	chatWait      *loopMark
+	chatWaitView  *fyne.Container
+	chatViewport  *fyne.Container
+	settled       *time.Timer
+	panel         *toolPanel
+	split         *fyne.Container
+	panelToggle   *tapRow
+	tips          *tipLayer
+	refHover      string // the issue or pull request link under the pointer
 
 	// Window and sidebar
-	header         *fitLabel
-	headerBar      *fyne.Container
-	parentLink     *tapRow // a subchat's way back to its parent, beside the title
-	expand         *tapRow
-	newChat        *tapRow
-	connections    *tapRow
-	projectList    *fyne.Container
-	sideGlide      *glideLayout // projectList's layout: its rows glide between renderings
-	sideLists      *fyne.Container
-	sideChats      []sideChat // the chats listed, for search
-	sideOrder      []sideChat // the same in the sidebar's order, for the previous and next chat
-	searchRow      *tapRow
-	find           *chatFind
-	shortcutKeys   map[string]string         // shortcut → key, where the user chose another than its default
-	registered     []*desktop.CustomShortcut // the shortcuts' keys the window has
-	allChatsShown  map[string]bool           // projects whose every chat is listed
-	worktreesShown map[string]bool           // projects whose worktrees are unfolded
-	foldedProjects map[string]bool
-	pane           *paneLayout
-	sideHandle     *sidebarHandle
-	sidebarWidth   float32 // dragged to, independent of window size; 0: the default
-	paneAnim       *fyne.Animation
-	root           *fyne.Container
+	header      *fitLabel
+	headerBar   *fyne.Container
+	parentLink  *tapRow // a subchat's way back to its parent, beside the title
+	expand      *tapRow
+	newChat     *tapRow
+	connections *tapRow
+	projectList *fyne.Container
+	sideGlide   *glideLayout // projectList's layout: its rows glide between renderings
+	sideLists   *fyne.Container
+	sideChats   []sideChat // the chats listed, for search
+	sideOrder   []sideChat // the same in the sidebar's order, for the previous and next chat
+	searchRow   *tapRow
+	find        *chatFind
+	registered  []*desktop.CustomShortcut // the shortcuts' keys the window has
+	pane        *paneLayout
+	sideHandle  *sidebarHandle
+	paneAnim    *fyne.Animation
+	root        *fyne.Container
+}
+
+// desktopApp is what the windows share: the backend, the chats and
+// projects, the settings, the tray and the phone remote.
+type desktopApp struct {
+	usage             *usage.Ledger // every model call this computer made (internal/usage)
+	prices            *usage.Prices
+	usageQuery        usage.Query // what the Usage page shows, kept while 1loop runs
+	computer          *computeruse.ComputerSession
+	browser           *browser.Engine
+	backend           *agent.App
+	keys              map[string]string
+	connectionsList   []agent.Connection
+	webSetupWindows   map[*agent.ChatGPTWeb]fyne.Window
+	choices           map[string]agent.ModelChoice
+	modelUnavailable  map[string]string // model catalog problems, displayed inside the selector
+	accountLimits     map[string]agent.AccountLimits
+	userInstructions  string
+	approvalMode      string
+	inForeground      bool // the window has the focus
+	chats             []*conversation
+	projects          []string
+	sshMachines       []sshmachine.Settings          // Settings → General
+	machineProjects   map[string][]string            // each SSH machine's projects (paths there), by machine ID
+	machines          map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
+	worktrees         map[string]string              // this computer's worktrees: folder → project (worktrees.go)
+	worktreeSort      string                         // how the sidebar and Repository order worktrees
+	theme             themeChoice                    // dark, light or the system's, and the accent
+	repos             map[string]*repoState          // repositories read, by target and project
+	repoWindow        *repoWindow                    // the open Repository window
+	statePath         string
+	saveTimer         *time.Timer
+	saveLock          sync.Mutex // one write at a time, the newest state last
+	saveCount         int        // states handed to persist
+	saveDone          int        // the newest one written (under saveLock)
+	saveError         string
+	stateProblem      string // why the saved state could not be read, said once the window is up
+	stateBlocked      bool   // the unreadable state could not be put aside: never write over it
+	ctx               context.Context
+	shutdown          context.CancelFunc
+	plan              agent.PlanUsage          // Claude Code connection: the subscription windows in use
+	claudeOffered     bool                     // the Claude Code connection was proposed once
+	remote            *remoteServer            // the phone remote, nil when off
+	links             []*serverLink            // the paired servers, each followed for the sidebar (target_link.go)
+	home              string                   // the browser client's own server, the page's origin; "" on the desktop
+	serverProjects    map[string][]string      // their projects as last listed, by address: listed while it does not answer
+	reaches           map[string]targetReach   // whether each target answered, by its key (targets.go)
+	remoteEnabled     bool                     // see phone_server.go
+	devices           []remoteapi.PairedDevice // phones paired with the remote
+	chrome            bool
+	updates           updateState                // the release page's latest version (updates.go)
+	panelWidth        float32                    // last width chosen by dragging, independent of window size
+	classicCompaction bool                       // settings: dynamic context compaction turned off
+	memoryOff         bool                       // settings: the agent's memory tool turned off
+	wrapUpOff         bool                       // settings: the next-step card (wrap_up tool) turned off
+	autoResume        *agent.AutoResume          // settings: what a rate limit does to a run
+	closeQuits        bool                       // settings: closing the window quits rather than hiding it in the tray
+	crashReportsOff   bool                       // settings: Don't ask again, after a crash
+	lastCrash         *crash.Crash               // the last run's, offered once the window is up
+	trayNoticeShown   bool                       // the first close said that 1loop stays in the tray
+	tray              *trayIcon                  // the system tray icon (tray.go), nil without one
+	discordPresence   bool                       // settings: show on Discord what the agent is doing
+	discordDetails    bool                       // settings: with the chat, project and tool
+	presence          *discord.Presence          // while discordPresence is on
+	refCache          map[string]*referenceCache // what was read of each, by owner/name#N
+	shortcutKeys      map[string]string          // shortcut → key, where the user chose another than its default
+	allChatsShown     map[string]bool            // projects whose every chat is listed
+	worktreesShown    map[string]bool            // projects whose worktrees are unfolded
+	foldedProjects    map[string]bool
+	sidebarWidth      float32 // dragged to, independent of window size; 0: the default
+
+	windows []*desktopUI // every window, the main one first (windows.go)
 }
 
 // Fyne snapshots its built-in dialog language when loading translations.
@@ -335,8 +348,10 @@ func runDesktop(backend *agent.App, root string) {
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
 	backend.EnableChatGPTWeb(ctx)
-	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), shortcutKeys: map[string]string{}, statePath: statePath(root),
-		cfg: agent.Config{Provider: "compatible", Workspace: root}, foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}, lastCrash: lastCrash}
+	ui := &desktopUI{desktopApp: &desktopApp{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), shortcutKeys: map[string]string{}, statePath: statePath(root),
+		foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}, lastCrash: lastCrash},
+		cfg: agent.Config{Provider: "compatible", Workspace: root}}
+	ui.windows = []*desktopUI{ui}
 	// Our own title bar on X11, native Wayland and Windows; the system bar
 	// elsewhere. Nothing is drawn in the window before its content is set
 	// below, once the state is loaded.

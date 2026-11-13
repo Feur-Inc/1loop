@@ -31,8 +31,10 @@ func WebMain() {
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
 	backend := &agent.App{Approvals: make(map[string]chan bool)}
-	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string),
-		cfg: agent.Config{Provider: "compatible"}, home: js.Global().Get("location").Get("origin").String(), serverProjects: loadWebProjects()}
+	ui := &desktopUI{desktopApp: &desktopApp{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string),
+		home: js.Global().Get("location").Get("origin").String(), serverProjects: loadWebProjects()},
+		cfg: agent.Config{Provider: "compatible"}}
+	ui.windows = []*desktopUI{ui}
 	ui.window = a.NewWindow("1loop")
 	ui.window.SetPadded(false)
 	ui.followTheme()

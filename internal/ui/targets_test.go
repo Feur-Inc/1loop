@@ -152,7 +152,7 @@ func TestProjectsShowTheirTarget(t *testing.T) {
 func TestServerProjectsRemembered(t *testing.T) {
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // no server paired
 	path := filepath.Join(t.TempDir(), "state.json")
-	before := &desktopUI{ctx: context.Background(), statePath: path, foldedProjects: map[string]bool{}, shortcutKeys: map[string]string{}}
+	before := &desktopUI{desktopApp: &desktopApp{ctx: context.Background(), statePath: path, foldedProjects: map[string]bool{}, shortcutKeys: map[string]string{}}}
 	before.rememberServerProjects("https://old.lan:47101", []string{"/srv/old"})
 	before.rememberServerProjects(testServer, []string{"/srv/api", "/srv/web"})
 	if before.saveTimer != nil {
@@ -162,7 +162,7 @@ func TestServerProjectsRemembered(t *testing.T) {
 	if before.saveError != "" {
 		t.Fatal(before.saveError)
 	}
-	after := &desktopUI{ctx: context.Background(), statePath: path, foldedProjects: map[string]bool{}, shortcutKeys: map[string]string{}}
+	after := &desktopUI{desktopApp: &desktopApp{ctx: context.Background(), statePath: path, foldedProjects: map[string]bool{}, shortcutKeys: map[string]string{}}}
 	after.load()
 	if len(after.serverProjects) != 1 || !slices.Equal(after.serverProjects[testServer], []string{"/srv/api", "/srv/web"}) {
 		t.Fatalf("remembered %v", after.serverProjects)

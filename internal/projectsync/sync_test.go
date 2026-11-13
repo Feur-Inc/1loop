@@ -3,6 +3,8 @@
 package projectsync
 
 import (
+	"archive/tar"
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -225,5 +227,20 @@ func TestScanKeepsProjectSettings(t *testing.T) {
 		if _, ok := files[left]; ok {
 			t.Fatalf("%s stays on its device", left)
 		}
+	}
+}
+
+// An oversized conversation is refused before it is read into memory.
+func TestImportRefusesHugeChats(t *testing.T) {
+	var buf bytes.Buffer
+	archive := tar.NewWriter(&buf)
+	writeEntry(archive, "sync.json", 0600, []byte("{}"))
+	// Only the header: the import must stop before reading the body.
+	archive.WriteHeader(&tar.Header{Name: "chats/c.json", Mode: 0600, Size: maxChat + 1, Typeflag: tar.TypeReg})
+	archive.Flush()
+	added := 0
+	_, err := Import(&buf, t.TempDir(), t.TempDir(), func(Chat, bool) (string, error) { added++; return "", nil })
+	if err == nil || !strings.Contains(err.Error(), "larger than") || added != 0 {
+		t.Fatalf("refused: err %v, %d added", err, added)
 	}
 }

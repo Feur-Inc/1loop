@@ -84,8 +84,15 @@ func (ui *desktopUI) checkUpdates(done func()) {
 	}()
 }
 
-// showUpdateRow shows the sidebar's "Update available" row when there is one.
+// showUpdateRow shows the sidebar's "Update available" row when there is
+// one, in every window.
 func (ui *desktopUI) showUpdateRow() {
+	for _, view := range ui.allWindows() {
+		view.drawUpdateRow()
+	}
+}
+
+func (ui *desktopUI) drawUpdateRow() {
 	if ui.updateRow == nil {
 		return
 	}

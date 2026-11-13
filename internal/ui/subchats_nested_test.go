@@ -53,7 +53,7 @@ func TestSidebarShowsNestedSubchats(t *testing.T) {
 // Stopping a subchat on this computer stops the ones under it, not its
 // parent; a subchat below level 3 is refused a start (#398).
 func TestStopNestedSubchatsOnDesktop(t *testing.T) {
-	ui := &desktopUI{ctx: context.Background()}
+	ui := &desktopUI{desktopApp: &desktopApp{ctx: context.Background()}}
 	ui.chats = nestedChats()
 	stopped := map[string]bool{}
 	for _, chat := range ui.chats {

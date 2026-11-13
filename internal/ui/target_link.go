@@ -35,13 +35,19 @@ type serverLink struct {
 
 // linkServers follows every paired server, in the order they were paired,
 // and stops following one that is no longer paired, or no longer the same
-// way: called at start and when the window takes a server.
+// way: called at start and when the window takes a server. The browser
+// client follows the page's own server first, then those it linked
+// (web_targets.go).
 func (ui *desktopUI) linkServers() {
-	if browserClient { // the page's server is the window's only target
-		return
+	addresses := loadServerAddresses()
+	if ui.home != "" {
+		addresses = ui.browserServers()
 	}
 	var links []*serverLink
-	for _, address := range loadServerAddresses() {
+	for _, address := range addresses {
+		if address.Token == "" { // the page's own server, not paired yet
+			continue
+		}
 		if i := slices.IndexFunc(ui.links, func(link *serverLink) bool { return link.address == address }); i >= 0 {
 			links = append(links, ui.links[i])
 			continue
@@ -61,6 +67,9 @@ func (ui *desktopUI) linkServers() {
 		}
 	}
 	ui.links = links
+	if ui.home != "" && ui.projectList != nil {
+		ui.renderChats()
+	}
 }
 
 // linkTo is the link that follows the server at an address, nil if none.

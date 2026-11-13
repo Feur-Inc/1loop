@@ -1519,6 +1519,34 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         refreshSharing()
     }
 
+    /** The devices paired with the headless server open now (#428). */
+    suspend fun pairedDevices(): List<ServerDevice> {
+        val target = server?.takeIf { !it.localPhone && !it.desktop } ?: return emptyList()
+        return serverDevices(onConnection(target, connectionGeneration) { it.get("/api/devices") })
+    }
+
+    /** Unpairs another device from the headless server open now. */
+    suspend fun revokeServerDevice(id: String) {
+        val target = server?.takeIf { !it.localPhone && !it.desktop } ?: return
+        onConnection(target, connectionGeneration) { it.post(revokePath(id), JSONObject()) }
+    }
+
+    /**
+     * Forgets a paired computer or server (#428). A headless server first
+     * unpairs this phone, so that its token stops working there; one that does
+     * not answer is forgotten here all the same, and problem says how to finish.
+     */
+    fun unpair(target: Server) {
+        scope.launch {
+            // Left first: the revocation ends the open stream, whose 401 must not find this server still open.
+            if (target.key == server?.key) leave()
+            val told = target.desktop || !target.paired ||
+                withContext(Dispatchers.IO) { runCatching { unpairFrom(Api(target)) }.isSuccess }
+            unlink(target.key)
+            if (!told) problem = "${target.name} is forgotten on this phone, but it could not be told. Remove this phone from its paired devices on another device, or type devices then revoke in its console."
+        }
+    }
+
     /** Erases the agent's browser data where it runs: this phone's WebView, or the computer's browser. */
     suspend fun clearBrowser() {
         val target = server ?: error("Connect first.")

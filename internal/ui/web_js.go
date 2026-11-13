@@ -31,8 +31,10 @@ func WebMain() {
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
 	backend := &agent.App{Approvals: make(map[string]chan bool)}
-	ui := &desktopUI{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string),
+	ui := &desktopUI{desktopApp: &desktopApp{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string),
+		home: js.Global().Get("location").Get("origin").String(), serverProjects: loadWebProjects()},
 		cfg: agent.Config{Provider: "compatible"}}
+	ui.windows = []*desktopUI{ui}
 	ui.window = a.NewWindow("1loop")
 	ui.window.SetPadded(false)
 	ui.followTheme()
@@ -46,10 +48,15 @@ func WebMain() {
 	a.Lifecycle().SetOnStarted(func() {
 		ui.startFrames()
 		ui.watchTextInput()
+		ui.linkServers() // listed at once, those that do not answer marked offline
 		ui.connectOrigin()
 	})
 	ui.window.ShowAndRun()
 }
+
+// pairOriginAgain pairs with the page's own server again once this browser
+// forgot it (server_devices.go).
+func (ui *desktopUI) pairOriginAgain() { ui.connectOrigin() }
 
 // connectOrigin uses the token saved for this server, or pairs: at once
 // with the server's one-time setup link (#setup=… in the address).
@@ -62,9 +69,8 @@ func (ui *desktopUI) connectOrigin() {
 		// Out of the address bar and the history: it is used up.
 		js.Global().Get("history").Call("replaceState", nil, "", location.Get("pathname").String())
 	}
-	saved := loadServerAddress()
 	target := serverAddress{URL: origin}
-	if saved.URL == origin {
+	if saved, ok := pairedServer(origin); ok { // among the servers it linked, not only the last
 		target.Token = saved.Token
 	}
 	client, err := newRemoteClient(target)
@@ -96,7 +102,7 @@ func (ui *desktopUI) connectOrigin() {
 				return
 			}
 			sheet.dismiss()
-			ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone, reply.Approved)
+			ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone, reply.Approved, ui.useNewServer)
 		})
 	}()
 }

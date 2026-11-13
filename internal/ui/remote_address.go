@@ -39,3 +39,19 @@ func saveServerAddress(address serverAddress) error {
 	}
 	return os.WriteFile(path, saved.encode(), 0600)
 }
+
+// forgetServerAddress unpairs a server; the others stay paired.
+func forgetServerAddress(address string) error {
+	saved := loadPairings()
+	saved.remove(address)
+	return os.WriteFile(remoteAddressPath(), saved.encode(), 0600)
+}
+
+// The browser client's servers' projects are kept in the page's storage
+// (remote_address_js.go); the desktop keeps them in its settings.
+func loadWebProjects() map[string][]string { return map[string][]string{} }
+func saveWebProjects(map[string][]string)  {}
+
+// pairOriginAgain is the browser client's (web_js.go): the desktop has no
+// page's own server.
+func (ui *desktopUI) pairOriginAgain() {}

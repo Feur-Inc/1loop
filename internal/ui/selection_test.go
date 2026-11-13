@@ -46,7 +46,7 @@ func drag(layer *selectLayer, at fyne.Position) {
 
 func TestSelectionGoesIntoCodeBlock(t *testing.T) {
 	test.NewTempApp(t)
-	ui := &desktopUI{}
+	ui := &desktopUI{desktopApp: &desktopApp{}}
 	ui.chatSel.ui = ui
 	layer, content := answer(t, ui, "Run this first:\n\n```go\nfmt.Println(\"hello\")\nos.Exit(2)\n```\n\nThen look.")
 	ui.transcript = container.NewVBox(content)
@@ -74,7 +74,7 @@ func TestSelectionGoesIntoCodeBlock(t *testing.T) {
 
 func TestSelectionAcrossMessages(t *testing.T) {
 	test.NewTempApp(t)
-	ui := &desktopUI{}
+	ui := &desktopUI{desktopApp: &desktopApp{}}
 	ui.chatSel.ui = ui
 	first, a := answer(t, ui, "First answer, one line.")
 	_, b := answer(t, ui, "Middle answer.")

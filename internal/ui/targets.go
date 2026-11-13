@@ -81,13 +81,14 @@ func groupKey(target projectTarget, project string) string {
 }
 
 // mark is the small icon after the name of the target's projects: none
-// for the device in use; the same icons as the target menu's otherwise.
-func (target projectTarget) mark() fyne.Resource {
+// for the device in use, nor for home, the server the browser client's
+// page came from; the same icons as the target menu's otherwise.
+func (target projectTarget) mark(home string) fyne.Resource {
 	switch target.kind {
 	case targetSSH:
 		return iconTerminal
 	case targetServer:
-		if browserClient {
+		if target.id == home {
 			return nil
 		}
 		return iconBrowser
@@ -302,8 +303,13 @@ func serverProjectList(workspace string, listed []string, chats []remoteapi.Chat
 
 // rememberServerProjects keeps a server's projects for the next start,
 // when it may not answer: they are listed then, marked offline. Only the
-// servers paired now are remembered.
+// servers paired now are remembered; the browser client keeps them in the
+// page's storage (web_targets.go).
 func (ui *desktopUI) rememberServerProjects(address string, projects []string) {
+	if ui.home != "" {
+		ui.rememberWebProjects(address, projects)
+		return
+	}
 	if known, ok := ui.serverProjects[address]; ok && slices.Equal(known, projects) {
 		return
 	}
@@ -325,6 +331,12 @@ func (ui *desktopUI) sideChatOf(chat *conversation) sideChat {
 		{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
 		{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
 	}
+	var window func()
+	if ui.canOpenWindow(chat) { // windows.go
+		window = func() { ui.openWindow(chat) }
+		menu = append([]menuAction{{label: "Open in new window", icon: iconWindow, run: window},
+			{label: "Open in split view", icon: iconPanel, run: func() { ui.splitPane(chat, false) }}}, menu...)
+	}
 	parent, ended := "", ""
 	if chat.Subchat != nil {
 		parent, ended = chat.Subchat.Parent, chat.Subchat.Ended
@@ -341,9 +353,10 @@ func (ui *desktopUI) sideChatOf(chat *conversation) sideChat {
 		id: chat.ID, parent: parent, ended: ended,
 		title: chat.Title, folder: chat.Config.Workspace, scratch: chat.Config.InScratch(), running: chat.run != nil, selected: chat == ui.current,
 		status: status, blocked: blocked,
-		open: func() { ui.openLocalChat(chat) },
-		menu: menu,
-		text: func() []string { return chatTexts(chat.Items) },
+		open:   func() { ui.openLocalChat(chat) },
+		window: window,
+		menu:   menu,
+		text:   func() []string { return chatTexts(chat.Items) },
 	}
 }
 
@@ -378,6 +391,10 @@ func (ui *desktopUI) serverSideChats(target projectTarget, chats []remoteapi.Cha
 // openLocalChat opens a chat of this computer or of an SSH machine: the
 // window comes back from a server first, and works on the chat's target.
 func (ui *desktopUI) openLocalChat(chat *conversation) {
+	if view := ui.viewOf(chat); view != ui { // on screen in another window: that one comes forward
+		view.raise()
+		return
+	}
 	if ui.server != nil {
 		ui.useComputer()
 	}

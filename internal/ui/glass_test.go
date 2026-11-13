@@ -18,7 +18,7 @@ func TestFooterFadeFollowsTheEnd(t *testing.T) {
 	test.NewTempApp(t)
 	tall := canvas.NewRectangle(nil)
 	tall.SetMinSize(fyne.NewSize(300, 2000))
-	ui := &desktopUI{footerGlass: newFooterGlass()}
+	ui := &desktopUI{desktopApp: &desktopApp{}, footerGlass: newFooterGlass()}
 	ui.scroll = newKineticVScroll(container.NewVBox(tall))
 	window := test.NewTempWindow(t, ui.scroll)
 	window.Resize(fyne.NewSize(300, 500))

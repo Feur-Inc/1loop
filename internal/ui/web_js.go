@@ -86,7 +86,7 @@ func (ui *desktopUI) connectOrigin() {
 			client.address.Token = ""
 		}
 		var reply struct {
-			Pairing, Code            string
+			Pairing, Code, Command   string
 			Console, Phone, Approved bool
 		}
 		err := client.json(ctx, "POST", "/api/pair", map[string]string{"device": "1loop web", "setup": setup}, &reply)
@@ -96,7 +96,7 @@ func (ui *desktopUI) connectOrigin() {
 				return
 			}
 			sheet.dismiss()
-			ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone, reply.Approved, ui.useNewServer)
+			ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Command, reply.Phone, reply.Approved, ui.useNewServer)
 		})
 	}()
 }

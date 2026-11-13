@@ -56,18 +56,21 @@ workspace is `/projects`: keep both on volumes. Browser Use runs Chromium
 without its own sandbox (`ONELOOP_CHROMIUM_NO_SANDBOX=1`): Docker's default
 profile allows none of them, so the container is what isolates it. The image
 also serves the browser client: open `https://your-server:47101/` and pair it
-like any other client. Pairing happens in the
-server's console, so start it with a terminal (`-it`):
+like any other client.
 
 ```sh
 docker run -d -it --name 1loop-server -p 47101:47101 \
   -v 1loop-data:/data -v ~/projects:/projects \
   ghcr.io/feur-inc/1loop-server:latest
-docker logs 1loop-server          # the certificate's fingerprint
-docker attach 1loop-server        # type pair …, devices or revoke …
+docker logs 1loop-server          # the certificate's fingerprint and the setup link
+docker exec 1loop-server 1loop-server pair <pairing-ID> <code>   # approve a client
+docker exec 1loop-server 1loop-server devices                    # or revoke <number>, ssh, trust <number>
 ```
 
-Detach from the console with **Ctrl+P Ctrl+Q**: Ctrl+C would stop the
+The client's pairing dialog shows the `docker exec …` command to run, with
+the container's ID in place of its name (the container's hostname, unless you
+set another). The console's commands work as well with `docker attach
+1loop-server`: detach with **Ctrl+P Ctrl+Q**, as Ctrl+C would stop the
 server. Arguments after the image name are added to the server's own, for
 example the first connection: `-provider compatible -base-url … -model …
 -api-key-env MODEL_API_KEY` with `-e MODEL_API_KEY=…`.
@@ -192,7 +195,7 @@ folder on the host:
    same flags work with any host the server reaches.
 
 3. Confirm the host key. On its first connection the server prints the
-   machine's host key in its console (`docker attach 1loop-server`):
+   machine's host key in its logs (`docker logs 1loop-server`):
 
    ```text
    SSH machine you@host.docker.internal (host.docker.internal:22) has never been connected to. Its host key is ssh-ed25519 SHA256:….
@@ -200,7 +203,8 @@ folder on the host:
    ```
 
    Compare it with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the
-   host, then type `trust 1`. The key is kept in `/data/known_hosts`, and a
+   host, then run `docker exec 1loop-server 1loop-server trust 1` (or type
+   `trust 1` in the console). The key is kept in `/data/known_hosts`, and a
    different key later is refused. To skip this step, pin the key with
    `host-key=` instead: the server then accepts that key only.
 
@@ -239,9 +243,12 @@ starts. You can instead supply a certificate and private key with
    explicit `http://` address.
 3. The client shows a six-digit code. Approve it from a device already paired
    with the server: 1loop there (desktop, web or Android) shows "<device>
-   wants to use this server" and asks for that code. Or type the
-   `pair <pairing-ID> <six-digit-code>` command the client also shows in the
-   server process's console. The client connects by itself once approved.
+   wants to use this server" and asks for that code. Or run the command the
+   client also shows on the server's machine, as the server's user:
+   `1loop-server pair <pairing-ID> <six-digit-code>` (in Docker,
+   `docker exec <container> 1loop-server pair …`), or type
+   `pair <pairing-ID> <six-digit-code>` in the server process's console. The
+   client connects by itself once approved.
    Pairings expire after two minutes and allow five failed code attempts. At
    most eight may be pending.
 4. The paired client retains a random bearer token. The server persists only
@@ -269,12 +276,25 @@ random, travels in the URL's fragment (browsers never send it in a request
 line, so proxies do not log it), works once, and stops working as soon as a
 device is paired. Revoking the last device prints a new one.
 
-The console also accepts `devices` and `revoke <number>`. Revocation rejects
-new requests and disconnects active event/browser streams. It does not undo
-an operation already accepted by the server. The console stays the fallback
-when no paired device is at hand: for a detached deployment, use a terminal
-multiplexer such as tmux, or `docker attach` with a container started with
-`-it` (Compose: `stdin_open` and `tty`).
+**Commands from another shell.** `1loop-server <command>` sends one of the
+console's commands to the server that is running: `pair <id> <code>`,
+`devices`, `revoke <number>`, `ssh` (and `ssh add …`, `ssh remove <number>`),
+`trust <number>` and `refuse <number>`. It prints the answer and exits with
+status 1 when the server refused the command. It reaches the server through
+a Unix socket in its data directory, `admin.sock`: mode `0600` in the `0700`
+directory, so only the server's own user (and root) can use it, as they could
+read its keys. It finds the directory as the server does: `-data-dir`, else
+`ONELOOP_DATA_DIR` (`/data` in the Docker image), else
+`~/.config/1loop-server`. A server started with another `-data-dir` needs the
+same one: `1loop-server -data-dir /srv/1loop pair …` (the dialog's command
+includes it).
+
+`devices` lists the paired devices, `revoke <number>` removes one.
+Revocation rejects new requests and disconnects active event/browser streams.
+It does not undo an operation already accepted by the server. These commands
+work as well in the console, typed in the server's standard input: with tmux,
+or `docker attach` with a container started with `-it` (Compose:
+`stdin_open` and `tty`).
 
 Certificate replacement requires verifying and entering the new fingerprint
 on each client. A private certificate's fingerprint replaces normal hostname
@@ -343,7 +363,7 @@ shell processes do not. Git changes reuse the desktop diff parser and show
 unstaged/untracked or staged changes. Task progress, elapsed time and context
 policy are read from the server.
 
-Android has been adapted for the same HTTPS endpoints and console pairing.
+Android has been adapted for the same HTTPS endpoints and pairing.
 Compilation is separate from device verification: phone installation and
 interactive tests must wait for the user's explicit signal.
 

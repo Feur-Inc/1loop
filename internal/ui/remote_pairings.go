@@ -53,6 +53,19 @@ func (saved *pairings) add(address serverAddress) {
 	saved.Servers = append(saved.Servers, address)
 }
 
+// remove unpairs the server at an address: if it was the last paired, the
+// one paired before it becomes so.
+func (saved *pairings) remove(address string) {
+	saved.Servers = saved.all()
+	saved.Servers = slices.DeleteFunc(saved.Servers, func(server serverAddress) bool { return server.URL == address })
+	if saved.URL == address {
+		saved.serverAddress = serverAddress{}
+		if n := len(saved.Servers); n > 0 {
+			saved.serverAddress = saved.Servers[n-1]
+		}
+	}
+}
+
 func (saved pairings) encode() []byte {
 	data, _ := json.Marshal(saved)
 	return data

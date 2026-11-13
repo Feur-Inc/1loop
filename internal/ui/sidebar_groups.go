@@ -166,7 +166,7 @@ func (ui *desktopUI) addTargetGroup(group targetGroup) {
 		header := newRow(name, icon, styleNav, func() { ui.foldProject(key, !folded) })
 		header.accent = true
 		header.truncate = true
-		header.mark = target.mark()
+		header.mark = target.mark(ui.home)
 		header.selected = group.active && p != "" && p == ui.cfg.Workspace && ui.current == nil
 		if group.reach.state == reachOffline {
 			header.trailing = offlineMark

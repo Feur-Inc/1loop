@@ -156,6 +156,7 @@ type desktopUI struct {
 	extPage          *extensionsPage          // Settings → Extensions, while it was last built
 	server           *remoteDesktop           // the server the window works on, nil for this computer (remote_desktop.go)
 	links            []*serverLink            // the paired servers, each followed for the sidebar (target_link.go)
+	home             string                   // the browser client's own server, the page's origin; "" on the desktop
 	serverProjects   map[string][]string      // their projects as last listed, by address: listed while it does not answer
 	reaches          map[string]targetReach   // whether each target answered, by its key (targets.go)
 	localCfg         agent.Config             // this computer's settings while a server is the target

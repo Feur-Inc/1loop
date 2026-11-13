@@ -81,13 +81,14 @@ func groupKey(target projectTarget, project string) string {
 }
 
 // mark is the small icon after the name of the target's projects: none
-// for the device in use; the same icons as the target menu's otherwise.
-func (target projectTarget) mark() fyne.Resource {
+// for the device in use, nor for home, the server the browser client's
+// page came from; the same icons as the target menu's otherwise.
+func (target projectTarget) mark(home string) fyne.Resource {
 	switch target.kind {
 	case targetSSH:
 		return iconTerminal
 	case targetServer:
-		if browserClient {
+		if target.id == home {
 			return nil
 		}
 		return iconBrowser
@@ -302,8 +303,13 @@ func serverProjectList(workspace string, listed []string, chats []remoteapi.Chat
 
 // rememberServerProjects keeps a server's projects for the next start,
 // when it may not answer: they are listed then, marked offline. Only the
-// servers paired now are remembered.
+// servers paired now are remembered; the browser client keeps them in the
+// page's storage (web_targets.go).
 func (ui *desktopUI) rememberServerProjects(address string, projects []string) {
+	if ui.home != "" {
+		ui.rememberWebProjects(address, projects)
+		return
+	}
 	if known, ok := ui.serverProjects[address]; ok && slices.Equal(known, projects) {
 		return
 	}

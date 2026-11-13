@@ -286,6 +286,18 @@ func (panel *toolPanel) slide(to float32) {
 func (panel *toolPanel) fold()   { panel.slide(0) }
 func (panel *toolPanel) unfold() { panel.slide(1) }
 
+// of is the side panel of the window showing chat (windows.go), else this
+// one.
+func (panel *toolPanel) of(chat *conversation) *toolPanel {
+	if panel.ui == nil {
+		return panel
+	}
+	if view := panel.ui.viewOf(chat); view.panel != nil {
+		return view.panel
+	}
+	return panel
+}
+
 func (panel *toolPanel) find(chat *conversation, index int) int {
 	for i, tab := range panel.tabs {
 		if tab.chat == chat && tab.index == index {
@@ -297,11 +309,13 @@ func (panel *toolPanel) find(chat *conversation, index int) int {
 
 // showing reports whether a call is the one the panel shows.
 func (panel *toolPanel) showing(chat *conversation, index int) bool {
+	panel = panel.of(chat)
 	return panel.shown > 0 && panel.active >= 0 && panel.find(chat, index) == panel.active
 }
 
 // open shows a call, in its existing tab or a new one.
 func (panel *toolPanel) open(chat *conversation, index int) {
+	panel = panel.of(chat)
 	i := panel.find(chat, index)
 	if i < 0 {
 		panel.tabs = append(panel.tabs, panelTab{kind: "tool", chat: chat, index: index})
@@ -380,6 +394,7 @@ func (panel *toolPanel) dispose() {
 
 // changed refreshes the panel when a call it shows gets its result.
 func (panel *toolPanel) changed(chat *conversation, index int) {
+	panel = panel.of(chat)
 	if i := panel.find(chat, index); i >= 0 {
 		panel.render()
 	}

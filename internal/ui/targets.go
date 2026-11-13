@@ -331,6 +331,11 @@ func (ui *desktopUI) sideChatOf(chat *conversation) sideChat {
 		{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
 		{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
 	}
+	var window func()
+	if ui.canOpenWindow(chat) { // windows.go
+		window = func() { ui.openWindow(chat) }
+		menu = append([]menuAction{{label: "Open in new window", icon: iconWindow, run: window}}, menu...)
+	}
 	parent := ""
 	if chat.Subchat != nil {
 		parent = chat.Subchat.Parent
@@ -347,9 +352,10 @@ func (ui *desktopUI) sideChatOf(chat *conversation) sideChat {
 		id: chat.ID, parent: parent,
 		title: chat.Title, folder: chat.Config.Workspace, scratch: chat.Config.InScratch(), running: chat.run != nil, selected: chat == ui.current,
 		status: status, blocked: blocked,
-		open: func() { ui.openLocalChat(chat) },
-		menu: menu,
-		text: func() []string { return chatTexts(chat.Items) },
+		open:   func() { ui.openLocalChat(chat) },
+		window: window,
+		menu:   menu,
+		text:   func() []string { return chatTexts(chat.Items) },
 	}
 }
 
@@ -384,6 +390,10 @@ func (ui *desktopUI) serverSideChats(target projectTarget, chats []remoteapi.Cha
 // openLocalChat opens a chat of this computer or of an SSH machine: the
 // window comes back from a server first, and works on the chat's target.
 func (ui *desktopUI) openLocalChat(chat *conversation) {
+	if view := ui.viewOf(chat); view != ui { // on screen in another window: that one comes forward
+		view.raise()
+		return
+	}
 	if ui.server != nil {
 		ui.useComputer()
 	}

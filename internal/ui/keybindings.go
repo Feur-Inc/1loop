@@ -24,10 +24,12 @@ import (
 // shortcutActions is what each shortcut does.
 func (ui *desktopUI) shortcutActions() map[string]func() {
 	return map[string]func(){
-		registry.ShortcutFind:       ui.findInChat,
-		registry.ShortcutSearch:     ui.search,
-		registry.ShortcutNewChat:    ui.startNew,
-		registry.ShortcutNewProject: ui.addProject,
+		registry.ShortcutFind:        ui.findInChat,
+		registry.ShortcutSearch:      ui.search,
+		registry.ShortcutNewChat:     ui.startNew,
+		registry.ShortcutNewProject:  ui.addProject,
+		registry.ShortcutNewWindow:   func() { ui.openWindow(nil) },
+		registry.ShortcutCloseWindow: ui.closeWindow,
 		registry.ShortcutSettings: func() {
 			if ui.prefs.open {
 				ui.prefs.close()

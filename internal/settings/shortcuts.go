@@ -27,6 +27,8 @@ const (
 	ShortcutSearch       = "shortcuts.search"
 	ShortcutNewChat      = "shortcuts.new_chat"
 	ShortcutNewProject   = "shortcuts.new_project"
+	ShortcutNewWindow    = "shortcuts.new_window"
+	ShortcutCloseWindow  = "shortcuts.close_window"
 	ShortcutSettings     = "shortcuts.settings"
 	ShortcutSidebar      = "shortcuts.sidebar"
 	ShortcutPrompt       = "shortcuts.prompt"
@@ -48,6 +50,8 @@ var shortcuts = []Setting{
 	shortcut(ShortcutFind, "Find in the chat", "Ctrl+F", "Finds words in the conversation on screen, from one match to the next.", "find", "search", "chat", "conversation", "text"),
 	shortcut(ShortcutSearch, "Search chats and settings", "Ctrl+K", "Opens the search of the sidebar, over every chat and setting.", "search", "find", "chats", "command palette", "quick open"),
 	shortcut(ShortcutNewChat, "New chat", "Ctrl+N", "Starts a new chat in the project open.", "new", "chat", "conversation"),
+	shortcut(ShortcutNewWindow, "New window", "Ctrl+Shift+N", "Opens another 1loop window, on a new chat in the project open.", "new", "window", "chat", "multiple", "side by side"),
+	shortcut(ShortcutCloseWindow, "Close the window", "Ctrl+Shift+W", "Closes this window. The last one follows the tray setting.", "close", "window"),
 	shortcut(ShortcutNewProject, "Add a project", "Ctrl+P", "Opens a folder as a new project.", "new", "project", "folder", "workspace", "open"),
 	shortcut(ShortcutSettings, "Open Settings", "Ctrl+,", "Opens 1loop's settings.", "settings", "preferences", "options"),
 	shortcut(ShortcutSidebar, "Show or hide the sidebar", "Ctrl+B", "Folds the sidebar away, or brings it back.", "sidebar", "toggle", "hide", "collapse"),

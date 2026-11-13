@@ -114,6 +114,7 @@ func (ui *desktopUI) syncNextStep() {
 // sendReply sends a card's reply as the user's message, as if typed; the
 // draft in the composer stays.
 func (ui *desktopUI) sendReply(chat *conversation, text string) {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	if chat != ui.current {
 		return
 	}

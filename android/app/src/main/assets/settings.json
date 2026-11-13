@@ -868,6 +868,49 @@
       "where": "desktop"
     },
     {
+      "key": "shortcuts.new_window",
+      "section": "general",
+      "page": "Keyboard shortcuts",
+      "title": "New window",
+      "description": "Opens another 1loop window, on a new chat in the project open.",
+      "keywords": [
+        "shortcut",
+        "keyboard",
+        "hotkey",
+        "keybinding",
+        "keybind",
+        "key",
+        "new",
+        "window",
+        "chat",
+        "multiple",
+        "side by side"
+      ],
+      "kind": "shortcut",
+      "default": "Ctrl+Shift+N",
+      "where": "desktop"
+    },
+    {
+      "key": "shortcuts.close_window",
+      "section": "general",
+      "page": "Keyboard shortcuts",
+      "title": "Close the window",
+      "description": "Closes this window. The last one follows the tray setting.",
+      "keywords": [
+        "shortcut",
+        "keyboard",
+        "hotkey",
+        "keybinding",
+        "keybind",
+        "key",
+        "close",
+        "window"
+      ],
+      "kind": "shortcut",
+      "default": "Ctrl+Shift+W",
+      "where": "desktop"
+    },
+    {
       "key": "shortcuts.new_project",
       "section": "general",
       "page": "Keyboard shortcuts",

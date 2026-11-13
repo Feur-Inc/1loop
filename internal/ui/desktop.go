@@ -113,6 +113,8 @@ type chatRun struct {
 // from any window.
 type desktopUI struct {
 	*desktopApp
+	draftSuffix string // another window's start screen keeps a draft of its own (windows.go)
+	hiddenAlone bool   // the main window was closed while another stayed open
 
 	usageRow         *tapRow // the sidebar's Usage row, with today's spend
 	window           fyne.Window
@@ -298,7 +300,10 @@ type desktopApp struct {
 	foldedProjects    map[string]bool
 	sidebarWidth      float32 // dragged to, independent of window size; 0: the default
 
-	windows []*desktopUI // every window, the main one first (windows.go)
+	windows      []*desktopUI  // every window, the main one first (windows.go)
+	active       *desktopUI    // the window the user last worked in
+	windowSerial int           // windows opened since 1loop started, to name their drafts
+	drafts       *promptDrafts // what is typed in each chat's composer, in any window
 }
 
 // Fyne snapshots its built-in dialog language when loading translations.
@@ -431,6 +436,7 @@ func runDesktop(backend *agent.App, root string) {
 		go ui.bench(kind)
 	}
 	windowIdentity(ui.window)
+	ui.restoreWindows(read.state.Windows) // the other windows of the last run, on their chats
 	a.Run()
 }
 
@@ -456,6 +462,7 @@ func statePath(root string) string {
 }
 
 func (ui *desktopUI) quit() {
+	ui = ui.mainView() // its window is the master: closing it ends 1loop and every window
 	ui.release()
 	ui.window.SetCloseIntercept(nil)
 	ui.window.Close()
@@ -502,6 +509,7 @@ func (ui *desktopUI) shortcut(s fyne.Shortcut) bool {
 
 // release stops background work and saves, before closing or restarting.
 func (ui *desktopUI) release() {
+	ui = ui.mainView() // whichever window asked: every window goes
 	ui.cancelChatLoad()
 	if ui.frames != nil {
 		// No more frame-hook redraws: once seen right before a window that
@@ -511,6 +519,11 @@ func (ui *desktopUI) release() {
 	ui.shutdown() // every run's context derives from it
 	for _, chat := range ui.chats {
 		chat.tasks.StopAll() // a background server must not outlive 1loop
+	}
+	for _, view := range ui.allWindows() {
+		if view != ui {
+			view.releaseWindow() // its chat's panel goes back to the chat, disposed with it below
+		}
 	}
 	ui.panel.dispose()
 	ui.remote.close()
@@ -622,7 +635,9 @@ func (themeSpec flatScrollTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVar
 }
 
 func (ui *desktopUI) build() fyne.CanvasObject {
-	watchReducedMotion()
+	if ui == ui.mainView() { // once, not for each window
+		watchReducedMotion()
+	}
 	ui.tips = newTipLayer()
 	ui.chatSel.ui = ui
 	ui.buildSettings()
@@ -630,14 +645,16 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 
 	// Conversation column. While the model works, the animated ring sits
 	// under the last message.
-	afterTypeset = func() {
+	afterTypeset = func() { // every window's formulas (windows.go)
 		if ui.ctx.Err() == nil {
-			if load := ui.loadingChat; load != nil {
-				ui.items.reset()
-				load.measured = 0
-				return
+			for _, view := range ui.windows {
+				if load := view.loadingChat; load != nil {
+					view.items.reset()
+					load.measured = 0
+					continue
+				}
+				view.relayoutColumn()
 			}
-			ui.relayoutColumn()
 		}
 	}
 	ui.items = &transcriptLayout{ui: ui}
@@ -716,8 +733,11 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 		}
 	}
 	ui.panel = newToolPanel(ui)
-	openCitation = ui.openCitation
-	openReference, hoverReference, refRepository = ui.openReference, ui.hoverReference, ui.chatRepository
+	// Links in any window act on the window the user works in (windows.go).
+	openCitation = func(link string) { ui.activeView().openCitation(link) }
+	openReference = func(link string) { ui.activeView().openReference(link) }
+	hoverReference = func(link string, at fyne.Position) { ui.activeView().hoverReference(link, at) }
+	refRepository = func() string { return ui.activeView().chatRepository() }
 	ui.split = container.New(splitLayout{ui.panel}, conversation, ui.panel.view, newPanelResizeHandle(ui.panel), ui.panelToggle)
 
 	// Title bar: conversation title, drag region and window controls.
@@ -774,7 +794,10 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.prompt.shortcut = ui.shortcut
 	ui.prompt.paste = ui.pasteFromClipboard
 	ui.prompt.oversize = ui.attachText
-	ui.prompt.bindDrafts(loadPromptDrafts(filepath.Join(filepath.Dir(ui.statePath), "drafts.json")))
+	if ui.drafts == nil { // one set for every window (windows.go)
+		ui.drafts = loadPromptDrafts(filepath.Join(filepath.Dir(ui.statePath), "drafts.json"))
+	}
+	ui.prompt.bindDrafts(ui.drafts)
 	ui.prompt.resized = func() {
 		if ui.split != nil {
 			relayout(ui.split)
@@ -966,7 +989,7 @@ func (ui *desktopUI) draftKey() string {
 	if ui.server != nil {
 		return ui.server.draftKey("") + ui.cfg.Workspace
 	}
-	return newChatDraft + ui.cfg.MachineID + ui.cfg.Workspace
+	return newChatDraft + ui.cfg.MachineID + ui.cfg.Workspace + ui.draftSuffix
 }
 
 func (ui *desktopUI) startNew() {
@@ -1148,6 +1171,7 @@ func (ui *desktopUI) syncRun() {
 
 // runStarted marks a chat as working.
 func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	if ui.cachedChat != nil && ui.cachedChat.chat == chat {
 		ui.cachedChat = nil
 	}
@@ -1172,6 +1196,7 @@ func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
 // runEnded closes a chat's run. ended is the ring shown briefly under the
 // answer when the chat is on screen: "done" or "stopped".
 func (ui *desktopUI) runEnded(chat *conversation, ended string) {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	run := chat.run
 	if run != nil && run.stopped {
 		ended = "stopped"
@@ -1241,6 +1266,7 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 // runFailed marks a chat whose run ended on an error, for the tray, unless
 // the user saw it fail.
 func (ui *desktopUI) runFailed(chat *conversation) {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	chat.failed = !(chat == ui.current && ui.inForeground)
 }
 
@@ -1436,6 +1462,7 @@ func (ui *desktopUI) chatTasks(chat *conversation) *agent.BackgroundTasks {
 
 // startIn runs the agent loop for a message in chat (a new chat when nil).
 func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id string) {
+	ui = ui.viewOf(chat) // the window showing it (windows.go); nil: a new chat in this one
 	if chat == nil {
 		title := []rune(strings.Join(strings.Fields(messageValue.Typed()), " "))
 		if len(title) > 36 {
@@ -1528,8 +1555,8 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 			identity := agent.IdentityOf(cfg)
 			ui.onUI(ctx, func() {
 				chat.Config.RanWith = &identity
-				if chat == ui.current { // the model picker starts from ui.cfg: a later switch back is a handoff too
-					ui.cfg.RanWith = &identity
+				if view := ui.viewOf(chat); chat == view.current { // the model picker starts from ui.cfg: a later switch back is a handoff too
+					view.cfg.RanWith = &identity
 				}
 			})
 			err = ui.backend.Run(ctx, cfg, history, inboxValue, pump.emit)
@@ -1561,6 +1588,7 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 // runConfig is the chat's configuration with this session's secrets and
 // preferences, for one run.
 func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	chat.identifyMessages()
 	if chat.Todo == nil {
 		chat.Todo = &agent.TodoState{}
@@ -1725,6 +1753,7 @@ func (ui *desktopUI) compactChat(focus string) {
 // showApproval asks before a command or an edit, whichever chat it comes
 // from: the run waits for the answer.
 func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) *sheet {
+	ui = ui.viewOf(chat).sheetView(chat) // the window showing it, else the one in use (windows.go)
 	id, _ := p["id"].(string)
 	title, _ := p["title"].(string)
 	preview, _ := p["preview"].(string)
@@ -1823,6 +1852,13 @@ func (ui *desktopUI) refreshModels() {
 			if ui.ctx.Err() != nil || generation != ui.modelLoad {
 				return
 			}
+			defer func() { // the other windows' pickers list the same models (windows.go)
+				for _, view := range ui.allWindows() {
+					if view != ui {
+						view.adoptModels(ui)
+					}
+				}
+			}()
 			ui.modelsLoading = false
 			ui.choices = map[string]agent.ModelChoice{}
 			ui.model.Details = map[string]string{}
@@ -1928,6 +1964,8 @@ type savedState struct {
 	Accent            string                `json:"accent,omitempty"`    // a preset or #rrggbb; amber when unset
 	// Each paired server's projects, as it last listed them (#359, #383).
 	ServerProjects map[string][]string `json:"serverProjects,omitempty"`
+	// The windows open beside the main one, to open again (windows.go).
+	Windows []savedWindow `json:"windows,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -1947,6 +1985,7 @@ func (ui *desktopUI) saveNow() { ui.persist(false) }
 // freeze the window for as long as it took. wait is for closing, when the
 // file must be on disk before the process ends.
 func (ui *desktopUI) persist(wait bool) {
+	ui = ui.mainView() // its settings are the ones kept; the other windows are listed
 	started := time.Now()
 	if ui.saveTimer != nil {
 		ui.saveTimer.Stop()
@@ -1997,9 +2036,12 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.theme.theme,
 		ui.theme.accent,
 		ui.serverProjects,
+		ui.savedWindows(),
 	})
-	if ui.panel != nil {
-		ui.panel.stash() // the open chat's panel, as it is now
+	for _, view := range ui.allWindows() {
+		if view.panel != nil {
+			view.panel.stash() // the open chat's panel, as it is now
+		}
 	}
 	chats := make([]*conversation, len(ui.chats))
 	for i, chat := range ui.chats { // messages are never edited in place: copying the lists is enough

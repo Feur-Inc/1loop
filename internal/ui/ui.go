@@ -307,6 +307,7 @@ var (
 	iconShield       = lineIcon("shield", `<path d="M8 2.2l4.6 1.8v3.5c0 3-2 5.1-4.6 6.3-2.6-1.2-4.6-3.3-4.6-6.3V4z"/>`)
 	iconBolt         = lineIcon("bolt", `<path d="M8.9 1.8 3.7 9h4.1l-.7 5.2L12.3 7H8.2z"/>`)
 	iconShieldCheck  = lineIcon("shield-check", `<path d="M8 2.2l4.6 1.8v3.5c0 3-2 5.1-4.6 6.3-2.6-1.2-4.6-3.3-4.6-6.3V4z"/><path d="M5.9 7.8 7.4 9.3l2.8-3"/>`)
+	iconWindow       = lineIcon("window", `<rect x="4.5" y="2.5" width="9" height="8" rx="1.5"/><path d="M4.5 5h9M2.5 6v6a1.5 1.5 0 0 0 1.5 1.5h6"/>`)
 	iconPanel        = lineIcon("panel", `<rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M9.5 3v10"/>`)
 	iconTerminal     = lineIcon("terminal", `<path d="M3.5 4.5 6.5 7.5 3.5 10.5M8 11.5h4.5"/>`)
 	iconDocument     = lineIcon("document", `<path d="M4 2.8h5l3 3v7.4H4z"/><path d="M9 2.8v3h3M6 8.6h4M6 10.9h4"/>`)
@@ -389,6 +390,7 @@ type tapRow struct {
 	danger    bool          // destructive action: red ink or red fill
 	onHover   func(bool)    // optional: reports pointer enter and leave
 	onMenu    func()        // optional: right click opens a context menu
+	onMiddle  func()        // optional: a middle click (a chat: in a new window)
 	iconPx    float32       // optional icon size (styleIcon), 0 = style default
 	padPx     float32       // optional padding around the icon (styleIcon), 0 = style default
 	badge     fyne.Resource // optional mark on the far edge (styleMenu: the active choice)
@@ -462,6 +464,10 @@ func (row *tapRow) flash() {
 // button is down the row sinks a little; the click itself acts on release,
 // as before, so nothing waits for the motion.
 func (row *tapRow) MouseDown(e *desktop.MouseEvent) {
+	if e.Button == desktop.MouseButtonTertiary && !row.disabled && row.onMiddle != nil {
+		row.onMiddle()
+		return
+	}
 	if e.Button == desktop.MouseButtonPrimary && !row.disabled && row.onTap != nil {
 		row.setSink(1)
 	}

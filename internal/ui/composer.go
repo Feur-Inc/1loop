@@ -53,6 +53,7 @@ type chatEntry struct {
 	measure  *widget.RichText
 	resized  func()
 	typing   func() // the text changed
+	sent     func() // the text was sent: the editor goes back to its place
 	fitting  bool
 	// Drafts (prompt_drafts.go): the conversation whose draft is shown, its
 	// undo history, and the last text seen.
@@ -320,29 +321,6 @@ func (layoutSpec composerSettingsLayout) Layout(o []fyne.CanvasObject, size fyne
 		o[i].Move(fyne.NewPos(x, (size.Height-s.Height)/2))
 		x += s.Width + composerSettingsGap
 	}
-}
-
-// attachButtonLayout puts the "+" button at the left of the prompt, centred
-// on its first line however many lines the prompt grows to.
-type attachButtonLayout struct{}
-
-const attachButtonGap = 4.0 // between the "+" and the text field
-
-func (attachButtonLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
-	input, btn := objects[0], objects[1]
-	return fyne.NewSize(btn.MinSize().Width+attachButtonGap+input.MinSize().Width,
-		fyne.Max(input.MinSize().Height, btn.MinSize().Height))
-}
-
-func (attachButtonLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	input, btn := objects[0], objects[1]
-	btnSize := btn.MinSize()
-	btn.Resize(btnSize)
-	line := textSize("Ag", theme.TextSize(), fyne.TextStyle{}).Height
-	btn.Move(fyne.NewPos(0, fyne.Max(0, theme.InnerPadding()+line/2-btnSize.Height/2)))
-	reserved := btnSize.Width + attachButtonGap
-	input.Resize(fyne.NewSize(size.Width-reserved, size.Height))
-	input.Move(fyne.NewPos(reserved, 0))
 }
 
 // ---------------------------------------------------------------------------

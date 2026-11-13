@@ -38,6 +38,7 @@ const (
 	ShortcutSettings     = "shortcuts.settings"
 	ShortcutSidebar      = "shortcuts.sidebar"
 	ShortcutPrompt       = "shortcuts.prompt"
+	ShortcutEditor       = "shortcuts.editor"
 	ShortcutModel        = "shortcuts.model"
 	ShortcutStop         = "shortcuts.stop"
 	ShortcutCopyAnswer   = "shortcuts.copy_answer"
@@ -68,6 +69,7 @@ var shortcuts = []Setting{
 	shortcut(ShortcutSettings, "Open Settings", "Ctrl+,", "Opens 1loop's settings.", "settings", "preferences", "options"),
 	shortcut(ShortcutSidebar, "Show or hide the sidebar", "Ctrl+B", "Folds the sidebar away, or brings it back.", "sidebar", "toggle", "hide", "collapse"),
 	shortcut(ShortcutPrompt, "Go to the message box", "Ctrl+L", "Puts the cursor in the message box, ready to type.", "focus", "prompt", "composer", "input", "message"),
+	shortcut(ShortcutEditor, "Expand the message box", "Ctrl+E", "Opens the message box as a large editor with line numbers over the conversation, or puts it back.", "editor", "expand", "prompt", "composer", "full", "line numbers", "multiline"),
 	shortcut(ShortcutModel, "Choose the model", "Ctrl+M", "Opens the model menu of the composer.", "model", "switch", "picker", "menu"),
 	shortcut(ShortcutStop, "Stop the agent", "Ctrl+.", "Stops the turn running in the chat on screen.", "stop", "cancel", "interrupt", "abort"),
 	shortcut(ShortcutCopyAnswer, "Copy the last answer", "Ctrl+Shift+C", "Copies the newest answer of the chat on screen.", "copy", "answer", "response", "clipboard"),

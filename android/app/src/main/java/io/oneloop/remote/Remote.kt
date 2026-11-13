@@ -1538,9 +1538,10 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
      */
     fun unpair(target: Server) {
         scope.launch {
+            // Left first: the revocation ends the open stream, whose 401 must not find this server still open.
+            if (target.key == server?.key) leave()
             val told = target.desktop || !target.paired ||
                 withContext(Dispatchers.IO) { runCatching { unpairFrom(Api(target)) }.isSuccess }
-            if (target.key == server?.key) leave()
             unlink(target.key)
             if (!told) problem = "${target.name} is forgotten on this phone, but it could not be told. Remove this phone from its paired devices on another device, or type devices then revoke in its console."
         }

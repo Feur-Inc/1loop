@@ -2,6 +2,7 @@
 
 package io.oneloop.remote
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.material3.ripple
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.animation.animateColorAsState
@@ -62,26 +63,42 @@ import androidx.compose.ui.unit.sp
 // back; LocalRuntime does the work.
 
 // ---------------------------------------------------------------------------
-// Where 1loop works: always the three, whatever is installed.
+// The targets to link: always the three, whatever is installed. The phone
+// links several (#380): the projects then come from every linked target.
 
 @Composable
-fun ModeScreen(onSelect: (ExecutionTarget) -> Unit) {
+fun ModeScreen(onSelect: (ExecutionTarget) -> Unit, linked: List<LinkedTarget> = emptyList(), onBack: (() -> Unit)? = null) {
+    if (onBack != null) BackHandler(onBack = onBack)
     Column(
         Modifier.fillMaxSize().windowInsetsPadding(WindowInsets.safeDrawing).verticalScroll(rememberScrollState())
             .padding(horizontal = 24.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
-        Spacer(Modifier.height(56.dp))
+        if (onBack != null) {
+            Row(Modifier.fillMaxWidth().padding(top = 8.dp)) {
+                RoundButton(Icons.back, Color.Transparent, Palette.muted, description = "Back", onClick = onBack)
+            }
+            Spacer(Modifier.height(8.dp))
+        } else Spacer(Modifier.height(56.dp))
         RingMark(64.dp)
         Spacer(Modifier.height(20.dp))
-        Text("Where should 1loop work?", style = Type.headline, textAlign = TextAlign.Center)
+        Text(if (linked.isEmpty()) "Link where 1loop works" else "Link a target", style = Type.headline, textAlign = TextAlign.Center)
         Spacer(Modifier.height(6.dp))
-        Text("Choose where to run your agent.", style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center)
+        Text(
+            "Your projects come from every target you link. You can link more later from the menu.",
+            style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center,
+        )
+        if (linked.isNotEmpty()) {
+            Spacer(Modifier.height(10.dp))
+            Text("Linked: " + linked.joinToString(", ") { it.name }, style = Type.caption.copy(color = Palette.muted), textAlign = TextAlign.Center)
+        }
         Spacer(Modifier.height(28.dp))
         Column(Modifier.widthIn(max = 520.dp).fillMaxWidth(), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             ModeCard(Icons.server, "Remote server", "A 1loop server, over HTTPS.") { onSelect(ExecutionTarget.RemoteServer) }
             ModeCard(Icons.computer, "Remote desktop", "1loop on your computer, on this Wi-Fi.") { onSelect(ExecutionTarget.RemoteDesktop) }
-            ModeCard(Icons.phone, "Local phone", "On this phone, with Debian. The setup is optional.") { onSelect(ExecutionTarget.LocalPhone) }
+            if (linked.none { it.kind == TargetKind.Phone }) {
+                ModeCard(Icons.phone, "Local phone", "On this phone, with Debian. The setup is optional.") { onSelect(ExecutionTarget.LocalPhone) }
+            }
         }
         Spacer(Modifier.height(32.dp))
     }

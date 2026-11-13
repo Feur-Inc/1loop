@@ -46,7 +46,7 @@ func WebMain() {
 	a.Lifecycle().SetOnStarted(func() {
 		ui.startFrames()
 		ui.watchTextInput()
-		ui.linkWebServers() // listed at once, those that do not answer marked offline
+		ui.linkServers() // listed at once, those that do not answer marked offline
 		ui.connectOrigin()
 	})
 	ui.window.ShowAndRun()
@@ -63,9 +63,8 @@ func (ui *desktopUI) connectOrigin() {
 		// Out of the address bar and the history: it is used up.
 		js.Global().Get("history").Call("replaceState", nil, "", location.Get("pathname").String())
 	}
-	saved := loadServerAddress()
 	target := serverAddress{URL: origin}
-	if saved.URL == origin {
+	if saved, ok := pairedServer(origin); ok { // among the servers it linked, not only the last
 		target.Token = saved.Token
 	}
 	client, err := newRemoteClient(target)

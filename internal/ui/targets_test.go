@@ -58,7 +58,7 @@ func sidebarLines(ui *desktopUI) []string {
 // has not answered yet, and the projects it listed the last time.
 func linkedUI(t *testing.T) *desktopUI {
 	ui := sidebarUI(t)
-	ui.link = &serverLink{address: serverAddress{URL: testServer, Token: "t"}, wake: make(chan struct{}, 1)}
+	ui.links = []*serverLink{{address: serverAddress{URL: testServer, Token: "t"}, wake: make(chan struct{}, 1)}}
 	ui.serverProjects = map[string][]string{testServer: {"/srv/api"}}
 	return ui
 }
@@ -121,8 +121,8 @@ func TestOfflineServerStaysListed(t *testing.T) {
 // stops answering, they stay, marked offline, rather than disappearing.
 func TestServerChatsStayWhenItGoesOffline(t *testing.T) {
 	ui := linkedUI(t)
-	ui.link.answered = true
-	ui.link.listing = serverListing{name: "box", projects: []string{"/srv/api", "/srv/web"},
+	ui.links[0].answered = true
+	ui.links[0].listing = serverListing{name: "box", projects: []string{"/srv/api", "/srv/web"},
 		chats: []remoteapi.Chat{{ID: "s1", Title: "Server chat", Workspace: "/srv/web"}}}
 	ui.reaches = map[string]targetReach{serverTarget(testServer).key(): {state: reachOnline}}
 	ui.renderChats()
@@ -148,8 +148,9 @@ func TestProjectsShowTheirTarget(t *testing.T) {
 }
 
 // The server's projects are remembered with the state, for a start when
-// it does not answer; only the server paired now is.
+// it does not answer; only the servers paired now are.
 func TestServerProjectsRemembered(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir()) // no server paired
 	path := filepath.Join(t.TempDir(), "state.json")
 	before := &desktopUI{ctx: context.Background(), statePath: path, foldedProjects: map[string]bool{}, shortcutKeys: map[string]string{}}
 	before.rememberServerProjects("https://old.lan:47101", []string{"/srv/old"})
@@ -175,8 +176,8 @@ func TestLeavingTheServerKeepsItListed(t *testing.T) {
 	remote := &remoteDesktop{parent: ui, client: &remoteClient{address: serverAddress{URL: testServer}}, name: "box",
 		projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "s1", Title: "Server chat", Workspace: "/srv/api"}}}
 	ui.handOver(remote)
-	if !ui.link.answered || !slices.Equal(ui.link.listing.projects, []string{"/srv/api"}) {
-		t.Fatalf("link after the hand-over: %+v", ui.link)
+	if link := ui.links[0]; !link.answered || !slices.Equal(link.listing.projects, []string{"/srv/api"}) {
+		t.Fatalf("link after the hand-over: %+v", link)
 	}
 	ui.renderChats()
 	wantListed(t, ui, "api", "Server chat", "app", "site")

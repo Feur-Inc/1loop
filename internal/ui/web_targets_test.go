@@ -4,6 +4,7 @@ package ui
 
 import (
 	"context"
+	"maps"
 	"slices"
 	"testing"
 
@@ -31,7 +32,7 @@ func browserUI(t *testing.T) *desktopUI {
 	ui.projectList = container.New(ui.sideGlide)
 	ui.server = &remoteDesktop{parent: ui, client: &remoteClient{address: serverAddress{URL: testServer}}, name: "box",
 		projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "s1", Title: "Home chat", Workspace: "/srv/api"}}, convs: map[string]*conversation{}}
-	ui.webLinks = []*serverLink{
+	ui.links = []*serverLink{
 		{address: serverAddress{URL: testServer, Token: "a"}},
 		{address: serverAddress{URL: shopServer, Token: "b"}, answered: true, listing: serverListing{name: "shop",
 			projects: []string{"/srv/shop"}, chats: []remoteapi.Chat{{ID: "s2", Title: "Shop chat", Workspace: "/srv/shop"}}}},
@@ -80,7 +81,7 @@ func TestBrowserKeepsHomeOnALinkedServer(t *testing.T) {
 	ui.handOver(home)
 	ui.server = &remoteDesktop{parent: ui, client: &remoteClient{address: serverAddress{URL: shopServer}}, name: "shop",
 		projects: []string{"/srv/shop"}, chats: []remoteapi.Chat{{ID: "s2", Title: "Shop chat", Workspace: "/srv/shop"}}, convs: map[string]*conversation{}}
-	if !ui.webLinks[0].answered {
+	if !ui.links[0].answered {
 		t.Fatal("the page's server's link was not handed what the window last read")
 	}
 	ui.renderChats()
@@ -95,13 +96,39 @@ func TestBrowserKeepsHomeOnALinkedServer(t *testing.T) {
 // Each linked server's projects are remembered for the next visit; one no
 // longer linked is forgotten.
 func TestBrowserRemembersEachServersProjects(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	saveServerAddress(serverAddress{URL: oldServer, Token: "c"})
 	ui := browserUI(t)
 	ui.serverProjects = map[string][]string{oldServer: {"/srv/legacy"}, "https://gone.lan:1": {"/x"}}
 	ui.rememberServerProjects(testServer, []string{"/srv/api"})
-	// browserServers reads the page's storage, which the desktop build has
-	// not: only home is linked there.
-	if want := map[string][]string{testServer: {"/srv/api"}}; len(ui.serverProjects) != 1 || !slices.Equal(ui.serverProjects[testServer], want[testServer]) {
+	want := map[string][]string{testServer: {"/srv/api"}, oldServer: {"/srv/legacy"}}
+	if !maps.EqualFunc(ui.serverProjects, want, slices.Equal) {
 		t.Fatalf("remembered %v, want %v", ui.serverProjects, want)
+	}
+}
+
+// The browser client keeps the servers it linked in the same pairings as
+// the desktop (remote_pairings.go): its own server first, then the others
+// in the order they were linked; unlinking one keeps the others.
+func TestBrowserServersArePairings(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	ui := &desktopUI{home: testServer}
+	if got := ui.browserServers(); !slices.Equal(got, []serverAddress{{URL: testServer}}) {
+		t.Fatalf("before pairing: %v", got)
+	}
+	shop, old, home := serverAddress{URL: shopServer, Token: "b"}, serverAddress{URL: oldServer, Token: "c"}, serverAddress{URL: testServer, Token: "a"}
+	for _, address := range []serverAddress{shop, home, old} {
+		saveServerAddress(address)
+	}
+	if got := ui.browserServers(); !slices.Equal(got, []serverAddress{home, shop, old}) {
+		t.Fatalf("servers %v", got)
+	}
+	forgetServerAddress(oldServer)
+	if got := ui.browserServers(); !slices.Equal(got, []serverAddress{home, shop}) {
+		t.Fatalf("after unlinking: %v", got)
+	}
+	if got := loadServerAddress(); got != home { // the last paired went: the one before it in the list takes its place
+		t.Fatalf("last paired %v, want %v", got, home)
 	}
 }
 
@@ -114,15 +141,6 @@ func TestBrowserTargets(t *testing.T) {
 	}
 	if got := browserTargets(serverAddress{}, linked[:1]); !slices.Equal(got, linked[:1]) {
 		t.Fatalf("with no home: %v", got)
-	}
-	linked = withLinkedServer(nil, serverAddress{URL: shopServer, Token: "b"})
-	linked = withLinkedServer(linked, serverAddress{URL: oldServer, Token: "c"})
-	linked = withLinkedServer(linked, serverAddress{URL: shopServer, Token: "new"})
-	if want := []serverAddress{{URL: shopServer, Token: "new"}, {URL: oldServer, Token: "c"}}; !slices.Equal(linked, want) {
-		t.Fatalf("linked %v, want %v", linked, want)
-	}
-	if got := withoutLinkedServer(linked, shopServer); !slices.Equal(got, []serverAddress{{URL: oldServer, Token: "c"}}) || len(linked) != 2 {
-		t.Fatalf("unlinked %v (from %v)", got, linked)
 	}
 }
 

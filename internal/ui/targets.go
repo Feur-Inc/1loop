@@ -3,7 +3,7 @@
 package ui
 
 // Projects belong to a target (#359): this computer, an SSH machine of
-// Settings → General, or the paired 1loop server. The sidebar lists the
+// Settings → General, or a paired 1loop server. The sidebar lists the
 // projects of every target at once, those of another target than this
 // computer marked with its icon, and a project whose target does not
 // answer stays listed, marked offline, instead of disappearing.
@@ -190,8 +190,9 @@ func (group targetGroup) keyOf(listed []string, chat sideChat) string {
 }
 
 // sidebarGroups are the targets the sidebar lists, in its order: this
-// computer, the SSH machines as Settings lists them, then the server. A
-// target that has neither a project nor a chat is left out.
+// computer, the SSH machines as Settings lists them, then the servers in
+// the order they were paired. A target that has neither a project nor a
+// chat is left out.
 func (ui *desktopUI) sidebarGroups() []targetGroup {
 	var groups []targetGroup
 	add := func(group targetGroup) {
@@ -203,16 +204,7 @@ func (ui *desktopUI) sidebarGroups() []targetGroup {
 	for _, machine := range ui.sshMachines {
 		add(ui.machineGroup(machine.ID))
 	}
-	if ui.home != "" { // the browser client: each of its servers (web_targets.go)
-		for _, link := range ui.webLinks {
-			add(ui.serverGroupOf(link.address.URL, link))
-		}
-		if remote := ui.server; remote != nil && ui.linkTo(remote.client.address.URL) == nil {
-			add(ui.serverGroupOf(remote.client.address.URL, nil))
-		}
-		return groups
-	}
-	if group, ok := ui.serverGroup(); ok {
+	for _, group := range ui.serverGroups() {
 		add(group)
 	}
 	return groups
@@ -243,31 +235,30 @@ func (ui *desktopUI) machineGroup(id string) targetGroup {
 	return group
 }
 
-// serverGroup is the server's: the window's own connection to it while it
+// serverGroups are the paired servers', each followed by its link, and
+// the one the window works on if it is not among them.
+func (ui *desktopUI) serverGroups() []targetGroup {
+	var groups []targetGroup
+	for _, link := range ui.links {
+		groups = append(groups, ui.serverGroup(link.address.URL))
+	}
+	if remote := ui.server; remote != nil && ui.linkTo(remote.client.address.URL) == nil {
+		groups = append(groups, ui.serverGroup(remote.client.address.URL))
+	}
+	return groups
+}
+
+// serverGroup is a server's: the window's own connection to it while it
 // works on it, else what its link last read. Until either has answered,
 // its projects are those remembered from the last time it did, and its
 // chats are not at hand.
-func (ui *desktopUI) serverGroup() (targetGroup, bool) {
-	switch {
-	case ui.server != nil:
-		return ui.serverGroupOf(ui.server.client.address.URL, nil), true
-	case ui.link != nil:
-		return ui.serverGroupOf(ui.link.address.URL, ui.link), true
-	}
-	return targetGroup{}, false
-}
-
-// serverGroupOf is a server's group: the window's connection's listing
-// while it works on it, else what link last read, if it answered.
-func (ui *desktopUI) serverGroupOf(address string, link *serverLink) targetGroup {
+func (ui *desktopUI) serverGroup(address string) targetGroup {
 	var listing *serverListing
 	active := false
-	switch {
-	case ui.server != nil && ui.server.client.address.URL == address:
-		remote := ui.server
+	if remote := ui.server; remote != nil && remote.client.address.URL == address {
 		active = true
 		listing = &serverListing{name: remote.name, projects: remote.projects, chats: remote.chats, worktrees: remote.worktrees}
-	case link != nil && link.answered:
+	} else if link := ui.linkTo(address); link != nil && link.answered {
 		listing = &link.listing
 	}
 	target := serverTarget(address)
@@ -310,19 +301,25 @@ func serverProjectList(workspace string, listed []string, chats []remoteapi.Chat
 	return projects
 }
 
-// rememberServerProjects keeps the server's projects for the next start,
-// when it may not answer: they are listed then, marked offline. Only
-// the server paired now is remembered; the browser client remembers each
-// of its servers' (web_targets.go).
+// rememberServerProjects keeps a server's projects for the next start,
+// when it may not answer: they are listed then, marked offline. Only the
+// servers paired now are remembered; the browser client keeps them in the
+// page's storage (web_targets.go).
 func (ui *desktopUI) rememberServerProjects(address string, projects []string) {
 	if ui.home != "" {
 		ui.rememberWebProjects(address, projects)
 		return
 	}
-	if len(ui.serverProjects) == 1 && slices.Equal(ui.serverProjects[address], projects) {
+	if known, ok := ui.serverProjects[address]; ok && slices.Equal(known, projects) {
 		return
 	}
-	ui.serverProjects = map[string][]string{address: slices.Clone(projects)}
+	remembered := map[string][]string{address: slices.Clone(projects)}
+	for _, server := range loadServerAddresses() {
+		if known, ok := ui.serverProjects[server.URL]; ok && server.URL != address {
+			remembered[server.URL] = known
+		}
+	}
+	ui.serverProjects = remembered
 	ui.save()
 }
 
@@ -425,12 +422,12 @@ func (ui *desktopUI) openProjectOn(target projectTarget, project string) {
 	}
 }
 
-// reachServer makes the paired server the window's target, then runs then
+// reachServer makes a paired server the window's target, then runs then
 // on it. When its link does not know it to answer, it is tried first: if
 // it still does not, the window stays where it is and says why.
 func (ui *desktopUI) reachServer(target projectTarget, then func(*remoteDesktop)) {
-	saved := ui.pairedServer(target.id)
-	if saved.URL != target.id || saved.Token == "" {
+	saved, ok := pairedServer(target.id)
+	if !ok {
 		ui.notice("Remote server", "This server is no longer paired. Connect it again with the target menu under the conversation.")
 		return
 	}

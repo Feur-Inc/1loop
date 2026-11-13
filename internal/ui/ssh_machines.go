@@ -284,58 +284,29 @@ func (ui *desktopUI) projectNameSeen(project string, seen map[string]bool) strin
 	return filepath.Base(project)
 }
 
-// addMachineProject makes a project on the machine: a folder of its
-// projects folder, made there unless it exists.
-func (ui *desktopUI) addMachineProject() {
-	id := ui.cfg.MachineID
+// addMachineProject makes a project on an SSH machine: a folder of its
+// projects folder, made there unless it exists. The machine need not be
+// the one in use: the project is opened on it once made.
+func (ui *desktopUI) addMachineProject(id string) {
 	machine := ui.machineFor(id)
 	if machine == nil {
 		return
 	}
 	settings := machine.Settings()
-	entry := widget.NewEntry()
-	entry.SetPlaceHolder("Project name")
-	problem := plainFlow("", 12.5, colDanger)
-	var dialog *sheet
-	var create *tapRow
-	apply := func() {
-		name := strings.TrimSpace(entry.Text)
-		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\\x00\r\n") {
-			setFlow(problem, "Enter a folder name, without / or \\.")
-			return
-		}
-		create.Disable()
-		go func() {
-			ctx, cancel := context.WithTimeout(ui.ctx, time.Minute)
-			defer cancel()
+	ui.projectNameDialog("New project on "+machine.Label(),
+		"A folder in "+settings.Projects+" on "+machine.Label()+". An existing folder of that name is opened as it is.",
+		func(ctx context.Context, name string) (string, error) {
 			folder, err := machine.ProjectsFolder(ctx)
 			project := path.Join(folder, name)
 			if err == nil {
 				err = machine.MkdirAll(ctx, project)
 			}
-			fyne.Do(func() {
-				create.Enable()
-				if err != nil {
-					setFlow(problem, err.Error())
-					return
-				}
-				dialog.Hide()
-				if ui.cfg.MachineID != id {
-					return
-				}
-				ui.ensureMachineProject(id, project)
-				ui.selectProject(project)
-			})
-		}()
-	}
-	entry.OnSubmitted = func(string) { apply() }
-	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
-	create = newRow("Create", nil, stylePrimary, apply)
-	body := container.NewVBox(
-		note("A folder in "+settings.Projects+" on "+machine.Label()+". An existing folder of that name is opened as it is."),
-		entry, problem)
-	dialog = ui.modal("New project on "+machine.Label(), body, 480, nil, cancel, create)
-	ui.window.Canvas().Focus(entry)
+			return project, err
+		},
+		func(project string) {
+			ui.setReach(sshTarget(id), reachOnline, "")
+			ui.projectAdded(sshTarget(id), project)
+		})
 }
 
 // ---------------------------------------------------------------------------

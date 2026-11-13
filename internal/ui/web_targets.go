@@ -41,102 +41,15 @@ func browserTargets(home serverAddress, linked []serverAddress) []serverAddress 
 	return targets
 }
 
-// withLinkedServer is the linked servers with address among them: in
-// place of one at the same address, at the end otherwise.
-func withLinkedServer(linked []serverAddress, address serverAddress) []serverAddress {
-	linked = slices.Clone(linked)
-	for i := range linked {
-		if linked[i].URL == address.URL {
-			linked[i] = address
-			return linked
-		}
-	}
-	return append(linked, address)
-}
-
-func withoutLinkedServer(linked []serverAddress, url string) []serverAddress {
-	return slices.DeleteFunc(slices.Clone(linked), func(address serverAddress) bool { return address.URL == url })
-}
-
-// browserServers are the browser client's servers as saved: home's token
-// is the page's own pairing.
+// browserServers are the browser client's servers: the page's own first,
+// with its token once paired, then the others it linked. All are kept in
+// the same pairings as the desktop's (remote_pairings.go).
 func (ui *desktopUI) browserServers() []serverAddress {
-	home := loadServerAddress()
-	if home.URL != ui.home {
+	home, ok := pairedServer(ui.home)
+	if !ok {
 		home = serverAddress{URL: ui.home}
 	}
-	return browserTargets(home, loadLinkedServers())
-}
-
-// pairedServer is the pairing saved for a server's address: the desktop's
-// one paired server, or one of the browser client's.
-func (ui *desktopUI) pairedServer(url string) serverAddress {
-	if ui.home == "" {
-		return loadServerAddress()
-	}
-	for _, address := range ui.browserServers() {
-		if address.URL == url {
-			return address
-		}
-	}
-	return serverAddress{}
-}
-
-// follows is whether link is one the window follows now.
-func (ui *desktopUI) follows(link *serverLink) bool {
-	return ui.link == link || slices.Contains(ui.webLinks, link)
-}
-
-// linkTo is the link that follows a server, nil when none does.
-func (ui *desktopUI) linkTo(url string) *serverLink {
-	if ui.link != nil && ui.link.address.URL == url {
-		return ui.link
-	}
-	for _, link := range ui.webLinks {
-		if link.address.URL == url {
-			return link
-		}
-	}
-	return nil
-}
-
-// linkWebServers follows each of the browser client's paired servers, and
-// stops following one it unlinked.
-func (ui *desktopUI) linkWebServers() {
-	ui.followServers(ui.browserServers())
-}
-
-// followServers makes the browser client's links those of addresses, in
-// their order: a link already following one at the same address and token
-// goes on, the others start, and those left are stopped.
-func (ui *desktopUI) followServers(addresses []serverAddress) {
-	links := []*serverLink{}
-	for _, address := range addresses {
-		if address.Token == "" { // home, not paired yet
-			continue
-		}
-		if link := ui.linkTo(address.URL); link != nil && link != ui.link && link.address == address {
-			links = append(links, link)
-			continue
-		}
-		client, err := newRemoteClient(address)
-		if err != nil {
-			continue
-		}
-		ctx, cancel := context.WithCancel(ui.ctx)
-		link := &serverLink{address: address, cancel: cancel, wake: make(chan struct{}, 1)}
-		links = append(links, link)
-		go ui.followServer(ctx, link, client)
-	}
-	for _, old := range ui.webLinks {
-		if !slices.Contains(links, old) && old.cancel != nil {
-			old.cancel()
-		}
-	}
-	ui.webLinks = links
-	if ui.projectList != nil {
-		ui.renderChats()
-	}
+	return browserTargets(home, loadServerAddresses())
 }
 
 // rememberWebProjects keeps each of the browser client's servers' projects
@@ -206,7 +119,7 @@ func (ui *desktopUI) linkAnotherServer() {
 			return
 		}
 		url := client.address.URL
-		if url == ui.home || slices.ContainsFunc(loadLinkedServers(), func(have serverAddress) bool { return have.URL == url && have.Token != "" }) {
+		if _, linked := pairedServer(url); url == ui.home || linked {
 			status.SetText(serverName(url) + " is linked already.")
 			return
 		}
@@ -253,21 +166,21 @@ func linkProblem(url string, err error) string {
 // linkPairedServer keeps a server the browser client just paired with,
 // and follows it.
 func (ui *desktopUI) linkPairedServer(client *remoteClient) error {
-	if err := saveLinkedServers(withLinkedServer(loadLinkedServers(), client.address)); err != nil {
+	if err := saveServerAddress(client.address); err != nil {
 		return err
 	}
-	ui.linkWebServers()
+	ui.linkServers()
 	return nil
 }
 
 // unlinkServer forgets a linked server: the window comes back to the
 // page's own first if it worked on it.
 func (ui *desktopUI) unlinkServer(url string) {
-	saveLinkedServers(withoutLinkedServer(loadLinkedServers(), url))
+	forgetServerAddress(url)
 	if ui.server != nil && ui.server.client.address.URL == url {
 		ui.reachServer(serverTarget(ui.home), func(*remoteDesktop) {})
 	}
 	delete(ui.serverProjects, url)
 	saveWebProjects(ui.serverProjects)
-	ui.linkWebServers()
+	ui.linkServers()
 }

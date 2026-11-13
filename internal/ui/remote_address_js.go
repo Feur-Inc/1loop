@@ -2,7 +2,7 @@
 
 package ui
 
-// The browser client's paired server: the page's localStorage, which only
+// The browser client's paired servers: the page's localStorage, which only
 // this origin (the server itself) can read.
 
 import (
@@ -12,26 +12,36 @@ import (
 
 const remoteAddressKey = "1loop.remote-server"
 
-func loadServerAddress() serverAddress {
-	var saved serverAddress
+func loadPairings() pairings {
+	var data []byte
 	if item := js.Global().Get("localStorage").Call("getItem", remoteAddressKey); item.Type() == js.TypeString {
-		json.Unmarshal([]byte(item.String()), &saved)
+		data = []byte(item.String())
 	}
-	return saved
+	return decodePairings(data)
 }
 
+func loadServerAddress() serverAddress { return loadPairings().serverAddress }
+
+func loadServerAddresses() []serverAddress { return loadPairings().all() }
+
 func saveServerAddress(address serverAddress) error {
-	data, _ := json.Marshal(address)
-	js.Global().Get("localStorage").Call("setItem", remoteAddressKey, string(data))
+	saved := loadPairings()
+	saved.add(address)
+	js.Global().Get("localStorage").Call("setItem", remoteAddressKey, string(saved.encode()))
 	return nil
 }
 
-// The other servers the browser client linked (web_targets.go), and each
-// server's projects as last listed, for a visit when it does not answer.
-const (
-	linkedServersKey = "1loop.linked-servers"
-	webProjectsKey   = "1loop.server-projects"
-)
+func forgetServerAddress(address string) error {
+	saved := loadPairings()
+	saved.remove(address)
+	js.Global().Get("localStorage").Call("setItem", remoteAddressKey, string(saved.encode()))
+	return nil
+}
+
+// Each of the browser client's servers' projects as last listed, for a
+// visit when it does not answer. The servers themselves are the pairings
+// above: the page's own and those it linked (web_targets.go).
+const webProjectsKey = "1loop.server-projects"
 
 func loadStored(key string, value any) {
 	if item := js.Global().Get("localStorage").Call("getItem", key); item.Type() == js.TypeString {
@@ -47,14 +57,6 @@ func store(key string, value any) error {
 	js.Global().Get("localStorage").Call("setItem", key, string(data))
 	return nil
 }
-
-func loadLinkedServers() []serverAddress {
-	var linked []serverAddress
-	loadStored(linkedServersKey, &linked)
-	return linked
-}
-
-func saveLinkedServers(linked []serverAddress) error { return store(linkedServersKey, linked) }
 
 func loadWebProjects() map[string][]string {
 	projects := map[string][]string{}

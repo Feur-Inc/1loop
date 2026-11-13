@@ -4,7 +4,6 @@ package ui
 
 import (
 	"math"
-	"runtime"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -30,30 +29,17 @@ import (
 //   - The glide advances from the frame hook, by the time really elapsed
 //     since the previous frame, not from a timer of its own.
 //
-// A wheel is eased, as browsers do: each notch's distance is travelled over
-// the next frames, fast at first and slowing into place (wheelEase), and
-// notches that follow add to what is left. A notch or a slow turn stops
-// exactly where the wheel aimed.
+// A mouse wheel does not throw the content: only gestures from a touchpad
+// glide, and only where the display tells the two apart (Wayland).
+// Elsewhere a wheel notch and a touchpad step reach 1loop as the same event:
+// guessing a release from a silence made a quickly spun wheel slide on for
+// screens (X11, Windows), and macOS already sends a touchpad's inertia.
 //
-// A flick of the wheel glides (#374): from the third notch within a tenth of
-// a second (wheelFlick), what is left to travel slows down at a touchpad's
-// pace (kineticDecay) instead of the wheel's, and grows so the content keeps
-// the speed it had. That growth is all the flick adds to what the wheel
-// turned, at most wheelMaxFling. Notches that keep coming add to the glide;
-// a notch the other way stops it.
-//
-// Fyne turns a notch into 25 points on Linux and Windows (scrollSpeed in
-// its GLFW driver): GLFW reports 1 per notch, from X11's buttons 4 to 7 and
-// from Windows' WHEEL_DELTA of 120. On Wayland GLFW divides the axis value
-// by 10, and a wheel click is 15 there: 37.5 points. On macOS (10 points
-// per unit, after the system's own acceleration) the system already adds
-// momentum to touchpads and mice, so a wheel never glides there.
-//
-// Only Wayland tells a wheel from a touchpad (scrollFinger). Elsewhere an
-// event counts as a wheel notch for a flick only when it is a whole number
-// of notches: a Windows precision touchpad sends fractions (and its own
-// momentum), while X11 turns every scroll into whole notches, so a quick
-// touchpad swipe there glides like a flicked wheel.
+// A wheel moves the content by each notch's distance as the notch arrives,
+// like a native wheel: the content goes as fast as the wheel spins and
+// stops with it. Easing each notch over the next frames (70 ms) left a
+// quick flick with half its distance still to travel when the wheel
+// stopped, trailing on for a third of a second.
 const (
 	kineticWindow   = 100 * time.Millisecond // the speed is measured over this much of the gesture's end
 	kineticStale    = 60 * time.Millisecond  // fingers that rested this long before leaving throw nothing
@@ -61,18 +47,8 @@ const (
 	kineticMinStart = 80.0                   // slower than this at release (points per second): no glide
 	kineticMinSpeed = 12.0                   // the glide ends below this
 	kineticMaxSpeed = 7000.0
-	kineticMaxFrame = 0.05            // a late frame does not jump further than this many seconds
-	wheelEase       = 0.07            // seconds for a wheel's remaining distance to fall to 1/e (settles in about 0.25 s)
-	wheelNotch      = 25.0            // points per wheel notch on Linux and Windows (Fyne's scrollSpeed)
-	wheelFlick      = 3               // notches within kineticWindow that make a flick
-	wheelMaxFling   = 12 * wheelNotch // the most a flick adds to what the wheel turned
+	kineticMaxFrame = 0.05 // a late frame does not jump further than this many seconds
 )
-
-// wheelGlides is false where the system adds its own momentum (macOS).
-var wheelGlides = runtime.GOOS != "darwin"
-
-// wheelClock times the notches where the display gives no time (tests set it).
-var wheelClock = time.Now
 
 type kineticSample struct {
 	at     time.Duration // on the display's clock when it gives one, else on ours
@@ -86,10 +62,6 @@ type kineticScroll struct {
 	samples []kineticSample // the end of the gesture in progress
 	vx, vy  float64         // glide speed in points per second
 	gliding bool
-
-	aheadX, aheadY float64         // what the wheel turned and the content has yet to travel
-	easeTime       float64         // seconds for aheadX/Y to fall to 1/e: wheelEase, or kineticDecay in a flick (0: wheelEase)
-	notches        []kineticSample // the wheel's last notches, within kineticWindow
 }
 
 // kineticActive is the scroll the fingers were last on: the only one that
@@ -113,13 +85,11 @@ func (scroll *kineticScroll) Scrolled(ev *fyne.ScrollEvent) {
 	kineticActive = scroll
 	scroll.gliding = false // fingers on the pad again: the content follows them, nothing else
 	if finger, told := scrollFinger(); !told || !finger {
-		// A wheel, or no telling: eased over the next frames (kineticFrame).
+		// A wheel, or no telling: the content moves by the notch, now.
 		scroll.samples = scroll.samples[:0]
-		scroll.wheel(ev, told)
+		scroll.Scroll.Scrolled(ev)
 		return
 	}
-	scroll.aheadX, scroll.aheadY, scroll.easeTime = 0, 0, 0
-	scroll.notches = scroll.notches[:0]
 	now := time.Now()
 	at := time.Duration(now.UnixNano())
 	if ms, ok := scrollEventTime(); ok {
@@ -135,70 +105,12 @@ func (scroll *kineticScroll) Scrolled(ev *fyne.ScrollEvent) {
 	scroll.Scroll.Scrolled(ev)
 }
 
-// wheel takes a notch (or anything the display cannot tell from one).
-// isWheel: the display says it is a wheel.
-func (scroll *kineticScroll) wheel(ev *fyne.ScrollEvent, isWheel bool) {
-	dx, dy := float64(ev.Scrolled.DX), float64(ev.Scrolled.DY)
-	if dx*scroll.aheadX < 0 || dy*scroll.aheadY < 0 {
-		// Turned back: what was left of the way, and of a glide, is dropped.
-		scroll.aheadX, scroll.aheadY, scroll.easeTime = 0, 0, 0
-		scroll.notches = scroll.notches[:0]
-	}
-	scroll.aheadX += dx
-	scroll.aheadY += dy
-	if !isWheel && (!wheelGlides || !wholeNotches(dx) || !wholeNotches(dy)) {
-		scroll.notches = scroll.notches[:0] // not a wheel's notch: eased, never thrown
-		return
-	}
-	now := wheelClock()
-	at := time.Duration(now.UnixNano())
-	if ms, ok := scrollEventTime(); ok {
-		at = time.Duration(ms) * time.Millisecond
-	}
-	scroll.notches = append(scroll.notches, kineticSample{at, now, dx, dy})
-	for len(scroll.notches) > 1 && at-scroll.notches[0].at > kineticWindow {
-		scroll.notches = scroll.notches[1:]
-	}
-	if scroll.easeTime == 0 && len(scroll.notches) >= wheelFlick {
-		scroll.fling()
-	}
-	if scroll.easeTime != 0 {
-		// The speed is what is left over easeTime: kept under a touchpad's.
-		if most := kineticMaxSpeed * scroll.easeTime; math.Hypot(scroll.aheadX, scroll.aheadY) > most {
-			k := most / math.Hypot(scroll.aheadX, scroll.aheadY)
-			scroll.aheadX, scroll.aheadY = scroll.aheadX*k, scroll.aheadY*k
-		}
-	}
-}
-
-func wholeNotches(d float64) bool {
-	return math.Mod(math.Abs(d), wheelNotch) == 0
-}
-
-// fling makes the wheel's way left glide: it slows down at a touchpad's
-// pace, and grows so the content keeps the speed it has (speed is what is
-// left over the time constant), by wheelMaxFling at most.
-func (scroll *kineticScroll) fling() {
-	grow := kineticDecay/wheelEase - 1
-	ex, ey := scroll.aheadX*grow, scroll.aheadY*grow
-	if extra := math.Hypot(ex, ey); extra > wheelMaxFling {
-		ex, ey = ex*wheelMaxFling/extra, ey*wheelMaxFling/extra
-	}
-	scroll.aheadX += ex
-	scroll.aheadY += ey
-	scroll.easeTime = kineticDecay
-	platform.Devf("ui", "wheel flicked (%d notches): gliding %.0f points past where it aimed", len(scroll.notches), math.Hypot(ex, ey))
-}
-
 // kineticFrame runs at each turn of the loop (frame hook), after the
 // events of that turn were handled.
 func kineticFrame(now time.Time, elapsed time.Duration) {
 	scroll := kineticActive
 	if scroll == nil {
 		return
-	}
-	if scroll.aheadX != 0 || scroll.aheadY != 0 {
-		scroll.ease(math.Min(elapsed.Seconds(), kineticMaxFrame))
 	}
 	if scroll.gliding {
 		scroll.glide(math.Min(elapsed.Seconds(), kineticMaxFrame))
@@ -251,50 +163,6 @@ func clampSpeed(v float64) float64 {
 func (scroll *kineticScroll) rest() {
 	scroll.gliding = false
 	scroll.vx, scroll.vy = 0, 0
-	scroll.aheadX, scroll.aheadY, scroll.easeTime = 0, 0, 0
-	scroll.notches = scroll.notches[:0]
-}
-
-// ease moves the content for one frame of dt seconds towards where the
-// wheel sent it: the same share of the distance left in every 70 ms (325 ms
-// in a flick), whatever the frame rate, and the last half point at once (dropped in
-// a flick's glide).
-func (scroll *kineticScroll) ease(dt float64) {
-	if dt <= 0 {
-		return
-	}
-	tau := scroll.easeTime
-	if tau == 0 {
-		tau = wheelEase
-	}
-	share := 1 - math.Exp(-dt/tau)
-	mx, my := scroll.aheadX*share, scroll.aheadY*share
-	last := math.Hypot(scroll.aheadX-mx, scroll.aheadY-my) < 0.5
-	gliding := scroll.easeTime != 0
-	if last && !gliding {
-		mx, my = scroll.aheadX, scroll.aheadY
-	}
-	scroll.aheadX -= mx
-	scroll.aheadY -= my
-	before := scroll.Offset
-	scroll.Scroll.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DX: float32(mx), DY: float32(my)}})
-	edge := scroll.Offset == before || !scroll.Visible()
-	if edge || last {
-		// Arrived, or an edge: nothing left to travel, and the next notch
-		// starts afresh. A glide has no exact aim: it ends where it is
-		// rather than jump its last half point.
-		scroll.aheadX, scroll.aheadY, scroll.easeTime = 0, 0, 0
-		scroll.notches = scroll.notches[:0]
-	}
-	if last && !edge && !gliding {
-		// The steps' float32 rounding adds up to a few millionths of a
-		// point: the motion ends on the whole point the wheel aimed at.
-		at := scroll.Offset
-		x, y := float32(math.Round(float64(at.X))), float32(math.Round(float64(at.Y)))
-		if math.Abs(float64(x-at.X)) < 0.01 && math.Abs(float64(y-at.Y)) < 0.01 && (x != at.X || y != at.Y) {
-			scroll.ScrollToOffset(fyne.NewPos(x, y))
-		}
-	}
 }
 
 // glide moves the content for one frame of dt seconds. The speed decays

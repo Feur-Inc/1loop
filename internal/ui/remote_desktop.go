@@ -51,8 +51,8 @@ func (ui *desktopUI) connectServer() {
 	connect := newRow("Connect", nil, stylePrimary, nil)
 	connect.onTap = func() {
 		target := serverAddress{URL: address.Text, Fingerprint: pin.Text}
-		if target.URL == saved.URL && target.Fingerprint == saved.Fingerprint {
-			target.Token = saved.Token
+		if known, ok := pairedServer(target.URL); ok && known.Fingerprint == target.Fingerprint { // any server paired, not only the last
+			target.Token = known.Token
 		}
 		client, err := newRemoteClient(target)
 		if err != nil {
@@ -302,7 +302,7 @@ func (ui *desktopUI) useServer(client *remoteClient) {
 	}
 	remote.resetTabs()
 	ui.server = remote
-	ui.linkServer() // a server just paired is followed from now on
+	ui.linkServers() // a server just paired is followed from now on
 	ui.machine.SetText(serverName(client.address.URL))
 	ui.serverStatus.SetText("Connecting…")
 	ui.serverStatus.Show()
@@ -379,13 +379,12 @@ func (remote *remoteDesktop) close() {
 }
 
 // targetMenu chooses where the agent works, as on the phone: this
-// computer, the server last used, or another one.
+// computer, an SSH machine, a paired server, or another one.
 func (ui *desktopUI) targetMenu() {
 	if ui.home != "" {
 		ui.browserTargetMenu()
 		return
 	}
-	saved := loadServerAddress()
 	computer := menuAction{label: "This computer", icon: theme.ComputerIcon(), checked: ui.server == nil && ui.cfg.MachineID == "", run: ui.useComputer}
 	actions := []menuAction{computer}
 	for _, machine := range ui.sshMachines {
@@ -394,7 +393,7 @@ func (ui *desktopUI) targetMenu() {
 			checked: ui.server == nil && ui.cfg.MachineID == id, run: func() { ui.useMachine(id) }})
 	}
 	actions = append(actions, menuAction{label: "Add an SSH machine…", icon: iconPlus, run: func() { ui.prefs.openOn("General") }})
-	if saved.URL != "" && saved.Token != "" {
+	for _, saved := range loadServerAddresses() {
 		server := menuAction{label: serverName(saved.URL), detail: saved.URL, icon: iconBrowser, checked: ui.server != nil && ui.server.client.address.URL == saved.URL, run: func() {
 			if ui.server != nil && ui.server.client.address.URL == saved.URL {
 				return

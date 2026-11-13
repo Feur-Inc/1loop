@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -101,6 +102,19 @@ func (server *headlessServer) addBrowserLocked(chat *serverChat, info browser.In
 	return page
 }
 
+// hasBrowser says whether Browser Use can start a browser: the phone's
+// WebView, or a Chromium unless ONELOOP_BROWSER=none (the slim image).
+func (server *headlessServer) hasBrowser() bool {
+	return server.engine.Native != nil || !browser.Disabled()
+}
+
+// hasClaudeCode says whether Claude Code connections can start its CLI here
+// (not in the slim image).
+func hasClaudeCode() bool {
+	_, err := agent.ClaudeExecutable()
+	return err == nil
+}
+
 func (server *headlessServer) browserTools(chat *serverChat) agent.PanelToolHandler {
 	return func(ctx context.Context, name string, raw json.RawMessage) (agent.PanelToolResult, error) {
 		var args agent.BrowserToolArgs
@@ -108,6 +122,9 @@ func (server *headlessServer) browserTools(chat *serverChat) agent.PanelToolHand
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&args); err != nil {
 			return agent.PanelToolResult{}, err
+		}
+		if !server.hasBrowser() {
+			return agent.PanelToolResult{}, errors.New(browser.NoBrowserProblem)
 		}
 		server.mu.Lock()
 		if server.panelChatLocked(chat.ID) != chat {

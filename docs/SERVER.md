@@ -82,11 +82,20 @@ in a container: pull the new image and recreate the container, and the
 volumes keep everything. To build it yourself: `docker build -t 1loop-server .`
 from the repository root.
 
+The slim image, without Chromium or Claude Code, is a much smaller download
+for a server that needs neither Browser Use nor Claude Code connections: tags
+`slim` and `0.3.3-slim`, `alpha-slim` and `alpha-slim-N`, or
+`docker build --target slim -t 1loop-server:slim .`. `/api/state` says what
+the server has: `"browser"` and `"claudeCode"` are `false` there. It sets `ONELOOP_BROWSER=none`: browser tabs do not open, and
+the agent's browser tools answer that this server has no browser instead of
+downloading one the image could not run. The same variable turns Browser Use
+off on any server.
+
 ### Claude Code in the image
 
-The image includes the Claude Code CLI (`claude`, Anthropic's native build),
-so a Claude Code connection works in a new container without installing
-anything. Its sign-in and settings are kept in the data volume, in
+The image (not the slim one) includes the Claude Code CLI (`claude`,
+Anthropic's native build), so a Claude Code connection works in a new
+container without installing anything. Its sign-in and settings are kept in the data volume, in
 `/data/claude` (`CLAUDE_CONFIG_DIR`, which holds both its `.claude` folder and
 its `.claude.json`): sign in once, and you stay signed in when the image is
 updated. Sign in with your Claude subscription (Pro or Max), in the container:

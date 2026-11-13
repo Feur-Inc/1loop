@@ -35,11 +35,11 @@ import (
 // guessing a release from a silence made a quickly spun wheel slide on for
 // screens (X11, Windows), and macOS already sends a touchpad's inertia.
 //
-// A wheel is eased instead, as browsers do: each notch's distance is
-// travelled over the next frames, fast at first and slowing into place
-// (wheelEase), and notches that follow add to what is left, so a quickly
-// spun wheel speeds the motion up and settles smoothly. The distance is
-// exactly what the wheel turned: nothing slides on after it.
+// A wheel moves the content by each notch's distance as the notch arrives,
+// like a native wheel: the content goes as fast as the wheel spins and
+// stops with it. Easing each notch over the next frames (70 ms) left a
+// quick flick with half its distance still to travel when the wheel
+// stopped, trailing on for a third of a second.
 const (
 	kineticWindow   = 100 * time.Millisecond // the speed is measured over this much of the gesture's end
 	kineticStale    = 60 * time.Millisecond  // fingers that rested this long before leaving throw nothing
@@ -48,7 +48,6 @@ const (
 	kineticMinSpeed = 12.0                   // the glide ends below this
 	kineticMaxSpeed = 7000.0
 	kineticMaxFrame = 0.05 // a late frame does not jump further than this many seconds
-	wheelEase       = 0.07 // seconds for a wheel's remaining distance to fall to 1/e (settles in about 0.25 s)
 )
 
 type kineticSample struct {
@@ -63,8 +62,6 @@ type kineticScroll struct {
 	samples []kineticSample // the end of the gesture in progress
 	vx, vy  float64         // glide speed in points per second
 	gliding bool
-
-	aheadX, aheadY float64 // what the wheel turned and the content has yet to travel
 }
 
 // kineticActive is the scroll the fingers were last on: the only one that
@@ -88,13 +85,11 @@ func (scroll *kineticScroll) Scrolled(ev *fyne.ScrollEvent) {
 	kineticActive = scroll
 	scroll.gliding = false // fingers on the pad again: the content follows them, nothing else
 	if finger, told := scrollFinger(); !told || !finger {
-		// A wheel, or no telling: eased over the next frames (kineticFrame).
+		// A wheel, or no telling: the content moves by the notch, now.
 		scroll.samples = scroll.samples[:0]
-		scroll.aheadX += float64(ev.Scrolled.DX)
-		scroll.aheadY += float64(ev.Scrolled.DY)
+		scroll.Scroll.Scrolled(ev)
 		return
 	}
-	scroll.aheadX, scroll.aheadY = 0, 0
 	now := time.Now()
 	at := time.Duration(now.UnixNano())
 	if ms, ok := scrollEventTime(); ok {
@@ -116,9 +111,6 @@ func kineticFrame(now time.Time, elapsed time.Duration) {
 	scroll := kineticActive
 	if scroll == nil {
 		return
-	}
-	if scroll.aheadX != 0 || scroll.aheadY != 0 {
-		scroll.ease(math.Min(elapsed.Seconds(), kineticMaxFrame))
 	}
 	if scroll.gliding {
 		scroll.glide(math.Min(elapsed.Seconds(), kineticMaxFrame))
@@ -171,38 +163,6 @@ func clampSpeed(v float64) float64 {
 func (scroll *kineticScroll) rest() {
 	scroll.gliding = false
 	scroll.vx, scroll.vy = 0, 0
-	scroll.aheadX, scroll.aheadY = 0, 0
-}
-
-// ease moves the content for one frame of dt seconds towards where the
-// wheel sent it: the same share of the distance left in every 70 ms,
-// whatever the frame rate, and the last half point at once.
-func (scroll *kineticScroll) ease(dt float64) {
-	if dt <= 0 {
-		return
-	}
-	share := 1 - math.Exp(-dt/wheelEase)
-	mx, my := scroll.aheadX*share, scroll.aheadY*share
-	last := math.Hypot(scroll.aheadX-mx, scroll.aheadY-my) < 0.5
-	if last {
-		mx, my = scroll.aheadX, scroll.aheadY
-	}
-	scroll.aheadX -= mx
-	scroll.aheadY -= my
-	before := scroll.Offset
-	scroll.Scroll.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DX: float32(mx), DY: float32(my)}})
-	switch {
-	case scroll.Offset == before || !scroll.Visible():
-		scroll.aheadX, scroll.aheadY = 0, 0 // an edge: nothing left to travel
-	case last:
-		// The steps' float32 rounding adds up to a few millionths of a
-		// point: the motion ends on the whole point the wheel aimed at.
-		at := scroll.Offset
-		x, y := float32(math.Round(float64(at.X))), float32(math.Round(float64(at.Y)))
-		if math.Abs(float64(x-at.X)) < 0.01 && math.Abs(float64(y-at.Y)) < 0.01 && (x != at.X || y != at.Y) {
-			scroll.ScrollToOffset(fyne.NewPos(x, y))
-		}
-	}
 }
 
 // glide moves the content for one frame of dt seconds. The speed decays

@@ -116,6 +116,17 @@ type desktopUI struct {
 	draftSuffix string // another window's start screen keeps a draft of its own (windows.go)
 	hiddenAlone bool   // the main window was closed while another stayed open
 
+	// Split views (panes.go). A pane other than its window's first has an
+	// owner; the first holds the window's tree and focus.
+	owner     *desktopUI
+	paneTitle *fitLabel         // the pane's chat, over it while the window is split
+	paneMark  *canvas.Rectangle // amber under the title of the pane with the focus
+	paneHead  *fyne.Container
+	paneBox   *fyne.Container // the pane's header over its chat area
+	tree      *splitNode      // the window's panes, nil while it has one
+	focus     *desktopUI      // the window's pane with the focus
+	chatArea  *fyne.Container // where the window's panes go
+
 	usageRow         *tapRow // the sidebar's Usage row, with today's spend
 	window           fyne.Window
 	cfg              agent.Config
@@ -380,19 +391,19 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
 	ui.window.SetContent(ui.build())
 	ui.followUsage()
-	ui.window.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
+	ui.window.SetOnDropped(func(at fyne.Position, uris []fyne.URI) {
 		var files []string
 		for _, uri := range uris {
 			if uri.Scheme() == "file" {
 				files = append(files, uri.Path())
 			}
 		}
-		ui.attachFiles(files)
+		ui.paneAt(at).attachFiles(files)
 	})
 	ui.prompt.switchDraft(ui.draftKey())
 	ui.window.SetCloseIntercept(ui.closeWindow)
 	ui.registerShortcuts()
-	ui.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { ui.copySelection() })
+	ui.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { ui.focused().copySelection() })
 	ui.updateHeader()
 	ui.renderChats()
 	ui.refreshModels()
@@ -436,6 +447,7 @@ func runDesktop(backend *agent.App, root string) {
 		go ui.bench(kind)
 	}
 	windowIdentity(ui.window)
+	ui.restoreLayout(read.state.Split)    // the main window's panes of the last run
 	ui.restoreWindows(read.state.Windows) // the other windows of the last run, on their chats
 	a.Run()
 }
@@ -520,7 +532,7 @@ func (ui *desktopUI) release() {
 	for _, chat := range ui.chats {
 		chat.tasks.StopAll() // a background server must not outlive 1loop
 	}
-	for _, view := range ui.allWindows() {
+	for _, view := range ui.allPanes() {
 		if view != ui {
 			view.releaseWindow() // its chat's panel goes back to the chat, disposed with it below
 		}
@@ -639,15 +651,34 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 		watchReducedMotion()
 	}
 	ui.tips = newTipLayer()
-	ui.chatSel.ui = ui
 	ui.buildSettings()
 	sidebar := ui.buildSidebar()
+	ui.buildChat()
+	ui.buildPaneBox()
+	ui.chatArea = container.NewStack(ui.paneBox)
+	// Links in any window act on the window the user works in (windows.go).
+	openCitation = func(link string) { ui.activeView().openCitation(link) }
+	openReference = func(link string) { ui.activeView().openReference(link) }
+	hoverReference = func(link string, at fyne.Position) { ui.activeView().hoverReference(link, at) }
+	refRepository = func() string { return ui.activeView().chatRepository() }
+	ui.buildTitleBar(sidebar)
+	layers := []fyne.CanvasObject{ui.root}
+	if ui.chrome {
+		layers = append(layers, resizeEdges(ui.window))
+	}
+	return container.NewStack(append(layers, ui.tips.layer)...)
+}
+
+// buildChat builds a pane's chat area (ui.split): the conversation, the
+// composer and the side panel.
+func (ui *desktopUI) buildChat() {
+	ui.chatSel.ui = ui
 
 	// Conversation column. While the model works, the animated ring sits
 	// under the last message.
 	afterTypeset = func() { // every window's formulas (windows.go)
 		if ui.ctx.Err() == nil {
-			for _, view := range ui.windows {
+			for _, view := range ui.allPanes() {
 				if load := view.loadingChat; load != nil {
 					view.items.reset()
 					load.measured = 0
@@ -733,13 +764,12 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 		}
 	}
 	ui.panel = newToolPanel(ui)
-	// Links in any window act on the window the user works in (windows.go).
-	openCitation = func(link string) { ui.activeView().openCitation(link) }
-	openReference = func(link string) { ui.activeView().openReference(link) }
-	hoverReference = func(link string, at fyne.Position) { ui.activeView().hoverReference(link, at) }
-	refRepository = func() string { return ui.activeView().chatRepository() }
 	ui.split = container.New(splitLayout{ui.panel}, conversation, ui.panel.view, newPanelResizeHandle(ui.panel), ui.panelToggle)
+}
 
+// buildTitleBar builds the window around its panes: the title bar, the
+// settings page over the chat area and the sidebar beside it (ui.root).
+func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	// Title bar: conversation title, drag region and window controls.
 	ui.header = newFitLabel("New chat", 14, colMuted)
 	ui.expand = newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
@@ -758,17 +788,12 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	}
 	// The settings page takes the conversation's place while it is open.
 	ui.curtain = newPageCurtain()
-	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view, ui.curtain.cover)))
+	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.chatArea, ui.prefs.view, ui.curtain.cover)))
 	// No rule between the panes: the sidebar only casts a faint shadow.
 	shade := canvas.NewHorizontalGradient(color.NRGBA{A: 0x2a}, color.NRGBA{})
 	ui.pane = &paneLayout{shown: 1, shade: 14, chosen: &ui.sidebarWidth}
 	ui.sideHandle = newSidebarHandle(ui)
 	ui.root = container.New(ui.pane, sidebar, main, shade, ui.sideHandle)
-	layers := []fyne.CanvasObject{ui.root}
-	if ui.chrome {
-		layers = append(layers, resizeEdges(ui.window))
-	}
-	return container.NewStack(append(layers, ui.tips.layer)...)
 }
 
 // buildFooter assembles the context line, the queue tray and the composer
@@ -904,6 +929,9 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	var glowAnim *fyne.Animation
 	glowLevel := float32(0)
 	ui.prompt.onFocus = func(focused bool) {
+		if focused {
+			ui.activate() // typing in a pane gives it the focus (panes.go)
+		}
 		from, to := colBorder, colBorderHot
 		if !focused {
 			from, to = to, from
@@ -972,6 +1000,12 @@ func (ui *desktopUI) updateHeader() {
 	title := "New chat"
 	if ui.current != nil {
 		title = ui.current.Title
+	}
+	if ui.paneTitle != nil {
+		ui.paneTitle.SetText(title)
+	}
+	if ui.desktopApp != nil && ui.focused() != ui {
+		return // the title bar shows the pane with the focus (panes.go)
 	}
 	if ui.prefs != nil && ui.prefs.open {
 		title = "Settings"
@@ -1853,7 +1887,7 @@ func (ui *desktopUI) refreshModels() {
 				return
 			}
 			defer func() { // the other windows' pickers list the same models (windows.go)
-				for _, view := range ui.allWindows() {
+				for _, view := range ui.allPanes() {
 					if view != ui {
 						view.adoptModels(ui)
 					}
@@ -1966,6 +2000,8 @@ type savedState struct {
 	ServerProjects map[string][]string `json:"serverProjects,omitempty"`
 	// The windows open beside the main one, to open again (windows.go).
 	Windows []savedWindow `json:"windows,omitempty"`
+	// The main window's split views, when it is split (panes.go).
+	Split *savedSplit `json:"split,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -2037,8 +2073,9 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.theme.accent,
 		ui.serverProjects,
 		ui.savedWindows(),
+		ui.savedLayout(),
 	})
-	for _, view := range ui.allWindows() {
+	for _, view := range ui.allPanes() {
 		if view.panel != nil {
 			view.panel.stash() // the open chat's panel, as it is now
 		}

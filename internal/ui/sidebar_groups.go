@@ -335,11 +335,12 @@ func (ui *desktopUI) foldProject(project string, folded bool) {
 
 // sideActions is the labelled block at the top of the sidebar.
 func (ui *desktopUI) sideActions() fyne.CanvasObject {
-	ui.newChat = newRow("New chat", iconPlus, styleNav, ui.startNew)
+	// They act on the pane with the focus, in a split window (panes.go).
+	ui.newChat = newRow("New chat", iconPlus, styleNav, func() { ui.focused().startNew() })
 	ui.newChat.trailing = ui.shortcutLabel(registry.ShortcutNewChat)
-	ui.searchRow = newRow("Search", iconSearch, styleNav, ui.search)
+	ui.searchRow = newRow("Search", iconSearch, styleNav, func() { ui.focused().search() })
 	ui.searchRow.trailing = ui.shortcutLabel(registry.ShortcutSearch)
-	add := newRow("Add project", iconFolderAdd, styleNav, ui.addProject)
+	add := newRow("Add project", iconFolderAdd, styleNav, func() { ui.focused().addProject() })
 	add.trailing = ui.shortcutLabel(registry.ShortcutNewProject)
 	return container.New(layout.NewCustomPaddedVBoxLayout(1), ui.newChat, ui.searchRow, add)
 }

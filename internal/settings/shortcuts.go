@@ -29,6 +29,12 @@ const (
 	ShortcutNewProject   = "shortcuts.new_project"
 	ShortcutNewWindow    = "shortcuts.new_window"
 	ShortcutCloseWindow  = "shortcuts.close_window"
+	ShortcutSplitRight   = "shortcuts.split_right"
+	ShortcutSplitDown    = "shortcuts.split_down"
+	ShortcutPaneLeft     = "shortcuts.pane_left"
+	ShortcutPaneRight    = "shortcuts.pane_right"
+	ShortcutPaneUp       = "shortcuts.pane_up"
+	ShortcutPaneDown     = "shortcuts.pane_down"
 	ShortcutSettings     = "shortcuts.settings"
 	ShortcutSidebar      = "shortcuts.sidebar"
 	ShortcutPrompt       = "shortcuts.prompt"
@@ -51,7 +57,13 @@ var shortcuts = []Setting{
 	shortcut(ShortcutSearch, "Search chats and settings", "Ctrl+K", "Opens the search of the sidebar, over every chat and setting.", "search", "find", "chats", "command palette", "quick open"),
 	shortcut(ShortcutNewChat, "New chat", "Ctrl+N", "Starts a new chat in the project open.", "new", "chat", "conversation"),
 	shortcut(ShortcutNewWindow, "New window", "Ctrl+Shift+N", "Opens another 1loop window, on a new chat in the project open.", "new", "window", "chat", "multiple", "side by side"),
-	shortcut(ShortcutCloseWindow, "Close the window", "Ctrl+Shift+W", "Closes this window. The last one follows the tray setting.", "close", "window"),
+	shortcut(ShortcutCloseWindow, "Close the pane or window", "Ctrl+Shift+W", "Closes the pane with the focus when the window is split, else the window. The last window follows the tray setting.", "close", "window", "pane", "split"),
+	shortcut(ShortcutSplitRight, "Split side by side", "Ctrl+Shift+E", "Opens a new chat in a pane beside the one with the focus.", "split", "pane", "side by side", "right", "view"),
+	shortcut(ShortcutSplitDown, "Split top and bottom", "Ctrl+Shift+O", "Opens a new chat in a pane under the one with the focus.", "split", "pane", "top", "bottom", "below", "view"),
+	shortcut(ShortcutPaneLeft, "Pane on the left", "Alt+Shift+ArrowLeft", "Moves the focus to the pane on the left of a split window.", "pane", "split", "focus", "left"),
+	shortcut(ShortcutPaneRight, "Pane on the right", "Alt+Shift+ArrowRight", "Moves the focus to the pane on the right of a split window.", "pane", "split", "focus", "right"),
+	shortcut(ShortcutPaneUp, "Pane above", "Alt+Shift+ArrowUp", "Moves the focus to the pane above in a split window.", "pane", "split", "focus", "up"),
+	shortcut(ShortcutPaneDown, "Pane below", "Alt+Shift+ArrowDown", "Moves the focus to the pane below in a split window.", "pane", "split", "focus", "down"),
 	shortcut(ShortcutNewProject, "Add a project", "Ctrl+P", "Opens a folder as a new project.", "new", "project", "folder", "workspace", "open"),
 	shortcut(ShortcutSettings, "Open Settings", "Ctrl+,", "Opens 1loop's settings.", "settings", "preferences", "options"),
 	shortcut(ShortcutSidebar, "Show or hide the sidebar", "Ctrl+B", "Folds the sidebar away, or brings it back.", "sidebar", "toggle", "hide", "collapse"),

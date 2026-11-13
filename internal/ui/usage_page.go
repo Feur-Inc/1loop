@@ -810,6 +810,7 @@ func (ui *desktopUI) followUsage() {
 
 func (ui *desktopUI) usageChanged() {
 	for _, view := range ui.allWindows() {
+		view = view.focused() // its sidebar's (panes.go)
 		if view.usageRow != nil {
 			text := ""
 			if view.server == nil { // the server's chats spend on the server

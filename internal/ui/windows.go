@@ -27,9 +27,10 @@ import (
 // savedWindow is a window opened beside the main one, as the state file
 // keeps it.
 type savedWindow struct {
-	Chat   string  `json:"chat,omitempty"` // the chat it showed, "" for a new chat
-	Width  float32 `json:"width,omitempty"`
-	Height float32 `json:"height,omitempty"`
+	Chat   string      `json:"chat,omitempty"` // the chat it showed, "" for a new chat
+	Width  float32     `json:"width,omitempty"`
+	Height float32     `json:"height,omitempty"`
+	Split  *savedSplit `json:"split,omitempty"` // its panes, when it is split (panes.go)
 }
 
 // viewOf is the window showing chat, else ui itself (or the main window,
@@ -38,15 +39,16 @@ func (ui *desktopUI) viewOf(chat *conversation) *desktopUI {
 	if ui.desktopApp == nil || chat != nil && ui.current == chat {
 		return ui
 	}
+	views := ui.allPanes() // every pane of every window (panes.go)
 	if chat != nil {
-		for _, view := range ui.windows {
+		for _, view := range views {
 			if view.current == chat {
 				return view
 			}
 		}
 	}
-	if len(ui.windows) > 0 && !slices.Contains(ui.windows, ui) {
-		return ui.mainView() // ui's window was closed: never draw in it
+	if len(ui.windows) > 0 && !slices.Contains(views, ui) {
+		return ui.mainView().focused() // ui's window or pane was closed: never draw in it
 	}
 	return ui
 }
@@ -63,7 +65,7 @@ func (ui *desktopUI) sheetView(chat *conversation) *desktopUI {
 // mainView is the first window.
 func (ui *desktopUI) mainView() *desktopUI {
 	if ui.desktopApp == nil || len(ui.windows) == 0 {
-		return ui
+		return ui.windowOf()
 	}
 	return ui.windows[0]
 }
@@ -71,54 +73,70 @@ func (ui *desktopUI) mainView() *desktopUI {
 // allWindows is every window, the main one first.
 func (ui *desktopUI) allWindows() []*desktopUI {
 	if ui.desktopApp == nil || len(ui.windows) == 0 {
-		return []*desktopUI{ui}
+		return []*desktopUI{ui.windowOf()}
 	}
 	return ui.windows
 }
 
 // shown reports whether the user can see ui's window.
 func (ui *desktopUI) shown() bool {
-	return !ui.hiddenAlone && (ui.tray == nil || !ui.tray.hidden)
+	return !ui.windowOf().hiddenAlone && (ui.tray == nil || !ui.tray.hidden)
 }
 
 // showing reports whether a window the user can see shows chat.
 func (app *desktopApp) showing(chat *conversation) bool {
 	for _, view := range app.windows {
-		if view.current == chat && view.shown() {
-			return true
+		for _, view := range view.panesOf() {
+			if view.current == chat && view.shown() {
+				return true
+			}
 		}
 	}
 	return false
 }
 
-// activate notes ui as the window the user works in: links and #12
-// references in any window act there.
+// activate notes ui as the window and pane the user works in: links and
+// #12 references in any window act there, the window's sidebar shows it.
 func (ui *desktopUI) activate() {
-	if ui != nil && ui.desktopApp != nil {
-		ui.active = ui
+	if ui == nil || ui.desktopApp == nil {
+		return
+	}
+	window := ui.windowOf()
+	ui.active = window
+	if window.focus == ui {
+		return
+	}
+	before := window.focused()
+	window.focus = ui
+	if before != ui && window.tree != nil {
+		ui.focusChanged() // panes.go
 	}
 }
 
 // activeView is the window the user last worked in, else the main one.
 func (ui *desktopUI) activeView() *desktopUI {
 	if ui.desktopApp != nil && ui.active != nil && slices.Contains(ui.windows, ui.active) && ui.active.shown() {
-		return ui.active
+		return ui.active.focused()
 	}
-	return ui.mainView()
+	return ui.mainView().focused()
 }
 
 // raise brings ui's window to the front, out of the tray if need be.
 func (ui *desktopUI) raise() {
-	if ui == ui.mainView() {
-		ui.showWindow()
-		return
+	window := ui.windowOf()
+	if window == ui.mainView() {
+		window.showWindow()
+	} else {
+		if ui.tray != nil && ui.tray.hidden {
+			ui.mainView().showWindow() // every window comes back with it
+		}
+		window.window.Show()
+		window.window.RequestFocus()
 	}
-	if ui.tray != nil && ui.tray.hidden {
-		ui.mainView().showWindow() // every window comes back with it
+	ui.activate() // and its pane takes the focus
+	if ui.isSplit() && ui.prompt != nil {
+		ui.window.Canvas().Focus(ui.prompt)
 	}
-	ui.window.Show()
-	ui.window.RequestFocus()
-	ui.activate()
 }
 
 // openWhereShown opens a chat from a notification or the tray: in the window
@@ -131,7 +149,7 @@ func (ui *desktopUI) openWhereShown(chat *conversation) {
 	}
 	view := ui.viewOf(chat)
 	if view.current != chat {
-		view = main
+		view = main.focused()
 		view.openChat(chat)
 	}
 	view.raise()
@@ -201,19 +219,19 @@ func (ui *desktopUI) newWindowView(cfg agent.Config, size fyne.Size) *desktopUI 
 	view.window.Resize(size)
 	view.window.SetIcon(brandResource("1loop-ring-on-black.png"))
 	view.window.SetContent(view.build())
-	view.window.SetOnDropped(func(_ fyne.Position, uris []fyne.URI) {
+	view.window.SetOnDropped(func(at fyne.Position, uris []fyne.URI) {
 		var files []string
 		for _, uri := range uris {
 			if uri.Scheme() == "file" {
 				files = append(files, uri.Path())
 			}
 		}
-		view.attachFiles(files)
+		view.paneAt(at).attachFiles(files)
 	})
 	view.prompt.switchDraft(view.draftKey())
 	view.window.SetCloseIntercept(view.closeWindow)
 	view.registerShortcuts()
-	view.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { view.copySelection() })
+	view.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { view.focused().copySelection() })
 	view.updateHeader()
 	view.renderSidebar(view.sidebarGroups())
 	view.adoptModels(ui.mainView())
@@ -229,6 +247,7 @@ func (ui *desktopUI) newWindowView(cfg agent.Config, size fyne.Size) *desktopUI 
 // hidden (closing it would end 1loop), any other goes, its chat's panel kept
 // with the chat.
 func (ui *desktopUI) closeAlone() {
+	ui = ui.windowOf()
 	if ui == ui.mainView() {
 		ui.hiddenAlone = true
 		ui.window.Hide()
@@ -237,12 +256,17 @@ func (ui *desktopUI) closeAlone() {
 		}
 		return
 	}
-	ui.releaseWindow()
+	panes := ui.panesOf()
+	for _, pane := range panes {
+		pane.releaseWindow()
+	}
 	ui.windows = slices.DeleteFunc(ui.windows, func(view *desktopUI) bool { return view == ui })
 	if ui.active == ui {
 		ui.active = nil
 	}
-	ui.current = nil
+	for _, pane := range panes {
+		pane.current = nil
+	}
 	ui.window.SetCloseIntercept(nil)
 	ui.window.Close()
 	platform.Devf("ui", "window closed, %d left", len(ui.windows))
@@ -278,6 +302,7 @@ func (ui *desktopUI) savedWindows() []savedWindow {
 			size := view.window.Canvas().Size()
 			saved.Width, saved.Height = size.Width, size.Height
 		}
+		saved.Split = view.savedLayout() // panes.go
 		out = append(out, saved)
 	}
 	return out
@@ -295,6 +320,7 @@ func (ui *desktopUI) restoreWindows(saved []savedWindow) {
 		if chat := ui.chatByID(window.Chat); chat != nil {
 			view.openLocalChat(chat)
 		}
+		view.restoreLayout(window.Split)
 		view.window.Show()
 		windowIdentity(view.window)
 	}

@@ -497,7 +497,7 @@ func (ui *desktopUI) removeChat(chat *conversation) {
 	chat.queue, chat.steer = nil, nil
 	chat.tasks.StopAll()
 	ui.prompt.drafts.set(chat.ID, "")
-	for _, view := range ui.windows {
+	for _, view := range ui.allPanes() {
 		if view.current == chat {
 			view.current = nil
 			view.startNew()
@@ -511,8 +511,9 @@ func (ui *desktopUI) removeChat(chat *conversation) {
 
 func (ui *desktopUI) chatMenu(chat *conversation, anchor fyne.CanvasObject) *sheet {
 	var window []menuAction
-	if ui.canOpenWindow(chat) { // windows.go
-		window = append(window, menuAction{label: "Open in new window", icon: iconWindow, run: func() { ui.openWindow(chat) }})
+	if ui.canOpenWindow(chat) { // windows.go, panes.go
+		window = append(window, menuAction{label: "Open in new window", icon: iconWindow, run: func() { ui.openWindow(chat) }},
+			menuAction{label: "Open in split view", icon: iconPanel, run: func() { ui.splitPane(chat, false) }})
 	}
 	return showMenu(ui.window, anchor, append(window, []menuAction{
 		{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
@@ -535,22 +536,21 @@ func (ui *desktopUI) confirm(title, text, verb string, run func()) {
 // window's sidebar.
 func (ui *desktopUI) renderChats() {
 	ui.remote.chatsChanged()
-	ui.syncTray() // a chat removed, or its run started or ended
-	windows := ui.windows
-	if len(windows) == 0 {
-		windows = []*desktopUI{ui}
-	}
-	for _, view := range windows {
+	ui.syncTray()                        // a chat removed, or its run started or ended
+	for _, view := range ui.allPanes() { // every pane of every window (panes.go)
 		if view.cachedChat != nil && !slices.Contains(ui.chats, view.cachedChat.chat) {
 			view.cachedChat = nil
 		}
 		if view.server == nil && view.worktreeMap()[view.cfg.Workspace] == "" && !view.cfg.InScratch() {
 			view.ensureTargetProject(view.cfg.Workspace)
 		}
-		view.renderSidebar(view.sidebarGroups())
 		if view != ui && view.header != nil {
-			view.updateHeader() // a rename, from another window
+			view.updateHeader() // a rename, from another window or pane
 		}
+	}
+	for _, window := range ui.allWindows() {
+		view := window.focused() // the sidebar shows the pane with the focus
+		view.renderSidebar(view.sidebarGroups())
 	}
 }
 

@@ -334,7 +334,8 @@ func (ui *desktopUI) sideChatOf(chat *conversation) sideChat {
 	var window func()
 	if ui.canOpenWindow(chat) { // windows.go
 		window = func() { ui.openWindow(chat) }
-		menu = append([]menuAction{{label: "Open in new window", icon: iconWindow, run: window}}, menu...)
+		menu = append([]menuAction{{label: "Open in new window", icon: iconWindow, run: window},
+			{label: "Open in split view", icon: iconPanel, run: func() { ui.splitPane(chat, false) }}}, menu...)
 	}
 	parent := ""
 	if chat.Subchat != nil {

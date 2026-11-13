@@ -93,6 +93,7 @@ func (ui *desktopUI) modelName(cfg agent.Config) string {
 
 // askHandoff shows the dialog for chat, then calls proceed with the choice.
 func (ui *desktopUI) askHandoff(chat *conversation, proceed func()) {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	previous := ui.previousConfig(chat)
 	next := ui.runConfig(chat)
 	plan := agent.PlanHandoff(previous, next, chat.History, chat.Items, ui.previousName(chat), ui.modelName(next))

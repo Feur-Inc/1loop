@@ -143,6 +143,7 @@ func recommendedLabel(label string) (string, bool) {
 }
 
 func (ui *desktopUI) showQuestions(chat *conversation, request agent.QuestionRequest) *sheet {
+	ui = ui.viewOf(chat).sheetView(chat) // the window showing it, else the one in use (windows.go)
 	form := newQuestionForm(request.Questions)
 	resolved := false
 	current := 0

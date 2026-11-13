@@ -20,7 +20,7 @@ import (
 func sidebarUI(t *testing.T) *desktopUI {
 	t.Helper()
 	test.NewTempApp(t)
-	ui := &desktopUI{ctx: context.Background(), foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}}
+	ui := &desktopUI{desktopApp: &desktopApp{ctx: context.Background(), foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}}}
 	ui.sideGlide = newGlideLayout()
 	ui.projectList = container.New(ui.sideGlide)
 	ui.projects = []string{"/home/u/app"}

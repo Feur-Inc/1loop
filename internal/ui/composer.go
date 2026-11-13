@@ -601,6 +601,7 @@ func (ui *desktopUI) takeAttachments() []core.ImagePart {
 // edited in the prompt, sent at once or dropped.
 
 func (ui *desktopUI) takeSteer(chat *conversation) []agent.Message {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	out := chat.steer
 	chat.steer = nil
 	if len(out) > 0 {
@@ -613,6 +614,7 @@ func (ui *desktopUI) takeSteer(chat *conversation) []agent.Message {
 }
 
 func (ui *desktopUI) takeNext(chat *conversation) (agent.Message, bool) {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	waiting := &chat.queue
 	if chat.run == nil && len(chat.steer) > 0 {
 		waiting = &chat.steer

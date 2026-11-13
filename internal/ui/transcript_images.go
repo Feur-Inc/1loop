@@ -75,6 +75,7 @@ func (ui *desktopUI) setUserImages(view *userImageView, parts []core.ImagePart) 
 // An arriving picture changes one row, not the text and controls of every
 // message in the conversation. Off-screen rows must lose their cached height.
 func (ui *desktopUI) refreshItemImages(chat *conversation, index int) {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	if chat != ui.current {
 		return
 	}

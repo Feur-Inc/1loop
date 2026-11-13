@@ -244,6 +244,7 @@ func (chat *conversation) disposePanel() {
 // showTodo opens the panel of a chat on its task list. A chat that is not
 // on screen finds it that way when it is opened.
 func (panel *toolPanel) showTodo(chat *conversation) {
+	panel = panel.of(chat)
 	if chat == panel.owner {
 		panel.openTodo()
 		return

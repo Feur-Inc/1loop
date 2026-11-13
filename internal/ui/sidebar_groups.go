@@ -31,6 +31,7 @@ type sideChat struct {
 	blocked  bool   // that wrap-up waits on the user
 	selected bool
 	open     func()
+	window   func() // opens it in a new window (middle click), nil when it cannot have one
 	menu     []menuAction
 	text     func() []string // its messages, for search; nil when they are not at hand
 	subchats []sideChat      // listed under it, whatever their folder (nestSubchats)
@@ -272,6 +273,7 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 		row.accent = true
 		row.truncate = true
 		row.selected = chat.selected
+		row.onMiddle = chat.window
 		if chat.folder != project && project != "" && !chat.scratch {
 			row.trailing = path.Base(ui.worktreeLabel(chat.folder)) // a worktree's chat: its branch's last part, short
 		}
@@ -291,6 +293,7 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 			sub := sub
 			subRow := newRow(sub.title, iconSubchat, styleNav, sub.open)
 			subRow.accent, subRow.truncate, subRow.selected = true, true, sub.selected
+			subRow.onMiddle = sub.window
 			subRow.size = 13
 			if sub.running {
 				subRow.badge = iconDot
@@ -332,11 +335,12 @@ func (ui *desktopUI) foldProject(project string, folded bool) {
 
 // sideActions is the labelled block at the top of the sidebar.
 func (ui *desktopUI) sideActions() fyne.CanvasObject {
-	ui.newChat = newRow("New chat", iconPlus, styleNav, ui.startNew)
+	// They act on the pane with the focus, in a split window (panes.go).
+	ui.newChat = newRow("New chat", iconPlus, styleNav, func() { ui.focused().startNew() })
 	ui.newChat.trailing = ui.shortcutLabel(registry.ShortcutNewChat)
-	ui.searchRow = newRow("Search", iconSearch, styleNav, ui.search)
+	ui.searchRow = newRow("Search", iconSearch, styleNav, func() { ui.focused().search() })
 	ui.searchRow.trailing = ui.shortcutLabel(registry.ShortcutSearch)
-	add := newRow("Add project", iconFolderAdd, styleNav, ui.addProject)
+	add := newRow("Add project", iconFolderAdd, styleNav, func() { ui.focused().addProject() })
 	add.trailing = ui.shortcutLabel(registry.ShortcutNewProject)
 	return container.New(layout.NewCustomPaddedVBoxLayout(1), ui.newChat, ui.searchRow, add)
 }

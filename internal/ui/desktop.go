@@ -278,6 +278,7 @@ type desktopUI struct {
 	shortcutKeys   map[string]string         // shortcut → key, where the user chose another than its default
 	registered     []*desktop.CustomShortcut // the shortcuts' keys the window has
 	allChatsShown  map[string]bool           // projects whose every chat is listed
+	subchatsShown  map[string]bool           // chats whose many subchats the user unfolded (true) or folded (false), by ID
 	worktreesShown map[string]bool           // projects whose worktrees are unfolded
 	foldedProjects map[string]bool
 	pane           *paneLayout

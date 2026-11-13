@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"path"
 	"slices"
+	"strconv"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -317,10 +318,13 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 		case chat.blocked:
 			row.badge = iconWaiting // its wrap-up waits on the user
 		}
+		if nested, _ := nestedCount(chat.subchats); nested > 0 {
+			row.mark, row.markText = iconBranch, strconv.Itoa(nested)
+		}
 		ui.addSide("chat:"+chat.id, padded(0, 0, 28, 0, ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, chat.menu)
 		})))
-		ui.addSubchatRows(chat.subchats, 1, trunkNone)
+		ui.addSubchatTree(chat)
 	}
 	if len(chats) > groupChatLimit {
 		label := fmt.Sprintf("Show %d more", len(chats)-len(shown))
@@ -334,6 +338,71 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 		more.ink = colFaint
 		more.size = 13
 		ui.addSide("more:"+key, padded(0, 0, 28, 0, more))
+	}
+}
+
+// A chat with more than this many subchats, all levels counted, lists one
+// summary row under it in place of its tree until that row is clicked
+// (#426), as Claude Code does.
+const subchatsFolded = 3
+
+// nestedCount counts subchats at every level, and how many of them failed.
+func nestedCount(subs []sideChat) (total, failed int) {
+	for _, sub := range subs {
+		total++
+		if sub.subchatState() == agent.SubchatFailed {
+			failed++
+		}
+		deeper, deeperFailed := nestedCount(sub.subchats)
+		total += deeper
+		failed += deeperFailed
+	}
+	return total, failed
+}
+
+// nestedSummary is the text of the row that stands for a chat's subchats.
+func nestedSummary(total, failed int) string {
+	text := fmt.Sprintf("%d nested sessions", total)
+	if failed > 0 {
+		text += fmt.Sprintf(" · %d failed", failed)
+	}
+	return text
+}
+
+// addSubchatTree lists a chat's subchats under its row: the tree when they
+// are few; when they are many, a muted summary row the line bends into,
+// which unfolds the tree under it when clicked and folds it again. Until
+// the user clicks it, the tree is unfolded only while one of them is open.
+func (ui *desktopUI) addSubchatTree(chat sideChat) {
+	total, failed := nestedCount(chat.subchats)
+	if total <= subchatsFolded {
+		ui.addSubchatRows(chat.subchats, 1, trunkNone)
+		return
+	}
+	shown, chosen := ui.subchatsShown[chat.id]
+	if !chosen {
+		shown = slices.ContainsFunc(chat.subchats, sideChat.openHere)
+	}
+	trunk := trunkLast // folded: the line ends on the summary
+	if shown {
+		trunk = trunkThrough
+	}
+	summary := newRow(nestedSummary(total, failed), nil, styleNav, func() {
+		if ui.subchatsShown == nil {
+			ui.subchatsShown = map[string]bool{}
+		}
+		ui.subchatsShown[chat.id] = !shown
+		ui.renderChats()
+	})
+	summary.ink, summary.size, summary.truncate = colMuted, 13, true
+	summary.tips = ui.tips               // the whole text while hovered, when cut short
+	summary.endInset = moreButtonInset() // its warning in line with the dots of the rows with a ⋯
+	if failed > 0 {
+		summary.badge = iconWarning
+	}
+	ui.addSide("nested:"+chat.id, padded(0, 0, 28, 0, container.NewBorder(nil, nil, newSubchatGuide(1, trunk), nil, summary)))
+	if shown {
+		ui.addSubchatRows(chat.subchats, 1, trunkNone)
 	}
 }
 

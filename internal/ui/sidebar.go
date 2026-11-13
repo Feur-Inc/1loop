@@ -174,13 +174,18 @@ func sectionHeader(text string, action fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewBorder(nil, nil, nil, padded(10, 0, 0, 2, action), label)
 }
 
+// moreButtonInset is the room withMore keeps at a row's end for its ⋯.
+func moreButtonInset() float32 {
+	return newRow("", iconMore, styleWindow, nil).MinSize().Width + 4
+}
+
 // withMore adds a "⋯" button that appears while the row is hovered; it and a
 // right click on the row open the row's context menu. A name cut short by
 // the sidebar's width shows in full while the row is hovered.
 func (ui *desktopUI) withMore(row *tapRow, open func(anchor fyne.CanvasObject) *sheet) fyne.CanvasObject {
 	more := newRow("", iconMore, styleWindow, nil)
 	row.tips = ui.tips
-	row.endInset = more.MinSize().Width + 4
+	row.endInset = moreButtonInset()
 	more.Hide()
 	// The ⋯ sits over the row's trailing text (a project's branch): that text
 	// hides while the ⋯ shows, also when the pointer has left the row for it.

@@ -30,10 +30,11 @@ func nestedChats() []*conversation {
 func TestSidebarShowsNestedSubchats(t *testing.T) {
 	ui := sidebarUI(t)
 	ui.chats = nestedChats()
+	ui.subchatsShown = map[string]bool{"here": true} // four subchats: unfolded by hand (#426)
 	ui.renderChats()
 	listed := sidebarTexts(ui)
 	at := slices.Index(listed, "Fix the parser")
-	want := []string{"Fix the parser", "Level one", "Level two", "Level three", "Beside one"}
+	want := []string{"Fix the parser", "4 nested sessions", "Level one", "Level two", "Level three", "Beside one"}
 	if at < 0 || len(listed) < at+len(want) || !slices.Equal(listed[at:at+len(want)], want) {
 		t.Fatalf("sidebar rows %q, want the tree %q", listed, want)
 	}

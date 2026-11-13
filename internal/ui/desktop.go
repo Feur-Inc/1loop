@@ -155,8 +155,8 @@ type desktopUI struct {
 	remote           *remoteServer            // the phone remote, nil when off
 	extPage          *extensionsPage          // Settings → Extensions, while it was last built
 	server           *remoteDesktop           // the server the window works on, nil for this computer (remote_desktop.go)
-	link             *serverLink              // the paired server, followed for the sidebar (target_link.go)
-	serverProjects   map[string][]string      // its projects as last listed, by address: listed while it does not answer
+	links            []*serverLink            // the paired servers, each followed for the sidebar (target_link.go)
+	serverProjects   map[string][]string      // their projects as last listed, by address: listed while it does not answer
 	reaches          map[string]targetReach   // whether each target answered, by its key (targets.go)
 	localCfg         agent.Config             // this computer's settings while a server is the target
 	machine          *tapRow                  // the target: this computer, an SSH machine or a server
@@ -377,7 +377,7 @@ func runDesktop(backend *agent.App, root string) {
 	ui.refreshModels()
 	ui.refreshContextRing()
 	ui.startRemote()
-	ui.linkServer()
+	ui.linkServers()
 	ui.watchUpdates()
 	ui.window.Canvas().Focus(ui.prompt)
 	// The launch sequence covers the first frames and only starts once the
@@ -1910,7 +1910,7 @@ type savedState struct {
 	Shortcuts         map[string]string     `json:"shortcuts,omitempty"` // the keys chosen in Settings
 	Theme             string                `json:"theme,omitempty"`     // dark when unset
 	Accent            string                `json:"accent,omitempty"`    // a preset or #rrggbb; amber when unset
-	// The paired server's projects, as it last listed them (#359).
+	// Each paired server's projects, as it last listed them (#359, #383).
 	ServerProjects map[string][]string `json:"serverProjects,omitempty"`
 }
 

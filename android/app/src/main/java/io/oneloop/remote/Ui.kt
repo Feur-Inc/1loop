@@ -230,7 +230,7 @@ fun Root(app: RemoteApp) {
             transitionSpec = { (fadeIn(tween(260, 60)) + scaleIn(tween(320, 60, FastOutSlowInEasing), initialScale = 0.96f)) togetherWith fadeOut(tween(160)) },
         ) { kind ->
             when (kind) {
-                Screen.Mode::class -> ModeScreen(app::chooseTarget)
+                Screen.Mode::class -> ModeScreen(app::chooseTarget, app.linked, app.backFromLinking())
                 Screen.Servers::class -> ServersScreen(app)
                 Screen.LocalSetup::class -> {
                     val status by app.local.status.collectAsState()
@@ -613,7 +613,7 @@ private fun ChatMain(app: RemoteApp) {
 }
 
 @Composable
-internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", trailing: String? = null, status: String = "", blocked: Boolean = false, chevron: ImageVector? = null, onMore: (() -> Unit)? = null, moreLabel: String = "More", onClick: () -> Unit) {
+internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", trailing: String? = null, status: String = "", blocked: Boolean = false, chevron: ImageVector? = null, onMore: (() -> Unit)? = null, moreLabel: String = "More", mark: ImageVector? = null, markLabel: String? = null, onClick: () -> Unit) {
     val press = remember { MutableInteractionSource() }
     val fill by animateColorAsState(if (selected) Palette.selected else Color.Transparent, motion(tween(180)), label = "row")
     Row(
@@ -630,7 +630,11 @@ internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running
             Spacer(Modifier.width(10.dp))
         }
         Column(Modifier.weight(1f)) {
-            Text(text, style = Type.body.copy(fontSize = 14.sp, color = if (selected) Palette.text else Palette.textSoft), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text, style = Type.body.copy(fontSize = 14.sp, color = if (selected) Palette.text else Palette.textSoft), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                // The target of a project not on this phone, after its name (Targets.kt).
+                mark?.let { Icon(it, markLabel, tint = Palette.muted, modifier = Modifier.padding(start = 6.dp).size(14.dp)) }
+            }
             // Its last wrap-up's recap, while the agent is not at work on it.
             if (status.isNotEmpty() && !running) Text(status, style = Type.caption.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
@@ -1078,9 +1082,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 app.selectProject(it)
             }
             Spacer(Modifier.width(4.dp))
-            Icon(Icons.computer, null, tint = Palette.muted, modifier = Modifier.size(15.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(app.server?.name.orEmpty(), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            TargetChip(app)
         }
         Column(
             // Focused, the card lifts in a soft amber glow.
@@ -1188,6 +1190,40 @@ private fun ProjectChip(app: RemoteApp, chosen: String?, onChoose: (String) -> U
                 leadingIcon = { Icon(if (path == NO_FOLDER) Icons.check else Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp)) },
             )
             if (app.projectManagement) DropdownMenuItem(text = { Text("Add project…", style = Type.body) }, onClick = { open = false; app.projectsOpen = true })
+        }
+    }
+}
+
+// The target a new chat runs on: another linked one can be picked, which
+// opens it with the same choice of folder when it has it (no folder stays
+// no folder). An open chat stays on its own.
+@Composable
+private fun TargetChip(app: RemoteApp) {
+    var open by remember { mutableStateOf(false) }
+    val here = app.server
+    val icon = { kind: TargetKind -> when (kind) { TargetKind.Phone -> Icons.phone; TargetKind.Desktop -> Icons.computer; TargetKind.Server -> Icons.server } }
+    val others = app.linked.filter { it.key != here?.key }
+    Box {
+        Row(
+            Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = app.current == null && others.isNotEmpty()) { open = true }
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon(here?.targetKind ?: TargetKind.Desktop), null, tint = Palette.muted, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(if (here?.localPhone == true) "This phone" else here?.name.orEmpty(), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (open) GlassMenuOpen()
+        DropdownMenu(open, { open = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover), border = GlassEdge, shape = GlassMenuShape) {
+            for (target in others) DropdownMenuItem(
+                text = { Text(target.name + if (app.reaches[target.key] == Reach.Offline) " · ${offlineMark(target.kind)}" else "", style = Type.body) },
+                onClick = {
+                    open = false
+                    app.clearAttachments() // sent to this target's folder
+                    app.openOn(target.key, app.selectedProject.takeIf { it == NO_FOLDER })
+                },
+                leadingIcon = { Icon(icon(target.kind), null, tint = Palette.muted, modifier = Modifier.size(16.dp)) },
+            )
         }
     }
 }

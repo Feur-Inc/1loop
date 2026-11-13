@@ -4,11 +4,10 @@
 
 package ui
 
-// The server last paired with, in the user's config folder (the browser
-// client keeps it in the page's storage: remote_address_js.go).
+// The servers paired with, in the user's config folder (the browser
+// client keeps them in the page's storage: remote_address_js.go).
 
 import (
-	"encoding/json"
 	"os"
 	"path/filepath"
 )
@@ -18,19 +17,25 @@ func remoteAddressPath() string {
 	return filepath.Join(dir, "1loop", "remote-server.json")
 }
 
-func loadServerAddress() serverAddress {
-	var saved serverAddress
-	if data, err := os.ReadFile(remoteAddressPath()); err == nil {
-		json.Unmarshal(data, &saved)
-	}
-	return saved
+func loadPairings() pairings {
+	data, _ := os.ReadFile(remoteAddressPath())
+	return decodePairings(data)
 }
 
+// loadServerAddress is the server last paired.
+func loadServerAddress() serverAddress { return loadPairings().serverAddress }
+
+// loadServerAddresses are every server paired.
+func loadServerAddresses() []serverAddress { return loadPairings().all() }
+
+// saveServerAddress pairs a server: it becomes the last paired, and the
+// others stay paired.
 func saveServerAddress(address serverAddress) error {
-	data, _ := json.Marshal(address)
+	saved := loadPairings()
+	saved.add(address)
 	path := remoteAddressPath()
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+	return os.WriteFile(path, saved.encode(), 0600)
 }

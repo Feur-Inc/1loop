@@ -37,55 +37,61 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.launch
 
 // The drawer, laid out as the desktop's sidebar (internal/ui/sidebar_groups.go):
-// the actions New chat / Search / Add project, then every project as a group
-// that folds, with its chats (the first few, then "Show N more"), a "No folder"
-// group first and an "Other chats" group last. A chat or a project has its menu
-// ("…" or a long press); a worktree's chat shows its branch.
+// the actions New chat / Search / Add project, then every linked target's
+// projects together (Targets.kt), each as a group that folds, with its chats
+// (the first few, then "Show N more"), a "No folder" group first and a
+// target's "Other chats" after its projects. A project of another target than
+// this phone shows the target's icon after its name, and "offline" while the
+// target does not answer. A chat or a project has its menu ("…" or a long
+// press); a worktree's chat shows its branch. Opening a project or a chat of
+// another target opens that target first.
 
 /** A project shows this many chats until "Show more" is pressed (groupChatLimit on the desktop). */
 internal const val GROUP_CHAT_LIMIT = 5
 
-private const val SCRATCH_GROUP = ":scratch"
-private const val OTHER_GROUP = ":other"
-
-/** A group of the drawer: a project, the chats with no folder, or the chats no project lists. */
-private class SideGroup(val key: String, val name: String, val project: String?, val chats: List<ChatSummary>)
-
 /** A subchat is listed under its parent, wherever its folder is (its worktree); one whose parent is not listed stays a chat of its own. */
-private class SideChats(all: List<ChatSummary>) {
-    private val listed = all.map { it.id }.toSet()
-    val children = all.filter { it.parent.isNotEmpty() && it.parent != it.id && it.parent in listed }.groupBy { it.parent }
-    val top = all.filter { it.parent.isEmpty() || it.parent == it.id || it.parent !in listed }
+private class SideChats(all: List<TargetChat>) {
+    private fun TargetChat.id() = target + "\u0000" + chat.id
+    private fun TargetChat.parentId() = target + "\u0000" + chat.parent
+    private val listed = all.map { it.id() }.toSet()
+    private fun nested(entry: TargetChat) = entry.chat.parent.isNotEmpty() && entry.chat.parent != entry.chat.id && entry.parentId() in listed
+    private val children = all.filter { nested(it) }.groupBy { it.parentId() }
+    val top = all.filterNot { nested(it) }.map { it.id() }.toSet()
+
+    fun isTop(entry: TargetChat) = entry.id() in top
+    fun children(entry: TargetChat) = children[entry.id()].orEmpty()
 
     /** The chat is open, or one of its subchats is. */
-    fun openHere(chat: ChatSummary, current: String?) = chat.id == current || children[chat.id].orEmpty().any { it.id == current }
+    fun openHere(entry: TargetChat, app: RemoteApp) = app.isOpen(entry) || children(entry).any { app.isOpen(it) }
 
-    fun workingHere(chat: ChatSummary) = chat.running || children[chat.id].orEmpty().any { it.running }
+    fun workingHere(entry: TargetChat) = entry.chat.running || children(entry).any { it.chat.running }
 }
 
-private fun sideGroups(app: RemoteApp, chats: List<ChatSummary>): List<SideGroup> {
-    val scratch = chats.filter { it.scratch }
-    val rest = chats.filter { !it.scratch }
-    val listed = app.projects.filter { it !in app.worktrees }
-    val groups = mutableListOf<SideGroup>()
-    if (scratch.isNotEmpty() || app.selectedProject == NO_FOLDER) groups += SideGroup(SCRATCH_GROUP, "No folder", null, scratch)
-    for (project in listed) groups += SideGroup(project, projectName(project), project, rest.filter { app.projectOf(it.workspace) == project })
-    val other = rest.filter { app.projectOf(it.workspace) !in listed }
-    if (other.isNotEmpty()) groups += SideGroup(OTHER_GROUP, "Other chats", null, other)
-    return groups
+/** Whether a drawer chat is the one on screen: on the open target. */
+private fun RemoteApp.isOpen(entry: TargetChat) = entry.target == server?.key && entry.chat.id == current
+
+/** A group's fold key on its target: its project, or the key the group had before targets. */
+private fun DrawerGroup.foldKey() = project ?: if (key == SCRATCH_GROUP) SCRATCH_GROUP else OTHER_GROUP
+
+private fun markIcon(kind: TargetKind?) = when (kind) {
+    TargetKind.Desktop -> Icons.computer
+    TargetKind.Server -> Icons.server
+    else -> null
 }
 
 @Composable
 internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) {
     var deleting by remember(app.server) { mutableStateOf<ChatSummary?>(null) }
     var renaming by remember(app.server) { mutableStateOf<ChatSummary?>(null) }
-    var chatMenu by remember(app.server) { mutableStateOf<ChatSummary?>(null) }
+    var chatMenu by remember(app.server) { mutableStateOf<TargetChat?>(null) }
     var groupMenu by remember(app.server) { mutableStateOf<String?>(null) } // a group's key
-    var projectActions by remember(app.server) { mutableStateOf<String?>(null) }
     var worktreeActions by remember(app.server) { mutableStateOf<Pair<String, Worktree>?>(null) }
     var newWorktree by remember(app.server) { mutableStateOf<String?>(null) }
-    val shownInFull = remember(app.server) { mutableStateListOf<String>() } // groups whose every chat is listed
-    val side = SideChats(app.chats)
+    val shownInFull = remember { mutableStateListOf<String>() } // groups whose every chat is listed
+    val active = app.server?.key
+    val targets = app.drawerTargets()
+    val groups = drawerGroups(targets, app.selectedProject == NO_FOLDER)
+    val side = SideChats(groups.flatMap { it.chats })
     Column(modifier.background(Palette.sidebar).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
         // The ring and the "1" take the accent, drawn over the rest of the logo.
         Box(Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp)) {
@@ -98,33 +104,52 @@ internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit)
         if (app.projectManagement) NavRow("Add project", Icons.folderAdd, selected = false) { app.projectsOpen = true; onPicked() }
         Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
             Text("Projects", style = Type.small.copy(color = Palette.faint), modifier = Modifier.padding(start = 10.dp, top = 14.dp, bottom = 2.dp))
-            val groups = sideGroups(app, app.chats)
             val opened = app.projectOf(app.selectedProject)
             for (group in groups) {
-                val folded = app.folded(group.key)
-                val git = group.project?.let { app.repositories[it] }?.takeIf { it.loaded && it.error == null }
-                NavRow(
-                    group.name, null, selected = app.current == null && (if (group.key == SCRATCH_GROUP) app.selectedProject == NO_FOLDER else group.project != null && group.project == app.selectedProject),
-                    chevron = if (folded) Icons.chevronRight else Icons.chevron,
-                    running = folded && group.chats.any { side.workingHere(it) },
+                val target = group.target
+                val onOpenTarget = target == null || target.active
+                val folded = app.folded(target?.target?.key ?: "", group.foldKey())
+                val git = group.project?.takeIf { onOpenTarget }?.let { app.repositories[it] }?.takeIf { it.loaded && it.error == null }
+                val trailing = when {
+                    target == null -> null
+                    target.reach == Reach.Offline && !target.active -> offlineMark(target.target.kind)
+                    target.active && !app.connected -> "reconnecting…"
                     // A project on an SSH machine says so, beside its branch.
-                    trailing = listOfNotNull(git?.current?.takeIf { it.isNotEmpty() }, group.project?.let { app.machineOf(it) }?.let { "on ${it.label}" })
-                        .joinToString(" · ").ifEmpty { null },
-                    onLongClick = if (group.key == OTHER_GROUP) null else ({ groupMenu = group.key }),
+                    else -> listOfNotNull(git?.current?.takeIf { it.isNotEmpty() }, group.project?.takeIf { onOpenTarget }?.let { app.machineOf(it) }?.let { "on ${it.label}" })
+                        .joinToString(" · ").ifEmpty { null }
+                }
+                val hasMenu = group.project != null || group.key == SCRATCH_GROUP
+                NavRow(
+                    group.name, null,
+                    selected = app.current == null && (if (group.key == SCRATCH_GROUP) app.selectedProject == NO_FOLDER else onOpenTarget && group.project != null && group.project == app.selectedProject),
+                    chevron = if (folded) Icons.chevronRight else Icons.chevron,
+                    mark = markIcon(target?.let { projectMark(it.target.kind) }),
+                    markLabel = target?.target?.name,
+                    running = folded && group.chats.any { side.workingHere(it) },
+                    trailing = trailing,
+                    onLongClick = if (hasMenu) ({ groupMenu = group.key }) else null,
                     longClickLabel = "Project menu",
-                    onMore = if (group.key == OTHER_GROUP) null else ({ groupMenu = group.key }),
+                    onMore = if (hasMenu) ({ groupMenu = group.key }) else null,
                     moreLabel = "Menu of ${group.name}",
-                ) { app.fold(group.key, !folded) }
+                ) { app.fold(target?.target?.key ?: "", group.foldKey(), !folded) }
                 AnimatedVisibility(
                     !folded,
                     enter = expandVertically(motion(tween(200, easing = CssEase))) + fadeIn(motion(tween(160, 40))),
                     exit = shrinkVertically(motion(tween(180, easing = CssEase))) + fadeOut(motion(tween(120))),
                 ) {
                     Column(Modifier.animateContentSize(motion(tween(200, easing = CssEase)))) {
-                        GroupChats(app, group, side, group.key in shownInFull, { full -> if (full) shownInFull.add(group.key) else shownInFull.remove(group.key) }, onPicked,
-                            onMenu = { chatMenu = it })
+                        if (target != null && !target.known) {
+                            // A target that has not answered: its chats are not at hand.
+                            Text(
+                                if (target.reach == Reach.Offline) "Chats show once it's back" else "Connecting…",
+                                style = Type.caption, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 26.dp, top = 6.dp, bottom = 6.dp),
+                            )
+                        } else {
+                            GroupChats(app, group, side, group.key in shownInFull, { full -> if (full) shownInFull.add(group.key) else shownInFull.remove(group.key) }, onPicked,
+                                onMenu = { chatMenu = it })
+                        }
                         // Its worktrees, after its chats, while the project is the open one.
-                        if (group.project != null && group.project == opened) {
+                        if (onOpenTarget && group.project != null && group.project == opened) {
                             Column(Modifier.padding(start = 16.dp)) {
                                 WorktreeEntries(app, group.project, {}, { worktreeActions = group.project to it }) { newWorktree = group.project }
                             }
@@ -134,49 +159,46 @@ internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit)
             }
             if (groups.isEmpty()) Text("No projects yet", style = Type.caption, modifier = Modifier.padding(10.dp))
         }
-        val localPhone = app.server?.localPhone == true
         Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.borderSoft))
-        Row(
-            Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(8.dp)).clickable { if (localPhone) app.switchTarget() else app.leave() }
-                .padding(horizontal = 10.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(if (localPhone) Icons.phone else Icons.computer, null, tint = Palette.muted, modifier = Modifier.size(18.dp))
-            Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                Text(app.server?.name.orEmpty(), style = Type.body.copy(fontSize = 14.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    if (!app.connected) "Reconnecting…" else if (localPhone) "Connected" else "Connected · change computer",
-                    style = Type.caption.copy(color = if (app.connected) Palette.muted else Palette.amber),
-                )
-            }
-        }
+        Spacer(Modifier.height(8.dp))
+        // Projects come from every linked target: another one is linked here, none is switched to.
+        NavRow("Link a target", Icons.plus, selected = false) { app.linkTarget() }
         NavRow("Settings", Icons.settings, selected = false) { app.settingsOpen = true; onPicked() }
-        NavRow("Switch execution target", Icons.refresh, selected = false) { app.switchTarget() }
         Spacer(Modifier.height(8.dp))
     }
-    // A group's menu: a new chat in it, then the project's own actions.
+    // A group's menu: a new chat in it, then the project's own actions on the open target.
     groupMenu?.let { key ->
-        val group = sideGroups(app, app.chats).firstOrNull { it.key == key }
+        val group = groups.firstOrNull { it.key == key }
+        val target = group?.target
         when {
             group == null -> groupMenu = null
+            group.project != null && target != null && !target.active -> SideMenuSheet(
+                group.name, listOf(SideAction("New chat in ${group.name}", Icons.plus) { app.openOn(target.target.key, group.project); onPicked() }),
+            ) { groupMenu = null }
             group.project != null -> ProjectActionsSheet(
                 app, group.project, onNewWorktree = { newWorktree = group.project },
                 onNewChat = { app.selectProject(group.project); app.open(null); onPicked() },
             ) { groupMenu = null }
-            else -> SideMenuSheet("No folder", listOf(SideAction("New chat with no folder", Icons.plus) { app.selectProject(NO_FOLDER); onPicked() })) { groupMenu = null }
+            else -> SideMenuSheet("No folder", listOf(SideAction("New chat with no folder", Icons.plus) { app.newChatWithNoFolder(); onPicked() })) { groupMenu = null }
         }
     }
-    chatMenu?.let { chat ->
-        val parent = app.chats.firstOrNull { it.id == chat.parent }
-        SideMenuSheet(
-            chat.title,
-            listOfNotNull(
-                if (chat.parent.isNotEmpty() && chat.running) SideAction("Stop", Icons.close) { app.stop(chat.id) } else null,
-                if (parent != null) SideAction("Open parent", Icons.subchat) { app.open(parent.id); onPicked() } else null,
-                SideAction("Rename", Icons.pencil) { renaming = chat },
-                SideAction("Delete", Icons.trash, danger = true) { deleting = chat },
-            ),
-        ) { chatMenu = null }
+    chatMenu?.let { entry ->
+        val chat = entry.chat
+        if (entry.target != active) {
+            // Another target's chat: opened there first; its actions are there.
+            SideMenuSheet(chat.title, listOf(SideAction("Open", Icons.chats) { app.openOn(entry.target, chat = chat.id); onPicked() })) { chatMenu = null }
+        } else {
+            val parent = app.chats.firstOrNull { it.id == chat.parent }
+            SideMenuSheet(
+                chat.title,
+                listOfNotNull(
+                    if (chat.parent.isNotEmpty() && chat.running) SideAction("Stop", Icons.close) { app.stop(chat.id) } else null,
+                    if (parent != null) SideAction("Open parent", Icons.subchat) { app.open(parent.id); onPicked() } else null,
+                    SideAction("Rename", Icons.pencil) { renaming = chat },
+                    SideAction("Delete", Icons.trash, danger = true) { deleting = chat },
+                ),
+            ) { chatMenu = null }
+        }
     }
     worktreeActions?.let { (project, worktree) -> WorktreeSheet(app, project, worktree) { worktreeActions = null } }
     newWorktree?.let { project -> NewWorktreeSheet(app, project) { newWorktree = null } }
@@ -186,8 +208,8 @@ internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit)
 
 /** A group's chats: the first few unless it was unfolded in full or the open chat is further down. */
 @Composable
-private fun GroupChats(app: RemoteApp, group: SideGroup, side: SideChats, full: Boolean, setFull: (Boolean) -> Unit, onPicked: () -> Unit, onMenu: (ChatSummary) -> Unit) {
-    val chats = group.chats.filter { chat -> side.top.any { it.id == chat.id } }
+private fun GroupChats(app: RemoteApp, group: DrawerGroup, side: SideChats, full: Boolean, setFull: (Boolean) -> Unit, onPicked: () -> Unit, onMenu: (TargetChat) -> Unit) {
+    val chats = group.chats.filter { side.isTop(it) }
     Column(Modifier.padding(start = 16.dp)) {
         if (chats.isEmpty()) {
             Text("No chats yet", style = Type.caption, modifier = Modifier.padding(10.dp))
@@ -196,23 +218,25 @@ private fun GroupChats(app: RemoteApp, group: SideGroup, side: SideChats, full: 
         var shown = chats
         if (!full && chats.size > GROUP_CHAT_LIMIT) {
             shown = chats.take(GROUP_CHAT_LIMIT)
-            if (chats.drop(GROUP_CHAT_LIMIT).any { side.openHere(it, app.current) }) shown = chats
+            if (chats.drop(GROUP_CHAT_LIMIT).any { side.openHere(it, app) }) shown = chats
         }
-        for (chat in shown) {
+        for (entry in shown) {
+            val chat = entry.chat
+            val onOpenTarget = entry.target == app.server?.key
             // A worktree's chat: its branch's last part, short.
             val branch = if (group.project != null && chat.workspace != group.project) {
-                (app.repositories[group.project]?.worktrees?.firstOrNull { it.path == chat.workspace }?.label ?: projectName(chat.workspace)).substringAfterLast('/')
+                (app.repositories[group.project]?.worktrees?.takeIf { onOpenTarget }?.firstOrNull { it.path == chat.workspace }?.label ?: projectName(chat.workspace)).substringAfterLast('/')
             } else null
             NavRow(
-                chat.title, null, selected = chat.id == app.current, running = chat.running, status = chat.status, blocked = chat.blocked,
-                trailing = branch, onLongClick = { onMenu(chat) }, longClickLabel = "Chat menu", onMore = { onMenu(chat) }, moreLabel = "Menu of ${chat.title}",
-            ) { app.open(chat.id); onPicked() }
-            side.children[chat.id]?.let { subs ->
+                chat.title, null, selected = app.isOpen(entry), running = chat.running, status = chat.status, blocked = chat.blocked,
+                trailing = branch, onLongClick = { onMenu(entry) }, longClickLabel = "Chat menu", onMore = { onMenu(entry) }, moreLabel = "Menu of ${chat.title}",
+            ) { app.openOn(entry.target, chat = chat.id); onPicked() }
+            side.children(entry).takeIf { it.isNotEmpty() }?.let { subs ->
                 Column(Modifier.padding(start = 16.dp)) {
                     for (sub in subs) NavRow(
-                        sub.title, Icons.subchat, selected = sub.id == app.current, running = sub.running,
-                        onLongClick = { onMenu(sub) }, longClickLabel = "Chat menu", onMore = { onMenu(sub) }, moreLabel = "Menu of ${sub.title}",
-                    ) { app.open(sub.id); onPicked() }
+                        sub.chat.title, Icons.subchat, selected = app.isOpen(sub), running = sub.chat.running,
+                        onLongClick = { onMenu(sub) }, longClickLabel = "Chat menu", onMore = { onMenu(sub) }, moreLabel = "Menu of ${sub.chat.title}",
+                    ) { app.openOn(sub.target, chat = sub.chat.id); onPicked() }
                 }
             }
         }

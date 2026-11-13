@@ -2,11 +2,11 @@
 
 package ui
 
-// The paired server's projects and chats stay in the sidebar while the
-// window works on another target (#359): a link reads them every few
-// seconds, which also says whether the server answers. While the window
-// works on the server, its own connection does it (remote_desktop.go),
-// and the link waits.
+// Each paired server's projects and chats stay in the sidebar while the
+// window works on another target (#359, #383): a link per server reads
+// them every few seconds, which also says whether it answers. While the
+// window works on a server, its own connection does it (remote_desktop.go),
+// and that server's link waits.
 
 import (
 	"context"
@@ -24,7 +24,7 @@ const (
 	linkRetry = 15 * time.Second // between two tries, while it does not
 )
 
-// serverLink follows the paired server for the sidebar.
+// serverLink follows a paired server for the sidebar.
 type serverLink struct {
 	address  serverAddress
 	cancel   context.CancelFunc
@@ -33,31 +33,44 @@ type serverLink struct {
 	listing  serverListing
 }
 
-// linkServer follows the server last paired, and stops following one that
-// is no longer: called at start and when the window takes a server.
-func (ui *desktopUI) linkServer() {
+// linkServers follows every paired server, in the order they were paired,
+// and stops following one that is no longer paired, or no longer the same
+// way: called at start and when the window takes a server.
+func (ui *desktopUI) linkServers() {
 	if browserClient { // the page's server is the window's only target
 		return
 	}
-	saved := loadServerAddress()
-	if link := ui.link; link != nil {
-		if link.address == saved {
-			return
+	var links []*serverLink
+	for _, address := range loadServerAddresses() {
+		if i := slices.IndexFunc(ui.links, func(link *serverLink) bool { return link.address == address }); i >= 0 {
+			links = append(links, ui.links[i])
+			continue
 		}
-		link.cancel()
-		ui.link = nil
+		client, err := newRemoteClient(address)
+		if err != nil {
+			continue
+		}
+		ctx, cancel := context.WithCancel(ui.ctx)
+		link := &serverLink{address: address, cancel: cancel, wake: make(chan struct{}, 1)}
+		links = append(links, link)
+		go ui.followServer(ctx, link, client)
 	}
-	if saved.URL == "" || saved.Token == "" {
-		return
+	for _, link := range ui.links {
+		if !slices.Contains(links, link) {
+			link.cancel()
+		}
 	}
-	client, err := newRemoteClient(saved)
-	if err != nil {
-		return
+	ui.links = links
+}
+
+// linkTo is the link that follows the server at an address, nil if none.
+func (ui *desktopUI) linkTo(address string) *serverLink {
+	for _, link := range ui.links {
+		if link.address.URL == address {
+			return link
+		}
 	}
-	ctx, cancel := context.WithCancel(ui.ctx)
-	link := &serverLink{address: saved, cancel: cancel, wake: make(chan struct{}, 1)}
-	ui.link = link
-	go ui.followServer(ctx, link, client)
+	return nil
 }
 
 // followServer reads the server's projects and chats until the link ends,
@@ -77,7 +90,7 @@ func (ui *desktopUI) followServer(ctx context.Context, link *serverLink, client 
 				wait = linkRetry
 			}
 			fyne.Do(func() {
-				if ui.link != link || ui.server != nil && ui.server.client.address.URL == link.address.URL {
+				if !slices.Contains(ui.links, link) || ui.server != nil && ui.server.client.address.URL == link.address.URL {
 					return
 				}
 				if err != nil {
@@ -124,12 +137,12 @@ func (listing serverListing) equal(other serverListing) bool {
 		slices.Equal(listing.chats, other.chats) && maps.Equal(listing.worktrees, other.worktrees)
 }
 
-// handOver gives the link what the window's connection to the server last
-// listed, as the window leaves the server: its projects and chats stay
-// listed as they were until the link reads them again, at once.
+// handOver gives the server's link what the window's connection to it
+// last listed, as the window leaves the server: its projects and chats
+// stay listed as they were until the link reads them again, at once.
 func (ui *desktopUI) handOver(remote *remoteDesktop) {
-	link := ui.link
-	if link == nil || link.address.URL != remote.client.address.URL || remote.name == "" {
+	link := ui.linkTo(remote.client.address.URL)
+	if link == nil || remote.name == "" {
 		return
 	}
 	link.answered = true

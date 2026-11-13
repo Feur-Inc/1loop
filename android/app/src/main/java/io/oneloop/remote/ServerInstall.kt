@@ -27,7 +27,7 @@ private class ServerInstallItem(val what: String, val field: String, val title: 
 
 private val serverInstallItems = listOf(
     ServerInstallItem("chromium", "browser", "Chromium", "Install Chromium",
-        "For Browser Use: the agent's browser tabs run on the server. It downloads Chromium (about 170 MB, checked against Google's checksum) into its data folder, with the system libraries it needs from Debian's signed packages."),
+        "For Browser Use: the agent's browser tabs run on the server. It downloads Chromium (about 200 MB, checked against Google's checksum) into its data folder, with the system libraries it needs from Debian's signed packages."),
     ServerInstallItem("claude-code", "claudeCode", "Claude Code", "Install Claude Code",
         "For Claude Code connections. The server downloads Anthropic's claude command into its data folder, checked against Anthropic's release signature and checksum."),
 )

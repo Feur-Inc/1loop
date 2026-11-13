@@ -101,7 +101,8 @@ under Linked targets). The server downloads them into its data folder, as its
 own user, without administrator rights, so they survive restarts and new
 images (`/data` in Docker):
 
-- **Chromium** goes to `<data>/chromium`: Google's Chrome for Testing, as
+- **Chromium** goes to `<data>/chromium` (about 200 MB, plus the libraries
+  below): Google's Chrome for Testing, as
   Browser Use downloads it on a desktop, checked against the MD5 checksum
   Google's storage gives with the file (Google publishes no signature for
   it), over HTTPS. It then has to start. The slim image lacks the system
@@ -115,7 +116,7 @@ images (`/data` in Docker):
   and the client shows why. Once installed, it overrides
   `ONELOOP_BROWSER=none`, and it updates itself like the desktop's (once a
   day, at most). Delete `<data>/chromium` to remove it.
-- **Claude Code** goes to `<data>/claude-code/claude`: the latest release
+- **Claude Code** goes to `<data>/claude-code/claude` (about 350 MB): the latest release
   from `downloads.claude.ai`, accepted only if its manifest carries
   Anthropic's release signature (key `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`,
   built into 1loop) and the binary its SHA-256, and if it starts. It is used
@@ -127,7 +128,7 @@ The API: `POST /api/install/chromium` or `POST /api/install/claude-code`
 starts the download in the background (`202`, or `200` with
 `{"installed": true}` when it is there already). `/api/state` follows it under
 `"installs"`: `{"chromium": {"running": true, "text": "Downloading… 42% of
-170 MB"}}`, then `"error"` if it failed; `"browser"` and `"claudeCode"` turn
+193 MB"}}`, then `"error"` if it failed; `"browser"` and `"claudeCode"` turn
 `true` once installed. An `install` event says the same to the open clients.
 
 ### Claude Code in the image

@@ -277,7 +277,11 @@ func (ui *desktopUI) closeAlone() {
 // chat's side panel goes back to the chat, its start screen's tabs end.
 func (ui *desktopUI) releaseWindow() {
 	ui.cancelChatLoad()
-	if ui.panel != nil {
+	if ui.owner != nil { // a pane: the panel is its window's, for the other panes
+		if ui.panel != nil && ui.current != nil && ui.panel.owner == ui.current {
+			ui.panel.stash() // its tabs stay with its chat; the next pane's come in their place (followPanel)
+		}
+	} else if ui.panel != nil {
 		ui.panel.stash()
 		for _, tab := range ui.panel.home.tabs {
 			tab.dispose()

@@ -414,7 +414,7 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 	ui.prompt.switchDraft(chat.ID)
 	ui.scroll.rest() // what the wheel still owed the last chat
 	ui.followTail = true
-	ui.panel.switchTo(chat)
+	ui.showPanel(chat)
 	if reuse {
 		ui.curtain.reveal() // another chat takes the page: not a reload of this one
 	}

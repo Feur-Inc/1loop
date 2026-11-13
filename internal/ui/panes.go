@@ -18,12 +18,14 @@ package ui
 import (
 	"fmt"
 	"image/color"
+	"path/filepath"
 	"slices"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/agent"
@@ -118,6 +120,7 @@ func (pane *desktopUI) shareWindow(window *desktopUI) {
 	pane.pane, pane.sideHandle, pane.root = window.pane, window.sideHandle, window.root
 	pane.usageRow, pane.updateRow = window.usageRow, window.updateRow
 	pane.sideChats, pane.sideOrder = window.sideChats, window.sideOrder
+	pane.panel, pane.panelToggle, pane.split = window.panel, window.panelToggle, window.split
 }
 
 // buildPaneBox puts ui's chat area under its pane header, shown while the
@@ -139,7 +142,7 @@ func (ui *desktopUI) buildPaneBox() {
 	head := container.NewStack(bg, newTapArea(ui.activate), container.NewBorder(nil, ui.paneMark, nil, nil, row))
 	ui.paneHead = container.New(fixedHeight{paneHeadHeight}, head)
 	ui.paneHead.Hide()
-	ui.paneBox = container.NewBorder(ui.paneHead, nil, nil, nil, ui.split)
+	ui.paneBox = container.NewBorder(ui.paneHead, nil, nil, nil, ui.conversation)
 }
 
 // fixedHeight lays its objects over one another, as tall as it says.
@@ -436,6 +439,7 @@ func (window *desktopUI) drawPaneFocus() {
 // that took the focus.
 func (ui *desktopUI) focusChanged() {
 	ui.windowOf().drawPaneFocus()
+	ui.followPanel() // the window's one side panel shows this pane's chat
 	if ui.projectList != nil {
 		ui.renderSidebar(ui.sidebarGroups())
 		ui.updateHeader()
@@ -486,6 +490,7 @@ func (ui *desktopUI) closePane() {
 	next := window.focused()
 	next.activate()
 	next.focusChanged()
+	next.followPanel()
 	window.window.Canvas().Focus(next.prompt)
 	window.save()
 }
@@ -653,10 +658,7 @@ func (ui *desktopUI) paneAt(at fyne.Position) *desktopUI {
 // paneArea is what the settings page takes the place of: every pane of the
 // window.
 func (ui *desktopUI) paneArea() fyne.CanvasObject {
-	if window := ui.windowOf(); window.chatArea != nil {
-		return window.chatArea
-	}
-	return ui.split
+	return ui.windowOf().split
 }
 
 // setColor gives the label another colour.
@@ -666,4 +668,142 @@ func (label *fitLabel) setColor(c color.Color) {
 	}
 	label.color = c
 	label.Refresh()
+}
+
+// panelFollows reports whether the window's side panel shows ui's chat: ui
+// is the pane with the focus (or the window is not split).
+func (ui *desktopUI) panelFollows() bool {
+	return ui.panel != nil && (ui.desktopApp == nil || ui.focused() == ui)
+}
+
+// showPanel puts chat's tabs in the window's side panel, when ui is the pane
+// the panel follows. A split window's panel stays open, at its width, as
+// the focus goes from pane to pane: it is one panel for all of them.
+func (ui *desktopUI) showPanel(chat *conversation) {
+	if !ui.panelFollows() {
+		return
+	}
+	panel := ui.panel
+	shown, target, width := panel.shown, panel.target, panel.width
+	panel.ui = ui
+	panel.switchTo(chat)
+	if ui.isSplit() {
+		if target > 0 {
+			panel.shown, panel.target = max(shown, 0.999), 1
+			panel.width = width
+		}
+		ui.panelToggle.SetSelected(panel.target > 0)
+		relayout(ui.split)
+	}
+}
+
+// followPanel makes the window's side panel follow the pane that took the
+// focus.
+func (ui *desktopUI) followPanel() {
+	if ui.panel == nil {
+		return
+	}
+	if ui.panel.ui == ui && ui.panel.owner == ui.current {
+		ui.panel.renderStrip()
+		return
+	}
+	ui.showPanel(ui.current)
+}
+
+// otherPanes are the panes whose tabs the panel's strip lists, in their
+// order, the one the panel follows as nil; none while the window is not
+// split.
+func (panel *toolPanel) otherPanes() []*desktopUI {
+	if panel.ui == nil || panel.ui.desktopApp == nil || !panel.ui.isSplit() {
+		return nil
+	}
+	panes := panel.ui.panesOf()
+	out := make([]*desktopUI, len(panes))
+	for i, pane := range panes {
+		if pane != panel.ui {
+			out[i] = pane
+		}
+	}
+	return out
+}
+
+// paneTabs are the tabs of another pane's chat, as its panel keeps them.
+func (panel *toolPanel) paneTabs(pane *desktopUI) []panelTab {
+	if pane.current == nil || pane.current == panel.owner {
+		return nil
+	}
+	return panel.stateOf(pane.current).tabs
+}
+
+// addStripGroup starts a pane's tabs in the strip with its chat's title.
+func (panel *toolPanel) addStripGroup(pane *desktopUI) {
+	title, ink := "New chat", colFaint
+	if pane.current != nil {
+		title = pane.current.Title
+	}
+	if pane == panel.ui {
+		ink = colMuted
+	}
+	label := textLine(fitText(title, 12, fyne.TextStyle{}, 110), 12, ink)
+	panel.strip.Add(container.NewCenter(padded(0, 0, 6, 2, label)))
+}
+
+// addPaneTabs lists another pane's tabs in the strip: a click gives that
+// pane the focus, and the panel shows the tab.
+func (panel *toolPanel) addPaneTabs(pane *desktopUI) {
+	tabs := panel.paneTabs(pane)
+	if len(tabs) == 0 {
+		return
+	}
+	panel.addStripGroup(pane)
+	for _, tab := range tabs {
+		tab := tab
+		var frame *panelTabFrame
+		frame = newPanelTabFrame(fitText(tabLabel(tab), 13, fyne.TextStyle{}, 150), tabIcon(tab), false, func() {
+			pane.activate() // the panel now follows it (showPanel)
+			if pane.prompt != nil {
+				pane.window.Canvas().Focus(pane.prompt)
+			}
+			for i, shown := range panel.tabs {
+				if sameTab(shown, tab) {
+					panel.choose(i)
+					break
+				}
+			}
+			if panel.target <= 0 {
+				panel.unfold()
+			}
+		})
+		// The frame draws the block; its glyph and label go over it, as in tabView.
+		panel.strip.Add(container.NewStack(frame, padded(4, 4, 10, 10, container.New(layout.NewCustomPaddedHBoxLayout(6),
+			container.NewCenter(frame.icon), container.NewCenter(frame.label)))))
+	}
+}
+
+// sameTab reports whether two tabs are the same one.
+func sameTab(a, b panelTab) bool {
+	return a.kind == b.kind && a.chat == b.chat && a.index == b.index && a.content == b.content &&
+		a.browser == b.browser && a.terminal == b.terminal && a.ref == b.ref
+}
+
+// tabLabel is what a tab's frame says: a call's target, else its title.
+func tabLabel(tab panelTab) string {
+	if tab.chat != nil && tab.index >= 0 && tab.index < len(tab.chat.Items) {
+		item := tab.chat.Items[tab.index]
+		_, target, _ := agent.DescribeTool(item, false)
+		switch item.Tool {
+		case "read_file", "list_directory", "edit_file", "apply_patch":
+			target = filepath.Base(target)
+		}
+		return target
+	}
+	return tab.title
+}
+
+// tabIcon is a tab's glyph: its tool's for a call.
+func tabIcon(tab panelTab) fyne.Resource {
+	if tab.chat != nil && tab.index >= 0 && tab.index < len(tab.chat.Items) {
+		return toolGlyph(tab.chat.Items[tab.index].Tool)
+	}
+	return tab.icon
 }

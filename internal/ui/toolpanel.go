@@ -100,6 +100,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	panel.strip = container.New(layout.NewCustomPaddedHBoxLayout(4))
 	add := newRow("", iconPlus, styleWindow, nil)
 	add.onTap = func() {
+		ui := panel.ui // the pane with the focus, in a split window (panes.go)
 		if ui.server != nil {
 			ui.server.panelMenu(add)
 			return
@@ -116,6 +117,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	fold := canvas.NewRectangle(color.Transparent)
 	fold.SetMinSize(ui.panelToggle.MinSize())
 	todo := newRow("Tasks", iconCheck, styleChip, func() {
+		ui := panel.ui
 		if ui.server != nil { // a server chat's tasks are the server's (remote_desktop.go)
 			ui.server.showTab("todo")
 			return
@@ -166,7 +168,11 @@ func (layoutSpec splitLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 
 func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	ui := layoutSpec.toolPanel.ui
-	followTail := ui.followTail
+	panes := ui.panesOf() // every pane follows its answer as the panel takes room (panes.go)
+	following := make([]bool, len(panes))
+	for i, pane := range panes {
+		following[i] = pane.followTail
+	}
 	previousWidth := objects[0].Size().Width
 	full := layoutSpec.width(size.Width)
 	width := full * layoutSpec.toolPanel.shown
@@ -182,9 +188,13 @@ func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size
 	} else {
 		objects[0].Resize(fyne.NewSize(size.Width-width, size.Height))
 	}
-	if followTail && objects[0].Size().Width != previousWidth {
-		ui.scroll.ScrollToBottom()
-		ui.followTail = true
+	if objects[0].Size().Width != previousWidth {
+		for i, pane := range panes {
+			if following[i] && pane.scroll != nil {
+				pane.scroll.ScrollToBottom()
+				pane.followTail = true
+			}
+		}
 	}
 	// Folded, the panel waits just past the right edge of the window,
 	// hidden: in a split window that is where the next pane is (panes.go).
@@ -322,6 +332,13 @@ func (panel *toolPanel) showing(chat *conversation, index int) bool {
 // open shows a call, in its existing tab or a new one.
 func (panel *toolPanel) open(chat *conversation, index int) {
 	panel = panel.of(chat)
+	if chat != panel.owner && chat != nil { // another pane's chat: its own tabs get it, for when it has the focus
+		state := panel.stateOf(chat)
+		state.tabs = append(state.tabs, panelTab{kind: "tool", chat: chat, index: index})
+		state.active, state.open = len(state.tabs)-1, true
+		panel.renderStrip()
+		return
+	}
 	i := panel.find(chat, index)
 	if i < 0 {
 		panel.tabs = append(panel.tabs, panelTab{kind: "tool", chat: chat, index: index})
@@ -408,8 +425,23 @@ func (panel *toolPanel) changed(chat *conversation, index int) {
 
 func (panel *toolPanel) renderStrip() {
 	panel.strip.RemoveAll()
-	for i, tab := range panel.tabs {
-		panel.strip.Add(panel.tabView(i, tab))
+	others := panel.otherPanes() // a split window's panel lists every pane's tabs (panes.go)
+	if len(others) == 0 {
+		for i, tab := range panel.tabs {
+			panel.strip.Add(panel.tabView(i, tab))
+		}
+	}
+	for _, pane := range others {
+		if pane == nil { // the pane with the focus: its tabs, as usual
+			if len(panel.tabs) > 0 {
+				panel.addStripGroup(panel.ui)
+			}
+			for i, tab := range panel.tabs {
+				panel.strip.Add(panel.tabView(i, tab))
+			}
+			continue
+		}
+		panel.addPaneTabs(pane)
 	}
 	// Refreshing the scroll, not only the strip, gives the strip its new
 	// width and brings the offset back within it at once: a closed tab

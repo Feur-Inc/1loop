@@ -126,6 +126,8 @@ type desktopUI struct {
 	tree      *splitNode      // the window's panes, nil while it has one
 	focus     *desktopUI      // the window's pane with the focus
 	chatArea  *fyne.Container // where the window's panes go
+	// The pane's conversation and composer, under its header (paneBox).
+	conversation fyne.CanvasObject
 
 	usageRow         *tapRow // the sidebar's Usage row, with today's spend
 	window           fyne.Window
@@ -656,6 +658,7 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.buildChat()
 	ui.buildPaneBox()
 	ui.chatArea = container.NewStack(ui.paneBox)
+	ui.buildPanel() // one side panel for every pane of the window (panes.go)
 	// Links in any window act on the window the user works in (windows.go).
 	openCitation = func(link string) { ui.activeView().openCitation(link) }
 	openReference = func(link string) { ui.activeView().openReference(link) }
@@ -746,6 +749,13 @@ func (ui *desktopUI) buildChat() {
 	// The activity line may sit beside the composer (dockActivity): the
 	// dock layer floats over the conversation's bottom left corner.
 	conversation = container.New(dockLayout{ui}, conversation, ui.dockRow)
+	ui.conversation = conversation
+}
+
+// buildPanel builds the window's side panel beside its chat area (ui.split).
+// A split window has one panel for all its panes: it shows the chat of the
+// pane with the focus, and the tabs of every pane's chat (panes.go).
+func (ui *desktopUI) buildPanel() {
 	// One button opens and folds the side panel: in the panel's header when
 	// it is open, at the same place over the conversation when it is folded
 	// (splitLayout). The title bar has none.
@@ -764,7 +774,7 @@ func (ui *desktopUI) buildChat() {
 		}
 	}
 	ui.panel = newToolPanel(ui)
-	ui.split = container.New(splitLayout{ui.panel}, conversation, ui.panel.view, newPanelResizeHandle(ui.panel), ui.panelToggle)
+	ui.split = container.New(splitLayout{ui.panel}, ui.chatArea, ui.panel.view, newPanelResizeHandle(ui.panel), ui.panelToggle)
 }
 
 // buildTitleBar builds the window around its panes: the title bar, the
@@ -788,7 +798,7 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	}
 	// The settings page takes the conversation's place while it is open.
 	ui.curtain = newPageCurtain()
-	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.chatArea, ui.prefs.view, ui.curtain.cover)))
+	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view, ui.curtain.cover)))
 	// No rule between the panes: the sidebar only casts a faint shadow.
 	shade := canvas.NewHorizontalGradient(color.NRGBA{A: 0x2a}, color.NRGBA{})
 	ui.pane = &paneLayout{shown: 1, shade: 14, chosen: &ui.sidebarWidth}
@@ -1045,7 +1055,7 @@ func (ui *desktopUI) startNew() {
 	ui.transcript.RemoveAll()
 	ui.items.reset()
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
-	ui.panel.switchTo(nil)
+	ui.showPanel(nil)
 	ui.find.reset()
 	ui.showTranscript(false)
 	ui.curtain.reveal()
@@ -1522,8 +1532,8 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		ui.current = chat
 		ui.prompt.renameDraft(chat.ID)
 		if chat.panel != nil {
-			ui.panel.switchTo(chat)
-		} else {
+			ui.showPanel(chat)
+		} else if ui.panelFollows() {
 			ui.panel.adopt(chat) // what was open on the start screen is now this chat's
 		}
 	}

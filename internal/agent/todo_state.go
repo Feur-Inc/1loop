@@ -257,7 +257,7 @@ func todoToolDefinition() map[string]any {
 	stringsArray := map[string]any{"type": "array", "items": map[string]string{"type": "string"}}
 	return map[string]any{"type": "function", "function": map[string]any{
 		"name":        "update_todo",
-		"description": "Change the conversation's persistent TODO. The current list comes with the request (the TODO snapshot) and every call returns the whole list: never call this tool just to read it. Call it only when the list changes, and make all the changes of a moment in one call: advance=true completes the step in progress and starts the next pending one. Plan all steps of multi-step work up front. Keep pending, in-progress and completed steps of the current request together; update existing IDs as work progresses. Remove tasks only when cancelled or explicitly requested. Use null text/status to leave that field unchanged. When a new user request starts and every task of the list is completed, start the new request's list with clear=true and its steps in add, in the same call.",
+		"description": "Change the conversation's persistent TODO, only when it changes: every call returns the whole list, so never call it to read. Make all the changes of a moment in one call; advance=true completes the step in progress and starts the next. null text or status leaves it unchanged. A new request, once every task is completed, starts its list with clear=true and its steps in add.",
 		"parameters": map[string]any{"type": "object", "properties": map[string]any{
 			"add":     stringsArray,
 			"remove":  stringsArray,

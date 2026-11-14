@@ -300,18 +300,16 @@ func ForkHistory(history []Message) []Message {
 func subchatToolDefinition() map[string]any {
 	return map[string]any{"type": "function", "function": map[string]any{
 		"name": "subchat",
-		"description": "Start and follow subchats: separate conversations that run in parallel with this one, for work that should go on by itself (a separate fix, a follow-up, a long investigation) while the user keeps talking here. The user sees each subchat in the sidebar under this chat and can open, steer or stop it. " +
-			"start proposes one (the user approves it, depending on the approval mode) and returns at once with its id: title is short; brief is everything it needs, since it does not see this conversation unless context is fork: the task, the files, what done means. context: fresh (null) or fork (it gets this conversation so far). isolation: worktree (null: its own Git worktree and branch, from this folder's last commit; uncommitted changes are not in it) or shared (this folder, for read-only work). model: a model name from the model picker, null for this chat's. files: optional files attached to the brief, by path in the workspace or /tmp: pictures (screenshots, mockups) arrive as images it sees, other files are copied into its workspace and attached. " +
-			"When a subchat's turn ends you receive its report (its last answer, branch) as a message: do not poll status in a loop. To send a subchat a follow-up, or in a subchat to ask the parent, use the chats tool (action message, id parent for the parent). status lists the subchats (id null) or one, with state, branch, last answer and context use. stop stops a subchat's turn, and those of the subchats under it. " +
-			"Use subchats for independent pieces of work, not for a quick step you can do here; a subchat can start subchats of its own, down to " + fmt.Sprint(MaxSubchatDepth) + " levels below the chat the user started, and at most " + fmt.Sprint(MaxRunningSubchats) + " of one chat work at once. Leave unused fields null.",
+		"description": "Start and follow subchats: conversations under this chat in the sidebar that run in parallel, for independent work; the user can open, steer or stop them. " +
+			"start returns its id at once (approved per the approval mode); brief is all it needs, as it sees this conversation only with context fork: the task, the files, what done means. isolation: worktree (null: own branch from the last commit, without uncommitted changes) or shared (this folder, read-only work). model: a name from the model picker, null for this chat's. " +
+			"Its report comes as a message when its turn ends: do not poll. Follow-ups go through the chats tool. status lists the subchats (id null) or one; stop stops one and those under it. At most " + fmt.Sprint(MaxSubchatDepth) + " levels below the user's chat, " + fmt.Sprint(MaxRunningSubchats) + " working at once. Leave unused fields null.",
 		"parameters": map[string]any{"type": "object", "additionalProperties": false,
-			"required": []string{"action", "id", "title", "brief", "text", "context", "isolation", "model", "files"},
+			"required": []string{"action", "id", "title", "brief", "context", "isolation", "model", "files"},
 			"properties": map[string]any{
 				"action":    map[string]any{"type": "string", "enum": []string{"start", "status", "stop"}},
 				"id":        map[string]any{"type": []string{"string", "null"}, "description": "status, stop: the subchat's id."},
-				"title":     map[string]any{"type": []string{"string", "null"}, "description": "start: a short title."},
-				"brief":     map[string]any{"type": []string{"string", "null"}, "description": "start: the task, the files and what done means."},
-				"text":      map[string]any{"type": []string{"string", "null"}, "description": "Unused: messages go through the chats tool."},
+				"title":     map[string]any{"type": []string{"string", "null"}, "description": "start: short."},
+				"brief":     map[string]any{"type": []string{"string", "null"}, "description": "start"},
 				"context":   map[string]any{"type": []string{"string", "null"}, "enum": []any{"fresh", "fork", nil}},
 				"isolation": map[string]any{"type": []string{"string", "null"}, "enum": []any{"worktree", "shared", nil}},
 				"model":     map[string]any{"type": []string{"string", "null"}},

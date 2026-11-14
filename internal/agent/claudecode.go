@@ -154,10 +154,13 @@ type PlanUsage struct {
 //   - EnterPlanMode, ExitPlanMode: 1loop has no plan view.
 //   - EnterWorktree, ExitWorktree move Claude Code to another folder, while
 //     1loop's workspace, diffs and files stay in the chat's.
-//   - RemoteTrigger, PushNotification, ReportFindings and DesignSync belong
-//     to Claude's own apps (cloud routines, notifications, review and design
-//     views), which 1loop neither shows nor manages.
-const claudeDisabledTools = "Task,Agent,SendMessage,ListAgents,CronCreate,CronDelete,CronList,ScheduleWakeup,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,RemoteTrigger,PushNotification,ReportFindings,DesignSync"
+//   - Workflow runs scripts of many subagents: off like Task, for the same
+//     reason, and it costs tokens on every turn.
+//   - RemoteTrigger, PushNotification, ReportFindings, DesignSync,
+//     ShareOnboardingGuide and PublishPlugin belong to Claude's own apps
+//     (cloud routines, notifications, review and design views, onboarding
+//     guides, the plugin directory), which 1loop neither shows nor manages.
+const claudeDisabledTools = "Task,Agent,SendMessage,ListAgents,Workflow,CronCreate,CronDelete,CronList,ScheduleWakeup,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,RemoteTrigger,PushNotification,ReportFindings,DesignSync,ShareOnboardingGuide,PublishPlugin"
 
 // claudeCommand prepares a Claude Code process in its stream-json mode.
 // The environment is the user's, minus what would change who pays (an API

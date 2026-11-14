@@ -183,9 +183,10 @@ func terminalAction(tool, raw string) (action, bool) {
 			command += " …"
 		}
 		return action{"Ran in the terminal:", "Running in the terminal:", command, true}, true
-	case "terminal_write":
-		return action{"Typed in the terminal:", "Typing in the terminal:", quoted(args.Text), false}, true
-	case "terminal_keys":
+	case "terminal_write", "terminal_keys":
+		if args.Text != "" || len(args.Keys) == 0 {
+			return action{"Typed in the terminal:", "Typing in the terminal:", quoted(args.Text), false}, true
+		}
 		return action{"Pressed in the terminal:", "Pressing in the terminal:", strings.Join(args.Keys, ", "), false}, true
 	case "terminal_read":
 		return action{"Read", "Reading", "the terminal output", false}, true

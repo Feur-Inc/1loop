@@ -83,48 +83,7 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 		case "ping":
 			response["result"] = map[string]any{}
 		case "tools/list":
-			definitions := projectMCPTools(cfg)
-			if cfg.ProjectTools == nil && cfg.toolAvailable("update_todo") {
-				definitions = append(definitions, todoToolDefinition())
-			}
-			if cfg.toolAvailable("wrap_up") && !hasTool(definitions, "wrap_up") {
-				definitions = append(definitions, wrapUpToolDefinition())
-			}
-			if cfg.ProjectTools == nil && cfg.toolAvailable("memory") {
-				definitions = append(definitions, memoryToolDefinition())
-			}
-			// Moving a chat without a folder; 1loop asks the user itself.
-			if cfg.ProjectTools == nil && cfg.toolAvailable("change_directory") {
-				definitions = append(definitions, changeDirectoryToolDefinition())
-			}
-			if cfg.ProjectTools == nil && cfg.toolAvailable("request_directory") {
-				definitions = append(definitions, requestDirectoryToolDefinition())
-			}
-			if cfg.ProjectTools == nil && cfg.toolAvailable("settings") {
-				definitions = append(definitions, settingsToolDefinition())
-			}
-			if cfg.ProjectTools == nil && cfg.toolAvailable("subchat") {
-				definitions = append(definitions, subchatToolDefinition())
-			}
-			if cfg.ProjectTools == nil && cfg.toolAvailable("chats") {
-				definitions = append(definitions, chatsToolDefinition())
-			}
-			for _, group := range builtinToolGroups(cfg) {
-				definitions = append(definitions, group.tools()...)
-			}
-			tools := []any{}
-			for _, definition := range definitions {
-				f := definition["function"].(map[string]any)
-				tool := map[string]any{"name": f["name"], "description": f["description"], "inputSchema": f["parameters"]}
-				if f["name"] == "wrap_up" || f["name"] == "update_todo" {
-					// Called on most turns: in the prompt, not deferred
-					// behind Claude Code's tool search (a round trip the
-					// model tends to skip, and the call with it).
-					tool["_meta"] = map[string]any{"anthropic/alwaysLoad": true}
-				}
-				tools = append(tools, tool)
-			}
-			response["result"] = map[string]any{"tools": tools}
+			response["result"] = map[string]any{"tools": claudeMCPToolList(claudeMCPDefinitions(cfg))}
 		case "tools/call":
 			var call struct {
 				Name      string          `json:"name"`
@@ -285,4 +244,55 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 		return "", nil, err
 	}
 	return path, func() { _ = server.Close(); _ = os.RemoveAll(dir) }, nil
+}
+
+// claudeMCPDefinitions are the tools 1loop's MCP server gives Claude Code.
+func claudeMCPDefinitions(cfg Config) []map[string]any {
+	definitions := projectMCPTools(cfg)
+	if cfg.ProjectTools == nil && cfg.toolAvailable("update_todo") {
+		definitions = append(definitions, todoToolDefinition())
+	}
+	if cfg.toolAvailable("wrap_up") && !hasTool(definitions, "wrap_up") {
+		definitions = append(definitions, wrapUpToolDefinition())
+	}
+	if cfg.ProjectTools == nil && cfg.toolAvailable("memory") {
+		definitions = append(definitions, memoryToolDefinition())
+	}
+	// Moving a chat without a folder; 1loop asks the user itself.
+	if cfg.ProjectTools == nil && cfg.toolAvailable("change_directory") {
+		definitions = append(definitions, changeDirectoryToolDefinition())
+	}
+	if cfg.ProjectTools == nil && cfg.toolAvailable("request_directory") {
+		definitions = append(definitions, requestDirectoryToolDefinition())
+	}
+	if cfg.ProjectTools == nil && cfg.toolAvailable("settings") {
+		definitions = append(definitions, settingsToolDefinition())
+	}
+	if cfg.ProjectTools == nil && cfg.toolAvailable("subchat") {
+		definitions = append(definitions, subchatToolDefinition())
+	}
+	if cfg.ProjectTools == nil && cfg.toolAvailable("chats") {
+		definitions = append(definitions, chatsToolDefinition())
+	}
+	for _, group := range builtinToolGroups(cfg) {
+		definitions = append(definitions, group.tools()...)
+	}
+	return definitions
+}
+
+// claudeMCPToolList is the tools/list answer for definitions.
+func claudeMCPToolList(definitions []map[string]any) []any {
+	tools := []any{}
+	for _, definition := range definitions {
+		f := definition["function"].(map[string]any)
+		tool := map[string]any{"name": f["name"], "description": f["description"], "inputSchema": f["parameters"]}
+		if f["name"] == "wrap_up" || f["name"] == "update_todo" {
+			// Called on most turns: in the prompt, not deferred
+			// behind Claude Code's tool search (a round trip the
+			// model tends to skip, and the call with it).
+			tool["_meta"] = map[string]any{"anthropic/alwaysLoad": true}
+		}
+		tools = append(tools, tool)
+	}
+	return tools
 }

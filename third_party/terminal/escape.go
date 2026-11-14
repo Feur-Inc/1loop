@@ -5,6 +5,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2/widget"
 )
@@ -40,9 +41,10 @@ func (t *Terminal) handleEscape(code string) {
 		return
 	}
 
-	runes := []rune(code)
-	if esc, ok := escapes[runes[len(code)-1]]; ok {
-		esc(t, code[:len(code)-1])
+	// the final character may take more than a byte (1loop, #450)
+	final, size := utf8.DecodeLastRuneInString(code)
+	if esc, ok := escapes[final]; ok {
+		esc(t, code[:len(code)-size])
 	} else if t.debug {
 		log.Println("Unrecognised Escape:", code)
 	}
@@ -138,9 +140,17 @@ func escapeDeleteChars(t *Terminal, msg string) {
 	if i == 0 {
 		i = 1
 	}
-	right := t.cursorCol + i
 
+	// nothing to delete past the end of the line's text, and only what is
+	// left of it after the cursor (1loop, #450)
 	row := t.content.Row(t.cursorRow)
+	if t.cursorCol >= len(row.Cells) {
+		return
+	}
+	if room := len(row.Cells) - t.cursorCol; i > room {
+		i = room
+	}
+	right := t.cursorCol + i
 	cells := row.Cells[:t.cursorCol]
 	if right < len(row.Cells) {
 		cells = append(cells, row.Cells[right:]...)
@@ -192,6 +202,15 @@ func escapeInsertChars(t *Terminal, msg string) {
 	if chars == 0 {
 		chars = 1
 	}
+	// cells pushed past the right edge are lost, so only insert what fits
+	// (1loop, #450)
+	cols := int(t.config.Columns)
+	if room := cols - t.cursorCol; chars > room {
+		chars = room
+	}
+	if chars <= 0 || t.cursorCol < 0 || t.cursorRow < 0 {
+		return
+	}
 
 	newCells := make([]widget.TextGridCell, chars)
 	cellStyle := &widget.CustomTextGridStyle{FGColor: t.currentFG, BGColor: t.currentBG}
@@ -202,14 +221,32 @@ func escapeInsertChars(t *Terminal, msg string) {
 		}
 	}
 
+	for len(t.content.Rows) <= t.cursorRow {
+		t.content.Rows = append(t.content.Rows, widget.TextGridRow{})
+	}
 	row := &t.content.Rows[t.cursorRow]
+	// a cursor past the line's text inserts after blanks up to it
+	for len(row.Cells) < t.cursorCol {
+		row.Cells = append(row.Cells, widget.TextGridCell{Rune: ' '})
+	}
 	row.Cells = append(row.Cells[:t.cursorCol], append(newCells, row.Cells[t.cursorCol:]...)...)
+	if len(row.Cells) > cols {
+		row.Cells = row.Cells[:cols]
+	}
 }
 
 func escapeInsertLines(t *Terminal, msg string) {
 	rows, _ := strconv.Atoi(msg)
 	if rows == 0 {
 		rows = 1
+	}
+	// lines pushed past the scroll area are lost: no more than it holds
+	// below the cursor (1loop, #450)
+	if t.cursorRow < t.scrollTop || t.cursorRow > t.scrollBottom {
+		return
+	}
+	if room := t.scrollBottom - t.cursorRow + 1; rows > room {
+		rows = room
 	}
 	i := t.scrollBottom
 	for ; i > t.cursorRow-rows+1; i-- {
@@ -315,10 +352,16 @@ func escapePrivateMode(t *Terminal, msg string, enable bool) {
 }
 
 func escapePrivateModeOff(t *Terminal, msg string) {
+	if msg == "" { // no mode (1loop, #450)
+		return
+	}
 	escapePrivateMode(t, msg[1:], false)
 }
 
 func escapePrivateModeOn(t *Terminal, msg string) {
+	if msg == "" { // no mode (1loop, #450)
+		return
+	}
 	escapePrivateMode(t, msg[1:], true)
 }
 
@@ -368,6 +411,19 @@ func escapeSetScrollArea(t *Terminal, msg string) {
 		}
 	}
 
+	// keep the area on the screen, or the whole screen when it makes no
+	// sense: scrolling indexes rows with it (1loop, #450)
+	last := int(t.config.Rows) - 1
+	if start < 0 {
+		start = 0
+	}
+	if end > last {
+		end = last
+	}
+	if start >= end {
+		start, end = 0, last
+	}
+
 	t.scrollTop = start
 	t.scrollBottom = end
 }
@@ -381,6 +437,10 @@ func escapeScrollUp(t *Terminal, msg string) {
 	// Ensure we are within the scrollable area
 	if t.cursorRow < t.scrollTop || t.cursorRow > t.scrollBottom {
 		return
+	}
+	// no more lines than the area holds (1loop, #450)
+	if height := t.scrollBottom - t.scrollTop + 1; lines > height {
+		lines = height
 	}
 
 	// Calculate new cursor position after scrolling
@@ -449,7 +509,7 @@ func escapeDeviceAttribute(t *Terminal, code string) {
 		return
 	}
 
-	if t.debug {
+	if t.debug && len(code) > 1 { // the code after its prefix (1loop, #450)
 		switch code[0] {
 		case '>':
 			log.Println("Unhandled secondary device attribute", code[1])

@@ -3,6 +3,7 @@ package terminal
 import (
 	"bytes"
 	"log"
+	"runtime/debug"
 	"time"
 	"unicode/utf8"
 
@@ -92,7 +93,35 @@ type parseState struct {
 	printing      bool
 }
 
-func (t *Terminal) handleOutput(buf []byte) []byte {
+// do runs f on Fyne's thread like fyne.Do, but a panic in f drops what f
+// was showing instead of ending the app (1loop, #450): output comes from
+// any program the terminal runs.
+func (t *Terminal) do(f func()) {
+	fyne.Do(func() {
+		defer t.recoverOutput()
+		f()
+	})
+}
+
+// recoverOutput, deferred, stops a panic while handling output and logs it.
+func (t *Terminal) recoverOutput() {
+	if r := recover(); r != nil {
+		logDroppedOutput(r)
+	}
+}
+
+func logDroppedOutput(r any) {
+	log.Printf("terminal: dropped output that failed to show: %v\n%s", r, debug.Stack())
+}
+
+func (t *Terminal) handleOutput(buf []byte) (rest []byte) {
+	defer func() {
+		if r := recover(); r != nil { // drop the chunk and the escape it was in
+			logDroppedOutput(r)
+			t.state = nil
+			rest = nil
+		}
+	}()
 	if t.hasSelectedText() {
 		t.clearSelectedText()
 	}
@@ -161,19 +190,19 @@ func (t *Terminal) handleOutput(buf []byte) []byte {
 			if out == nil {
 				continue
 			}
-			fyne.Do(func() {
+			t.do(func() {
 				out(t)
 			})
 		} else {
 			// check to see which charset to use
 			if t.useG1CharSet {
 				chr := charSetMap[t.g1Charset](r)
-				fyne.Do(func() {
+				t.do(func() {
 					t.handleOutputChar(chr)
 				})
 			} else {
 				chr := charSetMap[t.g0Charset](r)
-				fyne.Do(func() {
+				t.do(func() {
 					t.handleOutputChar(chr)
 				})
 			}
@@ -194,7 +223,7 @@ func (t *Terminal) parseEscState(r rune) (shouldContinue bool) {
 	case '\\':
 		if t.state.osc {
 			code := t.state.code
-			fyne.Do(func() {
+			t.do(func() {
 				t.handleOSC(code)
 			})
 		}
@@ -205,15 +234,18 @@ func (t *Terminal) parseEscState(r rune) (shouldContinue bool) {
 	case '(', ')':
 		t.state.vt100 = r
 	case '7':
-		t.savedRow = t.cursorRow
-		t.savedCol = t.cursorCol
+		t.do(func() {
+			t.savedRow = t.cursorRow
+			t.savedCol = t.cursorCol
+		})
 	case '8':
-		t.cursorRow = t.savedRow
-		t.cursorCol = t.savedCol
+		// moveCursor keeps it on the screen, which may have shrunk since
+		// (1loop, #450)
+		t.do(func() { t.moveCursor(t.savedRow, t.savedCol) })
 	case 'D':
-		t.scrollDown()
+		t.do(t.scrollDown)
 	case 'M':
-		t.scrollUp()
+		t.do(t.scrollUp)
 	case 'P':
 		t.state.dcs = true
 	case '_':
@@ -227,7 +259,7 @@ func (t *Terminal) parseEscape(r rune) {
 	t.state.code += string(r)
 	if (r < '0' || r > '9') && r != ';' && r != '=' && r != '?' && r != '>' {
 		code := t.state.code
-		fyne.Do(func() {
+		t.do(func() {
 			t.handleEscape(code)
 		})
 		t.state.code = ""
@@ -248,7 +280,7 @@ func (t *Terminal) parsePrinting(buf []byte, size int) {
 func (t *Terminal) parseAPC(r rune) {
 	if r == 0 {
 		code := t.state.code
-		fyne.Do(func() {
+		t.do(func() {
 			t.handleAPC(code)
 		})
 		t.state.code = ""
@@ -261,7 +293,7 @@ func (t *Terminal) parseAPC(r rune) {
 func (t *Terminal) parseOSC(r rune) {
 	if r == asciiBell || r == 0 {
 		code := t.state.code
-		fyne.Do(func() {
+		t.do(func() {
 			t.handleOSC(code)
 		})
 		t.state.code = ""
@@ -274,7 +306,7 @@ func (t *Terminal) parseOSC(r rune) {
 func (t *Terminal) parseDCS(r rune) {
 	if r == '\\' {
 		code := t.state.code
-		fyne.Do(func() {
+		t.do(func() {
 			t.handleDCS(code)
 		})
 		t.state.code = ""
@@ -329,6 +361,13 @@ func (t *Terminal) ringBell() {
 }
 
 func (t *Terminal) scrollUp() {
+	// the scroll area's rows may not exist yet (1loop, #450)
+	if t.scrollTop < 0 || t.scrollBottom < t.scrollTop {
+		return
+	}
+	for len(t.content.Rows) <= t.scrollBottom {
+		t.content.Rows = append(t.content.Rows, widget.TextGridRow{})
+	}
 	for i := t.scrollBottom; i > t.scrollTop; i-- {
 		t.content.Rows[i] = t.content.Row(i - 1)
 	}
@@ -337,6 +376,9 @@ func (t *Terminal) scrollUp() {
 }
 
 func (t *Terminal) scrollDown() {
+	if t.scrollTop < 0 || t.scrollBottom < t.scrollTop { // (1loop, #450)
+		return
+	}
 	i := t.scrollTop
 	for ; i < t.scrollBottom && i < len(t.content.Rows)-1; i++ {
 		t.content.Rows[i] = t.content.Row(i + 1)

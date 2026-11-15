@@ -188,7 +188,7 @@ jobs:
           sudo -n apt-get update -q
           mkdir -p ~/apt-windows/partial
           sudo -n apt-get install -y -q --no-install-recommends -o Dir::Cache::archives="$HOME/apt-windows" \
-            gcc-mingw-w64-x86-64 p7zip-full zip
+            gcc-mingw-w64-x86-64
           sudo -n chown -R "$(id -u):$(id -g)" ~/apt-windows # apt's lock file, readable by the cache
           packaging/windows/build.sh
 
@@ -364,7 +364,7 @@ jobs:
             "1loop-$version-x86_64.AppImage"
             "1loop-$version.flatpak"
             "1loop-server-$version-linux-amd64"
-            "1loop-$version-windows-amd64.zip"
+            "1loop-$version-windows-amd64.exe"
             "1loop-server-$version-windows-amd64.exe"
             "1loop-$version-debug.apk"
             "1loop-$version-android-native-sources.zip"
@@ -383,7 +383,7 @@ jobs:
 
           cat > "$work/notes.md" <<NOTES
           Test builds of 1loop $version from $GITHUB_SHA: Linux (.tar.gz, .deb, AppImage, Flatpak),
-          Windows (desktop with the software renderer), both servers, and the Android debug
+          Windows (desktop exe), both servers, and the Android debug
           APK ("1loop debug", installed beside the release app, debuggable: anyone with ADB
           access to the phone can read its data) with its native sources. Linux, Windows,
           Android, Flatpak and Nix checks passed; Windows is

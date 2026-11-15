@@ -307,15 +307,12 @@ and ScreenCast (GNOME and KDE do).
 
 ## Windows desktop (Windows 10 1809 or newer, x64)
 
-1. Download `1loop-VERSION-windows-amd64.zip`.
-2. Extract it to a folder you own, for example
-   `C:\Users\you\Applications\1loop`, and run `1loop.exe`.
+1. Download `1loop-VERSION-windows-amd64.exe`.
+2. Put it in a folder you own, for example
+   `C:\Users\you\Applications\1loop`, and run it. It updates itself
+   there (Settings → Updates).
 3. Windows SmartScreen may say the app is unrecognized: choose
    **More info → Run anyway**.
-
-If the window stays blank (no OpenGL driver), start `1loop-software.cmd`: it
-uses the bundled Mesa CPU renderer. It needs the Microsoft Visual C++
-2015–2022 x64 runtime.
 
 1loop draws its own title bar, as on Linux; Windows still moves, resizes and
 maximises the window. Set the environment variable

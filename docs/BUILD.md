@@ -15,7 +15,7 @@ keeps the plain version.
 |---|---|
 | `packaging/linux/build.sh binaries tarball deb appimage` | `1loop-VERSION-linux-amd64.tar.gz`, `1loop-VERSION-amd64.deb`, `1loop-VERSION-x86_64.AppImage` |
 | `packaging/server/build.sh` | `1loop-server-VERSION-linux-amd64`, `1loop-server-VERSION-windows-amd64.exe` |
-| `packaging/windows/build.sh` | `1loop-VERSION-windows-amd64.zip` |
+| `packaging/windows/build.sh` | `1loop-VERSION-windows-amd64.exe` |
 | `packaging/android/build.sh debug` | `1loop-VERSION-debug.apk`, `1loop-VERSION-android-native-sources.zip` |
 | `packaging/android/build.sh release` | `1loop-VERSION.apk` (only with the release key), same native sources |
 
@@ -109,12 +109,14 @@ Static, without cgo: nothing to install besides Go.
 ## Windows (cross-compiled from Linux)
 
 ```bash
-sudo apt-get install gcc-mingw-w64-x86-64 p7zip-full zip
+sudo apt-get install gcc-mingw-w64-x86-64
 ```
 
-The zip holds `1loop.exe`, `1loop-server.exe`, and `software/` with
-`1loop-software.cmd` (the Mesa CPU renderer, downloaded and checked, for PCs
-without a working OpenGL driver). `go vet` runs for Windows; the tests need
+The download is the desktop exe alone; the server is
+`packaging/server/build.sh`'s. Both exes carry the 1loop icon and their
+version (Properties → Details): `go run ./cmd/1loop-release winres` writes
+them as a `.syso` beside the command's sources, which `go build` links, and
+the scripts remove it afterwards. `go vet` runs for Windows; the tests need
 Windows itself: run `go test ./...` there.
 
 ## Android

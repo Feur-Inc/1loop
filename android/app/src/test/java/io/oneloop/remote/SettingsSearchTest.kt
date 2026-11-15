@@ -47,4 +47,15 @@ class SettingsSearchTest {
     fun everyPhoneSectionIsKnown() {
         for (setting in list.onPhone()) assertTrue(setting.key, list.sectionTitle(setting.section).isNotEmpty())
     }
+
+    // #443: everything remote is in one section, its parts in order, and the Phone section is gone.
+    @Test
+    fun remoteIsOneSection() {
+        assertTrue(list.sections.none { it.id == "phone" })
+        val parts = listOf("Where the agent runs", "Devices that control this 1loop", "Phone app")
+        val remote = list.onPhone().filter { it.section == "remote" }
+        assertEquals(listOf("general.target", "phone.pairing", "phone.sharing", "phone.status", "phone.adb", "phone.work_profile", "phone.background"), remote.map { it.key })
+        assertEquals(parts, remote.map { it.group }.distinct())
+        assertTrue(list.settings.filter { it.section != "remote" }.all { it.group.isEmpty() })
+    }
 }

@@ -392,7 +392,7 @@ func (ui *desktopUI) targetMenu() {
 		actions = append(actions, menuAction{label: machine.Label(), detail: "SSH · " + machine.User + "@" + machine.Host, icon: iconTerminal,
 			checked: ui.server == nil && ui.cfg.MachineID == id, run: func() { ui.useMachine(id) }})
 	}
-	actions = append(actions, menuAction{label: "Add an SSH machine…", icon: iconPlus, run: func() { ui.prefs.openOn("General") }})
+	actions = append(actions, menuAction{label: "Add an SSH machine…", icon: iconPlus, run: func() { ui.prefs.openOn("Remote") }})
 	for _, saved := range loadServerAddresses() {
 		server := menuAction{label: serverName(saved.URL), detail: saved.URL, icon: iconBrowser, checked: ui.server != nil && ui.server.client.address.URL == saved.URL, run: func() {
 			if ui.server != nil && ui.server.client.address.URL == saved.URL {

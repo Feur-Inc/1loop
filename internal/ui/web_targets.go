@@ -23,7 +23,10 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
+
+	registry "1loop/internal/settings"
 )
 
 // browserTargets are the browser client's servers in the sidebar's order:
@@ -89,7 +92,7 @@ func (ui *desktopUI) browserTargetMenu() {
 			}
 		}})
 		if url != ui.home {
-			unlink = append(unlink, menuAction{label: "Unlink " + serverName(url), icon: iconTrash, danger: true, run: func() { ui.unlinkServer(url) }})
+			unlink = append(unlink, menuAction{label: "Unlink " + serverName(url), icon: iconTrash, danger: true, run: func() { ui.askUnlink(url) }})
 		}
 	}
 	actions = append(actions, menuAction{label: "Link a server…", icon: iconPlus, run: ui.linkAnotherServer})
@@ -171,6 +174,59 @@ func (ui *desktopUI) linkPairedServer(client *remoteClient) error {
 	}
 	ui.linkServers()
 	return nil
+}
+
+// askUnlink asks, then unlinks a server the browser client linked (#443).
+func (ui *desktopUI) askUnlink(url string) {
+	name := serverName(url)
+	ui.confirm("Unlink "+name+"?",
+		name+" is forgotten in this browser: its projects and chats leave the sidebar, and linking it again needs a new pairing.",
+		"Unlink", func() {
+			ui.unlinkServer(url)
+			ui.reshowRemote()
+		})
+}
+
+// browserRemoteSettings is the browser client's Settings → Remote (#443),
+// the desktop's parts that a page has: the servers it works on, and the
+// devices paired with the one in use. SSH machines and the phone app are a
+// computer's.
+func (ui *desktopUI) browserRemoteSettings() fyne.CanvasObject {
+	view := ui.prefs
+	var rows []fyne.CanvasObject
+	for _, address := range ui.browserServers() {
+		url := address.URL
+		detail := url
+		if url == ui.home {
+			detail = "This page's server"
+		}
+		if ui.reaches[serverTarget(url).key()].state == reachOffline {
+			detail += " · " + offlineMark
+		}
+		var control fyne.CanvasObject = newRow("Use", nil, styleOutline, func() {
+			ui.reachServer(serverTarget(url), func(*remoteDesktop) { ui.reshowRemote() })
+		})
+		if ui.server != nil && ui.server.client.address.URL == url {
+			control = inUse()
+		}
+		if url != ui.home {
+			control = container.New(layout.NewCustomPaddedHBoxLayout(10), control, newRow("Unlink", iconTrash, styleChip, func() { ui.askUnlink(url) }))
+		}
+		rows = append(rows, settingRow(serverName(url), detail, control))
+	}
+	rows = append(rows, settingRow("Link a server", "Another 1loop server's projects and chats are listed in the sidebar beside this one's, and its chats run there.",
+		newRow("Link a server…", iconPlus, styleOutline, ui.linkAnotherServer)))
+	page := container.NewVBox(view.pageTitle("Remote", "", nil), view.intro(registry.Remote),
+		sectionTitle(registry.GroupTargets),
+		partNote("The 1loop servers this page works on: its own, and those it linked. The target button under the conversation switches between them too."),
+		view.mark("general.target", card(rows...)),
+		sectionTitle(registry.GroupDevices),
+		partNote("The phones and browsers paired with the server in use, this one included. Removing one stops its access at once: it must be paired again to come back."))
+	if ui.server != nil {
+		page.Add(partTitle("Paired with " + serverName(ui.server.client.address.URL)))
+		page.Add(view.mark("phone.pairing", ui.serverDevicesCard(ui.server)))
+	}
+	return page
 }
 
 // unlinkServer forgets a linked server: the window comes back to the

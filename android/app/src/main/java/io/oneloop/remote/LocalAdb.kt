@@ -249,7 +249,7 @@ class LocalAdb(private val context: Context, private val scope: CoroutineScope) 
 
     private suspend fun profileInstall(packageName: String): String {
         require(Regex("""[A-Za-z][A-Za-z0-9_]*(\.[A-Za-z0-9_]+)+""").matches(packageName)) { "Provide the app's package name in text, such as org.mozilla.firefox." }
-        val id = agentProfile() ?: error("The agent has no work profile yet. Ask the user to create it in 1loop: Settings → Phone access → Work profile for the agent.")
+        val id = agentProfile() ?: error("The agent has no work profile yet. Ask the user to create it in 1loop: Settings → Remote → Work profile for the agent.")
         // The app must already be installed for the user: Android copies it, without its data.
         command("pm install-existing --user $id $packageName")
         return "Added $packageName to the agent's work profile (Android user $id). Open it with launch in the hidden session."

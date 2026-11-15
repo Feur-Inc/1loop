@@ -3,7 +3,12 @@
     {
       "id": "general",
       "title": "General",
-      "intro": "Where the agent works, and what comes from elsewhere."
+      "intro": "The project folder, how 1loop looks, and what comes from elsewhere."
+    },
+    {
+      "id": "remote",
+      "title": "Remote",
+      "intro": "Where the agent runs, the devices that control this 1loop, and the phone app."
     },
     {
       "id": "models",
@@ -19,11 +24,6 @@
       "id": "tools",
       "title": "Tools \u0026 extensions",
       "intro": "What extends the agent, and its browser and screen."
-    },
-    {
-      "id": "phone",
-      "title": "Phone",
-      "intro": "The 1loop phone app: pairing, sharing and what it may do."
     },
     {
       "id": "updates",
@@ -49,64 +49,6 @@
         "folder",
         "path",
         "cwd"
-      ],
-      "kind": "action",
-      "where": "desktop",
-      "protected": true
-    },
-    {
-      "key": "general.target",
-      "section": "general",
-      "title": "Execution target",
-      "description": "Where the agent works: this computer, an SSH machine, a server or this phone.",
-      "keywords": [
-        "server",
-        "computer",
-        "desktop",
-        "switch",
-        "machine",
-        "local",
-        "connect",
-        "this computer"
-      ],
-      "kind": "action",
-      "where": "both",
-      "protected": true
-    },
-    {
-      "key": "general.remote_server",
-      "section": "general",
-      "title": "Connect a server",
-      "description": "Pair this computer with a headless 1loop server, then work on it.",
-      "keywords": [
-        "remote",
-        "server",
-        "headless",
-        "connect",
-        "pair",
-        "pairing",
-        "https",
-        "fingerprint",
-        "certificate",
-        "docker"
-      ],
-      "kind": "action",
-      "where": "desktop",
-      "protected": true
-    },
-    {
-      "key": "general.ssh",
-      "section": "general",
-      "title": "SSH machines",
-      "description": "Other computers the agent can work on over SSH.",
-      "keywords": [
-        "ssh",
-        "remote",
-        "machine",
-        "host",
-        "server",
-        "computer",
-        "vm"
       ],
       "kind": "action",
       "where": "desktop",
@@ -621,33 +563,64 @@
       "where": "phone"
     },
     {
-      "key": "phone.remote",
-      "section": "phone",
-      "title": "Phone app on this network",
-      "description": "Lets the 1loop phone app find and reach this computer, once paired.",
+      "key": "general.target",
+      "section": "remote",
+      "group": "Where the agent runs",
+      "title": "Execution target",
+      "description": "Where the agent works: this computer, an SSH machine, a server or this phone.",
       "keywords": [
-        "phone",
-        "mobile",
-        "android",
-        "remote",
-        "network",
-        "lan"
+        "server",
+        "computer",
+        "desktop",
+        "switch",
+        "machine",
+        "local",
+        "connect",
+        "this computer",
+        "link",
+        "unlink",
+        "forget"
       ],
-      "kind": "toggle",
+      "kind": "action",
+      "where": "both",
+      "protected": true
+    },
+    {
+      "key": "general.ssh",
+      "section": "remote",
+      "group": "Where the agent runs",
+      "title": "SSH machines",
+      "description": "Other computers the agent can work on over SSH.",
+      "keywords": [
+        "ssh",
+        "remote",
+        "machine",
+        "host",
+        "server",
+        "computer",
+        "vm"
+      ],
+      "kind": "action",
       "where": "desktop",
       "protected": true
     },
     {
-      "key": "phone.pairing",
-      "section": "phone",
-      "title": "Paired phones",
-      "description": "Pair a phone with a QR code, or forget one.",
+      "key": "general.remote_server",
+      "section": "remote",
+      "group": "Where the agent runs",
+      "title": "Connect a server",
+      "description": "Pair this computer with a headless 1loop server, then work on it; forget one.",
       "keywords": [
+        "remote",
+        "server",
+        "headless",
+        "connect",
         "pair",
-        "qr",
-        "code",
-        "phone",
-        "devices",
+        "pairing",
+        "https",
+        "fingerprint",
+        "certificate",
+        "docker",
         "forget"
       ],
       "kind": "action",
@@ -655,8 +628,72 @@
       "protected": true
     },
     {
+      "key": "phone.pairing",
+      "section": "remote",
+      "group": "Devices that control this 1loop",
+      "title": "Paired devices",
+      "description": "The phones and browsers paired with this computer or with the server in use: forget one, and its access stops.",
+      "keywords": [
+        "pair",
+        "paired",
+        "devices",
+        "phone",
+        "browser",
+        "forget",
+        "remove",
+        "unpair",
+        "revoke",
+        "phones"
+      ],
+      "kind": "action",
+      "where": "both",
+      "protected": true
+    },
+    {
+      "key": "phone.sharing",
+      "section": "remote",
+      "group": "Devices that control this 1loop",
+      "title": "Share this phone",
+      "description": "Lets the desktop or another phone on this network use this phone's agent.",
+      "keywords": [
+        "share",
+        "pair",
+        "remote",
+        "network",
+        "devices",
+        "fingerprint",
+        "remove",
+        "unpair"
+      ],
+      "kind": "action",
+      "where": "phone",
+      "protected": true
+    },
+    {
+      "key": "phone.remote",
+      "section": "remote",
+      "group": "Phone app",
+      "title": "Phone app on this network",
+      "description": "Lets the 1loop phone app find and reach this computer, and pairs a phone with a QR code.",
+      "keywords": [
+        "phone",
+        "mobile",
+        "android",
+        "remote",
+        "network",
+        "lan",
+        "pair",
+        "qr",
+        "code"
+      ],
+      "kind": "toggle",
+      "where": "desktop",
+      "protected": true
+    },
+    {
       "key": "phone.status",
-      "section": "phone",
+      "section": "remote",
+      "group": "Phone app",
       "title": "While a model runs",
       "description": "What shows over your other apps while the agent works: a small badge, a Live Update or nothing.",
       "keywords": [
@@ -687,7 +724,8 @@
     },
     {
       "key": "phone.adb",
-      "section": "phone",
+      "section": "remote",
+      "group": "Phone app",
       "title": "Phone access",
       "description": "Lets the local agent use this phone through Shizuku and local ADB.",
       "keywords": [
@@ -703,7 +741,8 @@
     },
     {
       "key": "phone.work_profile",
-      "section": "phone",
+      "section": "remote",
+      "group": "Phone app",
       "title": "Work profile for the agent",
       "description": "A separate Android profile where the agent installs and uses its apps.",
       "keywords": [
@@ -719,7 +758,8 @@
     },
     {
       "key": "phone.background",
-      "section": "phone",
+      "section": "remote",
+      "group": "Phone app",
       "title": "Background execution",
       "description": "Keeps long local tasks running when 1loop is not on screen.",
       "keywords": [
@@ -732,23 +772,6 @@
       ],
       "kind": "action",
       "where": "phone"
-    },
-    {
-      "key": "phone.sharing",
-      "section": "phone",
-      "title": "Share this phone",
-      "description": "Lets the desktop or another phone on this network use this phone's agent.",
-      "keywords": [
-        "share",
-        "pair",
-        "remote",
-        "network",
-        "devices",
-        "fingerprint"
-      ],
-      "kind": "action",
-      "where": "phone",
-      "protected": true
     },
     {
       "key": "updates.check",

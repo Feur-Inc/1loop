@@ -3,7 +3,7 @@
 package ui
 
 // Add project asks which target the project lives on (#381): this
-// computer, an SSH machine of Settings → General, or a paired server.
+// computer, an SSH machine of Settings → Remote, or a paired server.
 // The folder is then picked on that target, the project is kept under it,
 // and its chats run there. A folder of this computer is never sent to a
 // server, nor a server's opened here: the target is chosen, not implied

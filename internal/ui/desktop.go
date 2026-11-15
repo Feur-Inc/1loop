@@ -376,6 +376,7 @@ func runDesktop(backend *agent.App, root string) {
 	// elsewhere. Nothing is drawn in the window before its content is set
 	// below, once the state is loaded.
 	ui.chrome = customChromeSupported() && os.Getenv("ONELOOP_SYSTEM_TITLEBAR") == ""
+	nameWindows() // window_class_linux.go
 	if drv, ok := a.Driver().(desktop.Driver); ok && ui.chrome {
 		ui.window = drv.CreateSplashWindow()
 		ui.window.SetTitle("1loop")

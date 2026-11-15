@@ -797,6 +797,8 @@ static GLFWbool createLibdecorFrame(_GLFWwindow* window)
 
     if (strlen(window->wl.title))
         libdecor_frame_set_title(window->wl.libdecor.frame, window->wl.title);
+    if (window->wl.appId)
+        libdecor_frame_set_app_id(window->wl.libdecor.frame, window->wl.appId);
 
     if (window->minwidth != GLFW_DONT_CARE &&
         window->minheight != GLFW_DONT_CARE)
@@ -867,6 +869,10 @@ static GLFWbool createXdgShellObjects(_GLFWwindow* window)
 
     if (window->wl.title)
         xdg_toplevel_set_title(window->wl.xdg.toplevel, window->wl.title);
+    // 1loop: the app id goes with the toplevel, before its first commit, so
+    // the desktop knows which application this is from the first frame on.
+    if (window->wl.appId)
+        xdg_toplevel_set_app_id(window->wl.xdg.toplevel, window->wl.appId);
 
     if (window->monitor)
     {
@@ -992,6 +998,8 @@ static GLFWbool createNativeSurface(_GLFWwindow* window,
     window->wl.height = wndconfig->height;
     window->wl.contentScale = 1;
     window->wl.title = _glfw_strdup(wndconfig->title);
+    if (wndconfig->x11.className[0])
+        window->wl.appId = _glfw_strdup(wndconfig->x11.className);
 
     window->wl.maximized = wndconfig->maximized;
 
@@ -2172,6 +2180,7 @@ void _glfwPlatformDestroyWindow(_GLFWwindow* window)
         wl_surface_destroy(window->wl.surface);
 
     free(window->wl.title);
+    free(window->wl.appId);
     free(window->wl.scales);
 }
 

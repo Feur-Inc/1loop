@@ -151,8 +151,8 @@ func scrollGesture() (finger, released, ok bool)      { return false, false, fal
 func scrollEventTime() (milliseconds uint32, ok bool) { return 0, false }
 func scrollFinger() (finger, ok bool)                 { return false, false }
 
-// windowIdentity has nothing to do on X11: GLFW already names the window
-// class after its title, which is the application id.
+// windowIdentity has nothing to do on X11: the window's class is appID
+// from its creation (nameWindows).
 func windowIdentity(fyne.Window) {}
 
 func windowToggleMaximize(window fyne.Window) {

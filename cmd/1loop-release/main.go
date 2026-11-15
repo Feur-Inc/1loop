@@ -9,7 +9,7 @@
 //	    prints the signed latest.json for those files, served under URL.
 //	1loop-release icons DIR [NAME]
 //	    renders the launcher icon in DIR/hicolor/NxN/apps/NAME.png (NAME is
-//	    1loop by default), for the Linux packages.
+//	    io.github.Feur_Inc.OneLoop by default), for the Linux packages.
 package main
 
 import (

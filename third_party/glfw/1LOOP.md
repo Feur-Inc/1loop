@@ -23,6 +23,11 @@ untouched upstream copy, so `git diff` against it shows every change.
   a data device of its own: with that second device, GNOME (Mutter) most
   often left GLFW's without the selection, so text could not be pasted. `glfwGetClipboardString` returns no
   text for a selection that is only an image.
+- `glfw/src/wl_window.c`, `wl_platform.h` (#431): on Wayland the window
+  takes `GLFW_X11_CLASS_NAME` as its app id, sent with its xdg toplevel
+  before the first commit (GLFW 3.4 has `GLFW_WAYLAND_APP_ID` for this).
+  1loop sets the app id itself only once the window was shown, so GNOME
+  first took it for an unknown application, with a generic icon.
 - `glfw_tree_rebuild.go`: `upstreamTreeSHA` is the git tree of `glfw/` after
   the change above, so that a build cache made before it compiles the C
   sources again (Go does not hash them).

@@ -44,17 +44,17 @@ you when one is out but does not replace a packaged 1loop. Remove it with
    ~/Applications/1loop/install.sh
    ```
 
-   This writes `~/.local/share/applications/1loop.desktop` (pointing at this
+   This writes `~/.local/share/applications/io.github.Feur_Inc.OneLoop.desktop` (pointing at this
    folder) and the icons in `~/.local/share/icons/hicolor`. Run it again if
    you move the folder; `install.sh --uninstall` removes both.
 
 Keep `1loop` and `1loop-wayland` together, and the folder writable by you:
 1loop updates itself there (Settings → Updates).
 
-Versions before this one wrote `~/.local/share/applications/1loop.desktop`
-themselves on every start. If you switch to a package, delete that file (or
-run `install.sh --uninstall` from the old folder): it would hide the
-package's own entry.
+Older versions (install.sh, or 1loop itself on every start) wrote
+`~/.local/share/applications/1loop.desktop`. 1loop's entry is now named after
+its app id, `io.github.Feur_Inc.OneLoop`, in every package, so an old file
+can no longer hide a package's entry; `install.sh` removes it.
 
 ### AppImage
 
@@ -124,9 +124,8 @@ What that changes:
   (`flatpak-spawn --watch-bus`).
 - In a Wayland session the Flatpak has no X11 socket
   (`--socket=fallback-x11`), so `ONELOOP_BACKEND=x11` does not work there.
-- The window keeps the app id `1loop`; the entry,
-  `io.github.Feur_Inc.OneLoop.desktop`, matches it through
-  `StartupWMClass=1loop`.
+- The window's app id is `io.github.Feur_Inc.OneLoop`, the entry's name, as
+  in the other packages.
 - Updates: rebuild and reinstall.
 
 #### Flatpak permissions

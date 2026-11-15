@@ -338,6 +338,7 @@ typedef struct _GLFWwindowWayland
     double                      cursorPosX, cursorPosY;
 
     char*                       title;
+    char*                       appId; // 1loop: GLFW_X11_CLASS_NAME, sent before the first commit
 
     // We need to track the monitors the window spans on to calculate the
     // optimal scaling factor.

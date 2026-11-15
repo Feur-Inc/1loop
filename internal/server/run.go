@@ -34,6 +34,8 @@ import (
 func Main() {
 	workspace := flag.String("workspace", ".", "Workspace allowed for remote conversations")
 	listen := flag.String("listen", ":47101", "HTTPS listen address")
+	plainListen := flag.String("http-listen", "", "Plain-HTTP listen address for a reverse proxy with a real certificate, such as 127.0.0.1:47100 (optional; refused on a public address)")
+	plainPublic := flag.Bool("http-allow-public", false, "Allow -http-listen on a public address, with a warning: only behind a firewall that lets the proxy alone in")
 	dir := flag.String("data-dir", "", "Private server state directory")
 	settings := flag.String("config", "", "Server connection configuration JSON")
 	provider := flag.String("provider", "", "Provider for the initial connection")
@@ -69,6 +71,9 @@ func Main() {
 	}
 	if (*localToken == "") != (*localReady == "") {
 		log.Fatal("Local phone startup requires both -local-client-token-file and -local-ready-file")
+	}
+	if *plainListen != "" && *localToken != "" {
+		log.Fatal("Local phone mode has no reverse proxy: -http-listen is for the headless server")
 	}
 	if *localBridge != "" && *localToken == "" {
 		log.Fatal("The native phone bridge is only available in local phone mode")
@@ -173,17 +178,44 @@ func Main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	var plain net.Listener
+	if *plainListen != "" {
+		if plain, err = plainListener(*plainListen, *plainPublic, os.Stderr); err != nil {
+			log.Fatal(err)
+		}
+	}
 	server.handler = server.routes()
 	server.fingerprint = remoteapi.Fingerprint(certificate)
+	// Browsers that do not trust the certificate fail a handshake on every
+	// visit: summed up, so the pairing messages stay readable.
+	errorLog := newHandshakeLog(os.Stderr, time.Hour).Logger()
 	httpServer := &http.Server{
 		Handler:           server.handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       90 * time.Second,
 		MaxHeaderBytes:    32 << 10,
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}},
+		ErrorLog:          errorLog,
 	}
 	server.tlsConfig = httpServer.TLSConfig
 	fmt.Fprintf(os.Stderr, "1loop server listening on https://%s\nCertificate SHA-256: %s\nWorkspace: %s\nCommands: pair <id> <code>, devices, revoke <number>, ssh\n", listener.Addr(), remoteapi.Fingerprint(certificate), root)
+	var plainServer *http.Server
+	if plain != nil {
+		plainServer = &http.Server{
+			Handler:           server.handler,
+			ReadHeaderTimeout: httpServer.ReadHeaderTimeout,
+			IdleTimeout:       httpServer.IdleTimeout,
+			MaxHeaderBytes:    httpServer.MaxHeaderBytes,
+			ErrorLog:          errorLog,
+		}
+		server.proxied = true
+		fmt.Fprintf(os.Stderr, "Plain HTTP for a reverse proxy on http://%s: open the proxy's https:// address, not this one\n", plain.Addr())
+		go func() {
+			if err := plainServer.Serve(plain); err != nil && err != http.ErrServerClosed {
+				log.Printf("Plain HTTP listener stopped: %v", err)
+			}
+		}()
+	}
 	if server.local {
 		if err := saveServerJSON(*localReady, map[string]any{
 			"port":        listener.Addr().(*net.TCPAddr).Port,
@@ -205,6 +237,9 @@ func Main() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if plainServer != nil {
+			plainServer.Shutdown(shutdown)
+		}
 		httpServer.Shutdown(shutdown)
 	}()
 	err = httpServer.Serve(tls.NewListener(listener, httpServer.TLSConfig))

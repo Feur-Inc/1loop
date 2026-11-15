@@ -131,7 +131,16 @@ func (server *headlessServer) offerSetupLocked() {
 		return
 	}
 	server.setup = core.Identifier()
-	fmt.Fprintf(os.Stderr, "\nNo device is paired yet. To pair the first one, open this link in a browser,\nwith this server's address in place of <server> (it works once):\n\n  https://<server>:%d/app/#setup=%s\n\n", server.setupPort, server.setup)
+	fmt.Fprint(os.Stderr, setupMessage(server.setupPort, server.setup, server.proxied))
+}
+
+// setupMessage is the setup link's announcement: behind a reverse proxy,
+// the link is the proxy's address, without the server's own port.
+func setupMessage(port int, secret string, proxied bool) string {
+	if proxied {
+		return fmt.Sprintf("\nNo device is paired yet. To pair the first one, open this link in a browser,\nwith your reverse proxy's address in place of <proxy> (it works once):\n\n  https://<proxy>/app/#setup=%s\n\nWithout the proxy: https://<server>:%d/app/#setup=%s\n\n", secret, port, secret)
+	}
+	return fmt.Sprintf("\nNo device is paired yet. To pair the first one, open this link in a browser,\nwith this server's address in place of <server> (it works once):\n\n  https://<server>:%d/app/#setup=%s\n\n", port, secret)
 }
 
 func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.Request) {

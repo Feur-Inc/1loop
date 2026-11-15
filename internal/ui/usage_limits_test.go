@@ -3,55 +3,65 @@
 package ui
 
 import (
+	"image"
+	"image/color"
 	"math"
 	"testing"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
 )
 
 // A dashed line keeps dashes of one length and gap, whatever its length:
 // a short forecast was 48 dashes squeezed into dots, a long line had long
-// ones (#445). Its count follows its length, and resizing changes it.
-func TestDashedLineFixedPattern(t *testing.T) {
-	visible := func(d *dashedLine) []*canvas.Line {
-		var out []*canvas.Line
-		for _, line := range d.lines {
-			if line.Visible() {
-				out = append(out, line)
-			}
-		}
-		return out
-	}
-	length := func(line *canvas.Line) float64 {
-		return math.Hypot(float64(line.Position2.X-line.Position1.X), float64(line.Position2.Y-line.Position1.Y))
-	}
-	d := newDashedLine(colText, 2)
+// ones (#445).
+func TestDashSpans(t *testing.T) {
 	for _, tc := range []struct {
-		to   fyne.Position
-		want int
-	}{
-		{fyne.NewPos(90, 0), 10},  // 90 px: 10 dashes of 5, 4 apart
-		{fyne.NewPos(30, 40), 6},  // 50 px on a slope: 6 (the last one cut at the end)
-		{fyne.NewPos(450, 0), 50}, // longer: more dashes, the same size
-		{fyne.NewPos(18, 0), 2},   // the legend key
-		{fyne.NewPos(0.5, 0), 0},
-	} {
-		d.layout(fyne.NewPos(0, 0), tc.to)
-		lines := visible(d)
-		if len(lines) != tc.want {
-			t.Errorf("to %v: %d dashes, want %d", tc.to, len(lines), tc.want)
+		length float32
+		want   int
+	}{{100, 10}, {50, 5}, {500, 50}, {18, 2}, {0.5, 0}, {10.5, 1}} {
+		spans := dashSpans(tc.length)
+		if len(spans) != tc.want {
+			t.Errorf("%v px: %d dashes, want %d", tc.length, len(spans), tc.want)
 		}
-		for i, line := range lines {
-			if got := length(line); got > dashLength+0.01 || got < 1 {
-				t.Errorf("to %v: dash %d is %.2f px", tc.to, i, got)
+		for i, span := range spans {
+			if span[1]-span[0] > dashLength || span[1]-span[0] < 1 || span[1] > tc.length {
+				t.Errorf("%v px: dash %d is %v", tc.length, i, span)
 			}
-			if i > 0 {
-				step := math.Hypot(float64(line.Position1.X-lines[i-1].Position1.X), float64(line.Position1.Y-lines[i-1].Position1.Y))
-				if math.Abs(step-(dashLength+dashGap)) > 0.01 {
-					t.Errorf("to %v: dash %d starts %.2f px after the one before", tc.to, i, step)
+			if i > 0 && span[0]-spans[i-1][0] != dashLength+dashGap {
+				t.Errorf("%v px: dash %d starts %v after the one before", tc.length, i, span[0]-spans[i-1][0])
+			}
+		}
+	}
+}
+
+// A steep dashed line is drawn straight: every pixel it paints lies on the
+// line, within its width (Fyne's lines, rounded to the pixel at both ends,
+// made its short dashes zigzag), and its gaps are left empty.
+func TestSteepDashedStrokeIsStraight(t *testing.T) {
+	for _, scale := range []float32{1, 1.5, 2} {
+		img := image.NewNRGBA(image.Rect(0, 0, int(60*scale), int(240*scale)))
+		from, to := fyne.NewPos(8, 6), fyne.NewPos(41, 230) // as steep as "To last" before the reset
+		paintStrokes(img, []stroke{{from: from, to: to, ink: color.White, width: 2, dashed: true}}, scale)
+		dx, dy := float64(to.X-from.X), float64(to.Y-from.Y)
+		length := math.Hypot(dx, dy)
+		painted, empty := 0, 0
+		for y := 0; y < img.Bounds().Dy(); y++ {
+			for x := 0; x < img.Bounds().Dx(); x++ {
+				px, py := (float64(x)+0.5)/float64(scale)-float64(from.X), (float64(y)+0.5)/float64(scale)-float64(from.Y)
+				distance := math.Abs(px*dy-py*dx) / length
+				along := (px*dx + py*dy) / length
+				if img.NRGBAAt(x, y).A > 128 {
+					painted++
+					if distance > 1+0.75/float64(scale) {
+						t.Fatalf("scale %v: pixel %d,%d is %.2f px off the line", scale, x, y, distance)
+					}
+				} else if distance < 0.4 && along > 1 && along < length-1 && math.Mod(along, dashLength+dashGap) < dashLength-1 {
+					empty++
 				}
 			}
+		}
+		if painted == 0 || empty > 0 {
+			t.Fatalf("scale %v: %d pixels painted, %d holes inside dashes", scale, painted, empty)
 		}
 	}
 }

@@ -285,7 +285,11 @@ func walkString(faces shaping.Fontmap, s string, textSize fixed.Int26_6, style f
 		inEnd := in.RunEnd
 
 		pending := false
-		for i, r := range in.Text[in.RunStart:in.RunEnd] {
+		// i is an index in the whole text: the segment (a run of one font,
+		// an emoji between words for one) may not start at its beginning.
+		start := in.RunStart
+		for n, r := range in.Text[start:inEnd] {
+			i := start + n
 			if r == '\t' {
 				if pending {
 					in.RunEnd = i

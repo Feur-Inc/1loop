@@ -224,7 +224,10 @@ const (
 	paceAxis   = 40 // the percents' column
 	paceBottom = 22 // the days' row
 	paceTop    = 18 // room for "Now"
-	paceDashes = 48 // dashes in a dashed line, whatever its length
+	// A dashed line is dashes of the same length and gaps, in pixels,
+	// however long it is (#445): as many as fit, as in its legend key.
+	dashLength = 5
+	dashGap    = 4
 )
 
 type paceRenderer struct {
@@ -233,10 +236,10 @@ type paceRenderer struct {
 	percents []*canvas.Text
 	days     []*canvas.Text
 	dayAt    []time.Time
-	even     []*canvas.Line
+	even     *dashedLine
 	recorded []*canvas.Line
-	forecast []*canvas.Line
-	plan     []*canvas.Line
+	forecast *dashedLine
+	plan     *dashedLine
 	nowLine  *canvas.Line
 	nowText  *canvas.Text
 	dot      *canvas.Circle
@@ -244,13 +247,46 @@ type paceRenderer struct {
 	objects  []fyne.CanvasObject
 }
 
-func dashes(ink color.Color, width float32) []*canvas.Line {
-	lines := make([]*canvas.Line, paceDashes)
-	for i := range lines {
-		lines[i] = canvas.NewLine(ink)
-		lines[i].StrokeWidth = width
+// dashedLine is a dashed line between two points: dashLength long dashes,
+// dashGap apart, as many as its length holds. Its lines are made as it
+// grows and hidden when it shrinks.
+type dashedLine struct {
+	ink   color.Color
+	width float32
+	lines []*canvas.Line
+}
+
+func newDashedLine(ink color.Color, width float32) *dashedLine {
+	return &dashedLine{ink: ink, width: width}
+}
+
+// layout places its dashes from from to to, and says whether it made new
+// lines, which the renderer must then list.
+func (d *dashedLine) layout(from, to fyne.Position) (grew bool) {
+	dx, dy := to.X-from.X, to.Y-from.Y
+	length := float32(math.Hypot(float64(dx), float64(dy)))
+	count := 0
+	if length >= 1 {
+		count = int(math.Ceil(float64(length / (dashLength + dashGap))))
 	}
-	return lines
+	for len(d.lines) < count {
+		line := canvas.NewLine(d.ink)
+		line.StrokeWidth = d.width
+		d.lines = append(d.lines, line)
+		grew = true
+	}
+	for i, line := range d.lines {
+		a := float32(i) * (dashLength + dashGap)
+		b := min(a+dashLength, length)
+		if i >= count || b-a < 1 { // past the end, or a last speck
+			line.Hide()
+			continue
+		}
+		line.Show()
+		line.Position1 = fyne.NewPos(from.X+dx*a/length, from.Y+dy*a/length)
+		line.Position2 = fyne.NewPos(from.X+dx*b/length, from.Y+dy*b/length)
+	}
+	return grew
 }
 
 func (chart *paceChart) CreateRenderer() fyne.WidgetRenderer {
@@ -273,14 +309,14 @@ func (chart *paceChart) CreateRenderer() fyne.WidgetRenderer {
 		text.Alignment = fyne.TextAlignCenter
 		r.days, r.dayAt = append(r.days, text), append(r.dayAt, day)
 	}
-	r.even = dashes(colFaint, 1.5)
+	r.even = newDashedLine(colFaint, 1.5)
 	for range max(0, len(limit.Points)-1) {
 		line := canvas.NewLine(statusInk(limit.Status))
 		line.StrokeWidth = 2.5
 		r.recorded = append(r.recorded, line)
 	}
-	r.forecast = dashes(statusInk(limit.Status), 2)
-	r.plan = dashes(colText, 1.5)
+	r.forecast = newDashedLine(statusInk(limit.Status), 2)
+	r.plan = newDashedLine(colText, 1.5)
 	r.nowLine = canvas.NewLine(colBorder)
 	r.nowLine.StrokeWidth = 1
 	r.nowText = textLine("Now", 11, colMuted)
@@ -288,6 +324,14 @@ func (chart *paceChart) CreateRenderer() fyne.WidgetRenderer {
 	r.dot = canvas.NewCircle(statusInk(limit.Status))
 	r.legend = container.NewHBox(legendKey("Recorded", statusInk(limit.Status), false), spacer(10, 0),
 		legendKey("Forecast", statusInk(limit.Status), true), spacer(10, 0), legendKey("To last", colText, true), spacer(10, 0), legendKey("Even pace", colFaint, true))
+	r.collect()
+	return r
+}
+
+// collect lists what the chart draws, back to front; again once a dashed
+// line has made more dashes.
+func (r *paceRenderer) collect() {
+	r.objects = nil // a new list: the old one may still be walked
 	for _, line := range r.grid {
 		r.objects = append(r.objects, line)
 	}
@@ -298,29 +342,27 @@ func (chart *paceChart) CreateRenderer() fyne.WidgetRenderer {
 		r.objects = append(r.objects, text)
 	}
 	r.objects = append(r.objects, r.nowLine, r.nowText)
-	for _, group := range [][]*canvas.Line{r.even, r.plan, r.forecast, r.recorded} {
+	for _, group := range [][]*canvas.Line{r.even.lines, r.plan.lines, r.forecast.lines, r.recorded} {
 		for _, line := range group {
 			r.objects = append(r.objects, line)
 		}
 	}
 	r.objects = append(r.objects, r.dot, r.legend)
-	return r
 }
 
 // legendKey is a short line in a colour, solid or dashed, and its name.
 func legendKey(name string, ink color.Color, dashed bool) fyne.CanvasObject {
 	mark := container.NewWithoutLayout()
-	for i := 0; i < 3; i++ {
-		if dashed && i == 1 {
-			continue
+	if dashed { // the chart's dashes (dashedLine)
+		key := newDashedLine(ink, 2)
+		key.layout(fyne.NewPos(0, 8), fyne.NewPos(18, 8))
+		for _, segment := range key.lines {
+			mark.Add(segment)
 		}
+	} else {
 		segment := canvas.NewLine(ink)
 		segment.StrokeWidth = 2
-		segment.Position1 = fyne.NewPos(float32(i)*6, 8)
-		segment.Position2 = fyne.NewPos(float32(i)*6+6, 8)
-		if dashed {
-			segment.Position2 = fyne.NewPos(float32(i)*6+4, 8)
-		}
+		segment.Position1, segment.Position2 = fyne.NewPos(0, 8), fyne.NewPos(18, 8)
 		mark.Add(segment)
 	}
 	return container.NewHBox(container.NewGridWrap(fyne.NewSize(18, 16), mark), container.NewCenter(textLine(name, 12, colMuted)))
@@ -356,14 +398,7 @@ func (r *paceRenderer) Layout(size fyne.Size) {
 		text.Resize(fyne.NewSize(40, 14))
 		text.Move(fyne.NewPos(x(r.dayAt[i])-20, top+plot.Height+6))
 	}
-	dashed := func(lines []*canvas.Line, from, to fyne.Position) {
-		for i, line := range lines {
-			a, b := float32(i)/paceDashes, (float32(i)+0.55)/paceDashes
-			line.Position1 = fyne.NewPos(from.X+(to.X-from.X)*a, from.Y+(to.Y-from.Y)*a)
-			line.Position2 = fyne.NewPos(from.X+(to.X-from.X)*b, from.Y+(to.Y-from.Y)*b)
-		}
-	}
-	dashed(r.even, fyne.NewPos(x(start), y(100)), fyne.NewPos(x(limit.Reset), y(0)))
+	grew := r.even.layout(fyne.NewPos(x(start), y(100)), fyne.NewPos(x(limit.Reset), y(0)))
 	for i, line := range r.recorded {
 		a, b := limit.Points[i], limit.Points[i+1]
 		line.Position1, line.Position2 = fyne.NewPos(x(a.Time), y(a.Left)), fyne.NewPos(x(b.Time), y(b.Left))
@@ -373,8 +408,11 @@ func (r *paceRenderer) Layout(size fyne.Size) {
 	if !limit.EmptyAt.IsZero() {
 		end = fyne.NewPos(x(limit.EmptyAt), y(0))
 	}
-	dashed(r.forecast, from, end)
-	dashed(r.plan, from, fyne.NewPos(x(limit.Reset), y(0))) // the even pace from now that lasts exactly
+	grew = r.forecast.layout(from, end) || grew
+	grew = r.plan.layout(from, fyne.NewPos(x(limit.Reset), y(0))) || grew // the even pace from now that lasts exactly
+	if grew {
+		r.collect()
+	}
 	now := x(r.chart.now)
 	r.nowLine.Position1, r.nowLine.Position2 = fyne.NewPos(now, top-4), fyne.NewPos(now, top+plot.Height)
 	r.nowText.Move(fyne.NewPos(now-r.nowText.MinSize().Width/2, top-paceTop))

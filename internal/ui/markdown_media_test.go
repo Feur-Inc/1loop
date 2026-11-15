@@ -9,6 +9,7 @@ import (
 	"image/png"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -236,9 +237,11 @@ func TestFetchRemoteImage(t *testing.T) {
 		}
 	}))
 	defer server.Close()
-	saved := imageClient.Transport
-	imageClient.Transport = server.Client().Transport
-	defer func() { imageClient.Transport = saved }()
+	saved, savedRedirect := imageClient.Transport, imageClient.CheckRedirect
+	// The local server is not GitHub's: TestOnlyGitHubImagesLoad checks
+	// the hosts.
+	imageClient.Transport, imageClient.CheckRedirect = server.Client().Transport, nil
+	defer func() { imageClient.Transport, imageClient.CheckRedirect = saved, savedRedirect }()
 
 	img, err := fetchRemoteImage(context.Background(), server.URL+"/user-attachments/assets/a")
 	if err != nil {
@@ -326,7 +329,7 @@ func TestRemoteImageCacheMemory(t *testing.T) {
 	withFetch(t, func(context.Context, string) (image.Image, error) { return big, nil })
 	shown := 0
 	for i := 0; i < 12; i++ {
-		loadRemoteImage(fmt.Sprintf("https://example.com/%d.png", i), func(image.Image) { shown++ })
+		loadRemoteImage(fmt.Sprintf("https://raw.githubusercontent.com/o/r/main/%d.png", i), func(image.Image) { shown++ })
 		want := i + 1
 		waitFor(t, "the picture", func() bool { return shown == want })
 	}
@@ -340,7 +343,30 @@ func TestRemoteImageCacheMemory(t *testing.T) {
 	if kept > remoteImageMemory || len(cache.done) != len(cache.order) {
 		t.Fatalf("%d pictures, %d bytes kept: more than %d", len(cache.order), kept, remoteImageMemory)
 	}
-	if cache.done["https://example.com/11.png"] == nil {
+	if cache.done["https://raw.githubusercontent.com/o/r/main/11.png"] == nil {
 		t.Fatal("the newest picture was dropped")
+	}
+}
+
+// Only GitHub's own hosts are read: an image from another site stays its
+// link, so that site never learns who reads the issue.
+func TestOnlyGitHubImagesLoad(t *testing.T) {
+	asked := 0
+	withFetch(t, func(context.Context, string) (image.Image, error) {
+		asked++
+		return image.NewNRGBA(image.Rect(0, 0, 2, 2)), nil
+	})
+	for _, address := range []string{"https://tracker.example/pixel.png", "http://github.com/a.png", "https://github.com:8443/a.png", "https://evil.com/github.com/a.png", "https://githubusercontent.com.evil.com/a.png"} {
+		loadRemoteImage(address, func(image.Image) { t.Errorf("%s was loaded", address) })
+	}
+	pump()
+	if asked != 0 {
+		t.Fatalf("%d other sites' images fetched", asked)
+	}
+	for _, address := range []string{shot, "https://raw.githubusercontent.com/o/r/main/a.png", "https://private-user-images.githubusercontent.com/1/a.png", "https://camo.githubusercontent.com/abc"} {
+		parsed, _ := url.Parse(address)
+		if !githubHosted(parsed) {
+			t.Errorf("%s is GitHub's", address)
+		}
 	}
 }

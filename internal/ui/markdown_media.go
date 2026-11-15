@@ -363,8 +363,8 @@ var remoteImages = struct {
 // has loaded: at once when it already has. It is never called when the
 // picture cannot load (the alt text stays).
 func loadRemoteImage(address string, show func(image.Image)) {
-	if parsed, err := url.Parse(address); err != nil || parsed.Scheme != "https" || parsed.Host == "" {
-		return // http, data: and relative addresses stay links
+	if parsed, err := url.Parse(address); err != nil || !githubHosted(parsed) {
+		return // other sites, http, data: and relative addresses stay links
 	}
 	cache := &remoteImages
 	cache.Lock()
@@ -424,15 +424,30 @@ func pictureBytes(img image.Image) int {
 	return img.Bounds().Dx() * img.Bounds().Dy() * 4
 }
 
+// githubHosted says GitHub serves address: github.com, its
+// githubusercontent.com hosts (attachments, raw files, its image proxy) and
+// the storage its attachments redirect to. Only these load: an image from
+// any other site would tell that site, chosen by whoever wrote the issue,
+// who reads it and from where. github.com itself shows other sites' images
+// through its proxy, which the API's Markdown does not name.
+func githubHosted(address *url.URL) bool {
+	if address.Scheme != "https" || address.User != nil || address.Port() != "" {
+		return false
+	}
+	host := strings.ToLower(address.Hostname())
+	return host == "github.com" || strings.HasSuffix(host, ".githubusercontent.com") ||
+		strings.HasPrefix(host, "github-production-") && strings.HasSuffix(host, ".s3.amazonaws.com")
+}
+
 // imageClient follows redirects, as a browser does (GitHub's attachments
-// answer with one to a signed address), but only to https.
+// answer with one to a signed address), but only within GitHub.
 var imageClient = &http.Client{
 	CheckRedirect: func(request *http.Request, via []*http.Request) error {
 		if len(via) >= 10 {
 			return errors.New("too many redirects")
 		}
-		if request.URL.Scheme != "https" {
-			return errors.New("redirected away from https")
+		if !githubHosted(request.URL) {
+			return errors.New("redirected away from GitHub")
 		}
 		return nil
 	},

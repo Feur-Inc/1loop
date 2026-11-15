@@ -259,6 +259,7 @@ type remoteDesktop struct {
 	tier             string // and its speed
 	approvalMode     string
 	autoMode         bool
+	namingModel      *agent.NamingModel       // the server's chat naming model
 	convs            map[string]*conversation // the server's chats as this window shows them
 	fileAttachments  []agent.FileAttachment
 	update           *update.Status // the server runs an older version (remote_desktop_update.go)
@@ -711,6 +712,7 @@ func (remote *remoteDesktop) refreshLoop() {
 				Model, Effort, ApprovalMode string
 				Tier                        string
 				AutoMode                    bool // the server's model has an Auto mode
+				NamingModel                 *agent.NamingModel
 			}
 		}
 		err := remote.client.json(ctx, "GET", "/api/state", nil, &state)
@@ -754,6 +756,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			remote.accounts, remote.defaultPresets = state.Settings.Accounts, state.Settings.DefaultPresets
 			remote.model, remote.effort, remote.tier = state.Settings.Model, state.Settings.Effort, state.Settings.Tier
 			remote.approvalMode, remote.autoMode = state.Settings.ApprovalMode, state.Settings.AutoMode
+			remote.namingModel = state.Settings.NamingModel
 			remote.parent.updateApprovalControl()
 			if id == "" {
 				remote.parent.model.row.SetText(remote.modelText(remote.model, remote.effort))

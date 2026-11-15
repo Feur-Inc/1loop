@@ -676,10 +676,7 @@ func (server *remoteServer) renameChat(writer http.ResponseWriter, req *http.Req
 			return
 		}
 		found = true
-		chat.Title = title
-		server.ui.save()
-		server.ui.updateHeader()
-		server.ui.renderChats()
+		server.ui.setChatTitle(chat, title)
 	})
 	if !found {
 		core.Fail(writer, http.StatusNotFound, "This chat no longer exists")

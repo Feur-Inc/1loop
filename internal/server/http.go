@@ -111,6 +111,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/wrap-up":                            server.setWrapUp,
 		"POST /api/model":                              server.setModel,
 		"POST /api/auto-resume":                        server.setAutoResume,
+		"POST /api/naming-model":                       server.setNamingModel,
 		"POST /api/model/compaction":                   server.setModelCompaction,
 		"POST /api/model/defaults":                     server.setDefaultModels,
 		"POST /api/approval-mode":                      server.setApprovalMode,
@@ -289,12 +290,10 @@ func (server *headlessServer) renameChat(w http.ResponseWriter, r *http.Request)
 		core.Fail(w, 404, "Chat not found")
 		return
 	}
-	chat.Title = title
-	if err := server.saveLocked(); err != nil {
+	if err := server.setTitleLocked(chat, title); err != nil {
 		core.Fail(w, 500, err.Error())
 		return
 	}
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
 	core.WriteJSON(w, 200, map[string]any{"ok": true, "title": title})
 }
 
@@ -558,6 +557,7 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		delete(server.panelHomes, "home:"+workspace)
 		chat.ID, chat.Title, chat.Config = core.Identifier()[:16], string(title), cfg
 		server.chats = append([]*serverChat{chat}, server.chats...)
+		server.nameNewChatLocked(chat, m)
 	}
 
 	if chat.handoff == nil && chat.run == nil {

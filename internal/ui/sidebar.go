@@ -459,12 +459,7 @@ func (ui *desktopUI) renameChat(chat *conversation) {
 	entry.SetText(chat.Title)
 	var dialog *sheet
 	apply := func() {
-		if title := remoteapi.CleanChatTitle(entry.Text); title != "" {
-			chat.Title = title
-			ui.save()
-			ui.updateHeader()
-			ui.renderChats()
-		}
+		ui.setChatTitle(chat, entry.Text)
 		dialog.Hide()
 	}
 	entry.OnSubmitted = func(string) { apply() }
@@ -472,6 +467,20 @@ func (ui *desktopUI) renameChat(chat *conversation) {
 	row := newRow("Rename", nil, stylePrimary, apply)
 	dialog = ui.modal("Rename chat", entry, 420, nil, cancel, row)
 	ui.window.Canvas().Focus(entry)
+}
+
+// setChatTitle gives chat a title (Rename, the phone, the agent's chats
+// tool or the naming model), saved and shown in every window and on the
+// paired phones. A blank title changes nothing; it returns the title kept.
+func (ui *desktopUI) setChatTitle(chat *conversation, title string) string {
+	if title = remoteapi.CleanChatTitle(title); title == "" {
+		return ""
+	}
+	chat.Title = title
+	ui.save()
+	ui.updateHeader()
+	ui.renderChats()
+	return title
 }
 
 func (ui *desktopUI) deleteChat(chat *conversation) {

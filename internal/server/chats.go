@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 
 	"1loop/internal/agent"
+	"1loop/internal/core"
 )
 
 // relationLocked is how chat stands to other: parent, subchat or "".
@@ -38,7 +39,7 @@ func (server *headlessServer) chatInfoLocked(chat, other *serverChat) agent.Chat
 	}
 	return agent.ChatInfo{ID: other.ID, Title: agent.SubchatTitle(other.Title), Project: project,
 		Machine: server.machineLabelLocked(other.Config.MachineID), State: agent.ChatState(other.run != nil, waiting),
-		Relation: relationLocked(chat, other)}
+		Relation: relationLocked(chat, other), Provider: other.Config.Provider}
 }
 
 // findLocked is the chat id that chat's tool names ("parent": its parent).
@@ -87,16 +88,43 @@ func (server *headlessServer) chatAccess(chat *serverChat) *agent.ChatAccess {
 			}
 			return list
 		},
-		Send: func(_ context.Context, id, text string) error {
+		Send: func(ctx context.Context, id, text string, attachments agent.ChatAttachments) error {
+			var files []agent.FileAttachment
+			if len(attachments.Files) > 0 { // copied into its workspace first, outside the lock
+				server.mu.Lock()
+				other, err := server.findLocked(chat, id)
+				var workspace string
+				var machine agent.Machine
+				if err == nil {
+					workspace, machine = other.Config.Workspace, server.attachmentMachineLocked(other.Config.MachineID)
+				}
+				server.mu.Unlock()
+				if err != nil {
+					return err
+				}
+				if files, err = agent.DeliverFiles(ctx, machine, workspace, attachments.Files); err != nil {
+					return err
+				}
+			}
 			server.mu.Lock()
 			defer server.mu.Unlock()
-			return server.sendLocked(chat, id, text)
+			return server.sendLocked(chat, id, text, attachments.Images, files)
 		},
 	}
 }
 
-// sendLocked delivers text from chat's agent to the chat id.
-func (server *headlessServer) sendLocked(chat *serverChat, id, text string) error {
+// attachmentMachineLocked is the SSH machine of an ID files are copied
+// to, nil for the server's own computer.
+func (server *headlessServer) attachmentMachineLocked(id string) agent.Machine {
+	if machine := server.machineLocked(id); machine != nil {
+		return machine
+	}
+	return nil
+}
+
+// sendLocked delivers text, and the pictures and files (already in its
+// workspace) attached to it, from chat's agent to the chat id.
+func (server *headlessServer) sendLocked(chat *serverChat, id, text string, images []core.ImagePart, files []agent.FileAttachment) error {
 	other, err := server.findLocked(chat, id)
 	if err != nil {
 		return err
@@ -106,7 +134,7 @@ func (server *headlessServer) sendLocked(chat *serverChat, id, text string) erro
 		return agent.TooManyHops(hops)
 	}
 	sender := agent.ChatSender{ID: chat.ID, Title: agent.SubchatTitle(chat.Title), Hops: hops}
-	server.wakeLocked(other, agent.ChatMessage(sender, relationLocked(other, chat), text))
+	server.wakeLocked(other, agent.ChatMessage(sender, relationLocked(other, chat), text, images, files))
 	return nil
 }
 

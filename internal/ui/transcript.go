@@ -372,14 +372,8 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		view := &userImageView{pictures: container.New(layout.NewCustomPaddedHBoxLayout(6))}
 		ui.setUserImages(view, item.Images)
 		content := container.NewVBox(view.pictures)
-		var files []fyne.CanvasObject
-		for _, file := range item.Files {
-			if !file.Image { // a picture already shows above
-				files = append(files, surface(textLine(fitText(file.Name, 12.5, fyne.TextStyle{}, 220), 12.5, colText), colCode, colBorderSoft, 8, 6))
-			}
-		}
-		if len(files) > 0 {
-			content.Add(container.New(layout.NewCustomPaddedHBoxLayout(6), files...))
+		if chips := fileChips(item.Files); chips != nil {
+			content.Add(chips)
 		}
 		var text *flowText
 		if item.Text != "" {

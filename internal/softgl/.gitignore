@@ -1,2 +1,2 @@
-# Mesa, gzipped, written by packaging/windows/build.sh for the release.
-*.gz
+# Mesa, xz-compressed, written by go generate ./internal/softgl (fetch/).
+*.xz

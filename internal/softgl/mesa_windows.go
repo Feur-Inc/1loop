@@ -1,17 +1,20 @@
 // SPDX-License-Identifier: MPL-2.0
 
-//go:build windows && mesa
+//go:build windows
 
 package softgl
 
-import _ "embed"
+import "embed"
 
-// Written by packaging/windows/build.sh from the release's Mesa archive.
+// Written by go generate (fetch/), from the pinned Mesa archive: a build
+// for Windows without them stops here, saying the pattern matches no file.
 var (
-	//go:embed opengl32.dll.gz
+	//go:embed opengl32.dll.xz
 	openGL []byte
-	//go:embed libgallium_wgl.dll.gz
+	//go:embed libgallium_wgl.dll.xz
 	gallium []byte
+	//go:embed licenses
+	licenses embed.FS
 )
 
 func files() map[string][]byte {

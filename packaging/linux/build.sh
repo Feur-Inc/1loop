@@ -106,7 +106,7 @@ Installed-Size: $(du -sk --exclude=DEBIAN "$root" | cut -f1)
 Section: devel
 Priority: optional
 Homepage: https://github.com/Feur-Inc/1loop
-Depends: libc6 (>= $(glibc deb)), libgl1, libx11-6, libxrandr2, libxxf86vm1, libxi6, libxcursor1, libxinerama1, libwayland-client0, libwayland-cursor0, libwayland-egl1, libxkbcommon0
+Depends: libc6 (>= $(glibc deb)), libgl1, libgl1-mesa-dri, libglx-mesa0, libegl-mesa0, libx11-6, libxrandr2, libxxf86vm1, libxi6, libxcursor1, libxinerama1, libwayland-client0, libwayland-cursor0, libwayland-egl1, libxkbcommon0
 Recommends: git, chromium | google-chrome-stable | chromium-browser
 Suggests: python3, python3-gi, python3-dbus, python3-pil, gir1.2-gtk-3.0, gir1.2-gstreamer-1.0, gir1.2-gst-plugins-base-1.0, gstreamer1.0-pipewire, texlive-latex-base, dvipng
 Description: Coding agent for your project, with your model

@@ -333,10 +333,11 @@ func newVideoCard(address string) fyne.CanvasObject {
 // Loading.
 
 const (
-	remoteImageLimit   = 64       // pictures kept for the next preview
-	remoteImageBytes   = 25 << 20 // the largest file read
-	remoteImageSide    = 2400     // the longest side a picture is kept at
-	remoteImageLoaders = 4        // pictures downloaded at once
+	remoteImageLimit   = 64        // pictures kept for the next preview
+	remoteImageMemory  = 128 << 20 // at most this much of them decoded, the newest always kept
+	remoteImageBytes   = 25 << 20  // the largest file read
+	remoteImageSide    = 2400      // the longest side a picture is kept at
+	remoteImageLoaders = 4         // pictures downloaded at once
 )
 
 // remoteImages holds the pictures loaded, and the ones loading with who
@@ -391,7 +392,13 @@ func loadRemoteImage(address string, show func(image.Image)) {
 		if err == nil {
 			cache.done[address] = img
 			cache.order = append(cache.order, address)
-			for len(cache.order) > remoteImageLimit {
+			// 64 screenshots of 2400 px would hold more than a gigabyte.
+			kept := 0
+			for _, address := range cache.order {
+				kept += pictureBytes(cache.done[address])
+			}
+			for len(cache.order) > 1 && (len(cache.order) > remoteImageLimit || kept > remoteImageMemory) {
+				kept -= pictureBytes(cache.done[cache.order[0]])
 				delete(cache.done, cache.order[0])
 				cache.order = cache.order[1:]
 			}
@@ -407,6 +414,14 @@ func loadRemoteImage(address string, show func(image.Image)) {
 			}
 		})
 	}()
+}
+
+// pictureBytes is about what a decoded picture holds in memory.
+func pictureBytes(img image.Image) int {
+	if img == nil {
+		return 0
+	}
+	return img.Bounds().Dx() * img.Bounds().Dy() * 4
 }
 
 // imageClient follows redirects, as a browser does (GitHub's attachments

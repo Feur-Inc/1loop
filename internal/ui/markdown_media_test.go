@@ -4,6 +4,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"image"
 	"image/png"
 	"net/http"
@@ -315,5 +316,31 @@ func TestTableImages(t *testing.T) {
 	}
 	if got := picture[0].Size(); got.Width <= 100 || got.Height != got.Width/2 {
 		t.Errorf("picture laid out at %v", got)
+	}
+}
+
+// The cache keeps at most remoteImageMemory of decoded pictures, the newest
+// always: big screenshots must not pile up in memory.
+func TestRemoteImageCacheMemory(t *testing.T) {
+	big := image.NewNRGBA(image.Rect(0, 0, 2400, 2400)) // 23 MB decoded
+	withFetch(t, func(context.Context, string) (image.Image, error) { return big, nil })
+	shown := 0
+	for i := 0; i < 12; i++ {
+		loadRemoteImage(fmt.Sprintf("https://example.com/%d.png", i), func(image.Image) { shown++ })
+		want := i + 1
+		waitFor(t, "the picture", func() bool { return shown == want })
+	}
+	cache := &remoteImages
+	cache.Lock()
+	defer cache.Unlock()
+	kept := 0
+	for _, address := range cache.order {
+		kept += pictureBytes(cache.done[address])
+	}
+	if kept > remoteImageMemory || len(cache.done) != len(cache.order) {
+		t.Fatalf("%d pictures, %d bytes kept: more than %d", len(cache.order), kept, remoteImageMemory)
+	}
+	if cache.done["https://example.com/11.png"] == nil {
+		t.Fatal("the newest picture was dropped")
 	}
 }

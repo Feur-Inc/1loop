@@ -23,6 +23,10 @@ untouched upstream copy, so `git diff` against it shows every change.
   a data device of its own: with that second device, GNOME (Mutter) most
   often left GLFW's without the selection, so text could not be pasted. `glfwGetClipboardString` returns no
   text for a selection that is only an image.
+- `build.go` (#412): Windows no longer links `opengl32.dll` (`-lopengl32`):
+  GLFW already loads it by name when it starts WGL (`wgl_context.c`), and
+  then gets the one 1loop loaded, Mesa's on a PC without an OpenGL driver
+  (internal/softgl).
 - `glfw_tree_rebuild.go`: `upstreamTreeSHA` is the git tree of `glfw/` after
   the change above, so that a build cache made before it compiles the C
   sources again (Go does not hash them).

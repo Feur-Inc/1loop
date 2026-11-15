@@ -18,8 +18,7 @@ package gl
 
 // #cgo !gles2,darwin        LDFLAGS: -framework OpenGL
 // #cgo gles2,darwin         LDFLAGS: -framework OpenGLES
-// #cgo !gles2,windows       LDFLAGS: -lopengl32
-// #cgo gles2,windows        LDFLAGS: -lGLESv2
+// // #cgo gles2,windows        LDFLAGS: -lGLESv2
 // #cgo !egl,linux !egl,freebsd !egl,netbsd !egl,openbsd pkg-config: gl
 // #cgo egl,linux egl,freebsd egl,netbsd egl,openbsd    pkg-config: egl
 // #if defined(_WIN32) && !defined(APIENTRY) && !defined(__CYGWIN__) && !defined(__SCITECH_SNAP__)

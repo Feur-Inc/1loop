@@ -9,7 +9,6 @@ package glfw
 // Linker Options:
 #cgo windows LDFLAGS: -lgdi32
 
-#cgo !gles2,windows LDFLAGS: -lopengl32
 #cgo gles2,windows LDFLAGS: -lGLESv2
 
 // Darwin Build Tags

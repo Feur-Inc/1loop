@@ -17,7 +17,6 @@ package gl
 
 /*
 #cgo windows CFLAGS: -DTAG_WINDOWS
-#cgo !gles2,windows       LDFLAGS: -lopengl32
 #cgo gles2,windows        LDFLAGS: -lGLESv2
 #cgo darwin CFLAGS: -DTAG_DARWIN
 #cgo !gles2,darwin LDFLAGS: -framework OpenGL
@@ -40,16 +39,28 @@ package gl
 	#define WIN32_LEAN_AND_MEAN 1
 	#include <windows.h>
 	#include <stdlib.h>
+	// 1loop: opengl32.dll is not linked (no -lopengl32), so that 1loop can
+	// load Mesa's in its place, from any folder, before GLFW asks for it by
+	// name (internal/softgl). wglGetProcAddress comes from whichever
+	// opengl32.dll the process has loaded.
 	static HMODULE ogl32dll = NULL;
+	typedef PROC (WINAPI *glowWglGetProcAddress)(LPCSTR);
+	static glowWglGetProcAddress glowWglGet = NULL;
 	static void* GlowGetProcAddress(const char* name) {
-		void* pf = wglGetProcAddress((LPCSTR) name);
-		if (pf) {
-			return pf;
-		}
 		if (ogl32dll == NULL) {
 			ogl32dll = LoadLibraryA("opengl32.dll");
+			if (ogl32dll == NULL) {
+				return NULL;
+			}
+			glowWglGet = (glowWglGetProcAddress) GetProcAddress(ogl32dll, "wglGetProcAddress");
 		}
-		return GetProcAddress(ogl32dll, (LPCSTR) name);
+		if (glowWglGet != NULL) {
+			void* pf = (void*) glowWglGet((LPCSTR) name);
+			if (pf) {
+				return pf;
+			}
+		}
+		return (void*) GetProcAddress(ogl32dll, (LPCSTR) name);
 	}
 #elif defined(TAG_DARWIN)
 	#include <stdlib.h>

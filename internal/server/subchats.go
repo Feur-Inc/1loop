@@ -152,6 +152,11 @@ func (server *headlessServer) subchatAccess(chat *serverChat) *agent.SubchatAcce
 	access.Start = func(ctx context.Context, request agent.SubchatRequest) (agent.SubchatInfo, error) {
 		return server.startSubchat(ctx, chat, request)
 	}
+	access.ForkSize = func(context.Context) int {
+		server.mu.Lock()
+		defer server.mu.Unlock()
+		return agent.ContextUsed(chat.History)
+	}
 	access.Model = func(_ context.Context, name string) (string, error) {
 		server.mu.Lock()
 		defer server.mu.Unlock()
@@ -182,6 +187,7 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 	var history []agent.Message
 	var items []agent.ChatItem
 	if request.Context == "fork" {
+		agent.ForkConfig(&cfg, parent.Config)
 		history = agent.ForkHistory(parent.History)
 		items = slices.Clone(parent.Items)
 	}

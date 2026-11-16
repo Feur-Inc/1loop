@@ -108,6 +108,10 @@ func (ui *desktopUI) subchatAccess(chat *conversation) *agent.SubchatAccess {
 	access.Start = func(ctx context.Context, request agent.SubchatRequest) (agent.SubchatInfo, error) {
 		return ui.startSubchat(ctx, chat, request)
 	}
+	access.ForkSize = func(ctx context.Context) (size int) {
+		ui.onUI(ctx, func() { size = agent.ContextUsed(chat.History) })
+		return size
+	}
 	access.Model = func(ctx context.Context, name string) (display string, err error) {
 		ui.onUI(ctx, func() {
 			var found agent.ModelChoice
@@ -144,6 +148,7 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 		cfg = agent.SubchatConfig(parent.Config, choice)
 		machine = ui.attachmentMachine(cfg.MachineID)
 		if request.Context == "fork" {
+			agent.ForkConfig(&cfg, parent.Config)
 			history = agent.ForkHistory(parent.History)
 			items = slices.Clone(parent.Items)
 		}

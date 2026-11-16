@@ -168,6 +168,8 @@ func (ui *desktopUI) settingsAccess() *agent.SettingsAccess {
 					value = onOff(!animationsOff)
 				case registry.KeyCrashReports:
 					value = onOff(!ui.crashReportsOff)
+				case registry.KeyNotifications:
+					value = onOff(!ui.notificationsOff)
 				case registry.KeyDynamicCompaction:
 					value = onOff(!ui.classicCompaction)
 				case registry.KeyAutoResume:
@@ -205,6 +207,8 @@ func (ui *desktopUI) settingsAccess() *agent.SettingsAccess {
 					ui.setAnimations(on)
 				case registry.KeyCrashReports:
 					ui.setCrashReports(on)
+				case registry.KeyNotifications:
+					ui.setNotifications(on)
 				case registry.KeyDynamicCompaction:
 					ui.setDynamicCompaction(on)
 				case registry.KeyAutoResume:

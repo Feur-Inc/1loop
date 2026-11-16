@@ -602,6 +602,10 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 				ui.save()
 			})))))
 	}
+	page.Add(sectionTitle("Notifications"))
+	page.Add(card(view.mark(registry.KeyNotifications, settingRow("Notifications",
+		"On: when a chat finishes or waits for you, a desktop notification, but only while 1loop is in the background (another window on top, minimised or hidden in the tray). None while the 1loop window has the focus: the sidebar already shows the chat's state. Clicking one opens its chat.",
+		newToggle(!ui.notificationsOff, ui.setNotifications)))))
 	page.Add(sectionTitle("Motion"))
 	page.Add(card(view.mark(registry.KeyAnimations, settingRow("Animations",
 		"Short animations as you click and hover, as menus and dialogs open, as messages arrive and the sidebar changes. Off, every change shows at once. They are off too while the system asks for reduced motion.",
@@ -630,6 +634,13 @@ func (ui *desktopUI) setDiscordPresence(on, details bool) {
 	ui.discordPresence, ui.discordDetails = on, details
 	platform.Devf("ui", "discord status %v, details %v", on, details)
 	ui.syncPresence()
+	ui.save()
+}
+
+// setNotifications turns the desktop notifications on or off.
+func (ui *desktopUI) setNotifications(on bool) {
+	ui.notificationsOff = !on
+	platform.Devf("ui", "notifications %v", on)
 	ui.save()
 }
 

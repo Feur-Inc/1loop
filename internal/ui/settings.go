@@ -510,7 +510,7 @@ func (switchControl *toggle) Tapped(*fyne.PointEvent) {
 
 func (switchControl *toggle) CreateRenderer() fyne.WidgetRenderer {
 	renderer := &toggleRenderer{toggle: switchControl, track: canvas.NewRectangle(colBorder), knob: canvas.NewCircle(colMuted)}
-	renderer.track.CornerRadius = 10
+	renderer.track.CornerRadius = rounded(10)
 	renderer.Refresh()
 	return renderer
 }

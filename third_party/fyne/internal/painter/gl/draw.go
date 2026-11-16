@@ -117,6 +117,8 @@ func (p *painter) drawObject(o fyne.CanvasObject, pos fyne.Position, frame fyne.
 		p.drawRaster(obj, pos, frame)
 	case *canvas.Rectangle:
 		p.drawRectangle(obj, pos, frame)
+	case *canvas.Shader:
+		p.drawUserShader(obj, pos, frame)
 	case *canvas.Text:
 		p.drawText(obj, pos, frame, clip)
 	case *canvas.LinearGradient:

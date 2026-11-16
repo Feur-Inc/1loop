@@ -217,7 +217,13 @@ func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size
 	toggle := objects[3].MinSize()
 	row := layoutSpec.toolPanel.header.MinSize().Height
 	objects[3].Resize(toggle)
-	objects[3].Move(fyne.NewPos(size.Width-12-toggle.Width, 8+(row-toggle.Height)/2))
+	// In a split window, folded, it sits under the last pane's header, not
+	// over its ✕ (#285); it rises to the panel's header as the panel opens.
+	drop := float32(0)
+	if ui.isSplit() {
+		drop = paneHeadHeight * (1 - fyne.Min(1, layoutSpec.toolPanel.shown))
+	}
+	objects[3].Move(fyne.NewPos(size.Width-12-toggle.Width, drop+8+(row-toggle.Height)/2))
 }
 
 type panelResizeHandle struct {

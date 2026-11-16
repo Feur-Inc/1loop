@@ -282,6 +282,9 @@ func (window *desktopUI) layoutPanes() {
 		window.chatArea.Objects = []fyne.CanvasObject{window.tree.object(window)}
 	}
 	window.chatArea.Refresh()
+	if window.split != nil {
+		relayout(window.split) // the panel toggle moves under a pane header, or back
+	}
 }
 
 // object is the node's widgets.

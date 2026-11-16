@@ -46,6 +46,9 @@ var (
 	// shaderBroken is the shader file that failed, with its error, until
 	// the folder changes.
 	shaderBroken, shaderError string
+	// shaderBehind is a shader drawn behind the window now: the footer
+	// lays no floor over it (glass.go).
+	shaderBehind bool
 )
 
 // shaderInUse is the shader the active theme draws, "" for none.
@@ -99,6 +102,12 @@ func (ui *desktopUI) syncBackdrop() {
 		return
 	}
 	file, on := shaderInUse(ui.theme.active())
+	if shaderBehind != on {
+		shaderBehind = on
+		if ui.conversation != nil {
+			ui.conversation.Refresh()
+		}
+	}
 	if !on {
 		if b.stop != nil {
 			close(b.stop)

@@ -31,6 +31,30 @@ import org.json.JSONObject
  */
 data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean, val scratch: Boolean = false, val parent: String = "", val status: String = "", val blocked: Boolean = false)
 
+/** The chats under the chat [id]: its subchats at every level, parents first (agent.SubchatSubtree). */
+fun chatSubtree(chats: List<ChatSummary>, id: String): List<String> {
+    val children = chats.filter { it.parent.isNotEmpty() && it.parent != it.id }.groupBy({ it.parent }, { it.id })
+    val seen = mutableSetOf(id)
+    val out = mutableListOf<String>()
+    val queue = ArrayDeque(listOf(id))
+    while (queue.isNotEmpty()) {
+        for (child in children[queue.removeFirst()].orEmpty().sorted()) {
+            if (seen.add(child)) {
+                out += child
+                queue += child
+            }
+        }
+    }
+    return out
+}
+
+/** What deleting a chat with [count] chats under it says about them (agent.SubtreeNote). */
+fun subtreeNote(count: Int) = when (count) {
+    0 -> ""
+    1 -> " Its subchat will be deleted with it."
+    else -> " Its $count subchats, at every level, will be deleted with it."
+}
+
 /** A subchat as its parent's meta lists it; state is working, waiting, done, failed or stopped. */
 data class Subchat(val id: String, val title: String, val state: String, val branch: String, val used: Int) {
     val active get() = state == "working" || state == "waiting"
@@ -1098,12 +1122,18 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         problem = null
         scope.launch {
             try {
-                onConnection(target, generation) { it.post("/api/chats/$id/delete", JSONObject()) }
+                val subtree = chatSubtree(chats, id)
+                val reply = onConnection(target, generation) { it.post("/api/chats/$id/delete", JSONObject()) }
                 if (generation != connectionGeneration) return@launch
-                chats.removeAll { it.id == id }
-                approvals.remove(id)
-                forgetQuestion(questions.remove(id))
-                if (current == id) open(null)
+                // The chat and its subchats at every level: the server says which went.
+                val gone = reply.optJSONArray("deleted")?.let { list -> (0 until list.length()).map { list.optString(it) } }
+                    ?.takeIf { it.isNotEmpty() } ?: (listOf(id) + subtree)
+                chats.removeAll { it.id in gone }
+                for (each in gone) {
+                    approvals.remove(each)
+                    forgetQuestion(questions.remove(each))
+                }
+                if (current in gone) open(null)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {

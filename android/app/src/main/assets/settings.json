@@ -405,6 +405,25 @@
       "where": "both"
     },
     {
+      "key": "models.naming_model",
+      "section": "models",
+      "title": "Chat naming model",
+      "description": "A model that names each new chat from the words of its first message, never its pictures or files. None: a chat is named after the start of its first message.",
+      "keywords": [
+        "name",
+        "naming",
+        "title",
+        "rename",
+        "auto name",
+        "auto title",
+        "summarize",
+        "summary",
+        "chat name"
+      ],
+      "kind": "action",
+      "where": "desktop"
+    },
+    {
       "key": "agent.approval_mode",
       "section": "agent",
       "title": "Tool permissions",

@@ -238,6 +238,16 @@ func attachmentAddress(address *url.URL) (ok, signed bool) {
 	return false, false
 }
 
+// IsAttachment says Download reads address: a file attached on GitHub.
+func IsAttachment(address string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(address))
+	if err != nil {
+		return false
+	}
+	ok, _ := attachmentAddress(parsed)
+	return ok
+}
+
 // storageAddress is where github.com redirects an attachment: GitHub's own
 // storage, reached without a credential.
 func storageAddress(address *url.URL) bool {

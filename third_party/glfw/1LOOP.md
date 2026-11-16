@@ -28,6 +28,10 @@ untouched upstream copy, so `git diff` against it shows every change.
   before the first commit (GLFW 3.4 has `GLFW_WAYLAND_APP_ID` for this).
   1loop sets the app id itself only once the window was shown, so GNOME
   first took it for an unknown application, with a generic icon.
+- `build.go` (#412): Windows no longer links `opengl32.dll` (`-lopengl32`):
+  GLFW already loads it by name when it starts WGL (`wgl_context.c`), and
+  then gets the one 1loop loaded, Mesa's on a PC without an OpenGL driver
+  (internal/softgl).
 - `glfw_tree_rebuild.go`: `upstreamTreeSHA` is the git tree of `glfw/` after
   the change above, so that a build cache made before it compiles the C
   sources again (Go does not hash them).

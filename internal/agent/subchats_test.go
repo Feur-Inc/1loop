@@ -23,7 +23,9 @@ type fakeSubchats struct {
 	list     []SubchatInfo
 	started  []SubchatRequest
 	messages []string
+	attached []ChatAttachments // each message's
 	stopped  []string
+	renamed  []string // the titles the chats tool gave
 }
 
 func (host *fakeSubchats) access(parentTitle string) *SubchatAccess {
@@ -66,11 +68,16 @@ func (host *fakeSubchats) chats(parentTitle string) *ChatAccess {
 			other, _ := find(ctx, "other")
 			return []ChatInfo{other}
 		},
-		Send: func(ctx context.Context, id, text string) error {
+		Send: func(ctx context.Context, id, text string, attachments ChatAttachments) error {
 			if _, err := find(ctx, id); err != nil {
 				return err
 			}
 			host.messages = append(host.messages, id+": "+text)
+			host.attached = append(host.attached, attachments)
+			return nil
+		},
+		Rename: func(_ context.Context, title string) error {
+			host.renamed = append(host.renamed, title)
 			return nil
 		}}
 }
@@ -88,7 +95,7 @@ func runTool(t *testing.T, tool string, cfg Config, yolo, allow bool, arguments 
 	t.Helper()
 	ctx := context.WithValue(context.Background(), approvalContextKey{}, approvalPolicy{yolo: yolo})
 	ctx = context.WithValue(ctx, configContextKey{}, cfg)
-	for _, field := range []string{"id", "title", "brief", "text", "context", "isolation", "model"} {
+	for _, field := range []string{"id", "title", "brief", "text", "context", "isolation", "model", "files"} {
 		if _, ok := arguments[field]; !ok {
 			arguments[field] = nil
 		}
@@ -438,5 +445,44 @@ func TestNestedSubchatStart(t *testing.T) {
 	}
 	if got := SubchatDepth("x", func(id string) string { return parents[id] }); got > MaxSubchatDepth+1 {
 		t.Fatalf("a loop's depth %d", got)
+	}
+}
+
+func TestForkConfigForksTheParentsClaudeSession(t *testing.T) {
+	parent := Config{Provider: "claudecode", Model: "opus", Workspace: "/w", Session: "abc"}
+	cfg := SubchatConfig(parent, nil)
+	if args, forked := claudeSessionArgs(cfg); forked || len(args) != 0 {
+		t.Fatalf("a fresh subchat resumed %v", args)
+	}
+	ForkConfig(&cfg, parent)
+	args, forked := claudeSessionArgs(cfg)
+	if !forked || strings.Join(args, " ") != "--resume abc --fork-session" {
+		t.Fatalf("fork args = %v, %v", args, forked)
+	}
+	// Once Claude Code gave the subchat its own session, it resumes that one.
+	cfg.SetClaudeSession("own")
+	if args, forked := claudeSessionArgs(cfg); forked || strings.Join(args, " ") != "--resume own" {
+		t.Fatalf("after its first turn: %v, %v", args, forked)
+	}
+	// In its own worktree, Claude Code would not find the parent's session.
+	other := SubchatConfig(parent, nil)
+	ForkConfig(&other, parent)
+	other.Workspace = "/w/.worktrees/x"
+	if _, forked := claudeSessionArgs(other); forked {
+		t.Fatal("forked a session from another folder")
+	}
+	// Another model falls back to the recap.
+	changed := SubchatConfig(parent, nil)
+	changed.Model = "sonnet"
+	ForkConfig(&changed, parent)
+	if changed.ForkSession != "" {
+		t.Fatal("forked the session of another model")
+	}
+}
+
+func TestRecapBudgetIsCapped(t *testing.T) {
+	cfg := Config{Provider: "claudecode", Model: "opus[1m]"}
+	if got := RecapBudget(cfg); got > 120000 {
+		t.Fatalf("recap budget %d", got)
 	}
 }

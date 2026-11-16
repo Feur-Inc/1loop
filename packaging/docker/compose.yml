@@ -2,7 +2,7 @@
 #
 #   docker compose -f packaging/docker/compose.yml up -d
 #   docker compose -f packaging/docker/compose.yml logs server   # the certificate's fingerprint
-#   docker attach 1loop-server                                    # pair, devices, revoke, ssh; detach with Ctrl+P Ctrl+Q
+#   docker exec 1loop-server 1loop-server pair <id> <code>        # the command the client shows; also devices, revoke <n>, ssh
 #
 # How much of the host the agent reaches (docs/SERVER.md#how-much-of-the-host-the-agent-reaches):
 #   1. Isolated, as below: only the volumes, commands in the container's Debian.
@@ -15,7 +15,7 @@ services:
     image: ghcr.io/feur-inc/1loop-server:latest
     container_name: 1loop-server
     restart: unless-stopped
-    # The console reads commands (pair, devices, revoke, ssh): keep it open.
+    # The console also reads commands (docker attach), beside docker exec.
     stdin_open: true
     tty: true
     ports:
@@ -24,7 +24,7 @@ services:
       # Read by -api-key-env in command, if the first connection needs a key.
       MODEL_API_KEY: ${MODEL_API_KEY:-}
       # Level 3: the host as an SSH machine. Its first connection shows the
-      # host key in the console (docker attach): type trust <number>, or pin
+      # host key in the logs: docker exec 1loop-server 1loop-server trust <number>, or pin
       # it here with host-key=SHA256:… from ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub.
       # ONELOOP_SSH_MACHINE: "you@host.docker.internal key=/run/secrets/1loop_ssh_key projects=~/dev"
     # Arguments after the image's own (-data-dir /data -workspace /projects

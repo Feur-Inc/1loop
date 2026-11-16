@@ -92,7 +92,7 @@ func TestChatAccessFinds(t *testing.T) {
 		t.Fatal("a chat that is no subchat found a parent")
 	}
 	sub.hops = agent.MaxChatHops
-	if err := ui.sendToChat(sub, "other", "hi"); err == nil || !strings.Contains(err.Error(), "Not sent") {
+	if err := ui.sendToChat(sub, "other", "hi", nil, nil); err == nil || !strings.Contains(err.Error(), "Not sent") {
 		t.Fatalf("past the hops: %v", err)
 	}
 }

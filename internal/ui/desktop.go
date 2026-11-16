@@ -153,6 +153,7 @@ type desktopUI struct {
 	attachTray      fyne.CanvasObject // attachRow with its margins, hidden when empty
 	attachments     []core.ImagePart
 	fileAttachments []fileAttachment
+	parked          map[string]parkedAttachments // other drafts' attachments, by draft key (#409)
 	filesAttaching  int
 	editing         *queueEdit // a queued message being edited in the prompt
 	editBar         *fyne.Container
@@ -249,57 +250,62 @@ type desktopUI struct {
 // desktopApp is what the windows share: the backend, the chats and
 // projects, the settings, the tray and the phone remote.
 type desktopApp struct {
-	usage             *usage.Ledger // every model call this computer made (internal/usage)
-	prices            *usage.Prices
-	usageQuery        usage.Query // what the Usage page shows, kept while 1loop runs
-	computer          *computeruse.ComputerSession
-	browser           *browser.Engine
-	backend           *agent.App
-	keys              map[string]string
-	connectionsList   []agent.Connection
-	webSetupWindows   map[*agent.ChatGPTWeb]fyne.Window
-	choices           map[string]agent.ModelChoice
-	modelUnavailable  map[string]string // model catalog problems, displayed inside the selector
-	accountLimits     map[string]agent.AccountLimits
-	userInstructions  string
-	approvalMode      string
-	inForeground      bool // the window has the focus
-	chats             []*conversation
-	projects          []string
-	sshMachines       []sshmachine.Settings          // Settings → General
-	machineProjects   map[string][]string            // each SSH machine's projects (paths there), by machine ID
-	machines          map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
-	worktrees         map[string]string              // this computer's worktrees: folder → project (worktrees.go)
-	worktreeSort      string                         // how the sidebar and Repository order worktrees
-	theme             themeChoice                    // dark, light or the system's, and the accent
-	repos             map[string]*repoState          // repositories read, by target and project
-	repoWindow        *repoWindow                    // the open Repository window
-	statePath         string
-	saveTimer         *time.Timer
-	saveLock          sync.Mutex // one write at a time, the newest state last
-	saveCount         int        // states handed to persist
-	saveDone          int        // the newest one written (under saveLock)
-	saveError         string
-	stateProblem      string // why the saved state could not be read, said once the window is up
-	stateBlocked      bool   // the unreadable state could not be put aside: never write over it
-	ctx               context.Context
-	shutdown          context.CancelFunc
-	plan              agent.PlanUsage          // Claude Code connection: the subscription windows in use
-	claudeOffered     bool                     // the Claude Code connection was proposed once
-	remote            *remoteServer            // the phone remote, nil when off
-	links             []*serverLink            // the paired servers, each followed for the sidebar (target_link.go)
-	home              string                   // the browser client's own server, the page's origin; "" on the desktop
-	serverProjects    map[string][]string      // their projects as last listed, by address: listed while it does not answer
-	reaches           map[string]targetReach   // whether each target answered, by its key (targets.go)
-	remoteEnabled     bool                     // see phone_server.go
-	devices           []remoteapi.PairedDevice // phones paired with the remote
-	chrome            bool
-	updates           updateState                // the release page's latest version (updates.go)
-	panelWidth        float32                    // last width chosen by dragging, independent of window size
+	usage            *usage.Ledger // every model call this computer made (internal/usage)
+	prices           *usage.Prices
+	usageQuery       usage.Query // what the Usage page shows, kept while 1loop runs
+	computer         *computeruse.ComputerSession
+	browser          *browser.Engine
+	backend          *agent.App
+	keys             map[string]string
+	connectionsList  []agent.Connection
+	webSetupWindows  map[*agent.ChatGPTWeb]fyne.Window
+	choices          map[string]agent.ModelChoice
+	modelUnavailable map[string]string // model catalog problems, displayed inside the selector
+	accountLimits    map[string]agent.AccountLimits
+	userInstructions string
+	approvalMode     string
+	inForeground     bool // the window has the focus
+	chats            []*conversation
+	projects         []string
+	sshMachines      []sshmachine.Settings          // Settings → General
+	machineProjects  map[string][]string            // each SSH machine's projects (paths there), by machine ID
+	machines         map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
+	worktrees        map[string]string              // this computer's worktrees: folder → project (worktrees.go)
+	worktreeSort     string                         // how the sidebar and Repository order worktrees
+	theme            themeChoice                    // dark, light or the system's, and the accent
+	projectThemes    map[string]string              // project → its own theme setting (#464)
+	backdrop         *backdrop                      // a theme's shader behind the window (#464)
+	repos            map[string]*repoState          // repositories read, by target and project
+	repoWindow       *repoWindow                    // the open Repository window
+	statePath        string
+	saveTimer        *time.Timer
+	saveLock         sync.Mutex // one write at a time, the newest state last
+	saveCount        int        // states handed to persist
+	saveDone         int        // the newest one written (under saveLock)
+	saveError        string
+	stateProblem     string // why the saved state could not be read, said once the window is up
+	stateBlocked     bool   // the unreadable state could not be put aside: never write over it
+	ctx              context.Context
+	shutdown         context.CancelFunc
+	plan             agent.PlanUsage          // Claude Code connection: the subscription windows in use
+	claudeOffered    bool                     // the Claude Code connection was proposed once
+	remote           *remoteServer            // the phone remote, nil when off
+	links            []*serverLink            // the paired servers, each followed for the sidebar (target_link.go)
+	home             string                   // the browser client's own server, the page's origin; "" on the desktop
+	serverProjects   map[string][]string      // their projects as last listed, by address: listed while it does not answer
+	reaches          map[string]targetReach   // whether each target answered, by its key (targets.go)
+	remoteEnabled    bool                     // see phone_server.go
+	devices          []remoteapi.PairedDevice // phones paired with the remote
+	chrome           bool
+	updates          updateState // the release page's latest version (updates.go)
+	panelWidth       float32     // last width chosen by dragging, independent of window size
+	// Projects' environment variables, by projectEnvKey (project_env.go).
+	projectEnv        map[string]map[string]string
 	classicCompaction bool                       // settings: dynamic context compaction turned off
 	memoryOff         bool                       // settings: the agent's memory tool turned off
 	wrapUpOff         bool                       // settings: the next-step card (wrap_up tool) turned off
 	autoResume        *agent.AutoResume          // settings: what a rate limit does to a run
+	namingModel       *agent.NamingModel         // settings: the model that names new chats, nil for none
 	closeQuits        bool                       // settings: closing the window quits rather than hiding it in the tray
 	notificationsOff  bool                       // settings: no desktop notifications
 	crashReportsOff   bool                       // settings: Don't ask again, after a crash
@@ -336,6 +342,7 @@ func useEnglishUI() {
 }
 
 func runDesktop(backend *agent.App, root string) {
+	softwareRendererStart() // Windows without an OpenGL driver: 1loop's Mesa (software_gl_windows.go)
 	useEnglishUI()
 	switchBackend()
 	// Once this is the process that stays (the build for the display, past
@@ -377,6 +384,7 @@ func runDesktop(backend *agent.App, root string) {
 	// elsewhere. Nothing is drawn in the window before its content is set
 	// below, once the state is loaded.
 	ui.chrome = customChromeSupported() && os.Getenv("ONELOOP_SYSTEM_TITLEBAR") == ""
+	nameWindows() // window_class_linux.go
 	if drv, ok := a.Driver().(desktop.Driver); ok && ui.chrome {
 		ui.window = drv.CreateSplashWindow()
 		ui.window.SetTitle("1loop")
@@ -394,7 +402,9 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.Resize(fyne.NewSize(1180, 760))
 	ui.window.CenterOnScreen()
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
-	ui.window.SetContent(ui.build())
+	ui.backdrop = newBackdrop()
+	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.backdrop.picture, ui.build()))
+	ui.syncBackdrop()
 	ui.followUsage()
 	ui.window.SetOnDropped(func(at fyne.Position, uris []fyne.URI) {
 		var files []string
@@ -447,7 +457,19 @@ func runDesktop(backend *agent.App, root string) {
 	serveInstance(instance, func() { fyne.Do(ui.showWindow) })
 	// Shown, named, then run: the desktop learns which application this is
 	// before the window's first frame, when it picks its name and icon.
-	ui.window.Show()
+	// Show makes the window. When OpenGL cannot draw it, 1loop tries its
+	// other ways of drawing, by itself (render_fallback.go): what the next
+	// process needs (the one-instance claim) is let go first, and the end
+	// is a clean one.
+	if failure := showFirstWindow(ui.window); failure != nil {
+		renderFailed(failure, func() {
+			if instance != nil {
+				instance.Close()
+			}
+			crash.Clean()
+		})
+	}
+	rendererReady()
 	if kind := os.Getenv("ONELOOP_BENCH"); kind != "" && platform.Dev != nil {
 		go ui.bench(kind)
 	}
@@ -803,7 +825,7 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	ui.curtain = newPageCurtain()
 	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view, ui.curtain.cover)))
 	// No rule between the panes: the sidebar only casts a faint shadow.
-	shade := canvas.NewHorizontalGradient(color.NRGBA{A: 0x2a}, color.NRGBA{})
+	shade := canvas.NewHorizontalGradient(color.NRGBA{B: 1, A: 0x2a}, color.NRGBA{B: 1}) // shadowInk: kept by a change of theme
 	ui.pane = &paneLayout{shown: 1, shade: 14, chosen: &ui.sidebarWidth}
 	ui.sideHandle = newSidebarHandle(ui)
 	ui.root = container.New(ui.pane, sidebar, main, shade, ui.sideHandle)
@@ -839,6 +861,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.prompt.shortcut = ui.shortcut
 	ui.prompt.paste = ui.pasteFromClipboard
 	ui.prompt.oversize = ui.attachText
+	ui.prompt.switched = ui.switchAttachments
 	if ui.drafts == nil { // one set for every window (windows.go)
 		ui.drafts = loadPromptDrafts(filepath.Join(filepath.Dir(ui.statePath), "drafts.json"))
 	}
@@ -940,11 +963,12 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	// The card: no line of light along its top edge, which showed as a
 	// brighter pixel row above the prompt.
 	card := canvas.NewRectangle(colSurface)
-	card.CornerRadius = 18
+	card.CornerRadius = rounded(18)
 	card.StrokeColor = colBorder
 	card.StrokeWidth = 1
 	// The card floats on a soft shadow; focused, an amber halo lights up around it.
 	drop, glow := newShadow(2.2), newGlow(colAmber, 0.32)
+	onRepaint = append(onRepaint, func() { drop.setOpacity(1) })                 // lighter on a light theme
 	onRepaint = append(onRepaint, func() { drop.setOpacity(1); drop.refresh() }) // its strength is the theme's
 	var glowAnim *fyne.Animation
 	glowLevel := float32(0)
@@ -990,7 +1014,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		container.NewHBox(container.NewCenter(textLine("Enter to save · Esc to cancel", 12, colFaint)), cancelEdit)))
 	ui.editBar.Hide()
 	body := container.NewStack(card, padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
-	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: card.CornerRadius}, append(append(glow.objects(), drop.objects()...), body)...)
+	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: 18}, append(append(glow.objects(), drop.objects()...), body)...)
 	ui.composer = composer
 
 	// Messages waiting for the running task sit in a tray on top of the card.
@@ -999,7 +1023,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	clear.size = 12.5
 	ui.queueList = container.New(layout.NewCustomPaddedVBoxLayout(0))
 	trayBg := canvas.NewRectangle(colPopover)
-	trayBg.TopLeftCornerRadius, trayBg.TopRightCornerRadius = 12, 12
+	trayBg.TopLeftCornerRadius, trayBg.TopRightCornerRadius = rounded(12), rounded(12)
 	trayBg.StrokeColor = colBorderSoft
 	trayBg.StrokeWidth = 1
 	trayBody := container.NewVBox(container.NewBorder(nil, nil, nil, clear, padded(0, 0, 8, 0, ui.queueTitle)), ui.queueList)
@@ -1050,6 +1074,7 @@ func (ui *desktopUI) draftKey() string {
 func (ui *desktopUI) startNew() {
 	ui.cancelChatLoad()
 	platform.Devf("ui", "new chat screen (workspace %s)", ui.cfg.Workspace)
+	ui.syncProjectTheme()
 	if ui.server != nil {
 		ui.server.selectChat("")
 	}
@@ -1542,6 +1567,7 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		ui.chats = append([]*conversation{chat}, ui.chats...)
 		ui.current = chat
 		ui.prompt.renameDraft(chat.ID)
+		ui.nameNewChat(chat, messageValue)
 		if chat.panel != nil {
 			ui.showPanel(chat)
 		} else if ui.panelFollows() {
@@ -1671,6 +1697,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 			cfg.Machine = machine
 		}
 	}
+	cfg.Env = ui.runEnv(cfg)
 	if chat.Cache == nil {
 		chat.Cache = &agent.ContextCache{}
 	}
@@ -2002,6 +2029,7 @@ type savedState struct {
 	MemoryOff         bool                  `json:"memoryOff,omitempty"`
 	WrapUpOff         bool                  `json:"wrapUpOff,omitempty"`
 	AutoResume        *agent.AutoResume     `json:"autoResume,omitempty"`
+	NamingModel       *agent.NamingModel    `json:"namingModel,omitempty"`
 	SSHMachines       []sshmachine.Settings `json:"sshMachines,omitempty"`
 	MachineProjects   map[string][]string   `json:"machineProjects,omitempty"`
 	LocalWorkspace    string                `json:"localWorkspace,omitempty"` // while an SSH machine is the target
@@ -2020,10 +2048,17 @@ type savedState struct {
 	Accent            string                `json:"accent,omitempty"`    // a preset or #rrggbb; amber when unset
 	// Each paired server's projects, as it last listed them (#359, #383).
 	ServerProjects map[string][]string `json:"serverProjects,omitempty"`
+	// Projects' environment variables (#408), by target and folder
+	// (projectEnvKey); a server's projects keep theirs on the server.
+	ProjectEnv map[string]map[string]string `json:"projectEnv,omitempty"`
 	// The windows open beside the main one, to open again (windows.go).
 	Windows []savedWindow `json:"windows,omitempty"`
 	// The main window's split views, when it is split (panes.go).
 	Split *savedSplit `json:"split,omitempty"`
+	// Projects with a theme of their own (#464).
+	ProjectThemes map[string]string `json:"projectThemes,omitempty"`
+	// The Shader background setting; 30 fps when unset.
+	ShaderFPS string `json:"shaderFPS,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -2078,6 +2113,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.memoryOff,
 		ui.wrapUpOff,
 		ui.autoResume,
+		ui.namingModel,
 		ui.sshMachines,
 		ui.machineProjects,
 		ui.localWorkspace,
@@ -2095,8 +2131,11 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.theme.theme,
 		ui.theme.accent,
 		ui.serverProjects,
+		ui.projectEnv,
 		ui.savedWindows(),
 		ui.savedLayout(),
+		ui.projectThemes,
+		shaderFPSSaved(),
 	})
 	for _, view := range ui.allPanes() {
 		if view.panel != nil {
@@ -2220,7 +2259,12 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.sshMachines, ui.machineProjects, ui.localWorkspace = state.SSHMachines, state.MachineProjects, state.LocalWorkspace
 	ui.worktrees, ui.worktreeSort = state.Worktrees, state.WorktreeSort
 	ui.serverProjects = state.ServerProjects
+	ui.projectEnv = state.ProjectEnv
 	ui.theme = themeChoice{theme: state.Theme, accent: state.Accent}
+	ui.projectThemes = state.ProjectThemes
+	if state.ShaderFPS != "" {
+		shaderFPS = state.ShaderFPS
+	}
 	for _, project := range state.FoldedProjects {
 		ui.foldedProjects[project] = true
 	}
@@ -2245,6 +2289,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.crashReportsOff = state.CrashReportsOff
 	animationsOff = state.AnimationsOff
 	ui.autoResume = state.AutoResume
+	ui.namingModel = state.NamingModel
 	ui.discordPresence, ui.discordDetails = state.DiscordPresence, state.DiscordDetails
 	ui.syncPresence()
 	for _, chat := range state.Chats {

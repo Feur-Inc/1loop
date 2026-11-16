@@ -235,7 +235,7 @@ func (glass *footerGlass) veil(more bool) {
 // is drawn for it at the conversation's end.
 func (glass *footerGlass) paint(opacity float32) {
 	glass.shown = opacity
-	if opacity <= 0 {
+	if opacity <= 0 || shaderBehind {
 		glass.fade.Hide()
 		return
 	}
@@ -287,6 +287,17 @@ func (layoutSpec *glassFooterLayout) Layout(o []fyne.CanvasObject, size fyne.Siz
 	top := size.Height - footer.Height
 	o[0].Move(fyne.Position{})
 	o[0].Resize(size)
+	footerRoom := footer.Height
+	glass.floor.Show()
+	if shaderBehind {
+		// Over a shader the background is translucent: a floor laid on it
+		// would darken the composer's band. The conversation stops above
+		// the composer instead of scrolling under it (#464).
+		o[0].Resize(fyne.NewSize(size.Width, top))
+		glass.floor.Hide()
+		glass.fade.Hide()
+		footerRoom = 1
+	}
 	glass.fade.Move(fyne.NewPos(0, top-glassFade))
 	glass.fade.Resize(fyne.NewSize(size.Width, glassFade))
 	glass.floor.Move(fyne.NewPos(0, top))
@@ -294,8 +305,8 @@ func (layoutSpec *glassFooterLayout) Layout(o []fyne.CanvasObject, size fyne.Siz
 	o[3].Move(fyne.NewPos(0, top))
 	o[3].Resize(fyne.NewSize(size.Width, footer.Height))
 	// The open editor covers the conversation: its column keeps its room.
-	if space := layoutSpec.ui.footerSpace; space != nil && !layoutSpec.ui.editor.active() && space.MinSize().Height != footer.Height {
-		space.SetMinSize(fyne.NewSize(1, footer.Height))
+	if space := layoutSpec.ui.footerSpace; space != nil && !layoutSpec.ui.editor.active() && space.MinSize().Height != footerRoom {
+		space.SetMinSize(fyne.NewSize(1, footerRoom))
 		fyne.Do(layoutSpec.ui.relayoutColumn) // after this layout: it lays the column out again
 	}
 }

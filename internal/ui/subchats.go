@@ -53,7 +53,7 @@ func (ui *desktopUI) subchatInfo(chat *conversation) agent.SubchatInfo {
 	}
 	return agent.SubchatInfo{ID: chat.ID, Title: chat.Title, State: agent.SubchatState(chat.run != nil, waiting, link.Ended),
 		Folder: chat.Config.Workspace, Branch: link.Branch, Model: ui.modelName(chat.Config),
-		Used: used, Last: agent.LastAnswer(chat.Items)}
+		Used: used, Last: agent.LastAnswer(chat.Items), Provider: chat.Config.Provider}
 }
 
 // subchatDepth is a chat's level: 0 for a chat the user started, 1 for
@@ -108,6 +108,10 @@ func (ui *desktopUI) subchatAccess(chat *conversation) *agent.SubchatAccess {
 	access.Start = func(ctx context.Context, request agent.SubchatRequest) (agent.SubchatInfo, error) {
 		return ui.startSubchat(ctx, chat, request)
 	}
+	access.ForkSize = func(ctx context.Context) (size int) {
+		ui.onUI(ctx, func() { size = agent.ContextUsed(chat.History) })
+		return size
+	}
 	access.Model = func(ctx context.Context, name string) (display string, err error) {
 		ui.onUI(ctx, func() {
 			var found agent.ModelChoice
@@ -126,6 +130,7 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 	var cfg agent.Config
 	var history []agent.Message
 	var items []agent.ChatItem
+	var machine agent.Machine
 	ui.onUI(ctx, func() {
 		if ui.chatByID(parent.ID) != parent {
 			err = fmt.Errorf("The conversation was deleted")
@@ -141,7 +146,9 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 			choice = &found
 		}
 		cfg = agent.SubchatConfig(parent.Config, choice)
+		machine = ui.attachmentMachine(cfg.MachineID)
 		if request.Context == "fork" {
+			agent.ForkConfig(&cfg, parent.Config)
 			history = agent.ForkHistory(parent.History)
 			items = slices.Clone(parent.Items)
 		}
@@ -162,7 +169,18 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 			return info, fmt.Errorf("Could not make the subchat's worktree: %v", err)
 		}
 	}
+	var files []agent.FileAttachment
+	if err == nil && len(request.Attachments.Files) > 0 { // copied into its workspace, as the composer's
+		workspace := cfg.Workspace
+		if created.Path != "" {
+			workspace = created.Path
+		}
+		files, err = agent.DeliverFiles(ctx, machine, workspace, request.Attachments.Files)
+	}
 	ui.onUI(ctx, func() {
+		if err != nil {
+			return
+		}
 		if ui.chatByID(parent.ID) != parent {
 			err = fmt.Errorf("The conversation was deleted")
 			return
@@ -180,7 +198,7 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 			sub.Items = append(sub.Items, agent.ChatItem{Kind: "note", Text: "Forked from “" + parent.Title + "”"})
 		}
 		ui.chats = append([]*conversation{sub}, ui.chats...)
-		ui.startIn(sub, agent.Message{Role: "user", Content: request.Brief}, "")
+		ui.startIn(sub, agent.PromptMessage(request.Brief, request.Attachments.Images, files), "")
 		ui.panel.showTodo(parent) // its live state, beside the parent
 		ui.panel.todoChanged(parent)
 		info = ui.subchatInfo(sub)
@@ -217,49 +235,99 @@ func (ui *desktopUI) stopTree(chat *conversation, depth int) {
 // subchatWorktree is the worktree a subchat of this computer was given,
 // "" when it shares a folder or another chat works there too.
 func (ui *desktopUI) subchatWorktree(chat *conversation) string {
+	return ui.ownWorktree(chat, []*conversation{chat})
+}
+
+// ownWorktree is chat's worktree when no chat but those of group works
+// there, "" otherwise.
+func (ui *desktopUI) ownWorktree(chat *conversation, group []*conversation) string {
 	if chat.Subchat == nil || chat.Subchat.Branch == "" || chat.Config.MachineID != "" || ui.worktrees[chat.Config.Workspace] == "" {
 		return ""
 	}
 	for _, other := range ui.chats {
-		if other != chat && other.Config.Workspace == chat.Config.Workspace && other.Config.MachineID == "" {
+		if !slices.Contains(group, other) && other.Config.Workspace == chat.Config.Workspace && other.Config.MachineID == "" {
 			return ""
 		}
 	}
 	return chat.Config.Workspace
 }
 
-// confirmDeleteSubchat asks before deleting a subchat with its own
-// worktree, and removes the worktree and its branch with it unless the
-// user keeps them.
+// subtreeOf are the chats under chat, at every level, parents first.
+func (ui *desktopUI) subtreeOf(chat *conversation) []*conversation {
+	parents := map[string]string{}
+	for _, other := range ui.chats {
+		parents[other.ID] = ""
+		if other.Subchat != nil {
+			parents[other.ID] = other.Subchat.Parent
+		}
+	}
+	var out []*conversation
+	for _, id := range agent.SubchatSubtree(chat.ID, parents) {
+		if found := ui.chatByID(id); found != nil {
+			out = append(out, found)
+		}
+	}
+	return out
+}
+
+// treeWorktrees are the worktrees deleting chat and its subchats leaves
+// unused: those subchats were given and no other chat works in.
+func (ui *desktopUI) treeWorktrees(chat *conversation) []string {
+	group := append([]*conversation{chat}, ui.subtreeOf(chat)...)
+	var out []string
+	for _, member := range group {
+		if folder := ui.ownWorktree(member, group); folder != "" && !slices.Contains(out, folder) {
+			out = append(out, folder)
+		}
+	}
+	return out
+}
+
+// confirmDeleteSubchat asks before deleting a chat whose subchats (or
+// itself) have their own worktrees, and removes the worktrees and their
+// branches with it unless the user keeps them.
 func (ui *desktopUI) confirmDeleteSubchat(chat *conversation, text string) {
-	folder := ui.subchatWorktree(chat)
-	project := ui.worktrees[folder]
+	folders := ui.treeWorktrees(chat)
+	projects := map[string]string{}
+	for _, folder := range folders {
+		projects[folder] = ui.worktrees[folder]
+	}
+	title, detail := "Also remove its worktree and branch", "The folder "+worktreeFolder(folders[0])+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own."
+	if chat.Subchat != nil && len(folders) == 1 && folders[0] == ui.subchatWorktree(chat) {
+		title += " " + chat.Subchat.Branch
+	} else {
+		title = fmt.Sprintf("Also remove the %s of its subchats", plural(len(folders), "worktree"))
+		if len(folders) == 1 {
+			title = "Also remove its subchat's worktree"
+		}
+		detail = "Each folder goes unless it has uncommitted changes; each branch only if it is merged or has no commits of its own."
+	}
 	removeWorktree := true
 	body := container.New(layout.NewCustomPaddedVBoxLayout(10), note(text),
-		card(settingRow("Also remove its worktree and branch "+chat.Subchat.Branch,
-			"The folder "+worktreeFolder(folder)+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own.",
-			newToggle(true, func(on bool) { removeWorktree = on }))))
+		card(settingRow(title, detail, newToggle(true, func(on bool) { removeWorktree = on }))))
 	var dialog *sheet
 	remove := newRow("Delete", nil, stylePrimary, func() {
 		dialog.Hide()
-		ui.removeChat(chat)
+		ui.removeTree(chat)
 		if !removeWorktree {
 			return
 		}
 		go func() {
-			ctx, cancel := context.WithTimeout(ui.ctx, time.Minute)
-			kept, err := agent.RemoveSubchatWorktree(ctx, gitrepo.Local, folder, false)
-			cancel()
-			fyne.Do(func() {
-				if err != nil {
-					ui.notice("Worktree kept", folder+": "+err.Error())
-					return
-				}
-				ui.forgetLocalWorktree(project, folder)
-				if kept != "" {
-					ui.notice("Worktree removed", kept)
-				}
-			})
+			for _, folder := range folders {
+				ctx, cancel := context.WithTimeout(ui.ctx, time.Minute)
+				kept, err := agent.RemoveSubchatWorktree(ctx, gitrepo.Local, folder, false)
+				cancel()
+				fyne.Do(func() {
+					if err != nil {
+						ui.notice("Worktree kept", folder+": "+err.Error())
+						return
+					}
+					ui.forgetLocalWorktree(projects[folder], folder)
+					if kept != "" {
+						ui.notice("Worktree removed", kept)
+					}
+				})
+			}
 		}()
 	})
 	remove.danger = true

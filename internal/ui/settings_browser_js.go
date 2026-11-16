@@ -77,6 +77,7 @@ func (remote *remoteDesktop) generalSettings() fyne.CanvasObject {
 		sectionTitle("Hooks"),
 		card(settingRow("Hook commands", "The server's commands around the agent's work, in Claude Code's format.",
 			newRow("Edit", nil, styleOutline, remote.editHooks))),
+		remote.installRows(),
 	)
 }
 

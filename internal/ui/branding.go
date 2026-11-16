@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"1loop/assets"
+	"1loop/internal/palette"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -127,7 +128,7 @@ func introFrame(index int) image.Image {
 		source := sheet.(interface {
 			SubImage(image.Rectangle) image.Image
 		})
-		sheet = accentedArtwork(sheet)
+		sheet = inkedArtwork(sheet) // its white "1" in the text colour on a light theme
 		source = sheet.(interface {
 			SubImage(image.Rectangle) image.Image
 		})
@@ -142,7 +143,7 @@ func introFrame(index int) image.Image {
 
 var (
 	brandRingImage    image.Image
-	brandRingAccented image.Image // in the accent colour of brandRingInk
+	brandRingAccented image.Image // in the accent and text colours of brandRingInk
 	brandRingInk      string
 )
 
@@ -155,8 +156,9 @@ func brandRing() image.Image {
 		}
 		brandRingImage = img
 	}
-	if brandRingInk != accentHex() {
-		brandRingInk, brandRingAccented = accentHex(), accentedArtwork(brandRingImage)
+	// The accent, and the ink of its white "1": dark on a light theme.
+	if ink := accentHex() + palette.Hex(colText); brandRingInk != ink {
+		brandRingInk, brandRingAccented = ink, inkedArtwork(brandRingImage)
 	}
 	return brandRingAccented
 }
@@ -196,6 +198,9 @@ type loopMark struct {
 
 func newLoopMark(size float32) *loopMark {
 	mark := &loopMark{image: brandImage("1loop-ring.png", size, size), state: "brand", size: size}
+	// The raw artwork is in the brand's amber: drawn now in the accent,
+	// which a saved one has already set by the time the window is built.
+	mark.showBrand()
 	onRepaint = append(onRepaint, mark.recolour)
 	return mark
 }
@@ -207,6 +212,10 @@ func (mark *loopMark) recolour() {
 	case "brand":
 		mark.showBrand()
 	case "intro":
+		if mark.anim == nil { // stopped before its end: it would keep the old accent
+			mark.state = "brand"
+			mark.showBrand()
+		}
 	default:
 		mark.work.drawn = time.Time{}
 		mark.tick()

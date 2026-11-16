@@ -154,7 +154,12 @@ var interFaces = func() map[string]fyne.Resource {
 func (themeSpec loopTheme) Font(style fyne.TextStyle) fyne.Resource {
 	key := "regular"
 	switch {
-	case style.Monospace, style.Symbol:
+	case style.Monospace:
+		if face, ok := themeFonts["mono"]; ok {
+			return face
+		}
+		return themeSpec.Theme.Font(style)
+	case style.Symbol:
 		return themeSpec.Theme.Font(style)
 	case style.Bold && style.Italic:
 		key = "boldItalic"
@@ -162,6 +167,12 @@ func (themeSpec loopTheme) Font(style fyne.TextStyle) fyne.Resource {
 		key = "bold"
 	case style.Italic:
 		key = "italic"
+	}
+	if face, ok := themeFonts[key]; ok {
+		return face
+	}
+	if face, ok := themeFonts["regular"]; ok && key == "boldItalic" { // a theme's font, never Inter's
+		return face
 	}
 	if face, ok := interFaces[key]; ok {
 		return face
@@ -190,9 +201,9 @@ func (themeSpec loopTheme) Size(name fyne.ThemeSizeName) float32 {
 	case theme.SizeNameInputBorder:
 		return 1
 	case theme.SizeNameInputRadius:
-		return 8
+		return rounded(8)
 	case theme.SizeNameSelectionRadius:
-		return 3
+		return rounded(3)
 	case theme.SizeNameScrollBar:
 		return 6
 	case theme.SizeNameScrollBarSmall:
@@ -246,7 +257,7 @@ func relayout(c *fyne.Container) {
 // surface draws a rounded, finely bordered card behind content.
 func surface(content fyne.CanvasObject, fill, stroke color.Color, radius, pad float32) *fyne.Container {
 	background := canvas.NewRectangle(fill)
-	background.CornerRadius = radius
+	background.CornerRadius = rounded(radius)
 	if stroke != nil {
 		background.StrokeColor = stroke
 		background.StrokeWidth = 1
@@ -295,6 +306,10 @@ var (
 	iconMinimize     = lineIcon("minimize", `<path d="M4 8h8"/>`)
 	iconMaximize     = lineIcon("maximize", `<rect x="4" y="4" width="8" height="8" rx="1.2"/>`)
 	iconClose        = lineIcon("close", `<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>`)
+	iconZoomIn       = lineIcon("zoom-in", `<circle cx="7" cy="7" r="4.5"/><path d="M10.3 10.3 13.5 13.5M5 7h4M7 5v4"/>`)
+	iconZoomOut      = lineIcon("zoom-out", `<circle cx="7" cy="7" r="4.5"/><path d="M10.3 10.3 13.5 13.5M5 7h4"/>`)
+	iconFit          = lineIcon("fit", `<path d="M2.5 6V3.5a1 1 0 0 1 1-1H6M10 2.5h2.5a1 1 0 0 1 1 1V6M13.5 10v2.5a1 1 0 0 1-1 1H10M6 13.5H3.5a1 1 0 0 1-1-1V10"/>`)
+	iconDownload     = lineIcon("download", `<path d="M8 2.5v8M4.8 7.5 8 10.7l3.2-3.2M3 13.5h10"/>`)
 	iconSidebar      = lineIcon("sidebar", `<rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M6.5 3v10"/>`)
 	iconMore         = lineIcon("more", `<path d="M3.2 8h.01M8 8h.01M12.8 8h.01" stroke-width="3.1"/>`)
 	iconPlus         = lineIcon("plus", `<path d="M8 3v10M3 8h10" stroke-width="1.8"/>`)
@@ -677,15 +692,15 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 	defer renderer.nudgeIcon()
 	switch renderer.row.style {
 	case styleOutline, styleIcon:
-		renderer.bg.CornerRadius = size.Height/2 - inset
+		renderer.bg.CornerRadius = rounded(size.Height/2 - inset)
 	case styleWindow:
-		renderer.bg.CornerRadius = 6
+		renderer.bg.CornerRadius = rounded(6)
 	case stylePrimary, styleField:
-		renderer.bg.CornerRadius = 8
+		renderer.bg.CornerRadius = rounded(8)
 	case styleModel:
-		renderer.bg.CornerRadius = 9
+		renderer.bg.CornerRadius = rounded(9)
 	default:
-		renderer.bg.CornerRadius = 6
+		renderer.bg.CornerRadius = rounded(6)
 	}
 	if renderer.row.style == styleIcon || renderer.row.style == styleWindow {
 		renderer.icon.Resize(fyne.NewSquareSize(iconSize))
@@ -1015,6 +1030,11 @@ func (renderer *tapRowRenderer) Destroy() {}
 // ---------------------------------------------------------------------------
 // Soft drop shadow: stacked translucent rounded rectangles stand in for blur.
 
+// shadowInk is the black of shadows: blue 1, which no theme token is, so a
+// change of theme never maps it to the new theme's overlay (white on dark,
+// #436). Their opacity is set again for the theme instead.
+var shadowInk = color.NRGBA{B: 1}
+
 type shadow struct {
 	layers []*canvas.Rectangle
 	alphas []float32
@@ -1022,10 +1042,10 @@ type shadow struct {
 }
 
 func newShadow(strength float32) *shadow {
-	dropShadow := &shadow{}
+	dropShadow := &shadow{tint: shadowInk}
 	for i, alpha := range []float32{0.10, 0.08, 0.06, 0.04} {
-		r := canvas.NewRectangle(color.NRGBA{A: uint8(255 * alpha * strength)})
-		r.CornerRadius = float32(12 + 3*i)
+		r := canvas.NewRectangle(color.Transparent)
+		r.CornerRadius = rounded(float32(12 + 3*i))
 		dropShadow.layers = append(dropShadow.layers, r)
 		dropShadow.alphas = append(dropShadow.alphas, alpha*strength)
 	}
@@ -1046,7 +1066,7 @@ func (dropShadow *shadow) setOpacity(o float32) {
 	for i, r := range dropShadow.layers {
 		c := dropShadow.tint
 		strength := float32(1)
-		if !themeTokens.Dark && c.R == 0 && c.G == 0 && c.B == 0 {
+		if !themeTokens.Dark && c == shadowInk {
 			strength = 0.4 // a shadow, not a glow: on white a dark one reads as a grey band
 		}
 		c.A = uint8(255 * fyne.Min(1, dropShadow.alphas[i]) * o * strength)
@@ -1447,7 +1467,7 @@ func (renderer *sheetRenderer) layoutGlass(size fyne.Size, box rect, panelPos fy
 		if sheet.sharp.Image != nil && windowControlsBox != nil {
 			sheet.sharp.Move(fyne.CurrentApp().Driver().AbsolutePositionForObject(windowControlsBox))
 			sheet.sharp.Resize(windowControlsBox.Size())
-			sheet.sharp.CornerRadius = 8 // no square patch on the frosted window
+			sheet.sharp.CornerRadius = rounded(8) // no square patch on the frosted window
 			sheet.sharp.Show()
 		}
 		return
@@ -1485,11 +1505,11 @@ func (renderer *sheetRenderer) Refresh() {
 		sheet.dim.FillColor = color.Transparent
 		sheet.panel.FillColor = withAlpha(colPopover, o)
 		sheet.panel.StrokeColor = withAlpha(colPopBorder, o)
-		sheet.panel.CornerRadius = 10
+		sheet.panel.CornerRadius = rounded(10)
 		if sheet.columns {
 			sheet.panel.FillColor = withAlpha(colSurface, o)
 			sheet.panel.StrokeColor = withAlpha(colBorder, o)
-			sheet.panel.CornerRadius = 14
+			sheet.panel.CornerRadius = rounded(14)
 		}
 		if sheet.glass != nil { // frosted glass: the tint lets the blurred window through
 			base := colPopover
@@ -1527,7 +1547,7 @@ func (renderer *sheetRenderer) Refresh() {
 		if sheet.glass != nil {
 			sheet.panel.StrokeColor = glassEdge
 		}
-		sheet.panel.CornerRadius = 14
+		sheet.panel.CornerRadius = rounded(14)
 		sheet.shadow.setOpacity(1)
 	}
 	// Moving the content is enough to repaint it: refreshing the whole dialog
@@ -1828,7 +1848,7 @@ type tipLayer struct {
 
 func newTipLayer() *tipLayer {
 	tooltip := &tipLayer{bg: canvas.NewRectangle(colRaised)}
-	tooltip.bg.CornerRadius = 8
+	tooltip.bg.CornerRadius = rounded(8)
 	tooltip.bg.StrokeColor = colPopBorder
 	tooltip.bg.StrokeWidth = 1
 	tooltip.layer = container.NewWithoutLayout(tooltip.bg)

@@ -48,7 +48,7 @@ go run ./cmd/1loop-release manifest -key "$key" -version "$version" \
   -base "$site/updates/$version" -page "$site/" -notes "$notes" \
   "desktop-linux-amd64=$out/1loop-$version-linux-amd64.tar.gz" \
   "server-linux-amd64=$out/1loop-server-$version-linux-amd64" \
-  "desktop-windows-amd64=$out/1loop-$version-windows-amd64.zip" \
+  "desktop-windows-amd64=$out/1loop-$version-windows-amd64.exe" \
   "server-windows-amd64=$out/1loop-server-$version-windows-amd64.exe" \
   "android=$out/1loop-$version.apk" > "$out/latest.json"
 

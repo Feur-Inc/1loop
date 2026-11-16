@@ -110,7 +110,7 @@ modules:
         path: .
         dest: packaging/flatpak
       - type: file
-        path: ../linux/1loop.desktop
+        path: ../linux/io.github.Feur_Inc.OneLoop.desktop
         dest: packaging/linux
     build-commands:
       - |
@@ -125,7 +125,7 @@ modules:
       - ln -s host-browser /app/lib/1loop/host/chromium
       - ln -s host-claude /app/lib/1loop/host/claude
       - build/1loop-release icons /app/share/icons io.github.Feur_Inc.OneLoop
-      # The window keeps the app id 1loop: StartupWMClass ties it to this entry.
-      - sed -e 's/^Exec=.*/Exec=1loop-flatpak/' -e 's/^Icon=.*/Icon=io.github.Feur_Inc.OneLoop/' packaging/linux/1loop.desktop
+      # The window's app id is the entry's name (internal/ui/launcher.go).
+      - sed -e 's/^Exec=.*/Exec=1loop-flatpak/' packaging/linux/io.github.Feur_Inc.OneLoop.desktop
         | install -Dm644 /dev/stdin /app/share/applications/io.github.Feur_Inc.OneLoop.desktop
       - install -Dm644 packaging/flatpak/io.github.Feur_Inc.OneLoop.metainfo.xml -t /app/share/metainfo

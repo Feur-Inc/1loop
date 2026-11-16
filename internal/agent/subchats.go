@@ -74,6 +74,7 @@ const (
 // folder); Model is a model of the picker, "" for the parent's.
 type SubchatRequest struct {
 	Title, Brief, Context, Isolation, Model string
+	Attachments                             ChatAttachments // attached to the brief
 }
 
 // SubchatInfo is a subchat as its parent sees it.
@@ -87,6 +88,8 @@ type SubchatInfo struct {
 	Used   int    `json:"used,omitempty"` // its context, in tokens
 	Last   string `json:"-"`              // its last answer
 	Note   string `json:"-"`              // what start says besides (a folder shared for want of Git)
+	// Provider is its model's provider: whether it sees images.
+	Provider string `json:"-"`
 }
 
 // SubchatLink is what a subchat keeps of its parent. Who its turn reports
@@ -118,6 +121,7 @@ type SubchatAccess struct {
 	Depth       int
 	Start       func(ctx context.Context, request SubchatRequest) (SubchatInfo, error)
 	Model       func(ctx context.Context, name string) (string, error)
+	ForkSize    func(ctx context.Context) int // the parent's context, in tokens: what a fork carries
 	List        func(ctx context.Context) []SubchatInfo
 	Stop        func(ctx context.Context, id string) error
 }
@@ -277,6 +281,32 @@ func SubchatConfig(parent Config, choice *ModelChoice) Config {
 	return cfg
 }
 
+// ForkApprovalTokens is the size from which a fork is always the user's
+// call, even in approval modes that start subchats by themselves.
+const ForkApprovalTokens = 50000
+
+// RecapBudget is the most characters a chat's earlier conversation takes
+// when a harness without its session is told it as text: about 10% of the
+// model's window (4 characters a token), and never more than ~30k tokens.
+// That text is a new, uncached prompt.
+func RecapBudget(cfg Config) int {
+	return min(ModelContextWindow(cfg)*4*10/100, 120000)
+}
+
+// ForkConfig makes a forked subchat's configuration (from SubchatConfig)
+// fork its parent's Claude Code session, when both run in Claude Code with
+// the same login and model: its first turn then reads the parent's cached
+// prompt instead of a text recap. Several forks of one parent share it.
+func ForkConfig(cfg *Config, parent Config) {
+	if cfg.Provider != "claudecode" || parent.Provider != "claudecode" || cfg.ClaudeHome != parent.ClaudeHome || cfg.Model != parent.Model {
+		return
+	}
+	if HarnessSession(parent) == "" {
+		return
+	}
+	cfg.ForkSession, cfg.ForkWorkspace = parent.loginSession().Session, parent.Workspace
+}
+
 // ForkHistory is what a forked subchat starts from: the parent's messages,
 // without a turn still open (a tool call waiting for its result).
 func ForkHistory(history []Message) []Message {
@@ -298,11 +328,11 @@ func subchatToolDefinition() map[string]any {
 	return map[string]any{"type": "function", "function": map[string]any{
 		"name": "subchat",
 		"description": "Start and follow subchats: separate conversations that run in parallel with this one, for work that should go on by itself (a separate fix, a follow-up, a long investigation) while the user keeps talking here. The user sees each subchat in the sidebar under this chat and can open, steer or stop it. " +
-			"start proposes one (the user approves it, depending on the approval mode) and returns at once with its id: title is short; brief is everything it needs, since it does not see this conversation unless context is fork: the task, the files, what done means. context: fresh (null) or fork (it gets this conversation so far). isolation: worktree (null: its own Git worktree and branch, from this folder's last commit; uncommitted changes are not in it) or shared (this folder, for read-only work). model: a model name from the model picker, null for this chat's. " +
+			"start proposes one (the user approves it, depending on the approval mode) and returns at once with its id: title is short; brief is everything it needs, since it does not see this conversation unless context is fork: the task, the files, what done means. context: fresh (null, preferred: write what it needs in the brief) or fork (it gets this conversation so far; costly on a long conversation, since the subchat starts with all of it: fork only when the brief cannot carry what it needs, and the user approves a large fork). isolation: worktree (null: its own Git worktree and branch, from this folder's last commit; uncommitted changes are not in it) or shared (this folder, for read-only work). model: a model name from the model picker, null for this chat's. files: optional files attached to the brief, by path in the workspace or /tmp: pictures (screenshots, mockups) arrive as images it sees, other files are copied into its workspace and attached. " +
 			"When a subchat's turn ends you receive its report (its last answer, branch) as a message: do not poll status in a loop. To send a subchat a follow-up, or in a subchat to ask the parent, use the chats tool (action message, id parent for the parent). status lists the subchats (id null) or one, with state, branch, last answer and context use. stop stops a subchat's turn, and those of the subchats under it. " +
 			"Use subchats for independent pieces of work, not for a quick step you can do here; a subchat can start subchats of its own, down to " + fmt.Sprint(MaxSubchatDepth) + " levels below the chat the user started, and at most " + fmt.Sprint(MaxRunningSubchats) + " of one chat work at once. Leave unused fields null.",
 		"parameters": map[string]any{"type": "object", "additionalProperties": false,
-			"required": []string{"action", "id", "title", "brief", "text", "context", "isolation", "model"},
+			"required": []string{"action", "id", "title", "brief", "text", "context", "isolation", "model", "files"},
 			"properties": map[string]any{
 				"action":    map[string]any{"type": "string", "enum": []string{"start", "status", "stop"}},
 				"id":        map[string]any{"type": []string{"string", "null"}, "description": "status, stop: the subchat's id."},
@@ -312,6 +342,7 @@ func subchatToolDefinition() map[string]any {
 				"context":   map[string]any{"type": []string{"string", "null"}, "enum": []any{"fresh", "fork", nil}},
 				"isolation": map[string]any{"type": []string{"string", "null"}, "enum": []any{"worktree", "shared", nil}},
 				"model":     map[string]any{"type": []string{"string", "null"}},
+				"files":     filesProperty("start"),
 			}},
 	}}
 }
@@ -344,6 +375,7 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 	var args struct {
 		Action                                            string
 		ID, Title, Brief, Text, Context, Isolation, Model *string
+		Files                                             []string
 	}
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		return "", err
@@ -413,11 +445,24 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 			}
 		}
 		start := "fresh, with the brief only"
+		ask := backend.confirm
 		if request.Context == "fork" {
 			start = "with this conversation so far"
+			if access.ForkSize != nil {
+				size := access.ForkSize(ctx)
+				start += fmt.Sprintf(" (about %s tokens)", Tokens(size))
+				if size >= ForkApprovalTokens {
+					ask = backend.askApproval // a large fork is the user's call, whatever the mode
+				}
+			}
 		}
-		preview := fmt.Sprintf("%s\n\nStarts %s, %s, with %s.\n\n%s", request.Title, start, place, model, request.Brief)
-		if !backend.confirm(ctx, emit, "Start a subchat?", preview) {
+		attachments, err := messageAttachments(ctx, cfg.Workspace, args.Files)
+		if err != nil {
+			return "", err
+		}
+		request.Attachments = attachments
+		preview := fmt.Sprintf("%s\n\nStarts %s, %s, with %s.\n\n%s%s", request.Title, start, place, model, request.Brief, filesPreview(args.Files))
+		if !ask(ctx, emit, "Start a subchat?", preview) {
 			return "", fmt.Errorf("The user did not start the subchat")
 		}
 		begin()
@@ -429,9 +474,12 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 		if info.Note != "" {
 			out += "\n" + info.Note
 		}
+		if note := AttachmentsNote(info.Provider, request.Attachments); note != "" {
+			out += "\n" + strings.TrimSpace(note)
+		}
 		return out, nil
 	case "message": // the chats tool's now; kept for calls written before it
-		message, _ := json.Marshal(map[string]*string{"id": args.ID, "text": args.Text})
+		message, _ := json.Marshal(map[string]any{"id": args.ID, "text": args.Text, "files": args.Files})
 		return backend.chatsTool(ctx, `{"action":"message",`+string(message[1:]), begin, emit)
 	case "status":
 		begin()
@@ -519,4 +567,44 @@ func SubchatWorktree(ctx context.Context, host gitrepo.Host, folder, title, id s
 // does a branch with commits not merged: the note says what was kept.
 func RemoveSubchatWorktree(ctx context.Context, host gitrepo.Host, folder string, force bool) (string, error) {
 	return gitrepo.RemoveWorktree(ctx, host, folder, gitrepo.Removal{Path: folder, Force: force, DeleteBranch: true})
+}
+
+// SubchatSubtree are the chats under root, its subchats and theirs at
+// every level, parents before their subchats; parents maps each chat to
+// its parent ("" for a chat the user started). A loop of links stops
+// where it comes back.
+func SubchatSubtree(root string, parents map[string]string) []string {
+	children := map[string][]string{}
+	for id, parent := range parents {
+		if parent != "" && parent != id {
+			children[parent] = append(children[parent], id)
+		}
+	}
+	for _, list := range children {
+		slices.Sort(list) // the same order on every call
+	}
+	seen := map[string]bool{root: true}
+	var out []string
+	for queue := []string{root}; len(queue) > 0; queue = queue[1:] {
+		for _, child := range children[queue[0]] {
+			if !seen[child] {
+				seen[child] = true
+				out = append(out, child)
+				queue = append(queue, child)
+			}
+		}
+	}
+	return out
+}
+
+// SubtreeNote is what deleting a chat with count chats under it says
+// about them, "" when it has none.
+func SubtreeNote(count int) string {
+	switch count {
+	case 0:
+		return ""
+	case 1:
+		return " Its subchat will be deleted with it."
+	}
+	return fmt.Sprintf(" Its %d subchats, at every level, will be deleted with it.", count)
 }

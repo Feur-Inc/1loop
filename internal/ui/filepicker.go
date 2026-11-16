@@ -9,7 +9,9 @@ package ui
 import (
 	"errors"
 	"fmt"
+	"net/url"
 	"os/exec"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -26,6 +28,8 @@ type pickRequest struct {
 	filterName string   // label of the file filter, e.g. "Images"
 	extensions []string // accepted extensions with their dot, e.g. ".png"
 	always     bool     // call done when the chooser closes without a choice too (no paths)
+	save       bool     // choose where to write a new file, instead of files to open
+	name       string   // save: the file name proposed
 }
 
 var errNoNativePicker = errors.New("no native file chooser")
@@ -53,8 +57,13 @@ func (ui *desktopUI) pick(pickRequestValue pickRequest, done func([]string)) {
 }
 
 func nativePick(handle string, pickRequestValue pickRequest) ([]string, error) {
-	if runtime.GOOS == "windows" {
+	switch {
+	case runtime.GOOS == "windows" && pickRequestValue.save:
+		return windowsSavePick(pickRequestValue)
+	case runtime.GOOS == "windows":
 		return nil, errNoNativePicker
+	case runtime.GOOS == "darwin" && pickRequestValue.save:
+		return macSavePick(pickRequestValue)
 	}
 	if paths, ok := portalPick(handle, pickRequestValue); ok {
 		return paths, nil
@@ -71,6 +80,13 @@ func nativePick(handle string, pickRequestValue pickRequest) ([]string, error) {
 
 func zenityArgs(pickRequestValue pickRequest) []string {
 	args := []string{"zenity", "--file-selection", "--title=" + pickRequestValue.title, "--separator=\n"}
+	if pickRequestValue.save {
+		args = append(args, "--save", "--confirm-overwrite", "--filename="+filepath.Join(pickRequestValue.start, pickRequestValue.name))
+		if len(pickRequestValue.extensions) > 0 {
+			args = append(args, "--file-filter="+pickRequestValue.filterName+" | "+globs(pickRequestValue.extensions))
+		}
+		return args
+	}
 	if pickRequestValue.start != "" {
 		args = append(args, "--filename="+strings.TrimSuffix(pickRequestValue.start, "/")+"/")
 	}
@@ -94,6 +110,13 @@ func kdialogArgs(pickRequestValue pickRequest) []string {
 	if pickRequestValue.folder {
 		return []string{"kdialog", "--title", pickRequestValue.title, "--getexistingdirectory", start}
 	}
+	if pickRequestValue.save {
+		args := []string{"kdialog", "--title", pickRequestValue.title, "--getsavefilename", filepath.Join(start, pickRequestValue.name)}
+		if len(pickRequestValue.extensions) > 0 {
+			args = append(args, globs(pickRequestValue.extensions)+"|"+pickRequestValue.filterName)
+		}
+		return args
+	}
 	args := []string{"kdialog", "--title", pickRequestValue.title, "--getopenfilename", start}
 	if len(pickRequestValue.extensions) > 0 {
 		args = append(args, globs(pickRequestValue.extensions)+"|"+pickRequestValue.filterName)
@@ -110,6 +133,14 @@ func globs(extensions []string) string {
 		patterns[i] = "*" + ext
 	}
 	return strings.Join(patterns, " ")
+}
+
+// fileURIPath is the path of a file:// URI, its escapes (%20…) decoded.
+func fileURIPath(uri string) string {
+	if parsed, err := url.Parse(uri); err == nil && parsed.Scheme == "file" {
+		return parsed.Path
+	}
+	return strings.TrimPrefix(uri, "file://")
 }
 
 // runChooser runs zenity or kdialog; both exit with status 1 on cancel.
@@ -135,6 +166,22 @@ func (ui *desktopUI) fynePick(pickRequestValue pickRequest, done func([]string))
 	var start fyne.ListableURI
 	if pickRequestValue.start != "" {
 		start, _ = storage.ListerForURI(storage.NewFileURI(pickRequestValue.start))
+	}
+	if pickRequestValue.save {
+		d := dialog.NewFileSave(func(file fyne.URIWriteCloser, err error) {
+			if err != nil {
+				ui.notice(pickRequestValue.title, err.Error())
+				return
+			}
+			if file != nil {
+				file.Close()
+				done([]string{file.URI().Path()})
+			}
+		}, ui.window)
+		d.SetLocation(start)
+		d.SetFileName(pickRequestValue.name)
+		d.Show()
+		return
 	}
 	if pickRequestValue.folder {
 		d := dialog.NewFolderOpen(func(uri fyne.ListableURI, err error) {
@@ -166,4 +213,27 @@ func (ui *desktopUI) fynePick(pickRequestValue pickRequest, done func([]string))
 		d.SetFilter(storage.NewExtensionFileFilter(pickRequestValue.extensions))
 	}
 	d.Show()
+}
+
+// macSavePick asks the macOS Save dialog, through AppleScript.
+func macSavePick(pickRequestValue pickRequest) ([]string, error) {
+	quote := func(text string) string {
+		return `"` + strings.ReplaceAll(strings.ReplaceAll(text, `\`, `\\`), `"`, `\"`) + `"`
+	}
+	script := `POSIX path of (choose file name with prompt ` + quote(pickRequestValue.title) + ` default name ` + quote(pickRequestValue.name)
+	if pickRequestValue.start != "" {
+		script += ` default location (POSIX file ` + quote(pickRequestValue.start) + `)`
+	}
+	script += `)`
+	out, err := exec.Command("osascript", "-e", script).Output()
+	if exit, ok := err.(*exec.ExitError); ok && exit.ExitCode() == 1 {
+		return nil, nil // cancelled
+	}
+	if err != nil {
+		return nil, errNoNativePicker
+	}
+	if path := strings.TrimSpace(string(out)); path != "" {
+		return []string{path}, nil
+	}
+	return nil, nil
 }

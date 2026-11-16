@@ -73,7 +73,7 @@ buildGoModule {
   # with go.sum. CI commits a new one to a pull request when it does
   # (.github/workflows/nix-hash.yml).
   proxyVendor = true;
-  vendorHash = "sha256-0kWBfl9XQKw7WAP43B86slwovV+aCcZ1kvSvXH7LruU=";
+  vendorHash = "sha256-Uq5qXLu+HGAwZj0jDWloOSJ2l3fdzXXTcXKghfhjLm4=";
 
   nativeBuildInputs = [
     pkg-config
@@ -130,12 +130,12 @@ buildGoModule {
 
   desktopItems = [
     (makeDesktopItem {
-      name = "1loop";
+      name = "io.github.Feur_Inc.OneLoop";
       desktopName = "1loop";
       genericName = "Coding agent";
       comment = "Your project. Your model. One loop.";
       exec = "1loop";
-      icon = "1loop";
+      icon = "io.github.Feur_Inc.OneLoop";
       categories = [ "Development" ];
       keywords = [
         "AI"
@@ -144,7 +144,7 @@ buildGoModule {
         "code"
         "assistant"
       ];
-      startupWMClass = "1loop";
+      startupWMClass = "io.github.Feur_Inc.OneLoop";
       startupNotify = true;
     })
   ];

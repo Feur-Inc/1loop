@@ -42,21 +42,45 @@ func (server *headlessServer) subchatInfoLocked(chat *serverChat) agent.SubchatI
 	}
 	return agent.SubchatInfo{ID: chat.ID, Title: chat.Title, State: agent.SubchatState(chat.run != nil, waiting, chat.Subchat.Ended),
 		Folder: chat.Config.Workspace, Branch: chat.Subchat.Branch, Model: server.labelLocked(chat.Config),
-		Used: used, Last: agent.LastAnswer(chat.Items)}
+		Used: used, Last: agent.LastAnswer(chat.Items), Provider: chat.Config.Provider}
 }
 
 // subchatWorktreeLocked is the worktree a subchat was given, "" when it
 // shares a folder or another chat works there too.
 func (server *headlessServer) subchatWorktreeLocked(chat *serverChat) string {
+	return server.ownWorktreeLocked(chat, []*serverChat{chat})
+}
+
+// ownWorktreeLocked is chat's worktree when no chat but those of group
+// works there, "" otherwise.
+func (server *headlessServer) ownWorktreeLocked(chat *serverChat, group []*serverChat) string {
 	if chat.Subchat == nil || chat.Subchat.Branch == "" { // a branch: it was given a worktree
 		return ""
 	}
 	for _, other := range server.chats {
-		if other != chat && other.Config.Workspace == chat.Config.Workspace {
+		if !slices.Contains(group, other) && other.Config.Workspace == chat.Config.Workspace {
 			return ""
 		}
 	}
 	return chat.Config.Workspace
+}
+
+// subtreeLocked are the chats under chat, at every level, parents first.
+func (server *headlessServer) subtreeLocked(chat *serverChat) []*serverChat {
+	parents := map[string]string{}
+	for _, other := range server.chats {
+		parents[other.ID] = ""
+		if other.Subchat != nil {
+			parents[other.ID] = other.Subchat.Parent
+		}
+	}
+	var out []*serverChat
+	for _, id := range agent.SubchatSubtree(chat.ID, parents) {
+		if found := server.chatLocked(id); found != nil {
+			out = append(out, found)
+		}
+	}
+	return out
 }
 
 // wakeLocked gives chat a message that is not its user's: a task's end,
@@ -152,6 +176,11 @@ func (server *headlessServer) subchatAccess(chat *serverChat) *agent.SubchatAcce
 	access.Start = func(ctx context.Context, request agent.SubchatRequest) (agent.SubchatInfo, error) {
 		return server.startSubchat(ctx, chat, request)
 	}
+	access.ForkSize = func(context.Context) int {
+		server.mu.Lock()
+		defer server.mu.Unlock()
+		return agent.ContextUsed(chat.History)
+	}
 	access.Model = func(_ context.Context, name string) (string, error) {
 		server.mu.Lock()
 		defer server.mu.Unlock()
@@ -182,9 +211,11 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 	var history []agent.Message
 	var items []agent.ChatItem
 	if request.Context == "fork" {
+		agent.ForkConfig(&cfg, parent.Config)
 		history = agent.ForkHistory(parent.History)
 		items = slices.Clone(parent.Items)
 	}
+	machine := server.attachmentMachineLocked(cfg.MachineID)
 	project := cfg.Workspace
 	if server.worktreeLocked(project) {
 		project = server.worktrees[project]
@@ -203,6 +234,17 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 			gitTarget{server}.Opened(project, created.Path)
 			cfg.Workspace = created.Path
 		}
+	}
+	files, err := agent.DeliverFiles(ctx, machine, cfg.Workspace, request.Attachments.Files)
+	if err != nil {
+		if created.Path != "" { // no subchat works in it: it goes
+			go func() {
+				if _, err := agent.RemoveSubchatWorktree(context.WithoutCancel(ctx), gitrepo.Local, created.Path, true); err == nil {
+					gitTarget{server}.Removed(project, created.Path)
+				}
+			}()
+		}
+		return agent.SubchatInfo{}, err
 	}
 
 	server.mu.Lock()
@@ -224,7 +266,7 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 		server.addLocked(sub, agent.ChatItem{Kind: "note", Text: "Forked from “" + parent.Title + "”"})
 	}
 	server.chats = append([]*serverChat{sub}, server.chats...)
-	server.runLocked(sub, agent.Message{Role: "user", Content: request.Brief})
+	server.runLocked(sub, agent.PromptMessage(request.Brief, request.Attachments.Images, files))
 	server.broadcastLocked("meta", server.metaLocked(parent))
 	server.scheduleSaveLocked()
 	info := server.subchatInfoLocked(sub)

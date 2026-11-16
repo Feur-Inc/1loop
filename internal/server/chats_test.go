@@ -4,10 +4,12 @@ package server
 
 import (
 	"context"
+	"os"
 	"strings"
 	"testing"
 
 	"1loop/internal/agent"
+	"1loop/internal/core"
 )
 
 // A chat messages another that is not its subchat (#357): the message shows
@@ -45,7 +47,9 @@ func TestChatMessages(t *testing.T) {
 		}
 	}
 
-	if err := access.Send(ctx, "docs", "the API changed: /v2"); err != nil {
+	picture := core.ImagePart{Mime: "image/png", Data: "iVBORw0KGgo="}
+	attached := agent.ChatAttachments{Images: []core.ImagePart{picture}, Files: []agent.SentFile{{Name: "spec.md", Data: []byte("# v2")}}}
+	if err := access.Send(ctx, "docs", "the API changed: /v2", attached); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, server, "the report back", func() bool {
@@ -59,6 +63,20 @@ func TestChatMessages(t *testing.T) {
 	if !strings.HasPrefix(docs.History[0].Content, "[Message from the chat api “API work”]\n") {
 		t.Fatalf("what docs' agent reads: %q", docs.History[0].Content)
 	}
+	// The picture api attached reaches docs' model, and the file its
+	// workspace, both shown in its transcript as the user's attachments.
+	if images := docs.History[0].Images; len(images) != 1 || images[0] != picture {
+		t.Fatalf("the images docs' agent sees: %+v", images)
+	}
+	if len(message.Images) != 1 || message.Images[0] != picture || len(message.Files) != 1 || message.Files[0].Name != "spec.md" {
+		t.Fatalf("the attachments in docs' transcript: %+v", message)
+	}
+	if data, err := os.ReadFile(message.Files[0].Path); err != nil || string(data) != "# v2" || !strings.HasPrefix(message.Files[0].Path, server.root) {
+		t.Fatalf("the file in docs' workspace: %q %v", data, err)
+	}
+	if !strings.Contains(docs.History[0].Content, message.Files[0].Path) {
+		t.Fatalf("docs' agent is not told where the file is: %q", docs.History[0].Content)
+	}
 	if report := api.Items[0]; report.Kind != "note" || report.From == nil || !report.From.Report || report.From.Hops != 2 {
 		t.Fatalf("the report in api: %+v", report)
 	}
@@ -70,7 +88,7 @@ func TestChatMessages(t *testing.T) {
 	// message starts the count again.
 	api.hops = agent.MaxChatHops
 	server.mu.Unlock()
-	if err := access.Send(ctx, "docs", "again"); err == nil || !strings.Contains(err.Error(), "Not sent") {
+	if err := access.Send(ctx, "docs", "again", agent.ChatAttachments{}); err == nil || !strings.Contains(err.Error(), "Not sent") {
 		t.Fatalf("past the hops: %v", err)
 	}
 	if got := agent.TurnHops(agent.MaxChatHops, true, agent.Message{Role: "user", Content: "go on"}); got != 0 {

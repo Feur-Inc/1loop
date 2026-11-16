@@ -345,3 +345,5 @@ func toLEByteOrder(values ...float32) []byte {
 	}
 	return b
 }
+
+const userShaderHeader, userFragmentPrecision = "#version 100\n", "precision mediump float;\n"

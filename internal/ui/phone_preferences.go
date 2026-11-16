@@ -170,6 +170,7 @@ func (ui *desktopUI) changeProject(action string, args remoteapi.ProjectChange) 
 		}
 	}
 	ui.projects = projects
+	ui.moveProjectEnv(args.Path, destination)
 	// Copy before removing chats: removeChat updates the live slice and panel.
 	for _, chat := range append([]*conversation{}, ui.chats...) {
 		if !remoteapi.ProjectWithin(args.Path, chat.Config.Workspace) {

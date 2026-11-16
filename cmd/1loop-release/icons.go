@@ -27,7 +27,7 @@ func icons(args []string) {
 	if len(args) < 1 || len(args) > 2 {
 		fail("usage: 1loop-release icons DIR [NAME]")
 	}
-	name := "1loop"
+	name := "io.github.Feur_Inc.OneLoop" // the launcher entry's Icon
 	if len(args) == 2 {
 		name = args[1]
 	}

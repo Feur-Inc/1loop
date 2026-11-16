@@ -191,7 +191,7 @@ func TestSubchatLifecycle(t *testing.T) {
 	if info, err := chats.Find(ctx, sub.ID); err != nil || info.Relation != agent.RelationSubchat || info.State != agent.ChatIdle {
 		t.Fatalf("find the subchat: %+v %v", info, err)
 	}
-	if err := chats.Send(ctx, sub.ID, "check the edge cases"); err != nil {
+	if err := chats.Send(ctx, sub.ID, "check the edge cases", agent.ChatAttachments{}); err != nil {
 		t.Fatal(err)
 	}
 	waitFor(t, server, "the second report", func() bool {

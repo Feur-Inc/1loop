@@ -153,7 +153,7 @@ func (slider *stepSlider) key(e *fyne.KeyEvent) bool {
 
 func (slider *stepSlider) CreateRenderer() fyne.WidgetRenderer {
 	renderer := &stepSliderRenderer{slider: slider, track: canvas.NewRectangle(colTrack),
-		fill: canvas.NewRectangle(colAmber), thumb: canvas.NewCircle(colText), shadow: canvas.NewCircle(color.NRGBA{A: 0x33})}
+		fill: canvas.NewRectangle(colAmber), thumb: canvas.NewCircle(colText), shadow: canvas.NewCircle(color.NRGBA{B: 1, A: 0x33})} // shadowInk
 	renderer.track.CornerRadius = sliderWidth / 2
 	renderer.fill.CornerRadius = sliderWidth / 2
 	for i := 0; i < slider.steps; i++ {

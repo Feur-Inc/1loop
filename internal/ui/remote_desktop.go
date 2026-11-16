@@ -259,6 +259,7 @@ type remoteDesktop struct {
 	tier             string // and its speed
 	approvalMode     string
 	autoMode         bool
+	namingModel      *agent.NamingModel       // the server's chat naming model
 	convs            map[string]*conversation // the server's chats as this window shows them
 	fileAttachments  []agent.FileAttachment
 	update           *update.Status // the server runs an older version (remote_desktop_update.go)
@@ -711,6 +712,7 @@ func (remote *remoteDesktop) refreshLoop() {
 				Model, Effort, ApprovalMode string
 				Tier                        string
 				AutoMode                    bool // the server's model has an Auto mode
+				NamingModel                 *agent.NamingModel
 			}
 		}
 		err := remote.client.json(ctx, "GET", "/api/state", nil, &state)
@@ -754,6 +756,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			remote.accounts, remote.defaultPresets = state.Settings.Accounts, state.Settings.DefaultPresets
 			remote.model, remote.effort, remote.tier = state.Settings.Model, state.Settings.Effort, state.Settings.Tier
 			remote.approvalMode, remote.autoMode = state.Settings.ApprovalMode, state.Settings.AutoMode
+			remote.namingModel = state.Settings.NamingModel
 			remote.parent.updateApprovalControl()
 			if id == "" {
 				remote.parent.model.row.SetText(remote.modelText(remote.model, remote.effort))
@@ -827,15 +830,24 @@ func (remote *remoteDesktop) selectProject(path string) {
 
 func (remote *remoteDesktop) deleteChat(chat remoteapi.Chat) {
 	ui := remote.parent
-	text := fmt.Sprintf("“%s” will be permanently deleted from the server.", chat.Title)
-	removeWorktree := chat.Branch != "" // a subchat's own worktree: it goes too unless kept
-	run := func() {
-		if remote.current == chat.ID {
-			ui.startNew()
+	subtree := serverSubtree(remote.chats, chat.ID)
+	text := fmt.Sprintf("“%s” will be permanently deleted from the server.", chat.Title) + agent.SubtreeNote(len(subtree))
+	branches := 0 // the chats given a worktree: theirs go too unless kept
+	for _, member := range append([]remoteapi.Chat{chat}, subtree...) {
+		if member.Branch != "" {
+			branches++
 		}
-		if conv := remote.convs[chat.ID]; conv != nil {
-			conv.disposePanel()
-			delete(remote.convs, chat.ID)
+	}
+	removeWorktree := branches > 0
+	run := func() {
+		for _, member := range append([]remoteapi.Chat{chat}, subtree...) {
+			if remote.current == member.ID {
+				ui.startNew()
+			}
+			if conv := remote.convs[member.ID]; conv != nil {
+				conv.disposePanel()
+				delete(remote.convs, member.ID)
+			}
 		}
 		go func() {
 			ctx, cancel := context.WithTimeout(remote.ctx, time.Minute)
@@ -854,18 +866,40 @@ func (remote *remoteDesktop) deleteChat(chat remoteapi.Chat) {
 			remote.notify()
 		}()
 	}
-	if chat.Branch == "" {
+	if branches == 0 {
 		ui.confirm("Delete chat?", text, "Delete", run)
 		return
 	}
+	title, detail := "Also remove its worktree and branch "+chat.Branch,
+		"The folder "+worktreeFolder(chat.Workspace)+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own."
+	if chat.Branch == "" || branches > 1 {
+		title = "Also remove the worktrees of its subchats"
+		if chat.Branch != "" {
+			title = "Also remove its worktree and those of its subchats"
+		}
+		detail = "Each folder goes unless it has uncommitted changes or another chat works in it; each branch only if it is merged or has no commits of its own."
+	}
 	body := container.New(layout.NewCustomPaddedVBoxLayout(10), note(text),
-		card(settingRow("Also remove its worktree and branch "+chat.Branch,
-			"The folder "+worktreeFolder(chat.Workspace)+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own.",
-			newToggle(true, func(on bool) { removeWorktree = on }))))
+		card(settingRow(title, detail, newToggle(true, func(on bool) { removeWorktree = on }))))
 	var dialog *sheet
 	remove := newRow("Delete", nil, stylePrimary, func() { dialog.Hide(); run() })
 	remove.danger = true
 	dialog = ui.modal("Delete chat?", body, 500, nil, newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() }), remove)
+}
+
+// serverSubtree are the chats of a server under the chat id, its
+// subchats at every level, parents first.
+func serverSubtree(chats []remoteapi.Chat, id string) []remoteapi.Chat {
+	parents := map[string]string{}
+	byID := map[string]remoteapi.Chat{}
+	for _, chat := range chats {
+		parents[chat.ID], byID[chat.ID] = chat.Parent, chat
+	}
+	var out []remoteapi.Chat
+	for _, sub := range agent.SubchatSubtree(id, parents) {
+		out = append(out, byID[sub])
+	}
+	return out
 }
 
 // chatItem is a server item as this window's conversation holds it.

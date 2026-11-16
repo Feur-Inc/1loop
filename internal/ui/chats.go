@@ -123,7 +123,23 @@ func (ui *desktopUI) chatAccess(chat *conversation) *agent.ChatAccess {
 			ui.onUI(ctx, func() { err = ui.sendToChat(chat, id, text, attachments.Images, files) })
 			return err
 		},
+		Rename: func(ctx context.Context, title string) (err error) {
+			err = fmt.Errorf("1loop is closing")
+			ui.onUI(ctx, func() { err = ui.renameByAgent(chat, title) })
+			return err
+		},
 	}
+}
+
+// renameByAgent gives chat the title its agent chose with the chats tool.
+func (ui *desktopUI) renameByAgent(chat *conversation, title string) error {
+	if ui.chatByID(chat.ID) != chat {
+		return fmt.Errorf("This conversation was deleted")
+	}
+	if ui.setChatTitle(chat, title) == "" {
+		return fmt.Errorf("Give the new title as text")
+	}
+	return nil
 }
 
 // attachmentMachine is the SSH machine of an ID files are copied to, nil
@@ -197,7 +213,7 @@ func (ui *desktopUI) appendChatMessage(chat *conversation, item agent.ChatItem) 
 	pad := theme.InnerPadding()
 	body := container.NewVBox(container.NewHBox(from, layout.NewSpacer()))
 	if len(item.Images) > 0 { // the pictures its agent attached
-		pictures := &userImageView{pictures: container.New(layout.NewCustomPaddedHBoxLayout(6))}
+		pictures := &userImageView{pictures: newPictureStrip(0)}
 		ui.setUserImages(pictures, item.Images)
 		body.Add(padded(0, 0, pad, pad, pictures.pictures))
 	}

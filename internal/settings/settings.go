@@ -124,6 +124,7 @@ const (
 	KeyMemory            = "agent.memory"
 	KeyWrapUp            = "agent.wrap_up"
 	KeyAutoResume        = "models.auto_resume"
+	KeyNamingModel       = "models.naming_model"
 	KeyWorktreeSort      = "general.worktree_sort"
 	KeyDiscordPresence   = "general.discord_presence"
 	KeyDiscordDetails    = "general.discord_details"
@@ -192,6 +193,9 @@ var list = []Setting{
 	{Key: KeyAutoResume, Section: Models, Title: "Automatic resumption", Where: OnBoth, Kind: Toggle,
 		Description: "At a rate limit, wait for the reset or go on with another model, in the order you choose.",
 		Keywords:    []string{"rate limit", "quota", "resume", "fallback", "wait", "retry", "switch model", "usage"}},
+	{Key: KeyNamingModel, Section: Models, Title: "Chat naming model", Where: OnDesktop, Kind: Action,
+		Description: "A model that names each new chat from the words of its first message, never its pictures or files. None: a chat is named after the start of its first message.",
+		Keywords:    []string{"name", "naming", "title", "rename", "auto name", "auto title", "summarize", "summary", "chat name"}},
 
 	// Agent & approvals.
 	{Key: KeyApprovalMode, Section: Agent, Title: "Tool permissions", Where: OnBoth, Kind: Choice, Protected: true,

@@ -72,11 +72,12 @@ type ChatInfo struct {
 // the chat id ("parent" in a subchat) or says why it cannot be reached;
 // Send delivers text, and the files attached to it, to it (see the host's
 // wake; DeliverFiles copies the files); List is every other chat of this
-// 1loop.
+// 1loop; Rename gives this chat a new title, shown on every client.
 type ChatAccess struct {
-	Find func(ctx context.Context, id string) (ChatInfo, error)
-	List func(ctx context.Context) []ChatInfo
-	Send func(ctx context.Context, id, text string, attachments ChatAttachments) error
+	Find   func(ctx context.Context, id string) (ChatInfo, error)
+	List   func(ctx context.Context) []ChatInfo
+	Send   func(ctx context.Context, id, text string, attachments ChatAttachments) error
+	Rename func(ctx context.Context, title string) error
 }
 
 // ChatState is a chat's state for the chats tool.
@@ -191,13 +192,13 @@ func chatsToolDefinition() map[string]any {
 		"description": "Talk to the other chats (conversations) of this 1loop. list gives each chat's id, title, project, and whether it is working, waiting for its user or idle; this chat's parent and subchats are marked. " +
 			"message sends text to chat id (parent: this subchat's parent). It reaches that chat's agent labelled as coming from this chat, not from the user: it joins its turn if it is working, or starts one. When that turn ends, its last answer is reported back to you as a message, so do not poll. " +
 			"Write what the other chat needs, since it does not see this conversation. Messaging a chat that is not this chat's parent or subchat asks the user first, depending on the approval mode. Chats on another computer or 1loop server cannot be reached. " +
-			"files (message) attaches files to the message, by path (workspace or /tmp): pictures reach the other chat's model as images it sees, as if the user had pasted them (send a screenshot rather than describing it); other files are copied into its workspace and attached. Leave unused fields null.",
+			"files (message) attaches files to the message, by path (workspace or /tmp): pictures reach the other chat's model as images it sees, as if the user had pasted them (send a screenshot rather than describing it); other files are copied into its workspace and attached. rename sets this chat's own title to text: short and plain. Leave unused fields null.",
 		"parameters": map[string]any{"type": "object", "additionalProperties": false,
 			"required": []string{"action", "id", "text", "files"},
 			"properties": map[string]any{
-				"action": map[string]any{"type": "string", "enum": []string{"list", "message"}},
+				"action": map[string]any{"type": "string", "enum": []string{"list", "message", "rename"}},
 				"id":     map[string]any{"type": []string{"string", "null"}, "description": "message: the chat's id from list, or parent."},
-				"text":   map[string]any{"type": []string{"string", "null"}, "description": "message: what to say."},
+				"text":   map[string]any{"type": []string{"string", "null"}, "description": "message: what to say. rename: the new title."},
 				"files":  filesProperty("message"),
 			}},
 	}}
@@ -211,7 +212,7 @@ func chatsInstructions(cfg Config) string {
 	if cfg.Provider == "claudecode" {
 		tool = "mcp__1loop_todo__chats"
 	}
-	return "\n\nOther chats: " + tool + " lists the other conversations of this 1loop and sends one a message. Messages starting with [Message from … come from another chat's agent, not from the user; when your turn ends, your last answer is reported to it."
+	return "\n\nOther chats: " + tool + " lists the other conversations of this 1loop and sends one a message; rename retitles this chat. Messages starting with [Message from … come from another chat's agent, not from the user; when your turn ends, your last answer is reported to it."
 }
 
 // chatsTool answers the chats tool.
@@ -246,6 +247,19 @@ func (backend *App) chatsTool(ctx context.Context, arguments string, begin func(
 			return "No other chat here.", nil
 		}
 		return strings.Join(lines, "\n"), nil
+	case "rename":
+		title := ChatTitleText(value(args.Text))
+		if title == "" {
+			return "", fmt.Errorf("Give the new title as text")
+		}
+		if access.Rename == nil {
+			return "", fmt.Errorf("This chat cannot be renamed here")
+		}
+		begin()
+		if err := access.Rename(ctx, title); err != nil {
+			return "", err
+		}
+		return fmt.Sprintf("This chat is now titled “%s”.", title), nil
 	case "message":
 		id, text := value(args.ID), value(args.Text)
 		if id == "" || text == "" {

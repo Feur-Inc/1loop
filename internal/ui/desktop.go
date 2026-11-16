@@ -966,7 +966,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	card.StrokeColor = colBorder
 	card.StrokeWidth = 1
 	// The card floats on a soft shadow; focused, an amber halo lights up around it.
-	drop, glow := newShadow(2.2), newGlow(colAmber, 0.32)
+	drop, glow := newShadow(2.2), newGlow(colAmber, 0.28)
 	onRepaint = append(onRepaint, func() { drop.setOpacity(1) })                 // lighter on a light theme
 	onRepaint = append(onRepaint, func() { drop.setOpacity(1); drop.refresh() }) // its strength is the theme's
 	var glowAnim *fyne.Animation
@@ -1013,7 +1013,8 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		container.NewHBox(container.NewCenter(textLine("Enter to save · Esc to cancel", 12, colFaint)), cancelEdit)))
 	ui.editBar.Hide()
 	body := container.NewStack(card, padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
-	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: 18}, append(append(glow.objects(), drop.objects()...), body)...)
+	// The halo over the shadow: its amber reaches the card evenly all around.
+	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: 18}, append(append(drop.objects(), glow.objects()...), body)...)
 	ui.composer = composer
 
 	// Messages waiting for the running task sit in a tray on top of the card.

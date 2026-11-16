@@ -169,6 +169,7 @@ func repaint(changed recolour) {
 	}
 	for _, glow := range glows {
 		glow.tint = changed.of(glow.tint)
+		glow.refresh() // its picture, in the new tint
 	}
 	app := fyne.CurrentApp()
 	if app == nil {

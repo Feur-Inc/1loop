@@ -267,7 +267,7 @@ type haloLayout struct {
 func (layoutSpec *haloLayout) MinSize(o []fyne.CanvasObject) fyne.Size { return o[len(o)-1].MinSize() }
 
 func (layoutSpec *haloLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
-	layoutSpec.glow.layout(fyne.NewPos(0, -2), size, rounded(layoutSpec.radius))
+	layoutSpec.glow.layout(fyne.Position{}, size, rounded(layoutSpec.radius)) // even all around
 	layoutSpec.drop.layout(fyne.NewPos(0, 3), size, rounded(layoutSpec.radius))
 	o[len(o)-1].Move(fyne.Position{})
 	o[len(o)-1].Resize(size)

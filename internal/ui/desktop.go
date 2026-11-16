@@ -301,6 +301,7 @@ type desktopApp struct {
 	wrapUpOff         bool                       // settings: the next-step card (wrap_up tool) turned off
 	autoResume        *agent.AutoResume          // settings: what a rate limit does to a run
 	closeQuits        bool                       // settings: closing the window quits rather than hiding it in the tray
+	notificationsOff  bool                       // settings: no desktop notifications
 	crashReportsOff   bool                       // settings: Don't ask again, after a crash
 	lastCrash         *crash.Crash               // the last run's, offered once the window is up
 	trayNoticeShown   bool                       // the first close said that 1loop stays in the tray
@@ -2008,6 +2009,7 @@ type savedState struct {
 	WorktreeSort      string                `json:"worktreeSort,omitempty"`
 	FoldedProjects    []string              `json:"foldedProjects,omitempty"` // sidebar groups folded
 	CloseQuits        bool                  `json:"closeQuits,omitempty"`
+	NotificationsOff  bool                  `json:"notificationsOff,omitempty"`
 	CrashReportsOff   bool                  `json:"crashReportsOff,omitempty"`
 	AnimationsOff     bool                  `json:"animationsOff,omitempty"`
 	TrayNoticeShown   bool                  `json:"trayNoticeShown,omitempty"`
@@ -2083,6 +2085,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.worktreeSort,
 		slices.Sorted(maps.Keys(ui.foldedProjects)),
 		ui.closeQuits,
+		ui.notificationsOff,
 		ui.crashReportsOff,
 		animationsOff,
 		ui.trayNoticeShown,
@@ -2238,6 +2241,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.memoryOff = state.MemoryOff
 	ui.wrapUpOff = state.WrapUpOff
 	ui.closeQuits, ui.trayNoticeShown = state.CloseQuits, state.TrayNoticeShown
+	ui.notificationsOff = state.NotificationsOff
 	ui.crashReportsOff = state.CrashReportsOff
 	animationsOff = state.AnimationsOff
 	ui.autoResume = state.AutoResume

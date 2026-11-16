@@ -298,6 +298,26 @@
       "where": "both"
     },
     {
+      "key": "general.notifications",
+      "section": "general",
+      "title": "Notifications",
+      "description": "A desktop notification when a chat finishes or waits for you, but only while 1loop is in the background: never while its window has the focus.",
+      "keywords": [
+        "notification",
+        "notifications",
+        "notify",
+        "alert",
+        "alerts",
+        "desktop",
+        "banner",
+        "popup",
+        "sound",
+        "tray"
+      ],
+      "kind": "toggle",
+      "where": "desktop"
+    },
+    {
       "key": "general.usage",
       "section": "general",
       "page": "Usage",

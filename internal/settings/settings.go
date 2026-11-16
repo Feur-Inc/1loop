@@ -130,6 +130,7 @@ const (
 	KeyTheme             = "general.theme"
 	KeyAccent            = "general.accent"
 	KeyAnimations        = "general.animations"
+	KeyNotifications     = "general.notifications"
 	KeyCrashReports      = "advanced.crash_reports"
 )
 
@@ -172,6 +173,9 @@ var list = []Setting{
 	{Key: KeyAnimations, Section: General, Title: "Animations", Where: OnBoth, Kind: Toggle,
 		Description: "Short animations as you click, hover and as things change. Also off while the system asks for reduced motion.",
 		Keywords:    []string{"animation", "motion", "reduce motion", "reduced motion", "transitions", "effects", "accessibility", "fade"}},
+	{Key: KeyNotifications, Section: General, Title: "Notifications", Where: OnDesktop, Kind: Toggle,
+		Description: "A desktop notification when a chat finishes or waits for you, but only while 1loop is in the background: never while its window has the focus.",
+		Keywords:    []string{"notification", "notifications", "notify", "alert", "alerts", "desktop", "banner", "popup", "sound", "tray"}},
 	{Key: "general.usage", Section: General, Page: "Usage", Title: "Usage & spend", Where: OnBoth, Kind: Action,
 		Description: "Where the tokens and the money went, by model, connection, project, branch and chat, and the prices behind it.",
 		Keywords:    []string{"usage", "spend", "cost", "costs", "tokens", "price", "prices", "money", "billing", "budget", "dollars"}},

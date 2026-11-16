@@ -10,7 +10,8 @@
 #   scripts/perf/run.sh /tmp/1loop /tmp/1loop-perf out/ idle scroll stream ...
 #
 # Each mode writes out/<mode>.txt (report), out/<mode>.gctrace and, with
-# PROFILE=1, out/<mode>/{cpu,heap,allocs}.pprof. SECONDS_<mode>=N
+# PROFILE=1, out/<mode>/{cpu,heap,allocs}.pprof; out/<mode>.dev.log is
+# the developer log. SECONDS_<mode>=N
 # overrides a mode's span (ONELOOP_BENCH_SECONDS). The script also notes
 # the wall time from exec to package init, for the startup table.
 set -eu
@@ -37,5 +38,6 @@ for mode in "$@"; do
 	else
 		echo "bench $mode: no report (see $out/$mode.gctrace)"
 	fi
+	cp "$work/cache/1loop/dev.log" "$out/$mode.dev.log" 2>/dev/null || true
 	rm -rf "$work"
 done

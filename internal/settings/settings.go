@@ -130,6 +130,7 @@ const (
 	KeyTheme             = "general.theme"
 	KeyAccent            = "general.accent"
 	KeyAnimations        = "general.animations"
+	KeyNotifications     = "general.notifications"
 	KeyCrashReports      = "advanced.crash_reports"
 )
 
@@ -169,6 +170,9 @@ var list = []Setting{
 	{Key: KeyDiscordDetails, Section: General, Title: "Share the chat on Discord", Where: OnDesktop, Kind: Toggle, Protected: true,
 		Description: "Adds the chat's title, its project and the current command or file to the Discord status.",
 		Keywords:    []string{"discord", "rich presence", "privacy", "project", "chat", "details", "share"}},
+	{Key: KeyNotifications, Section: General, Title: "Notifications", Where: OnDesktop, Kind: Toggle,
+		Description: "A system notification when a chat finishes or waits for you, while 1loop is in the background, minimised or in the tray. None while its window has the focus. Off, there are none at all.",
+		Keywords:    []string{"notification", "notifications", "notify", "alert", "popup", "desktop", "mute", "silence", "disable", "done", "finished"}},
 	{Key: KeyAnimations, Section: General, Title: "Animations", Where: OnBoth, Kind: Toggle,
 		Description: "Short animations as you click, hover and as things change. Also off while the system asks for reduced motion.",
 		Keywords:    []string{"animation", "motion", "reduce motion", "reduced motion", "transitions", "effects", "accessibility", "fade"}},

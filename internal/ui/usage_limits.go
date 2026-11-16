@@ -224,7 +224,6 @@ const (
 	paceAxis   = 40 // the percents' column
 	paceBottom = 22 // the days' row
 	paceTop    = 18 // room for "Now"
-	paceDashes = 48 // dashes in a dashed line, whatever its length
 )
 
 type paceRenderer struct {
@@ -233,24 +232,12 @@ type paceRenderer struct {
 	percents []*canvas.Text
 	days     []*canvas.Text
 	dayAt    []time.Time
-	even     []*canvas.Line
-	recorded []*canvas.Line
-	forecast []*canvas.Line
-	plan     []*canvas.Line
+	ink      *chartStrokes // the lines: recorded, forecast, to last, even pace (chart_strokes.go)
 	nowLine  *canvas.Line
 	nowText  *canvas.Text
 	dot      *canvas.Circle
 	legend   *fyne.Container
 	objects  []fyne.CanvasObject
-}
-
-func dashes(ink color.Color, width float32) []*canvas.Line {
-	lines := make([]*canvas.Line, paceDashes)
-	for i := range lines {
-		lines[i] = canvas.NewLine(ink)
-		lines[i].StrokeWidth = width
-	}
-	return lines
 }
 
 func (chart *paceChart) CreateRenderer() fyne.WidgetRenderer {
@@ -273,14 +260,7 @@ func (chart *paceChart) CreateRenderer() fyne.WidgetRenderer {
 		text.Alignment = fyne.TextAlignCenter
 		r.days, r.dayAt = append(r.days, text), append(r.dayAt, day)
 	}
-	r.even = dashes(colFaint, 1.5)
-	for range max(0, len(limit.Points)-1) {
-		line := canvas.NewLine(statusInk(limit.Status))
-		line.StrokeWidth = 2.5
-		r.recorded = append(r.recorded, line)
-	}
-	r.forecast = dashes(statusInk(limit.Status), 2)
-	r.plan = dashes(colText, 1.5)
+	r.ink = newChartStrokes()
 	r.nowLine = canvas.NewLine(colBorder)
 	r.nowLine.StrokeWidth = 1
 	r.nowText = textLine("Now", 11, colMuted)
@@ -288,6 +268,12 @@ func (chart *paceChart) CreateRenderer() fyne.WidgetRenderer {
 	r.dot = canvas.NewCircle(statusInk(limit.Status))
 	r.legend = container.NewHBox(legendKey("Recorded", statusInk(limit.Status), false), spacer(10, 0),
 		legendKey("Forecast", statusInk(limit.Status), true), spacer(10, 0), legendKey("To last", colText, true), spacer(10, 0), legendKey("Even pace", colFaint, true))
+	r.collect()
+	return r
+}
+
+// collect lists what the chart draws, back to front.
+func (r *paceRenderer) collect() {
 	for _, line := range r.grid {
 		r.objects = append(r.objects, line)
 	}
@@ -297,30 +283,23 @@ func (chart *paceChart) CreateRenderer() fyne.WidgetRenderer {
 	for _, text := range r.days {
 		r.objects = append(r.objects, text)
 	}
-	r.objects = append(r.objects, r.nowLine, r.nowText)
-	for _, group := range [][]*canvas.Line{r.even, r.plan, r.forecast, r.recorded} {
-		for _, line := range group {
-			r.objects = append(r.objects, line)
-		}
-	}
-	r.objects = append(r.objects, r.dot, r.legend)
-	return r
+	r.objects = append(r.objects, r.nowLine, r.nowText, r.ink.raster, r.dot, r.legend)
 }
 
 // legendKey is a short line in a colour, solid or dashed, and its name.
 func legendKey(name string, ink color.Color, dashed bool) fyne.CanvasObject {
 	mark := container.NewWithoutLayout()
-	for i := 0; i < 3; i++ {
-		if dashed && i == 1 {
-			continue
+	if dashed { // the chart's dashes (dashSpans), level: Fyne draws them straight
+		for _, span := range dashSpans(18) {
+			segment := canvas.NewLine(ink)
+			segment.StrokeWidth = 2
+			segment.Position1, segment.Position2 = fyne.NewPos(span[0], 8), fyne.NewPos(span[1], 8)
+			mark.Add(segment)
 		}
+	} else {
 		segment := canvas.NewLine(ink)
 		segment.StrokeWidth = 2
-		segment.Position1 = fyne.NewPos(float32(i)*6, 8)
-		segment.Position2 = fyne.NewPos(float32(i)*6+6, 8)
-		if dashed {
-			segment.Position2 = fyne.NewPos(float32(i)*6+4, 8)
-		}
+		segment.Position1, segment.Position2 = fyne.NewPos(0, 8), fyne.NewPos(18, 8)
 		mark.Add(segment)
 	}
 	return container.NewHBox(container.NewGridWrap(fyne.NewSize(18, 16), mark), container.NewCenter(textLine(name, 12, colMuted)))
@@ -356,25 +335,21 @@ func (r *paceRenderer) Layout(size fyne.Size) {
 		text.Resize(fyne.NewSize(40, 14))
 		text.Move(fyne.NewPos(x(r.dayAt[i])-20, top+plot.Height+6))
 	}
-	dashed := func(lines []*canvas.Line, from, to fyne.Position) {
-		for i, line := range lines {
-			a, b := float32(i)/paceDashes, (float32(i)+0.55)/paceDashes
-			line.Position1 = fyne.NewPos(from.X+(to.X-from.X)*a, from.Y+(to.Y-from.Y)*a)
-			line.Position2 = fyne.NewPos(from.X+(to.X-from.X)*b, from.Y+(to.Y-from.Y)*b)
-		}
-	}
-	dashed(r.even, fyne.NewPos(x(start), y(100)), fyne.NewPos(x(limit.Reset), y(0)))
-	for i, line := range r.recorded {
+	status := statusInk(limit.Status)
+	strokes := []stroke{{from: fyne.NewPos(x(start), y(100)), to: fyne.NewPos(x(limit.Reset), y(0)), ink: colFaint, width: 1.5, dashed: true}}
+	for i := 0; i+1 < len(limit.Points); i++ {
 		a, b := limit.Points[i], limit.Points[i+1]
-		line.Position1, line.Position2 = fyne.NewPos(x(a.Time), y(a.Left)), fyne.NewPos(x(b.Time), y(b.Left))
+		strokes = append(strokes, stroke{from: fyne.NewPos(x(a.Time), y(a.Left)), to: fyne.NewPos(x(b.Time), y(b.Left)), ink: status, width: 2.5, round: true})
 	}
 	from := fyne.NewPos(x(limit.Checked), y(limit.Left))
 	end := fyne.NewPos(x(limit.Reset), y(limit.LeftAtReset))
 	if !limit.EmptyAt.IsZero() {
 		end = fyne.NewPos(x(limit.EmptyAt), y(0))
 	}
-	dashed(r.forecast, from, end)
-	dashed(r.plan, from, fyne.NewPos(x(limit.Reset), y(0))) // the even pace from now that lasts exactly
+	strokes = append(strokes,
+		stroke{from: from, to: fyne.NewPos(x(limit.Reset), y(0)), ink: colText, width: 2, dashed: true}, // to last: the even pace from now that lasts exactly
+		stroke{from: from, to: end, ink: status, width: 2, dashed: true})                                // the forecast, over it
+	r.ink.set(size, strokes)
 	now := x(r.chart.now)
 	r.nowLine.Position1, r.nowLine.Position2 = fyne.NewPos(now, top-4), fyne.NewPos(now, top+plot.Height)
 	r.nowText.Move(fyne.NewPos(now-r.nowText.MinSize().Width/2, top-paceTop))

@@ -144,9 +144,9 @@ func (renderer *subchatGuideRenderer) draw(w, h int) image.Image {
 		// where they would meet a radius in
 		cx, cy := x+radius, y-radius
 		const sides = 12
-		// A thin curve spreads over the pixels it crosses, and looks
-		// fainter than the straight line: it is drawn a little wider.
-		width := stroke + 0.8
+		// As wide as the straight parts: its edges carry on theirs, with
+		// no overhang where they meet.
+		width := stroke
 		outer, inner := radius+width/2, max(radius-width/2, 0)
 		for i := 0; i <= sides; i++ {
 			angle := math.Pi - float64(i)*math.Pi/2/sides

@@ -127,6 +127,20 @@ func TestSplitSaved(t *testing.T) {
 	}
 }
 
+// A narrow composer shows a shorter placeholder rather than a cut one.
+func TestPickPlaceholder(t *testing.T) {
+	texts := []string{"long text", "short", "x"}
+	width := func(s string) float32 { return float32(len(s)) }
+	for _, c := range []struct {
+		width float32
+		want  string
+	}{{20, "long text"}, {9, "long text"}, {6, "short"}, {2, "x"}, {0, "x"}} {
+		if got := pickPlaceholder(texts, c.width, width); got != c.want {
+			t.Errorf("width %v: %q, want %q", c.width, got, c.want)
+		}
+	}
+}
+
 // Each half keeps room enough while the window has it.
 func TestSplitCut(t *testing.T) {
 	for _, c := range []struct{ ratio, total, want float32 }{

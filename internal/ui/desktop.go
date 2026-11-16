@@ -830,7 +830,8 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 // card: the card's own outline is the only edge of the input area.
 func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.prompt = newChatEntry()
-	ui.prompt.SetPlaceHolder("Describe what you want to build…")
+	ui.prompt.placeholders = []string{"Describe what you want to build…", "What shall we build?", "Message…"}
+	ui.prompt.SetPlaceHolder(ui.prompt.placeholders[0])
 	ui.prompt.send = ui.submit
 	ui.prompt.steer = ui.steerNow
 	// The message being typed will go to the model: open the connection now.

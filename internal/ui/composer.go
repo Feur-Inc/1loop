@@ -55,6 +55,9 @@ type chatEntry struct {
 	typing   func() // the text changed
 	sent     func() // the text was sent: the editor goes back to its place
 	fitting  bool
+	// placeholders, longest first: the entry shows the first that fits on
+	// its one line, so a narrow pane does not wrap and cut it (#285).
+	placeholders []string
 	// Drafts (prompt_drafts.go): the conversation whose draft is shown, its
 	// undo history, and the last text seen.
 	drafts                *promptDrafts
@@ -117,6 +120,7 @@ func (entry *chatEntry) fit() {
 	segment.Style.TextStyle = entry.TextStyle
 	entry.measure.Refresh()
 	entry.measure.Resize(fyne.NewSize(width, 1))
+	entry.fitPlaceholder(width - 2*th.Size(theme.SizeNameInnerPadding))
 	line := textSize("M", th.Size(theme.SizeNameText), entry.TextStyle).Height
 	rows := max(1, min(promptMaxRows, int(math.Round(float64((entry.measure.MinSize().Height-2*th.Size(theme.SizeNameInnerPadding))/line)))))
 	if rows != entry.rows {
@@ -126,6 +130,30 @@ func (entry *chatEntry) fit() {
 			entry.resized()
 		}
 	}
+}
+
+// fitPlaceholder shows the longest of the placeholders that fits in width,
+// else the shortest.
+func (entry *chatEntry) fitPlaceholder(width float32) {
+	if len(entry.placeholders) == 0 {
+		return
+	}
+	size := entry.Theme().Size(theme.SizeNameText)
+	text := pickPlaceholder(entry.placeholders, width, func(s string) float32 { return textSize(s, size, entry.TextStyle).Width })
+	if text != entry.PlaceHolder {
+		entry.SetPlaceHolder(text)
+	}
+}
+
+// pickPlaceholder is the first of texts, longest first, at most width wide
+// as measure measures it, else the last.
+func pickPlaceholder(texts []string, width float32, measure func(string) float32) string {
+	for _, text := range texts {
+		if measure(text) <= width {
+			return text
+		}
+	}
+	return texts[len(texts)-1]
 }
 
 func (entry *chatEntry) Resize(size fyne.Size) {

@@ -93,4 +93,6 @@ replace github.com/go-gl/glfw/v3.3/glfw => ./third_party/glfw
 
 replace github.com/fyne-io/glfw-js => ./third_party/glfw-js
 
+replace github.com/fyne-io/terminal => ./third_party/terminal
+
 replace github.com/go-gl/gl => ./third_party/go-gl

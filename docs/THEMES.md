@@ -73,6 +73,10 @@ Write only the shader's body, without `#version`: 1loop adds the version for you
 | `vec4 u_background`, `u_surface`, `u_text`, `u_accent` | the theme's colours (opaque) and the accent in use |
 | `float u_state` | what the agent does, over all chats: `STATE_IDLE`, `STATE_WORKING`, `STATE_WAITING` (an approval or a question) or `STATE_ERROR` |
 | `float u_state_time` | seconds since `u_state` last changed |
+| `vec4 iMouse` | the pointer, as on Shadertoy but always followed: `xy` where it is, `zw` where a button was last pressed, in `gl_FragCoord`'s pixels (from the bottom left). `z` is negative once the button is released. Raw positions, not eased: ease them in the shader if you like. When the pointer leaves the window they keep its last place |
+| `float u_mouse_inside` | 1 while the pointer is over the window, 0 once it left |
+
+The shader is drawn again as the pointer moves only when it uses `iMouse` or `u_mouse_inside`; one that doesn't costs nothing more.
 
 **Settings → General → Shader background** sets the frame rate (15, 30 or 60 fps; 30 by default) or turns shaders off, which shows the theme's plain colours. The shader pauses while the window is hidden in the tray or not focused, and is still while Animations are off.
 

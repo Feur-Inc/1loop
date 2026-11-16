@@ -51,3 +51,8 @@ shows every change.
   framebuffer objects at halving sizes, and draws them back clipped to its
   rounded corners. Off (`canvas.BlurSupported`) on CPU renderers and GL
   older than 3.0. The painter now remembers its clip and output size.
+- `canvas/shader.go` (`Watch`, `Uses`), `internal/painter/gl/shader_user.go`
+  (#464): the painter says whether a shader uses given uniforms.
+- `driver/desktop/pointer.go`, `internal/driver/glfw/window_desktop.go`
+  (#464): `desktop.OnPointer` hears every pointer move, press and exit over
+  a window, whatever object is under it.

@@ -405,12 +405,27 @@ func (w *window) setCustomCursor(rawCursor *glfw.Cursor, isCustomCursor bool) {
 func (w *window) mouseMoved(_ *glfw.Window, xpos, ypos float64) {
 	inputAt = time.Now() // the loop speeds up (loop.go)
 	w.processMouseMoved(xpos, ypos)
+	if hook := desktop.OnPointer; hook != nil { // 1loop
+		hook(desktop.PointerEvent{Canvas: w.canvas, Position: w.mousePos, Inside: true, Button: w.mouseButton})
+	}
+}
+
+// cursorEntered tells desktop.OnPointer the pointer left (1loop).
+func (w *window) cursorEntered(_ *glfw.Window, entered bool) {
+	if hook := desktop.OnPointer; hook != nil && !entered {
+		hook(desktop.PointerEvent{Canvas: w.canvas, Position: w.mousePos, Inside: false, Button: w.mouseButton})
+	}
 }
 
 func (w *window) mouseClicked(_ *glfw.Window, btn glfw.MouseButton, action glfw.Action, mods glfw.ModifierKey) {
 	inputAt = time.Now() // the loop speeds up (loop.go)
 	button, modifiers := convertMouseButton(btn, mods)
 	mouseAction := convertAction(action)
+	defer func() {
+		if hook := desktop.OnPointer; hook != nil {
+			hook(desktop.PointerEvent{Canvas: w.canvas, Position: w.mousePos, Inside: true, Button: w.mouseButton})
+		}
+	}()
 
 	w.processMouseClicked(button, mouseAction, modifiers)
 }
@@ -796,6 +811,7 @@ func (w *window) create() {
 	win.SetContentScaleCallback(w.scaled)
 	win.SetCursorPosCallback(w.mouseMoved)
 	win.SetMouseButtonCallback(w.mouseClicked)
+	win.SetCursorEnterCallback(w.cursorEntered) // 1loop: desktop.OnPointer
 	win.SetScrollCallback(w.mouseScrolled)
 	win.SetKeyCallback(w.keyPressed)
 	win.SetCharCallback(w.charInput)

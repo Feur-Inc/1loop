@@ -402,6 +402,7 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.CenterOnScreen()
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
 	ui.backdrop = newBackdrop()
+	ui.watchPointer()
 	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.backdrop.picture, ui.build()))
 	ui.syncBackdrop()
 	ui.followUsage()

@@ -569,7 +569,7 @@ type panelTabFrame struct {
 
 func newPanelTabFrame(text string, glyph fyne.Resource, active bool, onTap func()) *panelTabFrame {
 	tab := &panelTabFrame{active: active, onTap: onTap, glyph: glyph, back: canvas.NewRectangle(color.Transparent), label: textLine(text, 13, colMuted)}
-	tab.back.CornerRadius = 10
+	tab.back.CornerRadius = rounded(10)
 	tab.icon = canvas.NewImageFromResource(nil)
 	tab.icon.SetMinSize(fyne.NewSquareSize(15))
 	if glyph == nil {

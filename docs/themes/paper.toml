@@ -4,6 +4,8 @@ name = "Paper"
 base = "light"
 accents = ["#b5541b"]
 roundness = 0.4
+shader = "grain.frag"
+shader_opacity = 0.85
 
 [colors]
 background = "#fbf8f1"

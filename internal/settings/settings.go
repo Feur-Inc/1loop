@@ -130,6 +130,7 @@ const (
 	KeyTheme             = "general.theme"
 	KeyAccent            = "general.accent"
 	KeyAnimations        = "general.animations"
+	KeyShaderFPS         = "general.shader_fps"
 	KeyCrashReports      = "advanced.crash_reports"
 )
 
@@ -169,6 +170,10 @@ var list = []Setting{
 	{Key: KeyDiscordDetails, Section: General, Title: "Share the chat on Discord", Where: OnDesktop, Kind: Toggle, Protected: true,
 		Description: "Adds the chat's title, its project and the current command or file to the Discord status.",
 		Keywords:    []string{"discord", "rich presence", "privacy", "project", "chat", "details", "share"}},
+	{Key: KeyShaderFPS, Section: General, Title: "Shader background", Where: OnDesktop, Kind: Choice,
+		Description: "How often a theme's shader background is drawn, or off for its plain colour. It pauses while the window is hidden or in the background.",
+		Keywords:    []string{"shader", "background", "glsl", "animation", "fps", "frame rate", "theme", "wallpaper", "battery"},
+		Values:      []Value{{"off", "Off"}, {"15", "15 fps"}, {"30", "30 fps"}, {"60", "60 fps"}}},
 	{Key: KeyAnimations, Section: General, Title: "Animations", Where: OnBoth, Kind: Toggle,
 		Description: "Short animations as you click, hover and as things change. Also off while the system asks for reduced motion.",
 		Keywords:    []string{"animation", "motion", "reduce motion", "reduced motion", "transitions", "effects", "accessibility", "fade"}},

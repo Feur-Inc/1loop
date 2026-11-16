@@ -273,6 +273,7 @@ type desktopApp struct {
 	worktreeSort      string                         // how the sidebar and Repository order worktrees
 	theme             themeChoice                    // dark, light or the system's, and the accent
 	projectThemes     map[string]string              // project → its own theme setting (#464)
+	backdrop          *backdrop                      // a theme's shader behind the window (#464)
 	repos             map[string]*repoState          // repositories read, by target and project
 	repoWindow        *repoWindow                    // the open Repository window
 	statePath         string
@@ -394,7 +395,9 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.Resize(fyne.NewSize(1180, 760))
 	ui.window.CenterOnScreen()
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
-	ui.window.SetContent(ui.build())
+	ui.backdrop = newBackdrop()
+	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.build()))
+	ui.syncBackdrop()
 	ui.followUsage()
 	ui.window.SetOnDropped(func(at fyne.Position, uris []fyne.URI) {
 		var files []string
@@ -990,7 +993,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		container.NewHBox(container.NewCenter(textLine("Enter to save · Esc to cancel", 12, colFaint)), cancelEdit)))
 	ui.editBar.Hide()
 	body := container.NewStack(card, padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
-	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: card.CornerRadius}, append(append(glow.objects(), drop.objects()...), body)...)
+	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: 18}, append(append(glow.objects(), drop.objects()...), body)...)
 	ui.composer = composer
 
 	// Messages waiting for the running task sit in a tray on top of the card.
@@ -999,7 +1002,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	clear.size = 12.5
 	ui.queueList = container.New(layout.NewCustomPaddedVBoxLayout(0))
 	trayBg := canvas.NewRectangle(colPopover)
-	trayBg.TopLeftCornerRadius, trayBg.TopRightCornerRadius = 12, 12
+	trayBg.TopLeftCornerRadius, trayBg.TopRightCornerRadius = rounded(12), rounded(12)
 	trayBg.StrokeColor = colBorderSoft
 	trayBg.StrokeWidth = 1
 	trayBody := container.NewVBox(container.NewBorder(nil, nil, nil, clear, padded(0, 0, 8, 0, ui.queueTitle)), ui.queueList)
@@ -2026,6 +2029,8 @@ type savedState struct {
 	Split *savedSplit `json:"split,omitempty"`
 	// Projects with a theme of their own (#464).
 	ProjectThemes map[string]string `json:"projectThemes,omitempty"`
+	// The Shader background setting; 30 fps when unset.
+	ShaderFPS string `json:"shaderFPS,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -2099,6 +2104,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.savedWindows(),
 		ui.savedLayout(),
 		ui.projectThemes,
+		shaderFPSSaved(),
 	})
 	for _, view := range ui.allPanes() {
 		if view.panel != nil {
@@ -2224,6 +2230,9 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.serverProjects = state.ServerProjects
 	ui.theme = themeChoice{theme: state.Theme, accent: state.Accent}
 	ui.projectThemes = state.ProjectThemes
+	if state.ShaderFPS != "" {
+		shaderFPS = state.ShaderFPS
+	}
 	for _, project := range state.FoldedProjects {
 		ui.foldedProjects[project] = true
 	}

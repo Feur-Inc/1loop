@@ -1025,7 +1025,7 @@ func newShadow(strength float32) *shadow {
 	dropShadow := &shadow{}
 	for i, alpha := range []float32{0.10, 0.08, 0.06, 0.04} {
 		r := canvas.NewRectangle(color.NRGBA{A: uint8(255 * alpha * strength)})
-		r.CornerRadius = float32(12 + 3*i)
+		r.CornerRadius = rounded(float32(12 + 3*i))
 		dropShadow.layers = append(dropShadow.layers, r)
 		dropShadow.alphas = append(dropShadow.alphas, alpha*strength)
 	}
@@ -1447,7 +1447,7 @@ func (renderer *sheetRenderer) layoutGlass(size fyne.Size, box rect, panelPos fy
 		if sheet.sharp.Image != nil && windowControlsBox != nil {
 			sheet.sharp.Move(fyne.CurrentApp().Driver().AbsolutePositionForObject(windowControlsBox))
 			sheet.sharp.Resize(windowControlsBox.Size())
-			sheet.sharp.CornerRadius = 8 // no square patch on the frosted window
+			sheet.sharp.CornerRadius = rounded(8) // no square patch on the frosted window
 			sheet.sharp.Show()
 		}
 		return
@@ -1485,11 +1485,11 @@ func (renderer *sheetRenderer) Refresh() {
 		sheet.dim.FillColor = color.Transparent
 		sheet.panel.FillColor = withAlpha(colPopover, o)
 		sheet.panel.StrokeColor = withAlpha(colPopBorder, o)
-		sheet.panel.CornerRadius = 10
+		sheet.panel.CornerRadius = rounded(10)
 		if sheet.columns {
 			sheet.panel.FillColor = withAlpha(colSurface, o)
 			sheet.panel.StrokeColor = withAlpha(colBorder, o)
-			sheet.panel.CornerRadius = 14
+			sheet.panel.CornerRadius = rounded(14)
 		}
 		if sheet.glass != nil { // frosted glass: the tint lets the blurred window through
 			base := colPopover
@@ -1527,7 +1527,7 @@ func (renderer *sheetRenderer) Refresh() {
 		if sheet.glass != nil {
 			sheet.panel.StrokeColor = glassEdge
 		}
-		sheet.panel.CornerRadius = 14
+		sheet.panel.CornerRadius = rounded(14)
 		sheet.shadow.setOpacity(1)
 	}
 	// Moving the content is enough to repaint it: refreshing the whole dialog

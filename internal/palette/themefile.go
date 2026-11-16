@@ -41,6 +41,10 @@ type ThemeFile struct {
 	Tokens    Tokens        // the base's tokens with the file's colours
 	Accents   []color.NRGBA // its own accents, if any: they replace the presets
 	Roundness float64       // corners, scaled: 1 is 1loop's own
+	Shader    string        // a GLSL fragment shader drawn behind the app: its path
+	// ShaderOpacity is how opaque the background and the sidebar stay over
+	// the shader, from 0 to 1.
+	ShaderOpacity float64
 }
 
 // Setting is the theme setting that chooses this theme.
@@ -52,6 +56,8 @@ type themeSource struct {
 	Base      string            `toml:"base"`
 	Accents   []string          `toml:"accents"`
 	Roundness *float64          `toml:"roundness"`
+	Shader    string            `toml:"shader"`
+	Opacity   *float64          `toml:"shader_opacity"`
 	Colors    map[string]string `toml:"colors"`
 }
 
@@ -121,7 +127,7 @@ func ParseTheme(id, text string) (ThemeFile, error) {
 	if extra := meta.Undecoded(); len(extra) > 0 {
 		return ThemeFile{}, fmt.Errorf("unknown key %q (see docs/THEMES.md)", extra[0].String())
 	}
-	theme := ThemeFile{ID: id, Name: strings.TrimSpace(source.Name), Roundness: 1}
+	theme := ThemeFile{ID: id, Name: strings.TrimSpace(source.Name), Roundness: 1, Shader: strings.TrimSpace(source.Shader), ShaderOpacity: 0.8}
 	if theme.Name == "" {
 		theme.Name = id
 	}
@@ -160,6 +166,13 @@ func ParseTheme(id, text string) (ThemeFile, error) {
 			return ThemeFile{}, fmt.Errorf("roundness: %v is outside %v to %v", r, MinRoundness, MaxRoundness)
 		}
 		theme.Roundness = r
+	}
+	if source.Opacity != nil {
+		o := *source.Opacity
+		if math.IsNaN(o) || o < 0 || o > 1 {
+			return ThemeFile{}, fmt.Errorf("shader_opacity: %v is outside 0 to 1", o)
+		}
+		theme.ShaderOpacity = o
 	}
 	return theme, nil
 }
@@ -239,6 +252,9 @@ func LoadThemes(dir string) ([]ThemeFile, []ThemeError) {
 			theme, err = ParseTheme(strings.TrimSuffix(filepath.Base(path), ".toml"), string(data))
 			if err == nil {
 				theme.Path = path
+				if theme.Shader != "" && !filepath.IsAbs(theme.Shader) {
+					theme.Shader = filepath.Join(dir, theme.Shader)
+				}
 				themes = append(themes, theme)
 				continue
 			}
@@ -257,7 +273,9 @@ func ThemeTemplate(name string) string {
 	fmt.Fprintf(&b, "name = %q\n", name)
 	b.WriteString("base = \"dark\"            # dark or light: what the colours left out come from\n")
 	b.WriteString("accents = [\"#ffb000\"]    # one is chosen by default; several are offered in the picker\n")
-	b.WriteString("roundness = 1.0          # 0 square to 1.6 round; 1 is 1loop's own\n\n")
+	b.WriteString("roundness = 1.0          # 0 square to 1.6 round; 1 is 1loop's own\n")
+	b.WriteString("# shader = \"aurora.frag\"  # a GLSL background beside this file (docs/THEMES.md)\n")
+	b.WriteString("# shader_opacity = 0.8    # how much the background and sidebar cover it\n\n")
 	b.WriteString("[colors]\n")
 	b.WriteString("# Only the colours you set change; surfaces follow background and the quieter texts follow text.\n")
 	for _, key := range ThemeColourKeys() {

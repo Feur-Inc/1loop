@@ -79,7 +79,7 @@ func statusPill(limit usage.Limit) fyne.CanvasObject {
 	text.TextStyle = fyne.TextStyle{Bold: true}
 	r, g, b, _ := ink.RGBA()
 	fill := canvas.NewRectangle(color.NRGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: 38})
-	fill.CornerRadius = 11
+	fill.CornerRadius = rounded(11)
 	return container.NewStack(fill, padded(3, 3, 10, 10, text))
 }
 

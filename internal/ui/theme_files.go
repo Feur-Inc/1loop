@@ -61,7 +61,7 @@ func loadThemeFiles() {
 
 // themesStamp sums up the folder: names, sizes and times of its files.
 func themesStamp() string {
-	paths, _ := filepath.Glob(filepath.Join(themesDir, "*.toml"))
+	paths, _ := filepath.Glob(filepath.Join(themesDir, "*")) // shaders too
 	var b strings.Builder
 	for _, path := range paths {
 		if info, err := os.Stat(path); err == nil {
@@ -85,6 +85,7 @@ func (ui *desktopUI) watchThemes() {
 			}
 			stamp = next
 			fyne.Do(func() {
+				shaderBroken, shaderError = "", "" // perhaps fixed: tried again
 				loadThemeFiles()
 				ui.themeChanged()
 			})
@@ -172,6 +173,8 @@ func (ui *desktopUI) syncProjectTheme() {
 	}
 	ui.theme.project = want
 	ui.theme.apply()
+	refreshRadii()
+	ui.syncBackdrop()
 	ui.renderChats()
 }
 

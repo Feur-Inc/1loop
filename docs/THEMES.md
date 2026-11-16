@@ -2,7 +2,8 @@
 
 # Theme files
 
-1loop's desktop app reads themes of your own from a folder:
+1loop's desktop app reads themes of your own from a folder. Theme files are desktop only for now: the phone keeps its own Dark / Light / System setting and accent.
+
 
 - Linux: `~/.config/1loop/themes/`
 - macOS: `~/Library/Application Support/1loop/themes/`
@@ -27,6 +28,8 @@ name = "Nord"            # as the picker shows it; the file name when left out
 base = "dark"            # dark or light: the colours left out come from it
 accents = ["#88c0d0", "#a3be8c"]
 roundness = 1.0          # corners: 0 square, 1 1loop's own, up to 1.6
+shader = "aurora.frag"   # a GLSL background, beside this file
+shader_opacity = 0.8     # how much the background and sidebar cover it, 0 to 1
 
 [colors]
 background = "#2e3440"
@@ -45,7 +48,28 @@ The accent is fitted to the background as before: lightened on dark or darkened 
 
 ### roundness
 
-Scales the corners of cards, buttons, fields, code blocks, menus and message bubbles. `0` to `1.6`; anything else is an error.
+Scales the corners of everything rounded: cards, buttons, fields, the composer, code blocks, menus, dialogs, tooltips and message bubbles (thin bars and pills of a few pixels keep theirs). `0` to `1.6`; anything else is an error.
+
+### shader
+
+A GLSL fragment shader drawn behind the whole window: the background and the sidebar are laid over it at `shader_opacity` (0.8 by default; cards, menus and fields stay opaque). The path is relative to the theme file. Saving the shader updates the app at once, like the theme.
+
+Write only the shader's body, without `#version`: 1loop adds the version for your GL (GLSL 1.10, or GLSL ES 1.00 with `precision mediump float`), so keep to what both accept (`gl_FragColor`, no `in`/`out`). 1loop declares these uniforms before your code; don't declare them again:
+
+| uniform | |
+| --- | --- |
+| `vec2 u_resolution` | the window's size in pixels |
+| `vec2 u_origin` | its bottom left corner in `gl_FragCoord`: `(gl_FragCoord.xy - u_origin) / u_resolution` goes from 0 to 1 |
+| `float u_time` | seconds; it stops while the shader is paused |
+| `vec4 u_background`, `u_surface`, `u_text`, `u_accent` | the theme's colours (opaque) and the accent in use |
+| `float u_state` | what the agent does, over all chats: `STATE_IDLE`, `STATE_WORKING`, `STATE_WAITING` (an approval or a question) or `STATE_ERROR` |
+| `float u_state_time` | seconds since `u_state` last changed |
+
+**Settings → General → Shader background** sets the frame rate (15, 30 or 60 fps; 30 by default) or turns shaders off, which shows the theme's plain colours. The shader pauses while the window is hidden in the tray or not focused, and is still while Animations are off.
+
+A shader that does not compile or link is not drawn: the theme's plain colours are shown, with the compiler's message in red in Settings → General. It is tried again as soon as a file in the folder changes.
+
+Examples: [`themes/aurora.frag`](themes/aurora.frag) (reacts to the agent's state, used by `aurora.toml`) and [`themes/grain.frag`](themes/grain.frag) (used by `paper.toml`). `glslangValidator` can check a shader before you save it: put `#version 110` and the uniforms above in front of it.
 
 ### colors
 
@@ -87,9 +111,8 @@ output_path = "~/.config/1loop/themes/matugen.toml"
 
 Each time matugen runs, 1loop picks the new colours up. For a light wallpaper scheme, change `base` to `"light"` in the template.
 
-More examples: [`themes/nord.toml`](themes/nord.toml), [`themes/paper.toml`](themes/paper.toml).
+More examples: [`themes/nord.toml`](themes/nord.toml), [`themes/paper.toml`](themes/paper.toml), [`themes/aurora.toml`](themes/aurora.toml).
 
 ## Not there yet
 
-- Shader backgrounds (GLSL drawn behind the app, reacting to the agent's state).
-- The phone takes the desktop's theme files.
+- The phone takes the desktop's theme files (colours, accents, roundness). Shaders would stay desktop only.

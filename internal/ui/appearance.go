@@ -89,6 +89,7 @@ func (ui *desktopUI) setAccent(accent string) {
 func (ui *desktopUI) themeChanged() {
 	ui.theme.apply()
 	refreshRadii()
+	ui.syncBackdrop()
 	ui.save()
 	// Built from the colours as they were: the page and the sidebar are
 	// made again with the new ones.
@@ -168,7 +169,29 @@ func (ui *desktopUI) appearanceRows(view *settingsView) []fyne.CanvasObject {
 	controls := container.NewHBox(swatches, padded(0, 0, 10, 0, container.NewCenter(customSwatch)), padded(0, 0, 6, 0, sized(110, custom)))
 	accentRow := view.mark(registry.KeyAccent, settingStack(accents.Title,
 		"Buttons, links and highlights. A colour of your own: type it as #rrggbb and press Enter. On the light theme it is darkened until it reads on white.", controls))
-	return append(themeRows, accentRow)
+	fpsSetting, _ := registry.Lookup(registry.KeyShaderFPS)
+	fps := newPicker(ui.window, fpsSetting.Title, styleField, nil)
+	for _, value := range fpsSetting.Values {
+		fps.Options = append(fps.Options, value.Label)
+	}
+	fps.SetSelected(fpsSetting.Label(shaderFPS))
+	fps.onChanged = func(label string) {
+		for _, value := range fpsSetting.Values {
+			if value.Label == label {
+				ui.setShaderFPS(value.ID)
+			}
+		}
+	}
+	fpsRow := view.mark(registry.KeyShaderFPS, settingRow(fpsSetting.Title,
+		"For themes with a shader background. It pauses while the window is hidden or in the background, and is still while animations are off.", sized(180, fps.row)))
+	rows := append(themeRows, accentRow, fpsRow)
+	if shaderError != "" {
+		problem := note("The theme's shader did not compile, its plain colours are shown: " + shaderError)
+		problem.Importance = widget.DangerImportance
+		problem.Wrapping = fyne.TextWrapWord
+		rows = append(rows, problem)
+	}
+	return rows
 }
 
 type colourError string

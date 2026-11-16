@@ -260,14 +260,14 @@ func (layoutSpec *composerControlsLayout) Layout(o []fyne.CanvasObject, size fyn
 // drop shadow out around it, past its edges.
 type haloLayout struct {
 	drop, glow *shadow
-	radius     float32
+	radius     float32 // the card's, at roundness 1
 }
 
 func (layoutSpec *haloLayout) MinSize(o []fyne.CanvasObject) fyne.Size { return o[len(o)-1].MinSize() }
 
 func (layoutSpec *haloLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
-	layoutSpec.glow.layout(fyne.NewPos(0, -2), size, layoutSpec.radius)
-	layoutSpec.drop.layout(fyne.NewPos(0, 3), size, layoutSpec.radius)
+	layoutSpec.glow.layout(fyne.NewPos(0, -2), size, rounded(layoutSpec.radius))
+	layoutSpec.drop.layout(fyne.NewPos(0, 3), size, rounded(layoutSpec.radius))
 	o[len(o)-1].Move(fyne.Position{})
 	o[len(o)-1].Resize(size)
 }
@@ -809,7 +809,7 @@ func (ui *desktopUI) queueRow(steer bool, index int, messageValue agent.Message)
 		bar.Add(a)
 	}
 	hover := canvas.NewRectangle(color.Transparent)
-	hover.CornerRadius = 8
+	hover.CornerRadius = rounded(8)
 	row := container.NewStack(hover, padded(0, 0, 4, 2, container.NewBorder(nil, nil, padded(0, 0, 0, 4, badge), bar, label)))
 	revealOnHover(label, hover, actions, tips, ui.tips)
 	return row

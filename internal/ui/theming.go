@@ -252,7 +252,12 @@ func (choice themeChoice) apply() {
 	tokens := palette.For(setting, setting == palette.ThemeSystem && systemDark())
 	roundness = 1
 	if file, ok := themeFile(setting); ok {
-		tokens, roundness = file.Tokens, max(float32(file.Roundness), 0.05) // never 0: radii scale back from it
+		tokens = file.Tokens
+		if _, on := shaderInUse(setting); on { // the shader shows through
+			a := uint8(file.ShaderOpacity*255 + 0.5)
+			tokens.Background.A, tokens.Sidebar.A = a, a
+		}
+		roundness = max(float32(file.Roundness), 0.05) // never 0: radii scale back from it
 	}
 	changed := setColours(tokens, choice.accentColour())
 	platform.Devf("ui", "theme %s (dark %v), accent %s, roundness %.2f", setting, tokens.Dark, choice.accent, roundness)

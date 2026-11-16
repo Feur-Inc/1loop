@@ -1136,6 +1136,8 @@ type sheet struct {
 	frost      *canvas.Image // a menu's: the frosted part of the window under its panel
 	frostAt    rect          // the panel rectangle frost was cut for
 	sharp      *canvas.Image // a dialog's: the window buttons as they were, over the frosted backdrop
+	live       *canvas.Blur  // a theme's blur instead ([blur] menus, dialogs: theme_blur.go)
+	liveTint   color.NRGBA   // the panel's colour over it
 	open       bool
 	closing    bool
 	items      []*tapRow
@@ -1143,7 +1145,7 @@ type sheet struct {
 }
 
 func newSheet(canvas fyne.Canvas, content fyne.CanvasObject, width float32) *sheet {
-	dialog := &sheet{canvas: canvas, content: content, width: width, active: -1}
+	dialog := &sheet{canvas: canvas, content: content, width: width, active: -1, live: canvasBlur()}
 	dialog.ExtendBaseWidget(dialog)
 	return dialog
 }
@@ -1174,7 +1176,10 @@ func (dialog *sheet) Show() {
 	dialog.Resize(dialog.canvas.Size())
 	dialog.openSize = dialog.canvas.Size()
 	var shot image.Image
-	dialog.glass, shot = frostedBackdrop(dialog.canvas) // before the sheet is drawn: what it covers
+	dialog.syncLive()
+	if !dialog.live.Visible() {
+		dialog.glass, shot = frostedBackdrop(dialog.canvas) // before the sheet is drawn: what it covers
+	}
 	if dialog.sharp != nil {
 		dialog.sharp.Image = nil
 		if !dialog.menu && shot != nil {
@@ -1378,6 +1383,24 @@ func (dialog *sheet) CreateRenderer() fyne.WidgetRenderer {
 	return &sheetRenderer{dialog}
 }
 
+// syncLive turns the theme's blur on or off as the sheet opens.
+func (dialog *sheet) syncLive() {
+	element, base, opacity := "dialogs", colSurface, float32(0xe0)/0xff
+	if dialog.menu {
+		element, base, opacity = "menus", colPopover, 0.5
+		if dialog.columns {
+			base = colSurface
+		}
+	}
+	dialog.live.Radius = blurRadius(element)
+	dialog.liveTint = blurTint(element, base, opacity)
+	if dialog.live.Radius > 0 {
+		dialog.live.Show()
+	} else {
+		dialog.live.Hide()
+	}
+}
+
 type sheetRenderer struct{ dialog *sheet }
 
 func (renderer *sheetRenderer) Layout(size fyne.Size) {
@@ -1406,6 +1429,14 @@ func (renderer *sheetRenderer) Layout(size fyne.Size) {
 		panelSize = fyne.NewSize(w, h)
 	}
 	renderer.layoutGlass(size, box, panelPos, panelSize)
+	if sheet.menu { // under the panel; behind a dialog, the whole window
+		sheet.live.Move(panelPos)
+		sheet.live.Resize(panelSize)
+		sheet.live.CornerRadius = sheet.panel.CornerRadius
+	} else {
+		sheet.live.Move(fyne.Position{})
+		sheet.live.Resize(size)
+	}
 	sheet.panel.Move(panelPos)
 	sheet.panel.Resize(panelSize)
 	sheet.shadow.layout(panelPos.AddXY(0, 2), panelSize, sheet.panel.CornerRadius)
@@ -1431,7 +1462,7 @@ func (renderer *sheetRenderer) windowResized(size fyne.Size) {
 			sheet.anchorAt = fyne.CurrentApp().Driver().AbsolutePositionForObject(sheet.anchor)
 			sheet.anchorSz = sheet.anchor.Size()
 		}
-		if sheet.glass != nil {
+		if sheet.glass != nil && !sheet.live.Visible() {
 			// The capture draws the whole window: the sheet steps out of it.
 			sheet.BaseWidget.Hide()
 			glass, shot := frostedBackdrop(sheet.canvas)
@@ -1511,7 +1542,11 @@ func (renderer *sheetRenderer) Refresh() {
 			sheet.panel.StrokeColor = withAlpha(colBorder, o)
 			sheet.panel.CornerRadius = rounded(14)
 		}
-		if sheet.glass != nil { // frosted glass: the tint lets the blurred window through
+		if sheet.live.Visible() { // the theme's blur: its tint, fading in
+			sheet.panel.FillColor = withAlpha(sheet.liveTint, o)
+			sheet.panel.StrokeColor = withAlpha(glassEdge, o)
+			sheet.panel.CornerRadius += 2
+		} else if sheet.glass != nil { // frosted glass: the tint lets the blurred window through
 			base := colPopover
 			if sheet.columns {
 				base = colSurface
@@ -1543,8 +1578,12 @@ func (renderer *sheetRenderer) Refresh() {
 			sheet.backdrop.Translucency = float64(1 - o)
 			sheet.panel.FillColor = color.NRGBA{R: colSurface.R, G: colSurface.G, B: colSurface.B, A: 0xe0} // a pane of glass too
 		}
+		if sheet.live.Visible() {
+			sheet.dim.FillColor = color.NRGBA{A: uint8(dimAlpha(55) * o)}
+			sheet.panel.FillColor = sheet.liveTint
+		}
 		sheet.panel.StrokeColor = colBorder
-		if sheet.glass != nil {
+		if sheet.glass != nil || sheet.live.Visible() {
 			sheet.panel.StrokeColor = glassEdge
 		}
 		sheet.panel.CornerRadius = rounded(14)
@@ -1563,8 +1602,15 @@ func (renderer *sheetRenderer) Refresh() {
 }
 
 func (renderer *sheetRenderer) Objects() []fyne.CanvasObject {
-	objects := []fyne.CanvasObject{renderer.dialog.backdrop, renderer.dialog.dim, renderer.dialog.sharp}
+	objects := []fyne.CanvasObject{renderer.dialog.backdrop}
+	if !renderer.dialog.menu {
+		objects = append(objects, renderer.dialog.live) // the window blurred, then dimmed
+	}
+	objects = append(objects, renderer.dialog.dim, renderer.dialog.sharp)
 	objects = append(objects, renderer.dialog.shadow.objects()...)
+	if renderer.dialog.menu {
+		objects = append(objects, renderer.dialog.live)
+	}
 	objects = append(objects, renderer.dialog.frost, renderer.dialog.panel, renderer.dialog.content)
 	return objects
 }

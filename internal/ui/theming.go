@@ -267,6 +267,7 @@ func (choice themeChoice) apply() {
 		measuresMu.Unlock()
 	}
 	changed := setColours(tokens, choice.accentColour())
+	defer setThemeBlur(themeFile(setting)) // after the repaint, which recolours the tints
 	platform.Devf("ui", "theme %s (dark %v), accent %s, roundness %.2f", setting, tokens.Dark, choice.accent, roundness)
 	if len(changed) > 0 || fontsChanged {
 		repaint(changed) // sets the theme again: Fyne drops its fonts

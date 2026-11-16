@@ -33,6 +33,13 @@ shader_opacity = 0.8     # how much the background and sidebar cover it, 0 to 1
 font = "IBM Plex Sans"   # the interface font: a family, or a .ttf/.otf
 font_mono = "JetBrains Mono"
 
+[blur]                   # frosted glass: what lies behind shows through, blurred
+sidebar = 16
+menus = 20
+
+[blur_tint]              # the colour over the blur; left out, the element's own, translucent
+sidebar = "#272c3699"
+
 [colors]
 background = "#2e3440"
 sidebar = "#272c36"
@@ -78,6 +85,21 @@ Examples: [`themes/aurora.frag`](themes/aurora.frag) (reacts to the agent's stat
 Instead of a shader, a picture drawn behind the whole window: `.png`, `.jpg`, `.webp`, or an animated `.gif`, which loops at its own frame delays. The path is relative to the theme file. It covers the window (cropped to keep its proportions), and the background and sidebar are laid over it at `shader_opacity`, like a shader. A theme has either `shader` or `background_image`, not both.
 
 A GIF pauses like a shader: while the window is hidden or in the background, and while Animations are off. **Shader background → Off** hides the picture too and shows the theme's plain colours. A picture that can't be read is reported in red in Settings → General, like a shader that fails. Example: [`themes/drift.toml`](themes/drift.toml) with `drift.gif`.
+
+### blur
+
+Frosted glass for parts of the window: `[blur]` gives an element a blur radius (in the interface's units, `0` to `64`; `0` or left out is no blur), and what lies behind it shows through, blurred: the shader or picture background, or the window behind a menu or dialog. `[blur_tint]` is the colour laid over the blur, `#rrggbbaa`; the alpha is how much it covers. An element without a tint gets its own colour at 60 % (menus 50 %, dialogs 88 %).
+
+| element | |
+| --- | --- |
+| `sidebar` | the sidebar |
+| `panel` | the side panel (tools, files, browser, terminal) |
+| `composer` | the message box |
+| `headers` | the pane headers of a split window |
+| `menus` | menus and popovers, over what they cover |
+| `dialogs` | dialogs: the whole window behind them, blurred live |
+
+The blur follows the corners (`roundness`), works on dark and light bases, and is drawn on the GPU only when the window redraws. Without a background behind the window (no `shader` or `background_image`) the sidebar, panel, composer and headers blur the plain window colour: use them with a background. Where the GPU can't blur (Mesa drawing on the CPU, see Settings → General's renderer, or a GL older than 3.0) the elements keep their plain, opaque look; menus and dialogs keep 1loop's own frosted glass.
 
 ### fonts
 
@@ -138,4 +160,5 @@ More examples: [`themes/nord.toml`](themes/nord.toml), [`themes/paper.toml`](the
 
 ## Not there yet
 
+- Whole-window blur through the compositor (KDE's or a Wayland blur protocol behind a translucent window) is not there yet: the blur stays inside the window.
 - The phone takes the desktop's theme files (colours, accents, roundness). Shaders would stay desktop only.

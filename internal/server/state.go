@@ -146,6 +146,9 @@ type headlessServer struct {
 	// which pairs the first device without the console (security.go).
 	setup     string
 	setupPort int
+	// proxied: a reverse proxy reaches it over plain HTTP (-http-listen),
+	// so the setup link names the proxy's address (proxy.go).
+	proxied bool
 	// Changes waiting for the next flush to the clients: a streamed answer
 	// reaches them at most ten times a second, as the desktop sends it.
 	pending  map[*serverChat]map[int]bool

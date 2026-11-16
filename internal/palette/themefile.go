@@ -42,6 +42,7 @@ type ThemeFile struct {
 	Accents   []color.NRGBA // its own accents, if any: they replace the presets
 	Roundness float64       // corners, scaled: 1 is 1loop's own
 	Shader    string        // a GLSL fragment shader drawn behind the app: its path
+	Image     string        // or a picture (PNG, JPEG, WebP, animated GIF): its path
 	// ShaderOpacity is how opaque the background and the sidebar stay over
 	// the shader, from 0 to 1.
 	ShaderOpacity float64
@@ -65,6 +66,7 @@ type themeSource struct {
 	Accents   []string          `toml:"accents"`
 	Roundness *float64          `toml:"roundness"`
 	Shader    string            `toml:"shader"`
+	Image     string            `toml:"background_image"`
 	Opacity   *float64          `toml:"shader_opacity"`
 	Font      string            `toml:"font"`
 	FontBold  string            `toml:"font_bold"`
@@ -139,7 +141,13 @@ func ParseTheme(id, text string) (ThemeFile, error) {
 	if extra := meta.Undecoded(); len(extra) > 0 {
 		return ThemeFile{}, fmt.Errorf("unknown key %q (see docs/THEMES.md)", extra[0].String())
 	}
-	theme := ThemeFile{ID: id, Name: strings.TrimSpace(source.Name), Roundness: 1, Shader: strings.TrimSpace(source.Shader), ShaderOpacity: 0.8}
+	theme := ThemeFile{ID: id, Name: strings.TrimSpace(source.Name), Roundness: 1, Shader: strings.TrimSpace(source.Shader), Image: strings.TrimSpace(source.Image), ShaderOpacity: 0.8}
+	if theme.Shader != "" && theme.Image != "" {
+		return ThemeFile{}, errors.New("shader and background_image: choose one")
+	}
+	if ext := strings.ToLower(filepath.Ext(theme.Image)); theme.Image != "" && ext != ".png" && ext != ".jpg" && ext != ".jpeg" && ext != ".gif" && ext != ".webp" {
+		return ThemeFile{}, fmt.Errorf("background_image: %q is not a .png, .jpg, .webp or .gif", theme.Image)
+	}
 	if theme.Name == "" {
 		theme.Name = id
 	}
@@ -274,6 +282,9 @@ func LoadThemes(dir string) ([]ThemeFile, []ThemeError) {
 				if theme.Shader != "" && !filepath.IsAbs(theme.Shader) {
 					theme.Shader = filepath.Join(dir, theme.Shader)
 				}
+				if theme.Image != "" && !filepath.IsAbs(theme.Image) {
+					theme.Image = filepath.Join(dir, theme.Image)
+				}
 				for _, font := range []*string{&theme.Fonts.Regular, &theme.Fonts.Bold, &theme.Fonts.Italic, &theme.Fonts.Mono} {
 					if IsFontFile(*font) && !filepath.IsAbs(*font) {
 						*font = filepath.Join(dir, *font)
@@ -299,7 +310,8 @@ func ThemeTemplate(name string) string {
 	b.WriteString("accents = [\"#ffb000\"]    # one is chosen by default; several are offered in the picker\n")
 	b.WriteString("roundness = 1.0          # 0 square to 1.6 round; 1 is 1loop's own\n")
 	b.WriteString("# shader = \"aurora.frag\"  # a GLSL background beside this file (docs/THEMES.md)\n")
-	b.WriteString("# shader_opacity = 0.8    # how much the background and sidebar cover it\n")
+	b.WriteString("# background_image = \"wall.gif\"  # or a picture: .png, .jpg, .webp or an animated .gif\n")
+	b.WriteString("# shader_opacity = 0.8    # how much the background and sidebar cover the shader or picture\n")
 	b.WriteString("# font = \"IBM Plex Sans\"  # a family installed on the system, or a .ttf/.otf beside this file\n")
 	b.WriteString("# font_bold = \"IBM Plex Sans:bold\"\n")
 	b.WriteString("# font_italic = \"IBM Plex Sans:italic\"\n")

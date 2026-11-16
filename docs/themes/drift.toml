@@ -1,0 +1,7 @@
+# SPDX-License-Identifier: MPL-2.0
+# 1loop's dark look over a looping GIF (drift.gif, beside it).
+name = "Drift"
+base = "dark"
+accents = ["#8ea2ff"]
+background_image = "drift.gif"
+shader_opacity = 0.7

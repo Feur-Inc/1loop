@@ -54,7 +54,7 @@ var (
 // shaderInUse is the shader the active theme draws, "" for none.
 func shaderInUse(setting string) (palette.ThemeFile, bool) {
 	file, ok := themeFile(setting)
-	if !ok || file.Shader == "" || shaderFPS == "off" || file.Shader == shaderBroken {
+	if !ok || (file.Shader == "" && file.Image == "") || shaderFPS == "off" || (file.Shader != "" && file.Shader == shaderBroken) || (file.Image != "" && file.Image == shaderBroken) {
 		return file, false
 	}
 	return file, true
@@ -62,8 +62,11 @@ func shaderInUse(setting string) (palette.ThemeFile, bool) {
 
 // backdrop is the shader behind the main window.
 type backdrop struct {
-	shader *canvas.Shader
-	path   string // the file drawn
+	shader  *canvas.Shader
+	picture *canvas.Image // or a theme's background_image (theme_picture.go)
+	picPath string
+	picStop chan struct{}
+	path    string // the file drawn
 
 	mu           sync.Mutex
 	clock        time.Duration // u_time, which stops while paused
@@ -73,8 +76,11 @@ type backdrop struct {
 }
 
 func newBackdrop() *backdrop {
-	b := &backdrop{shader: canvas.NewShader("")}
+	b := &backdrop{shader: canvas.NewShader(""), picture: canvas.NewImageFromImage(nil)}
 	b.shader.Hide()
+	b.picture.FillMode = canvas.ImageFillCover
+	b.picture.ScaleMode = canvas.ImageScaleSmooth
+	b.picture.Hide()
 	return b
 }
 
@@ -108,7 +114,8 @@ func (ui *desktopUI) syncBackdrop() {
 			ui.conversation.Refresh()
 		}
 	}
-	if !on {
+	ui.syncPicture(file, on)
+	if !on || file.Shader == "" {
 		if b.stop != nil {
 			close(b.stop)
 			b.stop = nil

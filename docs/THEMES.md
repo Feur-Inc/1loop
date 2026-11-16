@@ -73,6 +73,12 @@ A shader that does not compile or link is not drawn: the theme's plain colours a
 
 Examples: [`themes/aurora.frag`](themes/aurora.frag) (reacts to the agent's state, used by `aurora.toml`) and [`themes/grain.frag`](themes/grain.frag) (used by `paper.toml`). `glslangValidator` can check a shader before you save it: put `#version 110` and the uniforms above in front of it.
 
+### background_image
+
+Instead of a shader, a picture drawn behind the whole window: `.png`, `.jpg`, `.webp`, or an animated `.gif`, which loops at its own frame delays. The path is relative to the theme file. It covers the window (cropped to keep its proportions), and the background and sidebar are laid over it at `shader_opacity`, like a shader. A theme has either `shader` or `background_image`, not both.
+
+A GIF pauses like a shader: while the window is hidden or in the background, and while Animations are off. **Shader background → Off** hides the picture too and shows the theme's plain colours. A picture that can't be read is reported in red in Settings → General, like a shader that fails. Example: [`themes/drift.toml`](themes/drift.toml) with `drift.gif`.
+
 ### fonts
 
 | key | |

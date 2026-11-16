@@ -3,10 +3,14 @@
 package ui
 
 import (
+	"image"
+	"image/color"
+	"image/gif"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"1loop/internal/palette"
 )
@@ -62,5 +66,18 @@ func TestThemeFontFamily(t *testing.T) {
 	loadThemeFonts(palette.ThemeFonts{Regular: "NoSuchFamilyAtAll"})
 	if len(themeFonts) != 0 {
 		t.Fatalf("a missing family loaded %v", themeFonts)
+	}
+}
+
+// An animated GIF becomes whole frames with their delays.
+func TestGIFFrames(t *testing.T) {
+	pal := color.Palette{color.Black, color.White}
+	g := &gif.GIF{Delay: []int{5, 0}, Config: image.Config{Width: 4, Height: 4}}
+	for range 2 {
+		g.Image = append(g.Image, image.NewPaletted(image.Rect(0, 0, 4, 4), pal))
+	}
+	frames, delays := gifFrames(g)
+	if len(frames) != 2 || delays[0] != 50*time.Millisecond || delays[1] != 100*time.Millisecond {
+		t.Fatalf("%d frames, delays %v", len(frames), delays)
 	}
 }

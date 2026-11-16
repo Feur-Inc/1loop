@@ -77,3 +77,14 @@ func TestThemeFonts(t *testing.T) {
 		t.Fatal("IsFontFile")
 	}
 }
+
+func TestThemeBackgroundImage(t *testing.T) {
+	if theme, err := ParseTheme("i", `background_image = "wall.gif"`); err != nil || theme.Image != "wall.gif" {
+		t.Fatalf("%v %+v", err, theme)
+	}
+	for _, text := range []string{"background_image = \"a.bmp\"", "shader = \"a.frag\"\nbackground_image = \"a.png\""} {
+		if _, err := ParseTheme("i", text); err == nil {
+			t.Errorf("%q accepted", text)
+		}
+	}
+}

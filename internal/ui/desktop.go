@@ -396,7 +396,7 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.CenterOnScreen()
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
 	ui.backdrop = newBackdrop()
-	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.build()))
+	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.backdrop.picture, ui.build()))
 	ui.syncBackdrop()
 	ui.followUsage()
 	ui.window.SetOnDropped(func(at fyne.Position, uris []fyne.URI) {

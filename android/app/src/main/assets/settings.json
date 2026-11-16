@@ -288,7 +288,7 @@
       "key": "general.shader_fps",
       "section": "general",
       "title": "Shader background",
-      "description": "How often a theme's shader background is drawn, or off for its plain colour. It pauses while the window is hidden or in the background.",
+      "description": "How often a theme's shader background is drawn, or off for its plain colour (a background picture too). It pauses while the window is hidden or in the background.",
       "keywords": [
         "shader",
         "background",

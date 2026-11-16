@@ -115,6 +115,7 @@ func (ui *desktopUI) scratchMove(cfg *agent.Config) {
 // finishMove moves a chat whose turn was approved to, and tells its agent
 // what was copied, which starts its next turn there.
 func (ui *desktopUI) finishMove(chat *conversation, move *agent.WorkspaceMove) {
+	ui = ui.viewOf(chat)                                     // the window showing it (windows.go)
 	if move.Target() == "" || ui.chatByID(chat.ID) != chat { // deleted meanwhile
 		return
 	}

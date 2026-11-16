@@ -627,6 +627,22 @@ func claudePermissionArgs(cfg Config) []string {
 	return nil
 }
 
+// claudeSessionArgs are the arguments that pick Claude Code's session: the
+// chat's own, resumed, or for a forked subchat's first turn its parent's,
+// resumed with --fork-session so the cached prefix is read rather than
+// re-sent. forked says the latter. Claude Code keeps sessions by folder and
+// login: a fork in another folder (its own worktree) or login cannot.
+func claudeSessionArgs(cfg Config) (args []string, forked bool) {
+	if session := HarnessSession(cfg); session != "" {
+		return []string{"--resume", session}, false
+	}
+	if cfg.ForkSession == "" || cfg.ForkWorkspace != cfg.Workspace || sessionLogin(cfg.ForkSession) != cfg.claudeLogin() {
+		return nil, false
+	}
+	id, _, _ := strings.Cut(cfg.ForkSession, "@")
+	return []string{"--resume", id, "--fork-session"}, true
+}
+
 // runClaudeCode runs one task in Claude Code: the last message of history
 // is the prompt, sent in the chat's Claude Code session (cfg.Session) when
 // it has one. Steered messages are written to Claude Code while it works,
@@ -662,9 +678,8 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		args = append(args, "--effort", cfg.Effort)
 	}
 	session := HarnessSession(cfg)
-	if session != "" {
-		args = append(args, "--resume", session)
-	}
+	sessionArgs, forked := claudeSessionArgs(cfg)
+	args = append(args, sessionArgs...)
 	if cfg.Todo != nil {
 		config, close, err := backend.startTodoMCP(ctx, cfg, emit)
 		if err != nil {
@@ -772,10 +787,11 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	messages := append([]Message(nil), history...)
 	prompt := messages[len(messages)-1]
 	preface := ""
-	// The recap takes at most ~40% of Claude's window (about 4 characters a
-	// token): a 1M window receives nearly the whole conversation.
-	budget := ModelContextWindow(cfg) * 4 * 40 / 100
-	if session == "" && len(messages) > 1 {
+	budget := RecapBudget(cfg)
+	if forked {
+		// A forked subchat: the parent's session, resumed, already holds
+		// the conversation.
+	} else if session == "" && len(messages) > 1 {
 		// A chat begun with another model: Claude Code starts a session
 		// of its own, so it is told what was said before.
 		preface = "[Earlier conversation in this chat, for context]\n" + core.TruncateText(levelText(messages[:len(messages)-1], LevelEverything, ModelContextWindow(cfg)), budget) + "\n[End of the earlier conversation]\n\n"

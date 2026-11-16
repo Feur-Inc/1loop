@@ -9,6 +9,10 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -284,6 +288,7 @@ private fun localNetworkAllowed(context: Context) =
 @Composable
 fun ServersScreen(app: RemoteApp) {
     var adding by remember { mutableStateOf(false) }
+    var forgetting by remember { mutableStateOf<Server?>(null) } // a paired one, asked first (#428)
     val desktop = app.target != ExecutionTarget.RemoteServer
     val shown = app.servers.filter { it.desktop == desktop }
     val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> result.contents?.let(app::pairFromLink) }
@@ -334,7 +339,7 @@ fun ServersScreen(app: RemoteApp) {
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface)
                         .border(1.dp, Palette.borderSoft, RoundedCornerShape(14.dp))
-                        .combinedClickable(onClick = { app.choose(server) }, onLongClick = { app.forget(server) })
+                        .combinedClickable(onClick = { app.choose(server) }, onLongClick = { if (server.paired) forgetting = server else app.forget(server) })
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -378,6 +383,7 @@ fun ServersScreen(app: RemoteApp) {
             }
         }
         app.problem?.let { Text(it, style = Type.small.copy(color = Palette.danger), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 14.dp)) }
+        forgetting?.let { ForgetServerDialog(app, it) { forgetting = null } }
         Spacer(Modifier.height(24.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (desktop) Pill("Search again", icon = Icons.refresh, enabled = !app.scanning) { app.scan() }
@@ -1027,6 +1033,12 @@ private fun Composer(app: RemoteApp, running: Boolean) {
         steps++
     }
     var models by remember { mutableStateOf(false) }
+    // The message box as a tall editor over the chat, its lines numbered (#33):
+    // the same draft; sending it, its button or Back put it back.
+    var editor by remember { mutableStateOf(false) }
+    BackHandler(enabled = editor) { editor = false }
+    var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val editorScroll = rememberScrollState()
     // An "@" mention being typed: the chat's mentions, asked once the menu opens.
     val typing = mentionTyped(value)
     var mentions by remember(app.current, app.server) { mutableStateOf<List<Mention>?>(null) }
@@ -1055,7 +1067,9 @@ private fun Composer(app: RemoteApp, running: Boolean) {
     val focused by interaction.collectIsFocusedAsState()
     val border by animateColorAsState(if (focused) Palette.borderHover else Palette.overlay.copy(alpha = 0.11f), tween(160), label = "card")
     Column(
-        Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 12.dp).padding(bottom = 10.dp),
+        Modifier.fillMaxWidth().then(if (editor) Modifier.fillMaxHeight() else Modifier)
+            .animateContentSize(tween(280, easing = FastOutSlowInEasing))
+            .navigationBarsPadding().imePadding().padding(horizontal = 12.dp).padding(bottom = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         val meta = app.meta
@@ -1086,7 +1100,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
         }
         Column(
             // Focused, the card lifts in a soft amber glow.
-            Modifier.widthIn(max = 760.dp).fillMaxWidth()
+            Modifier.widthIn(max = 760.dp).fillMaxWidth().then(if (editor) Modifier.weight(1f) else Modifier)
                 .shadow(animateDpAsState(if (focused) 14.dp else 0.dp, tween(220), label = "glow").value, RoundedCornerShape(18.dp), ambientColor = Palette.amber, spotColor = Palette.amber)
                 .background(Palette.surface, RoundedCornerShape(18.dp))
                 // Glass catching the light: a sheen over its upper half, a hairline edge.
@@ -1094,25 +1108,40 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 .border(1.dp, border, RoundedCornerShape(18.dp)).padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
         ) {
             if (app.attachments.isNotEmpty()) AttachmentTray(app)
-            BasicTextField(
-                value, ::edit,
-                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp, end = 6.dp).focusRequester(promptFocus).onPreviewKeyEvent { event ->
-                    // A hardware keyboard: Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, as on the desktop.
-                    if (event.type != KeyEventType.KeyDown || !event.isCtrlPressed) false
-                    else when {
-                        event.key == Key.Z && !event.isShiftPressed -> { walk(true); true }
-                        event.key == Key.Y || (event.key == Key.Z && event.isShiftPressed) -> { walk(false); true }
-                        else -> false
-                    }
-                },
-                textStyle = Type.body, cursorBrush = SolidColor(Palette.amber), maxLines = 8, interactionSource = interaction,
-                decorationBox = { inner ->
-                    Box {
-                        if (text.isEmpty()) Text(if (running) "Queue a message…" else "Describe what you want to build…", style = Type.body.copy(color = Palette.faint))
-                        inner()
-                    }
-                },
-            )
+            Row(if (editor) Modifier.weight(1f) else Modifier) {
+                // Open, the text and its line numbers scroll together.
+                Row(Modifier.weight(1f).then(if (editor) Modifier.verticalScroll(editorScroll) else Modifier)) {
+                    if (editor) LineGutter(text, textLayout)
+                    BasicTextField(
+                        value, ::edit,
+                        Modifier.weight(1f).padding(top = 8.dp, bottom = 6.dp, end = 6.dp).focusRequester(promptFocus).onPreviewKeyEvent { event ->
+                            // A hardware keyboard: Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, as on the desktop.
+                            if (event.type != KeyEventType.KeyDown || !event.isCtrlPressed) false
+                            else when {
+                                event.key == Key.Z && !event.isShiftPressed -> { walk(true); true }
+                                event.key == Key.Y || (event.key == Key.Z && event.isShiftPressed) -> { walk(false); true }
+                                else -> false
+                            }
+                        },
+                        textStyle = Type.body, cursorBrush = SolidColor(Palette.amber), maxLines = if (editor) Int.MAX_VALUE else 8, interactionSource = interaction,
+                        onTextLayout = { textLayout = it },
+                        decorationBox = { inner ->
+                            Box {
+                                if (text.isEmpty()) Text(if (running) "Queue a message…" else "Describe what you want to build…", style = Type.body.copy(color = Palette.faint))
+                                inner()
+                            }
+                        },
+                    )
+                }
+                RoundButton(
+                    if (editor) Icons.collapseEditor else Icons.expandEditor, Color.Transparent, Palette.faint, size = 30.dp, iconSize = 15.dp,
+                    description = if (editor) "Back to the message box" else "Expand the editor",
+                    modifier = Modifier.padding(top = 2.dp),
+                ) {
+                    editor = !editor
+                    promptFocus.requestFocus()
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // The chips take what the buttons leave, and the buttons sit
                 // against the right edge: a long model name shrinks, not them.
@@ -1142,6 +1171,7 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                         app.drafts.save(draft, "")
                         value = TextFieldValue("")
                         steps++
+                        editor = false
                     }
                 }
                 if (running) {
@@ -1550,5 +1580,26 @@ private fun FromChatCard(item: Item, onOpen: () -> Unit) {
             Text(item.text, style = Type.body)
         }
         CopyChip { item.text }
+    }
+}
+
+// The open editor's line numbers: a line that wraps over several rows has its
+// number on its first row, read from the text's own layout.
+@Composable
+private fun LineGutter(text: String, layout: TextLayoutResult?) {
+    val lines = text.split('\n')
+    val digits = lines.size.toString().length.coerceAtLeast(2)
+    Box(Modifier.width((digits * 9 + 12).dp).padding(top = 8.dp)) {
+        if (layout == null) return@Box
+        var offset = 0
+        lines.forEachIndexed { index, line ->
+            val row = layout.getLineForOffset(offset.coerceAtMost(text.length))
+            val top = layout.getLineTop(row).toInt()
+            Text(
+                "${index + 1}", style = Type.body.copy(color = Palette.faint, fontFamily = FontFamily.Monospace), textAlign = TextAlign.End, maxLines = 1,
+                modifier = Modifier.fillMaxWidth().padding(end = 8.dp).offset { IntOffset(0, top) },
+            )
+            offset += line.length + 1
+        }
     }
 }

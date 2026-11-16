@@ -176,6 +176,15 @@ func excluded(relative string) bool {
 // maxFile is the largest file a copy carries.
 const maxFile = 512 << 20
 
+// maxChat is the largest conversation a copy carries, and maxChats the
+// most all the conversations of one copy may weigh together: each is
+// decoded whole in memory and kept by the target, so a larger copy could
+// run the target (often a phone) out of memory.
+const (
+	maxChat  = 64 << 20
+	maxChats = 256 << 20
+)
+
 // ScanFiles lists a project's files with their hashes. In a Git project the
 // files Git sees (tracked or not ignored) and the repository itself are
 // copied; elsewhere everything but the heavy folders.
@@ -508,6 +517,7 @@ func Import(r io.Reader, root, trash string, addChat func(chat Chat, conflict bo
 	var head header
 	seenHeader := false
 	conflicts := map[string]bool{}
+	var chatBytes int64
 	stamp := time.Now().Format("2006-01-02 15.04.05") + "-" + core.Identifier()[:8]
 	for {
 		entry, err := archive.Next()
@@ -580,8 +590,14 @@ func Import(r io.Reader, root, trash string, addChat func(chat Chat, conflict bo
 			}
 			result.Files++
 		case strings.HasPrefix(entry.Name, "chats/") && strings.HasSuffix(entry.Name, ".json"):
+			if entry.Size > maxChat {
+				return result, fmt.Errorf("a conversation in the copy is larger than %d MB", maxChat>>20)
+			}
+			if chatBytes += entry.Size; chatBytes > maxChats {
+				return result, fmt.Errorf("the conversations in the copy are larger than %d MB together", maxChats>>20)
+			}
 			var chat Chat
-			if err := json.NewDecoder(io.LimitReader(archive, 512<<20)).Decode(&chat); err != nil {
+			if err := json.NewDecoder(io.LimitReader(archive, maxChat)).Decode(&chat); err != nil {
 				return result, err
 			}
 			if chat.ID == "" || strings.ContainsAny(chat.ID, `/\\`) || filepath.Base(entry.Name) != chat.ID+".json" {

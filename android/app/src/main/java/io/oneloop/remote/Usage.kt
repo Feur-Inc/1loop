@@ -39,15 +39,16 @@ import java.util.Locale
 // computer or the server the agent runs on (internal/usage, GET /api/usage).
 
 data class UsageTotals(
-    val calls: Int, val input: Int, val output: Int, val cacheRead: Int, val cacheWrite: Int, val reasoning: Int,
-    val cost: Double, val planCost: Double, val unpriced: Int,
+    // Long: a heavy user's tokens pass Int's 2.1 billion over all time.
+    val calls: Int, val input: Long, val output: Long, val cacheRead: Long, val cacheWrite: Long, val reasoning: Long,
+    val cost: Double, val planCost: Double, val unpriced: Long,
 ) {
     val total get() = input + output + cacheRead + cacheWrite
 
     companion object {
         fun from(o: JSONObject?) = UsageTotals(
-            o?.optInt("calls") ?: 0, o?.optInt("in") ?: 0, o?.optInt("out") ?: 0, o?.optInt("cr") ?: 0, o?.optInt("cw") ?: 0,
-            o?.optInt("rs") ?: 0, o?.optDouble("cost", 0.0) ?: 0.0, o?.optDouble("planCost", 0.0) ?: 0.0, o?.optInt("unpriced") ?: 0,
+            o?.optInt("calls") ?: 0, o?.optLong("in") ?: 0, o?.optLong("out") ?: 0, o?.optLong("cr") ?: 0, o?.optLong("cw") ?: 0,
+            o?.optLong("rs") ?: 0, o?.optDouble("cost", 0.0) ?: 0.0, o?.optDouble("planCost", 0.0) ?: 0.0, o?.optLong("unpriced") ?: 0,
         )
     }
 }
@@ -63,7 +64,7 @@ data class UsageLimit(
 ) {
     companion object {
         private fun time(text: String?): Long? =
-            if (text.isNullOrEmpty()) null else runCatching { java.time.Instant.parse(text).toEpochMilli() }.getOrNull()
+            if (text.isNullOrEmpty()) null else runCatching { java.time.OffsetDateTime.parse(text).toInstant().toEpochMilli() }.getOrNull()
 
         fun from(o: JSONObject): UsageLimit {
             val points = o.optJSONArray("points")
@@ -88,7 +89,7 @@ data class UsageLimitDay(val label: String, val used: Double, val even: Double, 
 
 data class UsageReport(
     val period: String, val offset: Int, val group: String, val label: String, val from: String, val to: String,
-    val totals: UsageTotals, val rows: List<UsageRow>, val days: List<Pair<String, Double>>, val dayTokens: List<Int>,
+    val totals: UsageTotals, val rows: List<UsageRow>, val days: List<Pair<String, Double>>, val dayTokens: List<Long>,
     val compareLabel: String?, val compare: UsageTotals?, val paceSpent: Double, val paceProjected: Double, val paceDay: Int, val paceDays: Int,
     val pricesAsOf: String, val limits: List<UsageLimit>,
 ) {
@@ -105,7 +106,7 @@ data class UsageReport(
                     rows!!.getJSONObject(i).let { UsageRow(it.optString("key"), it.optString("label"), it.optString("detail"), UsageTotals.from(it), it.optJSONObject("previous")?.let(UsageTotals::from)) }
                 },
                 (0 until (days?.length() ?: 0)).map { i -> days!!.getJSONObject(i).let { it.optString("date") to it.optDouble("cost", 0.0) } },
-                (0 until (days?.length() ?: 0)).map { i -> days!!.getJSONObject(i).optInt("tokens") },
+                (0 until (days?.length() ?: 0)).map { i -> days!!.getJSONObject(i).optLong("tokens") },
                 compare?.optString("label"), compare?.optJSONObject("totals")?.let(UsageTotals::from),
                 pace?.optDouble("spent", 0.0) ?: 0.0, pace?.optDouble("projected", 0.0) ?: 0.0, pace?.optInt("day") ?: 0, pace?.optInt("days") ?: 0,
                 o.optString("pricesAsOf"),
@@ -124,7 +125,7 @@ fun money(cost: Double): String = when {
 }
 
 /** Tokens as the desktop counts them (usage.Count): 950, 12.3k, 4.1M. */
-fun tokenCount(n: Int): String = when {
+fun tokenCount(n: Long): String = when {
     n < 1000 -> "$n"
     n < 1_000_000 -> String.format(Locale.US, "%.1f", n / 1e3).removeSuffix(".0") + "k"
     else -> String.format(Locale.US, "%.1f", n / 1e6).removeSuffix(".0") + "M"
@@ -369,13 +370,14 @@ private fun UsageSummary(report: UsageReport) {
     }
 }
 
-/** How many days of the period have begun, at least one (as the desktop counts them). */
+/** How many days of the period have begun, at least one (as the desktop counts them). The
+ *  bounds carry their offset ("+01:00"), which Instant.parse reads only from Android 14. */
 private fun periodDays(report: UsageReport): Double {
     val day = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     val now = System.currentTimeMillis()
-    val to = runCatching { java.time.Instant.parse(report.to).toEpochMilli() }.getOrNull()
+    val to = runCatching { java.time.OffsetDateTime.parse(report.to).toInstant().toEpochMilli() }.getOrNull()
     val end = if (to != null && to < now) to else now
-    val from = runCatching { java.time.Instant.parse(report.from).toEpochMilli() }.getOrNull()
+    val from = runCatching { java.time.OffsetDateTime.parse(report.from).toInstant().toEpochMilli() }.getOrNull()
         ?: report.days.firstOrNull { it.second > 0 }?.let { runCatching { day.parse(it.first)!!.time }.getOrNull() }
         ?: return 1.0
     return maxOf(1.0, kotlin.math.ceil((end - from) / 86_400_000.0))
@@ -387,7 +389,7 @@ private fun UsageChart(report: UsageReport) {
     val values = if (byTokens) report.dayTokens.map { it.toDouble() } else report.days.map { it.second }
     val highest = values.maxOrNull() ?: 0.0
     val active = values.filter { it > 0 }
-    fun scale(v: Double) = if (byTokens) tokenCount(v.toInt()) else money(v)
+    fun scale(v: Double) = if (byTokens) tokenCount(v.toLong()) else money(v)
     val day = SimpleDateFormat("yyyy-MM-dd", Locale.US)
     val from = report.from.take(10)
     val to = report.to.take(10)

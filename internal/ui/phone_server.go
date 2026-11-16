@@ -513,7 +513,7 @@ func chatSummary(chat *conversation) remoteapi.Chat {
 	status, blocked := agent.WrapUpStatus(chat.Items)
 	summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Running: chat.run != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
 	if chat.Subchat != nil {
-		summary.Parent = chat.Subchat.Parent
+		summary.Parent, summary.Ended = chat.Subchat.Parent, chat.Subchat.Ended
 	}
 	return summary
 }
@@ -676,10 +676,7 @@ func (server *remoteServer) renameChat(writer http.ResponseWriter, req *http.Req
 			return
 		}
 		found = true
-		chat.Title = title
-		server.ui.save()
-		server.ui.updateHeader()
-		server.ui.renderChats()
+		server.ui.setChatTitle(chat, title)
 	})
 	if !found {
 		core.Fail(writer, http.StatusNotFound, "This chat no longer exists")
@@ -689,22 +686,23 @@ func (server *remoteServer) renameChat(writer http.ResponseWriter, req *http.Req
 }
 
 func (server *remoteServer) deleteChat(writer http.ResponseWriter, req *http.Request) {
-	found := false
+	var deleted []string // the chat and its subchats at every level
 	server.onUI(func() {
 		chat := server.ui.chatByID(req.PathValue("id"))
 		if chat == nil {
 			return
 		}
-		found = true
-		server.ui.removeChat(chat)
-		delete(server.dirty, chat)
-		delete(server.meta, chat)
+		for _, gone := range server.ui.removeTree(chat) {
+			deleted = append(deleted, gone.ID)
+			delete(server.dirty, gone)
+			delete(server.meta, gone)
+		}
 	})
-	if !found {
+	if len(deleted) == 0 {
 		core.Fail(writer, http.StatusNotFound, "This chat no longer exists")
 		return
 	}
-	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
+	core.WriteJSON(writer, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
 }
 
 // clearBrowser is Settings → Tools & extensions → Browsing data → Clear, asked from the phone.
@@ -1369,13 +1367,16 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 	var phones []fyne.CanvasObject
 	for i, pairedDevice := range ui.devices {
 		i := i
+		name := pairedDevice.Name
 		remove := newRow("Forget", iconTrash, styleChip, func() {
-			ui.devices = append(ui.devices[:i], ui.devices[i+1:]...)
-			ui.save()
-			if ui.remote != nil {
-				ui.remote.disconnectAll()
-			}
-			ui.prefs.show("Phone")
+			ui.confirm("Forget "+name+"?", name+" is unpaired from this computer: its access stops at once, and it must be paired again to use 1loop here.", "Forget", func() { // #428
+				ui.devices = append(ui.devices[:i], ui.devices[i+1:]...)
+				ui.save()
+				if ui.remote != nil {
+					ui.remote.disconnectAll()
+				}
+				ui.prefs.show("Phone")
+			})
 		})
 		phones = append(phones, settingRow(pairedDevice.Name, "Paired "+pairedDevice.Added.Format("2 Jan 2006 15:04"), remove))
 	}

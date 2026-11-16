@@ -809,12 +809,15 @@ func (ui *desktopUI) followUsage() {
 }
 
 func (ui *desktopUI) usageChanged() {
-	if ui.usageRow != nil {
-		text := ""
-		if ui.server == nil { // the server's chats spend on the server
-			text = todayText(ui.todayUsage())
+	for _, view := range ui.allWindows() {
+		view = view.focused() // its sidebar's (panes.go)
+		if view.usageRow != nil {
+			text := ""
+			if view.server == nil { // the server's chats spend on the server
+				text = todayText(view.todayUsage())
+			}
+			view.usageRow.SetTrailing(text)
 		}
-		ui.usageRow.SetTrailing(text)
 	}
 	ui.syncTray()
 }

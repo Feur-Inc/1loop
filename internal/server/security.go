@@ -16,6 +16,7 @@ import (
 	"math/big"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -131,7 +132,16 @@ func (server *headlessServer) offerSetupLocked() {
 		return
 	}
 	server.setup = core.Identifier()
-	fmt.Fprintf(os.Stderr, "\nNo device is paired yet. To pair the first one, open this link in a browser,\nwith this server's address in place of <server> (it works once):\n\n  https://<server>:%d/app/#setup=%s\n\n", server.setupPort, server.setup)
+	fmt.Fprint(os.Stderr, setupMessage(server.setupPort, server.setup, server.proxied))
+}
+
+// setupMessage is the setup link's announcement: behind a reverse proxy,
+// the link is the proxy's address, without the server's own port.
+func setupMessage(port int, secret string, proxied bool) string {
+	if proxied {
+		return fmt.Sprintf("\nNo device is paired yet. To pair the first one, open this link in a browser,\nwith your reverse proxy's address in place of <proxy> (it works once):\n\n  https://<proxy>/app/#setup=%s\n\nWithout the proxy: https://<server>:%d/app/#setup=%s\n\n", secret, port, secret)
+	}
+	return fmt.Sprintf("\nNo device is paired yet. To pair the first one, open this link in a browser,\nwith this server's address in place of <server> (it works once):\n\n  https://<server>:%d/app/#setup=%s\n\n", port, secret)
 }
 
 func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.Request) {
@@ -228,16 +238,11 @@ func (server *headlessServer) command(parts []string, out io.Writer) bool {
 			fmt.Fprintln(out, "Unknown device")
 			return false
 		}
-		before := append([]remoteapi.PairedDevice{}, server.devices...)
-		server.devices = append(server.devices[:index-1], server.devices[index:]...)
-		if err := server.saveLocked(); err != nil {
-			server.devices = before
+		if err := server.removeDeviceLocked(index - 1); err != nil {
 			fmt.Fprintln(out, err)
 			return false
 		}
-		server.disconnectStreamsLocked()
 		fmt.Fprintln(out, "Device revoked")
-		server.offerSetupLocked()
 	case "ssh", "trust", "refuse":
 		return server.machineConsole(parts, out)
 	default:
@@ -245,6 +250,80 @@ func (server *headlessServer) command(parts []string, out io.Writer) bool {
 		return false
 	}
 	return true
+}
+
+// deviceID names a paired device in the API: the start of its token's
+// hash, which tells nothing of the token and stays the same across restarts.
+func deviceID(device remoteapi.PairedDevice) string {
+	if len(device.TokenHash) < 16 {
+		return device.TokenHash
+	}
+	return device.TokenHash[:16]
+}
+
+// requestHash is the hash of the token a request carries, "" without one.
+func requestHash(req *http.Request) string {
+	token := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+	if token == "" || token == req.Header.Get("Authorization") {
+		return ""
+	}
+	return remoteapi.TokenHash(token)
+}
+
+// removeDeviceLocked unpairs the device at index: its token stops working
+// on its next request, and the open streams end so that no device keeps one
+// it no longer may (the others reconnect at once). With no device left, a
+// new setup link is offered.
+func (server *headlessServer) removeDeviceLocked(index int) error {
+	if index < 0 || index >= len(server.devices) {
+		return fmt.Errorf("Unknown device")
+	}
+	before := append([]remoteapi.PairedDevice{}, server.devices...)
+	server.devices = append(server.devices[:index], server.devices[index+1:]...)
+	if err := server.saveLocked(); err != nil {
+		server.devices = before
+		return err
+	}
+	server.disconnectStreamsLocked()
+	if !server.local {
+		fmt.Fprintf(os.Stderr, "\n%q is no longer paired.\n", before[index].Name)
+	}
+	server.offerSetupLocked()
+	return nil
+}
+
+// pairedDevices is GET /api/devices: the devices paired with the server,
+// the one asking marked current (#428).
+func (server *headlessServer) pairedDevices(w http.ResponseWriter, r *http.Request) {
+	hash := requestHash(r)
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	devices := []map[string]any{}
+	for _, device := range server.devices {
+		current := subtle.ConstantTimeCompare([]byte(device.TokenHash), []byte(hash)) == 1
+		devices = append(devices, map[string]any{"id": deviceID(device), "name": device.Name, "added": device.Added, "current": current})
+	}
+	core.WriteJSON(w, 200, map[string]any{"devices": devices})
+}
+
+// revokePairedDevice is POST /api/devices/{id}/revoke: a paired device
+// unpairs another one, or itself when it forgets the server (#428).
+func (server *headlessServer) revokePairedDevice(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	index := slices.IndexFunc(server.devices, func(device remoteapi.PairedDevice) bool {
+		return id != "" && deviceID(device) == id
+	})
+	if index < 0 {
+		core.Fail(w, 404, "This device is not paired")
+		return
+	}
+	if err := server.removeDeviceLocked(index); err != nil {
+		core.Fail(w, 500, "Unable to unpair the device: "+err.Error())
+		return
+	}
+	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }
 
 func saveServerJSON(path string, value any) error {

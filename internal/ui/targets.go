@@ -337,9 +337,9 @@ func (ui *desktopUI) sideChatOf(chat *conversation) sideChat {
 		menu = append([]menuAction{{label: "Open in new window", icon: iconWindow, run: window},
 			{label: "Open in split view", icon: iconPanel, run: func() { ui.splitPane(chat, false) }}}, menu...)
 	}
-	parent, ended := "", ""
+	parent, ended, seen := "", "", false
 	if chat.Subchat != nil {
-		parent, ended = chat.Subchat.Parent, chat.Subchat.Ended
+		parent, ended, seen = chat.Subchat.Parent, chat.Subchat.Ended, !chat.Subchat.Unseen
 		menu = append([]menuAction{{label: "Open parent", icon: iconSubchat, run: func() {
 			if parent := ui.parentOf(chat); parent != nil {
 				ui.openLocalChat(parent)
@@ -350,7 +350,7 @@ func (ui *desktopUI) sideChatOf(chat *conversation) sideChat {
 		}
 	}
 	return sideChat{
-		id: chat.ID, parent: parent, ended: ended,
+		id: chat.ID, parent: parent, ended: ended, seen: seen,
 		title: chat.Title, folder: chat.Config.Workspace, scratch: chat.Config.InScratch(), running: chat.run != nil, selected: chat == ui.current,
 		status: status, blocked: blocked,
 		open:   func() { ui.openLocalChat(chat) },

@@ -80,6 +80,7 @@ type serverSettings struct {
 	MemoryOff         bool               `json:"memoryOff,omitempty"`
 	WrapUpOff         bool               `json:"wrapUpOff,omitempty"`
 	AutoResume        *agent.AutoResume  `json:"autoResume,omitempty"`
+	NamingModel       *agent.NamingModel `json:"namingModel,omitempty"`
 	// Worktrees of the projects, by folder: their chats belong to the project.
 	Worktrees map[string]string `json:"worktrees,omitempty"`
 	// SSH machines (machines.go), and the projects that are folders of one.
@@ -112,6 +113,7 @@ type headlessServer struct {
 	memoryOff                  bool                   // the agent's memory tool turned off
 	wrapUpOff                  bool                   // the next-step card (wrap_up tool) turned off
 	autoResume                 *agent.AutoResume      // what a rate limit does to a run, for every chat
+	namingModel                *agent.NamingModel     // the model that names new chats, nil for none
 	panelHomes                 map[string]*serverChat // project panels before the first prompt; not persisted
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
@@ -217,6 +219,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		server.memoryOff = settings.MemoryOff
 		server.wrapUpOff = settings.WrapUpOff
 		server.autoResume = settings.AutoResume
+		server.namingModel = settings.NamingModel
 		if settings.ApprovalMode != "" {
 			server.approvalMode = settings.ApprovalMode
 		}
@@ -517,6 +520,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 	return map[string]any{
 		"defaultPresets":      true,
 		"autoResume":          server.autoResume,
+		"namingModel":         server.namingModel,
 		"userPreferences":     server.instructions,
 		"preferencesEditable": true,
 		"memory":              !server.memoryOff,
@@ -1086,6 +1090,7 @@ func (server *headlessServer) saveSettingsLocked() error {
 		MemoryOff:         server.memoryOff,
 		WrapUpOff:         server.wrapUpOff,
 		AutoResume:        server.autoResume,
+		NamingModel:       server.namingModel,
 		Worktrees:         server.worktrees,
 		SSHMachines:       server.machines,
 		ProjectMachines:   server.projectMachines,

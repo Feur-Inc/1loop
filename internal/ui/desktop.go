@@ -300,6 +300,7 @@ type desktopApp struct {
 	memoryOff         bool                       // settings: the agent's memory tool turned off
 	wrapUpOff         bool                       // settings: the next-step card (wrap_up tool) turned off
 	autoResume        *agent.AutoResume          // settings: what a rate limit does to a run
+	namingModel       *agent.NamingModel         // settings: the model that names new chats, nil for none
 	closeQuits        bool                       // settings: closing the window quits rather than hiding it in the tray
 	crashReportsOff   bool                       // settings: Don't ask again, after a crash
 	lastCrash         *crash.Crash               // the last run's, offered once the window is up
@@ -1554,6 +1555,7 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		ui.chats = append([]*conversation{chat}, ui.chats...)
 		ui.current = chat
 		ui.prompt.renameDraft(chat.ID)
+		ui.nameNewChat(chat, messageValue)
 		if chat.panel != nil {
 			ui.showPanel(chat)
 		} else if ui.panelFollows() {
@@ -2014,6 +2016,7 @@ type savedState struct {
 	MemoryOff         bool                  `json:"memoryOff,omitempty"`
 	WrapUpOff         bool                  `json:"wrapUpOff,omitempty"`
 	AutoResume        *agent.AutoResume     `json:"autoResume,omitempty"`
+	NamingModel       *agent.NamingModel    `json:"namingModel,omitempty"`
 	SSHMachines       []sshmachine.Settings `json:"sshMachines,omitempty"`
 	MachineProjects   map[string][]string   `json:"machineProjects,omitempty"`
 	LocalWorkspace    string                `json:"localWorkspace,omitempty"` // while an SSH machine is the target
@@ -2089,6 +2092,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.memoryOff,
 		ui.wrapUpOff,
 		ui.autoResume,
+		ui.namingModel,
 		ui.sshMachines,
 		ui.machineProjects,
 		ui.localWorkspace,
@@ -2254,6 +2258,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.crashReportsOff = state.CrashReportsOff
 	animationsOff = state.AnimationsOff
 	ui.autoResume = state.AutoResume
+	ui.namingModel = state.NamingModel
 	ui.discordPresence, ui.discordDetails = state.DiscordPresence, state.DiscordDetails
 	ui.syncPresence()
 	for _, chat := range state.Chats {

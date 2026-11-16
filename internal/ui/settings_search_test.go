@@ -32,7 +32,7 @@ func TestEverySettingIsMarked(t *testing.T) {
 		source.Write(data)
 	}
 	constants := map[string]string{"KeyApprovalMode": registry.KeyApprovalMode, "KeyDynamicCompaction": registry.KeyDynamicCompaction,
-		"KeyMemory": registry.KeyMemory, "KeyWrapUp": registry.KeyWrapUp, "KeyAutoResume": registry.KeyAutoResume, "KeyWorktreeSort": registry.KeyWorktreeSort,
+		"KeyMemory": registry.KeyMemory, "KeyWrapUp": registry.KeyWrapUp, "KeyAutoResume": registry.KeyAutoResume, "KeyNamingModel": registry.KeyNamingModel, "KeyWorktreeSort": registry.KeyWorktreeSort,
 		"KeyDiscordPresence": registry.KeyDiscordPresence, "KeyDiscordDetails": registry.KeyDiscordDetails,
 		"KeyTheme": registry.KeyTheme, "KeyAccent": registry.KeyAccent, "KeyAnimations": registry.KeyAnimations, "KeyCrashReports": registry.KeyCrashReports}
 	marked := map[string]bool{}

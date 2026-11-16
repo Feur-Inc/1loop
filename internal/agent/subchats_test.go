@@ -25,6 +25,7 @@ type fakeSubchats struct {
 	messages []string
 	attached []ChatAttachments // each message's
 	stopped  []string
+	renamed  []string // the titles the chats tool gave
 }
 
 func (host *fakeSubchats) access(parentTitle string) *SubchatAccess {
@@ -73,6 +74,10 @@ func (host *fakeSubchats) chats(parentTitle string) *ChatAccess {
 			}
 			host.messages = append(host.messages, id+": "+text)
 			host.attached = append(host.attached, attachments)
+			return nil
+		},
+		Rename: func(_ context.Context, title string) error {
+			host.renamed = append(host.renamed, title)
 			return nil
 		}}
 }

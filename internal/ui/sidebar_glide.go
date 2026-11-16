@@ -39,7 +39,7 @@ type glidePlace struct{ target, offset float32 }
 
 func newGlideLayout() *glideLayout {
 	pill := canvas.NewRectangle(colSelected)
-	pill.CornerRadius = 6
+	pill.CornerRadius = rounded(6)
 	pill.Hide()
 	return &glideLayout{keys: map[fyne.CanvasObject]string{}, places: map[string]glidePlace{}, progress: 1, pill: pill}
 }

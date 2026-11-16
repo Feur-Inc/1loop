@@ -129,20 +129,12 @@ func (ui *desktopUI) startTray(a fyne.App) {
 // syncTray follows the chats' states. The icon and the menu are only sent
 // to the tray host when they change.
 func (ui *desktopUI) syncTray() {
+	ui.backdropState() // the shader background follows the same state (#464)
 	tray := ui.tray
 	if tray == nil {
 		return
 	}
-	chats := make([]trayChat, len(ui.chats))
-	for i, chat := range ui.chats {
-		chats[i] = trayChat{title: chat.Title, failed: chat.failed}
-		if run := chat.run; run != nil {
-			chats[i].running = true
-			chats[i].waiting = run.approval != nil || run.questions != nil
-			chats[i].started = run.started.UnixNano()
-		}
-	}
-	status := summarizeTray(chats)
+	status := ui.chatsStatus()
 	tray.chat = nil
 	title := ""
 	if status.chat >= 0 {
@@ -164,6 +156,21 @@ func (ui *desktopUI) syncTray() {
 		traySetTooltip(tooltip)
 		ui.buildTrayMenu(work, status.chat >= 0, today)
 	}
+}
+
+// chatsStatus sums up the chats: idle, working, waiting for the user or
+// failed, and the chat that says so.
+func (ui *desktopUI) chatsStatus() trayStatus {
+	chats := make([]trayChat, len(ui.chats))
+	for i, chat := range ui.chats {
+		chats[i] = trayChat{title: chat.Title, failed: chat.failed}
+		if run := chat.run; run != nil {
+			chats[i].running = true
+			chats[i].waiting = run.approval != nil || run.questions != nil
+			chats[i].started = run.started.UnixNano()
+		}
+	}
+	return summarizeTray(chats)
 }
 
 func (ui *desktopUI) buildTrayMenu(work string, chat bool, today string) {

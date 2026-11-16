@@ -66,7 +66,7 @@ func (ui *desktopUI) setUserImages(view *userImageView, parts []core.ImagePart) 
 		if img, w, h := ui.thumbnails.getSized(part); img != nil {
 			// Its own shape, within 240 × 160, never larger than the
 			// original (the thumbnail may be smaller than that).
-			size := fitPicture(w, h, messagePictureWidth, messagePictureHeight)
+			size := fitPictureBox(w, h, messagePictureWidth, messagePictureHeight)
 			pictures = append(pictures, newPictureTile(img, size, func() { ui.openPicture("Image", part) }, nil))
 		}
 	}

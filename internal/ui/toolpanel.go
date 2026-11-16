@@ -133,7 +133,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	panel.body.OnScrolled = func(fyne.Position) { panel.place() }
 	panel.page = container.NewStack(panel.body)
 	card := canvas.NewRectangle(colSurface)
-	card.CornerRadius = 12
+	card.CornerRadius = rounded(12)
 	card.StrokeColor = colBorderSoft
 	card.StrokeWidth = 1
 	content := container.NewBorder(container.NewVBox(padded(6, 2, 8, 6, header), rule), nil, nil, nil, panel.page)
@@ -569,7 +569,7 @@ type panelTabFrame struct {
 
 func newPanelTabFrame(text string, glyph fyne.Resource, active bool, onTap func()) *panelTabFrame {
 	tab := &panelTabFrame{active: active, onTap: onTap, glyph: glyph, back: canvas.NewRectangle(color.Transparent), label: textLine(text, 13, colMuted)}
-	tab.back.CornerRadius = 10
+	tab.back.CornerRadius = rounded(10)
 	tab.icon = canvas.NewImageFromResource(nil)
 	tab.icon.SetMinSize(fyne.NewSquareSize(15))
 	if glyph == nil {

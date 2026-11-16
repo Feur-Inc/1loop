@@ -545,7 +545,7 @@ func (ui *desktopUI) renderAttachments() {
 		}
 		// Its own shape, 64 high: the full picture opens in the viewer.
 		bounds := img.Bounds()
-		size := fitPicture(bounds.Dx(), bounds.Dy(), composerPictureWidth, composerPictureHeight)
+		size := fitPictureBox(bounds.Dx(), bounds.Dy(), composerPictureWidth, composerPictureHeight)
 		ui.attachRow.Add(newPictureTile(thumbnail(img, 2*composerPictureWidth), size, func() { ui.openImage("Image", img) }, func() {
 			ui.attachments = append(ui.attachments[:i], ui.attachments[i+1:]...)
 			ui.renderAttachments()

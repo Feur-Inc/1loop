@@ -31,8 +31,22 @@ RUN mkdir -p /out/web \
  && cp "$(go env GOROOT)/lib/wasm/wasm_exec.js" cmd/1loop-web/index.html /out/web/ \
  && gzip -9kf /out/web/1loop.wasm
 
+# Claude Code's native build for the target, checked against its release
+# manifest. Bump CLAUDE_CODE_VERSION (or --build-arg it) and rebuild to update.
+FROM --platform=$BUILDPLATFORM golang:1.25-trixie AS claude
+ARG TARGETARCH
+ARG CLAUDE_CODE_VERSION=2.1.311
+ARG CLAUDE_CODE_DIST=https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases
+RUN case "$TARGETARCH" in amd64) platform=linux-x64 ;; arm64) platform=linux-arm64 ;; *) echo "no Claude Code for $TARGETARCH" >&2; exit 1 ;; esac \
+ && curl -fsSL -o /tmp/manifest.json "$CLAUDE_CODE_DIST/$CLAUDE_CODE_VERSION/manifest.json" \
+ && sum=$(tr -d ' \n' </tmp/manifest.json | grep -o "\"$platform\":{[^}]*}" | grep -o '"checksum":"[0-9a-f]*"' | cut -d'"' -f4) \
+ && test -n "$sum" \
+ && curl -fsSL -o /claude "$CLAUDE_CODE_DIST/$CLAUDE_CODE_VERSION/$platform/claude" \
+ && echo "$sum  /claude" | sha256sum -c - \
+ && chmod 0755 /claude
+
 FROM debian:trixie-slim
-# What the server runs besides itself: Bash and Git for the agent's commands,
+# What the server runs besides itself (and Claude Code): Bash and Git for the agent's commands,
 # Chromium for Browser Use, tini to pass signals on.
 RUN apt-get update \
  && apt-get install -y --no-install-recommends bash git chromium ca-certificates tini \
@@ -43,9 +57,14 @@ RUN apt-get update \
  && chmod 0700 /data
 COPY --from=build /out/1loop-server /usr/local/bin/1loop-server
 COPY --from=build /out/web /usr/local/share/1loop/web
+COPY --from=claude /claude /usr/local/bin/claude
 # Docker's default profile allows none of Chromium's sandboxes: the container
 # isolates the browser instead.
 ENV ONELOOP_CHROMIUM_NO_SANDBOX=1
+# Claude Code's sign-in and settings (its .claude folder and .claude.json)
+# live in the data volume, so they survive a new image. It is updated by
+# rebuilding the image, not by itself: /usr/local/bin is not the user's.
+ENV CLAUDE_CONFIG_DIR=/data/claude DISABLE_AUTOUPDATER=1
 USER oneloop
 WORKDIR /projects
 VOLUME ["/data", "/projects"]

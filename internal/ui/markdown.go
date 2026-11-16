@@ -438,10 +438,10 @@ func (table *markdownTable) cellHeight(r, c int, width float32) float32 {
 
 func (table *markdownTable) CreateRenderer() fyne.WidgetRenderer {
 	renderer := &tableRenderer{table: table, frame: canvas.NewRectangle(colCode), head: canvas.NewRectangle(colRaised)}
-	renderer.frame.CornerRadius = 10
+	renderer.frame.CornerRadius = rounded(10)
 	renderer.frame.StrokeColor = colBorder
 	renderer.frame.StrokeWidth = 1
-	renderer.head.CornerRadius = 9
+	renderer.head.CornerRadius = rounded(9)
 	for range table.cells[1:] {
 		rule := canvas.NewRectangle(colBorderSoft)
 		renderer.rules = append(renderer.rules, rule)

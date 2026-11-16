@@ -37,7 +37,7 @@ func newLimitGauge(window agent.AccountLimitWindow) fyne.CanvasObject {
 	value.TextStyle = fyne.TextStyle{Bold: true}
 	track := canvas.NewRectangle(colTrack)
 	fill := canvas.NewRectangle(colAmber)
-	track.CornerRadius, fill.CornerRadius = 2, 2
+	track.CornerRadius, fill.CornerRadius = rounded(2), rounded(2)
 	if window.Remaining() <= 20 {
 		fill.FillColor, value.Color = colDanger, colDanger
 	}

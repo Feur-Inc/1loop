@@ -165,7 +165,7 @@ func (row *toolRow) CreateRenderer() fyne.WidgetRenderer {
 	renderer := &toolRowRenderer{row: row, bg: canvas.NewRectangle(color.Transparent), icon: canvas.NewImageFromResource(nil),
 		verb: canvas.NewText("", colMuted), target: canvas.NewText("", colText),
 		meta: canvas.NewText("", colFaint), minus: canvas.NewText("", colDanger)}
-	renderer.bg.CornerRadius = 8
+	renderer.bg.CornerRadius = rounded(8)
 	renderer.icon.FillMode = canvas.ImageFillContain
 	for _, t := range []*canvas.Text{renderer.verb, renderer.target, renderer.meta, renderer.minus} {
 		t.TextSize = 13.5

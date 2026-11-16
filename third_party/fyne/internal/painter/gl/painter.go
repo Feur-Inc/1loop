@@ -54,6 +54,7 @@ type painter struct {
 	roundRectangleProgram ProgramState
 	polygonProgram        ProgramState
 	arcProgram            ProgramState
+	userPrograms          map[string]*userProgram // canvas.Shader sources, compiled (1loop)
 	texScale              float32
 	pixScale              float32 // pre-calculate scale*texScale for each draw
 }
@@ -113,7 +114,8 @@ var _ Painter = (*painter)(nil)
 
 func (p *painter) Clear() {
 	r, g, b, a := theme.Color(theme.ColorNameBackground).RGBA()
-	p.ctx.ClearColor(float32(r)/max16bit, float32(g)/max16bit, float32(b)/max16bit, float32(a)/max16bit)
+	_ = a // 1loop: always opaque, a translucent background is laid over a shader (#464)
+	p.ctx.ClearColor(float32(r)/max16bit, float32(g)/max16bit, float32(b)/max16bit, 1)
 	p.ctx.Clear(bitColorBuffer | bitDepthBuffer)
 	p.logError()
 }

@@ -1,0 +1,8 @@
+# SPDX-License-Identifier: MPL-2.0
+# 1loop's dark look over a slow aurora of the accent (aurora.frag, beside it).
+name = "Aurora"
+base = "dark"
+accents = ["#7aa2ff", "#2fc2a4", "#ff5fa2"]
+roundness = 1.2
+shader = "aurora.frag"
+shader_opacity = 0.78

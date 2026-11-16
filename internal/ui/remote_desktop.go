@@ -72,8 +72,8 @@ func (ui *desktopUI) connectServer() {
 				}
 			}
 			var reply struct {
-				Pairing, Code  string
-				Console, Phone bool
+				Pairing, Code, Command string
+				Console, Phone         bool
 			}
 			err = client.json(ctx, "POST", "/api/pair", map[string]string{"device": "1loop desktop"}, &reply)
 			fyne.Do(func() {
@@ -87,7 +87,7 @@ func (ui *desktopUI) connectServer() {
 					return
 				}
 				sheet.dismiss()
-				ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone, false, ui.useNewServer)
+				ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Command, reply.Phone, false, ui.useNewServer)
 			})
 		}()
 	}
@@ -103,7 +103,7 @@ func (ui *desktopUI) connectServer() {
 // the phone. A pairing the setup link approved connects at once.
 // paired keeps the server once paired: useNewServer, or the browser
 // client's linkPairedServer.
-func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code string, phone, approved bool, paired func(*remoteClient) error) {
+func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code, command string, phone, approved bool, paired func(*remoteClient) error) {
 	ctx, stop := context.WithCancel(ui.ctx)
 	status := widget.NewLabel("Waiting for approval…")
 	status.Wrapping = fyne.TextWrapWord
@@ -149,12 +149,19 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 	if approved {
 		return
 	}
-	command := "pair " + pairingID + " " + code
+	// The server's command runs on its machine (with docker exec in a
+	// container); a server older than it takes the console's only.
+	where := "Or type this command in the server's console:"
+	if console := "pair " + pairingID + " " + code; command == "" {
+		command = console
+	} else {
+		where = "Or run this command on the server's machine (or type " + console + " in its console):"
+	}
 	copyCommand := newRow("Copy command", nil, styleChip, func() { fyne.CurrentApp().Clipboard().SetContent(command) })
 	body := container.NewVBox(
 		note("Approve it in 1loop on a device already paired with this server: it asks for this code. This connects by itself once approved; the pairing expires after two minutes."),
 		codeBlock(code, 80),
-		note("Or type this command in the server's console:"),
+		note(where),
 		codeBlock(command, 80),
 		copyCommand,
 		status,

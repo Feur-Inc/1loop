@@ -77,6 +77,9 @@ COPY --from=build /out/web /usr/local/share/1loop/web
 # both go in CLAUDE_CONFIG_DIR) live in the data volume, so they survive
 # image updates.
 ENV CLAUDE_CONFIG_DIR=/data/claude DISABLE_AUTOUPDATER=1 ONELOOP_BROWSER=none
+# "docker exec <container> 1loop-server pair <id> <code>" finds the running
+# server's admin socket in /data without -data-dir.
+ENV ONELOOP_DATA_DIR=/data
 USER oneloop
 WORKDIR /projects
 VOLUME ["/data", "/projects"]

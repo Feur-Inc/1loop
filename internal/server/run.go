@@ -53,6 +53,25 @@ func Main() {
 	var sshFlags machineFlags
 	flag.Var(&sshFlags, "ssh-machine", "SSH machine projects can be on, as "+machineSpecUsage+" (repeatable; also ONELOOP_SSH_MACHINE, several separated by ;)")
 	flag.Parse()
+	if flag.NArg() > 0 && adminCommands[flag.Arg(0)] {
+		// "1loop-server pair <id> <code>": a command for the running server.
+		if *dir == "" {
+			var err error
+			if *dir, err = defaultDataDir(); err != nil {
+				log.Fatal(err)
+			}
+		}
+		if err := adminCommand(*dir, flag.Args(), os.Stdout); err != nil {
+			if err != errAdminFailed { // its output already says why
+				fmt.Fprintln(os.Stderr, err)
+			}
+			os.Exit(1)
+		}
+		return
+	}
+	if flag.NArg() > 0 {
+		log.Fatalf("Unknown command %q. Commands for the running server: pair <id> <code>, devices, revoke <number>, ssh, trust <number>, refuse <number>", flag.Arg(0))
+	}
 	if *installClaude {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
@@ -83,11 +102,9 @@ func Main() {
 		log.Fatal(err)
 	}
 	if *dir == "" {
-		home, err := os.UserConfigDir()
-		if err != nil {
+		if *dir, err = defaultDataDir(); err != nil {
 			log.Fatal(err)
 		}
-		*dir = filepath.Join(home, "1loop-server")
 	}
 	if err = os.MkdirAll(*dir, 0700); err != nil {
 		log.Fatal(err)
@@ -198,7 +215,7 @@ func Main() {
 		ErrorLog:          errorLog,
 	}
 	server.tlsConfig = httpServer.TLSConfig
-	fmt.Fprintf(os.Stderr, "1loop server listening on https://%s\nCertificate SHA-256: %s\nWorkspace: %s\nCommands: pair <id> <code>, devices, revoke <number>, ssh\n", listener.Addr(), remoteapi.Fingerprint(certificate), root)
+	fmt.Fprintf(os.Stderr, "1loop server listening on https://%s\nCertificate SHA-256: %s\nWorkspace: %s\nCommands (in this console, or as \"1loop-server <command>\" from another shell): pair <id> <code>, devices, revoke <number>, ssh\n", listener.Addr(), remoteapi.Fingerprint(certificate), root)
 	var plainServer *http.Server
 	if plain != nil {
 		plainServer = &http.Server{
@@ -229,6 +246,11 @@ func Main() {
 		server.offerSetupLocked()
 		server.mu.Unlock()
 		go server.console()
+		if closeAdmin, err := server.listenAdmin(*dir); err != nil {
+			fmt.Fprintf(os.Stderr, "The admin socket is unavailable (%v): \"1loop-server pair\" will not reach this server; use its console.\n", err)
+		} else {
+			defer closeAdmin()
+		}
 		go server.checkMachines()
 	}
 	go server.loadModels()

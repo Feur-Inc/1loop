@@ -37,9 +37,9 @@ const (
 	messagePictureHeight  = 160
 )
 
-// fitPicture is a w × h picture's size inside a maxW × maxH box, with its
+// fitPictureBox is a w × h picture's size inside a maxW × maxH box, with its
 // own aspect ratio, never larger than the picture.
-func fitPicture(w, h int, maxW, maxH float32) fyne.Size {
+func fitPictureBox(w, h int, maxW, maxH float32) fyne.Size {
 	if w <= 0 || h <= 0 {
 		return fyne.Size{}
 	}

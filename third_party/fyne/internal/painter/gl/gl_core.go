@@ -362,3 +362,5 @@ func (c *coreContext) VertexAttribPointerWithOffset(attribute Attribute, size in
 func (c *coreContext) Viewport(x, y, width, height int) {
 	gl.Viewport(int32(x), int32(y), int32(width), int32(height))
 }
+
+const userShaderHeader, userFragmentPrecision = "#version 110\n", ""

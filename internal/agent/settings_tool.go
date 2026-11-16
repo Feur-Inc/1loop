@@ -11,6 +11,7 @@ package agent
 // accounts and keys, sharing and pairing) are never readable or writable.
 
 import (
+	"1loop/internal/palette"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -79,6 +80,9 @@ func describeSetting(setting settings.Setting, value string) string {
 			ids = append(ids, option.ID+" ("+option.Label+")")
 		}
 		allowed = strings.Join(ids, ", ")
+		if setting.Key == settings.KeyTheme {
+			allowed += ", or file:<name> for the theme file <name>.toml in " + palette.ThemesDir() + " (format: docs/THEMES.md; the agent may write one there)"
+		}
 	case settings.Number:
 		allowed = fmt.Sprintf("%d to %d", setting.Min, setting.Max)
 	case settings.Shortcut:
@@ -101,6 +105,9 @@ func settingValue(setting settings.Setting, value string) (string, error) {
 		}
 		return "", fmt.Errorf("%s is a switch: give on or off", setting.Key)
 	case settings.Choice:
+		if setting.Key == settings.KeyTheme && strings.HasPrefix(value, palette.ThemeFilePrefix) {
+			return value, nil // a theme file: docs/THEMES.md
+		}
 		for _, option := range setting.Values {
 			if strings.EqualFold(value, option.ID) || strings.EqualFold(value, option.Label) {
 				return option.ID, nil

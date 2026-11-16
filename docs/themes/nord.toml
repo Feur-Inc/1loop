@@ -1,0 +1,15 @@
+# SPDX-License-Identifier: MPL-2.0
+# Nord-like blue greys, with a few accents to choose from.
+name = "Nord"
+base = "dark"
+accents = ["#88c0d0", "#81a1c1", "#a3be8c", "#ebcb8b", "#b48ead"]
+roundness = 1.0
+font_mono = "Fira Code"   # if installed; 1loop's own otherwise
+
+[colors]
+background = "#2e3440"
+sidebar = "#272c36"
+surface = "#3b4252"
+text = "#eceff4"
+danger = "#bf616a"
+added = "#a3be8c"

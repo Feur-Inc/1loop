@@ -801,7 +801,7 @@ func remotePicture(address string, size fyne.Size) fyne.CanvasObject {
 	view.FillMode = canvas.ImageFillContain
 	view.SetMinSize(size)
 	background := canvas.NewRectangle(colCode)
-	background.CornerRadius = 8
+	background.CornerRadius = rounded(8)
 	picturesMu.Lock()
 	cached := pictures[address]
 	picturesMu.Unlock()

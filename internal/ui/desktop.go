@@ -233,7 +233,9 @@ type desktopUI struct {
 	newChat       *tapRow
 	connections   *tapRow
 	projectList   *fyne.Container
-	sideGlide     *glideLayout // projectList's layout: its rows glide between renderings
+	sideGlide     *glideLayout        // projectList's layout: its rows glide between renderings
+	sideRows      map[string]*sideRow // the rows of the last rendering, by key, reused by the next (sidebar_groups.go)
+	sideRowsNext  map[string]*sideRow
 	sideLists     *fyne.Container
 	sideChats     []sideChat // the chats listed, for search
 	sideOrder     []sideChat // the same in the sidebar's order, for the previous and next chat

@@ -272,6 +272,7 @@ type desktopApp struct {
 	worktrees         map[string]string              // this computer's worktrees: folder → project (worktrees.go)
 	worktreeSort      string                         // how the sidebar and Repository order worktrees
 	theme             themeChoice                    // dark, light or the system's, and the accent
+	projectThemes     map[string]string              // project → its own theme setting (#464)
 	repos             map[string]*repoState          // repositories read, by target and project
 	repoWindow        *repoWindow                    // the open Repository window
 	statePath         string
@@ -939,7 +940,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	// The card: no line of light along its top edge, which showed as a
 	// brighter pixel row above the prompt.
 	card := canvas.NewRectangle(colSurface)
-	card.CornerRadius = 18
+	card.CornerRadius = rounded(18)
 	card.StrokeColor = colBorder
 	card.StrokeWidth = 1
 	// The card floats on a soft shadow; focused, an amber halo lights up around it.
@@ -1049,6 +1050,7 @@ func (ui *desktopUI) draftKey() string {
 func (ui *desktopUI) startNew() {
 	ui.cancelChatLoad()
 	platform.Devf("ui", "new chat screen (workspace %s)", ui.cfg.Workspace)
+	ui.syncProjectTheme()
 	if ui.server != nil {
 		ui.server.selectChat("")
 	}
@@ -2022,6 +2024,8 @@ type savedState struct {
 	Windows []savedWindow `json:"windows,omitempty"`
 	// The main window's split views, when it is split (panes.go).
 	Split *savedSplit `json:"split,omitempty"`
+	// Projects with a theme of their own (#464).
+	ProjectThemes map[string]string `json:"projectThemes,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -2094,6 +2098,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.serverProjects,
 		ui.savedWindows(),
 		ui.savedLayout(),
+		ui.projectThemes,
 	})
 	for _, view := range ui.allPanes() {
 		if view.panel != nil {
@@ -2218,6 +2223,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.worktrees, ui.worktreeSort = state.Worktrees, state.WorktreeSort
 	ui.serverProjects = state.ServerProjects
 	ui.theme = themeChoice{theme: state.Theme, accent: state.Accent}
+	ui.projectThemes = state.ProjectThemes
 	for _, project := range state.FoldedProjects {
 		ui.foldedProjects[project] = true
 	}

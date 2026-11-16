@@ -416,6 +416,7 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 		ui.syncTray()
 	}
 	ui.cfg = chat.Config
+	ui.syncProjectTheme()
 	ui.prompt.switchDraft(chat.ID)
 	ui.scroll.rest() // what the wheel still owed the last chat
 	ui.followTail = true

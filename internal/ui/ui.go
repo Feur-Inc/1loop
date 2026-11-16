@@ -190,9 +190,9 @@ func (themeSpec loopTheme) Size(name fyne.ThemeSizeName) float32 {
 	case theme.SizeNameInputBorder:
 		return 1
 	case theme.SizeNameInputRadius:
-		return 8
+		return rounded(8)
 	case theme.SizeNameSelectionRadius:
-		return 3
+		return rounded(3)
 	case theme.SizeNameScrollBar:
 		return 6
 	case theme.SizeNameScrollBarSmall:
@@ -246,7 +246,7 @@ func relayout(c *fyne.Container) {
 // surface draws a rounded, finely bordered card behind content.
 func surface(content fyne.CanvasObject, fill, stroke color.Color, radius, pad float32) *fyne.Container {
 	background := canvas.NewRectangle(fill)
-	background.CornerRadius = radius
+	background.CornerRadius = rounded(radius)
 	if stroke != nil {
 		background.StrokeColor = stroke
 		background.StrokeWidth = 1
@@ -677,15 +677,15 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 	defer renderer.nudgeIcon()
 	switch renderer.row.style {
 	case styleOutline, styleIcon:
-		renderer.bg.CornerRadius = size.Height/2 - inset
+		renderer.bg.CornerRadius = rounded(size.Height/2 - inset)
 	case styleWindow:
-		renderer.bg.CornerRadius = 6
+		renderer.bg.CornerRadius = rounded(6)
 	case stylePrimary, styleField:
-		renderer.bg.CornerRadius = 8
+		renderer.bg.CornerRadius = rounded(8)
 	case styleModel:
-		renderer.bg.CornerRadius = 9
+		renderer.bg.CornerRadius = rounded(9)
 	default:
-		renderer.bg.CornerRadius = 6
+		renderer.bg.CornerRadius = rounded(6)
 	}
 	if renderer.row.style == styleIcon || renderer.row.style == styleWindow {
 		renderer.icon.Resize(fyne.NewSquareSize(iconSize))
@@ -1828,7 +1828,7 @@ type tipLayer struct {
 
 func newTipLayer() *tipLayer {
 	tooltip := &tipLayer{bg: canvas.NewRectangle(colRaised)}
-	tooltip.bg.CornerRadius = 8
+	tooltip.bg.CornerRadius = rounded(8)
 	tooltip.bg.StrokeColor = colPopBorder
 	tooltip.bg.StrokeWidth = 1
 	tooltip.layer = container.NewWithoutLayout(tooltip.bg)

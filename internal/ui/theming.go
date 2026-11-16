@@ -213,16 +213,49 @@ func repaint(changed recolour) {
 
 // themeChoice is the theme setting with the accent, as saved.
 type themeChoice struct {
-	theme  string // palette.Theme…
-	accent string // a preset's id or #rrggbb
+	theme   string // palette.Theme…, or file:<name> for a theme file
+	accent  string // a preset's id or #rrggbb; "" for the default
+	project string // the theme bound to the project in view, over theme (not saved here)
+}
+
+// active is the theme setting painted: the project's, else the global one.
+func (choice themeChoice) active() string {
+	if choice.project != "" {
+		return choice.project
+	}
+	return choice.theme
+}
+
+// fileAccents are the active theme file's own accents, if it has any.
+func (choice themeChoice) fileAccents() []color.NRGBA {
+	file, _ := themeFile(choice.active())
+	return file.Accents
+}
+
+// accentColour is the accent painted: a colour of the user's own as it
+// is; otherwise the theme file's first accent, or the preset.
+func (choice themeChoice) accentColour() color.NRGBA {
+	if c, ok := palette.ParseHex(choice.accent); ok && strings.HasPrefix(choice.accent, "#") {
+		return c
+	}
+	if own := choice.fileAccents(); len(own) > 0 {
+		return own[0]
+	}
+	return palette.AccentColor(choice.accent)
 }
 
 // applyTheme sets the colours for the choice, the system's dark mode read
-// when it follows it, and repaints the windows when anything changed.
+// when it follows it, and repaints the windows when anything changed. A
+// theme file that is gone or broken paints 1loop's dark look meanwhile.
 func (choice themeChoice) apply() {
-	tokens := palette.For(choice.theme, choice.theme == palette.ThemeSystem && systemDark())
-	changed := setColours(tokens, palette.AccentColor(choice.accent))
-	platform.Devf("ui", "theme %s (dark %v), accent %s", choice.theme, tokens.Dark, choice.accent)
+	setting := choice.active()
+	tokens := palette.For(setting, setting == palette.ThemeSystem && systemDark())
+	roundness = 1
+	if file, ok := themeFile(setting); ok {
+		tokens, roundness = file.Tokens, max(float32(file.Roundness), 0.05) // never 0: radii scale back from it
+	}
+	changed := setColours(tokens, choice.accentColour())
+	platform.Devf("ui", "theme %s (dark %v), accent %s, roundness %.2f", setting, tokens.Dark, choice.accent, roundness)
 	if len(changed) > 0 {
 		repaint(changed)
 	}

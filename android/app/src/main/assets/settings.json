@@ -146,7 +146,7 @@
       "key": "general.theme",
       "section": "general",
       "title": "Theme",
-      "description": "Dark, light, or the system's: follows the computer's or the phone's dark mode as it changes.",
+      "description": "Dark, light, the system's (follows the computer's or the phone's dark mode as it changes), or on the computer a theme file of your own.",
       "keywords": [
         "theme",
         "dark",
@@ -156,7 +156,12 @@
         "colors",
         "colours",
         "night",
-        "system"
+        "system",
+        "theme file",
+        "custom theme",
+        "matugen",
+        "roundness",
+        "corners"
       ],
       "kind": "choice",
       "values": [

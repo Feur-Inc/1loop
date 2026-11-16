@@ -133,7 +133,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	panel.body.OnScrolled = func(fyne.Position) { panel.place() }
 	panel.page = container.NewStack(panel.body)
 	card := canvas.NewRectangle(colSurface)
-	card.CornerRadius = 12
+	card.CornerRadius = rounded(12)
 	card.StrokeColor = colBorderSoft
 	card.StrokeWidth = 1
 	content := container.NewBorder(container.NewVBox(padded(6, 2, 8, 6, header), rule), nil, nil, nil, panel.page)

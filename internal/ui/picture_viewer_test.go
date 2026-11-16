@@ -13,7 +13,7 @@ import (
 )
 
 // Pictures keep their shape, fit their box and are never enlarged (#435).
-func TestFitPicture(t *testing.T) {
+func TestFitPictureBox(t *testing.T) {
 	for _, c := range []struct {
 		w, h       int
 		maxW, maxH float32
@@ -26,7 +26,7 @@ func TestFitPicture(t *testing.T) {
 		{1600, 200, composerPictureWidth, composerPictureHeight, fyne.NewSize(192, 24)}, // wide, in the composer
 		{0, 10, 100, 100, fyne.Size{}},
 	} {
-		got := fitPicture(c.w, c.h, c.maxW, c.maxH)
+		got := fitPictureBox(c.w, c.h, c.maxW, c.maxH)
 		if abs32(got.Width-c.want.Width) > 0.001 || abs32(got.Height-c.want.Height) > 0.001 {
 			t.Errorf("%d × %d in %v × %v: %v, want %v", c.w, c.h, c.maxW, c.maxH, got, c.want)
 		}

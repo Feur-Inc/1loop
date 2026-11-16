@@ -272,6 +272,8 @@ type desktopApp struct {
 	worktrees         map[string]string              // this computer's worktrees: folder → project (worktrees.go)
 	worktreeSort      string                         // how the sidebar and Repository order worktrees
 	theme             themeChoice                    // dark, light or the system's, and the accent
+	projectThemes     map[string]string              // project → its own theme setting (#464)
+	backdrop          *backdrop                      // a theme's shader behind the window (#464)
 	repos             map[string]*repoState          // repositories read, by target and project
 	repoWindow        *repoWindow                    // the open Repository window
 	statePath         string
@@ -395,7 +397,9 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.Resize(fyne.NewSize(1180, 760))
 	ui.window.CenterOnScreen()
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
-	ui.window.SetContent(ui.build())
+	ui.backdrop = newBackdrop()
+	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.backdrop.picture, ui.build()))
+	ui.syncBackdrop()
 	ui.followUsage()
 	ui.window.SetOnDropped(func(at fyne.Position, uris []fyne.URI) {
 		var files []string
@@ -816,7 +820,7 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	ui.curtain = newPageCurtain()
 	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view, ui.curtain.cover)))
 	// No rule between the panes: the sidebar only casts a faint shadow.
-	shade := canvas.NewHorizontalGradient(color.NRGBA{A: 0x2a}, color.NRGBA{})
+	shade := canvas.NewHorizontalGradient(color.NRGBA{B: 1, A: 0x2a}, color.NRGBA{B: 1}) // shadowInk: kept by a change of theme
 	ui.pane = &paneLayout{shown: 1, shade: 14, chosen: &ui.sidebarWidth}
 	ui.sideHandle = newSidebarHandle(ui)
 	ui.root = container.New(ui.pane, sidebar, main, shade, ui.sideHandle)
@@ -953,11 +957,12 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	// The card: no line of light along its top edge, which showed as a
 	// brighter pixel row above the prompt.
 	card := canvas.NewRectangle(colSurface)
-	card.CornerRadius = 18
+	card.CornerRadius = rounded(18)
 	card.StrokeColor = colBorder
 	card.StrokeWidth = 1
 	// The card floats on a soft shadow; focused, an amber halo lights up around it.
 	drop, glow := newShadow(2.2), newGlow(colAmber, 0.32)
+	onRepaint = append(onRepaint, func() { drop.setOpacity(1) })                 // lighter on a light theme
 	onRepaint = append(onRepaint, func() { drop.setOpacity(1); drop.refresh() }) // its strength is the theme's
 	var glowAnim *fyne.Animation
 	glowLevel := float32(0)
@@ -1003,7 +1008,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		container.NewHBox(container.NewCenter(textLine("Enter to save · Esc to cancel", 12, colFaint)), cancelEdit)))
 	ui.editBar.Hide()
 	body := container.NewStack(card, padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
-	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: card.CornerRadius}, append(append(glow.objects(), drop.objects()...), body)...)
+	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: 18}, append(append(glow.objects(), drop.objects()...), body)...)
 	ui.composer = composer
 
 	// Messages waiting for the running task sit in a tray on top of the card.
@@ -1012,7 +1017,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	clear.size = 12.5
 	ui.queueList = container.New(layout.NewCustomPaddedVBoxLayout(0))
 	trayBg := canvas.NewRectangle(colPopover)
-	trayBg.TopLeftCornerRadius, trayBg.TopRightCornerRadius = 12, 12
+	trayBg.TopLeftCornerRadius, trayBg.TopRightCornerRadius = rounded(12), rounded(12)
 	trayBg.StrokeColor = colBorderSoft
 	trayBg.StrokeWidth = 1
 	trayBody := container.NewVBox(container.NewBorder(nil, nil, nil, clear, padded(0, 0, 8, 0, ui.queueTitle)), ui.queueList)
@@ -1063,6 +1068,7 @@ func (ui *desktopUI) draftKey() string {
 func (ui *desktopUI) startNew() {
 	ui.cancelChatLoad()
 	platform.Devf("ui", "new chat screen (workspace %s)", ui.cfg.Workspace)
+	ui.syncProjectTheme()
 	if ui.server != nil {
 		ui.server.selectChat("")
 	}
@@ -2038,6 +2044,10 @@ type savedState struct {
 	Windows []savedWindow `json:"windows,omitempty"`
 	// The main window's split views, when it is split (panes.go).
 	Split *savedSplit `json:"split,omitempty"`
+	// Projects with a theme of their own (#464).
+	ProjectThemes map[string]string `json:"projectThemes,omitempty"`
+	// The Shader background setting; 30 fps when unset.
+	ShaderFPS string `json:"shaderFPS,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -2111,6 +2121,8 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.serverProjects,
 		ui.savedWindows(),
 		ui.savedLayout(),
+		ui.projectThemes,
+		shaderFPSSaved(),
 	})
 	for _, view := range ui.allPanes() {
 		if view.panel != nil {
@@ -2235,6 +2247,10 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.worktrees, ui.worktreeSort = state.Worktrees, state.WorktreeSort
 	ui.serverProjects = state.ServerProjects
 	ui.theme = themeChoice{theme: state.Theme, accent: state.Accent}
+	ui.projectThemes = state.ProjectThemes
+	if state.ShaderFPS != "" {
+		shaderFPS = state.ShaderFPS
+	}
 	for _, project := range state.FoldedProjects {
 		ui.foldedProjects[project] = true
 	}

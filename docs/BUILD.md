@@ -15,7 +15,7 @@ keeps the plain version.
 |---|---|
 | `packaging/linux/build.sh binaries tarball deb appimage` | `1loop-VERSION-linux-amd64.tar.gz`, `1loop-VERSION-amd64.deb`, `1loop-VERSION-x86_64.AppImage` |
 | `packaging/server/build.sh` | `1loop-server-VERSION-linux-amd64`, `1loop-server-VERSION-windows-amd64.exe` |
-| `packaging/windows/build.sh` | `1loop-VERSION-windows-amd64.zip` |
+| `packaging/windows/build.sh` | `1loop-VERSION-windows-amd64.exe` |
 | `packaging/android/build.sh debug` | `1loop-VERSION-debug.apk`, `1loop-VERSION-android-native-sources.zip` |
 | `packaging/android/build.sh release` | `1loop-VERSION.apk` (only with the release key), same native sources |
 
@@ -109,17 +109,22 @@ Static, without cgo: nothing to install besides Go.
 ## Windows (cross-compiled from Linux)
 
 ```bash
-sudo apt-get install gcc-mingw-w64-x86-64 p7zip-full xz-utils zip
+sudo apt-get install gcc-mingw-w64-x86-64 p7zip-full xz-utils
 packaging/windows/build.sh
 ```
 
-The zip holds `1loop.exe` and `1loop-server.exe`. `1loop.exe` carries Mesa,
-which draws on the CPU, for PCs without a working OpenGL driver
-(`internal/softgl`). Every Windows build of the desktop needs it: run
-`go generate ./internal/softgl` once before building on Windows or by hand
-(without `GOOS` set). It downloads the pinned Mesa archive into the user's
-cache, checks its sum, and writes the two DLLs xz-compressed, which git
-ignores; it needs 7-Zip (`7z`) and, for the smallest exe, `xz`. A Windows
+The download is the desktop exe alone; the server is
+`packaging/server/build.sh`'s. Both exes carry the 1loop icon and their
+version (Properties → Details): `go run ./cmd/1loop-release winres` writes
+them as a `.syso` beside the command's sources, which `go build` links, and
+the scripts remove it afterwards.
+
+`1loop.exe` carries Mesa, which draws on the CPU, for PCs without a working
+OpenGL driver (`internal/softgl`). Every Windows build of the desktop needs
+it: run `go generate ./internal/softgl` once before building on Windows or by
+hand (without `GOOS` set). It downloads the pinned Mesa archive into the
+user's cache, checks its sum, and writes the two DLLs xz-compressed, which
+git ignores; it needs 7-Zip (`7z`) and, for the smallest exe, `xz`. A Windows
 build without them stops, saying `opengl32.dll.xz` matches no file. `go vet`
 runs for Windows; the tests need Windows itself: run `go test ./...` there.
 

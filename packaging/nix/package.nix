@@ -130,12 +130,12 @@ buildGoModule {
 
   desktopItems = [
     (makeDesktopItem {
-      name = "1loop";
+      name = "io.github.Feur_Inc.OneLoop";
       desktopName = "1loop";
       genericName = "Coding agent";
       comment = "Your project. Your model. One loop.";
       exec = "1loop";
-      icon = "1loop";
+      icon = "io.github.Feur_Inc.OneLoop";
       categories = [ "Development" ];
       keywords = [
         "AI"
@@ -144,7 +144,7 @@ buildGoModule {
         "code"
         "assistant"
       ];
-      startupWMClass = "1loop";
+      startupWMClass = "io.github.Feur_Inc.OneLoop";
       startupNotify = true;
     })
   ];

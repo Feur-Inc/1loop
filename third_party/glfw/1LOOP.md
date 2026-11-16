@@ -23,6 +23,11 @@ untouched upstream copy, so `git diff` against it shows every change.
   a data device of its own: with that second device, GNOME (Mutter) most
   often left GLFW's without the selection, so text could not be pasted. `glfwGetClipboardString` returns no
   text for a selection that is only an image.
+- `glfw/src/wl_window.c`, `wl_platform.h` (#431): on Wayland the window
+  takes `GLFW_X11_CLASS_NAME` as its app id, sent with its xdg toplevel
+  before the first commit (GLFW 3.4 has `GLFW_WAYLAND_APP_ID` for this).
+  1loop sets the app id itself only once the window was shown, so GNOME
+  first took it for an unknown application, with a generic icon.
 - `build.go` (#412): Windows no longer links `opengl32.dll` (`-lopengl32`):
   GLFW already loads it by name when it starts WGL (`wgl_context.c`), and
   then gets the one 1loop loaded, Mesa's on a PC without an OpenGL driver

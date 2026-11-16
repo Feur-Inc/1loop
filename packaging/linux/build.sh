@@ -14,7 +14,8 @@
 # Each format gets its own link, naming it in internal/update.Packaged:
 # packaged builds leave updates to the way they were installed.
 #
-# Every format ships packaging/linux/1loop.desktop and the icon, rendered by
+# Every format ships packaging/linux/io.github.Feur_Inc.OneLoop.desktop and
+# the icon of the same name, rendered by
 # `1loop-release icons`; 1loop never installs them itself.
 set -euo pipefail
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/../.."
@@ -54,7 +55,7 @@ glibc() {
 # STAGE/icons, as under /usr/share.
 share() {
   mkdir -p "$1/applications" "$1/icons"
-  cp packaging/linux/1loop.desktop "$1/applications/"
+  cp packaging/linux/io.github.Feur_Inc.OneLoop.desktop "$1/applications/"
   go run ./cmd/1loop-release icons "$1/icons"
 }
 
@@ -154,9 +155,9 @@ appimage() {
   install -Dm755 bin/linux/appimage/1loop "$app/usr/lib/1loop/1loop"
   install -Dm755 bin/linux/appimage/1loop-wayland "$app/usr/lib/1loop/1loop-wayland"
   share "$app/usr/share"
-  cp packaging/linux/1loop.desktop "$app/"
-  cp "$app/usr/share/icons/hicolor/256x256/apps/1loop.png" "$app/1loop.png"
-  ln -s 1loop.png "$app/.DirIcon"
+  cp packaging/linux/io.github.Feur_Inc.OneLoop.desktop "$app/"
+  cp "$app/usr/share/icons/hicolor/256x256/apps/io.github.Feur_Inc.OneLoop.png" "$app/"
+  ln -s io.github.Feur_Inc.OneLoop.png "$app/.DirIcon"
   cat > "$app/AppRun" <<'EOF'
 #!/bin/sh
 # Nothing is bundled but 1loop itself: OpenGL, X11, Wayland, Git, the

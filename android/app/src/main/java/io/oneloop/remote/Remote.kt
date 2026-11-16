@@ -31,6 +31,30 @@ import org.json.JSONObject
  */
 data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean, val scratch: Boolean = false, val parent: String = "", val status: String = "", val blocked: Boolean = false)
 
+/** The chats under the chat [id]: its subchats at every level, parents first (agent.SubchatSubtree). */
+fun chatSubtree(chats: List<ChatSummary>, id: String): List<String> {
+    val children = chats.filter { it.parent.isNotEmpty() && it.parent != it.id }.groupBy({ it.parent }, { it.id })
+    val seen = mutableSetOf(id)
+    val out = mutableListOf<String>()
+    val queue = ArrayDeque(listOf(id))
+    while (queue.isNotEmpty()) {
+        for (child in children[queue.removeFirst()].orEmpty().sorted()) {
+            if (seen.add(child)) {
+                out += child
+                queue += child
+            }
+        }
+    }
+    return out
+}
+
+/** What deleting a chat with [count] chats under it says about them (agent.SubtreeNote). */
+fun subtreeNote(count: Int) = when (count) {
+    0 -> ""
+    1 -> " Its subchat will be deleted with it."
+    else -> " Its $count subchats, at every level, will be deleted with it."
+}
+
 /** A subchat as its parent's meta lists it; state is working, waiting, done, failed or stopped. */
 data class Subchat(val id: String, val title: String, val state: String, val branch: String, val used: Int) {
     val active get() = state == "working" || state == "waiting"
@@ -1098,12 +1122,18 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         problem = null
         scope.launch {
             try {
-                onConnection(target, generation) { it.post("/api/chats/$id/delete", JSONObject()) }
+                val subtree = chatSubtree(chats, id)
+                val reply = onConnection(target, generation) { it.post("/api/chats/$id/delete", JSONObject()) }
                 if (generation != connectionGeneration) return@launch
-                chats.removeAll { it.id == id }
-                approvals.remove(id)
-                forgetQuestion(questions.remove(id))
-                if (current == id) open(null)
+                // The chat and its subchats at every level: the server says which went.
+                val gone = reply.optJSONArray("deleted")?.let { list -> (0 until list.length()).map { list.optString(it) } }
+                    ?.takeIf { it.isNotEmpty() } ?: (listOf(id) + subtree)
+                chats.removeAll { it.id in gone }
+                for (each in gone) {
+                    approvals.remove(each)
+                    forgetQuestion(questions.remove(each))
+                }
+                if (current in gone) open(null)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1517,6 +1547,34 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val target = server?.takeIf { it.localPhone } ?: return
         onConnection(target, connectionGeneration) { it.post("/api/local/devices/$index/revoke", JSONObject()) }
         refreshSharing()
+    }
+
+    /** The devices paired with the headless server open now (#428). */
+    suspend fun pairedDevices(): List<ServerDevice> {
+        val target = server?.takeIf { !it.localPhone && !it.desktop } ?: return emptyList()
+        return serverDevices(onConnection(target, connectionGeneration) { it.get("/api/devices") })
+    }
+
+    /** Unpairs another device from the headless server open now. */
+    suspend fun revokeServerDevice(id: String) {
+        val target = server?.takeIf { !it.localPhone && !it.desktop } ?: return
+        onConnection(target, connectionGeneration) { it.post(revokePath(id), JSONObject()) }
+    }
+
+    /**
+     * Forgets a paired computer or server (#428). A headless server first
+     * unpairs this phone, so that its token stops working there; one that does
+     * not answer is forgotten here all the same, and problem says how to finish.
+     */
+    fun unpair(target: Server) {
+        scope.launch {
+            // Left first: the revocation ends the open stream, whose 401 must not find this server still open.
+            if (target.key == server?.key) leave()
+            val told = target.desktop || !target.paired ||
+                withContext(Dispatchers.IO) { runCatching { unpairFrom(Api(target)) }.isSuccess }
+            unlink(target.key)
+            if (!told) problem = "${target.name} is forgotten on this phone, but it could not be told. Remove this phone from its paired devices on another device, or type devices then revoke in its console."
+        }
     }
 
     /** Erases the agent's browser data where it runs: this phone's WebView, or the computer's browser. */

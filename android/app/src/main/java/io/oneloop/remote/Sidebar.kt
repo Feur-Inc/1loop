@@ -61,10 +61,12 @@ private class SideChats(all: List<TargetChat>) {
     fun isTop(entry: TargetChat) = entry.id() in top
     fun children(entry: TargetChat) = children[entry.id()].orEmpty()
 
-    /** The chat is open, or one of its subchats is. */
-    fun openHere(entry: TargetChat, app: RemoteApp) = app.isOpen(entry) || children(entry).any { app.isOpen(it) }
+    /** The chat is open, or one of its subchats at any level is. */
+    fun openHere(entry: TargetChat, app: RemoteApp, depth: Int = 0): Boolean =
+        app.isOpen(entry) || depth < MAX_SUBCHAT_DEPTH && children(entry).any { openHere(it, app, depth + 1) }
 
-    fun workingHere(entry: TargetChat) = entry.chat.running || children(entry).any { it.chat.running }
+    fun workingHere(entry: TargetChat, depth: Int = 0): Boolean =
+        entry.chat.running || depth < MAX_SUBCHAT_DEPTH && children(entry).any { workingHere(it, depth + 1) }
 }
 
 /** Whether a drawer chat is the one on screen: on the open target. */
@@ -231,14 +233,7 @@ private fun GroupChats(app: RemoteApp, group: DrawerGroup, side: SideChats, full
                 chat.title, null, selected = app.isOpen(entry), running = chat.running, status = chat.status, blocked = chat.blocked,
                 trailing = branch, onLongClick = { onMenu(entry) }, longClickLabel = "Chat menu", onMore = { onMenu(entry) }, moreLabel = "Menu of ${chat.title}",
             ) { app.openOn(entry.target, chat = chat.id); onPicked() }
-            side.children(entry).takeIf { it.isNotEmpty() }?.let { subs ->
-                Column(Modifier.padding(start = 16.dp)) {
-                    for (sub in subs) NavRow(
-                        sub.chat.title, Icons.subchat, selected = app.isOpen(sub), running = sub.chat.running,
-                        onLongClick = { onMenu(sub) }, longClickLabel = "Chat menu", onMore = { onMenu(sub) }, moreLabel = "Menu of ${sub.chat.title}",
-                    ) { app.openOn(sub.target, chat = sub.chat.id); onPicked() }
-                }
-            }
+            SubchatRows(app, side, entry, 1, onPicked, onMenu)
         }
         if (chats.size > GROUP_CHAT_LIMIT) {
             Text(
@@ -246,6 +241,24 @@ private fun GroupChats(app: RemoteApp, group: DrawerGroup, side: SideChats, full
                 style = Type.caption.copy(color = Palette.faint, fontSize = 13.sp),
                 modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(8.dp)).clickable { setFull(shown.size < chats.size) }.padding(horizontal = 10.dp, vertical = 10.dp),
             )
+        }
+    }
+}
+
+/** A subchat level of 1loop's tree (agent.MaxSubchatDepth): the chat the user started is level 0. */
+private const val MAX_SUBCHAT_DEPTH = 3
+
+/** A chat's subchats under its row, theirs under each of them, to the deepest level. */
+@Composable
+private fun SubchatRows(app: RemoteApp, side: SideChats, parent: TargetChat, depth: Int, onPicked: () -> Unit, onMenu: (TargetChat) -> Unit) {
+    val subs = side.children(parent).takeIf { it.isNotEmpty() && depth <= MAX_SUBCHAT_DEPTH } ?: return
+    Column(Modifier.padding(start = 16.dp)) {
+        for (sub in subs) {
+            NavRow(
+                sub.chat.title, Icons.subchat, selected = app.isOpen(sub), running = sub.chat.running,
+                onLongClick = { onMenu(sub) }, longClickLabel = "Chat menu", onMore = { onMenu(sub) }, moreLabel = "Menu of ${sub.chat.title}",
+            ) { app.openOn(sub.target, chat = sub.chat.id); onPicked() }
+            SubchatRows(app, side, sub, depth + 1, onPicked, onMenu)
         }
     }
 }
@@ -330,9 +343,10 @@ private fun DeleteChatSheet(app: RemoteApp, chat: ChatSummary, onDone: () -> Uni
         Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
             Text("Delete chat?", style = Type.title)
             Spacer(Modifier.height(12.dp))
+            val under = chatSubtree(app.chats, chat.id).size
             Text(
-                if (chat.scratch) "“${chat.title}” and the folder 1loop made for it will be permanently deleted. Its running tasks and tabs will stop."
-                else "“${chat.title}” will be permanently deleted. Its running tasks and tabs will stop. Project files are kept.",
+                (if (chat.scratch) "“${chat.title}” and the folder 1loop made for it will be permanently deleted. Its running tasks and tabs will stop."
+                else "“${chat.title}” will be permanently deleted. Its running tasks and tabs will stop. Project files are kept.") + subtreeNote(under),
                 style = Type.body,
             )
             Spacer(Modifier.height(20.dp))

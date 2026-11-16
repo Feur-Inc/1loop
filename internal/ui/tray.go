@@ -174,8 +174,7 @@ func (ui *desktopUI) buildTrayMenu(work string, chat bool, today string) {
 	}
 	status := fyne.NewMenuItem(work, func() {
 		if slices.Contains(ui.chats, tray.chat) {
-			ui.openChat(tray.chat)
-			ui.showWindow()
+			ui.openWhereShown(tray.chat)
 		}
 	})
 	status.Disabled = !chat
@@ -198,6 +197,10 @@ func (ui *desktopUI) buildTrayMenu(work string, chat bool, today string) {
 // closeWindow is the window's close button: hidden in the tray when the
 // setting allows it and a tray host shows the icon, quit otherwise.
 func (ui *desktopUI) closeWindow() {
+	if ui.otherWindowShown() { // another 1loop window stays: only this one goes (windows.go)
+		ui.closeAlone()
+		return
+	}
 	if ui.closeQuits || ui.tray == nil || !trayHostPresent() {
 		ui.quit()
 		return
@@ -236,17 +239,24 @@ func (ui *desktopUI) hideWindow() {
 	platform.Devf("ui", "window hidden in the tray")
 	ui.tray.hidden = true
 	ui.inForeground = false // notifications are for every chat now
-	ui.window.Hide()
+	for _, view := range ui.allWindows() {
+		view.window.Hide()
+	}
 	ui.syncTray()
 }
 
 // showWindow brings the window back and to the front.
 func (ui *desktopUI) showWindow() {
+	ui = ui.mainView() // the tray and the single-instance handoff bring back the main window
 	if ui.tray != nil && ui.tray.hidden {
 		platform.Devf("ui", "window shown from the tray")
 		ui.tray.hidden = false
+		for _, view := range ui.allWindows()[1:] { // the others hidden with it
+			view.window.Show()
+		}
 		ui.syncTray()
 	}
+	ui.hiddenAlone = false
 	ui.window.Show()
 	ui.window.RequestFocus()
 }

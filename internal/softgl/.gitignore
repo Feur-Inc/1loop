@@ -1,0 +1,2 @@
+# Mesa, xz-compressed, written by go generate ./internal/softgl (fetch/).
+*.xz

@@ -110,6 +110,11 @@ func (server *headlessServer) chatAccess(chat *serverChat) *agent.ChatAccess {
 			defer server.mu.Unlock()
 			return server.sendLocked(chat, id, text, attachments.Images, files)
 		},
+		Rename: func(_ context.Context, title string) error {
+			server.mu.Lock()
+			defer server.mu.Unlock()
+			return server.renameLocked(chat, title)
+		},
 	}
 }
 

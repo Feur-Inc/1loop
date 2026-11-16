@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -111,6 +112,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/wrap-up":                            server.setWrapUp,
 		"POST /api/model":                              server.setModel,
 		"POST /api/auto-resume":                        server.setAutoResume,
+		"POST /api/naming-model":                       server.setNamingModel,
 		"POST /api/model/compaction":                   server.setModelCompaction,
 		"POST /api/model/defaults":                     server.setDefaultModels,
 		"POST /api/approval-mode":                      server.setApprovalMode,
@@ -289,15 +291,16 @@ func (server *headlessServer) renameChat(w http.ResponseWriter, r *http.Request)
 		core.Fail(w, 404, "Chat not found")
 		return
 	}
-	chat.Title = title
-	if err := server.saveLocked(); err != nil {
+	if err := server.setTitleLocked(chat, title); err != nil {
 		core.Fail(w, 500, err.Error())
 		return
 	}
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
 	core.WriteJSON(w, 200, map[string]any{"ok": true, "title": title})
 }
 
+// deleteChat deletes a chat with its subchats at every level: those that
+// run stop first. The worktrees they were given go too when asked, unless
+// they have uncommitted changes or another chat works in them.
 func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request) {
 	var args struct {
 		Worktree bool `json:"worktree"` // a subchat's: remove its worktree and branch too
@@ -310,15 +313,21 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 		core.Fail(w, 404, "Chat not found")
 		return
 	}
-	worktree := ""
+	gone := append([]*serverChat{chat}, server.subtreeLocked(chat)...)
+	var worktrees []string
+	projects := map[string]string{}
 	if args.Worktree {
-		worktree = server.subchatWorktreeLocked(chat)
+		for _, member := range gone {
+			if folder := server.ownWorktreeLocked(member, gone); folder != "" && !slices.Contains(worktrees, folder) {
+				worktrees = append(worktrees, folder)
+				projects[folder] = server.worktrees[folder]
+			}
+		}
 	}
-	project := server.worktrees[worktree]
 	previous := server.chats
-	kept := make([]*serverChat, 0, len(previous)-1)
+	kept := make([]*serverChat, 0, len(previous))
 	for _, candidate := range previous {
-		if candidate != chat {
+		if !slices.Contains(gone, candidate) {
 			kept = append(kept, candidate)
 		}
 	}
@@ -329,35 +338,44 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 		core.Fail(w, 500, err.Error())
 		return
 	}
-	if chat.run != nil {
-		chat.run.cancel()
-		chat.run = nil
+	var tabs []*serverTab
+	deleted := make([]string, 0, len(gone))
+	for _, member := range gone {
+		deleted = append(deleted, member.ID)
+		if member.run != nil {
+			member.run.cancel()
+			member.run = nil
+		}
+		member.queue, member.steer = nil, nil
+		member.tasks.StopAll()
+		if member.Config.Scratch != "" {
+			go func(path string) { _ = agent.RemoveScratchWorkspace(server.scratchBase(), path) }(member.Config.Scratch)
+		}
+		tabs = append(tabs, member.tabs...)
+		member.tabs = nil
 	}
-	chat.queue, chat.steer = nil, nil
-	chat.tasks.StopAll()
-	if chat.Config.Scratch != "" {
-		go func(path string) { _ = agent.RemoveScratchWorkspace(server.scratchBase(), path) }(chat.Config.Scratch)
-	}
-	tabs := chat.tabs
-	chat.tabs = nil
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
 	server.mu.Unlock()
 	for _, tab := range tabs {
 		tab.close()
 	}
-	reply := map[string]any{"ok": true}
-	if worktree != "" {
+	reply := map[string]any{"ok": true, "deleted": deleted}
+	var notes []string
+	for _, worktree := range worktrees {
 		ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 		kept, err := agent.RemoveSubchatWorktree(ctx, gitrepo.Local, worktree, false)
 		cancel()
 		if err != nil {
 			kept = "The worktree " + worktree + " was kept: " + err.Error()
 		} else {
-			gitTarget{server}.Removed(project, worktree)
+			gitTarget{server}.Removed(projects[worktree], worktree)
 		}
 		if kept != "" {
-			reply["note"] = kept
+			notes = append(notes, kept)
 		}
+	}
+	if len(notes) > 0 {
+		reply["note"] = strings.Join(notes, "\n")
 	}
 	core.WriteJSON(w, 200, reply)
 }
@@ -558,6 +576,7 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		delete(server.panelHomes, "home:"+workspace)
 		chat.ID, chat.Title, chat.Config = core.Identifier()[:16], string(title), cfg
 		server.chats = append([]*serverChat{chat}, server.chats...)
+		server.nameNewChatLocked(chat, m)
 	}
 
 	if chat.handoff == nil && chat.run == nil {

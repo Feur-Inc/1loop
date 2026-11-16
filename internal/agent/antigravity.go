@@ -485,7 +485,7 @@ func (backend *App) runAntigravity(ctx context.Context, cfg Config, history []Me
 	prompt := messages[len(messages)-1]
 	session := HarnessSession(cfg)
 	preface := ""
-	budget := ModelContextWindow(cfg) * 4 * 40 / 100
+	budget := RecapBudget(cfg)
 	if session == "" && len(messages) > 1 {
 		preface = "[Earlier conversation in this chat, for context]\n" + core.TruncateText(levelText(messages[:len(messages)-1], LevelEverything, ModelContextWindow(cfg)), budget) + "\n[End of the earlier conversation]\n\n"
 	} else if session != "" && cfg.HandoffSummary != "" {

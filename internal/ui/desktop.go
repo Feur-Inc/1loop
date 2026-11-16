@@ -302,6 +302,7 @@ type desktopApp struct {
 	memoryOff         bool                       // settings: the agent's memory tool turned off
 	wrapUpOff         bool                       // settings: the next-step card (wrap_up tool) turned off
 	autoResume        *agent.AutoResume          // settings: what a rate limit does to a run
+	namingModel       *agent.NamingModel         // settings: the model that names new chats, nil for none
 	closeQuits        bool                       // settings: closing the window quits rather than hiding it in the tray
 	crashReportsOff   bool                       // settings: Don't ask again, after a crash
 	lastCrash         *crash.Crash               // the last run's, offered once the window is up
@@ -337,6 +338,7 @@ func useEnglishUI() {
 }
 
 func runDesktop(backend *agent.App, root string) {
+	softwareRendererStart() // Windows without an OpenGL driver: 1loop's Mesa (software_gl_windows.go)
 	useEnglishUI()
 	switchBackend()
 	// Once this is the process that stays (the build for the display, past
@@ -450,7 +452,19 @@ func runDesktop(backend *agent.App, root string) {
 	serveInstance(instance, func() { fyne.Do(ui.showWindow) })
 	// Shown, named, then run: the desktop learns which application this is
 	// before the window's first frame, when it picks its name and icon.
-	ui.window.Show()
+	// Show makes the window. When OpenGL cannot draw it, 1loop tries its
+	// other ways of drawing, by itself (render_fallback.go): what the next
+	// process needs (the one-instance claim) is let go first, and the end
+	// is a clean one.
+	if failure := showFirstWindow(ui.window); failure != nil {
+		renderFailed(failure, func() {
+			if instance != nil {
+				instance.Close()
+			}
+			crash.Clean()
+		})
+	}
+	rendererReady()
 	if kind := os.Getenv("ONELOOP_BENCH"); kind != "" && platform.Dev != nil {
 		go ui.bench(kind)
 	}
@@ -1547,6 +1561,7 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		ui.chats = append([]*conversation{chat}, ui.chats...)
 		ui.current = chat
 		ui.prompt.renameDraft(chat.ID)
+		ui.nameNewChat(chat, messageValue)
 		if chat.panel != nil {
 			ui.showPanel(chat)
 		} else if ui.panelFollows() {
@@ -2007,6 +2022,7 @@ type savedState struct {
 	MemoryOff         bool                  `json:"memoryOff,omitempty"`
 	WrapUpOff         bool                  `json:"wrapUpOff,omitempty"`
 	AutoResume        *agent.AutoResume     `json:"autoResume,omitempty"`
+	NamingModel       *agent.NamingModel    `json:"namingModel,omitempty"`
 	SSHMachines       []sshmachine.Settings `json:"sshMachines,omitempty"`
 	MachineProjects   map[string][]string   `json:"machineProjects,omitempty"`
 	LocalWorkspace    string                `json:"localWorkspace,omitempty"` // while an SSH machine is the target
@@ -2086,6 +2102,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.memoryOff,
 		ui.wrapUpOff,
 		ui.autoResume,
+		ui.namingModel,
 		ui.sshMachines,
 		ui.machineProjects,
 		ui.localWorkspace,
@@ -2257,6 +2274,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.crashReportsOff = state.CrashReportsOff
 	animationsOff = state.AnimationsOff
 	ui.autoResume = state.AutoResume
+	ui.namingModel = state.NamingModel
 	ui.discordPresence, ui.discordDetails = state.DiscordPresence, state.DiscordDetails
 	ui.syncPresence()
 	for _, chat := range state.Chats {

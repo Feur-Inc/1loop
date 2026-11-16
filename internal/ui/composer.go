@@ -543,14 +543,13 @@ func (ui *desktopUI) renderAttachments() {
 		if err != nil {
 			continue
 		}
-		view := canvas.NewImageFromImage(img)
-		view.FillMode = canvas.ImageFillContain
-		view.SetMinSize(fyne.NewSize(64, 64))
-		remove := newRow("", iconClose, styleWindow, func() {
+		// Its own shape, 64 high: the full picture opens in the viewer.
+		bounds := img.Bounds()
+		size := fitPicture(bounds.Dx(), bounds.Dy(), composerPictureWidth, composerPictureHeight)
+		ui.attachRow.Add(newPictureTile(thumbnail(img, 2*composerPictureWidth), size, func() { ui.openImage("Image", img) }, func() {
 			ui.attachments = append(ui.attachments[:i], ui.attachments[i+1:]...)
 			ui.renderAttachments()
-		})
-		ui.attachRow.Add(container.NewStack(surface(view, colCode, colBorderSoft, 8, 0), container.NewBorder(nil, nil, nil, remove)))
+		}))
 	}
 	if len(ui.attachRow.Objects) == 0 {
 		ui.attachTray.Hide()

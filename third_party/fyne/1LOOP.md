@@ -39,3 +39,9 @@ shows every change.
   back), and at 60 Hz otherwise, so a 120 or 165 Hz screen gets every
   refresh while it matters and idle costs what it did. The caret's short
   fade doesn't count. The browser keeps 60.
+- `internal/painter/font.go` (walkString): a tab is found at its index in
+  the whole text, not in the run of one font it is in. After a change of
+  font (an emoji between words), each tab shaped a range starting too
+  early, so text before it was drawn again, partly in the emoji's font
+  (1loop #438: a copied table row pasted in the composer looked broken).
+  `internal/painter/font_tab_test.go` checks it.

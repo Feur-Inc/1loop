@@ -4,6 +4,8 @@ package ui
 
 import (
 	"encoding/base64"
+	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -21,4 +23,32 @@ func imageClipboardData() ([]byte, error) {
 		return nil, errNoClipboardImage
 	}
 	return base64.StdEncoding.DecodeString(strings.TrimSpace(string(data)))
+}
+
+// copyImageToClipboard puts a PNG picture on the clipboard, as PNG (kept
+// transparent, for the applications that read it) and as a bitmap.
+func copyImageToClipboard(data []byte) error {
+	file, err := os.CreateTemp("", "1loop-picture-*.png")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(file.Name())
+	_, err = file.Write(data)
+	if closeErr := file.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return err
+	}
+	path := "'" + strings.ReplaceAll(file.Name(), "'", "''") + "'"
+	script := `Add-Type -AssemblyName System.Windows.Forms; Add-Type -AssemblyName System.Drawing; ` +
+		`$bytes=[IO.File]::ReadAllBytes(` + path + `); $image=[Drawing.Image]::FromStream((New-Object IO.MemoryStream(,$bytes))); ` +
+		`$data=New-Object Windows.Forms.DataObject; $data.SetImage($image); $data.SetData('PNG',(New-Object IO.MemoryStream(,$bytes))); ` +
+		`[Windows.Forms.Clipboard]::SetDataObject($data,$true)`
+	command := exec.Command("powershell.exe", "-NoProfile", "-STA", "-EncodedCommand", platform.EncodePowerShell(script))
+	platform.PrepareProcess(command)
+	if out, err := command.CombinedOutput(); err != nil {
+		return fmt.Errorf("the picture could not be copied: %v %s", err, strings.TrimSpace(string(out)))
+	}
+	return nil
 }

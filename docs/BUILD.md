@@ -109,13 +109,19 @@ Static, without cgo: nothing to install besides Go.
 ## Windows (cross-compiled from Linux)
 
 ```bash
-sudo apt-get install gcc-mingw-w64-x86-64 p7zip-full zip
+sudo apt-get install gcc-mingw-w64-x86-64 p7zip-full xz-utils zip
+packaging/windows/build.sh
 ```
 
-The zip holds `1loop.exe`, `1loop-server.exe`, and `software/` with
-`1loop-software.cmd` (the Mesa CPU renderer, downloaded and checked, for PCs
-without a working OpenGL driver). `go vet` runs for Windows; the tests need
-Windows itself: run `go test ./...` there.
+The zip holds `1loop.exe` and `1loop-server.exe`. `1loop.exe` carries Mesa,
+which draws on the CPU, for PCs without a working OpenGL driver
+(`internal/softgl`). Every Windows build of the desktop needs it: run
+`go generate ./internal/softgl` once before building on Windows or by hand
+(without `GOOS` set). It downloads the pinned Mesa archive into the user's
+cache, checks its sum, and writes the two DLLs xz-compressed, which git
+ignores; it needs 7-Zip (`7z`) and, for the smallest exe, `xz`. A Windows
+build without them stops, saying `opengl32.dll.xz` matches no file. `go vet`
+runs for Windows; the tests need Windows itself: run `go test ./...` there.
 
 ## Android
 

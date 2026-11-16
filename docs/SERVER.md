@@ -131,6 +131,89 @@ starts the download in the background (`202`, or `200` with
 193 MB"}}`, then `"error"` if it failed; `"browser"` and `"claudeCode"` turn
 `true` once installed. An `install` event says the same to the open clients.
 
+### Behind a reverse proxy
+
+The generated certificate is self-signed. The desktop and Android clients
+pin its fingerprint, but a browser cannot: it shows a certificate warning on
+every visit, and each refused handshake used to print
+`http: TLS handshake error … unknown certificate` in the console. The server
+now says so once and then sums those failures up at most once an hour, so
+the pairing messages stay readable. To get rid of the warning, give the
+server a certificate browsers trust, in one of two ways.
+
+**A trusted certificate on the server.** Pass one, such as Let's Encrypt's
+for the server's name, with `-tls-cert` and `-tls-key` (mount the files
+read-only, for example `-v /etc/1loop-tls:/tls:ro` and
+`-tls-cert /tls/fullchain.pem -tls-key /tls/privkey.pem`). The server reads
+them when it starts, so restart it after each renewal. Clients then connect
+to `https://your-server-name:47101` with the fingerprint left empty.
+
+**A reverse proxy with a real certificate**, such as Caddy, or Traefik as
+Dokploy sets it up. The proxy holds the certificate and renews it, and
+forwards to the server's plain-HTTP listener, `-http-listen`. The server
+still serves HTTPS on `-listen` too. Without TLS, tokens and conversations
+cross the network in the clear between the proxy and the server, so
+`-http-listen` only accepts addresses that the rest of the internet cannot
+reach:
+
+- loopback (`127.0.0.1:47100`) or a private address (`10.…`, `172.16–31.…`,
+  `192.168.…`, `fd…`), or
+- every interface (`:47100`) when all of them are private, as inside a
+  container on a Docker network.
+
+On a public address it refuses to start. Add `-http-allow-public` only if
+a firewall lets the proxy alone in. The server then prints a warning every
+time it starts. Never publish the plain port on the host's public interface
+(`-p 47100:47100`): bind it to loopback (`-p 127.0.0.1:47100:47100`) or
+leave it on the Docker network.
+
+The proxy must pass the `Host` header and must not buffer
+`text/event-stream` responses. Caddy and Traefik do both by default. Open the
+proxy's `https://` address in the browser. On desktop and Android, add the
+same address with the fingerprint left empty, since the certificate is now
+one the system trusts. While no device is paired, the setup link the server
+prints names the proxy, `https://<proxy>/app/#setup=…`. Once everything goes
+through the proxy, you can stop publishing port 47101.
+
+Caddy on the host, with the server's container publishing the plain port on
+loopback only:
+
+```sh
+docker run -d -it --name 1loop-server -p 127.0.0.1:47100:47100 \
+  -v 1loop-data:/data -v ~/projects:/projects \
+  ghcr.io/feur-inc/1loop-server:latest -http-listen :47100
+```
+
+```
+# Caddyfile: Caddy gets and renews the certificate itself.
+1loop.example.com {
+	reverse_proxy 127.0.0.1:47100
+}
+```
+
+Dokploy (Traefik): deploy the image, or `packaging/docker/compose.yml`,
+with `-http-listen :47100` added to the server's arguments (Compose:
+`command: ["-http-listen", ":47100"]`) and no published ports. Then, under
+the service's **Domains**, add your domain with container port `47100`,
+HTTPS on and the Let's Encrypt certificate. Dokploy adds the Traefik labels
+for you. On another Traefik, these are the labels to add, with the container
+on Traefik's network:
+
+```yaml
+labels:
+  - traefik.enable=true
+  - traefik.http.routers.oneloop.rule=Host(`1loop.example.com`)
+  - traefik.http.routers.oneloop.entrypoints=websecure
+  - traefik.http.routers.oneloop.tls.certresolver=letsencrypt
+  - traefik.http.services.oneloop.loadbalancer.server.port=47100
+```
+
+Pairing is unchanged: approve a new device from one already paired, or type
+`pair …` in the console (`docker attach 1loop-server` on the host, since a
+shell opened in the container is not the console). The Docker image's console still shows the certificate
+fingerprint, which only matters to clients that connect to port 47101
+directly.
+
 ### Claude Code in the image
 
 The image (not the slim one) includes the Claude Code CLI (`claude`,
@@ -274,6 +357,8 @@ On first start the server generates an ECDSA TLS certificate, valid for one
 year, and prints its SHA-256 fingerprint. It reuses that certificate on later
 starts. You can instead supply a certificate and private key with
 `-tls-cert /path/server.crt -tls-key /path/server.key`.
+Browsers cannot pin the fingerprint: for the web client without a
+certificate warning, see [Behind a reverse proxy](#behind-a-reverse-proxy).
 
 1. On desktop, click **This computer** under the message box and choose
    **Connect a server…**, or open **Settings → General → Remote server →
@@ -317,6 +402,13 @@ without the console, and can then approve the next devices. The secret is
 random, travels in the URL's fragment (browsers never send it in a request
 line, so proxies do not log it), works once, and stops working as soon as a
 device is paired. Revoking the last device prints a new one.
+
+A paired device can also unpair devices: Settings → General on the desktop
+and in the browser (with the server in use) lists the devices paired with it,
+each with **Remove**, and **Forget** on a server unpairs this device there
+before forgetting it; the phone has the same under Settings → General →
+Linked targets. Both ask first. They use `GET /api/devices` and
+`POST /api/devices/{id}/revoke`.
 
 The console also accepts `devices` and `revoke <number>`. Revocation rejects
 new requests and disconnects active event/browser streams. It does not undo

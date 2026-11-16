@@ -52,11 +52,21 @@ func CopyAttachment(workspace, name string, source io.Reader) (FileAttachment, e
 }
 
 func AttachmentText(text string, files []FileAttachment) string {
+	return attachmentNotice("The user attached these files.", text, files)
+}
+
+// ChatAttachmentText is AttachmentText for files another chat's agent
+// attached to its message.
+func ChatAttachmentText(text string, files []FileAttachment) string {
+	return attachmentNotice("The chat that sent this message attached these files.", text, files)
+}
+
+func attachmentNotice(lead, text string, files []FileAttachment) string {
 	if len(files) == 0 {
 		return text
 	}
 	var notice strings.Builder
-	notice.WriteString("\n\n[Attached files]\nThe user attached these files. Files are available in the workspace:\n")
+	notice.WriteString("\n\n[Attached files]\n" + lead + " Files are available in the workspace:\n")
 	for _, file := range files {
 		fmt.Fprintf(&notice, "- %s: %s\n", file.Name, file.Path)
 	}
@@ -74,6 +84,9 @@ func PromptMessage(text string, images []core.ImagePart, files []FileAttachment)
 func (messageValue Message) Typed() string {
 	if len(messageValue.Files) == 0 {
 		return messageValue.Content
+	}
+	if messageValue.From != nil {
+		return strings.TrimSuffix(messageValue.Content, ChatAttachmentText("", messageValue.Files))
 	}
 	return strings.TrimSuffix(messageValue.Content, AttachmentText("", messageValue.Files))
 }

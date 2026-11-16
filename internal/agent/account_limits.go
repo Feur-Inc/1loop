@@ -27,6 +27,10 @@ type AccountLimitWindow struct {
 	// Group is the model group the window limits (Antigravity's "Gemini",
 	// "Claude/GPT"…); empty, it limits every model of the account.
 	Group string
+	// Scoped is a limit of its own for the models Group names (Claude's
+	// weekly limit for Fable): it limits those models only, and leaves the
+	// other groups' rule alone.
+	Scoped bool
 }
 
 type AccountLimits struct {
@@ -161,10 +165,18 @@ func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key s
 			Week     *window `json:"seven_day"`
 			Sonnet   *window `json:"seven_day_sonnet"`
 			Opus     *window `json:"seven_day_opus"`
+			// Limits are the account's meters as the server lists them now,
+			// a model's own weekly limit (Fable) among them; the fields
+			// above are the older form, read when it is missing.
+			Limits []claudeLimitRow `json:"limits"`
 		}
 		headers := http.Header{"Authorization": {"Bearer " + auth.OAuth.Access}, "Anthropic-Beta": {"oauth-2025-04-20"}}
 		if err := readAccountLimits(ctx, "https://api.anthropic.com/api/oauth/usage", headers, &usage); err != nil {
 			return limits, err
+		}
+		if len(usage.Limits) > 0 {
+			limits.Windows = claudeLimitWindows(usage.Limits)
+			break
 		}
 		for _, item := range []struct {
 			label       string
@@ -211,6 +223,9 @@ func (window AccountLimitWindow) appliesTo(model string, all []AccountLimitWindo
 		return true
 	}
 	model = strings.ToLower(model)
+	if window.Scoped {
+		return strings.Contains(model, strings.ToLower(window.Group))
+	}
 	matches := func(group string) (named, family bool) {
 		for _, word := range strings.FieldsFunc(strings.ToLower(group), func(r rune) bool { return r == '/' || r == ' ' }) {
 			if strings.Contains(model, word) {
@@ -225,7 +240,7 @@ func (window AccountLimitWindow) appliesTo(model string, all []AccountLimitWindo
 	}
 	anyNamed, anyMatch := false, false
 	for _, other := range all {
-		if other.Group == "" {
+		if other.Group == "" || other.Scoped {
 			continue
 		}
 		named, family := matches(other.Group)
@@ -277,4 +292,74 @@ func (backend *App) NoteLimits(ctx context.Context, conn Connection, key string,
 	limits.Checked = time.Now()
 	ledger.NoteLimits(conn.ID, limits.UsageWindows(), limits.Checked)
 	return limits, true
+}
+
+// claudeLimitRow is one meter of Claude's usage endpoint ("limits"): the
+// session, the whole week, or a week scoped to a model or a surface.
+type claudeLimitRow struct {
+	Kind    string    `json:"kind"`
+	Percent *float64  `json:"percent"`
+	ResetAt time.Time `json:"resets_at"`
+	Scope   *struct {
+		Model   json.RawMessage `json:"model"`
+		Surface json.RawMessage `json:"surface"`
+	} `json:"scope"`
+}
+
+// claudeLimitWindows turns the meters into windows, in the server's order:
+// "5h", "7d", and "Fable · 7d" for a model's own week, which limits that
+// model only.
+func claudeLimitWindows(rows []claudeLimitRow) []AccountLimitWindow {
+	var windows []AccountLimitWindow
+	for _, row := range rows {
+		if row.Percent == nil {
+			continue
+		}
+		window := AccountLimitWindow{used: *row.Percent, ResetAt: row.ResetAt}
+		switch row.Kind {
+		case "session":
+			window.Label = "5h"
+		case "weekly_all":
+			window.Label = "7d"
+		default: // weekly_scoped, and meters added since
+			period := "7d"
+			if row.Kind != "weekly_scoped" {
+				period = strings.ReplaceAll(row.Kind, "_", " ")
+			}
+			var model, surface string
+			if row.Scope != nil {
+				model, surface = claudeScopeName(row.Scope.Model), claudeScopeName(row.Scope.Surface)
+			}
+			switch {
+			case model != "":
+				window.Label, window.Group, window.Scoped = model+" · "+period, model, true
+			case surface != "":
+				window.Label = surface + " · " + period
+			default:
+				window.Label = period
+			}
+		}
+		windows = append(windows, window)
+	}
+	return windows
+}
+
+// claudeScopeName is a scope's display name: {"display_name": "Fable"}, or
+// a plain name.
+func claudeScopeName(raw json.RawMessage) string {
+	var named struct {
+		DisplayName string `json:"display_name"`
+		ID          string `json:"id"`
+	}
+	if json.Unmarshal(raw, &named) == nil {
+		if named.DisplayName != "" {
+			return named.DisplayName
+		}
+		return named.ID
+	}
+	var plain string
+	if json.Unmarshal(raw, &plain) == nil {
+		return plain
+	}
+	return ""
 }

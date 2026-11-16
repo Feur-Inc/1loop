@@ -33,7 +33,7 @@ func (ui *desktopUI) targetRows() []fyne.CanvasObject {
 	add := newRow("Add machine", iconPlus, styleChip, func() {
 		ui.sshEditor(sshmachine.Settings{ID: core.Identifier(), Port: 22, Auth: "key", KeyPath: "~/.ssh/id_ed25519", Projects: "~/1loop-projects"})
 	})
-	return []fyne.CanvasObject{
+	rows := []fyne.CanvasObject{
 		sectionTitle("Where the agent runs"),
 		padded(0, 10, 2, 0, plainFlow("Where the agent runs commands, edits files and keeps its projects. The target button under the conversation switches between them too.", 13, colMuted)),
 		card(view.mark("general.target", settingRow("This computer", "The agent works here, with your user's rights. Computer Use is available only on this target.", computer))),
@@ -42,6 +42,10 @@ func (ui *desktopUI) targetRows() []fyne.CanvasObject {
 		sectionTitle("Remote server"),
 		view.mark("general.remote_server", card(ui.serverRows()...)),
 	}
+	if ui.server != nil { // #428
+		rows = append(rows, sectionTitle("Devices paired with "+serverName(ui.server.client.address.URL)), ui.serverDevicesCard(ui.server))
+	}
+	return rows
 }
 
 // sshRows are the SSH machines, each with Use (or In use) and Edit.
@@ -86,6 +90,8 @@ func (ui *desktopUI) serverRows() []fyne.CanvasObject {
 			}))
 			detail = saved.URL + " · connected"
 		}
+		forget := newRow("Forget", iconTrash, styleChip, func() { ui.forgetServer(saved) })
+		control = container.New(layout.NewCustomPaddedHBoxLayout(10), control, forget)
 		rows = append(rows, settingRow(serverName(saved.URL), detail, control))
 	}
 	steps := container.New(layout.NewCustomPaddedVBoxLayout(4))

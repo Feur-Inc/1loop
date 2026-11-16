@@ -691,6 +691,7 @@ func (panel *toolPanel) syncBrowsers() {
 }
 
 func (panel *toolPanel) removeBrowser(chat *conversation, browser *browser.Page) {
+	panel = panel.of(chat)
 	if chat == panel.owner {
 		for i, tab := range panel.tabs {
 			if tab.browser == browser {

@@ -196,6 +196,9 @@ type loopMark struct {
 
 func newLoopMark(size float32) *loopMark {
 	mark := &loopMark{image: brandImage("1loop-ring.png", size, size), state: "brand", size: size}
+	// The raw artwork is in the brand's amber: drawn now in the accent,
+	// which a saved one has already set by the time the window is built.
+	mark.showBrand()
 	onRepaint = append(onRepaint, mark.recolour)
 	return mark
 }
@@ -207,6 +210,10 @@ func (mark *loopMark) recolour() {
 	case "brand":
 		mark.showBrand()
 	case "intro":
+		if mark.anim == nil { // stopped before its end: it would keep the old accent
+			mark.state = "brand"
+			mark.showBrand()
+		}
 	default:
 		mark.work.drawn = time.Time{}
 		mark.tick()

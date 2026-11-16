@@ -270,14 +270,14 @@ type stepRow struct {
 
 func newStepRow(list *stepList, index int, title, detail string, model bool, onRemove func()) *stepRow {
 	row := &stepRow{list: list, index: index, back: canvas.NewRectangle(colSurface)}
-	row.back.CornerRadius = 10
+	row.back.CornerRadius = rounded(10)
 	row.back.StrokeWidth = 1
 	row.grip = canvas.NewImageFromResource(tinted(iconGrip, colFaint))
 	row.grip.SetMinSize(fyne.NewSquareSize(16))
 	number := textLine(strconv.Itoa(index+1), 12, colText)
 	number.TextStyle = fyne.TextStyle{Bold: true}
 	badge := canvas.NewRectangle(colRaised)
-	badge.CornerRadius = 11
+	badge.CornerRadius = rounded(11)
 	badge.SetMinSize(fyne.NewSquareSize(22))
 	icon, tint := iconClock, colMuted
 	if model {
@@ -286,7 +286,7 @@ func newStepRow(list *stepList, index int, title, detail string, model bool, onR
 	glyph := canvas.NewImageFromResource(tinted(icon, tint))
 	glyph.SetMinSize(fyne.NewSquareSize(16))
 	tile := canvas.NewRectangle(withAlpha(tint, 0.14))
-	tile.CornerRadius = 8
+	tile.CornerRadius = rounded(8)
 	tile.SetMinSize(fyne.NewSquareSize(32))
 	text := container.New(layout.NewCustomPaddedVBoxLayout(2), newFitLabel(title, 13.5, colText), newFitLabel(detail, 12, colMuted))
 	remove := newIconButton(iconTrash, color.NRGBA{}, colMuted, onRemove)

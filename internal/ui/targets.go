@@ -505,7 +505,7 @@ func (ui *desktopUI) projectActionsOn(group targetGroup, project string) []menuA
 	case !group.active:
 		return []menuAction{env, remove}
 	}
-	actions := append(ui.repositoryActions(project), ui.projectMemoryAction(project), env)
+	actions := append(ui.repositoryActions(project), ui.projectMemoryAction(project), ui.projectThemeAction(project), env)
 	if group.target.kind == targetLocal { // a machine's folder is renamed there, in its terminal
 		actions = append(actions, menuAction{label: "Rename", icon: iconRename, run: func() { ui.renameProject(project) }})
 	}

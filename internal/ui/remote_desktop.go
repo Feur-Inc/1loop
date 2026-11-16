@@ -40,7 +40,14 @@ import (
 	"1loop/internal/update"
 )
 
+// connectServer asks first whether a server runs already, and guides its
+// setup when none does (server_setup.go, #443).
 func (ui *desktopUI) connectServer() {
+	ui.serverSetup("Connect a server", ui.connectServerAddress)
+}
+
+// connectServerAddress connects a running server by its address.
+func (ui *desktopUI) connectServerAddress() {
 	saved := loadServerAddress()
 	address, pin := widget.NewEntry(), widget.NewEntry()
 	address.SetText(saved.URL)

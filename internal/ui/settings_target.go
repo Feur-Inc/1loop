@@ -134,17 +134,8 @@ func (ui *desktopUI) serverRows() []fyne.CanvasObject {
 		control = container.New(layout.NewCustomPaddedHBoxLayout(10), control, forget)
 		rows = append(rows, settingRow(serverName(saved.URL), detail, control))
 	}
-	steps := container.New(layout.NewCustomPaddedVBoxLayout(4))
-	for i, step := range []string{
-		"Start the server on its machine (1loop-server, or its Docker image).",
-		"Enter its HTTPS address. For a self-signed certificate, also paste the SHA-256 fingerprint the console prints.",
-		"Approve this computer in 1loop on a device already paired with the server, or type the pairing command in the server's console.",
-	} {
-		number := textLine(string(rune('1'+i))+".", 12.5, colAmber)
-		steps.Add(container.NewBorder(nil, nil, padded(0, 0, 0, 8, number), nil, plainFlow(step, 12.5, colMuted)))
-	}
-	rows = append(rows, settingStack("Connect a server",
-		"A headless 1loop server runs the agent, its files, browser and terminals on another machine (see docs/SERVER.md).",
-		container.NewVBox(steps, container.NewHBox(newRow("Connect a server…", iconPlus, styleOutline, ui.connectServer)))))
+	// One line and its button: the steps are in the guide it opens (#443).
+	rows = append(rows, settingRow("Connect a server", "Run 1loop on another machine, and work there from here.",
+		newRow("Connect a server…", iconPlus, styleOutline, ui.connectServer)))
 	return rows
 }

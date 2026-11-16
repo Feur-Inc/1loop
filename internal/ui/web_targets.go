@@ -106,9 +106,15 @@ func (ui *desktopUI) browserTargetMenu() {
 	showMenu(ui.window, ui.machine, actions)
 }
 
-// linkAnotherServer pairs the browser client with another 1loop server,
-// which the sidebar lists from then on beside the page's own.
+// linkAnotherServer asks first whether the other server runs already, and
+// guides its setup when it does not (server_setup.go, #443).
 func (ui *desktopUI) linkAnotherServer() {
+	ui.serverSetup("Link a server", ui.linkServerAddress)
+}
+
+// linkServerAddress pairs the browser client with another 1loop server,
+// which the sidebar lists from then on beside the page's own.
+func (ui *desktopUI) linkServerAddress() {
 	address := widget.NewEntry()
 	address.SetPlaceHolder("https://192.168.1.20:47101")
 	status := widget.NewLabel("")

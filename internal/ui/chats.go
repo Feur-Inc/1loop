@@ -213,7 +213,7 @@ func (ui *desktopUI) appendChatMessage(chat *conversation, item agent.ChatItem) 
 	pad := theme.InnerPadding()
 	body := container.NewVBox(container.NewHBox(from, layout.NewSpacer()))
 	if len(item.Images) > 0 { // the pictures its agent attached
-		pictures := &userImageView{pictures: container.New(layout.NewCustomPaddedHBoxLayout(6))}
+		pictures := &userImageView{pictures: newPictureStrip(0)}
 		ui.setUserImages(pictures, item.Images)
 		body.Add(padded(0, 0, pad, pad, pictures.pictures))
 	}

@@ -38,18 +38,14 @@ func portalHandle(window fyne.Window) string {
 
 // portalPick asks the portal's file chooser; false when there is no portal.
 func portalPick(handle string, pickRequestValue pickRequest) ([]string, bool) {
+	if pickRequestValue.save {
+		return portalSave(handle, pickRequestValue)
+	}
 	options := &filechooser.OpenFileOptions{Directory: pickRequestValue.folder, Multiple: pickRequestValue.multiple, CurrentFolder: pickRequestValue.start}
 	if pickRequestValue.folder {
 		options.AcceptLabel = "Open"
 	}
-	if len(pickRequestValue.extensions) > 0 {
-		var rules []filechooser.Rule
-		for _, ext := range pickRequestValue.extensions {
-			rules = append(rules,
-				filechooser.Rule{Type: filechooser.GlobPattern, Pattern: "*" + strings.ToLower(ext)},
-				filechooser.Rule{Type: filechooser.GlobPattern, Pattern: "*" + strings.ToUpper(ext)})
-		}
-		filter := &filechooser.Filter{Name: pickRequestValue.filterName, Rules: rules}
+	if filter := portalFilter(pickRequestValue); filter != nil {
 		options.Filters, options.CurrentFilter = []*filechooser.Filter{filter}, filter
 	}
 	uris, err := filechooser.OpenFile(handle, pickRequestValue.title, options)
@@ -59,6 +55,37 @@ func portalPick(handle string, pickRequestValue pickRequest) ([]string, bool) {
 	paths := make([]string, 0, len(uris))
 	for _, uri := range uris {
 		paths = append(paths, strings.TrimPrefix(uri, "file://"))
+	}
+	return paths, true
+}
+
+// portalFilter is the request's file filter; nil without one.
+func portalFilter(pickRequestValue pickRequest) *filechooser.Filter {
+	if len(pickRequestValue.extensions) == 0 {
+		return nil
+	}
+	var rules []filechooser.Rule
+	for _, ext := range pickRequestValue.extensions {
+		rules = append(rules,
+			filechooser.Rule{Type: filechooser.GlobPattern, Pattern: "*" + strings.ToLower(ext)},
+			filechooser.Rule{Type: filechooser.GlobPattern, Pattern: "*" + strings.ToUpper(ext)})
+	}
+	return &filechooser.Filter{Name: pickRequestValue.filterName, Rules: rules}
+}
+
+// portalSave asks the portal where to save a new file.
+func portalSave(handle string, pickRequestValue pickRequest) ([]string, bool) {
+	options := &filechooser.SaveFileOptions{CurrentFolder: pickRequestValue.start, CurrentName: pickRequestValue.name, AcceptLabel: "Save"}
+	if filter := portalFilter(pickRequestValue); filter != nil {
+		options.Filters, options.CurrentFilter = []*filechooser.Filter{filter}, filter
+	}
+	uris, err := filechooser.SaveFile(handle, pickRequestValue.title, options)
+	if err != nil {
+		return nil, false
+	}
+	paths := make([]string, 0, len(uris))
+	for _, uri := range uris {
+		paths = append(paths, fileURIPath(uri))
 	}
 	return paths, true
 }

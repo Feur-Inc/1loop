@@ -719,7 +719,7 @@ func (panel *toolPanel) picture(tool string, part core.ImagePart) fyne.CanvasObj
 	view := canvas.NewImageFromImage(thumbnail(img, toolPictureSide))
 	view.FillMode = canvas.ImageFillContain
 	view.SetMinSize(fyne.NewSize(320, min(480, max(160, 320*float32(bounds.Dy())/float32(bounds.Dx())))))
-	open := newTapArea(func() { panel.ui.showPicture(name, part) })
+	open := newTapArea(func() { panel.ui.openPicture(name, part) })
 	return container.NewVBox(padded(0, 4, 2, 0, caption), container.NewStack(surface(view, colCode, colBorderSoft, 10, 0), open))
 }
 
@@ -733,20 +733,6 @@ func decodePicture(part core.ImagePart) image.Image {
 		return nil
 	}
 	return img
-}
-
-// showPicture shows a picture as large as the window allows.
-func (ui *desktopUI) showPicture(title string, part core.ImagePart) {
-	img := decodePicture(part)
-	if img == nil {
-		return
-	}
-	area := ui.window.Canvas().Size()
-	view := canvas.NewImageFromImage(img)
-	view.FillMode = canvas.ImageFillContain
-	view.ScaleMode = canvas.ImageScaleSmooth
-	view.SetMinSize(fyne.NewSize(area.Width-120, area.Height-200))
-	ui.modal(title, view, area.Width-80, nil)
 }
 
 func outputPlaceholder(running bool, empty string) string {

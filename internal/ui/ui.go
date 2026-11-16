@@ -1015,6 +1015,11 @@ func (renderer *tapRowRenderer) Destroy() {}
 // ---------------------------------------------------------------------------
 // Soft drop shadow: stacked translucent rounded rectangles stand in for blur.
 
+// shadowInk is the black of shadows: blue 1, which no theme token is, so a
+// change of theme never maps it to the new theme's overlay (white on dark,
+// #436). Their opacity is set again for the theme instead.
+var shadowInk = color.NRGBA{B: 1}
+
 type shadow struct {
 	layers []*canvas.Rectangle
 	alphas []float32
@@ -1022,9 +1027,9 @@ type shadow struct {
 }
 
 func newShadow(strength float32) *shadow {
-	dropShadow := &shadow{}
+	dropShadow := &shadow{tint: shadowInk}
 	for i, alpha := range []float32{0.10, 0.08, 0.06, 0.04} {
-		r := canvas.NewRectangle(color.NRGBA{A: uint8(255 * alpha * strength)})
+		r := canvas.NewRectangle(color.Transparent)
 		r.CornerRadius = rounded(float32(12 + 3*i))
 		dropShadow.layers = append(dropShadow.layers, r)
 		dropShadow.alphas = append(dropShadow.alphas, alpha*strength)
@@ -1046,7 +1051,7 @@ func (dropShadow *shadow) setOpacity(o float32) {
 	for i, r := range dropShadow.layers {
 		c := dropShadow.tint
 		strength := float32(1)
-		if !themeTokens.Dark && c.R == 0 && c.G == 0 && c.B == 0 {
+		if !themeTokens.Dark && c == shadowInk {
 			strength = 0.4 // a shadow, not a glow: on white a dark one reads as a grey band
 		}
 		c.A = uint8(255 * fyne.Min(1, dropShadow.alphas[i]) * o * strength)

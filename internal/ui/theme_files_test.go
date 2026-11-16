@@ -38,3 +38,15 @@ func TestThemeFileChoice(t *testing.T) {
 		t.Fatalf("choices %v", themeChoices(builtInThemes()))
 	}
 }
+
+// Light → dark leaves shadows black: they are not the overlay (#436).
+func TestShadowsSurviveThemeSwitch(t *testing.T) {
+	defer setColours(palette.Dark, palette.AccentColor(""))
+	setColours(palette.Light, palette.AccentColor(""))
+	changed := recolour(setColours(palette.Dark, palette.AccentColor("")))
+	ink := shadowInk
+	ink.A = 0x40
+	if got := changed.of(ink); got != ink {
+		t.Fatalf("shadow became %v", got)
+	}
+}

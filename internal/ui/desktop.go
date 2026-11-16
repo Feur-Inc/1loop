@@ -806,7 +806,7 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	ui.curtain = newPageCurtain()
 	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view, ui.curtain.cover)))
 	// No rule between the panes: the sidebar only casts a faint shadow.
-	shade := canvas.NewHorizontalGradient(color.NRGBA{A: 0x2a}, color.NRGBA{})
+	shade := canvas.NewHorizontalGradient(color.NRGBA{B: 1, A: 0x2a}, color.NRGBA{B: 1}) // shadowInk: kept by a change of theme
 	ui.pane = &paneLayout{shown: 1, shade: 14, chosen: &ui.sidebarWidth}
 	ui.sideHandle = newSidebarHandle(ui)
 	ui.root = container.New(ui.pane, sidebar, main, shade, ui.sideHandle)
@@ -948,6 +948,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	card.StrokeWidth = 1
 	// The card floats on a soft shadow; focused, an amber halo lights up around it.
 	drop, glow := newShadow(2.2), newGlow(colAmber, 0.32)
+	onRepaint = append(onRepaint, func() { drop.setOpacity(1) })                 // lighter on a light theme
 	onRepaint = append(onRepaint, func() { drop.setOpacity(1); drop.refresh() }) // its strength is the theme's
 	var glowAnim *fyne.Animation
 	glowLevel := float32(0)

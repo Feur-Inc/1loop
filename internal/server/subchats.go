@@ -48,15 +48,39 @@ func (server *headlessServer) subchatInfoLocked(chat *serverChat) agent.SubchatI
 // subchatWorktreeLocked is the worktree a subchat was given, "" when it
 // shares a folder or another chat works there too.
 func (server *headlessServer) subchatWorktreeLocked(chat *serverChat) string {
+	return server.ownWorktreeLocked(chat, []*serverChat{chat})
+}
+
+// ownWorktreeLocked is chat's worktree when no chat but those of group
+// works there, "" otherwise.
+func (server *headlessServer) ownWorktreeLocked(chat *serverChat, group []*serverChat) string {
 	if chat.Subchat == nil || chat.Subchat.Branch == "" { // a branch: it was given a worktree
 		return ""
 	}
 	for _, other := range server.chats {
-		if other != chat && other.Config.Workspace == chat.Config.Workspace {
+		if !slices.Contains(group, other) && other.Config.Workspace == chat.Config.Workspace {
 			return ""
 		}
 	}
 	return chat.Config.Workspace
+}
+
+// subtreeLocked are the chats under chat, at every level, parents first.
+func (server *headlessServer) subtreeLocked(chat *serverChat) []*serverChat {
+	parents := map[string]string{}
+	for _, other := range server.chats {
+		parents[other.ID] = ""
+		if other.Subchat != nil {
+			parents[other.ID] = other.Subchat.Parent
+		}
+	}
+	var out []*serverChat
+	for _, id := range agent.SubchatSubtree(chat.ID, parents) {
+		if found := server.chatLocked(id); found != nil {
+			out = append(out, found)
+		}
+	}
+	return out
 }
 
 // wakeLocked gives chat a message that is not its user's: a task's end,

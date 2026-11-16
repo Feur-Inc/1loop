@@ -479,37 +479,53 @@ func (ui *desktopUI) deleteChat(chat *conversation) {
 	if chat.Config.Scratch != "" {
 		text = fmt.Sprintf("“%s” and the folder 1loop made for it will be permanently deleted.", chat.Title)
 	}
-	if ui.subchatWorktree(chat) != "" {
+	text += agent.SubtreeNote(len(ui.subtreeOf(chat)))
+	if len(ui.treeWorktrees(chat)) > 0 {
 		ui.confirmDeleteSubchat(chat, text)
 		return
 	}
 	ui.confirm("Delete chat?", text, "Delete", func() {
-		ui.removeChat(chat)
+		ui.removeTree(chat)
 	})
 }
 
+// removeTree deletes a chat and its subchats at every level, stopping
+// those that run, and returns them all, the chat first.
+func (ui *desktopUI) removeTree(chat *conversation) []*conversation {
+	gone := append([]*conversation{chat}, ui.subtreeOf(chat)...)
+	ui.removeChats(gone...)
+	return gone
+}
+
 func (ui *desktopUI) removeChat(chat *conversation) {
+	ui.removeChats(chat)
+}
+
+// removeChats deletes these chats alone: what is under them stays.
+func (ui *desktopUI) removeChats(chats ...*conversation) {
 	var kept []*conversation
 	for _, conversationValue := range ui.chats {
-		if conversationValue != chat {
+		if !slices.Contains(chats, conversationValue) {
 			kept = append(kept, conversationValue)
 		}
 	}
 	ui.chats = kept
-	if chat.run != nil {
-		chat.run.cancel()
-	}
-	chat.queue, chat.steer = nil, nil
-	chat.tasks.StopAll()
-	ui.prompt.drafts.set(chat.ID, "")
-	for _, view := range ui.allPanes() {
-		if view.current == chat {
-			view.current = nil
-			view.startNew()
+	for _, chat := range chats {
+		if chat.run != nil {
+			chat.run.cancel()
 		}
+		chat.queue, chat.steer = nil, nil
+		chat.tasks.StopAll()
+		ui.prompt.drafts.set(chat.ID, "")
+		for _, view := range ui.allPanes() {
+			if view.current == chat {
+				view.current = nil
+				view.startNew()
+			}
+		}
+		chat.disposePanel()
+		ui.removeScratch(chat)
 	}
-	chat.disposePanel()
-	ui.removeScratch(chat)
 	ui.save()
 	ui.renderChats()
 }

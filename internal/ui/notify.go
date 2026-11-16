@@ -3,8 +3,10 @@
 package ui
 
 // Notifications: a chat that finishes or waits for the user says so through
-// the desktop's notifications, unless the user is looking at it, and also
-// while the window is hidden in the tray. Clicking one opens its chat. In
+// the desktop's notifications, but only while the 1loop window is in the
+// background, minimised or hidden in the tray (the sidebar already shows the
+// chats' states when it has the focus), and unless the user turned them off
+// in Settings. Clicking one opens its chat. In
 // the Flatpak they go through the notification portal, which needs no D-Bus
 // permission (Fyne itself would call org.freedesktop.Notifications).
 
@@ -13,7 +15,7 @@ import (
 )
 
 func (ui *desktopUI) notifyUser(chat *conversation, text string) {
-	if ui.inForeground && ui.showing(chat) { // on screen in one of the windows
+	if ui.notificationsOff || ui.inForeground { // off in Settings, or the window has the focus
 		return
 	}
 	title := chat.Title

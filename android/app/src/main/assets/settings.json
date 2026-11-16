@@ -244,6 +244,27 @@
       "where": "desktop"
     },
     {
+      "key": "general.notifications",
+      "section": "general",
+      "title": "Notifications",
+      "description": "A desktop notification when a chat finishes or waits for you, while the 1loop window is in the background, minimised or hidden in the tray.",
+      "keywords": [
+        "notification",
+        "notifications",
+        "notify",
+        "alert",
+        "popup",
+        "desktop",
+        "done",
+        "approval",
+        "mute",
+        "silence",
+        "disable"
+      ],
+      "kind": "toggle",
+      "where": "desktop"
+    },
+    {
       "key": "general.discord_presence",
       "section": "general",
       "title": "Discord status",

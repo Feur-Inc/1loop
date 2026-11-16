@@ -305,6 +305,7 @@ type desktopApp struct {
 	lastCrash         *crash.Crash               // the last run's, offered once the window is up
 	trayNoticeShown   bool                       // the first close said that 1loop stays in the tray
 	tray              *trayIcon                  // the system tray icon (tray.go), nil without one
+	notificationsOff  bool                       // settings: no desktop notifications (notify.go)
 	discordPresence   bool                       // settings: show on Discord what the agent is doing
 	discordDetails    bool                       // settings: with the chat, project and tool
 	presence          *discord.Presence          // while discordPresence is on
@@ -2011,6 +2012,7 @@ type savedState struct {
 	CrashReportsOff   bool                  `json:"crashReportsOff,omitempty"`
 	AnimationsOff     bool                  `json:"animationsOff,omitempty"`
 	TrayNoticeShown   bool                  `json:"trayNoticeShown,omitempty"`
+	NotificationsOff  bool                  `json:"notificationsOff,omitempty"`
 	DiscordPresence   bool                  `json:"discordPresence,omitempty"`
 	DiscordDetails    bool                  `json:"discordDetails,omitempty"`
 	Shortcuts         map[string]string     `json:"shortcuts,omitempty"` // the keys chosen in Settings
@@ -2086,6 +2088,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.crashReportsOff,
 		animationsOff,
 		ui.trayNoticeShown,
+		ui.notificationsOff,
 		ui.discordPresence,
 		ui.discordDetails,
 		ui.shortcutKeys,
@@ -2240,6 +2243,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.closeQuits, ui.trayNoticeShown = state.CloseQuits, state.TrayNoticeShown
 	ui.crashReportsOff = state.CrashReportsOff
 	animationsOff = state.AnimationsOff
+	ui.notificationsOff = state.NotificationsOff
 	ui.autoResume = state.AutoResume
 	ui.discordPresence, ui.discordDetails = state.DiscordPresence, state.DiscordDetails
 	ui.syncPresence()

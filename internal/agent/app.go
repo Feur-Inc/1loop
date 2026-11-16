@@ -80,7 +80,10 @@ type Config struct {
 	RecentProjects []string       `json:"-"`                 // the user's project folders, for a scratch chat's prompt
 	MachineID      string         `json:"machine,omitempty"` // the SSH machine the workspace is on, "" for this computer
 	Machine        Machine        `json:"-"`                 // that machine, for a run (machine.go)
-	Session        string         `json:"session,omitempty"` // Claude Code connection: the chat's session there (see ClaudeSession)
+	// Env is the project's environment variables (#408), for the commands
+	// the run starts. Never saved with the chat nor sent to the model.
+	Env     map[string]string `json:"-"`
+	Session string            `json:"session,omitempty"` // Claude Code connection: the chat's session there (see ClaudeSession)
 	// ClaudeHome is the Claude Code connection's CLAUDE_CONFIG_DIR, "" for
 	// the system Claude Code login (claude_accounts.go).
 	ClaudeHome string `json:"claudeHome,omitempty"`

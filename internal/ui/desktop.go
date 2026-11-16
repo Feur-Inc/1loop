@@ -249,55 +249,57 @@ type desktopUI struct {
 // desktopApp is what the windows share: the backend, the chats and
 // projects, the settings, the tray and the phone remote.
 type desktopApp struct {
-	usage             *usage.Ledger // every model call this computer made (internal/usage)
-	prices            *usage.Prices
-	usageQuery        usage.Query // what the Usage page shows, kept while 1loop runs
-	computer          *computeruse.ComputerSession
-	browser           *browser.Engine
-	backend           *agent.App
-	keys              map[string]string
-	connectionsList   []agent.Connection
-	webSetupWindows   map[*agent.ChatGPTWeb]fyne.Window
-	choices           map[string]agent.ModelChoice
-	modelUnavailable  map[string]string // model catalog problems, displayed inside the selector
-	accountLimits     map[string]agent.AccountLimits
-	userInstructions  string
-	approvalMode      string
-	inForeground      bool // the window has the focus
-	chats             []*conversation
-	projects          []string
-	sshMachines       []sshmachine.Settings          // Settings → General
-	machineProjects   map[string][]string            // each SSH machine's projects (paths there), by machine ID
-	machines          map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
-	worktrees         map[string]string              // this computer's worktrees: folder → project (worktrees.go)
-	worktreeSort      string                         // how the sidebar and Repository order worktrees
-	theme             themeChoice                    // dark, light or the system's, and the accent
-	projectThemes     map[string]string              // project → its own theme setting (#464)
-	backdrop          *backdrop                      // a theme's shader behind the window (#464)
-	repos             map[string]*repoState          // repositories read, by target and project
-	repoWindow        *repoWindow                    // the open Repository window
-	statePath         string
-	saveTimer         *time.Timer
-	saveLock          sync.Mutex // one write at a time, the newest state last
-	saveCount         int        // states handed to persist
-	saveDone          int        // the newest one written (under saveLock)
-	saveError         string
-	stateProblem      string // why the saved state could not be read, said once the window is up
-	stateBlocked      bool   // the unreadable state could not be put aside: never write over it
-	ctx               context.Context
-	shutdown          context.CancelFunc
-	plan              agent.PlanUsage          // Claude Code connection: the subscription windows in use
-	claudeOffered     bool                     // the Claude Code connection was proposed once
-	remote            *remoteServer            // the phone remote, nil when off
-	links             []*serverLink            // the paired servers, each followed for the sidebar (target_link.go)
-	home              string                   // the browser client's own server, the page's origin; "" on the desktop
-	serverProjects    map[string][]string      // their projects as last listed, by address: listed while it does not answer
-	reaches           map[string]targetReach   // whether each target answered, by its key (targets.go)
-	remoteEnabled     bool                     // see phone_server.go
-	devices           []remoteapi.PairedDevice // phones paired with the remote
-	chrome            bool
-	updates           updateState                // the release page's latest version (updates.go)
-	panelWidth        float32                    // last width chosen by dragging, independent of window size
+	usage            *usage.Ledger // every model call this computer made (internal/usage)
+	prices           *usage.Prices
+	usageQuery       usage.Query // what the Usage page shows, kept while 1loop runs
+	computer         *computeruse.ComputerSession
+	browser          *browser.Engine
+	backend          *agent.App
+	keys             map[string]string
+	connectionsList  []agent.Connection
+	webSetupWindows  map[*agent.ChatGPTWeb]fyne.Window
+	choices          map[string]agent.ModelChoice
+	modelUnavailable map[string]string // model catalog problems, displayed inside the selector
+	accountLimits    map[string]agent.AccountLimits
+	userInstructions string
+	approvalMode     string
+	inForeground     bool // the window has the focus
+	chats            []*conversation
+	projects         []string
+	sshMachines      []sshmachine.Settings          // Settings → General
+	machineProjects  map[string][]string            // each SSH machine's projects (paths there), by machine ID
+	machines         map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
+	worktrees        map[string]string              // this computer's worktrees: folder → project (worktrees.go)
+	worktreeSort     string                         // how the sidebar and Repository order worktrees
+	theme            themeChoice                    // dark, light or the system's, and the accent
+	projectThemes    map[string]string              // project → its own theme setting (#464)
+	backdrop         *backdrop                      // a theme's shader behind the window (#464)
+	repos            map[string]*repoState          // repositories read, by target and project
+	repoWindow       *repoWindow                    // the open Repository window
+	statePath        string
+	saveTimer        *time.Timer
+	saveLock         sync.Mutex // one write at a time, the newest state last
+	saveCount        int        // states handed to persist
+	saveDone         int        // the newest one written (under saveLock)
+	saveError        string
+	stateProblem     string // why the saved state could not be read, said once the window is up
+	stateBlocked     bool   // the unreadable state could not be put aside: never write over it
+	ctx              context.Context
+	shutdown         context.CancelFunc
+	plan             agent.PlanUsage          // Claude Code connection: the subscription windows in use
+	claudeOffered    bool                     // the Claude Code connection was proposed once
+	remote           *remoteServer            // the phone remote, nil when off
+	links            []*serverLink            // the paired servers, each followed for the sidebar (target_link.go)
+	home             string                   // the browser client's own server, the page's origin; "" on the desktop
+	serverProjects   map[string][]string      // their projects as last listed, by address: listed while it does not answer
+	reaches          map[string]targetReach   // whether each target answered, by its key (targets.go)
+	remoteEnabled    bool                     // see phone_server.go
+	devices          []remoteapi.PairedDevice // phones paired with the remote
+	chrome           bool
+	updates          updateState // the release page's latest version (updates.go)
+	panelWidth       float32     // last width chosen by dragging, independent of window size
+	// Projects' environment variables, by projectEnvKey (project_env.go).
+	projectEnv        map[string]map[string]string
 	classicCompaction bool                       // settings: dynamic context compaction turned off
 	memoryOff         bool                       // settings: the agent's memory tool turned off
 	wrapUpOff         bool                       // settings: the next-step card (wrap_up tool) turned off
@@ -1692,6 +1694,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 			cfg.Machine = machine
 		}
 	}
+	cfg.Env = ui.runEnv(cfg)
 	if chat.Cache == nil {
 		chat.Cache = &agent.ContextCache{}
 	}
@@ -2041,6 +2044,9 @@ type savedState struct {
 	Accent            string                `json:"accent,omitempty"`    // a preset or #rrggbb; amber when unset
 	// Each paired server's projects, as it last listed them (#359, #383).
 	ServerProjects map[string][]string `json:"serverProjects,omitempty"`
+	// Projects' environment variables (#408), by target and folder
+	// (projectEnvKey); a server's projects keep theirs on the server.
+	ProjectEnv map[string]map[string]string `json:"projectEnv,omitempty"`
 	// The windows open beside the main one, to open again (windows.go).
 	Windows []savedWindow `json:"windows,omitempty"`
 	// The main window's split views, when it is split (panes.go).
@@ -2120,6 +2126,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.theme.theme,
 		ui.theme.accent,
 		ui.serverProjects,
+		ui.projectEnv,
 		ui.savedWindows(),
 		ui.savedLayout(),
 		ui.projectThemes,
@@ -2247,6 +2254,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.sshMachines, ui.machineProjects, ui.localWorkspace = state.SSHMachines, state.MachineProjects, state.LocalWorkspace
 	ui.worktrees, ui.worktreeSort = state.Worktrees, state.WorktreeSort
 	ui.serverProjects = state.ServerProjects
+	ui.projectEnv = state.ProjectEnv
 	ui.theme = themeChoice{theme: state.Theme, accent: state.Accent}
 	ui.projectThemes = state.ProjectThemes
 	if state.ShaderFPS != "" {

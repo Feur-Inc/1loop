@@ -84,6 +84,8 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/projects":                            server.projectFolders,
 		"POST /api/projects":                           server.addProject,
 		"POST /api/projects/{action}":                  server.changeProject,
+		"GET /api/projects/env":                        server.readProjectEnv,
+		"POST /api/projects/env":                       server.saveProjectEnv,
 		"GET /api/state":                               server.state,
 		"POST /api/install/{what}":                     server.install,
 		"GET /api/limits":                              server.limits,

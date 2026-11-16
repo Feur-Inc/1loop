@@ -154,7 +154,12 @@ var interFaces = func() map[string]fyne.Resource {
 func (themeSpec loopTheme) Font(style fyne.TextStyle) fyne.Resource {
 	key := "regular"
 	switch {
-	case style.Monospace, style.Symbol:
+	case style.Monospace:
+		if face, ok := themeFonts["mono"]; ok {
+			return face
+		}
+		return themeSpec.Theme.Font(style)
+	case style.Symbol:
 		return themeSpec.Theme.Font(style)
 	case style.Bold && style.Italic:
 		key = "boldItalic"
@@ -162,6 +167,12 @@ func (themeSpec loopTheme) Font(style fyne.TextStyle) fyne.Resource {
 		key = "bold"
 	case style.Italic:
 		key = "italic"
+	}
+	if face, ok := themeFonts[key]; ok {
+		return face
+	}
+	if face, ok := themeFonts["regular"]; ok && key == "boldItalic" { // a theme's font, never Inter's
+		return face
 	}
 	if face, ok := interFaces[key]; ok {
 		return face

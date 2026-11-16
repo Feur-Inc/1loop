@@ -30,6 +30,8 @@ accents = ["#88c0d0", "#a3be8c"]
 roundness = 1.0          # corners: 0 square, 1 1loop's own, up to 1.6
 shader = "aurora.frag"   # a GLSL background, beside this file
 shader_opacity = 0.8     # how much the background and sidebar cover it, 0 to 1
+font = "IBM Plex Sans"   # the interface font: a family, or a .ttf/.otf
+font_mono = "JetBrains Mono"
 
 [colors]
 background = "#2e3440"
@@ -70,6 +72,21 @@ Write only the shader's body, without `#version`: 1loop adds the version for you
 A shader that does not compile or link is not drawn: the theme's plain colours are shown, with the compiler's message in red in Settings → General. It is tried again as soon as a file in the folder changes.
 
 Examples: [`themes/aurora.frag`](themes/aurora.frag) (reacts to the agent's state, used by `aurora.toml`) and [`themes/grain.frag`](themes/grain.frag) (used by `paper.toml`). `glslangValidator` can check a shader before you save it: put `#version 110` and the uniforms above in front of it.
+
+### fonts
+
+| key | |
+| --- | --- |
+| `font` | the interface's text |
+| `font_bold` | bold text (headings, buttons); by default the bold of `font`'s family |
+| `font_italic` | italic text; by default the italic of `font`'s family |
+| `font_mono` | code, terminals, diffs, file contents |
+
+Each is either a font file (`.ttf` or `.otf`; a relative path is beside the theme file) or a family installed on the system, as `fc-match` understands it: `"Fira Code"`, `"IBM Plex Sans:bold"`, `"Noto Serif:italic"`. A family that isn't installed, or a file that can't be read, keeps 1loop's font (Inter, or Fyne's own) for that style. Sizes don't change.
+
+### font colours
+
+Text colours are ordinary `[colors]` keys: `text` (body text), `text_soft`, `muted` (secondary text), `placeholder`, `faint` (hints, line numbers), `code_ink` (inline code), `danger` and `added` (error and success text). Links and highlighted text follow the accent.
 
 ### colors
 

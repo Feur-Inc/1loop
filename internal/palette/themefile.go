@@ -45,6 +45,14 @@ type ThemeFile struct {
 	// ShaderOpacity is how opaque the background and the sidebar stay over
 	// the shader, from 0 to 1.
 	ShaderOpacity float64
+	// Fonts: a font file (.ttf, .otf) beside the theme or anywhere, or a
+	// family name the system knows (fc-match), by style. "" keeps 1loop's.
+	Fonts ThemeFonts
+}
+
+// ThemeFonts are a theme's fonts by style.
+type ThemeFonts struct {
+	Regular, Bold, Italic, Mono string
 }
 
 // Setting is the theme setting that chooses this theme.
@@ -58,6 +66,10 @@ type themeSource struct {
 	Roundness *float64          `toml:"roundness"`
 	Shader    string            `toml:"shader"`
 	Opacity   *float64          `toml:"shader_opacity"`
+	Font      string            `toml:"font"`
+	FontBold  string            `toml:"font_bold"`
+	FontItal  string            `toml:"font_italic"`
+	FontMono  string            `toml:"font_mono"`
 	Colors    map[string]string `toml:"colors"`
 }
 
@@ -174,6 +186,7 @@ func ParseTheme(id, text string) (ThemeFile, error) {
 		}
 		theme.ShaderOpacity = o
 	}
+	theme.Fonts = ThemeFonts{strings.TrimSpace(source.Font), strings.TrimSpace(source.FontBold), strings.TrimSpace(source.FontItal), strings.TrimSpace(source.FontMono)}
 	return theme, nil
 }
 
@@ -221,6 +234,12 @@ func mixLike(from, to, baseFrom, baseTo, want color.NRGBA) color.NRGBA {
 		B: ch(from.B, to.B, baseFrom.B, baseTo.B, want.B), A: want.A}
 }
 
+// IsFontFile says whether a font setting names a file rather than a family.
+func IsFontFile(font string) bool {
+	lower := strings.ToLower(font)
+	return strings.HasSuffix(lower, ".ttf") || strings.HasSuffix(lower, ".otf") || strings.ContainsRune(font, '/')
+}
+
 // ThemeError is a theme file that could not be read.
 type ThemeError struct {
 	Path string
@@ -255,6 +274,11 @@ func LoadThemes(dir string) ([]ThemeFile, []ThemeError) {
 				if theme.Shader != "" && !filepath.IsAbs(theme.Shader) {
 					theme.Shader = filepath.Join(dir, theme.Shader)
 				}
+				for _, font := range []*string{&theme.Fonts.Regular, &theme.Fonts.Bold, &theme.Fonts.Italic, &theme.Fonts.Mono} {
+					if IsFontFile(*font) && !filepath.IsAbs(*font) {
+						*font = filepath.Join(dir, *font)
+					}
+				}
 				themes = append(themes, theme)
 				continue
 			}
@@ -275,7 +299,11 @@ func ThemeTemplate(name string) string {
 	b.WriteString("accents = [\"#ffb000\"]    # one is chosen by default; several are offered in the picker\n")
 	b.WriteString("roundness = 1.0          # 0 square to 1.6 round; 1 is 1loop's own\n")
 	b.WriteString("# shader = \"aurora.frag\"  # a GLSL background beside this file (docs/THEMES.md)\n")
-	b.WriteString("# shader_opacity = 0.8    # how much the background and sidebar cover it\n\n")
+	b.WriteString("# shader_opacity = 0.8    # how much the background and sidebar cover it\n")
+	b.WriteString("# font = \"IBM Plex Sans\"  # a family installed on the system, or a .ttf/.otf beside this file\n")
+	b.WriteString("# font_bold = \"IBM Plex Sans:bold\"\n")
+	b.WriteString("# font_italic = \"IBM Plex Sans:italic\"\n")
+	b.WriteString("# font_mono = \"JetBrains Mono\"  # code, terminals, diffs\n\n")
 	b.WriteString("[colors]\n")
 	b.WriteString("# Only the colours you set change; surfaces follow background and the quieter texts follow text.\n")
 	for _, key := range ThemeColourKeys() {

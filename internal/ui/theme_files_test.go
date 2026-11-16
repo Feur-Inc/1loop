@@ -4,6 +4,7 @@ package ui
 
 import (
 	"os"
+	"os/exec"
 	"path/filepath"
 	"testing"
 
@@ -48,5 +49,18 @@ func TestShadowsSurviveThemeSwitch(t *testing.T) {
 	ink.A = 0x40
 	if got := changed.of(ink); got != ink {
 		t.Fatalf("shadow became %v", got)
+	}
+}
+
+// A family fontconfig knows becomes the interface's font; one it lacks
+// keeps 1loop's. Skipped without fc-match.
+func TestThemeFontFamily(t *testing.T) {
+	if _, err := exec.LookPath("fc-match"); err != nil {
+		t.Skip("no fc-match")
+	}
+	defer loadThemeFonts(palette.ThemeFonts{})
+	loadThemeFonts(palette.ThemeFonts{Regular: "NoSuchFamilyAtAll"})
+	if len(themeFonts) != 0 {
+		t.Fatalf("a missing family loaded %v", themeFonts)
 	}
 }

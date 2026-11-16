@@ -259,10 +259,17 @@ func (choice themeChoice) apply() {
 		}
 		roundness = max(float32(file.Roundness), 0.05) // never 0: radii scale back from it
 	}
+	file, _ := themeFile(setting)
+	fontsChanged := loadThemeFonts(file.Fonts)
+	if fontsChanged {
+		measuresMu.Lock()
+		clear(measures) // measured in the old font
+		measuresMu.Unlock()
+	}
 	changed := setColours(tokens, choice.accentColour())
 	platform.Devf("ui", "theme %s (dark %v), accent %s, roundness %.2f", setting, tokens.Dark, choice.accent, roundness)
-	if len(changed) > 0 {
-		repaint(changed)
+	if len(changed) > 0 || fontsChanged {
+		repaint(changed) // sets the theme again: Fyne drops its fonts
 	}
 }
 

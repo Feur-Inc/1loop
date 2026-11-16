@@ -67,3 +67,13 @@ func TestExampleThemesLoad(t *testing.T) {
 		t.Fatalf("themes %d, failed %v", len(themes), failed)
 	}
 }
+
+func TestThemeFonts(t *testing.T) {
+	theme, err := ParseTheme("f", "font = \"Fira Code\"\nfont_mono = \"mono.ttf\"\n")
+	if err != nil || theme.Fonts.Regular != "Fira Code" || theme.Fonts.Mono != "mono.ttf" {
+		t.Fatalf("%v %+v", err, theme.Fonts)
+	}
+	if IsFontFile("Fira Code") || !IsFontFile("mono.ttf") || !IsFontFile("/usr/x/a") {
+		t.Fatal("IsFontFile")
+	}
+}

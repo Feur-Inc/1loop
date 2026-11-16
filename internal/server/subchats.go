@@ -42,21 +42,45 @@ func (server *headlessServer) subchatInfoLocked(chat *serverChat) agent.SubchatI
 	}
 	return agent.SubchatInfo{ID: chat.ID, Title: chat.Title, State: agent.SubchatState(chat.run != nil, waiting, chat.Subchat.Ended),
 		Folder: chat.Config.Workspace, Branch: chat.Subchat.Branch, Model: server.labelLocked(chat.Config),
-		Used: used, Last: agent.LastAnswer(chat.Items)}
+		Used: used, Last: agent.LastAnswer(chat.Items), Provider: chat.Config.Provider}
 }
 
 // subchatWorktreeLocked is the worktree a subchat was given, "" when it
 // shares a folder or another chat works there too.
 func (server *headlessServer) subchatWorktreeLocked(chat *serverChat) string {
+	return server.ownWorktreeLocked(chat, []*serverChat{chat})
+}
+
+// ownWorktreeLocked is chat's worktree when no chat but those of group
+// works there, "" otherwise.
+func (server *headlessServer) ownWorktreeLocked(chat *serverChat, group []*serverChat) string {
 	if chat.Subchat == nil || chat.Subchat.Branch == "" { // a branch: it was given a worktree
 		return ""
 	}
 	for _, other := range server.chats {
-		if other != chat && other.Config.Workspace == chat.Config.Workspace {
+		if !slices.Contains(group, other) && other.Config.Workspace == chat.Config.Workspace {
 			return ""
 		}
 	}
 	return chat.Config.Workspace
+}
+
+// subtreeLocked are the chats under chat, at every level, parents first.
+func (server *headlessServer) subtreeLocked(chat *serverChat) []*serverChat {
+	parents := map[string]string{}
+	for _, other := range server.chats {
+		parents[other.ID] = ""
+		if other.Subchat != nil {
+			parents[other.ID] = other.Subchat.Parent
+		}
+	}
+	var out []*serverChat
+	for _, id := range agent.SubchatSubtree(chat.ID, parents) {
+		if found := server.chatLocked(id); found != nil {
+			out = append(out, found)
+		}
+	}
+	return out
 }
 
 // wakeLocked gives chat a message that is not its user's: a task's end,
@@ -79,8 +103,42 @@ func (server *headlessServer) wakeLocked(chat *serverChat, message agent.Message
 	server.runLocked(chat, message)
 }
 
-// subchatAccess is what the chat's subchat tool reaches: its subchats, or
-// in a subchat its parent.
+// subchatDepthLocked is a chat's level: 0 for a chat a user started, 1 for
+// its subchat, 2 for theirs (agent.MaxSubchatDepth).
+func (server *headlessServer) subchatDepthLocked(chat *serverChat) int {
+	return agent.SubchatDepth(chat.ID, func(id string) string {
+		if found := server.chatLocked(id); found != nil && found.Subchat != nil && server.chatLocked(found.Subchat.Parent) != nil {
+			return found.Subchat.Parent
+		}
+		return ""
+	})
+}
+
+// stopTreeLocked stops a chat's turn, and those of the subchats under it.
+func (server *headlessServer) stopTreeLocked(chat *serverChat, depth int) {
+	if chat.run != nil {
+		chat.run.cancel()
+	}
+	if depth > agent.MaxSubchatDepth { // a loop of links: stop there
+		return
+	}
+	for _, sub := range server.subchatsLocked(chat) {
+		server.stopTreeLocked(sub, depth+1)
+	}
+}
+
+// treeWorkingLocked says whether a subchat under chat, at any depth, works.
+func (server *headlessServer) treeWorkingLocked(chat *serverChat, depth int) bool {
+	for _, sub := range server.subchatsLocked(chat) {
+		if sub.run != nil || depth < agent.MaxSubchatDepth && server.treeWorkingLocked(sub, depth+1) {
+			return true
+		}
+	}
+	return false
+}
+
+// subchatAccess is what the chat's subchat tool reaches: its subchats, and
+// in a subchat its parent's title.
 func (server *headlessServer) subchatAccess(chat *serverChat) *agent.SubchatAccess {
 	access := &agent.SubchatAccess{
 		List: func(context.Context) (list []agent.SubchatInfo) {
@@ -98,22 +156,30 @@ func (server *headlessServer) subchatAccess(chat *serverChat) *agent.SubchatAcce
 			if sub == nil || sub.Subchat == nil || sub.Subchat.Parent != chat.ID {
 				return fmt.Errorf("No subchat %s here", id)
 			}
-			if sub.run == nil {
+			if sub.run == nil && !server.treeWorkingLocked(sub, 0) {
 				return agent.SubchatNotWorking(server.subchatInfoLocked(sub))
 			}
-			sub.run.cancel()
+			server.stopTreeLocked(sub, 0)
 			return nil
 		},
 	}
-	if chat.Subchat != nil { // one level: a subchat talks to its parent only
+	if chat.Subchat != nil {
 		access.ParentTitle = "(deleted)"
 		if parent := server.parentLocked(chat); parent != nil {
 			access.ParentTitle = parent.Title
 		}
+		access.Depth = server.subchatDepthLocked(chat)
+	}
+	if agent.SubchatLimit(access.Depth) != "" { // the deepest level: no subchat of its own
 		return access
 	}
 	access.Start = func(ctx context.Context, request agent.SubchatRequest) (agent.SubchatInfo, error) {
 		return server.startSubchat(ctx, chat, request)
+	}
+	access.ForkSize = func(context.Context) int {
+		server.mu.Lock()
+		defer server.mu.Unlock()
+		return agent.ContextUsed(chat.History)
 	}
 	access.Model = func(_ context.Context, name string) (string, error) {
 		server.mu.Lock()
@@ -145,9 +211,11 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 	var history []agent.Message
 	var items []agent.ChatItem
 	if request.Context == "fork" {
+		agent.ForkConfig(&cfg, parent.Config)
 		history = agent.ForkHistory(parent.History)
 		items = slices.Clone(parent.Items)
 	}
+	machine := server.attachmentMachineLocked(cfg.MachineID)
 	project := cfg.Workspace
 	if server.worktreeLocked(project) {
 		project = server.worktrees[project]
@@ -166,6 +234,17 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 			gitTarget{server}.Opened(project, created.Path)
 			cfg.Workspace = created.Path
 		}
+	}
+	files, err := agent.DeliverFiles(ctx, machine, cfg.Workspace, request.Attachments.Files)
+	if err != nil {
+		if created.Path != "" { // no subchat works in it: it goes
+			go func() {
+				if _, err := agent.RemoveSubchatWorktree(context.WithoutCancel(ctx), gitrepo.Local, created.Path, true); err == nil {
+					gitTarget{server}.Removed(project, created.Path)
+				}
+			}()
+		}
+		return agent.SubchatInfo{}, err
 	}
 
 	server.mu.Lock()
@@ -187,7 +266,7 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 		server.addLocked(sub, agent.ChatItem{Kind: "note", Text: "Forked from “" + parent.Title + "”"})
 	}
 	server.chats = append([]*serverChat{sub}, server.chats...)
-	server.runLocked(sub, agent.Message{Role: "user", Content: request.Brief})
+	server.runLocked(sub, agent.PromptMessage(request.Brief, request.Attachments.Images, files))
 	server.broadcastLocked("meta", server.metaLocked(parent))
 	server.scheduleSaveLocked()
 	info := server.subchatInfoLocked(sub)
@@ -205,8 +284,8 @@ func (server *headlessServer) subchatCommandLocked(parent *serverChat, brief str
 		return fmt.Errorf("Write what the subchat should do after /subchat: the task, the files and what done means")
 	case parent == nil:
 		return fmt.Errorf("Open the conversation to start the subchat from first")
-	case parent.Subchat != nil:
-		return fmt.Errorf("A subchat cannot have subchats of its own")
+	case agent.SubchatLimit(server.subchatDepthLocked(parent)) != "":
+		return fmt.Errorf("This subchat is %d levels down, the most: start it from its parent", agent.MaxSubchatDepth)
 	}
 	running := 0
 	for _, sub := range server.subchatsLocked(parent) {

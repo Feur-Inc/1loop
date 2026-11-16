@@ -302,10 +302,12 @@ func (renderer *toolRowRenderer) Destroy() {}
 // The text's natural width is measured once: a long message made every
 // layout measure each of its lines again.
 type bubbleLayout struct {
-	text    *flowText // nil for a message of images only
-	chrom   float32
-	natural float32
-	known   bool
+	text     *flowText       // nil for a message of images only
+	pictures *fyne.Container // its pictures (pictureStrip), nil without
+	picChrom float32         // the bubble's width around them
+	chrom    float32
+	natural  float32
+	known    bool
 }
 
 func (layoutSpec *bubbleLayout) width(available float32) float32 {
@@ -315,7 +317,13 @@ func (layoutSpec *bubbleLayout) width(available float32) float32 {
 			layoutSpec.natural, _ = layoutSpec.text.extent()
 		}
 	}
-	return fyne.Min(layoutSpec.natural+layoutSpec.chrom+2, available*0.78)
+	// As wide as its text or its pictures on one line: pictures wrap, and
+	// shrink, only when the bubble cannot be that wide (#435).
+	natural := layoutSpec.natural + layoutSpec.chrom + 2
+	if pictures := pictureStripWidth(layoutSpec.pictures); pictures > 0 {
+		natural = fyne.Max(natural, pictures+layoutSpec.picChrom)
+	}
+	return fyne.Min(natural, available*0.78)
 }
 
 func (layoutSpec *bubbleLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
@@ -369,17 +377,11 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 			ui.appendChatMessage(chat, item)
 			return
 		}
-		view := &userImageView{pictures: container.New(layout.NewCustomPaddedHBoxLayout(6))}
+		view := &userImageView{pictures: newPictureStrip(4)} // 4 inside the bubble's round corners
 		ui.setUserImages(view, item.Images)
 		content := container.NewVBox(view.pictures)
-		var files []fyne.CanvasObject
-		for _, file := range item.Files {
-			if !file.Image { // a picture already shows above
-				files = append(files, surface(textLine(fitText(file.Name, 12.5, fyne.TextStyle{}, 220), 12.5, colText), colCode, colBorderSoft, 8, 6))
-			}
-		}
-		if len(files) > 0 {
-			content.Add(container.New(layout.NewCustomPaddedHBoxLayout(6), files...))
+		if chips := fileChips(item.Files); chips != nil {
+			content.Add(chips)
 		}
 		var text *flowText
 		if item.Text != "" {
@@ -390,7 +392,8 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 			content.Add(padded(theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(),
 				container.NewStack(text, newSelectLayer(ui, text))))
 		}
-		bubble := container.New(&bubbleLayout{text: text, chrom: 2*theme.InnerPadding() + 4}, surface(content, colRaised, nil, 14, 2))
+		bubble := container.New(&bubbleLayout{text: text, pictures: view.pictures, picChrom: 2 * 2, chrom: 2*theme.InnerPadding() + 4},
+			surface(content, colRaised, nil, 14, 2))
 		copyRow := container.NewHBox(layout.NewSpacer(), copyChip(func() string { return item.Text }),
 			newRow("Edit", iconPencil, styleChip, func() { ui.editMessage(chat, index) }), ui.versionControls(chat, item.ID))
 		view.box = container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, copyRow)
@@ -774,6 +777,7 @@ func copyChip(text func() string) *tapRow {
 // addItem appends an item to a chat, and to the transcript when that chat
 // is the one on screen.
 func (ui *desktopUI) addItem(chat *conversation, item agent.ChatItem) int {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	if ui.cachedChat != nil && ui.cachedChat.chat == chat {
 		ui.cachedChat = nil
 	}
@@ -792,6 +796,7 @@ func (ui *desktopUI) addItem(chat *conversation, item agent.ChatItem) int {
 
 // liveView is the widget showing chat.Items[index], if it is on screen.
 func (ui *desktopUI) liveView(chat *conversation, index int) any {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	if chat != ui.current {
 		return nil
 	}
@@ -927,7 +932,7 @@ func devEvent(uiEventValue uiEvent) {
 // touches widgets only while that chat is on screen, so the user can go
 // elsewhere while the agent works.
 type turn struct {
-	ui        *desktopUI
+	home      *desktopUI // the window it started in; view() is where its chat is now
 	chat      *conversation
 	cfg       agent.Config
 	index     int // the streaming answer's item, -1 between answers
@@ -942,8 +947,12 @@ type turn struct {
 	mark      string         // what the ring shows
 }
 
+// view is the window showing the turn's chat, else the one it started in:
+// the chat may have been opened in another window since.
+func (currentTurn *turn) view() *desktopUI { return currentTurn.home.viewOf(currentTurn.chat) }
+
 func (ui *desktopUI) newTurn(chat *conversation, cfg agent.Config) *turn {
-	return &turn{ui: ui, chat: chat, cfg: cfg, index: -1, calls: map[string]int{}, states: map[int]string{}}
+	return &turn{home: ui, chat: chat, cfg: cfg, index: -1, calls: map[string]int{}, states: map[int]string{}}
 }
 
 // render re-parses the streaming answer at most every 60 ms.
@@ -958,7 +967,7 @@ func (currentTurn *turn) render(force bool) {
 			time.AfterFunc(60*time.Millisecond, func() {
 				fyne.Do(func() {
 					currentTurn.parseDue = false
-					if currentTurn.ui.ctx.Err() == nil && currentTurn.index == index {
+					if currentTurn.view().ctx.Err() == nil && currentTurn.index == index {
 						currentTurn.render(true)
 					}
 				})
@@ -967,29 +976,29 @@ func (currentTurn *turn) render(force bool) {
 		return
 	}
 	currentTurn.lastParse = time.Now()
-	currentTurn.ui.remote.itemChanged(currentTurn.chat, currentTurn.index)
-	if view, ok := currentTurn.ui.liveView(currentTurn.chat, currentTurn.index).(*markdownView); ok {
+	currentTurn.view().remote.itemChanged(currentTurn.chat, currentTurn.index)
+	if view, ok := currentTurn.view().liveView(currentTurn.chat, currentTurn.index).(*markdownView); ok {
 		view.ParseMarkdown(currentTurn.chat.Items[currentTurn.index].Text)
-		currentTurn.ui.items.changed(view.box) // measured again even if the reader is elsewhere in the chat
-		currentTurn.ui.relayoutColumn()
+		currentTurn.view().items.changed(view.box) // measured again even if the reader is elsewhere in the chat
+		currentTurn.view().relayoutColumn()
 	}
 }
 
 // setRow changes a tool row's state, on screen too when it is shown.
 func (currentTurn *turn) setRow(index int, state string) {
 	currentTurn.states[index] = state
-	currentTurn.ui.remote.itemChanged(currentTurn.chat, index)
-	if row, ok := currentTurn.ui.liveView(currentTurn.chat, index).(*toolRow); ok {
+	currentTurn.view().remote.itemChanged(currentTurn.chat, index)
+	if row, ok := currentTurn.view().liveView(currentTurn.chat, index).(*toolRow); ok {
 		row.update(currentTurn.chat.Items[index], state)
 		if row.preview != nil {
-			currentTurn.ui.items.changed(row)
-			currentTurn.ui.relayoutColumn()
+			currentTurn.view().items.changed(row)
+			currentTurn.view().relayoutColumn()
 		}
 	}
 }
 
 func (currentTurn *turn) handle(uiEventValue uiEvent) {
-	ui := currentTurn.ui
+	ui := currentTurn.view()
 	if ui.ctx.Err() != nil {
 		return
 	}
@@ -1130,7 +1139,7 @@ func (currentTurn *turn) finish() {
 		if state != "done" {
 			currentTurn.chat.Items[index].Failed = stoppedCall
 			currentTurn.setRow(index, "done")
-			currentTurn.ui.panel.changed(currentTurn.chat, index)
+			currentTurn.view().panel.changed(currentTurn.chat, index)
 		}
 	}
 	currentTurn.states = map[int]string{}
@@ -1188,7 +1197,7 @@ func (currentTurn *turn) show(activityValue agent.Activity) {
 	if activityValue.State == "question" {
 		currentTurn.mark = "approval" // the ring's waiting-for-you glyph
 	}
-	currentTurn.ui.applyActivity(currentTurn)
+	currentTurn.view().applyActivity(currentTurn)
 }
 
 // showRun reports a tool that has started to run.
@@ -1210,11 +1219,12 @@ func (currentTurn *turn) showRun(outcome agent.ToolOutcome) {
 		verb, target, _ := agent.DescribeTool(agent.ChatItem{Tool: outcome.Name, Args: outcome.Args}, true)
 		currentTurn.label, currentTurn.mark = strings.TrimSpace(verb+" "+target)+"…", agent.CallMark(outcome.Name)
 	}
-	currentTurn.ui.applyActivity(currentTurn)
+	currentTurn.view().applyActivity(currentTurn)
 }
 
 // applyActivity shows a turn's activity when its chat is on screen.
 func (ui *desktopUI) applyActivity(currentTurn *turn) {
+	ui = ui.viewOf(currentTurn.chat)
 	ui.remote.metaChanged(currentTurn.chat)
 	ui.syncPresence()
 	if currentTurn.chat != ui.current || currentTurn.mark == "" {
@@ -1253,7 +1263,7 @@ func (currentTurn *turn) countWait(what string, after time.Duration) {
 	var tick func()
 	tick = func() {
 		fyne.Do(func() {
-			if currentTurn.waiting != turn || currentTurn.ui.ctx.Err() != nil {
+			if currentTurn.waiting != turn || currentTurn.view().ctx.Err() != nil {
 				return
 			}
 			seconds := int(time.Since(started).Seconds())
@@ -1263,13 +1273,13 @@ func (currentTurn *turn) countWait(what string, after time.Duration) {
 			}
 			currentTurn.label = fmt.Sprintf("Waiting for %s… %s", what, spent)
 			currentTurn.mark = "wait"
-			currentTurn.ui.applyActivity(currentTurn)
+			currentTurn.view().applyActivity(currentTurn)
 			time.AfterFunc(time.Second, tick)
 		})
 	}
 	if after == 0 { // shown at once: the line must not keep saying "Writing"
 		currentTurn.label, currentTurn.mark = "Waiting for "+what+"…", "wait"
-		currentTurn.ui.applyActivity(currentTurn)
+		currentTurn.view().applyActivity(currentTurn)
 		after = time.Second
 	}
 	time.AfterFunc(after, tick)

@@ -199,6 +199,7 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
     when (key) {
         "general.target" -> {
             // The phone links several targets (#380): the menu lists every one's projects.
+            var forgetting by remember { mutableStateOf<Server?>(null) }
             Text("Linked targets", style = Type.title)
             Text("Where the agent works: each project runs on its own target. The menu lists the projects of every target linked here; Settings apply to the one open now.", style = Type.small)
             for (linked in app.linked) {
@@ -212,10 +213,14 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
                         else -> null
                     }
                     Text(linked.name + (state?.let { " · $it" } ?: ""), style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
-                    if (!open) Pill("Unlink") { app.unlink(linked.key) }
+                    val paired = app.servers.firstOrNull { it.key == linked.key }
+                    if (paired != null) Pill("Forget") { forgetting = paired } // #428: unpairs this phone there too
+                    else if (!open) Pill("Unlink") { app.unlink(linked.key) }
                 }
             }
             Pill("Link a target") { app.linkTarget() }
+            forgetting?.let { ForgetServerDialog(app, it) { forgetting = null } }
+            ServerDevicesSection(app)
         }
         "models.connections" -> {
             Text("Connections", style = Type.title)

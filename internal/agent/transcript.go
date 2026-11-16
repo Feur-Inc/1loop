@@ -160,8 +160,11 @@ func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) 
 	case "chats":
 		var call struct{ Action, ID string }
 		_ = json.Unmarshal([]byte(item.Args), &call)
-		if call.Action == "message" {
+		switch call.Action {
+		case "message":
 			return describeChatMessage(call.ID, pick)
+		case "rename":
+			return pick("Renamed", "Renaming"), "this chat", false
 		}
 		return pick("Listed", "Listing"), "the other chats", false
 	case "memory":

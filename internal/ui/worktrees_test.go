@@ -9,7 +9,7 @@ import (
 )
 
 func TestNoteWorktreesSkipsOpenedWorktree(t *testing.T) {
-	ui := &desktopUI{}
+	ui := &desktopUI{desktopApp: &desktopApp{}}
 	repo := &gitrepo.Repository{Worktrees: []gitrepo.Worktree{
 		{Path: "/src/app", Main: true},
 		{Path: "/src/app/.claude/worktrees/fix"},
@@ -39,7 +39,7 @@ func TestProjectNameCycles(t *testing.T) {
 		{"its own project", map[string]string{"/src/fix": "/src/fix"}, "/src/fix", "fix"},
 		{"each other's", map[string]string{"/src/a": "/src/b", "/src/b": "/src/a"}, "/src/a", "b › a"},
 	} {
-		ui := &desktopUI{worktrees: test.worktrees}
+		ui := &desktopUI{desktopApp: &desktopApp{worktrees: test.worktrees}}
 		if got := ui.projectName(test.project); got != test.want {
 			t.Errorf("%s: projectName(%q) = %q, want %q", test.name, test.project, got, test.want)
 		}

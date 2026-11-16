@@ -174,13 +174,18 @@ func sectionHeader(text string, action fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewBorder(nil, nil, nil, padded(10, 0, 0, 2, action), label)
 }
 
+// moreButtonInset is the room withMore keeps at a row's end for its ⋯.
+func moreButtonInset() float32 {
+	return newRow("", iconMore, styleWindow, nil).MinSize().Width + 4
+}
+
 // withMore adds a "⋯" button that appears while the row is hovered; it and a
 // right click on the row open the row's context menu. A name cut short by
 // the sidebar's width shows in full while the row is hovered.
 func (ui *desktopUI) withMore(row *tapRow, open func(anchor fyne.CanvasObject) *sheet) fyne.CanvasObject {
 	more := newRow("", iconMore, styleWindow, nil)
 	row.tips = ui.tips
-	row.endInset = more.MinSize().Width + 4
+	row.endInset = moreButtonInset()
 	more.Hide()
 	// The ⋯ sits over the row's trailing text (a project's branch): that text
 	// hides while the ⋯ shows, also when the pointer has left the row for it.
@@ -386,6 +391,10 @@ func (ui *desktopUI) openChat(chat *conversation) {
 	if chat == ui.current {
 		return
 	}
+	if view := ui.viewOf(chat); view != ui { // on screen in another window: that one comes forward
+		view.raise()
+		return
+	}
 	ui.loadChat(chat, true)
 }
 
@@ -401,6 +410,7 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 	ui.prefs.close()
 	ui.clearSelection()
 	ui.current = chat
+	ui.activate()
 	if chat.failed { // seen now
 		chat.failed = false
 		ui.syncTray()
@@ -409,7 +419,7 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 	ui.prompt.switchDraft(chat.ID)
 	ui.scroll.rest() // what the wheel still owed the last chat
 	ui.followTail = true
-	ui.panel.switchTo(chat)
+	ui.showPanel(chat)
 	if reuse {
 		ui.curtain.reveal() // another chat takes the page: not a reload of this one
 	}
@@ -449,12 +459,7 @@ func (ui *desktopUI) renameChat(chat *conversation) {
 	entry.SetText(chat.Title)
 	var dialog *sheet
 	apply := func() {
-		if title := remoteapi.CleanChatTitle(entry.Text); title != "" {
-			chat.Title = title
-			ui.save()
-			ui.updateHeader()
-			ui.renderChats()
-		}
+		ui.setChatTitle(chat, entry.Text)
 		dialog.Hide()
 	}
 	entry.OnSubmitted = func(string) { apply() }
@@ -464,49 +469,86 @@ func (ui *desktopUI) renameChat(chat *conversation) {
 	ui.window.Canvas().Focus(entry)
 }
 
+// setChatTitle gives chat a title (Rename, the phone, the agent's chats
+// tool or the naming model), saved and shown in every window and on the
+// paired phones. A blank title changes nothing; it returns the title kept.
+func (ui *desktopUI) setChatTitle(chat *conversation, title string) string {
+	if title = remoteapi.CleanChatTitle(title); title == "" {
+		return ""
+	}
+	chat.Title = title
+	ui.save()
+	ui.updateHeader()
+	ui.renderChats()
+	return title
+}
+
 func (ui *desktopUI) deleteChat(chat *conversation) {
 	text := fmt.Sprintf("“%s” will be permanently deleted from 1loop.", chat.Title)
 	if chat.Config.Scratch != "" {
 		text = fmt.Sprintf("“%s” and the folder 1loop made for it will be permanently deleted.", chat.Title)
 	}
-	if ui.subchatWorktree(chat) != "" {
+	text += agent.SubtreeNote(len(ui.subtreeOf(chat)))
+	if len(ui.treeWorktrees(chat)) > 0 {
 		ui.confirmDeleteSubchat(chat, text)
 		return
 	}
 	ui.confirm("Delete chat?", text, "Delete", func() {
-		ui.removeChat(chat)
+		ui.removeTree(chat)
 	})
 }
 
+// removeTree deletes a chat and its subchats at every level, stopping
+// those that run, and returns them all, the chat first.
+func (ui *desktopUI) removeTree(chat *conversation) []*conversation {
+	gone := append([]*conversation{chat}, ui.subtreeOf(chat)...)
+	ui.removeChats(gone...)
+	return gone
+}
+
 func (ui *desktopUI) removeChat(chat *conversation) {
+	ui.removeChats(chat)
+}
+
+// removeChats deletes these chats alone: what is under them stays.
+func (ui *desktopUI) removeChats(chats ...*conversation) {
 	var kept []*conversation
 	for _, conversationValue := range ui.chats {
-		if conversationValue != chat {
+		if !slices.Contains(chats, conversationValue) {
 			kept = append(kept, conversationValue)
 		}
 	}
 	ui.chats = kept
-	if chat.run != nil {
-		chat.run.cancel()
+	for _, chat := range chats {
+		if chat.run != nil {
+			chat.run.cancel()
+		}
+		chat.queue, chat.steer = nil, nil
+		chat.tasks.StopAll()
+		ui.prompt.drafts.set(chat.ID, "")
+		for _, view := range ui.allPanes() {
+			if view.current == chat {
+				view.current = nil
+				view.startNew()
+			}
+		}
+		chat.disposePanel()
+		ui.removeScratch(chat)
 	}
-	chat.queue, chat.steer = nil, nil
-	chat.tasks.StopAll()
-	ui.prompt.drafts.set(chat.ID, "")
-	if ui.current == chat {
-		ui.current = nil
-		ui.startNew()
-	}
-	chat.disposePanel()
-	ui.removeScratch(chat)
 	ui.save()
 	ui.renderChats()
 }
 
 func (ui *desktopUI) chatMenu(chat *conversation, anchor fyne.CanvasObject) *sheet {
-	return showMenu(ui.window, anchor, []menuAction{
+	var window []menuAction
+	if ui.canOpenWindow(chat) { // windows.go, panes.go
+		window = append(window, menuAction{label: "Open in new window", icon: iconWindow, run: func() { ui.openWindow(chat) }},
+			menuAction{label: "Open in split view", icon: iconPanel, run: func() { ui.splitPane(chat, false) }})
+	}
+	return showMenu(ui.window, anchor, append(window, []menuAction{
 		{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
 		{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
-	})
+	}...))
 }
 
 // confirm asks before a destructive action.
@@ -520,17 +562,26 @@ func (ui *desktopUI) confirm(title, text, verb string, run func()) {
 	dialog = ui.modal(title, label, 440, nil, cancel, row)
 }
 
-// renderChats redraws every target's projects and their chats.
+// renderChats redraws every target's projects and their chats, in every
+// window's sidebar.
 func (ui *desktopUI) renderChats() {
-	if ui.cachedChat != nil && !slices.Contains(ui.chats, ui.cachedChat.chat) {
-		ui.cachedChat = nil
-	}
 	ui.remote.chatsChanged()
-	ui.syncTray() // a chat removed, or its run started or ended
-	if ui.server == nil && ui.worktreeMap()[ui.cfg.Workspace] == "" && !ui.cfg.InScratch() {
-		ui.ensureTargetProject(ui.cfg.Workspace)
+	ui.syncTray()                        // a chat removed, or its run started or ended
+	for _, view := range ui.allPanes() { // every pane of every window (panes.go)
+		if view.cachedChat != nil && !slices.Contains(ui.chats, view.cachedChat.chat) {
+			view.cachedChat = nil
+		}
+		if view.server == nil && view.worktreeMap()[view.cfg.Workspace] == "" && !view.cfg.InScratch() {
+			view.ensureTargetProject(view.cfg.Workspace)
+		}
+		if view != ui && view.header != nil {
+			view.updateHeader() // a rename, from another window or pane
+		}
 	}
-	ui.renderSidebar(ui.sidebarGroups())
+	for _, window := range ui.allWindows() {
+		view := window.focused() // the sidebar shows the pane with the focus
+		view.renderSidebar(view.sidebarGroups())
+	}
 }
 
 // chatTexts are a chat's messages, what search reads: not tool output.

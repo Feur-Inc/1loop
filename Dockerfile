@@ -5,6 +5,8 @@
 #
 #   docker build -t 1loop-server .
 #   docker run -it -p 47101:47101 -v 1loop-data:/data -v ~/projects:/projects 1loop-server
+#
+# --target slim builds it without Chromium or Claude Code.
 
 # The server is static Go (CGO_ENABLED=0): built for the target on the
 # build machine, without emulation. BuildKit sets BUILDPLATFORM; the default
@@ -55,11 +57,15 @@ RUN set -eu \
  && echo "$checksum  /out/claude" | sha256sum -c - \
  && chmod 0755 /out/claude
 
-FROM debian:trixie-slim
+# The slim image (docker build --target slim): the server without Chromium
+# or Claude Code, so without Browser Use or Claude Code connections.
+# ONELOOP_BROWSER=none says so to the clients and to the agent, rather than
+# downloading a browser the image could not run.
+FROM debian:trixie-slim AS slim
 # What the server runs besides itself: Bash and Git for the agent's commands,
-# Chromium for Browser Use, tini to pass signals on, Claude Code (below).
+# tini to pass signals on.
 RUN apt-get update \
- && apt-get install -y --no-install-recommends bash git chromium ca-certificates tini \
+ && apt-get install -y --no-install-recommends bash git ca-certificates tini \
  && rm -rf /var/lib/apt/lists/* \
  && useradd --create-home --uid 1000 --shell /bin/bash oneloop \
  && mkdir -p /data /projects \
@@ -67,18 +73,27 @@ RUN apt-get update \
  && chmod 0700 /data
 COPY --from=build /out/1loop-server /usr/local/bin/1loop-server
 COPY --from=build /out/web /usr/local/share/1loop/web
-# Root's, so the server cannot change it: a new version comes with a new
-# image, never from Claude Code's own updater.
-COPY --from=claude /out/claude /usr/local/bin/claude
-# Docker's default profile allows none of Chromium's sandboxes: the container
-# isolates the browser instead.
-ENV ONELOOP_CHROMIUM_NO_SANDBOX=1
 # Claude Code's sign-in and settings (its .claude folder and .claude.json
 # both go in CLAUDE_CONFIG_DIR) live in the data volume, so they survive
 # image updates.
-ENV CLAUDE_CONFIG_DIR=/data/claude DISABLE_AUTOUPDATER=1
+ENV CLAUDE_CONFIG_DIR=/data/claude DISABLE_AUTOUPDATER=1 ONELOOP_BROWSER=none
 USER oneloop
 WORKDIR /projects
 VOLUME ["/data", "/projects"]
 EXPOSE 47101
 ENTRYPOINT ["/usr/bin/tini", "--", "/usr/local/bin/1loop-server", "-data-dir", "/data", "-workspace", "/projects", "-listen", ":47101", "-web-dir", "/usr/local/share/1loop/web"]
+
+# The default image: the slim one with Chromium for Browser Use and Claude
+# Code, last so a plain docker build makes it: these layers on the slim one's.
+FROM slim
+USER root
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends chromium \
+ && rm -rf /var/lib/apt/lists/*
+# Docker's default profile allows none of Chromium's sandboxes: the container
+# isolates the browser instead.
+ENV ONELOOP_BROWSER= ONELOOP_CHROMIUM_NO_SANDBOX=1
+# Root's, so the server cannot change it: a new version comes with a new
+# image, never from Claude Code's own updater.
+COPY --from=claude /out/claude /usr/local/bin/claude
+USER oneloop

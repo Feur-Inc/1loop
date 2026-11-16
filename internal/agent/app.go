@@ -90,6 +90,11 @@ type Config struct {
 	// OtherSessions keeps the sessions of the chat's other Claude Code
 	// logins, so coming back to a login resumes its session (claude_accounts.go).
 	OtherSessions map[string]LoginSession `json:"otherSessions,omitempty"`
+	// ForkSession is a forked subchat's parent Claude Code session, with
+	// the folder it ran in: the subchat's first turn resumes it with
+	// --fork-session, reading the parent's cached prefix (ForkConfig).
+	ForkSession   string `json:"forkSession,omitempty"`
+	ForkWorkspace string `json:"forkWorkspace,omitempty"`
 	// RanWith is who the chat's last turn ran with: another provider,
 	// account or model first goes through a handoff (handoff.go).
 	RanWith *RunIdentity `json:"ranWith,omitempty"`

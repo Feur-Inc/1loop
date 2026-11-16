@@ -461,8 +461,9 @@ func (ui *desktopUI) closePaneOrWindow() {
 }
 
 // closePane closes ui's pane; its sibling takes its room. The window's
-// first pane cannot go, since it holds the window: it takes the chat of
-// the pane beside it, which goes instead.
+// first pane cannot go, since it holds the window: it takes the chat and
+// the place of the pane beside it, which goes instead, so that on screen
+// the pane closed is the one that disappears.
 func (ui *desktopUI) closePane() {
 	window := ui.windowOf()
 	if window.tree == nil {
@@ -482,10 +483,7 @@ func (ui *desktopUI) closePane() {
 			window.startNew()
 		}
 	}
-	window.tree.find(gone).remove()
-	if window.tree.pane != nil {
-		window.tree = nil
-	}
+	window.dropPane(ui, gone)
 	if window.focus == gone || window.focus == ui {
 		window.focus = nil
 	}
@@ -496,6 +494,22 @@ func (ui *desktopUI) closePane() {
 	next.followPanel()
 	window.window.Canvas().Focus(next.prompt)
 	window.save()
+}
+
+// dropPane takes closed's pane out of the window's tree. When closed is the
+// window's own pane, gone (the pane whose chat it takes) goes instead and
+// the window's pane takes gone's place: on screen, the pane closed is the
+// one that disappears.
+func (window *desktopUI) dropPane(closed, gone *desktopUI) {
+	if closed == window {
+		window.tree.find(window).remove()
+		window.tree.find(gone).pane = window
+	} else {
+		window.tree.find(gone).remove()
+	}
+	if window.tree.pane != nil {
+		window.tree = nil
+	}
 }
 
 // sibling is the other half of the leaf's parent.

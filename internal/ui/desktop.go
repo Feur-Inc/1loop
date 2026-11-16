@@ -153,6 +153,7 @@ type desktopUI struct {
 	attachTray      fyne.CanvasObject // attachRow with its margins, hidden when empty
 	attachments     []core.ImagePart
 	fileAttachments []fileAttachment
+	parked          map[string]parkedAttachments // other drafts' attachments, by draft key (#409)
 	filesAttaching  int
 	editing         *queueEdit // a queued message being edited in the prompt
 	editBar         *fyne.Container
@@ -859,6 +860,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.prompt.shortcut = ui.shortcut
 	ui.prompt.paste = ui.pasteFromClipboard
 	ui.prompt.oversize = ui.attachText
+	ui.prompt.switched = ui.switchAttachments
 	if ui.drafts == nil { // one set for every window (windows.go)
 		ui.drafts = loadPromptDrafts(filepath.Join(filepath.Dir(ui.statePath), "drafts.json"))
 	}

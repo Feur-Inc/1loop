@@ -346,7 +346,9 @@ func runDesktop(backend *agent.App, root string) {
 	switchBackend()
 	// Once this is the process that stays (the build for the display, past
 	// its probe), and before any state is read.
+	benchMark("runDesktop")
 	instance := claimInstance()
+	benchMark("instance claimed")
 	lastCrash := watchCrashes(statePath(root)) // crash_report.go
 	if platform.DevWanted {
 		platform.StartDevLog()
@@ -372,6 +374,7 @@ func runDesktop(backend *agent.App, root string) {
 		}
 	}
 	a := fyneapp.NewWithID("io.1loop.desktop")
+	benchMark("fyne app")
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
 	backend.EnableChatGPTWeb(ctx)
@@ -392,9 +395,13 @@ func runDesktop(backend *agent.App, root string) {
 		ui.chrome = false
 		ui.window = a.NewWindow("1loop")
 	}
+	benchMark("window created")
 	ui.usage, ui.prices = openUsage(ui.statePath)
+	benchMark("usage opened")
 	read := <-saved
+	benchMark("state read")
 	ui.loadFrom(read.state, read.err)
+	benchMark("state loaded")
 	ui.followTheme()
 	ui.initializeConnections()
 	ui.window.SetPadded(false)
@@ -403,6 +410,7 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
 	ui.backdrop = newBackdrop()
 	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.backdrop.picture, ui.build()))
+	benchMark("content built")
 	ui.syncBackdrop()
 	ui.followUsage()
 	ui.window.SetOnDropped(func(at fyne.Position, uris []fyne.URI) {
@@ -420,11 +428,13 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { ui.focused().copySelection() })
 	ui.updateHeader()
 	ui.renderChats()
+	benchMark("sidebar rendered")
 	ui.refreshModels()
 	ui.refreshContextRing()
 	ui.startRemote()
 	ui.linkServers()
 	ui.watchUpdates()
+	benchMark("services started")
 	ui.window.Canvas().Focus(ui.prompt)
 	// The launch sequence covers the first frames and only starts once the
 	// window is really on screen, otherwise it would play unseen.
@@ -460,6 +470,7 @@ func runDesktop(backend *agent.App, root string) {
 	// other ways of drawing, by itself (render_fallback.go): what the next
 	// process needs (the one-instance claim) is let go first, and the end
 	// is a clean one.
+	benchMark("show window")
 	if failure := showFirstWindow(ui.window); failure != nil {
 		renderFailed(failure, func() {
 			if instance != nil {
@@ -469,12 +480,14 @@ func runDesktop(backend *agent.App, root string) {
 		})
 	}
 	rendererReady()
+	benchMark("window shown")
 	if kind := os.Getenv("ONELOOP_BENCH"); kind != "" && platform.Dev != nil {
 		go ui.bench(kind)
 	}
 	windowIdentity(ui.window)
 	ui.restoreLayout(read.state.Split)    // the main window's panes of the last run
 	ui.restoreWindows(read.state.Windows) // the other windows of the last run, on their chats
+	benchMark("main loop")
 	a.Run()
 }
 

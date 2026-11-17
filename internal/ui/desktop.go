@@ -859,6 +859,9 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		ui.clearSelection()
 	}
 	ui.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
+		if key.Name == fyne.KeyEscape && ui.closePicture() {
+			return // a click on the title bar took the viewer's focus
+		}
 		if key.Name == fyne.KeyEscape && ui.prefs.open { // Escape goes back a page, then to the conversation
 			ui.prefs.back()
 		}

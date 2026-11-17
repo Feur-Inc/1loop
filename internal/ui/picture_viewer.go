@@ -294,6 +294,19 @@ func (viewer *pictureViewer) close() {
 	viewer.canvas.Unfocus()
 }
 
+// closePicture closes the picture shown in ui's window, if any.
+func (ui *desktopUI) closePicture() bool {
+	layer := ui.windowOf().pictureLayer
+	if layer == nil || len(layer.Objects) == 0 {
+		return false
+	}
+	if viewer, ok := layer.Objects[len(layer.Objects)-1].(*pictureViewer); ok {
+		viewer.close()
+		return true
+	}
+	return false
+}
+
 // underTitleBar lays the picture viewer out over the window, below the
 // title bar drawn by 1loop (desktopUI.titleBar).
 type underTitleBar struct{ ui *desktopUI }

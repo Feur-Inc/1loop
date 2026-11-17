@@ -174,9 +174,13 @@ func sectionHeader(text string, action fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewBorder(nil, nil, nil, padded(10, 0, 0, 2, action), label)
 }
 
-// moreButtonInset is the room withMore keeps at a row's end for its ⋯.
+// moreButtonInset is the room withMore keeps at a row's end for its ⋯:
+// a styleWindow row's width (tapRowRenderer.metrics: its icon and padding,
+// which no theme changes), and 4. A constant, not a row built and measured
+// for each row of the sidebar.
 func moreButtonInset() float32 {
-	return newRow("", iconMore, styleWindow, nil).MinSize().Width + 4
+	const padX, icon = 8, 18 // styleWindow
+	return icon + 2*padX + 4
 }
 
 // withMore adds a "⋯" button that appears while the row is hovered; it and a

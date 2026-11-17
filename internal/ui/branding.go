@@ -13,10 +13,10 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"1loop/assets"
-	"1loop/internal/palette"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -54,41 +54,60 @@ func accentHex() string {
 // inkedArtwork redraws the artwork's white (the wordmark's letters) in the
 // theme's text colour: dark letters on the light theme. Its amber takes the
 // accent colour.
-func inkedArtwork(art image.Image) *image.NRGBA {
-	out := accentedArtwork(art)
-	if themeTokens.Dark {
-		return out
-	}
-	for i := 0; i < len(out.Pix); i += 4 {
-		r, g, bl := out.Pix[i], out.Pix[i+1], out.Pix[i+2]
-		if min(r, g, bl) > 0xc0 && max(r, g, bl)-min(r, g, bl) < 0x20 { // white, or its antialiased edge
-			out.Pix[i], out.Pix[i+1], out.Pix[i+2] = colText.R, colText.G, colText.B
-		}
-	}
-	return out
-}
+func inkedArtwork(art image.Image) *image.NRGBA { return currentArtInk().draw(art) }
 
 // accentedArtwork copies the artwork with its amber in the accent colour.
 // An amber pixel keeps its brightness against the brand's amber, so the
 // antialiased edges, dark or blended, stay smooth.
 func accentedArtwork(art image.Image) *image.NRGBA {
+	ink := currentArtInk()
+	ink.dark = true // the white stays white
+	return ink.draw(art)
+}
+
+// artInk is what inkedArtwork paints with, read on the UI thread so the
+// painting itself can run on another goroutine.
+type artInk struct {
+	accent  color.NRGBA
+	branded bool // the accent is the brand's amber: nothing to change
+	dark    bool // the white stays white
+	text    color.NRGBA
+}
+
+func currentArtInk() artInk {
+	return artInk{accent: colAmber, branded: accentHex() == brandHex, dark: themeTokens.Dark, text: colText}
+}
+
+func (ink artInk) key() string {
+	return fmt.Sprintf("%v%v%v%v", ink.accent, ink.branded, ink.dark, ink.text)
+}
+
+func (ink artInk) draw(art image.Image) *image.NRGBA {
 	b := art.Bounds()
 	out := image.NewNRGBA(image.Rect(0, 0, b.Dx(), b.Dy()))
 	xdraw.Draw(out, out.Rect, art, b.Min, xdraw.Src)
-	accent := colAmber
-	if accentHex() == brandHex {
+	if !ink.branded {
+		accent := ink.accent
+		for i := 0; i < len(out.Pix); i += 4 {
+			r, g, bl := int(out.Pix[i]), int(out.Pix[i+1]), int(out.Pix[i+2])
+			// Amber: red highest, blue well below green (white and grey are not).
+			if r == 0 || r < g || r-bl < 0x40 || g < bl {
+				continue
+			}
+			level := float64(r) / 0xFF
+			out.Pix[i] = uint8(float64(accent.R)*level + 0.5)
+			out.Pix[i+1] = uint8(float64(accent.G)*level + 0.5)
+			out.Pix[i+2] = uint8(float64(accent.B)*level + 0.5)
+		}
+	}
+	if ink.dark {
 		return out
 	}
 	for i := 0; i < len(out.Pix); i += 4 {
-		r, g, bl := int(out.Pix[i]), int(out.Pix[i+1]), int(out.Pix[i+2])
-		// Amber: red highest, blue well below green (white and grey are not).
-		if r == 0 || r < g || r-bl < 0x40 || g < bl {
-			continue
+		r, g, bl := out.Pix[i], out.Pix[i+1], out.Pix[i+2]
+		if min(r, g, bl) > 0xc0 && max(r, g, bl)-min(r, g, bl) < 0x20 { // white, or its antialiased edge
+			out.Pix[i], out.Pix[i+1], out.Pix[i+2] = ink.text.R, ink.text.G, ink.text.B
 		}
-		level := float64(r) / 0xFF
-		out.Pix[i] = uint8(float64(accent.R)*level + 0.5)
-		out.Pix[i+1] = uint8(float64(accent.G)*level + 0.5)
-		out.Pix[i+2] = uint8(float64(accent.B)*level + 0.5)
 	}
 	return out
 }
@@ -142,26 +161,30 @@ func introFrame(index int) image.Image {
 }
 
 var (
-	brandRingImage    image.Image
-	brandRingAccented image.Image // in the accent and text colours of brandRingInk
-	brandRingInk      string
+	brandRingOnce  sync.Once
+	brandRingImage image.Image
+	// brandRings are the ring drawn for loopMark.showBrand, by ink and size
+	// in pixels, shared by every mark; brandRingJobs the ones being drawn,
+	// with the marks waiting for them. UI thread only.
+	brandRings    = map[string]image.Image{}
+	brandRingJobs = map[string][]*loopMark{}
+	brandRingWait sync.WaitGroup // the rings being drawn, for tests
 )
 
-func brandRing() image.Image {
-	if brandRingImage == nil {
+func brandRingArt() image.Image {
+	brandRingOnce.Do(func() {
 		data, _ := assets.Artwork.ReadFile("1loop-ring.png")
 		img, err := png.Decode(bytes.NewReader(data))
 		if err != nil {
 			panic(err)
 		}
 		brandRingImage = img
-	}
-	// The accent, and the ink of its white "1": dark on a light theme.
-	if ink := accentHex() + palette.Hex(colText); brandRingInk != ink {
-		brandRingInk, brandRingAccented = ink, inkedArtwork(brandRingImage)
-	}
-	return brandRingAccented
+	})
+	return brandRingImage
 }
+
+// brandRing is the ring in the accent and the theme's ink, full size.
+func brandRing() image.Image { return currentArtInk().draw(brandRingArt()) }
 
 // scaleTo resamples once with a high quality filter; Fyne then uploads the
 // pixels as they are instead of resampling the full-size art every frame.
@@ -266,10 +289,43 @@ func (mark *loopMark) stop() {
 
 func (mark *loopMark) showBrand() {
 	px := mark.pixels()
-	if mark.brand == nil {
-		mark.brand = scaleTo(brandRing(), px, px)
+	if mark.brand != nil {
+		mark.show(mark.brand)
+		return
 	}
-	mark.show(mark.brand)
+	// Decoding, inking and resampling the 512 px ring takes tens of ms:
+	// done once per ink and size, off the UI thread, and shared by the
+	// marks (#475). The mark shows it as soon as it is ready.
+	ink := currentArtInk()
+	key := fmt.Sprintf("%s/%d", ink.key(), px)
+	if ring := brandRings[key]; ring != nil {
+		mark.brand = ring
+		mark.show(ring)
+		return
+	}
+	waiting, busy := brandRingJobs[key]
+	brandRingJobs[key] = append(waiting, mark)
+	if busy {
+		return
+	}
+	brandRingWait.Add(1)
+	go func() {
+		defer brandRingWait.Done()
+		ring := scaleTo(ink.draw(brandRingArt()), px, px)
+		fyne.Do(func() {
+			if len(brandRings) > 16 {
+				clear(brandRings)
+			}
+			brandRings[key] = ring
+			for _, waiter := range brandRingJobs[key] {
+				if waiter.state == "brand" && waiter.px == px && waiter.brand == nil {
+					waiter.brand = ring
+					waiter.show(ring)
+				}
+			}
+			delete(brandRingJobs, key)
+		})
+	}()
 }
 
 // intro draws the ring, the "1" and the dot once (DA intro, 1.24 s), then

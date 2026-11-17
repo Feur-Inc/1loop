@@ -47,9 +47,11 @@ func TestAccentedArtwork(t *testing.T) {
 func TestLoopMarkStartsInAccent(t *testing.T) {
 	test.NewTempApp(t)
 	saved := colAmber
-	defer func() { colAmber, brandRingInk = saved, "" }()
+	defer func() { colAmber = saved }()
 	colAmber = color.NRGBA{0x2F, 0xC2, 0xA4, 0xFF} // teal
-	assertAccentRing(t, newLoopMark(60).image.Image)
+	mark := newLoopMark(60)
+	brandRingWait.Wait()
+	assertAccentRing(t, mark.image.Image)
 }
 
 // An intro stopped before its end (a running chat opened over the welcome
@@ -57,7 +59,7 @@ func TestLoopMarkStartsInAccent(t *testing.T) {
 func TestStoppedIntroTakesNewAccent(t *testing.T) {
 	test.NewTempApp(t)
 	saved := colAmber
-	defer func() { colAmber, brandRingInk = saved, "" }()
+	defer func() { colAmber = saved }()
 	colAmber = color.NRGBA{0xA8, 0x7B, 0xFF, 0xFF} // purple
 	mark := newLoopMark(60)
 	mark.showBrand()     // a frame of the intro, in purple
@@ -65,6 +67,7 @@ func TestStoppedIntroTakesNewAccent(t *testing.T) {
 	mark.stop()
 	colAmber = color.NRGBA{0x2F, 0xC2, 0xA4, 0xFF} // teal
 	mark.recolour()
+	brandRingWait.Wait()
 	assertAccentRing(t, mark.image.Image)
 }
 

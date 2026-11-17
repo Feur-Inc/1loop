@@ -1210,7 +1210,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				message := Message{Role: "user", Internal: true, Content: reminder}
 				messages = append(messages, message)
 				send(claudePrompt(message, ""))
-				emit("context_note", "TODO check · steps left in progress")
+				emit("context_note", "TODO check · steps not completed")
 			} else {
 				idle, idleSince = true, time.Now()
 				waitBackground()

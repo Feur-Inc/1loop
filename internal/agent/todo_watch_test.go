@@ -33,13 +33,17 @@ func TestTodoWatchRemindsOnce(t *testing.T) {
 	if text := watch.reminder(cfg); !strings.Contains(text, "has not changed") {
 		t.Fatalf("no stale reminder: %q", text)
 	}
-	if text := watch.endReminder(cfg); !strings.Contains(text, "write the code") {
+	if text := watch.endReminder(cfg); !strings.Contains(text, "in_progress: write the code") || !strings.Contains(text, "pending: test") {
 		t.Fatalf("no end check: %q", text)
 	}
 	if watch.endReminder(cfg) != "" {
 		t.Fatal("end check twice")
 	}
-	// A turn without tools, or without a list, ends quietly.
+	// A list all done ends quietly, as does a turn without tools or list.
+	done := Config{Todo: &TodoState{items: []TodoItem{{ID: "a", Text: "x", Status: "completed"}}}}
+	if (&todoWatch{calls: 5}).endReminder(done) != "" {
+		t.Fatal("end check on a completed list")
+	}
 	if (&todoWatch{}).endReminder(cfg) != "" || (&todoWatch{calls: 5}).endReminder(Config{}) != "" {
 		t.Fatal("end check without work or list")
 	}

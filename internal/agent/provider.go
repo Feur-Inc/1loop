@@ -965,7 +965,7 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 			}
 			if reminder := todo.endReminder(cfg); reminder != "" && ctx.Err() == nil {
 				messages = append(messages, Message{Role: "user", Internal: true, Content: reminder})
-				emit("context_note", "TODO check · steps left in progress")
+				emit("context_note", "TODO check · steps not completed")
 				publish()
 				continue
 			}

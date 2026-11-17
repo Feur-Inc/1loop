@@ -290,8 +290,8 @@ func todoInstructions(cfg Config) string {
 }
 
 // todoWatch follows a turn's tool calls to remind the model of the TODO
-// list when it works without one, lets it go stale, or ends a turn with a
-// step left in progress (#446): at most once each per turn.
+// list when it works without one, lets it go stale, or ends a turn with
+// steps not completed (#446): at most once each per turn.
 type todoWatch struct {
 	calls, sinceUpdate int
 	started, stale     bool
@@ -335,7 +335,8 @@ func (watch *todoWatch) reminder(cfg Config) string {
 	return ""
 }
 
-// endReminder is a reminder for a turn about to end with the list stale, or "".
+// endReminder is a reminder for a turn about to end with steps not
+// completed, or "".
 func (watch *todoWatch) endReminder(cfg Config) string {
 	if cfg.Todo == nil || watch.ended || watch.calls == 0 {
 		return ""
@@ -343,15 +344,15 @@ func (watch *todoWatch) endReminder(cfg Config) string {
 	items := cfg.Todo.Snapshot()
 	var open []string
 	for _, item := range items {
-		if item.Status == "in_progress" {
-			open = append(open, core.TruncateText(item.Text, 200))
+		if item.Status == "in_progress" || item.Status == "pending" {
+			open = append(open, item.Status+": "+core.TruncateText(item.Text, 200))
 		}
 	}
 	if len(open) == 0 {
 		return ""
 	}
 	watch.ended = true
-	return "[1loop TODO check before the turn ends] These steps are still in_progress: " + strings.Join(open, "; ") + ". If they are done, mark them completed with " + todoReminderTool(cfg) + "; if work remains, continue it or say what is left. Then end the turn."
+	return "[1loop TODO check before the turn ends] These steps are not completed: " + strings.Join(open, "; ") + ". Mark the ones you did completed with " + todoReminderTool(cfg) + "; for the others, continue the work or say in your answer what is left and why. Then end the turn."
 }
 
 func todoAllDone(items []TodoItem) bool {

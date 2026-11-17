@@ -930,7 +930,8 @@ func (layoutSpec *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyn
 		min := row.size
 		// A row already shown at this width was measured by MinSize, or
 		// by prepare when it changed: only the others are measured here.
-		if !object.Visible() || resized {
+		revived := !object.Visible()
+		if revived || resized {
 			object.Show() // it may have changed while out of sight
 			min = layoutSpec.measureAt(i, size.Width)
 		}
@@ -939,6 +940,12 @@ func (layoutSpec *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyn
 		}
 		object.Move(fyne.NewPos(0, y))
 		object.Resize(fyne.NewSize(size.Width, min.Height))
+		if revived {
+			// Its text was only measured (or released) while hidden, and a
+			// Resize to the size it already has lays nothing out: draw it
+			// again, or it keeps its height and shows nothing (#497).
+			object.Refresh()
+		}
 		y += min.Height + transcriptGap
 	}
 	hi := i

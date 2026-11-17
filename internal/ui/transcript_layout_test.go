@@ -154,3 +154,116 @@ func TestMarkdownIncrementalParse(t *testing.T) {
 		}
 	}
 }
+
+// #497: after a chat is loaded or the window resized, no row keeps a height
+// other than the one it needs at the column's width, shown or not, and every
+// row sits exactly under the one before it.
+func TestTranscriptRowsKeepTheirHeight(t *testing.T) {
+	ui, chat := perfWindow(t, 150)
+	check := func(when string) {
+		t.Helper()
+		for range 200 {
+			ui.remeasure()
+		}
+		ui.relayoutColumn()
+		layout := ui.items
+		y := float32(0)
+		for i, row := range layout.rows {
+			if abs32(layout.tops[i]-y) > 0.5 {
+				t.Fatalf("%s: row %d top %.1f, expected %.1f", when, i, layout.tops[i], y)
+			}
+			if need := measureRow(row.object, layout.width).Height; abs32(need-row.size.Height) > 0.5 {
+				t.Fatalf("%s: row %d (%T) kept %.1f, needs %.1f at %.0f", when, i, row.object, row.size.Height, need, layout.width)
+			}
+			y += row.size.Height + transcriptGap
+		}
+	}
+	check("loaded")
+	for _, width := range []float32{700, 1400, 1000} {
+		ui.window.Resize(fyne.NewSize(width, 760))
+		check(fmt.Sprintf("resized to %.0f", width))
+	}
+	// Opened again at another window width.
+	other := &conversation{ID: "short", Title: "Short", Items: perfItems(4)}
+	ui.chats = append(ui.chats, other)
+	ui.openLocalChat(other)
+	for ui.loadingChat != nil {
+		ui.advanceChatLoad()
+	}
+	ui.window.Resize(fyne.NewSize(800, 760))
+	ui.cachedChat = nil
+	ui.openLocalChat(chat)
+	for ui.loadingChat != nil {
+		ui.advanceChatLoad()
+	}
+	check("reopened narrower")
+}
+
+// flowTexts lists the paragraphs inside an item.
+func flowTexts(object fyne.CanvasObject, into *[]*flowText) {
+	switch object := object.(type) {
+	case *flowText:
+		*into = append(*into, object)
+	case *fyne.Container:
+		for _, child := range object.Objects {
+			flowTexts(child, into)
+		}
+	}
+}
+
+// #497: a row scrolled out of sight and back draws its text again, and keeps
+// its place.
+func TestTranscriptRowsDrawAfterScrollingBack(t *testing.T) {
+	ui, _ := perfWindow(t, 200)
+	ui.followTail = false
+	bottom := ui.scroll.Content.Size().Height - ui.scroll.Size().Height
+	for _, at := range []float32{0, 1, 0.5, 0, 1, 0.25} {
+		ui.scroll.ScrollToOffset(fyne.NewPos(0, at*bottom))
+		ui.relayoutColumn()
+		checkTranscript(t, ui, fmt.Sprintf("scrolled to %.0f%%", at*100))
+		for i, object := range ui.transcript.Objects {
+			if !object.Visible() {
+				continue
+			}
+			var texts []*flowText
+			flowTexts(object, &texts)
+			for _, text := range texts {
+				if text.height > 0 && len(text.objects) == 0 {
+					t.Fatalf("scrolled to %.0f%%: row %d is shown with %.0f px of text and nothing drawn", at*100, i, text.height)
+				}
+			}
+		}
+	}
+}
+
+// #473/#497: when a row's height changes, every row after it moves by
+// exactly the difference, shown or not.
+func TestTranscriptRowsFollowAChangedHeight(t *testing.T) {
+	ui, _ := perfWindow(t, 120)
+	layout := ui.items
+	for _, at := range []int{3, 40, 119} {
+		before := append([]float32(nil), layout.tops...)
+		row := &layout.rows[at]
+		const grow = 37
+		row.size.Height += grow
+		layout.dirty = min(layout.dirty, at+1)
+		ui.relayoutColumn()
+		for i := range layout.rows {
+			want := before[i]
+			if i > at {
+				want += grow
+			}
+			if abs32(layout.tops[i]-want) > 0.5 || abs32(layout.rows[i].object.Position().Y-want) > 0.5 && !layout.rows[i].object.Visible() {
+				t.Fatalf("row %d after changing row %d: top %.1f, at %.1f, expected %.1f", i, at, layout.tops[i], layout.rows[i].object.Position().Y, want)
+			}
+		}
+		// Measured again, it goes back, and so do the rows after it.
+		layout.forget(row.object)
+		ui.relayoutColumn()
+		for i := range layout.rows {
+			if abs32(layout.tops[i]-before[i]) > 0.5 {
+				t.Fatalf("row %d did not come back after row %d did: %.1f, expected %.1f", i, at, layout.tops[i], before[i])
+			}
+		}
+	}
+}

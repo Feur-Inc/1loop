@@ -218,3 +218,17 @@ func TestAppToolsLoadOnDemand(t *testing.T) {
 		t.Error("the memory instructions are still in the system prompt")
 	}
 }
+
+func TestLongRunCompactionDefault(t *testing.T) {
+	for _, cfg := range []Config{{Provider: "openrouter", Model: "deepseek/deepseek-v4.1-flash-1017"}, {Provider: "compatible", Model: "local", BaseURL: "http://127.0.0.1:8000/v1"}} {
+		if limit, _ := CompactDefault(cfg); limit != longRunDefault {
+			t.Errorf("%s %s: %d", cfg.Provider, cfg.Model, limit)
+		}
+	}
+	if limit, _ := CompactDefault(Config{Provider: "openrouter", Model: "anthropic/claude-haiku-5.5"}); limit != 100000 {
+		t.Errorf("Haiku through OpenRouter: %d", limit)
+	}
+	if limit, _ := CompactDefault(Config{Provider: "claudecode", Model: "sonnet"}); limit != 0 {
+		t.Errorf("Claude Code: %d", limit)
+	}
+}

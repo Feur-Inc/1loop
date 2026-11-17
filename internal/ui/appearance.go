@@ -87,13 +87,19 @@ func (ui *desktopUI) setAccent(accent string) {
 }
 
 func (ui *desktopUI) themeChanged() {
-	ui.theme.apply()
+	recoloured, fontsChanged := ui.theme.apply()
+	reshaped := fontsChanged || roundness != paintedRoundness
 	refreshRadii()
 	ui.syncBackdrop()
 	ui.save()
-	// Built from the colours as they were: the page and the sidebar are
-	// made again with the new ones.
-	ui.renderChats()
+	if !recoloured && !reshaped {
+		return // a theme file saved as it was: nothing to draw again
+	}
+	// The sidebar's rows recolour themselves (repaint); they are made
+	// again only when their fonts or corners change (#474).
+	if reshaped {
+		ui.renderChats()
+	}
 	if view := ui.prefs; view != nil && view.at(view.page) {
 		offset := view.scroll.Offset // where the user was: the rows they just used
 		view.showNow(view.page)

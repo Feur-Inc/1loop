@@ -565,7 +565,7 @@ func (ui *desktopUI) release() {
 	if ui.frames != nil {
 		// No more frame-hook redraws: once seen right before a window that
 		// was closing hung in GLFW's event poll.
-		ui.frames.anim.Stop()
+		ui.frames.stop()
 	}
 	ui.shutdown() // every run's context derives from it
 	for _, chat := range ui.chats {

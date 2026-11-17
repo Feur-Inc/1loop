@@ -38,7 +38,7 @@ func perfItems(n int) []agent.ChatItem {
 
 // perfWindow is a window of 1180 × 760 on the test driver showing a chat
 // of n items, loaded to the end.
-func perfWindow(b *testing.B, n int) (*desktopUI, *conversation) {
+func perfWindow(b testing.TB, n int) (*desktopUI, *conversation) {
 	b.Helper()
 	test.NewTempApp(b).Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ui, _ := twoWindows(&testing.T{})

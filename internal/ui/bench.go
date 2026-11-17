@@ -140,14 +140,19 @@ func benchScroll(scroll *kineticScroll, until time.Time) {
 		step := speed * float32(now.Sub(last).Seconds())
 		last = now
 		fyne.DoAndWait(func() {
-			// As a wheel does (Scrolled, which tells OnScrolled), without
-			// the inertia: ScrollToOffset alone brings no item into view.
+			// As the driver does for a wheel: through kineticScroll (which
+			// tells OnScrolled: ScrollToOffset alone brings no item into
+			// view), then a frame is due. canvas.Refresh would free the
+			// textures of the whole transcript, which a wheel does not.
 			bottom := scroll.Content.Size().Height - scroll.Size().Height
 			if offset+step > bottom || offset+step < 0 {
 				speed, step = -speed, -step
 			}
 			offset += step
-			scroll.Scroll.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DY: -step}})
+			scroll.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DY: -step}})
+			if dirty, ok := fyne.CurrentApp().Driver().CanvasForObject(scroll).(interface{ SetDirty() }); ok {
+				dirty.SetDirty()
+			}
 		})
 	}
 }

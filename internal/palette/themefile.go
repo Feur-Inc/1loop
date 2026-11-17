@@ -35,7 +35,7 @@ const (
 
 // ThemeFile is a theme read from a file.
 type ThemeFile struct {
-	ID        string        // the file name without .toml
+	ID        string        // the file name without .toml (the zip's or folder's name for a package)
 	Path      string        // where it is
 	Name      string        // as the picker shows it
 	Tokens    Tokens        // the base's tokens with the file's colours
@@ -265,38 +265,77 @@ func ThemesDir() string {
 	return filepath.Join(dir, "1loop", "themes")
 }
 
-// LoadThemes reads every *.toml in dir, sorted by name, with the files
-// that failed apart.
+// LoadThemes reads every theme of dir, sorted by name: loose *.toml files,
+// *.zip files and theme folders (docs/THEMES.md), with the ones that failed
+// apart. A name used twice loads once; the other is an error.
 func LoadThemes(dir string) ([]ThemeFile, []ThemeError) {
-	paths, _ := filepath.Glob(filepath.Join(dir, "*.toml"))
-	sort.Strings(paths)
 	var themes []ThemeFile
 	var failed []ThemeError
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
+	seen := map[string]string{}
+	take := func(path string, theme ThemeFile, err error) {
 		if err == nil {
-			var theme ThemeFile
-			theme, err = ParseTheme(strings.TrimSuffix(filepath.Base(path), ".toml"), string(data))
-			if err == nil {
-				theme.Path = path
-				if theme.Shader != "" && !filepath.IsAbs(theme.Shader) {
-					theme.Shader = filepath.Join(dir, theme.Shader)
-				}
-				if theme.Image != "" && !filepath.IsAbs(theme.Image) {
-					theme.Image = filepath.Join(dir, theme.Image)
-				}
-				for _, font := range []*string{&theme.Fonts.Regular, &theme.Fonts.Bold, &theme.Fonts.Italic, &theme.Fonts.Mono} {
-					if IsFontFile(*font) && !filepath.IsAbs(*font) {
-						*font = filepath.Join(dir, *font)
-					}
-				}
-				themes = append(themes, theme)
-				continue
+			if first, dup := seen[theme.ID]; dup {
+				err = fmt.Errorf("has the same name as %s: keep one of them", first)
 			}
 		}
-		failed = append(failed, ThemeError{Path: path, Err: err})
+		if err != nil {
+			failed = append(failed, ThemeError{Path: path, Err: err})
+			return
+		}
+		seen[theme.ID] = filepath.Base(path)
+		themes = append(themes, theme)
 	}
+	entries, _ := os.ReadDir(dir)
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		switch {
+		case entry.IsDir() || entry.Type()&os.ModeSymlink != 0 && isDir(path):
+			if strings.HasPrefix(entry.Name(), ".") {
+				continue
+			}
+			theme, err := loadFolder(path)
+			take(path, theme, err)
+		case ext == ".zip":
+			theme, err := loadZip(path)
+			take(path, theme, err)
+		case ext == ".toml":
+			theme, err := loadLoose(dir, path)
+			take(path, theme, err)
+		}
+	}
+	sort.Slice(themes, func(i, j int) bool { return themes[i].ID < themes[j].ID })
 	return themes, failed
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// loadLoose reads a theme that is one .toml file with its files beside it.
+func loadLoose(dir, path string) (ThemeFile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ThemeFile{}, err
+	}
+	theme, err := ParseTheme(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)), string(data))
+	if err != nil {
+		return theme, err
+	}
+	theme.Path = path
+	if theme.Shader != "" && !filepath.IsAbs(theme.Shader) {
+		theme.Shader = filepath.Join(dir, theme.Shader)
+	}
+	if theme.Image != "" && !filepath.IsAbs(theme.Image) {
+		theme.Image = filepath.Join(dir, theme.Image)
+	}
+	for _, font := range []*string{&theme.Fonts.Regular, &theme.Fonts.Bold, &theme.Fonts.Italic, &theme.Fonts.Mono} {
+		if IsFontFile(*font) && !filepath.IsAbs(*font) {
+			*font = filepath.Join(dir, *font)
+		}
+	}
+	return theme, nil
 }
 
 // ThemeTemplate is what New theme writes: every key, commented, around

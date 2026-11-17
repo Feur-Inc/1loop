@@ -30,13 +30,21 @@ func (backend *App) writeTheme(ctx context.Context, name, text, shader string, b
 	if err != nil {
 		return "", fmt.Errorf("The theme was not saved: %v. Call theme_format for the format.", err)
 	}
-	path := filepath.Join(dir, id+".toml")
-	_, existing := os.Stat(path)
-	verb := "Create"
-	if existing == nil {
+	// A theme is a zip; one that already lives as a folder or as loose
+	// files is replaced where it is.
+	zipPath := filepath.Join(dir, id+".zip")
+	folder := filepath.Join(dir, id)
+	loose := filepath.Join(dir, id+".toml")
+	target, verb := zipPath, "Create"
+	switch {
+	case isDir(folder):
+		target, verb = folder, "Replace"
+	case fileExists(zipPath):
 		verb = "Replace"
+	case fileExists(loose):
+		target, verb = loose, "Replace"
 	}
-	preview := fmt.Sprintf("%s the theme %q in %s\n\n%s", verb, theme.Name, dir, text)
+	preview := fmt.Sprintf("%s the theme %q as %s\n\n%s", verb, theme.Name, target, text)
 	if shader != "" {
 		preview += "\n\nShader " + theme.Shader + ":\n" + shader
 	}
@@ -47,13 +55,39 @@ func (backend *App) writeTheme(ctx context.Context, name, text, shader string, b
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return "", err
 	}
-	if shader != "" {
-		if err := os.WriteFile(filepath.Join(dir, theme.Shader), []byte(shader), 0o644); err != nil {
+	switch target {
+	case zipPath:
+		files := map[string][]byte{palette.ThemeFileName: []byte(text)}
+		if shader != "" {
+			files[theme.Shader] = []byte(shader)
+		}
+		if err := palette.WriteThemeZip(zipPath, files); err != nil {
+			return "", err
+		}
+	default:
+		base := dir
+		tomlPath := loose
+		if target == folder {
+			base, tomlPath = folder, filepath.Join(folder, palette.ThemeFileName)
+		}
+		if shader != "" {
+			if err := os.WriteFile(filepath.Join(base, theme.Shader), []byte(shader), 0o644); err != nil {
+				return "", err
+			}
+		}
+		if err := os.WriteFile(tomlPath, []byte(text), 0o644); err != nil {
 			return "", err
 		}
 	}
-	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
-		return "", err
-	}
-	return fmt.Sprintf("Saved %s. 1loop reads it within a second; then settings set general.theme to file:%s applies it (check the key with get). A shader that fails to compile is reported to the user in Settings → General, not here.", path, id), nil
+	return fmt.Sprintf("Saved %s. 1loop reads it within a second; then settings set general.theme to file:%s applies it (check the key with get). A shader that fails to compile is reported to the user in Settings → General, not here.", target, id), nil
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+func fileExists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

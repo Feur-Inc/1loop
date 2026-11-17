@@ -201,14 +201,60 @@ func DrawString(dst draw.Image, s string, color color.Color, f shaping.Fontmap, 
 	})
 }
 
+// parsedFonts holds each font file's parsed tables once (1loop, issue #476):
+// every style, scope and theme reset used to parse the same file again
+// (the emoji font alone four times). A Face is cheap and keeps its own
+// caches, so each user gets a new one over the shared Font.
+var parsedFonts sync.Map // fontKey -> *font.Font
+
+type fontKey struct {
+	data *byte
+	size int
+}
+
 func loadMeasureFont(data fyne.Resource) *font.Face {
-	loaded, err := font.ParseTTF(bytes.NewReader(data.Content()))
+	content := data.Content()
+	if len(content) == 0 {
+		return nil
+	}
+	key := fontKey{data: &content[0], size: len(content)}
+	if ft, ok := parsedFonts.Load(key); ok {
+		return font.NewFace(ft.(*font.Font))
+	}
+	loaded, err := font.ParseTTF(bytes.NewReader(content))
 	if err != nil {
 		fyne.LogError("font load error", err)
 		return nil
 	}
-
+	parsedFonts.Store(key, loaded.Font)
 	return loaded
+}
+
+// systemEmoji is the system's colour emoji font (Noto Color Emoji and the
+// like), looked up the first time an emoji is drawn when the build leaves
+// out Fyne's bundled one (tag no_emoji, 1loop's default).
+var (
+	systemEmojiOnce sync.Once
+	systemEmojiFont *font.Font
+)
+
+func systemEmoji() *font.Face {
+	systemEmojiOnce.Do(func() {
+		if face := lookupLangFont(fontscan.Emoji, font.Aspect{Style: font.StyleNormal}); face != nil {
+			if _, ok := face.NominalGlyph(0x1F600); ok {
+				systemEmojiFont = face.Font
+			}
+		}
+	})
+	if systemEmojiFont == nil {
+		return nil
+	}
+	return font.NewFace(systemEmojiFont)
+}
+
+// isEmoji says whether r is in a block colour emoji fonts cover.
+func isEmoji(r rune) bool {
+	return r >= 0x1F000 && r <= 0x1FAFF || r >= 0x2600 && r <= 0x27BF || r >= 0x2B00 && r <= 0x2BFF
 }
 
 // MeasureString returns how far dot would advance by drawing s with f.
@@ -369,13 +415,25 @@ type noopLogger struct{}
 func (n noopLogger) Printf(string, ...any) {}
 
 type dynamicFontMap struct {
-	faces  []*font.Face
-	family string
+	faces      []*font.Face
+	family     string
+	emojiTried bool
 }
 
 func (d *dynamicFontMap) ResolveFace(r rune) *font.Face {
 	for _, f := range d.faces {
 		if _, ok := f.NominalGlyph(r); ok {
+			return f
+		}
+	}
+
+	if theme.DefaultEmojiFont() == nil && isEmoji(r) && !d.emojiTried {
+		f := systemEmoji()
+		if f == nil {
+			d.emojiTried = true // no emoji font installed
+		} else if _, ok := f.NominalGlyph(r); ok {
+			d.emojiTried = true // added once, the loop above finds it next time
+			d.addFace(f)
 			return f
 		}
 	}

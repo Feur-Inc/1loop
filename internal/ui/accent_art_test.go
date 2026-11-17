@@ -51,6 +51,7 @@ func TestLoopMarkStartsInAccent(t *testing.T) {
 	colAmber = color.NRGBA{0x2F, 0xC2, 0xA4, 0xFF} // teal
 	mark := newLoopMark(60)
 	brandRingWait.Wait()
+	test.Drain() // the ring is shown by a fyne.Do queued on the test goroutine (#476)
 	assertAccentRing(t, mark.image.Image)
 }
 
@@ -68,6 +69,7 @@ func TestStoppedIntroTakesNewAccent(t *testing.T) {
 	colAmber = color.NRGBA{0x2F, 0xC2, 0xA4, 0xFF} // teal
 	mark.recolour()
 	brandRingWait.Wait()
+	test.Drain() // the ring is shown by a fyne.Do queued on the test goroutine (#476)
 	assertAccentRing(t, mark.image.Image)
 }
 

@@ -1137,9 +1137,13 @@ func (server *remoteServer) limits(writer http.ResponseWriter, req *http.Request
 			defer wg.Done()
 			limits, err := server.ui.backend.ConnectionLimits(req.Context(), conn, keys[conn.ID])
 			if err != nil {
-				limits = agent.AccountLimits{Note: "Limits unavailable"}
+				limits = agent.LimitsAfterError(cached[conn.ID], err) // last good numbers, and why they are old
+			} else {
+				limits.Checked = time.Now()
 			}
-			limits.Checked = time.Now()
+			if limits.Checked.IsZero() {
+				limits.Checked = time.Now()
+			}
 			results[i] = limits
 		}()
 	}

@@ -11,6 +11,7 @@ import (
 	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
+	"io"
 	"maps"
 	"net"
 	"os"
@@ -2083,6 +2084,42 @@ func (ui *desktopUI) save() {
 
 func (ui *desktopUI) saveNow() { ui.persist(false) }
 
+// writeChats writes the state: head before the chats, the chats as a JSON
+// list, one encoded at a time, and the rest of the head. written counts the
+// bytes.
+func writeChats(w io.Writer, written *int64, before []byte, chats []*conversation, after []byte) error {
+	put := func(b []byte) error {
+		n, err := w.Write(b)
+		*written += int64(n)
+		return err
+	}
+	if err := put(before); err != nil {
+		return err
+	}
+	if err := put([]byte(`"chats":[`)); err != nil {
+		return err
+	}
+	for i, chat := range chats {
+		chat.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
+		data, err := json.Marshal(chat)
+		if err != nil {
+			return err
+		}
+		if i > 0 {
+			if err := put([]byte{','}); err != nil {
+				return err
+			}
+		}
+		if err := put(data); err != nil {
+			return err
+		}
+	}
+	if err := put([]byte{']'}); err != nil {
+		return err
+	}
+	return put(after)
+}
+
 // persist writes the state file. The conversations are nearly all of it
 // (megabytes once they hold tool outputs and images), so they are encoded
 // and written beside the interface, from copies taken here: a save used to
@@ -2168,22 +2205,21 @@ func (ui *desktopUI) persist(wait bool) {
 			return // a newer state is already on disk
 		}
 		ui.saveDone = count
-		// The chats are encoded once, into the place the head keeps for them.
-		var data []byte
+		// The chats go into the place the head keeps for them, encoded and
+		// written one at a time: the whole list encoded at once was a buffer
+		// the size of the file (100 MB with long conversations), grown by
+		// doubling, at every save (#476).
+		var written int64
 		before, after, found := bytes.Cut(head, []byte(`"chats":null`))
 		if err == nil && !found {
 			err = errors.New("the state has no place for the chats")
 		}
 		if err == nil {
-			for _, chat := range chats {
-				chat.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
-			}
-			data, err = json.Marshal(chats)
+			err = core.WriteFileStreamed(path, 0600, true, func(w io.Writer) error {
+				return writeChats(w, &written, before, chats, after)
+			})
 		}
-		if err == nil {
-			err = core.WriteFileSafely(path, 0600, true, before, []byte(`"chats":`), data, after)
-		}
-		platform.Devf("app", "state saved: %d chats, %d KiB, %s in all (error: %v)", len(chats), (len(head)+len(data))>>10, time.Since(started).Round(time.Millisecond), err)
+		platform.Devf("app", "state saved: %d chats, %d KiB, %s in all (error: %v)", len(chats), written>>10, time.Since(started).Round(time.Millisecond), err)
 		report := func() {
 			if err != nil && err.Error() != ui.saveError && ui.ctx.Err() == nil {
 				ui.notice("Unable to save", err.Error()) // once per distinct problem

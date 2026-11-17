@@ -11,6 +11,9 @@ import (
 	"testing"
 )
 
+// No background Chromium update in tests (see startChromiumUpdate).
+func init() { startChromiumUpdate = func(string, string) {} }
+
 // fakeChromium puts a "browser" script in 1loop's Chromium folder, as an
 // install leaves it, and stops the daily update from going online.
 func fakeChromium(t *testing.T, script string) (dir, path string) {
@@ -45,7 +48,6 @@ func TestInstalledChromiumOverridesNone(t *testing.T) {
 	t.Setenv("ONELOOP_CHROMIUM", "/usr/bin/chromium")
 	BrowserProfileOverride = filepath.Join(t.TempDir(), "browser")
 	t.Cleanup(func() { BrowserProfileOverride = "" })
-	t.Cleanup(chromiumUpdates.Wait) // before the folder goes: an update may still write in it
 	if !Disabled() {
 		t.Fatal("no Chromium installed: Browser Use stays off")
 	}

@@ -371,7 +371,10 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		ui.views[index] = view
 		ui.copyRows[index] = copyRow
 		view.layer = newSelectLayer(ui, view.box)
-		ui.place(container.NewVBox(container.NewStack(view.box, view.layer), copyRow))
+		// The backdrop over a shader or picture is behind the agent's
+		// blocks only, not the gaps, the user's messages or the composer (#503).
+		backdrop := blurBehind("responses", canvas.NewRectangle(colBackground), &colBackground)
+		ui.place(container.NewStack(backdrop, container.NewVBox(container.NewStack(view.box, view.layer), copyRow)))
 	case "user":
 		if item.From != nil { // another chat's message, not the user's
 			ui.appendChatMessage(chat, item)

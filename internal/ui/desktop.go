@@ -274,6 +274,7 @@ type desktopApp struct {
 	worktreeSort     string                         // how the sidebar and Repository order worktrees
 	theme            themeChoice                    // dark, light or the system's, and the accent
 	projectThemes    map[string]string              // project → its own theme setting (#464)
+	mainFill         *canvas.Rectangle              // the window colour behind the conversation, clear over a shader (#503)
 	backdrop         *backdrop                      // a theme's shader behind the window (#464)
 	repos            map[string]*repoState          // repositories read, by target and project
 	repoWindow       *repoWindow                    // the open Repository window
@@ -823,7 +824,8 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	}
 	// The settings page takes the conversation's place while it is open.
 	ui.curtain = newPageCurtain()
-	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view, ui.curtain.cover)))
+	ui.mainFill = canvas.NewRectangle(colBackground)
+	main := container.NewStack(ui.mainFill, container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view, ui.curtain.cover)))
 	// No rule between the panes: the sidebar only casts a faint shadow.
 	shade := canvas.NewHorizontalGradient(color.NRGBA{B: 1, A: 0x2a}, color.NRGBA{B: 1}) // shadowInk: kept by a change of theme
 	ui.pane = &paneLayout{shown: 1, shade: 14, chosen: &ui.sidebarWidth}

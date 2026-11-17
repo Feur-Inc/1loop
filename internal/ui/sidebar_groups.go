@@ -141,6 +141,7 @@ func groupByProject[T any](projects []string, chats []T, folder func(T) string, 
 func (ui *desktopUI) renderSidebar(groups []targetGroup) {
 	ui.projectList.RemoveAll()
 	ui.sideGlide.begin()
+	ui.sideRowsNext = make(map[string]*sideRow, len(ui.sideRows))
 	var all, scratch []sideChat
 	for i := range groups {
 		listed := groups[i].listed()
@@ -163,6 +164,7 @@ func (ui *desktopUI) renderSidebar(groups []targetGroup) {
 	for _, group := range groups {
 		ui.addTargetGroup(group)
 	}
+	ui.sideRows, ui.sideRowsNext = ui.sideRowsNext, nil
 	ui.sideGlide.end(ui.projectList)
 	if ui.sideLists != nil {
 		ui.sideLists.Refresh() // the groups changed height: lay the column out again
@@ -212,9 +214,9 @@ func (ui *desktopUI) addTargetGroup(group targetGroup) {
 			header.badge = iconDot // a hidden chat is at work
 		}
 		if p == "" {
-			ui.addSide("project:"+key, header)
+			ui.addSide("project:"+key, ui.reuseRow("project:"+key, header, nil, nil))
 		} else {
-			ui.addSide("project:"+key, ui.withMore(header, func(anchor fyne.CanvasObject) *sheet {
+			ui.addSide("project:"+key, ui.reuseRow("project:"+key, header, nil, func(anchor fyne.CanvasObject) *sheet {
 				actions := []menuAction{{label: "New chat in " + name, icon: iconPlus, run: func() {
 					open(p)
 					if group.active {
@@ -253,6 +255,50 @@ func (ui *desktopUI) addTargetGroup(group targetGroup) {
 // addSide adds a sidebar entry under its key: the same chat or project
 // keeps its key from one rendering to the next, so it glides to its new
 // place instead of jumping there.
+// sideRow is a sidebar row kept from one rendering to the next: the
+// widget, its renderer and its icons are made once, and a rendering only
+// changes what changed (#475).
+type sideRow struct {
+	row    *tapRow
+	object fyne.CanvasObject                     // the row as listed (withMore, padded)
+	menu   func(anchor fyne.CanvasObject) *sheet // the ⋯ menu of the latest rendering
+}
+
+// reuseRow lists fresh, a row just described, as key: the row of that key
+// from the last rendering takes fresh's content and is listed in its stead,
+// refreshed only when something shows differently. menu, when given, is the
+// row's ⋯ (withMore); wrap places the row in the list.
+func (ui *desktopUI) reuseRow(key string, fresh *tapRow, wrap func(fyne.CanvasObject) fyne.CanvasObject, menu func(anchor fyne.CanvasObject) *sheet) fyne.CanvasObject {
+	if kept := ui.sideRows[key]; kept != nil && (kept.menu == nil) == (menu == nil) && kept.row.style == fresh.style {
+		row := kept.row
+		changed := row.text != fresh.text || row.icon != fresh.icon || row.selected != fresh.selected ||
+			row.accent != fresh.accent || row.truncate != fresh.truncate || row.trailing != fresh.trailing ||
+			row.detail != fresh.detail || row.badge != fresh.badge || row.mark != fresh.mark || row.markText != fresh.markText
+		row.text, row.icon, row.selected, row.accent, row.truncate = fresh.text, fresh.icon, fresh.selected, fresh.accent, fresh.truncate
+		row.trailing, row.detail, row.badge, row.mark, row.markText = fresh.trailing, fresh.detail, fresh.badge, fresh.mark, fresh.markText
+		row.onTap, row.onMiddle = fresh.onTap, fresh.onMiddle
+		kept.menu = menu
+		ui.sideRowsNext[key] = kept
+		if changed {
+			row.Refresh()
+		}
+		return kept.object
+	}
+	kept := &sideRow{row: fresh, menu: menu}
+	var object fyne.CanvasObject = fresh
+	if menu != nil {
+		object = ui.withMore(fresh, func(anchor fyne.CanvasObject) *sheet { return kept.menu(anchor) })
+	}
+	if wrap != nil {
+		object = wrap(object)
+	}
+	kept.object = object
+	if ui.sideRowsNext != nil {
+		ui.sideRowsNext[key] = kept
+	}
+	return object
+}
+
 func (ui *desktopUI) addSide(key string, object fyne.CanvasObject) {
 	ui.sideGlide.key(object, key)
 	ui.projectList.Add(object)
@@ -323,9 +369,11 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 		if nested, _ := nestedCount(chat.subchats); nested > 0 {
 			row.mark, row.markText = iconBranch, strconv.Itoa(nested)
 		}
-		ui.addSide("chat:"+chat.id, padded(0, 0, 28, 0, ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
+		ui.addSide("chat:"+chat.id, ui.reuseRow("chat:"+chat.id, row, func(object fyne.CanvasObject) fyne.CanvasObject {
+			return padded(0, 0, 28, 0, object)
+		}, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, chat.menu)
-		})))
+		}))
 		ui.addSubchatTree(chat)
 	}
 	if len(chats) > groupChatLimit {

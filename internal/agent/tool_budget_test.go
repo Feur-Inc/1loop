@@ -5,7 +5,9 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 
@@ -17,8 +19,8 @@ import (
 // its 118 tools of November 2026), stays within these budgets: the Context
 // panel's "MCP tools" count and tokens as 1loop estimates them (#447).
 const (
-	claudeToolCountBudget = 52
-	claudeToolTokenBudget = 13000
+	claudeToolCountBudget = 32
+	claudeToolTokenBudget = 8000
 )
 
 func githubFixture(t *testing.T) []extensions.MCPTool {
@@ -94,83 +96,79 @@ func TestClaudeToolBudgetCatchesTheWholeGitHubList(t *testing.T) {
 // Each of 1loop's own tools stays short, so a long description stands out.
 func TestOwnToolDescriptionsAreShort(t *testing.T) {
 	definitions := append(claudeMCPDefinitions(fullConfig()), coreToolDefinitions()...)
-	definitions = append(definitions, githubAttachmentTools()...)
+	definitions = append(definitions, githubDefinitionsList()...)
 	for _, definition := range definitions {
 		function := definition["function"].(map[string]any)
 		name := function["name"].(string)
 		if description := function["description"].(string); len(description) > 1000 {
 			t.Errorf("%s: description of %d bytes, over 1000", name, len(description))
 		}
-		if tokens := schemaTokens([]map[string]any{definition}); tokens > 450 {
-			t.Errorf("%s: about %d tokens, over 450", name, tokens)
+		// A grouped GitHub tool stands for up to seventeen of the server's.
+		limit := 450
+		if githubOps(name) != nil {
+			limit = 700
+		}
+		if tokens := schemaTokens([]map[string]any{definition}); tokens > limit {
+			t.Errorf("%s: about %d tokens, over %d", name, tokens, limit)
 		}
 	}
 }
 
-func TestGitHubCoreAndMore(t *testing.T) {
+func TestGitHubGroupedTools(t *testing.T) {
 	tools := githubFixture(t)
 	definitions := githubDefinitions(extensions.MCPServer{Name: "1loop-github-connector"}, tools)
-	names := map[string]bool{}
+	var names []string
 	for _, definition := range definitions {
-		names[definition["function"].(map[string]any)["name"].(string)] = true
+		names = append(names, definition["function"].(map[string]any)["name"].(string))
 	}
-	for _, name := range []string{"github_issue_read", "github_pull_request_read", "github_actions_list", "github_get_job_logs", githubMoreTool, githubUploadTool, githubViewTool} {
-		if !names[name] {
-			t.Errorf("%s is missing", name)
+	if strings.Join(names, ",") != "github_issues,github_pull_requests,github_code,github_actions" {
+		t.Fatalf("GitHub tools: %v", names)
+	}
+	// Every operation runs a tool the server has.
+	for _, name := range names {
+		for operation, op := range githubOps(name) {
+			if op.tool != "" && !slices.ContainsFunc(tools, func(tool extensions.MCPTool) bool { return tool.Name == op.tool }) {
+				t.Errorf("%s %s runs %s, not on the server", name, operation, op.tool)
+			}
 		}
 	}
-	for name := range githubCoreTools {
-		if !names["github_"+name] {
-			t.Errorf("core tool %s is not on the server's list", name)
-		}
-	}
-	if names["github_star_repository"] || names["github_create_automation"] {
-		t.Error("a specialised tool is in the list")
-	}
-	list := githubToolList(tools, "")
-	if !strings.Contains(list, "star_repository: ") || strings.Contains(list, "issue_read: ") {
-		t.Errorf("github_more's list:\n%s", list)
-	}
-	if list := githubToolList(tools, "gist"); !strings.Contains(list, "create_gist") || strings.Contains(list, "star_repository") {
-		t.Errorf("filtered list:\n%s", list)
+	if len(githubDefinitions(extensions.MCPServer{}, nil)) != 0 {
+		t.Error("tools offered without a server")
 	}
 }
 
-func TestCompactSchemaKeepsProperties(t *testing.T) {
-	schema := map[string]any{"type": "object", "properties": map[string]any{
-		"description": map[string]any{"type": "string", "description": strings.Repeat("word ", 80), "x-mcp-header": "d"},
-		"x-name":      map[string]any{"type": "string"},
-	}, "required": []any{"description"}}
-	compact := compactSchema(schema).(map[string]any)
-	properties := compact["properties"].(map[string]any)
-	if _, ok := properties["x-name"]; !ok {
-		t.Fatal("a property named x-name was dropped")
+func TestGitHubArguments(t *testing.T) {
+	args := map[string]any{"operation": "read", "repository": "Feur-Inc/1loop", "number": 452.0, "per_page": 5.0, "title": "ignored"}
+	got, err := githubArguments(githubPullOps["read"], args)
+	if err != nil {
+		t.Fatal(err)
 	}
-	property := properties["description"].(map[string]any)
-	if _, ok := property["x-mcp-header"]; ok || len(property["description"].(string)) > 125 {
-		t.Fatalf("property not compacted: %v", property)
+	want := map[string]any{"owner": "Feur-Inc", "repo": "1loop", "pullNumber": 452.0, "perPage": 5.0, "method": "get"}
+	if fmt.Sprint(got) != fmt.Sprint(want) {
+		t.Fatalf("got %v, want %v", got, want)
 	}
-	if got := shortText("One. Two three four five six seven eight nine ten.", 30); got != "One." && !strings.HasSuffix(got, "…") {
-		t.Fatalf("shortText: %q", got)
+	got, _ = githubArguments(githubActionOps["jobs"], map[string]any{"repository": "a/b", "run_id": 7.0})
+	if got["resource_id"] != 7.0 || got["method"] != "list_workflow_jobs" {
+		t.Fatalf("jobs: %v", got)
+	}
+	if _, err := githubArguments(githubIssueOps["read"], map[string]any{"repository": "nope"}); err == nil {
+		t.Fatal("a repository without owner passed")
 	}
 }
 
-func TestGitHubMoreListsAndDescribes(t *testing.T) {
-	tools := githubFixture(t)
-	backend := &App{}
-	run := func(arguments string) (string, error) {
-		call := ToolCall{ID: "1"}
-		call.Function.Name, call.Function.Arguments = githubMoreTool, arguments
-		text, _, err := backend.callGitHubMore(context.Background(), Config{}, extensions.MCPServer{}, tools, call, func() {}, func(string, any) {})
-		return text, err
+func TestGitHubAttachmentOperations(t *testing.T) {
+	call := ToolCall{ID: "1"}
+	call.Function.Name, call.Function.Arguments = githubPullsTool, `{"operation":"upload","repository":"a/b","files":[{"path":"shot.png"}]}`
+	inner, ok := githubAttachmentCall(call)
+	if !ok || inner.Function.Name != githubUploadTool || !strings.Contains(inner.Function.Arguments, `"shot.png"`) {
+		t.Fatalf("upload: %v %v", inner, ok)
 	}
-	if text, err := run(`{"operation":"list","query":"star"}`); err != nil || !strings.Contains(text, "star_repository") {
-		t.Fatalf("list: %q %v", text, err)
+	call.Function.Arguments = `{"operation":"read","number":1}`
+	if _, ok := githubAttachmentCall(call); ok {
+		t.Fatal("read taken for an attachment")
 	}
-	if text, err := run(`{"operation":"describe","tool":"github_create_gist"}`); err != nil || !strings.Contains(text, `"filename"`) {
-		t.Fatalf("describe: %q %v", text, err)
-	}
-	if _, err := run(`{"operation":"call","tool":"no_such_tool","arguments":{}}`); err == nil || !strings.Contains(err.Error(), "list them") {
-		t.Fatalf("unknown tool: %v", err)
+	action, _ := otherAction(githubIssuesTool, `{"operation":"read","repository":"a/b","number":3}`)
+	if action.target != "GitHub issues · read · a/b #3" {
+		t.Fatalf("summary: %q", action.target)
 	}
 }

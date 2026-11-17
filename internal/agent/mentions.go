@@ -48,7 +48,7 @@ func Mentions(cfg Config) []Mention {
 	if computerToolDefinition() != nil {
 		add("computer_use", "Computer Use", "Control the computer's screen, mouse and keyboard", "computer_use")
 	}
-	add("github", "GitHub", "Use the GitHub connector", "github_view_attachment", "github_upload_attachments")
+	add("github", "GitHub", "Use the GitHub connector", githubIssuesTool, githubPullsTool, githubCodeTool, githubActionsTool)
 	add("image_gen", "Image generation", "Generate or edit an image", "imagegen")
 	for _, server := range extensions.Enabled().MCP {
 		name := mentionName(server.Name)

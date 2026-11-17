@@ -55,7 +55,7 @@ func githubAttachmentTools() []map[string]any {
 }
 
 func githubAttachmentInstructions() string {
-	return " To show screenshots or recordings in an issue, pull request or comment, upload them with " + githubUploadTool + " and put the returned Markdown in the body. Use " + githubViewTool + " to look at images already attached."
+	return " To show screenshots or recordings in an issue, pull request or comment, use operation upload of " + githubIssuesTool + " or " + githubPullsTool + " and put the returned Markdown in the body; view_attachment opens images already attached."
 }
 
 // workspaceAttachment reads a file of the workspace, here or on the run's

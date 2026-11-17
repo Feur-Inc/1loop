@@ -12,7 +12,6 @@ package ui
 
 import (
 	"image/color"
-	"os"
 	"sync"
 	"time"
 
@@ -125,7 +124,7 @@ func (ui *desktopUI) syncBackdrop() {
 		b.shader.Hide()
 		return
 	}
-	data, err := os.ReadFile(file.Shader)
+	data, err := palette.ReadThemeFile(file.Shader)
 	if err != nil {
 		ui.shaderFailed(file.Shader, err)
 		return

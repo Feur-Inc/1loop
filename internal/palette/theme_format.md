@@ -1,4 +1,4 @@
-Theme file format (1loop desktop). A theme is `<name>.toml` in the themes folder, with an optional `.frag` shader beside it. Every key is optional; colours are `#rrggbb` (`#rrggbbaa` for washes). Unknown keys are errors.
+Theme file format (1loop desktop). A theme is `<name>.zip` in the themes folder: `theme.toml` plus an optional `.frag` shader (and fonts, licence, preview; paths relative inside the zip, no `..`). A folder `<name>/` with the same layout, or a loose `<name>.toml` with files beside it, also work. theme_write creates the zip for you. Every key is optional; colours are `#rrggbb` (`#rrggbbaa` for washes). Unknown keys are errors.
 
 ```toml
 name = "Nord"             # shown in the picker

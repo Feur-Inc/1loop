@@ -9,16 +9,34 @@
 - macOS: `~/Library/Application Support/1loop/themes/`
 - Windows: `%AppData%\1loop\themes\`
 
-Each `*.toml` file there is a theme. It appears in **Settings → General → Theme** next to Dark, Light and System as soon as it is saved, without a restart, and the theme in use is painted again each time its file changes. A file that cannot be read is listed in red under the theme picker with the reason (and the line, for a syntax error); the other themes keep working, and a theme in use whose file breaks shows 1loop's dark look until it is fixed.
+A theme is stored in one of three ways (see [One zip per theme](#one-zip-per-theme)): a `.zip` file, a folder laid out like the zip, or loose files (a `.toml` with its shader and fonts beside it). Each one there is a theme. It appears in **Settings → General → Theme** next to Dark, Light and System as soon as it is saved, without a restart, and the theme in use is painted again each time its file changes. A file that cannot be read is listed in red under the theme picker with the reason (and the line, for a syntax error); the other themes keep working, and a theme in use whose file breaks shows 1loop's dark look until it is fixed.
 
 Under the picker:
 
 - **New theme** writes a commented template (every key, 1loop's dark colours) and opens it in your editor.
-- **Duplicate** copies the theme in use into a new file: a theme file as it is, or Dark/Light as a template.
-- **Edit** opens the theme file in use.
+- **Duplicate** copies the theme in use: a theme file as it is, a zip or folder as a folder, or Dark/Light as a template.
+- **Edit** opens the theme file in use (for a zip, **Unpack to edit** copies it to a folder first).
+- **Pack into zip** turns a loose theme in use into a zip.
 - **Open folder** opens the themes folder.
 
 A project can have its own theme: in the sidebar, the project's menu → **Theme…**. Its chats use that theme while they are on screen; the others keep the global one.
+
+## One zip per theme
+
+A theme with a shader, fonts and a licence is several files; as a zip they stay together. Put `<name>.zip` in the themes folder (the name is the theme's id, `file:<name>`). Inside, at the root:
+
+```
+midnight.zip
+├── theme.toml          the theme (the only .toml, or the one called theme.toml)
+├── aurora.frag         shaders
+├── fonts/Maple.ttf     fonts, with their licence
+├── fonts/LICENSE.txt
+└── preview.png         optional picture
+```
+
+The theme refers to the other files by relative path inside the zip (`shader = "aurora.frag"`, `font = "fonts/Maple.ttf"`); each theme carries its own copy of a shared font and its licence. A **folder** `themes/<name>/` with the same layout is read the same way: it is the form to edit by hand, the zip is the form to share. Loose files keep working.
+
+Adding, replacing or removing a zip or folder is picked up within a second. 1loop reads a zip in memory and never extracts it. Safety: an entry with an absolute path or `..` is refused, a theme may have at most 200 entries and 64 MB unpacked, and only `.toml`, shaders (`.frag`, `.glsl`), fonts (`.ttf`, `.otf`), images (`.png`, `.jpg`, `.webp`, `.gif`) and text files (`.txt`, `.md`, licences) are allowed. A broken zip is listed in red with the reason. Two themes with the same name (`a.zip` and `a.toml`) are an error: keep one.
 
 ## Format
 
@@ -120,7 +138,7 @@ Unknown keys are errors, so a typo is reported rather than ignored.
 
 ## The agent
 
-The agent reads a short copy of this format on demand (`internal/palette/theme_format.md`, the settings tool's `theme_format`), writes a theme and its shader with `theme_write` (checked first, errors given back in plain words, saved only after you approve it), and switches to it with the settings tool: `general.theme` takes `file:<name>` for `<name>.toml`.
+The agent reads a short copy of this format on demand (`internal/palette/theme_format.md`, the settings tool's `theme_format`), writes a theme and its shader with `theme_write` (as `<name>.zip`; a theme that is already a folder or loose files is replaced where it is) (checked first, errors given back in plain words, saved only after you approve it), and switches to it with the settings tool: `general.theme` takes `file:<name>` for `<name>.toml`.
 
 ## matugen
 

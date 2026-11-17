@@ -367,6 +367,24 @@ func completionOnce(ctx context.Context, cfg Config, messages []Message, tools b
 	return out, err
 }
 
+// openRouterRouting sets where OpenRouter sends a chat's requests: the
+// connection's provider routing, and the chat's session_id, which keeps it
+// on one provider from its first request so its cache is read (OpenRouter's
+// sticky routing; without it, only after a cache hit: a measured DeepSeek
+// run missed 11 times). A fixed provider order would turn that off, and
+// lose the fallbacks.
+func openRouterRouting(cfg Config, body map[string]any) {
+	if cfg.Provider != "openrouter" {
+		return
+	}
+	if len(cfg.Routing) > 0 {
+		body["provider"] = cfg.Routing
+	}
+	if key := promptCacheKey(cfg); key != "" {
+		body["session_id"] = key
+	}
+}
+
 func chatCompletion(ctx context.Context, cfg Config, messages []Message, tools bool, emit emitter) (Message, error) {
 	wireMessages := append([]Message(nil), messages...)
 	for i := range wireMessages {
@@ -401,9 +419,7 @@ func chatCompletion(ctx context.Context, cfg Config, messages []Message, tools b
 		// The call's own cost in its last chunk, for the usage ledger.
 		body["usage"] = map[string]any{"include": true}
 	}
-	if cfg.Provider == "openrouter" && len(cfg.Routing) > 0 {
-		body["provider"] = cfg.Routing
-	}
+	openRouterRouting(cfg, body)
 	if cfg.Effort != "" {
 		if cfg.Provider == "openrouter" {
 			if cfg.Effort == "enabled" {

@@ -232,3 +232,20 @@ func TestLongRunCompactionDefault(t *testing.T) {
 		t.Errorf("Claude Code: %d", limit)
 	}
 }
+
+func TestOpenRouterSessionID(t *testing.T) {
+	body := map[string]any{}
+	openRouterRouting(Config{Provider: "openrouter", ContextKey: "chat-1"}, body)
+	id, _ := body["session_id"].(string)
+	if !strings.HasPrefix(id, "1loop-") || len(id) > 256 {
+		t.Fatalf("session_id: %q", id)
+	}
+	if _, ok := body["provider"]; ok {
+		t.Fatal("a provider order without routing set")
+	}
+	other := map[string]any{}
+	openRouterRouting(Config{Provider: "compatible", ContextKey: "chat-1"}, other)
+	if len(other) != 0 {
+		t.Fatalf("set for another provider: %v", other)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"math"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/driver"
 	"fyne.io/fyne/v2/internal/svg"
 )
 
@@ -17,6 +18,7 @@ const (
 
 // Refresh instructs the containing canvas to refresh the specified obj.
 func Refresh(obj fyne.CanvasObject) {
+	driver.Refreshes.Add(1)
 	app := fyne.CurrentApp()
 	if app == nil || app.Driver() == nil {
 		return

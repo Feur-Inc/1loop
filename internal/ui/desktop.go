@@ -233,7 +233,9 @@ type desktopUI struct {
 	newChat       *tapRow
 	connections   *tapRow
 	projectList   *fyne.Container
-	sideGlide     *glideLayout // projectList's layout: its rows glide between renderings
+	sideGlide     *glideLayout        // projectList's layout: its rows glide between renderings
+	sideRows      map[string]*sideRow // the rows of the last rendering, by key, reused by the next (sidebar_groups.go)
+	sideRowsNext  map[string]*sideRow
 	sideLists     *fyne.Container
 	sideChats     []sideChat // the chats listed, for search
 	sideOrder     []sideChat // the same in the sidebar's order, for the previous and next chat
@@ -431,10 +433,17 @@ func runDesktop(backend *agent.App, root string) {
 	benchMark("sidebar rendered")
 	ui.refreshModels()
 	ui.refreshContextRing()
-	ui.startRemote()
-	ui.linkServers()
-	ui.watchUpdates()
-	benchMark("services started")
+	// What the first frame does not show starts right after it (#475): the
+	// phone remote (its certificate), the linked servers, the update check
+	// and the other windows of the last run.
+	afterFirstFrame := func() {
+		ui.startRemote()
+		ui.linkServers()
+		ui.watchUpdates()
+		benchMark("services started")
+		ui.restoreWindows(read.state.Windows) // the other windows of the last run, on their chats
+		benchMark("windows restored")
+	}
 	ui.window.Canvas().Focus(ui.prompt)
 	// The launch sequence covers the first frames and only starts once the
 	// window is really on screen, otherwise it would play unseen.
@@ -458,6 +467,9 @@ func runDesktop(backend *agent.App, root string) {
 		clipboardReady()
 		windowIdentity(ui.window) // again, should the window not have existed yet below
 		ui.startFrames()
+		// Started now, it would run before the first frame: the queue is
+		// emptied before each one.
+		time.AfterFunc(100*time.Millisecond, func() { fyne.Do(afterFirstFrame) })
 		size := ui.window.Canvas().Size()
 		platform.Devf("app", "window %.0f x %.0f at scale %.2f, own title bar %v", size.Width, size.Height, ui.window.Canvas().Scale(), ui.chrome)
 		time.AfterFunc(180*time.Millisecond, func() { fyne.Do(launch.play) })
@@ -485,8 +497,7 @@ func runDesktop(backend *agent.App, root string) {
 		go ui.bench(kind)
 	}
 	windowIdentity(ui.window)
-	ui.restoreLayout(read.state.Split)    // the main window's panes of the last run
-	ui.restoreWindows(read.state.Windows) // the other windows of the last run, on their chats
+	ui.restoreLayout(read.state.Split) // the main window's panes of the last run
 	benchMark("main loop")
 	a.Run()
 }

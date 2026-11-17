@@ -10,8 +10,11 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	_ "crypto/sha512" // the release signatures' hash
+	_ "embed"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -22,14 +25,32 @@ import (
 	"runtime"
 	"strings"
 	"time"
+
+	"golang.org/x/crypto/openpgp"
 )
 
-const claudeDownloads = "https://downloads.claude.ai/claude-code-releases"
+// claudeDownloads is where Claude Code's releases are (a variable for tests).
+var claudeDownloads = "https://downloads.claude.ai/claude-code-releases"
+
+// Anthropic's Claude Code release key, as published at
+// downloads.claude.ai/keys/claude-code.asc: each release's manifest.json is
+// signed with it (manifest.json.sig). Pinned here, with its fingerprint.
+var (
+	//go:embed claude-code-release-key.asc
+	claudeReleaseKey         string
+	claudeReleaseFingerprint = "31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE"
+)
+
+// ClaudeInstallDir is where the server's Install Claude Code puts the
+// claude command (InstallClaudeCodeIn): a folder of its data directory, so
+// it survives a new container. ClaudeExecutable looks there last.
+var ClaudeInstallDir string
 
 // ClaudeExecutable is the claude command: on PATH, else where Claude Code's
 // installer puts it (~/.local/bin), a folder a desktop session's PATH often
-// lacks. In the Flatpak it is the host's, through the host-claude launcher
-// linked as claude, which looks in both places on the host.
+// lacks, else the server's own (ClaudeInstallDir). In the Flatpak it is the
+// host's, through the host-claude launcher linked as claude, which looks in
+// both places on the host.
 func ClaudeExecutable() (string, error) {
 	if os.Getenv("ONELOOP_FLATPAK") != "" {
 		if exec.Command("/app/lib/1loop/host/host-run", "sh", "-c", `command -v claude >/dev/null || [ -x "$HOME/.local/bin/claude" ]`).Run() == nil {
@@ -46,6 +67,12 @@ func ClaudeExecutable() (string, error) {
 			path += ".exe"
 		}
 		if info, err := os.Stat(path); err == nil && !info.IsDir() {
+			return path, nil
+		}
+	}
+	if ClaudeInstallDir != "" {
+		path := filepath.Join(ClaudeInstallDir, claudeName())
+		if info, err := os.Stat(path); err == nil && !info.IsDir() && info.Mode()&0111 != 0 {
 			return path, nil
 		}
 	}
@@ -91,15 +118,96 @@ func claudePlatform() string {
 
 var claudeRelease = regexp.MustCompile(`^\d+\.\d+\.\d+\S*$`)
 
+func claudeName() string {
+	if runtime.GOOS == "windows" {
+		return "claude.exe"
+	}
+	return "claude"
+}
+
 // InstallClaudeCode does what Anthropic's install scripts do
 // (claude.ai/install.sh and install.ps1): it downloads the latest release
 // for this system, checks it against the SHA-256 of the release's manifest,
-// then runs its `claude install`, which sets Claude Code up in ~/.local/bin
-// for this user, without administrator rights.
+// itself checked against Anthropic's signature, then runs its
+// `claude install`, which sets Claude Code up in ~/.local/bin for this
+// user, without administrator rights.
 func InstallClaudeCode(ctx context.Context, progress func(string)) (string, error) {
 	if problem := ClaudeInstallProblem(); problem != "" {
 		return "", fmt.Errorf("%s", problem)
 	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	downloads := filepath.Join(home, ".claude", "downloads")
+	binary, err := downloadClaudeCode(ctx, downloads, progress)
+	if binary != "" {
+		defer os.Remove(binary) // the scripts' cleanup: `claude install` keeps its own copy
+	}
+	if err != nil {
+		return "", err
+	}
+	progress("Setting up Claude Code…")
+	setup, cancel := context.WithTimeout(ctx, 10*time.Minute)
+	defer cancel()
+	command := exec.CommandContext(setup, binary, "install")
+	command.Dir = home
+	var output bytes.Buffer
+	command.Stdout, command.Stderr = &output, &output
+	if err := command.Run(); err != nil {
+		return "", fmt.Errorf("claude install failed (%v): %s", err, lastOutput(output.String()))
+	}
+	return ClaudeExecutable()
+}
+
+// InstallClaudeCodeIn puts the latest Claude Code's claude command in dir,
+// for the server (ClaudeInstallDir): the same checked download as
+// InstallClaudeCode, kept as it is, since `claude install` would set it up
+// in the home folder, which a container loses. It must start before it
+// replaces a previous one.
+func InstallClaudeCodeIn(ctx context.Context, dir string, progress func(string)) (string, error) {
+	if dir == "" {
+		return "", errors.New("This server has no folder to install Claude Code in")
+	}
+	if problem := ClaudeInstallProblem(); problem != "" {
+		return "", fmt.Errorf("%s", problem)
+	}
+	binary, err := downloadClaudeCode(ctx, dir, progress)
+	if binary != "" {
+		defer os.Remove(binary) // gone once renamed
+	}
+	if err != nil {
+		return "", err
+	}
+	progress("Checking that Claude Code starts…")
+	check, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
+	command := exec.CommandContext(check, binary, "--version")
+	command.Env = append(os.Environ(), "DISABLE_AUTOUPDATER=1")
+	if output, err := command.CombinedOutput(); err != nil {
+		return "", fmt.Errorf("Claude Code was downloaded but does not start (%v): %s", err, lastOutput(string(output)))
+	}
+	path := filepath.Join(dir, claudeName())
+	if err := os.Rename(binary, path); err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+func lastOutput(text string) string {
+	text = strings.TrimSpace(text)
+	if len(text) > 600 {
+		text = "…" + text[len(text)-600:]
+	}
+	return text
+}
+
+// downloadClaudeCode saves the latest release for this system in dir and
+// says where. The release's manifest must carry Anthropic's signature, and
+// the binary the manifest's SHA-256; nothing unchecked is kept. The path
+// is returned with an error too once the file may exist, for the caller to
+// remove.
+func downloadClaudeCode(ctx context.Context, dir string, progress func(string)) (string, error) {
 	target := claudePlatform()
 	client := &http.Client{Timeout: 30 * time.Minute}
 	get := func(address string, limit int64) ([]byte, error) {
@@ -130,6 +238,13 @@ func InstallClaudeCode(ctx context.Context, progress func(string)) (string, erro
 	if err != nil {
 		return "", err
 	}
+	signature, err := get(claudeDownloads+"/"+version+"/manifest.json.sig", 64<<10)
+	if err != nil {
+		return "", fmt.Errorf("Claude Code %s's signature could not be downloaded: %w", version, err)
+	}
+	if err := checkClaudeSignature(raw, signature); err != nil {
+		return "", err
+	}
 	var manifest struct {
 		Platforms map[string]struct {
 			Binary   string `json:"binary"`
@@ -144,38 +259,33 @@ func InstallClaudeCode(ctx context.Context, progress func(string)) (string, erro
 	if !ok || len(release.Checksum) != 64 || release.Binary != filepath.Base(release.Binary) || release.Binary == "" {
 		return "", fmt.Errorf("Claude Code %s has no build for %s", version, target)
 	}
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return "", err
-	}
-	downloads := filepath.Join(home, ".claude", "downloads")
-	if err := os.MkdirAll(downloads, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0755); err != nil {
 		return "", err
 	}
 	name := "claude-" + version + "-" + target
 	if runtime.GOOS == "windows" {
 		name += ".exe"
 	}
-	binary := filepath.Join(downloads, name)
-	defer os.Remove(binary) // the scripts' cleanup: `claude install` keeps its own copy
-	if err := claudeDownload(ctx, client, claudeDownloads+"/"+version+"/"+target+"/"+release.Binary, binary, release.Checksum, release.Size, progress); err != nil {
-		return "", err
+	binary := filepath.Join(dir, name)
+	return binary, claudeDownload(ctx, client, claudeDownloads+"/"+version+"/"+target+"/"+release.Binary, binary, release.Checksum, release.Size, progress)
+}
+
+// checkClaudeSignature accepts a release manifest only with a signature by
+// Anthropic's pinned release key.
+func checkClaudeSignature(manifest, signature []byte) error {
+	keys, err := openpgp.ReadArmoredKeyRing(strings.NewReader(claudeReleaseKey))
+	if err != nil {
+		return err
 	}
-	progress("Setting up Claude Code…")
-	setup, cancel := context.WithTimeout(ctx, 10*time.Minute)
-	defer cancel()
-	command := exec.CommandContext(setup, binary, "install")
-	command.Dir = home
-	var output bytes.Buffer
-	command.Stdout, command.Stderr = &output, &output
-	if err := command.Run(); err != nil {
-		text := strings.TrimSpace(output.String())
-		if len(text) > 600 {
-			text = "…" + text[len(text)-600:]
-		}
-		return "", fmt.Errorf("claude install failed (%v): %s", err, text)
+	check := openpgp.CheckDetachedSignature
+	if bytes.HasPrefix(bytes.TrimSpace(signature), []byte("-----BEGIN PGP SIGNATURE-----")) {
+		check = openpgp.CheckArmoredDetachedSignature // as Anthropic publishes it
 	}
-	return ClaudeExecutable()
+	signer, err := check(keys, bytes.NewReader(manifest), bytes.NewReader(signature))
+	if err != nil || signer == nil || !strings.EqualFold(hex.EncodeToString(signer.PrimaryKey.Fingerprint[:]), claudeReleaseFingerprint) {
+		return fmt.Errorf("the Claude Code release failed its signature verification")
+	}
+	return nil
 }
 
 // claudeDownload saves a release binary, refusing it unless its SHA-256 is

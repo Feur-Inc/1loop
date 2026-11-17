@@ -9,7 +9,6 @@ import (
 	"image"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/canvas"
 
 	"1loop/internal/core"
 )
@@ -19,33 +18,41 @@ const transcriptThumbnailLimit = 64
 // Display-sized images are retained instead of large decoded originals. The
 // cache is bounded and used on the UI thread, including remote completions.
 type transcriptThumbnailCache struct {
-	images map[[32]byte]image.Image
+	images map[[32]byte]cachedThumbnail
 	order  [transcriptThumbnailLimit][32]byte
 	next   int
 }
 
-func (cache *transcriptThumbnailCache) get(part core.ImagePart) image.Image {
+// cachedThumbnail is a picture made small, with the size of the original.
+type cachedThumbnail struct {
+	img           image.Image
+	width, height int
+}
+
+// getSized is the thumbnail of part and the size of the full picture.
+func (cache *transcriptThumbnailCache) getSized(part core.ImagePart) (image.Image, int, int) {
 	key := sha256.Sum256([]byte(part.Data))
-	if img := cache.images[key]; img != nil {
-		return img
+	if cached, ok := cache.images[key]; ok {
+		return cached.img, cached.width, cached.height
 	}
 	raw, err := base64.StdEncoding.DecodeString(part.Data)
 	if err != nil || !core.ImageDecodable(raw) {
-		return nil
+		return nil, 0, 0
 	}
 	img, _, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {
-		return nil
+		return nil, 0, 0
 	}
+	width, height := img.Bounds().Dx(), img.Bounds().Dy()
 	img = thumbnail(img, 256)
 	if cache.images == nil {
-		cache.images = make(map[[32]byte]image.Image)
+		cache.images = make(map[[32]byte]cachedThumbnail)
 	}
 	delete(cache.images, cache.order[cache.next])
 	cache.order[cache.next] = key
 	cache.next = (cache.next + 1) % transcriptThumbnailLimit
-	cache.images[key] = img
-	return img
+	cache.images[key] = cachedThumbnail{img, width, height}
+	return img, width, height
 }
 
 type userImageView struct {
@@ -56,11 +63,11 @@ type userImageView struct {
 func (ui *desktopUI) setUserImages(view *userImageView, parts []core.ImagePart) {
 	var pictures []fyne.CanvasObject
 	for _, part := range parts {
-		if img := ui.thumbnails.get(part); img != nil {
-			picture := canvas.NewImageFromImage(img)
-			picture.FillMode = canvas.ImageFillContain
-			picture.SetMinSize(fyne.NewSize(110, 110))
-			pictures = append(pictures, surface(picture, colCode, colBorderSoft, 8, 0))
+		if img, w, h := ui.thumbnails.getSized(part); img != nil {
+			// Its own shape, within 240 × 160, never larger than the
+			// original (the thumbnail may be smaller than that).
+			size := fitPictureBox(w, h, messagePictureWidth, messagePictureHeight)
+			pictures = append(pictures, newPictureTile(img, size, func() { ui.openPicture("Image", part) }, nil))
 		}
 	}
 	view.pictures.Objects = pictures

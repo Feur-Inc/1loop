@@ -293,7 +293,7 @@ func (backend *App) machineTool(ctx context.Context, machine Machine, root strin
 		begin()
 		if args.Detach != nil && *args.Detach {
 			tasks, _ := ctx.Value(tasksContextKey{}).(*BackgroundTasks)
-			output, err := startMachineBackground(tasks, machine, dir, args.Command)
+			output, err := startMachineBackground(ctx, tasks, machine, dir, args.Command)
 			return output, "", err
 		}
 		timeout, cancel := context.WithTimeout(ctx, shellTimeout(args.Timeout))

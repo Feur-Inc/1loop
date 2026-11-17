@@ -88,7 +88,7 @@
       "key": "general.theme",
       "section": "general",
       "title": "Theme",
-      "description": "Dark, light, or the system's: follows the computer's or the phone's dark mode as it changes.",
+      "description": "Dark, light, the system's (follows the computer's or the phone's dark mode as it changes), or on the computer a theme file of your own.",
       "keywords": [
         "theme",
         "dark",
@@ -98,7 +98,12 @@
         "colors",
         "colours",
         "night",
-        "system"
+        "system",
+        "theme file",
+        "custom theme",
+        "matugen",
+        "roundness",
+        "corners"
       ],
       "kind": "choice",
       "values": [
@@ -220,6 +225,43 @@
       "kind": "toggle",
       "where": "desktop",
       "protected": true
+    },
+    {
+      "key": "general.shader_fps",
+      "section": "general",
+      "title": "Shader background",
+      "description": "How often a theme's shader background is drawn, or off for its plain colour (a background picture too). It pauses while the window is hidden or in the background.",
+      "keywords": [
+        "shader",
+        "background",
+        "glsl",
+        "animation",
+        "fps",
+        "frame rate",
+        "theme",
+        "wallpaper",
+        "battery"
+      ],
+      "kind": "choice",
+      "values": [
+        {
+          "id": "off",
+          "label": "Off"
+        },
+        {
+          "id": "15",
+          "label": "15 fps"
+        },
+        {
+          "id": "30",
+          "label": "30 fps"
+        },
+        {
+          "id": "60",
+          "label": "60 fps"
+        }
+      ],
+      "where": "desktop"
     },
     {
       "key": "general.animations",
@@ -345,6 +387,25 @@
       ],
       "kind": "toggle",
       "where": "both"
+    },
+    {
+      "key": "models.naming_model",
+      "section": "models",
+      "title": "Chat naming model",
+      "description": "A model that names each new chat from the words of its first message, never its pictures or files. None: a chat is named after the start of its first message.",
+      "keywords": [
+        "name",
+        "naming",
+        "title",
+        "rename",
+        "auto name",
+        "auto title",
+        "summarize",
+        "summary",
+        "chat name"
+      ],
+      "kind": "action",
+      "where": "desktop"
     },
     {
       "key": "agent.approval_mode",

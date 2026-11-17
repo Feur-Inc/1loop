@@ -52,18 +52,6 @@ func tapRows(object fyne.CanvasObject) []*tapRow {
 	return rows
 }
 
-// tapText taps the first row or button with that text.
-func tapText(t *testing.T, object fyne.CanvasObject, text string) {
-	t.Helper()
-	for _, row := range tapRows(object) {
-		if row.text == text {
-			row.onTap()
-			return
-		}
-	}
-	t.Fatalf("no %q here", text)
-}
-
 // topSheet is the dialog on top of the window.
 func topSheet(t *testing.T, ui *desktopUI) *sheet {
 	t.Helper()

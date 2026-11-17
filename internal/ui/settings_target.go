@@ -46,6 +46,9 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 	for _, object := range ui.targetRows() {
 		page.Add(object)
 	}
+	if ui.server != nil { // Install Chromium / Claude Code, while the server lacks them (#406)
+		page.Add(ui.server.installRows())
+	}
 	page.Add(sectionTitle(registry.GroupDevices))
 	page.Add(partNote("The phones and browsers that can use this 1loop. Forgetting one stops its access at once: it must be paired again to come back."))
 	page.Add(partTitle("Paired with this computer"))

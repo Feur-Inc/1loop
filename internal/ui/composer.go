@@ -47,8 +47,9 @@ type chatEntry struct {
 	keys     func(*fyne.KeyEvent) bool // the command menu's keys, true when it took one
 	onFocus  func(bool)
 	shortcut func(fyne.Shortcut) bool
-	paste    func() bool  // image-aware paste (Ctrl+V), true when it handled the key
-	oversize func(string) // takes a text too long for the prompt (textTooBig) as an attachment
+	paste    func() bool           // image-aware paste (Ctrl+V), true when it handled the key
+	oversize func(string)          // takes a text too long for the prompt (textTooBig) as an attachment
+	switched func(from, to string) // another conversation's draft is about to show
 	rows     int
 	measure  *widget.RichText
 	resized  func()
@@ -260,14 +261,14 @@ func (layoutSpec *composerControlsLayout) Layout(o []fyne.CanvasObject, size fyn
 // drop shadow out around it, past its edges.
 type haloLayout struct {
 	drop, glow *shadow
-	radius     float32
+	radius     float32 // the card's, at roundness 1
 }
 
 func (layoutSpec *haloLayout) MinSize(o []fyne.CanvasObject) fyne.Size { return o[len(o)-1].MinSize() }
 
 func (layoutSpec *haloLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
-	layoutSpec.glow.layout(fyne.NewPos(0, -2), size, layoutSpec.radius)
-	layoutSpec.drop.layout(fyne.NewPos(0, 3), size, layoutSpec.radius)
+	layoutSpec.glow.layout(fyne.NewPos(0, -2), size, rounded(layoutSpec.radius))
+	layoutSpec.drop.layout(fyne.NewPos(0, 3), size, rounded(layoutSpec.radius))
 	o[len(o)-1].Move(fyne.Position{})
 	o[len(o)-1].Resize(size)
 }
@@ -543,20 +544,48 @@ func (ui *desktopUI) renderAttachments() {
 		if err != nil {
 			continue
 		}
-		view := canvas.NewImageFromImage(img)
-		view.FillMode = canvas.ImageFillContain
-		view.SetMinSize(fyne.NewSize(64, 64))
-		remove := newRow("", iconClose, styleWindow, func() {
+		// Its own shape, 64 high: the full picture opens in the viewer.
+		bounds := img.Bounds()
+		size := fitPictureBox(bounds.Dx(), bounds.Dy(), composerPictureWidth, composerPictureHeight)
+		ui.attachRow.Add(newPictureTile(thumbnail(img, 2*composerPictureWidth), size, func() { ui.openImage("Image", img) }, func() {
 			ui.attachments = append(ui.attachments[:i], ui.attachments[i+1:]...)
 			ui.renderAttachments()
-		})
-		ui.attachRow.Add(container.NewStack(surface(view, colCode, colBorderSoft, 8, 0), container.NewBorder(nil, nil, nil, remove)))
+		}))
 	}
 	if len(ui.attachRow.Objects) == 0 {
 		ui.attachTray.Hide()
 	} else {
 		ui.attachTray.Show()
 	}
+}
+
+// parkedAttachments are the pictures and files staged in a draft that is
+// not shown: like its text, they wait for its conversation to come back.
+type parkedAttachments struct {
+	images []core.ImagePart
+	files  []fileAttachment
+}
+
+// switchAttachments sets aside the attachments of the draft being left and
+// brings back those of the draft about to show, so that a picture pasted in
+// one chat is never sent from another (#409). A server chat's own files are
+// dropped by remoteDesktop.selectChat.
+func (ui *desktopUI) switchAttachments(from, to string) {
+	if from == to {
+		return
+	}
+	if ui.parked == nil {
+		ui.parked = map[string]parkedAttachments{}
+	}
+	if len(ui.attachments)+len(ui.fileAttachments) > 0 {
+		ui.parked[from] = parkedAttachments{ui.attachments, ui.fileAttachments}
+	} else {
+		delete(ui.parked, from)
+	}
+	back := ui.parked[to]
+	delete(ui.parked, to)
+	ui.attachments, ui.fileAttachments = back.images, back.files
+	ui.renderAttachments()
 }
 
 // takeAttachments hands the staged pictures to a message and clears them.
@@ -809,7 +838,7 @@ func (ui *desktopUI) queueRow(steer bool, index int, messageValue agent.Message)
 		bar.Add(a)
 	}
 	hover := canvas.NewRectangle(color.Transparent)
-	hover.CornerRadius = 8
+	hover.CornerRadius = rounded(8)
 	row := container.NewStack(hover, padded(0, 0, 4, 2, container.NewBorder(nil, nil, padded(0, 0, 0, 4, badge), bar, label)))
 	revealOnHover(label, hover, actions, tips, ui.tips)
 	return row

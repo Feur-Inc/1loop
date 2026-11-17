@@ -275,6 +275,7 @@ func (cfg *Config) InheritSession(from Config) {
 // ClearSessions forgets every Claude Code session of the chat.
 func (cfg *Config) ClearSessions() {
 	cfg.Session, cfg.SessionMark, cfg.OtherSessions = "", 0, nil
+	cfg.ForkSession, cfg.ForkWorkspace = "", ""
 }
 
 // claudeHomes are the Claude Code folders on this computer: the system one

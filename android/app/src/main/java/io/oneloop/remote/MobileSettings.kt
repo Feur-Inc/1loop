@@ -233,6 +233,8 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
             unlinking?.let { target ->
                 ConfirmDialog("Unlink ${target.name}?", unlinkText(target), "Unlink", { unlinking = null }) { app.unlink(target.key) }
             }
+            // The paired phones moved to their own setting, phone.pairing (#443).
+            if (app.server?.localPhone == false) ServerInstallSection(app) // Install Chromium / Claude Code (#406)
         }
         "phone.pairing" -> ServerDevicesSection(app)
         "models.connections" -> {

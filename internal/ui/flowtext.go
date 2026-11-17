@@ -416,7 +416,7 @@ func (flow *flowText) flow(width float32) {
 					textSize: first.size, style: first.style, after: after})
 				if span.code || span.cite || (span.math != "" && first.image == nil) {
 					chip := canvas.NewRectangle(colCodeChip)
-					chip.CornerRadius = 4
+					chip.CornerRadius = rounded(4)
 					chip.StrokeColor, chip.StrokeWidth = colCodeEdge, 1
 					chip.Move(fyne.NewPos(x, top-1))
 					chip.Resize(fyne.NewSize(runWidth, first.height+2))

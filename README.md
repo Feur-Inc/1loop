@@ -47,7 +47,7 @@ Full instructions are in the [install guide](docs/INSTALL.md).
 | Platform                 | Packages                                                                              |
 | ------------------------ | ------------------------------------------------------------------------------------- |
 | Linux x86-64             | `.tar.gz`, `.deb`, AppImage, [Flatpak, Nix](docs/INSTALL.md#linux-desktop-x86-64)     |
-| Windows 10 1809+ x64     | `.zip`                                                                                |
+| Windows 10 1809+ x64     | `.exe`                                                                                |
 | Android 8+               | `.apk`                                                                                |
 | Server (Linux, Windows)  | [Headless server](docs/SERVER.md)                                                     |
 

@@ -90,3 +90,15 @@ func readClipboardPipe(read *os.File, mime string) ([]byte, error) {
 	}
 	return data, nil
 }
+
+// copyImageToClipboard puts a PNG picture on the clipboard with wl-copy,
+// which stays in the background to hand it over: GLFW's data device offers
+// text only.
+func copyImageToClipboard(data []byte) error {
+	command := exec.Command("wl-copy", "--type", "image/png")
+	command.Stdin = bytes.NewReader(data)
+	if err := command.Run(); err != nil {
+		return clipboardToolError("wl-copy", err)
+	}
+	return nil
+}

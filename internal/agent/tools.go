@@ -77,6 +77,9 @@ func availableCoreTools(cfg Config) []map[string]any {
 	var definitions []map[string]any
 	for _, definition := range coreToolDefinitions() {
 		name := definition["function"].(map[string]any)["name"].(string)
+		if isAppTool(name) && cfg.Provider != "claudecode" {
+			continue // in the app_1loop group, loaded on demand
+		}
 		if cfg.toolAvailable(name) {
 			definitions = append(definitions, definition)
 		}

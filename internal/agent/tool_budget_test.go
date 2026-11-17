@@ -172,3 +172,49 @@ func TestGitHubAttachmentOperations(t *testing.T) {
 		t.Fatalf("summary: %q", action.target)
 	}
 }
+
+// Outside Claude Code, a turn starts with the core tools, update_todo and
+// wrap_up: 1loop's other tools wait in the app_1loop group.
+func TestAppToolsLoadOnDemand(t *testing.T) {
+	cfg := fullConfig()
+	cfg.Provider = "openrouter"
+	names := map[string]bool{}
+	var search map[string]any
+	for _, definition := range chatTools(cfg, nil) {
+		function := definition["function"].(map[string]any)
+		names[function["name"].(string)] = true
+		if function["name"] == "tool_search" {
+			search = function
+		}
+	}
+	for _, name := range []string{"shell", "read_file", "update_todo", "wrap_up", "background_task"} {
+		if !names[name] {
+			t.Errorf("%s is not loaded", name)
+		}
+	}
+	for _, name := range []string{"memory", "settings", "subchat", "chats", "request_permissions"} {
+		if names[name] {
+			t.Errorf("%s is loaded before tool_search", name)
+		}
+	}
+	if search == nil || !strings.Contains(fmt.Sprint(search["parameters"]), appToolGroup) {
+		t.Fatalf("tool_search does not offer %s: %v", appToolGroup, search)
+	}
+	text, err := searchTools(cfg, `{"group":"`+appToolGroup+`"}`)
+	if err != nil || !strings.Contains(text, "memory") || !strings.Contains(text, "Long-term memory") {
+		t.Fatalf("tool_search %s: %q %v", appToolGroup, text, err)
+	}
+	call := ToolCall{}
+	call.Function.Name, call.Function.Arguments = "tool_search", `{"group":"`+appToolGroup+`"}`
+	loaded := []Message{{Role: "assistant", ToolCalls: []ToolCall{call}}}
+	names = map[string]bool{}
+	for _, definition := range chatTools(cfg, loaded) {
+		names[definition["function"].(map[string]any)["name"].(string)] = true
+	}
+	if !names["memory"] || !names["subchat"] {
+		t.Fatal("the app_1loop tools are missing once loaded")
+	}
+	if strings.Contains(systemInstructions(cfg), "Long-term memory") {
+		t.Error("the memory instructions are still in the system prompt")
+	}
+}

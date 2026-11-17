@@ -360,6 +360,28 @@ func subchatInstructions(cfg Config) string {
 		}
 		return text
 	}
+	return subchatStartInstructions(cfg)
+}
+
+// subchatParentInstructions are a subchat's own rules, without the rest of
+// the app_1loop group's instructions.
+func subchatParentInstructions(cfg Config) string {
+	if cfg.Subchats == nil || cfg.Subchats.ParentTitle == "" {
+		return ""
+	}
+	return subchatInstructions(cfg)
+}
+
+// subchatStartInstructions say when to start a subchat; a subchat's own
+// rules (subchatInstructions) stay in its prompt.
+func subchatStartInstructions(cfg Config) string {
+	if !cfg.toolAvailable("subchat") || cfg.Subchats.ParentTitle != "" || (cfg.Provider == "claudecode" && cfg.Todo == nil) {
+		return ""
+	}
+	tool := "subchat"
+	if cfg.Provider == "claudecode" {
+		tool = "mcp__1loop_todo__subchat"
+	}
 	return "\n\nSubchats: for a separate piece of work that can run by itself while the user goes on here, start a subchat with " + tool + " rather than doing it in this chat; you are told when its turn ends."
 }
 

@@ -249,3 +249,38 @@ func TestOpenRouterSessionID(t *testing.T) {
 		t.Fatalf("set for another provider: %v", other)
 	}
 }
+
+// ChatGPT (Web) gets each tool once, the app_1loop ones included, with
+// their instructions in its prompt.
+func TestWebToolsOnce(t *testing.T) {
+	for _, phone := range []bool{false, true} {
+		seen := map[string]bool{}
+		for _, definition := range webToolDefinitions(phone) {
+			name := definition["function"].(map[string]any)["name"].(string)
+			if seen[name] {
+				t.Errorf("phone %v: %s twice", phone, name)
+			}
+			seen[name] = true
+		}
+		if !seen["memory"] || !seen["chats"] {
+			t.Errorf("phone %v: memory or chats missing", phone)
+		}
+	}
+	cfg := fullConfig()
+	cfg.Provider = "chatgptweb"
+	if prompt := webSystemInstructions(cfg, false); !strings.Contains(prompt, "Long-term memory") || !strings.Contains(prompt, "Other chats") {
+		t.Error("the web prompt lost the memory or chats instructions")
+	}
+}
+
+// A failed shell command's result already says how it ended: no error
+// line is added, and its output is kept.
+func TestFailedShellResultKept(t *testing.T) {
+	outcome := ToolOutcome{Name: "shell", Output: "exit 7 · failed · cwd /w\nout\n[stderr]\nerr", Err: fmt.Errorf("exit status 7")}
+	if outcome.modelText() != outcome.Output {
+		t.Fatalf("model text: %q", outcome.modelText())
+	}
+	if !completeResult("shell", outcome.Output) || completeResult("shell", "plain") || completeResult("edit_file", outcome.Output) {
+		t.Fatal("completeResult")
+	}
+}

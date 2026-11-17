@@ -285,10 +285,23 @@ type ToolOutcome struct {
 	Err            error
 }
 
+// completeResult: a shell or search result that already says how the
+// command ended (shell's "exit N · status" header, search's JSON), so a
+// failure needs no error line of its own.
+func completeResult(tool, output string) bool {
+	switch tool {
+	case "shell":
+		return strings.HasPrefix(output, "exit ")
+	case "search_files":
+		return json.Valid([]byte(output))
+	}
+	return false
+}
+
 // modelText is the tool result the model receives.
 func (outcome ToolOutcome) modelText() string {
 	if outcome.Err != nil {
-		if (outcome.Name == "shell" || outcome.Name == "search_files") && json.Valid([]byte(outcome.Output)) {
+		if completeResult(outcome.Name, outcome.Output) {
 			return outcome.Output
 		}
 		return outcome.Output + "\nError: " + outcome.Err.Error()

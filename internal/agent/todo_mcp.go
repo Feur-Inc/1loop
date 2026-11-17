@@ -228,7 +228,7 @@ func (backend *App) startTodoMCP(binding *todoMCPBinding) (string, func(), error
 				stop()
 				cancel()
 				content := []any{map[string]any{"type": "text", "text": result.Text}}
-				structuredCommand := (call.Name == "shell" || call.Name == "search_files") && json.Valid([]byte(result.Text))
+				structuredCommand := completeResult(call.Name, result.Text)
 				if err != nil && !structuredCommand {
 					content = []any{map[string]any{"type": "text", "text": err.Error()}}
 				}

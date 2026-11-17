@@ -120,7 +120,7 @@ Unknown keys are errors, so a typo is reported rather than ignored.
 
 ## The agent
 
-The agent can write a theme file in the folder above in this format, and switch to it with the settings tool: `general.theme` takes `file:<name>` for `<name>.toml`.
+The agent reads a short copy of this format on demand (`internal/palette/theme_format.md`, the settings tool's `theme_format`), writes a theme and its shader with `theme_write` (checked first, errors given back in plain words, saved only after you approve it), and switches to it with the settings tool: `general.theme` takes `file:<name>` for `<name>.toml`.
 
 ## matugen
 

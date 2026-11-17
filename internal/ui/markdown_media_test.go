@@ -112,6 +112,7 @@ var uiQueue = make(chan func(), 64)
 
 // pump runs what the loaders handed to the UI thread.
 func pump() {
+	test.Drain() // what other goroutines handed to fyne.Do
 	for {
 		select {
 		case f := <-uiQueue:

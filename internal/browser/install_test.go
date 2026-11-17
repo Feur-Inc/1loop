@@ -45,6 +45,7 @@ func TestInstalledChromiumOverridesNone(t *testing.T) {
 	t.Setenv("ONELOOP_CHROMIUM", "/usr/bin/chromium")
 	BrowserProfileOverride = filepath.Join(t.TempDir(), "browser")
 	t.Cleanup(func() { BrowserProfileOverride = "" })
+	t.Cleanup(chromiumUpdates.Wait) // before the folder goes: an update may still write in it
 	if !Disabled() {
 		t.Fatal("no Chromium installed: Browser Use stays off")
 	}

@@ -104,6 +104,10 @@ func compareVersions(a, b string) int {
 
 var chromiumMu sync.Mutex // one download at a time in this process
 
+// chromiumUpdates are the background updates running, which a test waits
+// for before its folder is removed.
+var chromiumUpdates sync.WaitGroup
+
 // ownChromium is 1loop's Chromium. An installed one is used at once and
 // updated in the background for the next start; otherwise it is downloaded
 // now, the pages saying how far it is.
@@ -117,7 +121,11 @@ func ownChromium(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("Add chromium to your NixOS packages to use browser tabs (the 1loop Nix package includes it)")
 	}
 	if versions := installedChromium(dir); len(versions) > 0 {
-		go updateChromium(dir, versions[0])
+		chromiumUpdates.Add(1)
+		go func() {
+			defer chromiumUpdates.Done()
+			updateChromium(dir, versions[0])
+		}()
 		return chromiumExecutable(dir, versions[0]), nil
 	}
 	chromiumMu.Lock()

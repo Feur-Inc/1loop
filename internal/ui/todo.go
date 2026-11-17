@@ -330,7 +330,14 @@ func taskElapsed(item agent.TodoItem, now time.Time) string {
 	return fmt.Sprintf("%d min %02d s", seconds/60, seconds%60)
 }
 
-func (panel *toolPanel) refreshTodoStatus() {
+// tickTodoClocks is the once-a-second tick: only the tasks' clocks move.
+// The context overview is not rebuilt here: building it asks every MCP
+// server for its tools (a failing one is retried every 30 s, its connection
+// blocking the interface), so its rows came and went at that interval (#487).
+// Events that change the numbers call refreshTodoStatus.
+func (panel *toolPanel) tickTodoClocks() { panel.refreshTodoStatus(false) }
+
+func (panel *toolPanel) refreshTodoStatus(rebuild ...bool) {
 	if panel.active < 0 || panel.active >= len(panel.tabs) || panel.target == 0 {
 		return
 	}
@@ -358,6 +365,9 @@ func (panel *toolPanel) refreshTodoStatus() {
 			state = panel.owner.run.turn.mark
 		}
 	}
+	if len(rebuild) > 0 && !rebuild[0] && tab.todoContextText != "" {
+		return
+	}
 	text := agent.TaskContextText(cfg, panel.ui.contextRing.used, panel.ui.contextRing.window, panel.ui.classicCompaction, state)
 	usage := panel.ui.contextUsage(panel.owner)
 	if tab.todoUsage == nil {
@@ -380,7 +390,7 @@ func (panel *toolPanel) refreshTodoStatus() {
 		tab.todoContext.Objects = []fyne.CanvasObject{rule}
 		lines := strings.Split(text, "\n")
 		if usage != nil {
-			tab.todoContext.Objects = append(tab.todoContext.Objects, padded(2, 4, 0, 0, contextUsageView(usage, tab.todoUsage, nil, panel.refreshTodoStatus)))
+			tab.todoContext.Objects = append(tab.todoContext.Objects, padded(2, 4, 0, 0, contextUsageView(usage, tab.todoUsage, nil, func() { panel.refreshTodoStatus() })))
 			lines = lines[1:]
 		}
 		for _, line := range lines {

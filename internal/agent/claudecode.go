@@ -428,6 +428,19 @@ func claudePrompt(messageValue Message, preface string) string {
 	return string(line)
 }
 
+// claudeTurnNote goes before the turn's prompt: the TODO list as it stands
+// and the tools the user's message mentions.
+func claudeTurnNote(cfg Config, prompt Message) string {
+	note := mentionNote(cfg, prompt.Content)
+	if todo := todoSnapshot(cfg); todo != "" {
+		note += "\n[1loop TODO list now]" + todo + "\n[End of the TODO list]"
+	}
+	if note == "" {
+		return ""
+	}
+	return "[1loop context, not a user request]" + note + "\n\n"
+}
+
 // claudeCodeGuidance settles where Claude Code's own instructions and 1loop's
 // meet: two memories, two shells and two attribution lines (#211).
 func claudeCodeGuidance(cfg Config) string {
@@ -438,6 +451,10 @@ func claudeCodeGuidance(cfg Config) string {
 	if cfg.ProjectTools == nil && cfg.toolAvailable("terminal_command") {
 		guidance = append(guidance, "Shells: Claude Code's Bash tool and 1loop's terminals run in the same environment. Use Bash for commands whose output you need; use a terminal when the user should see or reach the program: interactive programs, TUIs, servers and long watches. Bash follows Claude Code's permission rules, terminals follow 1loop's approval mode: neither is a way around the other's refusal.")
 	}
+	if cfg.Todo != nil {
+		guidance = append(guidance, "1loop's other tools (mcp__1loop_todo__*: memory, settings, subchats, other chats, browser, terminals, phone, computer, GitHub) are deferred: load the ones a task needs with ToolSearch. Each one's description carries its rules.")
+	}
+	guidance = append(guidance, "Tools: prefer a dedicated tool (Read, Edit, the GitHub and browser tools…) to a shell command doing the same, and send independent calls together in one response, where they run side by side.")
 	guidance = append(guidance, "Attribution: keep the lines Claude Code asks for (Co-Authored-By, Generated with Claude Code). When the project or the user also asks for an Assisted-by line, add it as well: one does not replace the other.")
 	return "\n\n" + strings.Join(guidance, "\n")
 }
@@ -698,12 +715,13 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	extensionArgs, cleanExtensions := claudeExtensionArgs()
 	defer cleanExtensions()
 	args = append(args, extensionArgs...)
-	appendPrompt := mobileInstructions(cfg) + projectInstructions(cfg.Workspace) + scratchInstructions(cfg) + citationInstructions + calculationInstructions + todoInstructions(cfg) + todoSnapshot(cfg) + wrapUpInstructions(cfg) + memoryInstructions(cfg) + settingsInstructions(cfg) + subchatInstructions(cfg) + chatsInstructions(cfg) + modelNote(cfg) + mentionNote(cfg, lastUserText(history))
+	// The same for every turn of the session, so that Claude Code's cached
+	// prompt holds: what changes (the TODO list, the tools the message
+	// mentions) goes with the prompt, and the rules of a deferred tool in its
+	// own description, read when the tool is loaded.
+	appendPrompt := mobileInstructions(cfg) + projectInstructions(cfg.Workspace) + scratchInstructions(cfg) + citationInstructions + calculationInstructions + todoInstructions(cfg) + wrapUpInstructions(cfg) + subchatParentInstructions(cfg) + modelNote(cfg)
 	if cfg.ProjectTools != nil {
 		appendPrompt += "\n\nUse 1loop's MCP shell, read_file, list_directory, edit_file and apply_patch tools for project work. Follow the phone's selected execution policy and stay strictly inside the requested project. Use recall to retrieve older conversation details. Your own context compaction remains managed by Claude Code."
-	}
-	for _, group := range builtinToolGroups(cfg) {
-		appendPrompt += group.instructions(cfg)
 	}
 	appendPrompt += claudeCodeGuidance(cfg)
 	if appendPrompt != "" {
@@ -832,6 +850,9 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			emit("session_synced", nil)
 		}
 	}()
+	if !command {
+		preface += claudeTurnNote(cfg, prompt)
+	}
 	emit("activity", Activity{State: "wait"})
 	send(claudePrompt(prompt, preface))
 
@@ -870,7 +891,11 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	}
 	// The TODO snapshot in the instructions is the list at launch: a
 	// message added while Claude works carries the list when it changed.
-	todoSent := todoSnapshot(cfg)
+	todoSent := ""
+	if !command {
+		todoSent = todoSnapshot(cfg)
+	}
+	var todo todoWatch
 	inject := func(messageValue Message) {
 		idle = false
 		messages = append(messages, messageValue)
@@ -1090,6 +1115,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 					emit("message_end", nil)
 				case "tool_use":
 					tool, arguments := claudeTool(cfg.Workspace, claudeBlockValue.Name, claudeBlockValue.Input)
+					todo.observe(tool)
 					pendingValue := &pending{outcome: ToolOutcome{ID: claudeBlockValue.ID, Name: tool, Args: arguments}, started: time.Now()}
 					calls[claudeBlockValue.ID] = pendingValue
 					emit("tool", pendingValue.outcome)
@@ -1156,6 +1182,12 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			for _, extra := range inboxValue.Steer() {
 				inject(extra)
 			}
+			if reminder := todo.reminder(cfg); reminder != "" && len(calls) == 0 {
+				message := Message{Role: "user", Internal: true, Content: reminder}
+				messages = append(messages, message)
+				send(claudePrompt(message, ""))
+				emit("context_note", "TODO reminder")
+			}
 		case "result":
 			answered = true
 			tally.flush()
@@ -1185,6 +1217,11 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				}
 			} else if next, ok := inboxValue.Next(); ok {
 				inject(next)
+			} else if reminder := todo.endReminder(cfg); reminder != "" {
+				message := Message{Role: "user", Internal: true, Content: reminder}
+				messages = append(messages, message)
+				send(claudePrompt(message, ""))
+				emit("context_note", "TODO check · steps left in progress")
 			} else {
 				idle, idleSince = true, time.Now()
 				waitBackground()

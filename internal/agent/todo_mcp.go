@@ -83,7 +83,7 @@ func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) 
 		case "ping":
 			response["result"] = map[string]any{}
 		case "tools/list":
-			response["result"] = map[string]any{"tools": claudeMCPToolList(claudeMCPDefinitions(cfg))}
+			response["result"] = map[string]any{"tools": claudeMCPToolList(claudeMCPWithRules(cfg, claudeMCPDefinitions(cfg)))}
 		case "tools/call":
 			var call struct {
 				Name      string          `json:"name"`
@@ -278,6 +278,41 @@ func claudeMCPDefinitions(cfg Config) []map[string]any {
 		definitions = append(definitions, group.tools()...)
 	}
 	return definitions
+}
+
+// claudeMCPWithRules adds to each deferred tool's description the rules
+// 1loop's instructions give for it, which other providers read in their
+// prompt or with tool_search: under Claude Code they arrive only when the
+// tool is loaded, instead of in every request.
+func claudeMCPWithRules(cfg Config, definitions []map[string]any) []map[string]any {
+	rules := map[string]string{
+		"memory":   memoryInstructions(cfg),
+		"settings": settingsInstructions(cfg),
+		"subchat":  subchatStartInstructions(cfg),
+		"chats":    chatsInstructions(cfg),
+	}
+	for _, group := range builtinToolGroups(cfg) {
+		text := group.instructions(cfg)
+		for _, definition := range group.tools() {
+			rules[definition["function"].(map[string]any)["name"].(string)] += text
+		}
+	}
+	result := make([]map[string]any, 0, len(definitions))
+	for _, definition := range definitions {
+		function := definition["function"].(map[string]any)
+		rule := strings.TrimSpace(rules[function["name"].(string)])
+		if rule == "" {
+			result = append(result, definition)
+			continue
+		}
+		copied := make(map[string]any, len(function))
+		for key, value := range function {
+			copied[key] = value
+		}
+		copied["description"] = function["description"].(string) + "\n\n" + rule
+		result = append(result, map[string]any{"type": definition["type"], "function": copied})
+	}
+	return result
 }
 
 // claudeMCPToolList is the tools/list answer for definitions.

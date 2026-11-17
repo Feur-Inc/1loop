@@ -189,10 +189,8 @@ func MessageItem(id string, m Message) ChatItem {
 func chatsToolDefinition() map[string]any {
 	return map[string]any{"type": "function", "function": map[string]any{
 		"name": "chats",
-		"description": "Talk to the other chats (conversations) of this 1loop. list gives each chat's id, title, project, and whether it is working, waiting for its user or idle; this chat's parent and subchats are marked. " +
-			"message sends text to chat id (parent: this subchat's parent). It reaches that chat's agent labelled as coming from this chat, not from the user: it joins its turn if it is working, or starts one. When that turn ends, its last answer is reported back to you as a message, so do not poll. " +
-			"Write what the other chat needs, since it does not see this conversation. Messaging a chat that is not this chat's parent or subchat asks the user first, depending on the approval mode. Chats on another computer or 1loop server cannot be reached. " +
-			"files (message) attaches files to the message, by path (workspace or /tmp): pictures reach the other chat's model as images it sees, as if the user had pasted them (send a screenshot rather than describing it); other files are copied into its workspace and attached. rename sets this chat's own title to text: short and plain. Leave unused fields null.",
+		"description": "Talk to this 1loop's other chats. list gives their id, title, project and state (working, waiting for its user, idle), marking this chat's parent and subchats. " +
+			"message sends text, and files, to chat id (parent: this subchat's parent), labelled as from this chat: it joins or starts that chat's turn, whose last answer comes back to you as a message, so do not poll. Write all it needs; it does not see this conversation. A chat other than the parent or a subchat is asked of the user first, per the approval mode; chats on another computer or server are out of reach. rename sets this chat's own title to text: short and plain. Leave unused fields null.",
 		"parameters": map[string]any{"type": "object", "additionalProperties": false,
 			"required": []string{"action", "id", "text", "files"},
 			"properties": map[string]any{

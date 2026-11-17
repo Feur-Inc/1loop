@@ -36,6 +36,7 @@ func Main() {
 		signal.Notify(stop, os.Interrupt, syscall.SIGTERM)
 		<-stop
 		agent.StopEveryTask()
+		agent.StopEveryClaude()
 		crash.Clean() // ended on purpose (logout, Ctrl+C): no crash
 		os.Exit(130)
 	}()

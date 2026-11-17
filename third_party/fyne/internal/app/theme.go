@@ -50,3 +50,10 @@ func ApplySettingsWithCallback(set fyne.Settings, app fyne.App, onEveryWindow fu
 		}
 	}
 }
+
+// VariantOnly is set while the settings announce a change of the system's
+// light or dark variant alone, with the theme unchanged (1loop). The
+// application's theme does not depend on Fyne's variant: when it follows
+// it, it sets a new theme, which clears this; otherwise the windows have
+// nothing to redraw. UI thread only.
+var VariantOnly bool

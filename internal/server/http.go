@@ -352,6 +352,7 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 		}
 		member.queue, member.steer = nil, nil
 		member.tasks.StopAll()
+		agent.DropClaudeChat(member.ID)
 		if member.Config.Scratch != "" {
 			go func(path string) { _ = agent.RemoveScratchWorkspace(server.scratchBase(), path) }(member.Config.Scratch)
 		}

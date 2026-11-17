@@ -11,6 +11,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"1loop/internal/core"
@@ -43,16 +44,45 @@ func hasTool(definitions []map[string]any, name string) bool {
 // providers.
 // The server lives as long as one Claude Code run of 1loop and answers only
 // that run (a random token); it returns the path of its --mcp-config file.
-func (backend *App) startTodoMCP(ctx context.Context, cfg Config, emit emitter) (string, func(), error) {
-	state := cfg.Todo
-	githubConnection := githubconnector.Default.ConnectionID()
-	browserTools, terminalTools, computerTools := modelBrowser(cfg.Browser), cfg.Terminal, cfg.Computer
+// todoMCPBinding is the turn a Claude Code process's MCP server works for:
+// a process kept between turns (claudeProcess) serves each turn in its own
+// context, with that turn's configuration and events.
+type todoMCPBinding struct {
+	mu     sync.Mutex
+	ctx    context.Context
+	cfg    Config
+	emit   emitter
+	github string // the GitHub connection of the turn
+}
+
+func newTodoMCPBinding(ctx context.Context, cfg Config, emit emitter) *todoMCPBinding {
+	binding := &todoMCPBinding{}
+	binding.set(ctx, cfg, emit)
+	return binding
+}
+
+func (binding *todoMCPBinding) set(ctx context.Context, cfg Config, emit emitter) {
+	binding.mu.Lock()
+	defer binding.mu.Unlock()
+	binding.ctx, binding.cfg, binding.emit, binding.github = ctx, cfg, emit, githubconnector.Default.ConnectionID()
+}
+
+func (binding *todoMCPBinding) get() (context.Context, Config, emitter, string) {
+	binding.mu.Lock()
+	defer binding.mu.Unlock()
+	return binding.ctx, binding.cfg, binding.emit, binding.github
+}
+
+func (backend *App) startTodoMCP(binding *todoMCPBinding) (string, func(), error) {
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
 	if err != nil {
 		return "", nil, err
 	}
 	token := core.Identifier()
 	server := &http.Server{ReadHeaderTimeout: 5 * time.Second, Handler: http.HandlerFunc(func(writer http.ResponseWriter, requestValue *http.Request) {
+		ctx, cfg, emit, githubConnection := binding.get()
+		state := cfg.Todo
+		browserTools, terminalTools, computerTools := modelBrowser(cfg.Browser), cfg.Terminal, cfg.Computer
 		if requestValue.Header.Get("Authorization") != "Bearer "+token {
 			http.Error(writer, "Unauthorized", http.StatusUnauthorized)
 			return

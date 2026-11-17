@@ -30,7 +30,6 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"1loop/internal/core"
@@ -702,19 +701,6 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	}
 	session := HarnessSession(cfg)
 	sessionArgs, forked := claudeSessionArgs(cfg)
-	args = append(args, sessionArgs...)
-	if cfg.Todo != nil {
-		config, close, err := backend.startTodoMCP(ctx, cfg, emit)
-		if err != nil {
-			return err
-		}
-		defer close()
-		args = append(args, "--mcp-config", config)
-	}
-	// The user's MCP servers, plugins and skills, for this session only.
-	extensionArgs, cleanExtensions := claudeExtensionArgs()
-	defer cleanExtensions()
-	args = append(args, extensionArgs...)
 	// The same for every turn of the session, so that Claude Code's cached
 	// prompt holds: what changes (the TODO list, the tools the message
 	// mentions) goes with the prompt, and the rules of a deferred tool in its
@@ -730,81 +716,91 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		appendPrompt = "\n\n# 1loop\nYou run inside 1loop, an app that drives Claude Code. Its rules for this session:" + appendPrompt + userPreferenceInstructions(cfg)
 		args = append(args, "--append-system-prompt", appendPrompt)
 	}
-	processCtx, stopProcess := context.WithCancel(ctx)
-	defer stopProcess()
-	cmd, err := claudeCommand(processCtx, cfg.ClaudeHome, cfg.Workspace, args...)
-	if err != nil {
-		return err
+	_, _, command := SlashCommand(history[len(history)-1].Content)
+	// A process kept from the chat's last turn takes this one when nothing
+	// that shaped it changed; a slash command, a fork or the phone's
+	// launcher always gets its own.
+	chat := cfg.ContextKey
+	keep := chat != "" && !command && !forked && cfg.ProjectTools == nil
+	key := claudeProcessKey(cfg, args)
+	var process *claudeProcess
+	if keep {
+		process = takeClaude(chat, key, session)
+	} else if chat != "" {
+		DropClaudeProcess(chat)
 	}
-	if cfg.CompactAt > 0 {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("CLAUDE_CODE_AUTO_COMPACT_WINDOW=%d", cfg.CompactAt))
-	}
-	logged := append([]string(nil), cmd.Args...)
-	for i := 1; i < len(logged); i++ {
-		if logged[i-1] == "--mcp-config" {
-			logged[i] = "[1loop MCP config]"
+	if process != nil {
+		platform.Devf("claude", "next turn in the kept process (session %s)", session)
+		if process.binding != nil {
+			process.binding.set(ctx, cfg, emit)
+			// The tools may have changed since its last turn.
+			request, _ := json.Marshal(map[string]any{"type": "control_request", "request_id": core.Identifier(), "request": map[string]string{"subtype": "mcp_reconnect", "serverName": "1loop_todo"}})
+			process.send(string(request))
 		}
-	}
-	platform.Devf("claude", "start in %s: %s", cfg.Workspace, strings.Join(logged, " "))
-	defer func() { platform.Devf("claude", "process ended: %v", cmd.ProcessState) }()
-	stdin, _ := cmd.StdinPipe()
-	stdout, _ := cmd.StdoutPipe()
-	var stderr outputBuffer
-	cmd.Stderr = &stderr
-	var writing sync.Mutex
-	open := true
-	send := func(line string) {
-		writing.Lock()
-		defer writing.Unlock()
-		if open {
-			io.WriteString(stdin, line+"\n")
-		}
-	}
-	finish := func(interrupt bool) { // no more input: Claude Code exits after its last turn
-		writing.Lock()
-		defer writing.Unlock()
-		if open {
-			if interrupt {
-				io.WriteString(stdin, `{"type":"control_request","request_id":"1loop-stop","request":{"subtype":"interrupt","cancel_queued":true}}`+"\n")
+	} else {
+		args = append(args, sessionArgs...)
+		var binding *todoMCPBinding
+		var cleanup []func()
+		if cfg.Todo != nil {
+			binding = newTodoMCPBinding(ctx, cfg, emit)
+			config, close, err := backend.startTodoMCP(binding)
+			if err != nil {
+				return err
 			}
-			open = false
-			stdin.Close()
+			cleanup = append(cleanup, close)
+			args = append(args, "--mcp-config", config)
 		}
-	}
-	processDone := make(chan struct{})
-	cmd.Cancel = func() error {
-		go finish(true)
-		go func() {
-			timer := time.NewTimer(3 * time.Second)
-			defer timer.Stop()
-			select {
-			case <-processDone:
-			case <-timer.C:
-				platform.KillProcessTree(cmd)
+		// The user's MCP servers, plugins and skills, for this session only.
+		extensionArgs, cleanExtensions := claudeExtensionArgs()
+		cleanup = append(cleanup, cleanExtensions)
+		args = append(args, extensionArgs...)
+		// Its own context: a kept process outlives this turn's.
+		cmd, err := claudeCommand(context.Background(), cfg.ClaudeHome, cfg.Workspace, args...)
+		if err != nil {
+			for _, clean := range cleanup {
+				clean()
 			}
-		}()
-		return nil
+			return err
+		}
+		if cfg.CompactAt > 0 {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("CLAUDE_CODE_AUTO_COMPACT_WINDOW=%d", cfg.CompactAt))
+		}
+		logged := append([]string(nil), cmd.Args...)
+		for i := 1; i < len(logged); i++ {
+			if logged[i-1] == "--mcp-config" {
+				logged[i] = "[1loop MCP config]"
+			}
+		}
+		platform.Devf("claude", "start in %s: %s", cfg.Workspace, strings.Join(logged, " "))
+		process, err = startClaudeProcess(cmd, key, binding, cleanup)
+		if err != nil {
+			return err
+		}
+		process.session = session
 	}
-	// Kill the tree before exec's fallback kills only its parent on Windows.
-	cmd.WaitDelay = 4 * time.Second
-	if err := cmd.Start(); err != nil {
-		return err
-	}
+	send, stderr := process.send, process.stderr
+	// Stop: interrupt, then kill what is still there after 3 seconds.
+	stopWatch := context.AfterFunc(ctx, func() { go process.end(true, 3*time.Second) })
+	defer stopWatch()
 	var failure error
+	parked := false // the process waits for the chat's next turn
 	defer func() {
-		if ctx.Err() != nil {
-			stopProcess()
-		} else if failure != nil {
+		switch {
+		case ctx.Err() != nil:
+			<-process.done
+		case failure != nil:
 			// Billing and other run failures retain their immediate stop.
-			platform.KillProcessTree(cmd)
-			finish(false)
-		} else {
-			finish(false)
-		}
-		cmd.Wait()
-		close(processDone)
-		if ctx.Err() != nil {
-			platform.KillProcessTree(cmd)
+			process.kill()
+		case parked:
+			if process.binding != nil {
+				// Between turns, its MCP server answers no tool call.
+				canceled, cancel := context.WithCancel(context.Background())
+				cancel()
+				process.binding.set(canceled, cfg, func(string, any) {})
+			}
+			parkClaude(chat, process)
+		default:
+			process.end(false, 4*time.Second)
 		}
 	}()
 
@@ -839,7 +835,6 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	// leaves the chat's session marks alone, so the next prompt still gets
 	// what the session misses; without a session, the one Claude Code opens
 	// for the command is not kept.
-	_, _, command := SlashCommand(prompt.Content)
 	if command {
 		preface = ""
 	}
@@ -908,28 +903,13 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		send(claudePrompt(messageValue, preface))
 	}
 
-	// The output is read apart, so the loop below can also watch the clock
-	// (an idle Claude Code says nothing) and the Stop button.
-	lines := make(chan []byte)
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		defer close(lines)
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 64<<10), 64<<20)
-		for scanner.Scan() {
-			select {
-			case lines <- append([]byte(nil), scanner.Bytes()...):
-			case <-done:
-				io.Copy(io.Discard, stdout)
-				return
-			}
-		}
-	}()
+	// The output is read apart (claudeProcess), so the loop below can also
+	// watch the clock (an idle Claude Code says nothing) and the Stop button.
+	lines := process.lines
 	githubChanges := githubconnector.Default.Changes()
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
-	for failure == nil {
+	for failure == nil && !parked {
 		var line []byte
 		select {
 		case <-githubChanges:
@@ -955,8 +935,14 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				inject(next)
 			} else if len(background) == 0 && time.Since(idleSince) > 600*time.Millisecond && (contextAsked.IsZero() || time.Since(contextAsked) > 5*time.Second) {
 				idle = false
+				if keep {
+					// Nothing runs, nothing waits: the turn is over, and the
+					// process waits for the chat's next one.
+					parked = true
+					continue
+				}
 				platform.Devf("claude", "nothing runs, nothing waits: closing its input")
-				finish(false) // nothing runs, nothing waits: the task is over
+				process.finish(false) // nothing runs, nothing waits: the task is over
 			}
 			continue
 		case next, more := <-lines:
@@ -1023,6 +1009,9 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			case "init":
 				if claudeEventValue.APIKeySource != "" && claudeEventValue.APIKeySource != "none" {
 					failure = fmt.Errorf("Claude Code is not using your subscription here (credentials: %s). 1loop stopped before anything was billed to an API key.", claudeEventValue.APIKeySource)
+				}
+				if claudeEventValue.SessionID != "" {
+					process.session = claudeEventValue.SessionID
 				}
 				if claudeEventValue.SessionID != "" && keepSession {
 					emit("session", claudeSessionRef(cfg.ClaudeHome, claudeEventValue.SessionID))

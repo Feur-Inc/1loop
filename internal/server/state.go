@@ -350,6 +350,7 @@ func (server *headlessServer) close() {
 		}
 		chat.tasks.StopAll() // a background server must not outlive this one
 	}
+	agent.StopEveryClaude()
 	if err := server.saveLocked(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}

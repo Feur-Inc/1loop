@@ -21,6 +21,7 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
+	"1loop/internal/agent"
 	"1loop/internal/githubconnector"
 	"1loop/internal/gitrepo"
 )
@@ -558,6 +559,7 @@ func (ui *desktopUI) forgetLocalWorktree(project, folder string) {
 				chat.run.cancel()
 			}
 			chat.tasks.StopAll()
+			agent.DropClaudeChat(chat.ID)
 			chat.disposePanel()
 			continue
 		}

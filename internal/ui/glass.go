@@ -10,9 +10,12 @@ package ui
 // an open overlay is not followed: menus and dialogs are short-lived.
 
 import (
+	"fmt"
+	"hash/maphash"
 	"image"
 	"image/color"
 	"runtime"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -26,6 +29,23 @@ import (
 // glassWidth is the width the backdrop is blurred at: small enough to be
 // cheap, large enough that its shapes still read through the glass.
 const glassWidth = 240
+
+var (
+	glassMu       sync.Mutex
+	glassCache    *image.NRGBA // the last blurred backdrop
+	glassCacheKey uint64
+	glassSeed     = maphash.MakeSeed()
+)
+
+// glassKey identifies a capture: its pixels, size and the brightness the
+// glass is tinted with.
+func glassKey(pix []uint8, w, h, step int) uint64 {
+	var hash maphash.Hash
+	hash.SetSeed(glassSeed)
+	hash.Write(pix)
+	hash.WriteString(fmt.Sprint(w, h, step, glassBrightness(0.72)))
+	return hash.Sum64()
+}
 
 // frostedBackdrop is the window as it is on screen, blurred and tinted for
 // text to stay readable over it; nil when the canvas cannot be read.
@@ -59,6 +79,20 @@ func frostedBackdrop(c fyne.Canvas) (*image.NRGBA, image.Image) {
 	if raw, ok := shot.(interface{ RawRGBA() ([]uint8, int, int) }); ok {
 		pix, pw, ph = raw.RawRGBA()
 	}
+	// The same pixels as last time blur to the same glass: reuse it (#490).
+	var key uint64
+	if pix != nil {
+		key = glassKey(pix, pw, ph, step)
+		glassMu.Lock()
+		cached, hit := glassCache, glassCacheKey == key && glassCache != nil
+		glassMu.Unlock()
+		if hit {
+			out := image.NewNRGBA(cached.Rect)
+			copy(out.Pix, cached.Pix)
+			platform.Devf("perf", "glass backdrop %dx%d cached", w, h)
+			return out, shot
+		}
+	}
 	sample := func(x, y int) (int, int, int) {
 		if pix != nil {
 			o := ((ph-y-1)*pw + x) * 4 // bottom-up rows
@@ -83,6 +117,13 @@ func frostedBackdrop(c fyne.Canvas) (*image.NRGBA, image.Image) {
 		boxBlur(small, 3)
 	}
 	vibrancy(small, 1.35, glassBrightness(0.72))
+	if pix != nil {
+		saved := image.NewNRGBA(small.Rect)
+		copy(saved.Pix, small.Pix)
+		glassMu.Lock()
+		glassCache, glassCacheKey = saved, key
+		glassMu.Unlock()
+	}
 	platform.Devf("perf", "glass backdrop %dx%d in %s", w, h, time.Since(started).Round(100*time.Microsecond))
 	return small, shot
 }

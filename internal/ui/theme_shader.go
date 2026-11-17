@@ -184,6 +184,16 @@ func (ui *desktopUI) animateBackdrop(b *backdrop, stop chan struct{}) {
 			return
 		case <-time.After(time.Second / time.Duration(fps)):
 		}
+		if !ui.inForeground || (ui.tray != nil && ui.tray.hidden) {
+			// Paused (#490): no frame and no trip to the UI thread; look again in a moment.
+			select {
+			case <-stop:
+				return
+			case <-time.After(250 * time.Millisecond):
+			}
+			last = time.Now()
+			continue
+		}
 		now := time.Now()
 		step := now.Sub(last)
 		last = now

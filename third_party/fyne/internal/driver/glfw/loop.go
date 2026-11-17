@@ -122,6 +122,9 @@ func (d *gLDriver) runGL() {
 	}
 
 	fyne.CurrentApp().Settings().AddListener(func(set fyne.Settings) {
+		if app.VariantOnly { // 1loop: the theme is the same (internal/app.VariantOnly)
+			return
+		}
 		painter.ClearFontCache()
 		cache.ResetThemeCaches()
 		app.ApplySettingsWithCallback(set, fyne.CurrentApp(), func(w fyne.Window) {

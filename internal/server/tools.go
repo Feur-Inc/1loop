@@ -534,10 +534,14 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 		switch name {
 		case "terminal_command":
 			err = terminal.write(args.Command + "\r")
-		case "terminal_write":
-			err = terminal.write(args.Text)
-		case "terminal_keys":
+		case "terminal_write", "terminal_keys": // terminal_write's text, then its keys (terminal_keys in chats before #447)
+			if args.Text != "" {
+				err = terminal.write(args.Text)
+			}
 			for _, name := range args.Keys {
+				if err != nil {
+					break
+				}
 				var key string
 				key, err = agent.TerminalKey(name)
 				if err != nil {

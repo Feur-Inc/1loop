@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 
+	"1loop/internal/agent"
 	"1loop/internal/remoteapi"
 )
 
@@ -73,6 +74,7 @@ func (target gitTarget) Removed(project, worktree string) {
 		}
 		chat.queue, chat.steer = nil, nil
 		chat.tasks.StopAll()
+		agent.DropClaudeChat(chat.ID)
 		tabs = append(tabs, chat.tabs...)
 		chat.tabs = nil
 	}

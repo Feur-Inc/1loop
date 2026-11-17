@@ -527,6 +527,7 @@ func (ui *desktopUI) removeChats(chats ...*conversation) {
 		}
 		chat.queue, chat.steer = nil, nil
 		chat.tasks.StopAll()
+		agent.DropClaudeChat(chat.ID)
 		ui.prompt.drafts.set(chat.ID, "")
 		for _, view := range ui.allPanes() {
 			if view.current == chat {

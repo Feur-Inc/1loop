@@ -11,6 +11,9 @@ import (
 	"testing"
 )
 
+// No background Chromium update in tests (see startChromiumUpdate).
+func init() { startChromiumUpdate = func(string, string) {} }
+
 // fakeChromium puts a "browser" script in 1loop's Chromium folder, as an
 // install leaves it, and stops the daily update from going online.
 func fakeChromium(t *testing.T, script string) (dir, path string) {

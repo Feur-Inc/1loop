@@ -359,6 +359,8 @@ func otherAction(tool, raw string) (action, bool) {
 			return action{"Listed", "Listing", "the background tasks", false}, true
 		case "stop":
 			return action{"Stopped", "Stopping", id, false}, true
+		case "wait":
+			return action{"Waited for", "Waiting for", id, false}, true
 		}
 		return action{"Read the output of", "Reading the output of", id, false}, true
 	case "skill":

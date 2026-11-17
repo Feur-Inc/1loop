@@ -512,7 +512,7 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	if call.Function.Name == "background_task" {
 		begin()
 		tasks, _ := ctx.Value(tasksContextKey{}).(*BackgroundTasks)
-		output, err = backgroundTool(tasks, call.Function.Arguments)
+		output, err = backgroundTool(ctx, tasks, call.Function.Arguments)
 		return
 	}
 	if call.Function.Name == "wrap_up" {

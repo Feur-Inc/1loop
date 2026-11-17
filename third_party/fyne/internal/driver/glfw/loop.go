@@ -122,8 +122,12 @@ func (d *gLDriver) runGL() {
 	}
 
 	fyne.CurrentApp().Settings().AddListener(func(set fyne.Settings) {
-		painter.ClearFontCache()
-		cache.ResetThemeCaches()
+		if driver.KeepFonts {
+			cache.ResetThemeColourCaches()
+		} else {
+			painter.ClearFontCache()
+			cache.ResetThemeCaches()
+		}
 		app.ApplySettingsWithCallback(set, fyne.CurrentApp(), func(w fyne.Window) {
 			c, ok := w.Canvas().(*glCanvas)
 			if !ok {
@@ -204,6 +208,9 @@ func (d *gLDriver) runGL() {
 				}
 			}
 
+			if driver.TurnHook != nil {
+				driver.TurnHook()
+			}
 			d.animation.TickAnimations()
 			now := time.Now()
 			if d.drawSingleFrame() {

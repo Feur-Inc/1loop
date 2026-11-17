@@ -20,6 +20,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	fynedriver "fyne.io/fyne/v2/driver"
 	"fyne.io/fyne/v2/widget"
+	"github.com/fsnotify/fsnotify"
 
 	"1loop/internal/palette"
 	"1loop/internal/platform"
@@ -71,14 +72,53 @@ func themesStamp() string {
 	return b.String()
 }
 
-// watchThemes reads the theme files, then looks at the folder every second
-// and reads it again when a file is added, saved or removed: the picker
-// lists the new file, and the theme in use is painted again.
+// watchThemes reads the theme files, then reads them again when a file of
+// the folder is added, saved or removed: the picker lists the new file, and
+// the theme in use is painted again. The folder is watched by notification
+// (inotify and the like); without it, or while the folder does not exist,
+// it is looked at every few seconds (it was every second, forever: #474).
 func (ui *desktopUI) watchThemes() {
 	loadThemeFiles()
 	stamp := themesStamp()
 	go func() {
-		for range time.Tick(time.Second) {
+		var events chan fsnotify.Event
+		watcher, err := fsnotify.NewWatcher()
+		if err == nil {
+			defer watcher.Close()
+			events = watcher.Events
+			go func() {
+				for range watcher.Errors {
+				}
+			}()
+		}
+		watching := false
+		for {
+			if watcher != nil && !watching {
+				watching = watcher.Add(themesDir) == nil
+			}
+			wait := themesPoll
+			if watching {
+				wait = time.Hour // the notifications wake it
+			}
+			select {
+			case event, ok := <-events:
+				if !ok {
+					events, watching, watcher = nil, false, nil
+					continue
+				}
+				if filepath.Clean(event.Name) == filepath.Clean(themesDir) && event.Has(fsnotify.Remove|fsnotify.Rename) {
+					watching = false // the folder went: looked at until it is back
+				}
+				// An editor saves in several steps: let them settle.
+				time.Sleep(150 * time.Millisecond)
+				for len(events) > 0 {
+					<-events
+				}
+			case <-time.After(wait):
+				if watching {
+					continue
+				}
+			}
 			next := themesStamp()
 			if next == stamp {
 				continue
@@ -92,6 +132,9 @@ func (ui *desktopUI) watchThemes() {
 		}
 	}()
 }
+
+// themesPoll is how often the folder is looked at without notifications.
+const themesPoll = 5 * time.Second
 
 // themeChoices are the theme settings to pick from, with their labels:
 // the built-in ones, then the files.

@@ -238,12 +238,9 @@ func (ui *desktopUI) addTargetGroup(group targetGroup) {
 		}
 		ui.addGroupChats(key, p, chats.chats)
 		if p != "" && p == opened { // its worktrees, after its chats
-			for _, object := range ui.worktreeRows(p, open) {
-				key := "worktree:" + key
-				if row := firstRow(object); row != nil {
-					key += ":" + row.text
-				}
-				ui.addSide(key, object)
+			rows, keys := ui.worktreeRows(p, open)
+			for i, object := range rows {
+				ui.addSide("worktree:"+key+":"+keys[i], object)
 			}
 			ui.loadRepo(p, true, 20*time.Second)
 		}

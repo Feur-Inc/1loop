@@ -297,8 +297,10 @@ type desktopApp struct {
 	remoteEnabled    bool                     // see phone_server.go
 	devices          []remoteapi.PairedDevice // phones paired with the remote
 	chrome           bool
-	updates          updateState // the release page's latest version (updates.go)
-	panelWidth       float32     // last width chosen by dragging, independent of window size
+	titleBar         fyne.CanvasObject // the bar over the conversation: its title, and the window buttons with chrome
+	pictureLayer     *fyne.Container   // where pictures open, under titleBar (picture_viewer.go); nil without chrome
+	updates          updateState       // the release page's latest version (updates.go)
+	panelWidth       float32           // last width chosen by dragging, independent of window size
 	// Projects' environment variables, by projectEnvKey (project_env.go).
 	projectEnv        map[string]map[string]string
 	classicCompaction bool                       // settings: dynamic context compaction turned off
@@ -692,7 +694,9 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.buildTitleBar(sidebar)
 	layers := []fyne.CanvasObject{ui.root}
 	if ui.chrome {
-		layers = append(layers, resizeEdges(ui.window))
+		ui.pictureLayer = container.New(underTitleBar{ui})
+		ui.pictureLayer.Hide()
+		layers = append(layers, ui.pictureLayer, resizeEdges(ui.window))
 	}
 	return container.NewStack(append(layers, ui.tips.layer)...)
 }
@@ -821,6 +825,7 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	if ui.chrome {
 		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, ui.headerBar))
 	}
+	ui.titleBar = header
 	// The settings page takes the conversation's place while it is open.
 	ui.curtain = newPageCurtain()
 	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view, ui.curtain.cover)))

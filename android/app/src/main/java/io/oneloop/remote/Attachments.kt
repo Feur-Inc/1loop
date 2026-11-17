@@ -43,12 +43,12 @@ import java.util.Locale
 // (the copy already sent to the workspace is not deleted).
 
 @Composable
-fun AttachmentTray(app: RemoteApp) {
+fun AttachmentTray(app: RemoteApp, staged: List<Attachment>) {
     Row(
         Modifier.horizontalScroll(rememberScrollState()).padding(top = 8.dp, end = 6.dp),
         horizontalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        for (attachment in app.attachments) AttachmentChip(attachment) { app.removeAttachment(attachment.key) }
+        for (attachment in staged) AttachmentChip(attachment) { app.removeAttachment(attachment.key) }
     }
 }
 

@@ -1,0 +1,83 @@
+// SPDX-License-Identifier: MPL-2.0
+
+package ui
+
+import (
+	"image"
+	"image/color"
+	"image/gif"
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"1loop/internal/palette"
+)
+
+func TestThemeFileChoice(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "sea.toml"), []byte("accents = [\"#2288cc\", \"#cc8822\"]\nroundness = 0.5\n[colors]\nbackground = \"#102030\"\n"), 0o644)
+	saved := themesDir
+	themesDir = dir
+	defer func() { themesDir = saved; loadThemeFiles() }()
+	loadThemeFiles()
+
+	choice := themeChoice{theme: "file:sea"}
+	if palette.Hex(choice.accentColour()) != "#2288cc" {
+		t.Fatalf("default accent %s, want the theme's first", palette.Hex(choice.accentColour()))
+	}
+	choice.accent = "#cc8822"
+	if palette.Hex(choice.accentColour()) != "#cc8822" {
+		t.Fatalf("chosen accent %s", palette.Hex(choice.accentColour()))
+	}
+	if choice.themeSetting() != "file:sea" {
+		t.Fatalf("setting %s", choice.themeSetting())
+	}
+	// A project's theme wins over the global one while it is on screen.
+	plain := themeChoice{theme: palette.ThemeDark, project: "file:sea"}
+	if len(plain.fileAccents()) != 2 {
+		t.Fatal("project theme not active")
+	}
+	if len(themeChoices(builtInThemes())) != 4 {
+		t.Fatalf("choices %v", themeChoices(builtInThemes()))
+	}
+}
+
+// Light → dark leaves shadows black: they are not the overlay (#436).
+func TestShadowsSurviveThemeSwitch(t *testing.T) {
+	defer setColours(palette.Dark, palette.AccentColor(""))
+	setColours(palette.Light, palette.AccentColor(""))
+	changed := recolour(setColours(palette.Dark, palette.AccentColor("")))
+	ink := shadowInk
+	ink.A = 0x40
+	if got := changed.of(ink); got != ink {
+		t.Fatalf("shadow became %v", got)
+	}
+}
+
+// A family fontconfig knows becomes the interface's font; one it lacks
+// keeps 1loop's. Skipped without fc-match.
+func TestThemeFontFamily(t *testing.T) {
+	if _, err := exec.LookPath("fc-match"); err != nil {
+		t.Skip("no fc-match")
+	}
+	defer loadThemeFonts(palette.ThemeFonts{})
+	loadThemeFonts(palette.ThemeFonts{Regular: "NoSuchFamilyAtAll"})
+	if len(themeFonts) != 0 {
+		t.Fatalf("a missing family loaded %v", themeFonts)
+	}
+}
+
+// An animated GIF becomes whole frames with their delays.
+func TestGIFFrames(t *testing.T) {
+	pal := color.Palette{color.Black, color.White}
+	g := &gif.GIF{Delay: []int{5, 0}, Config: image.Config{Width: 4, Height: 4}}
+	for range 2 {
+		g.Image = append(g.Image, image.NewPaletted(image.Rect(0, 0, 4, 4), pal))
+	}
+	frames, delays := gifFrames(g)
+	if len(frames) != 2 || delays[0] != 50*time.Millisecond || delays[1] != 100*time.Millisecond {
+		t.Fatalf("%d frames, delays %v", len(frames), delays)
+	}
+}

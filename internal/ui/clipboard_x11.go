@@ -73,3 +73,15 @@ func libraryClipboardImage() ([]byte, error) {
 	}
 	return nil, errNoClipboardImage
 }
+
+// copyImageToClipboard puts a PNG picture on the clipboard; the library
+// keeps answering for it until something else is copied.
+func copyImageToClipboard(data []byte) error {
+	if err := clipboard.Init(); err != nil {
+		return fmt.Errorf("the clipboard is not available: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), clipboardTimeout)
+	defer cancel()
+	_, err := clipboard.Write(ctx, clipboard.FmtImage, data)
+	return err
+}

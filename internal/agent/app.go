@@ -80,7 +80,10 @@ type Config struct {
 	RecentProjects []string       `json:"-"`                 // the user's project folders, for a scratch chat's prompt
 	MachineID      string         `json:"machine,omitempty"` // the SSH machine the workspace is on, "" for this computer
 	Machine        Machine        `json:"-"`                 // that machine, for a run (machine.go)
-	Session        string         `json:"session,omitempty"` // Claude Code connection: the chat's session there (see ClaudeSession)
+	// Env is the project's environment variables (#408), for the commands
+	// the run starts. Never saved with the chat nor sent to the model.
+	Env     map[string]string `json:"-"`
+	Session string            `json:"session,omitempty"` // Claude Code connection: the chat's session there (see ClaudeSession)
 	// ClaudeHome is the Claude Code connection's CLAUDE_CONFIG_DIR, "" for
 	// the system Claude Code login (claude_accounts.go).
 	ClaudeHome string `json:"claudeHome,omitempty"`
@@ -90,6 +93,11 @@ type Config struct {
 	// OtherSessions keeps the sessions of the chat's other Claude Code
 	// logins, so coming back to a login resumes its session (claude_accounts.go).
 	OtherSessions map[string]LoginSession `json:"otherSessions,omitempty"`
+	// ForkSession is a forked subchat's parent Claude Code session, with
+	// the folder it ran in: the subchat's first turn resumes it with
+	// --fork-session, reading the parent's cached prefix (ForkConfig).
+	ForkSession   string `json:"forkSession,omitempty"`
+	ForkWorkspace string `json:"forkWorkspace,omitempty"`
 	// RanWith is who the chat's last turn ran with: another provider,
 	// account or model first goes through a handoff (handoff.go).
 	RanWith *RunIdentity `json:"ranWith,omitempty"`

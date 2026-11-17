@@ -510,7 +510,7 @@ func (switchControl *toggle) Tapped(*fyne.PointEvent) {
 
 func (switchControl *toggle) CreateRenderer() fyne.WidgetRenderer {
 	renderer := &toggleRenderer{toggle: switchControl, track: canvas.NewRectangle(colBorder), knob: canvas.NewCircle(colMuted)}
-	renderer.track.CornerRadius = 10
+	renderer.track.CornerRadius = rounded(10)
 	renderer.Refresh()
 	return renderer
 }
@@ -586,6 +586,9 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 	}
 	for _, object := range ui.targetRows() {
 		page.Add(object)
+	}
+	if ui.server != nil { // Install Chromium / Claude Code, while the server lacks them
+		page.Add(ui.server.installRows())
 	}
 	page.Add(sectionTitle("Appearance"))
 	page.Add(card(ui.appearanceRows(view)...))
@@ -673,7 +676,8 @@ func (view *settingsView) intro(section string) fyne.CanvasObject {
 func (ui *desktopUI) modelSettings() fyne.CanvasObject {
 	view := ui.prefs
 	if ui.server != nil { // the server's chats use the server's
-		return view.mark("models.connections", ui.server.connectionSettings())
+		return container.NewVBox(view.mark("models.connections", ui.server.connectionSettings()),
+			sectionTitle("Chat names"), card(view.mark(registry.KeyNamingModel, ui.server.namingSetting())))
 	}
 	add := newRow("Add connection", iconPlus, stylePrimary, func() {
 		id := core.Identifier()
@@ -697,6 +701,8 @@ func (ui *desktopUI) modelSettings() fyne.CanvasObject {
 		card(view.mark(registry.KeyAutoResume, settingRow("Automatic resumption",
 			"What 1loop does when a conversation reaches a rate limit: wait for the reset, or go on with another model, in the order you choose.",
 			container.New(layout.NewCustomPaddedHBoxLayout(14), container.NewCenter(resumeToggle), newRow("Configure…", nil, styleOutline, ui.configureAutoResume))))),
+		sectionTitle("Chat names"),
+		card(view.mark(registry.KeyNamingModel, ui.namingSetting())),
 	)
 }
 

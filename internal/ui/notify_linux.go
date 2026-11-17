@@ -51,7 +51,7 @@ func sendClickableNotification(title, body string, click func()) bool {
 		var number uint32
 		err := conn.Object("org.freedesktop.Notifications", "/org/freedesktop/Notifications").Call("org.freedesktop.Notifications.Notify", 0,
 			"1loop", uint32(0), "1loop", title, body, []string{"default", "Open"},
-			map[string]dbus.Variant{"desktop-entry": dbus.MakeVariant("1loop")}, int32(-1)).Store(&number)
+			map[string]dbus.Variant{"desktop-entry": dbus.MakeVariant(appID)}, int32(-1)).Store(&number)
 		if err != nil {
 			platform.Devf("app", "notification: %v", err)
 			return

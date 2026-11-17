@@ -337,6 +337,7 @@ func (ui *desktopUI) removeProject(target projectTarget, path string) {
 			}
 		}
 		ui.setProjectsOn(target, projects)
+		ui.keepProjectEnv(target, path, nil)
 		if ui.server == nil && ui.cfg.MachineID == machine && ui.cfg.Workspace == path {
 			next := ""
 			if len(projects) > 0 {
@@ -416,6 +417,7 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 		ui.syncTray()
 	}
 	ui.cfg = chat.Config
+	ui.syncProjectTheme()
 	ui.prompt.switchDraft(chat.ID)
 	ui.scroll.rest() // what the wheel still owed the last chat
 	ui.followTail = true
@@ -459,12 +461,7 @@ func (ui *desktopUI) renameChat(chat *conversation) {
 	entry.SetText(chat.Title)
 	var dialog *sheet
 	apply := func() {
-		if title := remoteapi.CleanChatTitle(entry.Text); title != "" {
-			chat.Title = title
-			ui.save()
-			ui.updateHeader()
-			ui.renderChats()
-		}
+		ui.setChatTitle(chat, entry.Text)
 		dialog.Hide()
 	}
 	entry.OnSubmitted = func(string) { apply() }
@@ -474,42 +471,72 @@ func (ui *desktopUI) renameChat(chat *conversation) {
 	ui.window.Canvas().Focus(entry)
 }
 
+// setChatTitle gives chat a title (Rename, the phone, the agent's chats
+// tool or the naming model), saved and shown in every window and on the
+// paired phones. A blank title changes nothing; it returns the title kept.
+func (ui *desktopUI) setChatTitle(chat *conversation, title string) string {
+	if title = remoteapi.CleanChatTitle(title); title == "" {
+		return ""
+	}
+	chat.Title = title
+	ui.save()
+	ui.updateHeader()
+	ui.renderChats()
+	return title
+}
+
 func (ui *desktopUI) deleteChat(chat *conversation) {
 	text := fmt.Sprintf("“%s” will be permanently deleted from 1loop.", chat.Title)
 	if chat.Config.Scratch != "" {
 		text = fmt.Sprintf("“%s” and the folder 1loop made for it will be permanently deleted.", chat.Title)
 	}
-	if ui.subchatWorktree(chat) != "" {
+	text += agent.SubtreeNote(len(ui.subtreeOf(chat)))
+	if len(ui.treeWorktrees(chat)) > 0 {
 		ui.confirmDeleteSubchat(chat, text)
 		return
 	}
 	ui.confirm("Delete chat?", text, "Delete", func() {
-		ui.removeChat(chat)
+		ui.removeTree(chat)
 	})
 }
 
+// removeTree deletes a chat and its subchats at every level, stopping
+// those that run, and returns them all, the chat first.
+func (ui *desktopUI) removeTree(chat *conversation) []*conversation {
+	gone := append([]*conversation{chat}, ui.subtreeOf(chat)...)
+	ui.removeChats(gone...)
+	return gone
+}
+
 func (ui *desktopUI) removeChat(chat *conversation) {
+	ui.removeChats(chat)
+}
+
+// removeChats deletes these chats alone: what is under them stays.
+func (ui *desktopUI) removeChats(chats ...*conversation) {
 	var kept []*conversation
 	for _, conversationValue := range ui.chats {
-		if conversationValue != chat {
+		if !slices.Contains(chats, conversationValue) {
 			kept = append(kept, conversationValue)
 		}
 	}
 	ui.chats = kept
-	if chat.run != nil {
-		chat.run.cancel()
-	}
-	chat.queue, chat.steer = nil, nil
-	chat.tasks.StopAll()
-	ui.prompt.drafts.set(chat.ID, "")
-	for _, view := range ui.allPanes() {
-		if view.current == chat {
-			view.current = nil
-			view.startNew()
+	for _, chat := range chats {
+		if chat.run != nil {
+			chat.run.cancel()
 		}
+		chat.queue, chat.steer = nil, nil
+		chat.tasks.StopAll()
+		ui.prompt.drafts.set(chat.ID, "")
+		for _, view := range ui.allPanes() {
+			if view.current == chat {
+				view.current = nil
+				view.startNew()
+			}
+		}
+		chat.disposePanel()
+		ui.removeScratch(chat)
 	}
-	chat.disposePanel()
-	ui.removeScratch(chat)
 	ui.save()
 	ui.renderChats()
 }

@@ -80,11 +80,14 @@ type serverSettings struct {
 	MemoryOff         bool               `json:"memoryOff,omitempty"`
 	WrapUpOff         bool               `json:"wrapUpOff,omitempty"`
 	AutoResume        *agent.AutoResume  `json:"autoResume,omitempty"`
+	NamingModel       *agent.NamingModel `json:"namingModel,omitempty"`
 	// Worktrees of the projects, by folder: their chats belong to the project.
 	Worktrees map[string]string `json:"worktrees,omitempty"`
 	// SSH machines (machines.go), and the projects that are folders of one.
 	SSHMachines     []serverMachine   `json:"sshMachines,omitempty"`
 	ProjectMachines map[string]string `json:"projectMachines,omitempty"`
+	// Projects' environment variables (#408), by project folder.
+	ProjectEnv map[string]map[string]string `json:"projectEnv,omitempty"`
 }
 
 type headlessServer struct {
@@ -102,6 +105,7 @@ type headlessServer struct {
 	worktrees                  map[string]string              // worktree folder → project (worktrees.go)
 	machines                   []serverMachine                // SSH machines (machines.go)
 	projectMachines            map[string]string              // project folder there → machine ID
+	projectEnv                 map[string]map[string]string   // project folder → its environment variables (project_env.go)
 	connected                  map[string]*sshmachine.Machine // machines used since the start, by ID
 	trust                      *hostTrust
 	cfg                        agent.Config
@@ -112,6 +116,7 @@ type headlessServer struct {
 	memoryOff                  bool                   // the agent's memory tool turned off
 	wrapUpOff                  bool                   // the next-step card (wrap_up tool) turned off
 	autoResume                 *agent.AutoResume      // what a rate limit does to a run, for every chat
+	namingModel                *agent.NamingModel     // the model that names new chats, nil for none
 	panelHomes                 map[string]*serverChat // project panels before the first prompt; not persisted
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
@@ -146,10 +151,14 @@ type headlessServer struct {
 	// which pairs the first device without the console (security.go).
 	setup     string
 	setupPort int
+	// proxied: a reverse proxy reaches it over plain HTTP (-http-listen),
+	// so the setup link names the proxy's address (proxy.go).
+	proxied bool
 	// Changes waiting for the next flush to the clients: a streamed answer
 	// reaches them at most ten times a second, as the desktop sends it.
 	pending  map[*serverChat]map[int]bool
 	flushing bool
+	installs map[string]*installJob // Install Chromium / Claude Code (install.go)
 }
 
 type serverEvent struct {
@@ -204,6 +213,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		server.worktrees = settings.Worktrees
 		server.machines = settings.SSHMachines
 		server.projectMachines = settings.ProjectMachines
+		server.projectEnv = settings.ProjectEnv
 		server.cfg = settings.Config
 		server.connections = settings.Connections
 		if settings.Keys != nil {
@@ -214,6 +224,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		server.memoryOff = settings.MemoryOff
 		server.wrapUpOff = settings.WrapUpOff
 		server.autoResume = settings.AutoResume
+		server.namingModel = settings.NamingModel
 		if settings.ApprovalMode != "" {
 			server.approvalMode = settings.ApprovalMode
 		}
@@ -240,7 +251,8 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		}}
 		server.cfg.ConnectionID = server.connections[0].ID
 	}
-	browser.BrowserProfileOverride = filepath.Join(dir, "browser")
+	browser.BrowserProfileOverride = filepath.Join(dir, "browser") // and Install Chromium's, beside it
+	agent.ClaudeInstallDir = filepath.Join(dir, "claude-code")
 	server.engine = browser.NewBrowserEngine(ctx)
 	for _, chat := range server.chats {
 		if chat.Config.Workspace == "" {
@@ -514,6 +526,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 	return map[string]any{
 		"defaultPresets":      true,
 		"autoResume":          server.autoResume,
+		"namingModel":         server.namingModel,
 		"userPreferences":     server.instructions,
 		"preferencesEditable": true,
 		"memory":              !server.memoryOff,
@@ -756,6 +769,7 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	if machine := server.machineLocked(cfg.MachineID); machine != nil {
 		cfg.Machine = machine // else the run refuses: its machine was removed
 	}
+	cfg.Env = server.projectEnvLocked(cfg.Workspace)
 	cfg.UserInstructions = server.instructions
 	cfg.WrapUpOff = server.wrapUpOff
 	if !server.memoryOff {
@@ -1083,9 +1097,11 @@ func (server *headlessServer) saveSettingsLocked() error {
 		MemoryOff:         server.memoryOff,
 		WrapUpOff:         server.wrapUpOff,
 		AutoResume:        server.autoResume,
+		NamingModel:       server.namingModel,
 		Worktrees:         server.worktrees,
 		SSHMachines:       server.machines,
 		ProjectMachines:   server.projectMachines,
+		ProjectEnv:        server.projectEnv,
 	})
 }
 

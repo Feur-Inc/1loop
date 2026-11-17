@@ -133,7 +133,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	panel.body.OnScrolled = func(fyne.Position) { panel.place() }
 	panel.page = container.NewStack(panel.body)
 	card := canvas.NewRectangle(colSurface)
-	card.CornerRadius = 12
+	card.CornerRadius = rounded(12)
 	card.StrokeColor = colBorderSoft
 	card.StrokeWidth = 1
 	content := container.NewBorder(container.NewVBox(padded(6, 2, 8, 6, header), rule), nil, nil, nil, panel.page)
@@ -569,7 +569,7 @@ type panelTabFrame struct {
 
 func newPanelTabFrame(text string, glyph fyne.Resource, active bool, onTap func()) *panelTabFrame {
 	tab := &panelTabFrame{active: active, onTap: onTap, glyph: glyph, back: canvas.NewRectangle(color.Transparent), label: textLine(text, 13, colMuted)}
-	tab.back.CornerRadius = 10
+	tab.back.CornerRadius = rounded(10)
 	tab.icon = canvas.NewImageFromResource(nil)
 	tab.icon.SetMinSize(fyne.NewSquareSize(15))
 	if glyph == nil {
@@ -719,7 +719,7 @@ func (panel *toolPanel) picture(tool string, part core.ImagePart) fyne.CanvasObj
 	view := canvas.NewImageFromImage(thumbnail(img, toolPictureSide))
 	view.FillMode = canvas.ImageFillContain
 	view.SetMinSize(fyne.NewSize(320, min(480, max(160, 320*float32(bounds.Dy())/float32(bounds.Dx())))))
-	open := newTapArea(func() { panel.ui.showPicture(name, part) })
+	open := newTapArea(func() { panel.ui.openPicture(name, part) })
 	return container.NewVBox(padded(0, 4, 2, 0, caption), container.NewStack(surface(view, colCode, colBorderSoft, 10, 0), open))
 }
 
@@ -733,20 +733,6 @@ func decodePicture(part core.ImagePart) image.Image {
 		return nil
 	}
 	return img
-}
-
-// showPicture shows a picture as large as the window allows.
-func (ui *desktopUI) showPicture(title string, part core.ImagePart) {
-	img := decodePicture(part)
-	if img == nil {
-		return
-	}
-	area := ui.window.Canvas().Size()
-	view := canvas.NewImageFromImage(img)
-	view.FillMode = canvas.ImageFillContain
-	view.ScaleMode = canvas.ImageScaleSmooth
-	view.SetMinSize(fyne.NewSize(area.Width-120, area.Height-200))
-	ui.modal(title, view, area.Width-80, nil)
 }
 
 func outputPlaceholder(running bool, empty string) string {

@@ -56,18 +56,21 @@ workspace is `/projects`: keep both on volumes. Browser Use runs Chromium
 without its own sandbox (`ONELOOP_CHROMIUM_NO_SANDBOX=1`): Docker's default
 profile allows none of them, so the container is what isolates it. The image
 also serves the browser client: open `https://your-server:47101/` and pair it
-like any other client. Pairing happens in the
-server's console, so start it with a terminal (`-it`):
+like any other client.
 
 ```sh
 docker run -d -it --name 1loop-server -p 47101:47101 \
   -v 1loop-data:/data -v ~/projects:/projects \
   ghcr.io/feur-inc/1loop-server:latest
-docker logs 1loop-server          # the certificate's fingerprint
-docker attach 1loop-server        # type pair …, devices or revoke …
+docker logs 1loop-server          # the certificate's fingerprint and the setup link
+docker exec 1loop-server 1loop-server pair <pairing-ID> <code>   # approve a client
+docker exec 1loop-server 1loop-server devices                    # or revoke <number>, ssh, trust <number>
 ```
 
-Detach from the console with **Ctrl+P Ctrl+Q**: Ctrl+C would stop the
+The client's pairing dialog shows the `docker exec …` command to run, with
+the container's ID in place of its name (the container's hostname, unless you
+set another). The console's commands work as well with `docker attach
+1loop-server`: detach with **Ctrl+P Ctrl+Q**, as Ctrl+C would stop the
 server. Arguments after the image name are added to the server's own, for
 example the first connection: `-provider compatible -base-url … -model …
 -api-key-env MODEL_API_KEY` with `-e MODEL_API_KEY=…`.
@@ -90,6 +93,129 @@ the server has: `"browser"` and `"claudeCode"` are `false` there. It sets `ONELO
 the agent's browser tools answer that this server has no browser instead of
 downloading one the image could not run. The same variable turns Browser Use
 off on any server.
+
+### Install Chromium and Claude Code later
+
+A server without them (the slim image, or any server without Chromium or
+`claude`) can download them when you need them: in a paired client, Settings →
+General shows **Install Chromium** and **Install Claude Code** for what the
+server lacks (desktop and browser client: under "On the server"; Android:
+under Linked targets). The server downloads them into its data folder, as its
+own user, without administrator rights, so they survive restarts and new
+images (`/data` in Docker):
+
+- **Chromium** goes to `<data>/chromium` (about 200 MB, plus the libraries
+  below): Google's Chrome for Testing, as
+  Browser Use downloads it on a desktop, checked against the MD5 checksum
+  Google's storage gives with the file (Google publishes no signature for
+  it), over HTTPS. It then has to start. The slim image lacks the system
+  libraries it needs (about 25, from GLib to NSS): the server then fetches
+  them with `apt-get` from the system's own Debian repositories, keeping
+  apt's lists and downloads in its data folder (no root, no lock); apt
+  checks the repositories' signatures and each package's checksum as for an
+  install. The packages are unpacked, not installed, into
+  `<data>/chromium/libraries` (about 250 MB, with the Liberation fonts), and
+  Chromium starts with them. A Chromium that still does not start is removed,
+  and the client shows why. Once installed, it overrides
+  `ONELOOP_BROWSER=none`, and it updates itself like the desktop's (once a
+  day, at most). Delete `<data>/chromium` to remove it.
+- **Claude Code** goes to `<data>/claude-code/claude` (about 350 MB): the latest release
+  from `downloads.claude.ai`, accepted only if its manifest carries
+  Anthropic's release signature (key `31DDDE24DDFAB679F42D7BD2BAA929FF1A7ECACE`,
+  built into 1loop) and the binary its SHA-256, and if it starts. It is used
+  when there is no `claude` on `PATH` or in `~/.local/bin`. The slim image sets
+  `DISABLE_AUTOUPDATER=1`, so it keeps its version: delete the file and
+  install again to update it. Then sign in as above.
+
+The API: `POST /api/install/chromium` or `POST /api/install/claude-code`
+starts the download in the background (`202`, or `200` with
+`{"installed": true}` when it is there already). `/api/state` follows it under
+`"installs"`: `{"chromium": {"running": true, "text": "Downloading… 42% of
+193 MB"}}`, then `"error"` if it failed; `"browser"` and `"claudeCode"` turn
+`true` once installed. An `install` event says the same to the open clients.
+
+### Behind a reverse proxy
+
+The generated certificate is self-signed. The desktop and Android clients
+pin its fingerprint, but a browser cannot: it shows a certificate warning on
+every visit, and each refused handshake used to print
+`http: TLS handshake error … unknown certificate` in the console. The server
+now says so once and then sums those failures up at most once an hour, so
+the pairing messages stay readable. To get rid of the warning, give the
+server a certificate browsers trust, in one of two ways.
+
+**A trusted certificate on the server.** Pass one, such as Let's Encrypt's
+for the server's name, with `-tls-cert` and `-tls-key` (mount the files
+read-only, for example `-v /etc/1loop-tls:/tls:ro` and
+`-tls-cert /tls/fullchain.pem -tls-key /tls/privkey.pem`). The server reads
+them when it starts, so restart it after each renewal. Clients then connect
+to `https://your-server-name:47101` with the fingerprint left empty.
+
+**A reverse proxy with a real certificate**, such as Caddy, or Traefik as
+Dokploy sets it up. The proxy holds the certificate and renews it, and
+forwards to the server's plain-HTTP listener, `-http-listen`. The server
+still serves HTTPS on `-listen` too. Without TLS, tokens and conversations
+cross the network in the clear between the proxy and the server, so
+`-http-listen` only accepts addresses that the rest of the internet cannot
+reach:
+
+- loopback (`127.0.0.1:47100`) or a private address (`10.…`, `172.16–31.…`,
+  `192.168.…`, `fd…`), or
+- every interface (`:47100`) when all of them are private, as inside a
+  container on a Docker network.
+
+On a public address it refuses to start. Add `-http-allow-public` only if
+a firewall lets the proxy alone in. The server then prints a warning every
+time it starts. Never publish the plain port on the host's public interface
+(`-p 47100:47100`): bind it to loopback (`-p 127.0.0.1:47100:47100`) or
+leave it on the Docker network.
+
+The proxy must pass the `Host` header and must not buffer
+`text/event-stream` responses. Caddy and Traefik do both by default. Open the
+proxy's `https://` address in the browser. On desktop and Android, add the
+same address with the fingerprint left empty, since the certificate is now
+one the system trusts. While no device is paired, the setup link the server
+prints names the proxy, `https://<proxy>/app/#setup=…`. Once everything goes
+through the proxy, you can stop publishing port 47101.
+
+Caddy on the host, with the server's container publishing the plain port on
+loopback only:
+
+```sh
+docker run -d -it --name 1loop-server -p 127.0.0.1:47100:47100 \
+  -v 1loop-data:/data -v ~/projects:/projects \
+  ghcr.io/feur-inc/1loop-server:latest -http-listen :47100
+```
+
+```
+# Caddyfile: Caddy gets and renews the certificate itself.
+1loop.example.com {
+	reverse_proxy 127.0.0.1:47100
+}
+```
+
+Dokploy (Traefik): deploy the image, or `packaging/docker/compose.yml`,
+with `-http-listen :47100` added to the server's arguments (Compose:
+`command: ["-http-listen", ":47100"]`) and no published ports. Then, under
+the service's **Domains**, add your domain with container port `47100`,
+HTTPS on and the Let's Encrypt certificate. Dokploy adds the Traefik labels
+for you. On another Traefik, these are the labels to add, with the container
+on Traefik's network:
+
+```yaml
+labels:
+  - traefik.enable=true
+  - traefik.http.routers.oneloop.rule=Host(`1loop.example.com`)
+  - traefik.http.routers.oneloop.entrypoints=websecure
+  - traefik.http.routers.oneloop.tls.certresolver=letsencrypt
+  - traefik.http.services.oneloop.loadbalancer.server.port=47100
+```
+
+Pairing is unchanged: approve a new device from one already paired, or type
+`pair …` in the console (`docker attach 1loop-server` on the host, since a
+shell opened in the container is not the console). The Docker image's console still shows the certificate
+fingerprint, which only matters to clients that connect to port 47101
+directly.
 
 ### Claude Code in the image
 
@@ -201,7 +327,7 @@ folder on the host:
    same flags work with any host the server reaches.
 
 3. Confirm the host key. On its first connection the server prints the
-   machine's host key in its console (`docker attach 1loop-server`):
+   machine's host key in its logs (`docker logs 1loop-server`):
 
    ```text
    SSH machine you@host.docker.internal (host.docker.internal:22) has never been connected to. Its host key is ssh-ed25519 SHA256:….
@@ -209,7 +335,8 @@ folder on the host:
    ```
 
    Compare it with `ssh-keygen -lf /etc/ssh/ssh_host_ed25519_key.pub` on the
-   host, then type `trust 1`. The key is kept in `/data/known_hosts`, and a
+   host, then run `docker exec 1loop-server 1loop-server trust 1` (or type
+   `trust 1` in the console). The key is kept in `/data/known_hosts`, and a
    different key later is refused. To skip this step, pin the key with
    `host-key=` instead: the server then accepts that key only.
 
@@ -234,6 +361,8 @@ On first start the server generates an ECDSA TLS certificate, valid for one
 year, and prints its SHA-256 fingerprint. It reuses that certificate on later
 starts. You can instead supply a certificate and private key with
 `-tls-cert /path/server.crt -tls-key /path/server.key`.
+Browsers cannot pin the fingerprint: for the web client without a
+certificate warning, see [Behind a reverse proxy](#behind-a-reverse-proxy).
 
 1. On desktop, click **This computer** under the message box and choose
    **Connect a server…**, or open **Settings → General → Remote server →
@@ -248,9 +377,12 @@ starts. You can instead supply a certificate and private key with
    explicit `http://` address.
 3. The client shows a six-digit code. Approve it from a device already paired
    with the server: 1loop there (desktop, web or Android) shows "<device>
-   wants to use this server" and asks for that code. Or type the
-   `pair <pairing-ID> <six-digit-code>` command the client also shows in the
-   server process's console. The client connects by itself once approved.
+   wants to use this server" and asks for that code. Or run the command the
+   client also shows on the server's machine, as the server's user:
+   `1loop-server pair <pairing-ID> <six-digit-code>` (in Docker,
+   `docker exec <container> 1loop-server pair …`), or type
+   `pair <pairing-ID> <six-digit-code>` in the server process's console. The
+   client connects by itself once approved.
    Pairings expire after two minutes and allow five failed code attempts. At
    most eight may be pending.
 4. The paired client retains a random bearer token. The server persists only
@@ -285,12 +417,26 @@ before forgetting it; the phone has the same under Settings → General →
 Linked targets. Both ask first. They use `GET /api/devices` and
 `POST /api/devices/{id}/revoke`.
 
-The console also accepts `devices` and `revoke <number>`. Revocation rejects
-new requests and disconnects active event/browser streams. It does not undo
-an operation already accepted by the server. The console stays the fallback
-when no paired device is at hand: for a detached deployment, use a terminal
-multiplexer such as tmux, or `docker attach` with a container started with
-`-it` (Compose: `stdin_open` and `tty`).
+**Commands from another shell.** `1loop-server <command>` sends one of the
+console's commands to the server that is running: `pair <id> <code>`,
+`devices`, `revoke <number>`, `ssh` (and `ssh add …`, `ssh remove <number>`),
+`trust <number>` and `refuse <number>`. It prints the answer and exits with
+status 1 when the server refused the command. It reaches the server through
+a Unix socket in its data directory, `admin.sock`: mode `0600` in the `0700`
+directory, so only the server's own user (and root) can use it, as they could
+read its keys. It finds the directory as the server does: `-data-dir`, else
+`ONELOOP_DATA_DIR` (`/data` in the Docker image), else
+`~/.config/1loop-server`. A server started with another `-data-dir` needs the
+same one: `1loop-server -data-dir /srv/1loop pair …` (the dialog's command
+includes it).
+
+`devices` lists the paired devices, `revoke <number>` removes one: the
+fallback when no paired device is at hand.
+Revocation rejects new requests and disconnects active event/browser streams.
+It does not undo an operation already accepted by the server. These commands
+work as well in the console, typed in the server's standard input: with tmux,
+or `docker attach` with a container started with `-it` (Compose:
+`stdin_open` and `tty`).
 
 Certificate replacement requires verifying and entering the new fingerprint
 on each client. A private certificate's fingerprint replaces normal hostname
@@ -359,7 +505,7 @@ shell processes do not. Git changes reuse the desktop diff parser and show
 unstaged/untracked or staged changes. Task progress, elapsed time and context
 policy are read from the server.
 
-Android has been adapted for the same HTTPS endpoints and console pairing.
+Android has been adapted for the same HTTPS endpoints and pairing.
 Compilation is separate from device verification: phone installation and
 interactive tests must wait for the user's explicit signal.
 

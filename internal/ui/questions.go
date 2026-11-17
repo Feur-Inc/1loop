@@ -392,7 +392,7 @@ func tag(text string, ink, fill color.NRGBA) fyne.CanvasObject {
 	label := textLine(text, 11, ink)
 	label.TextStyle = fyne.TextStyle{Bold: true}
 	background := canvas.NewRectangle(fill)
-	background.CornerRadius = 6
+	background.CornerRadius = rounded(6)
 	return container.NewVBox(container.NewStack(background, padded(2, 2, 7, 7, label)))
 }
 
@@ -467,12 +467,12 @@ type choiceCardRenderer struct {
 func newChoiceCardRenderer(card *choiceCard) *choiceCardRenderer {
 	renderer := &choiceCardRenderer{card: card, bg: canvas.NewRectangle(color.Transparent), box: canvas.NewRectangle(color.Transparent),
 		dot: canvas.NewRectangle(colAmber), check: canvas.NewImageFromResource(tinted(iconCheck, colInk))}
-	renderer.bg.CornerRadius, renderer.bg.StrokeWidth = 10, 1
+	renderer.bg.CornerRadius, renderer.bg.StrokeWidth = rounded(10), 1
 	renderer.box.StrokeWidth = 1.5
-	renderer.box.CornerRadius = 8
-	renderer.dot.CornerRadius = 4
+	renderer.box.CornerRadius = rounded(8)
+	renderer.dot.CornerRadius = rounded(4)
 	if card.multi {
-		renderer.box.CornerRadius = 4
+		renderer.box.CornerRadius = rounded(4)
 	}
 	renderer.check.FillMode = canvas.ImageFillContain
 	renderer.Refresh()

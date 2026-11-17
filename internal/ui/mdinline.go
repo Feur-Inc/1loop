@@ -10,6 +10,9 @@ package ui
 // style, that flowText lays out.
 
 import (
+	"html"
+	"regexp"
+	"strconv"
 	"strings"
 
 	"github.com/yuin/goldmark"
@@ -31,6 +34,12 @@ type span struct {
 	link   string // where the run leads, when it is a link
 	math   string // LaTeX source, drawn typeset when a TeX system is installed
 	hard   bool   // a line break
+	// An image (or, with video, a video) as GitHub shows one: the preview of
+	// an issue or pull request draws it (markdown_media.go); elsewhere it is
+	// a link to it, labelled with its alt text.
+	media      string
+	video      bool
+	mediaWidth float32 // the width its tag asks for, 0 for its own
 }
 
 // markdownParser reads answers. A goldmark parser is safe for concurrent use.
@@ -76,7 +85,7 @@ func (builder *spanBuilder) text(text string, style span) {
 		last := &builder.out[n-1]
 		same := *last
 		same.text = text
-		if same == style && !last.hard && last.math == "" {
+		if same == style && !last.hard && last.math == "" && last.media == "" {
 			last.text += text
 			return
 		}
@@ -127,14 +136,8 @@ func (builder *spanBuilder) walk(parent ast.Node, style span) {
 			inner := style
 			inner.link = string(node.Destination)
 			builder.walk(node, inner)
-		case *ast.Image: // shown as a link to it
-			inner := style
-			inner.link = string(node.Destination)
-			label := plainText(node, builder.source)
-			if label == "" {
-				label = inner.link
-			}
-			builder.text(label, inner)
+		case *ast.Image:
+			builder.mediaSpan(string(node.Destination), plainText(node, builder.source), false, 0, style)
 		case *ast.AutoLink:
 			inner := style
 			inner.link = string(node.URL(builder.source))
@@ -187,7 +190,41 @@ func (builder *spanBuilder) html(raw string, style span) {
 		builder.out = append(builder.out, span{hard: true})
 		return
 	}
+	if name, attrs, ok := openingTag(raw); ok && (name == "img" || name == "video") && attrs["src"] != "" {
+		width, _ := strconv.ParseFloat(strings.TrimSuffix(attrs["width"], "px"), 32)
+		builder.mediaSpan(attrs["src"], attrs["alt"], name == "video", float32(width), style)
+		return
+	}
 	builder.text(raw, style)
+}
+
+// mediaSpan appends an image or a video: a link to it, its own span.
+func (builder *spanBuilder) mediaSpan(src, alt string, video bool, width float32, style span) {
+	style.link, style.media, style.video, style.mediaWidth = src, src, video, width
+	style.text = strings.TrimSpace(alt)
+	if style.text == "" {
+		style.text = src
+	}
+	builder.out = append(builder.out, style)
+}
+
+// htmlTagPattern reads an opening tag; htmlAttrPattern its attributes.
+var (
+	htmlTagPattern  = regexp.MustCompile(`^<([a-zA-Z][a-zA-Z0-9]*)((?:\s[^>]*)?)/?>$`)
+	htmlAttrPattern = regexp.MustCompile(`([a-zA-Z_:][-a-zA-Z0-9_:.]*)(?:\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s"'=<>` + "`" + `]+)))?`)
+)
+
+// openingTag is an opening tag's name, in lower case, and its attributes.
+func openingTag(raw string) (string, map[string]string, bool) {
+	match := htmlTagPattern.FindStringSubmatch(strings.TrimSpace(raw))
+	if match == nil {
+		return "", nil, false
+	}
+	attrs := map[string]string{}
+	for _, attr := range htmlAttrPattern.FindAllStringSubmatch(match[2], -1) {
+		attrs[strings.ToLower(attr[1])] = html.UnescapeString(attr[2] + attr[3] + attr[4])
+	}
+	return strings.ToLower(match[1]), attrs, true
 }
 
 // htmlSpans reads a block of HTML (a citation alone on its line is one)

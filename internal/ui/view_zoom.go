@@ -115,7 +115,7 @@ func newZoomBadge(reset func()) (*fyne.Container, *canvas.Text) {
 	text := textLine("100%", 11.5, colAmber)
 	text.TextStyle = fyne.TextStyle{Bold: true}
 	background := canvas.NewRectangle(colPopover)
-	background.StrokeColor, background.StrokeWidth, background.CornerRadius = colPopBorder, 1, 15
+	background.StrokeColor, background.StrokeWidth, background.CornerRadius = colPopBorder, 1, rounded(15)
 	row := container.NewHBox(text, spacer(2, 0), textLine("View only", 11.5, colMuted), newRow("Reset view", iconReload, styleChip, reset))
 	badge := container.NewStack(background, padded(1, 1, 10, 4, row))
 	badge.Hide()

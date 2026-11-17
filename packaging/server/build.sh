@@ -3,7 +3,7 @@
 # Builds the headless server downloads (x86-64), static and without cgo:
 #
 #   dist/1loop-server-VERSION-linux-amd64
-#   dist/1loop-server-VERSION-windows-amd64.exe
+#   dist/1loop-server-VERSION-windows-amd64.exe (with the 1loop icon)
 #
 # DIST sets the output folder (dist by default). `make server` builds the
 # development binary in bin/ instead.
@@ -17,6 +17,10 @@ mkdir -p "$dist"
 
 CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -trimpath -ldflags="$flags" \
   -o "$dist/1loop-server-$version-linux-amd64" ./cmd/1loop-server
+# The Windows exe carries the 1loop icon and its version.
+syso=cmd/1loop-server/rsrc_windows_amd64.syso
+trap 'rm -f "$syso"' EXIT
+go run ./cmd/1loop-release winres -version "$version" -file 1loop-server.exe -description "1loop server" -o "$syso"
 CGO_ENABLED=0 GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="$flags" \
   -o "$dist/1loop-server-$version-windows-amd64.exe" ./cmd/1loop-server
 echo "$dist/1loop-server-$version-linux-amd64"

@@ -2,27 +2,20 @@
 
 package ui
 
-// Add project asks which target the project lives on (#381): this
-// computer, an SSH machine of Settings → General, or a paired server.
-// The folder is then picked on that target, the project is kept under it,
-// and its chats run there. A folder of this computer is never sent to a
+// Add project is one dialog, New project (#408): where the project lives
+// (#381: this computer, an SSH machine of Settings → General, or a paired
+// server), its name, the folders of this computer it is made of (each
+// with its branch, and a Worktree box to work in a new worktree of it),
+// and its environment variables. The project is kept under its target and
+// its chats run there. A folder of this computer is never sent to a
 // server, nor a server's opened here: the target is chosen, not implied
 // by the one the window happens to work on.
 
 import (
-	"context"
-	"errors"
-	"path/filepath"
-	"strings"
-	"time"
+	"slices"
 
 	"fyne.io/fyne/v2"
-	"fyne.io/fyne/v2/container"
-	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
-	"fyne.io/fyne/v2/widget"
-
-	"1loop/internal/agent"
 )
 
 // addTargets are the targets Add project offers, in the sidebar's order:
@@ -79,60 +72,18 @@ func (ui *desktopUI) activeTarget() projectTarget {
 	return localTarget
 }
 
-// addProject asks which target the new project lives on, then picks its
-// folder there. With a single target there is nothing to ask.
+// addProject opens the New project dialog on the target the window works
+// on, when it is one Add project offers, else on the first.
 func (ui *desktopUI) addProject() {
 	targets := ui.addTargets()
-	if len(targets) == 1 {
-		ui.addProjectOn(targets[0])
+	if len(targets) == 0 {
 		return
 	}
-	var dialog *sheet
-	list := container.New(layout.NewCustomPaddedVBoxLayout(2))
-	for _, target := range targets {
-		target := target
-		name, detail, icon := ui.targetName(target)
-		row := newRow(name, icon, styleMenu, func() {
-			dialog.Hide()
-			ui.addProjectOn(target)
-		})
-		row.detail = detail
-		list.Add(row)
+	target := targets[0]
+	if active := ui.activeTarget(); slices.Contains(targets, active) {
+		target = active
 	}
-	body := container.NewVBox(note("Where does the project live? Its chats run there."), list)
-	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
-	dialog = ui.modal("Add project", body, 420, nil, cancel)
-}
-
-// addProjectOn picks a project's folder on a target: with this computer's
-// folder picker, or by name in the projects folder of an SSH machine or
-// of the server.
-func (ui *desktopUI) addProjectOn(target projectTarget) {
-	switch target.kind {
-	case targetSSH:
-		ui.addMachineProject(target.id)
-	case targetServer:
-		ui.addServerProject(target)
-	default:
-		ui.addLocalProject()
-	}
-}
-
-// addLocalProject picks a folder of this computer, even while a server or
-// an SSH machine is in use: the project is this computer's.
-func (ui *desktopUI) addLocalProject() {
-	start := ui.lastLocalWorkspace()
-	if ui.server == nil && ui.cfg.MachineID == "" {
-		start = ui.cfg.Workspace
-	}
-	ui.pick(pickRequest{title: "Add a project folder", start: filepath.Dir(start), folder: true}, func(paths []string) {
-		root, err := agent.ResolveWorkspace(paths[0])
-		if err != nil {
-			ui.notice("Add project", err.Error())
-			return
-		}
-		ui.projectAdded(localTarget, root)
-	})
+	ui.addProjectOn(target)
 }
 
 // keepProjectOn keeps a new project under its target. A server keeps its
@@ -156,88 +107,4 @@ func (ui *desktopUI) projectAdded(target projectTarget, folder string) {
 		return
 	}
 	ui.openProjectOn(target, folder)
-}
-
-// addServerProject makes a project on a paired server: a folder of its
-// projects folder, made there unless it exists.
-func (ui *desktopUI) addServerProject(target projectTarget) {
-	client := (*remoteClient)(nil)
-	if remote := ui.server; remote != nil && remote.client.address.URL == target.id {
-		client = remote.client
-	} else {
-		saved, ok := pairedServer(target.id)
-		if !ok {
-			ui.notice("Add project", "This server is no longer paired. Connect it again with the target menu under the conversation.")
-			return
-		}
-		var err error
-		if client, err = newRemoteClient(saved); err != nil {
-			ui.notice("Add project", err.Error())
-			return
-		}
-	}
-	name := serverName(target.id)
-	ui.projectNameDialog("New project on "+name, "A folder in the projects folder of "+name+". An existing folder of that name is opened as it is.",
-		func(ctx context.Context, folder string) (string, error) {
-			var reply struct{ Workspace string }
-			err := client.json(ctx, "POST", "/api/projects", map[string]any{"path": folder}, &reply)
-			if err != nil { // not there yet: made
-				err = client.json(ctx, "POST", "/api/projects", map[string]any{"path": folder, "create": true}, &reply)
-			}
-			if err == nil && reply.Workspace == "" {
-				err = errors.New("The server did not say where the project is")
-			}
-			return reply.Workspace, err
-		},
-		func(project string) {
-			ui.setReach(target, reachOnline, "")
-			if link := ui.linkTo(target.id); link != nil { // its listing is read again, at once
-				select {
-				case link.wake <- struct{}{}:
-				default:
-				}
-			}
-			if remote := ui.server; remote != nil && remote.client.address.URL == target.id {
-				remote.notify()
-			}
-			ui.projectAdded(target, project)
-		})
-}
-
-// projectNameDialog asks a new project's folder name, then makes it on a
-// target with makeFolder (off the UI thread), and calls done with its folder
-// there once it is.
-func (ui *desktopUI) projectNameDialog(title, text string, makeFolder func(ctx context.Context, name string) (string, error), done func(string)) {
-	entry := widget.NewEntry()
-	entry.SetPlaceHolder("Project name")
-	problem := plainFlow("", 12.5, colDanger)
-	var dialog *sheet
-	var create *tapRow
-	apply := func() {
-		name := strings.TrimSpace(entry.Text)
-		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\\x00\r\n") {
-			setFlow(problem, "Enter a folder name, without / or \\.")
-			return
-		}
-		create.Disable()
-		go func() {
-			ctx, cancel := context.WithTimeout(ui.ctx, time.Minute)
-			defer cancel()
-			project, err := makeFolder(ctx, name)
-			fyne.Do(func() {
-				create.Enable()
-				if err != nil {
-					setFlow(problem, err.Error())
-					return
-				}
-				dialog.Hide()
-				done(project)
-			})
-		}()
-	}
-	entry.OnSubmitted = func(string) { apply() }
-	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
-	create = newRow("Create", nil, stylePrimary, apply)
-	dialog = ui.modal(title, container.NewVBox(note(text), entry, problem), 480, nil, cancel, create)
-	ui.window.Canvas().Focus(entry)
 }

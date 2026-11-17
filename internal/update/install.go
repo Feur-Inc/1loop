@@ -40,7 +40,7 @@ func InstallDir() (string, error) {
 func installDir(exe string) string {
 	dir := filepath.Dir(exe)
 	// 1loop-software.cmd starts the copy in software\: the Windows archive
-	// unpacks in the folder above it.
+	// of releases before #431 unpacked in the folder above it.
 	if parent := filepath.Dir(dir); filepath.Base(dir) == "software" {
 		if _, err := os.Stat(filepath.Join(parent, "1loop-software.cmd")); err == nil {
 			return parent
@@ -93,6 +93,10 @@ func Install(ctx context.Context, manifest Manifest, kind string) (string, error
 		if err = os.Chmod(download, 0755); err == nil {
 			err = os.Rename(download, filepath.Join(staging, filepath.Base(exe)))
 		}
+		// A single binary replaces the running one where it is, even the
+		// software\ copy of the former Windows archive (installDir): its
+		// restart is this path.
+		dir = filepath.Dir(exe)
 	}
 	if err != nil {
 		return "", fmt.Errorf("Cannot unpack the update: %w", err)

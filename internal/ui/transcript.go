@@ -165,7 +165,7 @@ func (row *toolRow) CreateRenderer() fyne.WidgetRenderer {
 	renderer := &toolRowRenderer{row: row, bg: canvas.NewRectangle(color.Transparent), icon: canvas.NewImageFromResource(nil),
 		verb: canvas.NewText("", colMuted), target: canvas.NewText("", colText),
 		meta: canvas.NewText("", colFaint), minus: canvas.NewText("", colDanger)}
-	renderer.bg.CornerRadius = 8
+	renderer.bg.CornerRadius = rounded(8)
 	renderer.icon.FillMode = canvas.ImageFillContain
 	for _, t := range []*canvas.Text{renderer.verb, renderer.target, renderer.meta, renderer.minus} {
 		t.TextSize = 13.5
@@ -302,10 +302,12 @@ func (renderer *toolRowRenderer) Destroy() {}
 // The text's natural width is measured once: a long message made every
 // layout measure each of its lines again.
 type bubbleLayout struct {
-	text    *flowText // nil for a message of images only
-	chrom   float32
-	natural float32
-	known   bool
+	text     *flowText       // nil for a message of images only
+	pictures *fyne.Container // its pictures (pictureStrip), nil without
+	picChrom float32         // the bubble's width around them
+	chrom    float32
+	natural  float32
+	known    bool
 }
 
 func (layoutSpec *bubbleLayout) width(available float32) float32 {
@@ -315,7 +317,13 @@ func (layoutSpec *bubbleLayout) width(available float32) float32 {
 			layoutSpec.natural, _ = layoutSpec.text.extent()
 		}
 	}
-	return fyne.Min(layoutSpec.natural+layoutSpec.chrom+2, available*0.78)
+	// As wide as its text or its pictures on one line: pictures wrap, and
+	// shrink, only when the bubble cannot be that wide (#435).
+	natural := layoutSpec.natural + layoutSpec.chrom + 2
+	if pictures := pictureStripWidth(layoutSpec.pictures); pictures > 0 {
+		natural = fyne.Max(natural, pictures+layoutSpec.picChrom)
+	}
+	return fyne.Min(natural, available*0.78)
 }
 
 func (layoutSpec *bubbleLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
@@ -369,7 +377,7 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 			ui.appendChatMessage(chat, item)
 			return
 		}
-		view := &userImageView{pictures: container.New(layout.NewCustomPaddedHBoxLayout(6))}
+		view := &userImageView{pictures: newPictureStrip(4)} // 4 inside the bubble's round corners
 		ui.setUserImages(view, item.Images)
 		content := container.NewVBox(view.pictures)
 		if chips := fileChips(item.Files); chips != nil {
@@ -384,7 +392,8 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 			content.Add(padded(theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(),
 				container.NewStack(text, newSelectLayer(ui, text))))
 		}
-		bubble := container.New(&bubbleLayout{text: text, chrom: 2*theme.InnerPadding() + 4}, surface(content, colRaised, nil, 14, 2))
+		bubble := container.New(&bubbleLayout{text: text, pictures: view.pictures, picChrom: 2 * 2, chrom: 2*theme.InnerPadding() + 4},
+			surface(content, colRaised, nil, 14, 2))
 		copyRow := container.NewHBox(layout.NewSpacer(), copyChip(func() string { return item.Text }),
 			newRow("Edit", iconPencil, styleChip, func() { ui.editMessage(chat, index) }), ui.versionControls(chat, item.ID))
 		view.box = container.New(layout.NewCustomPaddedVBoxLayout(2), bubble, copyRow)

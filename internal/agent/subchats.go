@@ -121,6 +121,7 @@ type SubchatAccess struct {
 	Depth       int
 	Start       func(ctx context.Context, request SubchatRequest) (SubchatInfo, error)
 	Model       func(ctx context.Context, name string) (string, error)
+	ForkSize    func(ctx context.Context) int // the parent's context, in tokens: what a fork carries
 	List        func(ctx context.Context) []SubchatInfo
 	Stop        func(ctx context.Context, id string) error
 }
@@ -280,6 +281,32 @@ func SubchatConfig(parent Config, choice *ModelChoice) Config {
 	return cfg
 }
 
+// ForkApprovalTokens is the size from which a fork is always the user's
+// call, even in approval modes that start subchats by themselves.
+const ForkApprovalTokens = 50000
+
+// RecapBudget is the most characters a chat's earlier conversation takes
+// when a harness without its session is told it as text: about 10% of the
+// model's window (4 characters a token), and never more than ~30k tokens.
+// That text is a new, uncached prompt.
+func RecapBudget(cfg Config) int {
+	return min(ModelContextWindow(cfg)*4*10/100, 120000)
+}
+
+// ForkConfig makes a forked subchat's configuration (from SubchatConfig)
+// fork its parent's Claude Code session, when both run in Claude Code with
+// the same login and model: its first turn then reads the parent's cached
+// prompt instead of a text recap. Several forks of one parent share it.
+func ForkConfig(cfg *Config, parent Config) {
+	if cfg.Provider != "claudecode" || parent.Provider != "claudecode" || cfg.ClaudeHome != parent.ClaudeHome || cfg.Model != parent.Model {
+		return
+	}
+	if HarnessSession(parent) == "" {
+		return
+	}
+	cfg.ForkSession, cfg.ForkWorkspace = parent.loginSession().Session, parent.Workspace
+}
+
 // ForkHistory is what a forked subchat starts from: the parent's messages,
 // without a turn still open (a tool call waiting for its result).
 func ForkHistory(history []Message) []Message {
@@ -301,7 +328,7 @@ func subchatToolDefinition() map[string]any {
 	return map[string]any{"type": "function", "function": map[string]any{
 		"name": "subchat",
 		"description": "Start and follow subchats: conversations under this chat in the sidebar that run in parallel, for independent work; the user can open, steer or stop them. " +
-			"start returns its id at once (approved per the approval mode); brief is all it needs, as it sees this conversation only with context fork: the task, the files, what done means. isolation: worktree (null: own branch from the last commit, without uncommitted changes) or shared (this folder, read-only work). model: a name from the model picker, null for this chat's. " +
+			"start returns its id at once (approved per the approval mode); brief is all it needs: the task, the files, what done means. context: fresh (null, preferred) or fork (it gets this whole conversation: costly, only when the brief cannot carry it). isolation: worktree (null: own branch from the last commit, without uncommitted changes) or shared (this folder, read-only work). model: a name from the model picker, null for this chat's. " +
 			"Its report comes as a message when its turn ends: do not poll. Follow-ups go through the chats tool. status lists the subchats (id null) or one; stop stops one and those under it. At most " + fmt.Sprint(MaxSubchatDepth) + " levels below the user's chat, " + fmt.Sprint(MaxRunningSubchats) + " working at once. Leave unused fields null.",
 		"parameters": map[string]any{"type": "object", "additionalProperties": false,
 			"required": []string{"action", "id", "title", "brief", "context", "isolation", "model", "files"},
@@ -416,8 +443,16 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 			}
 		}
 		start := "fresh, with the brief only"
+		ask := backend.confirm
 		if request.Context == "fork" {
 			start = "with this conversation so far"
+			if access.ForkSize != nil {
+				size := access.ForkSize(ctx)
+				start += fmt.Sprintf(" (about %s tokens)", Tokens(size))
+				if size >= ForkApprovalTokens {
+					ask = backend.askApproval // a large fork is the user's call, whatever the mode
+				}
+			}
 		}
 		attachments, err := messageAttachments(ctx, cfg.Workspace, args.Files)
 		if err != nil {
@@ -425,7 +460,7 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 		}
 		request.Attachments = attachments
 		preview := fmt.Sprintf("%s\n\nStarts %s, %s, with %s.\n\n%s%s", request.Title, start, place, model, request.Brief, filesPreview(args.Files))
-		if !backend.confirm(ctx, emit, "Start a subchat?", preview) {
+		if !ask(ctx, emit, "Start a subchat?", preview) {
 			return "", fmt.Errorf("The user did not start the subchat")
 		}
 		begin()
@@ -530,4 +565,44 @@ func SubchatWorktree(ctx context.Context, host gitrepo.Host, folder, title, id s
 // does a branch with commits not merged: the note says what was kept.
 func RemoveSubchatWorktree(ctx context.Context, host gitrepo.Host, folder string, force bool) (string, error) {
 	return gitrepo.RemoveWorktree(ctx, host, folder, gitrepo.Removal{Path: folder, Force: force, DeleteBranch: true})
+}
+
+// SubchatSubtree are the chats under root, its subchats and theirs at
+// every level, parents before their subchats; parents maps each chat to
+// its parent ("" for a chat the user started). A loop of links stops
+// where it comes back.
+func SubchatSubtree(root string, parents map[string]string) []string {
+	children := map[string][]string{}
+	for id, parent := range parents {
+		if parent != "" && parent != id {
+			children[parent] = append(children[parent], id)
+		}
+	}
+	for _, list := range children {
+		slices.Sort(list) // the same order on every call
+	}
+	seen := map[string]bool{root: true}
+	var out []string
+	for queue := []string{root}; len(queue) > 0; queue = queue[1:] {
+		for _, child := range children[queue[0]] {
+			if !seen[child] {
+				seen[child] = true
+				out = append(out, child)
+				queue = append(queue, child)
+			}
+		}
+	}
+	return out
+}
+
+// SubtreeNote is what deleting a chat with count chats under it says
+// about them, "" when it has none.
+func SubtreeNote(count int) string {
+	switch count {
+	case 0:
+		return ""
+	case 1:
+		return " Its subchat will be deleted with it."
+	}
+	return fmt.Sprintf(" Its %d subchats, at every level, will be deleted with it.", count)
 }

@@ -129,8 +129,8 @@ func (ui *desktopUI) linkAnotherServer() {
 			ctx, cancel := context.WithTimeout(ui.ctx, 10*time.Second)
 			defer cancel()
 			var reply struct {
-				Pairing, Code  string
-				Console, Phone bool
+				Pairing, Code, Command string
+				Console, Phone         bool
 			}
 			err := client.json(ctx, "POST", "/api/pair", map[string]string{"device": "1loop web"}, &reply)
 			fyne.Do(func() {
@@ -140,7 +140,7 @@ func (ui *desktopUI) linkAnotherServer() {
 					return
 				}
 				sheet.dismiss()
-				ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone, false, ui.linkPairedServer)
+				ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Command, reply.Phone, false, ui.linkPairedServer)
 			})
 		}()
 	}

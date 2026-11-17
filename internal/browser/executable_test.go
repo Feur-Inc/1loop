@@ -4,12 +4,15 @@ package browser
 
 import (
 	"context"
+	"path/filepath"
 	"testing"
 )
 
 // ONELOOP_BROWSER=none wins over every browser, even ONELOOP_CHROMIUM, and
 // never downloads one.
 func TestFindBrowserDisabled(t *testing.T) {
+	BrowserProfileOverride = filepath.Join(t.TempDir(), "browser") // no 1loop Chromium installed
+	t.Cleanup(func() { BrowserProfileOverride = "" })
 	t.Setenv("ONELOOP_CHROMIUM", "/usr/bin/chromium")
 	for _, value := range []string{"none", " None "} {
 		t.Setenv("ONELOOP_BROWSER", value)

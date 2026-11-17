@@ -9,7 +9,10 @@
 //	    prints the signed latest.json for those files, served under URL.
 //	1loop-release icons DIR [NAME]
 //	    renders the launcher icon in DIR/hicolor/NxN/apps/NAME.png (NAME is
-//	    1loop by default), for the Linux packages.
+//	    io.github.Feur_Inc.OneLoop by default), for the Linux packages.
+//	1loop-release winres -version VERSION -file NAME.exe [-description TEXT] -o FILE.syso
+//	    writes the Windows resources of an exe, its icon and version
+//	    information, for go build to link (packaging/windows, packaging/server).
 package main
 
 import (
@@ -39,7 +42,7 @@ const inAppEnd = "<!-- end of the in-app notes -->"
 
 func main() {
 	if len(os.Args) < 2 {
-		fail("usage: 1loop-release keygen KEY.pem | manifest … | icons DIR [NAME]")
+		fail("usage: 1loop-release keygen KEY.pem | manifest … | icons DIR [NAME] | winres …")
 	}
 	switch os.Args[1] {
 	case "keygen":
@@ -51,6 +54,8 @@ func main() {
 		manifest(os.Args[2:])
 	case "icons":
 		icons(os.Args[2:])
+	case "winres":
+		winres(os.Args[2:])
 	default:
 		fail("unknown command " + os.Args[1])
 	}

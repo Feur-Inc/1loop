@@ -5,6 +5,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -102,4 +103,66 @@ func TestSelectionAcrossMessages(t *testing.T) {
 	if got := ui.chatSel.selectedText(); got != "answer" {
 		t.Fatalf("back in the first message selected %q", got)
 	}
+}
+
+// Copying a table's cells gives each cell's text once, the cells of a row
+// separated by tabs and the rows by line breaks, emoji and accents intact
+// (#438).
+func TestSelectionCopiesTableCells(t *testing.T) {
+	test.NewTempApp(t)
+	ui := &desktopUI{desktopApp: &desktopApp{}}
+	ui.chatSel.ui = ui
+	const why = "Il n'y a de compositeur Wayland (weston, sway, cage) ni dans l'image ni sur la machine. On ne peut donc tester que X11."
+	layer, content := answer(t, ui, "Before the table.\n\n"+
+		"| Cible | État | Ce que j'ai vérifié |\n|---|---|---|\n"+
+		"| Docker X11 | ✅ OK | L'image a Xvfb. |\n"+
+		"| Docker Wayland | ❌ absent | "+why+" |\n"+
+		"| Dev local | ✅ OK | Go 1.25.0 correspond. |\n\nAfter the table.")
+	ui.transcript = container.NewVBox(content)
+	window := test.NewWindow(ui.transcript)
+	defer window.Close()
+	window.Resize(fyne.NewSize(900, 600))
+
+	// at is a point in the last piece starting with prefix, n runes in.
+	at := func(prefix string, n int) fyne.Position {
+		layer.gather()
+		var piece selPiece
+		for _, p := range layer.pieces {
+			if strings.HasPrefix(string(p.runes), prefix) {
+				piece = p
+			}
+		}
+		if piece.runes == nil {
+			t.Fatalf("no piece starts with %q", prefix)
+		}
+		if n < 0 {
+			n = len(piece.runes)
+		}
+		return piece.at.AddXY(piece.width(n), piece.size.Height/2)
+	}
+	selects := func(what string, from, to fyne.Position, want string) {
+		t.Helper()
+		press(layer, from)
+		drag(layer, to)
+		got := ui.chatSel.selectedText()
+		if got != want {
+			t.Fatalf("%s copied %q, want %q", what, got, want)
+		}
+		if !utf8.ValidString(got) {
+			t.Fatalf("%s copied invalid UTF-8: %q", what, got)
+		}
+	}
+
+	// The row of the issue, from its first cell's start to its last's end.
+	selects("a row", at("Docker Wayland", 0), at("peut", -1),
+		"Docker Wayland\t❌ absent\t"+why)
+	// The state column, from its first cell to its last: the selection
+	// follows the reading order, so it takes the cells between them.
+	selects("a column", at("État", 0), at("✅", -1),
+		"État\tCe que j'ai vérifié\nDocker X11\t✅ OK\tL'image a Xvfb.\n"+
+			"Docker Wayland\t❌ absent\t"+why+"\nDev local\t✅ OK")
+	// Part of the table and the text around it.
+	selects("the table and its surroundings", at("Before", 7), at("After", 5),
+		"the table.\n\nCible\tÉtat\tCe que j'ai vérifié\nDocker X11\t✅ OK\tL'image a Xvfb.\n"+
+			"Docker Wayland\t❌ absent\t"+why+"\nDev local\t✅ OK\tGo 1.25.0 correspond.\nAfter")
 }

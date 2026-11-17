@@ -31,6 +31,30 @@ import org.json.JSONObject
  */
 data class ChatSummary(val id: String, val title: String, val workspace: String, val running: Boolean, val scratch: Boolean = false, val parent: String = "", val status: String = "", val blocked: Boolean = false)
 
+/** The chats under the chat [id]: its subchats at every level, parents first (agent.SubchatSubtree). */
+fun chatSubtree(chats: List<ChatSummary>, id: String): List<String> {
+    val children = chats.filter { it.parent.isNotEmpty() && it.parent != it.id }.groupBy({ it.parent }, { it.id })
+    val seen = mutableSetOf(id)
+    val out = mutableListOf<String>()
+    val queue = ArrayDeque(listOf(id))
+    while (queue.isNotEmpty()) {
+        for (child in children[queue.removeFirst()].orEmpty().sorted()) {
+            if (seen.add(child)) {
+                out += child
+                queue += child
+            }
+        }
+    }
+    return out
+}
+
+/** What deleting a chat with [count] chats under it says about them (agent.SubtreeNote). */
+fun subtreeNote(count: Int) = when (count) {
+    0 -> ""
+    1 -> " Its subchat will be deleted with it."
+    else -> " Its $count subchats, at every level, will be deleted with it."
+}
+
 /** A subchat as its parent's meta lists it; state is working, waiting, done, failed or stopped. */
 data class Subchat(val id: String, val title: String, val state: String, val branch: String, val used: Int) {
     val active get() = state == "working" || state == "waiting"
@@ -46,6 +70,7 @@ const val NO_FOLDER = "\u0000no-folder"
 data class Attachment(
     val key: String, val uri: android.net.Uri, val name: String, val size: Long, val image: Boolean,
     val folder: String, // the workspace it was sent to
+    val draft: String, // the draft it joins (RemoteApp.draftKey): other chats never show or send it
     val ready: JSONObject? = null, val problem: String? = null,
 ) {
     val sending get() = ready == null && problem == null
@@ -276,7 +301,10 @@ sealed interface Screen {
     data object Mode : Screen // where 1loop works: server, desktop or this phone
     data object Servers : Screen
     data object LocalSetup : Screen
-    data class Pair(val server: Server, val pairing: String, val consoleCode: String = "", val phone: Boolean = false) : Screen
+    data class Pair(val server: Server, val pairing: String, val consoleCode: String = "", val phone: Boolean = false, val command: String = "") : Screen {
+        /** What approves it on the server's machine: the server's own command (docker exec in a container), or the console's for an older server. */
+        val serverCommand get() = command.ifEmpty { "pair $pairing $consoleCode" }
+    }
     data object Chat : Screen
 }
 
@@ -792,7 +820,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             busy = true
             try {
                 val reply = onConnection(server, generation) { it.post("/api/pair", JSONObject().put("device", deviceName())) }
-                screen = Screen.Pair(server, reply.getString("pairing"), reply.optString("code").takeIf { reply.optBoolean("console") }.orEmpty(), reply.optBoolean("phone"))
+                screen = Screen.Pair(server, reply.getString("pairing"), reply.optString("code").takeIf { reply.optBoolean("console") }.orEmpty(), reply.optBoolean("phone"), reply.optString("command"))
             } catch (e: Exception) {
                 actionFailed(generation, e)
             } finally {
@@ -1098,12 +1126,18 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         problem = null
         scope.launch {
             try {
-                onConnection(target, generation) { it.post("/api/chats/$id/delete", JSONObject()) }
+                val subtree = chatSubtree(chats, id)
+                val reply = onConnection(target, generation) { it.post("/api/chats/$id/delete", JSONObject()) }
                 if (generation != connectionGeneration) return@launch
-                chats.removeAll { it.id == id }
-                approvals.remove(id)
-                forgetQuestion(questions.remove(id))
-                if (current == id) open(null)
+                // The chat and its subchats at every level: the server says which went.
+                val gone = reply.optJSONArray("deleted")?.let { list -> (0 until list.length()).map { list.optString(it) } }
+                    ?.takeIf { it.isNotEmpty() } ?: (listOf(id) + subtree)
+                chats.removeAll { it.id in gone }
+                for (each in gone) {
+                    approvals.remove(each)
+                    forgetQuestion(questions.remove(each))
+                }
+                if (current in gone) open(null)
             } catch (e: CancellationException) {
                 throw e
             } catch (e: Exception) {
@@ -1255,7 +1289,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val target = server ?: return
         val draft = draftKey(project)
         // What this message carries, as it is now: files added meanwhile stay for the next one.
-        val sent = attachments.filter { it.ready != null }
+        val sent = attachments.filter { it.ready != null && it.draft == draft }
         val body = JSONObject().put("chat", current.orEmpty()).put("text", text).put("mode", mode)
             .put("workspace", project ?: chats.firstOrNull { it.id == current }?.workspace ?: selectedProject ?: workspace)
         if (current == null && body.optString("workspace") == NO_FOLDER) body.put("workspace", "").put("noFolder", true)
@@ -1619,6 +1653,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val target = server ?: return
         // The open chat's project, or the one a new chat starts in.
         val folder = project ?: chats.firstOrNull { it.id == current }?.workspace ?: selectedProject ?: workspace
+        val draft = draftKey(project)
         for (uri in uris) {
             var name = "file"
             var size = -1L
@@ -1633,10 +1668,10 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             val key = java.util.UUID.randomUUID().toString()
             val image = context.contentResolver.getType(uri)?.startsWith("image/") == true
             if (size > MAX_ATTACHMENT) {
-                attachments.add(Attachment(key, uri, name, size, image, folder, problem = "Larger than 64 MiB"))
+                attachments.add(Attachment(key, uri, name, size, image, folder, draft, problem = "Larger than 64 MiB"))
                 continue
             }
-            attachments.add(Attachment(key, uri, name, size, image, folder))
+            attachments.add(Attachment(key, uri, name, size, image, folder, draft))
             uploads[key] = scope.launch {
                 var reply: JSONObject? = null
                 var failure: String? = null
@@ -1773,7 +1808,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     /** A project file joins the next message, as an attached file does. */
     fun attachProjectFile(workspace: String, file: ProjectFile) {
         val ready = JSONObject().put("name", file.name).put("path", file.path).put("workspace", workspace)
-        attachments.add(Attachment(java.util.UUID.randomUUID().toString(), android.net.Uri.EMPTY, file.name, file.size, false, workspace, ready = ready))
+        attachments.add(Attachment(java.util.UUID.randomUUID().toString(), android.net.Uri.EMPTY, file.name, file.size, false, workspace, draftKey(null), ready = ready))
     }
 
     suspend fun sendProjectFile(workspace: String, file: ProjectFile, peer: Server, destination: String): String =
@@ -1815,9 +1850,12 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         attachments.removeAll { it.key == key }
     }
 
-    /** Leaves out the files sent to another workspace than the message's: it would refuse them. */
-    fun retainAttachments(workspace: String) {
-        attachments.filter { !it.belongsTo(workspace) }.forEach { removeAttachment(it.key) }
+    /** The files picked for the next message of this draft, kept while other chats are shown (#409). */
+    fun staged(draft: String) = attachments.filter { it.draft == draft }
+
+    /** Leaves out the draft's files sent to another workspace than the message's: it would refuse them. */
+    fun retainAttachments(draft: String, workspace: String) {
+        staged(draft).filter { !it.belongsTo(workspace) }.forEach { removeAttachment(it.key) }
     }
 
     fun clearAttachments() {

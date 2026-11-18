@@ -156,17 +156,6 @@ func videoAddress(address string) bool {
 	return false
 }
 
-// openInBrowser opens an image or a video where the system opens links.
-func openInBrowser(address string) {
-	target, err := url.Parse(address)
-	if err != nil || target.Scheme != "https" && target.Scheme != "http" {
-		return
-	}
-	if err := fyne.CurrentApp().OpenURL(target); err != nil {
-		platform.Devf("ui", "could not open %s: %v", address, err)
-	}
-}
-
 // ---------------------------------------------------------------------------
 // Images.
 

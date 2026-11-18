@@ -4,6 +4,7 @@ package agent
 
 import (
 	"bytes"
+	"cmp"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -234,7 +235,7 @@ func request(ctx context.Context, cfg Config, method, path string, body any) (*h
 	if err != nil {
 		var failure requestFailed
 		if errors.As(err, &failure) {
-			return nil, requestFailed{fmt.Errorf("%s : %w", cfg.Provider, failure.err)}
+			return nil, requestFailed{connectionFailure(cfg, failure.err)}
 		}
 		return nil, err
 	}
@@ -927,6 +928,12 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 			cached = fmt.Sprint(*out.CachedTokens)
 		}
 		platform.Devf("context", "chat=%s usage input=%d cached=%s model=%s", cfg.ContextKey, out.Usage, cached, cfg.Model)
+		if last := messages[len(messages)-1]; len(out.ToolCalls) == 0 && strings.TrimSpace(out.Content) == "" && len(out.Images) == 0 &&
+			last.Role == "user" && !last.Internal {
+			// Nothing to show and nothing to run, in answer to the user: say
+			// so, rather than leave the message alone as if 1loop hung (#509).
+			return fmt.Errorf("%s answered nothing. Send your message again", cmp.Or(cfg.ConnectionName, ProviderName(cfg.Provider), cfg.Provider))
+		}
 		messages = append(messages, out)
 		if out.Usage > 0 {
 			reported, reportedAt = out.Usage, len(messages)-1

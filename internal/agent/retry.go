@@ -11,6 +11,7 @@ package agent
 // the user would read it twice (Retry is there for that).
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"errors"
@@ -25,6 +26,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"1loop/internal/core"
 )
 
 const (
@@ -89,12 +92,8 @@ func rateLimitFailure(status int, text string, header http.Header, cause error) 
 		reset = now.Add(time.Duration(body.Error.RetryAfterSeconds) * time.Second)
 	}
 	if reset.IsZero() {
-		if value := strings.TrimSpace(header.Get("Retry-After")); value != "" {
-			if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
-				reset = now.Add(time.Duration(seconds) * time.Second)
-			} else if at, err := http.ParseTime(value); err == nil {
-				reset = at
-			}
+		if wait := retryAfter(header, now); wait > 0 {
+			reset = now.Add(wait)
 		}
 	}
 	if reset.IsZero() {
@@ -183,24 +182,32 @@ func noticeRetry(ctx context.Context, text string) {
 	}
 }
 
-// retryWait is how long to wait before retry n (0-based): Retry-After when
-// the server gave one, else a doubling wait with some jitter.
-func retryWait(n int, header http.Header) time.Duration {
-	if header != nil {
-		if value := strings.TrimSpace(header.Get("Retry-After")); value != "" {
-			if seconds, err := strconv.Atoi(value); err == nil {
-				return time.Duration(seconds) * time.Second
-			}
-			if at, err := http.ParseTime(value); err == nil {
-				return time.Until(at)
-			}
-		}
+// retryAfter reads Retry-After (seconds or an HTTP date). It is 0 when the
+// header is missing, unreadable, zero or in the past.
+func retryAfter(header http.Header, now time.Time) time.Duration {
+	value := strings.TrimSpace(header.Get("Retry-After"))
+	if value == "" {
+		return 0
 	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		return max(time.Duration(seconds)*time.Second, 0)
+	}
+	if at, err := http.ParseTime(value); err == nil {
+		return max(at.Sub(now), 0)
+	}
+	return 0
+}
+
+// retryWait is how long to wait before retry n (0-based): a doubling wait
+// with some jitter, or Retry-After when the server asks for longer (a
+// Retry-After of 0, which some proxies send, never shortens it).
+func retryWait(n int, header http.Header) time.Duration {
 	wait := retryBase << n
 	if wait > 10*time.Second {
 		wait = 10 * time.Second
 	}
-	return wait + time.Duration(rand.Int64N(int64(wait)/5+1))
+	wait += time.Duration(rand.Int64N(int64(wait)/5 + 1))
+	return max(wait, retryAfter(header, time.Now()))
 }
 
 func sleepContext(ctx context.Context, wait time.Duration) error {
@@ -288,7 +295,7 @@ func send(ctx context.Context, client *http.Client, build func() (*http.Request,
 			}
 			text, _ := io.ReadAll(io.LimitReader(response.Body, 8192))
 			response.Body.Close()
-			failure = rateLimitFailure(response.StatusCode, string(text), response.Header, fmt.Errorf("HTTP %d · %s", response.StatusCode, text))
+			failure = rateLimitFailure(response.StatusCode, string(text), response.Header, &httpError{Status: response.StatusCode, Body: string(text)})
 			header = response.Header
 			if !retryableStatus(response.StatusCode, string(text)) {
 				return nil, requestFailed{failure}
@@ -345,4 +352,59 @@ func (watched *idleBody) Read(p []byte) (int, error) {
 func (watched *idleBody) Close() error {
 	watched.timer.Stop()
 	return watched.body.Close()
+}
+
+// httpError is a provider's refusal: its status and the body it sent.
+type httpError struct {
+	Status int
+	Body   string
+}
+
+// Error is "HTTP 401: bad key": the provider's error.message when the body
+// is the usual JSON, else the body itself, cut (#509).
+func (failure *httpError) Error() string {
+	if message := failure.message(); message != "" {
+		return fmt.Sprintf("HTTP %d: %s", failure.Status, message)
+	}
+	return fmt.Sprintf("HTTP %d", failure.Status)
+}
+
+func (failure *httpError) message() string {
+	var body struct {
+		Error   json.RawMessage `json:"error"`
+		Message string          `json:"message"`
+		Detail  string          `json:"detail"`
+	}
+	if json.Unmarshal([]byte(failure.Body), &body) == nil {
+		var nested struct {
+			Message string `json:"message"`
+		}
+		var flat string
+		switch {
+		case json.Unmarshal(body.Error, &nested) == nil && nested.Message != "":
+			return strings.TrimSpace(nested.Message)
+		case json.Unmarshal(body.Error, &flat) == nil && flat != "":
+			return strings.TrimSpace(flat)
+		case body.Message != "":
+			return strings.TrimSpace(body.Message)
+		case body.Detail != "":
+			return strings.TrimSpace(body.Detail)
+		}
+	}
+	return FirstLine(core.TruncateText(strings.TrimSpace(failure.Body), 300))
+}
+
+// connectionFailure names the connection the way the user knows it, and
+// says what to do when the key was refused.
+func connectionFailure(cfg Config, err error) error {
+	name := cmp.Or(cfg.ConnectionName, ProviderName(cfg.Provider), cfg.Provider)
+	var refused *httpError
+	if errors.As(err, &refused) && (refused.Status == http.StatusUnauthorized || refused.Status == http.StatusForbidden) {
+		detail := ""
+		if message := refused.message(); message != "" {
+			detail = ": " + message
+		}
+		return fmt.Errorf("%s refused the API key (HTTP %d)%s. Check the connection's key in Settings → Connections", name, refused.Status, detail)
+	}
+	return fmt.Errorf("%s: %w", name, err)
 }

@@ -131,11 +131,7 @@ func (manager *Manager) save(saved credentials) error {
 	if err != nil {
 		return err
 	}
-	path := manager.path() + ".tmp"
-	if err := os.WriteFile(path, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(path, manager.path())
+	return core.WriteFileSafely(manager.path(), 0o600, false, data)
 }
 
 func connected(saved credentials) bool {

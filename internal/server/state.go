@@ -776,6 +776,7 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok {
 		cfg = agent.ResolveDefault(cfg, connection, server.choices)
 		cfg.CompactAt = connection.ModelOptions[cfg.Model].CompactAt
+		cfg.ConnectionName = connection.Name
 	}
 	cfg.APIKey = server.keys[cfg.ConnectionID]
 	if machine := server.machineLocked(cfg.MachineID); machine != nil {

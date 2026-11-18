@@ -21,7 +21,8 @@ import (
 
 // Certificate loads the TLS certificate phones pin by its fingerprint: the
 // one given (certPath and keyPath), or server.crt and server.key in dir,
-// generated on first use.
+// generated on first use. It is never renewed, since a new one would have a
+// new fingerprint: the clients that pin it ignore its dates (#517).
 func Certificate(dir, certPath, keyPath string) (tls.Certificate, error) {
 	if (certPath == "") != (keyPath == "") {
 		return tls.Certificate{}, fmt.Errorf("Set both -tls-cert and -tls-key")
@@ -30,6 +31,12 @@ func Certificate(dir, certPath, keyPath string) (tls.Certificate, error) {
 		certPath, keyPath = filepath.Join(dir, "server.crt"), filepath.Join(dir, "server.key")
 		_, certErr := os.Stat(certPath)
 		_, keyErr := os.Stat(keyPath)
+		switch {
+		case os.IsNotExist(certErr) && !os.IsNotExist(keyErr):
+			return tls.Certificate{}, fmt.Errorf("%s is missing next to %s: restore it, or delete %s too to make a new certificate (paired devices then pair again)", certPath, keyPath, keyPath)
+		case os.IsNotExist(keyErr) && !os.IsNotExist(certErr):
+			return tls.Certificate{}, fmt.Errorf("%s is missing next to %s: restore it, or delete %s too to make a new certificate (paired devices then pair again)", keyPath, certPath, certPath)
+		}
 		if os.IsNotExist(certErr) && os.IsNotExist(keyErr) {
 			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			if err != nil {

@@ -1236,6 +1236,10 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	if ctx.Err() != nil {
 		return ctx.Err()
 	}
+	if lines == nil && process.readErr != nil {
+		emit("history", append([]Message(nil), messages...))
+		return process.readErr
+	}
 	if len(messages) == len(history) && !answered {
 		// Claude Code left without answering: its own words explain why.
 		if text := strings.TrimSpace(stderr.String()); text != "" {

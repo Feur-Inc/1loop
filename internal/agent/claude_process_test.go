@@ -5,10 +5,14 @@ package agent
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"1loop/internal/platform"
 )
 
 // keptClaude puts on PATH a claude that counts its starts in starts.log and
@@ -83,5 +87,35 @@ func TestClaudeProcessKeptBetweenTurns(t *testing.T) {
 	claudeParked.Unlock()
 	if kept {
 		t.Fatal("still kept after DropClaudeProcess")
+	}
+}
+
+// A line over the reader's limit ends the output with an error instead of
+// leaving Claude Code blocked on a full pipe and the turn waiting forever.
+func TestClaudeProcessLineTooLong(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake claude is a shell script")
+	}
+	cmd := exec.Command("sh", "-c", `head -c 70000000 /dev/zero | tr '\0' a; echo; head -c 1000000 /dev/zero; sleep 30`)
+	platform.PrepareProcess(cmd)
+	process, err := startClaudeProcess(cmd, "too-long", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	timeout := time.After(20 * time.Second)
+	for {
+		select {
+		case _, more := <-process.lines:
+			if more {
+				continue
+			}
+			if process.readErr == nil || !strings.Contains(process.readErr.Error(), "too long") {
+				t.Fatalf("read error: %v", process.readErr)
+			}
+			<-process.done
+			return
+		case <-timeout:
+			t.Fatal("the output never ended")
+		}
 	}
 }

@@ -82,6 +82,20 @@ func NoTerminal(id string, open []string) error {
 	return fmt.Errorf("No terminal with session_id %s in this chat; its terminals: %s", id, strings.Join(open, ", "))
 }
 
+// TerminalDir is the folder terminal_tabs opens a terminal in: the
+// workspace, or cwd within it. On an SSH machine (machine not nil), links
+// are resolved there (MachinePath), so one cannot lead outside the
+// workspace; the desktop only compared the joined path's prefix (#526).
+func TerminalDir(ctx context.Context, machine Machine, workspace, cwd string) (string, error) {
+	switch {
+	case cwd == "":
+		return workspace, nil
+	case machine != nil:
+		return MachinePath(ctx, machine, workspace, cwd)
+	}
+	return WorkspacePath(workspace, cwd)
+}
+
 // TerminalReadLimit is how much terminal_read returns: max_bytes, within
 // bounds, or 8 KiB.
 func TerminalReadLimit(maxBytes *int) int64 {

@@ -71,56 +71,62 @@ func (panel *toolPanel) todoChanged(chat *conversation) {
 		if chat != nil {
 			items = chat.Todo.Snapshot()
 		}
-		done := 0
-		for _, item := range items {
-			if item.Status == "completed" {
-				done++
-			}
-		}
-		title := textLine("Tasks", 16, colText)
-		title.TextStyle = fyne.TextStyle{Bold: true}
-		if len(items) == 0 {
-			box.Add(title)
-			box.Add(padded(8, 0, 0, 0, plainFlow("No tasks yet. The agent lists them here when it plans your request, and ticks them off as it goes.", 13, colMuted)))
-			panel.addBackgroundTasks(box, chat)
-			panel.addSubchats(box, chat)
-			box.Refresh()
-			panel.refreshTodoStatus()
-			continue
-		}
-		// The whole list at a glance: how many are done, and a line that fills.
-		track, fill := canvas.NewRectangle(colBorder), canvas.NewRectangle(colAmber)
-		track.CornerRadius, fill.CornerRadius = 1.5, 1.5
-		progress := container.New(progressLayout{float32(done) / float32(len(items))}, track, fill)
-		box.Add(container.NewBorder(nil, nil, title, textLine(fmt.Sprintf("%d of %d done", done, len(items)), 12.5, colMuted)))
-		box.Add(padded(10, 12, 0, 0, progress))
 		live := func() bool { // the ring only turns where it is seen, while the agent works
 			return panel.owner == chat && chat != nil && chat.run != nil && panel.shown > 0 &&
 				panel.active >= 0 && panel.active < len(panel.tabs) && panel.tabs[panel.active].todoView == box
 		}
-		for _, item := range items {
-			ink, style := color.Color(colText), fyne.TextStyle{}
-			switch item.Status {
-			case "completed":
-				ink = colMuted
-			case "in_progress":
-				style.Bold = true
-			}
-			text := plainFlow(item.Text, 13.5, ink)
-			text.bold = style.Bold
-			mark := newTaskMark(item.Status, live)
-			tab.todoMarks = append(tab.todoMarks, mark)
-			clock := textLine(taskElapsed(item, time.Now()), 11.5, colMuted)
-			tab.todoTimes[item.ID] = clock
-			// The clock keeps one width while it counts: the text's line breaks stay put.
-			slot := container.NewStack(spacer(56, 0), container.NewHBox(layout.NewSpacer(), clock))
-			box.Add(padded(7, 7, 0, 0, container.NewBorder(nil, nil, container.NewVBox(mark), container.NewVBox(slot), padded(1, 0, 12, 8, text))))
-		}
+		tab.todoMarks = drawTaskList(box, items, live, tab.todoTimes)
 		panel.addBackgroundTasks(box, chat)
 		panel.addSubchats(box, chat)
 		box.Refresh()
 	}
 	panel.refreshTodoStatus()
+}
+
+// drawTaskList adds a task list to box: its title, how many are done with a
+// line that fills, then each task with its mark, its text and its clock,
+// kept in times by task. The desktop's chats and a server's (#542) both
+// draw theirs with it; the marks it returns are stopped before a redraw.
+func drawTaskList(box *fyne.Container, items []agent.TodoItem, live func() bool, times map[string]*canvas.Text) []*taskMark {
+	done := 0
+	for _, item := range items {
+		if item.Status == "completed" {
+			done++
+		}
+	}
+	title := textLine("Tasks", 16, colText)
+	title.TextStyle = fyne.TextStyle{Bold: true}
+	if len(items) == 0 {
+		box.Add(title)
+		box.Add(padded(8, 0, 0, 0, plainFlow("No tasks yet. The agent lists them here when it plans your request, and ticks them off as it goes.", 13, colMuted)))
+		return nil
+	}
+	// The whole list at a glance: how many are done, and a line that fills.
+	track, fill := canvas.NewRectangle(colBorder), canvas.NewRectangle(colAmber)
+	track.CornerRadius, fill.CornerRadius = 1.5, 1.5
+	progress := container.New(progressLayout{float32(done) / float32(len(items))}, track, fill)
+	box.Add(container.NewBorder(nil, nil, title, textLine(fmt.Sprintf("%d of %d done", done, len(items)), 12.5, colMuted)))
+	box.Add(padded(10, 12, 0, 0, progress))
+	var marks []*taskMark
+	for _, item := range items {
+		ink, style := color.Color(colText), fyne.TextStyle{}
+		switch item.Status {
+		case "completed":
+			ink = colMuted
+		case "in_progress":
+			style.Bold = true
+		}
+		text := plainFlow(item.Text, 13.5, ink)
+		text.bold = style.Bold
+		mark := newTaskMark(item.Status, live)
+		marks = append(marks, mark)
+		clock := textLine(taskElapsed(item, time.Now()), 11.5, colMuted)
+		times[item.ID] = clock
+		// The clock keeps one width while it counts: the text's line breaks stay put.
+		slot := container.NewStack(spacer(56, 0), container.NewHBox(layout.NewSpacer(), clock))
+		box.Add(padded(7, 7, 0, 0, container.NewBorder(nil, nil, container.NewVBox(mark), container.NewVBox(slot), padded(1, 0, 12, 8, text))))
+	}
+	return marks
 }
 
 // addBackgroundTasks lists the chat's background commands under its tasks,

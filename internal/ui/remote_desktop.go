@@ -28,6 +28,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
@@ -286,7 +287,8 @@ type remoteDesktop struct {
 	todoFooter    *fyne.Container // the context breakdown and compaction lines
 	todoFooterKey string
 	todoUsage     *contextUsageState
-	todoRows      map[string]*widget.Label
+	todoTimes     map[string]*canvas.Text // each task's clock, ticking in place
+	todoMarks     []*taskMark
 	todoSignature string
 	openCommands  map[string]bool // the background commands shown in full, by task
 }
@@ -1266,15 +1268,14 @@ func (remote *remoteDesktop) renderTasks() {
 	if string(signature) != remote.todoSignature {
 		remote.todoSignature = string(signature)
 		remote.todoTasks.RemoveAll()
-		remote.todoRows = map[string]*widget.Label{}
-		if len(remote.meta.Todo) == 0 {
-			remote.todoTasks.Add(note("No tasks yet."))
+		for _, mark := range remote.todoMarks {
+			mark.stop()
 		}
-		for _, task := range remote.meta.Todo {
-			label := note("")
-			remote.todoRows[task.ID] = label
-			remote.todoTasks.Add(label)
-		}
+		remote.todoTimes = map[string]*canvas.Text{}
+		tasks := remote.todoTasks
+		live := func() bool { return remote.meta.Running && remote.todoTasks == tasks && remote.tabViews["todo"] != nil }
+		// Drawn as this computer's chats draw theirs (#542).
+		remote.todoMarks = drawTaskList(remote.todoTasks, remote.todoItems(), live, remote.todoTimes)
 		// The server's background commands, newest first, each with its own Stop.
 		if len(remote.meta.Tasks) > 0 {
 			remote.todoTasks.Add(sectionTitle("Background"))
@@ -1304,6 +1305,21 @@ func (remote *remoteDesktop) renderTasks() {
 		}
 		remote.addSubchats()
 	}
+	now := time.Now()
+	for _, item := range remote.todoItems() {
+		if clock := remote.todoTimes[item.ID]; clock != nil {
+			if value := taskElapsed(item, now); value != clock.Text {
+				clock.Text = value
+				clock.Refresh()
+			}
+		}
+	}
+	remote.refreshTodoFooter()
+}
+
+// todoItems is the server's task list as this computer's chats hold theirs.
+func (remote *remoteDesktop) todoItems() []agent.TodoItem {
+	items := make([]agent.TodoItem, 0, len(remote.meta.Todo))
 	for _, task := range remote.meta.Todo {
 		item := agent.TodoItem{ID: task.ID, Text: task.Text, Status: task.Status}
 		if task.Started > 0 {
@@ -1314,11 +1330,9 @@ func (remote *remoteDesktop) renderTasks() {
 			value := time.UnixMilli(task.Completed)
 			item.CompletedAt = &value
 		}
-		if label := remote.todoRows[task.ID]; label != nil {
-			label.SetText(task.Status + " · " + task.Text + " · " + taskElapsed(item, time.Now()))
-		}
+		items = append(items, item)
 	}
-	remote.refreshTodoFooter()
+	return items
 }
 
 // refreshTodoFooter draws the server's context breakdown above its

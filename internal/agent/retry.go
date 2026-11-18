@@ -89,12 +89,8 @@ func rateLimitFailure(status int, text string, header http.Header, cause error) 
 		reset = now.Add(time.Duration(body.Error.RetryAfterSeconds) * time.Second)
 	}
 	if reset.IsZero() {
-		if value := strings.TrimSpace(header.Get("Retry-After")); value != "" {
-			if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
-				reset = now.Add(time.Duration(seconds) * time.Second)
-			} else if at, err := http.ParseTime(value); err == nil {
-				reset = at
-			}
+		if wait := retryAfter(header, now); wait > 0 {
+			reset = now.Add(wait)
 		}
 	}
 	if reset.IsZero() {
@@ -183,24 +179,32 @@ func noticeRetry(ctx context.Context, text string) {
 	}
 }
 
-// retryWait is how long to wait before retry n (0-based): Retry-After when
-// the server gave one, else a doubling wait with some jitter.
-func retryWait(n int, header http.Header) time.Duration {
-	if header != nil {
-		if value := strings.TrimSpace(header.Get("Retry-After")); value != "" {
-			if seconds, err := strconv.Atoi(value); err == nil {
-				return time.Duration(seconds) * time.Second
-			}
-			if at, err := http.ParseTime(value); err == nil {
-				return time.Until(at)
-			}
-		}
+// retryAfter reads Retry-After (seconds or an HTTP date). It is 0 when the
+// header is missing, unreadable, zero or in the past.
+func retryAfter(header http.Header, now time.Time) time.Duration {
+	value := strings.TrimSpace(header.Get("Retry-After"))
+	if value == "" {
+		return 0
 	}
+	if seconds, err := strconv.Atoi(value); err == nil {
+		return max(time.Duration(seconds)*time.Second, 0)
+	}
+	if at, err := http.ParseTime(value); err == nil {
+		return max(at.Sub(now), 0)
+	}
+	return 0
+}
+
+// retryWait is how long to wait before retry n (0-based): a doubling wait
+// with some jitter, or Retry-After when the server asks for longer (a
+// Retry-After of 0, which some proxies send, never shortens it).
+func retryWait(n int, header http.Header) time.Duration {
 	wait := retryBase << n
 	if wait > 10*time.Second {
 		wait = 10 * time.Second
 	}
-	return wait + time.Duration(rand.Int64N(int64(wait)/5+1))
+	wait += time.Duration(rand.Int64N(int64(wait)/5 + 1))
+	return max(wait, retryAfter(header, time.Now()))
 }
 
 func sleepContext(ctx context.Context, wait time.Duration) error {

@@ -26,6 +26,7 @@ type sideChat struct {
 	id       string
 	parent   string // a subchat's parent, "" for another chat
 	ended    string // how a subchat's last turn ended: done, stopped or failed
+	seen     bool   // the user opened it since that end: its dot is gone, as an unread marker
 	title    string
 	folder   string // its project, or a worktree of it
 	scratch  bool   // in a folder 1loop made for it: listed under No folder
@@ -99,6 +100,8 @@ func (chat sideChat) subchatState() string {
 		return agent.SubchatWaiting
 	case chat.running:
 		return agent.SubchatWorking
+	case chat.seen:
+		return "" // read since it ended: no dot
 	case chat.ended == agent.SubchatDone || chat.ended == agent.SubchatFailed:
 		return chat.ended
 	}

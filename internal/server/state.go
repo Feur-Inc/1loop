@@ -278,6 +278,16 @@ func (server *headlessServer) saveLocked() error {
 	return server.stateLocked()()
 }
 
+// saveOutsideLocked saves the state with server.mu released while it is
+// encoded and written (#520), and takes the lock back: whoever calls it
+// must check, after it, what another request may have changed meanwhile.
+func (server *headlessServer) saveOutsideLocked() error {
+	write := server.stateLocked()
+	server.mu.Unlock()
+	defer server.mu.Lock()
+	return write()
+}
+
 // stateLocked takes the state to save, under the lock, and returns what
 // writes it: encoding and writing every chat can take seconds, during which
 // the phone's requests and the agents' events must not wait for the lock.

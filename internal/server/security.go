@@ -170,12 +170,13 @@ func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.
 	token := core.Identifier()
 	device := remoteapi.PairedDevice{Name: pair.Device, TokenHash: remoteapi.TokenHash(token), Added: time.Now()}
 	server.devices = append(server.devices, device)
-	if err := server.saveLocked(); err != nil {
-		server.devices = server.devices[:len(server.devices)-1]
+	delete(server.pairs, args.Pairing) // the same code cannot pair twice while the state is saved
+	if err := server.saveOutsideLocked(); err != nil {
+		server.devices = slices.DeleteFunc(server.devices, func(paired remoteapi.PairedDevice) bool { return paired.TokenHash == device.TokenHash })
+		server.pairs[args.Pairing] = pair
 		core.Fail(writer, 500, "Unable to save paired device")
 		return
 	}
-	delete(server.pairs, args.Pairing)
 	server.setup = "" // a device is paired: no more setup link
 	if server.local {
 		server.broadcastLocked("sharing", map[string]bool{"enabled": server.sharing != nil})
@@ -278,15 +279,17 @@ func (server *headlessServer) removeDeviceLocked(index int) error {
 	if index < 0 || index >= len(server.devices) {
 		return fmt.Errorf("Unknown device")
 	}
-	before := append([]remoteapi.PairedDevice{}, server.devices...)
-	server.devices = append(server.devices[:index], server.devices[index+1:]...)
-	if err := server.saveLocked(); err != nil {
-		server.devices = before
+	removed := server.devices[index]
+	server.devices = slices.Delete(slices.Clone(server.devices), index, index+1)
+	server.disconnectStreamsLocked() // before the save: its streams end now
+	if err := server.saveOutsideLocked(); err != nil {
+		if !slices.ContainsFunc(server.devices, func(paired remoteapi.PairedDevice) bool { return paired.TokenHash == removed.TokenHash }) {
+			server.devices = append(server.devices, removed)
+		}
 		return err
 	}
-	server.disconnectStreamsLocked()
 	if !server.local {
-		fmt.Fprintf(os.Stderr, "\n%q is no longer paired.\n", before[index].Name)
+		fmt.Fprintf(os.Stderr, "\n%q is no longer paired.\n", removed.Name)
 	}
 	server.offerSetupLocked()
 	return nil

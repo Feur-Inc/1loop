@@ -21,6 +21,7 @@ type Config struct {
 	presetSelection  *Config
 	selectionError   error
 	ConnectionID     string                                            `json:"connectionId,omitempty"`
+	ConnectionName   string                                            `json:"-"` // what the user named it, for messages (#509)
 	AccountID        string                                            `json:"-"`
 	Residency        string                                            `json:"-"`
 	AuthProfile      string                                            `json:"authProfile,omitempty"`

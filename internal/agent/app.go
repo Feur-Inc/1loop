@@ -234,14 +234,19 @@ func (backend *App) askApproval(ctx context.Context, emit emitter, title, previe
 	}
 }
 
-func (backend *App) Approve(id string, allow bool) {
+// Approve answers the approval id; false when none of that id waits (it
+// was answered elsewhere, or its run stopped).
+func (backend *App) Approve(id string, allow bool) bool {
 	backend.mu.Lock()
 	ch := backend.Approvals[id]
 	backend.mu.Unlock()
-	if ch != nil {
-		select {
-		case ch <- allow:
-		default:
-		}
+	if ch == nil {
+		return false
+	}
+	select {
+	case ch <- allow:
+		return true
+	default:
+		return false // already answered
 	}
 }

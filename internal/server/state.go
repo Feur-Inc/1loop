@@ -92,6 +92,7 @@ type serverSettings struct {
 
 type headlessServer struct {
 	mu                         sync.Mutex
+	adminReady                 atomic.Bool   // its admin socket listens: "1loop-server pair" reaches it
 	usage                      *usage.Ledger // every model call's tokens (internal/usage)
 	prices                     *usage.Prices
 	terminalRevision           uint64

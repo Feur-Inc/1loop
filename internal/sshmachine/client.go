@@ -159,6 +159,9 @@ func authMethods(settings Settings, secrets Secrets) ([]ssh.AuthMethod, func(), 
 	return nil, nil, fmt.Errorf("Choose how to sign in to %s", settings.Label())
 }
 
+// handshakeTimeout bounds the SSH banner, key exchange and sign-in.
+var handshakeTimeout = 30 * time.Second
+
 // dial opens one SSH connection to the machine.
 func dial(ctx context.Context, settings Settings, secrets Secrets, trust TrustFunc) (*ssh.Client, error) {
 	methods, done, err := authMethods(settings, secrets)
@@ -166,21 +169,35 @@ func dial(ctx context.Context, settings Settings, secrets Secrets, trust TrustFu
 		return nil, err
 	}
 	defer done()
-	config := &ssh.ClientConfig{
-		User:            settings.User,
-		Auth:            methods,
-		HostKeyCallback: hostKeyCallback(ctx, settings, trust),
-		Timeout:         20 * time.Second,
-	}
 	address := settings.Address()
 	connection, err := (&net.Dialer{Timeout: 20 * time.Second}).DialContext(ctx, "tcp", address)
 	if err != nil {
 		return nil, fmt.Errorf("%s could not be reached: %w", address, err)
 	}
-	// The handshake may wait for the user to trust the host key.
+	// ssh.ClientConfig.Timeout covers ssh.Dial only: a host that takes the
+	// TCP connection but never sends its banner would hang here (#521). The
+	// deadline is lifted while the user is asked to trust the host key.
+	connection.SetDeadline(time.Now().Add(handshakeTimeout))
+	asked := trust
+	if trust != nil {
+		asked = func(ctx context.Context, machine, address, keyType, fingerprint string) bool {
+			connection.SetDeadline(time.Time{})
+			defer connection.SetDeadline(time.Now().Add(handshakeTimeout))
+			return trust(ctx, machine, address, keyType, fingerprint)
+		}
+	}
+	config := &ssh.ClientConfig{
+		User:            settings.User,
+		Auth:            methods,
+		HostKeyCallback: hostKeyCallback(ctx, settings, asked),
+		Timeout:         20 * time.Second,
+	}
 	stop := context.AfterFunc(ctx, func() { connection.Close() })
 	defer stop()
 	conn, channels, requests, err := ssh.NewClientConn(connection, address, config)
+	if err == nil {
+		connection.SetDeadline(time.Time{}) // the connection lives on
+	}
 	if err != nil {
 		connection.Close()
 		if ctx.Err() != nil {

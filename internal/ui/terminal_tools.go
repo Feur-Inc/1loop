@@ -258,9 +258,8 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 		switch name {
 		case "terminal_command":
 			text = args.Command + "\r"
-		case "terminal_write":
+		case "terminal_write", "terminal_keys": // terminal_write's text, then its keys (terminal_keys in chats before #447)
 			text = args.Text
-		case "terminal_keys":
 			for _, name := range args.Keys {
 				key, err := agent.TerminalKey(name)
 				if err != nil {

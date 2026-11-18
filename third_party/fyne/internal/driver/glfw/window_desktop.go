@@ -263,6 +263,41 @@ func (w *window) fitContent() {
 	}
 }
 
+// fitWorkArea keeps a size in screen coordinates within the work area of
+// the window's screen, the screen less its panels (1loop #512): a 1180×760
+// window on a 1280×800 screen with a 54 px panel went under the panel.
+func (w *window) fitWorkArea(width, height int) (int, int) {
+	monitor := w.getMonitorForWindow()
+	if monitor == nil {
+		return width, height
+	}
+	_, _, areaWidth, areaHeight := monitor.GetWorkarea()
+	screenWidth, screenHeight := 0, 0
+	if mode := monitor.GetVideoMode(); mode != nil {
+		screenWidth, screenHeight = mode.Width, mode.Height
+	}
+	return fitArea(width, height, areaWidth, areaHeight, screenWidth, screenHeight)
+}
+
+// fitArea shrinks a size to fit the work area. Where the platform gives
+// none smaller than the screen (Wayland, or no panel), a tenth of the
+// screen is left around the window. Nothing is ever enlarged.
+func fitArea(width, height, areaWidth, areaHeight, screenWidth, screenHeight int) (int, int) {
+	if screenWidth > 0 && screenHeight > 0 && (areaWidth <= 0 || areaHeight <= 0 || areaWidth >= screenWidth && areaHeight >= screenHeight) {
+		areaWidth, areaHeight = screenWidth*9/10, screenHeight*9/10
+	}
+	if areaWidth <= 0 || areaHeight <= 0 {
+		return width, height
+	}
+	if width > areaWidth {
+		width = areaWidth
+	}
+	if height > areaHeight {
+		height = areaHeight
+	}
+	return width, height
+}
+
 // getMonitorScale returns the scale factor for a given monitor, handling platform-specific cases
 func getMonitorScale(monitor *glfw.Monitor) float32 {
 	widthMm, heightMm := monitor.GetPhysicalSize()

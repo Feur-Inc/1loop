@@ -527,10 +527,19 @@ func (ui *desktopUI) renderAttachments() {
 	}
 	for i, file := range *files {
 		i := i
-		remove := newRow("", iconClose, styleWindow, func() {
+		removeFile := func() {
 			*files = append((*files)[:i], (*files)[i+1:]...)
 			ui.renderAttachments()
-		})
+		}
+		if ui.server != nil {
+			if img := ui.server.thumbnails[file.Path]; img != nil { // a picture uploaded from here (#543)
+				bounds := img.Bounds()
+				size := fitPictureBox(bounds.Dx(), bounds.Dy(), composerPictureWidth, composerPictureHeight)
+				ui.attachRow.Add(newPictureTile(img, size, func() { ui.openImage(file.Name, img) }, removeFile))
+				continue
+			}
+		}
+		remove := newRow("", iconClose, styleWindow, removeFile)
 		label := textLine(fitText(file.Name, 12.5, fyne.TextStyle{}, 180), 12.5, colText)
 		ui.attachRow.Add(surface(container.NewHBox(label, remove), colCode, colBorderSoft, 8, 6))
 	}
@@ -564,12 +573,13 @@ func (ui *desktopUI) renderAttachments() {
 type parkedAttachments struct {
 	images []core.ImagePart
 	files  []fileAttachment
+	server []agent.FileAttachment // a server chat's, already uploaded there (#544)
 }
 
 // switchAttachments sets aside the attachments of the draft being left and
 // brings back those of the draft about to show, so that a picture pasted in
-// one chat is never sent from another (#409). A server chat's own files are
-// dropped by remoteDesktop.selectChat.
+// one chat is never sent from another (#409). A server chat's uploaded files
+// are parked the same way.
 func (ui *desktopUI) switchAttachments(from, to string) {
 	if from == to {
 		return
@@ -577,15 +587,37 @@ func (ui *desktopUI) switchAttachments(from, to string) {
 	if ui.parked == nil {
 		ui.parked = map[string]parkedAttachments{}
 	}
-	if len(ui.attachments)+len(ui.fileAttachments) > 0 {
-		ui.parked[from] = parkedAttachments{ui.attachments, ui.fileAttachments}
+	var server []agent.FileAttachment
+	if ui.server != nil {
+		server = ui.server.fileAttachments
+	}
+	if len(ui.attachments)+len(ui.fileAttachments)+len(server) > 0 {
+		ui.parked[from] = parkedAttachments{ui.attachments, ui.fileAttachments, server}
 	} else {
 		delete(ui.parked, from)
 	}
 	back := ui.parked[to]
 	delete(ui.parked, to)
 	ui.attachments, ui.fileAttachments = back.images, back.files
+	if ui.server != nil {
+		ui.server.fileAttachments = back.server
+	}
 	ui.renderAttachments()
+}
+
+// parkServerFiles gives files uploaded for a draft not on screen (an upload
+// that ended, or a send that failed, after the user moved on) to that
+// draft, where they show when it comes back.
+func (ui *desktopUI) parkServerFiles(key string, files []agent.FileAttachment) {
+	if len(files) == 0 {
+		return
+	}
+	if ui.parked == nil {
+		ui.parked = map[string]parkedAttachments{}
+	}
+	parked := ui.parked[key]
+	parked.server = append(parked.server, files...)
+	ui.parked[key] = parked
 }
 
 // takeAttachments hands the staged pictures to a message and clears them.

@@ -1390,14 +1390,12 @@ func (ui *desktopUI) submit() {
 		return
 	}
 	if chat != nil && chat.run != nil {
-		// Shown at once at the conversation's end, greyed, and given to the
-		// agent at its next step (between two tool calls), where it then
-		// takes its place in the conversation.
+		// Queued: it waits in the tray and becomes the next turn once the
+		// task is over. Steer (Ctrl+Enter) gives it to the agent at its next
+		// step instead; Enter steered too, so nothing could wait (#433).
 		if message, ok := ui.promptMessage(); ok {
-			chat.steer = append(chat.steer, message)
+			chat.queue = append(chat.queue, message)
 			ui.renderQueue()
-			ui.followTail = true
-			ui.relayoutColumn()
 		}
 		return
 	}
@@ -1442,8 +1440,13 @@ func (ui *desktopUI) steerNow() {
 		return
 	}
 	if message, ok := ui.promptMessage(); ok {
+		// Shown at once at the conversation's end, greyed, and given to the
+		// agent at its next step (between two tool calls), where it then
+		// takes its place in the conversation.
 		chat.steer = append(chat.steer, message)
 		ui.renderQueue()
+		ui.followTail = true
+		ui.relayoutColumn()
 	}
 }
 

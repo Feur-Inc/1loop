@@ -21,6 +21,7 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
+	"1loop/internal/agent"
 	"1loop/internal/githubconnector"
 	"1loop/internal/gitrepo"
 )
@@ -173,6 +174,11 @@ func (ui *desktopUI) repoFor(project string) *repoState {
 	return ui.repos[key]
 }
 
+// startGitLoad runs a repository read away from the UI. Tests turn it off:
+// their Fyne driver runs fyne.Do on the calling goroutine, so the read's
+// sidebar update would race the test's own.
+var startGitLoad = func(load func()) { go load() }
+
 // loadRepo reads a project's repository again if it is older than fresh,
 // and its GitHub side too when hub.
 func (ui *desktopUI) loadRepo(project string, hub bool, fresh time.Duration) {
@@ -183,7 +189,7 @@ func (ui *desktopUI) loadRepo(project string, hub bool, fresh time.Duration) {
 	state := ui.repoFor(project)
 	if !state.loading && time.Since(state.at) > fresh {
 		state.loading = true
-		go func() {
+		startGitLoad(func() {
 			ctx, cancel := context.WithTimeout(ui.ctx, 30*time.Second)
 			repo, err := source.repository(ctx, project)
 			cancel()
@@ -198,11 +204,11 @@ func (ui *desktopUI) loadRepo(project string, hub bool, fresh time.Duration) {
 				}
 				ui.gitChanged(project)
 			})
-		}()
+		})
 	}
 	if hub && !state.hubLoading && time.Since(state.hubAt) > max(fresh, time.Minute) && (state.repo == nil || state.repo.Owner != "") {
 		state.hubLoading = true
-		go func() {
+		startGitLoad(func() {
 			ctx, cancel := context.WithTimeout(ui.ctx, 45*time.Second)
 			found, pulls, err := source.github(ctx, project)
 			cancel()
@@ -214,7 +220,7 @@ func (ui *desktopUI) loadRepo(project string, hub bool, fresh time.Duration) {
 				}
 				ui.gitChanged(project)
 			})
-		}()
+		})
 	}
 }
 
@@ -558,6 +564,7 @@ func (ui *desktopUI) forgetLocalWorktree(project, folder string) {
 				chat.run.cancel()
 			}
 			chat.tasks.StopAll()
+			agent.DropClaudeChat(chat.ID)
 			chat.disposePanel()
 			continue
 		}

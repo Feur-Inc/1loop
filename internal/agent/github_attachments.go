@@ -33,13 +33,13 @@ func githubAttachmentTools() []map[string]any {
 	return []map[string]any{
 		{"type": "function", "function": map[string]any{
 			"name":        githubUploadTool,
-			"description": "Upload images or videos to a GitHub repository for an issue, pull request or comment, and get the Markdown that shows them. Then put that Markdown in the body with the GitHub issue, pull request or comment tools: an upload alone appears nowhere. Each file is a file of the workspace (png, jpg, jpeg, gif, webp or svg up to 10 MiB; mp4, mov or webm up to 100 MiB) or a fresh screenshot of a Browser Use tab. Uploads cannot be deleted and anyone who can read the repository can open them once referenced, so never upload secrets or private screens. Use empty strings for unused fields.",
+			"description": "Upload images or videos for a GitHub issue, pull request or comment and get the Markdown that shows them, to put in its body: an upload alone appears nowhere. Each file is a workspace file (png, jpg, gif, webp or svg up to 10 MiB; mp4, mov or webm up to 100 MiB) or a fresh screenshot of a Browser Use tab. Uploads cannot be deleted and whoever reads the repository can open them, so never upload secrets or private screens. Use empty strings for unused fields.",
 			"parameters": map[string]any{"type": "object", "properties": map[string]any{
-				"repository": str("owner/name of the repository whose issue, pull request or comment will show the files."),
+				"repository": str("owner/name of the repository that shows them."),
 				"files": map[string]any{"type": "array", "minItems": 1, "maxItems": 10, "items": map[string]any{"type": "object", "properties": map[string]any{
 					"path":        str("A file of the workspace; empty for a browser screenshot."),
-					"browser_tab": str("Browser Use tab ID to capture now, \"selected\" for this chat's selected tab; empty for a file."),
-					"full_page":   map[string]any{"type": "boolean", "description": "Capture the whole page rather than the viewport (browser screenshots only)."},
+					"browser_tab": str("Browser tab ID to capture, \"selected\" for the selected tab; empty for a file."),
+					"full_page":   map[string]any{"type": "boolean", "description": "Whole page, not the viewport (browser only)."},
 					"alt":         str("Alternative text of an image; empty uses the file name."),
 				}, "required": []string{"path", "browser_tab", "full_page", "alt"}, "additionalProperties": false}},
 			}, "required": []string{"repository", "files"}, "additionalProperties": false},
@@ -55,7 +55,7 @@ func githubAttachmentTools() []map[string]any {
 }
 
 func githubAttachmentInstructions() string {
-	return " To show screenshots or recordings in an issue, pull request or comment, upload them with " + githubUploadTool + " and put the returned Markdown in the body. Use " + githubViewTool + " to look at images already attached."
+	return " To show screenshots or recordings in an issue, pull request or comment, use operation upload of " + githubIssuesTool + " or " + githubPullsTool + " and put the returned Markdown in the body; view_attachment opens images already attached."
 }
 
 // workspaceAttachment reads a file of the workspace, here or on the run's

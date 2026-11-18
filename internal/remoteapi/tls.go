@@ -17,6 +17,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"1loop/internal/core"
 )
 
 // Certificate loads the TLS certificate phones pin by its fingerprint: the
@@ -56,13 +58,12 @@ func Certificate(dir, certPath, keyPath string) (tls.Certificate, error) {
 			if err != nil {
 				return tls.Certificate{}, err
 			}
-			if err = os.MkdirAll(dir, 0700); err != nil {
+			// Each one whole or not at all, the certificate last (#523): a
+			// crash never leaves a certificate without its key.
+			if err = core.WriteFileSafely(keyPath, 0600, false, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private})); err != nil {
 				return tls.Certificate{}, err
 			}
-			if err = os.WriteFile(keyPath, pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: private}), 0600); err != nil {
-				return tls.Certificate{}, err
-			}
-			if err = os.WriteFile(certPath, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: raw}), 0600); err != nil {
+			if err = core.WriteFileSafely(certPath, 0600, false, pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: raw})); err != nil {
 				return tls.Certificate{}, err
 			}
 		}

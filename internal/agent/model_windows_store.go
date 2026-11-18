@@ -12,6 +12,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"1loop/internal/core"
 )
 
 var loadWindows sync.Once
@@ -39,10 +41,8 @@ func learnWindow(connection, model string, tokens int) {
 	learnedWindows[key] = tokens
 	defer learnedMu.Unlock()
 	data, _ := json.Marshal(learnedWindows)
-	if path := windowsPath(); path != "" && os.MkdirAll(filepath.Dir(path), 0700) == nil {
-		if os.WriteFile(path+".tmp", data, 0600) == nil {
-			os.Rename(path+".tmp", path)
-		}
+	if path := windowsPath(); path != "" {
+		core.WriteFileSafely(path, 0600, false, data)
 	}
 }
 

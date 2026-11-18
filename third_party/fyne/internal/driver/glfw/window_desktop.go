@@ -267,7 +267,11 @@ func (w *window) fitContent() {
 // the window's screen, the screen less its panels (1loop #512): a 1180×760
 // window on a 1280×800 screen with a 54 px panel went under the panel.
 func (w *window) fitWorkArea(width, height int) (int, int) {
-	monitor := w.getMonitorForWindow()
+	return fitMonitor(w.getMonitorForWindow(), width, height)
+}
+
+// fitMonitor keeps a size within a screen's work area (fitArea).
+func fitMonitor(monitor *glfw.Monitor, width, height int) (int, int) {
 	if monitor == nil {
 		return width, height
 	}
@@ -803,6 +807,12 @@ func (w *window) create() {
 	if pixHeight == 0 {
 		pixHeight = 10
 	}
+
+	// 1loop: created within the work area too. On Wayland the compositor
+	// keeps the size a window is created with: the later Resize to fit
+	// (fitWorkArea) was not applied, and the canvas, laid out for the
+	// smaller size, was stretched over the larger surface (#512).
+	pixWidth, pixHeight = fitMonitor(glfw.GetPrimaryMonitor(), pixWidth, pixHeight)
 
 	win, err := glfw.CreateWindow(pixWidth, pixHeight, w.title, nil, nil)
 	if err != nil {

@@ -50,4 +50,7 @@ shows every change.
   its screen (glfw's work area, the screen less its panels), or than nine
   tenths of the screen where the platform gives no smaller work area
   (1loop #512: the first 1180×760 window went under a 54 px panel on a
-  1280×800 screen). `window_workarea_test.go` checks the arithmetic.
+  1280×800 screen). The window is also created at that size (primary
+  screen): on Wayland the compositor keeps the size a window is created
+  with, and the canvas was stretched over it. `window_workarea_test.go`
+  checks the arithmetic.

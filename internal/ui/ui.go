@@ -713,11 +713,6 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 		renderer.badge.Move(fyne.NewPos(size.Width-padX-iconSize-renderer.row.endInset, (size.Height-iconSize)/2))
 		trailingWidth = iconSize + gap
 	}
-	if renderer.row.trailing != "" {
-		width := renderer.trailing.MinSize().Width
-		renderer.trailing.Move(fyne.NewPos(size.Width-padX-trailingWidth-width, (size.Height-renderer.trailing.MinSize().Height)/2))
-		trailingWidth += width + gap
-	}
 	iconRoom := float32(0)
 	if renderer.row.icon != nil {
 		iconRoom = iconSize
@@ -725,8 +720,28 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 			iconRoom += gap
 		}
 	}
-	room := size.Width - 2*padX - iconRoom - trailingWidth - renderer.row.endInset
-	marked := renderer.row.mark != nil && room >= renderer.markWidth()+rowMarkMinText
+	// The name comes first: the trailing text (a project's branch) gets
+	// what it leaves, cut short, and goes when that is too little; only
+	// then is the name cut. A long branch was drawn over the name (#469).
+	// The mark goes before the trailing text is cut.
+	renderer.trailing.Text = ""
+	cut := false
+	if trailing := renderer.row.trailing; trailing != "" {
+		style := fyne.TextStyle{}
+		left := size.Width - 2*padX - iconRoom - trailingWidth - renderer.row.endInset - gap - textSize(renderer.row.text, renderer.row.size, style).Width
+		shortest := textSize(string([]rune(trailing)[:min(3, len([]rune(trailing)))])+"…", renderer.row.size-1, style).Width
+		if full := textSize(trailing, renderer.row.size-1, style).Width; left >= fyne.Min(full, shortest) {
+			renderer.trailing.Text = fitText(trailing, renderer.row.size-1, style, left)
+			cut = renderer.trailing.Text != trailing
+			width := renderer.trailing.MinSize().Width
+			renderer.trailing.Move(fyne.NewPos(size.Width-padX-trailingWidth-width, (size.Height-renderer.trailing.MinSize().Height)/2))
+			trailingWidth += width + gap
+		} else {
+			cut = true
+		}
+	}
+	room := fyne.Max(1, size.Width-2*padX-iconRoom-trailingWidth-renderer.row.endInset) // fitText keeps all of it at 0
+	marked := renderer.row.mark != nil && !cut && room >= renderer.markWidth()+rowMarkMinText
 	if marked {
 		room -= renderer.markWidth()
 	}

@@ -568,8 +568,15 @@ func (remote *remoteDesktop) submit(mode string) {
 func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.HandoffChoice, files []agent.FileAttachment, pending string) {
 	ui := remote.parent
 	workspace := ui.cfg.Workspace
+	// With files, the server may spend up to 2 minutes copying them to an SSH
+	// machine's project before it answers: a follow-up must not time out here
+	// while the server takes it (#545).
+	wait := 15 * time.Second
+	if len(files) > 0 {
+		wait = 3 * time.Minute
+	}
 	go func() {
-		ctx, cancel := context.WithTimeout(remote.ctx, 15*time.Second)
+		ctx, cancel := context.WithTimeout(remote.ctx, wait)
 		defer cancel()
 		var reply struct{ Chat string }
 		body := map[string]any{"chat": chat, "text": text, "mode": mode, "attachments": files}

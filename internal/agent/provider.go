@@ -958,14 +958,16 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 				publish()
 				continue
 			}
-			if next, ok := inboxValue.Next(); ok {
-				inject(next)
-				publish()
-				continue
-			}
+			// The TODO check is still part of this task: a queued message
+			// only comes once it is over (#433).
 			if reminder := todo.endReminder(cfg); reminder != "" && ctx.Err() == nil {
 				messages = append(messages, Message{Role: "user", Internal: true, Content: reminder})
 				emit("context_note", "TODO check · steps not completed")
+				publish()
+				continue
+			}
+			if next, ok := inboxValue.Next(); ok {
+				inject(next)
 				publish()
 				continue
 			}

@@ -1390,14 +1390,12 @@ func (ui *desktopUI) submit() {
 		return
 	}
 	if chat != nil && chat.run != nil {
-		// Shown at once at the conversation's end, greyed, and given to the
-		// agent at its next step (between two tool calls), where it then
-		// takes its place in the conversation.
+		// Enter while the agent works queues the message: it waits in the
+		// tray above the composer and becomes the next turn once the task
+		// is over (#433). Ctrl+Enter or Steer (steerNow) joins the task now.
 		if message, ok := ui.promptMessage(); ok {
-			chat.steer = append(chat.steer, message)
+			chat.queue = append(chat.queue, message)
 			ui.renderQueue()
-			ui.followTail = true
-			ui.relayoutColumn()
 		}
 		return
 	}

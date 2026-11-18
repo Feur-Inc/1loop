@@ -657,7 +657,10 @@ func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 		core.Fail(w, 400, "Invalid request")
 		return
 	}
-	server.backend.Approve(args.ID, args.Allow)
+	if !server.backend.Approve(args.ID, args.Allow) {
+		core.Fail(w, 404, "This approval is no longer waiting")
+		return
+	}
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }
 

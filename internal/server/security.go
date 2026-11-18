@@ -90,10 +90,13 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 		pair.Approved, server.setup = true, ""
 		fmt.Fprintf(os.Stderr, "\n%q paired with the setup link.\n", args.Device)
 	} else {
-		fmt.Fprintf(os.Stderr, "\nPairing requested by %q. Approve it in 1loop on a paired device, or type: pair %s <code shown on that device>\n(or from another shell: %s)\n", args.Device, id, server.pairCommand(id, "<code>"))
+		fmt.Fprintf(os.Stderr, "\nPairing requested by %q. Approve it in 1loop on a paired device, or type: pair %s <code shown on that device>\n", args.Device, id)
+		if server.adminReady.Load() { // "1loop-server pair" reaches this server only through its admin socket
+			fmt.Fprintf(os.Stderr, "(or from another shell: %s)\n", server.pairCommand(id, "<code>"))
+		}
 		server.pairingChangedLocked()
 	}
-	core.WriteJSON(writer, 200, map[string]any{"pairing": id, "code": code, "console": true, "phone": server.local, "approved": pair.Approved, "expiresIn": 120, "command": server.pairCommand(id, code)})
+	core.WriteJSON(writer, 200, map[string]any{"pairing": id, "code": code, "console": true, "phone": server.local, "approved": pair.Approved, "expiresIn": 120, "command": server.adminCommandFor(id, code)})
 }
 
 // pairingChangedLocked tells the clients that can approve pairings: the

@@ -1082,14 +1082,18 @@ func (remote *remoteDesktop) showMeta(conv *conversation) {
 func (remote *remoteDesktop) syncRun() {
 	ui := remote.parent
 	if remote.meta.Running {
+		// As for this computer's chats: a message can still be sent (it
+		// joins the task at its next step), and Steer and Stop show (#545).
 		ui.mark.stop()
-		ui.send.Hide()
+		ui.send.Show()
+		ui.steer.Show()
 		ui.stop.Show()
 		ui.showActivityLine(true)
 		ui.workMark.setState(cmp.Or(remote.meta.Mark, "wait"))
 		ui.thinkLabel.SetText(remote.meta.Label)
 	} else {
 		ui.send.Show()
+		ui.steer.Hide()
 		ui.stop.Hide()
 		ui.showActivityLine(false)
 		ui.workMark.setState("brand")

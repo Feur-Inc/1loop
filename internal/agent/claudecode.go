@@ -162,6 +162,18 @@ type PlanUsage struct {
 //     guides, the plugin directory), which 1loop neither shows nor manages.
 const claudeDisabledTools = "Task,Agent,SendMessage,ListAgents,Workflow,CronCreate,CronDelete,CronList,ScheduleWakeup,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,RemoteTrigger,PushNotification,ReportFindings,DesignSync,ShareOnboardingGuide,PublishPlugin"
 
+// claudeEntrypoint is the entry point Claude Code reports with each request
+// it makes for 1loop, instead of "sdk-cli", the one it gives itself when
+// started with -p (anthropics/claude-code#97074).
+const claudeEntrypoint = "1loop"
+
+// claudeEnv is env for a claude process, with any entry point inherited
+// from the environment 1loop runs in replaced by claudeEntrypoint.
+func claudeEnv(env []string) []string {
+	env = slices.DeleteFunc(slices.Clone(env), func(pair string) bool { return strings.HasPrefix(pair, "CLAUDE_CODE_ENTRYPOINT=") })
+	return append(env, "CLAUDE_CODE_ENTRYPOINT="+claudeEntrypoint)
+}
+
 // claudeCommand prepares a Claude Code process in its stream-json mode.
 // The environment is the user's, minus what would change who pays (an API
 // key) and minus the variables of a Claude Code session 1loop may have been
@@ -212,6 +224,7 @@ func claudeCommand(ctx context.Context, home, dir string, extra ...string) (*exe
 	if machineOf(ctx) == nil { // its Bash tool runs here: the project's variables (#408)
 		cmd.Env = append(cmd.Env, platform.ProjectEnv(ctx)...)
 	}
+	cmd.Env = claudeEnv(cmd.Env)
 	// Keep the CLI and its children in a process group for bounded shutdown.
 	platform.PrepareProcess(cmd)
 	cmd.Cancel = func() error { return platform.InterruptProcess(cmd) }

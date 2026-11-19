@@ -79,6 +79,8 @@ func modelLimitsStrip(conn agent.Connection, limits agent.AccountLimits, problem
 	tag := "· selected account"
 	if problem != "" {
 		tag = "· " + problem
+	} else if len(limits.Windows) > 0 && limits.Note != "" {
+		tag = "· " + limits.Note // the numbers are the last good ones, and this is why
 	}
 	at := ""
 	if !limits.Checked.IsZero() {

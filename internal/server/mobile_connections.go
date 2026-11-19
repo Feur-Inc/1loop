@@ -372,11 +372,15 @@ func (server *headlessServer) limits(w http.ResponseWriter, r *http.Request) {
 			defer wait.Done()
 			value, err := server.backend.ConnectionLimits(r.Context(), connection, keys[connection.ID])
 			if err != nil {
-				value = agent.AccountLimits{Note: "Limits unavailable"}
+				value = agent.LimitsAfterError(cached[connection.ID], err) // last good numbers, and why they are old
+			} else {
+				value.Checked = time.Now()
+				if agent.SubscriptionLimits(connection.Provider) {
+					server.usage.NoteLimits(connection.ID, value.UsageWindows(), value.Checked)
+				}
 			}
-			value.Checked = time.Now()
-			if agent.SubscriptionLimits(connection.Provider) {
-				server.usage.NoteLimits(connection.ID, value.UsageWindows(), value.Checked)
+			if value.Checked.IsZero() {
+				value.Checked = time.Now()
 			}
 			results[index] = value
 		}()

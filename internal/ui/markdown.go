@@ -74,11 +74,30 @@ func (view *markdownView) ParseMarkdown(text string) {
 		// without the recursive refresh of Container.Refresh.
 		view.box.Objects = objs
 		view.box.Layout.Layout(objs, view.box.Size())
+		// A new block's text gives its height at a provisional width before
+		// it is laid out (flowRenderer.MinSize), and another once it flows
+		// at its own: lay out again while a block keeps the first. Otherwise
+		// a list keeps gaps between its items, and its end is drawn below
+		// the answer, under the next row, when the answer's height did not
+		// change and nothing lays it out again (#440).
+		for pass := 0; pass < 3 && view.box.Size().Width > 0 && !heightsHold(objs); pass++ {
+			view.box.Layout.Layout(objs, view.box.Size())
+		}
 		canvas.Refresh(view.box)
 	}
 	if view.layer != nil {
 		view.layer.changed()
 	}
+}
+
+// heightsHold tells whether each block is as high as it now measures.
+func heightsHold(objs []fyne.CanvasObject) bool {
+	for _, obj := range objs {
+		if obj.Visible() && obj.Size().Height != obj.MinSize().Height {
+			return false
+		}
+	}
+	return true
 }
 
 // hideOpenTag cuts a citation tag still arriving at the end of a streamed

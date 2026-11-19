@@ -44,7 +44,9 @@ func TestSidebarSubchatGuides(t *testing.T) {
 	ui.chats = nestedChats()
 	ui.chatByID("one").run = &chatRun{cancel: func() {}}
 	ui.chatByID("two").Subchat.Ended = agent.SubchatDone
+	ui.chatByID("two").Subchat.Unseen = true
 	ui.chatByID("three").Subchat.Ended = agent.SubchatFailed
+	ui.chatByID("three").Subchat.Unseen = true
 	ui.subchatsShown = map[string]bool{"here": true} // four subchats: unfolded by hand (#426)
 	ui.renderChats()
 	guides := guidesOf(ui)[1:] // after the summary row's
@@ -167,6 +169,7 @@ func TestSidebarFoldsManySubchats(t *testing.T) {
 	ui := sidebarUI(t)
 	ui.chats = nestedChats()
 	ui.chatByID("three").Subchat.Ended = agent.SubchatFailed
+	ui.chatByID("three").Subchat.Unseen = true
 	ui.renderChats()
 	rows := func() []*tapRow {
 		var out []*tapRow
@@ -262,5 +265,26 @@ func TestNestedCount(t *testing.T) {
 	}
 	if got := nestedSummary(5, 2); got != "5 nested sessions · 2 failed" {
 		t.Fatal(got)
+	}
+}
+
+// A subchat's dot is an unread marker: it shows once its turn ends and goes
+// when the user opens it, and the summary counts only the unread failures.
+func TestSubchatDotClearsOnceRead(t *testing.T) {
+	ui := sidebarUI(t)
+	ui.chats = nestedChats()
+	three := ui.chatByID("three")
+	three.Subchat.Ended, three.Subchat.Unseen = agent.SubchatFailed, true // as turnEnded leaves it out of sight
+	ui.renderChats()
+	if !slices.Contains(sidebarTexts(ui), "4 nested sessions · 1 failed") {
+		t.Fatalf("unread failure not counted: %q", sidebarTexts(ui))
+	}
+	ui.markRead(three) // as opening it does
+	if three.Subchat.Unseen {
+		t.Fatal("still unread once opened")
+	}
+	ui.renderChats()
+	if !slices.Contains(sidebarTexts(ui), "4 nested sessions") {
+		t.Fatalf("a read failure still counted: %q", sidebarTexts(ui))
 	}
 }

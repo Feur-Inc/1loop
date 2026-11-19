@@ -148,11 +148,14 @@ func paintStrokes(img draw.Image, strokes []stroke, scale float32) {
 	}
 }
 
-// disc adds a small circle at x, y, as a polygon.
+// disc adds a small circle at x, y, as a polygon. It turns the way a
+// stroke's quad does: the rasterizer adds up the areas of a path, so a
+// circle turning the other way cut a hole where it overlapped its quad,
+// and every joint of the recorded line showed a dark speck (#533).
 func disc(r *vector.Rasterizer, x, y, radius float32) {
 	const sides = 16
 	for i := 0; i <= sides; i++ {
-		angle := 2 * math.Pi * float64(i) / sides
+		angle := -2 * math.Pi * float64(i) / sides
 		px, py := x+radius*float32(math.Cos(angle)), y+radius*float32(math.Sin(angle))
 		if i == 0 {
 			r.MoveTo(px, py)

@@ -120,6 +120,7 @@ Frosted glass for parts of the window: `[blur]` gives an element a blur radius (
 | `headers` | the pane headers of a split window |
 | `menus` | menus and popovers, over what they cover |
 | `dialogs` | dialogs: the whole window behind them, blurred live |
+| `responses` | the agent's response blocks (the backdrop over a shader or picture sits behind them only, never behind your messages, the gaps or the composer; no key, no blur) |
 
 The blur follows the corners (`roundness`), works on dark and light bases, and is drawn on the GPU only when the window redraws. Without a background behind the window (no `shader` or `background_image`) the sidebar, panel, composer and headers blur the plain window colour: use them with a background. Where the GPU can't blur (Mesa drawing on the CPU, see Settings → General's renderer, or a GL older than 3.0) the elements keep their plain, opaque look; menus and dialogs keep 1loop's own frosted glass.
 

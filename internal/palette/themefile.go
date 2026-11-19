@@ -86,7 +86,7 @@ type themeSource struct {
 // BlurElements are the parts of the window a theme can blur ([blur] and
 // [blur_tint]): the sidebar, the side panel (tools, files, browser), the
 // composer, a split window's pane headers, menus and popovers, dialogs.
-var BlurElements = []string{"sidebar", "panel", "composer", "headers", "menus", "dialogs"}
+var BlurElements = []string{"sidebar", "panel", "composer", "headers", "menus", "dialogs", "responses"}
 
 // MaxBlur is the widest blur radius a theme may ask for.
 const MaxBlur = 64
@@ -406,7 +406,7 @@ func ThemeTemplate(name string) string {
 	b.WriteString("# font_italic = \"IBM Plex Sans:italic\"\n")
 	b.WriteString("# font_mono = \"JetBrains Mono\"  # code, terminals, diffs\n\n")
 	b.WriteString("# [blur]                  # what lies behind an element shows through it, blurred (radius 0 to 64)\n")
-	b.WriteString("# sidebar = 16            # also: panel, composer, headers, menus, dialogs\n")
+	b.WriteString("# sidebar = 16            # also: panel, composer, headers, menus, dialogs, responses (the agent's blocks)\n")
 	b.WriteString("# [blur_tint]             # the colour laid over the blur; left out, the element's own, translucent\n")
 	b.WriteString("# sidebar = \"#0c0c0c99\"\n\n")
 	b.WriteString("[colors]\n")

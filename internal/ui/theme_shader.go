@@ -117,6 +117,7 @@ func (ui *desktopUI) syncBackdrop() {
 		}
 	}
 	ui.syncPicture(file, on)
+	ui.syncMainFill()
 	if !on || file.Shader == "" {
 		if b.stop != nil {
 			close(b.stop)
@@ -220,4 +221,20 @@ func (ui *desktopUI) setShaderFPS(value string) {
 	}
 	shaderFPS = value
 	ui.themeChanged()
+}
+
+// syncMainFill clears the window colour laid behind the whole conversation
+// while a shader or picture is behind the window: the agent's blocks bring
+// their own backdrop, and the gaps, the user's messages and the composer
+// show the background itself (#503).
+func (ui *desktopUI) syncMainFill() {
+	if ui.mainFill == nil {
+		return
+	}
+	if shaderBehind {
+		ui.mainFill.FillColor = color.NRGBA{}
+	} else {
+		ui.mainFill.FillColor = colBackground
+	}
+	ui.mainFill.Refresh()
 }

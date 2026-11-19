@@ -92,6 +92,7 @@ type serverSettings struct {
 
 type headlessServer struct {
 	mu                         sync.Mutex
+	adminReady                 atomic.Bool   // its admin socket listens: "1loop-server pair" reaches it
 	usage                      *usage.Ledger // every model call's tokens (internal/usage)
 	prices                     *usage.Prices
 	terminalRevision           uint64
@@ -278,6 +279,16 @@ func (server *headlessServer) saveLocked() error {
 	return server.stateLocked()()
 }
 
+// saveOutsideLocked saves the state with server.mu released while it is
+// encoded and written (#520), and takes the lock back: whoever calls it
+// must check, after it, what another request may have changed meanwhile.
+func (server *headlessServer) saveOutsideLocked() error {
+	write := server.stateLocked()
+	server.mu.Unlock()
+	defer server.mu.Lock()
+	return write()
+}
+
 // stateLocked takes the state to save, under the lock, and returns what
 // writes it: encoding and writing every chat can take seconds, during which
 // the phone's requests and the agents' events must not wait for the lock.
@@ -350,6 +361,7 @@ func (server *headlessServer) close() {
 		}
 		chat.tasks.StopAll() // a background server must not outlive this one
 	}
+	agent.StopEveryClaude()
 	if err := server.saveLocked(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
@@ -764,6 +776,7 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok {
 		cfg = agent.ResolveDefault(cfg, connection, server.choices)
 		cfg.CompactAt = connection.ModelOptions[cfg.Model].CompactAt
+		cfg.ConnectionName = connection.Name
 	}
 	cfg.APIKey = server.keys[cfg.ConnectionID]
 	if machine := server.machineLocked(cfg.MachineID); machine != nil {

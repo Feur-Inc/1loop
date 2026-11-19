@@ -159,7 +159,8 @@ private fun pinnedSocketFactory(expected: String): SSLSocketFactory = pinnedFact
             if (chain.isEmpty() || fingerprintOf(chain[0]) != expected) {
                 throw CertificateException("Server certificate fingerprint changed. Verify it on the server console.")
             }
-            chain[0].checkValidity()
+            // No date check: the server never renews its certificate (a new
+            // one would mean pairing again), and the pin says which it is (#517).
         }
     }
     SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }.socketFactory

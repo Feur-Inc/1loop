@@ -16,9 +16,7 @@ import (
 // tool or the naming model), saved and sent to every connected client.
 func (server *headlessServer) setTitleLocked(chat *serverChat, title string) error {
 	chat.Title = title
-	if err := server.saveLocked(); err != nil {
-		return err
-	}
+	server.scheduleSaveLocked() // written apart: a rename must not hold the lock (#520)
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
 	return nil
 }

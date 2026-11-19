@@ -65,3 +65,25 @@ func TestSteepDashedStrokeIsStraight(t *testing.T) {
 		}
 	}
 }
+
+// A line of several segments with round ends is solid where they meet:
+// no darker speck at a joint nor at its ends.
+func TestStrokeJointsAreSolid(t *testing.T) {
+	ink := color.NRGBA{R: 0xe0, G: 0x5a, B: 0x4a, A: 0xff}
+	points := []fyne.Position{{X: 5, Y: 5}, {X: 8, Y: 20}, {X: 30, Y: 20}, {X: 34, Y: 28}, {X: 60, Y: 40}}
+	var strokes []stroke
+	for i := 0; i+1 < len(points); i++ {
+		strokes = append(strokes, stroke{from: points[i], to: points[i+1], ink: ink, width: 2, round: true})
+	}
+	for _, scale := range []float32{1, 1.4, 2} {
+		img := image.NewNRGBA(image.Rect(0, 0, int(70*scale), int(50*scale)))
+		paintStrokes(img, strokes, scale)
+		for _, p := range points {
+			// the pixel the joint lies in
+			x, y := int(p.X*scale), int(p.Y*scale)
+			if a := img.NRGBAAt(x, y).A; a < 0xc0 {
+				t.Errorf("scale %v: the line has a hole at %v (alpha %d)", scale, p, a)
+			}
+		}
+	}
+}

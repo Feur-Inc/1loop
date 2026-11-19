@@ -183,9 +183,10 @@ func terminalAction(tool, raw string) (action, bool) {
 			command += " …"
 		}
 		return action{"Ran in the terminal:", "Running in the terminal:", command, true}, true
-	case "terminal_write":
-		return action{"Typed in the terminal:", "Typing in the terminal:", quoted(args.Text), false}, true
-	case "terminal_keys":
+	case "terminal_write", "terminal_keys":
+		if args.Text != "" || len(args.Keys) == 0 {
+			return action{"Typed in the terminal:", "Typing in the terminal:", quoted(args.Text), false}, true
+		}
 		return action{"Pressed in the terminal:", "Pressing in the terminal:", strings.Join(args.Keys, ", "), false}, true
 	case "terminal_read":
 		return action{"Read", "Reading", "the terminal output", false}, true
@@ -341,6 +342,10 @@ func otherAction(tool, raw string) (action, bool) {
 		Repository string
 		Files      []json.RawMessage
 		URL        string
+		// github_issues, github_pull_requests, github_code, github_actions
+		Operation string
+		Number    *float64
+		Query     string
 	}
 	_ = json.Unmarshal([]byte(raw), &args)
 	switch tool {
@@ -354,6 +359,8 @@ func otherAction(tool, raw string) (action, bool) {
 			return action{"Listed", "Listing", "the background tasks", false}, true
 		case "stop":
 			return action{"Stopped", "Stopping", id, false}, true
+		case "wait":
+			return action{"Waited for", "Waiting for", id, false}, true
 		}
 		return action{"Read the output of", "Reading the output of", id, false}, true
 	case "skill":
@@ -373,6 +380,25 @@ func otherAction(tool, raw string) (action, bool) {
 			group = "the " + server + " MCP tools"
 		}
 		return action{"Loaded", "Loading", group, false}, true
+	case githubIssuesTool, githubPullsTool, githubCodeTool, githubActionsTool:
+		if args.Operation == "upload" {
+			return otherAction(githubUploadTool, raw)
+		}
+		if args.Operation == "view_attachment" {
+			return otherAction(githubViewTool, raw)
+		}
+		area := map[string]string{githubIssuesTool: "issues", githubPullsTool: "pull requests", githubCodeTool: "code", githubActionsTool: "Actions"}[tool]
+		target := "GitHub " + area + " · " + strings.ReplaceAll(args.Operation, "_", " ")
+		if args.Repository != "" {
+			target += " · " + args.Repository
+		}
+		if args.Number != nil {
+			target += fmt.Sprintf(" #%d", int(*args.Number))
+		}
+		if args.Query != "" {
+			target += " · " + args.Query
+		}
+		return action{"Used", "Using", target, false}, true
 	case githubUploadTool:
 		files := "1 file"
 		if len(args.Files) != 1 {
@@ -507,6 +533,8 @@ func toolNoun(tool string) string {
 		return "a permission request"
 	case "install_packages":
 		return "a package install"
+	case githubIssuesTool, githubPullsTool, githubCodeTool, githubActionsTool:
+		return "a GitHub action"
 	case githubUploadTool:
 		return "a GitHub upload"
 	case githubViewTool:

@@ -104,6 +104,11 @@ func compareVersions(a, b string) int {
 
 var chromiumMu sync.Mutex // one download at a time in this process
 
+// startChromiumUpdate checks for a newer Chromium in the background. Tests
+// turn it off: started late, it could write in a test's folder as it is
+// removed, or download a real Chromium.
+var startChromiumUpdate = func(dir, installed string) { go updateChromium(dir, installed) }
+
 // ownChromium is 1loop's Chromium. An installed one is used at once and
 // updated in the background for the next start; otherwise it is downloaded
 // now, the pages saying how far it is.
@@ -117,7 +122,7 @@ func ownChromium(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("Add chromium to your NixOS packages to use browser tabs (the 1loop Nix package includes it)")
 	}
 	if versions := installedChromium(dir); len(versions) > 0 {
-		go updateChromium(dir, versions[0])
+		startChromiumUpdate(dir, versions[0])
 		return chromiumExecutable(dir, versions[0]), nil
 	}
 	chromiumMu.Lock()
@@ -283,51 +288,84 @@ func downloadChromium(ctx context.Context, dir, version, address string, shown b
 	return nil
 }
 
-// unzip extracts an archive into dest, keeping Unix permissions; an entry
-// that would land outside dest is refused.
+// unzip extracts an archive into dest, keeping Unix permissions. Nothing
+// lands outside dest (#524): a name must be local (no "..", not absolute);
+// files and folders are written first, while no link exists yet; links come
+// after, each resolved against the folder it really is in, then all of them
+// against the real filesystem. So a chain such as "d -> ." then
+// "d/x -> .." cannot reach dest's parent, which checking each link's target
+// from its name in the archive allowed.
 func unzip(path, dest string) error {
 	reader, err := zip.OpenReader(path)
 	if err != nil {
 		return err
 	}
 	defer reader.Close()
+	if err := os.MkdirAll(dest, 0755); err != nil {
+		return err
+	}
+	root, err := filepath.EvalSymlinks(dest)
+	if err != nil {
+		return err
+	}
+	var links []*zip.File
 	for _, file := range reader.File {
-		target := filepath.Join(dest, filepath.FromSlash(file.Name))
-		if !strings.HasPrefix(target, dest+string(filepath.Separator)) {
+		if !filepath.IsLocal(filepath.FromSlash(file.Name)) {
 			return fmt.Errorf("the archive holds an unsafe path: %s", file.Name)
 		}
+		target := filepath.Join(root, filepath.FromSlash(file.Name))
 		mode := file.Mode()
 		switch {
 		case mode.IsDir():
 			if err := os.MkdirAll(target, 0755); err != nil {
 				return err
 			}
-			continue
 		case mode&os.ModeSymlink != 0:
-			link, err := readEntry(file)
-			if err != nil {
-				return err
-			}
-			resolved := filepath.Join(filepath.Dir(target), string(link))
-			if filepath.IsAbs(string(link)) || !strings.HasPrefix(resolved, dest+string(filepath.Separator)) {
-				return fmt.Errorf("the archive holds an unsafe link: %s", file.Name)
-			}
+			links = append(links, file)
+		case mode.IsRegular():
 			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 				return err
 			}
-			if err := os.Symlink(string(link), target); err != nil {
+			if err := writeEntry(file, target, mode.Perm()|0600); err != nil {
 				return err
 			}
-			continue
+		default:
+			return fmt.Errorf("the archive holds a special file: %s", file.Name)
 		}
+	}
+	for _, file := range links {
+		link, err := readEntry(file)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(root, filepath.FromSlash(file.Name))
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 			return err
 		}
-		if err := writeEntry(file, target, mode.Perm()|0600); err != nil {
+		parent, err := filepath.EvalSymlinks(filepath.Dir(target))
+		if err != nil {
 			return err
+		}
+		if filepath.IsAbs(string(link)) || !within(root, parent) || !within(root, filepath.Join(parent, string(link))) {
+			return fmt.Errorf("the archive holds an unsafe link: %s", file.Name)
+		}
+		if err := os.Symlink(string(link), target); err != nil {
+			return err // a file or folder of the archive is already there
+		}
+	}
+	for _, file := range links {
+		resolved, err := filepath.EvalSymlinks(filepath.Join(root, filepath.FromSlash(file.Name)))
+		if err == nil && !within(root, resolved) {
+			return fmt.Errorf("the archive holds an unsafe link: %s", file.Name)
 		}
 	}
 	return nil
+}
+
+// within: path is root or inside it.
+func within(root, path string) bool {
+	rel, err := filepath.Rel(root, path)
+	return err == nil && filepath.IsLocal(rel)
 }
 
 func readEntry(file *zip.File) ([]byte, error) {

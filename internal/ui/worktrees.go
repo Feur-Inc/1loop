@@ -361,7 +361,7 @@ func (ui *desktopUI) worktreeActions(project string, worktree gitrepo.Worktree, 
 	actions := []menuAction{{label: "New chat", icon: iconPlus, run: func() { open(worktree.Path); ui.startNew() }}}
 	if number := state.pulls[worktree.Path]; number > 0 && state.hub != nil {
 		actions = append(actions, menuAction{label: fmt.Sprintf("Open pull request #%d", number), icon: iconGlobe, run: func() {
-			openLink(fmt.Sprintf("%s/pull/%d", state.hub.URL, number))
+			openInBrowser(fmt.Sprintf("%s/pull/%d", state.hub.URL, number))
 		}})
 	} else if state.repo != nil && state.repo.Owner != "" && worktree.Branch != "" {
 		actions = append(actions, menuAction{label: "Create a pull request on GitHub", icon: iconGlobe, run: func() {

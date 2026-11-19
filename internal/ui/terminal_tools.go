@@ -15,8 +15,6 @@ import (
 	"image/draw"
 	"image/png"
 	"io"
-	"path"
-	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -102,6 +100,31 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 		if err := decoder.Decode(&args); err != nil {
 			return agent.PanelToolResult{}, err
 		}
+		// The folder of a new terminal is resolved first, outside the UI
+		// thread: on an SSH machine it is looked up there.
+		dir := ""
+		if name == "terminal_tabs" && args.Action == "open" {
+			var workspace string
+			var machine agent.Machine
+			missing := false
+			ui.onUI(ctx, func() {
+				workspace = chat.Config.Workspace
+				if id := chat.Config.MachineID; id != "" {
+					if found := ui.machineFor(id); found != nil {
+						machine = found
+					} else {
+						missing = true
+					}
+				}
+			})
+			if missing {
+				return agent.PanelToolResult{}, fmt.Errorf("This conversation's SSH machine is no longer in Settings → General")
+			}
+			var err error
+			if dir, err = agent.TerminalDir(ctx, machine, workspace, args.Cwd); err != nil {
+				return agent.PanelToolResult{}, err
+			}
+		}
 		var term *panelTerminal
 		var problem error
 		var list []map[string]any
@@ -144,24 +167,6 @@ func (ui *desktopUI) terminalTools(chat *conversation) agent.PanelToolHandler {
 				case "list":
 					return
 				case "open":
-					dir := chat.Config.Workspace
-					switch {
-					case args.Cwd == "":
-					case chat.Config.MachineID != "": // a folder of the project on the machine
-						dir = path.Join(dir, args.Cwd)
-						if path.IsAbs(args.Cwd) {
-							dir = path.Clean(args.Cwd)
-						}
-						if dir != chat.Config.Workspace && !strings.HasPrefix(dir, strings.TrimSuffix(chat.Config.Workspace, "/")+"/") {
-							problem = fmt.Errorf("The path is outside the workspace")
-							return
-						}
-					default:
-						dir, problem = agent.WorkspacePath(dir, args.Cwd)
-						if problem != nil {
-							return
-						}
-					}
 					tab, err := panel.terminalTab(dir, chat.Config.MachineID)
 					if err != nil {
 						problem = err

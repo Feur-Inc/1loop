@@ -174,9 +174,13 @@ func sectionHeader(text string, action fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewBorder(nil, nil, nil, padded(10, 0, 0, 2, action), label)
 }
 
-// moreButtonInset is the room withMore keeps at a row's end for its ⋯.
+// moreButtonInset is the room withMore keeps at a row's end for its ⋯:
+// a styleWindow row's width (tapRowRenderer.metrics: its icon and padding,
+// which no theme changes), and 4. A constant, not a row built and measured
+// for each row of the sidebar.
 func moreButtonInset() float32 {
-	return newRow("", iconMore, styleWindow, nil).MinSize().Width + 4
+	const padX, icon = 8, 18 // styleWindow
+	return icon + 2*padX + 4
 }
 
 // withMore adds a "⋯" button that appears while the row is hovered; it and a
@@ -399,6 +403,16 @@ func (ui *desktopUI) openChat(chat *conversation) {
 	ui.loadChat(chat, true)
 }
 
+// markRead clears a subchat's unread mark as the user opens it: its dot in
+// the sidebar goes, and so does its count in the summary row. Kept for the
+// next start.
+func (ui *desktopUI) markRead(chat *conversation) {
+	if chat.Subchat != nil && chat.Subchat.Unseen {
+		chat.Subchat.Unseen = false
+		ui.save()
+	}
+}
+
 func (ui *desktopUI) reloadChat(chat *conversation) {
 	ui.loadChat(chat, false)
 }
@@ -416,6 +430,7 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 		chat.failed = false
 		ui.syncTray()
 	}
+	ui.markRead(chat)
 	ui.cfg = chat.Config
 	ui.syncProjectTheme()
 	ui.prompt.switchDraft(chat.ID)
@@ -527,6 +542,7 @@ func (ui *desktopUI) removeChats(chats ...*conversation) {
 		}
 		chat.queue, chat.steer = nil, nil
 		chat.tasks.StopAll()
+		agent.DropClaudeChat(chat.ID)
 		ui.prompt.drafts.set(chat.ID, "")
 		for _, view := range ui.allPanes() {
 			if view.current == chat {

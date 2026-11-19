@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"image"
 	"io"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
@@ -211,10 +212,12 @@ func (remote *remoteDesktop) attach(uploads []remoteUpload) {
 	if chat == "" && ui.cfg.Workspace != "" {
 		workspace = ui.cfg.Workspace // where post sends a new chat
 	}
+	draft := ui.draftKey()
 	ui.filesAttaching++
 	go func() {
 		var files []agent.FileAttachment
 		var problems []string
+		pictures := map[string]image.Image{}
 		for _, upload := range uploads {
 			file, err := remote.upload(workspace, upload)
 			if err != nil {
@@ -222,15 +225,24 @@ func (remote *remoteDesktop) attach(uploads []remoteUpload) {
 				continue
 			}
 			files = append(files, file)
+			if img := uploadThumbnail(upload); img != nil {
+				pictures[file.Path] = img
+			}
 		}
 		fyne.Do(func() {
 			ui.filesAttaching--
 			if remote.ctx.Err() != nil {
 				return
 			}
-			if remote.current == chat {
+			if remote.thumbnails == nil {
+				remote.thumbnails = map[string]image.Image{}
+			}
+			maps.Copy(remote.thumbnails, pictures)
+			if ui.draftKey() == draft {
 				remote.fileAttachments = append(remote.fileAttachments, files...)
 				ui.renderAttachments()
+			} else { // the user moved on: they wait in their own chat's draft (#544)
+				ui.parkServerFiles(draft, files)
 			}
 			if len(problems) > 0 {
 				ui.notice("Attach files", strings.Join(problems, "\n"))
@@ -250,4 +262,24 @@ func (remote *remoteDesktop) upload(workspace string, upload remoteUpload) (agen
 	defer cancel()
 	err = remote.client.json(ctx, "POST", "/api/attachments?workspace="+url.QueryEscape(workspace)+"&name="+url.QueryEscape(upload.name), content, &file)
 	return file, err
+}
+
+// uploadThumbnail is the composer's thumbnail of an uploaded picture, read
+// again from here; nil for other files.
+func uploadThumbnail(upload remoteUpload) image.Image {
+	switch strings.ToLower(filepath.Ext(upload.name)) {
+	case ".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp":
+	default:
+		return nil
+	}
+	content, err := upload.open()
+	if err != nil {
+		return nil
+	}
+	defer content.Close()
+	img, _, err := image.Decode(io.LimitReader(content, 25<<20))
+	if err != nil {
+		return nil
+	}
+	return thumbnail(img, 2*composerPictureWidth)
 }

@@ -216,6 +216,7 @@ func (view *settingsView) closeNow() {
 	if view.panelOn {
 		ui.panelToggle.Show()
 	}
+	ui.windowOf().panel.redraw()
 	ui = ui.focused() // the pane with the focus, in a split window (panes.go)
 	ui.updateHeader()
 	ui.relayoutColumn()

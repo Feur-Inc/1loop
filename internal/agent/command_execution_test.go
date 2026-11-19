@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -14,11 +15,40 @@ import (
 	"time"
 )
 
+// commandJSON reads a JSON tool result, or a shell result's text (header,
+// stdout, [stderr], [output_id …]) into the same fields.
 func commandJSON(t *testing.T, text string) map[string]any {
 	t.Helper()
 	var value map[string]any
-	if err := json.Unmarshal([]byte(text), &value); err != nil {
+	if json.Unmarshal([]byte(text), &value) == nil {
+		return value
+	}
+	header, body, _ := strings.Cut(text, "\n")
+	var code int
+	var status, cwd string
+	if _, err := fmt.Sscanf(header, "exit %d · %s · cwd ", &code, &status); err != nil {
 		t.Fatal(err, text)
+	}
+	_, cwd, _ = strings.Cut(header, " · cwd ")
+	value = map[string]any{"exit_code": float64(code), "status": status, "cwd": cwd, "stdout": "", "stderr": "", "retention_truncated": strings.Contains(text, "oldest output was not kept")}
+	if i := strings.Index(body, "\n[output_id "); i >= 0 || strings.HasPrefix(body, "[output_id ") {
+		if i < 0 {
+			i = -1
+		}
+		fields := strings.Fields(body[i+1:])
+		value["output_id"] = fields[1]
+		body = body[:max(i, 0)]
+	}
+	if i := strings.Index(body, "\n[error] "); i >= 0 {
+		value["error"] = body[i+9:]
+		body = body[:i]
+	}
+	if strings.HasPrefix(body, "[stderr]\n") {
+		value["stderr"] = strings.TrimPrefix(body, "[stderr]\n")
+	} else if out, errText, ok := strings.Cut(body, "\n[stderr]\n"); ok {
+		value["stdout"], value["stderr"] = out, errText
+	} else {
+		value["stdout"] = body
 	}
 	return value
 }

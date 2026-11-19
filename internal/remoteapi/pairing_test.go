@@ -107,9 +107,20 @@ func TestPairingRequestInterval(t *testing.T) {
 	if _, err := book.Request("Phone"); !errors.Is(err, ErrPairingBusy) {
 		t.Fatalf("second request within %s: %v", requestInterval, err)
 	}
+	// Another request does not replace the pairing on screen (#532)...
 	c.at = c.at.Add(requestInterval)
+	pending := book.Pending
+	if _, err := book.Request("Laptop"); !errors.Is(err, ErrPairingWaiting) || book.Pending != pending {
+		t.Fatalf("a request replaced the pending pairing: %v", err)
+	}
+	// ...until it is cancelled, or expires.
+	book.Cancel(pending.ID)
 	if _, err := book.Request("Phone"); err != nil {
 		t.Fatal(err)
+	}
+	c.at = c.at.Add(PairingTTL + time.Second)
+	if _, err := book.Request("Phone"); err != nil {
+		t.Fatalf("after expiry: %v", err)
 	}
 }
 

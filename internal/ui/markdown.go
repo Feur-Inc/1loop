@@ -27,6 +27,8 @@ type markdownView struct {
 	layer  *selectLayer // over the box: selects its text with the mouse
 	box    *fyne.Container
 	blocks []mdBlock
+	starts []int  // where each block starts in source
+	source string // the text last parsed
 	objs   []fyne.CanvasObject
 	media  *mdMedia // draws its images and videos; nil: they are links
 }
@@ -56,29 +58,66 @@ func newMarkdownMediaView(text string, media *mdMedia) *markdownView {
 // ParseMarkdown re-renders the text. Unchanged blocks keep their widgets:
 // while an answer streams, only its last block is built again.
 func (view *markdownView) ParseMarkdown(text string) {
-	source := []byte(hideOpenTag(text))
-	nodes, blocks := splitMarkdown(source)
+	text = hideOpenTag(text)
+	// A streamed answer only grows: the blocks before the last two are
+	// final, only the text from there on is parsed again. Parsing the
+	// whole answer at each delta cost megabytes by the end of a long one.
+	base, keep := 0, 0
+	if n := len(view.blocks); n >= 3 && !strings.Contains(text, "]:") { // no link definitions: they reach back
+		if at := view.starts[n-2]; at > 0 && at <= len(text) && text[at-1] == '\n' && text[:at] == view.source[:at] {
+			base, keep = at, n-2
+		}
+	}
+	source := []byte(text[base:])
+	nodes, fresh, starts := splitMarkdownAt(source)
+	blocks := append(view.blocks[:keep:keep], fresh...)
+	for i := range starts {
+		starts[i] += base
+	}
+	starts = append(view.starts[:keep:keep], starts...)
 	objs := make([]fyne.CanvasObject, len(blocks))
+	copy(objs, view.objs[:keep])
 	reshaped := len(blocks) != len(view.blocks)
-	for i, block := range blocks {
+	for i := keep; i < len(blocks); i++ {
+		block := blocks[i]
 		if i < len(view.blocks) && view.blocks[i] == block {
 			objs[i] = view.objs[i]
 			continue
 		}
-		objs[i] = renderNode(nodes[i], source, colText, view.media)
+		objs[i] = renderNode(nodes[i-keep], source, colText, view.media)
 		reshaped = true
 	}
+	view.starts, view.source = starts, text
 	view.blocks, view.objs = blocks, objs
 	if reshaped {
 		// New widgets are drawn on their own once placed: lay the box out,
 		// without the recursive refresh of Container.Refresh.
 		view.box.Objects = objs
 		view.box.Layout.Layout(objs, view.box.Size())
+		// A new block's text gives its height at a provisional width before
+		// it is laid out (flowRenderer.MinSize), and another once it flows
+		// at its own: lay out again while a block keeps the first. Otherwise
+		// a list keeps gaps between its items, and its end is drawn below
+		// the answer, under the next row, when the answer's height did not
+		// change and nothing lays it out again (#440).
+		for pass := 0; pass < 3 && view.box.Size().Width > 0 && !heightsHold(objs); pass++ {
+			view.box.Layout.Layout(objs, view.box.Size())
+		}
 		canvas.Refresh(view.box)
 	}
 	if view.layer != nil {
 		view.layer.changed()
 	}
+}
+
+// heightsHold tells whether each block is as high as it now measures.
+func heightsHold(objs []fyne.CanvasObject) bool {
+	for _, obj := range objs {
+		if obj.Visible() && obj.Size().Height != obj.MinSize().Height {
+			return false
+		}
+	}
+	return true
 }
 
 // hideOpenTag cuts a citation tag still arriving at the end of a streamed
@@ -93,6 +132,12 @@ func hideOpenTag(text string) string {
 // splitMarkdown parses the text and gives its top-level blocks, each with
 // its source.
 func splitMarkdown(source []byte) ([]ast.Node, []mdBlock) {
+	nodes, blocks, _ := splitMarkdownAt(source)
+	return nodes, blocks
+}
+
+// splitMarkdownAt is splitMarkdown, with where each block starts.
+func splitMarkdownAt(source []byte) ([]ast.Node, []mdBlock, []int) {
 	var nodes []ast.Node
 	for node := parseMarkdown(source).FirstChild(); node != nil; node = node.NextSibling() {
 		nodes = append(nodes, node)
@@ -122,7 +167,7 @@ func splitMarkdown(source []byte) ([]ast.Node, []mdBlock) {
 		}
 		blocks[i] = block
 	}
-	return nodes, blocks
+	return nodes, blocks, starts[:len(nodes)]
 }
 
 // blockStart is where a block starts in the source, or -1.

@@ -8,6 +8,7 @@ package ui
 // the window is hidden or in the background, or animations are off.
 
 import (
+	"bytes"
 	"image"
 	"image/draw"
 	"image/gif"
@@ -61,11 +62,11 @@ func gifFrames(g *gif.GIF) ([]image.Image, []time.Duration) {
 
 // readPicture reads a background picture: one frame, or a GIF's frames.
 func readPicture(path string) ([]image.Image, []time.Duration, error) {
-	f, err := os.Open(path)
+	data, err := palette.ReadThemeFile(path)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer f.Close()
+	f := bytes.NewReader(data)
 	if strings.EqualFold(filepath.Ext(path), ".gif") {
 		g, err := gif.DecodeAll(f)
 		if err != nil {

@@ -28,9 +28,9 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
-	"sync"
 	"time"
 
 	"1loop/internal/core"
@@ -154,10 +154,25 @@ type PlanUsage struct {
 //   - EnterPlanMode, ExitPlanMode: 1loop has no plan view.
 //   - EnterWorktree, ExitWorktree move Claude Code to another folder, while
 //     1loop's workspace, diffs and files stay in the chat's.
-//   - RemoteTrigger, PushNotification, ReportFindings and DesignSync belong
-//     to Claude's own apps (cloud routines, notifications, review and design
-//     views), which 1loop neither shows nor manages.
-const claudeDisabledTools = "Task,Agent,SendMessage,ListAgents,CronCreate,CronDelete,CronList,ScheduleWakeup,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,RemoteTrigger,PushNotification,ReportFindings,DesignSync"
+//   - Workflow runs scripts of many subagents: off like Task, for the same
+//     reason, and it costs tokens on every turn.
+//   - RemoteTrigger, PushNotification, ReportFindings, DesignSync,
+//     ShareOnboardingGuide and PublishPlugin belong to Claude's own apps
+//     (cloud routines, notifications, review and design views, onboarding
+//     guides, the plugin directory), which 1loop neither shows nor manages.
+const claudeDisabledTools = "Task,Agent,SendMessage,ListAgents,Workflow,CronCreate,CronDelete,CronList,ScheduleWakeup,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,RemoteTrigger,PushNotification,ReportFindings,DesignSync,ShareOnboardingGuide,PublishPlugin"
+
+// claudeEntrypoint is the entry point Claude Code reports with each request
+// it makes for 1loop, instead of "sdk-cli", the one it gives itself when
+// started with -p (anthropics/claude-code#97074).
+const claudeEntrypoint = "1loop"
+
+// claudeEnv is env for a claude process, with any entry point inherited
+// from the environment 1loop runs in replaced by claudeEntrypoint.
+func claudeEnv(env []string) []string {
+	env = slices.DeleteFunc(slices.Clone(env), func(pair string) bool { return strings.HasPrefix(pair, "CLAUDE_CODE_ENTRYPOINT=") })
+	return append(env, "CLAUDE_CODE_ENTRYPOINT="+claudeEntrypoint)
+}
 
 // claudeCommand prepares a Claude Code process in its stream-json mode.
 // The environment is the user's, minus what would change who pays (an API
@@ -209,6 +224,7 @@ func claudeCommand(ctx context.Context, home, dir string, extra ...string) (*exe
 	if machineOf(ctx) == nil { // its Bash tool runs here: the project's variables (#408)
 		cmd.Env = append(cmd.Env, platform.ProjectEnv(ctx)...)
 	}
+	cmd.Env = claudeEnv(cmd.Env)
 	// Keep the CLI and its children in a process group for bounded shutdown.
 	platform.PrepareProcess(cmd)
 	cmd.Cancel = func() error { return platform.InterruptProcess(cmd) }
@@ -307,6 +323,35 @@ func claudeLimit(status int, text string) (time.Time, bool) {
 // claudeTool translates a Claude Code tool call into the row 1loop shows:
 // commands, reads and edits use 1loop's own rows (and their detail panel);
 // every other tool keeps its name and arguments.
+// claudeRunning says how many of the calls still waiting for a result, in
+// the order the model asked for them, Claude Code runs now. It runs the
+// tools that only look (reading, searching) side by side, and any other one
+// alone, once the calls before it are done: a Read sent with a command
+// waits for that command's end.
+func claudeRunning(names []string) int {
+	if len(names) == 0 {
+		return 0
+	}
+	if !claudeConcurrent(names[0]) {
+		return 1
+	}
+	n := 1
+	for n < len(names) && claudeConcurrent(names[n]) {
+		n++
+	}
+	return n
+}
+
+// claudeConcurrent reports whether Claude Code may run the tool alongside
+// others.
+func claudeConcurrent(name string) bool {
+	switch name {
+	case "Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "ToolSearch", "Task", "Agent", "TaskOutput":
+		return true
+	}
+	return false
+}
+
 func claudeTool(root, name string, input json.RawMessage) (tool, args string) {
 	if strings.HasPrefix(name, "mcp__1loop_todo__") {
 		return strings.TrimPrefix(name, "mcp__1loop_todo__"), string(input)
@@ -425,6 +470,19 @@ func claudePrompt(messageValue Message, preface string) string {
 	return string(line)
 }
 
+// claudeTurnNote goes before the turn's prompt: the TODO list as it stands
+// and the tools the user's message mentions.
+func claudeTurnNote(cfg Config, prompt Message) string {
+	note := mentionNote(cfg, prompt.Content)
+	if todo := todoSnapshot(cfg); todo != "" {
+		note += "\n[1loop TODO list now]" + todo + "\n[End of the TODO list]"
+	}
+	if note == "" {
+		return ""
+	}
+	return "[1loop context, not a user request]" + note + "\n\n"
+}
+
 // claudeCodeGuidance settles where Claude Code's own instructions and 1loop's
 // meet: two memories, two shells and two attribution lines (#211).
 func claudeCodeGuidance(cfg Config) string {
@@ -435,6 +493,10 @@ func claudeCodeGuidance(cfg Config) string {
 	if cfg.ProjectTools == nil && cfg.toolAvailable("terminal_command") {
 		guidance = append(guidance, "Shells: Claude Code's Bash tool and 1loop's terminals run in the same environment. Use Bash for commands whose output you need; use a terminal when the user should see or reach the program: interactive programs, TUIs, servers and long watches. Bash follows Claude Code's permission rules, terminals follow 1loop's approval mode: neither is a way around the other's refusal.")
 	}
+	if cfg.Todo != nil {
+		guidance = append(guidance, "1loop's other tools (mcp__1loop_todo__*: memory, settings, subchats, other chats, browser, terminals, phone, computer, GitHub) are deferred: load the ones a task needs with ToolSearch. Each one's description carries its rules.")
+	}
+	guidance = append(guidance, "Tools: prefer a dedicated tool (Read, Edit, the GitHub and browser tools…) to a shell command doing the same, and send independent calls together in one response, where they run side by side.")
 	guidance = append(guidance, "Attribution: keep the lines Claude Code asks for (Co-Authored-By, Generated with Claude Code). When the project or the user also asks for an Assisted-by line, add it as well: one does not replace the other.")
 	return "\n\n" + strings.Join(guidance, "\n")
 }
@@ -654,7 +716,11 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	if len(history) == 0 {
 		return fmt.Errorf("Nothing to send")
 	}
-	cfg.Session = HarnessSession(cfg) // not an Antigravity conversation
+	if strings.HasPrefix(cfg.Session, agySessionPrefix) { // not an Antigravity conversation
+		// Only that is cleared: the reference keeps its login, without
+		// which a separate account's session would not be resumed (#483).
+		cfg.Session = ""
+	}
 	ctx = toolContext(ctx, cfg)
 	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
 		cfg.ProjectTools = func(operation context.Context, name string, raw json.RawMessage) (PanelToolResult, error) {
@@ -682,25 +748,13 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	}
 	session := HarnessSession(cfg)
 	sessionArgs, forked := claudeSessionArgs(cfg)
-	args = append(args, sessionArgs...)
-	if cfg.Todo != nil {
-		config, close, err := backend.startTodoMCP(ctx, cfg, emit)
-		if err != nil {
-			return err
-		}
-		defer close()
-		args = append(args, "--mcp-config", config)
-	}
-	// The user's MCP servers, plugins and skills, for this session only.
-	extensionArgs, cleanExtensions := claudeExtensionArgs()
-	defer cleanExtensions()
-	args = append(args, extensionArgs...)
-	appendPrompt := mobileInstructions(cfg) + projectInstructions(cfg.Workspace) + scratchInstructions(cfg) + citationInstructions + calculationInstructions + todoInstructions(cfg) + todoSnapshot(cfg) + wrapUpInstructions(cfg) + memoryInstructions(cfg) + settingsInstructions(cfg) + subchatInstructions(cfg) + chatsInstructions(cfg) + modelNote(cfg) + mentionNote(cfg, lastUserText(history))
+	// The same for every turn of the session, so that Claude Code's cached
+	// prompt holds: what changes (the TODO list, the tools the message
+	// mentions) goes with the prompt, and the rules of a deferred tool in its
+	// own description, read when the tool is loaded.
+	appendPrompt := mobileInstructions(cfg) + projectInstructions(cfg.Workspace) + scratchInstructions(cfg) + citationInstructions + calculationInstructions + todoInstructions(cfg) + wrapUpInstructions(cfg) + subchatParentInstructions(cfg) + modelNote(cfg)
 	if cfg.ProjectTools != nil {
 		appendPrompt += "\n\nUse 1loop's MCP shell, read_file, list_directory, edit_file and apply_patch tools for project work. Follow the phone's selected execution policy and stay strictly inside the requested project. Use recall to retrieve older conversation details. Your own context compaction remains managed by Claude Code."
-	}
-	for _, group := range builtinToolGroups(cfg) {
-		appendPrompt += group.instructions(cfg)
 	}
 	appendPrompt += claudeCodeGuidance(cfg)
 	if appendPrompt != "" {
@@ -709,81 +763,91 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		appendPrompt = "\n\n# 1loop\nYou run inside 1loop, an app that drives Claude Code. Its rules for this session:" + appendPrompt + userPreferenceInstructions(cfg)
 		args = append(args, "--append-system-prompt", appendPrompt)
 	}
-	processCtx, stopProcess := context.WithCancel(ctx)
-	defer stopProcess()
-	cmd, err := claudeCommand(processCtx, cfg.ClaudeHome, cfg.Workspace, args...)
-	if err != nil {
-		return err
+	_, _, command := SlashCommand(history[len(history)-1].Content)
+	// A process kept from the chat's last turn takes this one when nothing
+	// that shaped it changed; a slash command, a fork or the phone's
+	// launcher always gets its own.
+	chat := cfg.ContextKey
+	keep := chat != "" && !command && !forked && cfg.ProjectTools == nil
+	key := claudeProcessKey(cfg, args)
+	var process *claudeProcess
+	if keep {
+		process = takeClaude(chat, key, session)
+	} else if chat != "" {
+		DropClaudeProcess(chat)
 	}
-	if cfg.CompactAt > 0 {
-		cmd.Env = append(cmd.Env, fmt.Sprintf("CLAUDE_CODE_AUTO_COMPACT_WINDOW=%d", cfg.CompactAt))
-	}
-	logged := append([]string(nil), cmd.Args...)
-	for i := 1; i < len(logged); i++ {
-		if logged[i-1] == "--mcp-config" {
-			logged[i] = "[1loop MCP config]"
+	if process != nil {
+		platform.Devf("claude", "next turn in the kept process (session %s)", session)
+		if process.binding != nil {
+			process.binding.set(ctx, cfg, emit)
+			// The tools may have changed since its last turn.
+			request, _ := json.Marshal(map[string]any{"type": "control_request", "request_id": core.Identifier(), "request": map[string]string{"subtype": "mcp_reconnect", "serverName": "1loop_todo"}})
+			process.send(string(request))
 		}
-	}
-	platform.Devf("claude", "start in %s: %s", cfg.Workspace, strings.Join(logged, " "))
-	defer func() { platform.Devf("claude", "process ended: %v", cmd.ProcessState) }()
-	stdin, _ := cmd.StdinPipe()
-	stdout, _ := cmd.StdoutPipe()
-	var stderr outputBuffer
-	cmd.Stderr = &stderr
-	var writing sync.Mutex
-	open := true
-	send := func(line string) {
-		writing.Lock()
-		defer writing.Unlock()
-		if open {
-			io.WriteString(stdin, line+"\n")
-		}
-	}
-	finish := func(interrupt bool) { // no more input: Claude Code exits after its last turn
-		writing.Lock()
-		defer writing.Unlock()
-		if open {
-			if interrupt {
-				io.WriteString(stdin, `{"type":"control_request","request_id":"1loop-stop","request":{"subtype":"interrupt","cancel_queued":true}}`+"\n")
+	} else {
+		args = append(args, sessionArgs...)
+		var binding *todoMCPBinding
+		var cleanup []func()
+		if cfg.Todo != nil {
+			binding = newTodoMCPBinding(ctx, cfg, emit)
+			config, close, err := backend.startTodoMCP(binding)
+			if err != nil {
+				return err
 			}
-			open = false
-			stdin.Close()
+			cleanup = append(cleanup, close)
+			args = append(args, "--mcp-config", config)
 		}
-	}
-	processDone := make(chan struct{})
-	cmd.Cancel = func() error {
-		go finish(true)
-		go func() {
-			timer := time.NewTimer(3 * time.Second)
-			defer timer.Stop()
-			select {
-			case <-processDone:
-			case <-timer.C:
-				platform.KillProcessTree(cmd)
+		// The user's MCP servers, plugins and skills, for this session only.
+		extensionArgs, cleanExtensions := claudeExtensionArgs()
+		cleanup = append(cleanup, cleanExtensions)
+		args = append(args, extensionArgs...)
+		// Its own context: a kept process outlives this turn's.
+		cmd, err := claudeCommand(context.Background(), cfg.ClaudeHome, cfg.Workspace, args...)
+		if err != nil {
+			for _, clean := range cleanup {
+				clean()
 			}
-		}()
-		return nil
+			return err
+		}
+		if cfg.CompactAt > 0 {
+			cmd.Env = append(cmd.Env, fmt.Sprintf("CLAUDE_CODE_AUTO_COMPACT_WINDOW=%d", cfg.CompactAt))
+		}
+		logged := append([]string(nil), cmd.Args...)
+		for i := 1; i < len(logged); i++ {
+			if logged[i-1] == "--mcp-config" {
+				logged[i] = "[1loop MCP config]"
+			}
+		}
+		platform.Devf("claude", "start in %s: %s", cfg.Workspace, strings.Join(logged, " "))
+		process, err = startClaudeProcess(cmd, key, binding, cleanup)
+		if err != nil {
+			return err
+		}
+		process.session = session
 	}
-	// Kill the tree before exec's fallback kills only its parent on Windows.
-	cmd.WaitDelay = 4 * time.Second
-	if err := cmd.Start(); err != nil {
-		return err
-	}
+	send, stderr := process.send, process.stderr
+	// Stop: interrupt, then kill what is still there after 3 seconds.
+	stopWatch := context.AfterFunc(ctx, func() { go process.end(true, 3*time.Second) })
+	defer stopWatch()
 	var failure error
+	parked := false // the process waits for the chat's next turn
 	defer func() {
-		if ctx.Err() != nil {
-			stopProcess()
-		} else if failure != nil {
+		switch {
+		case ctx.Err() != nil:
+			<-process.done
+		case failure != nil:
 			// Billing and other run failures retain their immediate stop.
-			platform.KillProcessTree(cmd)
-			finish(false)
-		} else {
-			finish(false)
-		}
-		cmd.Wait()
-		close(processDone)
-		if ctx.Err() != nil {
-			platform.KillProcessTree(cmd)
+			process.kill()
+		case parked:
+			if process.binding != nil {
+				// Between turns, its MCP server answers no tool call.
+				canceled, cancel := context.WithCancel(context.Background())
+				cancel()
+				process.binding.set(canceled, cfg, func(string, any) {})
+			}
+			parkClaude(chat, process)
+		default:
+			process.end(false, 4*time.Second)
 		}
 	}()
 
@@ -818,7 +882,6 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	// leaves the chat's session marks alone, so the next prompt still gets
 	// what the session misses; without a session, the one Claude Code opens
 	// for the command is not kept.
-	_, _, command := SlashCommand(prompt.Content)
 	if command {
 		preface = ""
 	}
@@ -829,14 +892,35 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			emit("session_synced", nil)
 		}
 	}()
+	if !command {
+		preface += claudeTurnNote(cfg, prompt)
+	}
 	emit("activity", Activity{State: "wait"})
 	send(claudePrompt(prompt, preface))
 
 	type pending struct {
 		outcome ToolOutcome
 		started time.Time
+		name    string // Claude Code's name for the tool
+		running bool   // false while Claude Code holds it back (claudeRunning)
 	}
-	calls := map[string]*pending{}   // tool calls without a result yet
+	calls := map[string]*pending{} // tool calls without a result yet
+	var queue []*pending           // the same, in the order the model asked for them
+	// start marks the calls Claude Code runs now as started: it does not say
+	// when it starts one, and a call held back behind a command would show
+	// that command's time as its own (a failed Read "taking" 2 minutes).
+	start := func() {
+		names := make([]string, len(queue))
+		for i, p := range queue {
+			names[i] = p.name
+		}
+		for _, p := range queue[:claudeRunning(names)] {
+			if !p.running {
+				p.running, p.started = true, time.Now()
+				emit("tool_exec", p.outcome)
+			}
+		}
+	}
 	streaming := map[int]*ToolCall{} // tool calls being written, by block index
 	sawText := false                 // the current text arrived as deltas
 	status := &announcer{emit: emit}
@@ -867,7 +951,11 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	}
 	// The TODO snapshot in the instructions is the list at launch: a
 	// message added while Claude works carries the list when it changed.
-	todoSent := todoSnapshot(cfg)
+	todoSent := ""
+	if !command {
+		todoSent = todoSnapshot(cfg)
+	}
+	var todo todoWatch
 	inject := func(messageValue Message) {
 		idle = false
 		messages = append(messages, messageValue)
@@ -880,28 +968,13 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		send(claudePrompt(messageValue, preface))
 	}
 
-	// The output is read apart, so the loop below can also watch the clock
-	// (an idle Claude Code says nothing) and the Stop button.
-	lines := make(chan []byte)
-	done := make(chan struct{})
-	defer close(done)
-	go func() {
-		defer close(lines)
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 64<<10), 64<<20)
-		for scanner.Scan() {
-			select {
-			case lines <- append([]byte(nil), scanner.Bytes()...):
-			case <-done:
-				io.Copy(io.Discard, stdout)
-				return
-			}
-		}
-	}()
+	// The output is read apart (claudeProcess), so the loop below can also
+	// watch the clock (an idle Claude Code says nothing) and the Stop button.
+	lines := process.lines
 	githubChanges := githubconnector.Default.Changes()
 	tick := time.NewTicker(200 * time.Millisecond)
 	defer tick.Stop()
-	for failure == nil {
+	for failure == nil && !parked {
 		var line []byte
 		select {
 		case <-githubChanges:
@@ -923,12 +996,20 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				}
 			} else if !idle {
 				continue
+			} else if len(background) > 0 {
+				continue // the task still waits for its background work: the queue too (#433)
 			} else if next, ok := inboxValue.Next(); ok {
 				inject(next)
 			} else if len(background) == 0 && time.Since(idleSince) > 600*time.Millisecond && (contextAsked.IsZero() || time.Since(contextAsked) > 5*time.Second) {
 				idle = false
+				if keep {
+					// Nothing runs, nothing waits: the turn is over, and the
+					// process waits for the chat's next one.
+					parked = true
+					continue
+				}
 				platform.Devf("claude", "nothing runs, nothing waits: closing its input")
-				finish(false) // nothing runs, nothing waits: the task is over
+				process.finish(false) // nothing runs, nothing waits: the task is over
 			}
 			continue
 		case next, more := <-lines:
@@ -995,6 +1076,9 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			case "init":
 				if claudeEventValue.APIKeySource != "" && claudeEventValue.APIKeySource != "none" {
 					failure = fmt.Errorf("Claude Code is not using your subscription here (credentials: %s). 1loop stopped before anything was billed to an API key.", claudeEventValue.APIKeySource)
+				}
+				if claudeEventValue.SessionID != "" {
+					process.session = claudeEventValue.SessionID
 				}
 				if claudeEventValue.SessionID != "" && keepSession {
 					emit("session", claudeSessionRef(cfg.ClaudeHome, claudeEventValue.SessionID))
@@ -1087,10 +1171,12 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 					emit("message_end", nil)
 				case "tool_use":
 					tool, arguments := claudeTool(cfg.Workspace, claudeBlockValue.Name, claudeBlockValue.Input)
-					pendingValue := &pending{outcome: ToolOutcome{ID: claudeBlockValue.ID, Name: tool, Args: arguments}, started: time.Now()}
+					todo.observe(tool)
+					pendingValue := &pending{outcome: ToolOutcome{ID: claudeBlockValue.ID, Name: tool, Args: arguments}, started: time.Now(), name: claudeBlockValue.Name}
 					calls[claudeBlockValue.ID] = pendingValue
+					queue = append(queue, pendingValue)
 					emit("tool", pendingValue.outcome)
-					emit("tool_exec", pendingValue.outcome)
+					start()
 				}
 			}
 		case "control_request":
@@ -1112,8 +1198,10 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			if projectRead || claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__wrap_up" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__memory" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__settings" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__subchat" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__chats" || name == "change_directory" || name == "request_directory" || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || backend.confirm(ctx, emit, title, preview) {
 				response = map[string]any{"behavior": "allow", "updatedInput": claudeEventValue.Request.Input}
 				for _, p := range calls { // the approved call starts now
-					p.started = time.Now()
-					emit("tool_exec", p.outcome)
+					if p.running {
+						p.started = time.Now()
+						emit("tool_exec", p.outcome)
+					}
 				}
 			}
 			line, _ := json.Marshal(map[string]any{"type": "control_response", "response": map[string]any{
@@ -1131,6 +1219,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 					continue
 				}
 				delete(calls, b.ToolUseID)
+				queue = slices.DeleteFunc(queue, func(q *pending) bool { return q == p })
 				p.outcome.Output, p.outcome.Images = claudeResult(b.Content)
 				p.outcome.Elapsed = time.Since(p.started)
 				if b.IsError {
@@ -1148,10 +1237,17 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				messages = append(messages, Message{Role: "assistant", ToolCalls: []ToolCall{call}},
 					Message{Role: "tool", ToolCallID: b.ToolUseID, Content: p.outcome.modelText(), Images: p.outcome.Images})
 				emit("tool_result", p.outcome)
+				start() // the next ones in Claude Code's queue, if any
 			}
 			// The gap between two tool calls: steered messages go in now.
 			for _, extra := range inboxValue.Steer() {
 				inject(extra)
+			}
+			if reminder := todo.reminder(cfg); reminder != "" && len(calls) == 0 {
+				message := Message{Role: "user", Internal: true, Content: reminder}
+				messages = append(messages, message)
+				send(claudePrompt(message, ""))
+				emit("context_note", "TODO reminder")
 			}
 		case "result":
 			answered = true
@@ -1176,12 +1272,17 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			if failure != nil || claudeEventValue.QueuedTurns > 0 {
 				break // more turns are already queued in Claude Code
 			}
+			// A queued message waits for the task's end (#433): after the
+			// TODO check and the background tasks, on the idle tick.
 			if extras := inboxValue.Steer(); len(extras) > 0 {
 				for _, extra := range extras {
 					inject(extra)
 				}
-			} else if next, ok := inboxValue.Next(); ok {
-				inject(next)
+			} else if reminder := todo.endReminder(cfg); reminder != "" {
+				message := Message{Role: "user", Internal: true, Content: reminder}
+				messages = append(messages, message)
+				send(claudePrompt(message, ""))
+				emit("context_note", "TODO check · steps not completed")
 			} else {
 				idle, idleSince = true, time.Now()
 				waitBackground()
@@ -1202,6 +1303,10 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if lines == nil && process.readErr != nil {
+		emit("history", append([]Message(nil), messages...))
+		return process.readErr
 	}
 	if len(messages) == len(history) && !answered {
 		// Claude Code left without answering: its own words explain why.

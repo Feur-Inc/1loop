@@ -18,6 +18,8 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/desktop"
+
+	"1loop/internal/core"
 )
 
 // promptDrafts are the drafts, by key: a chat ID, or newChatDraft + its
@@ -130,12 +132,8 @@ func (drafts *promptDrafts) writeLocked(key string) bool {
 		err := os.Remove(path)
 		return err == nil || os.IsNotExist(err)
 	}
-	if os.MkdirAll(drafts.dir, 0700) != nil {
-		return false
-	}
 	data, _ := json.Marshal(savedDraft{key, text})
-	temporary := path + ".tmp"
-	return os.WriteFile(temporary, data, 0600) == nil && os.Rename(temporary, path) == nil
+	return core.WriteFileSafely(path, 0600, false, data) == nil
 }
 
 // promptHistory is one draft's undo and redo, as successive texts. Typing

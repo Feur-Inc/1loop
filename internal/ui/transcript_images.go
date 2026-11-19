@@ -96,7 +96,7 @@ func (ui *desktopUI) refreshItemImages(chat *conversation, index int) {
 	switch view := ui.liveView(chat, index).(type) {
 	case *userImageView:
 		ui.setUserImages(view, chat.Items[index].Images)
-		delete(ui.items.sizes, view.box)
+		ui.items.changed(view.box)
 	case *toolRow:
 		view.update(chat.Items[index], runState(chat, index))
 		ui.items.changed(view)

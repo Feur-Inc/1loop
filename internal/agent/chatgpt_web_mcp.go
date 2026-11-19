@@ -129,6 +129,9 @@ func webToolDefinitions(phone bool) []map[string]any {
 		}
 	}
 	for _, group := range toolGroups() {
+		if group.name == appToolGroup {
+			continue // its tools are among the core definitions above
+		}
 		if phone || group.name != "local_phone" && group.name != "local_debian" {
 			definitions = append(definitions, group.tools()...)
 		}

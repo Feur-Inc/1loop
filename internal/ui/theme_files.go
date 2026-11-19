@@ -8,6 +8,7 @@ package ui
 
 import (
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -19,7 +20,9 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	fynedriver "fyne.io/fyne/v2/driver"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
+	"github.com/fsnotify/fsnotify"
 
 	"1loop/internal/palette"
 	"1loop/internal/platform"
@@ -59,26 +62,72 @@ func loadThemeFiles() {
 	}
 }
 
-// themesStamp sums up the folder: names, sizes and times of its files.
+// themesStamp sums up the folder: names, sizes and times of its files, and
+// of the files inside theme folders.
 func themesStamp() string {
-	paths, _ := filepath.Glob(filepath.Join(themesDir, "*")) // shaders too
 	var b strings.Builder
-	for _, path := range paths {
-		if info, err := os.Stat(path); err == nil {
+	filepath.WalkDir(themesDir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if rel, _ := filepath.Rel(themesDir, path); strings.Count(rel, string(filepath.Separator)) > 2 {
+			return filepath.SkipDir
+		}
+		if info, err := entry.Info(); err == nil {
 			fmt.Fprintf(&b, "%s %d %d\n", path, info.Size(), info.ModTime().UnixNano())
 		}
-	}
+		return nil
+	})
 	return b.String()
 }
 
-// watchThemes reads the theme files, then looks at the folder every second
-// and reads it again when a file is added, saved or removed: the picker
-// lists the new file, and the theme in use is painted again.
+// watchThemes reads the theme files, then reads them again when a file of
+// the folder is added, saved or removed: the picker lists the new file, and
+// the theme in use is painted again. The folder is watched by notification
+// (inotify and the like); without it, or while the folder does not exist,
+// it is looked at every few seconds (it was every second, forever: #474).
 func (ui *desktopUI) watchThemes() {
 	loadThemeFiles()
 	stamp := themesStamp()
 	go func() {
-		for range time.Tick(time.Second) {
+		var events chan fsnotify.Event
+		watcher, err := fsnotify.NewWatcher()
+		if err == nil {
+			defer watcher.Close()
+			events = watcher.Events
+			go func() {
+				for range watcher.Errors {
+				}
+			}()
+		}
+		watching := false
+		for {
+			if watcher != nil && !watching {
+				watching = watcher.Add(themesDir) == nil
+			}
+			wait := themesPoll
+			if watching {
+				wait = time.Hour // the notifications wake it
+			}
+			select {
+			case event, ok := <-events:
+				if !ok {
+					events, watching, watcher = nil, false, nil
+					continue
+				}
+				if filepath.Clean(event.Name) == filepath.Clean(themesDir) && event.Has(fsnotify.Remove|fsnotify.Rename) {
+					watching = false // the folder went: looked at until it is back
+				}
+				// An editor saves in several steps: let them settle.
+				time.Sleep(150 * time.Millisecond)
+				for len(events) > 0 {
+					<-events
+				}
+			case <-time.After(wait):
+				if watching {
+					continue
+				}
+			}
 			next := themesStamp()
 			if next == stamp {
 				continue
@@ -92,6 +141,9 @@ func (ui *desktopUI) watchThemes() {
 		}
 	}()
 }
+
+// themesPoll is how often the folder is looked at without notifications.
+const themesPoll = 5 * time.Second
 
 // themeChoices are the theme settings to pick from, with their labels:
 // the built-in ones, then the files.
@@ -135,7 +187,10 @@ func (ui *desktopUI) newThemeFile(name, text string) {
 // duplicateTheme copies the theme in use into a new file: a file's text as
 // it is, a built-in theme as the template on its colours.
 func (ui *desktopUI) duplicateTheme() {
-	if theme, ok := themeFile(ui.theme.theme); ok {
+	if theme, ok := themeFile(ui.theme.theme); ok && theme.Packaging() != "loose" {
+		ui.unpackTheme(theme, theme.ID+"-copy", theme.Name+" copy")
+		return
+	} else if ok {
 		data, err := os.ReadFile(theme.Path)
 		if err != nil {
 			ui.showError(err)
@@ -152,6 +207,39 @@ func (ui *desktopUI) duplicateTheme() {
 		text = strings.Replace(text, `text = "#f4f4f4"`, fmt.Sprintf("text = %q", palette.Hex(palette.Light.Text)), 1)
 	}
 	ui.newThemeFile("my-theme", text)
+}
+
+// unpackTheme copies a zip or folder theme into a theme folder of the given
+// name, ready to edit by hand, and selects it.
+func (ui *desktopUI) unpackTheme(theme palette.ThemeFile, id, name string) {
+	id = strings.Trim(unsafeName.ReplaceAllString(strings.ToLower(id), "-"), "-")
+	dest := filepath.Join(themesDir, id)
+	if err := palette.UnpackTheme(theme.PackagePath(), dest); err != nil {
+		ui.showError(err)
+		return
+	}
+	tomlPath := filepath.Join(dest, filepath.Base(theme.Path))
+	if name != theme.Name {
+		if data, err := os.ReadFile(tomlPath); err == nil {
+			text := regexp.MustCompile(`(?m)^name\s*=.*$`).ReplaceAllString(string(data), fmt.Sprintf("name = %q", name))
+			os.WriteFile(tomlPath, []byte(text), 0o644)
+		}
+	}
+	loadThemeFiles()
+	ui.setTheme(palette.ThemeFilePrefix + id)
+	ui.openThemePath(tomlPath)
+}
+
+// packTheme packs the loose theme in use into a zip.
+func (ui *desktopUI) packTheme(theme palette.ThemeFile) {
+	zipPath, err := palette.PackTheme(themesDir, theme.ID)
+	if err != nil {
+		ui.showError(fmt.Errorf("The theme was not packed: %v", err))
+		return
+	}
+	platform.Devf("ui", "theme packed into %s", zipPath)
+	loadThemeFiles()
+	ui.themeChanged()
 }
 
 func (ui *desktopUI) openThemePath(path string) {
@@ -261,25 +349,36 @@ func refreshRadii() {
 	}
 }
 
-// themeFileRow offers New, Duplicate and Edit, and shows the files that
-// could not be read and why.
-func (ui *desktopUI) themeFileRow() fyne.CanvasObject {
+// themeFileControls offer New, Duplicate and Edit, and show the files that
+// could not be read and why: the end of the Theme row, inset as its text.
+func (ui *desktopUI) themeFileControls() fyne.CanvasObject {
 	actions := container.NewHBox(
 		newRow("New theme", nil, styleOutline, func() { ui.newThemeFile("my-theme", palette.ThemeTemplate("My theme")) }),
 		newRow("Duplicate", nil, styleOutline, ui.duplicateTheme),
 	)
 	if file, ok := themeFile(ui.theme.themeSetting()); ok {
-		actions.Add(newRow("Edit", nil, styleOutline, func() { ui.openThemePath(file.Path) }))
+		switch file.Packaging() {
+		case "loose":
+			actions.Add(newRow("Edit", nil, styleOutline, func() { ui.openThemePath(file.Path) }))
+			actions.Add(newRow("Pack into zip", nil, styleOutline, func() { ui.packTheme(file) }))
+		case "folder":
+			actions.Add(newRow("Edit", nil, styleOutline, func() { ui.openThemePath(file.Path) }))
+		case "zip":
+			actions.Add(newRow("Unpack to edit", nil, styleOutline, func() { ui.unpackTheme(file, file.ID+"-edit", file.Name) }))
+		}
 	}
 	actions.Add(newRow("Open folder", nil, styleOutline, func() {
 		os.MkdirAll(themesDir, 0o755)
 		ui.openThemePath(themesDir)
 	}))
-	rows := container.NewVBox(note("Theme files are read from "+themesDir+" and update the app as soon as they are saved. Format: docs/THEMES.md."), actions)
+	// Read as the row's second line of explanation, not the faint grey of
+	// something disabled (#508).
+	where := plainFlow("Themes are read from "+themesDir+": a .zip each, a folder, or loose .toml files. They update the app as soon as they are saved. Format: docs/THEMES.md.", 12.5, colMuted)
+	rows := container.New(layout.NewCustomPaddedVBoxLayout(8), where, actions)
 	for _, failed := range themeFileErrors {
 		problem := note(failed.Error())
 		problem.Importance = widget.DangerImportance
 		rows.Add(problem)
 	}
-	return rows
+	return padded(0, 13, 16, 16, rows)
 }

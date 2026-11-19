@@ -58,6 +58,7 @@ type chartStrokes struct {
 func newChartStrokes() *chartStrokes {
 	ink := &chartStrokes{}
 	ink.raster = canvas.NewRaster(ink.draw)
+	ink.raster.ScaleMode = canvas.ImageScalePixels // see wholePixels
 	return ink
 }
 
@@ -65,8 +66,35 @@ func newChartStrokes() *chartStrokes {
 func (ink *chartStrokes) set(size fyne.Size, strokes []stroke) {
 	ink.size, ink.strokes = size, strokes
 	ink.raster.Move(fyne.Position{})
-	ink.raster.Resize(size)
+	ink.raster.Resize(wholePixels(size, objectScale(ink.raster)))
 	ink.raster.Refresh()
+}
+
+// objectScale is the pixels per point of the window o is in; before it is
+// in one (laid out while its row is built), the first window's.
+func objectScale(o fyne.CanvasObject) float32 {
+	app := fyne.CurrentApp()
+	if app == nil {
+		return 1
+	}
+	if c := app.Driver().CanvasForObject(o); c != nil && c.Scale() > 0 {
+		return c.Scale()
+	}
+	if windows := app.Driver().AllWindows(); len(windows) > 0 && windows[0].Canvas().Scale() > 0 {
+		return windows[0].Canvas().Scale()
+	}
+	return 1
+}
+
+// wholePixels is size grown to whole pixels at scale: Fyne makes a
+// raster's picture rounded to whole pixels, so one that size is drawn one
+// screen pixel per pixel of it. Where it starts need not be a whole pixel,
+// though: smoothed, every line of it was spread over two rows of the
+// screen. Drawn with ImageScalePixels, each screen pixel takes the
+// picture's nearest one, and its crisp lines stay crisp.
+func wholePixels(size fyne.Size, scale float32) fyne.Size {
+	whole := func(v float32) float32 { return float32(math.Ceil(float64(v*scale-0.01))) / scale }
+	return fyne.NewSize(whole(size.Width), whole(size.Height))
 }
 
 // draw paints the strokes at w × h pixels.
@@ -75,7 +103,8 @@ func (ink *chartStrokes) draw(w, h int) image.Image {
 	if ink.size.Width <= 0 || ink.size.Height <= 0 || w <= 0 || h <= 0 {
 		return img
 	}
-	scale := float32(w) / ink.size.Width
+	// the raster's pixels per point: it starts where the chart does
+	scale := float32(w) / ink.raster.Size().Width
 	paintStrokes(img, ink.strokes, scale)
 	return img
 }
@@ -119,11 +148,14 @@ func paintStrokes(img draw.Image, strokes []stroke, scale float32) {
 	}
 }
 
-// disc adds a small circle at x, y, as a polygon.
+// disc adds a small circle at x, y, as a polygon. It turns the way a
+// stroke's quad does: the rasterizer adds up the areas of a path, so a
+// circle turning the other way cut a hole where it overlapped its quad,
+// and every joint of the recorded line showed a dark speck (#533).
 func disc(r *vector.Rasterizer, x, y, radius float32) {
 	const sides = 16
 	for i := 0; i <= sides; i++ {
-		angle := 2 * math.Pi * float64(i) / sides
+		angle := -2 * math.Pi * float64(i) / sides
 		px, py := x+radius*float32(math.Cos(angle)), y+radius*float32(math.Sin(angle))
 		if i == 0 {
 			r.MoveTo(px, py)

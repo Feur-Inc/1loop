@@ -465,6 +465,17 @@ func (flow *flowText) flow(width float32) {
 	}
 }
 
+// release drops what the block keeps to draw itself (its measured words,
+// drawing objects, selection pieces): it is out of sight, only its height
+// counts. They are made again when it is laid out on screen.
+func (flow *flowText) release() {
+	if flow.waiting {
+		return // a formula is coming: flow is called again then
+	}
+	flow.cut, flow.objects, flow.pieces, flow.links = nil, nil, nil, nil
+	flow.paintedWidth = 0
+}
+
 // selPieces gives the selection layer what is drawn and where.
 func (flow *flowText) selPieces() []selPiece { return flow.pieces }
 
@@ -496,16 +507,26 @@ func openLink(address string) {
 		openReference(address)
 		return
 	}
+	openInBrowser(address)
+}
+
+// openInBrowser opens a web or mail address with the desktop's
+// application, an issue or pull request too (an image, "Open on GitHub":
+// through openLink, it showed in the side panel again, #441).
+func openInBrowser(address string) {
 	target, err := url.Parse(address)
 	if err != nil || (target.Scheme != "http" && target.Scheme != "https" && target.Scheme != "mailto") {
 		platform.Devf("ui", "link not opened (not a web or mail address): %s", address)
 		return
 	}
 	platform.Devf("ui", "open link %s", address)
-	if err := fyne.CurrentApp().OpenURL(target); err != nil {
-		platform.Devf("ui", "could not open it: %v", err)
+	if err := openURL(target); err != nil {
+		platform.Devf("ui", "could not open %s: %v", address, err)
 	}
 }
+
+// openURL hands an address to the desktop (replaced in tests).
+var openURL = func(target *url.URL) error { return fyne.CurrentApp().OpenURL(target) }
 
 func (flow *flowText) CreateRenderer() fyne.WidgetRenderer {
 	return &flowRenderer{flow}

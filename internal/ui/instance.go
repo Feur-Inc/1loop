@@ -4,13 +4,15 @@ package ui
 
 // One 1loop per user: a second launch brings the running one's window to
 // the front and exits, instead of a second window, tray icon and state
-// writer.
+// writer. Started on a folder (-workspace), it has that one opened there.
 
 import (
 	"bufio"
 	"errors"
 	"net"
 	"os"
+	"path/filepath"
+	"strings"
 	"time"
 
 	"1loop/internal/platform"
@@ -18,8 +20,9 @@ import (
 
 // claimInstance makes this process the user's 1loop and returns the
 // listener later launches reach it on (nil when that cannot be had). When
-// a 1loop already runs, it shows that one's window and exits.
-func claimInstance() net.Listener {
+// a 1loop already runs, it shows that one's window, with folder open in it
+// when one was asked for, and exits.
+func claimInstance(folder string) net.Listener {
 	address := instanceAddress()
 	if address == "" {
 		return nil
@@ -28,6 +31,12 @@ func claimInstance() net.Listener {
 		if l, err := net.Listen("unix", address); err == nil {
 			return l
 		}
+		if folder != "" && askToOpen(address, folder) {
+			platform.Devf("app", "1loop already runs: %s was opened in its window", folder)
+			os.Exit(0)
+		}
+		// No folder, or a 1loop from before "open" (#511): its window still
+		// comes to the front.
 		if askToShow(address) {
 			platform.Devf("app", "1loop already runs: its window was brought to the front")
 			os.Exit(0)
@@ -44,22 +53,35 @@ func claimInstance() net.Listener {
 }
 
 // askToShow tells the running 1loop to show its window.
-func askToShow(address string) bool {
+func askToShow(address string) bool { return askInstance(address, "show") }
+
+// askToOpen tells the running 1loop to open a folder (adding it to its
+// projects if needed) and show its window. A 1loop from before it answers
+// nothing, as to any request it does not know.
+func askToOpen(address, folder string) bool {
+	if strings.ContainsAny(folder, "\n\r") {
+		return false
+	}
+	return askInstance(address, "open "+folder)
+}
+
+func askInstance(address, request string) bool {
 	conn, err := net.DialTimeout("unix", address, time.Second)
 	if err != nil {
 		return false
 	}
 	defer conn.Close()
 	conn.SetDeadline(time.Now().Add(2 * time.Second))
-	if _, err := conn.Write([]byte("show\n")); err != nil {
+	if _, err := conn.Write([]byte(request + "\n")); err != nil {
 		return false
 	}
 	reply, err := bufio.NewReader(conn).ReadString('\n')
 	return err == nil && reply == "ok\n"
 }
 
-// serveInstance answers later launches: each one shows the window.
-func serveInstance(l net.Listener, show func()) {
+// serveInstance answers later launches: each one shows the window, and
+// opens the folder it was started on, if any.
+func serveInstance(l net.Listener, show func(), open func(folder string)) {
 	if l == nil {
 		return
 	}
@@ -75,11 +97,20 @@ func serveInstance(l net.Listener, show func()) {
 				defer conn.Close()
 				conn.SetDeadline(time.Now().Add(2 * time.Second))
 				request, err := bufio.NewReader(conn).ReadString('\n')
-				if err != nil || request != "show\n" {
+				request = strings.TrimSuffix(request, "\n")
+				switch {
+				case err != nil:
+					return
+				case request == "show":
+					platform.Devf("app", "another launch: window brought to the front")
+					show()
+				case strings.HasPrefix(request, "open ") && filepath.IsAbs(strings.TrimPrefix(request, "open ")):
+					folder := strings.TrimPrefix(request, "open ")
+					platform.Devf("app", "another launch on %s: opened in the window", folder)
+					open(folder)
+				default:
 					return
 				}
-				platform.Devf("app", "another launch: window brought to the front")
-				show()
 				conn.Write([]byte("ok\n"))
 			}()
 		}

@@ -8,7 +8,6 @@ package ui
 // again (repaint), so a change shows at once.
 
 import (
-	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
@@ -70,7 +69,7 @@ func readFont(font string) fyne.Resource {
 			return nil
 		}
 	}
-	data, err := os.ReadFile(path)
+	data, err := palette.ReadThemeFile(path)
 	if err != nil {
 		platform.Devf("ui", "theme font %q: %v", font, err)
 		return nil

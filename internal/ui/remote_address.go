@@ -10,6 +10,8 @@ package ui
 import (
 	"os"
 	"path/filepath"
+
+	"1loop/internal/core"
 )
 
 func remoteAddressPath() string {
@@ -33,18 +35,15 @@ func loadServerAddresses() []serverAddress { return loadPairings().all() }
 func saveServerAddress(address serverAddress) error {
 	saved := loadPairings()
 	saved.add(address)
-	path := remoteAddressPath()
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	return os.WriteFile(path, saved.encode(), 0600)
+	// Every paired server's token is in it: never half written (#523).
+	return core.WriteFileSafely(remoteAddressPath(), 0600, false, saved.encode())
 }
 
 // forgetServerAddress unpairs a server; the others stay paired.
 func forgetServerAddress(address string) error {
 	saved := loadPairings()
 	saved.remove(address)
-	return os.WriteFile(remoteAddressPath(), saved.encode(), 0600)
+	return core.WriteFileSafely(remoteAddressPath(), 0600, false, saved.encode())
 }
 
 // The browser client's servers' projects are kept in the page's storage

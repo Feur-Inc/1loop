@@ -187,7 +187,7 @@ func (server *headlessServer) changeProject(w http.ResponseWriter, r *http.Reque
 	}
 	err = server.saveSettingsLocked()
 	if err == nil {
-		err = server.saveLocked()
+		err = server.saveOutsideLocked()
 	}
 	reply := map[string]any{"workspace": destination, "previous": args.Path, "projects": projects}
 	server.broadcastLocked("projects", reply)

@@ -64,7 +64,7 @@ func (target gitTarget) Removed(project, worktree string) {
 		}
 	}
 	server.chats = kept
-	_ = server.saveLocked()
+	server.scheduleSaveLocked()
 	_ = server.saveSettingsLocked()
 	var tabs []*serverTab
 	for _, chat := range gone {

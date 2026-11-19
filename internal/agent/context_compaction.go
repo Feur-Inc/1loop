@@ -87,6 +87,15 @@ func CompactLimit(cfg Config) int {
 	return limit
 }
 
+// longRunDefault: with no provider cache of its own to rely on, each request
+// sends the whole context again, so a long task through OpenRouter or an
+// OpenAI-compatible server is compacted before it fills a large window (a
+// measured DeepSeek run reached 197K, re-sent 162 times).
+const (
+	longRunDefault = 128000
+	longRunReason  = "every request re-sends the whole context: a long task costs less compacted at 128K"
+)
+
 // CompactDefault is the target used without a setting for the model, and
 // why, as the settings show it. It follows what each account charges:
 //   - a ChatGPT plan (Codex's limits): GPT-6.1 Sol has a 500K window with no
@@ -94,7 +103,8 @@ func CompactLimit(cfg Config) int {
 //   - OpenAI's API, directly or through OpenRouter: 272K, where long-context
 //     pricing starts; Claude Haiku 5.5 through OpenRouter: 100K, where
 //     Anthropic's higher rate starts;
-//   - elsewhere (Claude Code, local models…): none, the model's window.
+//   - other models through OpenRouter or an OpenAI-compatible server: 128K;
+//   - elsewhere (Claude Code, vLLM…): none, the model's window.
 func CompactDefault(cfg Config) (int, string) {
 	id := strings.ToLower(cfg.Model)
 	switch cfg.Provider {
@@ -112,11 +122,13 @@ func CompactDefault(cfg Config) (int, string) {
 		if strings.HasPrefix(id, "anthropic/") && strings.Contains(id, "haiku-5.5") {
 			return 100000, "Anthropic charges Claude Haiku 5.5 more above it"
 		}
+		return longRunDefault, longRunReason
 	case "compatible":
 		endpoint, err := url.Parse(cfg.BaseURL)
 		if err == nil && endpoint.Scheme == "https" && endpoint.Hostname() == "api.openai.com" && longContextModels[id] {
 			return 272000, "OpenAI charges long-context rates above it"
 		}
+		return longRunDefault, longRunReason
 	}
 	return 0, ""
 }

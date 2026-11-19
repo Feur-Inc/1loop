@@ -43,12 +43,12 @@ func Mentions(cfg Config) []Mention {
 	add("browser_use", "Browser Use", "Use the browser in the side panel",
 		"browser_tabs", "browser_navigate", "browser_read", "browser_interact", "browser_evaluate", "browser_resize")
 	add("terminal_use", "Terminal", "Use a terminal in the side panel",
-		"terminal_tabs", "terminal_command", "terminal_write", "terminal_keys", "terminal_read", "terminal_screen")
+		"terminal_tabs", "terminal_command", "terminal_write", "terminal_read", "terminal_screen")
 	add("phone_use", "Phone Use", "Control the phone", "phone_use", "adb_shell")
 	if computerToolDefinition() != nil {
 		add("computer_use", "Computer Use", "Control the computer's screen, mouse and keyboard", "computer_use")
 	}
-	add("github", "GitHub", "Use the GitHub connector", "github_view_attachment", "github_upload_attachments")
+	add("github", "GitHub", "Use the GitHub connector", githubIssuesTool, githubPullsTool, githubCodeTool, githubActionsTool)
 	add("image_gen", "Image generation", "Generate or edit an image", "imagegen")
 	for _, server := range extensions.Enabled().MCP {
 		name := mentionName(server.Name)

@@ -27,6 +27,29 @@ type toolGroup struct {
 	tools        func() []map[string]any
 }
 
+// appToolGroup holds 1loop's own tools a task seldom needs: outside Claude
+// Code (which defers MCP tools by itself), they load with tool_search so
+// that a coding turn carries only the core tools, update_todo and wrap_up.
+const appToolGroup = "app_1loop"
+
+func appToolDefinitions() []map[string]any {
+	return []map[string]any{memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), chatsToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition()}
+}
+
+// isAppTool: a tool of appToolGroup.
+func isAppTool(name string) bool {
+	for _, definition := range appToolDefinitions() {
+		if definition["function"].(map[string]any)["name"] == name {
+			return true
+		}
+	}
+	return false
+}
+
+func appGroupInstructions(cfg Config) string {
+	return memoryInstructions(cfg) + settingsInstructions(cfg) + subchatStartInstructions(cfg) + chatsInstructions(cfg)
+}
+
 func toolGroups() []toolGroup {
 	groups := []toolGroup{
 		{"panel_browser", "Web browser tabs in this chat's side panel: open pages, read or screenshot them, click, type, run JavaScript, resize.", browserInstructions, browserToolDefinitions},
@@ -36,6 +59,7 @@ func toolGroups() []toolGroup {
 			return "\n\nUse install_packages to add necessary Debian programs; project commands should only modify the selected project. Package installation uses the trusted installer and the current approval policy. It does not authorize Android or ADB access."
 		}, packageToolDefinitions},
 	}
+	groups = append(groups, toolGroup{appToolGroup, "1loop itself: remember the user's preferences, read or change 1loop's settings, start subchats that work in parallel, message other chats, move this chat to another folder, ask for access outside the workspace.", appGroupInstructions, appToolDefinitions})
 	if definition := computerToolDefinition(); definition != nil {
 		groups = append(groups, toolGroup{"desktop_computer", "Control the user's real desktop (screen, mouse, keyboard, windows) once the user shares it.", computerInstructions, func() []map[string]any { return []map[string]any{definition} }})
 	}
@@ -113,6 +137,9 @@ func builtinToolGroups(cfg Config) []toolGroup {
 		candidates = append(candidates, *group)
 	}
 	for _, group := range candidates {
+		if group.name == appToolGroup && cfg.Provider == "claudecode" {
+			continue // Claude Code gets these tools from 1loop's MCP server
+		}
 		var definitions []map[string]any
 		for _, definition := range group.tools() {
 			name := definition["function"].(map[string]any)["name"].(string)

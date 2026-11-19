@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"1loop/internal/core"
 )
 
 // Skill is an Agent Skill: a folder with a SKILL.md whose front matter gives
@@ -123,11 +125,7 @@ func save(registry Registry) error {
 	if err != nil {
 		return err
 	}
-	temp := registryPath() + ".tmp"
-	if err := os.WriteFile(temp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temp, registryPath())
+	return core.WriteFileSafely(registryPath(), 0o600, false, data)
 }
 
 // Update changes the registry under the lock and writes it.

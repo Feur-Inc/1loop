@@ -63,7 +63,7 @@ type ChatAttachments struct {
 // filesProperty is the tools' files parameter.
 func filesProperty(use string) map[string]any {
 	return map[string]any{"type": []string{"array", "null"}, "items": map[string]any{"type": "string"},
-		"description": fmt.Sprintf("%s: optional files to attach, as paths in the workspace or /tmp (at most %d, %d MiB each). PNG, JPEG, WebP and GIF pictures arrive as images its model sees, like pasted ones; other files are copied into its workspace and attached, like files the user attaches.", use, MaxMessageFiles, maxMessageFile>>20)}
+		"description": fmt.Sprintf("%s: files to attach, by path in the workspace or /tmp (at most %d, %d MiB each): pictures arrive as images its model sees, other files are copied into its workspace.", use, MaxMessageFiles, maxMessageFile>>20)}
 }
 
 // messageAttachments reads the files named by paths. A file that cannot be

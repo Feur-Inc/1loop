@@ -139,7 +139,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	content := container.NewBorder(container.NewVBox(padded(6, 2, 8, 6, header), rule), nil, nil, nil, panel.page)
 	// The panel goes nearly to the window's edges: only a thin margin, which
 	// also leaves the window's own resize border within reach.
-	panel.view = padded(0, 6, 0, 6, container.NewStack(card, content))
+	panel.view = padded(0, 6, 0, 6, container.NewStack(blurBehind("panel", card, &colSurface), content))
 	panel.render()
 	return panel
 }

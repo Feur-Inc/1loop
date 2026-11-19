@@ -139,7 +139,7 @@ func (ui *desktopUI) buildPaneBox() {
 	ui.paneMark.SetMinSize(fyne.NewSize(0, 2))
 	bg := canvas.NewRectangle(colSidebar)
 	row := container.NewBorder(nil, nil, nil, container.NewCenter(close), padded(0, 0, 14, 4, ui.paneTitle))
-	head := container.NewStack(bg, newTapArea(ui.activate), container.NewBorder(nil, ui.paneMark, nil, nil, row))
+	head := container.NewStack(blurBehind("headers", bg, &colSidebar), newTapArea(ui.activate), container.NewBorder(nil, ui.paneMark, nil, nil, row))
 	ui.paneHead = container.New(fixedHeight{paneHeadHeight}, head)
 	ui.paneHead.Hide()
 	ui.paneBox = container.NewBorder(ui.paneHead, nil, nil, nil, ui.conversation)

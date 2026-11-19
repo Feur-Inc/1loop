@@ -272,6 +272,7 @@ func (choice themeChoice) apply() (recoloured, fontsChanged bool) {
 		measuresMu.Unlock()
 	}
 	changed := setColours(tokens, choice.accentColour())
+	defer setThemeBlur(themeFile(setting)) // after the repaint, which recolours the tints
 	platform.Devf("ui", "theme %s (dark %v), accent %s, roundness %.2f", setting, tokens.Dark, choice.accent, roundness)
 	recoloured = len(changed) > 0
 	if recoloured || fontsChanged {

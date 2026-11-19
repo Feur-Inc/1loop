@@ -28,6 +28,27 @@ type Shader struct {
 
 	// OnError is called, once per Source, when it does not compile or link.
 	OnError func(error)
+
+	// Watch names uniforms the painter tells whether the compiled shader
+	// uses (Uses): an app can skip the work of updating one it does not.
+	Watch []string
+	used  map[string]bool
+	ready bool
+}
+
+// Uses says whether the shader as compiled uses a uniform named in Watch,
+// and whether that is known yet (it is once the shader was drawn).
+func (s *Shader) Uses(name string) (used, known bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.used[name], s.ready
+}
+
+// SetUsed is for painters: the uniforms of Watch the compiled shader uses.
+func (s *Shader) SetUsed(used map[string]bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.used, s.ready = used, true
 }
 
 // NewShader makes a shader object from a fragment shader's source.

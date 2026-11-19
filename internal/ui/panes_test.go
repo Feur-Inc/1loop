@@ -79,6 +79,26 @@ func TestPanesAndFocus(t *testing.T) {
 	}
 }
 
+// Closing the window's own pane, left of a column of two, takes the left
+// pane off the screen: the window's pane goes where the top right one was,
+// whose chat it takes, and the column fills the window.
+func TestCloseWindowPaneLeavesItsPlace(t *testing.T) {
+	window, right := splitWindow(t)
+	below := &desktopUI{desktopApp: window.desktopApp, owner: window}
+	window.tree.find(right).splitWith(below, true, 0.3)
+	window.dropPane(window, right)
+	if window.tree == nil || !window.tree.vertical || window.tree.ratio != 0.3 {
+		t.Fatalf("the column did not take the window: %+v", window.tree)
+	}
+	if panes := window.panesOf(); len(panes) != 2 || panes[0] != window || panes[1] != below {
+		t.Fatalf("panes = %v", panes)
+	}
+	window.dropPane(window, below)
+	if window.tree != nil {
+		t.Fatal("one pane left, the window is still split")
+	}
+}
+
 // A three-pane layout is saved and read back as it was: the window's own
 // pane marked, the others with their chats, the ratios kept.
 func TestSplitSaved(t *testing.T) {
@@ -104,6 +124,20 @@ func TestSplitSaved(t *testing.T) {
 	}
 	if !saved.hasWindow() || (&savedSplit{First: &savedSplit{Chat: "x"}, Second: &savedSplit{Chat: "y"}}).hasWindow() {
 		t.Fatal("hasWindow is wrong")
+	}
+}
+
+// A narrow composer shows a shorter placeholder rather than a cut one.
+func TestPickPlaceholder(t *testing.T) {
+	texts := []string{"long text", "short", "x"}
+	width := func(s string) float32 { return float32(len(s)) }
+	for _, c := range []struct {
+		width float32
+		want  string
+	}{{20, "long text"}, {9, "long text"}, {6, "short"}, {2, "x"}, {0, "x"}} {
+		if got := pickPlaceholder(texts, c.width, width); got != c.want {
+			t.Errorf("width %v: %q, want %q", c.width, got, c.want)
+		}
 	}
 }
 

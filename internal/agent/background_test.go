@@ -117,3 +117,48 @@ func TestShellTimeout(t *testing.T) {
 		t.Fatal("timeout_ms is not bounded to 1 s – 10 min")
 	}
 }
+
+// wait blocks until the task ends and answers with its end, instead of a
+// wake message; output says when nothing new came since the last read.
+func TestBackgroundWait(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("bash commands")
+	}
+	tasks := &BackgroundTasks{}
+	woken := make(chan Message, 64)
+	tasks.OnFinish = func(_ BackgroundTaskInfo, wake Message) { woken <- wake }
+	yolo := context.WithValue(context.Background(), approvalContextKey{}, approvalPolicy{yolo: true})
+	ctx := context.WithValue(yolo, tasksContextKey{}, tasks)
+	if _, err := runShell(t, ctx, t.TempDir(), map[string]any{"command": "echo first; sleep 0.6; echo done", "run_in_background": true}); err != nil {
+		t.Fatal(err)
+	}
+	time.Sleep(150 * time.Millisecond)
+	if out := backgroundCall(t, ctx, `{"action":"output","id":"1","max_output_tokens":null,"wait_seconds":null}`); !strings.Contains(out, "first") {
+		t.Fatalf("output: %q", out)
+	}
+	if out := backgroundCall(t, ctx, `{"action":"output","id":"1","max_output_tokens":null,"wait_seconds":null}`); !strings.Contains(out, "No new output") {
+		t.Fatalf("second output: %q", out)
+	}
+	start := time.Now()
+	out := backgroundCall(t, ctx, `{"action":"wait","id":"1","max_output_tokens":null,"wait_seconds":10}`)
+	if !strings.Contains(out, "ended with code 0") || !strings.Contains(out, "done") || time.Since(start) > 5*time.Second {
+		t.Fatalf("wait: %q after %v", out, time.Since(start))
+	}
+	select {
+	case wake := <-woken:
+		t.Fatalf("a waited task also woke the model: %q", wake.Content)
+	case <-time.After(300 * time.Millisecond):
+	}
+	// A wait that gives up says so; the task's end then wakes the model.
+	if _, err := runShell(t, ctx, t.TempDir(), map[string]any{"command": "sleep 1.5", "run_in_background": true}); err != nil {
+		t.Fatal(err)
+	}
+	if out := backgroundCall(t, ctx, `{"action":"wait","id":"2","max_output_tokens":null,"wait_seconds":1}`); !strings.Contains(out, "Still running after 1s") {
+		t.Fatalf("timed out wait: %q", out)
+	}
+	select {
+	case <-woken:
+	case <-time.After(5 * time.Second):
+		t.Fatal("no wake after a wait that gave up")
+	}
+}

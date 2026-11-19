@@ -96,6 +96,9 @@ func (w *window) SetFullScreen(full bool) {
 }
 
 // centerOnScreen handles the logic for centering a window
+// fitWorkArea: the browser sizes the canvas (1loop).
+func (w *window) fitWorkArea(width, height int) (int, int) { return width, height }
+
 func (w *window) CenterOnScreen() {
 	// FIXME: not supported with WebGL
 	w.centered = true

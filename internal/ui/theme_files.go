@@ -8,6 +8,7 @@ package ui
 
 import (
 	"fmt"
+	"io/fs"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -61,15 +62,22 @@ func loadThemeFiles() {
 	}
 }
 
-// themesStamp sums up the folder: names, sizes and times of its files.
+// themesStamp sums up the folder: names, sizes and times of its files, and
+// of the files inside theme folders.
 func themesStamp() string {
-	paths, _ := filepath.Glob(filepath.Join(themesDir, "*")) // shaders too
 	var b strings.Builder
-	for _, path := range paths {
-		if info, err := os.Stat(path); err == nil {
+	filepath.WalkDir(themesDir, func(path string, entry fs.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if rel, _ := filepath.Rel(themesDir, path); strings.Count(rel, string(filepath.Separator)) > 2 {
+			return filepath.SkipDir
+		}
+		if info, err := entry.Info(); err == nil {
 			fmt.Fprintf(&b, "%s %d %d\n", path, info.Size(), info.ModTime().UnixNano())
 		}
-	}
+		return nil
+	})
 	return b.String()
 }
 
@@ -179,7 +187,10 @@ func (ui *desktopUI) newThemeFile(name, text string) {
 // duplicateTheme copies the theme in use into a new file: a file's text as
 // it is, a built-in theme as the template on its colours.
 func (ui *desktopUI) duplicateTheme() {
-	if theme, ok := themeFile(ui.theme.theme); ok {
+	if theme, ok := themeFile(ui.theme.theme); ok && theme.Packaging() != "loose" {
+		ui.unpackTheme(theme, theme.ID+"-copy", theme.Name+" copy")
+		return
+	} else if ok {
 		data, err := os.ReadFile(theme.Path)
 		if err != nil {
 			ui.showError(err)
@@ -196,6 +207,39 @@ func (ui *desktopUI) duplicateTheme() {
 		text = strings.Replace(text, `text = "#f4f4f4"`, fmt.Sprintf("text = %q", palette.Hex(palette.Light.Text)), 1)
 	}
 	ui.newThemeFile("my-theme", text)
+}
+
+// unpackTheme copies a zip or folder theme into a theme folder of the given
+// name, ready to edit by hand, and selects it.
+func (ui *desktopUI) unpackTheme(theme palette.ThemeFile, id, name string) {
+	id = strings.Trim(unsafeName.ReplaceAllString(strings.ToLower(id), "-"), "-")
+	dest := filepath.Join(themesDir, id)
+	if err := palette.UnpackTheme(theme.PackagePath(), dest); err != nil {
+		ui.showError(err)
+		return
+	}
+	tomlPath := filepath.Join(dest, filepath.Base(theme.Path))
+	if name != theme.Name {
+		if data, err := os.ReadFile(tomlPath); err == nil {
+			text := regexp.MustCompile(`(?m)^name\s*=.*$`).ReplaceAllString(string(data), fmt.Sprintf("name = %q", name))
+			os.WriteFile(tomlPath, []byte(text), 0o644)
+		}
+	}
+	loadThemeFiles()
+	ui.setTheme(palette.ThemeFilePrefix + id)
+	ui.openThemePath(tomlPath)
+}
+
+// packTheme packs the loose theme in use into a zip.
+func (ui *desktopUI) packTheme(theme palette.ThemeFile) {
+	zipPath, err := palette.PackTheme(themesDir, theme.ID)
+	if err != nil {
+		ui.showError(fmt.Errorf("The theme was not packed: %v", err))
+		return
+	}
+	platform.Devf("ui", "theme packed into %s", zipPath)
+	loadThemeFiles()
+	ui.themeChanged()
 }
 
 func (ui *desktopUI) openThemePath(path string) {
@@ -313,7 +357,15 @@ func (ui *desktopUI) themeFileControls() fyne.CanvasObject {
 		newRow("Duplicate", nil, styleOutline, ui.duplicateTheme),
 	)
 	if file, ok := themeFile(ui.theme.themeSetting()); ok {
-		actions.Add(newRow("Edit", nil, styleOutline, func() { ui.openThemePath(file.Path) }))
+		switch file.Packaging() {
+		case "loose":
+			actions.Add(newRow("Edit", nil, styleOutline, func() { ui.openThemePath(file.Path) }))
+			actions.Add(newRow("Pack into zip", nil, styleOutline, func() { ui.packTheme(file) }))
+		case "folder":
+			actions.Add(newRow("Edit", nil, styleOutline, func() { ui.openThemePath(file.Path) }))
+		case "zip":
+			actions.Add(newRow("Unpack to edit", nil, styleOutline, func() { ui.unpackTheme(file, file.ID+"-edit", file.Name) }))
+		}
 	}
 	actions.Add(newRow("Open folder", nil, styleOutline, func() {
 		os.MkdirAll(themesDir, 0o755)
@@ -321,7 +373,7 @@ func (ui *desktopUI) themeFileControls() fyne.CanvasObject {
 	}))
 	// Read as the row's second line of explanation, not the faint grey of
 	// something disabled (#508).
-	where := plainFlow("Theme files are read from "+themesDir+" and update the app as soon as they are saved. Format: docs/THEMES.md.", 12.5, colMuted)
+	where := plainFlow("Themes are read from "+themesDir+": a .zip each, a folder, or loose .toml files. They update the app as soon as they are saved. Format: docs/THEMES.md.", 12.5, colMuted)
 	rows := container.New(layout.NewCustomPaddedVBoxLayout(8), where, actions)
 	for _, failed := range themeFileErrors {
 		problem := note(failed.Error())

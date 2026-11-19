@@ -62,7 +62,7 @@ func TestThemeFileControlsLineUp(t *testing.T) {
 		t.Fatal("New theme is not in the Theme row")
 	}
 	_, title := findFlow(page, fyne.Position{}, "Theme")
-	_, where := findFlow(page, fyne.Position{}, "Theme files are read from")
+	_, where := findFlow(page, fyne.Position{}, "Themes are read from")
 	_, button := findButton(page, fyne.Position{}, "New theme")
 	if title.X == 0 || where.X != title.X || button.X != title.X {
 		t.Errorf("title at x %v, note at %v, New theme at %v", title.X, where.X, button.X)

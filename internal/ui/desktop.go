@@ -342,13 +342,13 @@ func useEnglishUI() {
 	}
 }
 
-func runDesktop(backend *agent.App, root string) {
+func runDesktop(backend *agent.App, root, asked string) {
 	softwareRendererStart() // Windows without an OpenGL driver: 1loop's Mesa (software_gl_windows.go)
 	useEnglishUI()
 	switchBackend()
 	// Once this is the process that stays (the build for the display, past
 	// its probe), and before any state is read.
-	instance := claimInstance()
+	instance := claimInstance(asked)
 	lastCrash := watchCrashes(statePath(root)) // crash_report.go
 	if platform.DevWanted {
 		platform.StartDevLog()
@@ -455,7 +455,12 @@ func runDesktop(backend *agent.App, root string) {
 		time.AfterFunc(180*time.Millisecond, func() { fyne.Do(launch.play) })
 	})
 	ui.startTray(a)
-	serveInstance(instance, func() { fyne.Do(ui.showWindow) })
+	serveInstance(instance, func() { fyne.Do(ui.showWindow) }, func(folder string) {
+		fyne.Do(func() {
+			ui.mainView().openProjectOn(localTarget, folder)
+			ui.showWindow()
+		})
+	})
 	// Shown, named, then run: the desktop learns which application this is
 	// before the window's first frame, when it picks its name and icon.
 	// Show makes the window. When OpenGL cannot draw it, 1loop tries its

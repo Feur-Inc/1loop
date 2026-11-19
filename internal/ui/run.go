@@ -28,6 +28,12 @@ func Main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	asked := "" // the folder named on the command line: a running 1loop opens it (#511)
+	flag.Visit(func(f *flag.Flag) {
+		if f.Name == "workspace" {
+			asked = root
+		}
+	})
 	agent.TerminalScreenVisibility = "This chat must be visible; text output remains readable in background chats."
 	// Killed or interrupted (Ctrl+C), 1loop still ends the background
 	// commands it started: they run in their own process groups.
@@ -41,5 +47,5 @@ func Main() {
 		os.Exit(130)
 	}()
 	backend := &agent.App{Approvals: make(map[string]chan bool)}
-	runDesktop(backend, root)
+	runDesktop(backend, root, asked)
 }

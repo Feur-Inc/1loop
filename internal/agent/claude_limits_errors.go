@@ -18,7 +18,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"strconv"
 	"sync"
 	"time"
 )
@@ -32,17 +31,6 @@ type limitsHTTPError struct {
 }
 
 func (err *limitsHTTPError) Error() string { return fmt.Sprintf("HTTP %d", err.Status) }
-
-// retryAfter reads a Retry-After header: seconds, or a date.
-func retryAfter(value string, now time.Time) time.Duration {
-	if seconds, err := strconv.Atoi(value); err == nil && seconds > 0 {
-		return time.Duration(seconds) * time.Second
-	}
-	if at, err := http.ParseTime(value); err == nil && at.After(now) {
-		return at.Sub(now)
-	}
-	return 0
-}
 
 var (
 	// errClaudeSignedOut: no usable Claude login in the folder.
@@ -241,7 +229,7 @@ func claudeAccessToken(ctx context.Context, home string, force bool) (string, er
 		return "", errClaudeSignedOut // the refresh token is revoked or already used
 	}
 	if resp.StatusCode != http.StatusOK {
-		return "", &limitsHTTPError{Status: resp.StatusCode, RetryAfter: retryAfter(resp.Header.Get("Retry-After"), time.Now())}
+		return "", &limitsHTTPError{Status: resp.StatusCode, RetryAfter: retryAfter(resp.Header, time.Now())}
 	}
 	var reply struct {
 		Access  string `json:"access_token"`

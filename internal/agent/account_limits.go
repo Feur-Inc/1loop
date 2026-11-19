@@ -79,7 +79,7 @@ func readAccountLimits(ctx context.Context, url string, headers http.Header, tar
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return &limitsHTTPError{Status: resp.StatusCode, RetryAfter: retryAfter(resp.Header.Get("Retry-After"), time.Now())}
+		return &limitsHTTPError{Status: resp.StatusCode, RetryAfter: retryAfter(resp.Header, time.Now())}
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(target)
 }

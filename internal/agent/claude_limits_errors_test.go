@@ -55,7 +55,7 @@ func TestRetryAfter(t *testing.T) {
 		now.Add(time.Hour).Format(http.TimeFormat):  time.Hour,
 		now.Add(-time.Hour).Format(http.TimeFormat): 0,
 	} {
-		if got := retryAfter(value, now); got != want {
+		if got := retryAfter(http.Header{"Retry-After": {value}}, now); got != want {
 			t.Errorf("Retry-After %q: %v, want %v", value, got, want)
 		}
 	}

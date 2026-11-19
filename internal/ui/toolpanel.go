@@ -91,7 +91,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 			case <-timer.C:
 				fyne.Do(func() {
 					if ui.ctx.Err() == nil {
-						panel.refreshTodoStatus()
+						panel.tickTodoClocks()
 					}
 				})
 			}
@@ -139,7 +139,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	content := container.NewBorder(container.NewVBox(padded(6, 2, 8, 6, header), rule), nil, nil, nil, panel.page)
 	// The panel goes nearly to the window's edges: only a thin margin, which
 	// also leaves the window's own resize border within reach.
-	panel.view = padded(0, 6, 0, 6, container.NewStack(card, content))
+	panel.view = padded(0, 6, 0, 6, container.NewStack(blurBehind("panel", card, &colSurface), content))
 	panel.render()
 	return panel
 }
@@ -217,7 +217,13 @@ func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size
 	toggle := objects[3].MinSize()
 	row := layoutSpec.toolPanel.header.MinSize().Height
 	objects[3].Resize(toggle)
-	objects[3].Move(fyne.NewPos(size.Width-12-toggle.Width, 8+(row-toggle.Height)/2))
+	// In a split window, folded, it sits under the last pane's header, not
+	// over its ✕ (#285); it rises to the panel's header as the panel opens.
+	drop := float32(0)
+	if ui.isSplit() {
+		drop = paneHeadHeight * (1 - fyne.Min(1, layoutSpec.toolPanel.shown))
+	}
+	objects[3].Move(fyne.NewPos(size.Width-12-toggle.Width, drop+8+(row-toggle.Height)/2))
 }
 
 type panelResizeHandle struct {
@@ -477,6 +483,18 @@ func (panel *toolPanel) render() {
 	panel.body.Refresh()
 	panel.place()
 	panel.syncRows()
+}
+
+// redraw paints the panel again once it is back on screen. Texts that were
+// written while it was hidden (a call finishing behind Settings) were never
+// queued for painting, so their commands stayed blank until the surface was
+// redrawn by something else (#492).
+func (panel *toolPanel) redraw() {
+	panel.place()
+	for _, well := range panel.texts {
+		well.Refresh()
+	}
+	panel.view.Refresh()
 }
 
 // place tells each code well which of its rows the panel shows.

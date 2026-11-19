@@ -713,11 +713,6 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 		renderer.badge.Move(fyne.NewPos(size.Width-padX-iconSize-renderer.row.endInset, (size.Height-iconSize)/2))
 		trailingWidth = iconSize + gap
 	}
-	if renderer.row.trailing != "" {
-		width := renderer.trailing.MinSize().Width
-		renderer.trailing.Move(fyne.NewPos(size.Width-padX-trailingWidth-width, (size.Height-renderer.trailing.MinSize().Height)/2))
-		trailingWidth += width + gap
-	}
 	iconRoom := float32(0)
 	if renderer.row.icon != nil {
 		iconRoom = iconSize
@@ -725,12 +720,30 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 			iconRoom += gap
 		}
 	}
+	renderer.trailing.Text = ""
+	if renderer.row.trailing != "" {
+		// The label comes first: the trailing text (a project's branch) gets
+		// what the whole label leaves, cut short, and goes when too little is
+		// left for a few letters of it. Never drawn over the label.
+		trailingSize := renderer.row.size - 1
+		left := size.Width - 2*padX - iconRoom - trailingWidth - renderer.row.endInset - gap -
+			textSize(renderer.row.text, renderer.row.size, fyne.TextStyle{}).Width
+		if renderer.row.mark != nil {
+			left -= renderer.markWidth()
+		}
+		if left >= textSize("ab…", trailingSize, fyne.TextStyle{}).Width {
+			renderer.trailing.Text = fitText(renderer.row.trailing, trailingSize, fyne.TextStyle{}, left)
+			width := renderer.trailing.MinSize().Width
+			renderer.trailing.Move(fyne.NewPos(size.Width-padX-trailingWidth-width, (size.Height-renderer.trailing.MinSize().Height)/2))
+			trailingWidth += width + gap
+		}
+	}
 	room := size.Width - 2*padX - iconRoom - trailingWidth - renderer.row.endInset
 	marked := renderer.row.mark != nil && room >= renderer.markWidth()+rowMarkMinText
 	if marked {
 		room -= renderer.markWidth()
 	}
-	renderer.label.Text = fitText(renderer.row.text, renderer.row.size, fyne.TextStyle{}, room)
+	renderer.label.Text = fitText(renderer.row.text, renderer.row.size, fyne.TextStyle{}, max(room, 1))
 	renderer.row.clipped = renderer.label.Text != renderer.row.text
 	textWidth := renderer.label.MinSize().Width
 	textY := (size.Height - renderer.label.MinSize().Height) / 2
@@ -958,7 +971,6 @@ func (renderer *tapRowRenderer) Refresh() {
 		renderer.bg.StrokeWidth = 1
 	}
 	renderer.label.TextSize = row.size
-	renderer.trailing.Text = row.trailing
 	renderer.trailing.TextSize = row.size - 1
 	trailingInk := text(colFaint)
 	if row.endInset > 0 { // the row's ⋯ takes its place while hovered
@@ -1027,82 +1039,7 @@ func (renderer *tapRowRenderer) Objects() []fyne.CanvasObject {
 
 func (renderer *tapRowRenderer) Destroy() {}
 
-// ---------------------------------------------------------------------------
-// Soft drop shadow: stacked translucent rounded rectangles stand in for blur.
-
-// shadowInk is the black of shadows: blue 1, which no theme token is, so a
-// change of theme never maps it to the new theme's overlay (white on dark,
-// #436). Their opacity is set again for the theme instead.
-var shadowInk = color.NRGBA{B: 1}
-
-type shadow struct {
-	layers []*canvas.Rectangle
-	alphas []float32
-	tint   color.NRGBA // black for a shadow, a colour for a glow (newGlow)
-}
-
-func newShadow(strength float32) *shadow {
-	dropShadow := &shadow{tint: shadowInk}
-	for i, alpha := range []float32{0.10, 0.08, 0.06, 0.04} {
-		r := canvas.NewRectangle(color.Transparent)
-		r.CornerRadius = rounded(float32(12 + 3*i))
-		dropShadow.layers = append(dropShadow.layers, r)
-		dropShadow.alphas = append(dropShadow.alphas, alpha*strength)
-	}
-	dropShadow.setOpacity(1) // lighter on the light theme
-	return dropShadow
-}
-
-// newGlow is a halo of tint around a surface, like newShadow's layers.
-func newGlow(tint color.NRGBA, strength float32) *shadow {
-	glow := newShadow(strength)
-	glow.tint = tint
-	glow.setOpacity(0)
-	glows = append(glows, glow)
-	return glow
-}
-
-func (dropShadow *shadow) setOpacity(o float32) {
-	for i, r := range dropShadow.layers {
-		c := dropShadow.tint
-		strength := float32(1)
-		if !themeTokens.Dark && c == shadowInk {
-			strength = 0.4 // a shadow, not a glow: on white a dark one reads as a grey band
-		}
-		c.A = uint8(255 * fyne.Min(1, dropShadow.alphas[i]) * o * strength)
-		r.FillColor = c
-		// A layer with nothing to show is not drawn at all: a translucent
-		// rectangle still costs its whole area on every frame.
-		if c.A == 0 {
-			r.Hide()
-		} else {
-			r.Show()
-		}
-	}
-}
-
-func (dropShadow *shadow) layout(pos fyne.Position, size fyne.Size, radius float32) {
-	for i, r := range dropShadow.layers {
-		spread := float32(3 * (i + 1))
-		r.CornerRadius = radius + spread
-		r.Move(pos.AddXY(-spread, -spread+spread/2))
-		r.Resize(size.AddWidthHeight(2*spread, 2*spread))
-	}
-}
-
-func (dropShadow *shadow) objects() []fyne.CanvasObject {
-	objects := make([]fyne.CanvasObject, len(dropShadow.layers))
-	for i := range dropShadow.layers {
-		objects[len(dropShadow.layers)-1-i] = dropShadow.layers[i]
-	}
-	return objects
-}
-
-func (dropShadow *shadow) refresh() {
-	for _, r := range dropShadow.layers {
-		r.Refresh()
-	}
-}
+// Soft drop shadows and glows: soft_shadow.go.
 
 // ---------------------------------------------------------------------------
 // sheet: native overlay used for dialogs and menus. Menus behave like a web
@@ -1136,6 +1073,8 @@ type sheet struct {
 	frost      *canvas.Image // a menu's: the frosted part of the window under its panel
 	frostAt    rect          // the panel rectangle frost was cut for
 	sharp      *canvas.Image // a dialog's: the window buttons as they were, over the frosted backdrop
+	live       *canvas.Blur  // a theme's blur instead ([blur] menus, dialogs: theme_blur.go)
+	liveTint   color.NRGBA   // the panel's colour over it
 	open       bool
 	closing    bool
 	items      []*tapRow
@@ -1143,7 +1082,7 @@ type sheet struct {
 }
 
 func newSheet(canvas fyne.Canvas, content fyne.CanvasObject, width float32) *sheet {
-	dialog := &sheet{canvas: canvas, content: content, width: width, active: -1}
+	dialog := &sheet{canvas: canvas, content: content, width: width, active: -1, live: canvasBlur()}
 	dialog.ExtendBaseWidget(dialog)
 	return dialog
 }
@@ -1174,7 +1113,10 @@ func (dialog *sheet) Show() {
 	dialog.Resize(dialog.canvas.Size())
 	dialog.openSize = dialog.canvas.Size()
 	var shot image.Image
-	dialog.glass, shot = frostedBackdrop(dialog.canvas) // before the sheet is drawn: what it covers
+	dialog.syncLive()
+	if !dialog.live.Visible() {
+		dialog.glass, shot = frostedBackdrop(dialog.canvas) // before the sheet is drawn: what it covers
+	}
 	if dialog.sharp != nil {
 		dialog.sharp.Image = nil
 		if !dialog.menu && shot != nil {
@@ -1378,6 +1320,24 @@ func (dialog *sheet) CreateRenderer() fyne.WidgetRenderer {
 	return &sheetRenderer{dialog}
 }
 
+// syncLive turns the theme's blur on or off as the sheet opens.
+func (dialog *sheet) syncLive() {
+	element, base, opacity := "dialogs", colSurface, float32(0xe0)/0xff
+	if dialog.menu {
+		element, base, opacity = "menus", colPopover, 0.5
+		if dialog.columns {
+			base = colSurface
+		}
+	}
+	dialog.live.Radius = blurRadius(element)
+	dialog.liveTint = blurTint(element, base, opacity)
+	if dialog.live.Radius > 0 {
+		dialog.live.Show()
+	} else {
+		dialog.live.Hide()
+	}
+}
+
 type sheetRenderer struct{ dialog *sheet }
 
 func (renderer *sheetRenderer) Layout(size fyne.Size) {
@@ -1406,6 +1366,14 @@ func (renderer *sheetRenderer) Layout(size fyne.Size) {
 		panelSize = fyne.NewSize(w, h)
 	}
 	renderer.layoutGlass(size, box, panelPos, panelSize)
+	if sheet.menu { // under the panel; behind a dialog, the whole window
+		sheet.live.Move(panelPos)
+		sheet.live.Resize(panelSize)
+		sheet.live.CornerRadius = sheet.panel.CornerRadius
+	} else {
+		sheet.live.Move(fyne.Position{})
+		sheet.live.Resize(size)
+	}
 	sheet.panel.Move(panelPos)
 	sheet.panel.Resize(panelSize)
 	sheet.shadow.layout(panelPos.AddXY(0, 2), panelSize, sheet.panel.CornerRadius)
@@ -1431,7 +1399,7 @@ func (renderer *sheetRenderer) windowResized(size fyne.Size) {
 			sheet.anchorAt = fyne.CurrentApp().Driver().AbsolutePositionForObject(sheet.anchor)
 			sheet.anchorSz = sheet.anchor.Size()
 		}
-		if sheet.glass != nil {
+		if sheet.glass != nil && !sheet.live.Visible() {
 			// The capture draws the whole window: the sheet steps out of it.
 			sheet.BaseWidget.Hide()
 			glass, shot := frostedBackdrop(sheet.canvas)
@@ -1511,7 +1479,11 @@ func (renderer *sheetRenderer) Refresh() {
 			sheet.panel.StrokeColor = withAlpha(colBorder, o)
 			sheet.panel.CornerRadius = rounded(14)
 		}
-		if sheet.glass != nil { // frosted glass: the tint lets the blurred window through
+		if sheet.live.Visible() { // the theme's blur: its tint, fading in
+			sheet.panel.FillColor = withAlpha(sheet.liveTint, o)
+			sheet.panel.StrokeColor = withAlpha(glassEdge, o)
+			sheet.panel.CornerRadius += 2
+		} else if sheet.glass != nil { // frosted glass: the tint lets the blurred window through
 			base := colPopover
 			if sheet.columns {
 				base = colSurface
@@ -1543,8 +1515,12 @@ func (renderer *sheetRenderer) Refresh() {
 			sheet.backdrop.Translucency = float64(1 - o)
 			sheet.panel.FillColor = color.NRGBA{R: colSurface.R, G: colSurface.G, B: colSurface.B, A: 0xe0} // a pane of glass too
 		}
+		if sheet.live.Visible() {
+			sheet.dim.FillColor = color.NRGBA{A: uint8(dimAlpha(55) * o)}
+			sheet.panel.FillColor = sheet.liveTint
+		}
 		sheet.panel.StrokeColor = colBorder
-		if sheet.glass != nil {
+		if sheet.glass != nil || sheet.live.Visible() {
 			sheet.panel.StrokeColor = glassEdge
 		}
 		sheet.panel.CornerRadius = rounded(14)
@@ -1563,8 +1539,15 @@ func (renderer *sheetRenderer) Refresh() {
 }
 
 func (renderer *sheetRenderer) Objects() []fyne.CanvasObject {
-	objects := []fyne.CanvasObject{renderer.dialog.backdrop, renderer.dialog.dim, renderer.dialog.sharp}
+	objects := []fyne.CanvasObject{renderer.dialog.backdrop}
+	if !renderer.dialog.menu {
+		objects = append(objects, renderer.dialog.live) // the window blurred, then dimmed
+	}
+	objects = append(objects, renderer.dialog.dim, renderer.dialog.sharp)
 	objects = append(objects, renderer.dialog.shadow.objects()...)
+	if renderer.dialog.menu {
+		objects = append(objects, renderer.dialog.live)
+	}
 	objects = append(objects, renderer.dialog.frost, renderer.dialog.panel, renderer.dialog.content)
 	return objects
 }

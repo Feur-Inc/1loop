@@ -336,8 +336,8 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	server.chats = kept
-	if err := server.saveLocked(); err != nil {
-		server.chats = previous
+	if err := server.saveOutsideLocked(); err != nil {
+		server.chats = restoredChats(previous, server.chats, gone)
 		server.mu.Unlock()
 		core.Fail(w, 500, err.Error())
 		return
@@ -352,6 +352,7 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 		}
 		member.queue, member.steer = nil, nil
 		member.tasks.StopAll()
+		agent.DropClaudeChat(member.ID)
 		if member.Config.Scratch != "" {
 			go func(path string) { _ = agent.RemoveScratchWorkspace(server.scratchBase(), path) }(member.Config.Scratch)
 		}
@@ -601,10 +602,13 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if chat.run != nil {
-		// A message sent while the agent works joins it at its next step,
-		// whatever the client asked (older clients say "queue" or "send"):
-		// clients show it greyed at the conversation's end until then.
-		chat.steer = append(chat.steer, m)
+		// A message sent while the agent works is queued for the next turn
+		// ("send", "queue"); "steer" joins the task at its next step (#433).
+		if args.Mode == "steer" {
+			chat.steer = append(chat.steer, m)
+		} else {
+			chat.queue = append(chat.queue, m)
+		}
 		server.changedLocked(chat, -1)
 	} else {
 		server.runLocked(chat, m)
@@ -656,7 +660,10 @@ func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 		core.Fail(w, 400, "Invalid request")
 		return
 	}
-	server.backend.Approve(args.ID, args.Allow)
+	if !server.backend.Approve(args.ID, args.Allow) {
+		core.Fail(w, 404, "This approval is no longer waiting")
+		return
+	}
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -997,4 +1004,21 @@ func (server *headlessServer) setDefaultModels(w http.ResponseWriter, r *http.Re
 		return
 	}
 	core.Fail(w, 404, "Connection not found")
+}
+
+// restoredChats puts back the chats a failed delete removed, in their
+// order, keeping those created while the state was being saved.
+func restoredChats(previous, current, gone []*serverChat) []*serverChat {
+	var chats []*serverChat
+	for _, chat := range current {
+		if !slices.Contains(previous, chat) {
+			chats = append(chats, chat)
+		}
+	}
+	for _, chat := range previous {
+		if slices.Contains(gone, chat) || slices.Contains(current, chat) {
+			chats = append(chats, chat)
+		}
+	}
+	return chats
 }

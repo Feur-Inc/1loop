@@ -8,12 +8,11 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -64,6 +63,9 @@ func limitPeriod(seconds int64) string {
 	}
 }
 
+// claudeUsageURL is Claude's usage endpoint (a variable for the tests).
+var claudeUsageURL = "https://api.anthropic.com/api/oauth/usage"
+
 func readAccountLimits(ctx context.Context, url string, headers http.Header, target any) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -77,12 +79,22 @@ func readAccountLimits(ctx context.Context, url string, headers http.Header, tar
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		return &limitsHTTPError{Status: resp.StatusCode, RetryAfter: retryAfter(resp.Header, time.Now())}
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(target)
 }
 
 func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key string) (AccountLimits, error) {
+	if conn.Provider == "claudecode" {
+		// Connections on one Claude login share one read (and one pause).
+		return claudeLimitsShared(claudeDataDir(conn.ClaudeHome()), func() (AccountLimits, error) {
+			return backend.connectionLimits(ctx, conn, key)
+		})
+	}
+	return backend.connectionLimits(ctx, conn, key)
+}
+
+func (backend *App) connectionLimits(ctx context.Context, conn Connection, key string) (AccountLimits, error) {
 	limits := AccountLimits{Note: "Limits not provided"}
 	switch conn.Provider {
 	case "openai":
@@ -139,22 +151,9 @@ func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key s
 		}
 	case "claudecode":
 		// The connection's own Claude Code login (claude_accounts.go).
-		data, err := os.ReadFile(filepath.Join(claudeDataDir(conn.ClaudeHome()), ".credentials.json"))
+		access, err := claudeAccessToken(ctx, conn.ClaudeHome(), false)
 		if err != nil {
 			return limits, err
-		}
-		var auth struct {
-			OAuth struct {
-				Access  string `json:"accessToken"`
-				Expires int64  `json:"expiresAt"`
-			} `json:"claudeAiOauth"`
-		}
-		if err := json.Unmarshal(data, &auth); err != nil {
-			return limits, err
-		}
-		if auth.OAuth.Access == "" || auth.OAuth.Expires <= time.Now().UnixMilli() {
-			limits.Note = "Claude session expired"
-			return limits, nil
 		}
 		type window struct {
 			Used    *float64  `json:"utilization"`
@@ -170,8 +169,19 @@ func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key s
 			// above are the older form, read when it is missing.
 			Limits []claudeLimitRow `json:"limits"`
 		}
-		headers := http.Header{"Authorization": {"Bearer " + auth.OAuth.Access}, "Anthropic-Beta": {"oauth-2025-04-20"}}
-		if err := readAccountLimits(ctx, "https://api.anthropic.com/api/oauth/usage", headers, &usage); err != nil {
+		read := func(token string) error {
+			headers := http.Header{"Authorization": {"Bearer " + token}, "Anthropic-Beta": {"oauth-2025-04-20"}}
+			return readAccountLimits(ctx, claudeUsageURL, headers, &usage)
+		}
+		err = read(access)
+		var httpErr *limitsHTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == http.StatusUnauthorized && conn.ClaudeHome() != "" {
+			// The server refused a token that looked valid: refresh it once.
+			if fresh, refreshErr := claudeAccessToken(ctx, conn.ClaudeHome(), true); refreshErr == nil {
+				err = read(fresh)
+			}
+		}
+		if err != nil {
 			return limits, err
 		}
 		if len(usage.Limits) > 0 {
@@ -209,6 +219,9 @@ func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key s
 		if d := data.Data.Daily; d != nil && d.Limit > 0 && d.Remaining != nil {
 			limits.Windows = append(limits.Windows, AccountLimitWindow{Label: "Free/day", used: 100 * (1 - *d.Remaining/d.Limit)})
 		}
+	}
+	if len(limits.Windows) > 0 {
+		limits.Note = "" // numbers to show, nothing to explain
 	}
 	return limits, nil
 }

@@ -800,8 +800,9 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
         }
     }
     val tail by remember { derivedStateOf { items.size to (items.lastOrNull()?.text?.length ?: 0) } }
-    // Sent while the agent works: greyed at the end until the agent takes them in.
-    val pending = app.meta?.let { it.steer + it.queue }.orEmpty()
+    // Steered while the agent works: greyed at the end until the agent takes them in.
+    // Queued ones wait in the tray above the composer (QueueTray) for the task's end (#433).
+    val pending = app.meta?.steer.orEmpty()
     LaunchedEffect(tail, running, app.meta?.label, pending.size) {
         if (follow && items.isNotEmpty()) list.scrollToItem(items.size + 1 + pending.size, 0)
     }
@@ -1177,8 +1178,11 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 }
                 if (running) {
                     if (ready) {
-                        // Joins the running task at its next step, shown greyed until then.
-                        RoundButton(Icons.send, Palette.amber, Palette.ink, size = 36.dp, description = "Send at the next step") { send("steer") }
+                        // The arrow joins the running task at its next step, shown greyed
+                        // until then; Send queues the message for when the task ends (#433).
+                        RoundButton(Icons.arrowTurn, Palette.raised, Palette.text, size = 36.dp, iconSize = 18.dp, description = "Steer: send at the next step") { send("steer") }
+                        Spacer(Modifier.width(8.dp))
+                        RoundButton(Icons.send, Palette.amber, Palette.ink, size = 36.dp, description = "Queue: send when the task ends") { send("queue") }
                         Spacer(Modifier.width(8.dp))
                     }
                     RoundButton(Icons.close, Palette.text, Palette.ink, size = 36.dp, iconSize = 18.dp, description = "Stop") { app.stop() }

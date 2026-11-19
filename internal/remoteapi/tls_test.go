@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 )
 
@@ -34,5 +35,24 @@ func TestCertificateGeneratedOnceAndPrivate(t *testing.T) {
 	}
 	if _, err := Certificate(dir, filepath.Join(dir, "server.crt"), ""); err == nil {
 		t.Fatal("a certificate without its key was accepted")
+	}
+}
+
+// One of the two files gone: a clear message, and nothing regenerated (a new
+// certificate would unpair every device).
+func TestCertificateWithAMissingFile(t *testing.T) {
+	for _, missing := range []string{"server.key", "server.crt"} {
+		dir := filepath.Join(t.TempDir(), "remote")
+		if _, err := Certificate(dir, "", ""); err != nil {
+			t.Fatal(err)
+		}
+		os.Remove(filepath.Join(dir, missing))
+		_, err := Certificate(dir, "", "")
+		if err == nil || !strings.Contains(err.Error(), missing+" is missing") {
+			t.Fatalf("%s removed: %v", missing, err)
+		}
+		if _, err := os.Stat(filepath.Join(dir, missing)); !os.IsNotExist(err) {
+			t.Fatalf("%s was regenerated", missing)
+		}
 	}
 }

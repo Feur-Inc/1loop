@@ -169,6 +169,7 @@ func repaint(changed recolour, fontsChanged bool) {
 	}
 	for _, glow := range glows {
 		glow.tint = changed.of(glow.tint)
+		glow.refresh() // its picture, in the new tint
 	}
 	app := fyne.CurrentApp()
 	if app == nil {
@@ -271,6 +272,7 @@ func (choice themeChoice) apply() (recoloured, fontsChanged bool) {
 		measuresMu.Unlock()
 	}
 	changed := setColours(tokens, choice.accentColour())
+	defer setThemeBlur(themeFile(setting)) // after the repaint, which recolours the tints
 	platform.Devf("ui", "theme %s (dark %v), accent %s, roundness %.2f", setting, tokens.Dark, choice.accent, roundness)
 	recoloured = len(changed) > 0
 	if recoloured || fontsChanged {
@@ -355,6 +357,11 @@ func (row *tapRow) repaint(changed recolour) {
 func (flow *flowText) repaint(changed recolour) {
 	flow.ink = changed.any(flow.ink)
 	flow.cut = nil // its atoms keep their colours: measured again
+	// What it draws (text, bullets, link rules) was made with the old
+	// colours, and a colour that is not exactly a token, or one that two
+	// tokens shared, is not mapped by the walk: it is laid out again, from
+	// the colours now in use, at its next refresh (#436).
+	flow.paintedWidth = -1
 }
 
 func (label *fitLabel) repaint(changed recolour) { label.color = changed.any(label.color) }

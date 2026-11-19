@@ -33,6 +33,7 @@ var (
 	ErrPairingLocked  = errors.New("Too many wrong codes. Start pairing from Settings → Phone on the computer.")
 	ErrPairingExpired = errors.New("This code has expired. Ask for a new one.")
 	ErrPairingBusy    = errors.New("A pairing was just requested. Try again in a few seconds.")
+	ErrPairingWaiting = errors.New("Another pairing is waiting for its code on the computer. Try again once it is done, or in two minutes.")
 )
 
 // Pairing is the one pairing waiting for its code.
@@ -70,6 +71,12 @@ func (book *PairingBook) Request(device string) (*Pairing, error) {
 	now := book.now()
 	if now.Sub(book.lastRequest) < requestInterval {
 		return nil, ErrPairingBusy
+	}
+	// The pairing on screen stays until it is answered, cancelled or
+	// expires: anything on the network could otherwise keep replacing it,
+	// and the real phone's code would never be the one shown (#532).
+	if book.Pending != nil && now.Before(book.Pending.expires) {
+		return nil, ErrPairingWaiting
 	}
 	number, err := rand.Int(rand.Reader, big.NewInt(1000000))
 	if err != nil {

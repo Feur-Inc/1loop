@@ -403,6 +403,16 @@ func (ui *desktopUI) openChat(chat *conversation) {
 	ui.loadChat(chat, true)
 }
 
+// markRead clears a subchat's unread mark as the user opens it: its dot in
+// the sidebar goes, and so does its count in the summary row. Kept for the
+// next start.
+func (ui *desktopUI) markRead(chat *conversation) {
+	if chat.Subchat != nil && chat.Subchat.Unseen {
+		chat.Subchat.Unseen = false
+		ui.save()
+	}
+}
+
 func (ui *desktopUI) reloadChat(chat *conversation) {
 	ui.loadChat(chat, false)
 }
@@ -420,6 +430,7 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 		chat.failed = false
 		ui.syncTray()
 	}
+	ui.markRead(chat)
 	ui.cfg = chat.Config
 	ui.syncProjectTheme()
 	ui.prompt.switchDraft(chat.ID)
@@ -531,6 +542,7 @@ func (ui *desktopUI) removeChats(chats ...*conversation) {
 		}
 		chat.queue, chat.steer = nil, nil
 		chat.tasks.StopAll()
+		agent.DropClaudeChat(chat.ID)
 		ui.prompt.drafts.set(chat.ID, "")
 		for _, view := range ui.allPanes() {
 			if view.current == chat {
@@ -625,5 +637,5 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	// Under the logo: the chats, or the settings' sections while they are open.
 	ui.sideApp = container.NewBorder(ui.sideActions(), bottom, nil, nil, newKineticVScroll(lists))
 	content := padded(0, 0, 12, 12, container.NewBorder(brand, nil, nil, nil, container.NewStack(ui.sideApp, ui.prefs.side)))
-	return container.NewStack(canvas.NewRectangle(colSidebar), content)
+	return container.NewStack(blurBehind("sidebar", canvas.NewRectangle(colSidebar), &colSidebar), content)
 }

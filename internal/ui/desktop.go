@@ -300,8 +300,10 @@ type desktopApp struct {
 	remoteEnabled    bool                     // see phone_server.go
 	devices          []remoteapi.PairedDevice // phones paired with the remote
 	chrome           bool
-	updates          updateState // the release page's latest version (updates.go)
-	panelWidth       float32     // last width chosen by dragging, independent of window size
+	titleBar         fyne.CanvasObject // the bar over the conversation: its title, and the window buttons with chrome
+	pictureLayer     *fyne.Container   // where pictures open, under titleBar (picture_viewer.go); nil without chrome
+	updates          updateState       // the release page's latest version (updates.go)
+	panelWidth       float32           // last width chosen by dragging, independent of window size
 	// Projects' environment variables, by projectEnvKey (project_env.go).
 	projectEnv        map[string]map[string]string
 	classicCompaction bool                       // settings: dynamic context compaction turned off
@@ -343,14 +345,14 @@ func useEnglishUI() {
 	}
 }
 
-func runDesktop(backend *agent.App, root string) {
+func runDesktop(backend *agent.App, root, asked string) {
 	softwareRendererStart() // Windows without an OpenGL driver: 1loop's Mesa (software_gl_windows.go)
 	useEnglishUI()
 	switchBackend()
 	// Once this is the process that stays (the build for the display, past
 	// its probe), and before any state is read.
 	benchMark("runDesktop")
-	instance := claimInstance()
+	instance := claimInstance(asked)
 	benchMark("instance claimed")
 	lastCrash := watchCrashes(statePath(root)) // crash_report.go
 	if platform.DevWanted {
@@ -412,6 +414,7 @@ func runDesktop(backend *agent.App, root string) {
 	ui.window.CenterOnScreen()
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
 	ui.backdrop = newBackdrop()
+	ui.watchPointer()
 	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.backdrop.picture, ui.build()))
 	benchMark("content built")
 	ui.syncBackdrop()
@@ -476,7 +479,12 @@ func runDesktop(backend *agent.App, root string) {
 		time.AfterFunc(180*time.Millisecond, func() { fyne.Do(launch.play) })
 	})
 	ui.startTray(a)
-	serveInstance(instance, func() { fyne.Do(ui.showWindow) })
+	serveInstance(instance, func() { fyne.Do(ui.showWindow) }, func(folder string) {
+		fyne.Do(func() {
+			ui.mainView().openProjectOn(localTarget, folder)
+			ui.showWindow()
+		})
+	})
 	// Shown, named, then run: the desktop learns which application this is
 	// before the window's first frame, when it picks its name and icon.
 	// Show makes the window. When OpenGL cannot draw it, 1loop tries its
@@ -583,6 +591,7 @@ func (ui *desktopUI) release() {
 	for _, chat := range ui.chats {
 		chat.tasks.StopAll() // a background server must not outlive 1loop
 	}
+	agent.StopEveryClaude()
 	for _, view := range ui.allPanes() {
 		if view != ui {
 			view.releaseWindow() // its chat's panel goes back to the chat, disposed with it below
@@ -716,7 +725,9 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.buildTitleBar(sidebar)
 	layers := []fyne.CanvasObject{ui.root}
 	if ui.chrome {
-		layers = append(layers, resizeEdges(ui.window))
+		ui.pictureLayer = container.New(underTitleBar{ui})
+		ui.pictureLayer.Hide()
+		layers = append(layers, ui.pictureLayer, resizeEdges(ui.window))
 	}
 	return container.NewStack(append(layers, ui.tips.layer)...)
 }
@@ -845,6 +856,7 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	if ui.chrome {
 		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, ui.headerBar))
 	}
+	ui.titleBar = header
 	// The settings page takes the conversation's place while it is open.
 	ui.curtain = newPageCurtain()
 	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view, ui.curtain.cover)))
@@ -859,7 +871,8 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 // card: the card's own outline is the only edge of the input area.
 func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.prompt = newChatEntry()
-	ui.prompt.SetPlaceHolder("Describe what you want to build…")
+	ui.prompt.placeholders = []string{"Describe what you want to build…", "What shall we build?", "Message…"}
+	ui.prompt.SetPlaceHolder(ui.prompt.placeholders[0])
 	ui.prompt.send = ui.submit
 	ui.prompt.steer = ui.steerNow
 	// The message being typed will go to the model: open the connection now.
@@ -878,6 +891,9 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		ui.clearSelection()
 	}
 	ui.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
+		if key.Name == fyne.KeyEscape && ui.closePicture() {
+			return // a click on the title bar took the viewer's focus
+		}
 		if key.Name == fyne.KeyEscape && ui.prefs.open { // Escape goes back a page, then to the conversation
 			ui.prefs.back()
 		}
@@ -991,7 +1007,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	card.StrokeColor = colBorder
 	card.StrokeWidth = 1
 	// The card floats on a soft shadow; focused, an amber halo lights up around it.
-	drop, glow := newShadow(2.2), newGlow(colAmber, 0.32)
+	drop, glow := newShadow(2.2), newGlow(colAmber, 0.28)
 	onRepaint = append(onRepaint, func() { drop.setOpacity(1) })                 // lighter on a light theme
 	onRepaint = append(onRepaint, func() { drop.setOpacity(1); drop.refresh() }) // its strength is the theme's
 	var glowAnim *fyne.Animation
@@ -1037,8 +1053,9 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		container.NewHBox(container.NewCenter(pencil), textLine("Editing a queued message", 12.5, colAmber)),
 		container.NewHBox(container.NewCenter(textLine("Enter to save · Esc to cancel", 12, colFaint)), cancelEdit)))
 	ui.editBar.Hide()
-	body := container.NewStack(card, padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
-	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: 18}, append(append(glow.objects(), drop.objects()...), body)...)
+	body := container.NewStack(blurBehind("composer", card, &colSurface), padded(8, 8, 10, 10, container.NewVBox(ui.editBar, ui.attachTray, line, ui.controls)))
+	// The halo over the shadow: its amber reaches the card evenly all around.
+	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: 18}, append(append(drop.objects(), glow.objects()...), body)...)
 	ui.composer = composer
 
 	// Messages waiting for the running task sit in a tray on top of the card.
@@ -1414,14 +1431,12 @@ func (ui *desktopUI) submit() {
 		return
 	}
 	if chat != nil && chat.run != nil {
-		// Shown at once at the conversation's end, greyed, and given to the
-		// agent at its next step (between two tool calls), where it then
-		// takes its place in the conversation.
+		// Enter while the agent works queues the message: it waits in the
+		// tray above the composer and becomes the next turn once the task
+		// is over (#433). Ctrl+Enter or Steer (steerNow) joins the task now.
 		if message, ok := ui.promptMessage(); ok {
-			chat.steer = append(chat.steer, message)
+			chat.queue = append(chat.queue, message)
 			ui.renderQueue()
-			ui.followTail = true
-			ui.relayoutColumn()
 		}
 		return
 	}
@@ -1708,6 +1723,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	for _, conn := range ui.connectionsList {
 		if conn.ID == cfg.ConnectionID {
 			cfg.CompactAt = conn.ModelOptions[cfg.Model].CompactAt
+			cfg.ConnectionName = conn.Name
 			break
 		}
 	}

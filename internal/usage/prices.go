@@ -5,11 +5,12 @@ package usage
 import (
 	"encoding/json"
 	"os"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
 	"sync"
+
+	"1loop/internal/core"
 )
 
 // Price is what a model costs, in US dollars per million tokens.
@@ -289,13 +290,7 @@ func (prices *Prices) save() error {
 	if path == "" {
 		return nil
 	}
-	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return err
-	}
-	if err := os.WriteFile(path+".tmp", data, 0600); err != nil {
-		return err
-	}
-	return os.Rename(path+".tmp", path)
+	return core.WriteFileSafely(path, 0600, false, data)
 }
 
 // Cost prices a call: what its provider reported; else the user's price,

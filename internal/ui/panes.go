@@ -139,7 +139,7 @@ func (ui *desktopUI) buildPaneBox() {
 	ui.paneMark.SetMinSize(fyne.NewSize(0, 2))
 	bg := canvas.NewRectangle(colSidebar)
 	row := container.NewBorder(nil, nil, nil, container.NewCenter(close), padded(0, 0, 14, 4, ui.paneTitle))
-	head := container.NewStack(bg, newTapArea(ui.activate), container.NewBorder(nil, ui.paneMark, nil, nil, row))
+	head := container.NewStack(blurBehind("headers", bg, &colSidebar), newTapArea(ui.activate), container.NewBorder(nil, ui.paneMark, nil, nil, row))
 	ui.paneHead = container.New(fixedHeight{paneHeadHeight}, head)
 	ui.paneHead.Hide()
 	ui.paneBox = container.NewBorder(ui.paneHead, nil, nil, nil, ui.conversation)
@@ -282,6 +282,9 @@ func (window *desktopUI) layoutPanes() {
 		window.chatArea.Objects = []fyne.CanvasObject{window.tree.object(window)}
 	}
 	window.chatArea.Refresh()
+	if window.split != nil {
+		relayout(window.split) // the panel toggle moves under a pane header, or back
+	}
 }
 
 // object is the node's widgets.
@@ -458,8 +461,9 @@ func (ui *desktopUI) closePaneOrWindow() {
 }
 
 // closePane closes ui's pane; its sibling takes its room. The window's
-// first pane cannot go, since it holds the window: it takes the chat of
-// the pane beside it, which goes instead.
+// first pane cannot go, since it holds the window: it takes the chat and
+// the place of the pane beside it, which goes instead, so that on screen
+// the pane closed is the one that disappears.
 func (ui *desktopUI) closePane() {
 	window := ui.windowOf()
 	if window.tree == nil {
@@ -479,10 +483,7 @@ func (ui *desktopUI) closePane() {
 			window.startNew()
 		}
 	}
-	window.tree.find(gone).remove()
-	if window.tree.pane != nil {
-		window.tree = nil
-	}
+	window.dropPane(ui, gone)
 	if window.focus == gone || window.focus == ui {
 		window.focus = nil
 	}
@@ -493,6 +494,22 @@ func (ui *desktopUI) closePane() {
 	next.followPanel()
 	window.window.Canvas().Focus(next.prompt)
 	window.save()
+}
+
+// dropPane takes closed's pane out of the window's tree. When closed is the
+// window's own pane, gone (the pane whose chat it takes) goes instead and
+// the window's pane takes gone's place: on screen, the pane closed is the
+// one that disappears.
+func (window *desktopUI) dropPane(closed, gone *desktopUI) {
+	if closed == window {
+		window.tree.find(window).remove()
+		window.tree.find(gone).pane = window
+	} else {
+		window.tree.find(gone).remove()
+	}
+	if window.tree.pane != nil {
+		window.tree = nil
+	}
 }
 
 // sibling is the other half of the leaf's parent.

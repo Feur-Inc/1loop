@@ -26,6 +26,7 @@ type sideChat struct {
 	id       string
 	parent   string // a subchat's parent, "" for another chat
 	ended    string // how a subchat's last turn ended: done, stopped or failed
+	seen     bool   // the user opened it since that end: its dot is gone, as an unread marker
 	title    string
 	folder   string // its project, or a worktree of it
 	scratch  bool   // in a folder 1loop made for it: listed under No folder
@@ -99,6 +100,8 @@ func (chat sideChat) subchatState() string {
 		return agent.SubchatWaiting
 	case chat.running:
 		return agent.SubchatWorking
+	case chat.seen:
+		return "" // read since it ended: no dot
 	case chat.ended == agent.SubchatDone || chat.ended == agent.SubchatFailed:
 		return chat.ended
 	}
@@ -240,12 +243,9 @@ func (ui *desktopUI) addTargetGroup(group targetGroup) {
 		}
 		ui.addGroupChats(key, p, chats.chats)
 		if p != "" && p == opened { // its worktrees, after its chats
-			for _, object := range ui.worktreeRows(p, open) {
-				key := "worktree:" + key
-				if row := firstRow(object); row != nil {
-					key += ":" + row.text
-				}
-				ui.addSide(key, object)
+			rows, keys := ui.worktreeRows(p, open)
+			for i, object := range rows {
+				ui.addSide("worktree:"+key+":"+keys[i], object)
 			}
 			ui.loadRepo(p, true, 20*time.Second)
 		}

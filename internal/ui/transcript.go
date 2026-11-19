@@ -1352,6 +1352,13 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		currentTurn.setRow(index, "done")
 		delete(currentTurn.states, index)
 		ui.panel.changed(currentTurn.chat, index)
+		// Another call still running keeps its words: the model only
+		// takes over once every call it sent has its result.
+		for _, state := range currentTurn.states {
+			if state == "running" {
+				return
+			}
+		}
 		currentTurn.show(agent.Activity{State: "wait"})
 	case "injected":
 		messageValue := uiEventValue.data.(agent.Message)

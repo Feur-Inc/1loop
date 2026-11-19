@@ -6,3 +6,16 @@ accents = ["#7aa2ff", "#2fc2a4", "#ff5fa2"]
 roundness = 1.2
 shader = "aurora.frag"
 shader_opacity = 0.78
+
+# The sidebar and menus are frosted glass over the aurora.
+[blur]
+sidebar = 18
+panel = 14
+composer = 12
+menus = 20
+
+[blur_tint]
+sidebar = "#0c0c0cb8"
+panel = "#1a1a1ac0"
+composer = "#1a1a1ac8"
+menus = "#212121b0"

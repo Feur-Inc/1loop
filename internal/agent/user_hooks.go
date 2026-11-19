@@ -31,6 +31,7 @@ import (
 	"strings"
 	"time"
 
+	"1loop/internal/core"
 	"1loop/internal/platform"
 )
 
@@ -157,8 +158,10 @@ func runHooks(ctx context.Context, event, target string, payload map[string]any)
 					cmd.Env = append(cmd.Env, "CLAUDE_PLUGIN_ROOT="+from.root, "CLAUDE_PROJECT_DIR="+cwd)
 				}
 				cmd.Stdin = bytes.NewReader(input)
-				var stdout, stderr bytes.Buffer
-				cmd.Stdout, cmd.Stderr = &stdout, &stderr
+				// Bounded, like a tool's output: a chatty hook cannot grow
+				// memory while it runs.
+				stdout, stderr := &outputBuffer{}, &outputBuffer{}
+				cmd.Stdout, cmd.Stderr = stdout, stderr
 				platform.PrepareProcess(cmd)
 				cmd.Cancel = func() error { return platform.KillProcessTree(cmd) }
 				if hook.Async {
@@ -202,10 +205,15 @@ func runHooks(ctx context.Context, event, target string, payload map[string]any)
 			}
 		}
 	}
-	result.feedback = strings.TrimSpace(result.feedback)
-	result.output = strings.TrimSpace(result.output)
+	// Both enter the model's context, on every turn for UserPromptSubmit.
+	result.feedback = core.TruncateText(strings.TrimSpace(result.feedback), hookContextLimit)
+	result.output = core.TruncateText(strings.TrimSpace(result.output), hookContextLimit)
 	return result
 }
+
+// hookContextLimit is how many characters of the hooks' output, and of
+// their feedback, reach the model; TruncateText says what was cut.
+const hookContextLimit = 8000
 
 // hookMatches: an empty matcher or "*" matches every tool; otherwise a
 // regular expression on the whole tool name, as in Claude Code.

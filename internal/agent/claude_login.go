@@ -45,6 +45,7 @@ func claudeAuthCommand(ctx context.Context, conn Connection, args ...string) (*e
 		}
 		command.Env = append(command.Env, "CLAUDE_CONFIG_DIR="+home)
 	}
+	command.Env = claudeEnv(command.Env)
 	platform.PrepareProcess(command)
 	command.WaitDelay = 3 * time.Second
 	return command, nil

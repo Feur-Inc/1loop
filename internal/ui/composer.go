@@ -555,10 +555,19 @@ func (ui *desktopUI) renderAttachments() {
 	}
 	for i, file := range *files {
 		i := i
-		remove := newRow("", iconClose, styleWindow, func() {
+		removeFile := func() {
 			*files = append((*files)[:i], (*files)[i+1:]...)
 			ui.renderAttachments()
-		})
+		}
+		if ui.server != nil {
+			if img := ui.server.thumbnails[file.Path]; img != nil { // a picture uploaded from here (#543)
+				bounds := img.Bounds()
+				size := fitPictureBox(bounds.Dx(), bounds.Dy(), composerPictureWidth, composerPictureHeight)
+				ui.attachRow.Add(newPictureTile(img, size, func() { ui.openImage(file.Name, img) }, removeFile))
+				continue
+			}
+		}
+		remove := newRow("", iconClose, styleWindow, removeFile)
 		label := textLine(fitText(file.Name, 12.5, fyne.TextStyle{}, 180), 12.5, colText)
 		ui.attachRow.Add(surface(container.NewHBox(label, remove), colCode, colBorderSoft, 8, 6))
 	}
@@ -592,12 +601,13 @@ func (ui *desktopUI) renderAttachments() {
 type parkedAttachments struct {
 	images []core.ImagePart
 	files  []fileAttachment
+	server []agent.FileAttachment // a server chat's, already uploaded there (#544)
 }
 
 // switchAttachments sets aside the attachments of the draft being left and
 // brings back those of the draft about to show, so that a picture pasted in
-// one chat is never sent from another (#409). A server chat's own files are
-// dropped by remoteDesktop.selectChat.
+// one chat is never sent from another (#409). A server chat's uploaded files
+// are parked the same way.
 func (ui *desktopUI) switchAttachments(from, to string) {
 	if from == to {
 		return
@@ -605,15 +615,37 @@ func (ui *desktopUI) switchAttachments(from, to string) {
 	if ui.parked == nil {
 		ui.parked = map[string]parkedAttachments{}
 	}
-	if len(ui.attachments)+len(ui.fileAttachments) > 0 {
-		ui.parked[from] = parkedAttachments{ui.attachments, ui.fileAttachments}
+	var server []agent.FileAttachment
+	if ui.server != nil {
+		server = ui.server.fileAttachments
+	}
+	if len(ui.attachments)+len(ui.fileAttachments)+len(server) > 0 {
+		ui.parked[from] = parkedAttachments{ui.attachments, ui.fileAttachments, server}
 	} else {
 		delete(ui.parked, from)
 	}
 	back := ui.parked[to]
 	delete(ui.parked, to)
 	ui.attachments, ui.fileAttachments = back.images, back.files
+	if ui.server != nil {
+		ui.server.fileAttachments = back.server
+	}
 	ui.renderAttachments()
+}
+
+// parkServerFiles gives files uploaded for a draft not on screen (an upload
+// that ended, or a send that failed, after the user moved on) to that
+// draft, where they show when it comes back.
+func (ui *desktopUI) parkServerFiles(key string, files []agent.FileAttachment) {
+	if len(files) == 0 {
+		return
+	}
+	if ui.parked == nil {
+		ui.parked = map[string]parkedAttachments{}
+	}
+	parked := ui.parked[key]
+	parked.server = append(parked.server, files...)
+	ui.parked[key] = parked
 }
 
 // takeAttachments hands the staged pictures to a message and clears them.
@@ -627,13 +659,13 @@ func (ui *desktopUI) takeAttachments() []core.ImagePart {
 }
 
 // ---------------------------------------------------------------------------
-// While a task runs, a message sent (Enter, Ctrl+Enter, Send) steers it: it
+// While a task runs, a message sent with Enter or Send is queued: it waits
+// in a tray above the composer, where it can be reordered, edited in the
+// prompt, sent at once or dropped, and becomes the next turn once the task
+// is over (#433). One sent with Ctrl+Enter or Steer steers the task: it
 // shows at once at the conversation's end, greyed, and joins the running
 // task at the next gap between two model calls (after the current tool
-// calls), where it takes its place in the conversation. Messages kept for
-// the next turn (one that could not be sent, a queue left by a stopped
-// task) wait in a tray above the composer, where they can be reordered,
-// edited in the prompt, sent at once or dropped.
+// calls), where it takes its place in the conversation.
 
 func (ui *desktopUI) takeSteer(chat *conversation) []agent.Message {
 	ui = ui.viewOf(chat) // the window showing it (windows.go)
@@ -749,21 +781,25 @@ func (ui *desktopUI) renderPending() {
 	}
 	ui.pendingBox.RemoveAll()
 	type pendingMessage struct {
-		text  string
-		index int // in chat.steer; -1 for a server chat's
+		text   string
+		index  int  // in chat.steer; -1 for a server chat's
+		queued bool // a server chat's queue: sent once the task is over
 	}
 	var waiting []pendingMessage
 	running := false
 	if ui.server != nil {
 		meta := ui.server.meta
 		running = meta.Running
-		for _, text := range append(append([]string(nil), meta.Steer...), meta.Queue...) {
-			waiting = append(waiting, pendingMessage{text, -1})
+		for _, text := range meta.Steer {
+			waiting = append(waiting, pendingMessage{text, -1, false})
+		}
+		for _, text := range meta.Queue {
+			waiting = append(waiting, pendingMessage{text, -1, true})
 		}
 	} else if chat := ui.current; chat != nil {
 		running = chat.run != nil
 		for i, message := range chat.steer {
-			waiting = append(waiting, pendingMessage{pendingText(message), i})
+			waiting = append(waiting, pendingMessage{pendingText(message), i, false})
 		}
 	}
 	for _, message := range waiting {
@@ -773,6 +809,9 @@ func (ui *desktopUI) renderPending() {
 		bubble := container.New(&bubbleLayout{text: text, chrom: 2*pad + 4},
 			surface(padded(pad, pad, pad, pad, text), withAlpha(colRaised, 0.5), colBorderSoft, 14, 2))
 		note := "Sent at the next step"
+		if message.queued {
+			note = "Queued · sent when the task ends"
+		}
 		if !running {
 			note = "Not sent yet · press Enter to send"
 		}

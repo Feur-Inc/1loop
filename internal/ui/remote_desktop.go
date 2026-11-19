@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
@@ -270,7 +271,8 @@ type remoteDesktop struct {
 	namingModel      *agent.NamingModel       // the server's chat naming model
 	convs            map[string]*conversation // the server's chats as this window shows them
 	fileAttachments  []agent.FileAttachment
-	update           *update.Status // the server runs an older version (remote_desktop_update.go)
+	thumbnails       map[string]image.Image // the pictures uploaded from here, by their path on the server
+	update           *update.Status         // the server runs an older version (remote_desktop_update.go)
 	approvalID       string
 	approvalSheet    *sheet
 	pairingID        string // a device asking to use the server (askPairing)
@@ -478,8 +480,6 @@ func (remote *remoteDesktop) openChat(id string) {
 // selectChat follows the chat the window shows: its draft, tabs and dialogs.
 func (remote *remoteDesktop) selectChat(id string) {
 	remote.current = id
-	remote.fileAttachments = nil
-	remote.parent.renderAttachments()
 	remote.meta = remoteapi.Meta{}
 	remote.closeTabs()
 	remote.notify()
@@ -570,6 +570,7 @@ func (remote *remoteDesktop) submit(mode string) {
 func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.HandoffChoice, files []agent.FileAttachment, pending string) {
 	ui := remote.parent
 	workspace := ui.cfg.Workspace
+	draft := ui.draftKey() // where its files go back if it fails
 	// With files, the server may spend up to 2 minutes copying them to an SSH
 	// machine's project before it answers: a follow-up must not time out here
 	// while the server takes it (#545).
@@ -605,9 +606,11 @@ func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.Handof
 					ui.prompt.drafts.set(key, text)
 				}
 				ui.prompt.drafts.set(pending, "")
-				if remote.current == chat {
+				if ui.draftKey() == draft {
 					remote.fileAttachments = append(files, remote.fileAttachments...)
 					ui.renderAttachments()
+				} else {
+					ui.parkServerFiles(draft, files)
 				}
 			}
 			if required, ok := err.(handoffRequired); ok {

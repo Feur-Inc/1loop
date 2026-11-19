@@ -6,6 +6,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"path/filepath"
@@ -18,6 +19,8 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 	"golang.org/x/crypto/ssh/knownhosts"
+
+	"1loop/internal/platform"
 )
 
 // TrustFunc asks the user whether to trust a host key seen for the first
@@ -63,7 +66,12 @@ func hostKeyCallback(ctx context.Context, settings Settings, trust TrustFunc) ss
 			files = append(files, own)
 		}
 		if len(files) > 0 {
-			check, err := knownhosts.New(files...)
+			readable, origin, cleanup, err := readableKnownHosts(files)
+			if err != nil {
+				return fmt.Errorf("The known hosts could not be read: %w", err)
+			}
+			defer cleanup()
+			check, err := knownhosts.New(readable...)
 			if err != nil {
 				return fmt.Errorf("The known hosts could not be read: %w", err)
 			}
@@ -74,7 +82,7 @@ func hostKeyCallback(ctx context.Context, settings Settings, trust TrustFunc) ss
 				return nil
 			case errors.As(err, &keyErr) && len(keyErr.Want) > 0:
 				return fmt.Errorf("The host key of %s changed (now %s %s). This can mean someone is intercepting the connection; 1loop refuses it. If the machine was reinstalled, remove its old key from %s",
-					hostname, key.Type(), ssh.FingerprintSHA256(key), keyErr.Want[0].Filename)
+					hostname, key.Type(), ssh.FingerprintSHA256(key), origin[keyErr.Want[0].Filename])
 			case !errors.As(err, &keyErr):
 				return err
 			}
@@ -95,6 +103,59 @@ func hostKeyCallback(ctx context.Context, settings Settings, trust TrustFunc) ss
 		}
 		return err
 	}
+}
+
+// readableKnownHosts gives knownhosts.New files it can read: a line it
+// cannot parse (a key type newer than Go's ssh package, such as OpenSSH's
+// post-quantum ssh-mldsa44-ed25519) makes it refuse the whole file, so such
+// a file is copied with those lines blanked, line numbers kept. origin maps
+// each file given back to the one it came from.
+func readableKnownHosts(files []string) (readable []string, origin map[string]string, cleanup func(), err error) {
+	origin = map[string]string{}
+	var temporary []string
+	cleanup = func() {
+		for _, path := range temporary {
+			os.Remove(path)
+		}
+	}
+	for _, path := range files {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			cleanup()
+			return nil, nil, nil, err
+		}
+		lines := strings.Split(string(data), "\n")
+		skipped := 0
+		for i, line := range lines {
+			if _, _, _, _, _, err := ssh.ParseKnownHosts([]byte(line)); err != nil && !errors.Is(err, io.EOF) {
+				lines[i] = ""
+				skipped++
+				platform.Devf("ssh", "%s:%d skipped: %v", path, i+1, err)
+			}
+		}
+		if skipped == 0 {
+			readable = append(readable, path)
+			origin[path] = path
+			continue
+		}
+		copied, err := os.CreateTemp("", "1loop-known_hosts-*")
+		if err != nil {
+			cleanup()
+			return nil, nil, nil, err
+		}
+		temporary = append(temporary, copied.Name())
+		_, err = copied.WriteString(strings.Join(lines, "\n"))
+		if closeErr := copied.Close(); err == nil {
+			err = closeErr
+		}
+		if err != nil {
+			cleanup()
+			return nil, nil, nil, err
+		}
+		readable = append(readable, copied.Name())
+		origin[copied.Name()] = path
+	}
+	return readable, origin, cleanup, nil
 }
 
 func fileExists(path string) bool {
@@ -159,6 +220,9 @@ func authMethods(settings Settings, secrets Secrets) ([]ssh.AuthMethod, func(), 
 	return nil, nil, fmt.Errorf("Choose how to sign in to %s", settings.Label())
 }
 
+// handshakeTimeout bounds the SSH banner, key exchange and sign-in.
+var handshakeTimeout = 30 * time.Second
+
 // dial opens one SSH connection to the machine.
 func dial(ctx context.Context, settings Settings, secrets Secrets, trust TrustFunc) (*ssh.Client, error) {
 	methods, done, err := authMethods(settings, secrets)
@@ -166,21 +230,35 @@ func dial(ctx context.Context, settings Settings, secrets Secrets, trust TrustFu
 		return nil, err
 	}
 	defer done()
-	config := &ssh.ClientConfig{
-		User:            settings.User,
-		Auth:            methods,
-		HostKeyCallback: hostKeyCallback(ctx, settings, trust),
-		Timeout:         20 * time.Second,
-	}
 	address := settings.Address()
 	connection, err := (&net.Dialer{Timeout: 20 * time.Second}).DialContext(ctx, "tcp", address)
 	if err != nil {
 		return nil, fmt.Errorf("%s could not be reached: %w", address, err)
 	}
-	// The handshake may wait for the user to trust the host key.
+	// ssh.ClientConfig.Timeout covers ssh.Dial only: a host that takes the
+	// TCP connection but never sends its banner would hang here (#521). The
+	// deadline is lifted while the user is asked to trust the host key.
+	connection.SetDeadline(time.Now().Add(handshakeTimeout))
+	asked := trust
+	if trust != nil {
+		asked = func(ctx context.Context, machine, address, keyType, fingerprint string) bool {
+			connection.SetDeadline(time.Time{})
+			defer connection.SetDeadline(time.Now().Add(handshakeTimeout))
+			return trust(ctx, machine, address, keyType, fingerprint)
+		}
+	}
+	config := &ssh.ClientConfig{
+		User:            settings.User,
+		Auth:            methods,
+		HostKeyCallback: hostKeyCallback(ctx, settings, asked),
+		Timeout:         20 * time.Second,
+	}
 	stop := context.AfterFunc(ctx, func() { connection.Close() })
 	defer stop()
 	conn, channels, requests, err := ssh.NewClientConn(connection, address, config)
+	if err == nil {
+		connection.SetDeadline(time.Time{}) // the connection lives on
+	}
 	if err != nil {
 		connection.Close()
 		if ctx.Err() != nil {

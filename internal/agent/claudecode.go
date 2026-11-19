@@ -28,6 +28,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -309,6 +310,35 @@ func claudeLimit(status int, text string) (time.Time, bool) {
 // claudeTool translates a Claude Code tool call into the row 1loop shows:
 // commands, reads and edits use 1loop's own rows (and their detail panel);
 // every other tool keeps its name and arguments.
+// claudeRunning says how many of the calls still waiting for a result, in
+// the order the model asked for them, Claude Code runs now. It runs the
+// tools that only look (reading, searching) side by side, and any other one
+// alone, once the calls before it are done: a Read sent with a command
+// waits for that command's end.
+func claudeRunning(names []string) int {
+	if len(names) == 0 {
+		return 0
+	}
+	if !claudeConcurrent(names[0]) {
+		return 1
+	}
+	n := 1
+	for n < len(names) && claudeConcurrent(names[n]) {
+		n++
+	}
+	return n
+}
+
+// claudeConcurrent reports whether Claude Code may run the tool alongside
+// others.
+func claudeConcurrent(name string) bool {
+	switch name {
+	case "Read", "Grep", "Glob", "LS", "WebFetch", "WebSearch", "ToolSearch", "Task", "Agent", "TaskOutput":
+		return true
+	}
+	return false
+}
+
 func claudeTool(root, name string, input json.RawMessage) (tool, args string) {
 	if strings.HasPrefix(name, "mcp__1loop_todo__") {
 		return strings.TrimPrefix(name, "mcp__1loop_todo__"), string(input)
@@ -858,8 +888,26 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	type pending struct {
 		outcome ToolOutcome
 		started time.Time
+		name    string // Claude Code's name for the tool
+		running bool   // false while Claude Code holds it back (claudeRunning)
 	}
-	calls := map[string]*pending{}   // tool calls without a result yet
+	calls := map[string]*pending{} // tool calls without a result yet
+	var queue []*pending           // the same, in the order the model asked for them
+	// start marks the calls Claude Code runs now as started: it does not say
+	// when it starts one, and a call held back behind a command would show
+	// that command's time as its own (a failed Read "taking" 2 minutes).
+	start := func() {
+		names := make([]string, len(queue))
+		for i, p := range queue {
+			names[i] = p.name
+		}
+		for _, p := range queue[:claudeRunning(names)] {
+			if !p.running {
+				p.running, p.started = true, time.Now()
+				emit("tool_exec", p.outcome)
+			}
+		}
+	}
 	streaming := map[int]*ToolCall{} // tool calls being written, by block index
 	sawText := false                 // the current text arrived as deltas
 	status := &announcer{emit: emit}
@@ -1111,10 +1159,11 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				case "tool_use":
 					tool, arguments := claudeTool(cfg.Workspace, claudeBlockValue.Name, claudeBlockValue.Input)
 					todo.observe(tool)
-					pendingValue := &pending{outcome: ToolOutcome{ID: claudeBlockValue.ID, Name: tool, Args: arguments}, started: time.Now()}
+					pendingValue := &pending{outcome: ToolOutcome{ID: claudeBlockValue.ID, Name: tool, Args: arguments}, started: time.Now(), name: claudeBlockValue.Name}
 					calls[claudeBlockValue.ID] = pendingValue
+					queue = append(queue, pendingValue)
 					emit("tool", pendingValue.outcome)
-					emit("tool_exec", pendingValue.outcome)
+					start()
 				}
 			}
 		case "control_request":
@@ -1136,8 +1185,10 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			if projectRead || claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__wrap_up" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__memory" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__settings" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__subchat" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__chats" || name == "change_directory" || name == "request_directory" || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || backend.confirm(ctx, emit, title, preview) {
 				response = map[string]any{"behavior": "allow", "updatedInput": claudeEventValue.Request.Input}
 				for _, p := range calls { // the approved call starts now
-					p.started = time.Now()
-					emit("tool_exec", p.outcome)
+					if p.running {
+						p.started = time.Now()
+						emit("tool_exec", p.outcome)
+					}
 				}
 			}
 			line, _ := json.Marshal(map[string]any{"type": "control_response", "response": map[string]any{
@@ -1155,6 +1206,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 					continue
 				}
 				delete(calls, b.ToolUseID)
+				queue = slices.DeleteFunc(queue, func(q *pending) bool { return q == p })
 				p.outcome.Output, p.outcome.Images = claudeResult(b.Content)
 				p.outcome.Elapsed = time.Since(p.started)
 				if b.IsError {
@@ -1172,6 +1224,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				messages = append(messages, Message{Role: "assistant", ToolCalls: []ToolCall{call}},
 					Message{Role: "tool", ToolCallID: b.ToolUseID, Content: p.outcome.modelText(), Images: p.outcome.Images})
 				emit("tool_result", p.outcome)
+				start() // the next ones in Claude Code's queue, if any
 			}
 			// The gap between two tool calls: steered messages go in now.
 			for _, extra := range inboxValue.Steer() {

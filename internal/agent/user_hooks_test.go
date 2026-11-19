@@ -3,7 +3,9 @@
 package agent
 
 import (
+	"context"
 	"os"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -36,5 +38,23 @@ func TestSaveHooks(t *testing.T) {
 	}
 	if content, _ := ReadHooks(); content != good || HookCount() != 1 {
 		t.Fatalf("saved: %q, %d hooks", content, HookCount())
+	}
+}
+
+// A chatty hook's output is cut before it joins the model's context.
+func TestHookOutputIsCut(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the hook is a shell command")
+	}
+	dir := t.TempDir()
+	t.Setenv("XDG_CONFIG_HOME", dir)
+	t.Setenv("HOME", dir)
+	hooks := `{"hooks": {"UserPromptSubmit": [{"hooks": [{"type": "command", "command": "head -c 3000000 /dev/zero | tr '\\0' a"}]}]}}`
+	if err := SaveHooks(hooks); err != nil {
+		t.Fatal(err)
+	}
+	result := runHooks(context.Background(), "UserPromptSubmit", "", map[string]any{"cwd": dir, "prompt": "hi"})
+	if len(result.problems) > 0 || len(result.output) > hookContextLimit+100 || !strings.Contains(result.output, "skipped") {
+		t.Fatalf("problems %v, %d characters kept", result.problems, len(result.output))
 	}
 }

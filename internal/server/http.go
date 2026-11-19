@@ -336,8 +336,8 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 		}
 	}
 	server.chats = kept
-	if err := server.saveLocked(); err != nil {
-		server.chats = previous
+	if err := server.saveOutsideLocked(); err != nil {
+		server.chats = restoredChats(previous, server.chats, gone)
 		server.mu.Unlock()
 		core.Fail(w, 500, err.Error())
 		return
@@ -660,7 +660,10 @@ func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 		core.Fail(w, 400, "Invalid request")
 		return
 	}
-	server.backend.Approve(args.ID, args.Allow)
+	if !server.backend.Approve(args.ID, args.Allow) {
+		core.Fail(w, 404, "This approval is no longer waiting")
+		return
+	}
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }
 
@@ -1001,4 +1004,21 @@ func (server *headlessServer) setDefaultModels(w http.ResponseWriter, r *http.Re
 		return
 	}
 	core.Fail(w, 404, "Connection not found")
+}
+
+// restoredChats puts back the chats a failed delete removed, in their
+// order, keeping those created while the state was being saved.
+func restoredChats(previous, current, gone []*serverChat) []*serverChat {
+	var chats []*serverChat
+	for _, chat := range current {
+		if !slices.Contains(previous, chat) {
+			chats = append(chats, chat)
+		}
+	}
+	for _, chat := range previous {
+		if slices.Contains(gone, chat) || slices.Contains(current, chat) {
+			chats = append(chats, chat)
+		}
+	}
+	return chats
 }

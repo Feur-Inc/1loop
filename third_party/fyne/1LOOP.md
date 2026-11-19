@@ -45,3 +45,12 @@ shows every change.
   early, so text before it was drawn again, partly in the emoji's font
   (1loop #438: a copied table row pasted in the composer looked broken).
   `internal/painter/font_tab_test.go` checks it.
+- `internal/driver/glfw/window.go` (Resize), `window_desktop.go`,
+  `window_wasm.go`: a window is never sized larger than the work area of
+  its screen (glfw's work area, the screen less its panels), or than nine
+  tenths of the screen where the platform gives no smaller work area
+  (1loop #512: the first 1180×760 window went under a 54 px panel on a
+  1280×800 screen). The window is also created at that size (primary
+  screen): on Wayland the compositor keeps the size a window is created
+  with, and the canvas was stretched over it. `window_workarea_test.go`
+  checks the arithmetic.

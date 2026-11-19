@@ -43,9 +43,10 @@ type claudeProcess struct {
 	stderr  *outputBuffer
 	binding *todoMCPBinding // nil without 1loop's MCP server
 	lines   chan []byte     // its output, line by line; closed when it exits
-	quit    chan struct{}   // closed when the process is dropped
-	done    chan struct{}   // closed once it exited and was waited for
-	cleanup []func()        // its MCP server and config files
+	quit    chan struct{}   // closed when the process is dropped: its output is drained
+	quitOne sync.Once
+	done    chan struct{} // closed once it exited and was waited for
+	cleanup []func()      // its MCP server and config files
 
 	writing sync.Mutex
 	open    bool
@@ -132,6 +133,10 @@ func (process *claudeProcess) alive() bool {
 // released. It waits for the exit.
 func (process *claudeProcess) end(interrupt bool, grace time.Duration) {
 	process.finish(interrupt)
+	// Nobody reads its lines any more: the reader drains them, or it would
+	// wait to hand one over while this waits for the exit, which it reports
+	// (#545: Stop did nothing on a chat's second turn).
+	process.stopReading()
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
 	select {
@@ -149,9 +154,14 @@ func (process *claudeProcess) kill() {
 	process.end(false, 4*time.Second)
 }
 
+// stopReading lets the reader drop the rest of the output.
+func (process *claudeProcess) stopReading() {
+	process.quitOne.Do(func() { close(process.quit) })
+}
+
 func (process *claudeProcess) release() {
 	process.once.Do(func() {
-		close(process.quit)
+		process.stopReading()
 		for _, clean := range process.cleanup {
 			clean()
 		}

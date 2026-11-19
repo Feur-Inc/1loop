@@ -356,7 +356,7 @@ func referenceView(detail *gitrepo.Detail, refresh func()) fyne.CanvasObject {
 	if detail.Pull {
 		meta += fmt.Sprintf(" · %s ← %s · +%d −%d", detail.Base, detail.Head, detail.Additions, detail.Deletions)
 	}
-	open := newRow("Open on GitHub", nil, styleOutline, func() { openLink(detail.URL) })
+	open := newRow("Open on GitHub", nil, styleOutline, func() { openInBrowser(detail.URL) })
 	again := newRow("Refresh", nil, styleOutline, refresh)
 	header := padded(12, 8, 16, 16, container.NewVBox(
 		container.NewBorder(nil, nil, textLine(stateName(detail.State), 12.5, stateColor(detail.State)), container.NewHBox(again, open)),

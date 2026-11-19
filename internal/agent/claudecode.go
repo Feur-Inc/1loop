@@ -161,12 +161,26 @@ type PlanUsage struct {
 //     guides, the plugin directory), which 1loop neither shows nor manages.
 const claudeDisabledTools = "Task,Agent,SendMessage,ListAgents,Workflow,CronCreate,CronDelete,CronList,ScheduleWakeup,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,RemoteTrigger,PushNotification,ReportFindings,DesignSync,ShareOnboardingGuide,PublishPlugin"
 
+// ClaudeEntrypoint is the entry point Claude Code reports with each request
+// when a connection's ClaudeLabel is on, instead of "sdk-cli", the one it
+// gives itself when started with -p as 1loop starts it.
+//
+// Measured on a Claude Pro account (Sonnet 5.5, high effort, one long
+// answer per run, 5-hour window read before and after): about 1.5 % of the
+// window per 10k output tokens as "sdk-cli", 0.6 % from the interactive
+// "cli", though 1loop sent a shorter prompt. Others report the same in
+// anthropics/claude-code#97074 and earendil-works/pi-claude-code#22.
+// Anthropic has not said whether another name is allowed: the setting is
+// off by default and says so. It is 1loop's own name, never "cli": 1loop
+// does not pass itself off as the terminal, nor as another program.
+const ClaudeEntrypoint = "1loop"
+
 // claudeCommand prepares a Claude Code process in its stream-json mode.
 // The environment is the user's, minus what would change who pays (an API
 // key) and minus the variables of a Claude Code session 1loop may have been
 // started from. home is the connection's Claude Code folder, "" for the
-// system login (claude_accounts.go).
-func claudeCommand(ctx context.Context, home, dir string, extra ...string) (*exec.Cmd, error) {
+// system login (claude_accounts.go). label is the connection's ClaudeLabel.
+func claudeCommand(ctx context.Context, home, dir string, label bool, extra ...string) (*exec.Cmd, error) {
 	path, err := ClaudeExecutable()
 	if err != nil {
 		return nil, err
@@ -208,6 +222,9 @@ func claudeCommand(ctx context.Context, home, dir string, extra ...string) (*exe
 	// One memory: 1loop's (its memory tool and AGENTS.md), which every model
 	// it runs reads.
 	cmd.Env = append(cmd.Env, "CLAUDE_CODE_DISABLE_AUTO_MEMORY=1")
+	if label {
+		cmd.Env = append(cmd.Env, "CLAUDE_CODE_ENTRYPOINT="+ClaudeEntrypoint)
+	}
 	if machineOf(ctx) == nil { // its Bash tool runs here: the project's variables (#408)
 		cmd.Env = append(cmd.Env, platform.ProjectEnv(ctx)...)
 	}
@@ -251,7 +268,7 @@ type claudeAnswer struct {
 func (backend *App) claudeHandshake(ctx context.Context, home, dir string, extra ...string) (answer claudeAnswer, err error) {
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
-	cmd, err := claudeCommand(ctx, home, dir, extra...)
+	cmd, err := claudeCommand(ctx, home, dir, false, extra...) // the handshake asks no model
 	if err != nil {
 		return answer, err
 	}
@@ -759,7 +776,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		cleanup = append(cleanup, cleanExtensions)
 		args = append(args, extensionArgs...)
 		// Its own context: a kept process outlives this turn's.
-		cmd, err := claudeCommand(context.Background(), cfg.ClaudeHome, cfg.Workspace, args...)
+		cmd, err := claudeCommand(context.Background(), cfg.ClaudeHome, cfg.Workspace, cfg.ClaudeLabel, args...)
 		if err != nil {
 			for _, clean := range cleanup {
 				clean()

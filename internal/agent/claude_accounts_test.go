@@ -130,7 +130,7 @@ func TestClaudeCommandUsesConnectionFolder(t *testing.T) {
 	t.Setenv("CLAUDE_CONFIG_DIR", "/elsewhere")
 	t.Setenv("CLAUDE_CODE_OAUTH_TOKEN", "token")
 	own := filepath.Join(ClaudeAccountsDir(), "b2")
-	cmd, err := claudeCommand(context.Background(), own, home)
+	cmd, err := claudeCommand(context.Background(), own, home, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestClaudeCommandUsesConnectionFolder(t *testing.T) {
 	if info, err := os.Stat(own); err != nil || !info.IsDir() || info.Mode().Perm() != 0o700 {
 		t.Fatalf("folder not created privately: %v %v", info, err)
 	}
-	cmd, err = claudeCommand(context.Background(), "", home)
+	cmd, err = claudeCommand(context.Background(), "", home, false)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -284,5 +284,32 @@ func TestClaudeSessionSurvivesLoginSwitch(t *testing.T) {
 	cfg.ClearSessions()
 	if cfg.ClaudeSession() != "" || len(cfg.OtherSessions) != 0 {
 		t.Fatal("ClearSessions left a session")
+	}
+}
+
+// A connection that turned ClaudeLabel on has Claude Code report 1loop as
+// its entry point; one that did not passes nothing, and a variable from the
+// environment 1loop was started in never leaks through.
+func TestClaudeCommandEntrypointLabel(t *testing.T) {
+	home, _ := claudeAccountsHome(t)
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "cli")
+	for _, label := range []bool{false, true} {
+		cmd, err := claudeCommand(context.Background(), "", home, label)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		for _, pair := range cmd.Env {
+			if strings.HasPrefix(pair, "CLAUDE_CODE_ENTRYPOINT=") {
+				got = append(got, pair)
+			}
+		}
+		want := []string(nil)
+		if label {
+			want = []string{"CLAUDE_CODE_ENTRYPOINT=1loop"}
+		}
+		if strings.Join(got, ",") != strings.Join(want, ",") {
+			t.Fatalf("label %v: entry point variables %q, want %q", label, got, want)
+		}
 	}
 }

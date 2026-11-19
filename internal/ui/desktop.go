@@ -1686,6 +1686,7 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 		if conn.ID == cfg.ConnectionID {
 			cfg.CompactAt = conn.ModelOptions[cfg.Model].CompactAt
 			cfg.ConnectionName = conn.Name
+			cfg.ClaudeLabel = conn.ClaudeLabel
 			break
 		}
 	}

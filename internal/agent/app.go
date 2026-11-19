@@ -88,6 +88,9 @@ type Config struct {
 	// ClaudeHome is the Claude Code connection's CLAUDE_CONFIG_DIR, "" for
 	// the system Claude Code login (claude_accounts.go).
 	ClaudeHome string `json:"claudeHome,omitempty"`
+	// ClaudeLabel is the connection's choice to report "1loop" as Claude
+	// Code's entry point (ClaudeEntrypoint); read from it for each run.
+	ClaudeLabel bool `json:"-"`
 	// SessionMark is how many of the chat's items that session has seen:
 	// what other models did after it is sent when Claude Code resumes.
 	SessionMark int `json:"sessionMark,omitempty"`

@@ -293,6 +293,7 @@ type remoteDesktop struct {
 	todoMarks     []*taskMark
 	todoSignature string
 	openCommands  map[string]bool // the background commands shown in full, by task
+	connected     string          // the connection line show last wrote in status
 }
 
 // useServer makes a server the window's target: the sidebar lists its
@@ -767,6 +768,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			}
 			if err != nil {
 				remote.status.SetText(err.Error())
+				remote.connected = "" // the next answer says it is connected again
 				return
 			}
 			remote.worktrees = state.Worktrees
@@ -802,11 +804,13 @@ func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat
 		ui.cfg.Workspace = workspace
 		ui.updateHeader()
 	}
-	status := "Connected to " + name
-	if remote.meta.Running && remote.current != "" {
-		status += " · " + remote.meta.Label
+	// The connection only: the agent's activity is in the transcript and the
+	// sidebar (#546). Written when it changes, so that a notice or a failed
+	// send's error stays readable instead of being replaced at every refresh.
+	if status := "Connected to " + name; status != remote.connected {
+		remote.connected = status
+		remote.status.SetText(status)
 	}
-	remote.status.SetText(status)
 	if slices.Equal(remote.chats, chats) && slices.Equal(remote.projects, projects) {
 		return
 	}

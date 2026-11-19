@@ -10,6 +10,8 @@ package server
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -47,10 +49,47 @@ func defaultDataDir() (string, error) {
 	return filepath.Join(home, "1loop-server"), nil
 }
 
-// listenAdmin opens the admin socket in dir and serves it until the
-// returned function closes it.
-func (server *headlessServer) listenAdmin(dir string) (func(), error) {
+// adminSocketPath is where the admin socket of the server with data
+// directory dir is. A Unix socket's path has at most 104 to 108 bytes: with
+// a long data directory it goes to a private folder of this user's
+// ($XDG_RUNTIME_DIR, or one 1loop makes in the temporary folder), under a
+// name made from the data directory, which both sides work out alike (#514).
+func adminSocketPath(dir string) (string, error) {
 	path := filepath.Join(dir, adminSocketName)
+	if len(path) < 100 {
+		return path, nil
+	}
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(filepath.Clean(abs)))
+	name := "1loop-server-" + hex.EncodeToString(sum[:6]) + ".sock"
+	private := os.Getenv("XDG_RUNTIME_DIR")
+	if private == "" {
+		private = filepath.Join(os.TempDir(), fmt.Sprintf("1loop-server-%d", os.Getuid()))
+		if err := os.Mkdir(private, 0700); err != nil && !errors.Is(err, os.ErrExist) {
+			return "", err
+		}
+		// Not a link, not another user's: the socket is reached by whoever reaches it.
+		info, err := os.Lstat(private)
+		if err != nil {
+			return "", err
+		}
+		if !info.IsDir() || info.Mode().Perm() != 0700 || !ownedByMe(info) {
+			return "", fmt.Errorf("%s is not a private folder of this user", private)
+		}
+	}
+	return filepath.Join(private, name), nil
+}
+
+// listenAdmin opens the admin socket of data directory dir and serves it
+// until the returned function closes it.
+func (server *headlessServer) listenAdmin(dir string) (func(), error) {
+	path, err := adminSocketPath(dir)
+	if err != nil {
+		return nil, err
+	}
 	if conn, err := net.DialTimeout("unix", path, time.Second); err == nil {
 		conn.Close()
 		return nil, fmt.Errorf("another 1loop server already uses %s", dir)
@@ -77,7 +116,8 @@ func (server *headlessServer) listenAdmin(dir string) (func(), error) {
 			go server.serveAdmin(conn)
 		}
 	}()
-	return func() { listener.Close(); os.Remove(path) }, nil
+	server.adminReady.Store(true)
+	return func() { server.adminReady.Store(false); listener.Close(); os.Remove(path) }, nil
 }
 
 // serveAdmin runs the one command a connection sends, as a line of
@@ -101,7 +141,10 @@ func (server *headlessServer) serveAdmin(conn net.Conn) {
 // adminCommand sends one command to the server running with data directory
 // dir, and prints its answer to out.
 func adminCommand(dir string, args []string, out io.Writer) error {
-	path := filepath.Join(dir, adminSocketName)
+	path, err := adminSocketPath(dir)
+	if err != nil {
+		return err
+	}
 	conn, err := net.DialTimeout("unix", path, 5*time.Second)
 	if err != nil {
 		return fmt.Errorf("no 1loop server is running with the data directory %s (%v): start it first, or give the -data-dir it uses", dir, err)
@@ -161,4 +204,13 @@ func shellQuote(text string) string {
 		return text
 	}
 	return "'" + strings.ReplaceAll(text, "'", `'\''`) + "'"
+}
+
+// adminCommandFor is pairCommand when the admin socket listens, else empty:
+// the client then shows the console's command only.
+func (server *headlessServer) adminCommandFor(id, code string) string {
+	if !server.adminReady.Load() {
+		return ""
+	}
+	return server.pairCommand(id, code)
 }

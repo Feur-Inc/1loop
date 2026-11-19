@@ -12,7 +12,6 @@ package ui
 
 import (
 	"image/color"
-	"os"
 	"sync"
 	"time"
 
@@ -33,6 +32,8 @@ uniform vec4 u_text;
 uniform vec4 u_accent;
 uniform float u_state;       // STATE_IDLE, STATE_WORKING, STATE_WAITING or STATE_ERROR
 uniform float u_state_time;  // seconds since u_state changed
+uniform vec4 iMouse;         // xy: the pointer, zw: the last press, in gl_FragCoord's pixels; z < 0 once released
+uniform float u_mouse_inside; // 1 while the pointer is over the window, 0 once it left
 #define STATE_IDLE 0.0
 #define STATE_WORKING 1.0
 #define STATE_WAITING 2.0
@@ -77,6 +78,7 @@ type backdrop struct {
 
 func newBackdrop() *backdrop {
 	b := &backdrop{shader: canvas.NewShader(""), picture: canvas.NewImageFromImage(nil)}
+	b.shader.Watch = mouseUniforms
 	b.shader.Hide()
 	b.picture.FillMode = canvas.ImageFillCover
 	b.picture.ScaleMode = canvas.ImageScaleSmooth
@@ -125,7 +127,7 @@ func (ui *desktopUI) syncBackdrop() {
 		b.shader.Hide()
 		return
 	}
-	data, err := os.ReadFile(file.Shader)
+	data, err := palette.ReadThemeFile(file.Shader)
 	if err != nil {
 		ui.shaderFailed(file.Shader, err)
 		return

@@ -9,16 +9,34 @@
 - macOS: `~/Library/Application Support/1loop/themes/`
 - Windows: `%AppData%\1loop\themes\`
 
-Each `*.toml` file there is a theme. It appears in **Settings → General → Theme** next to Dark, Light and System as soon as it is saved, without a restart, and the theme in use is painted again each time its file changes. A file that cannot be read is listed in red under the theme picker with the reason (and the line, for a syntax error); the other themes keep working, and a theme in use whose file breaks shows 1loop's dark look until it is fixed.
+A theme is stored in one of three ways (see [One zip per theme](#one-zip-per-theme)): a `.zip` file, a folder laid out like the zip, or loose files (a `.toml` with its shader and fonts beside it). Each one there is a theme. It appears in **Settings → General → Theme** next to Dark, Light and System as soon as it is saved, without a restart, and the theme in use is painted again each time its file changes. A file that cannot be read is listed in red under the theme picker with the reason (and the line, for a syntax error); the other themes keep working, and a theme in use whose file breaks shows 1loop's dark look until it is fixed.
 
 Under the picker:
 
 - **New theme** writes a commented template (every key, 1loop's dark colours) and opens it in your editor.
-- **Duplicate** copies the theme in use into a new file: a theme file as it is, or Dark/Light as a template.
-- **Edit** opens the theme file in use.
+- **Duplicate** copies the theme in use: a theme file as it is, a zip or folder as a folder, or Dark/Light as a template.
+- **Edit** opens the theme file in use (for a zip, **Unpack to edit** copies it to a folder first).
+- **Pack into zip** turns a loose theme in use into a zip.
 - **Open folder** opens the themes folder.
 
 A project can have its own theme: in the sidebar, the project's menu → **Theme…**. Its chats use that theme while they are on screen; the others keep the global one.
+
+## One zip per theme
+
+A theme with a shader, fonts and a licence is several files; as a zip they stay together. Put `<name>.zip` in the themes folder (the name is the theme's id, `file:<name>`). Inside, at the root:
+
+```
+midnight.zip
+├── theme.toml          the theme (the only .toml, or the one called theme.toml)
+├── aurora.frag         shaders
+├── fonts/Maple.ttf     fonts, with their licence
+├── fonts/LICENSE.txt
+└── preview.png         optional picture
+```
+
+The theme refers to the other files by relative path inside the zip (`shader = "aurora.frag"`, `font = "fonts/Maple.ttf"`); each theme carries its own copy of a shared font and its licence. A **folder** `themes/<name>/` with the same layout is read the same way: it is the form to edit by hand, the zip is the form to share. Loose files keep working.
+
+Adding, replacing or removing a zip or folder is picked up within a second. 1loop reads a zip in memory and never extracts it. Safety: an entry with an absolute path or `..` is refused, a theme may have at most 200 entries and 64 MB unpacked, and only `.toml`, shaders (`.frag`, `.glsl`), fonts (`.ttf`, `.otf`), images (`.png`, `.jpg`, `.webp`, `.gif`) and text files (`.txt`, `.md`, licences) are allowed. A broken zip is listed in red with the reason. Two themes with the same name (`a.zip` and `a.toml`) are an error: keep one.
 
 ## Format
 
@@ -32,6 +50,13 @@ shader = "aurora.frag"   # a GLSL background, beside this file
 shader_opacity = 0.8     # how much the background and sidebar cover it, 0 to 1
 font = "IBM Plex Sans"   # the interface font: a family, or a .ttf/.otf
 font_mono = "JetBrains Mono"
+
+[blur]                   # frosted glass: what lies behind shows through, blurred
+sidebar = 16
+menus = 20
+
+[blur_tint]              # the colour over the blur; left out, the element's own, translucent
+sidebar = "#272c3699"
 
 [colors]
 background = "#2e3440"
@@ -66,6 +91,10 @@ Write only the shader's body, without `#version`: 1loop adds the version for you
 | `vec4 u_background`, `u_surface`, `u_text`, `u_accent` | the theme's colours (opaque) and the accent in use |
 | `float u_state` | what the agent does, over all chats: `STATE_IDLE`, `STATE_WORKING`, `STATE_WAITING` (an approval or a question) or `STATE_ERROR` |
 | `float u_state_time` | seconds since `u_state` last changed |
+| `vec4 iMouse` | the pointer, as on Shadertoy but always followed: `xy` where it is, `zw` where a button was last pressed, in `gl_FragCoord`'s pixels (from the bottom left). `z` is negative once the button is released. Raw positions, not eased: ease them in the shader if you like. When the pointer leaves the window they keep its last place |
+| `float u_mouse_inside` | 1 while the pointer is over the window, 0 once it left |
+
+The shader is drawn again as the pointer moves only when it uses `iMouse` or `u_mouse_inside`; one that doesn't costs nothing more.
 
 **Settings → General → Shader background** sets the frame rate (15, 30 or 60 fps; 30 by default) or turns shaders off, which shows the theme's plain colours. The shader pauses while the window is hidden in the tray or not focused, and is still while Animations are off.
 
@@ -78,6 +107,21 @@ Examples: [`themes/aurora.frag`](themes/aurora.frag) (reacts to the agent's stat
 Instead of a shader, a picture drawn behind the whole window: `.png`, `.jpg`, `.webp`, or an animated `.gif`, which loops at its own frame delays. The path is relative to the theme file. It covers the window (cropped to keep its proportions), and the background and sidebar are laid over it at `shader_opacity`, like a shader. A theme has either `shader` or `background_image`, not both.
 
 A GIF pauses like a shader: while the window is hidden or in the background, and while Animations are off. **Shader background → Off** hides the picture too and shows the theme's plain colours. A picture that can't be read is reported in red in Settings → General, like a shader that fails. Example: [`themes/drift.toml`](themes/drift.toml) with `drift.gif`.
+
+### blur
+
+Frosted glass for parts of the window: `[blur]` gives an element a blur radius (in the interface's units, `0` to `64`; `0` or left out is no blur), and what lies behind it shows through, blurred: the shader or picture background, or the window behind a menu or dialog. `[blur_tint]` is the colour laid over the blur, `#rrggbbaa`; the alpha is how much it covers. An element without a tint gets its own colour at 60 % (menus 50 %, dialogs 88 %).
+
+| element | |
+| --- | --- |
+| `sidebar` | the sidebar |
+| `panel` | the side panel (tools, files, browser, terminal) |
+| `composer` | the message box |
+| `headers` | the pane headers of a split window |
+| `menus` | menus and popovers, over what they cover |
+| `dialogs` | dialogs: the whole window behind them, blurred live |
+
+The blur follows the corners (`roundness`), works on dark and light bases, and is drawn on the GPU only when the window redraws. Without a background behind the window (no `shader` or `background_image`) the sidebar, panel, composer and headers blur the plain window colour: use them with a background. Where the GPU can't blur (Mesa drawing on the CPU, see Settings → General's renderer, or a GL older than 3.0) the elements keep their plain, opaque look; menus and dialogs keep 1loop's own frosted glass.
 
 ### fonts
 
@@ -120,7 +164,7 @@ Unknown keys are errors, so a typo is reported rather than ignored.
 
 ## The agent
 
-The agent can write a theme file in the folder above in this format, and switch to it with the settings tool: `general.theme` takes `file:<name>` for `<name>.toml`.
+The agent reads a short copy of this format on demand (`internal/palette/theme_format.md`, the settings tool's `theme_format`), writes a theme and its shader with `theme_write` (as `<name>.zip`; a theme that is already a folder or loose files is replaced where it is) (checked first, errors given back in plain words, saved only after you approve it), and switches to it with the settings tool: `general.theme` takes `file:<name>` for `<name>.toml`.
 
 ## matugen
 
@@ -138,4 +182,5 @@ More examples: [`themes/nord.toml`](themes/nord.toml), [`themes/paper.toml`](the
 
 ## Not there yet
 
+- Whole-window blur through the compositor (KDE's or a Wayland blur protocol behind a translucent window) is not there yet: the blur stays inside the window.
 - The phone takes the desktop's theme files (colours, accents, roundness). Shaders would stay desktop only.

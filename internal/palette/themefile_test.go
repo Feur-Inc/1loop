@@ -3,6 +3,7 @@
 package palette
 
 import (
+	"image/color"
 	"os"
 	"path/filepath"
 	"strings"
@@ -86,5 +87,30 @@ func TestThemeBackgroundImage(t *testing.T) {
 		if _, err := ParseTheme("i", text); err == nil {
 			t.Errorf("%q accepted", text)
 		}
+	}
+}
+
+func TestThemeBlur(t *testing.T) {
+	theme, err := ParseTheme("glass", "[blur]\nsidebar = 16\nmenus = 0\n[blur_tint]\nsidebar = \"#10203080\"\n")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if theme.Blur["sidebar"] != 16 || theme.Blur["menus"] != 0 || theme.BlurTint["sidebar"] != (color.NRGBA{0x10, 0x20, 0x30, 0x80}) {
+		t.Fatalf("blur %v, tint %v", theme.Blur, theme.BlurTint)
+	}
+	for text, want := range map[string]string{
+		"[blur]\nwindow = 4\n":             "blur.window: not an element",
+		"[blur]\nsidebar = 65\n":           "blur.sidebar: 65 is outside 0 to 64",
+		"[blur]\nsidebar = -1\n":           "blur.sidebar: -1 is outside",
+		"[blur]\nsidebar = \"x\"\n":        "line",
+		"[blur_tint]\nsidebar = \"red\"\n": "blur_tint.sidebar: \"red\" is not",
+		"[blur_tint]\ntitle = \"#000\"\n":  "blur_tint.title: not an element",
+	} {
+		if _, err := ParseTheme("bad", text); err == nil || !strings.Contains(err.Error(), want) {
+			t.Errorf("%q: %v, want %q", text, err, want)
+		}
+	}
+	if _, err := ParseTheme("template", ThemeTemplate("t")); err != nil {
+		t.Errorf("template: %v", err)
 	}
 }

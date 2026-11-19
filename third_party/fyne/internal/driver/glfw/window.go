@@ -59,6 +59,8 @@ func (w *window) Resize(size fyne.Size) {
 	bigEnough := size.Max(w.canvas.canvasSize(w.canvas.Content().MinSize()))
 	w.runOnMainWhenCreated(func() {
 		width, height := scale.ToScreenCoordinate(w.canvas, bigEnough.Width), scale.ToScreenCoordinate(w.canvas, bigEnough.Height)
+		// 1loop: never larger than the screen's work area (its panels left out).
+		width, height = w.fitWorkArea(width, height)
 		if w.fixedSize || !w.visible { // fixed size ignores future `resized` and if not visible we may not get the event
 			w.shouldWidth, w.shouldHeight = width, height
 			w.width, w.height = width, height

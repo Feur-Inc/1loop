@@ -14,6 +14,7 @@ import (
 type userProgram struct {
 	state  ProgramState
 	failed bool
+	used   map[string]bool // the shader's Watch uniforms it uses
 }
 
 const userVertex = `attribute vec2 vert;
@@ -76,6 +77,16 @@ func (p *painter) drawUserShader(s *canvas.Shader, pos fyne.Position, frame fyne
 		return
 	}
 	program := prog.state
+	if prog.used == nil {
+		prog.used = map[string]bool{}
+		for _, name := range s.Watch {
+			// Where the context cannot say, assume it is used.
+			u := p.ctx.GetUniformLocation(program.ref, name)
+			check, ok := p.ctx.(interface{ UniformFound(Uniform) bool })
+			prog.used[name] = !ok || check.UniformFound(u)
+		}
+	}
+	s.SetUsed(prog.used)
 	bounds, points := p.vecSquareCoords(pos, s, frame)
 	p.ctx.UseProgram(program.ref)
 	p.updateBuffer(program.buff, points)

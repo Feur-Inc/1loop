@@ -483,12 +483,12 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 				if machine == nil && chat.Config.MachineID != "" {
 					err = fmt.Errorf("This project's SSH machine is no longer on the server")
 				}
-				if err == nil && args.Cwd != "" {
+				if err == nil {
+					var on agent.Machine
 					if machine != nil {
-						dir, err = agent.MachinePath(ctx, machine, dir, args.Cwd)
-					} else {
-						dir, err = agent.WorkspacePath(dir, args.Cwd)
+						on = machine
 					}
+					dir, err = agent.TerminalDir(ctx, on, dir, args.Cwd)
 				}
 				if err == nil {
 					err = ctx.Err()

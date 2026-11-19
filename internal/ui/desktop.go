@@ -297,8 +297,10 @@ type desktopApp struct {
 	remoteEnabled    bool                     // see phone_server.go
 	devices          []remoteapi.PairedDevice // phones paired with the remote
 	chrome           bool
-	updates          updateState // the release page's latest version (updates.go)
-	panelWidth       float32     // last width chosen by dragging, independent of window size
+	titleBar         fyne.CanvasObject // the bar over the conversation: its title, and the window buttons with chrome
+	pictureLayer     *fyne.Container   // where pictures open, under titleBar (picture_viewer.go); nil without chrome
+	updates          updateState       // the release page's latest version (updates.go)
+	panelWidth       float32           // last width chosen by dragging, independent of window size
 	// Projects' environment variables, by projectEnvKey (project_env.go).
 	projectEnv        map[string]map[string]string
 	classicCompaction bool                       // settings: dynamic context compaction turned off
@@ -340,13 +342,13 @@ func useEnglishUI() {
 	}
 }
 
-func runDesktop(backend *agent.App, root string) {
+func runDesktop(backend *agent.App, root, asked string) {
 	softwareRendererStart() // Windows without an OpenGL driver: 1loop's Mesa (software_gl_windows.go)
 	useEnglishUI()
 	switchBackend()
 	// Once this is the process that stays (the build for the display, past
 	// its probe), and before any state is read.
-	instance := claimInstance()
+	instance := claimInstance(asked)
 	lastCrash := watchCrashes(statePath(root)) // crash_report.go
 	if platform.DevWanted {
 		platform.StartDevLog()
@@ -453,7 +455,12 @@ func runDesktop(backend *agent.App, root string) {
 		time.AfterFunc(180*time.Millisecond, func() { fyne.Do(launch.play) })
 	})
 	ui.startTray(a)
-	serveInstance(instance, func() { fyne.Do(ui.showWindow) })
+	serveInstance(instance, func() { fyne.Do(ui.showWindow) }, func(folder string) {
+		fyne.Do(func() {
+			ui.mainView().openProjectOn(localTarget, folder)
+			ui.showWindow()
+		})
+	})
 	// Shown, named, then run: the desktop learns which application this is
 	// before the window's first frame, when it picks its name and icon.
 	// Show makes the window. When OpenGL cannot draw it, 1loop tries its
@@ -692,7 +699,9 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	ui.buildTitleBar(sidebar)
 	layers := []fyne.CanvasObject{ui.root}
 	if ui.chrome {
-		layers = append(layers, resizeEdges(ui.window))
+		ui.pictureLayer = container.New(underTitleBar{ui})
+		ui.pictureLayer.Hide()
+		layers = append(layers, ui.pictureLayer, resizeEdges(ui.window))
 	}
 	return container.NewStack(append(layers, ui.tips.layer)...)
 }
@@ -821,6 +830,7 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	if ui.chrome {
 		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, ui.headerBar))
 	}
+	ui.titleBar = header
 	// The settings page takes the conversation's place while it is open.
 	ui.curtain = newPageCurtain()
 	main := container.NewStack(canvas.NewRectangle(colBackground), container.NewBorder(header, nil, nil, nil, container.NewStack(ui.split, ui.prefs.view, ui.curtain.cover)))
@@ -855,6 +865,9 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		ui.clearSelection()
 	}
 	ui.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
+		if key.Name == fyne.KeyEscape && ui.closePicture() {
+			return // a click on the title bar took the viewer's focus
+		}
 		if key.Name == fyne.KeyEscape && ui.prefs.open { // Escape goes back a page, then to the conversation
 			ui.prefs.back()
 		}

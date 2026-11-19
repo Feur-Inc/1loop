@@ -91,7 +91,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 			case <-timer.C:
 				fyne.Do(func() {
 					if ui.ctx.Err() == nil {
-						panel.refreshTodoStatus()
+						panel.tickTodoClocks()
 					}
 				})
 			}

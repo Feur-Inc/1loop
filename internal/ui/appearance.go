@@ -12,6 +12,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/palette"
@@ -120,9 +121,12 @@ func (ui *desktopUI) appearanceRows(view *settingsView) []fyne.CanvasObject {
 			}
 		}
 	}
-	themeRow := view.mark(registry.KeyTheme, settingRow(themes.Title,
-		"Dark is 1loop's own look. System follows this computer's dark mode, and changes with it. Theme files of your own are listed too.", sized(180, themePicker.row)))
-	themeRows := []fyne.CanvasObject{themeRow, ui.themeFileRow()}
+	// The theme files' note and buttons are part of the Theme row, with its
+	// inset, and the card's divider comes after them (#508).
+	themeRow := view.mark(registry.KeyTheme, container.New(layout.NewCustomPaddedVBoxLayout(0),
+		settingRow(themes.Title, "Dark is 1loop's own look. System follows this computer's dark mode, and changes with it. Theme files of your own are listed too.", sized(180, themePicker.row)),
+		ui.themeFileControls()))
+	themeRows := []fyne.CanvasObject{themeRow}
 
 	accents, _ := registry.Lookup(registry.KeyAccent)
 	current := ui.theme.accentSetting()

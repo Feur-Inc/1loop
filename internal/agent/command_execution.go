@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"sync"
 	"unicode/utf8"
 
@@ -106,21 +107,47 @@ func commandResult(ctx context.Context, dir string, capture *commandCapture, cod
 		tasks.logs = append(tasks.logs, savedCommandOutput{id, capture})
 		tasks.mu.Unlock()
 	}
-	result := map[string]any{
-		"cwd": dir, "status": status, "exit_code": code,
-		"stdout":       headAndTail(capture.stdout.summary(), tokens/2),
-		"stderr":       headAndTail(capture.stderr.summary(), tokens/2),
-		"stdout_bytes": capture.stdout.total, "stderr_bytes": capture.stderr.total,
-		"retention_truncated": capture.stdout.total > len(capture.stdout.data) || capture.stderr.total > len(capture.stderr.data),
+	return commandText(dir, status, code, capture, tokens, id, err)
+}
+
+// commandText is a command's result as the model reads it: a header line,
+// stdout, then stderr after a [stderr] line. Sizes and the id to page the
+// rest come only when output was cut; plain text, as JSON would escape every
+// newline and quote and add a field for each detail.
+func commandText(dir, status string, code int, capture *commandCapture, tokens int, id string, err error) string {
+	var builder strings.Builder
+	fmt.Fprintf(&builder, "exit %d · %s · cwd %s\n", code, status, dir)
+	block := func(label, full string) bool {
+		kept := headAndTail(full, tokens/2)
+		if kept == "" {
+			return false
+		}
+		if label != "" {
+			builder.WriteString("[" + label + "]\n")
+		}
+		builder.WriteString(kept)
+		if !strings.HasSuffix(kept, "\n") {
+			builder.WriteString("\n")
+		}
+		return kept != full
 	}
-	if id != "" {
-		result["output_id"] = id
+	stdout, stderr := capture.stdout.summary(), capture.stderr.summary()
+	cut := block("", stdout)
+	cut = block("stderr", stderr) || cut
+	retention := capture.stdout.total > len(capture.stdout.data) || capture.stderr.total > len(capture.stderr.data)
+	if (cut || retention) && id != "" {
+		fmt.Fprintf(&builder, "[output_id %s · stdout %d bytes, stderr %d bytes · command_output reads the rest", id, capture.stdout.total, capture.stderr.total)
+		if retention {
+			builder.WriteString("; the oldest output was not kept")
+		}
+		builder.WriteString("]\n")
+	} else if retention {
+		builder.WriteString("[the oldest output was not kept]\n")
 	}
 	if err != nil {
-		result["error"] = err.Error()
+		builder.WriteString("[error] " + err.Error() + "\n")
 	}
-	data, _ := json.Marshal(result)
-	return string(data)
+	return strings.TrimSuffix(builder.String(), "\n")
 }
 
 func readCommandOutput(ctx context.Context, raw string) (string, error) {

@@ -176,6 +176,7 @@ func (ui *desktopUI) sendToChat(chat *conversation, id, text string, images []co
 func (ui *desktopUI) turnEnded(chat *conversation, ended string) {
 	if chat.Subchat != nil {
 		chat.Subchat.Ended = ended
+		chat.Subchat.Unseen = ui.viewOf(chat).current != chat // unread unless a pane shows it
 		if parent := ui.parentOf(chat); parent != nil {
 			ui.panel.todoChanged(parent)
 			ui.remote.metaChanged(parent)

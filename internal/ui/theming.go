@@ -157,7 +157,7 @@ var tintedFrom = map[fyne.Resource]struct {
 
 // repaint maps the colours of everything in the app's windows to the new
 // theme's, then has Fyne draw it all again.
-func repaint(changed recolour) {
+func repaint(changed recolour, fontsChanged bool) {
 	for name, c := range tintColors {
 		next := changed.of(c)
 		tintColors[name] = next
@@ -208,8 +208,11 @@ func repaint(changed recolour) {
 		}
 	}
 	// Fyne's own widgets read the theme: setting it again draws every
-	// window anew.
+	// window anew. When the fonts are the same, the text already shaped is
+	// kept: only colours changed (#474).
+	fynedriver.KeepFonts = !fontsChanged
 	app.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
+	fynedriver.KeepFonts = false
 }
 
 // themeChoice is the theme setting with the accent, as saved.
@@ -245,10 +248,11 @@ func (choice themeChoice) accentColour() color.NRGBA {
 	return palette.AccentColor(choice.accent)
 }
 
-// applyTheme sets the colours for the choice, the system's dark mode read
-// when it follows it, and repaints the windows when anything changed. A
-// theme file that is gone or broken paints 1loop's dark look meanwhile.
-func (choice themeChoice) apply() {
+// apply sets the colours for the choice, the system's dark mode read when
+// it follows it, and repaints the windows when anything changed. A theme
+// file that is gone or broken paints 1loop's dark look meanwhile. It says
+// whether colours and fonts changed.
+func (choice themeChoice) apply() (recoloured, fontsChanged bool) {
 	setting := choice.active()
 	tokens := palette.For(setting, setting == palette.ThemeSystem && systemDark())
 	roundness = 1
@@ -261,7 +265,7 @@ func (choice themeChoice) apply() {
 		roundness = max(float32(file.Roundness), 0.05) // never 0: radii scale back from it
 	}
 	file, _ := themeFile(setting)
-	fontsChanged := loadThemeFonts(file.Fonts)
+	fontsChanged = loadThemeFonts(file.Fonts)
 	if fontsChanged {
 		measuresMu.Lock()
 		clear(measures) // measured in the old font
@@ -269,9 +273,11 @@ func (choice themeChoice) apply() {
 	}
 	changed := setColours(tokens, choice.accentColour())
 	platform.Devf("ui", "theme %s (dark %v), accent %s, roundness %.2f", setting, tokens.Dark, choice.accent, roundness)
-	if len(changed) > 0 || fontsChanged {
-		repaint(changed) // sets the theme again: Fyne drops its fonts
+	recoloured = len(changed) > 0
+	if recoloured || fontsChanged {
+		repaint(changed, fontsChanged) // sets the theme again
 	}
+	return recoloured, fontsChanged
 }
 
 // systemDark says whether the computer asks for dark windows. Fyne reads

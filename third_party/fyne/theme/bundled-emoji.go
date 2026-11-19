@@ -1,4 +1,4 @@
-//go:build !no_emoji
+//go:build !no_emoji && !linux
 
 package theme
 

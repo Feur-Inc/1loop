@@ -26,6 +26,11 @@ type overrideScope struct {
 func OverrideTheme(o fyne.CanvasObject, th fyne.Theme) {
 	id := overrideCount.Add(1)
 	s := &overrideScope{th: th, cacheID: strconv.Itoa(int(id))}
+	// 1loop: the caches were reset once per widget under the override, at
+	// each of its refreshes (thousands for the transcript), the measured
+	// text sizes too. Those are keyed by font and size, not by theme; the
+	// themed icons are dropped, once.
+	ResetThemeColourCaches()
 	overrideTheme(o, s)
 }
 
@@ -79,7 +84,6 @@ func overrideTheme(o fyne.CanvasObject, s *overrideScope) {
 }
 
 func overrideWidget(w fyne.Widget, s *overrideScope) {
-	ResetThemeCaches()
 	overrides.Store(w, s)
 
 	r := Renderer(w)

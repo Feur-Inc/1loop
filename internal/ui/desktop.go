@@ -11,6 +11,7 @@ import (
 	"image/color"
 	_ "image/gif"
 	_ "image/jpeg"
+	"io"
 	"maps"
 	"net"
 	"os"
@@ -233,7 +234,9 @@ type desktopUI struct {
 	newChat       *tapRow
 	connections   *tapRow
 	projectList   *fyne.Container
-	sideGlide     *glideLayout // projectList's layout: its rows glide between renderings
+	sideGlide     *glideLayout        // projectList's layout: its rows glide between renderings
+	sideRows      map[string]*sideRow // the rows of the last rendering, by key, reused by the next (sidebar_groups.go)
+	sideRowsNext  map[string]*sideRow
 	sideLists     *fyne.Container
 	sideChats     []sideChat // the chats listed, for search
 	sideOrder     []sideChat // the same in the sidebar's order, for the previous and next chat
@@ -348,7 +351,9 @@ func runDesktop(backend *agent.App, root, asked string) {
 	switchBackend()
 	// Once this is the process that stays (the build for the display, past
 	// its probe), and before any state is read.
+	benchMark("runDesktop")
 	instance := claimInstance(asked)
+	benchMark("instance claimed")
 	lastCrash := watchCrashes(statePath(root)) // crash_report.go
 	if platform.DevWanted {
 		platform.StartDevLog()
@@ -374,6 +379,7 @@ func runDesktop(backend *agent.App, root, asked string) {
 		}
 	}
 	a := fyneapp.NewWithID("io.1loop.desktop")
+	benchMark("fyne app")
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
 	backend.EnableChatGPTWeb(ctx)
@@ -394,9 +400,13 @@ func runDesktop(backend *agent.App, root, asked string) {
 		ui.chrome = false
 		ui.window = a.NewWindow("1loop")
 	}
+	benchMark("window created")
 	ui.usage, ui.prices = openUsage(ui.statePath)
+	benchMark("usage opened")
 	read := <-saved
+	benchMark("state read")
 	ui.loadFrom(read.state, read.err)
+	benchMark("state loaded")
 	ui.followTheme()
 	ui.initializeConnections()
 	ui.window.SetPadded(false)
@@ -405,6 +415,7 @@ func runDesktop(backend *agent.App, root, asked string) {
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
 	ui.backdrop = newBackdrop()
 	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.backdrop.picture, ui.build()))
+	benchMark("content built")
 	ui.syncBackdrop()
 	ui.followUsage()
 	ui.window.SetOnDropped(func(at fyne.Position, uris []fyne.URI) {
@@ -422,11 +433,20 @@ func runDesktop(backend *agent.App, root, asked string) {
 	ui.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { ui.focused().copySelection() })
 	ui.updateHeader()
 	ui.renderChats()
+	benchMark("sidebar rendered")
 	ui.refreshModels()
 	ui.refreshContextRing()
-	ui.startRemote()
-	ui.linkServers()
-	ui.watchUpdates()
+	// What the first frame does not show starts right after it (#475): the
+	// phone remote (its certificate), the linked servers, the update check
+	// and the other windows of the last run.
+	afterFirstFrame := func() {
+		ui.startRemote()
+		ui.linkServers()
+		ui.watchUpdates()
+		benchMark("services started")
+		ui.restoreWindows(read.state.Windows) // the other windows of the last run, on their chats
+		benchMark("windows restored")
+	}
 	ui.window.Canvas().Focus(ui.prompt)
 	// The launch sequence covers the first frames and only starts once the
 	// window is really on screen, otherwise it would play unseen.
@@ -450,6 +470,9 @@ func runDesktop(backend *agent.App, root, asked string) {
 		clipboardReady()
 		windowIdentity(ui.window) // again, should the window not have existed yet below
 		ui.startFrames()
+		// Started now, it would run before the first frame: the queue is
+		// emptied before each one.
+		time.AfterFunc(100*time.Millisecond, func() { fyne.Do(afterFirstFrame) })
 		size := ui.window.Canvas().Size()
 		platform.Devf("app", "window %.0f x %.0f at scale %.2f, own title bar %v", size.Width, size.Height, ui.window.Canvas().Scale(), ui.chrome)
 		time.AfterFunc(180*time.Millisecond, func() { fyne.Do(launch.play) })
@@ -467,6 +490,7 @@ func runDesktop(backend *agent.App, root, asked string) {
 	// other ways of drawing, by itself (render_fallback.go): what the next
 	// process needs (the one-instance claim) is let go first, and the end
 	// is a clean one.
+	benchMark("show window")
 	if failure := showFirstWindow(ui.window); failure != nil {
 		renderFailed(failure, func() {
 			if instance != nil {
@@ -476,12 +500,13 @@ func runDesktop(backend *agent.App, root, asked string) {
 		})
 	}
 	rendererReady()
+	benchMark("window shown")
 	if kind := os.Getenv("ONELOOP_BENCH"); kind != "" && platform.Dev != nil {
 		go ui.bench(kind)
 	}
 	windowIdentity(ui.window)
-	ui.restoreLayout(read.state.Split)    // the main window's panes of the last run
-	ui.restoreWindows(read.state.Windows) // the other windows of the last run, on their chats
+	ui.restoreLayout(read.state.Split) // the main window's panes of the last run
+	benchMark("main loop")
 	a.Run()
 }
 
@@ -559,7 +584,7 @@ func (ui *desktopUI) release() {
 	if ui.frames != nil {
 		// No more frame-hook redraws: once seen right before a window that
 		// was closing hung in GLFW's event poll.
-		ui.frames.anim.Stop()
+		ui.frames.stop()
 	}
 	ui.shutdown() // every run's context derives from it
 	for _, chat := range ui.chats {
@@ -2085,6 +2110,42 @@ func (ui *desktopUI) save() {
 
 func (ui *desktopUI) saveNow() { ui.persist(false) }
 
+// writeChats writes the state: head before the chats, the chats as a JSON
+// list, one encoded at a time, and the rest of the head. written counts the
+// bytes.
+func writeChats(w io.Writer, written *int64, before []byte, chats []*conversation, after []byte) error {
+	put := func(b []byte) error {
+		n, err := w.Write(b)
+		*written += int64(n)
+		return err
+	}
+	if err := put(before); err != nil {
+		return err
+	}
+	if err := put([]byte(`"chats":[`)); err != nil {
+		return err
+	}
+	for i, chat := range chats {
+		chat.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
+		data, err := json.Marshal(chat)
+		if err != nil {
+			return err
+		}
+		if i > 0 {
+			if err := put([]byte{','}); err != nil {
+				return err
+			}
+		}
+		if err := put(data); err != nil {
+			return err
+		}
+	}
+	if err := put([]byte{']'}); err != nil {
+		return err
+	}
+	return put(after)
+}
+
 // persist writes the state file. The conversations are nearly all of it
 // (megabytes once they hold tool outputs and images), so they are encoded
 // and written beside the interface, from copies taken here: a save used to
@@ -2170,22 +2231,21 @@ func (ui *desktopUI) persist(wait bool) {
 			return // a newer state is already on disk
 		}
 		ui.saveDone = count
-		// The chats are encoded once, into the place the head keeps for them.
-		var data []byte
+		// The chats go into the place the head keeps for them, encoded and
+		// written one at a time: the whole list encoded at once was a buffer
+		// the size of the file (100 MB with long conversations), grown by
+		// doubling, at every save (#476).
+		var written int64
 		before, after, found := bytes.Cut(head, []byte(`"chats":null`))
 		if err == nil && !found {
 			err = errors.New("the state has no place for the chats")
 		}
 		if err == nil {
-			for _, chat := range chats {
-				chat.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
-			}
-			data, err = json.Marshal(chats)
+			err = core.WriteFileStreamed(path, 0600, true, func(w io.Writer) error {
+				return writeChats(w, &written, before, chats, after)
+			})
 		}
-		if err == nil {
-			err = core.WriteFileSafely(path, 0600, true, before, []byte(`"chats":`), data, after)
-		}
-		platform.Devf("app", "state saved: %d chats, %d KiB, %s in all (error: %v)", len(chats), (len(head)+len(data))>>10, time.Since(started).Round(time.Millisecond), err)
+		platform.Devf("app", "state saved: %d chats, %d KiB, %s in all (error: %v)", len(chats), written>>10, time.Since(started).Round(time.Millisecond), err)
 		report := func() {
 			if err != nil && err.Error() != ui.saveError && ui.ctx.Err() == nil {
 				ui.notice("Unable to save", err.Error()) // once per distinct problem

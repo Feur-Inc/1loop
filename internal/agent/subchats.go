@@ -98,6 +98,9 @@ type SubchatLink struct {
 	Parent string `json:"parent"`
 	Branch string `json:"branch,omitempty"` // the worktree's branch, "" when it shares the folder
 	Ended  string `json:"ended,omitempty"`  // how its last turn ended: done, stopped or failed
+	// Unseen: its turn ended and the user has not opened it since, so the
+	// sidebar marks it as an unread chat.
+	Unseen bool `json:"unseen,omitempty"`
 }
 
 // Copy is the link as it is now, for a save encoded beside the chat's

@@ -125,3 +125,48 @@ func TestPairCommand(t *testing.T) {
 		t.Fatalf("outside a container: %q, want %q", got, want)
 	}
 }
+
+// A data directory too long for a Unix socket's path still gets its admin
+// socket, which "1loop-server <command>" finds (#514).
+func TestAdminSocketWithALongDataDirectory(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("XDG_RUNTIME_DIR", "")
+	ctx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	dir := filepath.Join(t.TempDir(), strings.Repeat("a-rather-long-folder-name/", 5), "data")
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		t.Fatal(err)
+	}
+	server, err := newHeadlessServer(ctx, t.TempDir(), dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(server.close)
+	if server.adminCommandFor("id", "code") != "" {
+		t.Fatal("a pairing command is offered before the admin socket listens")
+	}
+	closeAdmin, err := server.listenAdmin(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(closeAdmin)
+	if path, _ := adminSocketPath(dir); len(path) >= 100 || strings.HasPrefix(path, dir) {
+		t.Fatalf("socket path %q", path)
+	}
+	var out strings.Builder
+	if err := adminCommand(dir, []string{"devices"}, &out); err != nil {
+		t.Fatalf("devices: %v %s", err, out.String())
+	}
+	if !strings.Contains(server.adminCommandFor("id", "code"), "pair id code") {
+		t.Fatalf("pairing command: %q", server.adminCommandFor("id", "code"))
+	}
+}
+
+// Answering an approval that no longer waits says so (#514).
+func TestApproveUnknownID(t *testing.T) {
+	_, _, call := testServer(t)
+	code, data := call("POST", "/api/approve", strings.NewReader(`{"id":"gone","allow":true}`))
+	if code != 404 || !strings.Contains(string(data), "no longer waiting") {
+		t.Fatalf("approve gone: %d %s", code, data)
+	}
+}

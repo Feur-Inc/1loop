@@ -16,7 +16,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"sync"
@@ -429,13 +428,7 @@ func (store *BaseStore) Put(a, aWorkspace, b, bWorkspace string, base Base) erro
 	all := store.read()
 	all[pairKey(a, aWorkspace, b, bWorkspace)] = base
 	data, _ := json.Marshal(all)
-	if err := os.MkdirAll(filepath.Dir(store.Path), 0700); err != nil {
-		return err
-	}
-	if err := os.WriteFile(store.Path+".tmp", data, 0600); err != nil {
-		return err
-	}
-	return os.Rename(store.Path+".tmp", store.Path)
+	return core.WriteFileSafely(store.Path, 0600, false, data)
 }
 
 // Summary says in a line what a plan does, or did.

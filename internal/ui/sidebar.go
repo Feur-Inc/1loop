@@ -399,6 +399,16 @@ func (ui *desktopUI) openChat(chat *conversation) {
 	ui.loadChat(chat, true)
 }
 
+// markRead clears a subchat's unread mark as the user opens it: its dot in
+// the sidebar goes, and so does its count in the summary row. Kept for the
+// next start.
+func (ui *desktopUI) markRead(chat *conversation) {
+	if chat.Subchat != nil && chat.Subchat.Unseen {
+		chat.Subchat.Unseen = false
+		ui.save()
+	}
+}
+
 func (ui *desktopUI) reloadChat(chat *conversation) {
 	ui.loadChat(chat, false)
 }
@@ -416,6 +426,7 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 		chat.failed = false
 		ui.syncTray()
 	}
+	ui.markRead(chat)
 	ui.cfg = chat.Config
 	ui.syncProjectTheme()
 	ui.prompt.switchDraft(chat.ID)

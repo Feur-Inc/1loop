@@ -720,32 +720,30 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 			iconRoom += gap
 		}
 	}
-	// The name comes first: the trailing text (a project's branch) gets
-	// what it leaves, cut short, and goes when that is too little; only
-	// then is the name cut. A long branch was drawn over the name (#469).
-	// The mark goes before the trailing text is cut.
 	renderer.trailing.Text = ""
-	cut := false
-	if trailing := renderer.row.trailing; trailing != "" {
-		style := fyne.TextStyle{}
-		left := size.Width - 2*padX - iconRoom - trailingWidth - renderer.row.endInset - gap - textSize(renderer.row.text, renderer.row.size, style).Width
-		shortest := textSize(string([]rune(trailing)[:min(3, len([]rune(trailing)))])+"…", renderer.row.size-1, style).Width
-		if full := textSize(trailing, renderer.row.size-1, style).Width; left >= fyne.Min(full, shortest) {
-			renderer.trailing.Text = fitText(trailing, renderer.row.size-1, style, left)
-			cut = renderer.trailing.Text != trailing
+	if renderer.row.trailing != "" {
+		// The label comes first: the trailing text (a project's branch) gets
+		// what the whole label leaves, cut short, and goes when too little is
+		// left for a few letters of it. Never drawn over the label.
+		trailingSize := renderer.row.size - 1
+		left := size.Width - 2*padX - iconRoom - trailingWidth - renderer.row.endInset - gap -
+			textSize(renderer.row.text, renderer.row.size, fyne.TextStyle{}).Width
+		if renderer.row.mark != nil {
+			left -= renderer.markWidth()
+		}
+		if left >= textSize("ab…", trailingSize, fyne.TextStyle{}).Width {
+			renderer.trailing.Text = fitText(renderer.row.trailing, trailingSize, fyne.TextStyle{}, left)
 			width := renderer.trailing.MinSize().Width
 			renderer.trailing.Move(fyne.NewPos(size.Width-padX-trailingWidth-width, (size.Height-renderer.trailing.MinSize().Height)/2))
 			trailingWidth += width + gap
-		} else {
-			cut = true
 		}
 	}
-	room := fyne.Max(1, size.Width-2*padX-iconRoom-trailingWidth-renderer.row.endInset) // fitText keeps all of it at 0
-	marked := renderer.row.mark != nil && !cut && room >= renderer.markWidth()+rowMarkMinText
+	room := size.Width - 2*padX - iconRoom - trailingWidth - renderer.row.endInset
+	marked := renderer.row.mark != nil && room >= renderer.markWidth()+rowMarkMinText
 	if marked {
 		room -= renderer.markWidth()
 	}
-	renderer.label.Text = fitText(renderer.row.text, renderer.row.size, fyne.TextStyle{}, room)
+	renderer.label.Text = fitText(renderer.row.text, renderer.row.size, fyne.TextStyle{}, max(room, 1))
 	renderer.row.clipped = renderer.label.Text != renderer.row.text
 	textWidth := renderer.label.MinSize().Width
 	textY := (size.Height - renderer.label.MinSize().Height) / 2
@@ -973,7 +971,6 @@ func (renderer *tapRowRenderer) Refresh() {
 		renderer.bg.StrokeWidth = 1
 	}
 	renderer.label.TextSize = row.size
-	renderer.trailing.Text = row.trailing
 	renderer.trailing.TextSize = row.size - 1
 	trailingInk := text(colFaint)
 	if row.endInset > 0 { // the row's ⋯ takes its place while hovered

@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	fynedriver "fyne.io/fyne/v2/driver"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 	"github.com/fsnotify/fsnotify"
 
@@ -304,9 +305,9 @@ func refreshRadii() {
 	}
 }
 
-// themeFileRow offers New, Duplicate and Edit, and shows the files that
-// could not be read and why.
-func (ui *desktopUI) themeFileRow() fyne.CanvasObject {
+// themeFileControls offer New, Duplicate and Edit, and show the files that
+// could not be read and why: the end of the Theme row, inset as its text.
+func (ui *desktopUI) themeFileControls() fyne.CanvasObject {
 	actions := container.NewHBox(
 		newRow("New theme", nil, styleOutline, func() { ui.newThemeFile("my-theme", palette.ThemeTemplate("My theme")) }),
 		newRow("Duplicate", nil, styleOutline, ui.duplicateTheme),
@@ -318,11 +319,14 @@ func (ui *desktopUI) themeFileRow() fyne.CanvasObject {
 		os.MkdirAll(themesDir, 0o755)
 		ui.openThemePath(themesDir)
 	}))
-	rows := container.NewVBox(note("Theme files are read from "+themesDir+" and update the app as soon as they are saved. Format: docs/THEMES.md."), actions)
+	// Read as the row's second line of explanation, not the faint grey of
+	// something disabled (#508).
+	where := plainFlow("Theme files are read from "+themesDir+" and update the app as soon as they are saved. Format: docs/THEMES.md.", 12.5, colMuted)
+	rows := container.New(layout.NewCustomPaddedVBoxLayout(8), where, actions)
 	for _, failed := range themeFileErrors {
 		problem := note(failed.Error())
 		problem.Importance = widget.DangerImportance
 		rows.Add(problem)
 	}
-	return rows
+	return padded(0, 13, 16, 16, rows)
 }

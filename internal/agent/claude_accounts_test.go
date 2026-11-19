@@ -101,6 +101,30 @@ func TestClaudeSessionBelongsToItsFolder(t *testing.T) {
 	}
 }
 
+// A chat on an account with its own folder resumes its session: the turn
+// does not start a new one and send the conversation again (#483).
+func TestClaudeTurnResumesOwnLoginSession(t *testing.T) {
+	dir := fakeClaude(t, `    printf '%s\n' "$*" > "$(dirname "$0")/args"
+    printf '%s\n' '{"type":"system","subtype":"init","session_id":"s1","apiKeySource":"none"}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"","session_id":"s1"}'`)
+	own := filepath.Join(ClaudeAccountsDir(), "aa")
+	history := []Message{{Role: "user", Content: "hello"}, {Role: "assistant", Content: "hi"}, {Role: "user", Content: "again"}}
+	cfg := Config{Provider: "claudecode", ConnectionID: "aa", Model: "default", Workspace: t.TempDir(),
+		ClaudeHome: own, Session: claudeSessionRef(own, "s1"), SessionMark: 2}
+	inbox := Inbox{Steer: func() []Message { return nil }, Next: func() (Message, bool) { return Message{}, false }}
+	if err := (&App{}).runClaudeCode(context.Background(), cfg, history, inbox, func(string, any) {}); err != nil {
+		t.Fatal(err)
+	}
+	args, _ := os.ReadFile(filepath.Join(dir, "args"))
+	if !strings.Contains(string(args), "--resume s1") {
+		t.Errorf("not resumed: %s", args)
+	}
+	input, _ := os.ReadFile(filepath.Join(dir, "input.jsonl"))
+	if strings.Contains(string(input), "Earlier conversation") {
+		t.Errorf("the conversation was sent again: %s", input)
+	}
+}
+
 func TestClaudeCommandUsesConnectionFolder(t *testing.T) {
 	home, _ := claudeAccountsHome(t)
 	t.Setenv("CLAUDE_CONFIG_DIR", "/elsewhere")

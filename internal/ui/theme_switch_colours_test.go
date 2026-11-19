@@ -33,7 +33,7 @@ func TestFlowTextRecolouredOnSwitch(t *testing.T) {
 	next.Text = color.NRGBA{0x10, 0x20, 0x30, 0xff}
 	blue := color.NRGBA{0x20, 0x60, 0xe0, 0xff}
 	changed := recolour(setColours(next, blue))
-	repaint(changed)
+	repaint(changed, false) // the same fonts: only the colours change
 	flow.Refresh()
 
 	seen := 0

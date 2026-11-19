@@ -30,11 +30,12 @@ func (ui *desktopUI) loadAccountLimits(ctx context.Context, menu *sheet, conn ag
 	go func() {
 		limits, err := ui.backend.ConnectionLimits(ctx, conn, key)
 		if err != nil {
-			limits = agent.AccountLimits{Note: "Limits unavailable"}
-		}
-		limits.Checked = time.Now()
-		if agent.SubscriptionLimits(conn.Provider) {
-			ui.usage.NoteLimits(conn.ID, limits.UsageWindows(), limits.Checked) // the Usage page's pace
+			limits = agent.AccountLimits{Note: agent.LimitsNote(err)}
+		} else {
+			limits.Checked = time.Now()
+			if agent.SubscriptionLimits(conn.Provider) {
+				ui.usage.NoteLimits(conn.ID, limits.UsageWindows(), limits.Checked) // the Usage page's pace
+			}
 		}
 		fyne.Do(func() {
 			if ctx.Err() != nil || ui.model.open != menu || menu.closing {
@@ -43,9 +44,13 @@ func (ui *desktopUI) loadAccountLimits(ctx context.Context, menu *sheet, conn ag
 			if ui.accountLimits == nil {
 				ui.accountLimits = map[string]agent.AccountLimits{}
 			}
-			if len(limits.Windows) == 0 && len(ui.accountLimits[conn.ID].Windows) > 0 {
-				show(ui.accountLimits[conn.ID])
-				return
+			if err != nil {
+				// Keep the last good numbers, with the reason beside them
+				// (and their own time: they are not new).
+				limits = agent.LimitsAfterError(ui.accountLimits[conn.ID], err)
+				if limits.Checked.IsZero() {
+					limits.Checked = time.Now()
+				}
 			}
 			ui.accountLimits[conn.ID] = limits
 			show(limits)

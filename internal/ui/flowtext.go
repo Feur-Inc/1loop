@@ -465,6 +465,17 @@ func (flow *flowText) flow(width float32) {
 	}
 }
 
+// release drops what the block keeps to draw itself (its measured words,
+// drawing objects, selection pieces): it is out of sight, only its height
+// counts. They are made again when it is laid out on screen.
+func (flow *flowText) release() {
+	if flow.waiting {
+		return // a formula is coming: flow is called again then
+	}
+	flow.cut, flow.objects, flow.pieces, flow.links = nil, nil, nil, nil
+	flow.paintedWidth = 0
+}
+
 // selPieces gives the selection layer what is drawn and where.
 func (flow *flowText) selPieces() []selPiece { return flow.pieces }
 

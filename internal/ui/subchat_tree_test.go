@@ -3,6 +3,8 @@
 package ui
 
 import (
+	"image"
+	"math"
 	"slices"
 	"strings"
 	"testing"
@@ -109,15 +111,52 @@ func TestSubchatGuideLines(t *testing.T) {
 		guide := newSubchatGuide(1, c.trunk)
 		guide.Resize(fyne.NewSize(guide.MinSize().Width, 30))
 		renderer := guide.CreateRenderer().(*subchatGuideRenderer)
-		renderer.Layout(guide.Size())
-		if renderer.down.Visible() != c.down || renderer.across.Visible() != c.bended {
-			t.Errorf("trunk %d: down %v across %v", c.trunk, renderer.down.Visible(), renderer.across.Visible())
+		shape := guide.shape(guide.Size())
+		if renderer.raster.Visible() != c.down || shape.down != c.down || shape.bend != c.bended {
+			t.Errorf("trunk %d: drawn %v down %v bend %v", c.trunk, renderer.raster.Visible(), shape.down, shape.bend)
 		}
-		if c.trunk == trunkThrough && renderer.down.Position2.Y <= 30 {
+		if c.trunk == trunkThrough && shape.downTo <= 30 {
 			t.Error("the line does not run past the row to the next one")
 		}
-		if c.trunk == trunkLast && (renderer.down.Position2.Y >= 15 || renderer.across.Position2.X <= renderer.down.Position1.X) {
-			t.Errorf("the line does not bend into the last subchat: %v %v", renderer.down.Position2, renderer.across.Position2)
+		if c.trunk == trunkLast && (shape.downTo >= 15 || treeReach <= treeLine) {
+			t.Errorf("the line does not bend into the last subchat: %+v", shape)
+		}
+		// Drawn at 1.4 pixels a point: the line down sits on whole pixels,
+		// one solid column, and the bend reaches the line across.
+		img := renderer.draw(int(guide.Size().Width*1.4), 43).(*image.NRGBA)
+		column := int(math.Round(treeLine*1.4 - 0.5))
+		if c.down && img.NRGBAAt(column, 2).A != 0xff {
+			t.Errorf("trunk %d: the line down is not crisp: %v", c.trunk, img.NRGBAAt(column, 2))
+		}
+		if c.bended {
+			if img.NRGBAAt(24, int(shape.mid*1.4)).A == 0 {
+				t.Errorf("trunk %d: no line across", c.trunk)
+			}
+			// no gap from the line down, round the bend, to the line across
+			seen := map[image.Point]bool{}
+			var fill func(p image.Point)
+			fill = func(p image.Point) {
+				if seen[p] || !p.In(img.Bounds()) || img.NRGBAAt(p.X, p.Y).A < 0x60 {
+					return
+				}
+				seen[p] = true
+				for _, d := range []image.Point{{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, 1}, {1, -1}, {-1, -1}} {
+					fill(p.Add(d))
+				}
+			}
+			fill(image.Pt(column, 2))
+			if !seen[image.Pt(24, int(shape.mid*1.4))] {
+				t.Errorf("trunk %d: the line breaks at the bend", c.trunk)
+			}
+			// where the line down meets the bend, and the bend the line
+			// across: solid, no seam
+			row := int(math.Round(float64(shape.mid*1.4 - 0.5))) // the line across
+			radius := int(math.Round(treeBend * 1.4))
+			for _, p := range []image.Point{{column, row - radius}, {column + radius, row}} {
+				if a := img.NRGBAAt(p.X, p.Y).A; a < 0xc0 {
+					t.Errorf("trunk %d: a seam at %v (%d)", c.trunk, p, a)
+				}
+			}
 		}
 	}
 }

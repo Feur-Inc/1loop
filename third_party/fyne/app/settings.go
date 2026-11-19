@@ -81,6 +81,7 @@ func (s *settings) ThemeVariant() fyne.ThemeVariant {
 }
 
 func (s *settings) applyTheme(theme fyne.Theme, variant fyne.ThemeVariant) {
+	app.VariantOnly = false // a theme set: the windows take it
 	s.variant = variant
 	s.theme = theme
 	s.apply()

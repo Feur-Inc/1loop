@@ -11,6 +11,7 @@ import (
 	"log"
 	"os"
 	"os/signal"
+	"runtime/debug"
 	"syscall"
 
 	"1loop/internal/agent"
@@ -23,6 +24,7 @@ func Main() {
 	workspace := flag.String("workspace", ".", "Workspace")
 	developer := flag.Bool("dev", false, "Write a detailed developer log (events, performance, stalls) to the terminal and to ~/.cache/1loop/dev.log")
 	flag.Parse()
+	tuneMemory()
 	platform.DevWanted = *developer || os.Getenv("ONELOOP_DEV") == "1"
 	root, err := agent.ResolveWorkspace(*workspace)
 	if err != nil {
@@ -48,4 +50,15 @@ func Main() {
 	}()
 	backend := &agent.App{Approvals: make(map[string]chan bool)}
 	runDesktop(backend, root, asked)
+}
+
+// tuneMemory paces the garbage collector for a desktop app that stays open
+// all day (issue #476): a collection when the heap grows by half rather than
+// doubles (GOGC=50). No memory limit: one set below the live heap (a very
+// long chat open) made the collector run without pause and the window crawl
+// on the test VM. GOGC in the environment still wins.
+func tuneMemory() {
+	if os.Getenv("GOGC") == "" {
+		debug.SetGCPercent(50)
+	}
 }

@@ -120,7 +120,7 @@ func (ui *desktopUI) advanceChatLoad() {
 			}
 			if position := load.positions[index]; position >= 0 {
 				view := ui.transcript.Objects[position]
-				if _, known := ui.items.sizes[view]; !known {
+				if !ui.items.known(view) {
 					ui.items.measure(view, load.width)
 					view.Hide()
 				}
@@ -155,5 +155,5 @@ func (ui *desktopUI) replaceLoadingItem(load *conversationLoad, index int) {
 	ui.appendItem(load.chat, index)
 	ui.transcript.Objects[position] = ui.transcript.Objects[count]
 	ui.transcript.Objects = ui.transcript.Objects[:count]
-	delete(ui.items.sizes, old)
+	ui.items.forget(old)
 }

@@ -89,6 +89,12 @@ func CleanCanvas(canvas fyne.Canvas) {
 	})
 }
 
+// ResetThemeColourCaches clears what a change of colours makes stale,
+// keeping the measured text sizes. (1loop: driver.KeepFonts.)
+func ResetThemeColourCaches() {
+	svgs.Clear()
+}
+
 // ResetThemeCaches clears all the svg and text size cache maps
 func ResetThemeCaches() {
 	svgs.Clear()

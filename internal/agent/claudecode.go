@@ -162,6 +162,18 @@ type PlanUsage struct {
 //     guides, the plugin directory), which 1loop neither shows nor manages.
 const claudeDisabledTools = "Task,Agent,SendMessage,ListAgents,Workflow,CronCreate,CronDelete,CronList,ScheduleWakeup,EnterPlanMode,ExitPlanMode,EnterWorktree,ExitWorktree,RemoteTrigger,PushNotification,ReportFindings,DesignSync,ShareOnboardingGuide,PublishPlugin"
 
+// claudeEntrypoint is the entry point Claude Code reports with each request
+// it makes for 1loop, instead of "sdk-cli", the one it gives itself when
+// started with -p (anthropics/claude-code#97074).
+const claudeEntrypoint = "1loop"
+
+// claudeEnv is env for a claude process, with any entry point inherited
+// from the environment 1loop runs in replaced by claudeEntrypoint.
+func claudeEnv(env []string) []string {
+	env = slices.DeleteFunc(slices.Clone(env), func(pair string) bool { return strings.HasPrefix(pair, "CLAUDE_CODE_ENTRYPOINT=") })
+	return append(env, "CLAUDE_CODE_ENTRYPOINT="+claudeEntrypoint)
+}
+
 // claudeCommand prepares a Claude Code process in its stream-json mode.
 // The environment is the user's, minus what would change who pays (an API
 // key) and minus the variables of a Claude Code session 1loop may have been
@@ -212,6 +224,7 @@ func claudeCommand(ctx context.Context, home, dir string, extra ...string) (*exe
 	if machineOf(ctx) == nil { // its Bash tool runs here: the project's variables (#408)
 		cmd.Env = append(cmd.Env, platform.ProjectEnv(ctx)...)
 	}
+	cmd.Env = claudeEnv(cmd.Env)
 	// Keep the CLI and its children in a process group for bounded shutdown.
 	platform.PrepareProcess(cmd)
 	cmd.Cancel = func() error { return platform.InterruptProcess(cmd) }
@@ -983,6 +996,8 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				}
 			} else if !idle {
 				continue
+			} else if len(background) > 0 {
+				continue // the task still waits for its background work: the queue too (#433)
 			} else if next, ok := inboxValue.Next(); ok {
 				inject(next)
 			} else if len(background) == 0 && time.Since(idleSince) > 600*time.Millisecond && (contextAsked.IsZero() || time.Since(contextAsked) > 5*time.Second) {
@@ -1257,12 +1272,12 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			if failure != nil || claudeEventValue.QueuedTurns > 0 {
 				break // more turns are already queued in Claude Code
 			}
+			// A queued message waits for the task's end (#433): after the
+			// TODO check and the background tasks, on the idle tick.
 			if extras := inboxValue.Steer(); len(extras) > 0 {
 				for _, extra := range extras {
 					inject(extra)
 				}
-			} else if next, ok := inboxValue.Next(); ok {
-				inject(next)
 			} else if reminder := todo.endReminder(cfg); reminder != "" {
 				message := Message{Role: "user", Internal: true, Content: reminder}
 				messages = append(messages, message)
@@ -1288,6 +1303,10 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	}
 	if ctx.Err() != nil {
 		return ctx.Err()
+	}
+	if lines == nil && process.readErr != nil {
+		emit("history", append([]Message(nil), messages...))
+		return process.readErr
 	}
 	if len(messages) == len(history) && !answered {
 		// Claude Code left without answering: its own words explain why.

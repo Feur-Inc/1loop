@@ -602,10 +602,13 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if chat.run != nil {
-		// A message sent while the agent works joins it at its next step,
-		// whatever the client asked (older clients say "queue" or "send"):
-		// clients show it greyed at the conversation's end until then.
-		chat.steer = append(chat.steer, m)
+		// A message sent while the agent works is queued for the next turn
+		// ("send", "queue"); "steer" joins the task at its next step (#433).
+		if args.Mode == "steer" {
+			chat.steer = append(chat.steer, m)
+		} else {
+			chat.queue = append(chat.queue, m)
+		}
 		server.changedLocked(chat, -1)
 	} else {
 		server.runLocked(chat, m)

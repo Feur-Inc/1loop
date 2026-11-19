@@ -485,6 +485,18 @@ func (panel *toolPanel) render() {
 	panel.syncRows()
 }
 
+// redraw paints the panel again once it is back on screen. Texts that were
+// written while it was hidden (a call finishing behind Settings) were never
+// queued for painting, so their commands stayed blank until the surface was
+// redrawn by something else (#492).
+func (panel *toolPanel) redraw() {
+	panel.place()
+	for _, well := range panel.texts {
+		well.Refresh()
+	}
+	panel.view.Refresh()
+}
+
 // place tells each code well which of its rows the panel shows.
 func (panel *toolPanel) place() {
 	for _, text := range panel.texts {

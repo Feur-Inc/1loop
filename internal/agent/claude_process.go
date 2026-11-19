@@ -43,6 +43,7 @@ type claudeProcess struct {
 	stderr  *outputBuffer
 	binding *todoMCPBinding // nil without 1loop's MCP server
 	lines   chan []byte     // its output, line by line; closed when it exits
+	readErr error           // why its output could not be read (a line over 64 MB); set before lines closes
 	quit    chan struct{}   // closed when the process is dropped: its output is drained
 	quitOne sync.Once
 	done    chan struct{} // closed once it exited and was waited for
@@ -85,6 +86,15 @@ func startClaudeProcess(cmd *exec.Cmd, key string, binding *todoMCPBinding, clea
 				io.Copy(io.Discard, stdout)
 				break read
 			}
+		}
+		if err := scanner.Err(); err != nil {
+			// The turn cannot go on without its output: it ends with this
+			// error, and Claude Code, which may be blocked writing to a
+			// full pipe, is stopped and drained so Wait returns.
+			platform.Devf("claude", "output unreadable: %v", err)
+			process.readErr = fmt.Errorf("Claude Code's output could not be read: %w", err)
+			platform.KillProcessTree(cmd)
+			io.Copy(io.Discard, stdout)
 		}
 		cmd.Wait()
 		platform.Devf("claude", "process ended: %v", cmd.ProcessState)

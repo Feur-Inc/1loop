@@ -286,3 +286,23 @@ func TestClaudeSessionSurvivesLoginSwitch(t *testing.T) {
 		t.Fatal("ClearSessions left a session")
 	}
 }
+
+// Every claude process 1loop starts reports 1loop as its entry point, once,
+// whatever the environment 1loop was started in says.
+func TestClaudeCommandEntrypoint(t *testing.T) {
+	home, _ := claudeAccountsHome(t)
+	t.Setenv("CLAUDE_CODE_ENTRYPOINT", "sdk-cli")
+	cmd, err := claudeCommand(context.Background(), "", home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got []string
+	for _, pair := range cmd.Env {
+		if strings.HasPrefix(pair, "CLAUDE_CODE_ENTRYPOINT=") {
+			got = append(got, pair)
+		}
+	}
+	if len(got) != 1 || got[0] != "CLAUDE_CODE_ENTRYPOINT=1loop" {
+		t.Fatalf("entry point variables %q, want only CLAUDE_CODE_ENTRYPOINT=1loop", got)
+	}
+}

@@ -85,3 +85,23 @@ func TestClaudeProcessKeptBetweenTurns(t *testing.T) {
 		t.Fatal("still kept after DropClaudeProcess")
 	}
 }
+
+// A Read sent with a command waits for it in Claude Code: its row must not
+// count the command's time as its own.
+func TestClaudeRunningQueue(t *testing.T) {
+	for _, c := range []struct {
+		names []string
+		want  int
+	}{
+		{nil, 0},
+		{[]string{"Bash", "Read"}, 1},
+		{[]string{"Read", "Grep", "Bash", "Read"}, 2},
+		{[]string{"Read"}, 1},
+		{[]string{"Edit", "Edit"}, 1},
+		{[]string{"mcp__1loop_todo__update_todo", "Bash"}, 1},
+	} {
+		if got := claudeRunning(c.names); got != c.want {
+			t.Errorf("claudeRunning(%v) = %d, want %d", c.names, got, c.want)
+		}
+	}
+}

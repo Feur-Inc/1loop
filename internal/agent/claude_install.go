@@ -151,6 +151,7 @@ func InstallClaudeCode(ctx context.Context, progress func(string)) (string, erro
 	setup, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
 	command := exec.CommandContext(setup, binary, "install")
+	command.Env = claudeEnv(os.Environ())
 	command.Dir = home
 	var output bytes.Buffer
 	command.Stdout, command.Stderr = &output, &output
@@ -183,7 +184,7 @@ func InstallClaudeCodeIn(ctx context.Context, dir string, progress func(string))
 	check, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	command := exec.CommandContext(check, binary, "--version")
-	command.Env = append(os.Environ(), "DISABLE_AUTOUPDATER=1")
+	command.Env = append(claudeEnv(os.Environ()), "DISABLE_AUTOUPDATER=1")
 	if output, err := command.CombinedOutput(); err != nil {
 		return "", fmt.Errorf("Claude Code was downloaded but does not start (%v): %s", err, lastOutput(string(output)))
 	}

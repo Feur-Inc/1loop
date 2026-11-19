@@ -1198,12 +1198,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		"Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it.",
 		container.NewVBox(claudeState, container.NewHBox(installClaude))),
 		settingRow("Login", "The system login is the one claude uses in a terminal. A connection with its own login signs in to its own account, keeps its own usage limits and sessions, and leaves the other connections signed in.", sized(340, claudeLogin.row)),
-		settingStack("Account", "", container.NewVBox(claudeAccount, container.NewHBox(signInClaude))),
-		// Off by default: Anthropic has not said whether it allows it
-		// (agent.ClaudeEntrypoint).
-		settingRow("Report 1loop as the app",
-			"Started by 1loop, Claude Code tells Anthropic it runs as \"sdk-cli\", and measurements show that label using up the 5-hour window two to three times faster than Claude Code in a terminal. On, it says \"1loop\" instead. Anthropic has not said whether this is allowed: it may treat it as working around its limits and restrict your account. Off by default.",
-			newToggle(draft.ClaudeLabel, func(on bool) { draft.ClaudeLabel = on })))
+		settingStack("Account", "", container.NewVBox(claudeAccount, container.NewHBox(signInClaude))))
 	agyState := plainFlow("", 12.5, colMuted)
 	showAgy := func() {
 		if path, err := agent.AgyExecutable(); err == nil {

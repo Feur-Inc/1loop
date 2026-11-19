@@ -46,15 +46,12 @@ func (conn *Connection) SetCompactLimit(model string, limit int) error {
 }
 
 type Connection struct {
-	ID          string `json:"id"`
-	Name        string `json:"name"`
-	Provider    string `json:"provider"`
-	BaseURL     string `json:"baseURL"`
-	AuthProfile string `json:"authProfile,omitempty"`
-	ClaudeLogin string `json:"claudeLogin,omitempty"` // Claude Code: "" the system login, ClaudeOwnLogin its own folder (claude_accounts.go)
-	// ClaudeLabel, on a Claude Code connection the user turned it on for,
-	// has Claude Code report "1loop" as its entry point (ClaudeEntrypoint).
-	ClaudeLabel   bool                        `json:"claudeLabel,omitempty"`
+	ID            string                      `json:"id"`
+	Name          string                      `json:"name"`
+	Provider      string                      `json:"provider"`
+	BaseURL       string                      `json:"baseURL"`
+	AuthProfile   string                      `json:"authProfile,omitempty"`
+	ClaudeLogin   string                      `json:"claudeLogin,omitempty"` // Claude Code: "" the system login, ClaudeOwnLogin its own folder (claude_accounts.go)
 	Enabled       bool                        `json:"enabled"`
 	AllModels     bool                        `json:"allModels"`
 	Models        []string                    `json:"models,omitempty"`
@@ -140,7 +137,6 @@ func (conn Connection) Config(workspace string) Config {
 		ConnectionID: conn.ID,
 		AuthProfile:  conn.AuthProfile,
 		ClaudeHome:   conn.ClaudeHome(),
-		ClaudeLabel:  conn.ClaudeLabel,
 		Provider:     conn.Provider,
 		BaseURL:      conn.BaseURL,
 		Workspace:    workspace,

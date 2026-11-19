@@ -142,7 +142,7 @@ func (server *headlessServer) syncEngine() *projectsync.Local {
 		Saved: func() error {
 			server.mu.Lock()
 			defer server.mu.Unlock()
-			if err := server.saveLocked(); err != nil {
+			if err := server.saveOutsideLocked(); err != nil {
 				return err
 			}
 			server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})

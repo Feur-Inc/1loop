@@ -29,6 +29,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
@@ -288,7 +289,8 @@ type remoteDesktop struct {
 	todoFooter    *fyne.Container // the context breakdown and compaction lines
 	todoFooterKey string
 	todoUsage     *contextUsageState
-	todoRows      map[string]*widget.Label
+	todoTimes     map[string]*canvas.Text // each task's clock, ticking in place
+	todoMarks     []*taskMark
 	todoSignature string
 	openCommands  map[string]bool // the background commands shown in full, by task
 }
@@ -569,8 +571,15 @@ func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.Handof
 	ui := remote.parent
 	workspace := ui.cfg.Workspace
 	draft := ui.draftKey() // where its files go back if it fails
+	// With files, the server may spend up to 2 minutes copying them to an SSH
+	// machine's project before it answers: a follow-up must not time out here
+	// while the server takes it (#545).
+	wait := 15 * time.Second
+	if len(files) > 0 {
+		wait = 3 * time.Minute
+	}
 	go func() {
-		ctx, cancel := context.WithTimeout(remote.ctx, 15*time.Second)
+		ctx, cancel := context.WithTimeout(remote.ctx, wait)
 		defer cancel()
 		var reply struct{ Chat string }
 		body := map[string]any{"chat": chat, "text": text, "mode": mode, "attachments": files}
@@ -1078,14 +1087,18 @@ func (remote *remoteDesktop) showMeta(conv *conversation) {
 func (remote *remoteDesktop) syncRun() {
 	ui := remote.parent
 	if remote.meta.Running {
+		// As for this computer's chats: a message can still be sent (it
+		// joins the task at its next step), and Steer and Stop show (#545).
 		ui.mark.stop()
-		ui.send.Hide()
+		ui.send.Show()
+		ui.steer.Show()
 		ui.stop.Show()
 		ui.showActivityLine(true)
 		ui.workMark.setState(cmp.Or(remote.meta.Mark, "wait"))
 		ui.thinkLabel.SetText(remote.meta.Label)
 	} else {
 		ui.send.Show()
+		ui.steer.Hide()
 		ui.stop.Hide()
 		ui.showActivityLine(false)
 		ui.workMark.setState("brand")
@@ -1269,15 +1282,14 @@ func (remote *remoteDesktop) renderTasks() {
 	if string(signature) != remote.todoSignature {
 		remote.todoSignature = string(signature)
 		remote.todoTasks.RemoveAll()
-		remote.todoRows = map[string]*widget.Label{}
-		if len(remote.meta.Todo) == 0 {
-			remote.todoTasks.Add(note("No tasks yet."))
+		for _, mark := range remote.todoMarks {
+			mark.stop()
 		}
-		for _, task := range remote.meta.Todo {
-			label := note("")
-			remote.todoRows[task.ID] = label
-			remote.todoTasks.Add(label)
-		}
+		remote.todoTimes = map[string]*canvas.Text{}
+		tasks := remote.todoTasks
+		live := func() bool { return remote.meta.Running && remote.todoTasks == tasks && remote.tabViews["todo"] != nil }
+		// Drawn as this computer's chats draw theirs (#542).
+		remote.todoMarks = drawTaskList(remote.todoTasks, remote.todoItems(), live, remote.todoTimes)
 		// The server's background commands, newest first, each with its own Stop.
 		if len(remote.meta.Tasks) > 0 {
 			remote.todoTasks.Add(sectionTitle("Background"))
@@ -1307,6 +1319,21 @@ func (remote *remoteDesktop) renderTasks() {
 		}
 		remote.addSubchats()
 	}
+	now := time.Now()
+	for _, item := range remote.todoItems() {
+		if clock := remote.todoTimes[item.ID]; clock != nil {
+			if value := taskElapsed(item, now); value != clock.Text {
+				clock.Text = value
+				clock.Refresh()
+			}
+		}
+	}
+	remote.refreshTodoFooter()
+}
+
+// todoItems is the server's task list as this computer's chats hold theirs.
+func (remote *remoteDesktop) todoItems() []agent.TodoItem {
+	items := make([]agent.TodoItem, 0, len(remote.meta.Todo))
 	for _, task := range remote.meta.Todo {
 		item := agent.TodoItem{ID: task.ID, Text: task.Text, Status: task.Status}
 		if task.Started > 0 {
@@ -1317,11 +1344,9 @@ func (remote *remoteDesktop) renderTasks() {
 			value := time.UnixMilli(task.Completed)
 			item.CompletedAt = &value
 		}
-		if label := remote.todoRows[task.ID]; label != nil {
-			label.SetText(task.Status + " · " + task.Text + " · " + taskElapsed(item, time.Now()))
-		}
+		items = append(items, item)
 	}
-	remote.refreshTodoFooter()
+	return items
 }
 
 // refreshTodoFooter draws the server's context breakdown above its

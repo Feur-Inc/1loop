@@ -19,7 +19,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 
 	"1loop/internal/agent"
 )
@@ -124,25 +123,28 @@ func secureRemoteClient(address, fingerprint string) (*http.Client, string, erro
 		// Exact certificate pinning replaces CA/hostname validation for this
 		// user-approved private server; it never falls back to accepting any cert.
 		settings.InsecureSkipVerify = true
-		settings.VerifyConnection = func(state tls.ConnectionState) error {
-			if len(state.PeerCertificates) == 0 {
-				return fmt.Errorf("Server sent no certificate")
-			}
-			certificate := state.PeerCertificates[0]
-			actual := sha256.Sum256(certificate.Raw)
-			if subtle.ConstantTimeCompare(actual[:], expected) != 1 {
-				return fmt.Errorf("Server certificate fingerprint changed; verify it on the server console")
-			}
-			now := time.Now()
-			if now.Before(certificate.NotBefore) || now.After(certificate.NotAfter) {
-				return fmt.Errorf("Server certificate has expired or is not valid yet")
-			}
-			return nil
-		}
+		settings.VerifyConnection = pinnedCertificate(expected)
 	}
 	transport := http.DefaultTransport.(*http.Transport).Clone()
 	transport.TLSClientConfig = settings
 	return &http.Client{Transport: transport, CheckRedirect: func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }}, parsed.String(), nil
+}
+
+// pinnedCertificate accepts exactly the certificate whose SHA-256 is
+// expected. Its dates are not checked: the server's certificate is never
+// renewed, since a new one would mean pairing every device again, and the
+// pin already says which certificate this is (#517).
+func pinnedCertificate(expected []byte) func(tls.ConnectionState) error {
+	return func(state tls.ConnectionState) error {
+		if len(state.PeerCertificates) == 0 {
+			return fmt.Errorf("Server sent no certificate")
+		}
+		actual := sha256.Sum256(state.PeerCertificates[0].Raw)
+		if subtle.ConstantTimeCompare(actual[:], expected) != 1 {
+			return fmt.Errorf("Server certificate fingerprint changed; verify it on the server console")
+		}
+		return nil
+	}
 }
 
 // handoffRequired is the server asking how the chat's new model receives

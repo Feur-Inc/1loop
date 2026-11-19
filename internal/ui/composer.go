@@ -627,13 +627,13 @@ func (ui *desktopUI) takeAttachments() []core.ImagePart {
 }
 
 // ---------------------------------------------------------------------------
-// While a task runs, a message sent (Enter, Ctrl+Enter, Send) steers it: it
+// While a task runs, a message sent with Enter or Send is queued: it waits
+// in a tray above the composer, where it can be reordered, edited in the
+// prompt, sent at once or dropped, and becomes the next turn once the task
+// is over (#433). One sent with Ctrl+Enter or Steer steers the task: it
 // shows at once at the conversation's end, greyed, and joins the running
 // task at the next gap between two model calls (after the current tool
-// calls), where it takes its place in the conversation. Messages kept for
-// the next turn (one that could not be sent, a queue left by a stopped
-// task) wait in a tray above the composer, where they can be reordered,
-// edited in the prompt, sent at once or dropped.
+// calls), where it takes its place in the conversation.
 
 func (ui *desktopUI) takeSteer(chat *conversation) []agent.Message {
 	ui = ui.viewOf(chat) // the window showing it (windows.go)
@@ -749,21 +749,25 @@ func (ui *desktopUI) renderPending() {
 	}
 	ui.pendingBox.RemoveAll()
 	type pendingMessage struct {
-		text  string
-		index int // in chat.steer; -1 for a server chat's
+		text   string
+		index  int  // in chat.steer; -1 for a server chat's
+		queued bool // a server chat's queue: sent once the task is over
 	}
 	var waiting []pendingMessage
 	running := false
 	if ui.server != nil {
 		meta := ui.server.meta
 		running = meta.Running
-		for _, text := range append(append([]string(nil), meta.Steer...), meta.Queue...) {
-			waiting = append(waiting, pendingMessage{text, -1})
+		for _, text := range meta.Steer {
+			waiting = append(waiting, pendingMessage{text, -1, false})
+		}
+		for _, text := range meta.Queue {
+			waiting = append(waiting, pendingMessage{text, -1, true})
 		}
 	} else if chat := ui.current; chat != nil {
 		running = chat.run != nil
 		for i, message := range chat.steer {
-			waiting = append(waiting, pendingMessage{pendingText(message), i})
+			waiting = append(waiting, pendingMessage{pendingText(message), i, false})
 		}
 	}
 	for _, message := range waiting {
@@ -773,6 +777,9 @@ func (ui *desktopUI) renderPending() {
 		bubble := container.New(&bubbleLayout{text: text, chrom: 2*pad + 4},
 			surface(padded(pad, pad, pad, pad, text), withAlpha(colRaised, 0.5), colBorderSoft, 14, 2))
 		note := "Sent at the next step"
+		if message.queued {
+			note = "Queued · sent when the task ends"
+		}
 		if !running {
 			note = "Not sent yet · press Enter to send"
 		}

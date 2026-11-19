@@ -996,6 +996,8 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				}
 			} else if !idle {
 				continue
+			} else if len(background) > 0 {
+				continue // the task still waits for its background work: the queue too (#433)
 			} else if next, ok := inboxValue.Next(); ok {
 				inject(next)
 			} else if len(background) == 0 && time.Since(idleSince) > 600*time.Millisecond && (contextAsked.IsZero() || time.Since(contextAsked) > 5*time.Second) {
@@ -1270,12 +1272,12 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			if failure != nil || claudeEventValue.QueuedTurns > 0 {
 				break // more turns are already queued in Claude Code
 			}
+			// A queued message waits for the task's end (#433): after the
+			// TODO check and the background tasks, on the idle tick.
 			if extras := inboxValue.Steer(); len(extras) > 0 {
 				for _, extra := range extras {
 					inject(extra)
 				}
-			} else if next, ok := inboxValue.Next(); ok {
-				inject(next)
 			} else if reminder := todo.endReminder(cfg); reminder != "" {
 				message := Message{Role: "user", Internal: true, Content: reminder}
 				messages = append(messages, message)

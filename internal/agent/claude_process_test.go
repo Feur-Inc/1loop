@@ -86,6 +86,47 @@ func TestClaudeProcessKeptBetweenTurns(t *testing.T) {
 	}
 }
 
+// A message queued during a Claude Code task becomes the next turn once
+// the task is over, not a message steered into it (#433).
+func TestClaudeQueuedMessageIsTheNextTurn(t *testing.T) {
+	dir := keptClaude(t)
+	asked := 0
+	inbox := Inbox{Steer: func() []Message { return nil }, Next: func() (Message, bool) {
+		asked++
+		if asked == 1 {
+			return Message{Role: "user", Content: "queued message"}, true
+		}
+		return Message{}, false
+	}}
+	cfg := Config{Provider: "claudecode", ConnectionID: "claude", Model: "sonnet", Workspace: t.TempDir(), ContextKey: "chat-queue"}
+	t.Cleanup(func() { DropClaudeProcess("chat-queue") })
+	var injected []string
+	emit := func(kind string, value any) {
+		if kind == "injected" {
+			injected = append(injected, value.(Message).Content)
+		}
+	}
+	if err := (&App{}).runClaudeCode(context.Background(), cfg, []Message{{Role: "user", Content: "first"}}, inbox, emit); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := os.ReadFile(filepath.Join(dir, "input.jsonl"))
+	var prompts []string
+	for _, line := range strings.Split(string(input), "\n") {
+		if strings.Contains(line, `"type":"user"`) {
+			prompts = append(prompts, line)
+		}
+	}
+	if len(prompts) != 2 || !strings.Contains(prompts[0], "first") || !strings.Contains(prompts[1], "queued message") {
+		t.Fatalf("prompts sent to Claude Code: %q", prompts)
+	}
+	if strings.Contains(prompts[1], "while you were working") {
+		t.Fatal("the queued message was sent as a steered one")
+	}
+	if len(injected) != 1 || injected[0] != "queued message" {
+		t.Fatalf("injected %q", injected)
+	}
+}
+
 // A Read sent with a command waits for it in Claude Code: its row must not
 // count the command's time as its own.
 func TestClaudeRunningQueue(t *testing.T) {

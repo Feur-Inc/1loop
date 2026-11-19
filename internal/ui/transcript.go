@@ -372,10 +372,7 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		ui.views[index] = view
 		ui.copyRows[index] = copyRow
 		view.layer = newSelectLayer(ui, view.box)
-		// The backdrop over a shader or picture is behind the agent's
-		// blocks only, not the gaps, the user's messages or the composer (#503).
-		backdrop := blurBehind("responses", canvas.NewRectangle(colBackground), &colBackground)
-		row := container.NewStack(backdrop, container.NewVBox(container.NewStack(view.box, view.layer), copyRow))
+		row := container.NewVBox(container.NewStack(view.box, view.layer), copyRow)
 		ui.items.own(view.box, row)
 		ui.items.own(copyRow, row)
 		ui.place(row)
@@ -408,6 +405,7 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 			view.box = container.NewVBox(padded(0, transcriptGap-4, 0, 0, nextStepCard(wrap, nil, item.Text)), view.box)
 		}
 		ui.views[index] = view
+		ui.items.alone(view.box)
 		ui.place(view.box)
 	case "error":
 		text := newFlowText(plainSpans(item.Text), theme.TextSize(), colDanger)
@@ -496,6 +494,12 @@ type transcriptLayout struct {
 	// it can fade one rectangle over it.
 	arrivals map[fyne.CanvasObject]*arrival
 	veils    *fyne.Container // over the transcript, in its coordinates
+	// Behind each run of the agent's rows (its answers, tool rows, notes)
+	// one rounded card, the theme's backdrop over a picture or shader:
+	// not behind the user's messages, nor the gaps between turns (#503).
+	cards   *fyne.Container            // under the transcript, in its coordinates
+	cardSet []fyne.CanvasObject        // the cards made so far, reused
+	apart   map[fyne.CanvasObject]bool // rows that are in no card (the user's messages)
 }
 
 // transcriptRow is an item of the transcript and its measured size.
@@ -577,6 +581,7 @@ func (layoutSpec *transcriptLayout) reset() {
 	layoutSpec.index = map[fyne.CanvasObject]int{}
 	layoutSpec.owner = map[fyne.CanvasObject]fyne.CanvasObject{}
 	layoutSpec.early = map[fyne.CanvasObject]transcriptRow{}
+	layoutSpec.apart = map[fyne.CanvasObject]bool{}
 	layoutSpec.lo, layoutSpec.hi, layoutSpec.added, layoutSpec.widest, layoutSpec.pending = 0, 0, 0, 0, false
 	layoutSpec.stale, layoutSpec.shift = false, 0
 	layoutSpec.settle()
@@ -588,22 +593,31 @@ type transcriptState struct {
 	index map[fyne.CanvasObject]int
 	owner map[fyne.CanvasObject]fyne.CanvasObject
 	early map[fyne.CanvasObject]transcriptRow
+	apart map[fyne.CanvasObject]bool
 	width float32
 }
 
 func (layoutSpec *transcriptLayout) save() transcriptState {
-	return transcriptState{layoutSpec.rows, layoutSpec.index, layoutSpec.owner, layoutSpec.early, layoutSpec.width}
+	return transcriptState{layoutSpec.rows, layoutSpec.index, layoutSpec.owner, layoutSpec.early, layoutSpec.apart, layoutSpec.width}
 }
 
 func (layoutSpec *transcriptLayout) restore(state transcriptState) {
 	layoutSpec.reset()
-	layoutSpec.rows, layoutSpec.index, layoutSpec.owner, layoutSpec.early, layoutSpec.width =
-		state.rows, state.index, state.owner, state.early, state.width
+	layoutSpec.rows, layoutSpec.index, layoutSpec.owner, layoutSpec.early, layoutSpec.apart, layoutSpec.width =
+		state.rows, state.index, state.owner, state.early, state.apart, state.width
 	layoutSpec.hi = len(layoutSpec.rows) // any of them may be shown: the next layout looks at each once
 	layoutSpec.pending = true
 	for _, row := range layoutSpec.rows {
 		layoutSpec.widest = fyne.Max(layoutSpec.widest, row.size.Width)
 	}
+}
+
+// alone keeps a row out of the agent's cards: a message of the user's.
+func (layoutSpec *transcriptLayout) alone(row fyne.CanvasObject) {
+	if layoutSpec.apart == nil {
+		layoutSpec.apart = map[fyne.CanvasObject]bool{}
+	}
+	layoutSpec.apart[row] = true
 }
 
 // own tells which row holds part, so that changed finds it at once.
@@ -943,6 +957,7 @@ func (layoutSpec *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyn
 		}
 		object.Move(fyne.NewPos(0, y))
 		object.Resize(fyne.NewSize(size.Width, min.Height))
+		row.size = min
 		if revived {
 			// Its text was only measured (or released) while hidden, and a
 			// Resize to the size it already has lays nothing out: draw it
@@ -964,11 +979,64 @@ func (layoutSpec *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyn
 	hide(layoutSpec.added, len(rows))
 	layoutSpec.lo, layoutSpec.hi, layoutSpec.added = lo, hi, len(rows)
 	layoutSpec.sum()
+	layoutSpec.placeCards(lo, hi, size.Width)
 	for object, coming := range layoutSpec.arrivals {
 		if at, ok := layoutSpec.index[object]; ok && at < len(rows) && rows[at].object == object {
 			coming.y, coming.laid = layoutSpec.tops[at], true
 			layoutSpec.placeArrival(object, coming)
 		}
+	}
+}
+
+// Cards reach a little past their rows: the text keeps a margin inside.
+const cardPadX, cardPadY = 14, 10
+
+// placeCards puts one card behind each run of the agent's rows among the
+// rows shown (lo to hi), from the top of its first row to the bottom of
+// its last, the gaps between them included.
+func (layoutSpec *transcriptLayout) placeCards(lo, hi int, width float32) {
+	if layoutSpec.cards == nil {
+		return
+	}
+	used := 0
+	if !shaderBehind { // the plain background: the turns need no card
+		lo = hi
+	}
+	card := func(top, bottom float32) {
+		if used == len(layoutSpec.cardSet) {
+			fill := canvas.NewRectangle(colBackground)
+			fill.CornerRadius = rounded(14)
+			fill.StrokeColor, fill.StrokeWidth = colBorderSoft, 1
+			made := blurBehind("responses", fill, &colBackground)
+			layoutSpec.cardSet = append(layoutSpec.cardSet, made)
+			layoutSpec.cards.Add(made)
+		}
+		made := layoutSpec.cardSet[used]
+		used++
+		made.Move(fyne.NewPos(-cardPadX, top-cardPadY))
+		made.Resize(fyne.NewSize(width+2*cardPadX, bottom-top+2*cardPadY))
+		made.Show()
+	}
+	start, end := -1, -1
+	for i := lo; i < hi && i < len(layoutSpec.rows); i++ {
+		row := layoutSpec.rows[i]
+		if layoutSpec.apart[row.object] || !row.object.Visible() || row.size.Height <= 0 {
+			if start >= 0 {
+				card(layoutSpec.tops[start], layoutSpec.tops[end]+layoutSpec.rows[end].size.Height)
+				start = -1
+			}
+			continue
+		}
+		if start < 0 {
+			start = i
+		}
+		end = i
+	}
+	if start >= 0 {
+		card(layoutSpec.tops[start], layoutSpec.tops[end]+layoutSpec.rows[end].size.Height)
+	}
+	for _, extra := range layoutSpec.cardSet[used:] {
+		extra.Hide()
 	}
 }
 

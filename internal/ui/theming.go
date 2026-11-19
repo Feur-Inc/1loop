@@ -349,6 +349,11 @@ func (row *tapRow) repaint(changed recolour) {
 func (flow *flowText) repaint(changed recolour) {
 	flow.ink = changed.any(flow.ink)
 	flow.cut = nil // its atoms keep their colours: measured again
+	// What it draws (text, bullets, link rules) was made with the old
+	// colours, and a colour that is not exactly a token, or one that two
+	// tokens shared, is not mapped by the walk: it is laid out again, from
+	// the colours now in use, at its next refresh (#436).
+	flow.paintedWidth = -1
 }
 
 func (label *fitLabel) repaint(changed recolour) { label.color = changed.any(label.color) }

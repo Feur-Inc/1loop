@@ -756,7 +756,8 @@ func (ui *desktopUI) buildChat() {
 	ui.items.reset()
 	ui.transcript = container.New(ui.items)
 	ui.items.veils = container.NewWithoutLayout()
-	ui.transcriptBox = container.NewStack(ui.transcript, ui.items.veils)
+	ui.items.cards = container.NewWithoutLayout()
+	ui.transcriptBox = container.NewStack(ui.items.cards, ui.transcript, ui.items.veils)
 	ui.views, ui.copyRows = map[int]any{}, map[int]*fyne.Container{}
 	ui.workMark = newLoopMark(inlineMarkSize)
 	ui.thinkLabel = newFitLabel("", 14, colMuted)

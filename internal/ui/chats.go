@@ -224,7 +224,9 @@ func (ui *desktopUI) appendChatMessage(chat *conversation, item agent.ChatItem) 
 	body.Add(padded(0, pad, pad, pad, container.NewStack(text, newSelectLayer(ui, text))))
 	card := surface(body, colCode, colBorderSoft, 14, 2)
 	copyRow := container.NewHBox(layout.NewSpacer(), copyChip(func() string { return item.Text }))
-	ui.place(container.New(layout.NewCustomPaddedVBoxLayout(2), card, copyRow))
+	message := container.New(layout.NewCustomPaddedVBoxLayout(2), card, copyRow)
+	ui.items.alone(message) // another chat's message: drawn like the user's, in no card
+	ui.place(message)
 }
 
 // fileChips are a message's attached files as the transcript shows them, a

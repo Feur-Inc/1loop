@@ -365,7 +365,7 @@ Browsers cannot pin the fingerprint: for the web client without a
 certificate warning, see [Behind a reverse proxy](#behind-a-reverse-proxy).
 
 1. On desktop, click **This computer** under the message box and choose
-   **Connect a server…**, or open **Settings → General → Remote server →
+   **Connect a server…**, or open **Settings → Remote → Where the agent runs →
    Connect a server…**, which lists these steps too. On Android, choose
    **Add by address**.
 2. Enter `https://your-server:47101`. For a generated/private certificate,
@@ -410,11 +410,12 @@ random, travels in the URL's fragment (browsers never send it in a request
 line, so proxies do not log it), works once, and stops working as soon as a
 device is paired. Revoking the last device prints a new one.
 
-A paired device can also unpair devices: Settings → General on the desktop
-and in the browser (with the server in use) lists the devices paired with it,
-each with **Remove**, and **Forget** on a server unpairs this device there
-before forgetting it; the phone has the same under Settings → General →
-Linked targets. Both ask first. They use `GET /api/devices` and
+A paired device can also unpair devices: Settings → Remote → Devices that
+control this 1loop, on the desktop and in the browser (with the server in
+use), lists the devices paired with it, each with **Remove**, and **Forget**
+on a server (Settings → Remote → Where the agent runs) unpairs this device
+there before forgetting it; the phone has the same under Settings → Remote.
+All of them ask first. They use `GET /api/devices` and
 `POST /api/devices/{id}/revoke`.
 
 **Commands from another shell.** `1loop-server <command>` sends one of the

@@ -1,0 +1,98 @@
+{
+  "methods": [
+    {
+      "id": "docker",
+      "title": "Docker",
+      "detail": "One command, on any machine with Docker.",
+      "steps": [
+        {
+          "text": "Install Docker on the machine that will run the server.",
+          "link": {"label": "Get Docker", "url": "https://docs.docker.com/get-started/get-docker/"}
+        },
+        {
+          "text": "Start the server.",
+          "command": "docker run -d -it --name 1loop-server --restart unless-stopped -p 47101:47101 -v 1loop-data:/data -v 1loop-projects:/projects ghcr.io/feur-inc/1loop-server:alpha"
+        },
+        {
+          "text": "Copy its fingerprint: the line Certificate SHA-256.",
+          "command": "docker logs 1loop-server"
+        },
+        {
+          "text": "Open its console. Paste there the pair command 1loop shows next, then leave with Ctrl+P, Ctrl+Q.",
+          "command": "docker attach 1loop-server"
+        }
+      ]
+    },
+    {
+      "id": "compose",
+      "title": "Docker Compose",
+      "detail": "A compose.yml file, if you manage your services with it.",
+      "steps": [
+        {
+          "text": "Install Docker on the machine that will run the server.",
+          "link": {"label": "Get Docker", "url": "https://docs.docker.com/get-started/get-docker/"}
+        },
+        {
+          "text": "In an empty folder, save this as compose.yml.",
+          "command": "services:\n  server:\n    image: ghcr.io/feur-inc/1loop-server:alpha\n    container_name: 1loop-server\n    restart: unless-stopped\n    stdin_open: true\n    tty: true\n    ports:\n      - \"47101:47101\"\n    volumes:\n      - data:/data\n      - ./projects:/projects\nvolumes:\n  data:"
+        },
+        {
+          "text": "Start it, in that folder.",
+          "command": "docker compose up -d"
+        },
+        {
+          "text": "Copy its fingerprint: the line Certificate SHA-256.",
+          "command": "docker compose logs server"
+        },
+        {
+          "text": "Open its console. Paste there the pair command 1loop shows next, then leave with Ctrl+P, Ctrl+Q.",
+          "command": "docker attach 1loop-server"
+        }
+      ]
+    },
+    {
+      "id": "linux",
+      "title": "Linux program",
+      "detail": "The server alone, without Docker.",
+      "steps": [
+        {
+          "text": "Download 1loop-server-…-linux-amd64 from the newest release (the first one listed).",
+          "link": {"label": "Open the downloads", "url": "https://github.com/Feur-Inc/1loop/releases"}
+        },
+        {
+          "text": "Install Git (here on Debian or Ubuntu).",
+          "command": "sudo apt install git"
+        },
+        {
+          "text": "In the download folder, start it. Keep this terminal open.",
+          "command": "chmod +x 1loop-server-*-linux-amd64 && mkdir -p ~/1loop-projects && ./1loop-server-*-linux-amd64 -workspace ~/1loop-projects"
+        },
+        {
+          "text": "Copy its fingerprint: the line Certificate SHA-256 it prints. Paste in this terminal the pair command 1loop shows next."
+        }
+      ]
+    },
+    {
+      "id": "windows",
+      "title": "Windows program",
+      "detail": "The server alone, on a Windows PC.",
+      "steps": [
+        {
+          "text": "Download 1loop-server-…-windows-amd64.exe from the newest release (the first one listed).",
+          "link": {"label": "Open the downloads", "url": "https://github.com/Feur-Inc/1loop/releases"}
+        },
+        {
+          "text": "Install Git for Windows.",
+          "link": {"label": "Get Git", "url": "https://git-scm.com/downloads/win"}
+        },
+        {
+          "text": "In PowerShell, in the download folder, start it. Allow it when Windows asks about the network. Keep this window open.",
+          "command": "New-Item -ItemType Directory -Force \"$HOME\\1loop-projects\" | Out-Null; & (Get-Item .\\1loop-server-*-windows-amd64.exe).FullName -workspace \"$HOME\\1loop-projects\""
+        },
+        {
+          "text": "Copy its fingerprint: the line Certificate SHA-256 it prints. Paste in this window the pair command 1loop shows next."
+        }
+      ]
+    }
+  ]
+}

@@ -345,7 +345,7 @@ finds Chrome, Chromium or Microsoft Edge, or downloads its own Chromium into
    *More details → Install anyway*).
 4. Open 1loop and choose where the agent works:
    - **Remote desktop**: a 1loop desktop on your network. On the desktop,
-     **Settings → Phone remote → Pair a phone** shows a QR code; scan it with
+     **Settings → Remote → Phone app → Pair a phone** shows a QR code; scan it with
      **Scan QR code**, or tap the computer in the list and type the 6-digit
      code it shows.
    - **Remote server**: a headless 1loop server, by its HTTPS address and

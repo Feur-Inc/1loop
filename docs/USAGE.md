@@ -35,8 +35,8 @@ How to set up 1loop and what it can do. To install it first, see
    *Load / refresh models* fetches the catalog; tick the models to show.
 3. **Ask.** Type what you want and press Enter. The agent works in the folder;
    its tool calls, diffs and task list appear as it goes.
-4. **Pair your phone (optional).** Desktop: **Settings → Phone remote → Pair a
-   phone** shows a QR code. Phone: install the app, choose **Remote desktop**,
+4. **Pair your phone (optional).** Desktop: **Settings → Remote → Phone app →
+   Pair a phone** shows a QR code. Phone: install the app, choose **Remote desktop**,
    then **Scan QR code**.
 
 ## Approval modes

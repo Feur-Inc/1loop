@@ -26,7 +26,7 @@ import java.net.URLEncoder
 
 // Unpairing (#428): forgetting a paired server unpairs this phone there
 // first (its token stops working), and the headless server open now lists
-// the devices paired with it in Settings → General, each with Remove. Both
+// the devices paired with it in Settings → Remote, each with Remove. Both
 // ask first. The server's side is internal/server/security.go.
 
 /** A device paired with a headless server, as GET /api/devices lists it; current is this phone. */
@@ -61,12 +61,18 @@ fun ConfirmDialog(title: String, text: String, verb: String, onDismiss: () -> Un
 /** Asks before forgetting a paired computer or server. */
 @Composable
 fun ForgetServerDialog(app: RemoteApp, target: Server, onDismiss: () -> Unit) {
-    val text = if (target.desktop) "${target.name} is forgotten on this phone. To remove this phone on the computer too, use Forget in its Settings → Phone."
+    val text = if (!target.paired) "${target.name} is removed from this phone's list. It can be added again by its address."
+    else if (target.desktop) "${target.name} is forgotten on this phone. To remove this phone on the computer too, use Forget in its Settings → Remote."
     else "This phone is unpaired from ${target.name}: its access stops at once, and using the server again needs a new pairing, approved on a paired device or in the server's console."
     ConfirmDialog("Forget ${target.name}?", text, "Forget", onDismiss) { app.unpair(target) }
 }
 
-/** Settings → General: the devices paired with the headless server open now, each with Remove. */
+/** What Unlink does to a linked target that is not a paired one: this phone's projects leave the menu, a computer is forgotten. */
+fun unlinkText(target: LinkedTarget) =
+    if (target.kind == TargetKind.Phone) "This phone's projects and chats leave the menu. Link it again with Link a target."
+    else "${target.name} is forgotten on this phone: link it again to use it."
+
+/** Settings → Remote: the devices paired with the headless server open now, each with Remove. */
 @Composable
 fun ServerDevicesSection(app: RemoteApp) {
     val target = app.server?.takeIf { !it.localPhone && !it.desktop } ?: return

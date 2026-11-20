@@ -3,7 +3,7 @@
 package ui
 
 // Projects belong to a target (#359): this computer, an SSH machine of
-// Settings → General, or a paired 1loop server. The sidebar lists the
+// Settings → Remote, or a paired 1loop server. The sidebar lists the
 // projects of every target at once, those of another target than this
 // computer marked with its icon, and a project whose target does not
 // answer stays listed, marked offline, instead of disappearing.

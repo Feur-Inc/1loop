@@ -2,11 +2,16 @@
 
 package ui
 
-// Settings → General → Where the agent runs: every execution target on one
-// part of the page, the one in use marked, so the choice the composer's
-// target button makes is also explained and reachable here: this computer,
-// its SSH machines, and a headless 1loop server (how to connect one is
-// spelled out step by step, since nothing else in the window says it).
+// Settings → Remote (#443): everything remote on one page, in three parts.
+// Where the agent runs lists every execution target, the one in use
+// marked, so the choice the composer's target button makes is also
+// explained and reachable here: this computer, its SSH machines, and the
+// headless 1loop servers (how to connect one is spelled out step by step,
+// since nothing else in the window says it). Devices that control this
+// 1loop are the phones paired with this computer and the devices paired
+// with the server in use, each with Forget or Remove, which ask first. The
+// phone app is the switch that lets phones reach this computer, and its
+// pairing code.
 
 import (
 	"fyne.io/fyne/v2"
@@ -14,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/layout"
 
 	"1loop/internal/core"
+	registry "1loop/internal/settings"
 	"1loop/internal/sshmachine"
 )
 
@@ -22,30 +28,67 @@ func inUse() fyne.CanvasObject {
 	return container.NewCenter(textLine("In use", 12.5, colAmber))
 }
 
-// targetRows are General's targets: this computer, the SSH machines and
-// the remote server, each with Use, or In use for the one the agent is on.
+// partTitle heads a list inside one of a page's parts.
+func partTitle(text string) fyne.CanvasObject {
+	return padded(10, 6, 2, 0, textLine(text, 13, colMuted))
+}
+
+// partNote is the line under a part's title.
+func partNote(text string) fyne.CanvasObject {
+	return padded(0, 10, 2, 0, plainFlow(text, 13, colMuted))
+}
+
+// remoteSettings is the Remote page: where the agent runs, the devices
+// that control this 1loop, the phone app.
+func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
+	view := ui.prefs
+	page := container.NewVBox(view.pageTitle("Remote", "", nil), view.intro(registry.Remote))
+	for _, object := range ui.targetRows() {
+		page.Add(object)
+	}
+	if ui.server != nil { // Install Chromium / Claude Code, while the server lacks them (#406)
+		page.Add(ui.server.installRows())
+	}
+	page.Add(sectionTitle(registry.GroupDevices))
+	page.Add(partNote("The phones and browsers that can use this 1loop. Forgetting one stops its access at once: it must be paired again to come back."))
+	page.Add(partTitle("Paired with this computer"))
+	page.Add(view.mark("phone.pairing", card(ui.pairedPhoneRows()...)))
+	if ui.server != nil { // #428
+		page.Add(partTitle("Paired with " + serverName(ui.server.client.address.URL)))
+		page.Add(ui.serverDevicesCard(ui.server))
+	}
+	page.Add(sectionTitle(registry.GroupPhone))
+	page.Add(card(ui.phoneAppRows()...))
+	return page
+}
+
+// reshowRemote redraws Settings → Remote when it is on screen.
+func (ui *desktopUI) reshowRemote() {
+	if ui.prefs != nil && ui.prefs.at("Remote") {
+		ui.prefs.show("Remote")
+	}
+}
+
+// targetRows are Remote's first part: this computer, the SSH machines and
+// the remote servers, each with Use, or In use for the one the agent is on.
 func (ui *desktopUI) targetRows() []fyne.CanvasObject {
 	view := ui.prefs
-	var computer fyne.CanvasObject = newRow("Use", nil, styleOutline, func() { ui.useComputer(); view.show("General") })
+	var computer fyne.CanvasObject = newRow("Use", nil, styleOutline, func() { ui.useComputer(); view.show("Remote") })
 	if ui.server == nil && ui.cfg.MachineID == "" {
 		computer = inUse()
 	}
 	add := newRow("Add machine", iconPlus, styleChip, func() {
 		ui.sshEditor(sshmachine.Settings{ID: core.Identifier(), Port: 22, Auth: "key", KeyPath: "~/.ssh/id_ed25519", Projects: "~/1loop-projects"})
 	})
-	rows := []fyne.CanvasObject{
-		sectionTitle("Where the agent runs"),
-		padded(0, 10, 2, 0, plainFlow("Where the agent runs commands, edits files and keeps its projects. The target button under the conversation switches between them too.", 13, colMuted)),
+	return []fyne.CanvasObject{
+		sectionTitle(registry.GroupTargets),
+		partNote("Where the agent runs commands, edits files and keeps its projects. The target button under the conversation switches between them too."),
 		card(view.mark("general.target", settingRow("This computer", "The agent works here, with your user's rights. Computer Use is available only on this target.", computer))),
-		container.NewBorder(nil, nil, nil, padded(14, 4, 0, 0, add), sectionTitle("SSH machines")),
+		container.NewBorder(nil, nil, nil, padded(6, 2, 0, 0, add), partTitle("SSH machines")),
 		view.mark("general.ssh", card(ui.sshRows()...)),
-		sectionTitle("Remote server"),
+		partTitle("Remote servers"),
 		view.mark("general.remote_server", card(ui.serverRows()...)),
 	}
-	if ui.server != nil { // #428
-		rows = append(rows, sectionTitle("Devices paired with "+serverName(ui.server.client.address.URL)), ui.serverDevicesCard(ui.server))
-	}
-	return rows
 }
 
 // sshRows are the SSH machines, each with Use (or In use) and Edit.
@@ -55,7 +98,7 @@ func (ui *desktopUI) sshRows() []fyne.CanvasObject {
 		machine := machine
 		edit := newRow("Edit", iconChevronRight, styleChip, func() { ui.sshEditor(machine) })
 		edit.iconAfter = true
-		var use fyne.CanvasObject = newRow("Use", nil, styleOutline, func() { ui.useMachine(machine.ID); ui.prefs.show("General") })
+		var use fyne.CanvasObject = newRow("Use", nil, styleOutline, func() { ui.useMachine(machine.ID); ui.prefs.show("Remote") })
 		if ui.server == nil && ui.cfg.MachineID == machine.ID {
 			use = inUse()
 		}
@@ -86,7 +129,7 @@ func (ui *desktopUI) serverRows() []fyne.CanvasObject {
 		if connected {
 			control = container.New(layout.NewCustomPaddedHBoxLayout(10), inUse(), newRow("Disconnect", nil, styleOutline, func() {
 				ui.useComputer()
-				ui.prefs.show("General")
+				ui.prefs.show("Remote")
 			}))
 			detail = saved.URL + " · connected"
 		}
@@ -94,17 +137,8 @@ func (ui *desktopUI) serverRows() []fyne.CanvasObject {
 		control = container.New(layout.NewCustomPaddedHBoxLayout(10), control, forget)
 		rows = append(rows, settingRow(serverName(saved.URL), detail, control))
 	}
-	steps := container.New(layout.NewCustomPaddedVBoxLayout(4))
-	for i, step := range []string{
-		"Start the server on its machine (1loop-server, or its Docker image).",
-		"Enter its HTTPS address. For a self-signed certificate, also paste the SHA-256 fingerprint the console prints.",
-		"Approve this computer in 1loop on a device already paired with the server, or type the pairing command in the server's console.",
-	} {
-		number := textLine(string(rune('1'+i))+".", 12.5, colAmber)
-		steps.Add(container.NewBorder(nil, nil, padded(0, 0, 0, 8, number), nil, plainFlow(step, 12.5, colMuted)))
-	}
-	rows = append(rows, settingStack("Connect a server",
-		"A headless 1loop server runs the agent, its files, browser and terminals on another machine (see docs/SERVER.md).",
-		container.NewVBox(steps, container.NewHBox(newRow("Connect a server…", iconPlus, styleOutline, ui.connectServer)))))
+	// One line and its button: the steps are in the guide it opens (#443).
+	rows = append(rows, settingRow("Connect a server", "Run 1loop on another machine, and work there from here.",
+		newRow("Connect a server…", iconPlus, styleOutline, ui.connectServer)))
 	return rows
 }

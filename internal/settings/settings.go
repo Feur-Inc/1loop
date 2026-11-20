@@ -53,7 +53,10 @@ type Setting struct {
 	Section string `json:"section"`
 	// Page is the desktop page that holds it, when it is not the section's
 	// own (Extensions, Connectors).
-	Page        string   `json:"page,omitempty"`
+	Page string `json:"page,omitempty"`
+	// Group is the part of its section's page it is in, under a heading of
+	// that name, when the section has parts (Remote).
+	Group       string   `json:"group,omitempty"`
 	Title       string   `json:"title"`
 	Description string   `json:"description"`
 	Keywords    []string `json:"keywords,omitempty"`
@@ -89,17 +92,17 @@ const (
 	Models   = "models"
 	Agent    = "agent"
 	Tools    = "tools"
-	Phone    = "phone"
+	Remote   = "remote"
 	Updates  = "updates"
 	Advanced = "advanced"
 )
 
 var sections = []Section{
-	{General, "General", "Where the agent works, and what comes from elsewhere."},
+	{General, "General", "The project folder, how 1loop looks, and what comes from elsewhere."},
+	{Remote, "Remote", "Where the agent runs, the devices that control this 1loop, and the phone app."},
 	{Models, "Models & accounts", "The services and accounts the models come from, and what happens at a rate limit."},
 	{Agent, "Agent & approvals", "What the agent may do without asking, what it is told in every chat and what it remembers."},
 	{Tools, "Tools & extensions", "What extends the agent, and its browser and screen."},
-	{Phone, "Phone", "The 1loop phone app: pairing, sharing and what it may do."},
 	{Updates, "Updates", "This version of 1loop, and the newer ones."},
 	{Advanced, "Advanced", "Commands around the agent's work, and crash reports."},
 }
@@ -116,6 +119,13 @@ func SectionTitle(id string) string {
 	}
 	return ""
 }
+
+// The parts of the Remote section, in order.
+const (
+	GroupTargets = "Where the agent runs"
+	GroupDevices = "Devices that control this 1loop"
+	GroupPhone   = "Phone app"
+)
 
 // Keys of the settings 1loop itself reads and writes by key.
 const (
@@ -140,15 +150,6 @@ var list = []Setting{
 	{Key: "general.workspace", Section: General, Title: "Project folder", Where: OnDesktop, Kind: Action, Protected: true,
 		Description: "The folder the agent works in, with its files, terminals and git.",
 		Keywords:    []string{"workspace", "directory", "project", "folder", "path", "cwd"}},
-	{Key: "general.target", Section: General, Title: "Execution target", Where: OnBoth, Kind: Action, Protected: true,
-		Description: "Where the agent works: this computer, an SSH machine, a server or this phone.",
-		Keywords:    []string{"server", "computer", "desktop", "switch", "machine", "local", "connect", "this computer"}},
-	{Key: "general.remote_server", Section: General, Title: "Connect a server", Where: OnDesktop, Kind: Action, Protected: true,
-		Description: "Pair this computer with a headless 1loop server, then work on it.",
-		Keywords:    []string{"remote", "server", "headless", "connect", "pair", "pairing", "https", "fingerprint", "certificate", "docker"}},
-	{Key: "general.ssh", Section: General, Title: "SSH machines", Where: OnDesktop, Kind: Action, Protected: true,
-		Description: "Other computers the agent can work on over SSH.",
-		Keywords:    []string{"ssh", "remote", "machine", "host", "server", "computer", "vm"}},
 	{Key: KeyWorktreeSort, Section: General, Title: "Worktree order", Where: OnDesktop, Kind: Choice,
 		Description: "How the sidebar and the Repository window order a project's git worktrees.",
 		Keywords:    []string{"worktree", "sort", "order", "branch", "git", "sidebar"},
@@ -243,29 +244,38 @@ var list = []Setting{
 		Description: "The Debian the local agent works in: storage, packages, a terminal and a reset.",
 		Keywords:    []string{"linux", "debian", "terminal", "packages", "proot", "storage"}},
 
-	// Phone.
-	{Key: "phone.remote", Section: Phone, Title: "Phone app on this network", Where: OnDesktop, Kind: Toggle, Protected: true,
-		Description: "Lets the 1loop phone app find and reach this computer, once paired.",
-		Keywords:    []string{"phone", "mobile", "android", "remote", "network", "lan"}},
-	{Key: "phone.pairing", Section: Phone, Title: "Paired phones", Where: OnDesktop, Kind: Action, Protected: true,
-		Description: "Pair a phone with a QR code, or forget one.",
-		Keywords:    []string{"pair", "qr", "code", "phone", "devices", "forget"}},
-	{Key: "phone.status", Section: Phone, Title: "While a model runs", Where: OnPhone, Kind: Choice,
+	// Remote.
+	{Key: "general.target", Section: Remote, Group: GroupTargets, Title: "Execution target", Where: OnBoth, Kind: Action, Protected: true,
+		Description: "Where the agent works: this computer, an SSH machine, a server or this phone.",
+		Keywords:    []string{"server", "computer", "desktop", "switch", "machine", "local", "connect", "this computer", "link", "unlink", "forget"}},
+	{Key: "general.ssh", Section: Remote, Group: GroupTargets, Title: "SSH machines", Where: OnDesktop, Kind: Action, Protected: true,
+		Description: "Other computers the agent can work on over SSH.",
+		Keywords:    []string{"ssh", "remote", "machine", "host", "server", "computer", "vm"}},
+	{Key: "general.remote_server", Section: Remote, Group: GroupTargets, Title: "Connect a server", Where: OnDesktop, Kind: Action, Protected: true,
+		Description: "Pair this computer with a headless 1loop server, then work on it; forget one.",
+		Keywords:    []string{"remote", "server", "headless", "connect", "pair", "pairing", "https", "fingerprint", "certificate", "docker", "forget"}},
+	{Key: "phone.pairing", Section: Remote, Group: GroupDevices, Title: "Paired devices", Where: OnBoth, Kind: Action, Protected: true,
+		Description: "The phones and browsers paired with this computer or with the server in use: forget one, and its access stops.",
+		Keywords:    []string{"pair", "paired", "devices", "phone", "browser", "forget", "remove", "unpair", "revoke", "phones"}},
+	{Key: "phone.sharing", Section: Remote, Group: GroupDevices, Title: "Share this phone", Where: OnPhone, Kind: Action, Protected: true,
+		Description: "Lets the desktop or another phone on this network use this phone's agent.",
+		Keywords:    []string{"share", "pair", "remote", "network", "devices", "fingerprint", "remove", "unpair"}},
+	{Key: "phone.remote", Section: Remote, Group: GroupPhone, Title: "Phone app on this network", Where: OnDesktop, Kind: Toggle, Protected: true,
+		Description: "Lets the 1loop phone app find and reach this computer, and pairs a phone with a QR code.",
+		Keywords:    []string{"phone", "mobile", "android", "remote", "network", "lan", "pair", "qr", "code"}},
+	{Key: "phone.status", Section: Remote, Group: GroupPhone, Title: "While a model runs", Where: OnPhone, Kind: Choice,
 		Description: "What shows over your other apps while the agent works: a small badge, a Live Update or nothing.",
 		Keywords:    []string{"badge", "status", "overlay", "notification", "live update", "bubble", "floating"},
 		Values:      []Value{{"badge", "Badge"}, {"live", "Live Update"}, {"off", "Off"}}},
-	{Key: "phone.adb", Section: Phone, Title: "Phone access", Where: OnPhone, Kind: Action, Protected: true,
+	{Key: "phone.adb", Section: Remote, Group: GroupPhone, Title: "Phone access", Where: OnPhone, Kind: Action, Protected: true,
 		Description: "Lets the local agent use this phone through Shizuku and local ADB.",
 		Keywords:    []string{"shizuku", "adb", "phone use", "permissions", "control"}},
-	{Key: "phone.work_profile", Section: Phone, Title: "Work profile for the agent", Where: OnPhone, Kind: Action, Protected: true,
+	{Key: "phone.work_profile", Section: Remote, Group: GroupPhone, Title: "Work profile for the agent", Where: OnPhone, Kind: Action, Protected: true,
 		Description: "A separate Android profile where the agent installs and uses its apps.",
 		Keywords:    []string{"work profile", "profile", "apps", "isolation", "sandbox"}},
-	{Key: "phone.background", Section: Phone, Title: "Background execution", Where: OnPhone, Kind: Action,
+	{Key: "phone.background", Section: Remote, Group: GroupPhone, Title: "Background execution", Where: OnPhone, Kind: Action,
 		Description: "Keeps long local tasks running when 1loop is not on screen.",
 		Keywords:    []string{"battery", "background", "optimization", "doze", "sleep", "unrestricted"}},
-	{Key: "phone.sharing", Section: Phone, Title: "Share this phone", Where: OnPhone, Kind: Action, Protected: true,
-		Description: "Lets the desktop or another phone on this network use this phone's agent.",
-		Keywords:    []string{"share", "pair", "remote", "network", "devices", "fingerprint"}},
 
 	// Updates.
 	{Key: "updates.check", Section: Updates, Title: "1loop updates", Where: OnBoth, Kind: Action,

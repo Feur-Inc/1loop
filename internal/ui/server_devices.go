@@ -2,7 +2,7 @@
 
 package ui
 
-// Unpairing (#428), in Settings → General: Forget on a paired server
+// Unpairing (#428), in Settings → Remote: Forget on a paired server
 // unpairs this device there (its token stops working) before forgetting the
 // server here, and the server in use lists the devices paired with it, each
 // with Remove. Both ask first. The desktop and the browser client share
@@ -97,14 +97,7 @@ func (ui *desktopUI) dropServer(address string) {
 		forgetServerAddress(address)
 		ui.linkServers()
 	}
-	ui.reshowGeneral()
-}
-
-// reshowGeneral redraws Settings → General when it is on screen.
-func (ui *desktopUI) reshowGeneral() {
-	if ui.prefs != nil && ui.prefs.at("General") {
-		ui.prefs.show("General")
-	}
+	ui.reshowRemote()
 }
 
 // serverDevicesCard lists the devices paired with the server in use, each

@@ -87,5 +87,5 @@ func TestSidebarKeepsNoFolderChatsOnAMachine(t *testing.T) {
 	ui.chats = append(ui.chats, &conversation{ID: "loose", Title: "Quick question", Config: agent.Config{Workspace: "/state/scratch/a", Scratch: "/state/scratch/a"}})
 	ui.cfg.MachineID = "m1"
 	ui.renderChats()
-	wantListed(t, ui, noFolderLabel, "Quick question")
+	wantListed(t, ui, thisComputerLabel, "Quick question")
 }

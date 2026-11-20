@@ -204,7 +204,7 @@ func (ui *desktopUI) addPinned(groups []targetGroup, chats []sideChat) {
 		for _, chat := range chats {
 			if chatKey(chat.id) == key {
 				ui.sideOrder = append(ui.sideOrder, chat)
-				ui.addChatRow(chat, "", false, nil)
+				ui.addChatRow(chat, "", false, slices.Clone(ui.pinned))
 			}
 		}
 	}
@@ -247,6 +247,9 @@ func (ui *desktopUI) addTargetGroup(group targetGroup, shown func(rowKey string)
 		header.accent = true
 		header.truncate = true
 		header.mark = target.mark(ui.home)
+		if p != "" {
+			ui.dragRow(header, "project:"+key, ui.projectSiblings(group, "project:"+key))
+		}
 		header.selected = group.active && p != "" && p == ui.cfg.Workspace && ui.current == nil
 		if group.reach.state == reachOffline {
 			header.trailing = offlineMark
@@ -318,6 +321,7 @@ func (ui *desktopUI) reuseRow(key string, fresh *tapRow, wrap func(fyne.CanvasOb
 		row.text, row.icon, row.selected, row.accent, row.truncate = fresh.text, fresh.icon, fresh.selected, fresh.accent, fresh.truncate
 		row.trailing, row.detail, row.badge, row.mark, row.markText = fresh.trailing, fresh.detail, fresh.badge, fresh.mark, fresh.markText
 		row.onTap, row.onMiddle = fresh.onTap, fresh.onMiddle
+		row.onDrag, row.onDrop = fresh.onDrag, fresh.onDrop
 		kept.menu = menu
 		ui.sideRowsNext[key] = kept
 		if changed {
@@ -431,6 +435,7 @@ func (ui *desktopUI) addChatRow(chat sideChat, project string, indent bool, sibl
 	if nested, _ := nestedCount(chat.subchats); nested > 0 {
 		row.mark, row.markText = iconBranch, strconv.Itoa(nested)
 	}
+	ui.dragRow(row, chatKey(chat.id), siblings)
 	var wrap func(fyne.CanvasObject) fyne.CanvasObject
 	if indent {
 		wrap = func(object fyne.CanvasObject) fyne.CanvasObject { return padded(0, 0, 28, 0, object) }

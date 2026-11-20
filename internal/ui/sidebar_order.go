@@ -76,22 +76,35 @@ func (ui *desktopUI) moveBy(siblings []string, key string, delta int) {
 	ui.renderChats()
 }
 
-// moveRank swaps key's rank with its neighbour's in the direction delta
-// among siblings, in the sidebar's order. The siblings first take ranks from
-// base in that order, so the swap changes only those two. It says whether it
-// moved anything.
+// moveRank moves key one place in the direction delta among siblings, in the
+// sidebar's order. It says whether it moved anything.
 func moveRank(rank map[string]int64, siblings []string, key string, delta int, base int64) bool {
 	i := slices.Index(siblings, key)
 	j := i + delta
 	if i < 0 || j < 0 || j >= len(siblings) {
 		return false
 	}
-	for k, sibling := range siblings {
+	placeRank(rank, siblings, key, j, base)
+	return true
+}
+
+// placeRank puts key at index to among siblings, in the sidebar's order: the
+// siblings take ranks from base in their new order, so the sidebar shows it.
+func placeRank(rank map[string]int64, siblings []string, key string, to int, base int64) {
+	for k, sibling := range reorderKeys(siblings, key, to) {
 		rank[sibling] = base + int64(k)
 	}
-	a, b := siblings[i], siblings[j]
-	rank[a], rank[b] = rank[b], rank[a]
-	return true
+}
+
+// reorderKeys is list with key moved to index to. The list is unchanged when
+// it does not hold key.
+func reorderKeys(list []string, key string, to int) []string {
+	if !slices.Contains(list, key) {
+		return list
+	}
+	rest := slices.DeleteFunc(slices.Clone(list), func(k string) bool { return k == key })
+	to = min(max(to, 0), len(rest))
+	return slices.Insert(rest, to, key)
 }
 
 // movePinned moves a pinned project or chat up or down the pinned section.
@@ -154,6 +167,15 @@ func (ui *desktopUI) pinnedActions(key string) []menuAction {
 		actions = append(actions, menuAction{label: "Move down", icon: iconChevron, run: func() { ui.movePinned(key, 1) }})
 	}
 	return actions
+}
+
+// projectSiblings are the keys a project row's drag and move go among: the
+// pinned section's when the project is pinned, else its target's unpinned ones.
+func (ui *desktopUI) projectSiblings(group targetGroup, key string) []string {
+	if ui.isPinned(key) {
+		return slices.Clone(ui.pinned)
+	}
+	return ui.siblingProjects(group)
 }
 
 // siblingProjects are the keys of a target's projects the sidebar lists

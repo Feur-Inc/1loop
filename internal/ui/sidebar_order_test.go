@@ -73,3 +73,33 @@ func TestMoveRankRefusesEdges(t *testing.T) {
 		t.Fatal("a key not listed moved")
 	}
 }
+
+func TestReorderKeysMovesKeyToIndex(t *testing.T) {
+	list := []string{"p:a", "p:b", "p:c", "p:d"}
+	if got := reorderKeys(list, "p:a", 2); !slices.Equal(got, []string{"p:b", "p:c", "p:a", "p:d"}) {
+		t.Fatalf("a to 2: %v", got)
+	}
+	if got := reorderKeys(list, "p:d", 0); !slices.Equal(got, []string{"p:d", "p:a", "p:b", "p:c"}) {
+		t.Fatalf("d to 0: %v", got)
+	}
+	if got := reorderKeys(list, "p:b", 99); !slices.Equal(got, []string{"p:a", "p:c", "p:d", "p:b"}) {
+		t.Fatalf("b past the end: %v", got)
+	}
+	if got := reorderKeys(list, "p:missing", 0); !slices.Equal(got, list) {
+		t.Fatalf("a key not listed changed the list: %v", got)
+	}
+	if !slices.Equal(list, []string{"p:a", "p:b", "p:c", "p:d"}) {
+		t.Fatalf("the input list was changed: %v", list)
+	}
+}
+
+func TestPlaceRankFollowsDrop(t *testing.T) {
+	rank := map[string]int64{"p:a": -300, "p:b": -200, "p:c": -100}
+	siblings := []string{"p:a", "p:b", "p:c"}
+	placeRank(rank, siblings, "p:c", 0, 1000)
+	sorted := slices.Clone(siblings)
+	sortByRank(sorted, func(key string) string { return key }, rank)
+	if want := []string{"p:c", "p:a", "p:b"}; !slices.Equal(sorted, want) {
+		t.Fatalf("after dropping c first: %v, want %v", sorted, want)
+	}
+}

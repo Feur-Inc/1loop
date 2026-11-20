@@ -238,10 +238,12 @@ type desktopUI struct {
 	sideRows      map[string]*sideRow // the rows of the last rendering, by key, reused by the next (sidebar_groups.go)
 	sideRowsNext  map[string]*sideRow
 	sideLists     *fyne.Container
-	sideChats     []sideChat       // the chats listed, for search
-	sideOrder     []sideChat       // the same in the sidebar's order, for the previous and next chat
-	sideRank      map[string]int64 // when each project and chat was last used or moved (sidebar_order.go)
-	pinned        []string         // the pinned projects and chats, in order (sidebar_order.go)
+	sideChats     []sideChat        // the chats listed, for search
+	sideOrder     []sideChat        // the same in the sidebar's order, for the previous and next chat
+	sideRank      map[string]int64  // when each project and chat was last used or moved (sidebar_order.go)
+	pinned        []string          // the pinned projects and chats, in order (sidebar_order.go)
+	sideDrag      *sideDrag         // the sidebar row being dragged, nil when none (sidebar_drag.go)
+	sideMarker    *canvas.Rectangle // the line where a dragged sidebar row would land
 	searchRow     *tapRow
 	find          *chatFind
 	subchatsShown map[string]bool           // chats whose many subchats the user unfolded (true) or folded (false), by ID

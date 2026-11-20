@@ -65,3 +65,7 @@ shows every change.
   screen): on Wayland the compositor keeps the size a window is created
   with, and the canvas was stretched over it. `window_workarea_test.go`
   checks the arithmetic.
+- `internal/driver/glfw/window_desktop.go` (scaled): on Wayland, a change of
+  content scale also throws the text textures away, as RescaleContext does.
+  They are kept by text and colour, so text drawn before the compositor's
+  fractional scale arrived was stretched from 1.0 to 1.25.

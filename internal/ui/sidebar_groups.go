@@ -145,32 +145,68 @@ func (ui *desktopUI) renderSidebar(groups []targetGroup) {
 	ui.projectList.RemoveAll()
 	ui.sideGlide.begin()
 	ui.sideRowsNext = make(map[string]*sideRow, len(ui.sideRows))
-	var all, scratch []sideChat
+	var all, scratch, pinned []sideChat
 	for i := range groups {
+		target := groups[i].target
+		groups[i].projects = slices.Clone(groups[i].projects) // ui.projects keeps its own order
+		sortByRank(groups[i].projects, func(project string) string { return projectKey(target, project) }, ui.sideRank)
 		listed := groups[i].listed()
 		for j := range groups[i].chats {
 			groups[i].chats[j].group = groups[i].keyOf(listed, groups[i].chats[j])
 		}
 		all = append(all, groups[i].chats...)
-		groups[i].chats = slices.DeleteFunc(nestSubchats(groups[i].chats), func(chat sideChat) bool {
-			if chat.scratch {
+		groups[i].chats = nestSubchats(groups[i].chats)
+		sortByRank(groups[i].chats, func(chat sideChat) string { return chatKey(chat.id) }, ui.sideRank)
+		groups[i].chats = slices.DeleteFunc(groups[i].chats, func(chat sideChat) bool {
+			switch {
+			case ui.isPinned(chatKey(chat.id)):
+				pinned = append(pinned, chat)
+			case chat.scratch:
 				scratch = append(scratch, chat)
+			default:
+				return false
 			}
-			return chat.scratch
+			return true
 		})
 	}
 	ui.sideChats = all
+	ui.sideOrder = ui.sideOrder[:0]
+	ui.addPinned(groups, pinned)
 	if len(scratch) > 0 || ui.server == nil && ui.cfg.MachineID == "" && ui.cfg.InScratch() {
 		ui.addScratchGroup(scratch)
 	}
-	ui.sideOrder = append(ui.sideOrder[:0], scratch...)
+	ui.sideOrder = append(ui.sideOrder, scratch...)
 	for _, group := range groups {
-		ui.addTargetGroup(group)
+		ui.addTargetGroup(group, func(rowKey string) bool { return !ui.isPinned(rowKey) })
 	}
 	ui.sideRows, ui.sideRowsNext = ui.sideRowsNext, nil
 	ui.sideGlide.end(ui.projectList)
 	if ui.sideLists != nil {
 		ui.sideLists.Refresh() // the groups changed height: lay the column out again
+	}
+}
+
+// addPinned lists the pinned section above the projects (#283): the pinned
+// projects with their chats, and the pinned chats out of their projects, in
+// the order the user gave them.
+func (ui *desktopUI) addPinned(groups []targetGroup, chats []sideChat) {
+	if len(ui.pinned) == 0 {
+		return
+	}
+	ui.addSide("pinned:header", sectionHeader("Pinned", nil))
+	for _, key := range ui.pinned {
+		if isProjectKey(key) {
+			for _, group := range groups {
+				ui.addTargetGroup(group, func(rowKey string) bool { return rowKey == key })
+			}
+			continue
+		}
+		for _, chat := range chats {
+			if chatKey(chat.id) == key {
+				ui.sideOrder = append(ui.sideOrder, chat)
+				ui.addChatRow(chat, "", false, nil)
+			}
+		}
 	}
 }
 
@@ -180,10 +216,11 @@ func (ui *desktopUI) renderSidebar(groups []targetGroup) {
 const offlineMark = "offline"
 
 // addTargetGroup lists a target's projects, each with its chats, then its
-// chats of no listed project. A project of another target than this
+// chats of no listed project. shown picks the projects by row key, so the
+// pinned section can list its own (#283). A project of another target than this
 // computer shows the target's icon after its name, and offlineMark
 // while the target does not answer.
-func (ui *desktopUI) addTargetGroup(group targetGroup) {
+func (ui *desktopUI) addTargetGroup(group targetGroup, shown func(rowKey string) bool) {
 	target := group.target
 	open := func(folder string) { ui.openProjectOn(target, folder) }
 	opened := ""
@@ -191,9 +228,12 @@ func (ui *desktopUI) addTargetGroup(group targetGroup) {
 		opened = ui.projectOf(ui.cfg.Workspace)
 	}
 	for _, chats := range groupByProject(group.listed(), group.chats, func(chat sideChat) string { return chat.folder }, group.projectOf) {
-		ui.sideOrder = append(ui.sideOrder, chats.chats...)
 		p := chats.project
 		key := groupKey(target, p)
+		if !shown("project:" + key) {
+			continue
+		}
+		ui.sideOrder = append(ui.sideOrder, chats.chats...)
 		folded := ui.foldedProjects[key]
 		name := "Other chats"
 		if p != "" {
@@ -226,6 +266,7 @@ func (ui *desktopUI) addTargetGroup(group targetGroup) {
 						ui.startNew() // the project may be open already, with a chat on screen
 					}
 				}}}
+				actions = append(actions, ui.orderActions("project:"+key, ui.siblingProjects(group))...)
 				return showMenu(ui.window, anchor, append(actions, ui.projectActionsOn(group, p)...))
 			}))
 		}
@@ -338,6 +379,7 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 		ui.addSide("empty:"+key, padded(4, 4, 38, 0, textLine("No chats yet", 13, colFaint)))
 		return
 	}
+	siblings := ui.unpinnedChatKeys(chats)
 	shown := chats
 	if !ui.allChatsShown[key] && len(chats) > groupChatLimit {
 		shown = chats[:groupChatLimit]
@@ -348,33 +390,7 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 		}
 	}
 	for _, chat := range shown {
-		chat := chat
-		row := newRow(chat.title, nil, styleNav, chat.open)
-		row.accent = true
-		row.truncate = true
-		row.selected = chat.selected
-		row.onMiddle = chat.window
-		if chat.folder != project && project != "" && !chat.scratch {
-			row.trailing = path.Base(ui.worktreeLabel(chat.folder)) // a worktree's chat: its branch's last part, short
-		}
-		if !chat.running {
-			row.detail = chat.status
-		}
-		switch {
-		case chat.running:
-			row.badge = iconDot // the agent works on it in the background
-		case chat.blocked:
-			row.badge = iconWaiting // its wrap-up waits on the user
-		}
-		if nested, _ := nestedCount(chat.subchats); nested > 0 {
-			row.mark, row.markText = iconBranch, strconv.Itoa(nested)
-		}
-		ui.addSide("chat:"+chat.id, ui.reuseRow("chat:"+chat.id, row, func(object fyne.CanvasObject) fyne.CanvasObject {
-			return padded(0, 0, 28, 0, object)
-		}, func(anchor fyne.CanvasObject) *sheet {
-			return showMenu(ui.window, anchor, chat.menu)
-		}))
-		ui.addSubchatTree(chat)
+		ui.addChatRow(chat, project, true, siblings)
 	}
 	if len(chats) > groupChatLimit {
 		label := fmt.Sprintf("Show %d more", len(chats)-len(shown))
@@ -389,6 +405,40 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 		more.size = 13
 		ui.addSide("more:"+key, padded(0, 0, 28, 0, more))
 	}
+}
+
+// addChatRow lists a chat as a row: under its project when indent is set,
+// or out of one in the pinned section. siblings are the keys of its
+// project's unpinned chats, which its move actions go among (orderActions).
+func (ui *desktopUI) addChatRow(chat sideChat, project string, indent bool, siblings []string) {
+	row := newRow(chat.title, nil, styleNav, chat.open)
+	row.accent = true
+	row.truncate = true
+	row.selected = chat.selected
+	row.onMiddle = chat.window
+	if chat.folder != project && project != "" && !chat.scratch {
+		row.trailing = path.Base(ui.worktreeLabel(chat.folder)) // a worktree's chat: its branch's last part, short
+	}
+	if !chat.running {
+		row.detail = chat.status
+	}
+	switch {
+	case chat.running:
+		row.badge = iconDot // the agent works on it in the background
+	case chat.blocked:
+		row.badge = iconWaiting // its wrap-up waits on the user
+	}
+	if nested, _ := nestedCount(chat.subchats); nested > 0 {
+		row.mark, row.markText = iconBranch, strconv.Itoa(nested)
+	}
+	var wrap func(fyne.CanvasObject) fyne.CanvasObject
+	if indent {
+		wrap = func(object fyne.CanvasObject) fyne.CanvasObject { return padded(0, 0, 28, 0, object) }
+	}
+	ui.addSide(chatKey(chat.id), ui.reuseRow(chatKey(chat.id), row, wrap, func(anchor fyne.CanvasObject) *sheet {
+		return showMenu(ui.window, anchor, append(slices.Clip(chat.menu), ui.orderActions(chatKey(chat.id), siblings)...))
+	}))
+	ui.addSubchatTree(chat)
 }
 
 // A chat with more than this many subchats, all levels counted, lists one

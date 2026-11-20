@@ -379,7 +379,7 @@ func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
 		if ui.cfg.InScratch() {
 			icon = iconCheck
 		}
-		actions = append(actions, menuAction{label: noFolderLabel, icon: icon, run: ui.chooseNoFolder})
+		actions = append(actions, menuAction{label: thisComputerLabel, icon: icon, run: ui.chooseNoFolder})
 	}
 	add := "Add folder…"
 	if ui.cfg.MachineID != "" {

@@ -69,3 +69,9 @@ shows every change.
   content scale also throws the text textures away, as RescaleContext does.
   They are kept by text and colour, so text drawn before the compositor's
   fractional scale arrived was stretched from 1.0 to 1.25.
+- `internal/painter/gl/draw.go` (roundToPixelCoords): a texture's
+  rectangle keeps the size its texture is drawn at (`round(size × scale)`)
+  instead of the distance between its rounded edges, which changed with
+  its position at a fractional scale: at 1.25 the logo's ring (26 pixels)
+  was drawn 26×25, stretched and resampled out of round, and icons and text
+  were resampled by a pixel. `round_test.go` checks it.

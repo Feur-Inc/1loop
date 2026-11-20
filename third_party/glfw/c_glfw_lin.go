@@ -12,6 +12,7 @@ package glfw
 	#include "glfw/src/wayland-pointer-constraints-unstable-v1-client-protocol.c"
 	#include "glfw/src/wayland-relative-pointer-unstable-v1-client-protocol.c"
 	#include "glfw/src/wayland-viewporter-client-protocol.c"
+	#include "glfw/src/wayland-fractional-scale-v1-client-protocol.c"
 	#include "glfw/src/wayland-xdg-decoration-unstable-v1-client-protocol.c"
 	#include "glfw/src/wayland-xdg-shell-client-protocol.c"
 #endif

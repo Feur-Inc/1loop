@@ -10,16 +10,12 @@ package ui
 import (
 	"context"
 	"fmt"
-	"image"
 	"image/color"
 	_ "image/jpeg"
 	_ "image/png"
-	"io"
-	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -790,11 +786,6 @@ func extensionRow(title string, lines []string, control fyne.CanvasObject) fyne.
 	return padded(13, 13, 16, 16, container.NewBorder(nil, nil, nil, end, container.NewVBox(layout.NewSpacer(), text, layout.NewSpacer())))
 }
 
-var (
-	picturesMu sync.Mutex
-	pictures   = map[string]image.Image{}
-)
-
 // remotePicture shows a picture from the web once it has loaded.
 func remotePicture(address string, size fyne.Size) fyne.CanvasObject {
 	view := canvas.NewImageFromImage(nil)
@@ -802,36 +793,10 @@ func remotePicture(address string, size fyne.Size) fyne.CanvasObject {
 	view.SetMinSize(size)
 	background := canvas.NewRectangle(colCode)
 	background.CornerRadius = rounded(8)
-	picturesMu.Lock()
-	cached := pictures[address]
-	picturesMu.Unlock()
-	if cached != nil {
+	if cached := catalogPictures.get(address); cached != nil {
 		view.Image = cached
-	} else if address != "" {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			request, err := http.NewRequestWithContext(ctx, "GET", address, nil)
-			if err != nil {
-				return
-			}
-			response, err := http.DefaultClient.Do(request)
-			if err != nil {
-				return
-			}
-			defer response.Body.Close()
-			decoded, _, err := image.Decode(io.LimitReader(response.Body, 8<<20))
-			if err != nil {
-				return
-			}
-			picturesMu.Lock()
-			pictures[address] = decoded
-			picturesMu.Unlock()
-			fyne.Do(func() {
-				view.Image = decoded
-				view.Refresh()
-			})
-		}()
+	} else if pictureAllowed(address) && catalogPictures.join(address, view) {
+		go fetchPicture(address, size)
 	}
 	return container.NewStack(background, view)
 }

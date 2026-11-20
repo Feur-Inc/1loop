@@ -373,7 +373,7 @@ func (ui *desktopUI) speedToggle(choice agent.ModelChoice) fyne.CanvasObject {
 		}
 		row.text, row.accent = names[index], index > 0
 		row.Refresh()
-		ui.model.row.SetTrailing(modelTrailing(choice, ui.cfg))
+		ui.showModelTrailing(choice, ui.cfg)
 		ui.save()
 		ui.remote.metaChanged(ui.current)
 	})
@@ -407,6 +407,17 @@ func modelTrailing(choice agent.ModelChoice, cfg agent.Config) string {
 		parts = append(parts, name)
 	}
 	return strings.Join(parts, " · ")
+}
+
+// showModelTrailing shows this computer's effort and speed after the model's
+// name on the composer's chip, except while the window shows a server's
+// chat: that chip is the server's (remoteDesktop.showModel), and a change
+// made here, or from the phone, must not write over it (#581).
+func (ui *desktopUI) showModelTrailing(choice agent.ModelChoice, cfg agent.Config) {
+	if ui.server != nil {
+		return
+	}
+	ui.model.row.SetTrailing(modelTrailing(choice, cfg))
 }
 
 type modelColumnsLayout struct{}

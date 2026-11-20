@@ -119,7 +119,7 @@ func (pane *desktopUI) shareWindow(window *desktopUI) {
 	pane.projectList, pane.sideGlide, pane.sideLists = window.projectList, window.sideGlide, window.sideLists
 	pane.pane, pane.sideHandle, pane.root = window.pane, window.sideHandle, window.root
 	pane.usageRow, pane.updateRow = window.usageRow, window.updateRow
-	pane.sideChats, pane.sideOrder = window.sideChats, window.sideOrder
+	pane.sideChats, pane.sideOrder, pane.sideMarker = window.sideChats, window.sideOrder, window.sideMarker
 	pane.panel, pane.panelToggle, pane.split = window.panel, window.panelToggle, window.split
 }
 

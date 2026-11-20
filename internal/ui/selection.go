@@ -269,7 +269,9 @@ func (selection *selectLayer) below(at fyne.Position) *selTap {
 // Hovering is passed on to what is below, and decides the pointer: the
 // hand on a link or a button, the text cursor elsewhere.
 func (selection *selectLayer) MouseIn(e *desktop.MouseEvent) {
-	selection.ui.activate()
+	if !selection.ui.dragging() { // a drag passing over a pane leaves the focus where it is
+		selection.ui.activate()
+	}
 	selection.stale = true
 	selection.MouseMoved(e)
 }

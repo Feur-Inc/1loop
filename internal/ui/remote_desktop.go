@@ -278,7 +278,7 @@ type remoteDesktop struct {
 	pairingID        string // a device asking to use the server (askPairing)
 	pairingSheet     *sheet
 	questionID       string
-	questionSheet    *sheet
+	questionSheet    *questionCard
 	// The open chat's server tabs (browser, terminal, tasks, files).
 	tabViews      map[string]fyne.CanvasObject
 	tabCancel     map[string]context.CancelFunc

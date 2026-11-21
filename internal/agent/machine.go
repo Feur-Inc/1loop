@@ -4,8 +4,9 @@ package agent
 
 // A conversation on an SSH machine (internal/sshmachine): its files, shell
 // commands, background tasks, terminal and Git changes are there. The
-// agent itself, its models, Browser Use, Computer Use, hooks, skills and
-// MCP servers stay on this computer.
+// agent itself, its models, Browser Use, hooks, skills and MCP servers stay
+// on this computer; Computer Use, which would drive this computer's screen
+// from a chat about another one, is off.
 
 import (
 	"bytes"
@@ -62,13 +63,11 @@ func machineErr(cfg Config) error {
 	if cfg.Machine == nil {
 		return fmt.Errorf("This conversation's SSH machine is no longer in Settings → General")
 	}
-	switch cfg.Provider {
-	case "claudecode":
-		return fmt.Errorf("Claude Code works on this computer's projects only. Choose another model for %s", cfg.Machine.Label())
-	case "antigravity":
+	// Claude Code runs 1loop's tools instead of its own there (claudecode.go)
+	// and ChatGPT (Web) only ever calls 1loop's: both reach the machine.
+	// agy's own tools cannot be turned off, and would run on this computer.
+	if cfg.Provider == "antigravity" {
 		return fmt.Errorf("Antigravity works on this computer's projects only. Choose another model for %s", cfg.Machine.Label())
-	case "chatgptweb":
-		return fmt.Errorf("ChatGPT (Web) works on this computer's projects only. Choose another model for %s", cfg.Machine.Label())
 	}
 	return nil
 }
@@ -524,7 +523,7 @@ func workspaceInstructions(cfg Config) string {
 	if cfg.Machine == nil {
 		return projectInstructions(cfg.Workspace)
 	}
-	text := "\n\nThe workspace is on the SSH machine " + cfg.Machine.Label() + ": your file tools, shell commands, background tasks and the terminal run there, as the machine's user; there is no sandbox. Browser Use and Computer Use run on the user's own computer, not on the machine."
+	text := "\n\nThe workspace is on the SSH machine " + cfg.Machine.Label() + ": your file tools, shell commands, background tasks and the terminal run there, as the machine's user; there is no sandbox. Browser Use runs on the user's own computer, not on the machine; Computer Use is off in a chat on a machine."
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	data, err := cfg.Machine.ReadFile(ctx, path.Join(cfg.Workspace, "AGENTS.md"))

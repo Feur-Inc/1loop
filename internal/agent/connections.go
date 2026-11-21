@@ -282,7 +282,9 @@ func toolContext(ctx context.Context, cfg Config) context.Context {
 	ctx = platform.WithWorkspaceMode(ctx, cfg.ApprovalMode == "yolo")
 	ctx = platform.WithProjectEnv(ctx, cfg.Env)
 	ctx = context.WithValue(ctx, configContextKey{}, cfg)
-	ctx = context.WithValue(ctx, computerContextKey{}, cfg.Computer)
+	if cfg.MachineID == "" { // Computer Use is off on an SSH machine
+		ctx = context.WithValue(ctx, computerContextKey{}, cfg.Computer)
+	}
 	ctx = context.WithValue(ctx, terminalContextKey{}, cfg.Terminal)
 	ctx = context.WithValue(ctx, browserContextKey{}, modelBrowser(cfg.Browser))
 	ctx = context.WithValue(ctx, recallContextKey{}, cfg.Recall)

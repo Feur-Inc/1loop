@@ -185,7 +185,7 @@ func (backend *App) startTodoMCP(binding *todoMCPBinding) (string, func(), error
 					handler = cfg.Phone
 				case call.Name == "install_packages":
 					handler = cfg.Packages
-				case call.Name == "change_directory" || call.Name == "request_directory":
+				case call.Name == "change_directory" || call.Name == "request_directory" || isGoalTool(call.Name): // run as for every model
 					handler = func(operation context.Context, name string, arguments json.RawMessage) (PanelToolResult, error) {
 						call := ToolCall{ID: core.Identifier()}
 						call.Function.Name, call.Function.Arguments = name, string(arguments)
@@ -304,6 +304,9 @@ func claudeMCPDefinitions(cfg Config) []map[string]any {
 	if cfg.ProjectTools == nil && cfg.toolAvailable("chats") {
 		definitions = append(definitions, chatsToolDefinition())
 	}
+	if cfg.ProjectTools == nil && cfg.Goal != nil { // the chat's goal (goal.go)
+		definitions = append(definitions, goalToolDefinitions()...)
+	}
 	for _, group := range builtinToolGroups(cfg) {
 		definitions = append(definitions, group.tools()...)
 	}
@@ -351,7 +354,7 @@ func claudeMCPToolList(definitions []map[string]any) []any {
 	for _, definition := range definitions {
 		f := definition["function"].(map[string]any)
 		tool := map[string]any{"name": f["name"], "description": f["description"], "inputSchema": f["parameters"]}
-		if f["name"] == "wrap_up" || f["name"] == "update_todo" {
+		if f["name"] == "wrap_up" || f["name"] == "update_todo" || f["name"] == "update_goal" {
 			// Called on most turns: in the prompt, not deferred
 			// behind Claude Code's tool search (a round trip the
 			// model tends to skip, and the call with it).

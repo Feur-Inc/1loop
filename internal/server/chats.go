@@ -168,3 +168,23 @@ func (server *headlessServer) turnEndedLocked(chat *serverChat, ended string) {
 		server.wakeLocked(target, agent.TurnReport(sender, relationLocked(target, chat), info))
 	}
 }
+
+// goalCommandLocked runs a /goal sent to chat (agent/goal.go): its note
+// joins the chat, and a goal to work on now starts its turn.
+func (server *headlessServer) goalCommandLocked(chat *serverChat, command agent.GoalCommand) error {
+	if chat.Goal == nil {
+		chat.Goal = &agent.GoalState{}
+	}
+	outcome, err := chat.Goal.Command(command, chat.run != nil, chat.Config.Provider)
+	if err != nil {
+		return err
+	}
+	if outcome.Start != nil {
+		server.runLocked(chat, *outcome.Start) // its first line is the chat's note
+	} else if outcome.Note != "" {
+		server.changedLocked(chat, server.addLocked(chat, agent.ChatItem{Kind: "note", Text: outcome.Note}))
+	}
+	server.broadcastLocked("meta", server.metaLocked(chat))
+	server.scheduleSaveLocked()
+	return nil
+}

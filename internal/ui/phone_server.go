@@ -560,6 +560,7 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 	remoteMetaValue.Model, remoteMetaValue.Effort, remoteMetaValue.Tier = ui.choiceLabel(chat.Config), chat.Config.Effort, chat.Config.ServiceTier
 	remoteMetaValue.Window = agent.ModelContextWindow(ui.resolveModel(chat.Config))
 	remoteMetaValue.Todo = todoForPhone(chat)
+	remoteMetaValue.Goal = remoteapi.GoalOf(chat.Goal.Snapshot())
 	remoteMetaValue.ContextUsage = ui.contextUsage(chat).Summary()
 	remoteMetaValue.Spent = ui.usage.ChatSpend(ui.prices, chat.ID)
 	remoteMetaValue.Tasks = append([]agent.BackgroundTaskInfo{}, chat.tasks.Snapshot()...)
@@ -940,6 +941,17 @@ func (server *remoteServer) send(writer http.ResponseWriter, req *http.Request) 
 			root = server.ui.cfg.Workspace
 		}
 	})
+	// /goal is 1loop's, as typed in the window (goal.go).
+	if command, ok := agent.ParseGoalCommand(body.Text); ok && len(body.Attachments) == 0 {
+		var problem, chatID string
+		server.onUI(func() { chatID, problem = server.ui.remoteGoal(body.Chat, root, command) })
+		if problem != "" {
+			core.Fail(writer, http.StatusBadRequest, problem)
+			return
+		}
+		core.WriteJSON(writer, http.StatusOK, map[string]string{"chat": chatID})
+		return
+	}
 	message, err := remoteapi.AttachedMessage(root, strings.TrimSpace(body.Text), body.Attachments)
 	if err != nil {
 		core.Fail(writer, 400, err.Error())

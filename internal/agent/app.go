@@ -58,6 +58,7 @@ type Config struct {
 	Cache             *ContextCache                             `json:"-"`
 	ContextKey        string                                    `json:"-"`
 	Todo              *TodoState                                `json:"-"`
+	Goal              *GoalState                                `json:"-"` // the chat's goal (goal.go)
 	Tasks             *BackgroundTasks                          `json:"-"` // shell commands run in the background
 	Grants            *PermissionGrants                         `json:"-"`
 	Review            *ReviewSession                            `json:"-"` // the Auto mode reviewer's conversation for the chat

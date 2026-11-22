@@ -1450,6 +1450,8 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 	case "todo":
 		ui.todoUpdated(currentTurn.chat)
 		ui.save()
+	case "goal": // its state, time or tokens changed (goal.go)
+		ui.goalUpdated(currentTurn.chat)
 	case "usage":
 		currentTurn.usage = uiEventValue.data.(int)
 		ui.remote.metaChanged(currentTurn.chat)

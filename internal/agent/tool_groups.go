@@ -33,7 +33,7 @@ type toolGroup struct {
 const appToolGroup = "app_1loop"
 
 func appToolDefinitions() []map[string]any {
-	return []map[string]any{memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), chatsToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition()}
+	return []map[string]any{memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), chatsToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition(), goalToolDefinitions()[1]}
 }
 
 // isAppTool: a tool of appToolGroup.
@@ -93,6 +93,9 @@ func (cfg Config) toolAvailable(name string) bool {
 	}
 	if name == "chats" {
 		return cfg.Chats != nil
+	}
+	if isGoalTool(name) { // a chat that keeps a goal (goal.go)
+		return cfg.Goal != nil
 	}
 	switch groupOfTool(name) {
 	case "panel_browser":

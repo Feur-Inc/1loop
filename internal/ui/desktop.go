@@ -61,6 +61,7 @@ type conversation struct {
 	review       *agent.ReviewSession    // the Auto mode reviewer's conversation, until 1loop closes
 	tasks        *agent.BackgroundTasks  // shell commands run in the background, until 1loop closes
 	Todo         *agent.TodoState        `json:"todo,omitempty"`
+	Goal         *agent.GoalState        `json:"goal,omitempty"`  // its /goal (goal.go)
 	Panel        *savedPanel             `json:"panel,omitempty"` // its side panel, to open it again as it was
 	Version      string                  `json:"version,omitempty"`
 	Versions     []chatVersion           `json:"versions,omitempty"`
@@ -74,6 +75,7 @@ type conversation struct {
 	panel     *panelState // its side panel while 1loop runs (live tabs, terminals included)
 	failed    bool        // its last run failed and the user has not looked at it since: the tray says so
 	todoCount int         // tasks last seen in its list: the first ones open the panel
+	goalShown string      // the goal last shown: a new one opens the panel on it
 	taskCount int         // background tasks last seen: a new one opens the panel on them
 
 	run     *chatRun        // the agent loop working on this chat, if any
@@ -143,6 +145,7 @@ type desktopUI struct {
 	machine          *tapRow         // the target: this computer, an SSH machine or a server
 	serverStatus     *fitLabel       // the server's state beside it
 	modelsLoading    bool
+	pendingGoal      *agent.GoalState // a /goal on the start screen, for the chat it makes
 
 	updateRow *tapRow // the sidebar's "Update available" row
 
@@ -1347,6 +1350,15 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 			ui.save()
 			return
 		}
+		// The goal's next turn, while it is to be worked on (goal.go).
+		if next, ok := chat.Goal.Next(chat.Config.Provider); ok {
+			ui.startIn(chat, next, "")
+			ui.goalUpdated(chat)
+			return
+		}
+	}
+	if chat.Goal.Snapshot() != nil {
+		ui.panel.todoChanged(chat) // the clock stops, the state changed
 	}
 	if run != nil && ended == "done" {
 		ui.notifyUser(chat, "Done.")
@@ -1423,6 +1435,14 @@ func (ui *desktopUI) submit() {
 	}
 	text := strings.TrimSpace(ui.prompt.Text)
 	chat := ui.current
+	// /goal works with every model (#444): 1loop runs it, never the model.
+	if command, ok := agent.ParseGoalCommand(text); ok && len(ui.attachments)+len(ui.fileAttachments) == 0 {
+		ui.hideCommandMenu()
+		if problem := ui.goalCommand(chat, command, true); problem != "" {
+			ui.notice("/goal", problem)
+		}
+		return
+	}
 	if ui.commandsHere() && len(ui.attachments)+len(ui.fileAttachments) == 0 {
 		if name, args, ok := agent.SlashCommand(text); ok && ui.slashCommand(name, args) {
 			ui.hideCommandMenu()
@@ -1603,6 +1623,12 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 			chat = &conversation{}
 		}
 		chat.ID, chat.Title, chat.Config = core.Identifier()[:16], string(title), ui.cfg
+		if ui.pendingGoal != nil { // started by /goal (goal.go): named after its objective
+			chat.Goal, ui.pendingGoal = ui.pendingGoal, nil
+			if goal := chat.Goal.Snapshot(); goal != nil {
+				chat.Title = goalTitle(goal.Objective)
+			}
+		}
 		if !ui.scratchChat(chat) {
 			return
 		}
@@ -1731,6 +1757,10 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 		}
 	}
 	cfg.Todo = chat.Todo
+	if chat.Goal == nil {
+		chat.Goal = &agent.GoalState{}
+	}
+	cfg.Goal = chat.Goal
 	cfg.Tasks = ui.chatTasks(chat)
 	cfg.Browser = ui.browserTools(chat)
 	cfg.Terminal = ui.terminalTools(chat)
@@ -2222,7 +2252,7 @@ func (ui *desktopUI) persist(wait bool) {
 	chats := make([]*conversation, len(ui.chats))
 	for i, chat := range ui.chats { // messages are never edited in place: copying the lists is enough
 		chats[i] = &conversation{ID: chat.ID, Title: chat.Title, Config: chat.Config, Panel: chat.Panel,
-			History: append([]agent.Message{}, chat.History...), Items: append([]agent.ChatItem{}, chat.Items...), Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(),
+			History: append([]agent.Message{}, chat.History...), Items: append([]agent.ChatItem{}, chat.Items...), Todo: chat.Todo.Copy(), Goal: chat.Goal.Copy(), Cache: chat.Cache.Copy(),
 			Version: chat.Version, Versions: copyVersions(chat.Versions), ContextUsage: chat.ContextUsage,
 			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...)} // its parent: forgetting it detached every subchat on restart (#356)
 	}

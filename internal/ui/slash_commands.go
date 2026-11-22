@@ -36,6 +36,7 @@ var oneloopCommands = []commandOption{
 	{"clear", "", "Start a new chat with an empty context (this one stays in the sidebar)"},
 	{"compact", "[instructions]", "Free up context by summarizing the conversation so far"},
 	{"login", "", "Sign in to Claude Code"},
+	{"goal", "[objective]", "Give the chat a goal: 1loop keeps working on it, turn after turn, until it is done"},
 }
 
 // oneloopAliases are other names of oneloopCommands, as in Claude Code.

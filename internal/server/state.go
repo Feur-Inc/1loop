@@ -36,6 +36,7 @@ type serverChat struct {
 	Version  string              `json:"version,omitempty"`
 	Versions []agent.ChatVersion `json:"versions,omitempty"`
 	Todo     *agent.TodoState    `json:"todo"`
+	Goal     *agent.GoalState    `json:"goal,omitempty"` // its /goal (agent/goal.go)
 	Cache    *agent.ContextCache `json:"contextCache,omitempty"`
 	// ContextUsage is Claude Code's last count of the window by category.
 	ContextUsage *agent.ContextUsage     `json:"contextUsage,omitempty"`
@@ -310,7 +311,7 @@ func (server *headlessServer) stateLocked() (write func() error) {
 	for i, chat := range server.chats {
 		chats[i] = &serverChat{ID: chat.ID, Title: chat.Title, Config: chat.Config, History: append([]agent.Message{}, chat.History...),
 			Items: append([]agent.ChatItem{}, chat.Items...), Version: chat.Version, Versions: agent.CopyVersions(chat.Versions),
-			Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
+			Todo: chat.Todo.Copy(), Goal: chat.Goal.Copy(), Cache: chat.Cache.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
 			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...)} // its parent: forgetting it detached every subchat on restart (#356)
 	}
 	devices := append([]remoteapi.PairedDevice{}, server.devices...)
@@ -606,6 +607,7 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		}
 		meta.Todo = append(meta.Todo, item)
 	}
+	meta.Goal = remoteapi.GoalOf(chat.Goal.Snapshot())
 	meta.Used = agent.HistoryEstimate(chat.History) + agent.ContextOverhead(chat.Config)
 	if chat.run != nil {
 		meta.Label, meta.Mark, meta.Approval, meta.Question = chat.run.label, chat.run.mark, chat.run.approval, chat.run.question
@@ -801,6 +803,10 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	}
 	cfg.ClassicCompaction = server.classic
 	cfg.Todo = chat.Todo
+	if chat.Goal == nil {
+		chat.Goal = &agent.GoalState{}
+	}
+	cfg.Goal = chat.Goal
 	cfg.Tasks = server.chatTasksLocked(chat)
 	cfg.Cache = chat.Cache
 	if chat.grants == nil {
@@ -989,6 +995,8 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			next := chat.queue[0]
 			chat.queue = chat.queue[1:]
 			server.runLocked(chat, next)
+		} else if next, ok := chat.Goal.Next(chat.Config.Provider); ok && err == nil {
+			server.runLocked(chat, next) // the goal's next turn (agent/goal.go)
 		}
 		if chat.run == nil { // the last turn of the chain: it reports to who caused it
 			server.turnEndedLocked(chat, ended)
@@ -1094,6 +1102,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		chat.Config.SyncClaudeSession(len(chat.Items))
 	case "notice":
 		run.label = value.(string)
+	case "goal": // its state, time or tokens changed: the meta goes out with the change
 	}
 	server.changedLocked(chat, index)
 }

@@ -33,6 +33,28 @@ func TestMethods(t *testing.T) {
 	}
 }
 
+// Each guide ends with approving this device as the pairing dialog asks:
+// its command is a docker exec, run on the host, for a server in a
+// container; the programs' consoles take its short "pair" line. Nothing is
+// pasted into "docker attach", whose console takes only the short line.
+func TestPairingStep(t *testing.T) {
+	for _, method := range Methods() {
+		last := method.Steps[len(method.Steps)-1]
+		want := "line starting with pair"
+		if method.ID == "docker" || method.ID == "compose" {
+			want = "docker exec"
+		}
+		if !strings.Contains(last.Text, want) {
+			t.Errorf("%s: the last step %q does not say %q", method.ID, last.Text, want)
+		}
+		for i, step := range method.Steps {
+			if strings.Contains(step.Command, "docker attach") {
+				t.Errorf("%s step %d still opens the console with docker attach", method.ID, i+1)
+			}
+		}
+	}
+}
+
 // phoneCopy is the guides as the phone's build bundles them.
 const phoneCopy = "../../android/app/src/main/assets/server_setup.json"
 

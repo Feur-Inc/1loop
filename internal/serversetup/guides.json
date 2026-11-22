@@ -18,8 +18,7 @@
           "command": "docker logs 1loop-server"
         },
         {
-          "text": "Open its console. Paste there the pair command 1loop shows next, then leave with Ctrl+P, Ctrl+Q.",
-          "command": "docker attach 1loop-server"
+          "text": "Connect it below. To approve this device, run in a terminal on the server's machine the docker exec command 1loop shows then."
         }
       ]
     },
@@ -45,8 +44,7 @@
           "command": "docker compose logs server"
         },
         {
-          "text": "Open its console. Paste there the pair command 1loop shows next, then leave with Ctrl+P, Ctrl+Q.",
-          "command": "docker attach 1loop-server"
+          "text": "Connect it below. To approve this device, run in a terminal on the server's machine the docker exec command 1loop shows then."
         }
       ]
     },
@@ -68,7 +66,7 @@
           "command": "chmod +x 1loop-server-*-linux-amd64 && mkdir -p ~/1loop-projects && ./1loop-server-*-linux-amd64 -workspace ~/1loop-projects"
         },
         {
-          "text": "Copy its fingerprint: the line Certificate SHA-256 it prints. Paste in this terminal the pair command 1loop shows next."
+          "text": "Copy its fingerprint: the line Certificate SHA-256 it prints. Connect it below, then type in this terminal the line starting with pair that 1loop shows, to approve this device."
         }
       ]
     },
@@ -90,7 +88,7 @@
           "command": "New-Item -ItemType Directory -Force \"$HOME\\1loop-projects\" | Out-Null; & (Get-Item .\\1loop-server-*-windows-amd64.exe).FullName -workspace \"$HOME\\1loop-projects\""
         },
         {
-          "text": "Copy its fingerprint: the line Certificate SHA-256 it prints. Paste in this window the pair command 1loop shows next."
+          "text": "Copy its fingerprint: the line Certificate SHA-256 it prints. Connect it below, then type in this window the line starting with pair that 1loop shows, to approve this device."
         }
       ]
     }

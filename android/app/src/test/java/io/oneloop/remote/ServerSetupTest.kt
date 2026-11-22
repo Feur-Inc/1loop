@@ -27,6 +27,7 @@ class ServerSetupTest {
     fun dockerStartsTheServerImage() {
         val docker = methods.first { it.id == "docker" }
         assertTrue(docker.steps.any { "ghcr.io/feur-inc/1loop-server" in it.command })
-        assertTrue(docker.steps.any { it.command == "docker attach 1loop-server" })
+        // The pairing dialog's command is a docker exec, run on the host (#461).
+        assertTrue(docker.steps.last().text.contains("docker exec"))
     }
 }

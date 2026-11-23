@@ -115,31 +115,54 @@ func (ink artInk) draw(art image.Image) *image.NRGBA {
 // brandLogo is the logo with its letters in the theme's text colour, drawn
 // again when the theme changes.
 func brandLogo(width, height float32) *canvas.Image {
-	if logoArt() == nil {
-		return brandImage("1loop-logo.png", width, height)
-	}
-	logo := canvas.NewImageFromImage(inkedLogo(width, height))
+	logo := canvas.NewImageFromImage(nil)
 	logo.FillMode = canvas.ImageFillContain
 	logo.SetMinSize(fyne.NewSize(width, height))
-	onRepaint = append(onRepaint, func() {
-		if inked := inkedLogo(width, height); inked != logo.Image { // the same ink: nothing to draw
-			logo.Image = inked
-			logo.Refresh()
+	// Decoding, inking and resampling the 1483 px logo takes tens of ms:
+	// done once per ink, off the UI thread, and shared by the windows
+	// (#475). The logo shows as soon as it is ready.
+	show := func() {
+		ink := currentArtInk()
+		key := fmt.Sprintf("%s/%.0fx%.0f", ink.key(), width, height)
+		if inked := logosInked[key]; inked != nil {
+			if logo.Image != inked { // the same ink: nothing to draw
+				logo.Image = inked
+				logo.Refresh()
+			}
+			return
 		}
-	})
+		brandRingWait.Add(1)
+		go func() {
+			defer brandRingWait.Done()
+			inked := inkedLogo(ink, width, height)
+			fyne.Do(func() {
+				if inked == nil { // never with the embedded artwork
+					logo.Resource = brandResource("1loop-logo.png")
+					logo.Refresh()
+					return
+				}
+				if len(logosInked) > 8 {
+					clear(logosInked)
+				}
+				logosInked[key] = inked
+				if currentArtInk().key() == ink.key() {
+					logo.Image = inked
+					logo.Refresh()
+				}
+			})
+		}()
+	}
+	show()
+	onRepaint = append(onRepaint, show)
 	return logo
 }
 
 var (
 	logoOnce  sync.Once
 	logoImage image.Image
-	// logoInked is the logo in the ink and at the size of its last drawing,
-	// shared by the windows: inked and resampled once per ink (#475), not at
-	// each window and each change of theme. UI thread only.
-	logoInked struct {
-		key   string
-		image image.Image
-	}
+	// logosInked are the logo by ink and size, shared by the windows. UI
+	// thread only.
+	logosInked = map[string]image.Image{}
 )
 
 func logoArt() image.Image {
@@ -149,16 +172,15 @@ func logoArt() image.Image {
 	return logoImage
 }
 
-// inkedLogo is the logo in the theme's ink, resampled to three times its
-// size: sharp up to a scale of 3, and small enough that the painter's own
-// resampling for the screen costs nothing.
-func inkedLogo(width, height float32) image.Image {
-	ink := currentArtInk()
-	key := fmt.Sprintf("%s/%.0fx%.0f", ink.key(), width, height)
-	if logoInked.key != key {
-		logoInked.key, logoInked.image = key, scaleTo(ink.draw(logoArt()), int(3*width+0.5), int(3*height+0.5))
+// inkedLogo is the logo in an ink, resampled to three times its size:
+// sharp up to a scale of 3, and small enough that the painter's own
+// resampling for the screen costs nothing. Any goroutine.
+func inkedLogo(ink artInk, width, height float32) image.Image {
+	art := logoArt()
+	if art == nil {
+		return nil
 	}
-	return logoInked.image
+	return scaleTo(ink.draw(art), int(3*width+0.5), int(3*height+0.5))
 }
 
 // The intro sheet is an 8×8 grid of 144 px cells. It is decoded only when it
@@ -935,8 +957,10 @@ func (renderer *launchRenderer) Layout(size fyne.Size) {
 		if i == 2 {
 			width *= easeInOut((t - 280) / 700) // loop drawn left to right
 		}
-		// A zero-sized image cannot be painted, so keep it hidden until it has width.
-		if width*settle < 1 {
+		// A zero-sized image cannot be painted, so keep it hidden until it
+		// has width; a transparent one is not drawn either (the first frame,
+		// before the sequence plays: four textures of the full artwork).
+		if width*settle < 1 || part.Translucency >= 1 {
 			part.Hide()
 			continue
 		}

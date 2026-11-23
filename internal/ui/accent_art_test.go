@@ -11,6 +11,7 @@ import (
 
 	"1loop/assets"
 
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/test"
 )
 
@@ -108,15 +109,20 @@ func TestArtworkInkedOncePerAccent(t *testing.T) {
 	saved := colAmber
 	defer func() { colAmber = saved }()
 	colAmber = color.NRGBA{0xA8, 0x7B, 0xFF, 0xFF} // purple
-	logo, frame := inkedLogo(87, 30), introFrameAt(63, 60)
-	if inkedLogo(87, 30) != logo || introFrameAt(63, 60) != frame {
+	drawn := func(logo *canvas.Image) image.Image {
+		brandRingWait.Wait()
+		test.Drain() // the logo is shown by a fyne.Do queued on the test goroutine
+		return logo.Image
+	}
+	logo, frame := drawn(brandLogo(87, 30)), introFrameAt(63, 60)
+	if logo == nil || brandLogo(87, 30).Image != logo || introFrameAt(63, 60) != frame {
 		t.Fatal("the same accent drew the artwork again")
 	}
 	if logo.Bounds().Dx() != 261 || frame.Bounds().Dx() != 60 {
 		t.Fatalf("sizes %v and %v", logo.Bounds(), frame.Bounds())
 	}
 	colAmber = color.NRGBA{0x2F, 0xC2, 0xA4, 0xFF} // teal
-	if inkedLogo(87, 30) == logo {
+	if again := drawn(brandLogo(87, 30)); again == nil || again == logo {
 		t.Fatal("a new accent kept the logo of the old one")
 	}
 	if again := introFrameAt(63, 60); again == frame {

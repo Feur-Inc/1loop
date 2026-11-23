@@ -304,7 +304,7 @@ func (ui *desktopUI) bench(kind string) {
 		frames.present = append(frames.present, present)
 		frames.mu.Unlock()
 	}
-	cpu, started := platform.CpuTime(), time.Now()
+	cpu, started, partial := platform.CpuTime(), time.Now(), driver.PartialFrames.Load()
 	until := started.Add(span)
 	var reloads []time.Duration // theme: read, themeChanged, setAccent of each round
 	switch kind {
@@ -349,7 +349,7 @@ func (ui *desktopUI) bench(kind string) {
 	default:
 		time.Sleep(span)
 	}
-	elapsed, used := time.Since(started), platform.CpuTime()-cpu
+	elapsed, used, partial := time.Since(started), platform.CpuTime()-cpu, driver.PartialFrames.Load()-partial
 	driver.FrameTimes = nil
 	if profileDir != "" {
 		pprof.StopCPUProfile()
@@ -362,7 +362,7 @@ func (ui *desktopUI) bench(kind string) {
 	marks := strings.Join(benchMarks, "\n")
 	benchMu.Unlock()
 	report := strings.Join([]string{
-		fmt.Sprintf("bench %s: %d frames in %s (%.0f per second), CPU %.1f %% of a core", kind, len(frames.paint), elapsed.Round(time.Millisecond), float64(len(frames.paint))/elapsed.Seconds(), 100*used.Seconds()/elapsed.Seconds()),
+		fmt.Sprintf("bench %s: %d frames in %s (%.0f per second, %d of them painted in part), CPU %.1f %% of a core", kind, len(frames.paint), elapsed.Round(time.Millisecond), float64(len(frames.paint))/elapsed.Seconds(), partial, 100*used.Seconds()/elapsed.Seconds()),
 		"  sizes   " + percentiles(frames.sizes),
 		"  paint   " + percentiles(frames.paint),
 		"  present " + percentiles(frames.present),

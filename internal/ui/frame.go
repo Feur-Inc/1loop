@@ -64,6 +64,7 @@ type frameHook struct {
 	since   time.Time
 	turns   int
 	painted int
+	partial uint64 // driver.PartialFrames at since
 	worst   time.Duration
 }
 
@@ -110,8 +111,9 @@ func (hook *frameHook) turn() {
 			platform.Devf("perf", "the interface thread was busy for %s", gap.Round(time.Millisecond))
 		}
 		if span := now.Sub(hook.since); span > framesLogged {
-			platform.Devf("perf", "%.0f s: %d turns, %d frames drawn, longest turn %s", span.Seconds(), hook.turns, hook.painted, hook.worst.Round(100*time.Microsecond))
-			hook.since, hook.turns, hook.painted, hook.worst = now, 0, 0, 0
+			partial := fyneDriver.PartialFrames.Load()
+			platform.Devf("perf", "%.0f s: %d turns, %d frames drawn (%d of them in part), longest turn %s", span.Seconds(), hook.turns, hook.painted, partial-hook.partial, hook.worst.Round(100*time.Microsecond))
+			hook.since, hook.turns, hook.painted, hook.partial, hook.worst = now, 0, 0, partial, 0
 		}
 	}
 

@@ -124,6 +124,8 @@ type window struct {
 	// platform said, 1 yes, 2 no) and is minimised (InFront).
 	hasFocus  atomic.Int32
 	iconified atomic.Bool
+
+	retention retention // 1loop: how its last frame was painted (damage.go)
 }
 
 // InFront says whether the window has the keyboard focus and is not

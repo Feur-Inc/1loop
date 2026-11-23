@@ -21,6 +21,11 @@ var TurnHook func()
 // (1loop: a window nothing was refreshed in has nothing new to show.)
 var Refreshes atomic.Uint64
 
+// PartialFrames counts the frames that painted only the part of a window
+// that changed, the rest kept from the frame before. (1loop: a blinking
+// caret repainted the whole window.)
+var PartialFrames atomic.Uint64
+
 // KeepFonts, while true, has a theme set again keep the fonts and the text
 // already shaped: only colours changed. (1loop: a change of accent set the
 // theme again, and every text of the window was shaped again.)

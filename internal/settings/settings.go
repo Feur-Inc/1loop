@@ -131,6 +131,7 @@ const (
 	KeyTheme             = "general.theme"
 	KeyAccent            = "general.accent"
 	KeyAnimations        = "general.animations"
+	KeyNotifications     = "general.notifications"
 	KeyShaderFPS         = "general.shader_fps"
 	KeyCrashReports      = "advanced.crash_reports"
 )
@@ -165,6 +166,9 @@ var list = []Setting{
 	{Key: "general.close_to_tray", Section: General, Title: "Close to tray", Where: OnDesktop, Kind: Action,
 		Description: "Closing the window keeps 1loop running in the system tray; quit from the tray menu or with Ctrl+Q.",
 		Keywords:    []string{"tray", "close", "quit", "background", "minimize", "window"}},
+	{Key: KeyNotifications, Section: General, Title: "Notifications", Where: OnDesktop, Kind: Toggle,
+		Description: "A system notification when a chat finishes or waits for you while 1loop is in the background.",
+		Keywords:    []string{"notification", "notify", "alert", "popup", "toast", "mute", "silence", "do not disturb", "done", "background"}},
 	{Key: KeyDiscordPresence, Section: General, Title: "Discord status", Where: OnDesktop, Kind: Toggle, Protected: true,
 		Description: "Shows on your Discord profile that 1loop is working: the model, what it is doing and for how long.",
 		Keywords:    []string{"discord", "rich presence", "status", "activity", "profile", "playing", "rpc"}},

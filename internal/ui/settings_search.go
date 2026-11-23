@@ -164,6 +164,8 @@ func (ui *desktopUI) settingsAccess() *agent.SettingsAccess {
 					value = onOff(!ui.memoryOff)
 				case registry.KeyWrapUp:
 					value = onOff(!ui.wrapUpOff)
+				case registry.KeyNotifications:
+					value = onOff(!ui.notificationsOff)
 				case registry.KeyAnimations:
 					value = onOff(!animationsOff)
 				case registry.KeyCrashReports:
@@ -201,6 +203,8 @@ func (ui *desktopUI) settingsAccess() *agent.SettingsAccess {
 					ui.setMemory(on)
 				case registry.KeyWrapUp:
 					ui.setWrapUp(on)
+				case registry.KeyNotifications:
+					ui.setNotifications(on)
 				case registry.KeyAnimations:
 					ui.setAnimations(on)
 				case registry.KeyCrashReports:

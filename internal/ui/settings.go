@@ -603,6 +603,10 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 				ui.save()
 			})))))
 	}
+	page.Add(sectionTitle("Notifications"))
+	page.Add(card(view.mark(registry.KeyNotifications, settingRow("Notifications",
+		"A system notification when a chat finishes or waits for you while 1loop is in the background, minimised or in the tray. Never while one of its windows has the focus: the sidebar shows each chat's state.",
+		newToggle(!ui.notificationsOff, ui.setNotifications)))))
 	page.Add(sectionTitle("Motion"))
 	page.Add(card(view.mark(registry.KeyAnimations, settingRow("Animations",
 		"Short animations as you click and hover, as menus and dialogs open, as messages arrive and the sidebar changes. Off, every change shows at once. They are off too while the system asks for reduced motion.",
@@ -846,6 +850,12 @@ func (ui *desktopUI) advancedSettings() fyne.CanvasObject {
 }
 
 // setCrashReports turns the offer after a crash on or off.
+func (ui *desktopUI) setNotifications(on bool) {
+	ui.notificationsOff = !on
+	platform.Devf("ui", "notifications %v", on)
+	ui.save()
+}
+
 func (ui *desktopUI) setCrashReports(on bool) {
 	ui.crashReportsOff = !on
 	platform.Devf("ui", "crash reports %v", on)

@@ -314,6 +314,7 @@ type desktopApp struct {
 	namingModel       *agent.NamingModel         // settings: the model that names new chats, nil for none
 	closeQuits        bool                       // settings: closing the window quits rather than hiding it in the tray
 	crashReportsOff   bool                       // settings: Don't ask again, after a crash
+	notificationsOff  bool                       // settings: no system notification (notify.go)
 	lastCrash         *crash.Crash               // the last run's, offered once the window is up
 	trayNoticeShown   bool                       // the first close said that 1loop stays in the tray
 	tray              *trayIcon                  // the system tray icon (tray.go), nil without one
@@ -2081,6 +2082,7 @@ type savedState struct {
 	FoldedProjects    []string              `json:"foldedProjects,omitempty"` // sidebar groups folded
 	CloseQuits        bool                  `json:"closeQuits,omitempty"`
 	CrashReportsOff   bool                  `json:"crashReportsOff,omitempty"`
+	NotificationsOff  bool                  `json:"notificationsOff,omitempty"`
 	AnimationsOff     bool                  `json:"animationsOff,omitempty"`
 	TrayNoticeShown   bool                  `json:"trayNoticeShown,omitempty"`
 	DiscordPresence   bool                  `json:"discordPresence,omitempty"`
@@ -2200,6 +2202,7 @@ func (ui *desktopUI) persist(wait bool) {
 		slices.Sorted(maps.Keys(ui.foldedProjects)),
 		ui.closeQuits,
 		ui.crashReportsOff,
+		ui.notificationsOff,
 		animationsOff,
 		ui.trayNoticeShown,
 		ui.discordPresence,
@@ -2362,6 +2365,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.wrapUpOff = state.WrapUpOff
 	ui.closeQuits, ui.trayNoticeShown = state.CloseQuits, state.TrayNoticeShown
 	ui.crashReportsOff = state.CrashReportsOff
+	ui.notificationsOff = state.NotificationsOff
 	animationsOff = state.AnimationsOff
 	ui.autoResume = state.AutoResume
 	ui.namingModel = state.NamingModel

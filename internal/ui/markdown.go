@@ -77,11 +77,19 @@ func (view *markdownView) ParseMarkdown(text string) {
 	starts = append(view.starts[:keep:keep], starts...)
 	objs := make([]fyne.CanvasObject, len(blocks))
 	copy(objs, view.objs[:keep])
-	reshaped := len(blocks) != len(view.blocks)
+	reshaped, grown := len(blocks) != len(view.blocks), false
 	for i := keep; i < len(blocks); i++ {
 		block := blocks[i]
 		if i < len(view.blocks) && view.blocks[i] == block {
 			objs[i] = view.objs[i]
+			continue
+		}
+		// The paragraph being written goes on: the same widget, its text
+		// longer. Building it again cost the whole paragraph at each delta.
+		if text, ok := view.paragraph(i, nodes[i-keep]); ok {
+			before := text.height
+			text.grow(inlineSpans(nodes[i-keep], source))
+			objs[i], grown = text, grown || text.height != before
 			continue
 		}
 		objs[i] = renderNode(nodes[i-keep], source, colText, view.media)
@@ -89,6 +97,9 @@ func (view *markdownView) ParseMarkdown(text string) {
 	}
 	view.starts, view.source = starts, text
 	view.blocks, view.objs = blocks, objs
+	if grown && !reshaped && view.box.Size().Width > 0 {
+		view.box.Layout.Layout(objs, view.box.Size()) // its new height: what comes after it moves
+	}
 	if reshaped {
 		// New widgets are drawn on their own once placed: lay the box out,
 		// without the recursive refresh of Container.Refresh.
@@ -108,6 +119,21 @@ func (view *markdownView) ParseMarkdown(text string) {
 	if view.layer != nil {
 		view.layer.changed()
 	}
+}
+
+// paragraph is block i's widget when it is a paragraph drawn by one
+// flowText and node, its new source, is a paragraph too.
+func (view *markdownView) paragraph(i int, node ast.Node) (*flowText, bool) {
+	if i >= len(view.blocks) || view.media != nil || view.blocks[i].kind != "text" {
+		return nil, false
+	}
+	switch node.(type) {
+	case *ast.Paragraph, *ast.TextBlock:
+	default:
+		return nil, false
+	}
+	text, ok := view.objs[i].(*flowText)
+	return text, ok
 }
 
 // heightsHold tells whether each block is as high as it now measures.

@@ -60,8 +60,10 @@ type flowText struct {
 	objects       []fyne.CanvasObject
 	pieces        []selPiece
 	links         []flowLink
-	waiting       bool   // a formula is being typeset: flow again when it is ready
-	cut           []atom // the spans as measured words, kept from one width to the next
+	waiting       bool       // a formula is being typeset: flow again when it is ready
+	cut           []atom     // the spans as measured words, kept from one width to the next
+	marks         []lineMark // where each line laid out starts (grow)
+	drawn         bool       // objects are those of the lines in marks
 }
 
 type flowLink struct {
@@ -150,8 +152,11 @@ func measureText(text string, size float32, style fyne.TextStyle) (width, height
 }
 
 // atoms cuts the spans into words and spaces, measured.
-func (flow *flowText) atoms() []atom {
-	var out []atom
+func (flow *flowText) atoms() []atom { return flow.cutAtoms(nil, 0, 0) }
+
+// cutAtoms cuts the spans from span from on, the first of them from its
+// byte at (a plain span: grow), after the atoms out already holds.
+func (flow *flowText) cutAtoms(out []atom, from, at int) []atom {
 	add := func(text string, i int, space bool) *atom {
 		style, size, ink := flow.look(flow.spans[i])
 		atomValue := atom{text: text, span: i, style: style, size: size, ink: ink, space: space}
@@ -160,7 +165,8 @@ func (flow *flowText) atoms() []atom {
 		return &out[len(out)-1]
 	}
 	flow.waiting = false
-	for i, span := range flow.spans {
+	for i := from; i < len(flow.spans); i++ {
+		span := flow.spans[i]
 		switch {
 		case span.hard:
 			out = append(out, atom{hard: true, span: i})
@@ -196,8 +202,12 @@ func (flow *flowText) atoms() []atom {
 		if flow.mono {
 			add(strings.ReplaceAll(span.text, "\t", "    "), i, false)
 		} else {
-			start := -1 // of the word being read, in bytes
-			for at, r := range span.text {
+			start, skip := -1, 0 // of the word being read, in bytes
+			if i == from {
+				skip = at
+			}
+			for at, r := range span.text[skip:] {
+				at += skip
 				if r == ' ' || r == '\t' || r == '\n' {
 					if start >= 0 {
 						add(span.text[start:at], i, false)
@@ -228,34 +238,42 @@ func (flow *flowText) atoms() []atom {
 type flowLine struct {
 	atoms []atom
 	hard  bool // ended by a line break, not by the width
+	start int  // the index of the atom it starts from
+	clean bool // it starts at that atom, not inside a word cut across lines
 }
 
-// lines breaks the atoms into lines no wider than width.
+// lines breaks the atoms into lines no wider than width. A line that
+// starts clean is laid out the same from its first atom alone: grow
+// starts there again.
 func (flow *flowText) lines(atoms []atom, width float32) []flowLine {
 	var lines []flowLine
-	var line []atom
+	buf := make([]atom, 0, len(atoms)+8) // the lines' atoms, one after the other
+	from, begin, clean := 0, 0, true     // the line being filled: in buf, in atoms
 	x := float32(0)
-	flush := func(hard bool) {
-		for len(line) > 0 && line[len(line)-1].space { // a line does not end with a space
-			line = line[:len(line)-1]
+	flush := func(hard bool, next int, nextClean bool) {
+		for len(buf) > from && buf[len(buf)-1].space { // a line does not end with a space
+			buf = buf[:len(buf)-1]
 		}
-		lines = append(lines, flowLine{line, hard})
-		line, x = nil, 0
+		lines = append(lines, flowLine{buf[from:len(buf):len(buf)], hard, begin, clean})
+		from, x, begin, clean = len(buf), 0, next, nextClean
 	}
-	for _, atomValue := range atoms {
+	for i, atomValue := range atoms {
 		if atomValue.hard {
-			flush(true)
+			flush(true, i+1, true)
 			continue
 		}
-		if atomValue.space && len(line) == 0 {
+		if atomValue.space && len(buf) == from {
+			if begin == i {
+				begin++ // where the line really starts: grow compares with it
+			}
 			continue
 		}
 		if atomValue.image != nil && atomValue.width > width { // wider than the column: the whole formula, smaller
 			scale := width / atomValue.width
 			atomValue.width, atomValue.height, atomValue.base = atomValue.width*scale, atomValue.height*scale, atomValue.base*scale
 		}
-		if !flow.mono && !atomValue.space && x+atomValue.width > width && len(line) > 0 {
-			flush(false)
+		if !flow.mono && !atomValue.space && x+atomValue.width > width && len(buf) > from {
+			flush(false, i, true)
 		}
 		// A word wider than the line (a long address) is cut where it must.
 		// Each character is measured once: measuring every remaining part
@@ -279,8 +297,8 @@ func (flow *flowText) lines(atoms []atom, width float32) []flowLine {
 				head.width, _, _ = measureText(head.text, atomValue.size, atomValue.style)
 				head.width += atomValue.lead
 				head.trail = 0
-				line = append(line, head)
-				flush(false)
+				buf = append(buf, head)
+				flush(false, i, false)
 				start += fit
 				atomValue.lead = 0
 			}
@@ -288,26 +306,56 @@ func (flow *flowText) lines(atoms []atom, width float32) []flowLine {
 			atomValue.width, _, _ = measureText(atomValue.text, atomValue.size, atomValue.style)
 			atomValue.width += atomValue.trail
 		}
-		line = append(line, atomValue)
+		buf = append(buf, atomValue)
 		x += atomValue.width
 	}
-	if len(line) > 0 || len(lines) == 0 {
-		flush(true)
+	if len(buf) > from || len(lines) == 0 {
+		flush(true, len(atoms), true)
 	}
 	return lines
 }
 
+// lineMark is where a laid-out line starts, and what came before it:
+// enough for grow to lay the text out again from that line on.
+type lineMark struct {
+	start                  int  // its first atom (flowLine.start)
+	clean                  bool // flowLine.clean
+	y, natural             float32
+	objects, pieces, links int // how many were drawn before it
+}
+
 // flow lays the block out for a width and rebuilds what it draws.
-func (flow *flowText) flow(width float32) {
-	flow.width = width
-	if !flow.measuring {
-		flow.objects, flow.pieces, flow.links = flow.objects[:0], flow.pieces[:0], flow.links[:0]
+func (flow *flowText) flow(width float32) { flow.flowFrom(width, 0) }
+
+// flowFrom is flow, keeping the lines before line from as they are laid
+// out (grow): their atoms did not change, nor the width.
+func (flow *flowText) flowFrom(width float32, from int) {
+	if from <= 0 || from >= len(flow.marks) || !flow.marks[from].clean || width != flow.width || flow.cut == nil ||
+		(!flow.measuring && !flow.drawn) {
+		from = 0
 	}
+	flow.width = width
 	if flow.cut == nil { // measuring every word is the costly part: once is enough
 		flow.cut = flow.atoms()
 	}
 	atoms := flow.cut
-	flow.natural, flow.widest = 0, 0
+	y, start := float32(0), 0
+	if from > 0 {
+		mark := flow.marks[from]
+		y, start, flow.natural = mark.y, mark.start, mark.natural
+		if !flow.measuring {
+			clear(flow.objects[mark.objects:])
+			flow.objects, flow.pieces, flow.links = flow.objects[:mark.objects], flow.pieces[:mark.pieces], flow.links[:mark.links]
+		}
+		flow.marks = flow.marks[:from]
+	} else {
+		flow.natural, flow.marks = 0, flow.marks[:0]
+		if !flow.measuring {
+			clear(flow.objects)
+			flow.objects, flow.pieces, flow.links = flow.objects[:0], flow.pieces[:0], flow.links[:0]
+		}
+	}
+	flow.widest = 0
 	for _, atom := range atoms {
 		if !atom.space {
 			flow.widest = fyne.Max(flow.widest, atom.width)
@@ -322,20 +370,22 @@ func (flow *flowText) flow(width float32) {
 		leading = 0
 	}
 	room := fyne.Max(width-flow.hang, 40)
-	lines := flow.lines(atoms, room)
+	lines := flow.lines(atoms[start:], room)
+	// What each line draws, put in the objects line after line: chips
+	// under their text, rules and pictures over it.
 	var chips, marks, texts, pictures []fyne.CanvasObject
-	if flow.marker != "" && !flow.measuring {
+	if flow.marker != "" && !flow.measuring && from == 0 {
 		mark := canvas.NewText(flow.marker, colMuted)
 		mark.TextSize = flow.size
 		w, h, _ := measureText(flow.marker, flow.size, fyne.TextStyle{})
 		mark.Move(fyne.NewPos(fyne.Max(0, flow.hang-w-7), 0))
 		mark.Resize(fyne.NewSize(w, h))
-		texts = append(texts, mark)
+		flow.objects = append(flow.objects, mark)
 		flow.pieces = append(flow.pieces, selPiece{runes: []rune(flow.marker + " "), at: mark.Position(), size: fyne.NewSize(w, h),
 			textSize: flow.size, solid: true})
 	}
-	y := float32(0)
 	for n, line := range lines {
+		flow.marks = append(flow.marks, lineMark{start + line.start, line.clean, y, flow.natural, len(flow.objects), len(flow.pieces), len(flow.links)})
 		height, base, lineWidth := plainHeight, plainBase, float32(0)
 		for _, atomValue := range line.atoms {
 			lineWidth += atomValue.width
@@ -441,6 +491,8 @@ func (flow *flowText) flow(width float32) {
 			x += runWidth
 			i = j
 		}
+		flow.objects = append(append(append(append(flow.objects, chips...), texts...), marks...), pictures...)
+		chips, texts, marks, pictures = chips[:0], texts[:0], marks[:0], pictures[:0]
 		y += height
 		if n < len(lines)-1 {
 			y += leading
@@ -450,9 +502,10 @@ func (flow *flowText) flow(width float32) {
 		y += leading // code scrolls sideways, clipped at its height: room for the underscores of its last line
 	}
 	flow.height = y
-	if !flow.measuring {
-		flow.objects = append(append(append(append(flow.objects, chips...), texts...), marks...), pictures...)
-		flow.paintedWidth = width
+	if flow.measuring {
+		flow.drawn = false // the objects, if any, are of an earlier layout
+	} else {
+		flow.paintedWidth, flow.drawn = width, true
 	}
 	if flow.waiting {
 		whenTypeset(func() {
@@ -472,8 +525,77 @@ func (flow *flowText) release() {
 	if flow.waiting {
 		return // a formula is coming: flow is called again then
 	}
-	flow.cut, flow.objects, flow.pieces, flow.links = nil, nil, nil, nil
-	flow.paintedWidth = 0
+	flow.cut, flow.objects, flow.pieces, flow.links, flow.marks = nil, nil, nil, nil, nil
+	flow.paintedWidth, flow.drawn = 0, false
+}
+
+// grow gives the block new spans. While an answer streams they are the
+// ones it has, the last one longer, perhaps with more after it: the words
+// already measured stay, and so do the lines before the one being written,
+// with what they draw. Only the rest is cut and laid out again, so a
+// delta costs what it adds, not the length of the paragraph.
+func (flow *flowText) grow(spans []span) {
+	keep, from, at := flow.kept(spans)
+	flow.spans = spans
+	if keep < 0 {
+		flow.cut = nil
+	} else {
+		flow.cut = flow.cutAtoms(flow.cut[:keep], from, at)
+	}
+	if flow.width == 0 {
+		return // never laid out: MinSize and Layout do it
+	}
+	line := 0
+	for i := len(flow.marks) - 1; keep > 0 && i > 0; i-- {
+		if flow.marks[i].start < keep && flow.marks[i].clean { // the line holding the last atom kept
+			line = i
+			break
+		}
+	}
+	// Out of sight (released, or never drawn), it is only measured.
+	painted, measuring := flow.paintedWidth != 0, flow.measuring
+	flow.measuring = measuring || !painted
+	flow.flowFrom(flow.width, line)
+	flow.measuring = measuring
+	if measuring || !painted {
+		flow.paintedWidth = 0 // what it draws is of the shorter text: drawn again when shown
+	} else if c := fyne.CurrentApp().Driver().CanvasForObject(flow); c != nil {
+		// The new lines are drawn at the next frame. canvas.Refresh would
+		// free the textures of every line, the unchanged ones too.
+		setDirty(c)
+	}
+}
+
+// kept tells how much of what the block measured still holds for spans:
+// the atoms before keep, and the rest is cut from span from, at its byte
+// at. keep is -1 when nothing does.
+func (flow *flowText) kept(spans []span) (keep, from, at int) {
+	old := flow.spans
+	last := len(old) - 1
+	if flow.cut == nil || flow.mono || flow.waiting || last < 0 || len(spans) < len(old) {
+		return -1, 0, 0
+	}
+	for i := range last {
+		if spans[i] != old[i] {
+			return -1, 0, 0
+		}
+	}
+	was, now := old[last], spans[last]
+	grown := now
+	grown.text = was.text
+	if grown != was || !strings.HasPrefix(now.text, was.text) || was.hard || was.code || was.cite || was.math != "" {
+		return -1, 0, 0
+	}
+	// Its last word may go on: it is cut again, from its start.
+	keep, at = len(flow.cut), len(was.text)
+	if n := len(was.text); n > 0 && !strings.ContainsRune(" \t\n", rune(was.text[n-1])) {
+		if keep == 0 || flow.cut[keep-1].span != last || flow.cut[keep-1].space {
+			return -1, 0, 0
+		}
+		keep--
+		at -= len(flow.cut[keep].text)
+	}
+	return keep, last, at
 }
 
 // selPieces gives the selection layer what is drawn and where.
@@ -540,8 +662,12 @@ func (renderer *flowRenderer) MinSize() fyne.Size {
 	text := renderer.flowText
 	if text.width == 0 {
 		// Keep this provisional layout: repeated MinSize calls must not
-		// rebuild it. Layout reflows the text when its actual width differs.
+		// rebuild it. Layout reflows the text when its actual width differs,
+		// so it only measures: what it would draw is thrown away at once.
+		measuring := text.measuring
+		text.measuring = true
 		text.flow(600)
+		text.measuring = measuring
 	}
 	if text.mono {
 		return fyne.NewSize(text.natural, text.height) // code is never wrapped: it scrolls sideways

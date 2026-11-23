@@ -38,7 +38,6 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
-	"1loop/internal/sse"
 	"1loop/internal/update"
 )
 
@@ -294,6 +293,7 @@ type remoteDesktop struct {
 	todoSignature string
 	openCommands  map[string]bool // the background commands shown in full, by task
 	connected     string          // the connection line show last wrote in status
+	live          remoteSync      // what is kept between the server's events (remote_desktop_sync.go)
 }
 
 // useServer makes a server the window's target: the sidebar lists its
@@ -437,13 +437,6 @@ func (ui *desktopUI) targetMenu() {
 	showMenu(ui.window, ui.machine, actions)
 }
 
-func (remote *remoteDesktop) notify() {
-	select {
-	case remote.wake <- struct{}{}:
-	default:
-	}
-}
-
 func (remote *remoteDesktop) draftKey(chat string) string {
 	if chat == "" {
 		return "server:" + remote.client.address.URL + "|" + newChatDraft
@@ -484,7 +477,9 @@ func (remote *remoteDesktop) selectChat(id string) {
 	remote.current = id
 	remote.meta = remoteapi.Meta{}
 	remote.closeTabs()
-	remote.notify()
+	if id != "" {
+		remote.want(wantChat | wantPanel) // read in full on opening, then kept by the events
+	}
 }
 
 func (remote *remoteDesktop) resetTabs() {
@@ -633,7 +628,7 @@ func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.Handof
 				remote.conv(reply.Chat).Config.Workspace = workspace
 				remote.openChat(reply.Chat)
 			}
-			remote.notify()
+			remote.want(wantState) // the chat's own changes come in its events
 		})
 	}()
 }
@@ -675,124 +670,7 @@ func (remote *remoteDesktop) showTab(key string) {
 	}
 	delete(remote.hiddenTabs, key)
 	remote.asked[key] = true
-	remote.notify()
-}
-
-func (remote *remoteDesktop) events() {
-	for remote.ctx.Err() == nil {
-		response, err := remote.client.request(remote.ctx, "GET", "/api/events", nil)
-		if err == nil {
-			for event, err := range sse.Events(response.Body, 32<<20) {
-				if err != nil {
-					break
-				}
-				if event.Type == "pairing" {
-					remote.askPairing(event.Data)
-					continue
-				}
-				remote.notify()
-			}
-			response.Body.Close()
-		}
-		remote.notify()
-		select {
-		case <-remote.ctx.Done():
-			return
-		case <-time.After(time.Second):
-		}
-	}
-}
-
-// refreshLoop reads the server's state and the open chat after each event
-// (at most every 100 ms), and shows them.
-func (remote *remoteDesktop) refreshLoop() {
-	for {
-		select {
-		case <-remote.ctx.Done():
-			return
-		case <-remote.wake:
-		}
-		timer := time.NewTimer(100 * time.Millisecond)
-		select {
-		case <-remote.ctx.Done():
-			timer.Stop()
-			return
-		case <-timer.C:
-		}
-		var id string
-		fyne.DoAndWait(func() { id = remote.current })
-		ctx, cancel := context.WithTimeout(remote.ctx, 10*time.Second)
-		var state struct {
-			Name, Workspace string
-			Chats           []remoteapi.Chat
-			Worktrees       map[string]string
-			Settings        struct {
-				Models                      []remoteapi.Model
-				Accounts                    []remoteapi.Account
-				DefaultPresets              bool
-				Model, Effort, ApprovalMode string
-				Tier                        string
-				AutoMode                    bool // the server's model has an Auto mode
-				NamingModel                 *agent.NamingModel
-			}
-		}
-		err := remote.client.json(ctx, "GET", "/api/state", nil, &state)
-		stateErr := err // whether the server answers (an open chat's error may only be the chat's)
-		var projects struct{ Projects []string }
-		if err == nil {
-			remote.client.json(ctx, "GET", "/api/projects", nil, &projects) // an older server has none to list
-		}
-		var chat struct {
-			Items []remoteapi.Item
-			Meta  remoteapi.Meta
-		}
-		var tabs struct{ Tabs []remoteapi.Tab }
-		if err == nil && id != "" {
-			err = remote.client.json(ctx, "GET", "/api/chats/"+id, nil, &chat)
-			if err == nil {
-				err = remote.client.json(ctx, "GET", "/api/chats/"+id+"/panel", nil, &tabs)
-			}
-		}
-		cancel()
-		if remote.ctx.Err() != nil {
-			return
-		}
-		fyne.Do(func() {
-			if remote.current != id || remote.ctx.Err() != nil || remote.parent.server != remote {
-				return
-			}
-			target := serverTarget(remote.client.address.URL)
-			if stateErr != nil {
-				remote.parent.setReach(target, reachOffline, stateErr.Error())
-			} else {
-				remote.parent.setReach(target, reachOnline, "")
-			}
-			if err != nil {
-				remote.status.SetText(err.Error())
-				remote.connected = "" // the next answer says it is connected again
-				return
-			}
-			remote.worktrees = state.Worktrees
-			remote.show(state.Name, state.Workspace, state.Chats, projects.Projects)
-			remote.models = state.Settings.Models
-			remote.accounts, remote.defaultPresets = state.Settings.Accounts, state.Settings.DefaultPresets
-			remote.model, remote.effort, remote.tier = state.Settings.Model, state.Settings.Effort, state.Settings.Tier
-			remote.approvalMode, remote.autoMode = state.Settings.ApprovalMode, state.Settings.AutoMode
-			remote.namingModel = state.Settings.NamingModel
-			remote.parent.updateApprovalControl()
-			if id == "" {
-				remote.parent.model.row.SetText(remote.modelText(remote.model, remote.effort))
-				return
-			}
-			remote.meta = chat.Meta
-			conv := remote.conv(id)
-			conv.Config.Model, conv.Config.Effort = chat.Meta.Model, chat.Meta.Effort // shown at once when it opens again
-			remote.parent.model.row.SetText(remote.modelText(chat.Meta.Model, chat.Meta.Effort))
-			remote.showItems(conv, chat.Items)
-			remote.showMeta(conv)
-			remote.syncTabs(conv, tabs.Tabs)
-		})
-	}
+	remote.want(wantPanel)
 }
 
 // show updates the server's name, projects and chats in the sidebar.
@@ -887,7 +765,7 @@ func (remote *remoteDesktop) deleteChat(chat remoteapi.Chat) {
 					ui.notice("Worktree", reply.Note)
 				}
 			})
-			remote.notify()
+			remote.want(wantState)
 		}()
 	}
 	if branches == 0 {
@@ -941,9 +819,6 @@ func chatItem(item remoteapi.Item) agent.ChatItem {
 // else (a new version, an edit) draws the chat again.
 func (remote *remoteDesktop) showItems(conv *conversation, items []remoteapi.Item) {
 	ui := remote.parent
-	if ui.current != conv {
-		return
-	}
 	next := make([]agent.ChatItem, len(items))
 	states := map[int]string{}
 	versions := map[string]remoteapi.Versions{}
@@ -959,29 +834,15 @@ func (remote *remoteDesktop) showItems(conv *conversation, items []remoteapi.Ite
 			states[i] = item.State
 		}
 	}
+	if ui.current != conv { // kept for when it opens: drawn then
+		conv.Items, conv.states, conv.versions = next, states, versions
+		remote.fetchImages(conv, items)
+		return
+	}
 	remote.fetchImages(conv, items)
 	changed := len(next) < len(conv.Items) || !maps.Equal(versions, conv.versions)
 	for i := 0; i < len(conv.Items) && i < len(next) && !changed; i++ {
-		old := conv.Items[i]
-		switch {
-		case reflect.DeepEqual(old, next[i]) && conv.states[i] == states[i]:
-		case old.Kind == next[i].Kind && old.ID == next[i].ID && (old.Kind == "assistant" || old.Kind == "tool"):
-			conv.Items[i], conv.states[i] = next[i], states[i]
-			switch view := ui.liveView(conv, i).(type) {
-			case *markdownView:
-				view.ParseMarkdown(next[i].Text)
-				ui.items.changed(view.box)
-			case *toolRow:
-				view.update(next[i], states[i])
-				if view.preview != nil {
-					ui.items.changed(view)
-					ui.relayoutColumn()
-				}
-				ui.panel.changed(conv, i)
-			}
-		default:
-			changed = true
-		}
+		changed = !remote.updateRow(conv, i, next[i], states[i])
 	}
 	if changed || len(next)-len(conv.Items) > chatLoadThreshold {
 		conv.Items, conv.states, conv.versions = next, states, versions
@@ -1000,46 +861,80 @@ func (remote *remoteDesktop) showItems(conv *conversation, items []remoteapi.Ite
 	ui.relayoutColumn()
 }
 
+// updateRow brings the open chat's row i to next as it stands: a growing
+// answer or a tool call changes in place. It says whether it could; false
+// leaves the row as it was.
+func (remote *remoteDesktop) updateRow(conv *conversation, i int, next agent.ChatItem, state string) bool {
+	ui := remote.parent
+	old := conv.Items[i]
+	switch {
+	case reflect.DeepEqual(old, next) && conv.states[i] == state:
+	case old.Kind == next.Kind && old.ID == next.ID && (old.Kind == "assistant" || old.Kind == "tool"):
+		conv.Items[i], conv.states[i] = next, state
+		switch view := ui.liveView(conv, i).(type) {
+		case *markdownView:
+			view.ParseMarkdown(next.Text)
+			ui.items.changed(view.box)
+		case *toolRow:
+			view.update(next, state)
+			if view.preview != nil {
+				ui.items.changed(view)
+				ui.relayoutColumn()
+			}
+			ui.panel.changed(conv, i)
+		}
+	default:
+		return false
+	}
+	return true
+}
+
 // fetchImages loads attached and generated pictures, which the server
 // lists without their data, then shows the chat again with them.
 func (remote *remoteDesktop) fetchImages(conv *conversation, items []remoteapi.Item) {
 	for index, item := range items {
-		if (item.Kind != "user" && item.Tool != "imagegen") || item.Images == 0 || (index < len(conv.Items) && len(conv.Items[index].Images) > 0) {
-			continue
-		}
-		if conv.fetching == nil {
-			conv.fetching = map[string]bool{}
-		}
-		if conv.fetching[item.ID] {
-			continue
-		}
-		conv.fetching[item.ID] = true
-		index, item, chat := index, item, conv.serverID
-		go func() {
-			var parts []core.ImagePart
-			for n := 0; n < item.Images; n++ {
-				ctx, cancel := context.WithTimeout(remote.ctx, 30*time.Second)
-				response, err := remote.client.request(ctx, "GET", fmt.Sprintf("/api/chats/%s/items/%d/images/%d", chat, index, n), nil)
-				if err == nil {
-					data, readErr := io.ReadAll(io.LimitReader(response.Body, 32<<20))
-					response.Body.Close()
-					if readErr == nil {
-						parts = append(parts, core.ImagePart{Mime: response.Header.Get("Content-Type"), Data: base64.StdEncoding.EncodeToString(data)})
-					}
-				}
-				cancel()
-			}
-			fyne.Do(func() {
-				if len(parts) == 0 || index >= len(conv.Items) || conv.Items[index].ID != item.ID {
-					return
-				}
-				conv.Items[index].Images = parts
-				if remote.parent.current == conv {
-					remote.parent.refreshItemImages(conv, index)
-				}
-			})
-		}()
+		remote.fetchImage(conv, index, item)
 	}
+}
+
+// fetchImage loads the pictures of the chat's item at index, if it has
+// some not fetched yet.
+func (remote *remoteDesktop) fetchImage(conv *conversation, index int, item remoteapi.Item) {
+	if (item.Kind != "user" && item.Tool != "imagegen") || item.Images == 0 || (index < len(conv.Items) && len(conv.Items[index].Images) > 0) {
+		return
+	}
+	if conv.fetching == nil {
+		conv.fetching = map[string]bool{}
+	}
+	if conv.fetching[item.ID] {
+		return
+	}
+	conv.fetching[item.ID] = true
+	chat := conv.serverID
+	go func() {
+		var parts []core.ImagePart
+		for n := 0; n < item.Images; n++ {
+			ctx, cancel := context.WithTimeout(remote.ctx, 30*time.Second)
+			response, err := remote.client.request(ctx, "GET", fmt.Sprintf("/api/chats/%s/items/%d/images/%d", chat, index, n), nil)
+			if err == nil {
+				data, readErr := io.ReadAll(io.LimitReader(response.Body, 32<<20))
+				response.Body.Close()
+				if readErr == nil {
+					parts = append(parts, core.ImagePart{Mime: response.Header.Get("Content-Type"), Data: base64.StdEncoding.EncodeToString(data)})
+				}
+			}
+			cancel()
+		}
+		fyne.Do(func() {
+			if len(parts) == 0 || index >= len(conv.Items) || conv.Items[index].ID != item.ID {
+				return
+			}
+			conv.Items[index].Images = parts
+			if remote.parent.current == conv {
+				remote.parent.refreshItemImages(conv, index)
+			}
+		})
+	}()
 }
 
 // showMeta shows whether the open chat works, and what waits for the user.

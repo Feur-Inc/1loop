@@ -1368,7 +1368,8 @@ func (renderer *sheetRenderer) Layout(size fyne.Size) {
 	}
 	sheet.dim.Resize(size)
 	box := sheet.panelRect()
-	panelPos, panelSize := box.pos, fyne.NewSize(box.size.X, box.size.Y)
+	var panelPos fyne.Position
+	panelSize := fyne.NewSize(box.size.X, box.size.Y)
 	if sheet.menu {
 		// zoom-in-95 from the side facing the trigger, like web popovers
 		k := 0.95 + 0.05*sheet.progress

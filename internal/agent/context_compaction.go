@@ -519,7 +519,7 @@ func TaskContextText(cfg Config, used, window int, classic bool, activity string
 	if window <= 0 {
 		return "Context usage is available once a model is selected."
 	}
-	text := fmt.Sprintf("Context · %d%% · %s / %s tokens", min(100, used*100/window), Tokens(used), Tokens(window))
+	text := fmt.Sprintf("Context · %d%% · %s / %s tokens", min(100, used*100/window), core.CompactCount(used), core.CompactCount(window))
 	if cfg.Provider == "claudecode" {
 		return text + "\nCompaction is managed by Claude Code."
 	}
@@ -542,14 +542,4 @@ func TaskContextText(cfg Config, used, window int, classic bool, activity string
 		level, condition, fraction = 2, "after the next completed task", .7
 	}
 	return text + fmt.Sprintf("\nNext eligible: level %d · %s (from %.0f%%).\nThe actual level depends on the next work boundary and available reduction.", level, condition, float64(contextThreshold(cfg, fraction))*100/float64(window))
-}
-
-func Tokens(n int) string {
-	switch {
-	case n >= 1000000:
-		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(n)/1e6), ".0") + "M"
-	case n >= 1000:
-		return fmt.Sprintf("%dk", (n+500)/1000)
-	}
-	return fmt.Sprint(n)
 }

@@ -473,7 +473,7 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 			start = "with this conversation so far"
 			if access.ForkSize != nil {
 				size := access.ForkSize(ctx)
-				start += fmt.Sprintf(" (about %s tokens)", Tokens(size))
+				start += fmt.Sprintf(" (about %s tokens)", core.CompactCount(size))
 				if size >= ForkApprovalTokens {
 					ask = backend.askApproval // a large fork is the user's call, whatever the mode
 				}

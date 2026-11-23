@@ -176,11 +176,6 @@ func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size
 	previousWidth := objects[0].Size().Width
 	full := layoutSpec.width(size.Width)
 	width := full * layoutSpec.toolPanel.shown
-	conversationWidth := size.Width - width
-	if layoutSpec.toolPanel.snap {
-		conversationWidth = size.Width - full*layoutSpec.toolPanel.target
-	}
-	layoutSpec.toolPanel.ui.controls.Layout.(*composerControlsLayout).available = fyne.Min(760, conversationWidth-48) - 20
 	if layoutSpec.toolPanel.snap {
 		// Wrapping a long conversation again on every frame is what made
 		// the slide stutter: it takes its final width at once instead.

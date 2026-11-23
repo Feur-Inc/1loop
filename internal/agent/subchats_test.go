@@ -241,7 +241,7 @@ func TestSubchatFollow(t *testing.T) {
 }
 
 func TestSubchatReport(t *testing.T) {
-	report := SubchatReport(SubchatInfo{ID: "s1", Title: "Fix", State: SubchatDone, Branch: "subchat/fix", Folder: "/w/fix", Last: strings.Repeat("x", 3000)})
+	report := TurnReport(ChatSender{ID: "s1", Title: "Fix"}, RelationSubchat, SubchatInfo{ID: "s1", Title: "Fix", State: SubchatDone, Branch: "subchat/fix", Folder: "/w/fix", Last: strings.Repeat("x", 3000)})
 	if !report.Internal || WakeSummary(report) != "Subchat s1 “Fix” ended its turn: done" || !strings.HasSuffix(report.Content, "Branch subchat/fix · worktree /w/fix") || len(report.Content) > 2300 {
 		t.Fatalf("report %q (summary %q)", report.Content, WakeSummary(report))
 	}

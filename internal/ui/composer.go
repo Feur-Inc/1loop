@@ -248,26 +248,9 @@ func (entry *chatEntry) FocusLost() {
 	}
 }
 
-// On narrow conversations, the two groups need separate lines when the
-// side panel is open. The split supplies the available width before sizing.
-// transient are the run controls that come and go: the choice of one or two
-// lines counts them even while hidden, so it does not flip as a task starts
-// or ends.
-type composerControlsLayout struct {
-	available float32
-	transient []fyne.CanvasObject
-}
-
-func (layoutSpec *composerControlsLayout) widths(o []fyne.CanvasObject) (left, right fyne.Size, wide float32) {
-	left, right = o[0].MinSize(), o[1].MinSize()
-	wide = left.Width + right.Width + 8
-	for _, object := range layoutSpec.transient {
-		if !object.Visible() {
-			wide += object.MinSize().Width + 4
-		}
-	}
-	return left, right, wide
-}
+// composerControlsLayout puts the settings on the left and the run controls
+// on the right of one line.
+type composerControlsLayout struct{}
 
 // MinSize keeps the controls on one line: the settings shrink first
 // (composerSettingsLayout), so the send button always ends the line.
@@ -1072,7 +1055,7 @@ func (ring *contextRing) describe() string {
 	if percent > 100 {
 		percent = 100
 	}
-	text := fmt.Sprintf("%d%% of the context used\n%s of %s tokens", percent, agent.Tokens(ring.used), agent.Tokens(ring.window))
+	text := fmt.Sprintf("%d%% of the context used\n%s of %s tokens", percent, core.CompactCount(ring.used), core.CompactCount(ring.window))
 	if ring.plan != (agent.PlanUsage{}) {
 		text += fmt.Sprintf("\nClaude plan: %.0f%% of the 5 h window · %.0f%% of the week", ring.plan.FiveHour*100, ring.plan.Week*100)
 	}

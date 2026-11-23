@@ -9,6 +9,8 @@ import (
 	"image/draw"
 	"math"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -291,7 +293,26 @@ func fitText(text string, size float32, style fyne.TextStyle, width float32) str
 
 func lineIcon(name, body string) fyne.Resource {
 	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">` + body + `</svg>`
-	return fyne.NewStaticResource("1loop-"+name+".svg", []byte(svg))
+	return fyne.NewStaticResource("1loop-"+name+".svg", []byte(heavierStrokes(svg)))
+}
+
+// iconStrokeWeight thickens every stroke of the interface's icons (line and
+// file type icons) by 10 %. Drawn sharp at a fractional scale (125 %), the
+// 1.5 strokes read thinner than they did through the compositor's blur.
+const iconStrokeWeight = 1.1
+
+var strokeWidthAttr = regexp.MustCompile(`stroke-width="([0-9.]+)"`)
+
+// heavierStrokes multiplies each stroke-width of an icon's SVG by
+// iconStrokeWeight.
+func heavierStrokes(svg string) string {
+	return strokeWidthAttr.ReplaceAllStringFunc(svg, func(attr string) string {
+		width, err := strconv.ParseFloat(strokeWidthAttr.FindStringSubmatch(attr)[1], 64)
+		if err != nil {
+			return attr
+		}
+		return `stroke-width="` + strconv.FormatFloat(math.Round(width*iconStrokeWeight*1000)/1000, 'f', -1, 64) + `"`
+	})
 }
 
 var (

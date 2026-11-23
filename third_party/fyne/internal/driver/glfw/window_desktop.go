@@ -388,7 +388,16 @@ func (w *window) scaled(_ *glfw.Window, x float32, y float32) {
 		return
 	}
 
+	if w.canvas.texScale == x {
+		return
+	}
 	w.canvas.texScale = x
+	// Text textures are kept by text and colour, not by object: drawn
+	// at the old scale, they would be stretched to the new one (1loop:
+	// a fractional scale arrives after the first frames, at 1.0).
+	w.RunWithContext(func() {
+		cache.DeleteTextTexturesFor(w.canvas)
+	})
 	w.canvas.Refresh(w.canvas.content)
 }
 

@@ -347,14 +347,28 @@ static void setContentAreaOpaque(_GLFWwindow* window)
 }
 
 
+// 1loop: the scale the window's buffer is drawn at: the compositor's
+// fractional scale when it sends one (125 % on GNOME draws at 1.25, not at
+// 2 for the compositor to shrink, which blurred everything unevenly),
+// otherwise the integer buffer scale.
+static double bufferScale(_GLFWwindow* window)
+{
+    if (window->wl.fractionalScale)
+        return window->wl.fractionalScaleFactor > 0 ? window->wl.fractionalScaleFactor : 1;
+    return window->wl.contentScale;
+}
+
 static void resizeWindow(_GLFWwindow* window)
 {
-    int scale = window->wl.contentScale;
-    int scaledWidth = window->wl.width * scale;
-    int scaledHeight = window->wl.height * scale;
+    double scale = bufferScale(window);
+    int scaledWidth = (int) (window->wl.width * scale + 0.5);
+    int scaledHeight = (int) (window->wl.height * scale + 0.5);
 
     if (window->wl.egl.window)
         wl_egl_window_resize(window->wl.egl.window, scaledWidth, scaledHeight, 0, 0);
+    if (window->wl.scalingViewport && window->wl.width > 0 && window->wl.height > 0)
+        wp_viewport_set_destination(window->wl.scalingViewport,
+                                    window->wl.width, window->wl.height);
     if (!window->wl.transparent)
         setContentAreaOpaque(window);
     _glfwInputFramebufferSize(window, scaledWidth, scaledHeight);
@@ -397,6 +411,14 @@ void _glfwUpdateContentScaleWayland(_GLFWwindow* window)
     for (int i = 0; i < window->wl.scaleCount; i++)
         maxScale = _glfw_max(window->wl.scales[i].factor, maxScale);
 
+    // 1loop: with a fractional scale the buffer scale stays 1; the
+    // integer scale only picks the cursor's size.
+    if (window->wl.fractionalScale)
+    {
+        window->wl.contentScale = maxScale;
+        return;
+    }
+
     // Only change the framebuffer size if the scale changed.
     if (window->wl.contentScale != maxScale)
     {
@@ -409,6 +431,32 @@ void _glfwUpdateContentScaleWayland(_GLFWwindow* window)
             _glfwInputWindowDamage(window);
     }
 }
+
+static void fractionalScaleHandlePreferredScale(void* userData,
+                                                struct wp_fractional_scale_v1* fractionalScale,
+                                                uint32_t numerator)
+{
+    _GLFWwindow* window = userData;
+    const double scale = numerator / 120.0;
+
+    if (scale <= 0 || scale == window->wl.fractionalScaleFactor)
+        return;
+
+    window->wl.fractionalScaleFactor = scale;
+    // The EGL window gets its new size before the content scale is told:
+    // a handler of that event may use the GL context, and the back buffer
+    // it makes Mesa allocate would keep the old size until the next frame.
+    resizeWindow(window);
+    _glfwInputWindowContentScale(window, (float) scale, (float) scale);
+
+    if (window->wl.visible)
+        _glfwInputWindowDamage(window);
+}
+
+static const struct wp_fractional_scale_v1_listener fractionalScaleListener =
+{
+    fractionalScaleHandlePreferredScale
+};
 
 static void surfaceHandleEnter(void* userData,
                                struct wl_surface* surface,
@@ -997,6 +1045,21 @@ static GLFWbool createNativeSurface(_GLFWwindow* window,
     window->wl.width = wndconfig->width;
     window->wl.height = wndconfig->height;
     window->wl.contentScale = 1;
+
+    if (_glfw.wl.fractionalScaleManager && _glfw.wl.viewporter)
+    {
+        window->wl.scalingViewport =
+            wp_viewporter_get_viewport(_glfw.wl.viewporter, window->wl.surface);
+        window->wl.fractionalScale =
+            wp_fractional_scale_manager_v1_get_fractional_scale(
+                _glfw.wl.fractionalScaleManager, window->wl.surface);
+        wp_fractional_scale_v1_add_listener(window->wl.fractionalScale,
+                                            &fractionalScaleListener,
+                                            window);
+        if (window->wl.width > 0 && window->wl.height > 0)
+            wp_viewport_set_destination(window->wl.scalingViewport,
+                                        window->wl.width, window->wl.height);
+    }
     window->wl.title = _glfw_strdup(wndconfig->title);
     if (wndconfig->x11.className[0])
         window->wl.appId = _glfw_strdup(wndconfig->x11.className);
@@ -2176,6 +2239,12 @@ void _glfwPlatformDestroyWindow(_GLFWwindow* window)
     if (window->wl.egl.window)
         wl_egl_window_destroy(window->wl.egl.window);
 
+    if (window->wl.fractionalScale)
+        wp_fractional_scale_v1_destroy(window->wl.fractionalScale);
+
+    if (window->wl.scalingViewport)
+        wp_viewport_destroy(window->wl.scalingViewport);
+
     if (window->wl.surface)
         wl_surface_destroy(window->wl.surface);
 
@@ -2342,9 +2411,9 @@ void _glfwPlatformGetFramebufferSize(_GLFWwindow* window,
 {
     _glfwPlatformGetWindowSize(window, width, height);
     if (width)
-        *width *= window->wl.contentScale;
+        *width = (int) (*width * bufferScale(window) + 0.5);
     if (height)
-        *height *= window->wl.contentScale;
+        *height = (int) (*height * bufferScale(window) + 0.5);
 }
 
 void _glfwPlatformGetWindowFrameSize(_GLFWwindow* window,
@@ -2368,9 +2437,9 @@ void _glfwPlatformGetWindowContentScale(_GLFWwindow* window,
                                         float* xscale, float* yscale)
 {
     if (xscale)
-        *xscale = (float) window->wl.contentScale;
+        *xscale = (float) bufferScale(window);
     if (yscale)
-        *yscale = (float) window->wl.contentScale;
+        *yscale = (float) bufferScale(window);
 }
 
 void _glfwPlatformIconifyWindow(_GLFWwindow* window)

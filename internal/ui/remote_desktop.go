@@ -325,6 +325,7 @@ func (ui *desktopUI) useServer(client *remoteClient) {
 	ui.startNew()
 	go remote.refreshLoop()
 	go remote.events()
+	go remote.logTraffic()
 	go func() { // the tasks' clocks
 		ticker := time.NewTicker(time.Second)
 		defer ticker.Stop()

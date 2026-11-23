@@ -32,6 +32,7 @@ type serverAddress struct {
 type remoteClient struct {
 	http    *http.Client
 	address serverAddress
+	traffic *remoteTraffic // for the developer log (remote_traffic.go)
 }
 
 func newRemoteClient(address serverAddress) (*remoteClient, error) {
@@ -40,7 +41,7 @@ func newRemoteClient(address serverAddress) (*remoteClient, error) {
 		return nil, err
 	}
 	address.URL = base
-	return &remoteClient{client, address}, nil
+	return &remoteClient{http: client, address: address, traffic: &remoteTraffic{}}, nil
 }
 
 func (client *remoteClient) request(ctx context.Context, method, path string, body any) (*http.Response, error) {
@@ -63,10 +64,12 @@ func (client *remoteClient) request(ctx context.Context, method, path string, bo
 	if client.address.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+client.address.Token)
 	}
+	client.traffic.request(path)
 	response, err := client.http.Do(req)
 	if err != nil {
 		return nil, err
 	}
+	response.Body = client.traffic.body(response.Body)
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
 		var problem struct {

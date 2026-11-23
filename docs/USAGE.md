@@ -79,6 +79,9 @@ sharing.
 
 **Settings → Extensions** (also on the phone) has three tabs:
 
+  One interrupted (a stop, an error, 1loop closed) goes on where it stopped when
+  it is next needed; **Compare**, beside its note, shows the context before and
+  after.
 - **Store**: skills and plugins published on GitHub (topics `agent-skills`
   and `claude-code-plugin`), with their picture, stars and README, sorted by
   stars, last update or relevance. **Install** downloads the repository and

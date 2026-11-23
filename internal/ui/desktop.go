@@ -55,6 +55,8 @@ type conversation struct {
 	History []agent.Message     `json:"history"`
 	Items   []agent.ChatItem    `json:"items"`
 	Cache   *agent.ContextCache `json:"contextCache,omitempty"`
+	// Compaction is the one interrupted, and the last ones made (#128).
+	Compaction *agent.CompactionState `json:"compaction,omitempty"`
 	// ContextUsage is Claude Code's last count of the window by category.
 	ContextUsage *agent.ContextUsage     `json:"contextUsage,omitempty"`
 	grants       *agent.PermissionGrants // what request_permissions granted, until 1loop closes
@@ -1744,7 +1746,10 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	if chat.Cache == nil {
 		chat.Cache = &agent.ContextCache{}
 	}
-	cfg.Cache = chat.Cache
+	if chat.Compaction == nil {
+		chat.Compaction = &agent.CompactionState{}
+	}
+	cfg.Cache, cfg.Compaction = chat.Cache, chat.Compaction
 	if chat.grants == nil {
 		chat.grants = &agent.PermissionGrants{}
 	}
@@ -1868,7 +1873,11 @@ func (ui *desktopUI) compactChat(focus string) {
 				ui.addItem(chat, agent.ChatItem{Kind: "error", Text: err.Error()})
 			} else {
 				chat.History = kept
-				ui.addItem(chat, agent.ChatItem{Kind: "note", Text: "Context compacted: the earlier rounds were condensed"})
+				text := "Context compacted: the earlier rounds were condensed"
+				if records := chat.Compaction.List(); len(records) > 0 {
+					text = "Context compacted · asked by you · " + records[len(records)-1].Label() + ". Earlier details remain available through recall."
+				}
+				ui.addItem(chat, agent.ChatItem{Kind: "note", Text: text})
 			}
 			ui.runEnded(chat, ended)
 		})
@@ -2222,7 +2231,7 @@ func (ui *desktopUI) persist(wait bool) {
 	chats := make([]*conversation, len(ui.chats))
 	for i, chat := range ui.chats { // messages are never edited in place: copying the lists is enough
 		chats[i] = &conversation{ID: chat.ID, Title: chat.Title, Config: chat.Config, Panel: chat.Panel,
-			History: append([]agent.Message{}, chat.History...), Items: append([]agent.ChatItem{}, chat.Items...), Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(),
+			History: append([]agent.Message{}, chat.History...), Items: append([]agent.ChatItem{}, chat.Items...), Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(), Compaction: chat.Compaction.Copy(),
 			Version: chat.Version, Versions: copyVersions(chat.Versions), ContextUsage: chat.ContextUsage,
 			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...)} // its parent: forgetting it detached every subchat on restart (#356)
 	}

@@ -120,6 +120,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/model/defaults":                     server.setDefaultModels,
 		"POST /api/approval-mode":                      server.setApprovalMode,
 		"GET /api/chats/{id}/context":                  server.chatContext,
+		"GET /api/chats/{id}/compactions":              server.compactions,
 		"GET /api/mentions":                            server.mentions,
 		"GET /api/chats/{id}/panel":                    server.panelTabs,
 		"GET /api/chats/{id}/panel/{key}":              server.panelTab,
@@ -256,6 +257,18 @@ func (server *headlessServer) chatContext(w http.ResponseWriter, r *http.Request
 		return
 	}
 	core.WriteJSON(w, 200, usage)
+}
+
+// compactions are the chat's last ones, before and after (#128).
+func (server *headlessServer) compactions(w http.ResponseWriter, r *http.Request) {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	chat := server.chatLocked(r.PathValue("id"))
+	if chat == nil {
+		core.Fail(w, 404, "Chat not found")
+		return
+	}
+	core.WriteJSON(w, 200, map[string]any{"records": chat.Compaction.List()})
 }
 
 // mentions are what a chat's composer offers after "@" (?chat=, a new

@@ -121,6 +121,7 @@ func (d *gLDriver) runGL() {
 		d.trayStart()
 	}
 
+	driver.Recoloured = d.recoloured // 1loop
 	fyne.CurrentApp().Settings().AddListener(func(set fyne.Settings) {
 		if app.VariantOnly { // 1loop: the theme is the same (internal/app.VariantOnly)
 			return
@@ -239,6 +240,26 @@ func (d *gLDriver) runGL() {
 				eventTick.Reset(time.Second / time.Duration(rate))
 			}
 		}
+	}
+}
+
+// recoloured is driver.Recoloured (1loop): what a change of colours makes
+// stale is dropped, and the windows are painted again.
+func (d *gLDriver) recoloured(objects []fyne.CanvasObject) {
+	cache.ResetThemeColourCaches()
+	for _, win := range d.windowList() {
+		w := win.(*window)
+		if w.view() == nil || w.canvas.Painter() == nil {
+			continue
+		}
+		w.RunWithContext(func() {
+			for _, obj := range objects {
+				if c, ok := cache.TextureCanvas(obj); ok && c == w.canvas {
+					w.canvas.Painter().Free(obj)
+				}
+			}
+		})
+		w.canvas.SetDirty()
 	}
 }
 

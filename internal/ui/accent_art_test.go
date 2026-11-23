@@ -99,3 +99,29 @@ func assertAccentRing(t *testing.T, img image.Image) {
 		t.Fatalf("ring pixels: %d in the accent, %d in another colour", teal, other)
 	}
 }
+
+// The logo and the intro's frames are inked and resampled once per accent,
+// shared by every window and every intro, and drawn again in a new one
+// (#475).
+func TestArtworkInkedOncePerAccent(t *testing.T) {
+	test.NewTempApp(t)
+	saved := colAmber
+	defer func() { colAmber = saved }()
+	colAmber = color.NRGBA{0xA8, 0x7B, 0xFF, 0xFF} // purple
+	logo, frame := inkedLogo(87, 30), introFrameAt(63, 60)
+	if inkedLogo(87, 30) != logo || introFrameAt(63, 60) != frame {
+		t.Fatal("the same accent drew the artwork again")
+	}
+	if logo.Bounds().Dx() != 261 || frame.Bounds().Dx() != 60 {
+		t.Fatalf("sizes %v and %v", logo.Bounds(), frame.Bounds())
+	}
+	colAmber = color.NRGBA{0x2F, 0xC2, 0xA4, 0xFF} // teal
+	if inkedLogo(87, 30) == logo {
+		t.Fatal("a new accent kept the logo of the old one")
+	}
+	if again := introFrameAt(63, 60); again == frame {
+		t.Fatal("a new accent kept the intro of the old one")
+	} else {
+		assertAccentRing(t, again)
+	}
+}

@@ -1841,6 +1841,20 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             Api(engine).post("/api/local/sync", body, readTimeout = 3_600_000)
         }
 
+    /**
+     * Moves a chat with its project, its agent at work, between this phone's
+     * engine and a paired desktop or server (#18). It waits for the agent's
+     * step to end, so it may last.
+     */
+    suspend fun moveChat(peer: Server, pull: Boolean, local: String, remote: String, chat: String): JSONObject =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val engine = this@RemoteApp.local.activeServer.value ?: throw ApiError("Start the agent on this phone first (Local phone).")
+            val body = JSONObject()
+                .put("peer", JSONObject().put("url", "https://${peer.host}:${peer.port}").put("token", peer.token).put("fingerprint", peer.fingerprint))
+                .put("peerName", peer.name).put("direction", if (pull) "pull" else "push").put("local", local).put("remote", remote).put("chat", chat)
+            Api(engine).post("/api/local/move", body, readTimeout = 3_600_000)
+        }
+
     /** Files shared to 1loop from another app, waiting for the user to place them (Files.kt). */
     val shared = mutableStateListOf<android.net.Uri>()
 

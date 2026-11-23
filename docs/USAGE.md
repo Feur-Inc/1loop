@@ -72,6 +72,11 @@ sharing.
 - Changing **provider, account or model** mid-conversation asks how the new
   model receives it: as it is, or summarized (by the previous model, which
   still has it cached, or by the new one), with 1loop's recommendation.
+- A chat **moves to another device**, its agent at work, from its ⋯ menu (on the
+  phone, hold it): the agent finishes its step, pauses, the project and the
+  conversation are copied, and it goes on there. If that fails, it goes on
+  where it was. Commands left running, terminals, browser tabs, ignored files
+  and secrets stay behind.
 - Long conversations are **compacted** when they near the model's real context
   window; details stay reachable through the agent's `recall` tool.
 

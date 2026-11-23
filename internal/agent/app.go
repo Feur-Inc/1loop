@@ -56,6 +56,7 @@ type Config struct {
 	ClassicCompaction bool                                      `json:"-"`
 	CompactAt         int                                       `json:"-"`
 	Cache             *ContextCache                             `json:"-"`
+	Pause             *PauseSignal                              `json:"-"` // asks the run to pause between two steps (pause.go)
 	ContextKey        string                                    `json:"-"`
 	Todo              *TodoState                                `json:"-"`
 	Tasks             *BackgroundTasks                          `json:"-"` // shell commands run in the background

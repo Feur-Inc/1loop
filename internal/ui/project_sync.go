@@ -39,7 +39,8 @@ func (ui *desktopUI) syncEngine() *projectsync.Local {
 		identity = ui.remote.fingerprint
 	}
 	return &projectsync.Local{
-		Device:   device,
+		Device:    device,
+		PauseChat: ui.pauseChat, ResumeChat: ui.resumeMoved, MovedChat: ui.movedChat,
 		Identity: identity,
 		Bases:    &projectsync.BaseStore{Path: filepath.Join(filepath.Dir(ui.statePath), "sync-bases.json")},
 		Resolve: func(project string, create bool) (string, error) {

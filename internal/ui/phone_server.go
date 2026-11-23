@@ -188,6 +188,10 @@ func (ui *desktopUI) startRemote() {
 	syncEngine := server.ui.syncEngine()
 	syncEngine.Identity = server.fingerprint
 	syncManifest, syncExport, syncImport := syncEngine.Routes()
+	pause, resume, moved := syncEngine.MoveRoutes()
+	mux.HandleFunc("POST /api/chats/{id}/pause", server.authorized(pause))
+	mux.HandleFunc("POST /api/chats/{id}/resume", server.authorized(resume))
+	mux.HandleFunc("POST /api/chats/{id}/moved", server.authorized(moved))
 	mux.HandleFunc("GET /api/sync/base", server.authorized(syncEngine.BaseRoute))
 	mux.HandleFunc("POST /api/sync/base", server.authorized(syncEngine.BaseRoute))
 	mux.HandleFunc("GET /api/sync/manifest", server.authorized(syncManifest))

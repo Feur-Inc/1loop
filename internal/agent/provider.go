@@ -852,6 +852,10 @@ func (backend *App) runCompatible(ctx context.Context, cfg Config, history []Mes
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
+		if cfg.Pause.asked() {
+			publish()
+			return ErrPaused
+		}
 		system.Content = systemInstructions(cfg)
 		messages[0] = system
 		if extras := inboxValue.Steer(); len(extras) > 0 {

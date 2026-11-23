@@ -24,7 +24,8 @@ import (
 
 func (server *headlessServer) syncEngine() *projectsync.Local {
 	return &projectsync.Local{
-		Device:   server.name,
+		Device:    server.name,
+		PauseChat: server.pauseChat, ResumeChat: server.resumeChat, MovedChat: server.movedChat,
 		Identity: server.fingerprint,
 		Bases:    &projectsync.BaseStore{Path: filepath.Join(server.dir, "sync-bases.json")},
 		Resolve: func(project string, create bool) (string, error) {

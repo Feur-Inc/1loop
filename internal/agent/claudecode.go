@@ -1239,6 +1239,11 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				emit("tool_result", p.outcome)
 				start() // the next ones in Claude Code's queue, if any
 			}
+			if cfg.Pause.asked() && len(calls) == 0 {
+				failure = ErrPaused // the deferred kill stops it between two steps
+				emit("history", append([]Message(nil), messages...))
+				return failure
+			}
 			// The gap between two tool calls: steered messages go in now.
 			for _, extra := range inboxValue.Steer() {
 				inject(extra)

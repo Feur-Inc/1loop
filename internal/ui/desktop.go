@@ -77,6 +77,7 @@ type conversation struct {
 	taskCount int         // background tasks last seen: a new one opens the panel on them
 
 	run     *chatRun        // the agent loop working on this chat, if any
+	moving  bool            // paused to move to another device: it starts nothing (chat_move.go)
 	handoff *pendingHandoff // how the next turn's new model receives the chat
 	queue   []agent.Message // Enter while it runs: the next turns
 	steer   []agent.Message // Ctrl+Enter while it runs: joins at the next step
@@ -106,6 +107,9 @@ type chatRun struct {
 	questionList    []agent.Question
 	answerQuestions func(map[string]string)
 	started         time.Time
+	pause           *agent.PauseSignal
+	ended           chan struct{} // closed once the run is over
+	paused          bool          // it ended between two steps, to move
 }
 
 // desktopUI is one 1loop window: its widgets, the chat it shows, its
@@ -1302,6 +1306,9 @@ func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
 	platform.Devf("run", "start %q [%s]: %s %s, effort %q, approval %q, session %q, on screen %v",
 		chat.Title, chat.ID, chat.Config.Provider, chat.Config.Model, chat.Config.Effort, agent.ApprovalFor(ui.approvalMode, chat.Config), chat.Config.Session, chat == ui.current)
 	run.started = time.Now()
+	if run.ended == nil {
+		run.ended = make(chan struct{})
+	}
 	cancel := run.cancel
 	run.cancel = func() { run.stopped = true; cancel() }
 	chat.run = run
@@ -1329,6 +1336,9 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 		platform.Devf("run", "end %q [%s]: %s after %s, on screen %v", chat.Title, chat.ID, ended, time.Since(run.started).Round(time.Millisecond), chat == ui.current)
 	}
 	chat.run = nil
+	if run != nil {
+		defer close(run.ended)
+	}
 	ui.remote.metaChanged(chat)
 	ui.syncPresence()
 	ui.staleAccountLimits(chat.Config.ConnectionID)
@@ -1341,17 +1351,17 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	}
 	// A prompt can arrive after the provider's final inbox check but before
 	// this UI callback. Close that gap before announcing that the chat is done.
-	if ended == "done" {
+	if ended == "done" && !chat.moving {
 		if next, ok := ui.takeNext(chat); ok {
 			ui.startIn(chat, next, "")
 			ui.save()
 			return
 		}
 	}
-	if run != nil && ended == "done" {
+	if run != nil && ended == "done" && !run.paused {
 		ui.notifyUser(chat, "Done.")
 	}
-	if run != nil {
+	if run != nil && !run.paused {
 		state := agent.SubchatDone
 		if ended == "stopped" {
 			state = agent.SubchatFailed
@@ -1584,7 +1594,12 @@ func (ui *desktopUI) chatTasks(chat *conversation) *agent.BackgroundTasks {
 
 // startIn runs the agent loop for a message in chat (a new chat when nil).
 func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id string) {
-	ui = ui.viewOf(chat) // the window showing it (windows.go); nil: a new chat in this one
+	ui = ui.viewOf(chat)            // the window showing it (windows.go); nil: a new chat in this one
+	if chat != nil && chat.moving { // it goes on with the chat, wherever that is
+		chat.queue = append(chat.queue, messageValue)
+		ui.renderQueue()
+		return
+	}
 	if chat == nil {
 		title := []rune(strings.Join(strings.Fields(messageValue.Typed()), " "))
 		if len(title) > 36 {
@@ -1646,7 +1661,10 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		ui.ensureWebTab()
 	}
 	turn.show(agent.Activity{State: "wait"})
-	ui.runStarted(chat, &chatRun{cancel: cancel, turn: turn})
+	pause := agent.NewPauseSignal()
+	cfg.Pause = pause
+	run := &chatRun{cancel: cancel, turn: turn, pause: pause}
+	ui.runStarted(chat, run)
 	pump := &eventPump{handle: turn.handle}
 	inboxValue := agent.Inbox{
 		Steer: func() (out []agent.Message) {
@@ -1693,7 +1711,9 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 			turn.finish()
 			defer ui.finishMove(chat, cfg.Move) // after runEnded: its note starts the next turn
 			ended := "done"
-			if err != nil {
+			if errors.Is(err, agent.ErrPaused) {
+				run.paused = true
+			} else if err != nil {
 				ended = "stopped"
 				text := err.Error()
 				if canceled {

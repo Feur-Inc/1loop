@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/theme"
 
 	"1loop/internal/agent"
 	"1loop/internal/remoteapi"
@@ -327,10 +328,9 @@ func (ui *desktopUI) rememberServerProjects(address string, projects []string) {
 // sidebar lists it.
 func (ui *desktopUI) sideChatOf(chat *conversation) sideChat {
 	status, blocked := agent.WrapUpStatus(chat.Items)
-	menu := []menuAction{
-		{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
-		{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
-	}
+	menu := []menuAction{{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }}}
+	menu = append(menu, ui.moveActions(chat)...) // chat_move.go
+	menu = append(menu, menuAction{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }})
 	var window func()
 	if ui.canOpenWindow(chat) { // windows.go
 		window = func() { ui.openWindow(chat) }
@@ -377,12 +377,16 @@ func (ui *desktopUI) serverSideChats(target projectTarget, chats []remoteapi.Cha
 	for _, chat := range chats {
 		chat := chat
 		side = append(side, sideChat{
-			id: chat.ID, parent: chat.Parent, ended: chat.Ended,
+			target: target.id, id: chat.ID, parent: chat.Parent, ended: chat.Ended,
 			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
 			status: chat.Status, blocked: chat.Blocked,
 			selected: current != nil && current.server != nil && current.server.client.address.URL == target.id && current.serverID == chat.ID,
 			open:     onServer(func(remote *remoteDesktop) { remote.openChat(chat.ID) }),
-			menu:     []menuAction{{label: "Delete", icon: iconTrash, danger: true, run: onServer(func(remote *remoteDesktop) { remote.deleteChat(chat) })}},
+			menu: []menuAction{
+				{label: "Move to this computer…", icon: theme.ComputerIcon(), run: onServer(func(remote *remoteDesktop) {
+					remote.moveHere(chat.ID, chat.Title, chat.Workspace, chat.Running)
+				})},
+				{label: "Delete", icon: iconTrash, danger: true, run: onServer(func(remote *remoteDesktop) { remote.deleteChat(chat) })}},
 		})
 	}
 	return side

@@ -71,6 +71,7 @@ func (server *headlessServer) routes() http.Handler {
 		mux.HandleFunc("GET /api/local/claude/login", server.localOnly(server.claudeLoginState))
 		mux.HandleFunc("POST /api/local/claude/login", server.localOnly(server.beginClaudeLogin))
 		mux.HandleFunc("POST /api/local/sync", server.localOnly(server.localSync))
+		mux.HandleFunc("POST /api/local/move", server.localOnly(server.localMove))
 		mux.HandleFunc("GET /api/local/sharing", server.localOnly(server.sharingState))
 		mux.HandleFunc("POST /api/local/sharing", server.localOnly(server.setSharing))
 		mux.HandleFunc("POST /api/local/pairings/{id}", server.localOnly(server.answerPairing))
@@ -148,6 +149,8 @@ func (server *headlessServer) routes() http.Handler {
 	syncEngine := server.syncEngine()
 	syncManifest, syncExport, syncImport := syncEngine.Routes()
 	endpoints["GET /api/sync/base"] = syncEngine.BaseRoute
+	pause, resume, moved := syncEngine.MoveRoutes()
+	endpoints["POST /api/chats/{id}/pause"], endpoints["POST /api/chats/{id}/resume"], endpoints["POST /api/chats/{id}/moved"] = pause, resume, moved
 	endpoints["POST /api/sync/base"] = syncEngine.BaseRoute
 	endpoints["GET /api/sync/manifest"] = syncManifest
 	endpoints["POST /api/sync/export"] = syncExport

@@ -529,18 +529,6 @@ func withoutServerTabs(tabs []panelTab, active int) ([]panelTab, int) {
 	return kept, active
 }
 
-func (remote *remoteDesktop) action(path string, value any) {
-	go func() {
-		ctx, cancel := context.WithTimeout(remote.ctx, 15*time.Second)
-		defer cancel()
-		err := remote.client.json(ctx, "POST", path, value, nil)
-		if err != nil {
-			fyne.Do(func() { remote.status.SetText(err.Error()) })
-		}
-		remote.notify()
-	}()
-}
-
 // submit sends what the composer holds to the server: Enter, or Ctrl+Enter
 // ("steer") while the chat works.
 func (remote *remoteDesktop) submit(mode string) {
@@ -554,6 +542,9 @@ func (remote *remoteDesktop) submit(mode string) {
 		return
 	}
 	chat := remote.current
+	if remote.sending(sendKey(chat)) { // the last one is on its way: the text stays
+		return
+	}
 	pending := "sending:" + core.Identifier() + "|" + remote.draftKey(chat)
 	ui.prompt.drafts.set(pending, text)
 	ui.prompt.clearSent()
@@ -575,6 +566,13 @@ func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.Handof
 	if len(files) > 0 {
 		wait = 3 * time.Minute
 	}
+	if remote.live.pending == nil {
+		remote.live.pending = map[string]*remotePending{}
+	}
+	sent := &remotePending{}
+	remote.live.pending[sendKey(chat)] = sent
+	remote.syncSending()
+	remote.busy(1)
 	go func() {
 		ctx, cancel := context.WithTimeout(remote.ctx, wait)
 		defer cancel()
@@ -588,9 +586,14 @@ func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.Handof
 		}
 		err := remote.client.json(ctx, "POST", "/api/send", body, &reply)
 		fyne.Do(func() {
+			remote.busy(-1)
+			if remote.live.pending[sendKey(chat)] == sent {
+				delete(remote.live.pending, sendKey(chat))
+			}
 			if remote.ctx.Err() != nil {
 				return
 			}
+			remote.syncSending()
 			restore := func() {
 				key := remote.draftKey(chat)
 				if remote.current == chat {
@@ -617,7 +620,7 @@ func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.Handof
 				return
 			}
 			if err != nil {
-				remote.status.SetText(err.Error())
+				remote.failed("Message not sent", err)
 				restore()
 				return
 			}
@@ -631,10 +634,6 @@ func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.Handof
 			remote.want(wantState) // the chat's own changes come in its events
 		})
 	}()
-}
-
-func (remote *remoteDesktop) stop() {
-	remote.action("/api/stop", map[string]string{"chat": remote.current})
 }
 
 func (remote *remoteDesktop) addTab(kind string) {
@@ -751,22 +750,16 @@ func (remote *remoteDesktop) deleteChat(chat remoteapi.Chat) {
 				delete(remote.convs, member.ID)
 			}
 		}
-		go func() {
-			ctx, cancel := context.WithTimeout(remote.ctx, time.Minute)
-			defer cancel()
-			var reply struct {
-				Note string `json:"note"`
+		var reply struct {
+			Note string `json:"note"`
+		}
+		remote.act("/api/chats/"+chat.ID+"/delete", map[string]any{"worktree": removeWorktree}, remoteAction{key: "delete:" + chat.ID, reply: &reply, wait: time.Minute, done: func(err error) {
+			if err != nil {
+				remote.failed("Delete chat", err)
+			} else if reply.Note != "" {
+				ui.notice("Worktree", reply.Note)
 			}
-			err := remote.client.json(ctx, "POST", "/api/chats/"+chat.ID+"/delete", map[string]any{"worktree": removeWorktree}, &reply)
-			fyne.Do(func() {
-				if err != nil {
-					remote.status.SetText(err.Error())
-				} else if reply.Note != "" {
-					ui.notice("Worktree", reply.Note)
-				}
-			})
-			remote.want(wantState)
-		}()
+		}})
 	}
 	if branches == 0 {
 		ui.confirm("Delete chat?", text, "Delete", run)
@@ -1003,6 +996,7 @@ func (remote *remoteDesktop) syncRun() {
 		ui.showActivityLine(false)
 		ui.workMark.setState("brand")
 	}
+	remote.syncSending()
 }
 
 // modelText names the chat's model on the composer's chip.
@@ -1036,7 +1030,9 @@ func (remote *remoteDesktop) approvalMenu() {
 	var actions []menuAction
 	for _, mode := range modes {
 		mode := mode
-		action := menuAction{label: names[mode], run: func() { remote.action("/api/approval-mode", map[string]string{"mode": mode}) }}
+		action := menuAction{label: names[mode], run: func() {
+			remote.act("/api/approval-mode", map[string]string{"mode": mode}, remoteAction{key: "approval-mode", control: ui.approvalControl, latest: true, title: "Approval mode"})
+		}}
 		action.checked = mode == remote.approvalMode
 		actions = append(actions, action)
 	}

@@ -382,7 +382,8 @@ func (ui *desktopUI) serverSideChats(target projectTarget, chats []remoteapi.Cha
 			status: chat.Status, blocked: chat.Blocked,
 			selected: current != nil && current.server != nil && current.server.client.address.URL == target.id && current.serverID == chat.ID,
 			open:     onServer(func(remote *remoteDesktop) { remote.openChat(chat.ID) }),
-			menu:     []menuAction{{label: "Delete", icon: iconTrash, danger: true, run: onServer(func(remote *remoteDesktop) { remote.deleteChat(chat) })}},
+			menu: []menuAction{{label: "Rename", icon: iconRename, run: onServer(func(remote *remoteDesktop) { remote.renameChat(chat) })},
+				{label: "Delete", icon: iconTrash, danger: true, run: onServer(func(remote *remoteDesktop) { remote.deleteChat(chat) })}},
 		})
 	}
 	return side

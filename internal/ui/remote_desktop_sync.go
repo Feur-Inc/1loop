@@ -41,6 +41,8 @@ type remoteSync struct {
 	stateTag string                      // the ETag of the last state read
 	answered bool                        // its state came once
 	seqs     map[string]uint64           // the last applied event of each kind ("chats", "projects", "settings")
+	pending  map[string]*remotePending   // the actions on their way, by key (remote_desktop_actions.go)
+	inflight int                         // the requests on their way
 }
 
 // remoteChatCache is what the window holds of a server chat beside its

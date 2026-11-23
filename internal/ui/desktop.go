@@ -1929,7 +1929,7 @@ func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) *sheet {
 // approve answers an approval: this computer's agent, or the server's.
 func (ui *desktopUI) approve(chat *conversation, id string, allow bool) {
 	if chat.server != nil {
-		chat.server.action("/api/approve", map[string]any{"id": id, "allow": allow})
+		chat.server.approve(id, allow)
 		return
 	}
 	ui.backend.Approve(id, allow)

@@ -999,7 +999,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	// so nothing else moves when a task starts or ends.
 	ui.model.row.truncate = true // a long model name is cut short rather than pushed out of the card
 	settings := container.New(composerSettingsLayout{model: ui.model.row}, container.NewCenter(ui.approvalControl), ui.model.row, ui.contextRing)
-	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), ui.steer, ui.stop, ui.send)
+	actions := container.New(composerActionsLayout{}, ui.steer, ui.stop, ui.send)
 	ui.controls = container.New(&composerControlsLayout{transient: []fyne.CanvasObject{ui.steer, ui.stop, ui.send}}, settings, actions)
 	ui.model.relayout = ui.controls.Refresh
 

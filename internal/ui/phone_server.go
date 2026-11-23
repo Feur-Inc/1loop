@@ -1306,7 +1306,7 @@ func (ui *desktopUI) remoteModel(chatID, label, effort string, tier *string) str
 		if ui.current != nil {
 			ui.current.Config.Effort = effort
 		}
-		ui.model.row.SetTrailing(modelTrailing(choice, ui.cfg))
+		ui.showModelTrailing(choice, ui.cfg)
 		if ui.model.relayout != nil {
 			ui.model.relayout()
 		}
@@ -1323,7 +1323,7 @@ func (ui *desktopUI) remoteModel(chatID, label, effort string, tier *string) str
 		if ui.current != nil {
 			ui.current.Config.ServiceTier = *tier
 		}
-		ui.model.row.SetTrailing(modelTrailing(choice, ui.cfg))
+		ui.showModelTrailing(choice, ui.cfg)
 		ui.save()
 		ui.remote.settingsChanged()
 		ui.remote.metaChanged(ui.current)

@@ -474,7 +474,7 @@ func (remote *remoteDesktop) openChat(id string) {
 	conv := remote.conv(id)
 	remote.parent.openChat(conv)
 	if conv.Config.Model != "" {
-		remote.parent.model.row.SetText(remote.modelText(conv.Config.Model, conv.Config.Effort))
+		remote.showModel(conv.Config.Model, conv.Config.Effort)
 	}
 }
 
@@ -780,13 +780,13 @@ func (remote *remoteDesktop) refreshLoop() {
 			remote.namingModel = state.Settings.NamingModel
 			remote.parent.updateApprovalControl()
 			if id == "" {
-				remote.parent.model.row.SetText(remote.modelText(remote.model, remote.effort))
+				remote.showModel(remote.model, remote.effort)
 				return
 			}
 			remote.meta = chat.Meta
 			conv := remote.conv(id)
 			conv.Config.Model, conv.Config.Effort = chat.Meta.Model, chat.Meta.Effort // shown at once when it opens again
-			remote.parent.model.row.SetText(remote.modelText(chat.Meta.Model, chat.Meta.Effort))
+			remote.showModel(chat.Meta.Model, chat.Meta.Effort)
 			remote.showItems(conv, chat.Items)
 			remote.showMeta(conv)
 			remote.syncTabs(conv, tabs.Tabs)
@@ -1109,23 +1109,32 @@ func (remote *remoteDesktop) syncRun() {
 	}
 }
 
-// modelText names the chat's model on the composer's chip.
-func (remote *remoteDesktop) modelText(label, effort string) string {
-	text := label
+// modelChip is what the composer's chip shows for a server chat's model: its
+// name, and its effort after it, as for this computer's chats (#581).
+func (remote *remoteDesktop) modelChip(label, effort string) (text, trailing string) {
+	text = label
 	for _, model := range remote.models {
 		if model.Label == label {
 			text = model.Name
 			for _, entry := range model.Efforts {
 				if entry.Value == effort {
-					text += " · " + entry.Label
+					trailing = entry.Label
 				}
 			}
 		}
 	}
 	if text == "" {
-		return "Model"
+		text = "Model"
 	}
-	return text
+	return text, trailing
+}
+
+// showModel puts a server chat's model on the composer's chip. The effort is
+// the server's: this computer's own never shows here.
+func (remote *remoteDesktop) showModel(label, effort string) {
+	text, trailing := remote.modelChip(label, effort)
+	remote.parent.model.row.text = text
+	remote.parent.model.row.SetTrailing(trailing)
 }
 
 // modelMenu chooses the chat's model and reasoning among the server's.

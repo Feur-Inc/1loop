@@ -65,3 +65,16 @@ shows every change.
   screen): on Wayland the compositor keeps the size a window is created
   with, and the canvas was stretched over it. `window_workarea_test.go`
   checks the arithmetic.
+- `canvas/image.go` (renderSVG), `canvas/image_svgcache.go` (#475): an
+  SVG's rasterised copy is cached per pixel size, not one per name: an
+  icon shown at two sizes (a row's 18 px, a chip's 16 px) drew itself
+  again each time the other size was asked for. (The decoder kept per
+  resource and colour is #485's.)
+- `driver/frametimes.go` (`PreloadFonts`), `internal/painter/font.go`
+  (#475): the system's font index can be read on any goroutine ahead of
+  the first text measured, which waited for it on the UI thread
+  (~100 ms on the test VM).
+- `internal/driver/glfw/driver_desktop.go` (runSystray, #475): a tray set
+  once the app runs is started at once; before, only `runGL` started it,
+  so 1loop had to make the tray (its hidden window and GL context,
+  ~100 ms) before the first frame.

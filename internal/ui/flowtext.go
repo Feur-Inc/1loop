@@ -586,34 +586,47 @@ func (flow *flowText) grow(spans []span) {
 
 // kept tells how much of what the block measured still holds for spans:
 // the atoms before keep, and the rest is cut from span from, at its byte
-// at. keep is -1 when nothing does.
+// at. The spans before the first one that changed hold, and that one too
+// when it only got longer (plain text being written); markup that closes
+// (**bo, then **bold**) changes the spans from there on. keep is -1 when
+// nothing holds.
 func (flow *flowText) kept(spans []span) (keep, from, at int) {
 	old := flow.spans
-	last := len(old) - 1
-	if flow.cut == nil || flow.mono || flow.waiting || last < 0 || len(spans) < len(old) {
+	if flow.cut == nil || flow.mono || flow.waiting {
 		return -1, 0, 0
 	}
-	for i := range last {
-		if spans[i] != old[i] {
-			return -1, 0, 0
-		}
+	from = 0
+	for from < len(old) && from < len(spans) && spans[from] == old[from] {
+		from++
 	}
-	was, now := old[last], spans[last]
+	// The atoms are in the order of their spans: those of the spans kept.
+	keep = len(flow.cut)
+	for keep > 0 && flow.cut[keep-1].span >= from {
+		keep--
+	}
+	if from == len(old) || from == len(spans) {
+		return keep, from, 0
+	}
+	was, now := old[from], spans[from]
 	grown := now
 	grown.text = was.text
 	if grown != was || !strings.HasPrefix(now.text, was.text) || was.hard || was.code || was.cite || was.math != "" {
-		return -1, 0, 0
+		return keep, from, 0 // cut again from its start
 	}
-	// Its last word may go on: it is cut again, from its start.
-	keep, at = len(flow.cut), len(was.text)
+	// The words of the span that got longer, but its last: it may go on.
+	end := keep
+	for end < len(flow.cut) && flow.cut[end].span == from {
+		end++
+	}
+	at = len(was.text)
 	if n := len(was.text); n > 0 && !strings.ContainsRune(" \t\n", rune(was.text[n-1])) {
-		if keep == 0 || flow.cut[keep-1].span != last || flow.cut[keep-1].space {
-			return -1, 0, 0
+		if end == keep || flow.cut[end-1].space {
+			return keep, from, 0
 		}
-		keep--
-		at -= len(flow.cut[keep].text)
+		end--
+		at -= len(flow.cut[end].text)
 	}
-	return keep, last, at
+	return end, from, at
 }
 
 // selPieces gives the selection layer what is drawn and where.

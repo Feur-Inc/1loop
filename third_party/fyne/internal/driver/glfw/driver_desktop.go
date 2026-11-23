@@ -73,6 +73,13 @@ func (d *gLDriver) runSystray(m *fyne.Menu) {
 	w.background = true
 	w.create()
 	w.SetCloseIntercept(d.Quit)
+
+	// 1loop: a tray set once the app runs starts now; before, runGL starts
+	// it. The monitor's window and its GL context took ~100 ms before the
+	// first frame.
+	if running.Load() {
+		d.trayStart()
+	}
 }
 
 func itemForMenuItem(i *fyne.MenuItem, parent *systray.MenuItem) *systray.MenuItem {

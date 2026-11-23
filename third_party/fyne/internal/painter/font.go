@@ -17,6 +17,7 @@ import (
 	"golang.org/x/image/math/fixed"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/driver"
 	"fyne.io/fyne/v2/internal/async"
 	"fyne.io/fyne/v2/internal/cache"
 	"fyne.io/fyne/v2/lang"
@@ -43,6 +44,17 @@ func loadMap() {
 	err := loadSystemFonts(fm)
 	if err != nil {
 		fm = nil // just don't fallback
+	}
+}
+
+// 1loop: the system's fonts can be indexed ahead of the first text.
+func init() {
+	driver.PreloadFonts = func() {
+		fontScanLock.Lock()
+		defer fontScanLock.Unlock()
+		if !loaded {
+			loadMap()
+		}
 	}
 }
 

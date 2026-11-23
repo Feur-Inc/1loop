@@ -80,7 +80,13 @@ func (state *panelState) saved() *savedPanel {
 		return nil
 	}
 	out := &savedPanel{Open: state.open, Width: state.width, Active: state.active}
-	for _, tab := range state.tabs {
+	for i, tab := range state.tabs {
+		if tab.review != nil { // ends with its run
+			if state.active >= i {
+				out.Active--
+			}
+			continue
+		}
 		saved := savedTab{Kind: tab.kind, Index: tab.index, Ref: tab.ref}
 		if tab.browser != nil {
 			info := tab.browser.Snapshot()

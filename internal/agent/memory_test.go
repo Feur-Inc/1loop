@@ -30,7 +30,7 @@ func runMemory(t *testing.T, cfg Config, workspace string, during func(), argume
 	raw, _ := json.Marshal(arguments)
 	call := ToolCall{ID: "call"}
 	call.Function.Name, call.Function.Arguments = "memory", string(raw)
-	output, diff, err = (&App{Approvals: map[string]chan bool{}}).runTool(ctx, workspace, call, func() {}, func(string, any) {})
+	output, diff, err = (&App{Approvals: map[string]chan ApprovalAnswer{}}).runTool(ctx, workspace, call, func() {}, func(string, any) {})
 	return output, diff, err, reviewed
 }
 

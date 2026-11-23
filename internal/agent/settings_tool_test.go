@@ -41,7 +41,7 @@ func runSettings(t *testing.T, access *SettingsAccess, allow bool, arguments map
 	raw, _ := json.Marshal(arguments)
 	call := ToolCall{ID: "call"}
 	call.Function.Name, call.Function.Arguments = "settings", string(raw)
-	backend := &App{Approvals: map[string]chan bool{}}
+	backend := &App{Approvals: map[string]chan ApprovalAnswer{}}
 	output, _, err = backend.runTool(ctx, t.TempDir(), call, func() {}, func(event string, value any) {
 		if event == "approval" {
 			request := value.(map[string]any)

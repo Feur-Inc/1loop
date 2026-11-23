@@ -282,8 +282,13 @@ func (backend *App) applyPatch(ctx context.Context, root, text string, begin fun
 	if deletes {
 		title = "Delete or change " + strings.Join(names, ", ") + "?"
 	}
-	if !backend.confirm(ctx, emit, title, diff) {
-		return "", diff, fmt.Errorf("Patch denied")
+	changes, diff, note, err := backend.reviewPatch(ctx, emit, title, diff, changes)
+	if err != nil {
+		return "", diff, err
+	}
+	names = names[:0]
+	for _, change := range changes {
+		names = append(names, change.targetRel)
 	}
 	begin()
 	// Recheck after the approval: a file may have changed while the user read.
@@ -315,7 +320,7 @@ func (backend *App) applyPatch(ctx context.Context, root, text string, begin fun
 			return "", diff, fmt.Errorf("%s: %w (the files before it in the patch were written)", change.rel, err)
 		}
 	}
-	return "Patch applied: " + strings.Join(names, ", ") + "\n" + diff, diff, nil
+	return "Patch applied: " + strings.Join(names, ", ") + "\n" + note + diff, diff, nil
 }
 
 func writeNewFile(path, text string) error {

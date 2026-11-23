@@ -30,7 +30,7 @@ func WebMain() {
 	a := fyneapp.NewWithID("io.1loop.web")
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
-	backend := &agent.App{Approvals: make(map[string]chan bool)}
+	backend := &agent.App{Approvals: make(map[string]chan agent.ApprovalAnswer)}
 	ui := &desktopUI{desktopApp: &desktopApp{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string),
 		home: js.Global().Get("location").Get("origin").String(), serverProjects: loadWebProjects()},
 		cfg: agent.Config{Provider: "compatible"}}

@@ -74,7 +74,8 @@ type panelTab struct {
 	webPage         *browser.Page
 	workspace       string // manual tabs belong to a workspace, not a transcript item
 	files           *fileBrowser
-	ref             string // github: the issue or pull request shown, owner/name#N
+	review          *reviewView // an edit waiting for approval (review.go)
+	ref             string      // github: the issue or pull request shown, owner/name#N
 }
 
 const panelWidth = 840

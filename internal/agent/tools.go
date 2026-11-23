@@ -678,8 +678,9 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	if err != nil {
 		return "", "", err
 	}
-	if !backend.confirm(ctx, emit, "Apply changes to "+rel+"?", diff) {
-		return "", diff, fmt.Errorf("Edit denied")
+	after, diff, note, err := backend.approveEdit(ctx, emit, rel, before, after, diff, create)
+	if err != nil {
+		return "", diff, err
 	}
 	begin()
 	// Recheck the target after approval: it may have changed while the user reviewed the diff.
@@ -707,5 +708,5 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	if closeErr != nil {
 		return "", diff, closeErr
 	}
-	return "Changes applied: " + rel + "\n" + diff, diff, nil
+	return "Changes applied: " + rel + "\n" + note + diff, diff, nil
 }

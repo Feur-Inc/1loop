@@ -109,6 +109,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/send":                               server.send,
 		"POST /api/stop":                               server.stop,
 		"POST /api/approve":                            server.approve,
+		"GET /api/review":                              server.review,
 		"POST /api/answer":                             server.answer,
 		"POST /api/preferences":                        server.setPreferences,
 		"POST /api/memory":                             server.setMemory,
@@ -653,18 +654,28 @@ func (server *headlessServer) answer(w http.ResponseWriter, r *http.Request) {
 
 func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 	var args struct {
-		ID    string
-		Allow bool
+		ID string
+		agent.ApprovalAnswer
 	}
 	if core.ReadJSON(r, &args) != nil {
 		core.Fail(w, 400, "Invalid request")
 		return
 	}
-	if !server.backend.Approve(args.ID, args.Allow) {
+	if !server.backend.AnswerApproval(args.ID, args.ApprovalAnswer) {
 		core.Fail(w, 404, "This approval is no longer waiting")
 		return
 	}
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// review is the files of an edit waiting for approval (#242).
+func (server *headlessServer) review(w http.ResponseWriter, r *http.Request) {
+	files := server.backend.Review(r.URL.Query().Get("id"))
+	if files == nil {
+		core.Fail(w, 404, "This approval is no longer waiting")
+		return
+	}
+	core.WriteJSON(w, 200, map[string]any{"files": files})
 }
 
 func (server *headlessServer) setAutoResume(w http.ResponseWriter, r *http.Request) {

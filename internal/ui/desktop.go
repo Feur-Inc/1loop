@@ -99,7 +99,9 @@ type chatRun struct {
 	approval *sheet
 	// The pending approval, so the phone remote can show and answer it.
 	approvalID, approvalTitle, approvalPreview string
-	answer                                     func(allow bool)
+	approvalReview                             bool
+	answer                                     func(agent.ApprovalAnswer)
+	closeReview                                func() // its tab in the side panel (review.go)
 	// The pending questions (request_user_input), for the phone as well.
 	questions       *sheet
 	questionID      string
@@ -1336,6 +1338,9 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	if run != nil && run.approval != nil {
 		run.approval.dismiss()
 	}
+	if run != nil && run.closeReview != nil {
+		run.closeReview()
+	}
 	if run != nil && run.questions != nil {
 		run.questions.dismiss()
 	}
@@ -1876,63 +1881,130 @@ func (ui *desktopUI) compactChat(focus string) {
 }
 
 // showApproval asks before a command or an edit, whichever chat it comes
-// from: the run waits for the answer.
+// from: the run waits for the answer. An edit of the chat on screen is
+// reviewed in the side panel (review.go); elsewhere a dialog asks, and
+// offers that review.
 func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) *sheet {
+	app := ui
 	ui = ui.viewOf(chat).sheetView(chat) // the window showing it, else the one in use (windows.go)
 	id, _ := p["id"].(string)
 	title, _ := p["title"].(string)
 	preview, _ := p["preview"].(string)
-	if chat != ui.current {
-		title += " · " + chat.Title
-	}
+	review, _ := p["review"].(bool)
 	resolved := false
 	var dialog *sheet
 	forget := func() {
-		if chat.run != nil && chat.run.approval == dialog {
-			chat.run.approval = nil
-			chat.run.approvalID, chat.run.answer = "", nil
+		if chat.run != nil && chat.run.approvalID == id {
+			chat.run.approval, chat.run.closeReview = nil, nil
+			chat.run.approvalID, chat.run.answer, chat.run.approvalReview = "", nil, false
 			ui.remote.metaChanged(chat)
 			ui.syncTray()
 		}
 	}
-	answer := func(allow bool) {
+	closeReview := func() {}
+	resolve := func(answer agent.ApprovalAnswer) {
 		if resolved {
 			return
 		}
 		resolved = true
-		ui.approve(chat, id, allow)
+		ui.approve(chat, id, answer)
 		forget()
-		dialog.Hide()
-	}
-	refuse := newRow("Deny", nil, styleOutline, func() { answer(false) })
-	allow := newRow("Allow", nil, stylePrimary, func() { answer(true) })
-	intro := textLine("1loop needs your approval to perform this action.", 14, colMuted)
-	body := container.NewBorder(padded(0, 10, 0, 0, intro), nil, nil, nil, codeBlock(preview, 360))
-	dialog = ui.modal(title, body, 680, func() {
-		if !resolved {
-			resolved = true
-			ui.approve(chat, id, false)
-			forget()
+		if dialog != nil {
+			dialog.Hide()
 		}
-	}, refuse, allow)
+		closeReview()
+	}
 	ui.notifyUser(chat, "Waiting for your approval: "+title)
 	if chat.run != nil {
-		chat.run.approval = dialog
-		chat.run.approvalID, chat.run.approvalTitle, chat.run.approvalPreview = id, title, preview
-		chat.run.answer = answer
-		ui.remote.metaChanged(chat)
-		ui.syncTray()
+		chat.run.approvalID, chat.run.approvalTitle, chat.run.approvalPreview, chat.run.approvalReview = id, title, preview, review
+		chat.run.answer = resolve
 	}
+	openTab := func(view *desktopUI, files []agent.ReviewFile) {
+		closeReview = view.panel.openReview(chat, title, files, resolve)
+		if chat.run != nil && chat.run.approvalID == id {
+			chat.run.closeReview = func() { resolved = true; closeReview() }
+		}
+	}
+	waiting := func() {
+		if chat.run != nil {
+			chat.run.approval = dialog
+			ui.remote.metaChanged(chat)
+			ui.syncTray()
+		}
+	}
+	if review && chat.server == nil && ui.panel != nil && ui.panel.owner == chat && chat == ui.current {
+		if files := ui.backend.Review(id); len(files) > 0 {
+			openTab(ui, files)
+			waiting()
+			return nil
+		}
+	}
+	shown := title
+	if chat != ui.current {
+		shown += " · " + chat.Title
+	}
+	actions := []*tapRow{newRow("Deny", nil, styleOutline, func() { resolve(agent.ApprovalAnswer{}) })}
+	if review {
+		actions = append(actions, newRow("Review…", nil, styleOutline, func() {
+			if chat.server == nil { // in its chat's panel
+				files := ui.backend.Review(id)
+				if len(files) == 0 || resolved {
+					return
+				}
+				dialog.Hide()
+				dialog = nil
+				if chat.run != nil {
+					chat.run.approval = nil
+				}
+				app.openChat(chat)
+				openTab(app.viewOf(chat), files)
+				return
+			}
+			go func() {
+				files, err := ui.reviewFiles(ui.ctx, chat, id)
+				fyne.Do(func() {
+					if resolved {
+						return
+					}
+					if err != nil || len(files) == 0 {
+						ui.notice("Review", "This edit cannot be reviewed any more: it may have been answered elsewhere.")
+						return
+					}
+					view := newReviewView(ui, ui.window, title, files, resolve)
+					size := ui.window.Canvas().Size()
+					body := container.NewGridWrap(fyne.NewSize(fyne.Min(940, size.Width-90), fyne.Max(280, size.Height-190)), view.view)
+					old := dialog
+					dialog = newSheet(ui.window.Canvas(), body, fyne.Min(980, size.Width-50))
+					dialog.onDismiss = func() { resolve(agent.ApprovalAnswer{}) }
+					old.onDismiss = nil
+					old.Hide()
+					dialog.Show()
+					if chat.server != nil {
+						chat.server.approvalSheet = dialog
+					}
+					view.focus()
+				})
+			}()
+		}))
+	}
+	actions = append(actions, newRow("Allow", nil, stylePrimary, func() { resolve(agent.ApprovalAnswer{Allow: true}) }))
+	intro := textLine("1loop needs your approval to perform this action.", 14, colMuted)
+	body := container.NewBorder(padded(0, 10, 0, 0, intro), nil, nil, nil, codeBlock(preview, 360))
+	dialog = ui.modal(shown, body, 680, func() { resolve(agent.ApprovalAnswer{}) }, actions...)
+	waiting()
 	return dialog
 }
 
 // approve answers an approval: this computer's agent, or the server's.
-func (ui *desktopUI) approve(chat *conversation, id string, allow bool) {
+func (ui *desktopUI) approve(chat *conversation, id string, answer agent.ApprovalAnswer) {
 	if chat.server != nil {
-		chat.server.action("/api/approve", map[string]any{"id": id, "allow": allow})
+		chat.server.action("/api/approve", struct {
+			ID string `json:"id"`
+			agent.ApprovalAnswer
+		}{id, answer})
 		return
 	}
-	ui.backend.Approve(id, allow)
+	ui.backend.AnswerApproval(id, answer)
 }
 
 func (ui *desktopUI) refreshModels() {

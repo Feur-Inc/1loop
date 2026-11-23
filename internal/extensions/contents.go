@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"1loop/internal/core"
 )
 
 // ReadSkill reads a skill's SKILL.md front matter:
@@ -167,7 +169,7 @@ func pathIn(dir string, raw json.RawMessage) string {
 		return ""
 	}
 	full := filepath.Join(dir, filepath.FromSlash(path))
-	if rel, err := filepath.Rel(dir, full); err != nil || strings.HasPrefix(rel, "..") {
+	if !core.Within(dir, full) {
 		return ""
 	}
 	return full

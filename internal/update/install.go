@@ -3,16 +3,14 @@
 package update
 
 import (
-	"archive/tar"
-	"archive/zip"
-	"compress/gzip"
 	"context"
 	"fmt"
-	"io"
 	"os"
 	"path"
 	"path/filepath"
 	"strings"
+
+	"1loop/internal/core"
 )
 
 // running is the path of the running binary, links resolved. It is read
@@ -130,35 +128,9 @@ func replace(staging, dir string) error {
 	})
 }
 
-// staged resolves an archive entry inside the staging folder.
-func staged(staging, name string) (string, error) {
-	name = strings.ReplaceAll(name, "\\", "/")
-	for _, part := range strings.Split(name, "/") {
-		if part == ".." {
-			return "", fmt.Errorf("invalid path %q", name) // a release archive never climbs out
-		}
-	}
-	clean := path.Clean("/" + name)[1:]
-	if clean == "" || clean == "." {
-		return "", fmt.Errorf("invalid path %q", name)
-	}
-	return filepath.Join(staging, filepath.FromSlash(clean)), nil
-}
-
-func writeEntry(target string, mode os.FileMode, from io.Reader) error {
-	if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-		return err
-	}
-	out, err := os.OpenFile(target, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, mode|0600)
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(out, from)
-	if closeErr := out.Close(); err == nil {
-		err = closeErr
-	}
-	return err
-}
+// A release archive holds regular files only: links and anything outside
+// staging are refused or left out by core.Unpack (#524).
+var releaseArchive = core.Unpack{MaxTotal: 4 << 30}
 
 func extractTar(archive, staging string) error {
 	file, err := os.Open(archive)
@@ -166,55 +138,13 @@ func extractTar(archive, staging string) error {
 		return err
 	}
 	defer file.Close()
-	unzipped, err := gzip.NewReader(file)
-	if err != nil {
-		return err
-	}
-	reader := tar.NewReader(unzipped)
-	for {
-		entry, err := reader.Next()
-		if err == io.EOF {
-			return nil
-		}
-		if err != nil {
-			return err
-		}
-		if entry.Typeflag != tar.TypeReg {
-			continue // folders are made as needed; links are never followed
-		}
-		target, err := staged(staging, entry.Name)
-		if err != nil {
-			return err
-		}
-		if err := writeEntry(target, os.FileMode(entry.Mode).Perm(), reader); err != nil {
-			return err
-		}
-	}
+	_, err = releaseArchive.Tar(file, staging)
+	return err
 }
 
 func extractZip(archive, staging string) error {
-	reader, err := zip.OpenReader(archive)
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
-	for _, entry := range reader.File {
-		if entry.FileInfo().IsDir() || !entry.Mode().IsRegular() {
-			continue
-		}
-		target, err := staged(staging, entry.Name)
-		if err != nil {
-			return err
-		}
-		in, err := entry.Open()
-		if err != nil {
-			return err
-		}
-		err = writeEntry(target, entry.Mode().Perm()|0700, in)
-		in.Close()
-		if err != nil {
-			return err
-		}
-	}
-	return nil
+	unpack := releaseArchive
+	unpack.Mode = func(perm os.FileMode) os.FileMode { return perm | 0700 }
+	_, err := unpack.Zip(archive, staging)
+	return err
 }

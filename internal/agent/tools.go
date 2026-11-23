@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -101,28 +100,10 @@ func allToolDefinitions(cfg Config) []map[string]any {
 	return result
 }
 
+// WorkspacePath is core.WorkspacePath: path resolved with its links, inside
+// root.
 func WorkspacePath(root, path string) (string, error) {
-	if path == "" {
-		return "", fmt.Errorf("Missing path")
-	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(root, path)
-	}
-	path = filepath.Clean(path)
-	resolved, err := filepath.EvalSymlinks(path)
-	if os.IsNotExist(err) {
-		var parent string
-		parent, err = filepath.EvalSymlinks(filepath.Dir(path))
-		resolved = filepath.Join(parent, filepath.Base(path))
-	}
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(root, resolved)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("The path is outside the workspace")
-	}
-	return resolved, nil
+	return core.WorkspacePath(root, path)
 }
 
 // outputBuffer keeps the start and the end of a command's output: the start

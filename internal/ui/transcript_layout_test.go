@@ -4,13 +4,17 @@ package ui
 
 import (
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/test"
 
 	"1loop/internal/agent"
+	"1loop/internal/core"
 )
 
 // checkTranscript fails when rows of the transcript on screen overlap or
@@ -264,6 +268,181 @@ func TestTranscriptRowsFollowAChangedHeight(t *testing.T) {
 			if abs32(layout.tops[i]-before[i]) > 0.5 {
 				t.Fatalf("row %d did not come back after row %d did: %.1f, expected %.1f", i, at, layout.tops[i], before[i])
 			}
+		}
+	}
+}
+
+// #473: a paragraph written word by word (grow) is laid out and drawn as a
+// paragraph made with its whole text at once: the same lines, runs, pieces
+// and links, at every step.
+func TestFlowTextGrowsLikeANewOne(t *testing.T) {
+	test.NewTempApp(t)
+	answer := "Intro.\n\n" + strings.Repeat("Words that wrap, a `code bit` and **bold ones**, then [a link](https://example.com) and averyveryverylongwordthatwillnotfitonalineofitsownatallreally more. ", 6) +
+		"\n\n- a list\n- of two\n\nThe end, written  slowly."
+	const width = 420
+	view := newMarkdownView("")
+	view.box.Resize(fyne.NewSize(width, 10))
+	kept := 0
+	for n := 1; n <= len(answer); n += 1 + n%5 {
+		var before []*flowText
+		flowTexts(view.box, &before)
+		view.ParseMarkdown(answer[:n])
+		if last := len(before) - 1; last >= 0 && len(before[last].marks) > 2 && len(view.objs) == len(view.blocks) {
+			var after []*flowText
+			flowTexts(view.box, &after)
+			if after[last] == before[last] && len(after[last].objects) > 0 && len(before[last].objects) > 0 && after[last].objects[0] == before[last].objects[0] {
+				kept++ // the same paragraph, its first line not drawn again
+			}
+		}
+		whole := newMarkdownView(answer[:n])
+		whole.box.Resize(fyne.NewSize(width, 10))
+		var grown, made []*flowText
+		flowTexts(view.box, &grown)
+		flowTexts(whole.box, &made)
+		if len(grown) != len(made) {
+			t.Fatalf("after %d bytes: %d paragraphs, a whole parse makes %d", n, len(grown), len(made))
+		}
+		for i := range made {
+			if err := sameFlow(grown[i], made[i]); err != "" {
+				t.Fatalf("after %d bytes (%q), paragraph %d: %s", n, answer[max(0, n-20):n], i, err)
+			}
+		}
+	}
+	if kept < 50 {
+		t.Fatalf("the growing paragraph kept its first lines %d times only: it is built again", kept)
+	}
+}
+
+// sameFlow tells how two laid-out paragraphs differ, if they do.
+func sameFlow(a, b *flowText) string {
+	if a.width != b.width || a.height != b.height || a.natural != b.natural || a.widest != b.widest {
+		return fmt.Sprintf("width %.1f height %.1f natural %.1f widest %.1f, expected %.1f %.1f %.1f %.1f",
+			a.width, a.height, a.natural, a.widest, b.width, b.height, b.natural, b.widest)
+	}
+	if len(a.objects) != len(b.objects) || len(a.pieces) != len(b.pieces) || len(a.links) != len(b.links) {
+		return fmt.Sprintf("%d objects, %d pieces, %d links, expected %d, %d, %d",
+			len(a.objects), len(a.pieces), len(a.links), len(b.objects), len(b.pieces), len(b.links))
+	}
+	for i := range a.objects {
+		x, y := a.objects[i], b.objects[i]
+		if fmt.Sprintf("%T", x) != fmt.Sprintf("%T", y) || x.Position() != y.Position() || x.Size() != y.Size() {
+			return fmt.Sprintf("object %d: %T at %v %v, expected %T at %v %v", i, x, x.Position(), x.Size(), y, y.Position(), y.Size())
+		}
+		if text, ok := x.(*canvas.Text); ok && text.Text != y.(*canvas.Text).Text {
+			return fmt.Sprintf("object %d draws %q, expected %q", i, text.Text, y.(*canvas.Text).Text)
+		}
+	}
+	for i := range a.pieces {
+		x, y := a.pieces[i], b.pieces[i]
+		if string(x.runes) != string(y.runes) || x.at != y.at || x.size != y.size || x.after != y.after {
+			return fmt.Sprintf("piece %d: %q at %v after %q, expected %q at %v after %q", i, string(x.runes), x.at, x.after, string(y.runes), y.at, y.after)
+		}
+	}
+	for i := range a.links {
+		if a.links[i] != b.links[i] {
+			return fmt.Sprintf("link %d: %+v, expected %+v", i, a.links[i], b.links[i])
+		}
+	}
+	return ""
+}
+
+// sameItem compares every field of a chat item: one added to ChatItem must
+// be compared there too, or a changed item would show as it was.
+func TestSameItemComparesEveryField(t *testing.T) {
+	if n := reflect.TypeOf(agent.ChatItem{}).NumField(); n != 12 {
+		t.Fatalf("agent.ChatItem has %d fields, sameItem (chat_loading.go) compares 12: compare the new ones", n)
+	}
+	item := agent.ChatItem{ID: "a", Kind: "user", Text: "hi", Images: []core.ImagePart{{Mime: "image/png", Data: "x"}},
+		From: &agent.ChatSender{ID: "c", Title: "C"}}
+	other := snapshotChatItem(item)
+	other.From = &agent.ChatSender{ID: "c", Title: "C"}
+	if !sameItem(item, other) {
+		t.Fatal("a copy of an item is not the same item")
+	}
+	for _, change := range []func(*agent.ChatItem){
+		func(i *agent.ChatItem) { i.Text += "!" },
+		func(i *agent.ChatItem) { i.Images[0].Data = "y" },
+		func(i *agent.ChatItem) { i.From = &agent.ChatSender{ID: "c", Title: "C", Hops: 1} },
+		func(i *agent.ChatItem) { i.Millis = 3 },
+	} {
+		changed := snapshotChatItem(item)
+		change(&changed)
+		if sameItem(item, changed) {
+			t.Fatalf("a changed item is the same: %+v", changed)
+		}
+	}
+}
+
+// #440/#497: a row out of sight is measured there at another width (the
+// window resized), then changes while still out of sight. Every row after
+// it moves by exactly the difference in its height, the rows before it do
+// not move, and once it is shown at the first width again, its slot is the
+// height it needs and the rows around it touch it: no overlap, no gap.
+func TestTranscriptRowChangedWhileHiddenAtAnotherWidth(t *testing.T) {
+	ui, chat := perfWindow(t, 200)
+	layout := ui.items
+	ui.followTail = false
+	ui.scroll.ScrollToOffset(fyne.NewPos(0, 0))
+	ui.relayoutColumn()
+	at := -1 // an answer far below the view
+	for i := 160; i < len(chat.Items) && at < 0; i++ {
+		if chat.Items[i].Kind == "assistant" {
+			at = i
+		}
+	}
+	view := ui.views[at].(*markdownView)
+	row := layout.owner[view.box]
+	r := layout.index[row]
+	wide := layout.width
+
+	ui.window.Resize(fyne.NewSize(820, 760))
+	for range 200 {
+		ui.remeasure()
+	}
+	ui.relayoutColumn()
+	if row.Visible() || layout.rows[r].width != layout.width || layout.width == wide {
+		t.Fatalf("the row should be out of sight, measured at the new width %.0f (it is at %.0f, visible %v)", layout.width, layout.rows[r].width, row.Visible())
+	}
+	before := append([]float32(nil), layout.tops...)
+	height := layout.rows[r].size.Height
+
+	view.ParseMarkdown(chat.Items[at].Text + "\n\n" + strings.Repeat("Another paragraph, written while out of sight. ", 20))
+	layout.changed(view.box)
+	ui.relayoutColumn()
+	grow := layout.rows[r].size.Height - height
+	if grow <= 0 {
+		t.Fatalf("the row did not grow: %.1f, then %.1f", height, layout.rows[r].size.Height)
+	}
+	if need := measureRow(row, layout.width).Height; abs32(need-layout.rows[r].size.Height) > 0.5 {
+		t.Fatalf("the row kept %.1f, it needs %.1f", layout.rows[r].size.Height, need)
+	}
+	for i := range layout.rows {
+		want := before[i]
+		if i > r {
+			want += grow
+		}
+		object := layout.rows[i].object
+		if abs32(layout.tops[i]-want) > 0.5 || !object.Visible() && abs32(object.Position().Y-want) > 0.5 {
+			t.Fatalf("row %d after row %d grew by %.1f: top %.1f, at %.1f, expected %.1f", i, r, grow, layout.tops[i], object.Position().Y, want)
+		}
+	}
+
+	ui.window.Resize(fyne.NewSize(1180, 760))
+	for range 200 {
+		ui.remeasure()
+	}
+	origin, _ := offsetIn(ui.scroll.Content, ui.transcript)
+	ui.scroll.ScrollToOffset(fyne.NewPos(0, origin.Y+layout.tops[r]-100))
+	ui.relayoutColumn()
+	if !row.Visible() || layout.width != wide {
+		t.Fatalf("the row should be shown at %.0f (visible %v, width %.0f)", wide, row.Visible(), layout.width)
+	}
+	checkTranscript(t, ui, "shown again at the first width")
+	var texts []*flowText
+	flowTexts(row, &texts)
+	for _, text := range texts {
+		if text.height > 0 && len(text.objects) == 0 {
+			t.Fatalf("shown again, a paragraph of %.0f px draws nothing", text.height)
 		}
 	}
 }

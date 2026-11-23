@@ -2228,6 +2228,7 @@ func (ui *desktopUI) persist(wait bool) {
 	}
 	ui.saveCount++
 	count, path := ui.saveCount, ui.statePath
+	snapshot := time.Since(started) // what the interface's thread spent on this save
 	write := func() {
 		ui.saveLock.Lock()
 		defer ui.saveLock.Unlock()
@@ -2249,7 +2250,8 @@ func (ui *desktopUI) persist(wait bool) {
 				return writeChats(w, &written, before, chats, after)
 			})
 		}
-		platform.Devf("app", "state saved: %d chats, %d KiB, %s in all (error: %v)", len(chats), written>>10, time.Since(started).Round(time.Millisecond), err)
+		platform.Devf("app", "state saved: %d chats, %d KiB, %s in all, %s of it on the interface's thread (error: %v)",
+			len(chats), written>>10, time.Since(started).Round(time.Millisecond), snapshot.Round(10*time.Microsecond), err)
 		report := func() {
 			if err != nil && err.Error() != ui.saveError && ui.ctx.Err() == nil {
 				ui.notice("Unable to save", err.Error()) // once per distinct problem

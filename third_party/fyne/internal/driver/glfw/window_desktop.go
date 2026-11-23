@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -118,6 +119,21 @@ type window struct {
 	pending []func()
 
 	lastWalkedTime time.Time
+
+	// 1loop: whether the window has the keyboard focus (0 before the
+	// platform said, 1 yes, 2 no) and is minimised (InFront).
+	hasFocus  atomic.Int32
+	iconified atomic.Bool
+}
+
+// InFront says whether the window has the keyboard focus and is not
+// minimised, from the platform's own focus and iconify events, whichever
+// window of the app had the focus before; known is false until the first
+// focus event. (1loop: its shader background pauses otherwise, on X11 and
+// Xwayland too.) Safe from any goroutine.
+func (w *window) InFront() (front, known bool) {
+	focus := w.hasFocus.Load()
+	return focus == 1 && !w.iconified.Load(), focus != 0
 }
 
 func (w *window) SetFullScreen(full bool) {
@@ -759,7 +775,17 @@ func (w *window) charInput(viewport *glfw.Window, char rune) {
 }
 
 func (w *window) focused(_ *glfw.Window, focused bool) {
+	if focused { // 1loop: InFront
+		w.hasFocus.Store(1)
+	} else {
+		w.hasFocus.Store(2)
+	}
 	w.processFocused(focused)
+}
+
+// iconify notes whether the window is minimised (1loop: InFront).
+func (w *window) iconify(_ *glfw.Window, iconified bool) {
+	w.iconified.Store(iconified)
 }
 
 func (w *window) DetachCurrentContext() {
@@ -861,6 +887,7 @@ func (w *window) create() {
 	win.SetKeyCallback(w.keyPressed)
 	win.SetCharCallback(w.charInput)
 	win.SetFocusCallback(w.focused)
+	win.SetIconifyCallback(w.iconify) // 1loop: InFront
 
 	w.canvas.detectedScale = w.detectScale()
 	w.canvas.scale = w.calculatedScale()

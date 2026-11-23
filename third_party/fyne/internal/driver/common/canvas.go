@@ -509,15 +509,3 @@ func (c *Canvas) updateLayout(objToLayout fyne.CanvasObject) {
 		renderer.Layout(cont.Size())
 	}
 }
-
-// KeepKnown renews the object registry and renderer cache entries of every
-// object of the canvas, as the driver does for a window it does not draw.
-// (1loop: its frame hook did the same walk through reflection.)
-func (c *Canvas) KeepKnown() {
-	c.WalkTrees(nil, func(node *RenderCacheNode, _ fyne.Position) {
-		_ = cache.GetCanvasForObject(node.Obj())
-		if wid, ok := node.Obj().(fyne.Widget); ok {
-			_, _ = cache.CachedRenderer(wid)
-		}
-	})
-}

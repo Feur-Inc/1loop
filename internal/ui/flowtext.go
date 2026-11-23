@@ -152,7 +152,13 @@ func measureText(text string, size float32, style fyne.TextStyle) (width, height
 }
 
 // atoms cuts the spans into words and spaces, measured.
-func (flow *flowText) atoms() []atom { return flow.cutAtoms(nil, 0, 0) }
+func (flow *flowText) atoms() []atom {
+	size := len(flow.spans)
+	for _, span := range flow.spans {
+		size += len(span.text) / 3 // a word and a space for about every six bytes: grown once at most
+	}
+	return flow.cutAtoms(make([]atom, 0, size), 0, 0)
+}
 
 // cutAtoms cuts the spans from span from on, the first of them from its
 // byte at (a plain span: grow), after the atoms out already holds.
@@ -242,13 +248,19 @@ type flowLine struct {
 	clean bool // it starts at that atom, not inside a word cut across lines
 }
 
-// lines breaks the atoms into lines no wider than width. A line that
+// atomBuffers hold the atoms of the lines being laid out (lines), from one
+// layout to the next: a copy of every word at each layout was most of what
+// opening a chat allocated.
+var atomBuffers = sync.Pool{New: func() any { return new([]atom) }}
+
+// lines breaks the atoms into lines no wider than width, their atoms in
+// buf (from atomBuffers, given back once the lines are drawn). A line that
 // starts clean is laid out the same from its first atom alone: grow
 // starts there again.
-func (flow *flowText) lines(atoms []atom, width float32) []flowLine {
+func (flow *flowText) lines(atoms []atom, width float32, buf []atom) ([]flowLine, []atom) {
 	var lines []flowLine
-	buf := make([]atom, 0, len(atoms)+8) // the lines' atoms, one after the other
-	from, begin, clean := 0, 0, true     // the line being filled: in buf, in atoms
+	buf = buf[:0]                    // the lines' atoms, one after the other
+	from, begin, clean := 0, 0, true // the line being filled: in buf, in atoms
 	x := float32(0)
 	flush := func(hard bool, next int, nextClean bool) {
 		for len(buf) > from && buf[len(buf)-1].space { // a line does not end with a space
@@ -312,7 +324,7 @@ func (flow *flowText) lines(atoms []atom, width float32) []flowLine {
 	if len(buf) > from || len(lines) == 0 {
 		flush(true, len(atoms), true)
 	}
-	return lines
+	return lines, buf
 }
 
 // lineMark is where a laid-out line starts, and what came before it:
@@ -370,7 +382,13 @@ func (flow *flowText) flowFrom(width float32, from int) {
 		leading = 0
 	}
 	room := fyne.Max(width-flow.hang, 40)
-	lines := flow.lines(atoms[start:], room)
+	buffer := atomBuffers.Get().(*[]atom)
+	var lines []flowLine
+	lines, *buffer = flow.lines(atoms[start:], room, *buffer)
+	defer func() {
+		clear(*buffer) // its words and pictures are not kept alive by the pool
+		atomBuffers.Put(buffer)
+	}()
 	// What each line draws, put in the objects line after line: chips
 	// under their text, rules and pictures over it.
 	var chips, marks, texts, pictures []fyne.CanvasObject

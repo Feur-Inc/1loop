@@ -471,8 +471,18 @@ func (remote *remoteDesktop) openChat(id string) {
 	if conv.Config.Model != "" {
 		remote.parent.model.row.SetText(remote.modelText(conv.Config.Model, conv.Config.Effort))
 	}
-	if !remote.chatCache(id).loaded { // not the previous chat's items, nor an empty page
+	cache := remote.chatCache(id)
+	if !cache.loaded { // not the previous chat's items, nor an empty page
 		remote.showLoading(true)
+		return
+	}
+	// Opened before in this session: as last seen at once, then the read
+	// says what changed (nothing is sent back if nothing did).
+	if cache.hasMeta {
+		remote.applyMeta(cache.meta)
+	}
+	if cache.hasTabs {
+		remote.syncTabs(conv, cache.tabs)
 	}
 }
 
@@ -753,6 +763,7 @@ func (remote *remoteDesktop) deleteChat(chat remoteapi.Chat) {
 				conv.disposePanel()
 				delete(remote.convs, member.ID)
 			}
+			delete(remote.live.cache, member.ID)
 		}
 		var reply struct {
 			Note string `json:"note"`

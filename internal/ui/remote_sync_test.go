@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -223,5 +224,61 @@ func TestServerChatsLoadingUntilFirstAnswer(t *testing.T) {
 	remote.applyState(remoteState{Name: "box", Chats: []remoteapi.Chat{{ID: "c1", Title: "First"}}, Projects: &projects}, remoteChatRead{changed: true}, nil)
 	if group := ui.serverGroup(remote.client.address.URL); !group.known || len(group.chats) != 1 {
 		t.Fatalf("after its answer: known %v, %d chats", group.known, len(group.chats))
+	}
+}
+
+// A chat opened again in the session shows at once as it was left, with
+// its state, and is then read again only if it changed (If-None-Match).
+func TestServerChatCachedWhenOpenedAgain(t *testing.T) {
+	var mu sync.Mutex
+	var tags []string
+	handle := func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/state":
+			w.Write([]byte(`{"name":"box","projects":[],"chats":[{"id":"c1","title":"First"},{"id":"c2","title":"Second"}],"settings":{"models":[{"label":"m","name":"Model"}]}}`))
+		case "/api/chats/c1", "/api/chats/c2":
+			mu.Lock()
+			tags = append(tags, r.URL.Path+" "+r.Header.Get("If-None-Match"))
+			mu.Unlock()
+			w.Header().Set("X-1loop-Seq", "7")
+			w.Header().Set("ETag", `"`+r.URL.Path+`"`)
+			if r.Header.Get("If-None-Match") == `"`+r.URL.Path+`"` {
+				w.WriteHeader(http.StatusNotModified)
+				return
+			}
+			w.Write([]byte(`{"items":[{"id":"u","kind":"user","text":"hello"},{"id":"a","kind":"assistant","text":"answer"}],"meta":{"chat":"` + r.URL.Path[len("/api/chats/"):] + `","running":true,"label":"Working"}}`))
+		default:
+			w.Write([]byte(`{"tabs":[]}`))
+		}
+	}
+	ui, remote, _ := serverWindow(t, handle)
+	go remote.refreshLoop()
+	remote.notify()
+	remote.openChat("c1")
+	until(t, "the first read", func() bool { c := remote.live.cache["c1"]; return c != nil && c.loaded && c.hasTabs })
+	remote.openChat("c2")
+	until(t, "the other chat", func() bool { c := remote.live.cache["c2"]; return c != nil && c.loaded })
+
+	remote.openChat("c1")
+	conv := remote.convs["c1"]
+	if ui.current != conv || len(conv.Items) != 2 || len(ui.transcript.Objects) == 0 || ui.chatWaitView.Visible() {
+		t.Fatalf("opened again: %d items, %d rows, placeholder %v", len(conv.Items), len(ui.transcript.Objects), ui.chatWaitView.Visible())
+	}
+	if !remote.meta.Running || remote.meta.Label != "Working" {
+		t.Fatalf("its state is not shown at once: %+v", remote.meta)
+	}
+	until(t, "the conditional read", func() bool {
+		mu.Lock()
+		defer mu.Unlock()
+		return len(tags) == 3
+	})
+	until(t, "the read to be applied", func() bool { return !remote.live.cache["c1"].reading })
+	mu.Lock()
+	defer mu.Unlock()
+	if tags[2] != `/api/chats/c1 "/api/chats/c1"` {
+		t.Fatalf("reads: %q", tags)
+	}
+	if len(conv.Items) != 2 || len(remote.models) != 1 {
+		t.Fatalf("after a 304: %d items, %d models", len(conv.Items), len(remote.models))
 	}
 }

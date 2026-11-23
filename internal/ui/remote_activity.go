@@ -71,9 +71,14 @@ func (line *activityLine) stop() {
 type activityLineRenderer struct{ line *activityLine }
 
 func (r *activityLineRenderer) Layout(size fyne.Size) {
+	// Cut to the line's own width: nothing clips it, and it would run over
+	// the sidebar as it comes in.
 	width := size.Width * 0.3
-	r.line.bar.Move(fyne.NewPos((size.Width+width)*r.line.phase-width, size.Height-2))
-	r.line.bar.Resize(fyne.NewSize(width, 2))
+	left := (size.Width+width)*r.line.phase - width
+	right := fyne.Min(size.Width, left+width)
+	left = fyne.Max(0, left)
+	r.line.bar.Move(fyne.NewPos(left, size.Height-2))
+	r.line.bar.Resize(fyne.NewSize(fyne.Max(0, right-left), 2))
 }
 
 func (r *activityLineRenderer) MinSize() fyne.Size { return fyne.NewSize(0, 2) }

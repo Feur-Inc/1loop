@@ -282,3 +282,19 @@ func TestServerChatCachedWhenOpenedAgain(t *testing.T) {
 		t.Fatalf("after a 304: %d items, %d models", len(conv.Items), len(remote.models))
 	}
 }
+
+// The activity line's segment stays within the line as it glides: nothing
+// clips it, and it would run over the sidebar.
+func TestActivityLineStaysWithin(t *testing.T) {
+	test.NewTempApp(t)
+	line := newActivityLine()
+	line.Resize(fyne.NewSize(400, 2))
+	renderer := test.TempWidgetRenderer(t, line)
+	for _, phase := range []float32{0, 0.1, 0.5, 0.9, 1} {
+		line.phase = phase
+		renderer.Layout(line.Size())
+		if x, w := line.bar.Position().X, line.bar.Size().Width; x < 0 || x+w > 400 {
+			t.Fatalf("phase %v: the segment runs from %v to %v, outside 0 to 400", phase, x, x+w)
+		}
+	}
+}

@@ -493,6 +493,8 @@ func (remote *remoteDesktop) selectChat(id string) {
 	remote.closeTabs()
 	if id != "" {
 		remote.want(wantChat | wantPanel) // read in full on opening, then kept by the events
+	} else if remote.model != "" { // a new chat takes the server's model
+		remote.parent.model.row.SetText(remote.modelText(remote.model, remote.effort))
 	}
 }
 

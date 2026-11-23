@@ -255,10 +255,13 @@ func (ui *desktopUI) serverGroups() []targetGroup {
 func (ui *desktopUI) serverGroup(address string) targetGroup {
 	var listing *serverListing
 	active := false
-	if remote := ui.server; remote != nil && remote.client.address.URL == address {
+	remote := ui.server
+	if remote != nil && remote.client.address.URL == address {
 		active = true
+	}
+	if active && remote.live.answered {
 		listing = &serverListing{name: remote.name, projects: remote.projects, chats: remote.chats, worktrees: remote.worktrees}
-	} else if link := ui.linkTo(address); link != nil && link.answered {
+	} else if link := ui.linkTo(address); link != nil && link.answered { // until the window's own connection answers
 		listing = &link.listing
 	}
 	target := serverTarget(address)

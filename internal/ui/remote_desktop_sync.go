@@ -39,10 +39,11 @@ type remoteSync struct {
 	cache    map[string]*remoteChatCache // the chats opened in this session, by their ID on the server
 	listed   []string                    // the projects the server lists
 	stateTag string                      // the ETag of the last state read
-	answered bool                        // its state came once
+	answered bool                        // its state came once: the sidebar lists its chats
 	seqs     map[string]uint64           // the last applied event of each kind ("chats", "projects", "settings")
 	pending  map[string]*remotePending   // the actions on their way, by key (remote_desktop_actions.go)
 	inflight int                         // the requests on their way
+	slow     int                         // counts the activity line's timers: only the last one shows it
 }
 
 // remoteChatCache is what the window holds of a server chat beside its
@@ -334,6 +335,7 @@ func (remote *remoteDesktop) refreshLoop() {
 		parts := int(remote.live.wanted.Swap(0))
 		var id, tag, stateTag string
 		fyne.DoAndWait(func() {
+			remote.busy(1)
 			id, stateTag = remote.current, remote.live.stateTag
 			if id != "" && parts&wantChat != 0 {
 				cache := remote.chatCache(id)
@@ -347,6 +349,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			parts &^= wantChat | wantPanel
 		}
 		if parts == 0 {
+			fyne.Do(func() { remote.busy(-1) })
 			continue
 		}
 		ctx, cancel := context.WithTimeout(remote.ctx, 10*time.Second)
@@ -375,6 +378,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			return
 		}
 		fyne.Do(func() {
+			remote.busy(-1)
 			if remote.ctx.Err() != nil || remote.parent.server != remote {
 				return
 			}
@@ -421,8 +425,12 @@ func (remote *remoteDesktop) applyState(state remoteState, read remoteChatRead, 
 		remote.worktrees, projects = state.Worktrees, *state.Projects
 		remote.live.listed = projects
 	}
+	first := !remote.live.answered
 	remote.live.answered = true
 	remote.show(state.Name, state.Workspace, chats, projects)
+	if first {
+		remote.parent.renderChats() // its chats, no longer "Connecting…"
+	}
 	if remote.fresh("settings", seq) {
 		remote.applySettings(state.Settings)
 	}
@@ -452,6 +460,9 @@ func (remote *remoteDesktop) applyRead(id string, read remoteChatRead) {
 	if read.changed {
 		cache.tag = read.tag
 		remote.showItems(conv, read.items)
+		if !cache.loaded && id == remote.current {
+			remote.showLoading(false)
+		}
 		cache.loaded = true
 		remote.applyMeta(read.meta)
 	}

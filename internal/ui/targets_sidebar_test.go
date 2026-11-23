@@ -74,7 +74,7 @@ func TestSidebarKeepsThisComputerOnAMachine(t *testing.T) {
 // beside the server's.
 func TestSidebarKeepsThisComputerOnAServer(t *testing.T) {
 	ui := sidebarUI(t)
-	ui.server = &remoteDesktop{parent: ui, client: &remoteClient{address: serverAddress{URL: "https://box.lan:47101"}}, name: "box",
+	ui.server = &remoteDesktop{parent: ui, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: "https://box.lan:47101"}}, name: "box",
 		projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "s1", Title: "Server chat", Workspace: "/srv/api"}}, convs: map[string]*conversation{}}
 	ui.renderChats()
 	wantListed(t, ui, "app", "Fix the parser", "site", "Deploy the site", "api", "Server chat")

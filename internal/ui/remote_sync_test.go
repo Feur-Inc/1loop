@@ -9,6 +9,7 @@ import (
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/test"
@@ -167,5 +168,60 @@ func TestServerStateOlderThanEventsKeepsThem(t *testing.T) {
 		remoteChatRead{changed: true, seq: 60}, nil)
 	if remote.chats[0].Title != "Newest" {
 		t.Fatalf("a newer state was not applied: %+v", remote.chats)
+	}
+}
+
+// A server chat opened before its items came shows a light placeholder,
+// not the chat shown before nor an empty page, until they come (#591).
+func TestServerChatPlaceholderUntilItsItems(t *testing.T) {
+	ui, remote, _ := serverWindow(t, nil)
+	openRead(remote, "c1", 1, remoteapi.Item{ID: "u1", Kind: "user", Text: "the first chat"})
+	remote.openChat("c2")
+	if !ui.chatWaitView.Visible() || len(ui.transcript.Objects) != 0 {
+		t.Fatalf("opening a chat not read yet: placeholder %v, %d rows shown", ui.chatWaitView.Visible(), len(ui.transcript.Objects))
+	}
+	remote.chatCache("c2").reading = true
+	remote.applyRead("c2", remoteChatRead{changed: true, seq: 2, items: []remoteapi.Item{{ID: "u2", Kind: "user", Text: "the second"}}, meta: remoteapi.Meta{Chat: "c2"}})
+	if ui.chatWaitView.Visible() || len(remote.convs["c2"].Items) != 1 {
+		t.Fatalf("after its items: placeholder %v, %d items", ui.chatWaitView.Visible(), len(remote.convs["c2"].Items))
+	}
+}
+
+// The title bar's activity line shows only for a request slower than
+// slowRequest, and goes once the server answered.
+func TestServerSlowRequestShowsActivity(t *testing.T) {
+	ui, remote, _ := serverWindow(t, nil)
+	remote.busy(1)
+	remote.busy(-1) // answered at once: never shown
+	time.Sleep(slowRequest + 50*time.Millisecond)
+	test.Drain()
+	if ui.serverBusy.Visible() {
+		t.Fatal("a quick request showed the activity line")
+	}
+	remote.busy(1)
+	time.Sleep(slowRequest / 2)
+	test.Drain()
+	if ui.serverBusy.Visible() {
+		t.Fatal("the activity line shows before the request is slow")
+	}
+	until(t, "the activity line", ui.serverBusy.Visible)
+	remote.busy(-1)
+	if ui.serverBusy.Visible() {
+		t.Fatal("the activity line stays once the server answered")
+	}
+}
+
+// Until the server's first answer its chats are not listed (the sidebar
+// says it is connecting), rather than an empty list.
+func TestServerChatsLoadingUntilFirstAnswer(t *testing.T) {
+	ui, remote, _ := serverWindow(t, nil)
+	remote.live.answered = false
+	if group := ui.serverGroup(remote.client.address.URL); group.known {
+		t.Fatal("a server that has not answered lists its chats as known")
+	}
+	projects := []string{}
+	remote.applyState(remoteState{Name: "box", Chats: []remoteapi.Chat{{ID: "c1", Title: "First"}}, Projects: &projects}, remoteChatRead{changed: true}, nil)
+	if group := ui.serverGroup(remote.client.address.URL); !group.known || len(group.chats) != 1 {
+		t.Fatalf("after its answer: known %v, %d chats", group.known, len(group.chats))
 	}
 }

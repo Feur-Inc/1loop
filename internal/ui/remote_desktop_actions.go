@@ -112,11 +112,6 @@ func (remote *remoteDesktop) act(path string, value any, how remoteAction) bool 
 	return true
 }
 
-// busy counts the requests on their way (remote_activity.go shows them).
-func (remote *remoteDesktop) busy(delta int) {
-	remote.live.inflight += delta
-}
-
 // sending says whether a request of key is on its way.
 func (remote *remoteDesktop) sending(key string) bool {
 	return remote.live.pending[key] != nil

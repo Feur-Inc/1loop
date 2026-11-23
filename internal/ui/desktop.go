@@ -142,6 +142,7 @@ type desktopUI struct {
 	localCfg         agent.Config    // this computer's settings while a server is the target
 	machine          *tapRow         // the target: this computer, an SSH machine or a server
 	serverStatus     *fitLabel       // the server's state beside it
+	serverBusy       *activityLine   // under the title bar while the server is slow to answer (remote_activity.go)
 	modelsLoading    bool
 
 	updateRow *tapRow // the sidebar's "Update available" row
@@ -858,6 +859,8 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	if ui.chrome {
 		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, ui.headerBar))
 	}
+	ui.serverBusy = newActivityLine()
+	header = container.NewStack(header, container.NewBorder(nil, ui.serverBusy, nil, nil))
 	ui.titleBar = header
 	// The settings page takes the conversation's place while it is open.
 	ui.curtain = newPageCurtain()

@@ -361,6 +361,7 @@ func (ui *desktopUI) useComputer() {
 	ui.machine.SetText("This computer")
 	ui.serverStatus.SetText("")
 	ui.serverStatus.Hide()
+	ui.serverBusy.stop()
 	ui.startNew()
 	ui.renderAttachments()
 	ui.showChatModel()
@@ -469,6 +470,9 @@ func (remote *remoteDesktop) openChat(id string) {
 	remote.parent.openChat(conv)
 	if conv.Config.Model != "" {
 		remote.parent.model.row.SetText(remote.modelText(conv.Config.Model, conv.Config.Effort))
+	}
+	if !remote.chatCache(id).loaded { // not the previous chat's items, nor an empty page
+		remote.showLoading(true)
 	}
 }
 

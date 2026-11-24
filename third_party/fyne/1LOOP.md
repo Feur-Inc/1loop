@@ -114,5 +114,10 @@ shows every change.
   `gl_core.go`, `gl_es.go` (#474): fewer allocations per frame. The
   minimum-size memory's map is emptied and used again instead of made at
   each frame and each layout; vertex data goes through one buffer per
-  painter, uploaded without `gl.Ptr` (which boxed each slice). A full frame:
-  355 → 135 allocations.
+  painter, uploaded without `gl.Ptr` (which boxed each slice). `geometry.go`
+  (`Size.Larger`), `container.go`, `layout/{stack,custompadded,padded,center,
+  grid,border}layout.go`: a child's minimum size is compared without
+  `Size.Max`, whose `Vector2` parameter put the size on the heap, once per
+  child per frame; `RememberedMinSize`/`RememberMinSize` replace
+  `MemoMinSize`, which took the computation as a method value. A full frame
+  of the audit's state: 4,499 → 121 allocations.

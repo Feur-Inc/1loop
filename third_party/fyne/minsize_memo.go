@@ -38,15 +38,21 @@ func forgetMinSizes(memo map[CanvasObject]Size) {
 	}
 }
 
-// MemoMinSize returns object's remembered minimum size, or computes it.
-func MemoMinSize(object CanvasObject, compute func() Size) Size {
+// RememberedMinSize is object's minimum size remembered in this pass, if
+// any. RememberMinSize remembers it while a pass is on. (Both replace a
+// MemoMinSize that took the computation as a func: the method value passed
+// was allocated at every call, an allocation per container per frame.)
+func RememberedMinSize(object CanvasObject) (Size, bool) {
 	if minSizeMemo == nil {
-		return compute()
+		return Size{}, false
 	}
-	if size, ok := minSizeMemo[object]; ok {
-		return size
+	size, ok := minSizeMemo[object]
+	return size, ok
+}
+
+// RememberMinSize: see RememberedMinSize.
+func RememberMinSize(object CanvasObject, size Size) {
+	if minSizeMemo != nil {
+		minSizeMemo[object] = size
 	}
-	size := compute()
-	minSizeMemo[object] = size
-	return size
 }

@@ -94,6 +94,9 @@ func (cfg Config) toolAvailable(name string) bool {
 	if name == "chats" {
 		return cfg.Chats != nil
 	}
+	if name == "computer_use" { // drives this computer's screen: off on an SSH machine (machine.go)
+		return cfg.Computer != nil && cfg.MachineID == ""
+	}
 	if isGoalTool(name) { // a chat that keeps a goal (goal.go)
 		return cfg.Goal != nil
 	}
@@ -103,7 +106,7 @@ func (cfg Config) toolAvailable(name string) bool {
 	case "panel_terminal":
 		return cfg.Terminal != nil
 	case "desktop_computer":
-		return cfg.Computer != nil
+		return cfg.Computer != nil && cfg.MachineID == ""
 	case "local_phone":
 		return cfg.Phone != nil
 	case "local_debian":

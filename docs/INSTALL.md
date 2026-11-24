@@ -307,12 +307,20 @@ and ScreenCast (GNOME and KDE do).
 
 ## Windows desktop (Windows 10 1809 or newer, x64)
 
-1. Download `1loop-VERSION-windows-amd64.exe`.
-2. Put it in a folder you own, for example
-   `C:\Users\you\Applications\1loop`, and run it. It updates itself
-   there (Settings → Updates).
-3. Windows SmartScreen may say the app is unrecognized: choose
+1. Download `1loop-VERSION-windows-amd64-setup.exe` and run it. It installs
+   1loop for you alone, without administrator rights, in
+   `%LOCALAPPDATA%\Programs\1loop`, with a Start menu shortcut and, if you
+   ask, one on the desktop. 1loop updates itself there (Settings → Updates).
+2. Windows SmartScreen may say the app is unrecognized: choose
    **More info → Run anyway**.
+
+To remove it: **Settings → Apps → Installed apps → 1loop → Uninstall**. Your
+chats and settings (`%AppData%\1loop`) stay. `setup.exe /S` installs without
+a window (`/D=C:\folder`, last, sets where), and `uninstall.exe /S` removes it;
+both end with code 2 when 1loop is running.
+
+**Without installing:** download `1loop-VERSION-windows-amd64.exe`, put it in
+a folder you own and run it. It updates itself there too.
 
 On a PC without an OpenGL driver (a virtual machine, some remote desktops),
 1loop draws on the CPU by itself, with the Mesa it carries: the first time,

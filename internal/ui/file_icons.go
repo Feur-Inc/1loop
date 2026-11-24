@@ -101,7 +101,7 @@ const (
 
 func typeIcon(kind, colour, shape, mark string) fyne.Resource {
 	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="C" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">` + shape + mark + `</svg>`
-	return fyne.NewStaticResource("filetype-"+kind+".svg", []byte(strings.ReplaceAll(svg, `"C"`, `"`+colour+`"`)))
+	return fyne.NewStaticResource("filetype-"+kind+".svg", []byte(heavierStrokes(strings.ReplaceAll(svg, `"C"`, `"`+colour+`"`))))
 }
 
 var fileTypeIcons = map[string]fyne.Resource{

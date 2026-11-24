@@ -422,7 +422,11 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		}
 		icon := canvas.NewImageFromResource(tinted(glyph, colFaint))
 		icon.SetMinSize(fyne.NewSquareSize(15))
-		ui.place(container.NewBorder(nil, nil, container.NewCenter(icon), nil, newFlowText([]span{{text: item.Text}}, 12.5, colFaint)))
+		var compare fyne.CanvasObject
+		if compactionNote(item) {
+			compare = newRow("Compare", nil, styleChip, func() { ui.compareCompaction(chat, item.Text) })
+		}
+		ui.place(container.NewBorder(nil, nil, container.NewCenter(icon), compare, newFlowText([]span{{text: item.Text}}, 12.5, colFaint)))
 	case "tool":
 		if agent.WrapUpTool(item.Tool) {
 			return // drawn as the next-step card
@@ -1442,7 +1446,7 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		ui.save()
 	case "history":
 		currentTurn.chat.History = uiEventValue.data.([]agent.Message)
-	case "cache":
+	case "cache", "compaction":
 		ui.save()
 	case "context_note", "note":
 		ui.addItem(currentTurn.chat, agent.ChatItem{Kind: "note", Text: uiEventValue.data.(string)})

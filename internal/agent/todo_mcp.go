@@ -30,6 +30,12 @@ func projectMCPTools(cfg Config) []map[string]any {
 	return definitions
 }
 
+// isProjectMCPTool says whether name is one of the project tools 1loop's
+// MCP server gives Claude Code in place of its own (projectMCPTools).
+func isProjectMCPTool(cfg Config, name string) bool {
+	return hasTool(projectMCPTools(cfg), name)
+}
+
 func hasTool(definitions []map[string]any, name string) bool {
 	for _, definition := range definitions {
 		if definition["function"].(map[string]any)["name"] == name {
@@ -83,6 +89,9 @@ func (backend *App) startTodoMCP(binding *todoMCPBinding) (string, func(), error
 		ctx, cfg, emit, githubConnection := binding.get()
 		state := cfg.Todo
 		browserTools, terminalTools, computerTools := modelBrowser(cfg.Browser), cfg.Terminal, cfg.Computer
+		if cfg.MachineID != "" { // Computer Use is off on an SSH machine
+			computerTools = nil
+		}
 		if requestValue.Header.Get("Authorization") != "Bearer "+token {
 			http.Error(writer, "Unauthorized", http.StatusUnauthorized)
 			return

@@ -380,6 +380,9 @@ func (panel *toolPanel) refreshTodoStatus(rebuild ...bool) {
 		return
 	}
 	text := agent.TaskContextText(cfg, panel.ui.contextRing.used, panel.ui.contextRing.window, panel.ui.classicCompaction, state)
+	if panel.owner != nil && panel.owner.run == nil && panel.owner.Compaction.Interrupted() != nil {
+		text += "\nA compaction was interrupted: it goes on with the next message."
+	}
 	usage := panel.ui.contextUsage(panel.owner)
 	if tab.todoUsage == nil {
 		tab.todoUsage = &contextUsageState{}

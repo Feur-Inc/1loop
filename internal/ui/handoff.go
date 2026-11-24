@@ -16,6 +16,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/agent"
+	"1loop/internal/core"
 )
 
 // pendingHandoff is the user's choice, applied when the turn starts.
@@ -160,7 +161,7 @@ func showHandoffDialog(window fyne.Window, plan agent.HandoffPlan, done func(age
 	levelIDs := map[string]string{}
 	var levelLabels []string
 	for _, level := range plan.Levels {
-		label := fmt.Sprintf("%s · ~%s tokens", level.Name, agent.Tokens(level.Tokens))
+		label := fmt.Sprintf("%s · ~%s tokens", level.Name, core.CompactCount(level.Tokens))
 		levelIDs[label] = level.ID
 		levelLabels = append(levelLabels, label)
 	}

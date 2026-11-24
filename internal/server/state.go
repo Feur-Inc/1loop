@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -38,6 +39,8 @@ type serverChat struct {
 	Todo     *agent.TodoState    `json:"todo"`
 	Goal     *agent.GoalState    `json:"goal,omitempty"` // its /goal (agent/goal.go)
 	Cache    *agent.ContextCache `json:"contextCache,omitempty"`
+	// Compaction is the one interrupted, and the last ones made (#128).
+	Compaction *agent.CompactionState `json:"compaction,omitempty"`
 	// ContextUsage is Claude Code's last count of the window by category.
 	ContextUsage *agent.ContextUsage     `json:"contextUsage,omitempty"`
 	grants       *agent.PermissionGrants // what request_permissions granted, until the server stops
@@ -51,6 +54,7 @@ type serverChat struct {
 	ReportTo     []string `json:"reportTo,omitempty"`
 	hops         int      // messages between chats since the user last wrote (agent.TurnHops)
 	run          *serverRun
+	moving       bool // paused to move to another device: it starts nothing (chat_move.go)
 	tabs         []*serverTab
 	session      *browser.Session
 	queue, steer []agent.Message
@@ -64,6 +68,9 @@ type serverRun struct {
 	states       map[int]string
 	index        int
 	used         int
+	pause        *agent.PauseSignal
+	ended        chan struct{} // closed once the run is over
+	paused       bool          // it ended between two steps, to move
 	label, mark  string
 	tool         string // executing now, from tool_exec to its tool_result
 	approval     *remoteapi.Approval
@@ -177,7 +184,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		dir:          dir,
 		usage:        usage.Open(filepath.Join(dir, "usage.jsonl")),
 		prices:       usage.OpenPrices(filepath.Join(dir, "usage-prices.json")),
-		backend:      &agent.App{Approvals: map[string]chan bool{}},
+		backend:      &agent.App{Approvals: map[string]chan agent.ApprovalAnswer{}},
 		keys:         map[string]string{},
 		pairs:        map[string]*serverPair{},
 		subs:         map[chan serverEvent]bool{},
@@ -269,6 +276,9 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		if chat.Cache == nil {
 			chat.Cache = &agent.ContextCache{}
 		}
+		if chat.Compaction == nil {
+			chat.Compaction = &agent.CompactionState{}
+		}
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
 		chat.Subchat.Restored(len(chat.ReportTo) > 0)
 		chat.ReportTo = nil
@@ -311,7 +321,7 @@ func (server *headlessServer) stateLocked() (write func() error) {
 	for i, chat := range server.chats {
 		chats[i] = &serverChat{ID: chat.ID, Title: chat.Title, Config: chat.Config, History: append([]agent.Message{}, chat.History...),
 			Items: append([]agent.ChatItem{}, chat.Items...), Version: chat.Version, Versions: agent.CopyVersions(chat.Versions),
-			Todo: chat.Todo.Copy(), Goal: chat.Goal.Copy(), Cache: chat.Cache.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
+			Todo: chat.Todo.Copy(), Goal: chat.Goal.Copy(), Cache: chat.Cache.Copy(), Compaction: chat.Compaction.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
 			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...)} // its parent: forgetting it detached every subchat on restart (#356)
 	}
 	devices := append([]remoteapi.PairedDevice{}, server.devices...)
@@ -808,7 +818,10 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	}
 	cfg.Goal = chat.Goal
 	cfg.Tasks = server.chatTasksLocked(chat)
-	cfg.Cache = chat.Cache
+	if chat.Compaction == nil {
+		chat.Compaction = &agent.CompactionState{}
+	}
+	cfg.Cache, cfg.Compaction = chat.Cache, chat.Compaction
 	if chat.grants == nil {
 		chat.grants = &agent.PermissionGrants{}
 	}
@@ -885,18 +898,24 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 }
 
 func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message, id string) {
+	if chat.moving { // it goes on with the chat, wherever that is
+		chat.queue = append(chat.queue, m)
+		return
+	}
 	chat.History = append(chat.History, m)
 	chat.hops = agent.TurnHops(chat.hops, false, m)
 	// The user's words, another chat's under its name, or a note for
 	// 1loop's own (a task's end, a report).
 	index := server.addLocked(chat, agent.MessageItem(id, m))
 	ctx, cancel := context.WithCancel(server.ctx)
-	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait"}
+	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait",
+		pause: agent.NewPauseSignal(), ended: make(chan struct{})}
 	chat.run = run
 	if parent := server.parentLocked(chat); parent != nil { // its state in the parent's Tasks
 		server.broadcastLocked("meta", server.metaLocked(parent))
 	}
 	cfg := server.runConfigLocked(chat, run.capabilities)
+	cfg.Pause = run.pause
 	history := append([]agent.Message{}, chat.History...)
 	server.changedLocked(chat, index)
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
@@ -955,8 +974,12 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			return
 		}
 		chat.run = nil
+		defer close(run.ended)
 		ended := agent.SubchatDone
-		if err != nil {
+		paused := errors.Is(err, agent.ErrPaused)
+		if paused {
+			run.paused = true
+		} else if err != nil {
 			server.addLocked(chat, agent.ChatItem{Kind: "error", Text: err.Error()})
 			ended = agent.SubchatFailed
 			if ctx.Err() == context.Canceled {
@@ -978,7 +1001,7 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		if connection, ok := server.connectionLocked(chat.Config.ConnectionID); ok {
 			go server.noteLimits(connection, server.keys[connection.ID], 10*time.Minute)
 		}
-		if server.ctx.Err() != nil {
+		if server.ctx.Err() != nil || paused || chat.moving {
 			return
 		}
 		if moved != "" { // the agent goes on in the new folder
@@ -1084,7 +1107,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		run.mark, run.label = "approval", "Waiting for your answer"
 	case "approval":
 		data := value.(map[string]any)
-		run.approval = &remoteapi.Approval{Chat: chat.ID, ID: fmt.Sprint(data["id"]), Title: fmt.Sprint(data["title"]), Preview: fmt.Sprint(data["preview"])}
+		run.approval = &remoteapi.Approval{Chat: chat.ID, ID: fmt.Sprint(data["id"]), Title: fmt.Sprint(data["title"]), Preview: fmt.Sprint(data["preview"]), Review: data["review"] == true}
 		run.mark, run.label = "approval", "Waiting for your approval"
 	case "context_note", "note":
 		index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: value.(string)})

@@ -85,6 +85,7 @@ private fun markIcon(kind: TargetKind?) = when (kind) {
 internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) {
     var deleting by remember(app.server) { mutableStateOf<ChatSummary?>(null) }
     var renaming by remember(app.server) { mutableStateOf<ChatSummary?>(null) }
+    var moving by remember(app.server) { mutableStateOf<ChatSummary?>(null) }
     var chatMenu by remember(app.server) { mutableStateOf<TargetChat?>(null) }
     var groupMenu by remember(app.server) { mutableStateOf<String?>(null) } // a group's key
     var worktreeActions by remember(app.server) { mutableStateOf<Pair<String, Worktree>?>(null) }
@@ -197,6 +198,7 @@ internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit)
                     if (chat.parent.isNotEmpty() && chat.running) SideAction("Stop", Icons.close) { app.stop(chat.id) } else null,
                     if (parent != null) SideAction("Open parent", Icons.subchat) { app.open(parent.id); onPicked() } else null,
                     SideAction("Rename", Icons.pencil) { renaming = chat },
+                    if (!chat.scratch && chat.workspace.isNotEmpty()) SideAction("Move to another device", Icons.server) { moving = chat } else null,
                     SideAction("Delete", Icons.trash, danger = true) { deleting = chat },
                 ),
             ) { chatMenu = null }
@@ -204,6 +206,7 @@ internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit)
     }
     worktreeActions?.let { (project, worktree) -> WorktreeSheet(app, project, worktree) { worktreeActions = null } }
     newWorktree?.let { project -> NewWorktreeSheet(app, project) { newWorktree = null } }
+    moving?.let { chat -> MoveChatSheet(app, chat) { moving = null } }
     renaming?.let { chat -> RenameChatSheet(app, chat) { renaming = null } }
     deleting?.let { chat -> DeleteChatSheet(app, chat) { deleting = null } }
 }
@@ -288,6 +291,56 @@ internal fun SideMenuSheet(title: String, actions: List<SideAction>, onDone: () 
                     Text(action.label, style = Type.body.copy(color = ink))
                 }
             }
+        }
+    }
+}
+
+/** Moves a chat, its agent at work, between this phone and a paired device (#18). */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun MoveChatSheet(app: RemoteApp, chat: ChatSummary, onDone: () -> Unit) {
+    val here = app.server
+    val onPhone = here?.localPhone == true
+    val peers = if (onPhone) app.servers.filter { !it.localPhone && it.token.isNotEmpty() } else emptyList()
+    val name = chat.workspace.replace('\\', '/').substringAfterLast('/')
+    var busy by remember { mutableStateOf(false) }
+    var status by remember { mutableStateOf<String?>(null) }
+    val scope = rememberCoroutineScope()
+    fun move(peer: Server, pull: Boolean, to: String) {
+        busy = true
+        status = if (chat.running) "Waiting for the agent to finish its step, then copying…" else "Copying…"
+        scope.launch {
+            try {
+                app.moveChat(peer, pull, if (pull) name else chat.workspace, if (pull) chat.workspace else name, chat.id)
+                status = "Moved to $to."
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (failure: Exception) {
+                status = failure.message ?: "Could not move the chat."
+            } finally {
+                busy = false
+            }
+        }
+    }
+    GlassBackdrop()
+    ModalBottomSheet(
+        onDismissRequest = { if (!busy) onDone() }, containerColor = Palette.surface, scrimColor = GlassScrim,
+        sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
+    ) {
+        Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(14.dp)) {
+            Text("Move “${chat.title}”", style = Type.title)
+            Text(
+                "Moves this conversation, its tasks and the project's changed files. An agent at work finishes its step, pauses, and goes on there with that device's model. Commands left running, terminals, browser tabs, ignored files and secrets stay here.",
+                style = Type.small,
+            )
+            if (onPhone) {
+                if (peers.isEmpty()) Text("Pair a desktop or a server first: it then appears here.", style = Type.small.copy(color = Palette.danger))
+                for (peer in peers) Pill("Move to ${peer.name}", enabled = !busy) { move(peer, false, peer.name) }
+            } else if (here != null) {
+                Pill("Move to this phone", enabled = !busy) { move(here, true, "this phone") }
+            }
+            status?.let { Text(it, style = Type.small) }
+            Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) { Pill("Close", enabled = !busy, onClick = onDone) }
         }
     }
 }

@@ -52,6 +52,12 @@ Choose in the composer:
   Claude Code and Antigravity CLI run with `--dangerously-skip-permissions`
   (Claude Code refuses it as root: 1loop then approves each of its requests).
 
+An edit opens in a **Review** tab of the side panel: the whole file with its
+changes. Click a change to leave it out, **Edit** the proposed text, leave out
+a file of a patch, or say why with **Deny**; the model is told what you
+changed. Ctrl+Enter approves, Escape denies. For a chat that is not on screen,
+or on a server, the dialog offers **Review…**; the phone shows the diff.
+
 Commands run with your user's permissions: approving one lets it act on your
 machine.
 
@@ -72,6 +78,11 @@ sharing.
 - Changing **provider, account or model** mid-conversation asks how the new
   model receives it: as it is, or summarized (by the previous model, which
   still has it cached, or by the new one), with 1loop's recommendation.
+- A chat **moves to another device**, its agent at work, from its ⋯ menu (on the
+  phone, hold it): the agent finishes its step, pauses, the project and the
+  conversation are copied, and it goes on there. If that fails, it goes on
+  where it was. Commands left running, terminals, browser tabs, ignored files
+  and secrets stay behind.
 - Long conversations are **compacted** when they near the model's real context
   window; details stay reachable through the agent's `recall` tool.
 
@@ -79,6 +90,9 @@ sharing.
 
 **Settings → Extensions** (also on the phone) has three tabs:
 
+  One interrupted (a stop, an error, 1loop closed) goes on where it stopped when
+  it is next needed; **Compare**, beside its note, shows the context before and
+  after.
 - **Store**: skills and plugins published on GitHub (topics `agent-skills`
   and `claude-code-plugin`), with their picture, stars and README, sorted by
   stars, last update or relevance. **Install** downloads the repository and

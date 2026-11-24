@@ -28,15 +28,6 @@ func running() (string, error) {
 	return exe, nil
 }
 
-// InstallDir is the folder of the running binary, where an update goes.
-func InstallDir() (string, error) {
-	exe, err := running()
-	if err != nil {
-		return "", err
-	}
-	return installDir(exe), nil
-}
-
 func installDir(exe string) string {
 	dir := filepath.Dir(exe)
 	// 1loop-software.cmd starts the copy in software\: the Windows archive
@@ -106,8 +97,15 @@ func Install(ctx context.Context, manifest Manifest, kind string) (string, error
 
 // replace moves every staged file over its installed copy, keeping the
 // installed one as .old (the running binary can be renamed, not written).
+// When one cannot be, those already replaced go back too: an installation
+// never mixes two versions (#394).
 func replace(staging, dir string) error {
-	return filepath.Walk(staging, func(source string, info os.FileInfo, err error) error {
+	type change struct {
+		target string
+		kept   bool // the installed copy is in .old
+	}
+	var done []change
+	err := filepath.Walk(staging, func(source string, info os.FileInfo, err error) error {
 		if err != nil || info.IsDir() {
 			return err
 		}
@@ -116,18 +114,41 @@ func replace(staging, dir string) error {
 		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
 			return err
 		}
+		kept := false
 		if _, err := os.Stat(target); err == nil {
 			os.Remove(target + ".old") // the backup of the update before this one
 			if err := os.Rename(target, target+".old"); err != nil {
 				return fmt.Errorf("Cannot replace %s: %w", relative, err)
 			}
+			kept = true
 		}
+		done = append(done, change{target, kept})
 		if err := os.Rename(source, target); err != nil {
-			os.Rename(target+".old", target) // put the working copy back
 			return fmt.Errorf("Cannot install %s: %w", relative, err)
 		}
 		return nil
 	})
+	if err == nil {
+		return nil
+	}
+	var stuck []string
+	for i := len(done) - 1; i >= 0; i-- {
+		back := done[i]
+		var failed error
+		if back.kept {
+			os.Remove(back.target) // Windows does not rename over a file
+			failed = os.Rename(back.target+".old", back.target)
+		} else if failed = os.Remove(back.target); os.IsNotExist(failed) {
+			failed = nil
+		}
+		if failed != nil {
+			stuck = append(stuck, filepath.Base(back.target))
+		}
+	}
+	if len(stuck) > 0 {
+		return fmt.Errorf("%w; and the version before could not be put back for %s: install 1loop again", err, strings.Join(stuck, ", "))
+	}
+	return err
 }
 
 // staged resolves an archive entry inside the staging folder.

@@ -90,9 +90,6 @@ func defaultDir() string {
 // Dir is the extensions folder.
 func Dir() string { return dirFunc() }
 
-// SetDir moves the folder (tests).
-func SetDir(dir string) { dirFunc = func() string { return dir } }
-
 func registryPath() string { return filepath.Join(Dir(), "extensions.json") }
 
 // Load reads what is installed. A missing file is an empty registry.

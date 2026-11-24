@@ -159,6 +159,8 @@ type Approval struct {
 	ID      string `json:"id"`
 	Title   string `json:"title"`
 	Preview string `json:"preview"`
+	// Review: an edit whose files can be read and changed first (GET /api/review).
+	Review bool `json:"review,omitempty"`
 }
 
 type Effort struct {

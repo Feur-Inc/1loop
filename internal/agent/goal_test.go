@@ -183,7 +183,7 @@ func TestGoalSavedActiveComesBackPaused(t *testing.T) {
 
 // create_goal: only when the user asked for a goal, else after their yes.
 func TestCreateGoalNeedsTheUsersRequest(t *testing.T) {
-	backend := &App{Approvals: map[string]chan bool{}}
+	backend := &App{Approvals: map[string]chan ApprovalAnswer{}}
 	state := &GoalState{}
 	ctx := context.WithValue(context.Background(), goalContextKey{}, state)
 	var asked []string

@@ -564,11 +564,29 @@
       "where": "desktop"
     },
     {
+      "key": "loopy.home",
+      "section": "agent",
+      "page": "Loopy",
+      "title": "Where Loopy lives",
+      "description": "This computer, or a server where Loopy's routines go on when this computer is off.",
+      "keywords": [
+        "loopy",
+        "assistant",
+        "personal agent",
+        "server",
+        "host",
+        "always on"
+      ],
+      "kind": "action",
+      "where": "desktop",
+      "protected": true
+    },
+    {
       "key": "loopy.model",
       "section": "agent",
       "page": "Loopy",
       "title": "Loopy's model",
-      "description": "The model Loopy, the personal agent, works with: its own, or the one chosen in your projects.",
+      "description": "The model Loopy, the personal agent, works with: its own, or the one chosen for your projects.",
       "keywords": [
         "loopy",
         "assistant",
@@ -576,38 +594,80 @@
         "model"
       ],
       "kind": "action",
-      "where": "desktop"
+      "where": "both"
     },
     {
       "key": "loopy.summary",
       "section": "agent",
       "page": "Loopy",
       "title": "Morning summary",
-      "description": "When Loopy sums up each morning what is in progress and what needs you, or never.",
+      "description": "When Loopy sums up each morning what needs you and what is in progress, or never; and its night.",
       "keywords": [
         "loopy",
         "morning",
         "summary",
-        "brief"
+        "brief",
+        "night",
+        "quiet"
       ],
       "kind": "action",
-      "where": "desktop"
+      "where": "both"
     },
     {
       "key": "loopy.memory",
       "section": "agent",
       "page": "Loopy",
       "title": "Loopy's memory",
-      "description": "What Loopy remembers about you, by kind, and its journal; whether it remembers on its own or only when asked.",
+      "description": "What Loopy remembers of you: rules, how you like answers, facts, its journal; whether it learns on its own.",
       "keywords": [
         "loopy",
         "memory",
         "remember",
         "journal",
-        "forget"
+        "forget",
+        "habits",
+        "style",
+        "learn"
       ],
       "kind": "action",
-      "where": "desktop"
+      "where": "both"
+    },
+    {
+      "key": "loopy.accounts",
+      "section": "agent",
+      "page": "Loopy",
+      "title": "Loopy's accounts",
+      "description": "The mail and calendar accounts Loopy reads. It sends and adds only from a card you press.",
+      "keywords": [
+        "loopy",
+        "mail",
+        "email",
+        "imap",
+        "calendar",
+        "caldav",
+        "account"
+      ],
+      "kind": "action",
+      "where": "both",
+      "protected": true
+    },
+    {
+      "key": "loopy.vault",
+      "section": "agent",
+      "page": "Loopy",
+      "title": "Loopy's vault",
+      "description": "Sign-ins 1loop types in a page for Loopy, which never sees them.",
+      "keywords": [
+        "loopy",
+        "vault",
+        "password",
+        "sign in",
+        "login",
+        "secret"
+      ],
+      "kind": "action",
+      "where": "both",
+      "protected": true
     },
     {
       "key": "agent.dynamic_compaction",

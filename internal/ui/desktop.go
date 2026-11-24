@@ -41,7 +41,6 @@ import (
 	"1loop/internal/crash"
 	"1loop/internal/discord"
 	"1loop/internal/extensions"
-	"1loop/internal/loopy"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	registry "1loop/internal/settings"
@@ -133,6 +132,7 @@ type desktopUI struct {
 	loopy                    *loopyMode
 	brand                    *brandMark // 1loop's logo in its sidebar
 	inLoopy                  bool
+	loopySettingsShown       func() // draws Settings → Loopy again
 	oneloopSide, oneloopMain fyne.CanvasObject
 
 	// Split views (panes.go). A pane other than its window's first has an
@@ -328,13 +328,17 @@ type desktopApp struct {
 	panelWidth       float32           // last width chosen by dragging, independent of window size
 	// Projects' environment variables, by projectEnvKey (project_env.go).
 	projectEnv        map[string]map[string]string
-	classicCompaction bool                       // settings: dynamic context compaction turned off
-	memoryOff         bool                       // settings: the agent's memory tool turned off
-	wrapUpOff         bool                       // settings: the next-step card (wrap_up tool) turned off
-	autoResume        *agent.AutoResume          // settings: what a rate limit does to a run
-	namingModel       *agent.NamingModel         // settings: the model that names new chats, nil for none
-	closeQuits        bool                       // settings: closing the window quits rather than hiding it in the tray
-	crashReportsOff   bool                       // settings: Don't ask again, after a crash
+	classicCompaction bool               // settings: dynamic context compaction turned off
+	memoryOff         bool               // settings: the agent's memory tool turned off
+	wrapUpOff         bool               // settings: the next-step card (wrap_up tool) turned off
+	autoResume        *agent.AutoResume  // settings: what a rate limit does to a run
+	namingModel       *agent.NamingModel // settings: the model that names new chats, nil for none
+	closeQuits        bool               // settings: closing the window quits rather than hiding it in the tray
+	crashReportsOff   bool               // settings: Don't ask again, after a crash
+	loopyAt           string             // where the app's Loopy lives: a server's address, "" for here
+	loopyShown        bool               // the Loopy space was on screen when 1loop closed
+	loopyHome         loopyHome          // this computer's Loopy (loopy_host.go)
+	loopyUnlink       context.CancelFunc
 	lastCrash         *crash.Crash               // the last run's, offered once the window is up
 	trayNoticeShown   bool                       // the first close said that 1loop stays in the tray
 	tray              *trayIcon                  // the system tray icon (tray.go), nil without one
@@ -441,7 +445,7 @@ func runDesktop(backend *agent.App, root, asked string) {
 	benchMark("content built")
 	ui.syncBackdrop()
 	ui.followUsage()
-	if ui.mainWindow() && loopy.Open(filepath.Join(filepath.Dir(ui.statePath), "loopy.json")).Settings.Shown {
+	if ui.loopyShown && ui.owner == nil && len(ui.windows) <= 1 {
 		ui.openLoopy() // Loopy was on screen when 1loop closed
 	}
 	ui.window.SetOnDropped(func(at fyne.Position, uris []fyne.URI) {
@@ -467,6 +471,8 @@ func runDesktop(backend *agent.App, root, asked string) {
 	// and the other windows of the last run.
 	afterFirstFrame := func() {
 		ui.startRemote()
+		ui.wakeLoopy() // its routines go on
+		ui.linkLoopy()
 		ui.linkServers()
 		ui.watchUpdates()
 		benchMark("services started")
@@ -613,6 +619,7 @@ func (ui *desktopUI) release() {
 		ui.frames.stop()
 	}
 	ui.shutdown() // every run's context derives from it
+	ui.closeLoopy()
 	for _, chat := range ui.chats {
 		chat.tasks.StopAll() // a background server must not outlive 1loop
 	}
@@ -1368,9 +1375,7 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	ui.remote.metaChanged(chat)
 	ui.syncPresence()
 	ui.staleAccountLimits(chat.Config.ConnectionID)
-	if ui.loopy != nil {
-		ui.loopy.taskEnded(chat, ended) // a coding task Loopy handed over
-	}
+	ui.loopyEnded(chat, ended) // a coding task Loopy handed over
 	ui.noteLimits(chat.Config.ConnectionID, 10*time.Minute, nil)
 	if run != nil && run.approval != nil {
 		run.approval.dismiss()
@@ -2234,6 +2239,8 @@ type savedState struct {
 	FoldedProjects    []string              `json:"foldedProjects,omitempty"` // sidebar groups folded
 	CloseQuits        bool                  `json:"closeQuits,omitempty"`
 	CrashReportsOff   bool                  `json:"crashReportsOff,omitempty"`
+	LoopyAt           string                `json:"loopyAt,omitempty"`
+	LoopyShown        bool                  `json:"loopyShown,omitempty"`
 	AnimationsOff     bool                  `json:"animationsOff,omitempty"`
 	TrayNoticeShown   bool                  `json:"trayNoticeShown,omitempty"`
 	DiscordPresence   bool                  `json:"discordPresence,omitempty"`
@@ -2353,6 +2360,8 @@ func (ui *desktopUI) persist(wait bool) {
 		slices.Sorted(maps.Keys(ui.foldedProjects)),
 		ui.closeQuits,
 		ui.crashReportsOff,
+		ui.loopyAt,
+		ui.loopyShown,
 		animationsOff,
 		ui.trayNoticeShown,
 		ui.discordPresence,
@@ -2515,6 +2524,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.wrapUpOff = state.WrapUpOff
 	ui.closeQuits, ui.trayNoticeShown = state.CloseQuits, state.TrayNoticeShown
 	ui.crashReportsOff = state.CrashReportsOff
+	ui.loopyAt, ui.loopyShown = state.LoopyAt, state.LoopyShown
 	animationsOff = state.AnimationsOff
 	ui.autoResume = state.AutoResume
 	ui.namingModel = state.NamingModel

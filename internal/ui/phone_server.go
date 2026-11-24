@@ -157,6 +157,12 @@ func (ui *desktopUI) startRemote() {
 	}) {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
+	for path, handler := range server.loopyHandlers() { // this computer's Loopy
+		mux.HandleFunc(path, server.authorized(handler))
+	}
+	if hook := server.loopyHook(); hook != nil {
+		mux.HandleFunc("POST /api/loopy/hook/{token}", hook) // the token is the key
+	}
 	for path, handler := range githubconnector.Handlers() {
 		mux.HandleFunc(path, server.authorized(handler))
 	}

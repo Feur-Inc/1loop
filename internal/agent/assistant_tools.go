@@ -10,6 +10,7 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 // AssistantTools are a host's own tools for a run.
@@ -40,4 +41,23 @@ func (tools *AssistantTools) has(name string) bool {
 func assistantOf(ctx context.Context) *AssistantTools {
 	cfg, _ := ctx.Value(configContextKey{}).(Config)
 	return cfg.Assistant
+}
+
+// Ask asks cfg's model one thing, without tools, apart from any chat.
+func Ask(ctx context.Context, backend *App, cfg Config, system, prompt string) (string, error) {
+	ctx, cancel := context.WithTimeout(ctx, 3*time.Minute)
+	defer cancel()
+	cfg.ClearSessions()
+	cfg.RanWith, cfg.ContextKey, cfg.ServiceTier, cfg.toolSet, cfg.Assistant = nil, "ask", "", nil, nil
+	switch cfg.Provider {
+	case "claudecode":
+		return claudeHandoffNote(ctx, cfg, system+"\n\n"+prompt)
+	case "openai":
+		var err error
+		if cfg, err = backend.openAIConfig(ctx, cfg); err != nil {
+			return "", err
+		}
+	}
+	out, err := completion(ctx, cfg, []Message{{Role: "system", Content: system}, {Role: "user", Content: prompt}}, false, func(string, any) {})
+	return out.Content, err
 }

@@ -35,7 +35,18 @@ require (
 	mvdan.cc/sh/v3 v3.9.0
 )
 
-require github.com/tetratelabs/wazero v1.12.0
+require (
+	github.com/emersion/go-ical v0.0.0-20250609112844-439c63cef608
+	github.com/emersion/go-imap v1.2.1
+	github.com/emersion/go-message v0.18.2
+	github.com/emersion/go-webdav v0.8.0
+	github.com/tetratelabs/wazero v1.12.0
+)
+
+require (
+	github.com/emersion/go-sasl v0.0.0-20200509203442-7bfe0ed36a21 // indirect
+	github.com/teambition/rrule-go v1.8.2 // indirect
+)
 
 require (
 	github.com/Azure/go-ansiterm v0.0.0-20170929234023-d6e3b3328b78 // indirect

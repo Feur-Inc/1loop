@@ -49,7 +49,7 @@ func (mode *loopyMode) openMemory() {
 	}
 	opened := false
 	draw = func() {
-		page := mode.pageHead("What Loopy remembers", "Every exchange is kept as it was said, and searched when it matters. Facts are drawn from your own words: rules and ways of answering are always followed, pinned facts always known, the others come back when they have to do with your message. What Loopy only noticed once guides nothing. Passwords and card numbers never go here.")
+		page := mode.pageHead("What Loopy remembers", "Every exchange is kept as it was said, and searched when it matters. Facts are drawn from your own words: what you said, and what you pin, is always in its mind; what it only noticed once comes back when it has to do with your message, as a guess. Passwords and card numbers never go here.")
 		if !loaded {
 			page.Add(spacer(0, 12))
 			page.Add(note("Loading…"))
@@ -138,7 +138,7 @@ func (mode *loopyMode) factRow(fact loopy.Fact) fyne.CanvasObject {
 	case fact.Times >= 2:
 		detail = fmt.Sprintf("Noticed %d times · %s", fact.Times, detail)
 	default:
-		detail = "Noticed once, guides nothing yet · " + detail
+		detail = "Noticed once, only a guess yet · " + detail
 	}
 	if fact.Pinned {
 		detail = "Pinned · " + detail

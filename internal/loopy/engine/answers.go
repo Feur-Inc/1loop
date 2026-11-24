@@ -8,6 +8,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -34,6 +35,9 @@ func (e *Engine) Answer(answer loopy.Answer) error {
 	known := slices.Contains(card.Actions, answer.Answer) || slices.ContainsFunc(card.Options, func(o loopy.Option) bool { return o.Label == answer.Answer })
 	if !known {
 		return errors.New("that is not one of the card's answers")
+	}
+	if card.Kind == "signin" && answer.Answer == card.Actions[0] && strings.TrimSpace(strings.Join(slices.Collect(maps.Values(answer.Values)), "")) == "" {
+		return errors.New("type them first")
 	}
 	e.mu.Lock()
 	waiting := e.waits[answer.Message]

@@ -77,7 +77,7 @@ type loopyMode struct {
 	browserPane *fyne.Container
 	browserTab  fyne.CanvasObject
 	browserBar  *fyne.Container // who has it
-	browserOn   bool // the user wants the pane while there is a page
+	browserOn   bool            // the user wants the pane while there is a page
 	remoteTab   string
 	closeRemote context.CancelFunc
 	drafts      map[string]*loopyDraft // what is typed in the cards' fields, by message
@@ -400,6 +400,8 @@ func (mode *loopyMode) openSettings() {
 	mode.ui.showSpace(false)
 	mode.ui.settings()
 	mode.ui.prefs.openOn(loopySettingsPage)
+	mode.ui.prefs.toLoopy = true
+	mode.ui.prefs.leave.SetText("Back to Loopy")
 }
 
 func (mode *loopyMode) buildMain() {
@@ -748,7 +750,7 @@ func (mode *loopyMode) memoryNote(message loopy.Message) fyne.CanvasObject {
 			mode.action(loopy.Action{Do: "fact.forget", ID: message.MemoryID}, nil)
 		}))
 	}
-	return padded(2, 6, 34, 0, container.New(&maxWidthLayout{width: 600}, container.NewBorder(nil, nil, container.NewCenter(pin), right, plainFlow(message.Memory, 12.5, colMuted))))
+	return padded(2, 6, 34, 0, container.New(&maxWidthLayout{width: 600}, container.NewBorder(nil, nil, container.NewCenter(pin), right, container.NewVBox(layout.NewSpacer(), plainFlow(message.Memory, 12.5, colMuted), layout.NewSpacer()))))
 }
 
 // reactMenu lets the user put a reaction on one of Loopy's messages.

@@ -315,11 +315,9 @@ func (mode *loopyMode) cardView(message loopy.Message) fyne.CanvasObject {
 	waiting := c.Waiting()
 	icon := canvas.NewImageFromResource(tinted(loopyCardIcon(c.Kind), colMuted))
 	icon.SetMinSize(fyne.NewSquareSize(15))
-	title := textLine(c.Title, 13, colText)
-	title.TextStyle = fyne.TextStyle{Bold: true}
-	headParts := []fyne.CanvasObject{container.NewCenter(icon), container.NewCenter(title)}
+	heading := container.New(layout.NewCustomPaddedVBoxLayout(1), newFlowText([]span{{text: c.Title, bold: true}}, 13, colText))
 	if c.Subtitle != "" {
-		headParts = append(headParts, container.NewCenter(textLine(c.Subtitle, 12.5, colMuted)))
+		heading.Add(plainFlow(c.Subtitle, 12.5, colMuted))
 	}
 	var status fyne.CanvasObject = layout.NewSpacer()
 	task, isTask := mode.task(c.Task)
@@ -342,7 +340,7 @@ func (mode *loopyMode) cardView(message loopy.Message) fyne.CanvasObject {
 	case waiting:
 		status = container.NewCenter(loopyPill("Waiting for you", colAmber))
 	}
-	head := padded(9, 9, 13, 13, container.NewBorder(nil, nil, nil, status, container.New(&loopyClipLayout{}, container.New(layout.NewCustomPaddedHBoxLayout(8), headParts...))))
+	head := padded(9, 9, 13, 13, container.NewBorder(nil, nil, padded(0, 0, 0, 8, container.NewCenter(icon)), padded(0, 0, 8, 0, status), heading))
 	rows := []fyne.CanvasObject{head}
 	if c.Warning != "" {
 		rows = append(rows, padded(8, 8, 13, 13, plainFlow("⚠ "+c.Warning, 12.5, colDanger)))
@@ -379,7 +377,8 @@ func (mode *loopyMode) cardView(message loopy.Message) fyne.CanvasObject {
 			form.Add(draft.values[field.Label])
 		}
 		if draft.keep != nil {
-			form.Add(container.NewBorder(nil, nil, draft.keep, nil, draft.hint))
+			form.Add(draft.keep)
+			form.Add(draft.hint)
 		}
 		form.Add(plainFlow("It goes straight into the page: Loopy never sees it.", 12, colMuted))
 		rows = append(rows, padded(10, 10, 13, 13, form))
@@ -454,18 +453,6 @@ func (mode *loopyMode) cardOptions(message loopy.Message) fyne.CanvasObject {
 		options.Add(entry)
 	}
 	return options
-}
-
-// loopyClipLayout gives its content the room there is, its end cut.
-type loopyClipLayout struct{}
-
-func (loopyClipLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
-	return fyne.NewSize(40, objects[0].MinSize().Height)
-}
-
-func (loopyClipLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
-	objects[0].Resize(size)
-	objects[0].Move(fyne.NewPos(0, 0))
 }
 
 // wrapLayout sets its objects side by side, on as many lines as it takes.
@@ -549,7 +536,7 @@ func (mode *loopyMode) taskProgress(task loopy.Task) fyne.CanvasObject {
 		}
 		dot := canvas.NewCircle(ink)
 		mark := padded(3, 0, 0, 0, container.NewGridWrap(fyne.NewSquareSize(8), dot)) // level with the text's middle
-		steps.Add(container.NewBorder(nil, nil, container.NewCenter(mark), textLine(step.Time.Local().Format("15:04"), 12, colFaint), container.New(&loopyClipLayout{}, textLine(step.Text, 13, colTextSoft))))
+		steps.Add(container.NewBorder(nil, nil, container.NewCenter(mark), textLine(step.Time.Local().Format("15:04"), 12, colFaint), plainFlow(step.Text, 13, colTextSoft)))
 	}
 	actions := container.New(&wrapLayout{gap: 8}, newRow("Open the chat", nil, styleOutline, func() { mode.openTask(task) }))
 	if task.Status == "running" || task.Status == "waiting" {

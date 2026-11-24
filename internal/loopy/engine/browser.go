@@ -46,8 +46,8 @@ func (e *Engine) guardBrowser(tools agent.PanelToolHandler) agent.PanelToolHandl
 			if clickScript.MatchString(args.Expression) {
 				return agent.PanelToolResult{}, errors.New("refused: a script may only read the page. Click and type with browser_interact")
 			}
-			if page != nil && e.holdsSecret(page) {
-				return agent.PanelToolResult{}, errors.New("refused: a password is in this page. Press its button first")
+			if page != nil && e.holdsSecret(page) && !e.clearsSecret(ctx, page) {
+				return agent.PanelToolResult{}, errors.New("refused: a password is still in this page. Press its button if you have not, and read it with browser_read")
 			}
 		case "browser_interact":
 			if page != nil {
@@ -139,6 +139,19 @@ func (e *Engine) holdsSecret(page *browser.Page) bool {
 		e.filled = ""
 	}
 	return e.filled != ""
+}
+
+// clearsSecret forgets the secret of a page that stayed but whose password
+// fields are empty now: signed in without leaving it.
+func (e *Engine) clearsSecret(ctx context.Context, page *browser.Page) bool {
+	raw, err := page.Evaluate(ctx, `[...document.querySelectorAll('input')].some(i => i.value && (i.type === 'password' || /passw|current-password/i.test(i.name + i.id + i.autocomplete)))`)
+	if err != nil || string(raw) != "false" {
+		return false
+	}
+	e.mu.Lock()
+	e.filled = ""
+	e.mu.Unlock()
+	return true
 }
 
 // pressed reads what is about to be pressed: its words, and those of the

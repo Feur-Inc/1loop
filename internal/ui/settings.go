@@ -117,8 +117,10 @@ type settingsFrame struct {
 type settingsView struct {
 	ui      *desktopUI
 	open    bool
-	section string // the section selected in the sidebar
-	page    string // the page shown: the section, or one of its sub-pages
+	toLoopy bool    // closing goes back to Loopy's space
+	leave   *tapRow // what closes it
+	section string  // the section selected in the sidebar
+	page    string  // the page shown: the section, or one of its sub-pages
 	rows    map[string]*tapRow
 	side    fyne.CanvasObject // what the sidebar shows
 	view    *fyne.Container   // what the main area shows
@@ -137,6 +139,7 @@ type settingsView struct {
 func (ui *desktopUI) buildSettings() {
 	view := &settingsView{ui: ui, rows: map[string]*tapRow{}, section: "General", page: "General", anchors: map[string]*settingAnchor{}}
 	back := newRow("Back to 1loop", iconChevronLeft, styleNav, view.close)
+	view.leave = back
 	nav := container.New(layout.NewCustomPaddedVBoxLayout(1))
 	for _, section := range registry.Sections() {
 		name := section.Title
@@ -227,6 +230,11 @@ func (view *settingsView) closeNow() {
 	ui.relayoutColumn()
 	ui.curtain.reveal()
 	ui.window.Canvas().Focus(ui.prompt)
+	if view.toLoopy { // opened from there
+		view.toLoopy = false
+		view.leave.SetText("Back to 1loop")
+		ui.openLoopy()
+	}
 }
 
 // show opens a page, leaving whatever was open.

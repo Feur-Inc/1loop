@@ -37,17 +37,19 @@ func (ui *desktopUI) loopySettings() fyne.CanvasObject {
 		note("Loopy is the personal agent you reach from the logo at the top of the sidebar: one conversation apart from your projects, for mail, errands, routines and the coding tasks it hands to an agent in a project."), page)
 }
 
-// choice is a row whose control opens a menu of values.
+// choice is a row whose control picks one of the values.
 func (mode *loopyMode) choice(title, detail, label string, values []string, name func(string) string, set func(string)) fyne.CanvasObject {
-	var control *tapRow
-	control = newRow(label, iconChevron, styleChip, func() {
-		var actions []menuAction
-		for _, value := range values {
-			actions = append(actions, menuAction{label: name(value), checked: name(value) == label, run: func() { set(value) }})
+	pick := newPicker(mode.ui.window, label, styleField, nil)
+	of := map[string]string{}
+	for _, value := range values {
+		if _, twice := of[name(value)]; !twice {
+			of[name(value)] = value
+			pick.Options = append(pick.Options, name(value))
 		}
-		showMenu(mode.ui.window, control, actions)
-	})
-	return settingRow(title, detail, control)
+	}
+	pick.SetSelected(label)
+	pick.onChanged = func(chosen string) { set(of[chosen]) }
+	return settingRow(title, detail, sized(220, pick.row))
 }
 
 func (ui *desktopUI) loopySettingsRows(mode *loopyMode) []fyne.CanvasObject {
@@ -94,15 +96,15 @@ func (ui *desktopUI) loopySettingsRows(mode *loopyMode) []fyne.CanvasObject {
 		return none
 	}
 	modelRow := func(title, detail, none, connection, id string, set func(connection, id string)) fyne.CanvasObject {
-		var control *tapRow
-		control = newRow(modelName(connection, id, none), iconChevron, styleChip, func() {
-			actions := []menuAction{{label: none, checked: id == "", run: func() { set("", "") }}}
-			for _, model := range mode.view.Models {
-				actions = append(actions, menuAction{label: model.Label, checked: model.ID == id && model.Connection == connection, run: func() { set(model.Connection, model.ID) }})
-			}
-			showMenu(ui.window, control, actions)
+		values := []string{none}
+		of := map[string]loopy.Model{none: {}}
+		for _, model := range mode.view.Models {
+			values = append(values, model.Label)
+			of[model.Label] = model
+		}
+		return mode.choice(title, detail, modelName(connection, id, none), values, func(label string) string { return label }, func(label string) {
+			set(of[label].Connection, of[label].ID)
 		})
-		return settingRow(title, detail, control)
 	}
 	var efforts []string
 	for _, model := range mode.view.Models {

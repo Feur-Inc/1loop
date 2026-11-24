@@ -54,7 +54,9 @@ func (ui *desktopUI) usageSource() usageSource {
 type localUsage struct{ ui *desktopUI }
 
 func (local localUsage) report(_ context.Context, query usage.Query) (usage.Report, error) {
-	return usage.Build(local.ui.usage, local.ui.prices, local.ui.usageNames, query, time.Now()), nil
+	report := usage.Build(local.ui.usage, local.ui.prices, local.ui.usageNames, query, time.Now())
+	report.HideLimits(local.ui.accountDisabled)
+	return report, nil
 }
 
 func (local localUsage) priceTable(context.Context) ([]usage.PriceRow, error) {
@@ -79,6 +81,17 @@ func (ui *desktopUI) usageNames(group, key string) string {
 		return chat.Title
 	}
 	return ""
+}
+
+// accountDisabled says whether a connection is kept but turned off: its
+// limits are not shown on the Usage page.
+func (ui *desktopUI) accountDisabled(id string) bool {
+	for _, conn := range ui.connectionsList {
+		if conn.ID == id {
+			return !conn.Enabled
+		}
+	}
+	return false
 }
 
 // serverUsage is the server's ledger (internal/usage/http.go).

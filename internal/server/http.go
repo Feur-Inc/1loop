@@ -164,7 +164,7 @@ func (server *headlessServer) routes() http.Handler {
 	for path, handler := range githubconnector.Handlers() {
 		endpoints[path] = handler
 	}
-	for path, handler := range usage.Handlers(server.usage, server.prices, server.usageNames, nil) {
+	for path, handler := range usage.Handlers(server.usage, server.prices, server.usageNames, server.accountDisabled, nil) {
 		if path == "GET /api/usage" {
 			serve := handler
 			handler = func(w http.ResponseWriter, r *http.Request) {

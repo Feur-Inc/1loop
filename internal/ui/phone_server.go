@@ -166,7 +166,11 @@ func (ui *desktopUI) startRemote() {
 		server.onUI(func() { name = server.ui.usageNames(group, key) })
 		return name
 	}
-	for path, handler := range usage.Handlers(ui.usage, ui.prices, names, func() { server.onUI(ui.usageChanged) }) {
+	disabled := func(connection string) (off bool) {
+		server.onUI(func() { off = server.ui.accountDisabled(connection) })
+		return off
+	}
+	for path, handler := range usage.Handlers(ui.usage, ui.prices, names, disabled, func() { server.onUI(ui.usageChanged) }) {
 		if path == "GET /api/usage" {
 			serve := handler
 			handler = func(w http.ResponseWriter, r *http.Request) {

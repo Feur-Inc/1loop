@@ -980,6 +980,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         questions.clear()
         questionsAside.clear()
         questionDrafts.clear()
+        loopy.reset()
+        loopyFiles.clear()
         prefs.edit { putString("last", target.key) }
         screen = Screen.Chat
         readTargetsNow() // the target open before is read as the others now
@@ -1278,6 +1280,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             }
             "settings" -> applySettings(data)
             "extensions" -> extensionsRevision++
+            "loopy" -> loopy.apply(data)
+            "loopy_notice" -> if (!foreground && !target.localPhone) notifyLoopy(context, target, data.optString("title"), data.optString("text"), data.optJSONObject("message"))
             "sharing" -> if (target.localPhone) scope.launch {
                 try {
                     refreshSharing(true)
@@ -1896,6 +1900,100 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     /** Files shared to 1loop from another app, waiting for the user to place them (Files.kt). */
     val shared = mutableStateListOf<android.net.Uri>()
+
+    // -- Loopy (Loopy.kt) -------------------------------------------------------
+
+    val loopy = LoopyStore(this, scope)
+    var loopyOpen by mutableStateOf(prefs.getBoolean("loopyOpen", false))
+        private set
+    var loopyPage by mutableStateOf<String?>(null) // "memory", "files", "settings", "routine:<id>"
+    var loopyShow by mutableStateOf<String?>(null) // the message to bring on screen
+    var loopyDraft by mutableStateOf<String?>(null) // a text shared to Loopy
+    var loopySpeak by mutableStateOf(false) // asked aloud: answered aloud
+    val loopyFiles = mutableStateListOf<String>() // in Loopy's folder, for the next message
+
+    /** The target the user's Loopy lives on; null: the one open. */
+    var loopyHome by mutableStateOf(prefs.getString("loopyAt", null))
+        private set
+
+    /** Loopy's space: on the target it lives on, opened first when it is another one. */
+    fun openLoopy(show: String? = null) {
+        showLoopy(true)
+        loopyPage = null
+        loopyShow = show
+        val at = loopyHome?.takeIf { key -> linked.any { it.key == key } } ?: server?.key
+        if (at != null && at != server?.key) openOn(at)
+        LoopyCheckJob.schedule(context)
+    }
+
+    fun closeLoopy() = showLoopy(false)
+
+    private fun showLoopy(on: Boolean) {
+        loopyOpen = on
+        prefs.edit { putBoolean("loopyOpen", on) }
+    }
+
+    /** Another target's Loopy becomes the user's. */
+    fun chooseLoopyHome(key: String) {
+        loopyHome = key
+        prefs.edit { putString("loopyAt", key) }
+        if (key != server?.key) openOn(key)
+    }
+
+    suspend fun <T> loopyCall(call: (Api) -> T): T {
+        val target = server ?: throw ApiError("Connect first.")
+        return onConnection(target, connectionGeneration, call)
+    }
+
+    /** Sends what is written, with the files given since the last message. */
+    fun loopySend(text: String) {
+        val files = loopyFiles.toList()
+        loopyFiles.clear()
+        loopy.act {
+            try {
+                loopyCall { it.post("/api/loopy/send", JSONObject().put("text", text.trim()).put("files", JSONArray(files))) }
+            } catch (failure: Exception) {
+                if (failure !is CancellationException) { loopyDraft = text; loopyFiles.addAll(files) } // back in the composer
+                throw failure
+            }
+        }
+    }
+
+    /** Copies files into Loopy's folder; [done] gets where they are. */
+    fun loopyUpload(uris: List<android.net.Uri>, dir: String, done: (List<String>) -> Unit) = loopy.act {
+        val paths = uris.map { uri ->
+            var name = "file"
+            var size = -1L
+            runCatching {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = cursor.getString(it) ?: name }
+                        cursor.getColumnIndex(android.provider.OpenableColumns.SIZE).takeIf { it >= 0 && !cursor.isNull(it) }?.let { size = cursor.getLong(it) }
+                    }
+                }
+            }
+            fun encode(part: String) = java.net.URLEncoder.encode(part, "UTF-8")
+            loopyCall { api ->
+                context.contentResolver.openInputStream(uri)?.use { api.upload("/api/loopy/file?dir=${encode(dir)}&name=${encode(name)}", it, size) } ?: throw ApiError("Cannot read this file.")
+            }.optString("path")
+        }
+        done(paths)
+    }
+
+    /** Files for the next message to Loopy. */
+    fun loopyGive(uris: List<android.net.Uri>) {
+        if (uris.isNotEmpty()) loopyUpload(uris, "/inbox") { loopyFiles.addAll(it) }
+    }
+
+    /** A delegated task's chat, in 1loop's space. */
+    fun openLoopyTask(task: LoopyTask) {
+        if (task.chat.isEmpty()) {
+            loopyShow = loopy.messages.lastOrNull { it.card?.task == task.id }?.id
+            return
+        }
+        closeLoopy()
+        open(task.chat)
+    }
 
     /** Takes it out of the next message; the copy already in the workspace stays. */
     fun removeAttachment(key: String) {

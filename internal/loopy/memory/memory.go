@@ -178,7 +178,7 @@ func (m *Memory) put(record Record) {
 	}
 }
 
-const answerKey = 1500 // of Loopy's answer, what search reads
+const answerKey = 4000 // of Loopy's answer, what search reads
 
 // index gives a record its keys: what was said, and the facts drawn from
 // it (LongMemEval: keys with the facts find more than the words alone).

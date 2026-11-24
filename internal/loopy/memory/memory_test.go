@@ -290,3 +290,13 @@ func TestManyRecordsStayFast(t *testing.T) {
 		t.Errorf("a search over 5000 exchanges took %s", took)
 	}
 }
+
+func TestExcerptShowsWhatIsAskedAbout(t *testing.T) {
+	long := strings.Repeat("Du texte sans rapport avec la question. ", 60) + "Le restaurant s'appelle La Table Ronde, rue des Lilas. " + strings.Repeat("Encore autre chose de long. ", 60)
+	if got := excerpt(long, "comment s'appelle le restaurant ?", 300); !strings.Contains(got, "La Table Ronde") || len([]rune(got)) > 302 {
+		t.Errorf("%q", got)
+	}
+	if got := excerpt("court", "x", 300); got != "court" {
+		t.Errorf("%q", got)
+	}
+}

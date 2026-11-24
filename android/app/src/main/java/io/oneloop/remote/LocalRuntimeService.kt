@@ -137,6 +137,7 @@ class LocalRuntimeService : Service() {
             try {
                 Api(server).events(onOpen = { wait = 500L }) { name, data ->
                     if (name == "meta") scope.launch { changed(Meta.from(data)) }
+                    if (name == "loopy_notice" && !runtime.appForeground) notifyLoopy(this, server, data.optString("title"), data.optString("text"), data.optJSONObject("message"))
                 }
             } catch (e: CancellationException) {
                 throw e

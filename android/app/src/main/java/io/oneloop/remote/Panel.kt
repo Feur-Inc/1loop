@@ -123,10 +123,14 @@ import org.json.JSONObject
 // tabs open there (browsers, terminals, Git changes, tool calls). Browsers
 // and terminals are live and take the phone's touches and typing.
 
+/** The hidden chat of Loopy's browser on the target it lives on. */
+const val LOOPY_CHAT = "loopy"
+
 @Composable
 fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
     val back = predictiveBack(onBack = onClose)
     val home = chat.startsWith("home:")
+    val loopy = chat == LOOPY_CHAT // Loopy's own browser (LoopyScreen.kt): no tasks, no project
     val initialTab = if (home) "files" else "tasks"
     var tabs by remember(chat) { mutableStateOf<List<PanelTab>>(emptyList()) }
     var selected by rememberSaveable(chat) { mutableStateOf(initialTab) }
@@ -138,7 +142,8 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
             reachable = list != null
             if (list != null) {
                 tabs = list.filter { it.kind != "todo" && it.kind != "tool" } // the task list is always first
-                if (selected != "tasks" && selected != "files" && tabs.none { it.key == selected }) selected = initialTab
+                if (loopy && tabs.none { it.key == selected }) tabs.lastOrNull()?.let { selected = it.key }
+                else if (selected != "tasks" && selected != "files" && tabs.none { it.key == selected }) selected = initialTab
             }
             delay(2000)
         }
@@ -151,19 +156,19 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
             Column(Modifier.weight(1f).padding(horizontal = 8.dp)) {
                 Text("Panel", style = Type.body.copy(fontWeight = FontWeight.Medium))
                 Text(
-                    if (!reachable) "Reconnecting…" else if (home) "New chat" else app.chats.firstOrNull { it.id == chat }?.title.orEmpty(),
+                    if (!reachable) "Reconnecting…" else if (loopy) "Loopy's browser" else if (home) "New chat" else app.chats.firstOrNull { it.id == chat }?.title.orEmpty(),
                     style = Type.caption.copy(color = if (reachable) Palette.faint else Palette.amber), maxLines = 1, overflow = TextOverflow.Ellipsis,
                 )
             }
-            LocalPanelAdd(app, chat)
+            if (!loopy) LocalPanelAdd(app, chat)
         }
         Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()).padding(horizontal = 12.dp).padding(bottom = 10.dp),
             horizontalArrangement = Arrangement.spacedBy(6.dp),
         ) {
             val done = tasks.count { it.status == "completed" }
-            if (!home) TabChip(if (tasks.isEmpty()) "Tasks" else "Tasks $done/${tasks.size}", Icons.tasks, selected == "tasks") { selected = "tasks" }
-            TabChip("Files", Icons.folder, selected == "files") { selected = "files" }
+            if (!home && !loopy) TabChip(if (tasks.isEmpty()) "Tasks" else "Tasks $done/${tasks.size}", Icons.tasks, selected == "tasks") { selected = "tasks" }
+            if (!loopy) TabChip("Files", Icons.folder, selected == "files") { selected = "files" }
             // The tab shown can be closed, as on the desktop.
             for (tab in tabs) TabChip(
                 tab.title, tabIcon(tab.kind), selected == tab.key,
@@ -189,7 +194,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
                     "terminal" -> TerminalView(app, chat, tab)
                     "changes" -> ChangesView(app, chat, tab)
                     "tool" -> ToolView(app, app.items.getOrNull(tab.index))
-                    else -> Column {
+                    else -> if (loopy) Empty("No page open", "Loopy opens one when it needs the web.") else Column {
                         Box(Modifier.weight(1f)) { TasksView(tasks, app.meta?.background.orEmpty(), app::stopTask, app.meta?.subchats.orEmpty(), { app.open(it) }, { app.stop(it) }, app.meta?.goal, app::goalCommand) }
                         ContextFooter(app, chat, app.meta)
                     }

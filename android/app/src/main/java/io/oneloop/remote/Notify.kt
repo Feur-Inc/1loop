@@ -24,7 +24,10 @@ class Notifier(private val context: Context) {
         val updates = NotificationChannel(UPDATES, "Updates", NotificationManager.IMPORTANCE_DEFAULT).apply {
             description = "A new version of 1loop is out"
         }
-        context.getSystemService(NotificationManager::class.java).createNotificationChannels(listOf(channel, updates))
+        val loopy = NotificationChannel(LOOPY, "Loopy", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "Loopy needs you, or tells you something"
+        }
+        context.getSystemService(NotificationManager::class.java).createNotificationChannels(listOf(channel, updates, loopy))
     }
 
     fun show(chat: String, title: String, text: String) {
@@ -66,6 +69,7 @@ class Notifier(private val context: Context) {
     companion object {
         const val CHANNEL = "chats"
         const val UPDATES = "updates"
+        const val LOOPY = "loopy"
         const val SHOW_UPDATE = "io.oneloop.remote.SHOW_UPDATE"
     }
 }

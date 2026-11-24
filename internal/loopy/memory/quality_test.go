@@ -97,6 +97,9 @@ func TestLongMemEvalAnswers(t *testing.T) {
 		}
 	}
 	ways := []string{"nothing", "words only", "one search", "several searches"}
+	if only := os.Getenv("LOOPY_WAYS"); only != "" {
+		ways = strings.Split(only, ",")
+	}
 	right := map[string]map[string][2]int{}
 	tokens := map[string]int{}
 	var mu sync.Mutex
@@ -124,11 +127,11 @@ func TestLongMemEvalAnswers(t *testing.T) {
 				m.index(record)
 			}
 		}
-		show := func(hits []Hit) string {
+		show := func(hits []Hit) string { // the excerpts are the product's
 			sort.SliceStable(hits, func(a, b int) bool { return hits[a].Record.Time.Before(hits[b].Record.Time) })
 			var b strings.Builder
 			for _, hit := range hits {
-				b.WriteString(hit.Record.Format(900) + "\n")
+				b.WriteString(hit.Record.Format(q.Question, 900) + "\n")
 			}
 			return b.String()
 		}

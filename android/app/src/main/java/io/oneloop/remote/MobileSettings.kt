@@ -88,6 +88,7 @@ fun phoneSettingsShown(app: RemoteApp, list: SettingsList, workProfile: Boolean)
             "models.default_preset" -> app.defaultPresets
             "agent.memory" -> app.memoryEnabled != null
             "agent.wrap_up" -> app.wrapUpEnabled != null
+            "loopy.summary", "loopy.memory", "loopy.accounts", "loopy.vault" -> false // all under loopy.model's button
             else -> true
         }
     }
@@ -270,6 +271,11 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
                 }
             }
             notice?.let { Text(it, style = Type.small) }
+        }
+        "loopy.model" -> {
+            Text("Loopy", style = Type.title)
+            Text("The personal agent you reach from the logo at the top of the menu: where it lives, its model, its summary, memory, accounts and vault.", style = Type.small)
+            Pill("Loopy's settings", enabled = app.connected) { app.settingsOpen = false; app.openLoopy(); app.loopyPage = "settings" }
         }
         "tools.extensions" -> {
             Text("Skills, plugins and MCP servers", style = Type.title)

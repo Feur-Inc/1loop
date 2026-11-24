@@ -115,29 +115,74 @@ func (m *Memory) Recall(message string, skip map[string]bool) string {
 		sort.SliceStable(hits, func(i, j int) bool { return hits[i].Record.Time.Before(hits[j].Record.Time) })
 		b.WriteString("Earlier exchanges that may matter (older ones may no longer hold):\n")
 		for _, hit := range hits {
-			b.WriteString(hit.Record.Format(500) + "\n")
+			b.WriteString(hit.Record.Format(message, 500) + "\n")
 		}
 	}
 	return b.String()
 }
 
-// Format is a record for the model, its parts cut to n runes.
-func (record Record) Format(n int) string {
+// Format is a record for the model, its parts cut to n runes around what
+// the query is about.
+func (record Record) Format(query string, n int) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "[%s]", record.Time.Local().Format("Mon 2006-01-02 15:04"))
 	if record.Event != "" {
-		fmt.Fprintf(&b, " %s", clip(record.Event, n))
+		fmt.Fprintf(&b, " %s", excerpt(record.Event, query, n))
 	}
 	if record.User != "" {
-		fmt.Fprintf(&b, " User: %s", clip(record.User, n))
+		fmt.Fprintf(&b, " User: %s", excerpt(record.User, query, n))
 	}
 	if record.Loopy != "" {
-		fmt.Fprintf(&b, "\n  You: %s", clip(record.Loopy, n))
+		fmt.Fprintf(&b, "\n  You: %s", excerpt(record.Loopy, query, n))
 	}
 	if record.Final != "" {
-		fmt.Fprintf(&b, "\n  Text they sent: %s", clip(record.Final, n))
+		fmt.Fprintf(&b, "\n  Text they sent: %s", excerpt(record.Final, query, n))
 	}
 	return b.String()
+}
+
+// excerpt is the part of a text closest to the query, in words and in
+// meaning, n runes long: what was asked about is often far in a long answer.
+func excerpt(text, query string, n int) string {
+	runes := []rune(text)
+	if len(runes) <= n || query == "" {
+		return clip(text, n)
+	}
+	asked := map[string]bool{}
+	for _, word := range words(query) {
+		asked[word] = true
+	}
+	meaning := Embed(query)
+	best, from := -1.0, 0
+	for at := 0; ; at += max(1, n/3) {
+		part := string(runes[at:min(len(runes), at+n)])
+		held := map[string]bool{}
+		for _, word := range words(part) {
+			if asked[word] {
+				held[word] = true
+			}
+		}
+		score := float64(len(held)) / float64(max(1, len(asked)))
+		for _, p := range passages(part) {
+			if v := Embed(p); v != nil && meaning != nil {
+				score += float64(meaning.Close(v)) / float64(len(passages(part)))
+			}
+		}
+		if score > best+1e-9 {
+			best, from = score, at
+		}
+		if at+n >= len(runes) {
+			break
+		}
+	}
+	for back := 0; from > 0 && back < 80 && runes[from-1] != '\n' && runes[from-1] != ' '; back++ { // at a word
+		from--
+	}
+	out := clip(string(runes[from:]), n)
+	if from > 0 {
+		out = "…" + out
+	}
+	return out
 }
 
 // FormatSearch is an answer to loopy_recall: the facts, those that ended
@@ -190,7 +235,7 @@ func (m *Memory) FormatSearch(queries []string, since, until time.Time, limit in
 	if len(hits) > 0 {
 		b.WriteString("Exchanges, in order of time:\n")
 		for _, hit := range hits {
-			b.WriteString(hit.Record.Format(700) + "\n")
+			b.WriteString(hit.Record.Format(strings.Join(queries, " "), 700) + "\n")
 		}
 	}
 	if b.Len() == 0 {

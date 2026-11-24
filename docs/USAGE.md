@@ -8,6 +8,7 @@ How to set up 1loop and what it can do. To install it first, see
 - [Tools and the side panel](#tools-and-the-side-panel)
 - [Prompts, models and context](#prompts-models-and-context)
 - [Skills, plugins and MCP servers](#skills-plugins-and-mcp-servers)
+- [Loopy](#loopy)
 - [SSH machines](#ssh-machines)
 - [The phone app](#the-phone-app)
 - [Shortcuts](#shortcuts)
@@ -113,6 +114,34 @@ not get them.
 
 Without a `GITHUB_TOKEN` (or `GH_TOKEN`), GitHub allows about ten searches a
 minute.
+
+## Loopy
+
+Loopy is a personal agent apart from your projects: one conversation for mail,
+errands on the web, files and figures, reminders and the coding tasks it hands
+to an agent in a project. The logo at the top of the sidebar (of the menu on
+the phone) switches between 1loop and Loopy.
+
+- **Where it lives.** On this computer, on a [headless server](SERVER.md) or on
+  the phone (Settings → Loopy → Where Loopy lives). On a server its routines
+  go on when the computer is off. Each place has a Loopy of its own.
+- **It asks first.** Sending, buying, deleting or publishing always waits for
+  your yes on a card. Mail drafts are yours to edit before they go. Some
+  presses can be allowed for good, site by site.
+- **It remembers.** What you tell it and how you like things, from your own
+  words. **What I remember** shows every fact with the words it comes from:
+  edit, pin or forget any of them.
+- **Its own folder and computer.** Notes, files you give it and the results of
+  its scripts stay in its folder. The scripts run in a WebAssembly sandbox
+  that sees this folder and nothing else.
+- **Signing in.** You type a password in 1loop's own form, or it comes from
+  Loopy's encrypted vault: it goes straight into the page and Loopy never
+  sees it. For a CAPTCHA or a payment, **Take over** its browser, then press
+  **I'm done**.
+- **Routines.** On a schedule, or when a GitHub issue, a mail or a webhook
+  comes. A morning summary says what needs you.
+
+How it works, and how its memory was measured: [LOOPY.md](LOOPY.md).
 
 ## SSH machines
 

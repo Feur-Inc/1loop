@@ -14,6 +14,7 @@ import (
 	"fyne.io/fyne/v2/layout"
 
 	"1loop/internal/agent"
+	"1loop/internal/platform"
 	registry "1loop/internal/settings"
 )
 
@@ -24,6 +25,7 @@ const groupChatLimit = 5
 // or a server's.
 type sideChat struct {
 	id       string
+	server   string // the server it is on, by its address; "" on this computer or an SSH machine
 	parent   string // a subchat's parent, "" for another chat
 	ended    string // how a subchat's last turn ended: done, stopped or failed
 	seen     bool   // the user opened it since that end: its dot is gone, as an unread marker
@@ -40,6 +42,17 @@ type sideChat struct {
 	text     func() []string // its messages, for search; nil when they are not at hand
 	subchats []sideChat      // listed under it, whatever their folder, each with its own (nestSubchats)
 	group    string          // the key of the group it is listed in (groupKey), once listed
+}
+
+// rowKey is the key of the chat's row (addSide). A server's chat ID may
+// also be one of this computer's (a project copied there keeps its chats'
+// IDs) or another server's: a row sharing its key was listed once, at the
+// second place, the first chat gone (#600).
+func (chat sideChat) rowKey() string {
+	if chat.server != "" {
+		return "chat:" + serverTarget(chat.server).key() + "|" + chat.id
+	}
+	return "chat:" + chat.id
 }
 
 // nestSubchats puts each subchat under its parent, wherever its folder is
@@ -300,7 +313,9 @@ func (ui *desktopUI) reuseRow(key string, fresh *tapRow, wrap func(fyne.CanvasOb
 }
 
 func (ui *desktopUI) addSide(key string, object fyne.CanvasObject) {
-	ui.sideGlide.key(object, key)
+	if !ui.sideGlide.key(object, key) {
+		platform.Devf("ui", "sidebar: %s is listed twice, one of its rows is not drawn (#600)", key)
+	}
 	ui.projectList.Add(object)
 }
 
@@ -369,7 +384,7 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 		if nested, _ := nestedCount(chat.subchats); nested > 0 {
 			row.mark, row.markText = iconBranch, strconv.Itoa(nested)
 		}
-		ui.addSide("chat:"+chat.id, ui.reuseRow("chat:"+chat.id, row, func(object fyne.CanvasObject) fyne.CanvasObject {
+		ui.addSide(chat.rowKey(), ui.reuseRow(chat.rowKey(), row, func(object fyne.CanvasObject) fyne.CanvasObject {
 			return padded(0, 0, 28, 0, object)
 		}, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, chat.menu)
@@ -477,7 +492,7 @@ func (ui *desktopUI) addSubchatRows(subs []sideChat, depth int, trunk treeTrunk)
 		subRow.size = 13
 		subRow.badge = subchatBadge(sub.subchatState())
 		guide := newSubchatGuide(depth, own)
-		ui.addSide("chat:"+sub.id, padded(0, 0, 28, 0, container.NewBorder(nil, nil, guide, nil, ui.withMore(subRow, func(anchor fyne.CanvasObject) *sheet {
+		ui.addSide(sub.rowKey(), padded(0, 0, 28, 0, container.NewBorder(nil, nil, guide, nil, ui.withMore(subRow, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, sub.menu)
 		}))))
 		below := own // under it, the line runs on only if more subchats follow

@@ -380,7 +380,7 @@ func (ui *desktopUI) serverSideChats(target projectTarget, chats []remoteapi.Cha
 	for _, chat := range chats {
 		chat := chat
 		side = append(side, sideChat{
-			id: chat.ID, parent: chat.Parent, ended: chat.Ended,
+			id: chat.ID, server: target.id, parent: chat.Parent, ended: chat.Ended,
 			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
 			status: chat.Status, blocked: chat.Blocked,
 			selected: current != nil && current.server != nil && current.server.client.address.URL == target.id && current.serverID == chat.ID,

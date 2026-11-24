@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/test"
 
@@ -88,4 +89,33 @@ func TestSidebarKeepsNoFolderChatsOnAMachine(t *testing.T) {
 	ui.cfg.MachineID = "m1"
 	ui.renderChats()
 	wantListed(t, ui, noFolderLabel, "Quick question")
+}
+
+// A project copied to a server keeps its chats' IDs (projectsync): the
+// same ID is then this computer's chat and the server's. Their rows shared
+// one key, so from the second rendering on they shared one row, drawn at
+// the second place only: the first chat was gone, an empty gap where it
+// was (#600).
+func TestSidebarSameChatIDOnAServer(t *testing.T) {
+	ui := sidebarUI(t)
+	ui.server = &remoteDesktop{parent: ui, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: "https://box.lan:47101"}}, name: "box",
+		projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "here", Title: "Fix the parser, on the server", Workspace: "/srv/api"}}, convs: map[string]*conversation{}}
+	for range 2 { // the rows are reused from the second rendering on
+		ui.renderChats()
+	}
+	wantListed(t, ui, "Fix the parser", "Fix the parser, on the server")
+	seen := map[fyne.CanvasObject]bool{}
+	for _, object := range ui.projectList.Objects {
+		if seen[object] {
+			t.Errorf("%q is listed twice", firstRow(object).text)
+		}
+		seen[object] = true
+	}
+	keys := map[string]bool{}
+	for _, key := range ui.sideGlide.keys {
+		if keys[key] {
+			t.Errorf("two rows have the key %q: the glide puts them at one place", key)
+		}
+		keys[key] = true
+	}
 }

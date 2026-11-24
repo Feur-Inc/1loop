@@ -246,6 +246,9 @@ func (chat *conversation) disposePanel() {
 func (panel *toolPanel) showTodo(chat *conversation) {
 	panel = panel.of(chat)
 	if chat == panel.owner {
+		if panel.ui.split != nil && panel.target == 0 && panelCovers(panel.ui.split.Size().Width) {
+			return // it would cover the chat the user reads: they open it
+		}
 		panel.openTodo()
 		return
 	}

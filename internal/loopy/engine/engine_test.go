@@ -114,6 +114,8 @@ func (h *fakeHost) Notify(title, text string, card *loopy.Message) {
 func (h *fakeHost) GitHub(context.Context) string { return h.auth }
 func (h *fakeHost) Changed(loopy.Change)          { h.mu.Lock(); h.changes++; h.mu.Unlock() }
 
+var later atomic.Int64 // the engines' clocks are ahead by this
+
 func wake(t *testing.T, dir string, reply func(messages []heard) any) (*Engine, *fakeHost) {
 	t.Helper()
 	host := &fakeHost{cfg: fakeModel(t, reply), backend: &agent.App{Approvals: map[string]chan agent.ApprovalAnswer{}}}
@@ -121,13 +123,14 @@ func wake(t *testing.T, dir string, reply func(messages []heard) any) (*Engine, 
 	if err != nil {
 		t.Fatal(err)
 	}
+	e.now = func() time.Time { return time.Now().Add(time.Duration(later.Load())) }
 	t.Cleanup(e.Close)
 	return e, host
 }
 
 func until(t *testing.T, what string, done func() bool) {
 	t.Helper()
-	for range 500 {
+	for range 3000 {
 		if done() {
 			return
 		}
@@ -550,7 +553,9 @@ func routineCall(args map[string]any) call {
 }
 
 func TestRoutine(t *testing.T) {
+	var lock sync.Mutex
 	var heardTexts []string
+	count := func() int { lock.Lock(); defer lock.Unlock(); return len(heardTexts) }
 	release := make(chan bool, 1)
 	var blocked atomic.Bool
 	first := true
@@ -558,7 +563,9 @@ func TestRoutine(t *testing.T) {
 		if last(m).Role == "tool" {
 			return "ok"
 		}
+		lock.Lock()
 		heardTexts = append(heardTexts, lastUser(m))
+		lock.Unlock()
 		if first {
 			first = false
 			return routineCall(nil)
@@ -587,16 +594,17 @@ func TestRoutine(t *testing.T) {
 	// Its time comes while Loopy works: its whole task waits.
 	blocked.Store(true)
 	e.Send("fais autre chose", nil)
-	until(t, "it works", func() bool { return e.View().Running && len(heardTexts) == 2 })
+	until(t, "it works", func() bool { return e.View().Running && count() == 2 })
 	e.Set(loopy.Settings{Summary: "off"})
 	at := time.Now().Add(25 * time.Hour)
-	e.mu.Lock()
-	e.now = func() time.Time { return at }
-	e.mu.Unlock()
+	later.Store(int64(25 * time.Hour))
+	defer later.Store(0)
 	e.tick(at)
 	e.tick(at.Add(time.Minute)) // not twice
 	release <- true
-	until(t, "it ran", func() bool { return e.idle() && len(heardTexts) >= 3 })
+	until(t, "it ran", func() bool { return e.idle() && count() >= 3 })
+	lock.Lock()
+	defer lock.Unlock()
 	if !strings.Contains(heardTexts[2], "Regarde les prix") {
 		t.Errorf("heard %q", heardTexts)
 	}

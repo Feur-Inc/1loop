@@ -427,16 +427,18 @@ func letterBytes(from string, fields []loopy.Field, body string, at time.Time) (
 	if reply := fieldOf(fields, "In-Reply-To"); reply != "" {
 		header.Set("In-Reply-To", strings.Join(strings.Fields(reply), " "))
 	}
-	if err := header.GenerateMessageID(); err != nil {
-		return nil, nil, err
-	}
+	_, domain, _ := strings.Cut(from, "@") // never this computer's name
+	header.SetMessageID(loopy.NewID() + loopy.NewID() + "@" + domain)
 	header.SetContentType("text/plain", map[string]string{"charset": "utf-8"})
 	writer, err := gomail.CreateSingleInlineWriter(&b, header)
 	if err != nil {
 		return nil, nil, err
 	}
 	io.WriteString(writer, strings.ReplaceAll(strings.ReplaceAll(body, "\r\n", "\n"), "\n", "\r\n"))
-	return b.Bytes(), append(to, cc...), writer.Close()
+	if err := writer.Close(); err != nil {
+		return nil, nil, err
+	}
+	return b.Bytes(), append(to, cc...), nil
 }
 
 func (e *Engine) sendMail(ctx context.Context, account loopy.Account, fields []loopy.Field, body string) error {

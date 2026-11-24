@@ -607,6 +607,9 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		meta.Todo = append(meta.Todo, item)
 	}
 	meta.Used = agent.HistoryEstimate(chat.History) + agent.ContextOverhead(chat.Config)
+	if chat.Config.Provider == "claudecode" && chat.ContextUsage != nil {
+		meta.Used = chat.ContextUsage.Used // Claude Code keeps its own history
+	}
 	if chat.run != nil {
 		meta.Label, meta.Mark, meta.Approval, meta.Question = chat.run.label, chat.run.mark, chat.run.approval, chat.run.question
 		meta.Tool = chat.run.tool
@@ -1082,6 +1085,9 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: value.(string)})
 	case "usage":
 		run.used = value.(int)
+		if chat.Config.Provider == "claudecode" { // its own count comes when the turn ends
+			chat.ContextUsage = chat.ContextUsage.At(run.used)
+		}
 	case "context_usage":
 		usage := value.(agent.ContextUsage)
 		chat.ContextUsage = &usage

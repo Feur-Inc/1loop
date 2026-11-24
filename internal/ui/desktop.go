@@ -176,7 +176,7 @@ type desktopUI struct {
 	queueTitle                      *fitLabel
 	model                           *picker
 	approvalControl                 *tapRow
-	contextRing                     *contextRing
+	contextUsed, contextWindow      int // the open conversation's use of its model's window
 	send                            *tapRow
 	steer                           *tapRow
 	stop                            *tapRow
@@ -437,7 +437,7 @@ func runDesktop(backend *agent.App, root, asked string) {
 	ui.renderChats()
 	benchMark("sidebar rendered")
 	ui.refreshModels()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 	// What the first frame does not show starts right after it (#475): the
 	// phone remote (its certificate), the linked servers, the update check
 	// and the other windows of the last run.
@@ -972,7 +972,6 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		ui.approvalMenu()
 	})
 	ui.updateApprovalControl()
-	ui.contextRing = newContextRing(ui.tips)
 	ui.attach = newIconButton(iconPlus, overlay(0x0d), color.NRGBA{}, nil)
 	ui.attach.iconPx, ui.attach.padPx = 18, 6
 	ui.attach.onTap = func() {
@@ -998,7 +997,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	// last: Steer and Stop come and go in the free space between the two,
 	// so nothing else moves when a task starts or ends.
 	ui.model.row.truncate = true // a long model name is cut short rather than pushed out of the card
-	settings := container.New(composerSettingsLayout{model: ui.model.row}, container.NewCenter(ui.approvalControl), ui.model.row, ui.contextRing)
+	settings := container.New(composerSettingsLayout{model: ui.model.row}, container.NewCenter(ui.approvalControl), ui.model.row)
 	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), ui.steer, ui.stop, ui.send)
 	ui.controls = container.New(&composerControlsLayout{transient: []fyne.CanvasObject{ui.steer, ui.stop, ui.send}}, settings, actions)
 	ui.model.relayout = ui.controls.Refresh
@@ -1143,7 +1142,7 @@ func (ui *desktopUI) startNew() {
 	ui.mark.intro()
 	ui.updateHeader()
 	ui.renderChats()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 	ui.window.Canvas().Focus(ui.prompt)
 }
 
@@ -1367,7 +1366,7 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 		return
 	}
 	ui.syncRun()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 	// The closed ring stays briefly under the answer, then goes away.
 	ui.showActivityLine(true)
 	ui.workMark.setState(ended)
@@ -2050,7 +2049,7 @@ func (ui *desktopUI) refreshModels() {
 			}
 			ui.model.SetSelected(selected)
 			ui.send.Enable()
-			ui.refreshContextRing()
+			ui.refreshContextUsage()
 		})
 	}()
 }

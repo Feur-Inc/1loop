@@ -374,7 +374,7 @@ func (panel *toolPanel) refreshTodoStatus(rebuild ...bool) {
 	if len(rebuild) > 0 && !rebuild[0] && tab.todoContextText != "" {
 		return
 	}
-	text := agent.TaskContextText(cfg, panel.ui.contextRing.used, panel.ui.contextRing.window, panel.ui.classicCompaction, state)
+	text := agent.TaskContextText(cfg, panel.ui.contextUsed, panel.ui.contextWindow, panel.ui.classicCompaction, state)
 	usage := panel.ui.contextUsage(panel.owner)
 	if tab.todoUsage == nil {
 		tab.todoUsage = &contextUsageState{}

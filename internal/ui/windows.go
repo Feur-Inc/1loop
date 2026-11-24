@@ -376,5 +376,5 @@ func (ui *desktopUI) adoptModels(from *desktopUI) {
 	}
 	ui.model.SetSelected(selected)
 	ui.send.Enable()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 }

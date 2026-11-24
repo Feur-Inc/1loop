@@ -301,8 +301,8 @@ func (layoutSpec *haloLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
 	o[len(o)-1].Resize(size)
 }
 
-// composerSettingsLayout lines up the approval mode, the model and the
-// context ring. Its minimum is their natural width, which decides whether
+// composerSettingsLayout lines up the approval mode and the model. Its
+// minimum is their natural width, which decides whether
 // the controls take two lines; given less, the model's name is cut short so
 // that nothing leaves the card.
 type composerSettingsLayout struct{ model *tapRow }
@@ -316,33 +316,16 @@ func (layoutSpec composerSettingsLayout) natural() float32 {
 }
 
 func (layoutSpec composerSettingsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
-	width := o[0].MinSize().Width + layoutSpec.natural() + 2*composerSettingsGap
-	height := fyne.Max(o[0].MinSize().Height, o[1].MinSize().Height)
-	if o[2].Visible() {
-		width += o[2].MinSize().Width
-		height = fyne.Max(height, o[2].MinSize().Height)
-	}
-	return fyne.NewSize(width, height)
+	width := o[0].MinSize().Width + layoutSpec.natural() + composerSettingsGap
+	return fyne.NewSize(width, fyne.Max(o[0].MinSize().Height, o[1].MinSize().Height))
 }
 
 func (layoutSpec composerSettingsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
-	approval, ring := o[0].MinSize(), fyne.Size{}
-	if o[2].Visible() {
-		ring = o[2].MinSize()
-	}
-	gaps := float32(2 * composerSettingsGap)
-	natural := layoutSpec.natural()
-	// Room is given up in this order: the model's name is cut short, then the
-	// context ring goes (its figure is in the side panel too).
-	model := fyne.Min(natural, size.Width-approval.Width-ring.Width-gaps)
-	if model < 70 && ring.Width > 0 {
-		ring = fyne.Size{}
-		model = fyne.Min(natural, size.Width-approval.Width-gaps)
-	}
-	model = fyne.Max(36, model)
-	o[2].Move(fyne.NewPos(-10000, 0)) // out of sight unless placed below
+	approval := o[0].MinSize()
+	// The model's name is cut short where there is no room for all of it.
+	model := fyne.Max(36, fyne.Min(layoutSpec.natural(), size.Width-approval.Width-composerSettingsGap))
 	x := float32(0)
-	for i, s := range []fyne.Size{approval, fyne.NewSize(model, o[1].MinSize().Height), ring} {
+	for i, s := range []fyne.Size{approval, fyne.NewSize(model, o[1].MinSize().Height)} {
 		if s.Width == 0 {
 			continue
 		}
@@ -1032,101 +1015,27 @@ func (ui *desktopUI) finishEdit(commit bool) {
 }
 
 // ---------------------------------------------------------------------------
-// contextRing shows how much of the model's window the conversation fills:
-// amber for what is used, white for what is left. Hovering gives the figures.
+// Context use: what the open conversation fills of the model's window, shown
+// under the task list (context_usage.go) and in /status.
 
-type contextRing struct {
-	widget.BaseWidget
-	used, window int
-	plan         agent.PlanUsage // Claude Code: how much of the subscription's windows is used
-	tips         *tipLayer
-	track, fill  *canvas.Arc
-}
-
-func newContextRing(tips *tipLayer) *contextRing {
-	ring := &contextRing{tips: tips}
-	ring.track = canvas.NewArc(0, 360, 0.76, colText)
-	ring.fill = canvas.NewArc(0, 0, 0.76, colAmber)
-	ring.ExtendBaseWidget(ring)
-	return ring
-}
-
-func (ring *contextRing) set(used, window int) {
-	ring.used, ring.window = used, window
-	frac := float32(0)
-	if window > 0 {
-		frac = fyne.Min(1, float32(used)/float32(window))
+func (ui *desktopUI) describeContext() string {
+	if ui.contextWindow <= 0 {
+		return "Available once a model is selected"
 	}
-	ring.fill.EndAngle = 360 * frac
-	ring.fill.Refresh()
-	if ring.tips.anchor == ring {
-		ring.tips.place(ring, ring.describe())
-	}
+	return fmt.Sprintf("%d%% used · %s of %s tokens", min(100, ui.contextUsed*100/ui.contextWindow), agent.Tokens(ui.contextUsed), agent.Tokens(ui.contextWindow))
 }
 
-func (ring *contextRing) describe() string {
-	if ring.window <= 0 {
-		return "Context usage\nAvailable once a model is selected"
-	}
-	percent := ring.used * 100 / ring.window
-	if percent > 100 {
-		percent = 100
-	}
-	text := fmt.Sprintf("%d%% of the context used\n%s of %s tokens", percent, agent.Tokens(ring.used), agent.Tokens(ring.window))
-	if ring.plan != (agent.PlanUsage{}) {
-		text += fmt.Sprintf("\nClaude plan: %.0f%% of the 5 h window · %.0f%% of the week", ring.plan.FiveHour*100, ring.plan.Week*100)
-	}
-	return text
-}
-
-func (ring *contextRing) MouseIn(*desktop.MouseEvent)    { ring.tips.show(ring, ring.describe()) }
-func (ring *contextRing) MouseMoved(*desktop.MouseEvent) {}
-func (ring *contextRing) MouseOut()                      { ring.tips.hide() }
-
-func (ring *contextRing) CreateRenderer() fyne.WidgetRenderer { return &contextRingRenderer{ring} }
-
-type contextRingRenderer struct{ ring *contextRing }
-
-const contextRingSize = 16
-
-func (renderer *contextRingRenderer) MinSize() fyne.Size {
-	return fyne.NewSquareSize(contextRingSize + 12)
-}
-
-func (renderer *contextRingRenderer) Layout(size fyne.Size) {
-	at := fyne.NewPos((size.Width-contextRingSize)/2, (size.Height-contextRingSize)/2)
-	for _, arc := range []*canvas.Arc{renderer.ring.track, renderer.ring.fill} {
-		arc.Move(at)
-		arc.Resize(fyne.NewSquareSize(contextRingSize))
-	}
-}
-
-func (renderer *contextRingRenderer) Refresh() {
-	renderer.ring.track.Refresh()
-	renderer.ring.fill.Refresh()
-}
-
-func (renderer *contextRingRenderer) Objects() []fyne.CanvasObject {
-	return []fyne.CanvasObject{renderer.ring.track, renderer.ring.fill}
-}
-
-func (renderer *contextRingRenderer) Destroy() {}
-
-// setContextUsage updates the ring for the open conversation.
+// setContextUsage notes what the open conversation uses.
 func (ui *desktopUI) setContextUsage(used, window int) {
-	ui.contextRing.set(used, window)
+	ui.contextUsed, ui.contextWindow = used, window
 	if ui.panel != nil {
 		ui.panel.refreshTodoStatus()
 	}
 }
 
-// refreshContextRing recomputes the usage of the open conversation from its
-// history, so the ring is right after opening a chat or when nothing runs.
-func (ui *desktopUI) refreshContextRing() {
-	ui.contextRing.plan = agent.PlanUsage{}
-	if ui.cfg.Provider == "claudecode" {
-		ui.contextRing.plan = ui.plan
-	}
+// refreshContextUsage recomputes the usage of the open conversation from its
+// history, so it is right after opening a chat or when nothing runs.
+func (ui *desktopUI) refreshContextUsage() {
 	if ui.current == nil {
 		ui.setContextUsage(0, agent.ModelContextWindow(ui.resolveModel(ui.cfg)))
 		return
@@ -1136,6 +1045,9 @@ func (ui *desktopUI) refreshContextRing() {
 		if message.Usage > usage {
 			usage = message.Usage
 		}
+	}
+	if ui.current.Config.Provider == "claudecode" && ui.current.ContextUsage != nil {
+		usage = ui.current.ContextUsage.Used // Claude Code keeps its own history
 	}
 	ui.setContextUsage(usage, agent.ModelContextWindow(ui.resolveModel(ui.current.Config)))
 }

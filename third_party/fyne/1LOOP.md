@@ -75,3 +75,7 @@ shows every change.
   its position at a fractional scale: at 1.25 the logo's ring (26 pixels)
   was drawn 26×25, stretched and resampled out of round, and icons and text
   were resampled by a pixel. `round_test.go` checks it.
+- **Colour emoji** (`internal/painter/font.go`, #352): an emoji the text font
+  has a plain glyph for (a few faces and the heart, in Inter) is drawn with
+  the colour emoji font; and on Linux that font is also looked for by its
+  family, for the query by language could answer with a text font.

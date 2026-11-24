@@ -137,3 +137,28 @@ func TestSidebarServerChatWithNoFolder(t *testing.T) {
 		t.Errorf("its folder is listed as a project: %q", sidebarTexts(ui))
 	}
 }
+
+// A pane of the window works on a server while the other pane, on this
+// computer, has the focus: the sidebar shows the focused pane, and it
+// listed the server's chats as the link last read them, which stops
+// reading while a pane works on that server. A chat made on the server
+// since was missing (#600).
+func TestSidebarServerChatsFromTheOtherPane(t *testing.T) {
+	ui := sidebarUI(t)
+	const address = "https://box.lan:47101"
+	old := remoteapi.Chat{ID: "s1", Title: "Server chat", Workspace: "/srv/api"}
+	ui.links = []*serverLink{{address: serverAddress{URL: address}, answered: true,
+		listing: serverListing{name: "box", projects: []string{"/srv/api"}, chats: []remoteapi.Chat{old}}}}
+	ui.server = &remoteDesktop{parent: ui, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: address}}, name: "box",
+		projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "s2", Title: "Made since", Workspace: "/srv/api"}, old}, convs: map[string]*conversation{}}
+	right := &desktopUI{desktopApp: ui.desktopApp}
+	ui.tree = &splitNode{pane: ui}
+	ui.tree.splitWith(right, false, 0.5)
+	right.shareWindow(ui)
+	ui.focus = right
+	if right.serverInUse(address) != ui.server {
+		t.Error("the server is not seen in use: its link goes on reading it")
+	}
+	ui.renderChats()
+	wantListed(t, ui, "api", "Server chat", "Made since")
+}

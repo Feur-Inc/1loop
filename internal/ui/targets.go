@@ -248,8 +248,8 @@ func (ui *desktopUI) serverGroups() []targetGroup {
 	return groups
 }
 
-// serverGroup is a server's: the window's own connection to it while it
-// works on it, else what its link last read. Until either has answered,
+// serverGroup is a server's: the own connection of a pane that works on
+// it (serverInUse), else what its link last read. Until either has answered,
 // its projects are those remembered from the last time it did, and its
 // chats are not at hand.
 func (ui *desktopUI) serverGroup(address string) targetGroup {
@@ -259,8 +259,8 @@ func (ui *desktopUI) serverGroup(address string) targetGroup {
 	if remote != nil && remote.client.address.URL == address {
 		active = true
 	}
-	if active && remote.live.answered {
-		listing = &serverListing{name: remote.name, projects: remote.projects, chats: remote.chats, worktrees: remote.worktrees}
+	if live := ui.serverInUse(address); live != nil && live.live.answered { // this pane's, or another's (#600)
+		listing = &serverListing{name: live.name, projects: live.projects, chats: live.chats, worktrees: live.worktrees}
 	} else if link := ui.linkTo(address); link != nil && link.answered { // until the window's own connection answers
 		listing = &link.listing
 	}
@@ -274,6 +274,22 @@ func (ui *desktopUI) serverGroup(address string) targetGroup {
 		}
 	}
 	return group
+}
+
+// serverInUse is the connection of a pane that works on the server at
+// address, this one's first, nil when no pane of any window does. While
+// one does, the server's link stops reading it: the sidebar of every
+// window and pane lists the server from that connection, which keeps up.
+func (ui *desktopUI) serverInUse(address string) *remoteDesktop {
+	if remote := ui.server; remote != nil && remote.client.address.URL == address {
+		return remote
+	}
+	for _, view := range ui.allPanes() {
+		if remote := view.server; remote != nil && remote.client.address.URL == address {
+			return remote
+		}
+	}
+	return nil
 }
 
 // serverListing is what a server lists of itself for the sidebar.

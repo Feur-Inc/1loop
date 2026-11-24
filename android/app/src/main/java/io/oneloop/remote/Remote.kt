@@ -1238,11 +1238,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         AgentStatus.update(context, m)
         // On this phone, LocalRuntimeService notifies: it runs even without the app.
         val notify = !foreground && server?.localPhone != true
-        if (notify && wasRunning == true && !m.running) notifier.show(m.chat, m.title, "Done.")
+        if (notify && wasRunning == true && !m.running) notifier.showChat(m.chat, m.title, "Done.")
         if (!foreground && wasRunning == true && !m.running) loadNextStep(m.chat)
         if (notify) {
-            if (m.approval != null && approvals[m.chat]?.id != m.approval.id) notifier.show(m.chat, m.title, "Waiting for your approval: " + m.approval.title)
-            if (m.question != null && questions[m.chat]?.id != m.question.id) notifier.show(m.chat, m.title, m.question.questions.firstOrNull()?.text ?: "1loop has a question")
+            if (m.approval != null && approvals[m.chat]?.id != m.approval.id) notifier.showChat(m.chat, m.title, "Waiting for your approval: " + m.approval.title)
+            if (m.question != null && questions[m.chat]?.id != m.question.id) notifier.showChat(m.chat, m.title, m.question.questions.firstOrNull()?.text ?: "1loop has a question")
         }
         if (m.approval != null) approvals[m.chat] = m.approval else approvals.remove(m.chat)
         val previous = if (m.question != null) questions.put(m.chat, m.question) else questions.remove(m.chat)

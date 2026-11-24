@@ -11,6 +11,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
+import androidx.core.content.edit
 
 /**
  * Notifications while the app is in the background: a chat finished, or
@@ -25,6 +26,11 @@ class Notifier(private val context: Context) {
             description = "A new version of 1loop is out"
         }
         context.getSystemService(NotificationManager::class.java).createNotificationChannels(listOf(channel, updates))
+    }
+
+    /** A chat finished or waits for the user: not while Settings turns these off (#439). */
+    fun showChat(chat: String, title: String, text: String) {
+        if (chatsOn(context)) show(chat, title, text)
     }
 
     fun show(chat: String, title: String, text: String) {
@@ -64,6 +70,16 @@ class Notifier(private val context: Context) {
     }
 
     companion object {
+        private const val PREFERENCES = "1loop-notifications"
+        private const val OFF = "off"
+
+        /** The switch in Settings, General: Notifications. Read each time: the local
+         * agent's service outlives the app's screen. */
+        fun chatsOn(context: Context) = !context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).getBoolean(OFF, false)
+
+        fun setChats(context: Context, on: Boolean) =
+            context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit { putBoolean(OFF, !on) }
+
         const val CHANNEL = "chats"
         const val UPDATES = "updates"
         const val SHOW_UPDATE = "io.oneloop.remote.SHOW_UPDATE"

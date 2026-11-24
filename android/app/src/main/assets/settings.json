@@ -252,7 +252,7 @@
       "key": "general.notifications",
       "section": "general",
       "title": "Notifications",
-      "description": "A system notification when a chat finishes or waits for you while 1loop is in the background.",
+      "description": "A notification when a chat finishes or waits for you while 1loop is in the background.",
       "keywords": [
         "notification",
         "notify",
@@ -266,7 +266,7 @@
         "background"
       ],
       "kind": "toggle",
-      "where": "desktop"
+      "where": "both"
     },
     {
       "key": "general.discord_presence",

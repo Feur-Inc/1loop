@@ -291,6 +291,17 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
         "general.theme" -> ThemeSection()
         "general.accent" -> AccentSection()
         "phone.status" -> RunStatusSection()
+        "general.notifications" -> {
+            val context = LocalContext.current
+            var on by remember { mutableStateOf(Notifier.chatsOn(context)) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Notifications", style = Type.title)
+                    Text("A notification when a chat finishes or waits for you while 1loop is in the background. Never while it is on screen. New versions, devices asking to pair and the status of a running model are not concerned.", style = Type.small)
+                }
+                Toggle(on, enabled = true) { on = it; Notifier.setChats(context, it) }
+            }
+        }
         "general.animations" -> {
             val context = LocalContext.current
             Row(verticalAlignment = Alignment.CenterVertically) {

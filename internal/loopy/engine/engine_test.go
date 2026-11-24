@@ -627,10 +627,12 @@ func TestWebhookAndGitHub(t *testing.T) {
 		heardTexts = append(heardTexts, lastUser(m))
 		return "vu"
 	})
+	e.store.Lock()
 	e.store.Routines = []loopy.Routine{
 		{ID: "hook", Title: "Alerte", Task: "Dis-le-moi", Trigger: "webhook", Token: "tok", On: true},
 		{ID: "gh", Title: "Issues", Task: "Résume", Trigger: "github", Filter: "acme/app issue"},
 	}
+	e.store.Unlock()
 	if e.Hook("wrong", nil) == nil || e.Hook("", nil) == nil {
 		t.Error("a wrong token was taken")
 	}

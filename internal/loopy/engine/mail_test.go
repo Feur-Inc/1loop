@@ -102,7 +102,9 @@ func TestMailAccount(t *testing.T) {
 		t.Fatal(err)
 	}
 	account.Password = ""
+	e.store.Lock()
 	e.store.Accounts = []loopy.Account{account}
+	e.store.Unlock()
 	listed, err := e.mailTool(ctx, toolArgs{Action: "list"})
 	if err != nil || !strings.Contains(listed, "A little message, just for you") || !strings.HasPrefix(listed, "⟦mail") {
 		t.Fatalf("%q %v", listed, err)
@@ -130,7 +132,9 @@ func TestMailAccount(t *testing.T) {
 		t.Errorf("%+v", shown.Card)
 	}
 	// A routine on mail: the one there is old, nothing runs.
+	e.store.Lock()
 	e.store.Routines = []loopy.Routine{{ID: "m", Title: "Mails", Task: "Lis", Trigger: "mail", On: true}}
+	e.store.Unlock()
 	until(t, "idle", e.idle)
 	before := len(e.View().Messages)
 	e.poll(ctx)

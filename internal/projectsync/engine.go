@@ -43,6 +43,11 @@ type Local struct {
 	Chats    func(workspace string) []Chat                                    // its conversations
 	AddChat  func(workspace string, chat Chat, conflict bool) (string, error) // stores one; returns its title
 	Saved    func() error                                                     // after an import
+
+	// Moving a chat (move.go).
+	PauseChat  func(ctx context.Context, chat string) (Paused, error)
+	ResumeChat func(chat, from, problem string, paused Paused) error
+	MovedChat  func(chat, to string) error
 }
 
 func (local *Local) ID() string {
@@ -315,6 +320,38 @@ func (local *Local) Routes() (manifest, export, importing http.HandlerFunc) {
 		core.WriteJSON(w, 200, map[string]any{"result": result, "workspace": workspace})
 	}
 	return manifest, export, importing
+}
+
+// MoveRoutes are the routes a peer moves a chat with.
+func (local *Local) MoveRoutes() (pause, resume, moved http.HandlerFunc) {
+	answer := func(w http.ResponseWriter, value any, err error) {
+		if err != nil {
+			core.Fail(w, 409, err.Error())
+			return
+		}
+		core.WriteJSON(w, 200, value)
+	}
+	pause = func(w http.ResponseWriter, r *http.Request) {
+		paused, err := local.PauseChat(r.Context(), r.PathValue("id"))
+		answer(w, paused, err)
+	}
+	resume = func(w http.ResponseWriter, r *http.Request) {
+		var args ResumeRequest
+		if core.ReadJSON(r, &args) != nil {
+			core.Fail(w, 400, "Invalid request")
+			return
+		}
+		answer(w, map[string]bool{"ok": true}, local.ResumeChat(r.PathValue("id"), args.From, args.Problem, args.Paused))
+	}
+	moved = func(w http.ResponseWriter, r *http.Request) {
+		var args struct{ To string }
+		if core.ReadJSON(r, &args) != nil {
+			core.Fail(w, 400, "Invalid request")
+			return
+		}
+		answer(w, map[string]bool{"ok": true}, local.MovedChat(r.PathValue("id"), args.To))
+	}
+	return pause, resume, moved
 }
 
 // Report is a copy, done or only planned.

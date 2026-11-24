@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -52,6 +53,7 @@ type serverChat struct {
 	ReportTo     []string `json:"reportTo,omitempty"`
 	hops         int      // messages between chats since the user last wrote (agent.TurnHops)
 	run          *serverRun
+	moving       bool // paused to move to another device: it starts nothing (chat_move.go)
 	tabs         []*serverTab
 	session      *browser.Session
 	queue, steer []agent.Message
@@ -65,6 +67,9 @@ type serverRun struct {
 	states       map[int]string
 	index        int
 	used         int
+	pause        *agent.PauseSignal
+	ended        chan struct{} // closed once the run is over
+	paused       bool          // it ended between two steps, to move
 	label, mark  string
 	tool         string // executing now, from tool_exec to its tool_result
 	approval     *remoteapi.Approval
@@ -887,18 +892,24 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 }
 
 func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message, id string) {
+	if chat.moving { // it goes on with the chat, wherever that is
+		chat.queue = append(chat.queue, m)
+		return
+	}
 	chat.History = append(chat.History, m)
 	chat.hops = agent.TurnHops(chat.hops, false, m)
 	// The user's words, another chat's under its name, or a note for
 	// 1loop's own (a task's end, a report).
 	index := server.addLocked(chat, agent.MessageItem(id, m))
 	ctx, cancel := context.WithCancel(server.ctx)
-	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait"}
+	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait",
+		pause: agent.NewPauseSignal(), ended: make(chan struct{})}
 	chat.run = run
 	if parent := server.parentLocked(chat); parent != nil { // its state in the parent's Tasks
 		server.broadcastLocked("meta", server.metaLocked(parent))
 	}
 	cfg := server.runConfigLocked(chat, run.capabilities)
+	cfg.Pause = run.pause
 	history := append([]agent.Message{}, chat.History...)
 	server.changedLocked(chat, index)
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
@@ -957,8 +968,12 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			return
 		}
 		chat.run = nil
+		defer close(run.ended)
 		ended := agent.SubchatDone
-		if err != nil {
+		paused := errors.Is(err, agent.ErrPaused)
+		if paused {
+			run.paused = true
+		} else if err != nil {
 			server.addLocked(chat, agent.ChatItem{Kind: "error", Text: err.Error()})
 			ended = agent.SubchatFailed
 			if ctx.Err() == context.Canceled {
@@ -980,7 +995,7 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		if connection, ok := server.connectionLocked(chat.Config.ConnectionID); ok {
 			go server.noteLimits(connection, server.keys[connection.ID], 10*time.Minute)
 		}
-		if server.ctx.Err() != nil {
+		if server.ctx.Err() != nil || paused || chat.moving {
 			return
 		}
 		if moved != "" { // the agent goes on in the new folder

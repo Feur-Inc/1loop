@@ -65,6 +65,14 @@ func (ui *desktopUI) clearSelection() {
 	}
 }
 
+// selectionKey takes the keys typed with no field focused that are the
+// selection's: Escape lets it go.
+func (ui *desktopUI) selectionKey(key *fyne.KeyEvent) {
+	if key.Name == fyne.KeyEscape {
+		ui.focused().clearSelection()
+	}
+}
+
 // copySelection puts the selected text on the clipboard; false when
 // nothing is selected.
 func (ui *desktopUI) copySelection() bool {

@@ -189,6 +189,7 @@ type desktopUI struct {
 	footerGlass   *footerGlass
 	column        *fyne.Container
 	scroll        *kineticScroll
+	chatBar       *chatScrollBar // the conversation's scrollbar, over it (chat_scrollbar.go)
 	followTail    bool
 	items         *transcriptLayout
 	frames        *frameHook
@@ -785,6 +786,7 @@ func (ui *desktopUI) buildChat() {
 		bottom := fyne.Max(0, ui.scroll.Content.Size().Height-ui.scroll.Size().Height)
 		ui.followTail = bottom-position.Y <= 2
 		ui.syncFooterFade()
+		ui.chatBar.sync()
 		relayout(ui.transcript) // items entering the view come back, those leaving it rest
 	}
 	ui.mark = newLoopMark(60)
@@ -795,7 +797,7 @@ func (ui *desktopUI) buildChat() {
 	// No scroll edge shadow between the conversation and the composer: the
 	// conversation fades under the composer while more of it lies below
 	// (footerGlass).
-	scroll := container.NewThemeOverride(ui.scroll, flatScrollTheme{loopTheme{theme.DefaultTheme()}})
+	scroll := container.NewThemeOverride(ui.scroll, chatScrollTheme{flatScrollTheme{loopTheme{theme.DefaultTheme()}}})
 	ui.chatWait = newLoopMark(56)
 	ui.chatWaitView = container.NewStack(canvas.NewRectangle(colBackground), container.NewCenter(container.NewVBox(
 		container.NewCenter(ui.chatWait.image), spacer(0, 12),
@@ -811,6 +813,10 @@ func (ui *desktopUI) buildChat() {
 	// The activity line may sit beside the composer (dockActivity): the
 	// dock layer floats over the conversation's bottom left corner.
 	conversation = container.New(dockLayout{ui}, conversation, ui.dockRow)
+	// The scrollbar is drawn over all of it, above the composer's fade
+	// (#609), clear of the side panel's handle (#610).
+	ui.chatBar = newChatScrollBar(ui)
+	conversation = container.New(chatBarLayout{ui: ui, footer: footer}, conversation, ui.chatBar)
 	ui.conversation = conversation
 }
 
@@ -1165,6 +1171,7 @@ func (ui *desktopUI) showTranscript(show bool) {
 func (ui *desktopUI) syncFooterFade() {
 	bottom := fyne.Max(0, ui.scroll.Content.Size().Height-ui.scroll.Size().Height)
 	ui.footerGlass.veil(ui.scroll.Visible() && bottom-ui.scroll.Offset.Y > 2)
+	ui.chatBar.sync() // the same moments move the scrollbar's thumb
 }
 
 func codeText(text string) fyne.CanvasObject {

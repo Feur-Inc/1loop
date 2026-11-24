@@ -286,7 +286,8 @@ type serverListing struct {
 
 // serverProjectList is a server's projects as the sidebar lists them: its
 // default folder, those it lists, then its chats' folders, each once, its
-// worktrees left out (they show under their project).
+// worktrees left out (they show under their project), and so are the
+// folders it made for chats with no folder (listed under No folder).
 func serverProjectList(workspace string, listed []string, chats []remoteapi.Chat, worktrees map[string]string) []string {
 	projects := []string{}
 	add := func(folder string) {
@@ -299,7 +300,9 @@ func serverProjectList(workspace string, listed []string, chats []remoteapi.Chat
 		add(folder)
 	}
 	for _, chat := range chats {
-		add(chat.Workspace)
+		if !chat.Scratch {
+			add(chat.Workspace)
+		}
 	}
 	return projects
 }
@@ -381,7 +384,7 @@ func (ui *desktopUI) serverSideChats(target projectTarget, chats []remoteapi.Cha
 		chat := chat
 		side = append(side, sideChat{
 			id: chat.ID, server: target.id, parent: chat.Parent, ended: chat.Ended,
-			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
+			title: chat.Title, folder: chat.Workspace, scratch: chat.Scratch, running: chat.Running, // the agent works on it on the server
 			status: chat.Status, blocked: chat.Blocked,
 			selected: current != nil && current.server != nil && current.server.client.address.URL == target.id && current.serverID == chat.ID,
 			open:     onServer(func(remote *remoteDesktop) { remote.openChat(chat.ID) }),

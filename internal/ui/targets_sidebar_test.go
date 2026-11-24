@@ -119,3 +119,21 @@ func TestSidebarSameChatIDOnAServer(t *testing.T) {
 		keys[key] = true
 	}
 }
+
+// A server's chat with no folder runs in a folder the server made for it:
+// it is listed under No folder, not as a project of that folder's name.
+func TestSidebarServerChatWithNoFolder(t *testing.T) {
+	ui := sidebarUI(t)
+	chats := []remoteapi.Chat{{ID: "q", Title: "Quick question", Workspace: "/data/scratch/x600", Scratch: true}}
+	projects := serverProjectList("/srv/api", nil, chats, nil)
+	if slices.Contains(projects, "/data/scratch/x600") {
+		t.Errorf("its folder is a project of the server: %q", projects)
+	}
+	ui.server = &remoteDesktop{parent: ui, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: "https://box.lan:47101"}}, name: "box",
+		projects: projects, chats: chats, convs: map[string]*conversation{}}
+	ui.renderChats()
+	wantListed(t, ui, noFolderLabel, "Quick question")
+	if slices.Contains(sidebarTexts(ui), "x600") {
+		t.Errorf("its folder is listed as a project: %q", sidebarTexts(ui))
+	}
+}

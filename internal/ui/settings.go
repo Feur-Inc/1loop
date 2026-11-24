@@ -85,7 +85,6 @@ var subPages = map[string]string{
 	"Extensions":           registry.Tools,
 	"Connectors":           registry.Tools,
 	registry.ShortcutsPage: registry.General,
-	UsagePage:              registry.General,
 }
 
 // pageAliases are pages of earlier versions, still named by links and
@@ -146,6 +145,11 @@ func (ui *desktopUI) buildSettings() {
 		row := newRow(name, sectionIcons[section.ID], styleNav, func() { view.show(name) })
 		view.rows[name] = row
 		nav.Add(row)
+		if section.ID == registry.Models { // beside the accounts it counts (#415)
+			usage := newRow(UsagePage, iconUsage, styleNav, func() { view.show(UsagePage) })
+			view.rows[UsagePage] = usage
+			nav.Add(usage)
+		}
 	}
 	view.search = widget.NewEntry()
 	view.search.SetPlaceHolder("Search settings")

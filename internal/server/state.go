@@ -38,6 +38,8 @@ type serverChat struct {
 	Versions []agent.ChatVersion `json:"versions,omitempty"`
 	Todo     *agent.TodoState    `json:"todo"`
 	Cache    *agent.ContextCache `json:"contextCache,omitempty"`
+	// Compaction is the one interrupted, and the last ones made (#128).
+	Compaction *agent.CompactionState `json:"compaction,omitempty"`
 	// ContextUsage is Claude Code's last count of the window by category.
 	ContextUsage *agent.ContextUsage     `json:"contextUsage,omitempty"`
 	grants       *agent.PermissionGrants // what request_permissions granted, until the server stops
@@ -181,7 +183,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		dir:          dir,
 		usage:        usage.Open(filepath.Join(dir, "usage.jsonl")),
 		prices:       usage.OpenPrices(filepath.Join(dir, "usage-prices.json")),
-		backend:      &agent.App{Approvals: map[string]chan bool{}},
+		backend:      &agent.App{Approvals: map[string]chan agent.ApprovalAnswer{}},
 		keys:         map[string]string{},
 		pairs:        map[string]*serverPair{},
 		subs:         map[chan serverEvent]bool{},
@@ -273,6 +275,9 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		if chat.Cache == nil {
 			chat.Cache = &agent.ContextCache{}
 		}
+		if chat.Compaction == nil {
+			chat.Compaction = &agent.CompactionState{}
+		}
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
 		chat.Subchat.Restored(len(chat.ReportTo) > 0)
 		chat.ReportTo = nil
@@ -315,7 +320,7 @@ func (server *headlessServer) stateLocked() (write func() error) {
 	for i, chat := range server.chats {
 		chats[i] = &serverChat{ID: chat.ID, Title: chat.Title, Config: chat.Config, History: append([]agent.Message{}, chat.History...),
 			Items: append([]agent.ChatItem{}, chat.Items...), Version: chat.Version, Versions: agent.CopyVersions(chat.Versions),
-			Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
+			Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(), Compaction: chat.Compaction.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
 			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...)} // its parent: forgetting it detached every subchat on restart (#356)
 	}
 	devices := append([]remoteapi.PairedDevice{}, server.devices...)
@@ -807,7 +812,10 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	cfg.ClassicCompaction = server.classic
 	cfg.Todo = chat.Todo
 	cfg.Tasks = server.chatTasksLocked(chat)
-	cfg.Cache = chat.Cache
+	if chat.Compaction == nil {
+		chat.Compaction = &agent.CompactionState{}
+	}
+	cfg.Cache, cfg.Compaction = chat.Cache, chat.Compaction
 	if chat.grants == nil {
 		chat.grants = &agent.PermissionGrants{}
 	}
@@ -1091,7 +1099,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		run.mark, run.label = "approval", "Waiting for your answer"
 	case "approval":
 		data := value.(map[string]any)
-		run.approval = &remoteapi.Approval{Chat: chat.ID, ID: fmt.Sprint(data["id"]), Title: fmt.Sprint(data["title"]), Preview: fmt.Sprint(data["preview"])}
+		run.approval = &remoteapi.Approval{Chat: chat.ID, ID: fmt.Sprint(data["id"]), Title: fmt.Sprint(data["title"]), Preview: fmt.Sprint(data["preview"]), Review: data["review"] == true}
 		run.mark, run.label = "approval", "Waiting for your approval"
 	case "context_note", "note":
 		index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: value.(string)})

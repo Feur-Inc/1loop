@@ -487,21 +487,9 @@ func (report Report) Summary() string {
 	if n := len(plan.Conflicts) + len(plan.ChatConflicts); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d changed on both sides, kept twice", n))
 	}
-	text := strings.Join(parts, ", ") + fmt.Sprintf(" · %s of file data", size(plan.Bytes))
+	text := strings.Join(parts, ", ") + fmt.Sprintf(" · %s of file data", core.ByteSize(plan.Bytes))
 	if len(plan.Kept) > 0 {
 		text += fmt.Sprintf(" · %d file(s) changed only on the target stay as they are", len(plan.Kept))
 	}
 	return text
-}
-
-func size(n int64) string {
-	switch {
-	case n >= 1<<30:
-		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
-	case n >= 1<<20:
-		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
-	case n >= 1<<10:
-		return fmt.Sprintf("%.0f KB", float64(n)/(1<<10))
-	}
-	return fmt.Sprintf("%d B", n)
 }

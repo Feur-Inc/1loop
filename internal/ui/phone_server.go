@@ -31,7 +31,8 @@ package ui
 //   GET  /api/events                    server-sent events (see remoteEvent)
 //   POST /api/send       {chat,text,mode,workspace}  mode: send, queue or steer
 //   POST /api/stop       {chat}
-//   POST /api/approve    {id,allow}
+//   POST /api/approve    {id,allow,note,files,denied}
+//   GET  /api/review?id=                      the files of an edit waiting for approval
 //   POST /api/answer     {id,answers}         answers to the model's questions
 //   POST /api/model      {chat,label,effort}    model and reasoning effort
 //   GET  /api/limits                    every account's usage windows
@@ -144,6 +145,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("GET /api/state", server.authorized(server.state))
 	mux.HandleFunc("GET /api/chats/{id}", server.authorized(server.chat))
 	mux.HandleFunc("GET /api/chats/{id}/context", server.authorized(server.chatContext))
+	mux.HandleFunc("GET /api/chats/{id}/compactions", server.authorized(server.compactions))
 	mux.HandleFunc("GET /api/mentions", server.authorized(server.mentions))
 	mux.HandleFunc("POST /api/chats/{id}/delete", server.authorized(server.deleteChat))
 	mux.HandleFunc("POST /api/chats/{id}/rename", server.authorized(server.renameChat))
@@ -204,6 +206,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/send", server.authorized(server.send))
 	mux.HandleFunc("POST /api/stop", server.authorized(server.stop))
 	mux.HandleFunc("POST /api/approve", server.authorized(server.approve))
+	mux.HandleFunc("GET /api/review", server.authorized(server.review))
 	mux.HandleFunc("POST /api/answer", server.authorized(server.answer))
 	mux.HandleFunc("POST /api/preferences", server.authorized(server.setPreferences))
 	mux.HandleFunc("POST /api/memory", server.authorized(server.setMemory))
@@ -582,7 +585,7 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 		}
 		remoteMetaValue.Label, remoteMetaValue.Mark = run.turn.label, run.turn.mark
 		if run.approvalID != "" {
-			remoteMetaValue.Approval = &remoteapi.Approval{Chat: chat.ID, ID: run.approvalID, Title: run.approvalTitle, Preview: run.approvalPreview}
+			remoteMetaValue.Approval = &remoteapi.Approval{Chat: chat.ID, ID: run.approvalID, Title: run.approvalTitle, Preview: run.approvalPreview, Review: run.approvalReview}
 		}
 		if run.questionID != "" {
 			remoteMetaValue.Question = &remoteapi.Question{Chat: chat.ID, ID: run.questionID, Questions: run.questionList}
@@ -626,6 +629,17 @@ func (server *remoteServer) chatContext(writer http.ResponseWriter, req *http.Re
 		return
 	}
 	core.WriteJSON(writer, http.StatusOK, usage)
+}
+
+// compactions are the chat's last ones, before and after (#128).
+func (server *remoteServer) compactions(writer http.ResponseWriter, req *http.Request) {
+	var records []agent.CompactionRecord
+	server.onUI(func() {
+		if chat := server.ui.chatByID(req.PathValue("id")); chat != nil {
+			records = chat.Compaction.List()
+		}
+	})
+	core.WriteJSON(writer, http.StatusOK, map[string]any{"records": records})
 }
 
 // mentions are what a chat's composer offers after "@" (?chat=, a new
@@ -1045,10 +1059,20 @@ func (server *remoteServer) answer(writer http.ResponseWriter, req *http.Request
 	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// review is the files of an edit waiting for approval (#242).
+func (server *remoteServer) review(writer http.ResponseWriter, req *http.Request) {
+	files := server.ui.backend.Review(req.URL.Query().Get("id"))
+	if files == nil {
+		core.Fail(writer, http.StatusNotFound, "This request was already answered")
+		return
+	}
+	core.WriteJSON(writer, http.StatusOK, map[string]any{"files": files})
+}
+
 func (server *remoteServer) approve(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
-		ID    string `json:"id"`
-		Allow bool   `json:"allow"`
+		ID string `json:"id"`
+		agent.ApprovalAnswer
 	}
 	if core.ReadJSON(req, &body) != nil {
 		core.Fail(writer, http.StatusBadRequest, "Invalid request")
@@ -1058,7 +1082,7 @@ func (server *remoteServer) approve(writer http.ResponseWriter, req *http.Reques
 	server.onUI(func() {
 		for _, chat := range server.ui.chats {
 			if run := chat.run; run != nil && run.approvalID == body.ID && run.answer != nil {
-				run.answer(body.Allow) // closes the dialog on the computer too
+				run.answer(body.ApprovalAnswer) // closes the dialog on the computer too
 				found = true
 			}
 		}

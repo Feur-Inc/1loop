@@ -7,8 +7,9 @@ import (
 	"fmt"
 	"net/url"
 
-	"1loop/internal/core"
 	"github.com/chromedp/cdproto/target"
+
+	"1loop/internal/core"
 )
 
 // NativeHost owns Android views; CDP still handles page content and input.

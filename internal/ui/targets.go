@@ -10,7 +10,7 @@ package ui
 // Opening a project or a chat makes its target the one the window works
 // on: there is no switch to flip before reaching it.
 //
-// A new chat with no folder runs on the device in use (noFolderTarget);
+// A new chat with no folder runs on the device in use;
 // the target chip under the composer moves a new chat to another target.
 
 import (
@@ -104,13 +104,6 @@ func targetProjectName(target projectTarget, project string) string {
 	}
 	return path.Base(filepath.ToSlash(project))
 }
-
-// noFolderTarget is where a new chat with no folder runs: the device in
-// use, which is this computer. One function, so that another default is a
-// one-line change; the target chip under the composer moves a new chat
-// elsewhere. (The browser client has no folder of its own to offer: its
-// chats run on the page's server.)
-func noFolderTarget() projectTarget { return localTarget }
 
 // reach is whether a target answers, as last seen.
 type reach int

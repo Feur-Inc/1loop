@@ -118,19 +118,19 @@ func (server *headlessServer) syncEngine() *projectsync.Local {
 				// The chat goes on here with this engine's model; a Claude Code
 				// session here reads what happened elsewhere when it resumes.
 				cfg := existing.Config
-				cfg.RanWith = ranWith(copied.Config)
+				cfg.RanWith = agent.CopiedRanWith(copied.Config)
 				copied = copied.AtWorkspace(cfg)
 				existing.Config.ClearSessions()
 				existing.Cache = &agent.ContextCache{}
 				existing.Title, existing.History, existing.Items = copied.Title, copied.History, copied.Items
 				existing.Todo, existing.Version, existing.Versions = copied.Todo, copied.Version, copied.Versions
-				existing.Config.RanWith = ranWith(copied.Config)
+				existing.Config.RanWith = agent.CopiedRanWith(copied.Config)
 				server.broadcastLocked("replace", map[string]string{"chat": existing.ID})
 			} else {
 				cfg := server.cfg
 				cfg.Workspace = workspace
 				cfg.ClearSessions()
-				cfg.RanWith = ranWith(copied.Config) // its next turn here goes through a handoff
+				cfg.RanWith = agent.CopiedRanWith(copied.Config) // its next turn here goes through a handoff
 				copied = copied.AtWorkspace(cfg)
 				if copied.Todo == nil {
 					copied.Todo = &agent.TodoState{}
@@ -150,19 +150,6 @@ func (server *headlessServer) syncEngine() *projectsync.Local {
 			return nil
 		},
 	}
-}
-
-// ranWith is who a copied chat last ran with, for the handoff here.
-func ranWith(cfg agent.Config) *agent.RunIdentity {
-	if cfg.RanWith != nil {
-		identity := *cfg.RanWith
-		return &identity
-	}
-	if cfg.Provider == "" {
-		return nil
-	}
-	identity := agent.IdentityOf(cfg)
-	return &identity
 }
 
 // localSync is POST /api/local/sync, the phone app's: copy a project

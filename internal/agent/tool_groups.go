@@ -94,13 +94,16 @@ func (cfg Config) toolAvailable(name string) bool {
 	if name == "chats" {
 		return cfg.Chats != nil
 	}
+	if name == "computer_use" { // drives this computer's screen: off on an SSH machine (machine.go)
+		return cfg.Computer != nil && cfg.MachineID == ""
+	}
 	switch groupOfTool(name) {
 	case "panel_browser":
 		return cfg.Browser != nil
 	case "panel_terminal":
 		return cfg.Terminal != nil
 	case "desktop_computer":
-		return cfg.Computer != nil
+		return cfg.Computer != nil && cfg.MachineID == ""
 	case "local_phone":
 		return cfg.Phone != nil
 	case "local_debian":

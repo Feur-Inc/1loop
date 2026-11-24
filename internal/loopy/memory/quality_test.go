@@ -127,14 +127,7 @@ func TestLongMemEvalAnswers(t *testing.T) {
 				m.index(record)
 			}
 		}
-		show := func(hits []Hit) string { // the excerpts are the product's
-			sort.SliceStable(hits, func(a, b int) bool { return hits[a].Record.Time.Before(hits[b].Record.Time) })
-			var b strings.Builder
-			for _, hit := range hits {
-				b.WriteString(hit.Record.Format(q.Question, 900) + "\n")
-			}
-			return b.String()
-		}
+		show := func(hits []Hit) string { return formatHits(hits, q.Question) }
 		for _, way := range ways {
 			context := ""
 			switch way {

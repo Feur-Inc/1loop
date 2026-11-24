@@ -10,10 +10,10 @@ import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.animateFloat
 import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.keyframes
 import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.Canvas
@@ -82,16 +82,22 @@ private val loopyMe = Color(0xFF0F7A6E)
 fun LoopyFace(size: Dp, state: String, modifier: Modifier = Modifier) {
     val ring = when (state) { "blocked" -> Color(0xFFE86A5F); "done" -> Color(0xFF7FC88F); else -> Palette.amber }
     val busy = state in listOf("thinking", "reading", "copy", "typing")
-    val move = if (Motion.enabled) rememberInfiniteTransition(label = "loopy") else null
-    val blink = move?.animateFloat(1f, 1f, infiniteRepeatable(keyframes { durationMillis = 4200; 1f at 0; 1f at 3900; 0.1f at 4000; 1f at 4120 }), label = "blink")
-    val sway = move?.animateFloat(0f, 1f, infiniteRepeatable(tween(if (busy) 1400 else 5200, easing = LinearEasing)), label = "sway")
+    // At rest it only blinks, now and then: nothing is drawn in between.
+    val blink = remember { Animatable(1f) }
+    LaunchedEffect(Motion.enabled, state == "still") {
+        while (Motion.enabled && state != "still") {
+            delay(3500L + (Math.random() * 3500).toLong())
+            blink.animateTo(0.1f, tween(70)); blink.animateTo(1f, tween(120))
+        }
+    }
+    val sway = if (Motion.enabled && busy) rememberInfiniteTransition(label = "loopy").animateFloat(0f, 1f, infiniteRepeatable(tween(1400, easing = LinearEasing)), label = "sway") else null
     val eyes = if (Palette.dark) Color.White else Palette.text
     Canvas(modifier.size(size)) {
         val unit = this.size.minDimension / 120f
         val turn = sin((sway?.value ?: 0f) * 2 * PI).toFloat()
-        rotate(turn * (if (busy) 9f else 2.5f)) {
+        rotate(turn * 9f) {
             drawArc(ring, -34f, 308f, false, Offset(20 * unit, 20 * unit), Size(80 * unit, 80 * unit), style = Stroke(15 * unit, cap = StrokeCap.Round))
-            val open = blink?.value ?: 1f
+            val open = blink.value
             fun eye(x: Float, y: Float, color: Color) = drawOval(color, Offset((x - 10) * unit, (y - 10 * open) * unit), Size(20 * unit, 20 * open * unit))
             val look = if (busy) turn * 3 else 0f
             eye(50 + look, 47f, eyes)
@@ -253,7 +259,11 @@ private fun LoopyConversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: M
         val at = loopy.messages.indexOfLast { it.id == id }
         if (at >= 0) { list.scrollToItem(loopy.messages.size - 1 - at); app.loopyShow = null }
     }
-    LaunchedEffect(loopy.messages.lastOrNull()?.id) { if (list.firstVisibleItemIndex <= 1) list.scrollToItem(0) }
+    // Scrolled up by hand, it stays there; what the user sends brings the end back.
+    var away by remember { mutableStateOf(false) }
+    LaunchedEffect(list.isScrollInProgress) { if (!list.isScrollInProgress) away = list.firstVisibleItemIndex > 0 || list.firstVisibleItemScrollOffset > 300 }
+    val last = loopy.messages.lastOrNull()
+    LaunchedEffect(last?.id, loopy.messages.size, loopy.running, last?.text?.length) { if (app.loopyShow == null && (!away || last?.mine == true)) list.scrollToItem(0) }
     SpeakAnswers(app)
     Column(modifier.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing.only(WindowInsetsSides.Top + WindowInsetsSides.Horizontal))) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {

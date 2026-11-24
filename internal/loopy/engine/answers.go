@@ -179,7 +179,7 @@ func (e *Engine) answerDraft(message loopy.Message, answer loopy.Answer) error {
 	e.mu.Lock()
 	e.granted["send"] = e.now().Add(15 * time.Minute)
 	e.mu.Unlock()
-	e.close(message.ID, "Send", "")
+	e.close(message.ID, "Approved", "No account is connected for it: I send it from the browser.")
 	keep()
 	var b strings.Builder
 	fmt.Fprintf(&b, "[The user wants this %s sent, exactly as it is here. No account is connected for it: do it in the browser, on the service they use.]\n", card.Kind)

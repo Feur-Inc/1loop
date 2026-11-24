@@ -231,15 +231,34 @@ func (m *Memory) FormatSearch(queries []string, since, until time.Time, limit in
 			}
 		}
 	}
-	sort.SliceStable(hits, func(i, j int) bool { return hits[i].Record.Time.Before(hits[j].Record.Time) })
 	if len(hits) > 0 {
-		b.WriteString("Exchanges, in order of time:\n")
-		for _, hit := range hits {
-			b.WriteString(hit.Record.Format(strings.Join(queries, " "), 700) + "\n")
-		}
+		b.WriteString("Exchanges, in order of time:\n" + formatHits(hits, strings.Join(queries, " ")))
 	}
 	if b.Len() == 0 {
 		return "Nothing found. Try other words, or the other language."
+	}
+	return b.String()
+}
+
+// formatHits shows exchanges found, the best first, in order of time: more
+// of those at the top.
+func formatHits(hits []Hit, query string) string {
+	room := map[string]int{}
+	for i, hit := range hits {
+		switch {
+		case i < 3:
+			room[hit.Record.ID] = 2000
+		case i < 7:
+			room[hit.Record.ID] = 900
+		default:
+			room[hit.Record.ID] = 450
+		}
+	}
+	hits = slices.Clone(hits)
+	sort.SliceStable(hits, func(i, j int) bool { return hits[i].Record.Time.Before(hits[j].Record.Time) })
+	var b strings.Builder
+	for _, hit := range hits {
+		b.WriteString(hit.Record.Format(query, room[hit.Record.ID]) + "\n")
 	}
 	return b.String()
 }

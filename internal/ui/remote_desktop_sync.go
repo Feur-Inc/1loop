@@ -97,8 +97,7 @@ func (remote *remoteDesktop) events() {
 	for remote.ctx.Err() == nil {
 		response, err := remote.client.request(remote.ctx, "GET", "/api/events", nil)
 		if err == nil {
-			// Connected, or again: what changed meanwhile came in no event.
-			remote.notify()
+			fyne.Do(remote.eventsConnected)
 			for event, err := range sse.Events(response.Body, 32<<20) {
 				if err != nil {
 					break
@@ -164,21 +163,30 @@ func (remote *remoteDesktop) apply(event serverEvent) {
 		}
 	case "chats":
 		var listed struct{ Chats []remoteapi.Chat }
-		if json.Unmarshal([]byte(event.data), &listed) != nil || listed.Chats == nil || !remote.live.answered {
-			return // the state, when it comes, has them
+		if json.Unmarshal([]byte(event.data), &listed) != nil || listed.Chats == nil {
+			return
 		}
 		remote.markSeq("chats", event.seq)
+		if !remote.live.answered {
+			// Kept for the first state, which may be older (a chat made
+			// while it was on its way): applyState keeps the newer (#600).
+			remote.chats = listed.Chats
+			return
+		}
 		remote.show(remote.name, remote.defaultWorkspace, listed.Chats, remote.live.listed)
 	case "projects":
 		var listed struct {
 			Projects  []string
 			Worktrees map[string]string
 		}
-		if json.Unmarshal([]byte(event.data), &listed) != nil || !remote.live.answered {
+		if json.Unmarshal([]byte(event.data), &listed) != nil {
 			return
 		}
 		remote.markSeq("projects", event.seq)
 		remote.worktrees, remote.live.listed = listed.Worktrees, listed.Projects
+		if !remote.live.answered {
+			return // kept for the first state, as chats are
+		}
 		remote.show(remote.name, remote.defaultWorkspace, remote.chats, listed.Projects)
 	case "settings":
 		var settings remoteSettings
@@ -418,10 +426,10 @@ func (remote *remoteDesktop) applyState(state remoteState, read remoteChatRead, 
 	remote.live.stateTag = read.tag
 	seq := read.seq
 	chats, projects := remote.chats, remote.live.listed
-	if remote.fresh("chats", seq) || !remote.live.answered {
+	if remote.fresh("chats", seq) { // else a newer event's, even before the first state
 		chats = state.Chats
 	}
-	if remote.fresh("projects", seq) || !remote.live.answered {
+	if remote.fresh("projects", seq) {
 		remote.worktrees, projects = state.Worktrees, *state.Projects
 		remote.live.listed = projects
 	}
@@ -480,4 +488,13 @@ func (remote *remoteDesktop) applyTabs(id string, tabs []remoteapi.Tab) {
 	if id == remote.current {
 		remote.syncTabs(remote.conv(id), tabs)
 	}
+}
+
+// eventsConnected reads everything: the events stream is connected, or
+// again, and what changed meanwhile came in no event. The numbers of the
+// events seen are forgotten: a server that restarted numbers them from 1
+// again, and every read of its state would seem older than them (#600).
+func (remote *remoteDesktop) eventsConnected() {
+	clear(remote.live.seqs)
+	remote.notify()
 }

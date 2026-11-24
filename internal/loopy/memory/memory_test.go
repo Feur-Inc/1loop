@@ -250,7 +250,11 @@ func TestRecallStaysOutOfPlace(t *testing.T) {
 	m.Remember(Fact{Text: "Préfère les trains avant 10 h", Kind: Preference, Said: true}, "")
 	m.Remember(Fact{Text: "A un chat nommé Pixel", Kind: Other, Said: true}, "")
 	add(t, m, "2026-11-01 10:00", "Trouve un vétérinaire pour Pixel", "Le cabinet du Parc, 04 00 00 00 00.")
-	if recall := m.Recall("réserve un train pour Paris demain", nil); !strings.Contains(recall, "avant 10 h") || strings.Contains(recall, "Pixel") {
+	m.Remember(Fact{Text: "Prend souvent le train du matin pour Paris", Kind: Habit}, "") // noticed once
+	if profile := m.Profile(); !strings.Contains(profile, "avant 10 h") || !strings.Contains(profile, "chat") || strings.Contains(profile, "du matin") {
+		t.Errorf("profile:\n%s", profile)
+	}
+	if recall := m.Recall("réserve un train pour Paris demain", nil); !strings.Contains(recall, "train du matin") || strings.Contains(recall, "avant 10 h") || strings.Contains(recall, "Pixel") {
 		t.Errorf("train:\n%s", recall)
 	}
 	if recall := m.Recall("combien font 17 fois 23 ?", nil); recall != "" {

@@ -6,22 +6,24 @@ package memory
 
 import (
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 	"time"
 )
 
-// What a message brings back, for Loopy's prompt. Rules and the way to
-// answer are always there; the rest only when it has to do with the
-// message, for a memory brought up out of place makes answers worse
-// (docs/LOOPY.md).
+// What Loopy knows when it answers. A short profile is always there: the
+// rules, how to write to them, and what they said of themselves. Choosing
+// the facts by how close they are to the message missed the ones that
+// matter most ("an idea for dessert?" is not close to "allergic to nuts"):
+// measured, a profile of the sure facts did better (docs/LOOPY.md). What
+// was only noticed once, and past exchanges, come only when they have to do
+// with the message, for a memory brought up out of place makes answers worse.
 
-// Profile is what Loopy always knows: the rules, how the user likes things,
-// and the pinned facts. It changes rarely, so a cached prompt holds.
-func (m *Memory) Profile() string {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	var rules, style, pinned []Fact
+const profileFacts = 40
+
+// profile is the facts always in mind: rules, style, the rest.
+func (m *Memory) profile() (rules, style, about []Fact) {
 	for _, fact := range m.state.Facts {
 		switch {
 		case !fact.Current() || !fact.Sure():
@@ -29,8 +31,8 @@ func (m *Memory) Profile() string {
 			rules = append(rules, fact)
 		case fact.Kind == Style:
 			style = append(style, fact)
-		case fact.Pinned:
-			pinned = append(pinned, fact)
+		default:
+			about = append(about, fact)
 		}
 	}
 	latest := func(facts []Fact, n int) []Fact {
@@ -45,29 +47,31 @@ func (m *Memory) Profile() string {
 		})
 		return facts[:min(n, len(facts))]
 	}
+	return latest(rules, 40), latest(style, 25), latest(about, profileFacts)
+}
+
+// Profile is what Loopy always knows. It changes rarely, so a cached prompt
+// holds.
+func (m *Memory) Profile() string {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	rules, style, about := m.profile()
 	var b strings.Builder
-	write := func(title string, facts []Fact) {
-		if len(facts) == 0 {
+	write := func(title string, lines []string, facts []Fact) {
+		if len(lines)+len(facts) == 0 {
 			return
 		}
 		b.WriteString(title + "\n")
+		for _, line := range lines {
+			b.WriteString("- " + line + "\n")
+		}
 		for _, fact := range facts {
 			fmt.Fprintf(&b, "- [%s] %s\n", fact.ID, fact.Text)
 		}
 	}
-	write("Rules the user gave you, or that their corrections show. Follow them without being told again:", latest(rules, 40))
-	lines := m.state.Style.Describe()
-	style = latest(style, 25)
-	if len(style)+len(lines) > 0 {
-		b.WriteString("How to write to them:\n")
-		for _, line := range lines {
-			b.WriteString("- " + line + "\n")
-		}
-		for _, fact := range style {
-			fmt.Fprintf(&b, "- [%s] %s\n", fact.ID, fact.Text)
-		}
-	}
-	write("What you always keep in mind about them:", latest(pinned, 25))
+	write("Rules the user gave you, or that their corrections show. Follow them without being told again:", nil, rules)
+	write("How to write to them, and for them:", m.state.Style.Describe(), style)
+	write("About them. It steers what you propose, plan and choose (what they do not eat, when they are free, who is who…) whenever it bears on the matter; when it does not, leave it out:", nil, about)
 	return b.String()
 }
 
@@ -79,12 +83,14 @@ func (m *Memory) Recall(message string, skip map[string]bool) string {
 	}
 	m.mu.Lock()
 	var b strings.Builder
+	always := map[string]bool{}
+	rules, style, about := m.profile()
+	for _, fact := range slices.Concat(rules, style, about) {
+		always[fact.ID] = true
+	}
 	var facts []Fact
 	for _, fact := range m.near(message, 14, true) {
-		if fact.Pinned || (fact.Kind == Instruction || fact.Kind == Style) && fact.Sure() { // in the profile
-			continue
-		}
-		if len(facts) < 10 {
+		if !always[fact.ID] && len(facts) < 10 {
 			facts = append(facts, fact)
 		}
 	}

@@ -72,8 +72,8 @@ type Fact struct {
 	// replaced it.
 	Until time.Time `json:"until,omitzero"`
 	By    string    `json:"by,omitempty"`
-	// Said: the user told it to remember. Otherwise it was noticed, Times
-	// times.
+	// Said: the user's words say it outright. Otherwise it was inferred,
+	// Times times.
 	Said   bool `json:"said,omitempty"`
 	Times  int  `json:"times,omitempty"`
 	Pinned bool `json:"pinned,omitempty"`
@@ -85,8 +85,8 @@ type Fact struct {
 // Current says whether the fact still holds.
 func (fact Fact) Current() bool { return fact.Until.IsZero() }
 
-// Sure says whether the fact may steer Loopy on its own: told by the user,
-// pinned, or noticed more than once.
+// Sure says whether the fact may steer Loopy on its own: said by the user,
+// pinned, or seen more than once.
 func (fact Fact) Sure() bool { return fact.Said || fact.Pinned || fact.Times >= 2 }
 
 type saved struct {

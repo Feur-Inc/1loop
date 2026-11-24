@@ -13,6 +13,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"time"
 )
@@ -52,17 +53,18 @@ Each change is one of:
 {"do":"end","id":ID,"quote":Q,"exchange":N}   no longer true, and nothing replaces it
 
 K: "instruction" (how the assistant must act, a rule), "style" (how they like to be answered or texts written for them: length, tone, format, words), "preference", "habit" (what they regularly do or ask, and how), "person", "place", "work", "goal", "other".
-T: one short sentence in the third person, complete on its own, in the language the user writes in, with the date when it matters ("Préfère les trains avant 10 h").
+T: one short sentence, complete on its own, in the language the user writes in, with the date when it matters ("Préfère les trains avant 10 h"). It guesses neither their gender nor what they did not say. One fact a change. A "replace" keeps what still holds of the old one ("meetings after 2pm" then "only on Tuesdays" gives "Meetings only on Tuesdays, after 2 pm").
 Q: the user's own words that show it, copied exactly from one of their messages (or from the text they rewrote), at least three words.
-B: true when they told the assistant to remember it or to always or never do something; false when you only notice it.
+B: true when their words say it outright (a rule, how they want things, a fact about them: "je mange pas de viande", "meetings only on Tuesdays", "pas de liste"); false when you infer it from what they do or ask.
 
 Rules:
 - Only lasting things. Not the task at hand, not a one-off request, not what the assistant or a document said.
 - A correction of the assistant ("non, plus court", "je t'avais dit de ne pas…") is an instruction or a style: say the rule behind it, for next time.
 - When the user rewrote a text the assistant proposed, what they changed shows how they like their texts: a "style".
-- Something noticed once about their way of doing things may be noted with told false; it guides nothing until seen again.
+- A rule keeps what it bears on: a wish about summaries is about summaries, not about every answer.
+- Something inferred may be noted with told false; it guides little until seen again.
 - Already known, or clearly the same: "confirm", never "add".
-- Never a password, code, card or account number, ID number, or a health, political or religious detail they did not ask to be remembered.
+- Never a password, code, card or account number, ID number, or a health, political or religious detail they did not ask to be remembered. What they cannot or will not eat, allergies included, is kept: it steers what to propose.
 - Nothing to change is common: {"changes":[]}.
 
 Answer: {"changes":[…]}`
@@ -149,6 +151,17 @@ func (m *Memory) Learn(ctx context.Context, ask Ask, batch int) (Learned, error)
 	return learned, m.save()
 }
 
+var (
+	passage = regexp.MustCompile("(?s)<pasted_content.*?(?:</pasted_content[^>]*>|$)|```.*?(?:```|$)|«[^»]{40,}(?:»|$)|“[^”]{40,}(?:”|$)|\"[^\"]{40,}\"")
+	cited   = regexp.MustCompile(`(?m)^\s*>.*$`)
+)
+
+// own is the user's message without what they quote in it: a page or a mail
+// pasted there is not their words.
+func own(text string) string {
+	return cited.ReplaceAllString(passage.ReplaceAllString(text, " | "), " | ")
+}
+
 // quoted says whether the words are the user's, in that exchange.
 func quoted(record Record, quote string) bool {
 	bare := func(s string) string {
@@ -158,7 +171,7 @@ func quoted(record Record, quote string) bool {
 	if len(strings.Fields(quote)) < 2 && len(quote) < 8 {
 		return false
 	}
-	return strings.Contains(" "+bare(record.User)+" ", " "+quote+" ") || strings.Contains(" "+bare(record.Final)+" ", " "+quote+" ")
+	return strings.Contains(" "+bare(own(record.User))+" ", " "+quote+" ") || strings.Contains(" "+bare(record.Final)+" ", " "+quote+" ")
 }
 
 func (m *Memory) apply(c change, record Record, learned *Learned) {
@@ -170,7 +183,7 @@ func (m *Memory) apply(c change, record Record, learned *Learned) {
 		}
 		return nil
 	}
-	fact := Fact{Text: strings.TrimSpace(c.Text), Kind: c.Kind, Said: c.Told && imperative(record.User), Quote: strings.TrimSpace(c.Quote), From: record.ID, Since: record.Time}
+	fact := Fact{Text: strings.TrimSpace(c.Text), Kind: c.Kind, Said: c.Told, Quote: strings.TrimSpace(c.Quote), From: record.ID, Since: record.Time}
 	switch c.Do {
 	case "add", "replace":
 		if fact.Text == "" || len(fact.Text) > 300 || secret(fact.Text) {
@@ -185,13 +198,10 @@ func (m *Memory) apply(c change, record Record, learned *Learned) {
 		replaces := ""
 		if old := find(c.ID); c.Do == "replace" && old != nil {
 			// What was noticed does not undo what was told.
-			if old.Said && !fact.Said && !c.Told {
+			if old.Said && !fact.Said {
 				return
 			}
 			replaces = old.ID
-			if c.Told || fact.Said {
-				fact.Said = true
-			}
 		}
 		learned.Added = append(learned.Added, m.remember(fact, replaces))
 	case "confirm":
@@ -200,26 +210,14 @@ func (m *Memory) apply(c change, record Record, learned *Learned) {
 			learned.Confirmed = append(learned.Confirmed, *old)
 		}
 	case "end":
-		if old := find(c.ID); old != nil && (!old.Said || c.Told || imperative(record.User)) {
+		if old := find(c.ID); old != nil && (!old.Said || c.Told) {
 			old.Until = record.Time
 			learned.Ended = append(learned.Ended, *old)
 		}
 	}
 }
 
-// imperative says whether the user's words can be an order to remember:
-// "told" from the model alone is not enough.
-func imperative(text string) bool {
-	low := " " + plain(text) + " "
-	for _, word := range []string{"remember", "souviens", "rappelle toi", "rappelle-toi", "retiens", "note que", "n'oublie", "oublie pas", "always", "never", "toujours", "jamais", "don't", "do not", "stop", "arrete", "je veux", "je veut", "i want", "from now", "desormais", "a partir de", "a chaque fois", "every time", "prefer", "prefere", "fais", "fait", "ne "} {
-		if strings.Contains(low, " "+word) {
-			return true
-		}
-	}
-	return false
-}
-
-// Between is when the learning may run: after some exchanges, or a while
+// LearnNow says whether the learning may run: after some exchanges, or a while
 // after the last one.
 func (m *Memory) LearnNow(at time.Time) bool {
 	m.mu.Lock()

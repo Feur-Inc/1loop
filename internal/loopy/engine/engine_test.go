@@ -124,6 +124,7 @@ func wake(t *testing.T, dir string, reply func(messages []heard) any) (*Engine, 
 		t.Fatal(err)
 	}
 	e.now = func() time.Time { return time.Now().Add(time.Duration(later.Load())) }
+	e.Set(loopy.Settings{QuietFrom: "00:00", QuietTo: "00:00"}) // the tests run at night too
 	t.Cleanup(e.Close)
 	return e, host
 }
@@ -712,6 +713,7 @@ func TestSummaryHasLinesToPress(t *testing.T) {
 
 func TestNight(t *testing.T) {
 	e, _ := wake(t, t.TempDir(), func([]heard) any { return "x" })
+	e.Set(loopy.Settings{}) // the default night
 	for clock, want := range map[string]bool{"23:30": true, "03:00": true, "07:00": false, "12:00": false} {
 		at, _ := time.Parse("15:04", clock)
 		if e.night(at) != want {

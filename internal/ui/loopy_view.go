@@ -72,7 +72,6 @@ type loopyMode struct {
 	sendBtn     *tapRow
 	stopBtn     *tapRow
 	modelChip   *tapRow
-	contextChip *tapRow
 	browserBtn  *tapRow
 	browserPane *fyne.Container
 	browserTab  fyne.CanvasObject
@@ -346,7 +345,6 @@ func (mode *loopyMode) show() {
 		mode.typing.Hide()
 		mode.stopBtn.Hide()
 	}
-	mode.syncContext()
 }
 
 // face moves both faces and says what Loopy is doing.
@@ -448,8 +446,6 @@ func (mode *loopyMode) buildMain() {
 
 	mode.body = container.NewStack(mode.scroll)
 	mode.modelChip = newRow("Model", nil, styleChip, mode.chooseModel)
-	mode.contextChip = newRow("", nil, styleChip, mode.openSettings)
-	mode.contextChip.Hide()
 	title := textLine("Loopy", 14, colMuted)
 	right := container.New(layout.NewCustomPaddedHBoxLayout(2))
 	mode.browserBtn = newRow("Browser", iconBrowser, styleChip, func() {
@@ -458,7 +454,6 @@ func (mode *loopyMode) buildMain() {
 	})
 	mode.browserBtn.Hide()
 	right.Add(container.NewCenter(mode.browserBtn))
-	right.Add(container.NewCenter(mode.contextChip))
 	right.Add(container.NewCenter(mode.modelChip))
 	if ui.chrome {
 		right.Add(windowControls(ui.window, ui.closeWindow))
@@ -859,7 +854,6 @@ func (mode *loopyMode) renderSide() {
 	}
 	mode.modelChip.SetText(name)
 	mode.sideList.Refresh()
-	mode.syncContext()
 	mode.syncBrowser()
 }
 
@@ -950,16 +944,6 @@ func (mode *loopyMode) putPage(content fyne.CanvasObject) {
 	if offset.Y > 0 {
 		scroll.ScrollToOffset(offset)
 	}
-}
-
-// syncContext says how full Loopy's context is.
-func (mode *loopyMode) syncContext() {
-	if mode.view.Window <= 0 || mode.view.Used <= 0 {
-		mode.contextChip.Hide()
-		return
-	}
-	mode.contextChip.SetText(fmt.Sprintf("Context %d%%", min(100, mode.view.Used*100/mode.view.Window)))
-	mode.contextChip.Show()
 }
 
 // syncBrowser shows Loopy's browser beside the conversation, live: the view

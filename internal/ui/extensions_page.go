@@ -28,6 +28,7 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
+	"1loop/internal/core"
 	"1loop/internal/extensions"
 )
 
@@ -204,7 +205,7 @@ func (page *extensionsPage) card(listing extensions.Listing) fyne.CanvasObject {
 	}
 	badge := surface(textLine(kind, 11, colMuted), colRaised, nil, 6, 4)
 	owner := textLine("by "+listing.Owner, 12.5, colMuted)
-	stars := container.NewHBox(iconImage(iconStar, colAmber, 13), textLine(compactCount(listing.Stars), 12.5, colText), textLine("· updated "+ago(listing.Updated), 12.5, colFaint))
+	stars := container.NewHBox(iconImage(iconStar, colAmber, 13), textLine(core.CompactCount(listing.Stars), 12.5, colText), textLine("· updated "+ago(listing.Updated), 12.5, colFaint))
 	description := listing.Description
 	if description == "" {
 		description = "No description."
@@ -244,7 +245,7 @@ func (page *extensionsPage) details(listing extensions.Listing) {
 			fyne.CurrentApp().OpenURL(address)
 		}
 	})
-	facts := []string{compactCount(listing.Stars) + " stars", compactCount(listing.Forks) + " forks", "updated " + ago(listing.Updated)}
+	facts := []string{core.CompactCount(listing.Stars) + " stars", core.CompactCount(listing.Forks) + " forks", "updated " + ago(listing.Updated)}
 	if listing.License != "" {
 		facts = append(facts, listing.License)
 	}
@@ -842,23 +843,11 @@ func iconImage(icon fyne.Resource, ink color.NRGBA, size float32) fyne.CanvasObj
 	return container.NewCenter(view)
 }
 
-func compactCount(n int) string {
-	switch {
-	case n >= 1000000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 10000:
-		return fmt.Sprintf("%dk", n/1000)
-	case n >= 1000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	}
-	return fmt.Sprint(n)
-}
-
 func countText(n int, word string) string {
 	if n == 1 {
 		return "1 " + word
 	}
-	return fmt.Sprintf("%s %ss", compactCount(n), word)
+	return fmt.Sprintf("%s %ss", core.CompactCount(n), word)
 }
 
 // ago says how long ago a time was, as people say it.

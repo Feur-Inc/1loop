@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"1loop/internal/browser"
-	"1loop/internal/core"
 )
 
 type Config struct {
@@ -56,8 +55,11 @@ type Config struct {
 	ClassicCompaction bool                                      `json:"-"`
 	CompactAt         int                                       `json:"-"`
 	Cache             *ContextCache                             `json:"-"`
+	Compaction        *CompactionState                          `json:"-"`
+	Pause             *PauseSignal                              `json:"-"` // asks the run to pause between two steps (pause.go)
 	ContextKey        string                                    `json:"-"`
 	Todo              *TodoState                                `json:"-"`
+	Goal              *GoalState                                `json:"-"` // the chat's goal (goal.go)
 	Tasks             *BackgroundTasks                          `json:"-"` // shell commands run in the background
 	Grants            *PermissionGrants                         `json:"-"`
 	Review            *ReviewSession                            `json:"-"` // the Auto mode reviewer's conversation for the chat
@@ -120,7 +122,8 @@ type emitter func(string, any)
 
 type App struct {
 	mu              sync.Mutex
-	Approvals       map[string]chan bool
+	Approvals       map[string]chan ApprovalAnswer
+	reviews         map[string][]ReviewFile // the files of the edits waiting, by approval (review.go)
 	openAI          *openAIAuth
 	openAIProfiles  map[string]*openAIAuth
 	capabilityCache map[string]ModelChoice
@@ -190,12 +193,16 @@ func (backend *App) models(ctx context.Context, cfg Config) (map[string]any, err
 }
 
 func (backend *App) confirm(ctx context.Context, emit emitter, title, preview string) bool {
+	return backend.confirmAnswer(ctx, emit, title, preview, nil).Allow
+}
+
+func (backend *App) confirmAnswer(ctx context.Context, emit emitter, title, preview string, files []ReviewFile) ApprovalAnswer {
 	if ctx.Err() != nil {
-		return false
+		return ApprovalAnswer{}
 	}
 	policy, _ := ctx.Value(approvalContextKey{}).(approvalPolicy)
 	if policy.yolo {
-		return true
+		return ApprovalAnswer{Allow: true}
 	}
 	if policy.review != nil {
 		allow, reason := policy.review(ctx, emit, title, preview)
@@ -203,51 +210,14 @@ func (backend *App) confirm(ctx context.Context, emit emitter, title, preview st
 			if reason != "" { // the reviewer's approval: kept in the chat
 				emit("note", "Auto-approved · "+actionSummary(title, preview)+" · "+reason)
 			}
-			return true
+			return ApprovalAnswer{Allow: true}
 		}
 		if ctx.Err() != nil {
-			return false
+			return ApprovalAnswer{}
 		}
 		if reason != "" {
 			preview = "Auto-review asks you: " + reason + "\n\n" + preview
 		}
 	}
-	return backend.askApproval(ctx, emit, title, preview)
-}
-
-// askApproval asks the user, whatever the approval mode.
-func (backend *App) askApproval(ctx context.Context, emit emitter, title, preview string) bool {
-	if ctx.Err() != nil {
-		return false
-	}
-	id := core.Identifier()
-	ch := make(chan bool, 1)
-	backend.mu.Lock()
-	backend.Approvals[id] = ch
-	backend.mu.Unlock()
-	defer func() { backend.mu.Lock(); delete(backend.Approvals, id); backend.mu.Unlock() }()
-	emit("approval", map[string]any{"id": id, "title": title, "preview": preview})
-	select {
-	case allowed := <-ch:
-		return allowed
-	case <-ctx.Done():
-		return false
-	}
-}
-
-// Approve answers the approval id; false when none of that id waits (it
-// was answered elsewhere, or its run stopped).
-func (backend *App) Approve(id string, allow bool) bool {
-	backend.mu.Lock()
-	ch := backend.Approvals[id]
-	backend.mu.Unlock()
-	if ch == nil {
-		return false
-	}
-	select {
-	case ch <- allow:
-		return true
-	default:
-		return false // already answered
-	}
+	return backend.askAnswer(ctx, emit, title, preview, files)
 }

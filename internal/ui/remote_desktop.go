@@ -291,6 +291,7 @@ type remoteDesktop struct {
 	todoUsage     *contextUsageState
 	todoTimes     map[string]*canvas.Text // each task's clock, ticking in place
 	todoMarks     []*taskMark
+	goalClock     *canvas.Text // the goal card's time spent (goal.go)
 	todoSignature string
 	openCommands  map[string]bool // the background commands shown in full, by task
 	connected     string          // the connection line show last wrote in status
@@ -1059,7 +1060,7 @@ func (remote *remoteDesktop) showMeta(conv *conversation) {
 		}
 		remote.approvalID = approvalID
 		if approval := meta.Approval; approval != nil {
-			remote.approvalSheet = ui.showApproval(conv, map[string]any{"id": approval.ID, "title": approval.Title, "preview": approval.Preview})
+			remote.approvalSheet = ui.showApproval(conv, map[string]any{"id": approval.ID, "title": approval.Title, "preview": approval.Preview, "review": approval.Review})
 		}
 	}
 	questionID := ""
@@ -1291,7 +1292,7 @@ func (remote *remoteDesktop) renderTasks() {
 	if remote.tabViews["todo"] == nil || remote.todoTasks == nil {
 		return
 	}
-	signature, _ := json.Marshal([]any{remote.meta.Todo, remote.meta.Tasks, remote.meta.Subchats})
+	signature, _ := json.Marshal([]any{remote.meta.Todo, remote.meta.Tasks, remote.meta.Subchats, remote.meta.Goal})
 	if string(signature) != remote.todoSignature {
 		remote.todoSignature = string(signature)
 		remote.todoTasks.RemoveAll()
@@ -1301,7 +1302,12 @@ func (remote *remoteDesktop) renderTasks() {
 		remote.todoTimes = map[string]*canvas.Text{}
 		tasks := remote.todoTasks
 		live := func() bool { return remote.meta.Running && remote.todoTasks == tasks && remote.tabViews["todo"] != nil }
-		// Drawn as this computer's chats draw theirs (#542).
+		// Drawn as this computer's chats draw theirs (#542), the goal first:
+		// its controls send the /goal command they name (goal.go).
+		chatID := remote.meta.Chat
+		remote.goalClock = drawGoalCard(remote.todoTasks, remote.meta.Goal.AgentGoal(), func(command string) {
+			remote.action("/api/send", map[string]any{"chat": chatID, "text": command})
+		})
 		remote.todoMarks = drawTaskList(remote.todoTasks, remote.todoItems(), live, remote.todoTimes)
 		// The server's background commands, newest first, each with its own Stop.
 		if len(remote.meta.Tasks) > 0 {
@@ -1333,6 +1339,7 @@ func (remote *remoteDesktop) renderTasks() {
 		remote.addSubchats()
 	}
 	now := time.Now()
+	tickGoalClock(remote.goalClock, remote.meta.Goal.AgentGoal())
 	for _, item := range remote.todoItems() {
 		if clock := remote.todoTimes[item.ID]; clock != nil {
 			if value := taskElapsed(item, now); value != clock.Text {

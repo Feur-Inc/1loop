@@ -267,7 +267,7 @@ func systemInstructions(cfg Config) string {
 	if cfg.InScratch() { // never its path (scratchInstructions)
 		workspace = "a folder 1loop made for this chat (the project root of your tools)"
 	}
-	return prompt + scratchInstructions(cfg) + "\nWorkspace: " + workspace + "\nShell: " + shell + "." + citationInstructions + calculationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + wrapUpInstructions(cfg) + contextInstructions(cfg) + subchatParentInstructions(cfg) + toolSearchInstructions(cfg)
+	return prompt + scratchInstructions(cfg) + "\nWorkspace: " + workspace + "\nShell: " + shell + "." + citationInstructions + calculationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + goalInstructions(cfg) + wrapUpInstructions(cfg) + contextInstructions(cfg) + subchatParentInstructions(cfg) + toolSearchInstructions(cfg)
 }
 
 type approvalContextKey struct{}
@@ -282,11 +282,14 @@ func toolContext(ctx context.Context, cfg Config) context.Context {
 	ctx = platform.WithWorkspaceMode(ctx, cfg.ApprovalMode == "yolo")
 	ctx = platform.WithProjectEnv(ctx, cfg.Env)
 	ctx = context.WithValue(ctx, configContextKey{}, cfg)
-	ctx = context.WithValue(ctx, computerContextKey{}, cfg.Computer)
+	if cfg.MachineID == "" { // Computer Use is off on an SSH machine
+		ctx = context.WithValue(ctx, computerContextKey{}, cfg.Computer)
+	}
 	ctx = context.WithValue(ctx, terminalContextKey{}, cfg.Terminal)
 	ctx = context.WithValue(ctx, browserContextKey{}, modelBrowser(cfg.Browser))
 	ctx = context.WithValue(ctx, recallContextKey{}, cfg.Recall)
 	ctx = context.WithValue(ctx, todoContextKey{}, cfg.Todo)
+	ctx = context.WithValue(ctx, goalContextKey{}, cfg.Goal)
 	ctx = context.WithValue(ctx, tasksContextKey{}, cfg.Tasks)
 	ctx = context.WithValue(ctx, grantsContextKey{}, cfg.Grants)
 	if cfg.Machine != nil {

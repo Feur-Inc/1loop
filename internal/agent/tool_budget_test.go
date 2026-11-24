@@ -83,7 +83,7 @@ func TestClaudeToolListBudget(t *testing.T) {
 func TestClaudeToolBudgetCatchesTheWholeGitHubList(t *testing.T) {
 	tools := githubFixture(t)
 	group := mcpToolGroup(extensions.MCPServer{Name: "1loop-github-connector"}, tools)
-	definitions := append(claudeMCPDefinitions(fullConfig()), githubAttachmentTools()...)
+	definitions := claudeMCPDefinitions(fullConfig())
 	for i, definition := range group.tools() {
 		definition["function"].(map[string]any)["name"] = "github_" + tools[i].Name
 		definitions = append(definitions, definition)

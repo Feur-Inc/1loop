@@ -69,7 +69,7 @@ func coreToolDefinitions() []map[string]any {
 			"parameters":  map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false},
 		}})
 	}
-	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), wrapUpToolDefinition(), recallToolDefinition(), memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), chatsToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition())
+	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), wrapUpToolDefinition(), recallToolDefinition(), memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), chatsToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition(), goalToolDefinitions()[0], goalToolDefinitions()[1], goalToolDefinitions()[2])
 }
 
 // allToolDefinitions are every tool, loaded or not.
@@ -534,6 +534,11 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		output, err = wrapUp(state, call.Function.Arguments, emit)
 		return
 	}
+	if isGoalTool(call.Function.Name) {
+		begin()
+		output, err = backend.goalTool(ctx, call.Function.Name, call.Function.Arguments, emit)
+		return
+	}
 	if call.Function.Name == "update_todo" {
 		state, _ := ctx.Value(todoContextKey{}).(*TodoState)
 		if state == nil {
@@ -678,8 +683,9 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	if err != nil {
 		return "", "", err
 	}
-	if !backend.confirm(ctx, emit, "Apply changes to "+rel+"?", diff) {
-		return "", diff, fmt.Errorf("Edit denied")
+	after, diff, note, err := backend.approveEdit(ctx, emit, rel, before, after, diff, create)
+	if err != nil {
+		return "", diff, err
 	}
 	begin()
 	// Recheck the target after approval: it may have changed while the user reviewed the diff.
@@ -707,5 +713,5 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	if closeErr != nil {
 		return "", diff, closeErr
 	}
-	return "Changes applied: " + rel + "\n" + diff, diff, nil
+	return "Changes applied: " + rel + "\n" + note + diff, diff, nil
 }

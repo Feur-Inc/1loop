@@ -75,7 +75,9 @@ func (view *settingsView) find(query string) {
 // result is a found setting: its title, where it is and what it does.
 func (view *settingsView) result(setting registry.Setting) fyne.CanvasObject {
 	where := registry.SectionTitle(setting.Section)
-	if setting.Page != "" {
+	if setting.Page == UsagePage { // an entry of the menu
+		where = setting.Page
+	} else if setting.Page != "" {
 		where += " › " + setting.Page
 	}
 	text := container.New(layout.NewCustomPaddedVBoxLayout(3),

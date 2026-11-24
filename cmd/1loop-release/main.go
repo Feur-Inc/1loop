@@ -13,6 +13,8 @@
 //	1loop-release winres -version VERSION -file NAME.exe [-description TEXT] -o FILE.syso
 //	    writes the Windows resources of an exe, its icon and version
 //	    information, for go build to link (packaging/windows, packaging/server).
+//	1loop-release setup -program FILE.exe -app 1loop.exe -o FILE.exe
+//	    puts the app in the Windows setup (cmd/1loop-setup).
 package main
 
 import (
@@ -42,7 +44,7 @@ const inAppEnd = "<!-- end of the in-app notes -->"
 
 func main() {
 	if len(os.Args) < 2 {
-		fail("usage: 1loop-release keygen KEY.pem | manifest … | icons DIR [NAME] | winres …")
+		fail("usage: 1loop-release keygen KEY.pem | manifest … | icons DIR [NAME] | winres … | setup …")
 	}
 	switch os.Args[1] {
 	case "keygen":
@@ -56,6 +58,8 @@ func main() {
 		icons(os.Args[2:])
 	case "winres":
 		winres(os.Args[2:])
+	case "setup":
+		setup(os.Args[2:])
 	default:
 		fail("unknown command " + os.Args[1])
 	}

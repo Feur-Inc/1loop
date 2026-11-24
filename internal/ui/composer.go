@@ -248,25 +248,58 @@ func (entry *chatEntry) FocusLost() {
 	}
 }
 
-// On narrow conversations, the two groups need separate lines when the
-// side panel is open. The split supplies the available width before sizing.
-// transient are the run controls that come and go: the choice of one or two
-// lines counts them even while hidden, so it does not flip as a task starts
-// or ends.
-type composerControlsLayout struct {
-	available float32
-	transient []fyne.CanvasObject
-}
+// composerControlsLayout puts the settings on the left and the run controls
+// on the right of one line.
+type composerControlsLayout struct{}
 
-func (layoutSpec *composerControlsLayout) widths(o []fyne.CanvasObject) (left, right fyne.Size, wide float32) {
-	left, right = o[0].MinSize(), o[1].MinSize()
-	wide = left.Width + right.Width + 8
-	for _, object := range layoutSpec.transient {
-		if !object.Visible() {
-			wide += object.MinSize().Width + 4
+// composerActionsLayout lines up the run controls, Steer first. Where there
+// is no room for all of them, the first go out of sight (Steer keeps its
+// shortcut), so that none is drawn over the settings (#429).
+type composerActionsLayout struct{}
+
+const composerActionsGap = 4
+
+// natural is the width of every control shown.
+func (composerActionsLayout) natural(o []fyne.CanvasObject) float32 {
+	width := float32(0)
+	for _, object := range o {
+		if object.Visible() {
+			if width > 0 {
+				width += composerActionsGap
+			}
+			width += object.MinSize().Width
 		}
 	}
-	return left, right, wide
+	return width
+}
+
+func (spec composerActionsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
+	height := float32(0)
+	for _, object := range o {
+		if object.Visible() {
+			height = fyne.Max(height, object.MinSize().Height)
+		}
+	}
+	return fyne.NewSize(spec.natural(o[1:]), height)
+}
+
+func (composerActionsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
+	x := size.Width
+	room := true
+	for i := len(o) - 1; i >= 0; i-- {
+		if !o[i].Visible() {
+			continue
+		}
+		min := o[i].MinSize()
+		o[i].Resize(min)
+		room = room && x-min.Width >= -0.5
+		if !room {
+			o[i].Move(fyne.NewPos(-10000, 0))
+			continue
+		}
+		o[i].Move(fyne.NewPos(x-min.Width, (size.Height-min.Height)/2))
+		x -= min.Width + composerActionsGap
+	}
 }
 
 // MinSize keeps the controls on one line: the settings shrink first
@@ -278,6 +311,18 @@ func (layoutSpec *composerControlsLayout) MinSize(o []fyne.CanvasObject) fyne.Si
 
 func (layoutSpec *composerControlsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
 	left, right := o[0].MinSize(), o[1].MinSize()
+	// Every run control, when the settings keep room for their shortest.
+	if actions, ok := o[1].(*fyne.Container); ok {
+		if spec, ok := actions.Layout.(composerActionsLayout); ok {
+			natural, least := spec.natural(actions.Objects), float32(0)
+			if settings, ok := o[0].(*fyne.Container); ok && len(settings.Objects) > 0 {
+				least = settings.Objects[0].MinSize().Width + composerSettingsGap + composerModelLeast
+			}
+			if size.Width-natural-8 >= least {
+				right.Width = natural
+			}
+		}
+	}
 	width := fyne.Max(0, fyne.Min(left.Width, size.Width-right.Width-8))
 	o[0].Resize(fyne.NewSize(width, left.Height))
 	o[0].Move(fyne.NewPos(0, (size.Height-left.Height)/2))
@@ -309,6 +354,9 @@ type composerSettingsLayout struct{ model *tapRow }
 
 const composerSettingsGap = 4
 
+// composerModelLeast is the narrowest the model's name is cut to.
+const composerModelLeast = 56
+
 func (layoutSpec composerSettingsLayout) natural() float32 {
 	layoutSpec.model.truncate = false
 	defer func() { layoutSpec.model.truncate = true }()
@@ -339,7 +387,10 @@ func (layoutSpec composerSettingsLayout) Layout(o []fyne.CanvasObject, size fyne
 		ring = fyne.Size{}
 		model = fyne.Min(natural, size.Width-approval.Width-gaps)
 	}
-	model = fyne.Max(36, model)
+	if model < composerModelLeast-1 { // not even its start: out of sight
+		model = 0
+		o[1].Move(fyne.NewPos(-10000, 0))
+	}
 	o[2].Move(fyne.NewPos(-10000, 0)) // out of sight unless placed below
 	x := float32(0)
 	for i, s := range []fyne.Size{approval, fyne.NewSize(model, o[1].MinSize().Height), ring} {
@@ -1072,7 +1123,7 @@ func (ring *contextRing) describe() string {
 	if percent > 100 {
 		percent = 100
 	}
-	text := fmt.Sprintf("%d%% of the context used\n%s of %s tokens", percent, agent.Tokens(ring.used), agent.Tokens(ring.window))
+	text := fmt.Sprintf("%d%% of the context used\n%s of %s tokens", percent, core.CompactCount(ring.used), core.CompactCount(ring.window))
 	if ring.plan != (agent.PlanUsage{}) {
 		text += fmt.Sprintf("\nClaude plan: %.0f%% of the 5 h window · %.0f%% of the week", ring.plan.FiveHour*100, ring.plan.Week*100)
 	}

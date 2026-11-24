@@ -71,6 +71,7 @@ func (server *headlessServer) routes() http.Handler {
 		mux.HandleFunc("GET /api/local/claude/login", server.localOnly(server.claudeLoginState))
 		mux.HandleFunc("POST /api/local/claude/login", server.localOnly(server.beginClaudeLogin))
 		mux.HandleFunc("POST /api/local/sync", server.localOnly(server.localSync))
+		mux.HandleFunc("POST /api/local/move", server.localOnly(server.localMove))
 		mux.HandleFunc("GET /api/local/sharing", server.localOnly(server.sharingState))
 		mux.HandleFunc("POST /api/local/sharing", server.localOnly(server.setSharing))
 		mux.HandleFunc("POST /api/local/pairings/{id}", server.localOnly(server.answerPairing))
@@ -109,6 +110,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/send":                               server.send,
 		"POST /api/stop":                               server.stop,
 		"POST /api/approve":                            server.approve,
+		"GET /api/review":                              server.review,
 		"POST /api/answer":                             server.answer,
 		"POST /api/preferences":                        server.setPreferences,
 		"POST /api/memory":                             server.setMemory,
@@ -120,6 +122,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/model/defaults":                     server.setDefaultModels,
 		"POST /api/approval-mode":                      server.setApprovalMode,
 		"GET /api/chats/{id}/context":                  server.chatContext,
+		"GET /api/chats/{id}/compactions":              server.compactions,
 		"GET /api/mentions":                            server.mentions,
 		"GET /api/chats/{id}/panel":                    server.panelTabs,
 		"GET /api/chats/{id}/panel/{key}":              server.panelTab,
@@ -148,6 +151,8 @@ func (server *headlessServer) routes() http.Handler {
 	syncEngine := server.syncEngine()
 	syncManifest, syncExport, syncImport := syncEngine.Routes()
 	endpoints["GET /api/sync/base"] = syncEngine.BaseRoute
+	pause, resume, moved := syncEngine.MoveRoutes()
+	endpoints["POST /api/chats/{id}/pause"], endpoints["POST /api/chats/{id}/resume"], endpoints["POST /api/chats/{id}/moved"] = pause, resume, moved
 	endpoints["POST /api/sync/base"] = syncEngine.BaseRoute
 	endpoints["GET /api/sync/manifest"] = syncManifest
 	endpoints["POST /api/sync/export"] = syncExport
@@ -256,6 +261,18 @@ func (server *headlessServer) chatContext(w http.ResponseWriter, r *http.Request
 		return
 	}
 	core.WriteJSON(w, 200, usage)
+}
+
+// compactions are the chat's last ones, before and after (#128).
+func (server *headlessServer) compactions(w http.ResponseWriter, r *http.Request) {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	chat := server.chatLocked(r.PathValue("id"))
+	if chat == nil {
+		core.Fail(w, 404, "Chat not found")
+		return
+	}
+	core.WriteJSON(w, 200, map[string]any{"records": chat.Compaction.List()})
 }
 
 // mentions are what a chat's composer offers after "@" (?chat=, a new
@@ -494,6 +511,24 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		core.WriteJSON(w, 200, map[string]string{"chat": args.Chat})
 		return
 	}
+	// /goal is 1loop's, never the model's (agent/goal.go).
+	goal, isGoal := agent.ParseGoalCommand(args.Text)
+	isGoal = isGoal && len(args.Attachments) == 0 && len(args.Images) == 0
+	if isGoal && chat != nil {
+		err := server.goalCommandLocked(chat, goal)
+		server.mu.Unlock()
+		if err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		core.WriteJSON(w, 200, map[string]string{"chat": chat.ID})
+		return
+	}
+	if isGoal && goal.Action != "set" {
+		server.mu.Unlock()
+		core.Fail(w, 400, "This chat has no goal yet: /goal <objective> sets one and starts working on it")
+		return
+	}
 	workspace := args.Workspace
 	if chat != nil {
 		if workspace != "" && workspace != chat.Config.Workspace {
@@ -548,6 +583,17 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.Images = append(m.Images, args.Images...)
+	var newGoal *agent.GoalState // a new chat started by /goal
+	if isGoal {
+		newGoal = &agent.GoalState{}
+		outcome, err := newGoal.Command(goal, false, server.cfg.Provider)
+		if err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		m = *outcome.Start
+		args.Text = goal.Objective // the chat's title
+	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	if chat == nil {
@@ -580,6 +626,9 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(server.panelHomes, "home:"+workspace)
 		chat.ID, chat.Title, chat.Config = core.Identifier()[:16], string(title), cfg
+		if newGoal != nil {
+			chat.Goal = newGoal
+		}
 		server.chats = append([]*serverChat{chat}, server.chats...)
 		server.nameNewChatLocked(chat, m)
 	}
@@ -653,18 +702,28 @@ func (server *headlessServer) answer(w http.ResponseWriter, r *http.Request) {
 
 func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 	var args struct {
-		ID    string
-		Allow bool
+		ID string
+		agent.ApprovalAnswer
 	}
 	if core.ReadJSON(r, &args) != nil {
 		core.Fail(w, 400, "Invalid request")
 		return
 	}
-	if !server.backend.Approve(args.ID, args.Allow) {
+	if !server.backend.AnswerApproval(args.ID, args.ApprovalAnswer) {
 		core.Fail(w, 404, "This approval is no longer waiting")
 		return
 	}
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// review is the files of an edit waiting for approval (#242).
+func (server *headlessServer) review(w http.ResponseWriter, r *http.Request) {
+	files := server.backend.Review(r.URL.Query().Get("id"))
+	if files == nil {
+		core.Fail(w, 404, "This approval is no longer waiting")
+		return
+	}
+	core.WriteJSON(w, 200, map[string]any{"files": files})
 }
 
 func (server *headlessServer) setAutoResume(w http.ResponseWriter, r *http.Request) {

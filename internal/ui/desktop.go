@@ -55,12 +55,15 @@ type conversation struct {
 	History []agent.Message     `json:"history"`
 	Items   []agent.ChatItem    `json:"items"`
 	Cache   *agent.ContextCache `json:"contextCache,omitempty"`
+	// Compaction is the one interrupted, and the last ones made (#128).
+	Compaction *agent.CompactionState `json:"compaction,omitempty"`
 	// ContextUsage is Claude Code's last count of the window by category.
 	ContextUsage *agent.ContextUsage     `json:"contextUsage,omitempty"`
 	grants       *agent.PermissionGrants // what request_permissions granted, until 1loop closes
 	review       *agent.ReviewSession    // the Auto mode reviewer's conversation, until 1loop closes
 	tasks        *agent.BackgroundTasks  // shell commands run in the background, until 1loop closes
 	Todo         *agent.TodoState        `json:"todo,omitempty"`
+	Goal         *agent.GoalState        `json:"goal,omitempty"`  // its /goal (goal.go)
 	Panel        *savedPanel             `json:"panel,omitempty"` // its side panel, to open it again as it was
 	Version      string                  `json:"version,omitempty"`
 	Versions     []chatVersion           `json:"versions,omitempty"`
@@ -74,9 +77,11 @@ type conversation struct {
 	panel     *panelState // its side panel while 1loop runs (live tabs, terminals included)
 	failed    bool        // its last run failed and the user has not looked at it since: the tray says so
 	todoCount int         // tasks last seen in its list: the first ones open the panel
+	goalShown string      // the goal last shown: a new one opens the panel on it
 	taskCount int         // background tasks last seen: a new one opens the panel on them
 
 	run     *chatRun        // the agent loop working on this chat, if any
+	moving  bool            // paused to move to another device: it starts nothing (chat_move.go)
 	handoff *pendingHandoff // how the next turn's new model receives the chat
 	queue   []agent.Message // Enter while it runs: the next turns
 	steer   []agent.Message // Ctrl+Enter while it runs: joins at the next step
@@ -99,13 +104,18 @@ type chatRun struct {
 	approval *sheet
 	// The pending approval, so the phone remote can show and answer it.
 	approvalID, approvalTitle, approvalPreview string
-	answer                                     func(allow bool)
+	approvalReview                             bool
+	answer                                     func(agent.ApprovalAnswer)
+	closeReview                                func() // its tab in the side panel (review.go)
 	// The pending questions (request_user_input), for the phone as well.
 	questions       *sheet
 	questionID      string
 	questionList    []agent.Question
 	answerQuestions func(map[string]string)
 	started         time.Time
+	pause           *agent.PauseSignal
+	ended           chan struct{} // closed once the run is over
+	paused          bool          // it ended between two steps, to move
 }
 
 // desktopUI is one 1loop window: its widgets, the chat it shows, its
@@ -143,6 +153,7 @@ type desktopUI struct {
 	machine          *tapRow         // the target: this computer, an SSH machine or a server
 	serverStatus     *fitLabel       // the server's state beside it
 	modelsLoading    bool
+	pendingGoal      *agent.GoalState // a /goal on the start screen, for the chat it makes
 
 	updateRow *tapRow // the sidebar's "Update available" row
 
@@ -189,6 +200,7 @@ type desktopUI struct {
 	footerGlass   *footerGlass
 	column        *fyne.Container
 	scroll        *kineticScroll
+	chatBar       *chatScrollBar // the conversation's scrollbar, over it (chat_scrollbar.go)
 	followTail    bool
 	items         *transcriptLayout
 	frames        *frameHook
@@ -256,6 +268,7 @@ type desktopApp struct {
 	usage            *usage.Ledger // every model call this computer made (internal/usage)
 	prices           *usage.Prices
 	usageQuery       usage.Query // what the Usage page shows, kept while 1loop runs
+	usageAccount     string      // the account whose limits the Usage page shows
 	computer         *computeruse.ComputerSession
 	browser          *browser.Engine
 	backend          *agent.App
@@ -786,6 +799,7 @@ func (ui *desktopUI) buildChat() {
 		bottom := fyne.Max(0, ui.scroll.Content.Size().Height-ui.scroll.Size().Height)
 		ui.followTail = bottom-position.Y <= 2
 		ui.syncFooterFade()
+		ui.chatBar.sync()
 		relayout(ui.transcript) // items entering the view come back, those leaving it rest
 	}
 	ui.mark = newLoopMark(60)
@@ -796,7 +810,7 @@ func (ui *desktopUI) buildChat() {
 	// No scroll edge shadow between the conversation and the composer: the
 	// conversation fades under the composer while more of it lies below
 	// (footerGlass).
-	scroll := container.NewThemeOverride(ui.scroll, flatScrollTheme{loopTheme{theme.DefaultTheme()}})
+	scroll := container.NewThemeOverride(ui.scroll, chatScrollTheme{flatScrollTheme{loopTheme{theme.DefaultTheme()}}})
 	ui.chatWait = newLoopMark(56)
 	ui.chatWaitView = container.NewStack(canvas.NewRectangle(colBackground), container.NewCenter(container.NewVBox(
 		container.NewCenter(ui.chatWait.image), spacer(0, 12),
@@ -812,6 +826,10 @@ func (ui *desktopUI) buildChat() {
 	// The activity line may sit beside the composer (dockActivity): the
 	// dock layer floats over the conversation's bottom left corner.
 	conversation = container.New(dockLayout{ui}, conversation, ui.dockRow)
+	// The scrollbar is drawn over all of it, above the composer's fade
+	// (#609), clear of the side panel's handle (#610).
+	ui.chatBar = newChatScrollBar(ui)
+	conversation = container.New(chatBarLayout{ui: ui, footer: footer}, conversation, ui.chatBar)
 	ui.conversation = conversation
 }
 
@@ -1000,8 +1018,8 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	// so nothing else moves when a task starts or ends.
 	ui.model.row.truncate = true // a long model name is cut short rather than pushed out of the card
 	settings := container.New(composerSettingsLayout{model: ui.model.row}, container.NewCenter(ui.approvalControl), ui.model.row, ui.contextRing)
-	actions := container.New(layout.NewCustomPaddedHBoxLayout(4), ui.steer, ui.stop, ui.send)
-	ui.controls = container.New(&composerControlsLayout{transient: []fyne.CanvasObject{ui.steer, ui.stop, ui.send}}, settings, actions)
+	actions := container.New(composerActionsLayout{}, ui.steer, ui.stop, ui.send)
+	ui.controls = container.New(&composerControlsLayout{}, settings, actions)
 	ui.model.relayout = ui.controls.Refresh
 
 	// The card: no line of light along its top edge, which showed as a
@@ -1166,6 +1184,7 @@ func (ui *desktopUI) showTranscript(show bool) {
 func (ui *desktopUI) syncFooterFade() {
 	bottom := fyne.Max(0, ui.scroll.Content.Size().Height-ui.scroll.Size().Height)
 	ui.footerGlass.veil(ui.scroll.Visible() && bottom-ui.scroll.Offset.Y > 2)
+	ui.chatBar.sync() // the same moments move the scrollbar's thumb
 }
 
 func codeText(text string) fyne.CanvasObject {
@@ -1303,6 +1322,9 @@ func (ui *desktopUI) runStarted(chat *conversation, run *chatRun) {
 	platform.Devf("run", "start %q [%s]: %s %s, effort %q, approval %q, session %q, on screen %v",
 		chat.Title, chat.ID, chat.Config.Provider, chat.Config.Model, chat.Config.Effort, agent.ApprovalFor(ui.approvalMode, chat.Config), chat.Config.Session, chat == ui.current)
 	run.started = time.Now()
+	if run.ended == nil {
+		run.ended = make(chan struct{})
+	}
 	cancel := run.cancel
 	run.cancel = func() { run.stopped = true; cancel() }
 	chat.run = run
@@ -1330,6 +1352,9 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 		platform.Devf("run", "end %q [%s]: %s after %s, on screen %v", chat.Title, chat.ID, ended, time.Since(run.started).Round(time.Millisecond), chat == ui.current)
 	}
 	chat.run = nil
+	if run != nil {
+		defer close(run.ended)
+	}
 	ui.remote.metaChanged(chat)
 	ui.syncPresence()
 	ui.staleAccountLimits(chat.Config.ConnectionID)
@@ -1337,22 +1362,34 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	if run != nil && run.approval != nil {
 		run.approval.dismiss()
 	}
+	if run != nil && run.closeReview != nil {
+		run.closeReview()
+	}
 	if run != nil && run.questions != nil {
 		run.questions.dismiss()
 	}
 	// A prompt can arrive after the provider's final inbox check but before
 	// this UI callback. Close that gap before announcing that the chat is done.
-	if ended == "done" {
+	if ended == "done" && !chat.moving {
 		if next, ok := ui.takeNext(chat); ok {
 			ui.startIn(chat, next, "")
 			ui.save()
 			return
 		}
+		// The goal's next turn, while it is to be worked on (goal.go).
+		if next, ok := chat.Goal.Next(chat.Config.Provider); ok {
+			ui.startIn(chat, next, "")
+			ui.goalUpdated(chat)
+			return
+		}
 	}
-	if run != nil && ended == "done" {
+	if chat.Goal.Snapshot() != nil {
+		ui.panel.todoChanged(chat) // the clock stops, the state changed
+	}
+	if run != nil && ended == "done" && !run.paused {
 		ui.notifyUser(chat, "Done.")
 	}
-	if run != nil {
+	if run != nil && !run.paused {
 		state := agent.SubchatDone
 		if ended == "stopped" {
 			state = agent.SubchatFailed
@@ -1424,6 +1461,14 @@ func (ui *desktopUI) submit() {
 	}
 	text := strings.TrimSpace(ui.prompt.Text)
 	chat := ui.current
+	// /goal works with every model (#444): 1loop runs it, never the model.
+	if command, ok := agent.ParseGoalCommand(text); ok && len(ui.attachments)+len(ui.fileAttachments) == 0 {
+		ui.hideCommandMenu()
+		if problem := ui.goalCommand(chat, command, true); problem != "" {
+			ui.notice("/goal", problem)
+		}
+		return
+	}
 	if ui.commandsHere() && len(ui.attachments)+len(ui.fileAttachments) == 0 {
 		if name, args, ok := agent.SlashCommand(text); ok && ui.slashCommand(name, args) {
 			ui.hideCommandMenu()
@@ -1585,7 +1630,12 @@ func (ui *desktopUI) chatTasks(chat *conversation) *agent.BackgroundTasks {
 
 // startIn runs the agent loop for a message in chat (a new chat when nil).
 func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id string) {
-	ui = ui.viewOf(chat) // the window showing it (windows.go); nil: a new chat in this one
+	ui = ui.viewOf(chat)            // the window showing it (windows.go); nil: a new chat in this one
+	if chat != nil && chat.moving { // it goes on with the chat, wherever that is
+		chat.queue = append(chat.queue, messageValue)
+		ui.renderQueue()
+		return
+	}
 	if chat == nil {
 		title := []rune(strings.Join(strings.Fields(messageValue.Typed()), " "))
 		if len(title) > 36 {
@@ -1604,6 +1654,12 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 			chat = &conversation{}
 		}
 		chat.ID, chat.Title, chat.Config = core.Identifier()[:16], string(title), ui.cfg
+		if ui.pendingGoal != nil { // started by /goal (goal.go): named after its objective
+			chat.Goal, ui.pendingGoal = ui.pendingGoal, nil
+			if goal := chat.Goal.Snapshot(); goal != nil {
+				chat.Title = goalTitle(goal.Objective)
+			}
+		}
 		if !ui.scratchChat(chat) {
 			return
 		}
@@ -1647,7 +1703,10 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		ui.ensureWebTab()
 	}
 	turn.show(agent.Activity{State: "wait"})
-	ui.runStarted(chat, &chatRun{cancel: cancel, turn: turn})
+	pause := agent.NewPauseSignal()
+	cfg.Pause = pause
+	run := &chatRun{cancel: cancel, turn: turn, pause: pause}
+	ui.runStarted(chat, run)
 	pump := &eventPump{handle: turn.handle}
 	inboxValue := agent.Inbox{
 		Steer: func() (out []agent.Message) {
@@ -1694,7 +1753,9 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 			turn.finish()
 			defer ui.finishMove(chat, cfg.Move) // after runEnded: its note starts the next turn
 			ended := "done"
-			if err != nil {
+			if errors.Is(err, agent.ErrPaused) {
+				run.paused = true
+			} else if err != nil {
 				ended = "stopped"
 				text := err.Error()
 				if canceled {
@@ -1732,6 +1793,10 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 		}
 	}
 	cfg.Todo = chat.Todo
+	if chat.Goal == nil {
+		chat.Goal = &agent.GoalState{}
+	}
+	cfg.Goal = chat.Goal
 	cfg.Tasks = ui.chatTasks(chat)
 	cfg.Browser = ui.browserTools(chat)
 	cfg.Terminal = ui.terminalTools(chat)
@@ -1745,7 +1810,10 @@ func (ui *desktopUI) runConfig(chat *conversation) agent.Config {
 	if chat.Cache == nil {
 		chat.Cache = &agent.ContextCache{}
 	}
-	cfg.Cache = chat.Cache
+	if chat.Compaction == nil {
+		chat.Compaction = &agent.CompactionState{}
+	}
+	cfg.Cache, cfg.Compaction = chat.Cache, chat.Compaction
 	if chat.grants == nil {
 		chat.grants = &agent.PermissionGrants{}
 	}
@@ -1869,7 +1937,11 @@ func (ui *desktopUI) compactChat(focus string) {
 				ui.addItem(chat, agent.ChatItem{Kind: "error", Text: err.Error()})
 			} else {
 				chat.History = kept
-				ui.addItem(chat, agent.ChatItem{Kind: "note", Text: "Context compacted: the earlier rounds were condensed"})
+				text := "Context compacted: the earlier rounds were condensed"
+				if records := chat.Compaction.List(); len(records) > 0 {
+					text = "Context compacted · asked by you · " + records[len(records)-1].Label() + ". Earlier details remain available through recall."
+				}
+				ui.addItem(chat, agent.ChatItem{Kind: "note", Text: text})
 			}
 			ui.runEnded(chat, ended)
 		})
@@ -1877,63 +1949,130 @@ func (ui *desktopUI) compactChat(focus string) {
 }
 
 // showApproval asks before a command or an edit, whichever chat it comes
-// from: the run waits for the answer.
+// from: the run waits for the answer. An edit of the chat on screen is
+// reviewed in the side panel (review.go); elsewhere a dialog asks, and
+// offers that review.
 func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) *sheet {
+	app := ui
 	ui = ui.viewOf(chat).sheetView(chat) // the window showing it, else the one in use (windows.go)
 	id, _ := p["id"].(string)
 	title, _ := p["title"].(string)
 	preview, _ := p["preview"].(string)
-	if chat != ui.current {
-		title += " · " + chat.Title
-	}
+	review, _ := p["review"].(bool)
 	resolved := false
 	var dialog *sheet
 	forget := func() {
-		if chat.run != nil && chat.run.approval == dialog {
-			chat.run.approval = nil
-			chat.run.approvalID, chat.run.answer = "", nil
+		if chat.run != nil && chat.run.approvalID == id {
+			chat.run.approval, chat.run.closeReview = nil, nil
+			chat.run.approvalID, chat.run.answer, chat.run.approvalReview = "", nil, false
 			ui.remote.metaChanged(chat)
 			ui.syncTray()
 		}
 	}
-	answer := func(allow bool) {
+	closeReview := func() {}
+	resolve := func(answer agent.ApprovalAnswer) {
 		if resolved {
 			return
 		}
 		resolved = true
-		ui.approve(chat, id, allow)
+		ui.approve(chat, id, answer)
 		forget()
-		dialog.Hide()
-	}
-	refuse := newRow("Deny", nil, styleOutline, func() { answer(false) })
-	allow := newRow("Allow", nil, stylePrimary, func() { answer(true) })
-	intro := textLine("1loop needs your approval to perform this action.", 14, colMuted)
-	body := container.NewBorder(padded(0, 10, 0, 0, intro), nil, nil, nil, codeBlock(preview, 360))
-	dialog = ui.modal(title, body, 680, func() {
-		if !resolved {
-			resolved = true
-			ui.approve(chat, id, false)
-			forget()
+		if dialog != nil {
+			dialog.Hide()
 		}
-	}, refuse, allow)
+		closeReview()
+	}
 	ui.notifyUser(chat, "Waiting for your approval: "+title)
 	if chat.run != nil {
-		chat.run.approval = dialog
-		chat.run.approvalID, chat.run.approvalTitle, chat.run.approvalPreview = id, title, preview
-		chat.run.answer = answer
-		ui.remote.metaChanged(chat)
-		ui.syncTray()
+		chat.run.approvalID, chat.run.approvalTitle, chat.run.approvalPreview, chat.run.approvalReview = id, title, preview, review
+		chat.run.answer = resolve
 	}
+	openTab := func(view *desktopUI, files []agent.ReviewFile) {
+		closeReview = view.panel.openReview(chat, title, files, resolve)
+		if chat.run != nil && chat.run.approvalID == id {
+			chat.run.closeReview = func() { resolved = true; closeReview() }
+		}
+	}
+	waiting := func() {
+		if chat.run != nil {
+			chat.run.approval = dialog
+			ui.remote.metaChanged(chat)
+			ui.syncTray()
+		}
+	}
+	if review && chat.server == nil && ui.panel != nil && ui.panel.owner == chat && chat == ui.current {
+		if files := ui.backend.Review(id); len(files) > 0 {
+			openTab(ui, files)
+			waiting()
+			return nil
+		}
+	}
+	shown := title
+	if chat != ui.current {
+		shown += " · " + chat.Title
+	}
+	actions := []*tapRow{newRow("Deny", nil, styleOutline, func() { resolve(agent.ApprovalAnswer{}) })}
+	if review {
+		actions = append(actions, newRow("Review…", nil, styleOutline, func() {
+			if chat.server == nil { // in its chat's panel
+				files := ui.backend.Review(id)
+				if len(files) == 0 || resolved {
+					return
+				}
+				dialog.Hide()
+				dialog = nil
+				if chat.run != nil {
+					chat.run.approval = nil
+				}
+				app.openChat(chat)
+				openTab(app.viewOf(chat), files)
+				return
+			}
+			go func() {
+				files, err := ui.reviewFiles(ui.ctx, chat, id)
+				fyne.Do(func() {
+					if resolved {
+						return
+					}
+					if err != nil || len(files) == 0 {
+						ui.notice("Review", "This edit cannot be reviewed any more: it may have been answered elsewhere.")
+						return
+					}
+					view := newReviewView(ui, ui.window, title, files, resolve)
+					size := ui.window.Canvas().Size()
+					body := container.NewGridWrap(fyne.NewSize(fyne.Min(940, size.Width-90), fyne.Max(280, size.Height-190)), view.view)
+					old := dialog
+					dialog = newSheet(ui.window.Canvas(), body, fyne.Min(980, size.Width-50))
+					dialog.onDismiss = func() { resolve(agent.ApprovalAnswer{}) }
+					old.onDismiss = nil
+					old.Hide()
+					dialog.Show()
+					if chat.server != nil {
+						chat.server.approvalSheet = dialog
+					}
+					view.focus()
+				})
+			}()
+		}))
+	}
+	actions = append(actions, newRow("Allow", nil, stylePrimary, func() { resolve(agent.ApprovalAnswer{Allow: true}) }))
+	intro := textLine("1loop needs your approval to perform this action.", 14, colMuted)
+	body := container.NewBorder(padded(0, 10, 0, 0, intro), nil, nil, nil, codeBlock(preview, 360))
+	dialog = ui.modal(shown, body, 680, func() { resolve(agent.ApprovalAnswer{}) }, actions...)
+	waiting()
 	return dialog
 }
 
 // approve answers an approval: this computer's agent, or the server's.
-func (ui *desktopUI) approve(chat *conversation, id string, allow bool) {
+func (ui *desktopUI) approve(chat *conversation, id string, answer agent.ApprovalAnswer) {
 	if chat.server != nil {
-		chat.server.action("/api/approve", map[string]any{"id": id, "allow": allow})
+		chat.server.action("/api/approve", struct {
+			ID string `json:"id"`
+			agent.ApprovalAnswer
+		}{id, answer})
 		return
 	}
-	ui.backend.Approve(id, allow)
+	ui.backend.AnswerApproval(id, answer)
 }
 
 func (ui *desktopUI) refreshModels() {
@@ -2225,7 +2364,7 @@ func (ui *desktopUI) persist(wait bool) {
 	chats := make([]*conversation, len(ui.chats))
 	for i, chat := range ui.chats { // messages are never edited in place: copying the lists is enough
 		chats[i] = &conversation{ID: chat.ID, Title: chat.Title, Config: chat.Config, Panel: chat.Panel,
-			History: append([]agent.Message{}, chat.History...), Items: append([]agent.ChatItem{}, chat.Items...), Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(),
+			History: append([]agent.Message{}, chat.History...), Items: append([]agent.ChatItem{}, chat.Items...), Todo: chat.Todo.Copy(), Goal: chat.Goal.Copy(), Cache: chat.Cache.Copy(), Compaction: chat.Compaction.Copy(),
 			Version: chat.Version, Versions: copyVersions(chat.Versions), ContextUsage: chat.ContextUsage,
 			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...)} // its parent: forgetting it detached every subchat on restart (#356)
 	}

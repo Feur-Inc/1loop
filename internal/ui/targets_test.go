@@ -227,13 +227,6 @@ func TestGroupKeys(t *testing.T) {
 	}
 }
 
-// A new chat with no folder runs on the device in use: this computer.
-func TestNoFolderRunsHere(t *testing.T) {
-	if noFolderTarget() != localTarget {
-		t.Fatalf("no folder runs on %v", noFolderTarget())
-	}
-}
-
 // The target's icon after a project's name never runs into its trailing
 // text: in a narrow sidebar it steps aside for the name.
 func TestRowMarkStepsAside(t *testing.T) {

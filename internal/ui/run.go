@@ -17,6 +17,7 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/crash"
 	"1loop/internal/platform"
+	"1loop/internal/update"
 )
 
 // Main runs the desktop program.
@@ -25,6 +26,7 @@ func Main() {
 	developer := flag.Bool("dev", false, "Write a detailed developer log (events, performance, stalls) to the terminal and to ~/.cache/1loop/dev.log")
 	flag.Parse()
 	tuneMemory()
+	go update.RecordInstalled()
 	platform.DevWanted = *developer || os.Getenv("ONELOOP_DEV") == "1"
 	root, err := agent.ResolveWorkspace(*workspace)
 	if err != nil {
@@ -48,7 +50,7 @@ func Main() {
 		crash.Clean() // ended on purpose (logout, Ctrl+C): no crash
 		os.Exit(130)
 	}()
-	backend := &agent.App{Approvals: make(map[string]chan bool)}
+	backend := &agent.App{Approvals: make(map[string]chan agent.ApprovalAnswer)}
 	runDesktop(backend, root, asked)
 }
 

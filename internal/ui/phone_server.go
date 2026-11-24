@@ -145,6 +145,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("GET /api/state", server.authorized(server.state))
 	mux.HandleFunc("GET /api/chats/{id}", server.authorized(server.chat))
 	mux.HandleFunc("GET /api/chats/{id}/context", server.authorized(server.chatContext))
+	mux.HandleFunc("GET /api/chats/{id}/compactions", server.authorized(server.compactions))
 	mux.HandleFunc("GET /api/mentions", server.authorized(server.mentions))
 	mux.HandleFunc("POST /api/chats/{id}/delete", server.authorized(server.deleteChat))
 	mux.HandleFunc("POST /api/chats/{id}/rename", server.authorized(server.renameChat))
@@ -624,6 +625,17 @@ func (server *remoteServer) chatContext(writer http.ResponseWriter, req *http.Re
 		return
 	}
 	core.WriteJSON(writer, http.StatusOK, usage)
+}
+
+// compactions are the chat's last ones, before and after (#128).
+func (server *remoteServer) compactions(writer http.ResponseWriter, req *http.Request) {
+	var records []agent.CompactionRecord
+	server.onUI(func() {
+		if chat := server.ui.chatByID(req.PathValue("id")); chat != nil {
+			records = chat.Compaction.List()
+		}
+	})
+	core.WriteJSON(writer, http.StatusOK, map[string]any{"records": records})
 }
 
 // mentions are what a chat's composer offers after "@" (?chat=, a new

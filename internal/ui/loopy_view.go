@@ -76,6 +76,7 @@ type loopyMode struct {
 	browserBtn  *tapRow
 	browserPane *fyne.Container
 	browserTab  fyne.CanvasObject
+	browserBar  *fyne.Container // who has it
 	browserOn   bool // the user wants the pane while there is a page
 	remoteTab   string
 	closeRemote context.CancelFunc
@@ -602,8 +603,11 @@ func (mode *loopyMode) renderFeed(end bool) {
 	}
 }
 
-// taskKey says what a task's card shows besides its message.
+// taskKey says what a card shows besides its message.
 func (mode *loopyMode) taskKey(message loopy.Message) string {
+	if message.Card != nil && message.Card.Kind == "needs_you" {
+		return fmt.Sprint(mode.view.Browser, mode.view.Taken)
+	}
 	if message.Card == nil || message.Card.Task == "" || message.Card.Kind != "delegate" {
 		return ""
 	}
@@ -1003,8 +1007,11 @@ func (mode *loopyMode) showBrowser(view fyne.CanvasObject) {
 	if view != mode.browserTab {
 		mode.browserTab = view
 		frame := canvas.NewRectangle(colSidebar)
-		mode.browserPane.Objects = []fyne.CanvasObject{frame, padded(0, 12, 0, 12, view)}
+		mode.browserBar = container.NewStack()
+		mode.browserPane.Objects = []fyne.CanvasObject{frame, padded(0, 12, 0, 12, container.NewBorder(mode.browserBar, nil, nil, nil, view))}
 	}
+	mode.browserBar.Objects = []fyne.CanvasObject{mode.browserHands()}
+	mode.browserBar.Refresh()
 	if mode.browserOn {
 		mode.browserPane.Show()
 	} else {
@@ -1012,6 +1019,23 @@ func (mode *loopyMode) showBrowser(view fyne.CanvasObject) {
 	}
 	mode.browserPane.Refresh()
 	mode.main.Refresh()
+}
+
+// browserHands says who has Loopy's browser, and gives it to the other.
+func (mode *loopyMode) browserHands() fyne.CanvasObject {
+	text, label, do, style := "Loopy's browser", "Take over", "browser.take", styleChip
+	if mode.view.Taken {
+		text, label, do, style = "You have the browser. Loopy waits.", "I'm done", "browser.give", stylePrimary
+	}
+	button := newRow(label, nil, style, func() { mode.action(loopy.Action{Do: do}, nil) })
+	return padded(8, 8, 12, 0, container.NewBorder(nil, nil, container.NewCenter(textLine(text, 12.5, colMuted)), container.NewCenter(button)))
+}
+
+// takeBrowser opens Loopy's browser for the user to act in.
+func (mode *loopyMode) takeBrowser() {
+	mode.browserOn = true
+	mode.syncBrowser()
+	mode.action(loopy.Action{Do: "browser.take"}, nil)
 }
 
 // syncRemoteBrowser is the same for a Loopy on a server: its page is a tab

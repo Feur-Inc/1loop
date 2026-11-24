@@ -89,6 +89,12 @@ func (e *Engine) Do(ctx context.Context, a loopy.Action) error {
 	case "summary":
 		e.Summary("a summary the user asked for")
 		return nil
+	case "browser.take":
+		e.TakeBrowser(true)
+		return nil
+	case "browser.give":
+		e.TakeBrowser(false)
+		return nil
 	case "learn":
 		e.store.Lock()
 		settings := e.store.Settings

@@ -53,6 +53,9 @@ func (e *Engine) Answer(answer loopy.Answer) error {
 	case "routine":
 		return e.answerRoutine(message, answer)
 	}
+	if card.Kind == "needs_you" {
+		e.TakeBrowser(false) // done with it, or dropped
+	}
 	note := fmt.Sprintf("[The user answered your card %q: %s]", card.Title, answer.Answer)
 	shown := answer.Answer
 	if card.Ask != "" && answer.Answer == card.Actions[0] {

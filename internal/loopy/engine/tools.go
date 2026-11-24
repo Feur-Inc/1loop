@@ -273,7 +273,7 @@ func (e *Engine) card(r *run, args toolArgs) (string, error) {
 			return "", errors.New("never ask for a password or a card: use loopy_sign_in for a sign-in")
 		}
 		if len(card.Actions) == 0 && card.Ask == "" {
-			card.Actions = []string{"I'm done", "Drop it"}
+			card.Actions = []string{imDone, "Drop it"}
 		}
 		if card.Ask != "" {
 			card.Actions = []string{"Give it", "Drop it"}

@@ -31,7 +31,7 @@ type Action struct {
 	// Do is "routine.on", "routine.off", "routine.run", "routine.remove",
 	// "routine.edit", "task.stop", "fact.change", "fact.add", "fact.forget",
 	// "rule.remove", "vault.save", "vault.remove", "account.save",
-	// "account.remove", "file.remove", "summary", "learn".
+	// "account.remove", "file.remove", "summary", "learn", "browser.take", "browser.give".
 	Do      string            `json:"do"`
 	ID      string            `json:"id,omitempty"`
 	Text    string            `json:"text,omitempty"`

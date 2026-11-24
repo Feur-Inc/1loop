@@ -27,6 +27,13 @@ func (e *Engine) guardBrowser(tools agent.PanelToolHandler) agent.PanelToolHandl
 	return func(ctx context.Context, name string, raw json.RawMessage) (agent.PanelToolResult, error) {
 		var args agent.BrowserToolArgs
 		json.Unmarshal(raw, &args)
+		was, err := e.waitBrowser(ctx)
+		if err != nil {
+			return agent.PanelToolResult{}, err
+		}
+		if was && name == "browser_interact" {
+			return agent.PanelToolResult{}, errors.New("the user just used the browser themselves: read the page again before acting in it")
+		}
 		page := e.host.Page()
 		// What leaves by an address, a script or the keyboard.
 		for _, out := range []string{args.Text, args.URL, args.Expression} {
@@ -50,6 +57,9 @@ func (e *Engine) guardBrowser(tools agent.PanelToolHandler) agent.PanelToolHandl
 			}
 		}
 		result, err := tools(ctx, name, raw)
+		if was && err == nil {
+			result.Text = "(The user just used the browser themselves.)\n" + result.Text
+		}
 		result.Text = redact(result.Text, e.secrets())
 		if err == nil && (name == "browser_read" || name == "browser_evaluate") && result.Text != "" {
 			result.Text = untrusted("web page", result.Text)
@@ -58,6 +68,63 @@ func (e *Engine) guardBrowser(tools agent.PanelToolHandler) agent.PanelToolHandl
 			e.holdsSecret(e.host.Page()) // forgets a page that was left
 		}
 		return result, err
+	}
+}
+
+// TakeBrowser gives the browser to the user, who does something in it
+// themselves (a CAPTCHA, a code, a payment): Loopy's next action there waits
+// until they give it back.
+func (e *Engine) TakeBrowser(on bool) {
+	e.mu.Lock()
+	switch {
+	case on && e.hands == nil:
+		e.hands = make(chan struct{})
+	case !on && e.hands != nil:
+		close(e.hands)
+		e.hands = nil
+	default:
+		e.mu.Unlock()
+		return
+	}
+	e.mu.Unlock()
+	if on {
+		e.log("The user took the browser over.")
+	} else {
+		// A card that asked for just that is answered.
+		for _, id := range e.waiting() {
+			message, ok := e.message(id)
+			if ok && message.Card.Kind == "needs_you" && slices.Contains(message.Card.Actions, imDone) {
+				e.Answer(loopy.Answer{Message: id, Answer: imDone})
+				break
+			}
+		}
+	}
+	e.tell(nil, nil, true)
+}
+
+const imDone = "I'm done"
+
+func (e *Engine) taken() bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	return e.hands != nil
+}
+
+// waitBrowser waits for the user to be done with the browser; it says
+// whether they had it.
+func (e *Engine) waitBrowser(ctx context.Context) (bool, error) {
+	e.mu.Lock()
+	hands := e.hands
+	e.mu.Unlock()
+	if hands == nil {
+		return false, nil
+	}
+	e.set("waiting", "You have the browser")
+	select {
+	case <-hands:
+		return true, nil
+	case <-ctx.Done():
+		return true, ctx.Err()
 	}
 }
 

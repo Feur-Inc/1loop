@@ -73,6 +73,7 @@ type Engine struct {
 	used       int
 	window     int
 	waits      map[string]chan loopy.Answer // a run waiting on a card
+	hands      chan struct{}                // the user has the browser; closed when they give it back
 	filled     string                       // the site a secret was put in a page of
 	granted    map[string]time.Time         // what a card just allowed, once
 	learning   bool
@@ -408,6 +409,7 @@ func (e *Engine) View() loopy.View {
 	view.Facts = len(e.memory.Facts(false))
 	view.Models = e.host.Models()
 	view.Browser = e.host.Page() != nil
+	view.Taken = view.Browser && e.taken()
 	if cfg, err := e.host.Config(view.Settings, e.folder.dir); err == nil {
 		view.Model = cfg.Model
 	}

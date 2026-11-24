@@ -268,6 +268,7 @@ type View struct {
 	Used     int          `json:"used,omitempty"`
 	Window   int          `json:"window,omitempty"`
 	Browser  bool         `json:"browser,omitempty"` // it has a page open
+	Taken    bool         `json:"taken,omitempty"`   // the user took its browser over
 }
 
 // Change is what changed since a version.

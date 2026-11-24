@@ -392,6 +392,9 @@ func (mode *loopyMode) cardView(message loopy.Message) fyne.CanvasObject {
 	}
 	if waiting && len(c.Actions) > 0 {
 		buttons := container.New(&wrapLayout{gap: 8})
+		if c.Kind == "needs_you" && c.Ask == "" && mode.view.Browser && !mode.view.Taken {
+			buttons.Add(newRow("Take over the browser", iconBrowser, styleOutline, mode.takeBrowser))
+		}
 		for i, action := range c.Actions {
 			style := styleOutline
 			if i == 0 {

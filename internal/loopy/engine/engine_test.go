@@ -878,3 +878,44 @@ func (base httpCaller) Upload(_ context.Context, path string, data []byte, out a
 }
 
 var _ = memory.Fact{}
+
+func TestTheUserTakesTheBrowser(t *testing.T) {
+	heardText := ""
+	e, _ := wake(t, t.TempDir(), func(m []heard) any {
+		if last(m).Role == "tool" {
+			return ""
+		}
+		if heardText = lastUser(m); strings.Contains(heardText, "answered your card") {
+			return "Je continue."
+		}
+		return card(map[string]any{"kind": "needs_you", "title": "Un captcha"})
+	})
+	var used int
+	tools := e.guardBrowser(func(_ context.Context, name string, _ json.RawMessage) (agent.PanelToolResult, error) {
+		used++
+		return agent.PanelToolResult{Text: "page"}, nil
+	})
+	e.Send("réserve", nil)
+	waitingCard(t, e)
+	until(t, "its turn ended", e.idle)
+	e.Do(t.Context(), loopy.Action{Do: "browser.take"})
+	ctx, cancel := context.WithTimeout(t.Context(), 50*time.Millisecond)
+	defer cancel()
+	if _, err := tools(ctx, "browser_read", json.RawMessage(`{}`)); err == nil || used != 0 {
+		t.Error("the browser was used while the user had it")
+	}
+	done := make(chan agent.PanelToolResult)
+	go func() {
+		result, _ := tools(t.Context(), "browser_read", json.RawMessage(`{}`))
+		done <- result
+	}()
+	time.Sleep(20 * time.Millisecond)
+	e.Do(t.Context(), loopy.Action{Do: "browser.give"})
+	if result := <-done; !strings.Contains(result.Text, "used the browser themselves") {
+		t.Error(result.Text)
+	}
+	until(t, "the card is answered", func() bool { return e.idle() && slices.Contains(said(e), "Je continue.") })
+	if !strings.Contains(heardText, "I'm done") {
+		t.Errorf("heard %q", heardText)
+	}
+}

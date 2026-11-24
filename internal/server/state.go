@@ -23,6 +23,7 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/browser"
 	"1loop/internal/core"
+	"1loop/internal/loopy/engine"
 	"1loop/internal/remoteapi"
 	"1loop/internal/sshmachine"
 	"1loop/internal/usage"
@@ -100,6 +101,11 @@ type serverSettings struct {
 
 type headlessServer struct {
 	mu                         sync.Mutex
+	loopyMu                    sync.Mutex // Loopy (loopy.go), woken on first use
+	loopy                      *engine.Engine
+	loopyClosed                bool
+	loopyOnce                  sync.Once
+	loopyEvents                chan func()
 	adminReady                 atomic.Bool   // its admin socket listens: "1loop-server pair" reaches it
 	usage                      *usage.Ledger // every model call's tokens (internal/usage)
 	prices                     *usage.Prices
@@ -359,6 +365,7 @@ func (server *headlessServer) scheduleSaveLocked() {
 }
 
 func (server *headlessServer) close() {
+	server.closeLoopy()
 	server.mu.Lock()
 	server.closing = true
 	shared := server.sharing
@@ -1022,6 +1029,7 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			server.runLocked(chat, next) // the goal's next turn (agent/goal.go)
 		}
 		if chat.run == nil { // the last turn of the chain: it reports to who caused it
+			server.loopyEnded(chat, ended)
 			server.turnEndedLocked(chat, ended)
 		}
 	}()
@@ -1127,6 +1135,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		run.label = value.(string)
 	case "goal": // its state, time or tokens changed: the meta goes out with the change
 	}
+	server.loopyFollow(chat, run, kind)
 	server.changedLocked(chat, index)
 }
 

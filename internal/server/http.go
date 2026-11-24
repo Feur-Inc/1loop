@@ -21,6 +21,7 @@ import (
 	"1loop/internal/extensions"
 	"1loop/internal/githubconnector"
 	"1loop/internal/gitrepo"
+	"1loop/internal/loopy/engine"
 	"1loop/internal/remoteapi"
 	"1loop/internal/usage"
 )
@@ -181,6 +182,8 @@ func (server *headlessServer) routes() http.Handler {
 		}
 		endpoints[path] = handler
 	}
+	server.loopyRoutes(endpoints)
+	mux.HandleFunc("POST /api/loopy/hook/{token}", engine.HookHandler(server.loopyEngine)) // the token is the key
 	for path, handler := range gitrepo.Handlers(gitTarget{server}, githubconnector.Default.Authorizations) {
 		endpoints[path] = handler
 	}
@@ -189,7 +192,7 @@ func (server *headlessServer) routes() http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/attachments", "/api/files/upload", "/api/sync/import":
+		case "/api/attachments", "/api/files/upload", "/api/sync/import", "/api/loopy/file":
 			// Files: their handlers set their own limits.
 		case "/api/sync/export":
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<20) // the list of a large project's files

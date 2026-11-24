@@ -12,9 +12,12 @@ import (
 // turn, a message waiting for one, a background command or an open
 // terminal. In the background, the app stops an engine that stays idle.
 func (server *headlessServer) localBusy(w http.ResponseWriter, r *http.Request) {
+	server.loopyMu.Lock()
+	woken := server.loopy
+	server.loopyMu.Unlock()
+	busy := woken != nil && (woken.Busy() || woken.Wakes()) // its routines go on without the app
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	busy := false
 	for _, chat := range server.panelContextsLocked() {
 		if chat.run != nil || len(chat.queue) > 0 || len(chat.steer) > 0 {
 			busy = true

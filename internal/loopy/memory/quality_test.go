@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -46,10 +47,12 @@ func modelAsk(t *testing.T) Ask {
 	}
 }
 
-// yes reads a verdict's last line.
+var verdictLine = regexp.MustCompile(`(?i)verdict\W*(yes|no)\b`)
+
+// yes reads a verdict: its last one.
 func yes(verdict string) bool {
-	lines := strings.Split(strings.TrimSpace(verdict), "\n")
-	return strings.Contains(strings.ToLower(lines[len(lines)-1]), "yes")
+	all := verdictLine.FindAllStringSubmatch(verdict, -1)
+	return len(all) > 0 && strings.EqualFold(all[len(all)-1][1], "yes")
 }
 
 func number(name string, otherwise int) int {
@@ -89,6 +92,9 @@ func TestLongMemEvalAnswers(t *testing.T) {
 		kind := q.Type
 		if strings.HasSuffix(q.ID, "_abs") {
 			kind = "abstention"
+		}
+		if only := os.Getenv("LOOPY_TYPE"); only != "" && kind != only {
+			continue
 		}
 		if count[kind] < each {
 			count[kind]++
@@ -159,12 +165,15 @@ func TestLongMemEvalAnswers(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			verdict, err := ask(t.Context(), "You grade answers.", gradePrompt(q, answer)+"\n\nCheck it in a few words, then write yes or no alone on the last line.")
+			verdict, err := ask(t.Context(), "You grade answers.", gradePrompt(q, answer)+"\n\nCheck it in a few words, then end with a line that is exactly VERDICT: yes or VERDICT: no.")
 			if err != nil {
 				t.Error(err)
 				return
 			}
 			ok := yes(verdict)
+			if !ok {
+				t.Logf("missed, %s: %s\n  right: %v\n  got: %s", way, q.Question, q.Answer, clip(answer, 500))
+			}
 			mu.Lock()
 			for _, name := range []string{"all", q.Type} {
 				if right[name] == nil {
@@ -320,7 +329,7 @@ func TestHabitsAreFollowed(t *testing.T) {
 					t.Error(err)
 					return
 				}
-				verdict, err := ask(t.Context(), "You check answers with care.", fmt.Sprintf("Does the answer satisfy this: it %s?\nMessage: %s\nAnswer: %s\n\nCheck it in a few words, then write yes or no alone on the last line.", w.must, w.ask, answer))
+				verdict, err := ask(t.Context(), "You check answers with care.", fmt.Sprintf("Does the answer satisfy this: it %s?\nMessage: %s\nAnswer: %s\n\nCheck it in a few words, then end with a line that is exactly VERDICT: yes or VERDICT: no.", w.must, w.ask, answer))
 				if err != nil {
 					t.Error(err)
 					return
@@ -336,7 +345,7 @@ func TestHabitsAreFollowed(t *testing.T) {
 				if ok {
 					s[0]++
 				} else if way == "memory" {
-					lines = append(lines, fmt.Sprintf("missed: %s / %q must be: %s\n   got %q", p.name, w.ask, w.must, clip(answer, 220)))
+					lines = append(lines, fmt.Sprintf("missed: %s / %q must be: %s\n   got %q\n   because %q", p.name, w.ask, w.must, clip(answer, 220), clip(verdict, 200)))
 				}
 				into[way] = s
 				mu.Unlock()

@@ -141,7 +141,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
             val list = app.panelTabs(chat)
             reachable = list != null
             if (list != null) {
-                tabs = list.filter { it.kind != "todo" && it.kind != "tool" } // the task list is always first
+                tabs = list.filter { it.kind != "todo" && it.kind != "tool" && (!loopy || it.kind == "browser") } // the task list is always first
                 if (loopy && tabs.none { it.key == selected }) tabs.lastOrNull()?.let { selected = it.key }
                 else if (selected != "tasks" && selected != "files" && tabs.none { it.key == selected }) selected = initialTab
             }
@@ -557,6 +557,7 @@ private fun BrowserView(app: RemoteApp, chat: String, tab: PanelTab) {
         if (!addressFocused && leaving == null) address = url
         zoom = zoom.follow(url)
     }
+    if (chat == LOOPY_CHAT) LaunchedEffect(app.loopy.taken) { locked = !app.loopy.taken } // taken over: the page is the user's
     LaunchedEffect(locked) { if (!locked) zoom = zoom.reset() } // control acts on the page as the agent sees it
     LaunchedEffect(locked, used) {
         if (!locked) {

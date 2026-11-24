@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
 	_ "image/jpeg"
 	_ "image/png"
 	"io"
@@ -28,6 +29,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/theme"
@@ -51,8 +53,8 @@ func (ui *desktopUI) connectServer() {
 	connect := newRow("Connect", nil, stylePrimary, nil)
 	connect.onTap = func() {
 		target := serverAddress{URL: address.Text, Fingerprint: pin.Text}
-		if target.URL == saved.URL && target.Fingerprint == saved.Fingerprint {
-			target.Token = saved.Token
+		if known, ok := pairedServer(target.URL); ok && known.Fingerprint == target.Fingerprint { // any server paired, not only the last
+			target.Token = known.Token
 		}
 		client, err := newRemoteClient(target)
 		if err != nil {
@@ -72,8 +74,8 @@ func (ui *desktopUI) connectServer() {
 				}
 			}
 			var reply struct {
-				Pairing, Code  string
-				Console, Phone bool
+				Pairing, Code, Command string
+				Console, Phone         bool
 			}
 			err = client.json(ctx, "POST", "/api/pair", map[string]string{"device": "1loop desktop"}, &reply)
 			fyne.Do(func() {
@@ -87,7 +89,7 @@ func (ui *desktopUI) connectServer() {
 					return
 				}
 				sheet.dismiss()
-				ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Phone, false)
+				ui.confirmServerPair(client, reply.Pairing, reply.Code, reply.Command, reply.Phone, false, ui.useNewServer)
 			})
 		}()
 	}
@@ -101,7 +103,9 @@ func (ui *desktopUI) connectServer() {
 // confirmServerPair waits for the pairing's approval, and connects as soon
 // as it comes: from a paired device, the server's console or, in local mode,
 // the phone. A pairing the setup link approved connects at once.
-func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code string, phone, approved bool) {
+// paired keeps the server once paired: useNewServer, or the browser
+// client's linkPairedServer.
+func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code, command string, phone, approved bool, paired func(*remoteClient) error) {
 	ctx, stop := context.WithCancel(ui.ctx)
 	status := widget.NewLabel("Waiting for approval…")
 	status.Wrapping = fyne.TextWrapWord
@@ -121,7 +125,7 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 				fyne.Do(func() {
 					if err == nil {
 						client.address.Token = reply.Token
-						err = saveServerAddress(client.address)
+						err = paired(client)
 					}
 					if err != nil {
 						if sheet == nil { // the setup link: no sheet shown yet
@@ -134,7 +138,6 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 					if sheet != nil {
 						sheet.dismiss()
 					}
-					ui.useServer(client)
 				})
 				return
 			}
@@ -148,12 +151,19 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 	if approved {
 		return
 	}
-	command := "pair " + pairingID + " " + code
+	// The server's command runs on its machine (with docker exec in a
+	// container); a server older than it takes the console's only.
+	where := "Or type this command in the server's console:"
+	if console := "pair " + pairingID + " " + code; command == "" {
+		command = console
+	} else {
+		where = "Or run this command on the server's machine (or type " + console + " in its console):"
+	}
 	copyCommand := newRow("Copy command", nil, styleChip, func() { fyne.CurrentApp().Clipboard().SetContent(command) })
 	body := container.NewVBox(
 		note("Approve it in 1loop on a device already paired with this server: it asks for this code. This connects by itself once approved; the pairing expires after two minutes."),
 		codeBlock(code, 80),
-		note("Or type this command in the server's console:"),
+		note(where),
 		codeBlock(command, 80),
 		copyCommand,
 		status,
@@ -162,6 +172,16 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code str
 		body = container.NewVBox(note("On the phone, type this code in 1loop's request, then tap Allow. The pairing expires after two minutes."), codeBlock(code, 80), status)
 	}
 	sheet = ui.modal("Approve this device", body, 620, stop)
+}
+
+// useNewServer saves the server just paired as the one to come back to,
+// and makes it the window's target.
+func (ui *desktopUI) useNewServer(client *remoteClient) error {
+	if err := saveServerAddress(client.address); err != nil {
+		return err
+	}
+	ui.useServer(client)
+	return nil
 }
 
 // askPairing shows a device asking to use the server (the "pairing" event):
@@ -248,9 +268,11 @@ type remoteDesktop struct {
 	tier             string // and its speed
 	approvalMode     string
 	autoMode         bool
+	namingModel      *agent.NamingModel       // the server's chat naming model
 	convs            map[string]*conversation // the server's chats as this window shows them
 	fileAttachments  []agent.FileAttachment
-	update           *update.Status // the server runs an older version (remote_desktop_update.go)
+	thumbnails       map[string]image.Image // the pictures uploaded from here, by their path on the server
+	update           *update.Status         // the server runs an older version (remote_desktop_update.go)
 	approvalID       string
 	approvalSheet    *sheet
 	pairingID        string // a device asking to use the server (askPairing)
@@ -267,15 +289,19 @@ type remoteDesktop struct {
 	todoFooter    *fyne.Container // the context breakdown and compaction lines
 	todoFooterKey string
 	todoUsage     *contextUsageState
-	todoRows      map[string]*widget.Label
+	todoTimes     map[string]*canvas.Text // each task's clock, ticking in place
+	todoMarks     []*taskMark
+	goalClock     *canvas.Text // the goal card's time spent (goal.go)
 	todoSignature string
 	openCommands  map[string]bool // the background commands shown in full, by task
+	connected     string          // the connection line show last wrote in status
 }
 
 // useServer makes a server the window's target: the sidebar lists its
 // projects and chats, and what is sent runs there.
 func (ui *desktopUI) useServer(client *remoteClient) {
 	if ui.server != nil {
+		ui.handOver(ui.server)
 		ui.server.close()
 	} else {
 		ui.localCfg = ui.cfg
@@ -290,6 +316,7 @@ func (ui *desktopUI) useServer(client *remoteClient) {
 	}
 	remote.resetTabs()
 	ui.server = remote
+	ui.linkServers() // a server just paired is followed from now on
 	ui.machine.SetText(serverName(client.address.URL))
 	ui.serverStatus.SetText("Connecting…")
 	ui.serverStatus.Show()
@@ -327,6 +354,7 @@ func (ui *desktopUI) useComputer() {
 		}
 		return
 	}
+	ui.handOver(ui.server)
 	ui.server.close()
 	ui.server = nil
 	ui.cfg = ui.localCfg
@@ -365,9 +393,12 @@ func (remote *remoteDesktop) close() {
 }
 
 // targetMenu chooses where the agent works, as on the phone: this
-// computer, the server last used, or another one.
+// computer, an SSH machine, a paired server, or another one.
 func (ui *desktopUI) targetMenu() {
-	saved := loadServerAddress()
+	if ui.home != "" {
+		ui.browserTargetMenu()
+		return
+	}
 	computer := menuAction{label: "This computer", icon: theme.ComputerIcon(), checked: ui.server == nil && ui.cfg.MachineID == "", run: ui.useComputer}
 	actions := []menuAction{computer}
 	for _, machine := range ui.sshMachines {
@@ -376,7 +407,7 @@ func (ui *desktopUI) targetMenu() {
 			checked: ui.server == nil && ui.cfg.MachineID == id, run: func() { ui.useMachine(id) }})
 	}
 	actions = append(actions, menuAction{label: "Add an SSH machine…", icon: iconPlus, run: func() { ui.prefs.openOn("General") }})
-	if saved.URL != "" && saved.Token != "" {
+	for _, saved := range loadServerAddresses() {
 		server := menuAction{label: serverName(saved.URL), detail: saved.URL, icon: iconBrowser, checked: ui.server != nil && ui.server.client.address.URL == saved.URL, run: func() {
 			if ui.server != nil && ui.server.client.address.URL == saved.URL {
 				return
@@ -444,15 +475,13 @@ func (remote *remoteDesktop) openChat(id string) {
 	conv := remote.conv(id)
 	remote.parent.openChat(conv)
 	if conv.Config.Model != "" {
-		remote.parent.model.row.SetText(remote.modelText(conv.Config.Model, conv.Config.Effort))
+		remote.showModel(conv.Config.Model, conv.Config.Effort)
 	}
 }
 
 // selectChat follows the chat the window shows: its draft, tabs and dialogs.
 func (remote *remoteDesktop) selectChat(id string) {
 	remote.current = id
-	remote.fileAttachments = nil
-	remote.parent.renderAttachments()
 	remote.meta = remoteapi.Meta{}
 	remote.closeTabs()
 	remote.notify()
@@ -543,8 +572,16 @@ func (remote *remoteDesktop) submit(mode string) {
 func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.HandoffChoice, files []agent.FileAttachment, pending string) {
 	ui := remote.parent
 	workspace := ui.cfg.Workspace
+	draft := ui.draftKey() // where its files go back if it fails
+	// With files, the server may spend up to 2 minutes copying them to an SSH
+	// machine's project before it answers: a follow-up must not time out here
+	// while the server takes it (#545).
+	wait := 15 * time.Second
+	if len(files) > 0 {
+		wait = 3 * time.Minute
+	}
 	go func() {
-		ctx, cancel := context.WithTimeout(remote.ctx, 15*time.Second)
+		ctx, cancel := context.WithTimeout(remote.ctx, wait)
 		defer cancel()
 		var reply struct{ Chat string }
 		body := map[string]any{"chat": chat, "text": text, "mode": mode, "attachments": files}
@@ -571,9 +608,11 @@ func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.Handof
 					ui.prompt.drafts.set(key, text)
 				}
 				ui.prompt.drafts.set(pending, "")
-				if remote.current == chat {
+				if ui.draftKey() == draft {
 					remote.fileAttachments = append(files, remote.fileAttachments...)
 					ui.renderAttachments()
+				} else {
+					ui.parkServerFiles(draft, files)
 				}
 			}
 			if required, ok := err.(handoffRequired); ok {
@@ -694,9 +733,11 @@ func (remote *remoteDesktop) refreshLoop() {
 				Model, Effort, ApprovalMode string
 				Tier                        string
 				AutoMode                    bool // the server's model has an Auto mode
+				NamingModel                 *agent.NamingModel
 			}
 		}
 		err := remote.client.json(ctx, "GET", "/api/state", nil, &state)
+		stateErr := err // whether the server answers (an open chat's error may only be the chat's)
 		var projects struct{ Projects []string }
 		if err == nil {
 			remote.client.json(ctx, "GET", "/api/projects", nil, &projects) // an older server has none to list
@@ -720,8 +761,15 @@ func (remote *remoteDesktop) refreshLoop() {
 			if remote.current != id || remote.ctx.Err() != nil || remote.parent.server != remote {
 				return
 			}
+			target := serverTarget(remote.client.address.URL)
+			if stateErr != nil {
+				remote.parent.setReach(target, reachOffline, stateErr.Error())
+			} else {
+				remote.parent.setReach(target, reachOnline, "")
+			}
 			if err != nil {
 				remote.status.SetText(err.Error())
+				remote.connected = "" // the next answer says it is connected again
 				return
 			}
 			remote.worktrees = state.Worktrees
@@ -730,15 +778,16 @@ func (remote *remoteDesktop) refreshLoop() {
 			remote.accounts, remote.defaultPresets = state.Settings.Accounts, state.Settings.DefaultPresets
 			remote.model, remote.effort, remote.tier = state.Settings.Model, state.Settings.Effort, state.Settings.Tier
 			remote.approvalMode, remote.autoMode = state.Settings.ApprovalMode, state.Settings.AutoMode
+			remote.namingModel = state.Settings.NamingModel
 			remote.parent.updateApprovalControl()
 			if id == "" {
-				remote.parent.model.row.SetText(remote.modelText(remote.model, remote.effort))
+				remote.showModel(remote.model, remote.effort)
 				return
 			}
 			remote.meta = chat.Meta
 			conv := remote.conv(id)
 			conv.Config.Model, conv.Config.Effort = chat.Meta.Model, chat.Meta.Effort // shown at once when it opens again
-			remote.parent.model.row.SetText(remote.modelText(chat.Meta.Model, chat.Meta.Effort))
+			remote.showModel(chat.Meta.Model, chat.Meta.Effort)
 			remote.showItems(conv, chat.Items)
 			remote.showMeta(conv)
 			remote.syncTabs(conv, tabs.Tabs)
@@ -750,28 +799,19 @@ func (remote *remoteDesktop) refreshLoop() {
 func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat, listed []string) {
 	ui := remote.parent
 	remote.name, remote.defaultWorkspace = name, workspace
-	projects := []string{}
-	add := func(path string) {
-		if path != "" && !slices.Contains(projects, path) && remote.worktrees[path] == "" {
-			projects = append(projects, path)
-		}
-	}
-	add(workspace)
-	for _, path := range listed {
-		add(path)
-	}
-	for _, chat := range chats {
-		add(chat.Workspace)
-	}
+	projects := serverProjectList(workspace, listed, chats, remote.worktrees)
+	ui.rememberServerProjects(remote.client.address.URL, projects)
 	if ui.cfg.Workspace == "" {
 		ui.cfg.Workspace = workspace
 		ui.updateHeader()
 	}
-	status := "Connected to " + name
-	if remote.meta.Running && remote.current != "" {
-		status += " · " + remote.meta.Label
+	// The connection only: the agent's activity is in the transcript and the
+	// sidebar (#546). Written when it changes, so that a notice or a failed
+	// send's error stays readable instead of being replaced at every refresh.
+	if status := "Connected to " + name; status != remote.connected {
+		remote.connected = status
+		remote.status.SetText(status)
 	}
-	remote.status.SetText(status)
 	if slices.Equal(remote.chats, chats) && slices.Equal(remote.projects, projects) {
 		return
 	}
@@ -785,26 +825,6 @@ func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat
 		}
 	}
 	ui.renderChats()
-}
-
-// renderChats is the sidebar for a server: its projects and their chats.
-func (remote *remoteDesktop) renderChats() {
-	ui := remote.parent
-	var chats []sideChat
-	for _, chat := range remote.chats {
-		chat := chat
-		chats = append(chats, sideChat{
-			id: chat.ID, parent: chat.Parent,
-			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
-			status: chat.Status, blocked: chat.Blocked,
-			selected: ui.current != nil && ui.current.server == remote && ui.current.serverID == chat.ID,
-			open:     func() { remote.openChat(chat.ID) },
-			menu:     []menuAction{{label: "Delete", icon: iconTrash, danger: true, run: func() { remote.deleteChat(chat) }}},
-		})
-	}
-	ui.renderSidebar(remote.projects, chats, remote.selectProject, func(p string) []menuAction {
-		return append(ui.repositoryActions(p), ui.projectMemoryAction(p))
-	})
 }
 
 // projectMenu is the composer's folder chip for a server: its projects.
@@ -834,15 +854,24 @@ func (remote *remoteDesktop) selectProject(path string) {
 
 func (remote *remoteDesktop) deleteChat(chat remoteapi.Chat) {
 	ui := remote.parent
-	text := fmt.Sprintf("“%s” will be permanently deleted from the server.", chat.Title)
-	removeWorktree := chat.Branch != "" // a subchat's own worktree: it goes too unless kept
-	run := func() {
-		if remote.current == chat.ID {
-			ui.startNew()
+	subtree := serverSubtree(remote.chats, chat.ID)
+	text := fmt.Sprintf("“%s” will be permanently deleted from the server.", chat.Title) + agent.SubtreeNote(len(subtree))
+	branches := 0 // the chats given a worktree: theirs go too unless kept
+	for _, member := range append([]remoteapi.Chat{chat}, subtree...) {
+		if member.Branch != "" {
+			branches++
 		}
-		if conv := remote.convs[chat.ID]; conv != nil {
-			conv.disposePanel()
-			delete(remote.convs, chat.ID)
+	}
+	removeWorktree := branches > 0
+	run := func() {
+		for _, member := range append([]remoteapi.Chat{chat}, subtree...) {
+			if remote.current == member.ID {
+				ui.startNew()
+			}
+			if conv := remote.convs[member.ID]; conv != nil {
+				conv.disposePanel()
+				delete(remote.convs, member.ID)
+			}
 		}
 		go func() {
 			ctx, cancel := context.WithTimeout(remote.ctx, time.Minute)
@@ -861,24 +890,46 @@ func (remote *remoteDesktop) deleteChat(chat remoteapi.Chat) {
 			remote.notify()
 		}()
 	}
-	if chat.Branch == "" {
+	if branches == 0 {
 		ui.confirm("Delete chat?", text, "Delete", run)
 		return
 	}
+	title, detail := "Also remove its worktree and branch "+chat.Branch,
+		"The folder "+worktreeFolder(chat.Workspace)+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own."
+	if chat.Branch == "" || branches > 1 {
+		title = "Also remove the worktrees of its subchats"
+		if chat.Branch != "" {
+			title = "Also remove its worktree and those of its subchats"
+		}
+		detail = "Each folder goes unless it has uncommitted changes or another chat works in it; each branch only if it is merged or has no commits of its own."
+	}
 	body := container.New(layout.NewCustomPaddedVBoxLayout(10), note(text),
-		card(settingRow("Also remove its worktree and branch "+chat.Branch,
-			"The folder "+worktreeFolder(chat.Workspace)+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own.",
-			newToggle(true, func(on bool) { removeWorktree = on }))))
+		card(settingRow(title, detail, newToggle(true, func(on bool) { removeWorktree = on }))))
 	var dialog *sheet
 	remove := newRow("Delete", nil, stylePrimary, func() { dialog.Hide(); run() })
 	remove.danger = true
 	dialog = ui.modal("Delete chat?", body, 500, nil, newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() }), remove)
 }
 
+// serverSubtree are the chats of a server under the chat id, its
+// subchats at every level, parents first.
+func serverSubtree(chats []remoteapi.Chat, id string) []remoteapi.Chat {
+	parents := map[string]string{}
+	byID := map[string]remoteapi.Chat{}
+	for _, chat := range chats {
+		parents[chat.ID], byID[chat.ID] = chat.Parent, chat
+	}
+	var out []remoteapi.Chat
+	for _, sub := range agent.SubchatSubtree(id, parents) {
+		out = append(out, byID[sub])
+	}
+	return out
+}
+
 // chatItem is a server item as this window's conversation holds it.
 func chatItem(item remoteapi.Item) agent.ChatItem {
 	converted := agent.ChatItem{ID: item.ID, Kind: item.Kind, Text: item.Text, Tool: item.Tool, Args: item.Args,
-		Diff: item.Diff, Millis: item.Millis, Failed: item.Failed}
+		Diff: item.Diff, Millis: item.Millis, Failed: item.Failed, From: item.From}
 	for _, name := range item.Files {
 		converted.Files = append(converted.Files, agent.FileAttachment{Name: name})
 	}
@@ -1009,7 +1060,7 @@ func (remote *remoteDesktop) showMeta(conv *conversation) {
 		}
 		remote.approvalID = approvalID
 		if approval := meta.Approval; approval != nil {
-			remote.approvalSheet = ui.showApproval(conv, map[string]any{"id": approval.ID, "title": approval.Title, "preview": approval.Preview})
+			remote.approvalSheet = ui.showApproval(conv, map[string]any{"id": approval.ID, "title": approval.Title, "preview": approval.Preview, "review": approval.Review})
 		}
 	}
 	questionID := ""
@@ -1041,37 +1092,50 @@ func (remote *remoteDesktop) showMeta(conv *conversation) {
 func (remote *remoteDesktop) syncRun() {
 	ui := remote.parent
 	if remote.meta.Running {
+		// As for this computer's chats: a message can still be sent (it
+		// joins the task at its next step), and Steer and Stop show (#545).
 		ui.mark.stop()
-		ui.send.Hide()
+		ui.send.Show()
+		ui.steer.Show()
 		ui.stop.Show()
 		ui.showActivityLine(true)
 		ui.workMark.setState(cmp.Or(remote.meta.Mark, "wait"))
 		ui.thinkLabel.SetText(remote.meta.Label)
 	} else {
 		ui.send.Show()
+		ui.steer.Hide()
 		ui.stop.Hide()
 		ui.showActivityLine(false)
 		ui.workMark.setState("brand")
 	}
 }
 
-// modelText names the chat's model on the composer's chip.
-func (remote *remoteDesktop) modelText(label, effort string) string {
-	text := label
+// modelChip is what the composer's chip shows for a server chat's model: its
+// name, and its effort after it, as for this computer's chats (#581).
+func (remote *remoteDesktop) modelChip(label, effort string) (text, trailing string) {
+	text = label
 	for _, model := range remote.models {
 		if model.Label == label {
 			text = model.Name
 			for _, entry := range model.Efforts {
 				if entry.Value == effort {
-					text += " · " + entry.Label
+					trailing = entry.Label
 				}
 			}
 		}
 	}
 	if text == "" {
-		return "Model"
+		text = "Model"
 	}
-	return text
+	return text, trailing
+}
+
+// showModel puts a server chat's model on the composer's chip. The effort is
+// the server's: this computer's own never shows here.
+func (remote *remoteDesktop) showModel(label, effort string) {
+	text, trailing := remote.modelChip(label, effort)
+	remote.parent.model.row.text = text
+	remote.parent.model.row.SetTrailing(trailing)
 }
 
 // modelMenu chooses the chat's model and reasoning among the server's.
@@ -1228,19 +1292,23 @@ func (remote *remoteDesktop) renderTasks() {
 	if remote.tabViews["todo"] == nil || remote.todoTasks == nil {
 		return
 	}
-	signature, _ := json.Marshal([]any{remote.meta.Todo, remote.meta.Tasks, remote.meta.Subchats})
+	signature, _ := json.Marshal([]any{remote.meta.Todo, remote.meta.Tasks, remote.meta.Subchats, remote.meta.Goal})
 	if string(signature) != remote.todoSignature {
 		remote.todoSignature = string(signature)
 		remote.todoTasks.RemoveAll()
-		remote.todoRows = map[string]*widget.Label{}
-		if len(remote.meta.Todo) == 0 {
-			remote.todoTasks.Add(note("No tasks yet."))
+		for _, mark := range remote.todoMarks {
+			mark.stop()
 		}
-		for _, task := range remote.meta.Todo {
-			label := note("")
-			remote.todoRows[task.ID] = label
-			remote.todoTasks.Add(label)
-		}
+		remote.todoTimes = map[string]*canvas.Text{}
+		tasks := remote.todoTasks
+		live := func() bool { return remote.meta.Running && remote.todoTasks == tasks && remote.tabViews["todo"] != nil }
+		// Drawn as this computer's chats draw theirs (#542), the goal first:
+		// its controls send the /goal command they name (goal.go).
+		chatID := remote.meta.Chat
+		remote.goalClock = drawGoalCard(remote.todoTasks, remote.meta.Goal.AgentGoal(), func(command string) {
+			remote.action("/api/send", map[string]any{"chat": chatID, "text": command})
+		})
+		remote.todoMarks = drawTaskList(remote.todoTasks, remote.todoItems(), live, remote.todoTimes)
 		// The server's background commands, newest first, each with its own Stop.
 		if len(remote.meta.Tasks) > 0 {
 			remote.todoTasks.Add(sectionTitle("Background"))
@@ -1270,6 +1338,22 @@ func (remote *remoteDesktop) renderTasks() {
 		}
 		remote.addSubchats()
 	}
+	now := time.Now()
+	tickGoalClock(remote.goalClock, remote.meta.Goal.AgentGoal())
+	for _, item := range remote.todoItems() {
+		if clock := remote.todoTimes[item.ID]; clock != nil {
+			if value := taskElapsed(item, now); value != clock.Text {
+				clock.Text = value
+				clock.Refresh()
+			}
+		}
+	}
+	remote.refreshTodoFooter()
+}
+
+// todoItems is the server's task list as this computer's chats hold theirs.
+func (remote *remoteDesktop) todoItems() []agent.TodoItem {
+	items := make([]agent.TodoItem, 0, len(remote.meta.Todo))
 	for _, task := range remote.meta.Todo {
 		item := agent.TodoItem{ID: task.ID, Text: task.Text, Status: task.Status}
 		if task.Started > 0 {
@@ -1280,11 +1364,9 @@ func (remote *remoteDesktop) renderTasks() {
 			value := time.UnixMilli(task.Completed)
 			item.CompletedAt = &value
 		}
-		if label := remote.todoRows[task.ID]; label != nil {
-			label.SetText(task.Status + " · " + task.Text + " · " + taskElapsed(item, time.Now()))
-		}
+		items = append(items, item)
 	}
-	remote.refreshTodoFooter()
+	return items
 }
 
 // refreshTodoFooter draws the server's context breakdown above its
@@ -1294,7 +1376,8 @@ func (remote *remoteDesktop) refreshTodoFooter() {
 		return
 	}
 	usage := remote.meta.ContextUsage
-	key := remote.meta.ContextStatus + fmt.Sprintf("%v", *remote.todoUsage)
+	spent := remote.meta.Spent.Text()
+	key := remote.meta.ContextStatus + spent + fmt.Sprintf("%v", *remote.todoUsage)
 	if usage != nil {
 		key += fmt.Sprintf("%v", *usage)
 	}
@@ -1324,6 +1407,9 @@ func (remote *remoteDesktop) refreshTodoFooter() {
 		if line != "" {
 			remote.todoFooter.Add(plainFlow(line, 12, colMuted))
 		}
+	}
+	if spent != "" {
+		remote.todoFooter.Add(plainFlow(spent, 12, colMuted))
 	}
 	remote.todoFooter.Refresh()
 }

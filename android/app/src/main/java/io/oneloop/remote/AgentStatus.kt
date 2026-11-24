@@ -18,9 +18,32 @@ data class RunStatus(
     // Done while 1loop was not on screen: the badge stays, with a check, until dismissed
     // or until 1loop comes back.
     val finished: Boolean = false,
+    val approval: Approval? = null, // a tool waits to be allowed or denied: the badge asks
+    // The turn ended on a next-step question (wrap_up): the finished badge offers its replies.
+    val nextStep: WrapUp? = null,
 ) {
     val done get() = todo.count { it.status == "completed" }
+
+    /** What the open badge shows under its row: what waits on the user first, then the preview. */
+    val card: BadgeCard
+        get() = when {
+            question != null -> BadgeCard.Question
+            approval != null -> BadgeCard.Approval
+            nextStep != null -> BadgeCard.NextStep
+            else -> BadgeCard.Preview
+        }
+
+    /** What waits on the user, as a key: the badge opens, and comes back if put away, when it changes. */
+    val waiting: String?
+        get() = when (card) {
+            BadgeCard.Question -> "question:" + question?.id
+            BadgeCard.Approval -> "approval:" + approval?.id
+            BadgeCard.NextStep -> "next:" + nextStep?.ask
+            BadgeCard.Preview -> null
+        }
 }
+
+enum class BadgeCard { Question, Approval, NextStep, Preview }
 
 /** How the status shows while a model runs and 1loop is not on screen. */
 enum class StatusStyle(val key: String, val title: String) {
@@ -69,14 +92,14 @@ object AgentStatus {
             val phoneUse = if (meta.tool.isNotEmpty()) meta.tool == "phone_use" || meta.tool == "adb_shell"
             else meta.label.contains("phone_use") || meta.label.contains("adb_shell")
             runs.remove(meta.chat)
-            runs[meta.chat] = RunStatus(meta.chat, meta.title, meta.label, meta.mark, meta.todo, phoneUse, meta.question)
+            runs[meta.chat] = RunStatus(meta.chat, meta.title, meta.label, meta.mark, meta.todo, phoneUse, meta.question, approval = meta.approval)
         } else {
             val run = runs[meta.chat] ?: return
             if (run.finished) return
             // The badge stays on what it finished; the Live Update alone leaves to the chat's
             // "Done." notification (RemoteApp).
             if (!foreground.value && style(context) == StatusStyle.Badge && canDrawOverlays(context)) {
-                runs[meta.chat] = run.copy(label = "Done", mark = "done", todo = meta.todo, phoneUse = false, question = null, finished = true)
+                runs[meta.chat] = run.copy(label = "Done", mark = "done", todo = meta.todo, phoneUse = false, question = null, approval = null, finished = true)
             } else runs.remove(meta.chat)
         }
         refresh(context)
@@ -105,8 +128,31 @@ object AgentStatus {
 
     fun answer(request: Questions, answers: Map<String, String>) { app.get()?.answer(request, answers) }
 
+    fun approve(approval: Approval, allow: Boolean) {
+        app.get()?.answer(approval, allow)
+        // Shown answered at once; the next meta confirms.
+        runs[approval.chat]?.let { if (it.approval?.id == approval.id) runs[approval.chat] = it.copy(approval = null) }
+        status.value = pick()
+    }
+
+    /** The finished run's next-step card (RemoteApp reads it from the chat once the turn ends). */
+    fun nextStep(context: Context, chat: String, wrap: WrapUp?) {
+        val run = runs[chat] ?: return
+        if (!run.finished || wrap == null || !wrap.card) return
+        runs[chat] = run.copy(nextStep = wrap)
+        refresh(context)
+    }
+
+    /** A reply button of the next-step card: sent to its chat, and the finished badge goes away. */
+    fun reply(context: Context, chat: String, text: String) {
+        app.get()?.reply(chat, text)
+        dismiss(context, chat)
+    }
+
+    private fun pick() = runs.values.lastOrNull { !it.finished } ?: runs.values.lastOrNull()
+
     private fun refresh(context: Context) {
-        status.value = runs.values.lastOrNull { !it.finished } ?: runs.values.lastOrNull()
+        status.value = pick()
         val wanted = status.value != null && style(context) != StatusStyle.Off
         val intent = Intent(context, AgentStatusService::class.java)
         if (wanted && !AgentStatusService.active) {

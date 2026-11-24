@@ -10,9 +10,12 @@ package ui
 // an open overlay is not followed: menus and dialogs are short-lived.
 
 import (
+	"fmt"
+	"hash/maphash"
 	"image"
 	"image/color"
 	"runtime"
+	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -26,6 +29,23 @@ import (
 // glassWidth is the width the backdrop is blurred at: small enough to be
 // cheap, large enough that its shapes still read through the glass.
 const glassWidth = 240
+
+var (
+	glassMu       sync.Mutex
+	glassCache    *image.NRGBA // the last blurred backdrop
+	glassCacheKey uint64
+	glassSeed     = maphash.MakeSeed()
+)
+
+// glassKey identifies a capture: its pixels, size and the brightness the
+// glass is tinted with.
+func glassKey(pix []uint8, w, h, step int) uint64 {
+	var hash maphash.Hash
+	hash.SetSeed(glassSeed)
+	hash.Write(pix)
+	hash.WriteString(fmt.Sprint(w, h, step, glassBrightness(0.72)))
+	return hash.Sum64()
+}
 
 // frostedBackdrop is the window as it is on screen, blurred and tinted for
 // text to stay readable over it; nil when the canvas cannot be read.
@@ -59,6 +79,20 @@ func frostedBackdrop(c fyne.Canvas) (*image.NRGBA, image.Image) {
 	if raw, ok := shot.(interface{ RawRGBA() ([]uint8, int, int) }); ok {
 		pix, pw, ph = raw.RawRGBA()
 	}
+	// The same pixels as last time blur to the same glass: reuse it (#490).
+	var key uint64
+	if pix != nil {
+		key = glassKey(pix, pw, ph, step)
+		glassMu.Lock()
+		cached, hit := glassCache, glassCacheKey == key && glassCache != nil
+		glassMu.Unlock()
+		if hit {
+			out := image.NewNRGBA(cached.Rect)
+			copy(out.Pix, cached.Pix)
+			platform.Devf("perf", "glass backdrop %dx%d cached", w, h)
+			return out, shot
+		}
+	}
 	sample := func(x, y int) (int, int, int) {
 		if pix != nil {
 			o := ((ph-y-1)*pw + x) * 4 // bottom-up rows
@@ -83,6 +117,13 @@ func frostedBackdrop(c fyne.Canvas) (*image.NRGBA, image.Image) {
 		boxBlur(small, 3)
 	}
 	vibrancy(small, 1.35, glassBrightness(0.72))
+	if pix != nil {
+		saved := image.NewNRGBA(small.Rect)
+		copy(saved.Pix, small.Pix)
+		glassMu.Lock()
+		glassCache, glassCacheKey = saved, key
+		glassMu.Unlock()
+	}
 	platform.Devf("perf", "glass backdrop %dx%d in %s", w, h, time.Since(started).Round(100*time.Microsecond))
 	return small, shot
 }
@@ -235,7 +276,7 @@ func (glass *footerGlass) veil(more bool) {
 // is drawn for it at the conversation's end.
 func (glass *footerGlass) paint(opacity float32) {
 	glass.shown = opacity
-	if opacity <= 0 {
+	if opacity <= 0 || shaderBehind {
 		glass.fade.Hide()
 		return
 	}
@@ -272,23 +313,41 @@ type glassFooterLayout struct {
 
 func (layoutSpec *glassFooterLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
 	view, footer := o[0].MinSize(), o[3].MinSize()
+	// The open editor takes the room the conversation has: it never asks
+	// the window for more.
+	if editor := layoutSpec.ui.editor; editor != nil {
+		footer.Height -= editor.extra
+	}
 	return fyne.NewSize(fyne.Max(view.Width, footer.Width), view.Height+footer.Height)
 }
 
 func (layoutSpec *glassFooterLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
 	glass := layoutSpec.glass
+	layoutSpec.ui.editor.fit(size.Height, o[3].MinSize().Height)
 	footer := o[3].MinSize()
 	top := size.Height - footer.Height
 	o[0].Move(fyne.Position{})
 	o[0].Resize(size)
+	footerRoom := footer.Height
+	glass.floor.Show()
+	if shaderBehind {
+		// Over a shader the background is translucent: a floor laid on it
+		// would darken the composer's band. The conversation stops above
+		// the composer instead of scrolling under it (#464).
+		o[0].Resize(fyne.NewSize(size.Width, top))
+		glass.floor.Hide()
+		glass.fade.Hide()
+		footerRoom = 1
+	}
 	glass.fade.Move(fyne.NewPos(0, top-glassFade))
 	glass.fade.Resize(fyne.NewSize(size.Width, glassFade))
 	glass.floor.Move(fyne.NewPos(0, top))
 	glass.floor.Resize(fyne.NewSize(size.Width, footer.Height))
 	o[3].Move(fyne.NewPos(0, top))
 	o[3].Resize(fyne.NewSize(size.Width, footer.Height))
-	if space := layoutSpec.ui.footerSpace; space != nil && space.MinSize().Height != footer.Height {
-		space.SetMinSize(fyne.NewSize(1, footer.Height))
+	// The open editor covers the conversation: its column keeps its room.
+	if space := layoutSpec.ui.footerSpace; space != nil && !layoutSpec.ui.editor.active() && space.MinSize().Height != footerRoom {
+		space.SetMinSize(fyne.NewSize(1, footerRoom))
 		fyne.Do(layoutSpec.ui.relayoutColumn) // after this layout: it lays the column out again
 	}
 }

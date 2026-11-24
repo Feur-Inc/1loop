@@ -57,22 +57,13 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
     val list = remember { SettingsList.load(context) }
     var section by app::settingsSection
     var query by rememberSaveable { mutableStateOf("") }
-    var reveal by remember { mutableStateOf<String?>(null) } // the setting a search opened the section on
+    var reveal by app::settingsReveal // the setting a search opened the section on (the sidebar's too)
     val leave = { if (section != null) { section = null; reveal = null } else onBack() }
     val back = predictiveBack(onBack = leave)
     val local = app.server?.localPhone == true
     val adb = if (local) app.local.adb.collectAsState().value else null
     // What the pages show now: the search finds only those.
-    val shown = list.onPhone().filter { setting ->
-        when (setting.key) {
-            "models.connections", "tools.linux", "phone.adb", "phone.background", "phone.sharing" -> local
-            "phone.work_profile" -> adb?.allowed == true && adb.connected
-            "models.default_preset" -> app.defaultPresets
-            "agent.memory" -> app.memoryEnabled != null
-            "agent.wrap_up" -> app.wrapUpEnabled != null
-            else -> true
-        }
-    }
+    val shown = phoneSettingsShown(app, list, adb?.let { it.allowed && it.connected } == true)
     val open = section?.let { id -> list.sections.firstOrNull { it.id == id } }
     Column(back.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -83,6 +74,21 @@ fun MobileSettings(app: RemoteApp, onBack: () -> Unit) {
             SettingsHome(app, list, shown, query, { query = it }) { id, key -> section = id; reveal = key }
         } else {
             SettingsSectionPage(app, open, shown.filter { it.section == open.id }, adb, reveal)
+        }
+    }
+}
+
+/** The settings the phone's pages show now, which the search finds (here and from the drawer). */
+fun phoneSettingsShown(app: RemoteApp, list: SettingsList, workProfile: Boolean): List<SettingEntry> {
+    val local = app.server?.localPhone == true
+    return list.onPhone().filter { setting ->
+        when (setting.key) {
+            "models.connections", "tools.linux", "phone.adb", "phone.background", "phone.sharing" -> local
+            "phone.work_profile" -> workProfile
+            "models.default_preset" -> app.defaultPresets
+            "agent.memory" -> app.memoryEnabled != null
+            "agent.wrap_up" -> app.wrapUpEnabled != null
+            else -> true
         }
     }
 }
@@ -192,10 +198,30 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
     val scope = rememberCoroutineScope()
     when (key) {
         "general.target" -> {
-            Text("Execution target", style = Type.title)
-            Text("Where the agent works: it runs commands, edits files and keeps its projects there.", style = Type.small)
-            Text(app.server?.name.orEmpty(), style = Type.body)
-            Pill("Switch execution target") { app.switchTarget() }
+            // The phone links several targets (#380): the menu lists every one's projects.
+            var forgetting by remember { mutableStateOf<Server?>(null) }
+            Text("Linked targets", style = Type.title)
+            Text("Where the agent works: each project runs on its own target. The menu lists the projects of every target linked here; Settings apply to the one open now.", style = Type.small)
+            for (linked in app.linked) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(when (linked.kind) { TargetKind.Phone -> Icons.phone; TargetKind.Desktop -> Icons.computer; TargetKind.Server -> Icons.server }, null, tint = Palette.muted, modifier = Modifier.size(18.dp))
+                    Spacer(Modifier.width(10.dp))
+                    val open = linked.key == app.server?.key
+                    val state = when {
+                        open -> "open now"
+                        app.reaches[linked.key] == Reach.Offline -> offlineMark(linked.kind)
+                        else -> null
+                    }
+                    Text(linked.name + (state?.let { " · $it" } ?: ""), style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
+                    val paired = app.servers.firstOrNull { it.key == linked.key }
+                    if (paired != null) Pill("Forget") { forgetting = paired } // #428: unpairs this phone there too
+                    else if (!open) Pill("Unlink") { app.unlink(linked.key) }
+                }
+            }
+            Pill("Link a target") { app.linkTarget() }
+            forgetting?.let { ForgetServerDialog(app, it) { forgetting = null } }
+            ServerDevicesSection(app)
+            if (app.server?.localPhone == false) ServerInstallSection(app) // Install Chromium / Claude Code (#406)
         }
         "models.connections" -> {
             Text("Connections", style = Type.title)
@@ -251,6 +277,11 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
             Pill("Open extensions", enabled = app.connected) { app.extensionsOpen = true }
         }
         "tools.github" -> GitHubConnectorSection(app)
+        "general.usage" -> {
+            Text("Usage & spend", style = Type.title)
+            Text("Where the tokens and the money went, by model, connection, project, branch and chat.", style = Type.small)
+            Pill("Open usage", enabled = app.connected) { app.usageOpen = true }
+        }
         "tools.browser_data" -> BrowserDataSection(app)
         "tools.linux" -> {
             Text("Linux", style = Type.title)

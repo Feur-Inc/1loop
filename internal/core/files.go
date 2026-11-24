@@ -3,6 +3,8 @@
 package core
 
 import (
+	"bufio"
+	"io"
 	"os"
 	"path/filepath"
 )
@@ -13,6 +15,20 @@ import (
 // never half of one. With backup, the file it replaces stays as path.bak
 // (a second name for it, not a copy).
 func WriteFileSafely(path string, perm os.FileMode, backup bool, parts ...[]byte) error {
+	return WriteFileStreamed(path, perm, backup, func(w io.Writer) error {
+		for _, part := range parts {
+			if _, err := w.Write(part); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+// WriteFileStreamed is WriteFileSafely for content written piece by piece,
+// through a buffer, by write: a large file (the state, 100 MB with long
+// conversations) is never whole in memory (#476).
+func WriteFileStreamed(path string, perm os.FileMode, backup bool, write func(io.Writer) error) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return err
 	}
@@ -22,10 +38,9 @@ func WriteFileSafely(path string, perm os.FileMode, backup bool, parts ...[]byte
 	}
 	defer os.Remove(file.Name()) // gone already once renamed
 	if err = file.Chmod(perm); err == nil {
-		for _, part := range parts {
-			if _, err = file.Write(part); err != nil {
-				break
-			}
+		buffered := bufio.NewWriterSize(file, 256<<10)
+		if err = write(buffered); err == nil {
+			err = buffered.Flush()
 		}
 	}
 	if err == nil {

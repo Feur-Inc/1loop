@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"1loop/internal/platform"
+
+	"1loop/internal/usage"
 )
 
 type ModelPreferences struct {
@@ -74,6 +76,22 @@ type ModelChoice struct {
 	// none on most plans; DefaultServiceTier is the one used unless told.
 	ServiceTiers       []ServiceTier
 	DefaultServiceTier string
+	// Price is what the provider's catalog says the model costs, per
+	// million tokens (OpenRouter lists it, and a compatible API may): the
+	// usage ledger prices its calls with it (usage.Prices.Learn).
+	Price *usage.Price
+}
+
+// ListedPrices are the prices of the models a connection listed, for
+// usage.Prices.Learn.
+func ListedPrices(choices []ModelChoice) map[string]usage.Price {
+	listed := map[string]usage.Price{}
+	for _, choice := range choices {
+		if choice.Price != nil {
+			listed[choice.ID] = *choice.Price
+		}
+	}
+	return listed
 }
 
 // ServiceTier is a speed of a ChatGPT model, as its catalog lists it.
@@ -252,7 +270,7 @@ func systemInstructions(cfg Config) string {
 	if cfg.InScratch() { // never its path (scratchInstructions)
 		workspace = "a folder 1loop made for this chat (the project root of your tools)"
 	}
-	return prompt + scratchInstructions(cfg) + "\nWorkspace: " + workspace + "\nShell: " + shell + "." + citationInstructions + calculationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + wrapUpInstructions(cfg) + contextInstructions(cfg) + memoryInstructions(cfg) + settingsInstructions(cfg) + subchatInstructions(cfg) + toolSearchInstructions(cfg)
+	return prompt + scratchInstructions(cfg) + "\nWorkspace: " + workspace + "\nShell: " + shell + "." + citationInstructions + calculationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + goalInstructions(cfg) + wrapUpInstructions(cfg) + contextInstructions(cfg) + subchatParentInstructions(cfg) + toolSearchInstructions(cfg)
 }
 
 type approvalContextKey struct{}
@@ -265,12 +283,16 @@ type configContextKey struct{}
 
 func toolContext(ctx context.Context, cfg Config) context.Context {
 	ctx = platform.WithWorkspaceMode(ctx, cfg.ApprovalMode == "yolo")
+	ctx = platform.WithProjectEnv(ctx, cfg.Env)
 	ctx = context.WithValue(ctx, configContextKey{}, cfg)
-	ctx = context.WithValue(ctx, computerContextKey{}, cfg.Computer)
+	if cfg.MachineID == "" { // Computer Use is off on an SSH machine
+		ctx = context.WithValue(ctx, computerContextKey{}, cfg.Computer)
+	}
 	ctx = context.WithValue(ctx, terminalContextKey{}, cfg.Terminal)
 	ctx = context.WithValue(ctx, browserContextKey{}, modelBrowser(cfg.Browser))
 	ctx = context.WithValue(ctx, recallContextKey{}, cfg.Recall)
 	ctx = context.WithValue(ctx, todoContextKey{}, cfg.Todo)
+	ctx = context.WithValue(ctx, goalContextKey{}, cfg.Goal)
 	ctx = context.WithValue(ctx, tasksContextKey{}, cfg.Tasks)
 	ctx = context.WithValue(ctx, grantsContextKey{}, cfg.Grants)
 	if cfg.Machine != nil {

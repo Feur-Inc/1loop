@@ -24,6 +24,7 @@ require (
 	github.com/rymdport/portal v0.4.2
 	github.com/skip2/go-qrcode v0.0.0-20200617195104-da1b6568686e
 	github.com/srwiley/rasterx v0.0.0-20220730225603-2ab79fcdd4ef
+	github.com/ulikunitz/xz v0.5.17
 	github.com/yuin/goldmark v1.8.7
 	golang.design/x/clipboard v0.11.0
 	golang.org/x/crypto v0.33.0
@@ -36,14 +37,14 @@ require (
 
 require (
 	github.com/Azure/go-ansiterm v0.0.0-20170929234023-d6e3b3328b78 // indirect
-	github.com/BurntSushi/toml v1.5.0 // indirect
+	github.com/BurntSushi/toml v1.5.0
 	github.com/chromedp/sysutil v1.1.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
 	github.com/dlclark/regexp2 v1.11.4 // indirect
 	github.com/dustin/go-humanize v1.0.1 // indirect
 	github.com/ebitengine/purego v0.10.1 // indirect
 	github.com/fredbi/uri v1.1.1 // indirect
-	github.com/fsnotify/fsnotify v1.9.0 // indirect
+	github.com/fsnotify/fsnotify v1.9.0
 	github.com/fyne-io/gl-js v0.2.0 // indirect
 	github.com/fyne-io/image v0.1.1 // indirect
 	github.com/go-gl/gl v0.0.0-20231021071112-07e5d0ea2e71 // indirect
@@ -91,3 +92,7 @@ replace fyne.io/fyne/v2 => ./third_party/fyne
 replace github.com/go-gl/glfw/v3.3/glfw => ./third_party/glfw
 
 replace github.com/fyne-io/glfw-js => ./third_party/glfw-js
+
+replace github.com/fyne-io/terminal => ./third_party/terminal
+
+replace github.com/go-gl/gl => ./third_party/go-gl

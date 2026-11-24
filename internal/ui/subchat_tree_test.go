@@ -1,0 +1,290 @@
+// SPDX-License-Identifier: MPL-2.0
+
+package ui
+
+import (
+	"image"
+	"math"
+	"slices"
+	"strings"
+	"testing"
+
+	"fyne.io/fyne/v2"
+
+	"1loop/internal/agent"
+)
+
+// guidesOf are the tree guides drawn in the sidebar, top to bottom.
+func guidesOf(ui *desktopUI) []*subchatGuide {
+	var out []*subchatGuide
+	var walk func(fyne.CanvasObject)
+	walk = func(object fyne.CanvasObject) {
+		switch object := object.(type) {
+		case *subchatGuide:
+			out = append(out, object)
+		case *fyne.Container:
+			for _, child := range object.Objects {
+				walk(child)
+			}
+		}
+	}
+	for _, object := range ui.projectList.Objects {
+		walk(object)
+	}
+	return out
+}
+
+// The subchats look like Claude Code's tree (#419): plain text with no
+// chat icon, one step further in per level, a line down the left of the
+// first level that bends into its last subchat and stops there, and the
+// state's dot at the right of the row: working amber, done green, failed
+// red, none while idle.
+func TestSidebarSubchatGuides(t *testing.T) {
+	ui := sidebarUI(t)
+	ui.chats = nestedChats()
+	ui.chatByID("one").run = &chatRun{cancel: func() {}}
+	ui.chatByID("two").Subchat.Ended = agent.SubchatDone
+	ui.chatByID("two").Subchat.Unseen = true
+	ui.chatByID("three").Subchat.Ended = agent.SubchatFailed
+	ui.chatByID("three").Subchat.Unseen = true
+	ui.subchatsShown = map[string]bool{"here": true} // four subchats: unfolded by hand (#426)
+	ui.renderChats()
+	guides := guidesOf(ui)[1:] // after the summary row's
+	if len(guides) != 4 {
+		t.Fatalf("%d guides", len(guides))
+	}
+	rows := map[string]*tapRow{}
+	for _, object := range ui.projectList.Objects {
+		if row := firstRow(object); row != nil {
+			rows[row.text] = row
+		}
+	}
+	type want struct {
+		title string
+		depth int
+		trunk treeTrunk
+		badge fyne.Resource
+	}
+	for i, w := range []want{
+		{"Level one", 1, trunkThrough, iconDot},                      // Beside one comes after it
+		{"Level two", 2, trunkThrough, tinted(iconDot, colAdded)},    // the line runs on past it to Beside one
+		{"Level three", 3, trunkThrough, tinted(iconDot, colDanger)}, // and past it
+		{"Beside one", 1, trunkLast, nil},                            // the last: the line bends into it; idle
+	} {
+		got, row := guides[i], rows[w.title]
+		if got.depth != w.depth || got.trunk != w.trunk {
+			t.Errorf("%s: depth %d trunk %d, want %d %d", w.title, got.depth, got.trunk, w.depth, w.trunk)
+		}
+		if row == nil {
+			t.Fatalf("no row %q", w.title)
+		}
+		if row.icon != nil || row.badge != w.badge {
+			t.Errorf("%s: icon %v badge %v, want no icon and the badge %v", w.title, resourceName(row.icon), resourceName(row.badge), resourceName(w.badge))
+		}
+	}
+	if guides[2].MinSize().Width <= guides[1].MinSize().Width || guides[1].MinSize().Width <= guides[0].MinSize().Width {
+		t.Fatal("deeper subchats are not indented further")
+	}
+
+	// under the last subchat the line has ended
+	ui.chats = append(ui.chats, &conversation{ID: "late", Title: "Under the last", Config: ui.chatByID("here").Config, Subchat: &agent.SubchatLink{Parent: "sibling"}})
+	ui.renderChats()
+	guides = guidesOf(ui)[1:]
+	if len(guides) != 5 || guides[4].depth != 2 || guides[4].trunk != trunkNone {
+		t.Fatalf("a subchat under the last one: %+v", guides[len(guides)-1])
+	}
+}
+
+func resourceName(resource fyne.Resource) string {
+	if resource == nil {
+		return "none"
+	}
+	return resource.Name()
+}
+
+// The line is drawn for its trunk: past the row, bending into it, or not.
+func TestSubchatGuideLines(t *testing.T) {
+	for _, c := range []struct {
+		trunk        treeTrunk
+		down, bended bool
+	}{{trunkThrough, true, false}, {trunkLast, true, true}, {trunkNone, false, false}} {
+		guide := newSubchatGuide(1, c.trunk)
+		guide.Resize(fyne.NewSize(guide.MinSize().Width, 30))
+		renderer := guide.CreateRenderer().(*subchatGuideRenderer)
+		shape := guide.shape(guide.Size())
+		if renderer.raster.Visible() != c.down || shape.down != c.down || shape.bend != c.bended {
+			t.Errorf("trunk %d: drawn %v down %v bend %v", c.trunk, renderer.raster.Visible(), shape.down, shape.bend)
+		}
+		if c.trunk == trunkThrough && shape.downTo <= 30 {
+			t.Error("the line does not run past the row to the next one")
+		}
+		if c.trunk == trunkLast && (shape.downTo >= 15 || treeReach <= treeLine) {
+			t.Errorf("the line does not bend into the last subchat: %+v", shape)
+		}
+		// Drawn at 1.4 pixels a point: the line down sits on whole pixels,
+		// one solid column, and the bend reaches the line across.
+		img := renderer.draw(int(guide.Size().Width*1.4), 43).(*image.NRGBA)
+		column := int(math.Round(treeLine*1.4 - 0.5))
+		if c.down && img.NRGBAAt(column, 2).A != 0xff {
+			t.Errorf("trunk %d: the line down is not crisp: %v", c.trunk, img.NRGBAAt(column, 2))
+		}
+		if c.bended {
+			if img.NRGBAAt(24, int(shape.mid*1.4)).A == 0 {
+				t.Errorf("trunk %d: no line across", c.trunk)
+			}
+			// no gap from the line down, round the bend, to the line across
+			seen := map[image.Point]bool{}
+			var fill func(p image.Point)
+			fill = func(p image.Point) {
+				if seen[p] || !p.In(img.Bounds()) || img.NRGBAAt(p.X, p.Y).A < 0x60 {
+					return
+				}
+				seen[p] = true
+				for _, d := range []image.Point{{1, 0}, {-1, 0}, {0, 1}, {0, -1}, {1, 1}, {-1, 1}, {1, -1}, {-1, -1}} {
+					fill(p.Add(d))
+				}
+			}
+			fill(image.Pt(column, 2))
+			if !seen[image.Pt(24, int(shape.mid*1.4))] {
+				t.Errorf("trunk %d: the line breaks at the bend", c.trunk)
+			}
+			// where the line down meets the bend, and the bend the line
+			// across: solid, no seam
+			row := int(math.Round(float64(shape.mid*1.4 - 0.5))) // the line across
+			radius := int(math.Round(treeBend * 1.4))
+			for _, p := range []image.Point{{column, row - radius}, {column + radius, row}} {
+				if a := img.NRGBAAt(p.X, p.Y).A; a < 0xc0 {
+					t.Errorf("trunk %d: a seam at %v (%d)", c.trunk, p, a)
+				}
+			}
+		}
+	}
+}
+
+// A chat with more than three subchats, all levels counted, lists one muted
+// summary row under it in place of its tree, with the failed ones counted
+// and a warning at its right; clicking it unfolds the tree and clicking
+// again folds it (#426). The chat keeps the branch mark with the count.
+func TestSidebarFoldsManySubchats(t *testing.T) {
+	ui := sidebarUI(t)
+	ui.chats = nestedChats()
+	ui.chatByID("three").Subchat.Ended = agent.SubchatFailed
+	ui.chatByID("three").Subchat.Unseen = true
+	ui.renderChats()
+	rows := func() []*tapRow {
+		var out []*tapRow
+		for _, object := range ui.projectList.Objects {
+			if row := firstRow(object); row != nil {
+				out = append(out, row)
+			}
+		}
+		return out
+	}
+	find := func(text string) (*tapRow, int) {
+		for i, row := range rows() {
+			if row.text == text {
+				return row, i
+			}
+		}
+		return nil, -1
+	}
+	parent, at := find("Fix the parser")
+	if parent == nil || parent.mark != iconBranch || parent.markText != "4" {
+		t.Fatalf("the parent row's branch mark: %+v", parent)
+	}
+	summary, summaryAt := find("4 nested sessions · 1 failed")
+	if summary == nil || summaryAt != at+1 {
+		t.Fatalf("no summary row under the parent: %q", sidebarTexts(ui))
+	}
+	if summary.ink != colMuted || summary.badge != iconWarning {
+		t.Errorf("summary: ink %v badge %s, want muted and the warning", summary.ink, resourceName(summary.badge))
+	}
+	for _, title := range []string{"Level one", "Level two", "Level three", "Beside one"} {
+		if row, _ := find(title); row != nil {
+			t.Errorf("%q is listed while folded", title)
+		}
+	}
+	if guides := guidesOf(ui); len(guides) != 1 || guides[0].depth != 1 || guides[0].trunk != trunkLast {
+		t.Fatalf("the line does not bend into the summary: %+v", guides)
+	}
+
+	summary.onTap() // unfolds
+	if listed := sidebarTexts(ui); !slices.Contains(listed, "Level three") || !slices.Contains(listed, "4 nested sessions · 1 failed") {
+		t.Fatalf("unfolded: %q", listed)
+	}
+	if guides := guidesOf(ui); len(guides) != 5 || guides[0].trunk != trunkThrough {
+		t.Fatalf("unfolded guides: %+v", guides)
+	}
+	summary, _ = find("4 nested sessions · 1 failed")
+	summary.onTap() // folds again
+	if row, _ := find("Level one"); row != nil {
+		t.Fatal("clicking again does not fold the tree")
+	}
+
+	// none failed: no failed count, no warning
+	ui.chatByID("three").Subchat.Ended = agent.SubchatDone
+	ui.renderChats()
+	if summary, _ = find("4 nested sessions"); summary == nil || summary.badge != nil {
+		t.Fatalf("with none failed: %q", sidebarTexts(ui))
+	}
+
+	// three or fewer: the tree, no summary
+	ui.chats = slices.DeleteFunc(ui.chats, func(chat *conversation) bool { return chat.ID == "sibling" })
+	ui.renderChats()
+	if listed := sidebarTexts(ui); !slices.Contains(listed, "Level three") || slices.ContainsFunc(listed, func(text string) bool { return strings.Contains(text, "nested sessions") }) {
+		t.Fatalf("three subchats: %q", listed)
+	}
+	if parent, _ = find("Fix the parser"); parent.markText != "3" {
+		t.Errorf("parent count %q", parent.markText)
+	}
+
+	// an open subchat unfolds the tree until the user folds it
+	ui.chats = nestedChats()
+	ui.subchatsShown = nil
+	ui.current = ui.chatByID("two")
+	ui.renderChats()
+	if row, _ := find("Level two"); row == nil {
+		t.Fatalf("the open subchat is hidden: %q", sidebarTexts(ui))
+	}
+}
+
+// The count goes down every level and counts the failed ones anywhere.
+func TestNestedCount(t *testing.T) {
+	failed := func(id string, subs ...sideChat) sideChat {
+		return sideChat{id: id, ended: agent.SubchatFailed, subchats: subs}
+	}
+	tree := []sideChat{
+		{id: "a", subchats: []sideChat{failed("b", failed("c")), {id: "d", running: true, ended: agent.SubchatFailed}}},
+		{id: "e", ended: agent.SubchatDone},
+	}
+	if total, bad := nestedCount(tree); total != 5 || bad != 2 {
+		t.Fatalf("nestedCount = %d, %d, want 5, 2", total, bad)
+	}
+	if got := nestedSummary(5, 0); got != "5 nested sessions" {
+		t.Fatal(got)
+	}
+	if got := nestedSummary(5, 2); got != "5 nested sessions · 2 failed" {
+		t.Fatal(got)
+	}
+}
+
+// A subchat's dot is an unread marker: it shows once its turn ends and goes
+// when the user opens it, and the summary counts only the unread failures.
+func TestSubchatDotClearsOnceRead(t *testing.T) {
+	ui := sidebarUI(t)
+	ui.chats = nestedChats()
+	three := ui.chatByID("three")
+	three.Subchat.Ended, three.Subchat.Unseen = agent.SubchatFailed, true // as turnEnded leaves it out of sight
+	ui.renderChats()
+	if !slices.Contains(sidebarTexts(ui), "4 nested sessions · 1 failed") {
+		t.Fatalf("unread failure not counted: %q", sidebarTexts(ui))
+	}
+	ui.markRead(three) // as opening it does
+	if three.Subchat.Unseen {
+		t.Fatal("still unread once opened")
+	}
+	ui.renderChats()
+	if !slices.Contains(sidebarTexts(ui), "4 nested sessions") {
+		t.Fatalf("a read failure still counted: %q", sidebarTexts(ui))
+	}
+}

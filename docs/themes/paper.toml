@@ -1,0 +1,13 @@
+# SPDX-License-Identifier: MPL-2.0
+# A warm light theme with square-ish corners and one accent.
+name = "Paper"
+base = "light"
+accents = ["#b5541b"]
+roundness = 0.4
+shader = "grain.frag"
+shader_opacity = 0.85
+
+[colors]
+background = "#fbf8f1"
+sidebar = "#f1ece0"
+text = "#2b2620"

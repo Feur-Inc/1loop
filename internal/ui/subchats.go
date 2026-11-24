@@ -53,11 +53,22 @@ func (ui *desktopUI) subchatInfo(chat *conversation) agent.SubchatInfo {
 	}
 	return agent.SubchatInfo{ID: chat.ID, Title: chat.Title, State: agent.SubchatState(chat.run != nil, waiting, link.Ended),
 		Folder: chat.Config.Workspace, Branch: link.Branch, Model: ui.modelName(chat.Config),
-		Used: used, Last: agent.LastAnswer(chat.Items)}
+		Used: used, Last: agent.LastAnswer(chat.Items), Provider: chat.Config.Provider}
 }
 
-// subchatAccess is what the chat's subchat tool reaches: its subchats, or
-// in a subchat its parent.
+// subchatDepth is a chat's level: 0 for a chat the user started, 1 for
+// its subchat, 2 for theirs (agent.MaxSubchatDepth).
+func (ui *desktopUI) subchatDepth(chat *conversation) int {
+	return agent.SubchatDepth(chat.ID, func(id string) string {
+		if found := ui.chatByID(id); found != nil && found.Subchat != nil && ui.chatByID(found.Subchat.Parent) != nil {
+			return found.Subchat.Parent
+		}
+		return ""
+	})
+}
+
+// subchatAccess is what the chat's subchat tool reaches: its subchats, and
+// in a subchat its parent's title.
 func (ui *desktopUI) subchatAccess(chat *conversation) *agent.SubchatAccess {
 	access := &agent.SubchatAccess{
 		List: func(ctx context.Context) (list []agent.SubchatInfo) {
@@ -68,10 +79,6 @@ func (ui *desktopUI) subchatAccess(chat *conversation) *agent.SubchatAccess {
 			})
 			return list
 		},
-		Message: func(ctx context.Context, id, text string) (err error) {
-			ui.onUI(ctx, func() { err = ui.messageSubchat(chat, id, text) })
-			return err
-		},
 		Stop: func(ctx context.Context, id string) (err error) {
 			ui.onUI(ctx, func() {
 				sub := ui.chatByID(id)
@@ -79,7 +86,7 @@ func (ui *desktopUI) subchatAccess(chat *conversation) *agent.SubchatAccess {
 					err = fmt.Errorf("No subchat %s here", id)
 					return
 				}
-				if sub.run == nil {
+				if sub.run == nil && !ui.treeWorking(sub) {
 					err = agent.SubchatNotWorking(ui.subchatInfo(sub))
 					return
 				}
@@ -88,15 +95,22 @@ func (ui *desktopUI) subchatAccess(chat *conversation) *agent.SubchatAccess {
 			return err
 		},
 	}
-	if chat.Subchat != nil { // one level: a subchat talks to its parent only
+	if chat.Subchat != nil {
 		access.ParentTitle = "(deleted)"
 		if parent := ui.parentOf(chat); parent != nil {
 			access.ParentTitle = parent.Title
 		}
+		access.Depth = ui.subchatDepth(chat)
+	}
+	if agent.SubchatLimit(access.Depth) != "" { // the deepest level: no subchat of its own
 		return access
 	}
 	access.Start = func(ctx context.Context, request agent.SubchatRequest) (agent.SubchatInfo, error) {
 		return ui.startSubchat(ctx, chat, request)
+	}
+	access.ForkSize = func(ctx context.Context) (size int) {
+		ui.onUI(ctx, func() { size = agent.ContextUsed(chat.History) })
+		return size
 	}
 	access.Model = func(ctx context.Context, name string) (display string, err error) {
 		ui.onUI(ctx, func() {
@@ -116,6 +130,7 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 	var cfg agent.Config
 	var history []agent.Message
 	var items []agent.ChatItem
+	var machine agent.Machine
 	ui.onUI(ctx, func() {
 		if ui.chatByID(parent.ID) != parent {
 			err = fmt.Errorf("The conversation was deleted")
@@ -131,7 +146,9 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 			choice = &found
 		}
 		cfg = agent.SubchatConfig(parent.Config, choice)
+		machine = ui.attachmentMachine(cfg.MachineID)
 		if request.Context == "fork" {
+			agent.ForkConfig(&cfg, parent.Config)
 			history = agent.ForkHistory(parent.History)
 			items = slices.Clone(parent.Items)
 		}
@@ -152,13 +169,24 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 			return info, fmt.Errorf("Could not make the subchat's worktree: %v", err)
 		}
 	}
+	var files []agent.FileAttachment
+	if err == nil && len(request.Attachments.Files) > 0 { // copied into its workspace, as the composer's
+		workspace := cfg.Workspace
+		if created.Path != "" {
+			workspace = created.Path
+		}
+		files, err = agent.DeliverFiles(ctx, machine, workspace, request.Attachments.Files)
+	}
 	ui.onUI(ctx, func() {
+		if err != nil {
+			return
+		}
 		if ui.chatByID(parent.ID) != parent {
 			err = fmt.Errorf("The conversation was deleted")
 			return
 		}
 		sub := &conversation{ID: id, Title: request.Title, Config: cfg, History: history, Items: items,
-			Subchat: &agent.SubchatLink{Parent: parent.ID, Branch: created.Branch, Report: true}}
+			Subchat: &agent.SubchatLink{Parent: parent.ID, Branch: created.Branch}, ReportTo: []string{parent.ID}}
 		if created.Path != "" {
 			if ui.worktrees == nil {
 				ui.worktrees = map[string]string{}
@@ -170,7 +198,7 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 			sub.Items = append(sub.Items, agent.ChatItem{Kind: "note", Text: "Forked from “" + parent.Title + "”"})
 		}
 		ui.chats = append([]*conversation{sub}, ui.chats...)
-		ui.startIn(sub, agent.Message{Role: "user", Content: request.Brief}, "")
+		ui.startIn(sub, agent.PromptMessage(request.Brief, request.Attachments.Images, files), "")
 		ui.panel.showTodo(parent) // its live state, beside the parent
 		ui.panel.todoChanged(parent)
 		info = ui.subchatInfo(sub)
@@ -187,86 +215,119 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 	return info, err
 }
 
-// messageSubchat sends text from chat to its subchat id, or to its parent
-// for "parent".
-func (ui *desktopUI) messageSubchat(chat *conversation, id, text string) error {
-	if id == "parent" {
-		parent := ui.parentOf(chat)
-		if parent == nil {
-			return fmt.Errorf("This chat has no parent conversation")
-		}
-		ui.wake(parent, agent.SubchatQuestion(chat.ID, chat.Title, text))
-		return nil
-	}
-	sub := ui.chatByID(id)
-	if sub == nil || sub.Subchat == nil || sub.Subchat.Parent != chat.ID {
-		return fmt.Errorf("No subchat %s here", id)
-	}
-	sub.Subchat.Report = true
-	message := agent.FromParent(text)
-	if sub.run != nil {
-		sub.steer = append(sub.steer, message)
-		if sub == ui.current {
-			ui.renderQueue()
-		}
-		return nil
-	}
-	ui.wake(sub, message)
-	return nil
+// stopSubchat stops a subchat's turn, and those of the subchats under it.
+func (ui *desktopUI) stopSubchat(sub *conversation) {
+	ui.stopTree(sub, 0)
 }
 
-func (ui *desktopUI) stopSubchat(sub *conversation) {
-	if sub.run != nil {
-		sub.run.cancel()
+func (ui *desktopUI) stopTree(chat *conversation, depth int) {
+	if chat.run != nil {
+		chat.run.cancel()
+	}
+	if depth > agent.MaxSubchatDepth { // a loop of links: stop there
+		return
+	}
+	for _, sub := range ui.subchatsOf(chat) {
+		ui.stopTree(sub, depth+1)
 	}
 }
 
 // subchatWorktree is the worktree a subchat of this computer was given,
 // "" when it shares a folder or another chat works there too.
 func (ui *desktopUI) subchatWorktree(chat *conversation) string {
+	return ui.ownWorktree(chat, []*conversation{chat})
+}
+
+// ownWorktree is chat's worktree when no chat but those of group works
+// there, "" otherwise.
+func (ui *desktopUI) ownWorktree(chat *conversation, group []*conversation) string {
 	if chat.Subchat == nil || chat.Subchat.Branch == "" || chat.Config.MachineID != "" || ui.worktrees[chat.Config.Workspace] == "" {
 		return ""
 	}
 	for _, other := range ui.chats {
-		if other != chat && other.Config.Workspace == chat.Config.Workspace && other.Config.MachineID == "" {
+		if !slices.Contains(group, other) && other.Config.Workspace == chat.Config.Workspace && other.Config.MachineID == "" {
 			return ""
 		}
 	}
 	return chat.Config.Workspace
 }
 
-// confirmDeleteSubchat asks before deleting a subchat with its own
-// worktree, and removes the worktree and its branch with it unless the
-// user keeps them.
+// subtreeOf are the chats under chat, at every level, parents first.
+func (ui *desktopUI) subtreeOf(chat *conversation) []*conversation {
+	parents := map[string]string{}
+	for _, other := range ui.chats {
+		parents[other.ID] = ""
+		if other.Subchat != nil {
+			parents[other.ID] = other.Subchat.Parent
+		}
+	}
+	var out []*conversation
+	for _, id := range agent.SubchatSubtree(chat.ID, parents) {
+		if found := ui.chatByID(id); found != nil {
+			out = append(out, found)
+		}
+	}
+	return out
+}
+
+// treeWorktrees are the worktrees deleting chat and its subchats leaves
+// unused: those subchats were given and no other chat works in.
+func (ui *desktopUI) treeWorktrees(chat *conversation) []string {
+	group := append([]*conversation{chat}, ui.subtreeOf(chat)...)
+	var out []string
+	for _, member := range group {
+		if folder := ui.ownWorktree(member, group); folder != "" && !slices.Contains(out, folder) {
+			out = append(out, folder)
+		}
+	}
+	return out
+}
+
+// confirmDeleteSubchat asks before deleting a chat whose subchats (or
+// itself) have their own worktrees, and removes the worktrees and their
+// branches with it unless the user keeps them.
 func (ui *desktopUI) confirmDeleteSubchat(chat *conversation, text string) {
-	folder := ui.subchatWorktree(chat)
-	project := ui.worktrees[folder]
+	folders := ui.treeWorktrees(chat)
+	projects := map[string]string{}
+	for _, folder := range folders {
+		projects[folder] = ui.worktrees[folder]
+	}
+	title, detail := "Also remove its worktree and branch", "The folder "+worktreeFolder(folders[0])+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own."
+	if chat.Subchat != nil && len(folders) == 1 && folders[0] == ui.subchatWorktree(chat) {
+		title += " " + chat.Subchat.Branch
+	} else {
+		title = fmt.Sprintf("Also remove the %s of its subchats", core.Plural(len(folders), "worktree"))
+		if len(folders) == 1 {
+			title = "Also remove its subchat's worktree"
+		}
+		detail = "Each folder goes unless it has uncommitted changes; each branch only if it is merged or has no commits of its own."
+	}
 	removeWorktree := true
 	body := container.New(layout.NewCustomPaddedVBoxLayout(10), note(text),
-		card(settingRow("Also remove its worktree and branch "+chat.Subchat.Branch,
-			"The folder "+worktreeFolder(folder)+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own.",
-			newToggle(true, func(on bool) { removeWorktree = on }))))
+		card(settingRow(title, detail, newToggle(true, func(on bool) { removeWorktree = on }))))
 	var dialog *sheet
 	remove := newRow("Delete", nil, stylePrimary, func() {
 		dialog.Hide()
-		ui.removeChat(chat)
+		ui.removeTree(chat)
 		if !removeWorktree {
 			return
 		}
 		go func() {
-			ctx, cancel := context.WithTimeout(ui.ctx, time.Minute)
-			kept, err := agent.RemoveSubchatWorktree(ctx, gitrepo.Local, folder, false)
-			cancel()
-			fyne.Do(func() {
-				if err != nil {
-					ui.notice("Worktree kept", folder+": "+err.Error())
-					return
-				}
-				ui.forgetLocalWorktree(project, folder)
-				if kept != "" {
-					ui.notice("Worktree removed", kept)
-				}
-			})
+			for _, folder := range folders {
+				ctx, cancel := context.WithTimeout(ui.ctx, time.Minute)
+				kept, err := agent.RemoveSubchatWorktree(ctx, gitrepo.Local, folder, false)
+				cancel()
+				fyne.Do(func() {
+					if err != nil {
+						ui.notice("Worktree kept", folder+": "+err.Error())
+						return
+					}
+					ui.forgetLocalWorktree(projects[folder], folder)
+					if kept != "" {
+						ui.notice("Worktree removed", kept)
+					}
+				})
+			}
 		}()
 	})
 	remove.danger = true
@@ -280,24 +341,6 @@ func worktreeFolder(folder string) string {
 		return folder[i+1:]
 	}
 	return folder
-}
-
-// subchatEnded notes how a subchat's turn ended and, when the parent caused
-// it, reports to the parent: its message joins the parent's turn or starts
-// one, as a background task's end does.
-func (ui *desktopUI) subchatEnded(chat *conversation, ended string) {
-	if chat.Subchat == nil {
-		return
-	}
-	chat.Subchat.Ended = ended
-	if parent := ui.parentOf(chat); parent != nil {
-		ui.panel.todoChanged(parent)
-		ui.remote.metaChanged(parent)
-		if chat.Subchat.Report {
-			chat.Subchat.Report = false
-			ui.wake(parent, agent.SubchatReport(ui.subchatInfo(chat)))
-		}
-	}
 }
 
 // subchatCommand is /subchat <brief> in the composer.
@@ -318,8 +361,8 @@ func (ui *desktopUI) splitOff(parent *conversation, brief string) string {
 		return "Write what the subchat should do after /subchat: the task, the files and what done means."
 	case parent == nil:
 		return "Open the conversation to start the subchat from first."
-	case parent.Subchat != nil:
-		return "A subchat cannot have subchats of its own. Start it from “" + parentTitle(ui, parent) + "”."
+	case agent.SubchatLimit(ui.subchatDepth(parent)) != "":
+		return fmt.Sprintf("This subchat is %d levels down, the most: start it from “%s”.", agent.MaxSubchatDepth, parentTitle(ui, parent))
 	}
 	running := 0
 	for _, sub := range ui.subchatsOf(parent) {
@@ -341,6 +384,24 @@ func (ui *desktopUI) splitOff(parent *conversation, brief string) string {
 		}
 	}()
 	return ""
+}
+
+// treeWorking says whether a subchat under chat, at any depth, is working.
+func (ui *desktopUI) treeWorking(chat *conversation) bool {
+	working := false
+	var walk func(*conversation, int)
+	walk = func(parent *conversation, depth int) {
+		for _, sub := range ui.subchatsOf(parent) {
+			if sub.run != nil {
+				working = true
+			}
+			if depth < agent.MaxSubchatDepth {
+				walk(sub, depth+1)
+			}
+		}
+	}
+	walk(chat, 0)
+	return working
 }
 
 func parentTitle(ui *desktopUI, chat *conversation) string {
@@ -377,7 +438,7 @@ func (panel *toolPanel) addSubchats(box *fyne.Container, chat *conversation) {
 	for _, sub := range subs {
 		total += ui.subchatInfo(sub).Used
 	}
-	box.Add(padded(22, 6, 0, 0, container.NewBorder(nil, nil, title, textLine(fmt.Sprintf("%s tokens together", compactTokens(total)), 12.5, colMuted))))
+	box.Add(padded(22, 6, 0, 0, container.NewBorder(nil, nil, title, textLine(fmt.Sprintf("%s tokens together", core.CompactCount(total)), 12.5, colMuted))))
 	for _, sub := range subs {
 		sub := sub
 		info := ui.subchatInfo(sub)
@@ -405,19 +466,6 @@ func (panel *toolPanel) addSubchats(box *fyne.Container, chat *conversation) {
 			padded(1, 0, 12, 8, container.NewVBox(name, textLine(state, 11.5, colMuted))))))
 	}
 	box.Add(layout.NewSpacer())
-}
-
-// compactTokens is a token count at a glance: 950, 12k, 1.2M.
-func compactTokens(n int) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	case n >= 10_000:
-		return fmt.Sprintf("%dk", n/1000)
-	case n >= 1000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	}
-	return fmt.Sprint(n)
 }
 
 // openSubchat opens a subchat from its parent's start call: on this

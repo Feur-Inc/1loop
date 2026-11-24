@@ -27,7 +27,10 @@ type markdownView struct {
 	layer  *selectLayer // over the box: selects its text with the mouse
 	box    *fyne.Container
 	blocks []mdBlock
+	starts []int  // where each block starts in source
+	source string // the text last parsed
 	objs   []fyne.CanvasObject
+	media  *mdMedia // draws its images and videos; nil: they are links
 }
 
 // mdBlock identifies a top-level block: while an answer streams, a block
@@ -44,32 +47,77 @@ func newMarkdownView(text string) *markdownView {
 	return view
 }
 
+// newMarkdownMediaView renders text that GitHub would show with its images
+// and videos, an issue's or a pull request's (markdown_media.go).
+func newMarkdownMediaView(text string, media *mdMedia) *markdownView {
+	view := &markdownView{box: container.New(layout.NewCustomPaddedVBoxLayout(12)), media: media}
+	view.ParseMarkdown(text)
+	return view
+}
+
 // ParseMarkdown re-renders the text. Unchanged blocks keep their widgets:
 // while an answer streams, only its last block is built again.
 func (view *markdownView) ParseMarkdown(text string) {
-	source := []byte(hideOpenTag(text))
-	nodes, blocks := splitMarkdown(source)
+	text = hideOpenTag(text)
+	// A streamed answer only grows: the blocks before the last two are
+	// final, only the text from there on is parsed again. Parsing the
+	// whole answer at each delta cost megabytes by the end of a long one.
+	base, keep := 0, 0
+	if n := len(view.blocks); n >= 3 && !strings.Contains(text, "]:") { // no link definitions: they reach back
+		if at := view.starts[n-2]; at > 0 && at <= len(text) && text[at-1] == '\n' && text[:at] == view.source[:at] {
+			base, keep = at, n-2
+		}
+	}
+	source := []byte(text[base:])
+	nodes, fresh, starts := splitMarkdownAt(source)
+	blocks := append(view.blocks[:keep:keep], fresh...)
+	for i := range starts {
+		starts[i] += base
+	}
+	starts = append(view.starts[:keep:keep], starts...)
 	objs := make([]fyne.CanvasObject, len(blocks))
+	copy(objs, view.objs[:keep])
 	reshaped := len(blocks) != len(view.blocks)
-	for i, block := range blocks {
+	for i := keep; i < len(blocks); i++ {
+		block := blocks[i]
 		if i < len(view.blocks) && view.blocks[i] == block {
 			objs[i] = view.objs[i]
 			continue
 		}
-		objs[i] = renderNode(nodes[i], source, colText)
+		objs[i] = renderNode(nodes[i-keep], source, colText, view.media)
 		reshaped = true
 	}
+	view.starts, view.source = starts, text
 	view.blocks, view.objs = blocks, objs
 	if reshaped {
 		// New widgets are drawn on their own once placed: lay the box out,
 		// without the recursive refresh of Container.Refresh.
 		view.box.Objects = objs
 		view.box.Layout.Layout(objs, view.box.Size())
+		// A new block's text gives its height at a provisional width before
+		// it is laid out (flowRenderer.MinSize), and another once it flows
+		// at its own: lay out again while a block keeps the first. Otherwise
+		// a list keeps gaps between its items, and its end is drawn below
+		// the answer, under the next row, when the answer's height did not
+		// change and nothing lays it out again (#440).
+		for pass := 0; pass < 3 && view.box.Size().Width > 0 && !heightsHold(objs); pass++ {
+			view.box.Layout.Layout(objs, view.box.Size())
+		}
 		canvas.Refresh(view.box)
 	}
 	if view.layer != nil {
 		view.layer.changed()
 	}
+}
+
+// heightsHold tells whether each block is as high as it now measures.
+func heightsHold(objs []fyne.CanvasObject) bool {
+	for _, obj := range objs {
+		if obj.Visible() && obj.Size().Height != obj.MinSize().Height {
+			return false
+		}
+	}
+	return true
 }
 
 // hideOpenTag cuts a citation tag still arriving at the end of a streamed
@@ -84,6 +132,12 @@ func hideOpenTag(text string) string {
 // splitMarkdown parses the text and gives its top-level blocks, each with
 // its source.
 func splitMarkdown(source []byte) ([]ast.Node, []mdBlock) {
+	nodes, blocks, _ := splitMarkdownAt(source)
+	return nodes, blocks
+}
+
+// splitMarkdownAt is splitMarkdown, with where each block starts.
+func splitMarkdownAt(source []byte) ([]ast.Node, []mdBlock, []int) {
 	var nodes []ast.Node
 	for node := parseMarkdown(source).FirstChild(); node != nil; node = node.NextSibling() {
 		nodes = append(nodes, node)
@@ -113,7 +167,7 @@ func splitMarkdown(source []byte) ([]ast.Node, []mdBlock) {
 		}
 		blocks[i] = block
 	}
-	return nodes, blocks
+	return nodes, blocks, starts[:len(nodes)]
 }
 
 // blockStart is where a block starts in the source, or -1.
@@ -135,7 +189,7 @@ func blockStart(node ast.Node) int {
 var headingSizes = [...]float32{22, 19, 16.5, 15, 14, 14}
 
 // renderNode lays one block out, its own blocks inside it top to bottom.
-func renderNode(node ast.Node, source []byte, ink color.Color) fyne.CanvasObject {
+func renderNode(node ast.Node, source []byte, ink color.Color, media *mdMedia) fyne.CanvasObject {
 	size := theme.TextSize()
 	switch node := node.(type) {
 	case *ast.Heading:
@@ -143,12 +197,18 @@ func renderNode(node ast.Node, source []byte, ink color.Color) fyne.CanvasObject
 		heading.bold = true
 		return padded(6, 0, 0, 0, heading)
 	case *ast.Paragraph, *ast.TextBlock:
+		if media != nil {
+			return media.paragraph(inlineSpans(node, source), size, ink)
+		}
 		return newFlowText(inlineSpans(node, source), size, ink)
 	case *ast.HTMLBlock:
 		var raw strings.Builder
 		for i := 0; i < node.Lines().Len(); i++ {
 			line := node.Lines().At(i)
 			raw.Write(line.Value(source))
+		}
+		if media != nil {
+			return media.paragraph(htmlSpans(raw.String()), size, ink)
 		}
 		return newFlowText(htmlSpans(raw.String()), size, ink)
 	case *ast.ThematicBreak:
@@ -159,10 +219,10 @@ func renderNode(node ast.Node, source []byte, ink color.Color) fyne.CanvasObject
 		bar := canvas.NewRectangle(colBorder)
 		bar.SetMinSize(fyne.NewSize(3, 0))
 		bar.CornerRadius = 1.5
-		return container.NewBorder(nil, nil, bar, nil, padded(1, 1, 12, 0, renderChildren(node, source, colMuted)))
+		return container.NewBorder(nil, nil, bar, nil, padded(1, 1, 12, 0, renderChildren(node, source, colMuted, media)))
 	case *ast.List:
 		var last *flowText
-		list := renderList(node, source, 0, ink, &last)
+		list := renderList(node, source, 0, ink, &last, media)
 		if last != nil {
 			last.tail = "\n\n"
 		}
@@ -172,7 +232,7 @@ func renderNode(node ast.Node, source []byte, ink color.Color) fyne.CanvasObject
 	case *ast.CodeBlock:
 		return markdownCode("", codeBlockText(node, source))
 	case *east.Table:
-		return newMarkdownTable(tableSpans(node, source))
+		return newMarkdownTable(tableSpans(node, source), media)
 	case *mathBlock:
 		if !node.closed { // still being written: not worth composing yet
 			return markdownCode("latex", node.formula())
@@ -181,14 +241,14 @@ func renderNode(node ast.Node, source []byte, ink color.Color) fyne.CanvasObject
 		formula.center = true
 		return padded(4, 4, 0, 0, formula)
 	}
-	return renderChildren(node, source, ink)
+	return renderChildren(node, source, ink, media)
 }
 
 // renderChildren stacks a container block's blocks.
-func renderChildren(node ast.Node, source []byte, ink color.Color) fyne.CanvasObject {
+func renderChildren(node ast.Node, source []byte, ink color.Color, media *mdMedia) fyne.CanvasObject {
 	var out []fyne.CanvasObject
 	for child := node.FirstChild(); child != nil; child = child.NextSibling() {
-		out = append(out, renderNode(child, source, ink))
+		out = append(out, renderNode(child, source, ink, media))
 	}
 	if len(out) == 1 {
 		return out[0]
@@ -200,7 +260,7 @@ func renderChildren(node ast.Node, source []byte, ink color.Color) fyne.CanvasOb
 // wrap under themselves, sublists and the items' other blocks indented
 // under their item. last is the list's last line of text, which ends it
 // in copied text.
-func renderList(list *ast.List, source []byte, level int, ink color.Color, last **flowText) fyne.CanvasObject {
+func renderList(list *ast.List, source []byte, level int, ink color.Color, last **flowText, media *mdMedia) fyne.CanvasObject {
 	size := theme.TextSize()
 	box := container.New(layout.NewCustomPaddedVBoxLayout(6))
 	indent := float32(level) * 20
@@ -220,7 +280,20 @@ func renderList(list *ast.List, source []byte, level int, ink color.Color, last 
 					marker = "☑"
 				}
 			}
-			if spans := inlineSpans(child, source); len(spans) > 0 { // a bullet whose text is not written yet waits
+			spans := inlineSpans(child, source)
+			var pictures fyne.CanvasObject // an item's images and videos, under its text (markdown_media.go)
+			if media != nil && hasMedia(spans) {
+				var text, shown []span
+				for _, s := range spans {
+					if s.media == "" {
+						text = append(text, s)
+					} else {
+						shown = append(shown, s)
+					}
+				}
+				spans, pictures = text, media.paragraph(shown, size, ink)
+			}
+			if len(spans) > 0 { // a bullet whose text is not written yet waits
 				entry := newFlowText(spans, size, ink)
 				entry.marker, entry.hang, entry.tail = marker, 24, "\n"
 				if w, _, _ := measureText(marker, size, fyne.TextStyle{}); w+10 > entry.hang {
@@ -229,14 +302,17 @@ func renderList(list *ast.List, source []byte, level int, ink color.Color, last 
 				box.Add(padded(0, 0, indent, 0, entry))
 				*last = entry
 			}
+			if pictures != nil {
+				box.Add(padded(0, 0, indent+24, 0, pictures))
+			}
 			child = child.NextSibling()
 		}
 		for ; child != nil; child = child.NextSibling() {
 			if sublist, ok := child.(*ast.List); ok {
-				box.Add(renderList(sublist, source, level+1, ink, last))
+				box.Add(renderList(sublist, source, level+1, ink, last, media))
 				continue
 			}
-			box.Add(padded(0, 0, indent+24, 0, renderNode(child, source, ink)))
+			box.Add(padded(0, 0, indent+24, 0, renderNode(child, source, ink, media)))
 			*last = nil
 		}
 	}
@@ -303,6 +379,11 @@ type markdownTable struct {
 	weights []float32
 	minimum []float32 // widest single word per column: never broken
 	width   float32   // last laid out width, used to size wrapped rows
+	// pictures are each cell's images, under its text, in the preview of
+	// an issue or a pull request (markdown_media.go); stale says one has
+	// loaded since the rows were measured.
+	pictures [][][]*remoteImage
+	stale    bool
 }
 
 // selPieces gives the selection layer the cells' text, row by row, as
@@ -334,17 +415,34 @@ func (table *markdownTable) linkAt(at fyne.Position) string {
 
 func (table *markdownTable) Tapped(e *fyne.PointEvent) { openLink(table.linkAt(e.Position)) }
 
-func newMarkdownTable(rows [][][]span) *markdownTable {
+func newMarkdownTable(rows [][][]span, media *mdMedia) *markdownTable {
 	table := &markdownTable{width: 600}
 	columns := len(rows[0])
 	table.weights = make([]float32, columns)
 	table.minimum = make([]float32, columns)
 	for r, cells := range rows {
 		var row []*flowText
+		pictures := make([][]*remoteImage, columns)
 		for c := 0; c < columns; c++ {
 			var cell []span
 			if c < len(cells) {
 				cell = cells[c]
+			}
+			if media != nil && hasMedia(cell) {
+				var text []span
+				for _, s := range cell {
+					if s.media == "" || s.video || videoAddress(s.media) {
+						text = append(text, s) // a video stays a link here
+						continue
+					}
+					picture := newRemoteImage(s, theme.TextSize(), media)
+					picture.loaded = func() { table.stale = true }
+					pictures[c] = append(pictures[c], picture)
+				}
+				cell = text
+				// Room for a picture, as for a long text.
+				table.weights[c] = fyne.Max(table.weights[c], 320)
+				table.minimum[c] = fyne.Max(table.minimum[c], 120)
 			}
 			flow := newFlowText(cell, theme.TextSize(), colText)
 			flow.bold = r == 0 // the header row
@@ -359,17 +457,36 @@ func newMarkdownTable(rows [][][]span) *markdownTable {
 			table.minimum[c] = fyne.Max(table.minimum[c], fyne.Min(widest, 320)+4)
 		}
 		table.cells = append(table.cells, row)
+		table.pictures = append(table.pictures, pictures)
 	}
 	table.ExtendBaseWidget(table)
 	return table
 }
 
+// cellHeight is a cell's text and pictures' height in width: the pictures
+// are under the text, 6 apart.
+func (table *markdownTable) cellHeight(r, c int, width float32) float32 {
+	cell := table.cells[r][c]
+	cell.Resize(fyne.NewSize(width, 10))
+	height := float32(0)
+	if len(cell.spans) > 0 || len(table.pictures[r][c]) == 0 {
+		height = cell.MinSize().Height
+	}
+	for _, picture := range table.pictures[r][c] {
+		if height > 0 {
+			height += 6
+		}
+		height += picture.heightAt(width)
+	}
+	return height
+}
+
 func (table *markdownTable) CreateRenderer() fyne.WidgetRenderer {
 	renderer := &tableRenderer{table: table, frame: canvas.NewRectangle(colCode), head: canvas.NewRectangle(colRaised)}
-	renderer.frame.CornerRadius = 10
+	renderer.frame.CornerRadius = rounded(10)
 	renderer.frame.StrokeColor = colBorder
 	renderer.frame.StrokeWidth = 1
-	renderer.head.CornerRadius = 9
+	renderer.head.CornerRadius = rounded(9)
 	for range table.cells[1:] {
 		rule := canvas.NewRectangle(colBorderSoft)
 		renderer.rules = append(renderer.rules, rule)
@@ -412,17 +529,16 @@ func (renderer *tableRenderer) rowHeights(width float32) []float32 {
 	widths := renderer.columns(width)
 	heights := make([]float32, len(renderer.table.cells))
 	for i, row := range renderer.table.cells {
-		for c, cell := range row {
-			cell.Resize(fyne.NewSize(widths[c]-2*cellPadX, 10))
-			heights[i] = fyne.Max(heights[i], cell.MinSize().Height+2*cellPadY)
+		for c := range row {
+			heights[i] = fyne.Max(heights[i], renderer.table.cellHeight(i, c, widths[c]-2*cellPadX)+2*cellPadY)
 		}
 	}
 	return heights
 }
 
 func (renderer *tableRenderer) MinSize() fyne.Size {
-	if renderer.height == 0 || renderer.measuredAt != renderer.table.width {
-		renderer.measuredAt, renderer.height = renderer.table.width, 0
+	if renderer.height == 0 || renderer.measuredAt != renderer.table.width || renderer.table.stale {
+		renderer.measuredAt, renderer.height, renderer.table.stale = renderer.table.width, 0, false
 		for _, h := range renderer.rowHeights(renderer.table.width) {
 			renderer.height += h
 		}
@@ -442,8 +558,25 @@ func (renderer *tableRenderer) Layout(size fyne.Size) {
 	for i, row := range renderer.table.cells {
 		x := float32(0)
 		for c, cell := range row {
+			width := widths[c] - 2*cellPadX
 			cell.Move(fyne.NewPos(x+cellPadX, y+cellPadY))
-			cell.Resize(fyne.NewSize(widths[c]-2*cellPadX, heights[i]-2*cellPadY))
+			at := y + cellPadY
+			if pictures := renderer.table.pictures[i][c]; len(pictures) > 0 {
+				text := float32(0)
+				if len(cell.spans) > 0 {
+					text = cell.MinSize().Height
+					at += text + 6
+				}
+				cell.Resize(fyne.NewSize(width, text))
+				for _, picture := range pictures {
+					h := picture.heightAt(width)
+					picture.Move(fyne.NewPos(x+cellPadX, at))
+					picture.Resize(fyne.NewSize(width, h))
+					at += h + 6
+				}
+			} else {
+				cell.Resize(fyne.NewSize(width, heights[i]-2*cellPadY))
+			}
 			x += widths[c]
 		}
 		if i > 0 {
@@ -466,6 +599,13 @@ func (renderer *tableRenderer) Refresh() {
 			cell.Refresh()
 		}
 	}
+	for _, row := range renderer.table.pictures {
+		for _, pictures := range row {
+			for _, picture := range pictures {
+				picture.Refresh()
+			}
+		}
+	}
 }
 
 func (renderer *tableRenderer) Objects() []fyne.CanvasObject {
@@ -476,6 +616,13 @@ func (renderer *tableRenderer) Objects() []fyne.CanvasObject {
 	for _, row := range renderer.table.cells {
 		for _, cell := range row {
 			objects = append(objects, cell)
+		}
+	}
+	for _, row := range renderer.table.pictures {
+		for _, pictures := range row {
+			for _, picture := range pictures {
+				objects = append(objects, picture)
+			}
 		}
 	}
 	return objects

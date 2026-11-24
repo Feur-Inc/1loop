@@ -18,6 +18,8 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/driver/desktop"
+
+	"1loop/internal/core"
 )
 
 // promptDrafts are the drafts, by key: a chat ID, or newChatDraft + its
@@ -130,12 +132,8 @@ func (drafts *promptDrafts) writeLocked(key string) bool {
 		err := os.Remove(path)
 		return err == nil || os.IsNotExist(err)
 	}
-	if os.MkdirAll(drafts.dir, 0700) != nil {
-		return false
-	}
 	data, _ := json.Marshal(savedDraft{key, text})
-	temporary := path + ".tmp"
-	return os.WriteFile(temporary, data, 0600) == nil && os.Rename(temporary, path) == nil
+	return core.WriteFileSafely(path, 0600, false, data) == nil
 }
 
 // promptHistory is one draft's undo and redo, as successive texts. Typing
@@ -187,6 +185,9 @@ func (entry *chatEntry) renameDraft(key string) {
 func (entry *chatEntry) switchDraft(key string) {
 	if entry.drafts == nil || (key == entry.draftKey && entry.draftBound) {
 		return
+	}
+	if entry.switched != nil && entry.draftBound {
+		entry.switched(entry.draftKey, key)
 	}
 	entry.draftKey, entry.draftBound = key, true
 	if draft := entry.drafts.get(key); entry.replace(draft) != draft {
@@ -255,6 +256,9 @@ func (entry *chatEntry) changed(text string) {
 // clearSent empties the prompt once its message is on its way; Ctrl+Z
 // still brings the text back.
 func (entry *chatEntry) clearSent() {
+	if entry.sent != nil {
+		defer entry.sent()
+	}
 	if entry.drafts == nil {
 		entry.SetText("")
 		return

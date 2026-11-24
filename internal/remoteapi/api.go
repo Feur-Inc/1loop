@@ -24,7 +24,21 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/browser"
 	"1loop/internal/core"
+	"1loop/internal/usage"
 )
+
+// ChatTitleLimit is how many characters a chat's title keeps.
+const ChatTitleLimit = 80
+
+// CleanChatTitle is a title as a chat keeps it: on one line, without spaces
+// around it and cut to ChatTitleLimit characters. Empty when nothing is left.
+func CleanChatTitle(title string) string {
+	runes := []rune(strings.Join(strings.Fields(title), " "))
+	if len(runes) > ChatTitleLimit {
+		runes = runes[:ChatTitleLimit]
+	}
+	return strings.TrimSpace(string(runes))
+}
 
 func TokenHash(token string) string {
 	sum := sha256.Sum256([]byte(token))
@@ -48,6 +62,7 @@ type Chat struct {
 	Items     int    `json:"items"`
 	Parent    string `json:"parent,omitempty"` // a subchat's parent chat (agent/subchats.go)
 	Branch    string `json:"branch,omitempty"` // a subchat's own worktree's branch, removable with it
+	Ended     string `json:"ended,omitempty"`  // how a subchat's last turn ended: done, stopped or failed
 	// From its last wrap_up: the recap's first sentence, and whether the
 	// chat waits on the user.
 	Status  string `json:"status,omitempty"`
@@ -72,6 +87,9 @@ type Item struct {
 	Diff     string    `json:"diff,omitempty"`
 	Millis   int64     `json:"millis,omitempty"`
 	Failed   string    `json:"failed,omitempty"`
+	// From: user and note rows another chat sent (agent/chats.go), shown
+	// under its title rather than as the user's.
+	From *agent.ChatSender `json:"from,omitempty"`
 }
 
 type Meta struct {
@@ -79,16 +97,18 @@ type Meta struct {
 	// ContextUsage is the window by category, without the MCP tools' list
 	// (GET /api/chats/{id}/context has it).
 	ContextUsage *agent.ContextUsage `json:"contextUsage,omitempty"`
-	Chat         string              `json:"chat"`
-	Title        string              `json:"title"`
-	Running      bool                `json:"running"`
-	Label        string              `json:"label,omitempty"`
-	Mark         string              `json:"mark,omitempty"`
-	Queue        []string            `json:"queue"`
-	Steer        []string            `json:"steer"`
-	Items        int                 `json:"items"`
-	Approval     *Approval           `json:"approval,omitempty"`
-	Question     *Question           `json:"question,omitempty"` // request_user_input waiting for answers
+	// Spent is what the chat and its subchats spent (internal/usage).
+	Spent    *usage.ChatSpend `json:"spent,omitempty"`
+	Chat     string           `json:"chat"`
+	Title    string           `json:"title"`
+	Running  bool             `json:"running"`
+	Label    string           `json:"label,omitempty"`
+	Mark     string           `json:"mark,omitempty"`
+	Queue    []string         `json:"queue"`
+	Steer    []string         `json:"steer"`
+	Items    int              `json:"items"`
+	Approval *Approval        `json:"approval,omitempty"`
+	Question *Question        `json:"question,omitempty"` // request_user_input waiting for answers
 	// The tool executing now, whatever the label says (an approval replaces it):
 	// the phone's status badge lets touches through while phone_use runs.
 	Tool string `json:"tool,omitempty"`
@@ -98,7 +118,8 @@ type Meta struct {
 	Tier   string `json:"tier,omitempty"` // its speed (see agent.TierFor)
 	Used   int    `json:"used"`
 	Window int    `json:"window"`
-	Todo   []Todo `json:"todo"` // the chat's task list
+	Todo   []Todo `json:"todo"`           // the chat's task list
+	Goal   *Goal  `json:"goal,omitempty"` // its /goal; "/goal pause", "resume" and "clear" sent as messages control it
 	// Its background commands; POST /api/chats/{id}/tasks/{task}/stop ends one.
 	Tasks []agent.BackgroundTaskInfo `json:"tasks"`
 	// Its account's type: a local phone keeps a ChatGPT (Web) chat's page open.
@@ -138,6 +159,8 @@ type Approval struct {
 	ID      string `json:"id"`
 	Title   string `json:"title"`
 	Preview string `json:"preview"`
+	// Review: an edit whose files can be read and changed first (GET /api/review).
+	Review bool `json:"review,omitempty"`
 }
 
 type Effort struct {
@@ -194,6 +217,52 @@ type Tab struct {
 	Title string `json:"title"`
 	URL   string `json:"url,omitempty"`
 	Index int    `json:"index,omitempty"` // a tool tab: its item in the conversation
+}
+
+// Goal is a chat's goal as clients show it (agent.Goal): its clock counts
+// from Running, Unix milliseconds, while the agent works on it.
+type Goal struct {
+	ID          string  `json:"id"`
+	Objective   string  `json:"objective"`
+	Status      string  `json:"status"`
+	Label       string  `json:"label"` // the status as the views name it
+	By          string  `json:"by,omitempty"`
+	Reason      string  `json:"reason,omitempty"`
+	Idle        bool    `json:"idle,omitempty"`
+	TokensUsed  int     `json:"tokensUsed"`
+	TokenBudget int     `json:"tokenBudget,omitempty"`
+	Turns       int     `json:"turns"`
+	MaxTurns    int     `json:"maxTurns,omitempty"`
+	TimeBudget  int     `json:"timeBudget,omitempty"`
+	Seconds     float64 `json:"seconds"`
+	Running     int64   `json:"running,omitempty"`
+}
+
+// GoalOf is a goal for the clients, nil for none.
+func GoalOf(goal *agent.Goal) *Goal {
+	if goal == nil {
+		return nil
+	}
+	out := &Goal{ID: goal.ID, Objective: goal.Objective, Status: goal.Status, Label: agent.GoalStatusLabel(*goal), By: goal.By, Reason: goal.Reason, Idle: goal.Idle,
+		TokensUsed: goal.TokensUsed, TokenBudget: goal.TokenBudget, Turns: goal.Turns, MaxTurns: goal.MaxTurns, TimeBudget: goal.TimeBudget, Seconds: goal.Seconds}
+	if goal.RunningSince != nil {
+		out.Running = goal.RunningSince.UnixMilli()
+	}
+	return out
+}
+
+// AgentGoal is the goal a client got, as the desktop's views draw it.
+func (goal *Goal) AgentGoal() *agent.Goal {
+	if goal == nil {
+		return nil
+	}
+	out := &agent.Goal{ID: goal.ID, Objective: goal.Objective, Status: goal.Status, By: goal.By, Reason: goal.Reason, Idle: goal.Idle,
+		TokensUsed: goal.TokensUsed, TokenBudget: goal.TokenBudget, Turns: goal.Turns, MaxTurns: goal.MaxTurns, TimeBudget: goal.TimeBudget, Seconds: goal.Seconds}
+	if goal.Running > 0 {
+		since := time.UnixMilli(goal.Running)
+		out.RunningSince = &since
+	}
+	return out
 }
 
 type Todo struct {

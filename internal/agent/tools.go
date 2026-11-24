@@ -27,7 +27,7 @@ func coreToolDefinitions() []map[string]any {
 		name, description string
 		fields            []string
 	}{
-		{"shell", "Run a " + platform.ShellDescription() + " command after user approval. Each call starts a new shell: cd does not persist. workdir is an existing directory relative to the project, or an absolute granted directory; null uses the project. The result reports cwd, stdout, stderr, exit_code and status. Exit 1 is not automatically success. A command stops after timeout_ms (null: 60000, up to 600000). For longer work, a server or a watcher, set run_in_background to true: the command starts and this call returns at once, with no time limit; you are told when it ends, with the end of its output, and can follow it with background_task. Output longer than max_output_tokens (null: 10000, up to 50000) keeps its start and its end; use command_output with output_id to read retained output pages. Logs are temporary and bounded. In Auto mode commands may run in a workspace sandbox: set escalate to true, with a justification, only to rerun a command that must write outside it (null otherwise).", []string{"command", "workdir:string?", "max_output_tokens:int", "timeout_ms:int", "run_in_background:bool", "escalate:bool", "justification:string?"}},
+		{"shell", "Run a " + platform.ShellDescription() + " command after user approval, each call in a new shell (cd does not persist). workdir: a project directory or an absolute granted one; null is the project. Returns a line with the exit code, status and cwd, then stdout, then stderr after a [stderr] line. It stops after timeout_ms (null: 60000, up to 600000); for a server, a watcher or longer work, run_in_background returns at once with no limit, you are told when it ends, and background_task follows it. Output past max_output_tokens (null: 10000, up to 50000) keeps its start and end; command_output with the output_id it gives reads the rest. In Auto mode a sandbox may hold the command: escalate true, with a justification, only to rerun one that must write outside it (null otherwise).", []string{"command", "workdir:string?", "max_output_tokens:int", "timeout_ms:int", "run_in_background:bool", "escalate:bool", "justification:string?"}},
 		{"search_files", "Search workspace file contents with ripgrep (rg must be installed). pattern is a regular expression; path is a file or directory, null uses the project. Honors ignore files, skips binary files and files over 1 MiB; returns at most 100 matching lines per file. no_matches is a successful empty search; failed means a real error. Narrow path or pattern when truncated.", []string{"path:string?", "pattern", "max_output_tokens:int"}},
 		{"command_output", "Read a retained shell output page in this conversation. Choose stdout or stderr. offset is a zero-based byte offset, limit defaults to 8192 bytes (maximum 32768). Retention is eight commands, up to 2 MiB per stream; totals and truncated report any discarded bytes. Logs disappear when the conversation runtime closes.", []string{"id", "stream", "offset:int", "limit:int"}},
 		{"read_file", "Read a UTF-8 text file in the workspace (maximum 1 MiB): limit lines from line offset (1-based; null: from line 1, 2000 lines). The reply says which lines it holds and how many the file has; read further only when you need them.", []string{"path", "offset:int", "limit:int"}},
@@ -69,7 +69,7 @@ func coreToolDefinitions() []map[string]any {
 			"parameters":  map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false},
 		}})
 	}
-	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), wrapUpToolDefinition(), recallToolDefinition(), memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition())
+	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), wrapUpToolDefinition(), recallToolDefinition(), memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), chatsToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition(), goalToolDefinitions()[0], goalToolDefinitions()[1], goalToolDefinitions()[2])
 }
 
 // allToolDefinitions are every tool, loaded or not.
@@ -77,6 +77,9 @@ func availableCoreTools(cfg Config) []map[string]any {
 	var definitions []map[string]any
 	for _, definition := range coreToolDefinitions() {
 		name := definition["function"].(map[string]any)["name"].(string)
+		if isAppTool(name) && cfg.Provider != "claudecode" {
+			continue // in the app_1loop group, loaded on demand
+		}
 		if cfg.toolAvailable(name) {
 			definitions = append(definitions, definition)
 		}
@@ -285,10 +288,23 @@ type ToolOutcome struct {
 	Err            error
 }
 
+// completeResult: a shell or search result that already says how the
+// command ended (shell's "exit N · status" header, search's JSON), so a
+// failure needs no error line of its own.
+func completeResult(tool, output string) bool {
+	switch tool {
+	case "shell":
+		return strings.HasPrefix(output, "exit ")
+	case "search_files":
+		return json.Valid([]byte(output))
+	}
+	return false
+}
+
 // modelText is the tool result the model receives.
 func (outcome ToolOutcome) modelText() string {
 	if outcome.Err != nil {
-		if (outcome.Name == "shell" || outcome.Name == "search_files") && json.Valid([]byte(outcome.Output)) {
+		if completeResult(outcome.Name, outcome.Output) {
 			return outcome.Output
 		}
 		return outcome.Output + "\nError: " + outcome.Err.Error()
@@ -467,6 +483,10 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		output, err = backend.subchatTool(ctx, call.Function.Arguments, begin, emit)
 		return
 	}
+	if call.Function.Name == "chats" {
+		output, err = backend.chatsTool(ctx, call.Function.Arguments, begin, emit)
+		return
+	}
 	if call.Function.Name == "skill" {
 		begin()
 		output, err = loadSkill(call.Function.Arguments)
@@ -513,13 +533,18 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	if call.Function.Name == "background_task" {
 		begin()
 		tasks, _ := ctx.Value(tasksContextKey{}).(*BackgroundTasks)
-		output, err = backgroundTool(tasks, call.Function.Arguments)
+		output, err = backgroundTool(ctx, tasks, call.Function.Arguments)
 		return
 	}
 	if call.Function.Name == "wrap_up" {
 		state, _ := ctx.Value(todoContextKey{}).(*TodoState)
 		begin()
 		output, err = wrapUp(state, call.Function.Arguments, emit)
+		return
+	}
+	if isGoalTool(call.Function.Name) {
+		begin()
+		output, err = backend.goalTool(ctx, call.Function.Name, call.Function.Arguments, emit)
 		return
 	}
 	if call.Function.Name == "update_todo" {
@@ -569,6 +594,7 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		defer cancel()
 		cmd := platform.ShellCommand(timeout, args.Command)
 		platform.WorkspaceCommandIn(cmd, root, dir, platform.WorkspaceYOLO(ctx))
+		platform.ApplyProjectEnv(ctx, cmd)
 		if sandboxed {
 			if err := platform.SandboxCommand(cmd, root); err != nil {
 				return "", "", err
@@ -665,8 +691,9 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	if err != nil {
 		return "", "", err
 	}
-	if !backend.confirm(ctx, emit, "Apply changes to "+rel+"?", diff) {
-		return "", diff, fmt.Errorf("Edit denied")
+	after, diff, note, err := backend.approveEdit(ctx, emit, rel, before, after, diff, create)
+	if err != nil {
+		return "", diff, err
 	}
 	begin()
 	// Recheck the target after approval: it may have changed while the user reviewed the diff.
@@ -694,5 +721,5 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	if closeErr != nil {
 		return "", diff, closeErr
 	}
-	return "Changes applied: " + rel + "\n" + diff, diff, nil
+	return "Changes applied: " + rel + "\n" + note + diff, diff, nil
 }

@@ -9,6 +9,10 @@ import android.content.pm.PackageManager
 import android.net.Uri
 import android.os.Build
 import androidx.activity.compose.BackHandler
+import androidx.compose.ui.text.font.FontFamily
+import androidx.compose.foundation.layout.offset
+import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.animation.AnimatedVisibility
@@ -134,8 +138,10 @@ import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.TextFieldValue
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.input.VisualTransformation
+import androidx.compose.ui.layout.layout
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -228,7 +234,7 @@ fun Root(app: RemoteApp) {
             transitionSpec = { (fadeIn(tween(260, 60)) + scaleIn(tween(320, 60, FastOutSlowInEasing), initialScale = 0.96f)) togetherWith fadeOut(tween(160)) },
         ) { kind ->
             when (kind) {
-                Screen.Mode::class -> ModeScreen(app::chooseTarget)
+                Screen.Mode::class -> ModeScreen(app::chooseTarget, app.linked, app.backFromLinking())
                 Screen.Servers::class -> ServersScreen(app)
                 Screen.LocalSetup::class -> {
                     val status by app.local.status.collectAsState()
@@ -282,6 +288,7 @@ private fun localNetworkAllowed(context: Context) =
 @Composable
 fun ServersScreen(app: RemoteApp) {
     var adding by remember { mutableStateOf(false) }
+    var forgetting by remember { mutableStateOf<Server?>(null) } // a paired one, asked first (#428)
     val desktop = app.target != ExecutionTarget.RemoteServer
     val shown = app.servers.filter { it.desktop == desktop }
     val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> result.contents?.let(app::pairFromLink) }
@@ -332,7 +339,7 @@ fun ServersScreen(app: RemoteApp) {
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface)
                         .border(1.dp, Palette.borderSoft, RoundedCornerShape(14.dp))
-                        .combinedClickable(onClick = { app.choose(server) }, onLongClick = { app.forget(server) })
+                        .combinedClickable(onClick = { app.choose(server) }, onLongClick = { if (server.paired) forgetting = server else app.forget(server) })
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -376,6 +383,7 @@ fun ServersScreen(app: RemoteApp) {
             }
         }
         app.problem?.let { Text(it, style = Type.small.copy(color = Palette.danger), textAlign = TextAlign.Center, modifier = Modifier.padding(top = 14.dp)) }
+        forgetting?.let { ForgetServerDialog(app, it) { forgetting = null } }
         Spacer(Modifier.height(24.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (desktop) Pill("Search again", icon = Icons.refresh, enabled = !app.scanning) { app.scan() }
@@ -464,7 +472,7 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
         Spacer(Modifier.height(8.dp))
         Text(
             if (pair.phone) "On that phone, type this code in 1loop's request and tap Allow:\n${pair.consoleCode}"
-            else if (pair.consoleCode.isNotEmpty()) "Approve this phone in 1loop on a device already paired with the server: it asks for ${pair.consoleCode}. Or enter this command in the server console:\npair ${pair.pairing} ${pair.consoleCode}\nThis connects by itself once approved."
+            else if (pair.consoleCode.isNotEmpty()) "Approve this phone in 1loop on a device already paired with the server: it asks for ${pair.consoleCode}. Or approve it on the server with:\n${pair.serverCommand}\nThis connects by itself once approved."
             else "Type the code 1loop shows on your computer.",
             style = Type.small.copy(fontSize = 15.sp), textAlign = TextAlign.Center,
         )
@@ -474,7 +482,7 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
         }
         Spacer(Modifier.height(32.dp))
         if (pair.consoleCode.isNotEmpty()) {
-            if (!pair.phone) CopyChip { "pair ${pair.pairing} ${pair.consoleCode}" }
+            if (!pair.phone) CopyChip { pair.serverCommand }
             Spacer(Modifier.height(16.dp))
             Pill("Connect after approval", primary = true, enabled = !app.busy) { app.confirm(pair, pair.consoleCode) }
         } else BasicTextField(
@@ -533,9 +541,11 @@ fun ChatScreen(app: RemoteApp) {
     app.handoffAsk?.let { HandoffDialog(it) } // the chat continues with another model
     SharedFilesDialog(app) // files shared to 1loop from another app
     val page = app.repositoryOpen?.let { ChatPage("repository", it) }
-        ?: if (!app.settingsOpen) ChatPage("chat")
+        ?: if (app.searchOpen) ChatPage("search")
+        else if (!app.settingsOpen) ChatPage("chat")
         else if (app.extensionsOpen) ChatPage("extensions")
         else if (app.linuxOpen) ChatPage("linux")
+        else if (app.usageOpen) ChatPage("usage")
         else ChatPage("settings")
     AnimatedContent(
         page, label = "page",
@@ -551,7 +561,9 @@ fun ChatScreen(app: RemoteApp) {
             "repository" -> RepositoryScreen(app, shown.project!!) { app.repositoryOpen = null }
             "extensions" -> ExtensionsScreen(app) { app.extensionsOpen = false }
             "linux" -> LinuxScreen(app) { app.linuxOpen = false }
+            "usage" -> UsageScreen(app) { app.usageOpen = false }
             "settings" -> MobileSettings(app) { app.settingsOpen = false }
+            "search" -> SearchScreen(app) { app.searchOpen = false }
             else -> ChatMain(app)
         }
     }
@@ -569,7 +581,7 @@ fun ChatScreen(app: RemoteApp) {
 
 /** A page of the connected app: the chat, Settings or one of its pages, a project's repository. */
 private data class ChatPage(val name: String, val project: String? = null) {
-    val depth get() = when (name) { "chat" -> 0; "settings", "repository" -> 1; else -> 2 }
+    val depth get() = when (name) { "chat" -> 0; "settings", "repository", "search" -> 1; else -> 2 }
 }
 
 @Composable
@@ -606,140 +618,8 @@ private fun ChatMain(app: RemoteApp) {
     }
 }
 
-@OptIn(ExperimentalMaterial3Api::class)
 @Composable
-private fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit) {
-    var deleting by remember(app.server) { mutableStateOf<ChatSummary?>(null) }
-    var projectActions by remember(app.server) { mutableStateOf<String?>(null) }
-    var worktreeActions by remember(app.server) { mutableStateOf<Pair<String, Worktree>?>(null) }
-    var newWorktree by remember(app.server) { mutableStateOf<String?>(null) }
-    Column(modifier.background(Palette.sidebar).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
-        Image(painterResource(if (Palette.dark) R.drawable.logo else R.drawable.logo_light), "1loop", modifier = Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp))
-        NavRow("New chat", Icons.plus, selected = app.current == null) { app.open(null); onPicked() }
-        Column(Modifier.weight(1f).verticalScroll(rememberScrollState())) {
-            Row(Modifier.fillMaxWidth().padding(top = 12.dp), verticalAlignment = Alignment.CenterVertically) {
-                Text("Projects", style = Type.small.copy(color = Palette.faint), modifier = Modifier.weight(1f).padding(start = 10.dp))
-                if (app.projectManagement) RoundButton(Icons.plus, Color.Transparent, Palette.muted, description = "Add project") { app.projectsOpen = true }
-            }
-            // A subchat is listed under its parent, wherever its folder is (its worktree).
-            val listed = app.chats.map { it.id }.toSet()
-            val nested = app.chats.filter { it.parent.isNotEmpty() && it.parent in listed }.groupBy { it.parent }
-            val topLevel = app.chats.filter { it.parent.isEmpty() || it.parent !in listed }
-            @Composable
-            fun chatRow(chat: ChatSummary) {
-                NavRow(
-                    chat.title, null, selected = chat.id == app.current, running = chat.running, status = chat.status, blocked = chat.blocked,
-                    onLongClick = { deleting = chat },
-                ) { app.open(chat.id); onPicked() }
-                nested[chat.id]?.let { subs ->
-                    Column(Modifier.padding(start = 16.dp)) {
-                        for (sub in subs) NavRow(
-                            sub.title, Icons.subchat, selected = sub.id == app.current, running = sub.running,
-                            onLongClick = { deleting = sub },
-                        ) { app.open(sub.id); onPicked() }
-                    }
-                }
-            }
-            @Composable
-            fun chatRows(folder: String) {
-                val chats = topLevel.filter { it.workspace == folder }
-                for (chat in chats) chatRow(chat)
-                if (chats.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
-            }
-            // Chats without a folder: one "No folder" entry, never their paths.
-            val scratch = topLevel.filter { it.scratch }
-            if (scratch.isNotEmpty() || app.selectedProject == NO_FOLDER) {
-                NavRow("No folder", Icons.folder, selected = app.selectedProject == NO_FOLDER) { app.selectProject(NO_FOLDER) }
-                AnimatedVisibility(
-                    app.selectedProject == NO_FOLDER,
-                    enter = expandVertically(motion(tween(200, easing = CssEase))) + fadeIn(motion(tween(160, 40))),
-                    exit = shrinkVertically(motion(tween(180, easing = CssEase))) + fadeOut(motion(tween(120))),
-                ) {
-                    Column(Modifier.padding(start = 16.dp).animateContentSize(motion(tween(200, easing = CssEase)))) {
-                        for (chat in scratch) chatRow(chat)
-                        if (scratch.isEmpty()) Text("No chats here yet", style = Type.caption, modifier = Modifier.padding(10.dp))
-                    }
-                }
-            }
-            // A worktree shows under its project, not as a project of its own.
-            for (workspace in (app.projects + topLevel.filter { !it.scratch }.map { app.projectOf(it.workspace) ?: it.workspace }).distinct().filter { it !in app.worktrees }) {
-                val selected = workspace == app.selectedProject
-                val git = app.repositories[workspace]?.takeIf { it.loaded && it.error == null }
-                NavRow(
-                    projectName(workspace), Icons.folder, selected = selected,
-                    onLongClick = if (app.projectActions || git != null) ({ projectActions = workspace }) else null,
-                    longClickLabel = "Project actions",
-                    // A project on an SSH machine says so, beside its branch.
-                    trailing = listOfNotNull(git?.current?.takeIf { it.isNotEmpty() }, app.machineOf(workspace)?.let { "on ${it.label}" })
-                        .joinToString(" · ").ifEmpty { null },
-                ) { app.selectProject(workspace) }
-                // A project's chats unfold under it, and slide as chats come and go.
-                AnimatedVisibility(
-                    app.projectOf(app.selectedProject) == workspace,
-                    enter = expandVertically(motion(tween(200, easing = CssEase))) + fadeIn(motion(tween(160, 40))),
-                    exit = shrinkVertically(motion(tween(180, easing = CssEase))) + fadeOut(motion(tween(120))),
-                ) {
-                    Column(Modifier.padding(start = 16.dp).animateContentSize(motion(tween(200, easing = CssEase)))) {
-                        if (selected) chatRows(workspace)
-                        WorktreeEntries(app, workspace, { chatRows(it) }, { worktreeActions = workspace to it }) { newWorktree = workspace }
-                    }
-                }
-            }
-        }
-        val localPhone = app.server?.localPhone == true
-        Box(Modifier.fillMaxWidth().height(1.dp).background(Palette.borderSoft))
-        Row(
-            Modifier.fillMaxWidth().padding(top = 8.dp).clip(RoundedCornerShape(8.dp)).clickable { if (localPhone) app.switchTarget() else app.leave() }
-                .padding(horizontal = 10.dp, vertical = 10.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(if (localPhone) Icons.phone else Icons.computer, null, tint = Palette.muted, modifier = Modifier.size(18.dp))
-            Column(Modifier.weight(1f).padding(start = 10.dp)) {
-                Text(app.server?.name.orEmpty(), style = Type.body.copy(fontSize = 14.sp), maxLines = 1, overflow = TextOverflow.Ellipsis)
-                Text(
-                    if (!app.connected) "Reconnecting…" else if (localPhone) "Connected" else "Connected · change computer",
-                    style = Type.caption.copy(color = if (app.connected) Palette.muted else Palette.amber),
-                )
-            }
-        }
-        NavRow("Settings", Icons.settings, selected = false) { app.settingsOpen = true; onPicked() }
-        NavRow("Switch execution target", Icons.refresh, selected = false) { app.switchTarget() }
-        Spacer(Modifier.height(8.dp))
-    }
-    projectActions?.let { path -> ProjectActionsSheet(app, path, onNewWorktree = { newWorktree = path }) { projectActions = null } }
-    worktreeActions?.let { (project, worktree) -> WorktreeSheet(app, project, worktree) { worktreeActions = null } }
-    newWorktree?.let { project -> NewWorktreeSheet(app, project) { newWorktree = null } }
-    deleting?.let { chat ->
-        GlassBackdrop()
-        ModalBottomSheet(
-            onDismissRequest = { deleting = null },
-            containerColor = Palette.surface, scrimColor = GlassScrim,
-            sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
-        ) {
-            Column(Modifier.padding(horizontal = 24.dp).padding(bottom = 24.dp)) {
-                Text("Delete chat?", style = Type.title)
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    if (chat.scratch) "“${chat.title}” and the folder 1loop made for it will be permanently deleted. Its running tasks and tabs will stop."
-                    else "“${chat.title}” will be permanently deleted. Its running tasks and tabs will stop. Project files are kept.",
-                    style = Type.body,
-                )
-                Spacer(Modifier.height(20.dp))
-                Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-                    Pill("Cancel") { deleting = null }
-                    Spacer(Modifier.width(10.dp))
-                    Pill("Delete", primary = true) {
-                        app.deleteChat(chat.id)
-                        deleting = null
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", trailing: String? = null, status: String = "", blocked: Boolean = false, onClick: () -> Unit) {
+internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running: Boolean = false, onLongClick: (() -> Unit)? = null, longClickLabel: String = "Delete chat", trailing: String? = null, status: String = "", blocked: Boolean = false, chevron: ImageVector? = null, onMore: (() -> Unit)? = null, moreLabel: String = "More", mark: ImageVector? = null, markLabel: String? = null, onClick: () -> Unit) {
     val press = remember { MutableInteractionSource() }
     val fill by animateColorAsState(if (selected) Palette.selected else Color.Transparent, motion(tween(180)), label = "row")
     Row(
@@ -747,18 +627,37 @@ internal fun NavRow(text: String, icon: ImageVector?, selected: Boolean, running
             .combinedClickable(press, ripple(), onClick = onClick, onLongClick = onLongClick, onLongClickLabel = longClickLabel).padding(horizontal = 10.dp, vertical = 10.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
+        if (chevron != null) {
+            Icon(chevron, null, tint = Palette.faint, modifier = Modifier.size(16.dp))
+            Spacer(Modifier.width(6.dp))
+        }
         if (icon != null) {
             Icon(icon, null, tint = Palette.text, modifier = Modifier.size(18.dp))
             Spacer(Modifier.width(10.dp))
         }
         Column(Modifier.weight(1f)) {
-            Text(text, style = Type.body.copy(fontSize = 14.sp, color = if (selected) Palette.text else Palette.textSoft), maxLines = 1, overflow = TextOverflow.Ellipsis)
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Text(text, style = Type.body.copy(fontSize = 14.sp, color = if (selected) Palette.text else Palette.textSoft), maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f, fill = false))
+                // The target of a project not on this phone, after its name (Targets.kt).
+                mark?.let { Icon(it, markLabel, tint = Palette.muted, modifier = Modifier.padding(start = 6.dp).size(14.dp)) }
+            }
             // Its last wrap-up's recap, while the agent is not at work on it.
             if (status.isNotEmpty() && !running) Text(status, style = Type.caption.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis)
         }
         trailing?.let { Text(it, style = Type.caption, maxLines = 1, modifier = Modifier.padding(start = 8.dp)) }
         if (running) Box(Modifier.padding(start = 8.dp).size(7.dp).clip(CircleShape).background(Palette.amber))
         else if (blocked) Box(Modifier.padding(start = 8.dp).size(8.dp).border(1.5.dp, Palette.amber, CircleShape)) // waits on the user
+        // The row's menu, as the desktop's "…": a long press opens it too.
+        onMore?.let { more ->
+            Icon(
+                Icons.more, moreLabel, tint = Palette.faint,
+                // Its 28 dp target overlaps the row's padding instead of making the row taller.
+                modifier = Modifier.padding(start = 4.dp).layout { measurable, constraints ->
+                    val placeable = measurable.measure(constraints.copy(minHeight = 0, maxHeight = Constraints.Infinity))
+                    layout(placeable.width, 0) { placeable.place(0, -placeable.height / 2) }
+                }.size(28.dp).clip(CircleShape).clickable(onClick = more).padding(5.dp),
+            )
+        }
     }
 }
 
@@ -901,8 +800,9 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
         }
     }
     val tail by remember { derivedStateOf { items.size to (items.lastOrNull()?.text?.length ?: 0) } }
-    // Sent while the agent works: greyed at the end until the agent takes them in.
-    val pending = app.meta?.let { it.steer + it.queue }.orEmpty()
+    // Steered while the agent works: greyed at the end until the agent takes them in.
+    // Queued ones wait in the tray above the composer (QueueTray) for the task's end (#433).
+    val pending = app.meta?.steer.orEmpty()
     LaunchedEffect(tail, running, app.meta?.label, pending.size) {
         if (follow && items.isNotEmpty()) list.scrollToItem(items.size + 1 + pending.size, 0)
     }
@@ -923,7 +823,7 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
             Box(Modifier.fillMaxWidth().appear(rise), contentAlignment = Alignment.TopCenter) {
                 Box(Modifier.widthIn(max = 760.dp).fillMaxWidth()) {
                     when (item.kind) {
-                        "user" -> Column {
+                        "user" -> if (item.fromId.isNotEmpty()) FromChatCard(item) { app.open(item.fromId) } else Column {
                             // The question this message answers stays above it.
                             WrapUp.answered(items, index)?.let { NextStepCard(it, null, item.text); Spacer(Modifier.height(12.dp)) }
                             UserBubble(item, images = { if (item.images > 0) ItemImages(app, app.firstItem + index, item.images) }) {
@@ -961,7 +861,13 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
                             Text(item.text, style = Type.body.copy(color = Palette.danger))
                             if (!(running && index > lastUser)) MessageActions(app, item, running) { app.retryMessage(index) }
                         }
-                        "note" -> Text(item.text, style = Type.caption, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth())
+                        "note" -> Text(
+                            item.text, style = Type.caption, textAlign = TextAlign.Center,
+                            // Another chat's report opens that chat.
+                            modifier = Modifier.fillMaxWidth().then(
+                                if (item.fromId.isEmpty()) Modifier else Modifier.clickable(onClickLabel = "Open the chat") { app.open(item.fromId) }
+                            ),
+                        )
                     }
                 }
         
@@ -1128,6 +1034,12 @@ private fun Composer(app: RemoteApp, running: Boolean) {
         steps++
     }
     var models by remember { mutableStateOf(false) }
+    // The message box as a tall editor over the chat, its lines numbered (#33):
+    // the same draft; sending it, its button or Back put it back.
+    var editor by remember { mutableStateOf(false) }
+    BackHandler(enabled = editor) { editor = false }
+    var textLayout by remember { mutableStateOf<TextLayoutResult?>(null) }
+    val editorScroll = rememberScrollState()
     // An "@" mention being typed: the chat's mentions, asked once the menu opens.
     val typing = mentionTyped(value)
     var mentions by remember(app.current, app.server) { mutableStateOf<List<Mention>?>(null) }
@@ -1147,8 +1059,8 @@ private fun Composer(app: RemoteApp, running: Boolean) {
     val chatWorkspace = app.current?.let { id -> app.chats.firstOrNull { it.id == id }?.workspace }
     LaunchedEffect(app.current, chatWorkspace, project) {
         when {
-            app.current == null -> app.retainAttachments(project ?: app.workspace)
-            chatWorkspace != null -> app.retainAttachments(chatWorkspace)
+            app.current == null -> app.retainAttachments(draft, project ?: app.workspace)
+            chatWorkspace != null -> app.retainAttachments(draft, chatWorkspace)
             // Not listed yet: nothing is removed on a guess.
         }
     }
@@ -1156,7 +1068,9 @@ private fun Composer(app: RemoteApp, running: Boolean) {
     val focused by interaction.collectIsFocusedAsState()
     val border by animateColorAsState(if (focused) Palette.borderHover else Palette.overlay.copy(alpha = 0.11f), tween(160), label = "card")
     Column(
-        Modifier.fillMaxWidth().navigationBarsPadding().imePadding().padding(horizontal = 12.dp).padding(bottom = 10.dp),
+        Modifier.fillMaxWidth().then(if (editor) Modifier.fillMaxHeight() else Modifier)
+            .animateContentSize(tween(280, easing = FastOutSlowInEasing))
+            .navigationBarsPadding().imePadding().padding(horizontal = 12.dp).padding(bottom = 10.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         val meta = app.meta
@@ -1179,43 +1093,56 @@ private fun Composer(app: RemoteApp, running: Boolean) {
         // The desktop's context line: the project and the computer.
         Row(Modifier.widthIn(max = 760.dp).fillMaxWidth().padding(bottom = 4.dp), verticalAlignment = Alignment.CenterVertically) {
             ProjectChip(app, project) {
-                if (it != project) app.clearAttachments() // sent to the other project's folder
-                app.selectProject(it)
+                app.selectProject(it) // the files picked stay with this project's draft
             }
             Spacer(Modifier.width(4.dp))
-            Icon(Icons.computer, null, tint = Palette.muted, modifier = Modifier.size(15.dp))
-            Spacer(Modifier.width(6.dp))
-            Text(app.server?.name.orEmpty(), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis)
+            TargetChip(app)
         }
         Column(
             // Focused, the card lifts in a soft amber glow.
-            Modifier.widthIn(max = 760.dp).fillMaxWidth()
+            Modifier.widthIn(max = 760.dp).fillMaxWidth().then(if (editor) Modifier.weight(1f) else Modifier)
                 .shadow(animateDpAsState(if (focused) 14.dp else 0.dp, tween(220), label = "glow").value, RoundedCornerShape(18.dp), ambientColor = Palette.amber, spotColor = Palette.amber)
                 .background(Palette.surface, RoundedCornerShape(18.dp))
                 // Glass catching the light: a sheen over its upper half, a hairline edge.
                 .background(Brush.verticalGradient(listOf(Palette.overlay.copy(alpha = 0.06f), Color.Transparent)), RoundedCornerShape(18.dp))
                 .border(1.dp, border, RoundedCornerShape(18.dp)).padding(start = 14.dp, end = 8.dp, top = 6.dp, bottom = 8.dp),
         ) {
-            if (app.attachments.isNotEmpty()) AttachmentTray(app)
-            BasicTextField(
-                value, ::edit,
-                Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 6.dp, end = 6.dp).focusRequester(promptFocus).onPreviewKeyEvent { event ->
-                    // A hardware keyboard: Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, as on the desktop.
-                    if (event.type != KeyEventType.KeyDown || !event.isCtrlPressed) false
-                    else when {
-                        event.key == Key.Z && !event.isShiftPressed -> { walk(true); true }
-                        event.key == Key.Y || (event.key == Key.Z && event.isShiftPressed) -> { walk(false); true }
-                        else -> false
-                    }
-                },
-                textStyle = Type.body, cursorBrush = SolidColor(Palette.amber), maxLines = 8, interactionSource = interaction,
-                decorationBox = { inner ->
-                    Box {
-                        if (text.isEmpty()) Text(if (running) "Queue a message…" else "Describe what you want to build…", style = Type.body.copy(color = Palette.faint))
-                        inner()
-                    }
-                },
-            )
+            val staged = app.staged(draft)
+            if (staged.isNotEmpty()) AttachmentTray(app, staged)
+            Row(if (editor) Modifier.weight(1f) else Modifier) {
+                // Open, the text and its line numbers scroll together.
+                Row(Modifier.weight(1f).then(if (editor) Modifier.verticalScroll(editorScroll) else Modifier)) {
+                    if (editor) LineGutter(text, textLayout)
+                    BasicTextField(
+                        value, ::edit,
+                        Modifier.weight(1f).padding(top = 8.dp, bottom = 6.dp, end = 6.dp).focusRequester(promptFocus).onPreviewKeyEvent { event ->
+                            // A hardware keyboard: Ctrl+Z, Ctrl+Y and Ctrl+Shift+Z, as on the desktop.
+                            if (event.type != KeyEventType.KeyDown || !event.isCtrlPressed) false
+                            else when {
+                                event.key == Key.Z && !event.isShiftPressed -> { walk(true); true }
+                                event.key == Key.Y || (event.key == Key.Z && event.isShiftPressed) -> { walk(false); true }
+                                else -> false
+                            }
+                        },
+                        textStyle = Type.body, cursorBrush = SolidColor(Palette.amber), maxLines = if (editor) Int.MAX_VALUE else 8, interactionSource = interaction,
+                        onTextLayout = { textLayout = it },
+                        decorationBox = { inner ->
+                            Box {
+                                if (text.isEmpty()) Text(if (running) "Queue a message…" else "Describe what you want to build…", style = Type.body.copy(color = Palette.faint))
+                                inner()
+                            }
+                        },
+                    )
+                }
+                RoundButton(
+                    if (editor) Icons.collapseEditor else Icons.expandEditor, Color.Transparent, Palette.faint, size = 30.dp, iconSize = 15.dp,
+                    description = if (editor) "Back to the message box" else "Expand the editor",
+                    modifier = Modifier.padding(top = 2.dp),
+                ) {
+                    editor = !editor
+                    promptFocus.requestFocus()
+                }
+            }
             Row(verticalAlignment = Alignment.CenterVertically) {
                 // The chips take what the buttons leave, and the buttons sit
                 // against the right edge: a long model name shrinks, not them.
@@ -1235,8 +1162,9 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 val meta = app.meta
                 ContextRing(meta?.used?.takeIf { app.current != null } ?: 0, meta?.window?.takeIf { app.current != null && it > 0 } ?: app.defaultWindow)
                 // Not while a file is still on its way, or one failed and is still listed.
-                val blocked = app.attachments.any { it.sending || it.problem != null }
-                val ready = !blocked && (text.isNotBlank() || app.attachments.isNotEmpty())
+                val staged = app.staged(draft)
+                val blocked = staged.any { it.sending || it.problem != null }
+                val ready = !blocked && (text.isNotBlank() || staged.isNotEmpty())
                 val send = { mode: String ->
                     if (ready) {
                         app.send(text, mode, project)
@@ -1245,12 +1173,16 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                         app.drafts.save(draft, "")
                         value = TextFieldValue("")
                         steps++
+                        editor = false
                     }
                 }
                 if (running) {
                     if (ready) {
-                        // Joins the running task at its next step, shown greyed until then.
-                        RoundButton(Icons.send, Palette.amber, Palette.ink, size = 36.dp, description = "Send at the next step") { send("steer") }
+                        // The arrow joins the running task at its next step, shown greyed
+                        // until then; Send queues the message for when the task ends (#433).
+                        RoundButton(Icons.arrowTurn, Palette.raised, Palette.text, size = 36.dp, iconSize = 18.dp, description = "Steer: send at the next step") { send("steer") }
+                        Spacer(Modifier.width(8.dp))
+                        RoundButton(Icons.send, Palette.amber, Palette.ink, size = 36.dp, description = "Queue: send when the task ends") { send("queue") }
                         Spacer(Modifier.width(8.dp))
                     }
                     RoundButton(Icons.close, Palette.text, Palette.ink, size = 36.dp, iconSize = 18.dp, description = "Stop") { app.stop() }
@@ -1293,6 +1225,40 @@ private fun ProjectChip(app: RemoteApp, chosen: String?, onChoose: (String) -> U
                 leadingIcon = { Icon(if (path == NO_FOLDER) Icons.check else Icons.folder, null, tint = Palette.muted, modifier = Modifier.size(16.dp)) },
             )
             if (app.projectManagement) DropdownMenuItem(text = { Text("Add project…", style = Type.body) }, onClick = { open = false; app.projectsOpen = true })
+        }
+    }
+}
+
+// The target a new chat runs on: another linked one can be picked, which
+// opens it with the same choice of folder when it has it (no folder stays
+// no folder). An open chat stays on its own.
+@Composable
+private fun TargetChip(app: RemoteApp) {
+    var open by remember { mutableStateOf(false) }
+    val here = app.server
+    val icon = { kind: TargetKind -> when (kind) { TargetKind.Phone -> Icons.phone; TargetKind.Desktop -> Icons.computer; TargetKind.Server -> Icons.server } }
+    val others = app.linked.filter { it.key != here?.key }
+    Box {
+        Row(
+            Modifier.clip(RoundedCornerShape(8.dp)).clickable(enabled = app.current == null && others.isNotEmpty()) { open = true }
+                .padding(horizontal = 6.dp, vertical = 6.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(icon(here?.targetKind ?: TargetKind.Desktop), null, tint = Palette.muted, modifier = Modifier.size(15.dp))
+            Spacer(Modifier.width(6.dp))
+            Text(if (here?.localPhone == true) "This phone" else here?.name.orEmpty(), style = Type.small, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        if (open) GlassMenuOpen()
+        DropdownMenu(open, { open = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.popover), border = GlassEdge, shape = GlassMenuShape) {
+            for (target in others) DropdownMenuItem(
+                text = { Text(target.name + if (app.reaches[target.key] == Reach.Offline) " · ${offlineMark(target.kind)}" else "", style = Type.body) },
+                onClick = {
+                    open = false
+                    app.clearAttachments() // sent to this target's folder
+                    app.openOn(target.key, app.selectedProject.takeIf { it == NO_FOLDER })
+                },
+                leadingIcon = { Icon(icon(target.kind), null, tint = Palette.muted, modifier = Modifier.size(16.dp)) },
+            )
         }
     }
 }
@@ -1602,3 +1568,43 @@ internal fun toolPreviewText(text: String): String = runCatching {
         else -> text
     }
 }.getOrDefault(text)
+
+/** Another chat's message: a card under its sender's title, which opens the sender, apart from the user's own bubbles (no Edit, no Retry). */
+@Composable
+private fun FromChatCard(item: Item, onOpen: () -> Unit) {
+    Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        Column(
+            Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.code)
+                .border(1.dp, Palette.borderSoft, RoundedCornerShape(14.dp)).padding(12.dp),
+            verticalArrangement = Arrangement.spacedBy(6.dp),
+        ) {
+            Text(
+                "From the chat “${item.fromTitle}”", style = Type.caption.copy(color = Palette.amber), maxLines = 1, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.clickable(onClickLabel = "Open the chat that sent it", onClick = onOpen),
+            )
+            Text(item.text, style = Type.body)
+        }
+        CopyChip { item.text }
+    }
+}
+
+// The open editor's line numbers: a line that wraps over several rows has its
+// number on its first row, read from the text's own layout.
+@Composable
+private fun LineGutter(text: String, layout: TextLayoutResult?) {
+    val lines = text.split('\n')
+    val digits = lines.size.toString().length.coerceAtLeast(2)
+    Box(Modifier.width((digits * 9 + 12).dp).padding(top = 8.dp)) {
+        if (layout == null) return@Box
+        var offset = 0
+        lines.forEachIndexed { index, line ->
+            val row = layout.getLineForOffset(offset.coerceAtMost(text.length))
+            val top = layout.getLineTop(row).toInt()
+            Text(
+                "${index + 1}", style = Type.body.copy(color = Palette.faint, fontFamily = FontFamily.Monospace), textAlign = TextAlign.End, maxLines = 1,
+                modifier = Modifier.fillMaxWidth().padding(end = 8.dp).offset { IntOffset(0, top) },
+            )
+            offset += line.length + 1
+        }
+    }
+}

@@ -157,7 +157,7 @@ var tintedFrom = map[fyne.Resource]struct {
 
 // repaint maps the colours of everything in the app's windows to the new
 // theme's, then has Fyne draw it all again.
-func repaint(changed recolour) {
+func repaint(changed recolour, fontsChanged bool) {
 	for name, c := range tintColors {
 		next := changed.of(c)
 		tintColors[name] = next
@@ -169,6 +169,7 @@ func repaint(changed recolour) {
 	}
 	for _, glow := range glows {
 		glow.tint = changed.of(glow.tint)
+		glow.refresh() // its picture, in the new tint
 	}
 	app := fyne.CurrentApp()
 	if app == nil {
@@ -207,25 +208,77 @@ func repaint(changed recolour) {
 		}
 	}
 	// Fyne's own widgets read the theme: setting it again draws every
-	// window anew.
+	// window anew. When the fonts are the same, the text already shaped is
+	// kept: only colours changed (#474).
+	fynedriver.KeepFonts = !fontsChanged
 	app.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
+	fynedriver.KeepFonts = false
 }
 
 // themeChoice is the theme setting with the accent, as saved.
 type themeChoice struct {
-	theme  string // palette.Theme…
-	accent string // a preset's id or #rrggbb
+	theme   string // palette.Theme…, or file:<name> for a theme file
+	accent  string // a preset's id or #rrggbb; "" for the default
+	project string // the theme bound to the project in view, over theme (not saved here)
 }
 
-// applyTheme sets the colours for the choice, the system's dark mode read
-// when it follows it, and repaints the windows when anything changed.
-func (choice themeChoice) apply() {
-	tokens := palette.For(choice.theme, choice.theme == palette.ThemeSystem && systemDark())
-	changed := setColours(tokens, palette.AccentColor(choice.accent))
-	platform.Devf("ui", "theme %s (dark %v), accent %s", choice.theme, tokens.Dark, choice.accent)
-	if len(changed) > 0 {
-		repaint(changed)
+// active is the theme setting painted: the project's, else the global one.
+func (choice themeChoice) active() string {
+	if choice.project != "" {
+		return choice.project
 	}
+	return choice.theme
+}
+
+// fileAccents are the active theme file's own accents, if it has any.
+func (choice themeChoice) fileAccents() []color.NRGBA {
+	file, _ := themeFile(choice.active())
+	return file.Accents
+}
+
+// accentColour is the accent painted: a colour of the user's own as it
+// is; otherwise the theme file's first accent, or the preset.
+func (choice themeChoice) accentColour() color.NRGBA {
+	if c, ok := palette.ParseHex(choice.accent); ok && strings.HasPrefix(choice.accent, "#") {
+		return c
+	}
+	if own := choice.fileAccents(); len(own) > 0 {
+		return own[0]
+	}
+	return palette.AccentColor(choice.accent)
+}
+
+// apply sets the colours for the choice, the system's dark mode read when
+// it follows it, and repaints the windows when anything changed. A theme
+// file that is gone or broken paints 1loop's dark look meanwhile. It says
+// whether colours and fonts changed.
+func (choice themeChoice) apply() (recoloured, fontsChanged bool) {
+	setting := choice.active()
+	tokens := palette.For(setting, setting == palette.ThemeSystem && systemDark())
+	roundness = 1
+	if file, ok := themeFile(setting); ok {
+		tokens = file.Tokens
+		if _, on := shaderInUse(setting); on { // the shader shows through
+			a := uint8(file.ShaderOpacity*255 + 0.5)
+			tokens.Background.A, tokens.Sidebar.A = a, a
+		}
+		roundness = max(float32(file.Roundness), 0.05) // never 0: radii scale back from it
+	}
+	file, _ := themeFile(setting)
+	fontsChanged = loadThemeFonts(file.Fonts)
+	if fontsChanged {
+		measuresMu.Lock()
+		clear(measures) // measured in the old font
+		measuresMu.Unlock()
+	}
+	changed := setColours(tokens, choice.accentColour())
+	defer setThemeBlur(themeFile(setting)) // after the repaint, which recolours the tints
+	platform.Devf("ui", "theme %s (dark %v), accent %s, roundness %.2f", setting, tokens.Dark, choice.accent, roundness)
+	recoloured = len(changed) > 0
+	if recoloured || fontsChanged {
+		repaint(changed, fontsChanged) // sets the theme again
+	}
+	return recoloured, fontsChanged
 }
 
 // systemDark says whether the computer asks for dark windows. Fyne reads
@@ -304,6 +357,11 @@ func (row *tapRow) repaint(changed recolour) {
 func (flow *flowText) repaint(changed recolour) {
 	flow.ink = changed.any(flow.ink)
 	flow.cut = nil // its atoms keep their colours: measured again
+	// What it draws (text, bullets, link rules) was made with the old
+	// colours, and a colour that is not exactly a token, or one that two
+	// tokens shared, is not mapped by the walk: it is laid out again, from
+	// the colours now in use, at its next refresh (#436).
+	flow.paintedWidth = -1
 }
 
 func (label *fitLabel) repaint(changed recolour) { label.color = changed.any(label.color) }

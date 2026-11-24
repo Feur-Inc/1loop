@@ -124,12 +124,14 @@ const (
 	KeyMemory            = "agent.memory"
 	KeyWrapUp            = "agent.wrap_up"
 	KeyAutoResume        = "models.auto_resume"
+	KeyNamingModel       = "models.naming_model"
 	KeyWorktreeSort      = "general.worktree_sort"
 	KeyDiscordPresence   = "general.discord_presence"
 	KeyDiscordDetails    = "general.discord_details"
 	KeyTheme             = "general.theme"
 	KeyAccent            = "general.accent"
 	KeyAnimations        = "general.animations"
+	KeyShaderFPS         = "general.shader_fps"
 	KeyCrashReports      = "advanced.crash_reports"
 )
 
@@ -152,8 +154,8 @@ var list = []Setting{
 		Keywords:    []string{"worktree", "sort", "order", "branch", "git", "sidebar"},
 		Values:      []Value{{"recent", "Latest commit"}, {"name", "Name"}, {"pull", "Pull requests first"}}},
 	{Key: KeyTheme, Section: General, Title: "Theme", Where: OnBoth, Kind: Choice,
-		Description: "Dark, light, or the system's: follows the computer's or the phone's dark mode as it changes.",
-		Keywords:    []string{"theme", "dark", "light", "mode", "appearance", "colors", "colours", "night", "system"},
+		Description: "Dark, light, the system's (follows the computer's or the phone's dark mode as it changes), or on the computer a theme file of your own.",
+		Keywords:    []string{"theme", "dark", "light", "mode", "appearance", "colors", "colours", "night", "system", "theme file", "custom theme", "matugen", "roundness", "corners"},
 		Values:      []Value{{"dark", "Dark"}, {"light", "Light"}, {"system", "System"}}},
 	{Key: KeyAccent, Section: General, Title: "Accent colour", Where: OnBoth, Kind: Choice,
 		Description: "The colour of buttons, links and highlights: amber, another preset or a colour of your own.",
@@ -169,9 +171,16 @@ var list = []Setting{
 	{Key: KeyDiscordDetails, Section: General, Title: "Share the chat on Discord", Where: OnDesktop, Kind: Toggle, Protected: true,
 		Description: "Adds the chat's title, its project and the current command or file to the Discord status.",
 		Keywords:    []string{"discord", "rich presence", "privacy", "project", "chat", "details", "share"}},
+	{Key: KeyShaderFPS, Section: General, Title: "Shader background", Where: OnDesktop, Kind: Choice,
+		Description: "How often a theme's shader background is drawn, or off for its plain colour (a background picture too). It pauses while the window is hidden or in the background.",
+		Keywords:    []string{"shader", "background", "glsl", "animation", "fps", "frame rate", "theme", "wallpaper", "battery"},
+		Values:      []Value{{"off", "Off"}, {"15", "15 fps"}, {"30", "30 fps"}, {"60", "60 fps"}}},
 	{Key: KeyAnimations, Section: General, Title: "Animations", Where: OnBoth, Kind: Toggle,
 		Description: "Short animations as you click, hover and as things change. Also off while the system asks for reduced motion.",
 		Keywords:    []string{"animation", "motion", "reduce motion", "reduced motion", "transitions", "effects", "accessibility", "fade"}},
+	{Key: "general.usage", Section: General, Page: "Usage", Title: "Usage & spend", Where: OnBoth, Kind: Action,
+		Description: "Where the tokens and the money went, by model, connection, project, branch and chat, and the prices behind it.",
+		Keywords:    []string{"usage", "spend", "cost", "costs", "tokens", "price", "prices", "money", "billing", "budget", "dollars"}},
 	{Key: "general.import", Section: General, Title: "Import chats", Where: OnDesktop, Kind: Action,
 		Description: "Bring conversations over from Claude Code, Codex and other apps.",
 		Keywords:    []string{"import", "history", "migrate", "conversations", "codex", "claude"}},
@@ -189,6 +198,9 @@ var list = []Setting{
 	{Key: KeyAutoResume, Section: Models, Title: "Automatic resumption", Where: OnBoth, Kind: Toggle,
 		Description: "At a rate limit, wait for the reset or go on with another model, in the order you choose.",
 		Keywords:    []string{"rate limit", "quota", "resume", "fallback", "wait", "retry", "switch model", "usage"}},
+	{Key: KeyNamingModel, Section: Models, Title: "Chat naming model", Where: OnDesktop, Kind: Action,
+		Description: "A model that names each new chat from the words of its first message, never its pictures or files. None: a chat is named after the start of its first message.",
+		Keywords:    []string{"name", "naming", "title", "rename", "auto name", "auto title", "summarize", "summary", "chat name"}},
 
 	// Agent & approvals.
 	{Key: KeyApprovalMode, Section: Agent, Title: "Tool permissions", Where: OnBoth, Kind: Choice, Protected: true,

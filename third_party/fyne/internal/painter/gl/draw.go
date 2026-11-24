@@ -117,6 +117,10 @@ func (p *painter) drawObject(o fyne.CanvasObject, pos fyne.Position, frame fyne.
 		p.drawRaster(obj, pos, frame)
 	case *canvas.Rectangle:
 		p.drawRectangle(obj, pos, frame)
+	case *canvas.Shader:
+		p.drawUserShader(obj, pos, frame)
+	case *canvas.Blur:
+		p.drawBlur(obj, pos, frame)
 	case *canvas.Text:
 		p.drawText(obj, pos, frame, clip)
 	case *canvas.LinearGradient:
@@ -615,14 +619,17 @@ func roundToPixel(v float32, pixScale float32) float32 {
 	return float32(math.Round(float64(v*pixScale))) / pixScale
 }
 
+// roundToPixelCoords puts a texture's rectangle on whole pixels. Its size
+// is rounded on its own, to the size its texture is drawn at
+// (textureScale), not as the distance between its rounded edges: at a
+// fractional scale (1.25) that distance changed with the position, so a
+// square icon of 26 pixels was drawn 26×25, stretched and resampled out
+// of shape (1loop).
 func roundToPixelCoords(size fyne.Size, pos fyne.Position, pixScale float32) (fyne.Size, fyne.Position) {
-	end := pos.Add(size)
-	end.X = roundToPixel(end.X, pixScale)
-	end.Y = roundToPixel(end.Y, pixScale)
 	pos.X = roundToPixel(pos.X, pixScale)
 	pos.Y = roundToPixel(pos.Y, pixScale)
-	size.Width = end.X - pos.X
-	size.Height = end.Y - pos.Y
+	size.Width = roundToPixel(size.Width, pixScale)
+	size.Height = roundToPixel(size.Height, pixScale)
 
 	return size, pos
 }

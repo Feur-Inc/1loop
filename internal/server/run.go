@@ -34,6 +34,8 @@ import (
 func Main() {
 	workspace := flag.String("workspace", ".", "Workspace allowed for remote conversations")
 	listen := flag.String("listen", ":47101", "HTTPS listen address")
+	plainListen := flag.String("http-listen", "", "Plain-HTTP listen address for a reverse proxy with a real certificate, such as 127.0.0.1:47100 (optional; refused on a public address)")
+	plainPublic := flag.Bool("http-allow-public", false, "Allow -http-listen on a public address, with a warning: only behind a firewall that lets the proxy alone in")
 	dir := flag.String("data-dir", "", "Private server state directory")
 	settings := flag.String("config", "", "Server connection configuration JSON")
 	provider := flag.String("provider", "", "Provider for the initial connection")
@@ -51,6 +53,25 @@ func Main() {
 	var sshFlags machineFlags
 	flag.Var(&sshFlags, "ssh-machine", "SSH machine projects can be on, as "+machineSpecUsage+" (repeatable; also ONELOOP_SSH_MACHINE, several separated by ;)")
 	flag.Parse()
+	if flag.NArg() > 0 && adminCommands[flag.Arg(0)] {
+		// "1loop-server pair <id> <code>": a command for the running server.
+		if *dir == "" {
+			var err error
+			if *dir, err = defaultDataDir(); err != nil {
+				log.Fatal(err)
+			}
+		}
+		if err := adminCommand(*dir, flag.Args(), os.Stdout); err != nil {
+			if err != errAdminFailed { // its output already says why
+				fmt.Fprintln(os.Stderr, err)
+			}
+			os.Exit(1)
+		}
+		return
+	}
+	if flag.NArg() > 0 {
+		log.Fatalf("Unknown command %q. Commands for the running server: pair <id> <code>, devices, revoke <number>, ssh, trust <number>, refuse <number>", flag.Arg(0))
+	}
 	if *installClaude {
 		ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 		defer stop()
@@ -70,6 +91,9 @@ func Main() {
 	if (*localToken == "") != (*localReady == "") {
 		log.Fatal("Local phone startup requires both -local-client-token-file and -local-ready-file")
 	}
+	if *plainListen != "" && *localToken != "" {
+		log.Fatal("Local phone mode has no reverse proxy: -http-listen is for the headless server")
+	}
 	if *localBridge != "" && *localToken == "" {
 		log.Fatal("The native phone bridge is only available in local phone mode")
 	}
@@ -78,11 +102,9 @@ func Main() {
 		log.Fatal(err)
 	}
 	if *dir == "" {
-		home, err := os.UserConfigDir()
-		if err != nil {
+		if *dir, err = defaultDataDir(); err != nil {
 			log.Fatal(err)
 		}
-		*dir = filepath.Join(home, "1loop-server")
 	}
 	if err = os.MkdirAll(*dir, 0700); err != nil {
 		log.Fatal(err)
@@ -173,17 +195,44 @@ func Main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+	var plain net.Listener
+	if *plainListen != "" {
+		if plain, err = plainListener(*plainListen, *plainPublic, os.Stderr); err != nil {
+			log.Fatal(err)
+		}
+	}
 	server.handler = server.routes()
 	server.fingerprint = remoteapi.Fingerprint(certificate)
+	// Browsers that do not trust the certificate fail a handshake on every
+	// visit: summed up, so the pairing messages stay readable.
+	errorLog := newHandshakeLog(os.Stderr, time.Hour).Logger()
 	httpServer := &http.Server{
 		Handler:           server.handler,
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       90 * time.Second,
 		MaxHeaderBytes:    32 << 10,
 		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}},
+		ErrorLog:          errorLog,
 	}
 	server.tlsConfig = httpServer.TLSConfig
-	fmt.Fprintf(os.Stderr, "1loop server listening on https://%s\nCertificate SHA-256: %s\nWorkspace: %s\nCommands: pair <id> <code>, devices, revoke <number>, ssh\n", listener.Addr(), remoteapi.Fingerprint(certificate), root)
+	fmt.Fprintf(os.Stderr, "1loop server listening on https://%s\nCertificate SHA-256: %s\nWorkspace: %s\nCommands (in this console, or as \"1loop-server <command>\" from another shell): pair <id> <code>, devices, revoke <number>, ssh\n", listener.Addr(), remoteapi.Fingerprint(certificate), root)
+	var plainServer *http.Server
+	if plain != nil {
+		plainServer = &http.Server{
+			Handler:           server.handler,
+			ReadHeaderTimeout: httpServer.ReadHeaderTimeout,
+			IdleTimeout:       httpServer.IdleTimeout,
+			MaxHeaderBytes:    httpServer.MaxHeaderBytes,
+			ErrorLog:          errorLog,
+		}
+		server.proxied = true
+		fmt.Fprintf(os.Stderr, "Plain HTTP for a reverse proxy on http://%s: open the proxy's https:// address, not this one\n", plain.Addr())
+		go func() {
+			if err := plainServer.Serve(plain); err != nil && err != http.ErrServerClosed {
+				log.Printf("Plain HTTP listener stopped: %v", err)
+			}
+		}()
+	}
 	if server.local {
 		if err := saveServerJSON(*localReady, map[string]any{
 			"port":        listener.Addr().(*net.TCPAddr).Port,
@@ -197,6 +246,11 @@ func Main() {
 		server.offerSetupLocked()
 		server.mu.Unlock()
 		go server.console()
+		if closeAdmin, err := server.listenAdmin(*dir); err != nil {
+			fmt.Fprintf(os.Stderr, "The admin socket is unavailable (%v): \"1loop-server pair\" will not reach this server; use its console.\n", err)
+		} else {
+			defer closeAdmin()
+		}
 		go server.checkMachines()
 	}
 	go server.loadModels()
@@ -205,6 +259,9 @@ func Main() {
 		<-ctx.Done()
 		shutdown, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 		defer cancel()
+		if plainServer != nil {
+			plainServer.Shutdown(shutdown)
+		}
 		httpServer.Shutdown(shutdown)
 	}()
 	err = httpServer.Serve(tls.NewListener(listener, httpServer.TLSConfig))

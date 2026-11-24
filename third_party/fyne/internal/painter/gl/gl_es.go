@@ -362,3 +362,5 @@ func (c *esContext) VertexAttribPointerWithOffset(attribute Attribute, size int,
 func (c *esContext) Viewport(x, y, width, height int) {
 	gl.Viewport(int32(x), int32(y), int32(width), int32(height))
 }
+
+const userShaderHeader, userFragmentPrecision = "#version 100\n", "precision mediump float;\n"

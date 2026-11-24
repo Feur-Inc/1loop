@@ -67,14 +67,16 @@ type panelTab struct {
 	todoContextText string
 	todoUsage       *contextUsageState // what the user opened in the context breakdown
 	todoTimes       map[string]*canvas.Text
-	todoMarks       []*taskMark // the rings of the list as drawn, stopped when it is drawn again
+	todoMarks       []*taskMark  // the rings of the list as drawn, stopped when it is drawn again
+	goalClock       *canvas.Text // the goal card's time spent, ticking while the agent works (goal.go)
 	web             bool
 	webKey          string // the ChatGPT page shown: its chat's
 	webAccount      *agent.ChatGPTWeb
 	webPage         *browser.Page
 	workspace       string // manual tabs belong to a workspace, not a transcript item
 	files           *fileBrowser
-	ref             string // github: the issue or pull request shown, owner/name#N
+	review          *reviewView // an edit waiting for approval (review.go)
+	ref             string      // github: the issue or pull request shown, owner/name#N
 }
 
 const panelWidth = 840
@@ -91,7 +93,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 			case <-timer.C:
 				fyne.Do(func() {
 					if ui.ctx.Err() == nil {
-						panel.refreshTodoStatus()
+						panel.tickTodoClocks()
 					}
 				})
 			}
@@ -100,6 +102,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	panel.strip = container.New(layout.NewCustomPaddedHBoxLayout(4))
 	add := newRow("", iconPlus, styleWindow, nil)
 	add.onTap = func() {
+		ui := panel.ui // the pane with the focus, in a split window (panes.go)
 		if ui.server != nil {
 			ui.server.panelMenu(add)
 			return
@@ -116,6 +119,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	fold := canvas.NewRectangle(color.Transparent)
 	fold.SetMinSize(ui.panelToggle.MinSize())
 	todo := newRow("Tasks", iconCheck, styleChip, func() {
+		ui := panel.ui
 		if ui.server != nil { // a server chat's tasks are the server's (remote_desktop.go)
 			ui.server.showTab("todo")
 			return
@@ -131,13 +135,13 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	panel.body.OnScrolled = func(fyne.Position) { panel.place() }
 	panel.page = container.NewStack(panel.body)
 	card := canvas.NewRectangle(colSurface)
-	card.CornerRadius = 12
+	card.CornerRadius = rounded(12)
 	card.StrokeColor = colBorderSoft
 	card.StrokeWidth = 1
-	content := container.NewBorder(container.NewVBox(padded(8, 8, 8, 6, header), rule), nil, nil, nil, panel.page)
+	content := container.NewBorder(container.NewVBox(padded(6, 2, 8, 6, header), rule), nil, nil, nil, panel.page)
 	// The panel goes nearly to the window's edges: only a thin margin, which
 	// also leaves the window's own resize border within reach.
-	panel.view = padded(0, 6, 0, 6, container.NewStack(card, content))
+	panel.view = padded(0, 6, 0, 6, container.NewStack(blurBehind("panel", card, &colSurface), content))
 	panel.render()
 	return panel
 }
@@ -156,8 +160,18 @@ func (layoutSpec splitLayout) width(total float32) float32 {
 	return panelWidthWithin(width, total)
 }
 
+// The least the chat and the panel get side by side; with less than both,
+// the panel covers the chat instead of crushing it (#429).
+const chatLeast, panelLeast = 300, 280
+
+func panelCovers(total float32) bool { return total < chatLeast+panelLeast }
+
 func panelWidthWithin(width, total float32) float32 {
-	return fyne.Max(320, fyne.Min(width, total-360))
+	if panelCovers(total) {
+		return fyne.Max(0, total)
+	}
+	chat := fyne.Max(chatLeast, fyne.Min(360, total-320)) // the chat gives up room first
+	return fyne.Max(panelLeast, fyne.Min(width, total-chat))
 }
 
 func (layoutSpec splitLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
@@ -166,29 +180,47 @@ func (layoutSpec splitLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 
 func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	ui := layoutSpec.toolPanel.ui
-	followTail := ui.followTail
+	panes := ui.panesOf() // every pane follows its answer as the panel takes room (panes.go)
+	following := make([]bool, len(panes))
+	for i, pane := range panes {
+		following[i] = pane.followTail
+	}
 	previousWidth := objects[0].Size().Width
 	full := layoutSpec.width(size.Width)
 	width := full * layoutSpec.toolPanel.shown
-	conversationWidth := size.Width - width
-	if layoutSpec.toolPanel.snap {
-		conversationWidth = size.Width - full*layoutSpec.toolPanel.target
-	}
-	layoutSpec.toolPanel.ui.controls.Layout.(*composerControlsLayout).available = fyne.Min(760, conversationWidth-48) - 20
-	if layoutSpec.toolPanel.snap {
+	covered := panelCovers(size.Width)
+	if covered { // at its full width, under the panel
+		objects[0].Resize(size)
+	} else if layoutSpec.toolPanel.snap {
 		// Wrapping a long conversation again on every frame is what made
 		// the slide stutter: it takes its final width at once instead.
 		objects[0].Resize(fyne.NewSize(size.Width-full*layoutSpec.toolPanel.target, size.Height))
 	} else {
 		objects[0].Resize(fyne.NewSize(size.Width-width, size.Height))
 	}
-	if followTail && objects[0].Size().Width != previousWidth {
-		ui.scroll.ScrollToBottom()
-		ui.followTail = true
+	// Covered for good, nothing of it shows through a translucent panel.
+	if covered && layoutSpec.toolPanel.shown >= 1 {
+		objects[0].Hide()
+	} else {
+		objects[0].Show()
 	}
-	// Folded, the panel waits just past the right edge of the window.
+	if objects[0].Size().Width != previousWidth {
+		for i, pane := range panes {
+			if following[i] && pane.scroll != nil {
+				pane.scroll.ScrollToBottom()
+				pane.followTail = true
+			}
+		}
+	}
+	// Folded, the panel waits just past the right edge of the window,
+	// hidden: in a split window that is where the next pane is (panes.go).
 	objects[1].Move(fyne.NewPos(size.Width-width, 0))
 	objects[1].Resize(fyne.NewSize(full, size.Height))
+	if width <= 0 && layoutSpec.toolPanel.target <= 0 {
+		objects[1].Hide()
+	} else {
+		objects[1].Show()
+	}
 	objects[2].Move(fyne.NewPos(size.Width-width-4, 0))
 	objects[2].Resize(fyne.NewSize(8, size.Height-6))
 	if layoutSpec.toolPanel.target > 0 {
@@ -201,7 +233,13 @@ func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size
 	toggle := objects[3].MinSize()
 	row := layoutSpec.toolPanel.header.MinSize().Height
 	objects[3].Resize(toggle)
-	objects[3].Move(fyne.NewPos(size.Width-12-toggle.Width, 8+(row-toggle.Height)/2))
+	// In a split window, folded, it sits under the last pane's header, not
+	// over its ✕ (#285); it rises to the panel's header as the panel opens.
+	drop := float32(0)
+	if ui.isSplit() {
+		drop = paneHeadHeight * (1 - fyne.Min(1, layoutSpec.toolPanel.shown))
+	}
+	objects[3].Move(fyne.NewPos(size.Width-12-toggle.Width, drop+8+(row-toggle.Height)/2))
 }
 
 type panelResizeHandle struct {
@@ -286,6 +324,18 @@ func (panel *toolPanel) slide(to float32) {
 func (panel *toolPanel) fold()   { panel.slide(0) }
 func (panel *toolPanel) unfold() { panel.slide(1) }
 
+// of is the side panel of the window showing chat (windows.go), else this
+// one.
+func (panel *toolPanel) of(chat *conversation) *toolPanel {
+	if panel.ui == nil {
+		return panel
+	}
+	if view := panel.ui.viewOf(chat); view.panel != nil {
+		return view.panel
+	}
+	return panel
+}
+
 func (panel *toolPanel) find(chat *conversation, index int) int {
 	for i, tab := range panel.tabs {
 		if tab.chat == chat && tab.index == index {
@@ -297,11 +347,20 @@ func (panel *toolPanel) find(chat *conversation, index int) int {
 
 // showing reports whether a call is the one the panel shows.
 func (panel *toolPanel) showing(chat *conversation, index int) bool {
+	panel = panel.of(chat)
 	return panel.shown > 0 && panel.active >= 0 && panel.find(chat, index) == panel.active
 }
 
 // open shows a call, in its existing tab or a new one.
 func (panel *toolPanel) open(chat *conversation, index int) {
+	panel = panel.of(chat)
+	if chat != panel.owner && chat != nil { // another pane's chat: its own tabs get it, for when it has the focus
+		state := panel.stateOf(chat)
+		state.tabs = append(state.tabs, panelTab{kind: "tool", chat: chat, index: index})
+		state.active, state.open = len(state.tabs)-1, true
+		panel.renderStrip()
+		return
+	}
 	i := panel.find(chat, index)
 	if i < 0 {
 		panel.tabs = append(panel.tabs, panelTab{kind: "tool", chat: chat, index: index})
@@ -380,6 +439,7 @@ func (panel *toolPanel) dispose() {
 
 // changed refreshes the panel when a call it shows gets its result.
 func (panel *toolPanel) changed(chat *conversation, index int) {
+	panel = panel.of(chat)
 	if i := panel.find(chat, index); i >= 0 {
 		panel.render()
 	}
@@ -387,8 +447,23 @@ func (panel *toolPanel) changed(chat *conversation, index int) {
 
 func (panel *toolPanel) renderStrip() {
 	panel.strip.RemoveAll()
-	for i, tab := range panel.tabs {
-		panel.strip.Add(panel.tabView(i, tab))
+	others := panel.otherPanes() // a split window's panel lists every pane's tabs (panes.go)
+	if len(others) == 0 {
+		for i, tab := range panel.tabs {
+			panel.strip.Add(panel.tabView(i, tab))
+		}
+	}
+	for _, pane := range others {
+		if pane == nil { // the pane with the focus: its tabs, as usual
+			if len(panel.tabs) > 0 {
+				panel.addStripGroup(panel.ui)
+			}
+			for i, tab := range panel.tabs {
+				panel.strip.Add(panel.tabView(i, tab))
+			}
+			continue
+		}
+		panel.addPaneTabs(pane)
 	}
 	// Refreshing the scroll, not only the strip, gives the strip its new
 	// width and brings the offset back within it at once: a closed tab
@@ -424,6 +499,18 @@ func (panel *toolPanel) render() {
 	panel.body.Refresh()
 	panel.place()
 	panel.syncRows()
+}
+
+// redraw paints the panel again once it is back on screen. Texts that were
+// written while it was hidden (a call finishing behind Settings) were never
+// queued for painting, so their commands stayed blank until the surface was
+// redrawn by something else (#492).
+func (panel *toolPanel) redraw() {
+	panel.place()
+	for _, well := range panel.texts {
+		well.Refresh()
+	}
+	panel.view.Refresh()
 }
 
 // place tells each code well which of its rows the panel shows.
@@ -490,21 +577,76 @@ func (panel *toolPanel) tabView(i int, tab panelTab) fyne.CanvasObject {
 		}
 		icon = toolGlyph(item.Tool)
 	}
-	label := newRow(fitText(target, 13, fyne.TextStyle{}, 190), icon, styleChip, func() { panel.choose(i) })
-	label.selected = i == panel.active
-	label.ink = colText
+	tabFrame := newPanelTabFrame(fitText(target, 13, fyne.TextStyle{}, 190), icon, i == panel.active, func() { panel.choose(i) })
 	closeTab := newIconButton(iconClose, color.NRGBA{}, color.NRGBA{}, func() { panel.close(i) })
 	closeTab.iconPx, closeTab.padPx = 14, 6
+	closeTab.onHover = func(on bool) { tabFrame.closeHovered = on; tabFrame.paint() }
 	if tab.web && panel.ui.cfg.Provider == "chatgptweb" {
 		closeTab.Hide()
 	}
-	bg := canvas.NewRectangle(color.Transparent)
-	bg.CornerRadius = 10
-	if i == panel.active {
-		bg.FillColor = colRaised
-		bg.StrokeColor, bg.StrokeWidth = colBorder, 1
+	return container.NewStack(tabFrame, padded(4, 4, 10, 4, container.New(layout.NewCustomPaddedHBoxLayout(6),
+		container.NewCenter(tabFrame.icon), container.NewCenter(tabFrame.label), container.NewCenter(closeTab))))
+}
+
+// panelTabFrame is a tab of the side panel as a whole: the pointer over any
+// part of it lights it up, a click anywhere on it but its close button
+// opens it, and the open tab stands out as one raised block.
+type panelTabFrame struct {
+	widget.BaseWidget
+	active, hovered, closeHovered bool
+	onTap                         func()
+	back                          *canvas.Rectangle
+	icon                          *canvas.Image
+	label                         *canvas.Text
+	glyph                         fyne.Resource
+}
+
+func newPanelTabFrame(text string, glyph fyne.Resource, active bool, onTap func()) *panelTabFrame {
+	tab := &panelTabFrame{active: active, onTap: onTap, glyph: glyph, back: canvas.NewRectangle(color.Transparent), label: textLine(text, 13, colMuted)}
+	tab.back.CornerRadius = rounded(10)
+	tab.icon = canvas.NewImageFromResource(nil)
+	tab.icon.SetMinSize(fyne.NewSquareSize(15))
+	if glyph == nil {
+		tab.icon.Hide()
 	}
-	return container.NewStack(bg, padded(4, 4, 5, 4, container.New(layout.NewCustomPaddedHBoxLayout(2), label, container.NewCenter(closeTab))))
+	tab.ExtendBaseWidget(tab)
+	tab.paint()
+	return tab
+}
+
+func (tab *panelTabFrame) paint() {
+	lit := tab.hovered || tab.closeHovered
+	tab.back.FillColor, tab.back.StrokeColor, tab.back.StrokeWidth = color.Transparent, color.Transparent, 0
+	ink := colMuted
+	switch {
+	case tab.active:
+		tab.back.FillColor = colRaised
+		tab.back.StrokeColor, tab.back.StrokeWidth = colBorder, 1
+		if lit {
+			tab.back.StrokeColor = colBorderHot
+		}
+		ink = colText
+	case lit:
+		tab.back.FillColor = colHover
+		ink = colText
+	}
+	tab.label.Color = ink
+	if tab.glyph != nil {
+		tab.icon.Resource = tinted(tab.glyph, ink)
+	}
+	tab.back.Refresh()
+	tab.label.Refresh()
+	tab.icon.Refresh()
+}
+
+func (tab *panelTabFrame) Tapped(*fyne.PointEvent)        { tab.onTap() }
+func (tab *panelTabFrame) Cursor() desktop.Cursor         { return desktop.PointerCursor }
+func (tab *panelTabFrame) MouseIn(*desktop.MouseEvent)    { tab.hovered = true; tab.paint() }
+func (tab *panelTabFrame) MouseMoved(*desktop.MouseEvent) {}
+func (tab *panelTabFrame) MouseOut()                      { tab.hovered = false; tab.paint() }
+
+func (tab *panelTabFrame) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(tab.back)
 }
 
 // details lays out one call: a heading with its outcome, then the call and
@@ -611,7 +753,7 @@ func (panel *toolPanel) picture(tool string, part core.ImagePart) fyne.CanvasObj
 	view := canvas.NewImageFromImage(thumbnail(img, toolPictureSide))
 	view.FillMode = canvas.ImageFillContain
 	view.SetMinSize(fyne.NewSize(320, min(480, max(160, 320*float32(bounds.Dy())/float32(bounds.Dx())))))
-	open := newTapArea(func() { panel.ui.showPicture(name, part) })
+	open := newTapArea(func() { panel.ui.openPicture(name, part) })
 	return container.NewVBox(padded(0, 4, 2, 0, caption), container.NewStack(surface(view, colCode, colBorderSoft, 10, 0), open))
 }
 
@@ -625,20 +767,6 @@ func decodePicture(part core.ImagePart) image.Image {
 		return nil
 	}
 	return img
-}
-
-// showPicture shows a picture as large as the window allows.
-func (ui *desktopUI) showPicture(title string, part core.ImagePart) {
-	img := decodePicture(part)
-	if img == nil {
-		return
-	}
-	area := ui.window.Canvas().Size()
-	view := canvas.NewImageFromImage(img)
-	view.FillMode = canvas.ImageFillContain
-	view.ScaleMode = canvas.ImageScaleSmooth
-	view.SetMinSize(fyne.NewSize(area.Width-120, area.Height-200))
-	ui.modal(title, view, area.Width-80, nil)
 }
 
 func outputPlaceholder(running bool, empty string) string {

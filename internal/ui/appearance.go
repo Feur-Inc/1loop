@@ -12,6 +12,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/palette"
@@ -21,9 +22,10 @@ import (
 // followTheme applies the saved theme, and again whenever the system's dark
 // mode changes while the theme follows it.
 func (ui *desktopUI) followTheme() {
+	ui.watchThemes()
 	ui.theme.apply()
 	fyne.CurrentApp().Settings().AddListener(func(fyne.Settings) {
-		if ui.theme.theme == palette.ThemeSystem {
+		if ui.theme.active() == palette.ThemeSystem {
 			ui.theme.apply()
 		}
 	})
@@ -31,6 +33,9 @@ func (ui *desktopUI) followTheme() {
 
 // themeSetting is the theme as the settings list names it.
 func (choice themeChoice) themeSetting() string {
+	if strings.HasPrefix(choice.theme, palette.ThemeFilePrefix) {
+		return choice.theme
+	}
 	switch choice.theme {
 	case palette.ThemeLight, palette.ThemeSystem:
 		return choice.theme
@@ -57,6 +62,9 @@ func (ui *desktopUI) setTheme(theme string) {
 		return
 	}
 	ui.theme.theme = theme
+	if file, ok := themeFile(theme); ok && len(file.Accents) > 0 {
+		ui.theme.accent = "" // its own first accent
+	}
 	ui.themeChanged()
 }
 
@@ -80,11 +88,19 @@ func (ui *desktopUI) setAccent(accent string) {
 }
 
 func (ui *desktopUI) themeChanged() {
-	ui.theme.apply()
+	recoloured, fontsChanged := ui.theme.apply()
+	reshaped := fontsChanged || roundness != paintedRoundness
+	refreshRadii()
+	ui.syncBackdrop()
 	ui.save()
-	// Built from the colours as they were: the page and the sidebar are
-	// made again with the new ones.
-	ui.renderChats()
+	if !recoloured && !reshaped {
+		return // a theme file saved as it was: nothing to draw again
+	}
+	// The sidebar's rows recolour themselves (repaint); they are made
+	// again only when their fonts or corners change (#474).
+	if reshaped {
+		ui.renderChats()
+	}
 	if view := ui.prefs; view != nil && view.at(view.page) {
 		offset := view.scroll.Offset // where the user was: the rows they just used
 		view.showNow(view.page)
@@ -97,26 +113,44 @@ func (ui *desktopUI) themeChanged() {
 func (ui *desktopUI) appearanceRows(view *settingsView) []fyne.CanvasObject {
 	themes, _ := registry.Lookup(registry.KeyTheme)
 	themePicker := newPicker(ui.window, themes.Title, styleField, nil)
-	for _, value := range themes.Values {
-		themePicker.Options = append(themePicker.Options, value.Label)
+	choices := themeChoices(builtInThemes())
+	for _, choice := range choices {
+		themePicker.Options = append(themePicker.Options, choice[1])
+		if choice[0] == ui.theme.themeSetting() {
+			themePicker.SetSelected(choice[1])
+		}
 	}
-	themePicker.SetSelected(themes.Label(ui.theme.themeSetting()))
 	themePicker.onChanged = func(label string) {
-		for _, value := range themes.Values {
-			if value.Label == label {
-				ui.setTheme(value.ID)
+		for _, choice := range choices {
+			if choice[1] == label {
+				ui.setTheme(choice[0])
 			}
 		}
 	}
-	themeRow := view.mark(registry.KeyTheme, settingRow(themes.Title,
-		"Dark is 1loop's own look. System follows this computer's dark mode, and changes with it.", sized(180, themePicker.row)))
+	// The theme files' note and buttons are part of the Theme row, with its
+	// inset, and the card's divider comes after them (#508).
+	themeRow := view.mark(registry.KeyTheme, container.New(layout.NewCustomPaddedVBoxLayout(0),
+		settingRow(themes.Title, "Dark is 1loop's own look. System follows this computer's dark mode, and changes with it. Theme files of your own are listed too.", sized(180, themePicker.row)),
+		ui.themeFileControls()))
+	themeRows := []fyne.CanvasObject{themeRow}
 
 	accents, _ := registry.Lookup(registry.KeyAccent)
 	current := ui.theme.accentSetting()
 	swatches := container.NewHBox()
-	for _, accent := range palette.Accents {
-		id := accent.ID
-		swatches.Add(newSwatch(accent.Color, current == id, func() { ui.setAccent(id) }))
+	if own := ui.theme.fileAccents(); len(own) > 0 {
+		chosen := palette.Hex(ui.theme.accentColour())
+		for _, c := range own {
+			id := palette.Hex(c)
+			if id == chosen {
+				current = id
+			}
+			swatches.Add(newSwatch(c, id == chosen, func() { ui.setAccent(id) }))
+		}
+	} else {
+		for _, accent := range palette.Accents {
+			id := accent.ID
+			swatches.Add(newSwatch(accent.Color, current == id, func() { ui.setAccent(id) }))
+		}
 	}
 	custom := widget.NewEntry()
 	custom.SetPlaceHolder("#rrggbb")
@@ -145,7 +179,29 @@ func (ui *desktopUI) appearanceRows(view *settingsView) []fyne.CanvasObject {
 	controls := container.NewHBox(swatches, padded(0, 0, 10, 0, container.NewCenter(customSwatch)), padded(0, 0, 6, 0, sized(110, custom)))
 	accentRow := view.mark(registry.KeyAccent, settingStack(accents.Title,
 		"Buttons, links and highlights. A colour of your own: type it as #rrggbb and press Enter. On the light theme it is darkened until it reads on white.", controls))
-	return []fyne.CanvasObject{themeRow, accentRow}
+	fpsSetting, _ := registry.Lookup(registry.KeyShaderFPS)
+	fps := newPicker(ui.window, fpsSetting.Title, styleField, nil)
+	for _, value := range fpsSetting.Values {
+		fps.Options = append(fps.Options, value.Label)
+	}
+	fps.SetSelected(fpsSetting.Label(shaderFPS))
+	fps.onChanged = func(label string) {
+		for _, value := range fpsSetting.Values {
+			if value.Label == label {
+				ui.setShaderFPS(value.ID)
+			}
+		}
+	}
+	fpsRow := view.mark(registry.KeyShaderFPS, settingRow(fpsSetting.Title,
+		"For themes with a shader background. It pauses while the window is hidden or in the background, and is still while animations are off.", sized(180, fps.row)))
+	rows := append(themeRows, accentRow, fpsRow)
+	if shaderError != "" {
+		problem := note("The theme's shader did not compile, its plain colours are shown: " + shaderError)
+		problem.Importance = widget.DangerImportance
+		problem.Wrapping = fyne.TextWrapWord
+		rows = append(rows, problem)
+	}
+	return rows
 }
 
 type colourError string

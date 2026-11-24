@@ -9,6 +9,8 @@ import (
 	"image/draw"
 	"math"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -154,7 +156,12 @@ var interFaces = func() map[string]fyne.Resource {
 func (themeSpec loopTheme) Font(style fyne.TextStyle) fyne.Resource {
 	key := "regular"
 	switch {
-	case style.Monospace, style.Symbol:
+	case style.Monospace:
+		if face, ok := themeFonts["mono"]; ok {
+			return face
+		}
+		return themeSpec.Theme.Font(style)
+	case style.Symbol:
 		return themeSpec.Theme.Font(style)
 	case style.Bold && style.Italic:
 		key = "boldItalic"
@@ -162,6 +169,12 @@ func (themeSpec loopTheme) Font(style fyne.TextStyle) fyne.Resource {
 		key = "bold"
 	case style.Italic:
 		key = "italic"
+	}
+	if face, ok := themeFonts[key]; ok {
+		return face
+	}
+	if face, ok := themeFonts["regular"]; ok && key == "boldItalic" { // a theme's font, never Inter's
+		return face
 	}
 	if face, ok := interFaces[key]; ok {
 		return face
@@ -190,9 +203,9 @@ func (themeSpec loopTheme) Size(name fyne.ThemeSizeName) float32 {
 	case theme.SizeNameInputBorder:
 		return 1
 	case theme.SizeNameInputRadius:
-		return 8
+		return rounded(8)
 	case theme.SizeNameSelectionRadius:
-		return 3
+		return rounded(3)
 	case theme.SizeNameScrollBar:
 		return 6
 	case theme.SizeNameScrollBarSmall:
@@ -246,7 +259,7 @@ func relayout(c *fyne.Container) {
 // surface draws a rounded, finely bordered card behind content.
 func surface(content fyne.CanvasObject, fill, stroke color.Color, radius, pad float32) *fyne.Container {
 	background := canvas.NewRectangle(fill)
-	background.CornerRadius = radius
+	background.CornerRadius = rounded(radius)
 	if stroke != nil {
 		background.StrokeColor = stroke
 		background.StrokeWidth = 1
@@ -280,7 +293,26 @@ func fitText(text string, size float32, style fyne.TextStyle, width float32) str
 
 func lineIcon(name, body string) fyne.Resource {
 	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">` + body + `</svg>`
-	return fyne.NewStaticResource("1loop-"+name+".svg", []byte(svg))
+	return fyne.NewStaticResource("1loop-"+name+".svg", []byte(heavierStrokes(svg)))
+}
+
+// iconStrokeWeight thickens every stroke of the interface's icons (line and
+// file type icons) by 10 %. Drawn sharp at a fractional scale (125 %), the
+// 1.5 strokes read thinner than they did through the compositor's blur.
+const iconStrokeWeight = 1.1
+
+var strokeWidthAttr = regexp.MustCompile(`stroke-width="([0-9.]+)"`)
+
+// heavierStrokes multiplies each stroke-width of an icon's SVG by
+// iconStrokeWeight.
+func heavierStrokes(svg string) string {
+	return strokeWidthAttr.ReplaceAllStringFunc(svg, func(attr string) string {
+		width, err := strconv.ParseFloat(strokeWidthAttr.FindStringSubmatch(attr)[1], 64)
+		if err != nil {
+			return attr
+		}
+		return `stroke-width="` + strconv.FormatFloat(math.Round(width*iconStrokeWeight*1000)/1000, 'f', -1, 64) + `"`
+	})
 }
 
 var (
@@ -295,6 +327,10 @@ var (
 	iconMinimize     = lineIcon("minimize", `<path d="M4 8h8"/>`)
 	iconMaximize     = lineIcon("maximize", `<rect x="4" y="4" width="8" height="8" rx="1.2"/>`)
 	iconClose        = lineIcon("close", `<path d="M4.5 4.5l7 7M11.5 4.5l-7 7"/>`)
+	iconZoomIn       = lineIcon("zoom-in", `<circle cx="7" cy="7" r="4.5"/><path d="M10.3 10.3 13.5 13.5M5 7h4M7 5v4"/>`)
+	iconZoomOut      = lineIcon("zoom-out", `<circle cx="7" cy="7" r="4.5"/><path d="M10.3 10.3 13.5 13.5M5 7h4"/>`)
+	iconFit          = lineIcon("fit", `<path d="M2.5 6V3.5a1 1 0 0 1 1-1H6M10 2.5h2.5a1 1 0 0 1 1 1V6M13.5 10v2.5a1 1 0 0 1-1 1H10M6 13.5H3.5a1 1 0 0 1-1-1V10"/>`)
+	iconDownload     = lineIcon("download", `<path d="M8 2.5v8M4.8 7.5 8 10.7l3.2-3.2M3 13.5h10"/>`)
 	iconSidebar      = lineIcon("sidebar", `<rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M6.5 3v10"/>`)
 	iconMore         = lineIcon("more", `<path d="M3.2 8h.01M8 8h.01M12.8 8h.01" stroke-width="3.1"/>`)
 	iconPlus         = lineIcon("plus", `<path d="M8 3v10M3 8h10" stroke-width="1.8"/>`)
@@ -307,6 +343,7 @@ var (
 	iconShield       = lineIcon("shield", `<path d="M8 2.2l4.6 1.8v3.5c0 3-2 5.1-4.6 6.3-2.6-1.2-4.6-3.3-4.6-6.3V4z"/>`)
 	iconBolt         = lineIcon("bolt", `<path d="M8.9 1.8 3.7 9h4.1l-.7 5.2L12.3 7H8.2z"/>`)
 	iconShieldCheck  = lineIcon("shield-check", `<path d="M8 2.2l4.6 1.8v3.5c0 3-2 5.1-4.6 6.3-2.6-1.2-4.6-3.3-4.6-6.3V4z"/><path d="M5.9 7.8 7.4 9.3l2.8-3"/>`)
+	iconWindow       = lineIcon("window", `<rect x="4.5" y="2.5" width="9" height="8" rx="1.5"/><path d="M4.5 5h9M2.5 6v6a1.5 1.5 0 0 0 1.5 1.5h6"/>`)
 	iconPanel        = lineIcon("panel", `<rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M9.5 3v10"/>`)
 	iconTerminal     = lineIcon("terminal", `<path d="M3.5 4.5 6.5 7.5 3.5 10.5M8 11.5h4.5"/>`)
 	iconDocument     = lineIcon("document", `<path d="M4 2.8h5l3 3v7.4H4z"/><path d="M9 2.8v3h3M6 8.6h4M6 10.9h4"/>`)
@@ -315,6 +352,7 @@ var (
 	iconDot          = lineIcon("dot", `<circle cx="8" cy="8" r="3.2" fill="currentColor" stroke="none"/>`)
 	iconBookmark     = lineIcon("bookmark", `<path d="M4.5 2.5h7v11L8 10.8l-3.5 2.7z"/>`)
 	iconCompact      = lineIcon("compact", `<path d="M8 2.5v4M5.8 4.6 8 6.6l2.2-2M8 13.5v-4M5.8 11.4 8 9.4l2.2 2M3 8h10"/>`)
+	iconWarning      = lineIcon("warning", `<path d="M8 2.6 14 13H2z"/><path d="M8 6.6v3M8 11.3h.01" stroke-width="1.6"/>`)
 	iconTaskEnded    = lineIcon("task-ended", `<rect x="2.5" y="3" width="11" height="10" rx="2"/><path d="M5 6.3 6.8 8 5 9.7M8.4 10h2.6"/>`)
 )
 
@@ -389,9 +427,12 @@ type tapRow struct {
 	danger    bool          // destructive action: red ink or red fill
 	onHover   func(bool)    // optional: reports pointer enter and leave
 	onMenu    func()        // optional: right click opens a context menu
+	onMiddle  func()        // optional: a middle click (a chat: in a new window)
 	iconPx    float32       // optional icon size (styleIcon), 0 = style default
 	padPx     float32       // optional padding around the icon (styleIcon), 0 = style default
 	badge     fyne.Resource // optional mark on the far edge (styleMenu: the active choice)
+	mark      fyne.Resource // optional small icon right after the text (a project's target, #359)
+	markText  string        // optional short muted text after the mark (a chat's count of subchats, #426)
 	truncate  bool          // fills its column: truncates instead of forcing it wider
 	tips      *tipLayer     // optional: shows the whole text while hovered, when it is cut short
 	clipped   bool          // the text was cut short at the last layout
@@ -461,6 +502,10 @@ func (row *tapRow) flash() {
 // button is down the row sinks a little; the click itself acts on release,
 // as before, so nothing waits for the motion.
 func (row *tapRow) MouseDown(e *desktop.MouseEvent) {
+	if e.Button == desktop.MouseButtonTertiary && !row.disabled && row.onMiddle != nil {
+		row.onMiddle()
+		return
+	}
 	if e.Button == desktop.MouseButtonPrimary && !row.disabled && row.onTap != nil {
 		row.setSink(1)
 	}
@@ -552,7 +597,11 @@ func (row *tapRow) CreateRenderer() fyne.WidgetRenderer {
 	detail.TextSize = 12
 	badge := canvas.NewImageFromResource(nil)
 	badge.FillMode = canvas.ImageFillContain
-	renderer := &tapRowRenderer{row: row, bg: bg, label: label, trailing: trailing, icon: icon, detail: detail, badge: badge}
+	mark := canvas.NewImageFromResource(nil)
+	mark.FillMode = canvas.ImageFillContain
+	markText := canvas.NewText("", colMuted)
+	markText.TextSize = 12
+	renderer := &tapRowRenderer{row: row, bg: bg, label: label, trailing: trailing, icon: icon, detail: detail, badge: badge, mark: mark, markText: markText}
 	renderer.Refresh()
 	return renderer
 }
@@ -565,9 +614,31 @@ type tapRowRenderer struct {
 	detail   *canvas.Text
 	icon     *canvas.Image
 	badge    *canvas.Image
+	mark     *canvas.Image
 	tint     color.NRGBA
 	source   fyne.Resource
 	marked   fyne.Resource
+	markedBy fyne.Resource // the mark's resource, as tinted
+	markTint color.NRGBA
+	markText *canvas.Text // row.markText
+}
+
+// The mark after a row's text: its size, the gap before it, and the room
+// it leaves the text at least; with less, it steps aside for the text.
+const (
+	rowMarkSize    = 13
+	rowMarkGap     = 6
+	rowMarkMinText = 32
+	rowMarkTextGap = 3 // between the mark and its text
+)
+
+// markWidth is the room the mark and its text take after the row's text.
+func (renderer *tapRowRenderer) markWidth() float32 {
+	width := float32(rowMarkGap + rowMarkSize)
+	if renderer.row.markText != "" {
+		width += rowMarkTextGap + textSize(renderer.row.markText, 12, fyne.TextStyle{}).Width
+	}
+	return width
 }
 
 func (renderer *tapRowRenderer) metrics() (padX, padY, iconSize, gap float32) {
@@ -620,6 +691,9 @@ func (renderer *tapRowRenderer) MinSize() fyne.Size {
 	}
 	width += fyne.Max(textSize(renderer.row.text, renderer.row.size, fyne.TextStyle{}).Width,
 		textSize(renderer.row.detail, 12, fyne.TextStyle{}).Width) + 2
+	if renderer.row.mark != nil {
+		width += renderer.markWidth()
+	}
 	if renderer.row.trailing != "" {
 		width += gap + textSize(renderer.row.trailing, renderer.row.size-1, fyne.TextStyle{}).Width
 	}
@@ -639,15 +713,15 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 	defer renderer.nudgeIcon()
 	switch renderer.row.style {
 	case styleOutline, styleIcon:
-		renderer.bg.CornerRadius = size.Height/2 - inset
+		renderer.bg.CornerRadius = rounded(size.Height/2 - inset)
 	case styleWindow:
-		renderer.bg.CornerRadius = 6
+		renderer.bg.CornerRadius = rounded(6)
 	case stylePrimary, styleField:
-		renderer.bg.CornerRadius = 8
+		renderer.bg.CornerRadius = rounded(8)
 	case styleModel:
-		renderer.bg.CornerRadius = 9
+		renderer.bg.CornerRadius = rounded(9)
 	default:
-		renderer.bg.CornerRadius = 6
+		renderer.bg.CornerRadius = rounded(6)
 	}
 	if renderer.row.style == styleIcon || renderer.row.style == styleWindow {
 		renderer.icon.Resize(fyne.NewSquareSize(iconSize))
@@ -660,11 +734,6 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 		renderer.badge.Move(fyne.NewPos(size.Width-padX-iconSize-renderer.row.endInset, (size.Height-iconSize)/2))
 		trailingWidth = iconSize + gap
 	}
-	if renderer.row.trailing != "" {
-		width := renderer.trailing.MinSize().Width
-		renderer.trailing.Move(fyne.NewPos(size.Width-padX-trailingWidth-width, (size.Height-renderer.trailing.MinSize().Height)/2))
-		trailingWidth += width + gap
-	}
 	iconRoom := float32(0)
 	if renderer.row.icon != nil {
 		iconRoom = iconSize
@@ -672,8 +741,30 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 			iconRoom += gap
 		}
 	}
+	renderer.trailing.Text = ""
+	if renderer.row.trailing != "" {
+		// The label comes first: the trailing text (a project's branch) gets
+		// what the whole label leaves, cut short, and goes when too little is
+		// left for a few letters of it. Never drawn over the label.
+		trailingSize := renderer.row.size - 1
+		left := size.Width - 2*padX - iconRoom - trailingWidth - renderer.row.endInset - gap -
+			textSize(renderer.row.text, renderer.row.size, fyne.TextStyle{}).Width
+		if renderer.row.mark != nil {
+			left -= renderer.markWidth()
+		}
+		if left >= textSize("ab…", trailingSize, fyne.TextStyle{}).Width {
+			renderer.trailing.Text = fitText(renderer.row.trailing, trailingSize, fyne.TextStyle{}, left)
+			width := renderer.trailing.MinSize().Width
+			renderer.trailing.Move(fyne.NewPos(size.Width-padX-trailingWidth-width, (size.Height-renderer.trailing.MinSize().Height)/2))
+			trailingWidth += width + gap
+		}
+	}
 	room := size.Width - 2*padX - iconRoom - trailingWidth - renderer.row.endInset
-	renderer.label.Text = fitText(renderer.row.text, renderer.row.size, fyne.TextStyle{}, room)
+	marked := renderer.row.mark != nil && room >= renderer.markWidth()+rowMarkMinText
+	if marked {
+		room -= renderer.markWidth()
+	}
+	renderer.label.Text = fitText(renderer.row.text, renderer.row.size, fyne.TextStyle{}, max(room, 1))
 	renderer.row.clipped = renderer.label.Text != renderer.row.text
 	textWidth := renderer.label.MinSize().Width
 	textY := (size.Height - renderer.label.MinSize().Height) / 2
@@ -700,6 +791,17 @@ func (renderer *tapRowRenderer) Layout(size fyne.Size) {
 		}
 	}
 	renderer.label.Move(fyne.NewPos(x, textY))
+	if marked {
+		renderer.mark.Resize(fyne.NewSquareSize(rowMarkSize))
+		renderer.mark.Move(fyne.NewPos(x+textWidth+rowMarkGap, textY+(renderer.label.MinSize().Height-rowMarkSize)/2))
+		renderer.mark.Show()
+		renderer.markText.Text = renderer.row.markText
+		renderer.markText.Move(fyne.NewPos(x+textWidth+rowMarkGap+rowMarkSize+rowMarkTextGap, textY+(renderer.label.MinSize().Height-renderer.markText.MinSize().Height)/2))
+		renderer.markText.Hidden = renderer.row.markText == ""
+	} else {
+		renderer.mark.Hide()
+		renderer.markText.Hide()
+	}
 	// The second line starts under the label, past any leading icon.
 	renderer.detail.Move(fyne.NewPos(x, textY+renderer.label.MinSize().Height+1))
 }
@@ -776,7 +878,11 @@ func (renderer *tapRowRenderer) colorsAt(h float32) (fill, stroke, ink color.NRG
 			}
 		}
 		ink = colText
-		if !row.selected && row.accent {
+		switch {
+		case row.selected:
+		case row.ink != (color.NRGBA{}): // an ink of its own, muted or faint: brightens on hover
+			ink = mix(row.ink, colText, h)
+		case row.accent:
 			ink = mix(colTextSoft, colText, h)
 		}
 	case styleChip:
@@ -886,7 +992,6 @@ func (renderer *tapRowRenderer) Refresh() {
 		renderer.bg.StrokeWidth = 1
 	}
 	renderer.label.TextSize = row.size
-	renderer.trailing.Text = row.trailing
 	renderer.trailing.TextSize = row.size - 1
 	trailingInk := text(colFaint)
 	if row.endInset > 0 { // the row's ⋯ takes its place while hovered
@@ -916,6 +1021,11 @@ func (renderer *tapRowRenderer) Refresh() {
 		renderer.badge.Resource = tinted(row.badge, colAmber)
 		renderer.badge.Refresh()
 	}
+	if row.mark != nil && (renderer.markedBy != row.mark || renderer.markTint != colMuted) {
+		renderer.markedBy, renderer.markTint = row.mark, colMuted
+		renderer.mark.Resource = tinted(row.mark, colMuted)
+		renderer.mark.Refresh()
+	}
 	// Translucency is read at draw time; refreshing the image would only
 	// throw its texture away.
 	iconAlpha := row.alpha
@@ -924,11 +1034,14 @@ func (renderer *tapRowRenderer) Refresh() {
 	}
 	renderer.icon.Translucency = float64(1 - iconAlpha)
 	renderer.badge.Translucency = renderer.icon.Translucency
+	renderer.mark.Translucency = renderer.icon.Translucency
+	renderer.markText.Color = text(colMuted)
 	renderer.Layout(row.Size())
 	renderer.bg.Refresh()
 	renderer.label.Refresh()
 	renderer.trailing.Refresh()
 	renderer.detail.Refresh()
+	renderer.markText.Refresh()
 }
 
 func (renderer *tapRowRenderer) Objects() []fyne.CanvasObject {
@@ -939,82 +1052,15 @@ func (renderer *tapRowRenderer) Objects() []fyne.CanvasObject {
 	if renderer.row.badge != nil {
 		objects = append(objects, renderer.badge)
 	}
+	if renderer.row.mark != nil {
+		objects = append(objects, renderer.mark, renderer.markText)
+	}
 	return objects
 }
 
 func (renderer *tapRowRenderer) Destroy() {}
 
-// ---------------------------------------------------------------------------
-// Soft drop shadow: stacked translucent rounded rectangles stand in for blur.
-
-type shadow struct {
-	layers []*canvas.Rectangle
-	alphas []float32
-	tint   color.NRGBA // black for a shadow, a colour for a glow (newGlow)
-}
-
-func newShadow(strength float32) *shadow {
-	dropShadow := &shadow{}
-	for i, alpha := range []float32{0.10, 0.08, 0.06, 0.04} {
-		r := canvas.NewRectangle(color.NRGBA{A: uint8(255 * alpha * strength)})
-		r.CornerRadius = float32(12 + 3*i)
-		dropShadow.layers = append(dropShadow.layers, r)
-		dropShadow.alphas = append(dropShadow.alphas, alpha*strength)
-	}
-	dropShadow.setOpacity(1) // lighter on the light theme
-	return dropShadow
-}
-
-// newGlow is a halo of tint around a surface, like newShadow's layers.
-func newGlow(tint color.NRGBA, strength float32) *shadow {
-	glow := newShadow(strength)
-	glow.tint = tint
-	glow.setOpacity(0)
-	glows = append(glows, glow)
-	return glow
-}
-
-func (dropShadow *shadow) setOpacity(o float32) {
-	for i, r := range dropShadow.layers {
-		c := dropShadow.tint
-		strength := float32(1)
-		if !themeTokens.Dark && c.R == 0 && c.G == 0 && c.B == 0 {
-			strength = 0.4 // a shadow, not a glow: on white a dark one reads as a grey band
-		}
-		c.A = uint8(255 * fyne.Min(1, dropShadow.alphas[i]) * o * strength)
-		r.FillColor = c
-		// A layer with nothing to show is not drawn at all: a translucent
-		// rectangle still costs its whole area on every frame.
-		if c.A == 0 {
-			r.Hide()
-		} else {
-			r.Show()
-		}
-	}
-}
-
-func (dropShadow *shadow) layout(pos fyne.Position, size fyne.Size, radius float32) {
-	for i, r := range dropShadow.layers {
-		spread := float32(3 * (i + 1))
-		r.CornerRadius = radius + spread
-		r.Move(pos.AddXY(-spread, -spread+spread/2))
-		r.Resize(size.AddWidthHeight(2*spread, 2*spread))
-	}
-}
-
-func (dropShadow *shadow) objects() []fyne.CanvasObject {
-	objects := make([]fyne.CanvasObject, len(dropShadow.layers))
-	for i := range dropShadow.layers {
-		objects[len(dropShadow.layers)-1-i] = dropShadow.layers[i]
-	}
-	return objects
-}
-
-func (dropShadow *shadow) refresh() {
-	for _, r := range dropShadow.layers {
-		r.Refresh()
-	}
-}
+// Soft drop shadows and glows: soft_shadow.go.
 
 // ---------------------------------------------------------------------------
 // sheet: native overlay used for dialogs and menus. Menus behave like a web
@@ -1028,6 +1074,7 @@ type sheet struct {
 	anchor     fyne.CanvasObject
 	anchorAt   fyne.Position // anchor geometry captured when the menu opens:
 	anchorSz   fyne.Size     // the trigger may move or hide while it is open
+	openSize   fyne.Size     // the window's size the anchor and glass were taken at
 	menu       bool
 	alignLeft  bool
 	columns    bool // the model selector uses the HTML demo's surface and radius
@@ -1047,6 +1094,8 @@ type sheet struct {
 	frost      *canvas.Image // a menu's: the frosted part of the window under its panel
 	frostAt    rect          // the panel rectangle frost was cut for
 	sharp      *canvas.Image // a dialog's: the window buttons as they were, over the frosted backdrop
+	live       *canvas.Blur  // a theme's blur instead ([blur] menus, dialogs: theme_blur.go)
+	liveTint   color.NRGBA   // the panel's colour over it
 	open       bool
 	closing    bool
 	items      []*tapRow
@@ -1054,7 +1103,7 @@ type sheet struct {
 }
 
 func newSheet(canvas fyne.Canvas, content fyne.CanvasObject, width float32) *sheet {
-	dialog := &sheet{canvas: canvas, content: content, width: width, active: -1}
+	dialog := &sheet{canvas: canvas, content: content, width: width, active: -1, live: canvasBlur()}
 	dialog.ExtendBaseWidget(dialog)
 	return dialog
 }
@@ -1083,8 +1132,12 @@ func (dialog *sheet) Show() {
 		dialog.anchorSz = dialog.anchor.Size()
 	}
 	dialog.Resize(dialog.canvas.Size())
+	dialog.openSize = dialog.canvas.Size()
 	var shot image.Image
-	dialog.glass, shot = frostedBackdrop(dialog.canvas) // before the sheet is drawn: what it covers
+	dialog.syncLive()
+	if !dialog.live.Visible() {
+		dialog.glass, shot = frostedBackdrop(dialog.canvas) // before the sheet is drawn: what it covers
+	}
 	if dialog.sharp != nil {
 		dialog.sharp.Image = nil
 		if !dialog.menu && shot != nil {
@@ -1288,13 +1341,35 @@ func (dialog *sheet) CreateRenderer() fyne.WidgetRenderer {
 	return &sheetRenderer{dialog}
 }
 
+// syncLive turns the theme's blur on or off as the sheet opens.
+func (dialog *sheet) syncLive() {
+	element, base, opacity := "dialogs", colSurface, float32(0xe0)/0xff
+	if dialog.menu {
+		element, base, opacity = "menus", colPopover, 0.5
+		if dialog.columns {
+			base = colSurface
+		}
+	}
+	dialog.live.Radius = blurRadius(element)
+	dialog.liveTint = blurTint(element, base, opacity)
+	if dialog.live.Radius > 0 {
+		dialog.live.Show()
+	} else {
+		dialog.live.Hide()
+	}
+}
+
 type sheetRenderer struct{ dialog *sheet }
 
 func (renderer *sheetRenderer) Layout(size fyne.Size) {
 	sheet := renderer.dialog
+	if sheet.open && size != sheet.openSize && size.Width > 0 {
+		renderer.windowResized(size)
+	}
 	sheet.dim.Resize(size)
 	box := sheet.panelRect()
-	panelPos, panelSize := box.pos, fyne.NewSize(box.size.X, box.size.Y)
+	var panelPos fyne.Position
+	panelSize := fyne.NewSize(box.size.X, box.size.Y)
 	if sheet.menu {
 		// zoom-in-95 from the side facing the trigger, like web popovers
 		k := 0.95 + 0.05*sheet.progress
@@ -1313,12 +1388,51 @@ func (renderer *sheetRenderer) Layout(size fyne.Size) {
 		panelSize = fyne.NewSize(w, h)
 	}
 	renderer.layoutGlass(size, box, panelPos, panelSize)
+	if sheet.menu { // under the panel; behind a dialog, the whole window
+		sheet.live.Move(panelPos)
+		sheet.live.Resize(panelSize)
+		sheet.live.CornerRadius = sheet.panel.CornerRadius
+	} else {
+		sheet.live.Move(fyne.Position{})
+		sheet.live.Resize(size)
+	}
 	sheet.panel.Move(panelPos)
 	sheet.panel.Resize(panelSize)
 	sheet.shadow.layout(panelPos.AddXY(0, 2), panelSize, sheet.panel.CornerRadius)
 	pad := sheet.pad()
 	sheet.content.Move(box.pos.AddXY(pad, pad))
 	sheet.content.Resize(fyne.NewSize(box.size.X-2*pad, box.size.Y-2*pad))
+}
+
+// windowResized follows the window's new size while the sheet is open: a
+// menu goes back beside its trigger, wherever the new layout put it (one
+// that is hidden meanwhile keeps the place it had), and the frosted copy of
+// the window is taken again, since the old one no longer matches it.
+func (renderer *sheetRenderer) windowResized(size fyne.Size) {
+	sheet := renderer.dialog
+	sheet.openSize = size
+	// Fyne resizes the overlays before the window's content: the trigger
+	// and what the glass shows have their new place on the next turn.
+	go fyne.Do(func() {
+		if !sheet.open || sheet.openSize != size {
+			return
+		}
+		if sheet.anchor != nil && sheet.anchor.Visible() && sheet.anchor.Size().Width > 0 {
+			sheet.anchorAt = fyne.CurrentApp().Driver().AbsolutePositionForObject(sheet.anchor)
+			sheet.anchorSz = sheet.anchor.Size()
+		}
+		if sheet.glass != nil && !sheet.live.Visible() {
+			// The capture draws the whole window: the sheet steps out of it.
+			sheet.BaseWidget.Hide()
+			glass, shot := frostedBackdrop(sheet.canvas)
+			sheet.BaseWidget.Show()
+			sheet.glass, sheet.frostAt = glass, rect{}
+			if sheet.sharp.Image != nil && !sheet.menu && shot != nil {
+				sheet.sharp.Image = windowControlsCut(sheet.canvas, shot)
+			}
+		}
+		renderer.Refresh()
+	})
 }
 
 // layoutGlass places the frosted window: all of it behind a dialog, the
@@ -1343,7 +1457,7 @@ func (renderer *sheetRenderer) layoutGlass(size fyne.Size, box rect, panelPos fy
 		if sheet.sharp.Image != nil && windowControlsBox != nil {
 			sheet.sharp.Move(fyne.CurrentApp().Driver().AbsolutePositionForObject(windowControlsBox))
 			sheet.sharp.Resize(windowControlsBox.Size())
-			sheet.sharp.CornerRadius = 8 // no square patch on the frosted window
+			sheet.sharp.CornerRadius = rounded(8) // no square patch on the frosted window
 			sheet.sharp.Show()
 		}
 		return
@@ -1381,13 +1495,17 @@ func (renderer *sheetRenderer) Refresh() {
 		sheet.dim.FillColor = color.Transparent
 		sheet.panel.FillColor = withAlpha(colPopover, o)
 		sheet.panel.StrokeColor = withAlpha(colPopBorder, o)
-		sheet.panel.CornerRadius = 10
+		sheet.panel.CornerRadius = rounded(10)
 		if sheet.columns {
 			sheet.panel.FillColor = withAlpha(colSurface, o)
 			sheet.panel.StrokeColor = withAlpha(colBorder, o)
-			sheet.panel.CornerRadius = 14
+			sheet.panel.CornerRadius = rounded(14)
 		}
-		if sheet.glass != nil { // frosted glass: the tint lets the blurred window through
+		if sheet.live.Visible() { // the theme's blur: its tint, fading in
+			sheet.panel.FillColor = withAlpha(sheet.liveTint, o)
+			sheet.panel.StrokeColor = withAlpha(glassEdge, o)
+			sheet.panel.CornerRadius += 2
+		} else if sheet.glass != nil { // frosted glass: the tint lets the blurred window through
 			base := colPopover
 			if sheet.columns {
 				base = colSurface
@@ -1419,11 +1537,15 @@ func (renderer *sheetRenderer) Refresh() {
 			sheet.backdrop.Translucency = float64(1 - o)
 			sheet.panel.FillColor = color.NRGBA{R: colSurface.R, G: colSurface.G, B: colSurface.B, A: 0xe0} // a pane of glass too
 		}
+		if sheet.live.Visible() {
+			sheet.dim.FillColor = color.NRGBA{A: uint8(dimAlpha(55) * o)}
+			sheet.panel.FillColor = sheet.liveTint
+		}
 		sheet.panel.StrokeColor = colBorder
-		if sheet.glass != nil {
+		if sheet.glass != nil || sheet.live.Visible() {
 			sheet.panel.StrokeColor = glassEdge
 		}
-		sheet.panel.CornerRadius = 14
+		sheet.panel.CornerRadius = rounded(14)
 		sheet.shadow.setOpacity(1)
 	}
 	// Moving the content is enough to repaint it: refreshing the whole dialog
@@ -1439,8 +1561,15 @@ func (renderer *sheetRenderer) Refresh() {
 }
 
 func (renderer *sheetRenderer) Objects() []fyne.CanvasObject {
-	objects := []fyne.CanvasObject{renderer.dialog.backdrop, renderer.dialog.dim, renderer.dialog.sharp}
+	objects := []fyne.CanvasObject{renderer.dialog.backdrop}
+	if !renderer.dialog.menu {
+		objects = append(objects, renderer.dialog.live) // the window blurred, then dimmed
+	}
+	objects = append(objects, renderer.dialog.dim, renderer.dialog.sharp)
 	objects = append(objects, renderer.dialog.shadow.objects()...)
+	if renderer.dialog.menu {
+		objects = append(objects, renderer.dialog.live)
+	}
 	objects = append(objects, renderer.dialog.frost, renderer.dialog.panel, renderer.dialog.content)
 	return objects
 }
@@ -1724,7 +1853,7 @@ type tipLayer struct {
 
 func newTipLayer() *tipLayer {
 	tooltip := &tipLayer{bg: canvas.NewRectangle(colRaised)}
-	tooltip.bg.CornerRadius = 8
+	tooltip.bg.CornerRadius = rounded(8)
 	tooltip.bg.StrokeColor = colPopBorder
 	tooltip.bg.StrokeWidth = 1
 	tooltip.layer = container.NewWithoutLayout(tooltip.bg)

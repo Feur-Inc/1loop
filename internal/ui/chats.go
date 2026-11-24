@@ -1,0 +1,245 @@
+// SPDX-License-Identifier: MPL-2.0
+
+package ui
+
+// Messages between this computer's chats (agent/chats.go): the chats
+// tool's list and messages, and the reports a turn sends back when it
+// ends. Every message, a subchat's included, goes through wake.
+
+import (
+	"context"
+	"fmt"
+	"path/filepath"
+
+	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
+
+	"1loop/internal/agent"
+	"1loop/internal/core"
+)
+
+// chatRelation is how chat stands to other: parent, subchat or "".
+func chatRelation(chat, other *conversation) string {
+	switch {
+	case other.Subchat != nil && other.Subchat.Parent == chat.ID:
+		return agent.RelationSubchat
+	case chat.Subchat != nil && chat.Subchat.Parent == other.ID:
+		return agent.RelationParent
+	}
+	return ""
+}
+
+// chatInfo is other as chat's chats tool lists it.
+func (ui *desktopUI) chatInfo(chat, other *conversation) agent.ChatInfo {
+	waiting := other.run != nil && (other.run.approvalID != "" || other.run.questionID != "")
+	info := agent.ChatInfo{ID: other.ID, Title: agent.SubchatTitle(other.Title), State: agent.ChatState(other.run != nil, waiting),
+		Relation: chatRelation(chat, other), Provider: other.Config.Provider}
+	if !other.Config.InScratch() {
+		info.Project = filepath.Base(ui.projectOf(other.Config.Workspace))
+	}
+	if machine, ok := ui.machineSettings(other.Config.MachineID); ok && other.Config.MachineID != "" {
+		info.Machine = machine.Name
+	}
+	return info
+}
+
+// findChat is the chat id that chat's tool names ("parent": its parent),
+// or why it cannot be reached.
+func (ui *desktopUI) findChat(chat *conversation, id string) (*conversation, error) {
+	if id == "parent" {
+		if parent := ui.parentOf(chat); parent != nil {
+			return parent, nil
+		}
+		if chat.Subchat != nil {
+			return nil, fmt.Errorf("This chat's parent conversation was deleted")
+		}
+		return nil, fmt.Errorf("This chat has no parent conversation")
+	}
+	if ui.chatByID(chat.ID) != chat {
+		return nil, fmt.Errorf("This conversation was deleted")
+	}
+	if id == chat.ID {
+		return nil, fmt.Errorf("That is this chat: give another chat's id")
+	}
+	if other := ui.chatByID(id); other != nil {
+		return other, nil
+	}
+	if remote := ui.server; remote != nil {
+		for _, other := range remote.chats {
+			if other.ID == id {
+				return nil, fmt.Errorf("Chat %s “%s” is on the 1loop server %s, which chats on this computer cannot reach", id, other.Title, remote.name)
+			}
+		}
+	}
+	return nil, fmt.Errorf("No chat %s on this computer: it was deleted, or it is on another computer or 1loop server, which chats here cannot reach. List the chats you can message with action list", id)
+}
+
+// chatAccess is what chat's chats tool reaches: this computer's other
+// chats, those working on SSH machines included.
+func (ui *desktopUI) chatAccess(chat *conversation) *agent.ChatAccess {
+	return &agent.ChatAccess{
+		Find: func(ctx context.Context, id string) (info agent.ChatInfo, err error) {
+			err = fmt.Errorf("1loop is closing")
+			ui.onUI(ctx, func() {
+				var other *conversation
+				if other, err = ui.findChat(chat, id); err == nil {
+					info = ui.chatInfo(chat, other)
+				}
+			})
+			return info, err
+		},
+		List: func(ctx context.Context) (list []agent.ChatInfo) {
+			ui.onUI(ctx, func() {
+				for _, other := range ui.chats {
+					if other != chat {
+						list = append(list, ui.chatInfo(chat, other))
+					}
+				}
+			})
+			return list
+		},
+		Send: func(ctx context.Context, id, text string, attachments agent.ChatAttachments) (err error) {
+			var files []agent.FileAttachment
+			if len(attachments.Files) > 0 { // copied into its workspace first, off the interface thread
+				var workspace string
+				var machine agent.Machine
+				err = fmt.Errorf("1loop is closing")
+				ui.onUI(ctx, func() {
+					var other *conversation
+					if other, err = ui.findChat(chat, id); err == nil {
+						workspace, machine = other.Config.Workspace, ui.attachmentMachine(other.Config.MachineID)
+					}
+				})
+				if err != nil {
+					return err
+				}
+				if files, err = agent.DeliverFiles(ctx, machine, workspace, attachments.Files); err != nil {
+					return err
+				}
+			}
+			err = fmt.Errorf("1loop is closing")
+			ui.onUI(ctx, func() { err = ui.sendToChat(chat, id, text, attachments.Images, files) })
+			return err
+		},
+		Rename: func(ctx context.Context, title string) (err error) {
+			err = fmt.Errorf("1loop is closing")
+			ui.onUI(ctx, func() { err = ui.renameByAgent(chat, title) })
+			return err
+		},
+	}
+}
+
+// renameByAgent gives chat the title its agent chose with the chats tool.
+func (ui *desktopUI) renameByAgent(chat *conversation, title string) error {
+	if ui.chatByID(chat.ID) != chat {
+		return fmt.Errorf("This conversation was deleted")
+	}
+	if ui.setChatTitle(chat, title) == "" {
+		return fmt.Errorf("Give the new title as text")
+	}
+	return nil
+}
+
+// attachmentMachine is the SSH machine of an ID files are copied to, nil
+// for this computer.
+func (ui *desktopUI) attachmentMachine(id string) agent.Machine {
+	if machine := ui.machineFor(id); machine != nil {
+		return machine
+	}
+	return nil
+}
+
+// sendToChat delivers text, and the pictures and files (already in its
+// workspace) attached to it, from chat's agent to the chat id.
+func (ui *desktopUI) sendToChat(chat *conversation, id, text string, images []core.ImagePart, files []agent.FileAttachment) error {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
+	other, err := ui.findChat(chat, id)
+	if err != nil {
+		return err
+	}
+	hops := chat.hops + 1
+	if hops > agent.MaxChatHops {
+		return agent.TooManyHops(hops)
+	}
+	sender := agent.ChatSender{ID: chat.ID, Title: agent.SubchatTitle(chat.Title), Hops: hops}
+	ui.wake(other, agent.ChatMessage(sender, chatRelation(other, chat), text, images, files))
+	if other == ui.current && other.run != nil { // it waits in the queue under the composer
+		ui.renderQueue()
+	}
+	return nil
+}
+
+// turnEnded is the end of a chat's last turn in a row: a subchat notes how
+// it ended, and the chats that caused it hear it.
+func (ui *desktopUI) turnEnded(chat *conversation, ended string) {
+	if chat.Subchat != nil {
+		chat.Subchat.Ended = ended
+		chat.Subchat.Unseen = ui.viewOf(chat).current != chat // unread unless a pane shows it
+		if parent := ui.parentOf(chat); parent != nil {
+			ui.panel.todoChanged(parent)
+			ui.remote.metaChanged(parent)
+		}
+	}
+	reportTo := chat.ReportTo
+	chat.ReportTo = nil
+	for _, id := range reportTo {
+		target := ui.chatByID(id)
+		if target == nil {
+			continue // deleted meanwhile
+		}
+		info := agent.SubchatInfo{ID: chat.ID, Title: agent.SubchatTitle(chat.Title), State: agent.SubchatState(false, false, ended),
+			Folder: chat.Config.Workspace, Last: agent.LastAnswer(chat.Items)}
+		if chat.Subchat != nil {
+			info = ui.subchatInfo(chat)
+		}
+		sender := agent.ChatSender{ID: chat.ID, Title: info.Title, Hops: chat.hops + 1}
+		ui.wake(target, agent.TurnReport(sender, chatRelation(target, chat), info))
+	}
+}
+
+// appendChatMessage draws another chat's message in chat's transcript: a
+// card under its sender's name, which opens the sender, with the pictures
+// it attached, apart from the user's own bubbles (it has no Edit).
+func (ui *desktopUI) appendChatMessage(chat *conversation, item agent.ChatItem) {
+	sender := item.From
+	title := []rune(sender.Title)
+	if len(title) > 40 {
+		title = append(title[:40], '…')
+	}
+	from := newRow("From the chat “"+string(title)+"”", iconSubchat, styleChip, func() { ui.openSubchat(chat, sender.ID) })
+	text := newFlowText(plainSpans(item.Text), theme.TextSize(), colText)
+	text.tail, text.tight = "", true
+	pad := theme.InnerPadding()
+	body := container.NewVBox(container.NewHBox(from, layout.NewSpacer()))
+	if len(item.Images) > 0 { // the pictures its agent attached
+		pictures := &userImageView{pictures: newPictureStrip(0)}
+		ui.setUserImages(pictures, item.Images)
+		body.Add(padded(0, 0, pad, pad, pictures.pictures))
+	}
+	if chips := fileChips(item.Files); chips != nil { // and the other files, as the user's show
+		body.Add(padded(0, 0, pad, pad, chips))
+	}
+	body.Add(padded(0, pad, pad, pad, container.NewStack(text, newSelectLayer(ui, text))))
+	card := surface(body, colCode, colBorderSoft, 14, 2)
+	copyRow := container.NewHBox(layout.NewSpacer(), copyChip(func() string { return item.Text }))
+	message := container.New(layout.NewCustomPaddedVBoxLayout(2), card, copyRow)
+	ui.items.alone(message) // another chat's message: drawn like the user's, in no card
+	ui.place(message)
+}
+
+// fileChips are a message's attached files as the transcript shows them, a
+// chip with each name; nil when there is none but pictures, shown apart.
+func fileChips(attached []agent.FileAttachment) *fyne.Container {
+	var files []fyne.CanvasObject
+	for _, file := range attached {
+		if !file.Image { // a picture already shows above
+			files = append(files, surface(textLine(fitText(file.Name, 12.5, fyne.TextStyle{}, 220), 12.5, colText), colCode, colBorderSoft, 8, 6))
+		}
+	}
+	if len(files) == 0 {
+		return nil
+	}
+	return container.New(layout.NewCustomPaddedHBoxLayout(6), files...)
+}

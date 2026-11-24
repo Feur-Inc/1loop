@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"image"
 	"image/color"
@@ -101,6 +102,19 @@ func (server *headlessServer) addBrowserLocked(chat *serverChat, info browser.In
 	return page
 }
 
+// hasBrowser says whether Browser Use can start a browser: the phone's
+// WebView, or a Chromium unless ONELOOP_BROWSER=none (the slim image).
+func (server *headlessServer) hasBrowser() bool {
+	return server.engine.Native != nil || !browser.Disabled()
+}
+
+// hasClaudeCode says whether Claude Code connections can start its CLI here
+// (not in the slim image).
+func hasClaudeCode() bool {
+	_, err := agent.ClaudeExecutable()
+	return err == nil
+}
+
 func (server *headlessServer) browserTools(chat *serverChat) agent.PanelToolHandler {
 	return func(ctx context.Context, name string, raw json.RawMessage) (agent.PanelToolResult, error) {
 		var args agent.BrowserToolArgs
@@ -108,6 +122,9 @@ func (server *headlessServer) browserTools(chat *serverChat) agent.PanelToolHand
 		decoder.DisallowUnknownFields()
 		if err := decoder.Decode(&args); err != nil {
 			return agent.PanelToolResult{}, err
+		}
+		if !server.hasBrowser() {
+			return agent.PanelToolResult{}, errors.New(browser.NoBrowserProblem)
 		}
 		server.mu.Lock()
 		if server.panelChatLocked(chat.ID) != chat {
@@ -458,6 +475,7 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 			case "open":
 				dir, revision := chat.Config.Workspace, server.terminalRevision
 				parent := platform.WithWorkspaceMode(server.ctx, server.approvalMode == "yolo")
+				parent = platform.WithProjectEnv(parent, server.projectEnvLocked(chat.Config.Workspace))
 				host := mobileTerminalHost(server.bridge, ctx)
 				machine := server.machineLocked(chat.Config.MachineID)
 				server.mu.Unlock()
@@ -465,12 +483,12 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 				if machine == nil && chat.Config.MachineID != "" {
 					err = fmt.Errorf("This project's SSH machine is no longer on the server")
 				}
-				if err == nil && args.Cwd != "" {
+				if err == nil {
+					var on agent.Machine
 					if machine != nil {
-						dir, err = agent.MachinePath(ctx, machine, dir, args.Cwd)
-					} else {
-						dir, err = agent.WorkspacePath(dir, args.Cwd)
+						on = machine
 					}
+					dir, err = agent.TerminalDir(ctx, on, dir, args.Cwd)
 				}
 				if err == nil {
 					err = ctx.Err()
@@ -516,10 +534,14 @@ func (server *headlessServer) terminalTools(chat *serverChat) agent.PanelToolHan
 		switch name {
 		case "terminal_command":
 			err = terminal.write(args.Command + "\r")
-		case "terminal_write":
-			err = terminal.write(args.Text)
-		case "terminal_keys":
+		case "terminal_write", "terminal_keys": // terminal_write's text, then its keys (terminal_keys in chats before #447)
+			if args.Text != "" {
+				err = terminal.write(args.Text)
+			}
 			for _, name := range args.Keys {
+				if err != nil {
+					break
+				}
 				var key string
 				key, err = agent.TerminalKey(name)
 				if err != nil {

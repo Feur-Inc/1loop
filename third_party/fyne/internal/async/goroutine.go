@@ -83,3 +83,9 @@ func goroutineID() (id uint64) {
 
 	return id
 }
+
+// GoroutineID is the calling goroutine's ID (1loop: the test driver's UI
+// queue, issue #476).
+func GoroutineID() uint64 {
+	return goroutineID()
+}

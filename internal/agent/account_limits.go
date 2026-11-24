@@ -8,14 +8,15 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"math"
 	"net/http"
-	"os"
-	"path/filepath"
 	"strings"
 	"time"
+
+	"1loop/internal/usage"
 )
 
 type AccountLimitWindow struct {
@@ -25,6 +26,10 @@ type AccountLimitWindow struct {
 	// Group is the model group the window limits (Antigravity's "Gemini",
 	// "Claude/GPT"…); empty, it limits every model of the account.
 	Group string
+	// Scoped is a limit of its own for the models Group names (Claude's
+	// weekly limit for Fable): it limits those models only, and leaves the
+	// other groups' rule alone.
+	Scoped bool
 }
 
 type AccountLimits struct {
@@ -58,6 +63,9 @@ func limitPeriod(seconds int64) string {
 	}
 }
 
+// claudeUsageURL is Claude's usage endpoint (a variable for the tests).
+var claudeUsageURL = "https://api.anthropic.com/api/oauth/usage"
+
 func readAccountLimits(ctx context.Context, url string, headers http.Header, target any) error {
 	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -71,12 +79,22 @@ func readAccountLimits(ctx context.Context, url string, headers http.Header, tar
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("HTTP %d", resp.StatusCode)
+		return &limitsHTTPError{Status: resp.StatusCode, RetryAfter: retryAfter(resp.Header, time.Now())}
 	}
 	return json.NewDecoder(io.LimitReader(resp.Body, 1<<20)).Decode(target)
 }
 
 func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key string) (AccountLimits, error) {
+	if conn.Provider == "claudecode" {
+		// Connections on one Claude login share one read (and one pause).
+		return claudeLimitsShared(claudeDataDir(conn.ClaudeHome()), func() (AccountLimits, error) {
+			return backend.connectionLimits(ctx, conn, key)
+		})
+	}
+	return backend.connectionLimits(ctx, conn, key)
+}
+
+func (backend *App) connectionLimits(ctx context.Context, conn Connection, key string) (AccountLimits, error) {
 	limits := AccountLimits{Note: "Limits not provided"}
 	switch conn.Provider {
 	case "openai":
@@ -133,22 +151,9 @@ func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key s
 		}
 	case "claudecode":
 		// The connection's own Claude Code login (claude_accounts.go).
-		data, err := os.ReadFile(filepath.Join(claudeDataDir(conn.ClaudeHome()), ".credentials.json"))
+		access, err := claudeAccessToken(ctx, conn.ClaudeHome(), false)
 		if err != nil {
 			return limits, err
-		}
-		var auth struct {
-			OAuth struct {
-				Access  string `json:"accessToken"`
-				Expires int64  `json:"expiresAt"`
-			} `json:"claudeAiOauth"`
-		}
-		if err := json.Unmarshal(data, &auth); err != nil {
-			return limits, err
-		}
-		if auth.OAuth.Access == "" || auth.OAuth.Expires <= time.Now().UnixMilli() {
-			limits.Note = "Claude session expired"
-			return limits, nil
 		}
 		type window struct {
 			Used    *float64  `json:"utilization"`
@@ -159,10 +164,29 @@ func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key s
 			Week     *window `json:"seven_day"`
 			Sonnet   *window `json:"seven_day_sonnet"`
 			Opus     *window `json:"seven_day_opus"`
+			// Limits are the account's meters as the server lists them now,
+			// a model's own weekly limit (Fable) among them; the fields
+			// above are the older form, read when it is missing.
+			Limits []claudeLimitRow `json:"limits"`
 		}
-		headers := http.Header{"Authorization": {"Bearer " + auth.OAuth.Access}, "Anthropic-Beta": {"oauth-2025-04-20"}}
-		if err := readAccountLimits(ctx, "https://api.anthropic.com/api/oauth/usage", headers, &usage); err != nil {
+		read := func(token string) error {
+			headers := http.Header{"Authorization": {"Bearer " + token}, "Anthropic-Beta": {"oauth-2025-04-20"}}
+			return readAccountLimits(ctx, claudeUsageURL, headers, &usage)
+		}
+		err = read(access)
+		var httpErr *limitsHTTPError
+		if errors.As(err, &httpErr) && httpErr.Status == http.StatusUnauthorized && conn.ClaudeHome() != "" {
+			// The server refused a token that looked valid: refresh it once.
+			if fresh, refreshErr := claudeAccessToken(ctx, conn.ClaudeHome(), true); refreshErr == nil {
+				err = read(fresh)
+			}
+		}
+		if err != nil {
 			return limits, err
+		}
+		if len(usage.Limits) > 0 {
+			limits.Windows = claudeLimitWindows(usage.Limits)
+			break
 		}
 		for _, item := range []struct {
 			label       string
@@ -196,6 +220,9 @@ func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key s
 			limits.Windows = append(limits.Windows, AccountLimitWindow{Label: "Free/day", used: 100 * (1 - *d.Remaining/d.Limit)})
 		}
 	}
+	if len(limits.Windows) > 0 {
+		limits.Note = "" // numbers to show, nothing to explain
+	}
 	return limits, nil
 }
 
@@ -209,6 +236,9 @@ func (window AccountLimitWindow) appliesTo(model string, all []AccountLimitWindo
 		return true
 	}
 	model = strings.ToLower(model)
+	if window.Scoped {
+		return strings.Contains(model, strings.ToLower(window.Group))
+	}
 	matches := func(group string) (named, family bool) {
 		for _, word := range strings.FieldsFunc(strings.ToLower(group), func(r rune) bool { return r == '/' || r == ' ' }) {
 			if strings.Contains(model, word) {
@@ -223,7 +253,7 @@ func (window AccountLimitWindow) appliesTo(model string, all []AccountLimitWindo
 	}
 	anyNamed, anyMatch := false, false
 	for _, other := range all {
-		if other.Group == "" {
+		if other.Group == "" || other.Scoped {
 			continue
 		}
 		named, family := matches(other.Group)
@@ -238,4 +268,111 @@ func (window AccountLimitWindow) appliesTo(model string, all []AccountLimitWindo
 		return named
 	}
 	return family
+}
+
+// Windows are the limits as the usage ledger keeps them over time
+// (usage.Ledger.NoteLimits): the Usage page's pace of each window.
+func (limits AccountLimits) UsageWindows() []usage.LimitWindow {
+	var windows []usage.LimitWindow
+	for _, window := range limits.Windows {
+		label := window.Label
+		if window.Group != "" && !strings.HasPrefix(label, window.Group) {
+			label = window.Group + " · " + label
+		}
+		windows = append(windows, usage.LimitWindow{Label: label, Left: window.Remaining(), Reset: window.ResetAt})
+	}
+	return windows
+}
+
+// SubscriptionLimits says whether a connection's provider reports the usage
+// windows of a subscription (a week, 5 hours…).
+func SubscriptionLimits(provider string) bool {
+	return provider == "openai" || provider == "claudecode" || provider == "antigravity"
+}
+
+// NoteLimits reads a subscription's limits into the usage ledger, at most
+// every interval for a connection: after a turn, or when the Usage page
+// opens. ok is false when nothing was read (not due, not a subscription,
+// or the provider did not answer).
+func (backend *App) NoteLimits(ctx context.Context, conn Connection, key string, ledger *usage.Ledger, every time.Duration) (limits AccountLimits, ok bool) {
+	if ledger == nil || !conn.Enabled || !SubscriptionLimits(conn.Provider) || !ledger.LimitsDue(conn.ID, every, time.Now()) {
+		return limits, false
+	}
+	limits, err := backend.ConnectionLimits(ctx, conn, key)
+	if err != nil || len(limits.Windows) == 0 {
+		return limits, false
+	}
+	limits.Checked = time.Now()
+	ledger.NoteLimits(conn.ID, limits.UsageWindows(), limits.Checked)
+	return limits, true
+}
+
+// claudeLimitRow is one meter of Claude's usage endpoint ("limits"): the
+// session, the whole week, or a week scoped to a model or a surface.
+type claudeLimitRow struct {
+	Kind    string    `json:"kind"`
+	Percent *float64  `json:"percent"`
+	ResetAt time.Time `json:"resets_at"`
+	Scope   *struct {
+		Model   json.RawMessage `json:"model"`
+		Surface json.RawMessage `json:"surface"`
+	} `json:"scope"`
+}
+
+// claudeLimitWindows turns the meters into windows, in the server's order:
+// "5h", "7d", and "Fable · 7d" for a model's own week, which limits that
+// model only.
+func claudeLimitWindows(rows []claudeLimitRow) []AccountLimitWindow {
+	var windows []AccountLimitWindow
+	for _, row := range rows {
+		if row.Percent == nil {
+			continue
+		}
+		window := AccountLimitWindow{used: *row.Percent, ResetAt: row.ResetAt}
+		switch row.Kind {
+		case "session":
+			window.Label = "5h"
+		case "weekly_all":
+			window.Label = "7d"
+		default: // weekly_scoped, and meters added since
+			period := "7d"
+			if row.Kind != "weekly_scoped" {
+				period = strings.ReplaceAll(row.Kind, "_", " ")
+			}
+			var model, surface string
+			if row.Scope != nil {
+				model, surface = claudeScopeName(row.Scope.Model), claudeScopeName(row.Scope.Surface)
+			}
+			switch {
+			case model != "":
+				window.Label, window.Group, window.Scoped = model+" · "+period, model, true
+			case surface != "":
+				window.Label = surface + " · " + period
+			default:
+				window.Label = period
+			}
+		}
+		windows = append(windows, window)
+	}
+	return windows
+}
+
+// claudeScopeName is a scope's display name: {"display_name": "Fable"}, or
+// a plain name.
+func claudeScopeName(raw json.RawMessage) string {
+	var named struct {
+		DisplayName string `json:"display_name"`
+		ID          string `json:"id"`
+	}
+	if json.Unmarshal(raw, &named) == nil {
+		if named.DisplayName != "" {
+			return named.DisplayName
+		}
+		return named.ID
+	}
+	var plain string
+	if json.Unmarshal(raw, &plain) == nil {
+		return plain
+	}
+	return ""
 }

@@ -49,6 +49,7 @@ func (panel *toolPanel) todoTab(chat *conversation) panelTab {
 // waits, the ring turning with its dot while the agent works on it, the
 // ring closed around a tick once it is done.
 func (panel *toolPanel) todoChanged(chat *conversation) {
+	panel = panel.of(chat)
 	panel.ui.remote.metaChanged(chat) // the phone shows the list too
 	if chat != panel.owner {
 		return // drawn when its chat comes back on screen
@@ -70,56 +71,66 @@ func (panel *toolPanel) todoChanged(chat *conversation) {
 		if chat != nil {
 			items = chat.Todo.Snapshot()
 		}
-		done := 0
-		for _, item := range items {
-			if item.Status == "completed" {
-				done++
-			}
-		}
-		title := textLine("Tasks", 16, colText)
-		title.TextStyle = fyne.TextStyle{Bold: true}
-		if len(items) == 0 {
-			box.Add(title)
-			box.Add(padded(8, 0, 0, 0, plainFlow("No tasks yet. The agent lists them here when it plans your request, and ticks them off as it goes.", 13, colMuted)))
-			panel.addBackgroundTasks(box, chat)
-			panel.addSubchats(box, chat)
-			box.Refresh()
-			panel.refreshTodoStatus()
-			continue
-		}
-		// The whole list at a glance: how many are done, and a line that fills.
-		track, fill := canvas.NewRectangle(colBorder), canvas.NewRectangle(colAmber)
-		track.CornerRadius, fill.CornerRadius = 1.5, 1.5
-		progress := container.New(progressLayout{float32(done) / float32(len(items))}, track, fill)
-		box.Add(container.NewBorder(nil, nil, title, textLine(fmt.Sprintf("%d of %d done", done, len(items)), 12.5, colMuted)))
-		box.Add(padded(10, 12, 0, 0, progress))
 		live := func() bool { // the ring only turns where it is seen, while the agent works
 			return panel.owner == chat && chat != nil && chat.run != nil && panel.shown > 0 &&
 				panel.active >= 0 && panel.active < len(panel.tabs) && panel.tabs[panel.active].todoView == box
 		}
-		for _, item := range items {
-			ink, style := color.Color(colText), fyne.TextStyle{}
-			switch item.Status {
-			case "completed":
-				ink = colMuted
-			case "in_progress":
-				style.Bold = true
-			}
-			text := plainFlow(item.Text, 13.5, ink)
-			text.bold = style.Bold
-			mark := newTaskMark(item.Status, live)
-			tab.todoMarks = append(tab.todoMarks, mark)
-			clock := textLine(taskElapsed(item, time.Now()), 11.5, colMuted)
-			tab.todoTimes[item.ID] = clock
-			// The clock keeps one width while it counts: the text's line breaks stay put.
-			slot := container.NewStack(spacer(56, 0), container.NewHBox(layout.NewSpacer(), clock))
-			box.Add(padded(7, 7, 0, 0, container.NewBorder(nil, nil, container.NewVBox(mark), container.NewVBox(slot), padded(1, 0, 12, 8, text))))
+		tab.goalClock = nil
+		if chat != nil { // the goal first, as Codex shows it above the plan (#444)
+			tab.goalClock = drawGoalCard(box, chat.Goal.Snapshot(), func(command string) { panel.ui.goalButton(chat, command) })
 		}
+		tab.todoMarks = drawTaskList(box, items, live, tab.todoTimes)
 		panel.addBackgroundTasks(box, chat)
 		panel.addSubchats(box, chat)
 		box.Refresh()
 	}
 	panel.refreshTodoStatus()
+}
+
+// drawTaskList adds a task list to box: its title, how many are done with a
+// line that fills, then each task with its mark, its text and its clock,
+// kept in times by task. The desktop's chats and a server's (#542) both
+// draw theirs with it; the marks it returns are stopped before a redraw.
+func drawTaskList(box *fyne.Container, items []agent.TodoItem, live func() bool, times map[string]*canvas.Text) []*taskMark {
+	done := 0
+	for _, item := range items {
+		if item.Status == "completed" {
+			done++
+		}
+	}
+	title := textLine("Tasks", 16, colText)
+	title.TextStyle = fyne.TextStyle{Bold: true}
+	if len(items) == 0 {
+		box.Add(title)
+		box.Add(padded(8, 0, 0, 0, plainFlow("No tasks yet. The agent lists them here when it plans your request, and ticks them off as it goes.", 13, colMuted)))
+		return nil
+	}
+	// The whole list at a glance: how many are done, and a line that fills.
+	track, fill := canvas.NewRectangle(colBorder), canvas.NewRectangle(colAmber)
+	track.CornerRadius, fill.CornerRadius = 1.5, 1.5
+	progress := container.New(progressLayout{float32(done) / float32(len(items))}, track, fill)
+	box.Add(container.NewBorder(nil, nil, title, textLine(fmt.Sprintf("%d of %d done", done, len(items)), 12.5, colMuted)))
+	box.Add(padded(10, 12, 0, 0, progress))
+	var marks []*taskMark
+	for _, item := range items {
+		ink, style := color.Color(colText), fyne.TextStyle{}
+		switch item.Status {
+		case "completed":
+			ink = colMuted
+		case "in_progress":
+			style.Bold = true
+		}
+		text := plainFlow(item.Text, 13.5, ink)
+		text.bold = style.Bold
+		mark := newTaskMark(item.Status, live)
+		marks = append(marks, mark)
+		clock := textLine(taskElapsed(item, time.Now()), 11.5, colMuted)
+		times[item.ID] = clock
+		// The clock keeps one width while it counts: the text's line breaks stay put.
+		slot := container.NewStack(spacer(56, 0), container.NewHBox(layout.NewSpacer(), clock))
+		box.Add(padded(7, 7, 0, 0, container.NewBorder(nil, nil, container.NewVBox(mark), container.NewVBox(slot), padded(1, 0, 12, 8, text))))
+	}
+	return marks
 }
 
 // addBackgroundTasks lists the chat's background commands under its tasks,
@@ -259,7 +270,7 @@ func (mark *taskMark) draw() {
 	layer := func(src image.Image) { draw.Draw(out, out.Bounds(), src, image.Point{}, draw.Over) }
 	switch mark.status {
 	case "completed":
-		layer(art.full("#FFB000"))
+		layer(art.full(brandHex))
 		layer(art.icon("done", 1))
 	case "in_progress":
 		angle := 0.0
@@ -329,7 +340,14 @@ func taskElapsed(item agent.TodoItem, now time.Time) string {
 	return fmt.Sprintf("%d min %02d s", seconds/60, seconds%60)
 }
 
-func (panel *toolPanel) refreshTodoStatus() {
+// tickTodoClocks is the once-a-second tick: only the tasks' clocks move.
+// The context overview is not rebuilt here: building it asks every MCP
+// server for its tools (a failing one is retried every 30 s, its connection
+// blocking the interface), so its rows came and went at that interval (#487).
+// Events that change the numbers call refreshTodoStatus.
+func (panel *toolPanel) tickTodoClocks() { panel.refreshTodoStatus(false) }
+
+func (panel *toolPanel) refreshTodoStatus(rebuild ...bool) {
 	if panel.active < 0 || panel.active >= len(panel.tabs) || panel.target == 0 {
 		return
 	}
@@ -339,6 +357,7 @@ func (panel *toolPanel) refreshTodoStatus() {
 	}
 	now := time.Now()
 	if panel.owner != nil {
+		tickGoalClock(tab.goalClock, panel.owner.Goal.Snapshot())
 		for _, item := range panel.owner.Todo.Snapshot() {
 			if clock := tab.todoTimes[item.ID]; clock != nil {
 				value := taskElapsed(item, now)
@@ -357,14 +376,24 @@ func (panel *toolPanel) refreshTodoStatus() {
 			state = panel.owner.run.turn.mark
 		}
 	}
+	if len(rebuild) > 0 && !rebuild[0] && tab.todoContextText != "" {
+		return
+	}
 	text := agent.TaskContextText(cfg, panel.ui.contextRing.used, panel.ui.contextRing.window, panel.ui.classicCompaction, state)
+	if panel.owner != nil && panel.owner.run == nil && panel.owner.Compaction.Interrupted() != nil {
+		text += "\nA compaction was interrupted: it goes on with the next message."
+	}
 	usage := panel.ui.contextUsage(panel.owner)
 	if tab.todoUsage == nil {
 		tab.todoUsage = &contextUsageState{}
 	}
 	// The breakdown replaces the first line (Context · % · tokens); the
 	// compaction lines stay under it.
-	key := text + fmt.Sprintf("%v", *tab.todoUsage)
+	spent := ""
+	if panel.owner != nil {
+		spent = panel.ui.usage.ChatSpend(panel.ui.prices, panel.owner.ID).Text()
+	}
+	key := text + spent + fmt.Sprintf("%v", *tab.todoUsage)
 	if usage != nil {
 		key += fmt.Sprintf("%v", *usage)
 	}
@@ -375,11 +404,14 @@ func (panel *toolPanel) refreshTodoStatus() {
 		tab.todoContext.Objects = []fyne.CanvasObject{rule}
 		lines := strings.Split(text, "\n")
 		if usage != nil {
-			tab.todoContext.Objects = append(tab.todoContext.Objects, padded(2, 4, 0, 0, contextUsageView(usage, tab.todoUsage, nil, panel.refreshTodoStatus)))
+			tab.todoContext.Objects = append(tab.todoContext.Objects, padded(2, 4, 0, 0, contextUsageView(usage, tab.todoUsage, nil, func() { panel.refreshTodoStatus() })))
 			lines = lines[1:]
 		}
 		for _, line := range lines {
 			tab.todoContext.Objects = append(tab.todoContext.Objects, plainFlow(line, 12, colMuted))
+		}
+		if spent != "" {
+			tab.todoContext.Objects = append(tab.todoContext.Objects, plainFlow(spent, 12, colMuted))
 		}
 		tab.todoContext.Refresh()
 	}

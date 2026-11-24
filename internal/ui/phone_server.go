@@ -31,7 +31,8 @@ package ui
 //   GET  /api/events                    server-sent events (see remoteEvent)
 //   POST /api/send       {chat,text,mode,workspace}  mode: send, queue or steer
 //   POST /api/stop       {chat}
-//   POST /api/approve    {id,allow}
+//   POST /api/approve    {id,allow,note,files,denied}
+//   GET  /api/review?id=                      the files of an edit waiting for approval
 //   POST /api/answer     {id,answers}         answers to the model's questions
 //   POST /api/model      {chat,label,effort}    model and reasoning effort
 //   GET  /api/limits                    every account's usage windows
@@ -71,6 +72,7 @@ import (
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	registry "1loop/internal/settings"
+	"1loop/internal/usage"
 )
 
 const (
@@ -143,8 +145,10 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("GET /api/state", server.authorized(server.state))
 	mux.HandleFunc("GET /api/chats/{id}", server.authorized(server.chat))
 	mux.HandleFunc("GET /api/chats/{id}/context", server.authorized(server.chatContext))
+	mux.HandleFunc("GET /api/chats/{id}/compactions", server.authorized(server.compactions))
 	mux.HandleFunc("GET /api/mentions", server.authorized(server.mentions))
 	mux.HandleFunc("POST /api/chats/{id}/delete", server.authorized(server.deleteChat))
+	mux.HandleFunc("POST /api/chats/{id}/rename", server.authorized(server.renameChat))
 	mux.HandleFunc("POST /api/chats/{id}/tasks/{task}/stop", server.authorized(server.stopTask))
 	mux.HandleFunc("POST /api/browser/clear", server.authorized(server.clearBrowser))
 	for path, handler := range extensions.Handlers(func() {
@@ -159,6 +163,23 @@ func (ui *desktopUI) startRemote() {
 	for path, handler := range gitrepo.Handlers(phoneGitTarget{server}, githubconnector.Default.Authorizations) {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
+	// The Usage screen: this computer's ledger, as a server serves its own.
+	names := func(group, key string) (name string) {
+		server.onUI(func() { name = server.ui.usageNames(group, key) })
+		return name
+	}
+	for path, handler := range usage.Handlers(ui.usage, ui.prices, names, func() { server.onUI(ui.usageChanged) }) {
+		if path == "GET /api/usage" {
+			serve := handler
+			handler = func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("chat") == "" {
+					server.ui.noteAllLimits(r.Context())
+				}
+				serve(w, r)
+			}
+		}
+		mux.HandleFunc(path, server.authorized(handler))
+	}
 	mux.HandleFunc("GET /api/hooks", server.authorized(remoteapi.GetHooks))
 	mux.HandleFunc("POST /api/hooks", server.authorized(remoteapi.SaveHooks))
 	mux.HandleFunc("GET /api/chats/{id}/items/{index}/images/{n}", server.authorized(server.itemImage))
@@ -169,6 +190,10 @@ func (ui *desktopUI) startRemote() {
 	syncEngine := server.ui.syncEngine()
 	syncEngine.Identity = server.fingerprint
 	syncManifest, syncExport, syncImport := syncEngine.Routes()
+	pause, resume, moved := syncEngine.MoveRoutes()
+	mux.HandleFunc("POST /api/chats/{id}/pause", server.authorized(pause))
+	mux.HandleFunc("POST /api/chats/{id}/resume", server.authorized(resume))
+	mux.HandleFunc("POST /api/chats/{id}/moved", server.authorized(moved))
 	mux.HandleFunc("GET /api/sync/base", server.authorized(syncEngine.BaseRoute))
 	mux.HandleFunc("POST /api/sync/base", server.authorized(syncEngine.BaseRoute))
 	mux.HandleFunc("GET /api/sync/manifest", server.authorized(syncManifest))
@@ -181,6 +206,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("POST /api/send", server.authorized(server.send))
 	mux.HandleFunc("POST /api/stop", server.authorized(server.stop))
 	mux.HandleFunc("POST /api/approve", server.authorized(server.approve))
+	mux.HandleFunc("GET /api/review", server.authorized(server.review))
 	mux.HandleFunc("POST /api/answer", server.authorized(server.answer))
 	mux.HandleFunc("POST /api/preferences", server.authorized(server.setPreferences))
 	mux.HandleFunc("POST /api/memory", server.authorized(server.setMemory))
@@ -494,7 +520,7 @@ func chatSummary(chat *conversation) remoteapi.Chat {
 	status, blocked := agent.WrapUpStatus(chat.Items)
 	summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Running: chat.run != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
 	if chat.Subchat != nil {
-		summary.Parent = chat.Subchat.Parent
+		summary.Parent, summary.Ended = chat.Subchat.Parent, chat.Subchat.Ended
 	}
 	return summary
 }
@@ -505,7 +531,7 @@ func itemForPhone(chat *conversation, index int) remoteapi.Item {
 	}
 	versions := chat.branching()
 	item := chat.Items[index]
-	out := remoteapi.Item{ID: item.ID, Versions: remoteapi.ItemVersions(&versions, index), Kind: item.Kind, Text: agent.ToolText(item), Images: agent.ToolImageCount(item), Files: remoteapi.FileNames(item.Files)}
+	out := remoteapi.Item{ID: item.ID, Versions: remoteapi.ItemVersions(&versions, index), Kind: item.Kind, Text: agent.ToolText(item), Images: agent.ToolImageCount(item), Files: remoteapi.FileNames(item.Files), From: item.From}
 	if item.Kind != "tool" {
 		return out
 	}
@@ -541,7 +567,9 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 	remoteMetaValue.Model, remoteMetaValue.Effort, remoteMetaValue.Tier = ui.choiceLabel(chat.Config), chat.Config.Effort, chat.Config.ServiceTier
 	remoteMetaValue.Window = agent.ModelContextWindow(ui.resolveModel(chat.Config))
 	remoteMetaValue.Todo = todoForPhone(chat)
+	remoteMetaValue.Goal = remoteapi.GoalOf(chat.Goal.Snapshot())
 	remoteMetaValue.ContextUsage = ui.contextUsage(chat).Summary()
+	remoteMetaValue.Spent = ui.usage.ChatSpend(ui.prices, chat.ID)
 	remoteMetaValue.Tasks = append([]agent.BackgroundTaskInfo{}, chat.tasks.Snapshot()...)
 	if parent := ui.parentOf(chat); parent != nil {
 		remoteMetaValue.Parent, remoteMetaValue.ParentTitle = parent.ID, parent.Title
@@ -558,7 +586,7 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 		}
 		remoteMetaValue.Label, remoteMetaValue.Mark = run.turn.label, run.turn.mark
 		if run.approvalID != "" {
-			remoteMetaValue.Approval = &remoteapi.Approval{Chat: chat.ID, ID: run.approvalID, Title: run.approvalTitle, Preview: run.approvalPreview}
+			remoteMetaValue.Approval = &remoteapi.Approval{Chat: chat.ID, ID: run.approvalID, Title: run.approvalTitle, Preview: run.approvalPreview, Review: run.approvalReview}
 		}
 		if run.questionID != "" {
 			remoteMetaValue.Question = &remoteapi.Question{Chat: chat.ID, ID: run.questionID, Questions: run.questionList}
@@ -604,6 +632,17 @@ func (server *remoteServer) chatContext(writer http.ResponseWriter, req *http.Re
 	core.WriteJSON(writer, http.StatusOK, usage)
 }
 
+// compactions are the chat's last ones, before and after (#128).
+func (server *remoteServer) compactions(writer http.ResponseWriter, req *http.Request) {
+	var records []agent.CompactionRecord
+	server.onUI(func() {
+		if chat := server.ui.chatByID(req.PathValue("id")); chat != nil {
+			records = chat.Compaction.List()
+		}
+	})
+	core.WriteJSON(writer, http.StatusOK, map[string]any{"records": records})
+}
+
 // mentions are what a chat's composer offers after "@" (?chat=, a new
 // chat's without it).
 func (server *remoteServer) mentions(writer http.ResponseWriter, req *http.Request) {
@@ -635,7 +674,20 @@ func (server *remoteServer) chat(writer http.ResponseWriter, req *http.Request) 
 	core.WriteJSON(writer, http.StatusOK, out)
 }
 
-func (server *remoteServer) deleteChat(writer http.ResponseWriter, req *http.Request) {
+// renameChat gives a chat the title typed on the phone, as Rename in the sidebar does.
+func (server *remoteServer) renameChat(writer http.ResponseWriter, req *http.Request) {
+	var args struct {
+		Title string `json:"title"`
+	}
+	if core.ReadJSON(req, &args) != nil {
+		core.Fail(writer, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	title := remoteapi.CleanChatTitle(args.Title)
+	if title == "" {
+		core.Fail(writer, http.StatusBadRequest, "A chat needs a title")
+		return
+	}
 	found := false
 	server.onUI(func() {
 		chat := server.ui.chatByID(req.PathValue("id"))
@@ -643,15 +695,33 @@ func (server *remoteServer) deleteChat(writer http.ResponseWriter, req *http.Req
 			return
 		}
 		found = true
-		server.ui.removeChat(chat)
-		delete(server.dirty, chat)
-		delete(server.meta, chat)
+		server.ui.setChatTitle(chat, title)
 	})
 	if !found {
 		core.Fail(writer, http.StatusNotFound, "This chat no longer exists")
 		return
 	}
-	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
+	core.WriteJSON(writer, http.StatusOK, map[string]any{"ok": true, "title": title})
+}
+
+func (server *remoteServer) deleteChat(writer http.ResponseWriter, req *http.Request) {
+	var deleted []string // the chat and its subchats at every level
+	server.onUI(func() {
+		chat := server.ui.chatByID(req.PathValue("id"))
+		if chat == nil {
+			return
+		}
+		for _, gone := range server.ui.removeTree(chat) {
+			deleted = append(deleted, gone.ID)
+			delete(server.dirty, gone)
+			delete(server.meta, gone)
+		}
+	})
+	if len(deleted) == 0 {
+		core.Fail(writer, http.StatusNotFound, "This chat no longer exists")
+		return
+	}
+	core.WriteJSON(writer, http.StatusOK, map[string]any{"ok": true, "deleted": deleted})
 }
 
 // clearBrowser is Settings → Tools & extensions → Browsing data → Clear, asked from the phone.
@@ -889,6 +959,17 @@ func (server *remoteServer) send(writer http.ResponseWriter, req *http.Request) 
 			root = server.ui.cfg.Workspace
 		}
 	})
+	// /goal is 1loop's, as typed in the window (goal.go).
+	if command, ok := agent.ParseGoalCommand(body.Text); ok && len(body.Attachments) == 0 {
+		var problem, chatID string
+		server.onUI(func() { chatID, problem = server.ui.remoteGoal(body.Chat, root, command) })
+		if problem != "" {
+			core.Fail(writer, http.StatusBadRequest, problem)
+			return
+		}
+		core.WriteJSON(writer, http.StatusOK, map[string]string{"chat": chatID})
+		return
+	}
 	message, err := remoteapi.AttachedMessage(root, strings.TrimSpace(body.Text), body.Attachments)
 	if err != nil {
 		core.Fail(writer, 400, err.Error())
@@ -933,10 +1014,13 @@ func (ui *desktopUI) remoteSend(chatID, mode, workspace string, messageValue age
 		ui.startNew()
 	}
 	if chat != nil && chat.run != nil {
-		// Whatever the phone asked (an older app still says "queue"), a
-		// message sent while the agent works joins it at its next step, as
-		// one typed in the window does.
-		chat.steer = append(chat.steer, messageValue)
+		// As in the window: "send" or "queue" waits for the end of the
+		// task, "steer" joins it at its next step (#433).
+		if mode == "steer" {
+			chat.steer = append(chat.steer, messageValue)
+		} else {
+			chat.queue = append(chat.queue, messageValue)
+		}
 		ui.renderQueue()
 		ui.remote.metaChanged(chat)
 		return chat.ID, ""
@@ -987,10 +1071,20 @@ func (server *remoteServer) answer(writer http.ResponseWriter, req *http.Request
 	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
 }
 
+// review is the files of an edit waiting for approval (#242).
+func (server *remoteServer) review(writer http.ResponseWriter, req *http.Request) {
+	files := server.ui.backend.Review(req.URL.Query().Get("id"))
+	if files == nil {
+		core.Fail(writer, http.StatusNotFound, "This request was already answered")
+		return
+	}
+	core.WriteJSON(writer, http.StatusOK, map[string]any{"files": files})
+}
+
 func (server *remoteServer) approve(writer http.ResponseWriter, req *http.Request) {
 	var body struct {
-		ID    string `json:"id"`
-		Allow bool   `json:"allow"`
+		ID string `json:"id"`
+		agent.ApprovalAnswer
 	}
 	if core.ReadJSON(req, &body) != nil {
 		core.Fail(writer, http.StatusBadRequest, "Invalid request")
@@ -1000,7 +1094,7 @@ func (server *remoteServer) approve(writer http.ResponseWriter, req *http.Reques
 	server.onUI(func() {
 		for _, chat := range server.ui.chats {
 			if run := chat.run; run != nil && run.approvalID == body.ID && run.answer != nil {
-				run.answer(body.Allow) // closes the dialog on the computer too
+				run.answer(body.ApprovalAnswer) // closes the dialog on the computer too
 				found = true
 			}
 		}
@@ -1086,9 +1180,13 @@ func (server *remoteServer) limits(writer http.ResponseWriter, req *http.Request
 			defer wg.Done()
 			limits, err := server.ui.backend.ConnectionLimits(req.Context(), conn, keys[conn.ID])
 			if err != nil {
-				limits = agent.AccountLimits{Note: "Limits unavailable"}
+				limits = agent.LimitsAfterError(cached[conn.ID], err) // last good numbers, and why they are old
+			} else {
+				limits.Checked = time.Now()
 			}
-			limits.Checked = time.Now()
+			if limits.Checked.IsZero() {
+				limits.Checked = time.Now()
+			}
 			results[i] = limits
 		}()
 	}
@@ -1248,7 +1346,7 @@ func (ui *desktopUI) remoteModel(chatID, label, effort string, tier *string) str
 		if ui.current != nil {
 			ui.current.Config.Effort = effort
 		}
-		ui.model.row.SetTrailing(modelTrailing(choice, ui.cfg))
+		ui.showModelTrailing(choice, ui.cfg)
 		if ui.model.relayout != nil {
 			ui.model.relayout()
 		}
@@ -1265,7 +1363,7 @@ func (ui *desktopUI) remoteModel(chatID, label, effort string, tier *string) str
 		if ui.current != nil {
 			ui.current.Config.ServiceTier = *tier
 		}
-		ui.model.row.SetTrailing(modelTrailing(choice, ui.cfg))
+		ui.showModelTrailing(choice, ui.cfg)
 		ui.save()
 		ui.remote.settingsChanged()
 		ui.remote.metaChanged(ui.current)
@@ -1316,13 +1414,16 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 	var phones []fyne.CanvasObject
 	for i, pairedDevice := range ui.devices {
 		i := i
+		name := pairedDevice.Name
 		remove := newRow("Forget", iconTrash, styleChip, func() {
-			ui.devices = append(ui.devices[:i], ui.devices[i+1:]...)
-			ui.save()
-			if ui.remote != nil {
-				ui.remote.disconnectAll()
-			}
-			ui.prefs.show("Phone")
+			ui.confirm("Forget "+name+"?", name+" is unpaired from this computer: its access stops at once, and it must be paired again to use 1loop here.", "Forget", func() { // #428
+				ui.devices = append(ui.devices[:i], ui.devices[i+1:]...)
+				ui.save()
+				if ui.remote != nil {
+					ui.remote.disconnectAll()
+				}
+				ui.prefs.show("Phone")
+			})
 		})
 		phones = append(phones, settingRow(pairedDevice.Name, "Paired "+pairedDevice.Added.Format("2 Jan 2006 15:04"), remove))
 	}

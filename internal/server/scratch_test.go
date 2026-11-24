@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"time"
 
@@ -114,5 +115,50 @@ func TestServerMoveAddsTheProject(t *testing.T) {
 	}
 	if _, err := os.Stat(target + "/page.html"); err != nil {
 		t.Fatal("the files are copied")
+	}
+}
+
+func TestRenameChat(t *testing.T) {
+	server, root, call := testServer(t)
+	server.cfg = agent.Config{Provider: "compatible", ConnectionID: "c", Model: "m", BaseURL: "http://127.0.0.1:1", Workspace: root}
+	body, _ := json.Marshal(map[string]any{"text": "hello"})
+	if code, data := call("POST", "/api/send", bytes.NewReader(body)); code != 200 {
+		t.Fatalf("send: %d %s", code, data)
+	}
+	server.mu.Lock()
+	chat := server.chats[0]
+	id := chat.ID
+	server.mu.Unlock()
+	waitIdle(t, server, chat)
+
+	rename := func(chatID, title string) (int, string) {
+		raw, _ := json.Marshal(map[string]any{"title": title})
+		code, data := call("POST", "/api/chats/"+chatID+"/rename", bytes.NewReader(raw))
+		return code, string(data)
+	}
+	if code, data := rename(id, "  A new\n title  "); code != 200 {
+		t.Fatalf("rename: %d %s", code, data)
+	}
+	server.mu.Lock()
+	got := chat.Title
+	server.mu.Unlock()
+	if got != "A new title" {
+		t.Fatalf("title %q", got)
+	}
+	long := strings.Repeat("é", 120)
+	if code, _ := rename(id, long); code != 200 {
+		t.Fatalf("long title: %d", code)
+	}
+	server.mu.Lock()
+	got = chat.Title
+	server.mu.Unlock()
+	if len([]rune(got)) != 80 {
+		t.Fatalf("a long title keeps 80 characters, got %d", len([]rune(got)))
+	}
+	if code, _ := rename(id, "   "); code != 400 {
+		t.Fatalf("a blank title is refused: %d", code)
+	}
+	if code, _ := rename("nope", "x"); code != 404 {
+		t.Fatalf("an unknown chat: %d", code)
 	}
 }

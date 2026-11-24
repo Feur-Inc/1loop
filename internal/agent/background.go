@@ -37,6 +37,11 @@ type backgroundTask struct {
 	output lockedOutput
 	cancel context.CancelFunc
 	kill   func() // ends the task's process tree at once, when cancel alone would be late
+	done   chan struct{}
+	// waiters are background_task waits on it: a task that ends during one
+	// answers it, rather than waking the model with a message of its own.
+	waiters int
+	read    int // output bytes when the model last read it
 }
 
 // lockedOutput is an outputBuffer the command writes while the model reads.
@@ -49,6 +54,12 @@ func (out *lockedOutput) Write(p []byte) (int, error) {
 	out.mu.Lock()
 	defer out.mu.Unlock()
 	return out.buffer.Write(p)
+}
+
+func (out *lockedOutput) Total() int {
+	out.mu.Lock()
+	defer out.mu.Unlock()
+	return out.buffer.total
 }
 
 func (out *lockedOutput) String() string {
@@ -118,7 +129,7 @@ func (tasks *BackgroundTasks) start(begin func(io.Writer) (func() (int, error), 
 		return "", fmt.Errorf("%d background tasks are already running; stop one (background_task) or wait for one to end", running)
 	}
 	tasks.next++
-	task := &backgroundTask{info: BackgroundTaskInfo{ID: fmt.Sprint(tasks.next), Command: text, Running: true, Started: time.Now()}, cancel: cancel, kill: kill}
+	task := &backgroundTask{info: BackgroundTaskInfo{ID: fmt.Sprint(tasks.next), Command: text, Running: true, Started: time.Now()}, cancel: cancel, kill: kill, done: make(chan struct{})}
 	tasks.mu.Unlock()
 	wait, err := begin(&task.output)
 	if err != nil {
@@ -145,6 +156,7 @@ func (tasks *BackgroundTasks) start(begin func(io.Writer) (func() (int, error), 
 			task.info.ExitCode = -1
 		}
 		info := task.info
+		awaited := task.waiters > 0
 		tasks.forgetEndedLocked()
 		if tasks.listed && !slices.ContainsFunc(tasks.tasks, func(other *backgroundTask) bool { return other.info.Running }) {
 			tasks.listed = false
@@ -153,8 +165,9 @@ func (tasks *BackgroundTasks) start(begin func(io.Writer) (func() (int, error), 
 			everyTasks.mu.Unlock()
 		}
 		tasks.mu.Unlock()
+		close(task.done)
 		tasks.changed()
-		if tasks.OnFinish != nil {
+		if tasks.OnFinish != nil && !awaited {
 			tasks.OnFinish(info, WakeMessage(info, headAndTail(task.output.String(), 2000)))
 		}
 	}()
@@ -255,24 +268,26 @@ func WakeSummary(m Message) string {
 func backgroundToolDefinition() map[string]any {
 	return map[string]any{"type": "function", "function": map[string]any{
 		"name":        "background_task",
-		"description": "Look after commands started with shell's run_in_background: list them, read a task's output (its start and end, up to max_output_tokens; null: 10000), or stop one. You are told when a task ends, so do not poll in a loop.",
-		"parameters": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"action", "id", "max_output_tokens"}, "properties": map[string]any{
-			"action":            map[string]any{"type": "string", "enum": []string{"list", "output", "stop"}},
+		"description": "Look after commands started with shell's run_in_background. wait blocks until task id ends (or wait_seconds pass; null: 300, up to 600) and returns its end: use it rather than polling output or running sleep. output reads a task's output so far (start and end, up to max_output_tokens; null: 10000). list lists them; stop stops one. A task that ends while you do something else is reported to you.",
+		"parameters": map[string]any{"type": "object", "additionalProperties": false, "required": []string{"action", "id", "max_output_tokens", "wait_seconds"}, "properties": map[string]any{
+			"action":            map[string]any{"type": "string", "enum": []string{"wait", "output", "list", "stop"}},
 			"id":                map[string]any{"type": []string{"string", "null"}},
 			"max_output_tokens": map[string]any{"type": []string{"integer", "null"}},
+			"wait_seconds":      map[string]any{"type": []string{"integer", "null"}},
 		}},
 	}}
 }
 
 // backgroundTool answers background_task.
-func backgroundTool(tasks *BackgroundTasks, arguments string) (string, error) {
+func backgroundTool(ctx context.Context, tasks *BackgroundTasks, arguments string) (string, error) {
 	if tasks == nil {
 		return "", fmt.Errorf("Background tasks are not attached to this conversation")
 	}
 	var args struct {
-		Action    string
-		ID        *string
-		MaxTokens *int `json:"max_output_tokens"`
+		Action      string
+		ID          *string
+		MaxTokens   *int `json:"max_output_tokens"`
+		WaitSeconds *int `json:"wait_seconds"`
 	}
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		return "", err
@@ -306,16 +321,61 @@ func backgroundTool(tasks *BackgroundTasks, arguments string) (string, error) {
 	if task == nil {
 		return "", fmt.Errorf("No background task %s (only the last %d ended tasks are kept)", *args.ID, maxEndedTasks)
 	}
-	switch args.Action {
-	case "output":
-		tokens := 10000
-		if args.MaxTokens != nil {
-			tokens = min(50000, max(1000, *args.MaxTokens))
-		}
+	tokens := 10000
+	if args.MaxTokens != nil {
+		tokens = min(50000, max(1000, *args.MaxTokens))
+	}
+	// read is the task's state and output, remembered as read.
+	read := func() string {
 		tasks.mu.Lock()
 		info := task.info
+		task.read = task.output.Total()
 		tasks.mu.Unlock()
-		return describe(info) + "\n" + headAndTail(task.output.String(), tokens), nil
+		return describe(info) + "\n" + headAndTail(task.output.String(), tokens)
+	}
+	switch args.Action {
+	case "wait":
+		seconds := 300
+		if args.WaitSeconds != nil {
+			seconds = min(600, max(1, *args.WaitSeconds))
+		}
+		tasks.mu.Lock()
+		running := task.info.Running
+		if running {
+			task.waiters++
+		}
+		tasks.mu.Unlock()
+		if !running {
+			return read(), nil
+		}
+		timer := time.NewTimer(time.Duration(seconds) * time.Second)
+		defer timer.Stop()
+		select {
+		case <-task.done:
+			return read(), nil
+		case <-ctx.Done():
+		case <-timer.C:
+		}
+		tasks.mu.Lock()
+		task.waiters--
+		ended := !task.info.Running
+		tasks.mu.Unlock()
+		if ended { // it ended as the wait gave up: its end is here, not in a wake
+			return read(), nil
+		}
+		if ctx.Err() != nil {
+			return "", ctx.Err()
+		}
+		return fmt.Sprintf("Still running after %ds of waiting.\n", seconds) + read(), nil
+	case "output":
+		tasks.mu.Lock()
+		unchanged := task.info.Running && task.read > 0 && task.output.Total() == task.read
+		info := task.info
+		tasks.mu.Unlock()
+		if unchanged {
+			return describe(info) + "\nNo new output since your last read. Use action wait to block until it ends instead of reading again.", nil
+		}
+		return read(), nil
 	case "stop":
 		if !tasks.Stop(*args.ID) {
 			return "Task " + *args.ID + " was not running.", nil
@@ -343,6 +403,7 @@ func startBackground(ctx context.Context, tasks *BackgroundTasks, root, dir, com
 	taskCtx, cancel := context.WithCancel(context.Background())
 	cmd := platform.ShellCommand(taskCtx, command)
 	platform.WorkspaceCommandIn(cmd, root, dir, platform.WorkspaceYOLO(ctx))
+	platform.ApplyProjectEnv(ctx, cmd)
 	if sandboxed {
 		if err := platform.SandboxCommand(cmd, root); err != nil {
 			cancel()
@@ -370,16 +431,18 @@ func startBackground(ctx context.Context, tasks *BackgroundTasks, root, dir, com
 }
 
 func backgroundStarted(id, command string) string {
-	return "Started background task " + id + ": $ " + command + "\nIt has no time limit. You will be told when it ends, with the end of its output; read it meanwhile with background_task (action output) and stop it with action stop."
+	return "Started background task " + id + ": $ " + command + "\nIt has no time limit. To wait for it, call background_task with action wait (not sleep, not repeated output reads); you are also told when it ends while you do something else. Read it meanwhile with action output, stop it with action stop."
 }
 
 // startMachineBackground starts an approved command on the machine as a
 // task: stopping it ends the command and what it started there.
-func startMachineBackground(tasks *BackgroundTasks, machine Machine, root, command string) (string, error) {
+func startMachineBackground(ctx context.Context, tasks *BackgroundTasks, machine Machine, root, command string) (string, error) {
 	if tasks == nil {
 		return "", fmt.Errorf("Background tasks are not attached to this conversation")
 	}
+	// The task outlives the turn, but keeps the project's variables.
 	taskCtx, cancel := context.WithCancel(context.Background())
+	taskCtx = platform.WithProjectEnvPairs(taskCtx, platform.ProjectEnv(ctx))
 	begin := func(output io.Writer) (func() (int, error), error) {
 		return machine.Start(taskCtx, root, command, output)
 	}

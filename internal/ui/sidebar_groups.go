@@ -6,12 +6,14 @@ import (
 	"fmt"
 	"path"
 	"slices"
+	"strconv"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 
+	"1loop/internal/agent"
 	registry "1loop/internal/settings"
 )
 
@@ -21,8 +23,11 @@ const groupChatLimit = 5
 // sideChat is a chat as the sidebar lists it: this computer's, a machine's
 // or a server's.
 type sideChat struct {
+	target   string // the server it is on, "" here: a moved chat has its ID on both
 	id       string
 	parent   string // a subchat's parent, "" for another chat
+	ended    string // how a subchat's last turn ended: done, stopped or failed
+	seen     bool   // the user opened it since that end: its dot is gone, as an unread marker
 	title    string
 	folder   string // its project, or a worktree of it
 	scratch  bool   // in a folder 1loop made for it: listed under No folder
@@ -31,14 +36,17 @@ type sideChat struct {
 	blocked  bool   // that wrap-up waits on the user
 	selected bool
 	open     func()
+	window   func() // opens it in a new window (middle click), nil when it cannot have one
 	menu     []menuAction
 	text     func() []string // its messages, for search; nil when they are not at hand
-	subchats []sideChat      // listed under it, whatever their folder (nestSubchats)
+	subchats []sideChat      // listed under it, whatever their folder, each with its own (nestSubchats)
+	group    string          // the key of the group it is listed in (groupKey), once listed
 }
 
 // nestSubchats puts each subchat under its parent, wherever its folder is
-// (its worktree, or a parent's scratch folder). One whose parent is not
-// listed stays a chat of its own.
+// (its worktree, or a parent's scratch folder), as a tree: a subchat's own
+// subchats go under it, down to agent.MaxSubchatDepth. One whose parent is
+// not listed stays a chat of its own, and so does one of a loop of links.
 func nestSubchats(chats []sideChat) []sideChat {
 	listed := map[string]bool{}
 	for _, chat := range chats {
@@ -53,20 +61,52 @@ func nestSubchats(chats []sideChat) []sideChat {
 		}
 		top = append(top, chat)
 	}
+	placed := map[string]bool{}
+	var grow func(chat sideChat, depth int) sideChat
+	grow = func(chat sideChat, depth int) sideChat {
+		placed[chat.id] = true
+		chat.subchats = nil
+		for _, sub := range children[chat.id] {
+			if !placed[sub.id] && depth < agent.MaxSubchatDepth {
+				chat.subchats = append(chat.subchats, grow(sub, depth+1))
+			}
+		}
+		return chat
+	}
 	for i := range top {
-		top[i].subchats = children[top[i].id]
+		top[i] = grow(top[i], 0)
+	}
+	for _, chat := range chats { // in no tree from the top: listed on its own
+		if !placed[chat.id] {
+			top = append(top, grow(chat, 0))
+		}
 	}
 	return top
 }
 
-// openHere says whether the chat or one of its subchats is open.
+// openHere says whether the chat or a subchat under it is open.
 func (chat sideChat) openHere() bool {
-	return chat.selected || slices.ContainsFunc(chat.subchats, func(sub sideChat) bool { return sub.selected })
+	return chat.selected || slices.ContainsFunc(chat.subchats, sideChat.openHere)
 }
 
-// workingHere says whether the chat or one of its subchats is at work.
+// workingHere says whether the chat or a subchat under it is at work.
 func (chat sideChat) workingHere() bool {
-	return chat.running || slices.ContainsFunc(chat.subchats, func(sub sideChat) bool { return sub.running })
+	return chat.running || slices.ContainsFunc(chat.subchats, sideChat.workingHere)
+}
+
+// subchatState is a subchat's state as its dot in the sidebar shows it.
+func (chat sideChat) subchatState() string {
+	switch {
+	case chat.blocked && chat.running:
+		return agent.SubchatWaiting
+	case chat.running:
+		return agent.SubchatWorking
+	case chat.seen:
+		return "" // read since it ended: no dot
+	case chat.ended == agent.SubchatDone || chat.ended == agent.SubchatFailed:
+		return chat.ended
+	}
+	return "" // idle: not started yet, or stopped
 }
 
 // projectGroup is a project of the sidebar and the chats under it. The
@@ -99,86 +139,167 @@ func groupByProject[T any](projects []string, chats []T, folder func(T) string, 
 	return groups
 }
 
-// renderSidebar lists the projects as groups that fold, each with its own
-// chats. selectProject opens the new chat screen in a project or worktree;
-// projectActions are a project's menu after "New chat".
-func (ui *desktopUI) renderSidebar(projects []string, chats []sideChat, selectProject func(string), projectActions func(string) []menuAction) {
-	ui.sideChats = chats
-	worktrees := ui.worktreeMap()
-	var listed []string
-	for _, p := range projects {
-		if worktrees[p] == "" { // a worktree shows under its project
-			listed = append(listed, p)
-		}
-	}
-	opened := ui.projectOf(ui.cfg.Workspace)
+// renderSidebar lists every target's projects as groups that fold, each
+// with its own chats (#359): this computer's chats with no folder first,
+// then this computer's projects, each SSH machine's and the server's.
+func (ui *desktopUI) renderSidebar(groups []targetGroup) {
 	ui.projectList.RemoveAll()
 	ui.sideGlide.begin()
-	var scratch []sideChat
-	chats = slices.DeleteFunc(nestSubchats(chats), func(chat sideChat) bool {
-		if chat.scratch {
-			scratch = append(scratch, chat)
+	ui.sideRowsNext = make(map[string]*sideRow, len(ui.sideRows))
+	var all, scratch []sideChat
+	for i := range groups {
+		listed := groups[i].listed()
+		for j := range groups[i].chats {
+			groups[i].chats[j].group = groups[i].keyOf(listed, groups[i].chats[j])
 		}
-		return chat.scratch
-	})
-	if ui.server == nil && ui.cfg.MachineID == "" && (ui.cfg.InScratch() || len(scratch) > 0) {
+		all = append(all, groups[i].chats...)
+		groups[i].chats = slices.DeleteFunc(nestSubchats(groups[i].chats), func(chat sideChat) bool {
+			if chat.scratch {
+				scratch = append(scratch, chat)
+			}
+			return chat.scratch
+		})
+	}
+	ui.sideChats = all
+	if len(scratch) > 0 || ui.server == nil && ui.cfg.MachineID == "" && ui.cfg.InScratch() {
 		ui.addScratchGroup(scratch)
 	}
 	ui.sideOrder = append(ui.sideOrder[:0], scratch...)
-	for _, group := range groupByProject(listed, chats, func(chat sideChat) string { return chat.folder }, ui.projectOf) {
-		ui.sideOrder = append(ui.sideOrder, group.chats...)
-		p := group.project
-		folded := ui.foldedProjects[p]
-		name := "Other chats"
-		if p != "" {
-			name = ui.projectName(p)
-		}
-		icon := iconChevron
-		if folded {
-			icon = iconChevronRight
-		}
-		header := newRow(name, icon, styleNav, func() { ui.foldProject(p, !folded) })
-		header.accent = true
-		header.truncate = true
-		header.selected = p != "" && p == ui.cfg.Workspace && ui.current == nil
-		if state := ui.repoFor(p); p != "" && state.repo != nil {
-			header.trailing = state.repo.Current // the branch of the project's folder
-		}
-		if folded && groupRunning(group.chats) {
-			header.badge = iconDot // a hidden chat is at work
-		}
-		if p == "" {
-			ui.addSide("project:", header)
-		} else {
-			ui.addSide("project:"+p, ui.withMore(header, func(anchor fyne.CanvasObject) *sheet {
-				actions := []menuAction{{label: "New chat in " + name, icon: iconPlus, run: func() { selectProject(p); ui.startNew() }}}
-				return showMenu(ui.window, anchor, append(actions, projectActions(p)...))
-			}))
-		}
-		if folded {
-			continue
-		}
-		ui.addGroupChats(p, group.chats)
-		if p != "" && p == opened { // its worktrees, after its chats
-			for _, object := range ui.worktreeRows(p, selectProject) {
-				key := "worktree:" + p
-				if row := firstRow(object); row != nil {
-					key += ":" + row.text
-				}
-				ui.addSide(key, object)
-			}
-			ui.loadRepo(p, true, 20*time.Second)
-		}
+	for _, group := range groups {
+		ui.addTargetGroup(group)
 	}
+	ui.sideRows, ui.sideRowsNext = ui.sideRowsNext, nil
 	ui.sideGlide.end(ui.projectList)
 	if ui.sideLists != nil {
 		ui.sideLists.Refresh() // the groups changed height: lay the column out again
 	}
 }
 
+// offlineMark is what a project shows, in place of its branch, while
+// its target cannot be reached: down, out of the network or refusing the
+// sign-in. Short, for a narrow sidebar.
+const offlineMark = "offline"
+
+// addTargetGroup lists a target's projects, each with its chats, then its
+// chats of no listed project. A project of another target than this
+// computer shows the target's icon after its name, and offlineMark
+// while the target does not answer.
+func (ui *desktopUI) addTargetGroup(group targetGroup) {
+	target := group.target
+	open := func(folder string) { ui.openProjectOn(target, folder) }
+	opened := ""
+	if group.active {
+		opened = ui.projectOf(ui.cfg.Workspace)
+	}
+	for _, chats := range groupByProject(group.listed(), group.chats, func(chat sideChat) string { return chat.folder }, group.projectOf) {
+		ui.sideOrder = append(ui.sideOrder, chats.chats...)
+		p := chats.project
+		key := groupKey(target, p)
+		folded := ui.foldedProjects[key]
+		name := "Other chats"
+		if p != "" {
+			name = targetProjectName(target, p)
+		}
+		icon := iconChevron
+		if folded {
+			icon = iconChevronRight
+		}
+		header := newRow(name, icon, styleNav, func() { ui.foldProject(key, !folded) })
+		header.accent = true
+		header.truncate = true
+		header.mark = target.mark(ui.home)
+		header.selected = group.active && p != "" && p == ui.cfg.Workspace && ui.current == nil
+		if group.reach.state == reachOffline {
+			header.trailing = offlineMark
+		} else if state := ui.repoStateOn(target, p); p != "" && state != nil && state.repo != nil {
+			header.trailing = state.repo.Current // the branch of the project's folder
+		}
+		if folded && groupRunning(chats.chats) {
+			header.badge = iconDot // a hidden chat is at work
+		}
+		if p == "" {
+			ui.addSide("project:"+key, ui.reuseRow("project:"+key, header, nil, nil))
+		} else {
+			ui.addSide("project:"+key, ui.reuseRow("project:"+key, header, nil, func(anchor fyne.CanvasObject) *sheet {
+				actions := []menuAction{{label: "New chat in " + name, icon: iconPlus, run: func() {
+					open(p)
+					if group.active {
+						ui.startNew() // the project may be open already, with a chat on screen
+					}
+				}}}
+				return showMenu(ui.window, anchor, append(actions, ui.projectActionsOn(group, p)...))
+			}))
+		}
+		if folded {
+			continue
+		}
+		if !group.known { // a server that has not answered: its chats are not at hand
+			placeholder := "Connecting…"
+			if group.reach.state == reachOffline {
+				placeholder = "Chats show once it's back"
+			}
+			// Cut short rather than widen the sidebar when it is narrow.
+			ui.addSide("empty:"+key, padded(4, 4, 38, 0, newFitLabel(placeholder, 13, colFaint)))
+			continue
+		}
+		ui.addGroupChats(key, p, chats.chats)
+		if p != "" && p == opened { // its worktrees, after its chats
+			rows, keys := ui.worktreeRows(p, open)
+			for i, object := range rows {
+				ui.addSide("worktree:"+key+":"+keys[i], object)
+			}
+			ui.loadRepo(p, true, 20*time.Second)
+		}
+	}
+}
+
 // addSide adds a sidebar entry under its key: the same chat or project
 // keeps its key from one rendering to the next, so it glides to its new
 // place instead of jumping there.
+// sideRow is a sidebar row kept from one rendering to the next: the
+// widget, its renderer and its icons are made once, and a rendering only
+// changes what changed (#475).
+type sideRow struct {
+	row    *tapRow
+	object fyne.CanvasObject                     // the row as listed (withMore, padded)
+	menu   func(anchor fyne.CanvasObject) *sheet // the ⋯ menu of the latest rendering
+}
+
+// reuseRow lists fresh, a row just described, as key: the row of that key
+// from the last rendering takes fresh's content and is listed in its stead,
+// refreshed only when something shows differently. menu, when given, is the
+// row's ⋯ (withMore); wrap places the row in the list.
+func (ui *desktopUI) reuseRow(key string, fresh *tapRow, wrap func(fyne.CanvasObject) fyne.CanvasObject, menu func(anchor fyne.CanvasObject) *sheet) fyne.CanvasObject {
+	if kept := ui.sideRows[key]; kept != nil && (kept.menu == nil) == (menu == nil) && kept.row.style == fresh.style {
+		row := kept.row
+		changed := row.text != fresh.text || row.icon != fresh.icon || row.selected != fresh.selected ||
+			row.accent != fresh.accent || row.truncate != fresh.truncate || row.trailing != fresh.trailing ||
+			row.detail != fresh.detail || row.badge != fresh.badge || row.mark != fresh.mark || row.markText != fresh.markText
+		row.text, row.icon, row.selected, row.accent, row.truncate = fresh.text, fresh.icon, fresh.selected, fresh.accent, fresh.truncate
+		row.trailing, row.detail, row.badge, row.mark, row.markText = fresh.trailing, fresh.detail, fresh.badge, fresh.mark, fresh.markText
+		row.onTap, row.onMiddle = fresh.onTap, fresh.onMiddle
+		kept.menu = menu
+		ui.sideRowsNext[key] = kept
+		if changed {
+			row.Refresh()
+		}
+		return kept.object
+	}
+	kept := &sideRow{row: fresh, menu: menu}
+	var object fyne.CanvasObject = fresh
+	if menu != nil {
+		object = ui.withMore(fresh, func(anchor fyne.CanvasObject) *sheet { return kept.menu(anchor) })
+	}
+	if wrap != nil {
+		object = wrap(object)
+	}
+	kept.object = object
+	if ui.sideRowsNext != nil {
+		ui.sideRowsNext[key] = kept
+	}
+	return object
+}
+
 func (ui *desktopUI) addSide(key string, object fyne.CanvasObject) {
 	ui.sideGlide.key(object, key)
 	ui.projectList.Add(object)
@@ -206,19 +327,20 @@ func (ui *desktopUI) addScratchGroup(chats []sideChat) {
 		return showMenu(ui.window, anchor, []menuAction{{label: "New chat with no folder", icon: iconPlus, run: ui.chooseNoFolder}})
 	}))
 	if !folded {
-		ui.addGroupChats(scratchGroup, chats)
+		ui.addGroupChats(scratchGroup, scratchGroup, chats)
 	}
 }
 
 // addGroupChats lists a project's chats under it, the first few unless it
-// was unfolded in full or the open chat is further down.
-func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
+// was unfolded in full or the open chat is further down. key is the
+// group's (groupKey).
+func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 	if len(chats) == 0 {
-		ui.addSide("empty:"+project, padded(4, 4, 38, 0, textLine("No chats yet", 13, colFaint)))
+		ui.addSide("empty:"+key, padded(4, 4, 38, 0, textLine("No chats yet", 13, colFaint)))
 		return
 	}
 	shown := chats
-	if !ui.allChatsShown[project] && len(chats) > groupChatLimit {
+	if !ui.allChatsShown[key] && len(chats) > groupChatLimit {
 		shown = chats[:groupChatLimit]
 		for _, chat := range chats[groupChatLimit:] {
 			if chat.openHere() {
@@ -232,6 +354,7 @@ func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 		row.accent = true
 		row.truncate = true
 		row.selected = chat.selected
+		row.onMiddle = chat.window
 		if chat.folder != project && project != "" && !chat.scratch {
 			row.trailing = path.Base(ui.worktreeLabel(chat.folder)) // a worktree's chat: its branch's last part, short
 		}
@@ -244,21 +367,16 @@ func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 		case chat.blocked:
 			row.badge = iconWaiting // its wrap-up waits on the user
 		}
-		ui.addSide("chat:"+chat.id, padded(0, 0, 28, 0, ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
-			return showMenu(ui.window, anchor, chat.menu)
-		})))
-		for _, sub := range chat.subchats { // indented under it, with the subchat mark
-			sub := sub
-			subRow := newRow(sub.title, iconSubchat, styleNav, sub.open)
-			subRow.accent, subRow.truncate, subRow.selected = true, true, sub.selected
-			subRow.size = 13
-			if sub.running {
-				subRow.badge = iconDot
-			}
-			ui.addSide("chat:"+sub.id, padded(0, 0, 44, 0, ui.withMore(subRow, func(anchor fyne.CanvasObject) *sheet {
-				return showMenu(ui.window, anchor, sub.menu)
-			})))
+		if nested, _ := nestedCount(chat.subchats); nested > 0 {
+			row.mark, row.markText = iconBranch, strconv.Itoa(nested)
 		}
+		key := "chat:" + chat.target + ":" + chat.id
+		ui.addSide(key, ui.reuseRow(key, row, func(object fyne.CanvasObject) fyne.CanvasObject {
+			return padded(0, 0, 28, 0, object)
+		}, func(anchor fyne.CanvasObject) *sheet {
+			return showMenu(ui.window, anchor, chat.menu)
+		}))
+		ui.addSubchatTree(chat)
 	}
 	if len(chats) > groupChatLimit {
 		label := fmt.Sprintf("Show %d more", len(chats)-len(shown))
@@ -266,12 +384,109 @@ func (ui *desktopUI) addGroupChats(project string, chats []sideChat) {
 			label = "Show less"
 		}
 		more := newRow(label, nil, styleNav, func() {
-			ui.allChatsShown[project] = len(shown) < len(chats)
+			ui.allChatsShown[key] = len(shown) < len(chats)
 			ui.renderChats()
 		})
 		more.ink = colFaint
 		more.size = 13
-		ui.addSide("more:"+project, padded(0, 0, 28, 0, more))
+		ui.addSide("more:"+key, padded(0, 0, 28, 0, more))
+	}
+}
+
+// A chat with more than this many subchats, all levels counted, lists one
+// summary row under it in place of its tree until that row is clicked
+// (#426), as Claude Code does.
+const subchatsFolded = 3
+
+// nestedCount counts subchats at every level, and how many of them failed.
+func nestedCount(subs []sideChat) (total, failed int) {
+	for _, sub := range subs {
+		total++
+		if sub.subchatState() == agent.SubchatFailed {
+			failed++
+		}
+		deeper, deeperFailed := nestedCount(sub.subchats)
+		total += deeper
+		failed += deeperFailed
+	}
+	return total, failed
+}
+
+// nestedSummary is the text of the row that stands for a chat's subchats.
+func nestedSummary(total, failed int) string {
+	text := fmt.Sprintf("%d nested sessions", total)
+	if failed > 0 {
+		text += fmt.Sprintf(" · %d failed", failed)
+	}
+	return text
+}
+
+// addSubchatTree lists a chat's subchats under its row: the tree when they
+// are few; when they are many, a muted summary row the line bends into,
+// which unfolds the tree under it when clicked and folds it again. Until
+// the user clicks it, the tree is unfolded only while one of them is open.
+func (ui *desktopUI) addSubchatTree(chat sideChat) {
+	total, failed := nestedCount(chat.subchats)
+	if total <= subchatsFolded {
+		ui.addSubchatRows(chat.subchats, 1, trunkNone)
+		return
+	}
+	shown, chosen := ui.subchatsShown[chat.id]
+	if !chosen {
+		shown = slices.ContainsFunc(chat.subchats, sideChat.openHere)
+	}
+	trunk := trunkLast // folded: the line ends on the summary
+	if shown {
+		trunk = trunkThrough
+	}
+	summary := newRow(nestedSummary(total, failed), nil, styleNav, func() {
+		if ui.subchatsShown == nil {
+			ui.subchatsShown = map[string]bool{}
+		}
+		ui.subchatsShown[chat.id] = !shown
+		ui.renderChats()
+	})
+	summary.ink, summary.size, summary.truncate = colMuted, 13, true
+	summary.tips = ui.tips               // the whole text while hovered, when cut short
+	summary.endInset = moreButtonInset() // its warning in line with the dots of the rows with a ⋯
+	if failed > 0 {
+		summary.badge = iconWarning
+	}
+	ui.addSide("nested:"+chat.id, padded(0, 0, 28, 0, container.NewBorder(nil, nil, newSubchatGuide(1, trunk), nil, summary)))
+	if shown {
+		ui.addSubchatRows(chat.subchats, 1, trunkNone)
+	}
+}
+
+// addSubchatRows lists subchats under their parent's row as a tree, as
+// Claude Code does: plain text, each level one step further in, a line down
+// the left of the first level that bends into its last subchat, and the
+// state's dot at the right. trunk is what that line does beside rows under
+// the first level.
+func (ui *desktopUI) addSubchatRows(subs []sideChat, depth int, trunk treeTrunk) {
+	for i, sub := range subs {
+		sub := sub
+		own := trunk // a deeper row: the line of its first-level ancestor
+		if depth == 1 {
+			own = trunkThrough
+			if i == len(subs)-1 {
+				own = trunkLast
+			}
+		}
+		subRow := newRow(sub.title, nil, styleNav, sub.open)
+		subRow.accent, subRow.truncate, subRow.selected = true, true, sub.selected
+		subRow.onMiddle = sub.window
+		subRow.size = 13
+		subRow.badge = subchatBadge(sub.subchatState())
+		guide := newSubchatGuide(depth, own)
+		ui.addSide("chat:"+sub.id, padded(0, 0, 28, 0, container.NewBorder(nil, nil, guide, nil, ui.withMore(subRow, func(anchor fyne.CanvasObject) *sheet {
+			return showMenu(ui.window, anchor, sub.menu)
+		}))))
+		below := own // under it, the line runs on only if more subchats follow
+		if own == trunkLast {
+			below = trunkNone
+		}
+		ui.addSubchatRows(sub.subchats, depth+1, below)
 	}
 }
 
@@ -292,11 +507,12 @@ func (ui *desktopUI) foldProject(project string, folded bool) {
 
 // sideActions is the labelled block at the top of the sidebar.
 func (ui *desktopUI) sideActions() fyne.CanvasObject {
-	ui.newChat = newRow("New chat", iconPlus, styleNav, ui.startNew)
+	// They act on the pane with the focus, in a split window (panes.go).
+	ui.newChat = newRow("New chat", iconPlus, styleNav, func() { ui.focused().startNew() })
 	ui.newChat.trailing = ui.shortcutLabel(registry.ShortcutNewChat)
-	ui.searchRow = newRow("Search", iconSearch, styleNav, ui.search)
+	ui.searchRow = newRow("Search", iconSearch, styleNav, func() { ui.focused().search() })
 	ui.searchRow.trailing = ui.shortcutLabel(registry.ShortcutSearch)
-	add := newRow("Add project", iconFolderAdd, styleNav, ui.addProject)
+	add := newRow("Add project", iconFolderAdd, styleNav, func() { ui.focused().addProject() })
 	add.trailing = ui.shortcutLabel(registry.ShortcutNewProject)
 	return container.New(layout.NewCustomPaddedVBoxLayout(1), ui.newChat, ui.searchRow, add)
 }

@@ -65,19 +65,21 @@ import kotlinx.coroutines.delay
  * the chat) and the mini preview of what it does and its tasks. Small by
  * design: it never covers the screen. It moves anywhere by dragging, settles
  * on a side when let go near it (BadgeWindow), and goes away on the ✕ ring.
- * A question from the agent opens it on the question, answered there.
+ * A question from the agent, an approval, or the next-step card at the end of
+ * a turn opens it on that card, answered there as in the chat.
  */
 @Composable
 fun StatusBadge(
     ui: BadgeUi, onStop: (String) -> Unit, onTalk: (String) -> Unit,
     onAnswer: (Questions, Map<String, String>) -> Unit, onTyping: (Boolean) -> Unit,
-    onDismiss: (String) -> Unit,
+    onDismiss: (String) -> Unit, onApprove: (Approval, Boolean) -> Unit, onReply: (String, String) -> Unit,
 ) {
     val status by AgentStatus.status.collectAsState()
     val run = status ?: return
     var open by remember { mutableStateOf(false) }
     var preview by remember { mutableStateOf(false) }
-    LaunchedEffect(run.question?.id) { if (run.question != null) open = true }
+    // What waits on the user (a question, an approval, the next-step card) opens it.
+    LaunchedEffect(run.waiting) { if (run.waiting != null) open = true }
     // Moving it folds the pill: the badge alone follows the finger.
     LaunchedEffect(ui.dragging) { if (ui.dragging) open = false }
     SideEffect { ui.expanded = open && !run.phoneUse }
@@ -142,9 +144,14 @@ fun StatusBadge(
                 val edgeFirst = listOf(mark) + buttons + label
                 for (part in if (ui.onRight) edgeFirst.reversed() else edgeFirst) part()
             }
-            val question = run.question
-            if (question != null) QuestionCard(question, onAnswer, onTyping)
-            else if (preview) Preview(run)
+            when (run.card) {
+                BadgeCard.Question -> QuestionCard(run.question!!, onAnswer, onTyping)
+                BadgeCard.Approval -> ApprovalCard(run.approval!!, onApprove)
+                BadgeCard.NextStep -> Box(Modifier.padding(top = 6.dp).widthIn(max = 300.dp)) {
+                    NextStepCard(run.nextStep!!, onReply = { onReply(run.chat, it) })
+                }
+                BadgeCard.Preview -> if (preview) Preview(run)
+            }
         }
     }
 }
@@ -221,6 +228,33 @@ private fun QuestionCard(request: Questions, onAnswer: (Questions, Map<String, S
                 focus.requestFocus()
                 keyboard?.show()
             }
+        }
+    }
+}
+
+/** A tool waiting to be allowed: the chat's approval sheet, small enough for the badge. */
+@Composable
+private fun ApprovalCard(approval: Approval, onApprove: (Approval, Boolean) -> Unit) {
+    Column(
+        Modifier.padding(top = 6.dp).widthIn(max = 300.dp).clip(RoundedCornerShape(14.dp)).background(Palette.surface)
+            .border(1.dp, Palette.borderSoft, RoundedCornerShape(14.dp)).padding(12.dp),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            WorkRing("approval", 24.dp)
+            Spacer(Modifier.width(8.dp))
+            Text(approval.title, style = Type.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
+        }
+        Text("1loop needs your approval to perform this action on the computer.", style = Type.small)
+        if (approval.preview.isNotEmpty()) {
+            Text(
+                approval.preview, style = Type.small.copy(color = Palette.text), maxLines = 6, overflow = TextOverflow.Ellipsis,
+                modifier = Modifier.fillMaxWidth().clip(RoundedCornerShape(10.dp)).background(Palette.code).padding(horizontal = 10.dp, vertical = 8.dp),
+            )
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(8.dp, Alignment.End)) {
+            Pill("Deny") { onApprove(approval, false) }
+            Pill("Allow", primary = true) { onApprove(approval, true) }
         }
     }
 }

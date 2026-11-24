@@ -23,6 +23,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 
+	"1loop/internal/core"
 	"1loop/internal/githubconnector"
 	"1loop/internal/gitrepo"
 )
@@ -253,10 +254,10 @@ func referenceCard(ref gitrepo.Ref, entry *referenceCache) [][]tipRun {
 		lines = append(lines, []tipRun{
 			{fmt.Sprintf("+%d", item.Additions), colAdded},
 			{fmt.Sprintf(" −%d", item.Deletions), colDanger},
-			{fmt.Sprintf(" · %s · %s · %s ← %s", plural(item.Files, "file"), plural(item.Commits, "commit"), item.Base, item.Head), colMuted},
+			{fmt.Sprintf(" · %s · %s · %s ← %s", core.Plural(item.Files, "file"), core.Plural(item.Commits, "commit"), item.Base, item.Head), colMuted},
 		})
 	} else {
-		line := plural(item.Comments, "comment")
+		line := core.Plural(item.Comments, "comment")
 		if len(item.Labels) > 0 {
 			line += " · " + strings.Join(item.Labels, ", ")
 		}
@@ -270,13 +271,6 @@ func stateName(state string) string {
 		return ""
 	}
 	return strings.ToUpper(state[:1]) + state[1:]
-}
-
-func plural(n int, word string) string {
-	if n == 1 {
-		return "1 " + word
-	}
-	return fmt.Sprintf("%d %ss", n, word)
 }
 
 // openReference shows an issue or pull request in the side panel.
@@ -356,7 +350,7 @@ func referenceView(detail *gitrepo.Detail, refresh func()) fyne.CanvasObject {
 	if detail.Pull {
 		meta += fmt.Sprintf(" · %s ← %s · +%d −%d", detail.Base, detail.Head, detail.Additions, detail.Deletions)
 	}
-	open := newRow("Open on GitHub", nil, styleOutline, func() { openLink(detail.URL) })
+	open := newRow("Open on GitHub", nil, styleOutline, func() { openInBrowser(detail.URL) })
 	again := newRow("Refresh", nil, styleOutline, refresh)
 	header := padded(12, 8, 16, 16, container.NewVBox(
 		container.NewBorder(nil, nil, textLine(stateName(detail.State), 12.5, stateColor(detail.State)), container.NewHBox(again, open)),
@@ -367,7 +361,12 @@ func referenceView(detail *gitrepo.Detail, refresh func()) fyne.CanvasObject {
 		name  string
 		count int
 		build func() fyne.CanvasObject
-	}{{"Conversation", len(detail.Posts), func() fyne.CanvasObject { return newKineticVScroll(conversationView(detail)) }}}
+	}{{"Conversation", len(detail.Posts), func() fyne.CanvasObject {
+		media := &mdMedia{} // its images and videos (markdown_media.go)
+		scroll := newKineticVScroll(conversationView(detail, media))
+		media.relayout = scroll.Refresh
+		return scroll
+	}}}
 	if detail.Pull {
 		views = append(views,
 			struct {
@@ -419,13 +418,14 @@ func stateColor(state string) color.NRGBA {
 	return colMuted
 }
 
-// conversationView is the description, then the comments and reviews.
-func conversationView(detail *gitrepo.Detail) fyne.CanvasObject {
+// conversationView is the description, then the comments and reviews,
+// with their images and videos, as GitHub shows them.
+func conversationView(detail *gitrepo.Detail, media *mdMedia) fyne.CanvasObject {
 	box := container.New(layout.NewCustomPaddedVBoxLayout(14))
 	post := func(heading, text string) {
 		parts := []fyne.CanvasObject{plainFlow(heading, 12.5, colMuted)}
 		if strings.TrimSpace(text) != "" {
-			parts = append(parts, newMarkdownView(text).box)
+			parts = append(parts, newMarkdownMediaView(text, media).box)
 		}
 		box.Add(container.NewVBox(parts...))
 	}

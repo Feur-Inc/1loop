@@ -39,3 +39,39 @@ shows every change.
   back), and at 60 Hz otherwise, so a 120 or 165 Hz screen gets every
   refresh while it matters and idle costs what it did. The caret's short
   fade doesn't count. The browser keeps 60.
+- `internal/painter/font.go` (walkString): a tab is found at its index in
+  the whole text, not in the run of one font it is in. After a change of
+  font (an emoji between words), each tab shaped a range starting too
+  early, so text before it was drawn again, partly in the emoji's font
+  (1loop #438: a copied table row pasted in the composer looked broken).
+  `internal/painter/font_tab_test.go` checks it.
+- `canvas/blur.go`, `internal/painter/gl/blur*.go`, `draw.go`, `painter.go`
+  (#464): `canvas.Blur`, a backdrop filter. The GL painter copies the
+  pixels already drawn under it, blurs them with dual Kawase passes into
+  framebuffer objects at halving sizes, and draws them back clipped to its
+  rounded corners. Off (`canvas.BlurSupported`) on CPU renderers and GL
+  older than 3.0. The painter now remembers its clip and output size.
+- `canvas/shader.go` (`Watch`, `Uses`), `internal/painter/gl/shader_user.go`
+  (#464): the painter says whether a shader uses given uniforms.
+- `driver/desktop/pointer.go`, `internal/driver/glfw/window_desktop.go`
+  (#464): `desktop.OnPointer` hears every pointer move, press and exit over
+  a window, whatever object is under it.
+- `internal/driver/glfw/window.go` (Resize), `window_desktop.go`,
+  `window_wasm.go`: a window is never sized larger than the work area of
+  its screen (glfw's work area, the screen less its panels), or than nine
+  tenths of the screen where the platform gives no smaller work area
+  (1loop #512: the first 1180×760 window went under a 54 px panel on a
+  1280×800 screen). The window is also created at that size (primary
+  screen): on Wayland the compositor keeps the size a window is created
+  with, and the canvas was stretched over it. `window_workarea_test.go`
+  checks the arithmetic.
+- `internal/driver/glfw/window_desktop.go` (scaled): on Wayland, a change of
+  content scale also throws the text textures away, as RescaleContext does.
+  They are kept by text and colour, so text drawn before the compositor's
+  fractional scale arrived was stretched from 1.0 to 1.25.
+- `internal/painter/gl/draw.go` (roundToPixelCoords): a texture's
+  rectangle keeps the size its texture is drawn at (`round(size × scale)`)
+  instead of the distance between its rounded edges, which changed with
+  its position at a fractional scale: at 1.25 the logo's ring (26 pixels)
+  was drawn 26×25, stretched and resampled out of round, and icons and text
+  were resampled by a pixel. `round_test.go` checks it.

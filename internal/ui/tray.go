@@ -129,20 +129,12 @@ func (ui *desktopUI) startTray(a fyne.App) {
 // syncTray follows the chats' states. The icon and the menu are only sent
 // to the tray host when they change.
 func (ui *desktopUI) syncTray() {
+	ui.backdropState() // the shader background follows the same state (#464)
 	tray := ui.tray
 	if tray == nil {
 		return
 	}
-	chats := make([]trayChat, len(ui.chats))
-	for i, chat := range ui.chats {
-		chats[i] = trayChat{title: chat.Title, failed: chat.failed}
-		if run := chat.run; run != nil {
-			chats[i].running = true
-			chats[i].waiting = run.approval != nil || run.questions != nil
-			chats[i].started = run.started.UnixNano()
-		}
-	}
-	status := summarizeTray(chats)
+	status := ui.chatsStatus()
 	tray.chat = nil
 	title := ""
 	if status.chat >= 0 {
@@ -154,14 +146,34 @@ func (ui *desktopUI) syncTray() {
 		tray.app.SetSystemTrayIcon(trayIconFor(status.state))
 	}
 	work := status.label(title)
-	if menu := fmt.Sprint(work, tray.hidden); menu != tray.menu {
+	today := todayText(ui.todayUsage())
+	if menu := fmt.Sprint(work, tray.hidden, today); menu != tray.menu {
 		tray.menu = menu
-		traySetTooltip("1loop · " + work)
-		ui.buildTrayMenu(work, status.chat >= 0)
+		tooltip := "1loop · " + work
+		if today != "" {
+			tooltip += " · today " + today
+		}
+		traySetTooltip(tooltip)
+		ui.buildTrayMenu(work, status.chat >= 0, today)
 	}
 }
 
-func (ui *desktopUI) buildTrayMenu(work string, chat bool) {
+// chatsStatus sums up the chats: idle, working, waiting for the user or
+// failed, and the chat that says so.
+func (ui *desktopUI) chatsStatus() trayStatus {
+	chats := make([]trayChat, len(ui.chats))
+	for i, chat := range ui.chats {
+		chats[i] = trayChat{title: chat.Title, failed: chat.failed}
+		if run := chat.run; run != nil {
+			chats[i].running = true
+			chats[i].waiting = run.approvalID != "" || run.questions != nil
+			chats[i].started = run.started.UnixNano()
+		}
+	}
+	return summarizeTray(chats)
+}
+
+func (ui *desktopUI) buildTrayMenu(work string, chat bool, today string) {
 	tray := ui.tray
 	toggle := fyne.NewMenuItem("Hide window", ui.hideWindow)
 	if tray.hidden {
@@ -169,8 +181,7 @@ func (ui *desktopUI) buildTrayMenu(work string, chat bool) {
 	}
 	status := fyne.NewMenuItem(work, func() {
 		if slices.Contains(ui.chats, tray.chat) {
-			ui.openChat(tray.chat)
-			ui.showWindow()
+			ui.openWhereShown(tray.chat)
 		}
 	})
 	status.Disabled = !chat
@@ -178,14 +189,25 @@ func (ui *desktopUI) buildTrayMenu(work string, chat bool) {
 		ui.startNew()
 		ui.showWindow()
 	})
+	if today == "" {
+		today = "nothing yet"
+	}
+	spent := fyne.NewMenuItem("Spent today: "+today, func() {
+		ui.showUsage()
+		ui.showWindow()
+	})
 	quit := fyne.NewMenuItem("Quit", ui.quit)
 	quit.IsQuit = true
-	tray.app.SetSystemTrayMenu(fyne.NewMenu("1loop", toggle, fyne.NewMenuItemSeparator(), status, newChat, fyne.NewMenuItemSeparator(), quit))
+	tray.app.SetSystemTrayMenu(fyne.NewMenu("1loop", toggle, fyne.NewMenuItemSeparator(), status, newChat, spent, fyne.NewMenuItemSeparator(), quit))
 }
 
 // closeWindow is the window's close button: hidden in the tray when the
 // setting allows it and a tray host shows the icon, quit otherwise.
 func (ui *desktopUI) closeWindow() {
+	if ui.otherWindowShown() { // another 1loop window stays: only this one goes (windows.go)
+		ui.closeAlone()
+		return
+	}
 	if ui.closeQuits || ui.tray == nil || !trayHostPresent() {
 		ui.quit()
 		return
@@ -224,17 +246,24 @@ func (ui *desktopUI) hideWindow() {
 	platform.Devf("ui", "window hidden in the tray")
 	ui.tray.hidden = true
 	ui.inForeground = false // notifications are for every chat now
-	ui.window.Hide()
+	for _, view := range ui.allWindows() {
+		view.window.Hide()
+	}
 	ui.syncTray()
 }
 
 // showWindow brings the window back and to the front.
 func (ui *desktopUI) showWindow() {
+	ui = ui.mainView() // the tray and the single-instance handoff bring back the main window
 	if ui.tray != nil && ui.tray.hidden {
 		platform.Devf("ui", "window shown from the tray")
 		ui.tray.hidden = false
+		for _, view := range ui.allWindows()[1:] { // the others hidden with it
+			view.window.Show()
+		}
 		ui.syncTray()
 	}
+	ui.hiddenAlone = false
 	ui.window.Show()
 	ui.window.RequestFocus()
 }

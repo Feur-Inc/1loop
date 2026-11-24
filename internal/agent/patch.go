@@ -150,8 +150,14 @@ func findLines(lines, want []string, start int, atEnd bool) int {
 	return -1
 }
 
-// applyHunks returns the file's new text.
+// applyHunks returns the file's new text. A file whose lines end mostly
+// with \r\n (Windows) is patched as \n and written back with \r\n: the
+// patch's lines carry no \r.
 func applyHunks(path, text string, hunks []patchHunk) (string, error) {
+	crlf := strings.Count(text, "\r\n") > strings.Count(text, "\n")/2
+	if crlf {
+		text = strings.ReplaceAll(text, "\r\n", "\n")
+	}
 	lines := strings.Split(text, "\n")
 	trailingNewline := strings.HasSuffix(text, "\n")
 	if trailingNewline {
@@ -185,6 +191,9 @@ func applyHunks(path, text string, hunks []patchHunk) (string, error) {
 	result := strings.Join(lines, "\n")
 	if trailingNewline || len(lines) > 0 {
 		result += "\n"
+	}
+	if crlf {
+		result = strings.ReplaceAll(result, "\n", "\r\n")
 	}
 	return result, nil
 }
@@ -273,8 +282,13 @@ func (backend *App) applyPatch(ctx context.Context, root, text string, begin fun
 	if deletes {
 		title = "Delete or change " + strings.Join(names, ", ") + "?"
 	}
-	if !backend.confirm(ctx, emit, title, diff) {
-		return "", diff, fmt.Errorf("Patch denied")
+	changes, diff, note, err := backend.reviewPatch(ctx, emit, title, diff, changes)
+	if err != nil {
+		return "", diff, err
+	}
+	names = names[:0]
+	for _, change := range changes {
+		names = append(names, change.targetRel)
 	}
 	begin()
 	// Recheck after the approval: a file may have changed while the user read.
@@ -306,7 +320,7 @@ func (backend *App) applyPatch(ctx context.Context, root, text string, begin fun
 			return "", diff, fmt.Errorf("%s: %w (the files before it in the patch were written)", change.rel, err)
 		}
 	}
-	return "Patch applied: " + strings.Join(names, ", ") + "\n" + diff, diff, nil
+	return "Patch applied: " + strings.Join(names, ", ") + "\n" + note + diff, diff, nil
 }
 
 func writeNewFile(path, text string) error {

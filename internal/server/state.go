@@ -9,6 +9,7 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"os"
@@ -24,6 +25,7 @@ import (
 	"1loop/internal/core"
 	"1loop/internal/remoteapi"
 	"1loop/internal/sshmachine"
+	"1loop/internal/usage"
 )
 
 type serverChat struct {
@@ -35,7 +37,10 @@ type serverChat struct {
 	Version  string              `json:"version,omitempty"`
 	Versions []agent.ChatVersion `json:"versions,omitempty"`
 	Todo     *agent.TodoState    `json:"todo"`
+	Goal     *agent.GoalState    `json:"goal,omitempty"` // its /goal (agent/goal.go)
 	Cache    *agent.ContextCache `json:"contextCache,omitempty"`
+	// Compaction is the one interrupted, and the last ones made (#128).
+	Compaction *agent.CompactionState `json:"compaction,omitempty"`
 	// ContextUsage is Claude Code's last count of the window by category.
 	ContextUsage *agent.ContextUsage     `json:"contextUsage,omitempty"`
 	grants       *agent.PermissionGrants // what request_permissions granted, until the server stops
@@ -43,8 +48,13 @@ type serverChat struct {
 	tasks        *agent.BackgroundTasks  // shell commands run in the background, until the server stops
 	Browsers     []browser.Info          `json:"browsers,omitempty"`
 	// Subchat links a subchat to the chat that started it (subchats.go).
-	Subchat      *agent.SubchatLink `json:"subchat,omitempty"`
+	Subchat *agent.SubchatLink `json:"subchat,omitempty"`
+	// ReportTo: the chats whose message caused the running turn, told when
+	// it ends (chats.go). Saved, so a turn cut off by a restart shows so.
+	ReportTo     []string `json:"reportTo,omitempty"`
+	hops         int      // messages between chats since the user last wrote (agent.TurnHops)
 	run          *serverRun
+	moving       bool // paused to move to another device: it starts nothing (chat_move.go)
 	tabs         []*serverTab
 	session      *browser.Session
 	queue, steer []agent.Message
@@ -58,6 +68,9 @@ type serverRun struct {
 	states       map[int]string
 	index        int
 	used         int
+	pause        *agent.PauseSignal
+	ended        chan struct{} // closed once the run is over
+	paused       bool          // it ended between two steps, to move
 	label, mark  string
 	tool         string // executing now, from tool_exec to its tool_result
 	approval     *remoteapi.Approval
@@ -75,15 +88,21 @@ type serverSettings struct {
 	MemoryOff         bool               `json:"memoryOff,omitempty"`
 	WrapUpOff         bool               `json:"wrapUpOff,omitempty"`
 	AutoResume        *agent.AutoResume  `json:"autoResume,omitempty"`
+	NamingModel       *agent.NamingModel `json:"namingModel,omitempty"`
 	// Worktrees of the projects, by folder: their chats belong to the project.
 	Worktrees map[string]string `json:"worktrees,omitempty"`
 	// SSH machines (machines.go), and the projects that are folders of one.
 	SSHMachines     []serverMachine   `json:"sshMachines,omitempty"`
 	ProjectMachines map[string]string `json:"projectMachines,omitempty"`
+	// Projects' environment variables (#408), by project folder.
+	ProjectEnv map[string]map[string]string `json:"projectEnv,omitempty"`
 }
 
 type headlessServer struct {
 	mu                         sync.Mutex
+	adminReady                 atomic.Bool   // its admin socket listens: "1loop-server pair" reaches it
+	usage                      *usage.Ledger // every model call's tokens (internal/usage)
+	prices                     *usage.Prices
 	terminalRevision           uint64
 	closing                    bool
 	ctx                        context.Context
@@ -95,6 +114,7 @@ type headlessServer struct {
 	worktrees                  map[string]string              // worktree folder → project (worktrees.go)
 	machines                   []serverMachine                // SSH machines (machines.go)
 	projectMachines            map[string]string              // project folder there → machine ID
+	projectEnv                 map[string]map[string]string   // project folder → its environment variables (project_env.go)
 	connected                  map[string]*sshmachine.Machine // machines used since the start, by ID
 	trust                      *hostTrust
 	cfg                        agent.Config
@@ -105,6 +125,7 @@ type headlessServer struct {
 	memoryOff                  bool                   // the agent's memory tool turned off
 	wrapUpOff                  bool                   // the next-step card (wrap_up tool) turned off
 	autoResume                 *agent.AutoResume      // what a rate limit does to a run, for every chat
+	namingModel                *agent.NamingModel     // the model that names new chats, nil for none
 	panelHomes                 map[string]*serverChat // project panels before the first prompt; not persisted
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
@@ -139,10 +160,14 @@ type headlessServer struct {
 	// which pairs the first device without the console (security.go).
 	setup     string
 	setupPort int
+	// proxied: a reverse proxy reaches it over plain HTTP (-http-listen),
+	// so the setup link names the proxy's address (proxy.go).
+	proxied bool
 	// Changes waiting for the next flush to the clients: a streamed answer
 	// reaches them at most ten times a second, as the desktop sends it.
 	pending  map[*serverChat]map[int]bool
 	flushing bool
+	installs map[string]*installJob // Install Chromium / Claude Code (install.go)
 }
 
 type serverEvent struct {
@@ -157,7 +182,9 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		name:         host,
 		root:         root,
 		dir:          dir,
-		backend:      &agent.App{Approvals: map[string]chan bool{}},
+		usage:        usage.Open(filepath.Join(dir, "usage.jsonl")),
+		prices:       usage.OpenPrices(filepath.Join(dir, "usage-prices.json")),
+		backend:      &agent.App{Approvals: map[string]chan agent.ApprovalAnswer{}},
 		keys:         map[string]string{},
 		pairs:        map[string]*serverPair{},
 		subs:         map[chan serverEvent]bool{},
@@ -195,6 +222,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		server.worktrees = settings.Worktrees
 		server.machines = settings.SSHMachines
 		server.projectMachines = settings.ProjectMachines
+		server.projectEnv = settings.ProjectEnv
 		server.cfg = settings.Config
 		server.connections = settings.Connections
 		if settings.Keys != nil {
@@ -205,6 +233,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		server.memoryOff = settings.MemoryOff
 		server.wrapUpOff = settings.WrapUpOff
 		server.autoResume = settings.AutoResume
+		server.namingModel = settings.NamingModel
 		if settings.ApprovalMode != "" {
 			server.approvalMode = settings.ApprovalMode
 		}
@@ -231,7 +260,8 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		}}
 		server.cfg.ConnectionID = server.connections[0].ID
 	}
-	browser.BrowserProfileOverride = filepath.Join(dir, "browser")
+	browser.BrowserProfileOverride = filepath.Join(dir, "browser") // and Install Chromium's, beside it
+	agent.ClaudeInstallDir = filepath.Join(dir, "claude-code")
 	server.engine = browser.NewBrowserEngine(ctx)
 	for _, chat := range server.chats {
 		if chat.Config.Workspace == "" {
@@ -246,13 +276,28 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		if chat.Cache == nil {
 			chat.Cache = &agent.ContextCache{}
 		}
+		if chat.Compaction == nil {
+			chat.Compaction = &agent.CompactionState{}
+		}
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
+		chat.Subchat.Restored(len(chat.ReportTo) > 0)
+		chat.ReportTo = nil
 	}
 	return server, nil
 }
 
 func (server *headlessServer) saveLocked() error {
 	return server.stateLocked()()
+}
+
+// saveOutsideLocked saves the state with server.mu released while it is
+// encoded and written (#520), and takes the lock back: whoever calls it
+// must check, after it, what another request may have changed meanwhile.
+func (server *headlessServer) saveOutsideLocked() error {
+	write := server.stateLocked()
+	server.mu.Unlock()
+	defer server.mu.Lock()
+	return write()
 }
 
 // stateLocked takes the state to save, under the lock, and returns what
@@ -276,7 +321,8 @@ func (server *headlessServer) stateLocked() (write func() error) {
 	for i, chat := range server.chats {
 		chats[i] = &serverChat{ID: chat.ID, Title: chat.Title, Config: chat.Config, History: append([]agent.Message{}, chat.History...),
 			Items: append([]agent.ChatItem{}, chat.Items...), Version: chat.Version, Versions: agent.CopyVersions(chat.Versions),
-			Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...)}
+			Todo: chat.Todo.Copy(), Goal: chat.Goal.Copy(), Cache: chat.Cache.Copy(), Compaction: chat.Compaction.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
+			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...)} // its parent: forgetting it detached every subchat on restart (#356)
 	}
 	devices := append([]remoteapi.PairedDevice{}, server.devices...)
 	server.saveCount++
@@ -326,6 +372,7 @@ func (server *headlessServer) close() {
 		}
 		chat.tasks.StopAll() // a background server must not outlive this one
 	}
+	agent.StopEveryClaude()
 	if err := server.saveLocked(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 	}
@@ -375,6 +422,7 @@ func (server *headlessServer) loadModels() {
 			continue
 		}
 		rows, err := server.backend.ConnectionModels(server.ctx, connection, keys[connection.ID])
+		server.prices.Learn(agent.ListedPrices(rows)) // what the catalog says its models cost
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "Models unavailable for %q: %v\n", connection.Name, err)
 			problems[connection.ID] = "Models unavailable"
@@ -501,6 +549,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 	return map[string]any{
 		"defaultPresets":      true,
 		"autoResume":          server.autoResume,
+		"namingModel":         server.namingModel,
 		"userPreferences":     server.instructions,
 		"preferencesEditable": true,
 		"memory":              !server.memoryOff,
@@ -526,7 +575,7 @@ func (server *headlessServer) summariesLocked() []remoteapi.Chat {
 		status, blocked := agent.WrapUpStatus(chat.Items)
 		summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
 		if chat.Subchat != nil {
-			summary.Parent = chat.Subchat.Parent
+			summary.Parent, summary.Ended = chat.Subchat.Parent, chat.Subchat.Ended
 			if server.subchatWorktreeLocked(chat) != "" {
 				summary.Branch = chat.Subchat.Branch
 			}
@@ -568,6 +617,7 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		}
 		meta.Todo = append(meta.Todo, item)
 	}
+	meta.Goal = remoteapi.GoalOf(chat.Goal.Snapshot())
 	meta.Used = agent.HistoryEstimate(chat.History) + agent.ContextOverhead(chat.Config)
 	if chat.run != nil {
 		meta.Label, meta.Mark, meta.Approval, meta.Question = chat.run.label, chat.run.mark, chat.run.approval, chat.run.question
@@ -584,6 +634,7 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 	}
 	meta.ContextStatus = agent.TaskContextText(chat.Config, meta.Used, meta.Window, server.classic, meta.Mark)
 	meta.ContextUsage = agent.ChatContextUsage(chat.Config, chat.History, chat.ContextUsage, server.classic).Summary()
+	meta.Spent = server.usage.ChatSpend(server.prices, chat.ID)
 	return meta
 }
 
@@ -606,6 +657,7 @@ func (server *headlessServer) itemLocked(chat *serverChat, index int) remoteapi.
 		Diff:     item.Diff,
 		Millis:   item.Millis,
 		Failed:   item.Failed,
+		From:     item.From,
 		State:    "done",
 	}
 	if chat.run != nil {
@@ -736,11 +788,13 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok {
 		cfg = agent.ResolveDefault(cfg, connection, server.choices)
 		cfg.CompactAt = connection.ModelOptions[cfg.Model].CompactAt
+		cfg.ConnectionName = connection.Name
 	}
 	cfg.APIKey = server.keys[cfg.ConnectionID]
 	if machine := server.machineLocked(cfg.MachineID); machine != nil {
 		cfg.Machine = machine // else the run refuses: its machine was removed
 	}
+	cfg.Env = server.projectEnvLocked(cfg.Workspace)
 	cfg.UserInstructions = server.instructions
 	cfg.WrapUpOff = server.wrapUpOff
 	if !server.memoryOff {
@@ -748,6 +802,7 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	}
 	cfg.Settings = server.settingsAccess()
 	cfg.Subchats = server.subchatAccess(chat)
+	cfg.Chats = server.chatAccess(chat)
 	cfg.ApprovalMode = agent.ApprovalFor(server.approvalMode, cfg)
 	if cfg.InScratch() { // change_directory; the phone has no folder picker for request_directory yet
 		cfg.Move = &agent.WorkspaceMove{}
@@ -758,8 +813,15 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	}
 	cfg.ClassicCompaction = server.classic
 	cfg.Todo = chat.Todo
+	if chat.Goal == nil {
+		chat.Goal = &agent.GoalState{}
+	}
+	cfg.Goal = chat.Goal
 	cfg.Tasks = server.chatTasksLocked(chat)
-	cfg.Cache = chat.Cache
+	if chat.Compaction == nil {
+		chat.Compaction = &agent.CompactionState{}
+	}
+	cfg.Cache, cfg.Compaction = chat.Cache, chat.Compaction
 	if chat.grants == nil {
 		chat.grants = &agent.PermissionGrants{}
 	}
@@ -769,6 +831,10 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	}
 	cfg.Review = chat.review
 	cfg.ContextKey = chat.ID + chat.Version
+	cfg.Usage = &agent.UsageTag{Ledger: server.usage, Chat: chat.ID}
+	if chat.Subchat != nil {
+		cfg.Usage.Parent = chat.Subchat.Parent
+	}
 	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok && cfg.Provider == "chatgptweb" {
 		cfg.WebSettings = connection.WebSettings // the tunnel as last saved, not as when the model was chosen
 	}
@@ -832,19 +898,24 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 }
 
 func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message, id string) {
-	chat.History = append(chat.History, m)
-	item := agent.PromptItem(id, m)
-	if m.Internal { // a background task's end: a note, not the user's words
-		item = agent.ChatItem{ID: id, Kind: "note", Text: agent.WakeSummary(m)}
+	if chat.moving { // it goes on with the chat, wherever that is
+		chat.queue = append(chat.queue, m)
+		return
 	}
-	index := server.addLocked(chat, item)
+	chat.History = append(chat.History, m)
+	chat.hops = agent.TurnHops(chat.hops, false, m)
+	// The user's words, another chat's under its name, or a note for
+	// 1loop's own (a task's end, a report).
+	index := server.addLocked(chat, agent.MessageItem(id, m))
 	ctx, cancel := context.WithCancel(server.ctx)
-	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait"}
+	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait",
+		pause: agent.NewPauseSignal(), ended: make(chan struct{})}
 	chat.run = run
 	if parent := server.parentLocked(chat); parent != nil { // its state in the parent's Tasks
 		server.broadcastLocked("meta", server.metaLocked(parent))
 	}
 	cfg := server.runConfigLocked(chat, run.capabilities)
+	cfg.Pause = run.pause
 	history := append([]agent.Message{}, chat.History...)
 	server.changedLocked(chat, index)
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
@@ -903,8 +974,12 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			return
 		}
 		chat.run = nil
+		defer close(run.ended)
 		ended := agent.SubchatDone
-		if err != nil {
+		paused := errors.Is(err, agent.ErrPaused)
+		if paused {
+			run.paused = true
+		} else if err != nil {
 			server.addLocked(chat, agent.ChatItem{Kind: "error", Text: err.Error()})
 			ended = agent.SubchatFailed
 			if ctx.Err() == context.Canceled {
@@ -922,7 +997,11 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			limits.Checked = time.Time{}
 			server.limitsCache[chat.Config.ConnectionID] = limits
 		}
-		if server.ctx.Err() != nil {
+		// And noted for the Usage page's pace, at most every 10 minutes.
+		if connection, ok := server.connectionLocked(chat.Config.ConnectionID); ok {
+			go server.noteLimits(connection, server.keys[connection.ID], 10*time.Minute)
+		}
+		if server.ctx.Err() != nil || paused || chat.moving {
 			return
 		}
 		if moved != "" { // the agent goes on in the new folder
@@ -939,9 +1018,11 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			next := chat.queue[0]
 			chat.queue = chat.queue[1:]
 			server.runLocked(chat, next)
+		} else if next, ok := chat.Goal.Next(chat.Config.Provider); ok && err == nil {
+			server.runLocked(chat, next) // the goal's next turn (agent/goal.go)
 		}
-		if chat.run == nil { // the last turn of the chain: a subchat reports
-			server.subchatEndedLocked(chat, ended)
+		if chat.run == nil { // the last turn of the chain: it reports to who caused it
+			server.turnEndedLocked(chat, ended)
 		}
 	}()
 }
@@ -973,11 +1054,8 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		chat.History = value.([]agent.Message)
 	case "injected":
 		m := value.(agent.Message)
-		if m.Internal {
-			index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: agent.WakeSummary(m)})
-		} else {
-			index = server.addLocked(chat, agent.PromptItem("", m))
-		}
+		chat.hops = agent.TurnHops(chat.hops, true, m)
+		index = server.addLocked(chat, agent.MessageItem("", m))
 	case "activity":
 		status := value.(agent.Activity)
 		run.mark = status.State
@@ -1029,7 +1107,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		run.mark, run.label = "approval", "Waiting for your answer"
 	case "approval":
 		data := value.(map[string]any)
-		run.approval = &remoteapi.Approval{Chat: chat.ID, ID: fmt.Sprint(data["id"]), Title: fmt.Sprint(data["title"]), Preview: fmt.Sprint(data["preview"])}
+		run.approval = &remoteapi.Approval{Chat: chat.ID, ID: fmt.Sprint(data["id"]), Title: fmt.Sprint(data["title"]), Preview: fmt.Sprint(data["preview"]), Review: data["review"] == true}
 		run.mark, run.label = "approval", "Waiting for your approval"
 	case "context_note", "note":
 		index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: value.(string)})
@@ -1047,6 +1125,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		chat.Config.SyncClaudeSession(len(chat.Items))
 	case "notice":
 		run.label = value.(string)
+	case "goal": // its state, time or tokens changed: the meta goes out with the change
 	}
 	server.changedLocked(chat, index)
 }
@@ -1063,9 +1142,11 @@ func (server *headlessServer) saveSettingsLocked() error {
 		MemoryOff:         server.memoryOff,
 		WrapUpOff:         server.wrapUpOff,
 		AutoResume:        server.autoResume,
+		NamingModel:       server.namingModel,
 		Worktrees:         server.worktrees,
 		SSHMachines:       server.machines,
 		ProjectMachines:   server.projectMachines,
+		ProjectEnv:        server.projectEnv,
 	})
 }
 
@@ -1074,4 +1155,58 @@ func (server *headlessServer) resolveModelLocked(cfg agent.Config) agent.Config 
 		return agent.ResolveDefault(cfg, connection, server.choices)
 	}
 	return cfg
+}
+
+// usageNames names the chats and connections the usage ledger keeps by id.
+func (server *headlessServer) usageNames(group, key string) string {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if group == "connection" {
+		if connection, ok := server.connectionLocked(key); ok {
+			return connection.Name
+		}
+		return ""
+	}
+	if chat := server.chatLocked(key); chat != nil {
+		return chat.Title
+	}
+	return ""
+}
+
+// noteLimits reads a subscription's usage windows into the usage ledger
+// (agent.App.NoteLimits) and keeps them as the account's current limits.
+func (server *headlessServer) noteLimits(connection agent.Connection, key string, every time.Duration) {
+	ctx, cancel := context.WithTimeout(server.ctx, 15*time.Second)
+	defer cancel()
+	limits, ok := server.backend.NoteLimits(ctx, connection, key, server.usage, every)
+	if !ok {
+		return
+	}
+	server.mu.Lock()
+	if server.limitsCache == nil {
+		server.limitsCache = map[string]agent.AccountLimits{}
+	}
+	server.limitsCache[connection.ID] = limits
+	server.mu.Unlock()
+}
+
+// noteAllLimits reads every subscription's windows that were not read in
+// the last minutes, before the Usage page shows their pace.
+func (server *headlessServer) noteAllLimits() {
+	server.mu.Lock()
+	connections := append([]agent.Connection(nil), server.connections...)
+	keys := make(map[string]string, len(server.keys))
+	for id, key := range server.keys {
+		keys[id] = key
+	}
+	server.mu.Unlock()
+	var wait sync.WaitGroup
+	for _, connection := range connections {
+		wait.Add(1)
+		go func() {
+			defer wait.Done()
+			server.noteLimits(connection, keys[connection.ID], 2*time.Minute)
+		}()
+	}
+	wait.Wait()
 }

@@ -38,7 +38,7 @@ func (view *settingsView) mark(key string, row fyne.CanvasObject) fyne.CanvasObj
 		panic("settings: " + key + " is not in internal/settings")
 	}
 	glow := canvas.NewRectangle(color.Transparent)
-	glow.CornerRadius = 10
+	glow.CornerRadius = rounded(10)
 	anchor := &settingAnchor{glow: glow, box: container.NewStack(glow, row)}
 	view.anchors[key] = anchor
 	return anchor.box
@@ -75,7 +75,9 @@ func (view *settingsView) find(query string) {
 // result is a found setting: its title, where it is and what it does.
 func (view *settingsView) result(setting registry.Setting) fyne.CanvasObject {
 	where := registry.SectionTitle(setting.Section)
-	if setting.Page != "" {
+	if setting.Page == UsagePage { // an entry of the menu
+		where = setting.Page
+	} else if setting.Page != "" {
 		where += " › " + setting.Page
 	}
 	text := container.New(layout.NewCustomPaddedVBoxLayout(3),
@@ -176,6 +178,8 @@ func (ui *desktopUI) settingsAccess() *agent.SettingsAccess {
 					value = ui.theme.themeSetting()
 				case registry.KeyAccent:
 					value = ui.theme.accentSetting()
+				case registry.KeyShaderFPS:
+					value = shaderFPS
 				case registry.KeyWorktreeSort:
 					value = ui.worktreeSort
 					if sortLabels[value] == "" {
@@ -213,6 +217,8 @@ func (ui *desktopUI) settingsAccess() *agent.SettingsAccess {
 					ui.setTheme(value)
 				case registry.KeyAccent:
 					ui.setAccent(value)
+				case registry.KeyShaderFPS:
+					ui.setShaderFPS(value)
 				case registry.KeyWorktreeSort:
 					ui.setWorktreeSort(value)
 				default:

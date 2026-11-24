@@ -146,6 +146,11 @@ func (ui *desktopUI) buildSettings() {
 		row := newRow(name, sectionIcons[section.ID], styleNav, func() { view.show(name) })
 		view.rows[name] = row
 		nav.Add(row)
+		if section.ID == registry.Models { // beside the accounts it counts (#415)
+			usage := newRow(UsagePage, iconUsage, styleNav, func() { view.show(UsagePage) })
+			view.rows[UsagePage] = usage
+			nav.Add(usage)
+		}
 	}
 	view.search = widget.NewEntry()
 	view.search.SetPlaceHolder("Search settings")
@@ -187,7 +192,7 @@ func (view *settingsView) openOn(page string) {
 		ui.panelToggle.Hide()
 		ui.sideApp.Hide()
 		view.side.Show()
-		ui.split.Hide()
+		ui.paneArea().Hide()
 		view.view.Show()
 		ui.header.SetText("Settings")
 	}
@@ -212,10 +217,12 @@ func (view *settingsView) closeNow() {
 	view.side.Hide()
 	ui.sideApp.Show()
 	view.view.Hide()
-	ui.split.Show()
+	ui.paneArea().Show()
 	if view.panelOn {
 		ui.panelToggle.Show()
 	}
+	ui.windowOf().panel.redraw()
+	ui = ui.focused() // the pane with the focus, in a split window (panes.go)
 	ui.updateHeader()
 	ui.relayoutColumn()
 	ui.curtain.reveal()
@@ -295,6 +302,8 @@ func (view *settingsView) build(page string) fyne.CanvasObject {
 		return ui.extensionSettings()
 	case "Connectors":
 		return ui.connectorSettings()
+	case UsagePage:
+		return ui.usageSettings()
 	}
 	return ui.generalSettings()
 }
@@ -437,6 +446,25 @@ func settingStack(title, detail string, below fyne.CanvasObject) fyne.CanvasObje
 	return padded(13, 14, 16, 16, container.New(layout.NewCustomPaddedVBoxLayout(9), text, below))
 }
 
+// widthLayout gives its content a width of its own and the height it
+// needs at that width, as it changes: a message that wraps.
+type widthLayout struct{ width float32 }
+
+func (wide *widthLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	height := float32(0)
+	for _, object := range objects {
+		height = fyne.Max(height, object.MinSize().Height)
+	}
+	return fyne.NewSize(wide.width, height)
+}
+
+func (wide *widthLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	for _, object := range objects {
+		object.Move(fyne.NewPos(0, 0))
+		object.Resize(size)
+	}
+}
+
 // sized gives a control (an entry, a picker) a width of its own.
 func sized(width float32, object fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewGridWrap(fyne.NewSize(width, object.MinSize().Height), object)
@@ -490,7 +518,7 @@ func (switchControl *toggle) Tapped(*fyne.PointEvent) {
 
 func (switchControl *toggle) CreateRenderer() fyne.WidgetRenderer {
 	renderer := &toggleRenderer{toggle: switchControl, track: canvas.NewRectangle(colBorder), knob: canvas.NewCircle(colMuted)}
-	renderer.track.CornerRadius = 10
+	renderer.track.CornerRadius = rounded(10)
 	renderer.Refresh()
 	return renderer
 }
@@ -567,6 +595,9 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 	for _, object := range ui.targetRows() {
 		page.Add(object)
 	}
+	if ui.server != nil { // Install Chromium / Claude Code, while the server lacks them
+		page.Add(ui.server.installRows())
+	}
 	page.Add(sectionTitle("Appearance"))
 	page.Add(card(ui.appearanceRows(view)...))
 	if ui.server == nil {
@@ -594,6 +625,8 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		page.Add(sectionTitle("Keyboard"))
 		page.Add(card(settingRow(registry.ShortcutsPage, "New chat, search, find in the chat and more: see their keys, and change them.", view.pageButton(registry.ShortcutsPage))))
 	}
+	page.Add(sectionTitle("Usage"))
+	page.Add(card(view.mark("general.usage", settingRow("Usage & spend", "Where the tokens and the money went, by model, connection, project, branch and chat, and the prices behind it.", view.pageButton(UsagePage)))))
 	page.Add(sectionTitle("Import"))
 	page.Add(card(view.mark("general.import", ui.importRow())))
 	return page
@@ -651,7 +684,8 @@ func (view *settingsView) intro(section string) fyne.CanvasObject {
 func (ui *desktopUI) modelSettings() fyne.CanvasObject {
 	view := ui.prefs
 	if ui.server != nil { // the server's chats use the server's
-		return view.mark("models.connections", ui.server.connectionSettings())
+		return container.NewVBox(view.mark("models.connections", ui.server.connectionSettings()),
+			sectionTitle("Chat names"), card(view.mark(registry.KeyNamingModel, ui.server.namingSetting())))
 	}
 	add := newRow("Add connection", iconPlus, stylePrimary, func() {
 		id := core.Identifier()
@@ -675,6 +709,8 @@ func (ui *desktopUI) modelSettings() fyne.CanvasObject {
 		card(view.mark(registry.KeyAutoResume, settingRow("Automatic resumption",
 			"What 1loop does when a conversation reaches a rate limit: wait for the reset, or go on with another model, in the order you choose.",
 			container.New(layout.NewCustomPaddedHBoxLayout(14), container.NewCenter(resumeToggle), newRow("Configure…", nil, styleOutline, ui.configureAutoResume))))),
+		sectionTitle("Chat names"),
+		card(view.mark(registry.KeyNamingModel, ui.namingSetting())),
 	)
 }
 
@@ -1041,11 +1077,20 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		"ChatGPT (Web)":         "chatgptweb",
 	}
 	status := plainFlow("", 13, colMuted)
+	statusWidth := &widthLayout{}
 	say := func(text string) {
 		status.spans, status.cut = []span{{text: text}}, nil
-		status.flow(status.Size().Width)
+		// As wide as the message, on one line while it fits beside the
+		// buttons; longer ones wrap.
+		natural, _ := status.extent()
+		statusWidth.width = fyne.Min(natural+2, 440)
+		status.flow(statusWidth.width)
 		status.Refresh()
+		// The bar under the page takes the text's new height: two lines
+		// would otherwise run out of the window.
+		settings.view.Refresh()
 	}
+	var loadModels func() // set once its button is built
 
 	// Access: an address and a key, a ChatGPT sign-in, or nothing (Claude Code).
 	apiFields := card(
@@ -1105,13 +1150,15 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 					say(err.Error())
 					return
 				}
-				say("Account connected. Load its models to choose which ones to show.")
+				say("Account connected.")
+				email := ""
 				if auth, errorValue := ui.backend.GetOpenAI(profile); errorValue == nil {
 					auth.Mu.Lock()
-					email := auth.Account.Email
+					email = auth.Account.Email
 					auth.Mu.Unlock()
 					showAccount(email)
 				}
+				ui.chatGPTConnected(email, loadModels)
 			})
 		}()
 	}
@@ -1293,6 +1340,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 			})
 		}()
 	}
+	loadModels = load.onTap
 
 	typePicker.onChanged = func(label string) {
 		previous := draft.Provider
@@ -1463,7 +1511,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	}
 	cancel := newRow("Cancel", nil, styleOutline, settings.back)
 	settings.push(settingsFrame{content: page, actions: []fyne.CanvasObject{
-		container.NewCenter(sized(360, status)),
+		container.NewCenter(container.New(statusWidth, status)),
 		cancel,
 		save,
 	}, beforeLeave: beforeLeave, leave: func() {
@@ -1629,4 +1677,36 @@ func requestParameters(raw string) (map[string]any, error) {
 		}
 	}
 	return params, nil
+}
+
+// chatGPTConnected says the sign-in worked, and what is left to do: the
+// connection is not saved yet, and its models are not loaded.
+func (ui *desktopUI) chatGPTConnected(email string, loadModels func()) {
+	who := "Your ChatGPT account is connected."
+	if email != "" {
+		who = "Your ChatGPT account " + email + " is connected."
+	}
+	next := textLine("What's next", 13.5, colText)
+	next.TextStyle = fyne.TextStyle{Bold: true}
+	step := func(number, text string) fyne.CanvasObject {
+		digit := textLine(number, 13, colAmber)
+		digit.TextStyle = fyne.TextStyle{Bold: true}
+		return padded(6, 0, 0, 0, container.NewBorder(nil, nil, container.NewVBox(sized(18, digit)), nil, plainFlow(text, 13, colMuted)))
+	}
+	body := container.NewVBox(
+		plainFlow(who, 13.5, colText),
+		padded(16, 2, 0, 0, next),
+		step("1", "Load models: 1loop asks this account which models it can use."),
+		step("2", "Choose the models to show and, if you like, one for each level."),
+		step("3", "Save connection, at the bottom of the page. Its models then show in the model menu under the message box."),
+	)
+	var dialog *sheet
+	later := newRow("Later", nil, styleOutline, func() { dialog.dismiss() })
+	load := newRow("Load models", nil, stylePrimary, func() {
+		dialog.dismiss()
+		if loadModels != nil {
+			loadModels()
+		}
+	})
+	dialog = ui.modal("ChatGPT account connected", body, 480, nil, later, load)
 }

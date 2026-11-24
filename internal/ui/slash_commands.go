@@ -36,6 +36,7 @@ var oneloopCommands = []commandOption{
 	{"clear", "", "Start a new chat with an empty context (this one stays in the sidebar)"},
 	{"compact", "[instructions]", "Free up context by summarizing the conversation so far"},
 	{"login", "", "Sign in to Claude Code"},
+	{"goal", "[objective]", "Give the chat a goal: 1loop keeps working on it, turn after turn, until it is done"},
 }
 
 // oneloopAliases are other names of oneloopCommands, as in Claude Code.
@@ -269,7 +270,7 @@ func (ui *desktopUI) showClaudeStatus() {
 func (ui *desktopUI) buildCommandMenu() fyne.CanvasObject {
 	ui.commandList = container.New(layout.NewCustomPaddedVBoxLayout(0))
 	background := canvas.NewRectangle(colPopover)
-	background.TopLeftCornerRadius, background.TopRightCornerRadius = 12, 12
+	background.TopLeftCornerRadius, background.TopRightCornerRadius = rounded(12), rounded(12)
 	background.StrokeColor = colBorderSoft
 	background.StrokeWidth = 1
 	ui.commandTray = padded(0, 0, 16, 16, container.NewStack(background, padded(4, 6, 4, 4, ui.commandList)))
@@ -355,7 +356,7 @@ func (ui *desktopUI) commandRow(index int) fyne.CanvasObject {
 		fill = colSelected
 	}
 	highlight := canvas.NewRectangle(fill)
-	highlight.CornerRadius = 8
+	highlight.CornerRadius = rounded(8)
 	sign := "/"
 	if ui.mentioning {
 		sign = "@"

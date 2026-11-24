@@ -13,7 +13,6 @@ import (
 	"time"
 
 	"1loop/internal/browser"
-	"1loop/internal/core"
 )
 
 type Config struct {
@@ -21,6 +20,7 @@ type Config struct {
 	presetSelection  *Config
 	selectionError   error
 	ConnectionID     string                                            `json:"connectionId,omitempty"`
+	ConnectionName   string                                            `json:"-"` // what the user named it, for messages (#509)
 	AccountID        string                                            `json:"-"`
 	Residency        string                                            `json:"-"`
 	AuthProfile      string                                            `json:"authProfile,omitempty"`
@@ -47,13 +47,19 @@ type Config struct {
 	// Subchats starts and follows the chat's subchats (subchats.go), or
 	// its parent in a subchat. Nil where the tool is not offered.
 	Subchats *SubchatAccess `json:"-"`
+	// Chats lists the other chats of this 1loop and sends them messages
+	// (chats.go). Nil where the tool is not offered.
+	Chats *ChatAccess `json:"-"`
 	// ClassicCompaction turns the staged context policy off: one compaction
 	// when the window is nearly full, tool outputs kept as they come.
 	ClassicCompaction bool                                      `json:"-"`
 	CompactAt         int                                       `json:"-"`
 	Cache             *ContextCache                             `json:"-"`
+	Compaction        *CompactionState                          `json:"-"`
+	Pause             *PauseSignal                              `json:"-"` // asks the run to pause between two steps (pause.go)
 	ContextKey        string                                    `json:"-"`
 	Todo              *TodoState                                `json:"-"`
+	Goal              *GoalState                                `json:"-"` // the chat's goal (goal.go)
 	Tasks             *BackgroundTasks                          `json:"-"` // shell commands run in the background
 	Grants            *PermissionGrants                         `json:"-"`
 	Review            *ReviewSession                            `json:"-"` // the Auto mode reviewer's conversation for the chat
@@ -77,7 +83,10 @@ type Config struct {
 	RecentProjects []string       `json:"-"`                 // the user's project folders, for a scratch chat's prompt
 	MachineID      string         `json:"machine,omitempty"` // the SSH machine the workspace is on, "" for this computer
 	Machine        Machine        `json:"-"`                 // that machine, for a run (machine.go)
-	Session        string         `json:"session,omitempty"` // Claude Code connection: the chat's session there (see ClaudeSession)
+	// Env is the project's environment variables (#408), for the commands
+	// the run starts. Never saved with the chat nor sent to the model.
+	Env     map[string]string `json:"-"`
+	Session string            `json:"session,omitempty"` // Claude Code connection: the chat's session there (see ClaudeSession)
 	// ClaudeHome is the Claude Code connection's CLAUDE_CONFIG_DIR, "" for
 	// the system Claude Code login (claude_accounts.go).
 	ClaudeHome string `json:"claudeHome,omitempty"`
@@ -87,6 +96,11 @@ type Config struct {
 	// OtherSessions keeps the sessions of the chat's other Claude Code
 	// logins, so coming back to a login resumes its session (claude_accounts.go).
 	OtherSessions map[string]LoginSession `json:"otherSessions,omitempty"`
+	// ForkSession is a forked subchat's parent Claude Code session, with
+	// the folder it ran in: the subchat's first turn resumes it with
+	// --fork-session, reading the parent's cached prefix (ForkConfig).
+	ForkSession   string `json:"forkSession,omitempty"`
+	ForkWorkspace string `json:"forkWorkspace,omitempty"`
 	// RanWith is who the chat's last turn ran with: another provider,
 	// account or model first goes through a handoff (handoff.go).
 	RanWith *RunIdentity `json:"ranWith,omitempty"`
@@ -99,7 +113,9 @@ type Config struct {
 	ToolAllowed         func(string) bool `json:"-"`
 	CapabilitiesChanged <-chan struct{}   `json:"-"`
 	WebConversation     *WebConversation  `json:"webConversation,omitempty"`
-	WebSettings         *WebSettings      `json:"webSettings,omitempty"`
+	// Usage keeps the run's model calls in the usage ledger; nil keeps none.
+	Usage       *UsageTag    `json:"-"`
+	WebSettings *WebSettings `json:"webSettings,omitempty"`
 
 	// Assistant are a host's own tools and prompt for this run (Loopy).
 	Assistant *AssistantTools `json:"-"`
@@ -109,7 +125,8 @@ type emitter func(string, any)
 
 type App struct {
 	mu              sync.Mutex
-	Approvals       map[string]chan bool
+	Approvals       map[string]chan ApprovalAnswer
+	reviews         map[string][]ReviewFile // the files of the edits waiting, by approval (review.go)
 	openAI          *openAIAuth
 	openAIProfiles  map[string]*openAIAuth
 	capabilityCache map[string]ModelChoice
@@ -179,12 +196,16 @@ func (backend *App) models(ctx context.Context, cfg Config) (map[string]any, err
 }
 
 func (backend *App) confirm(ctx context.Context, emit emitter, title, preview string) bool {
+	return backend.confirmAnswer(ctx, emit, title, preview, nil).Allow
+}
+
+func (backend *App) confirmAnswer(ctx context.Context, emit emitter, title, preview string, files []ReviewFile) ApprovalAnswer {
 	if ctx.Err() != nil {
-		return false
+		return ApprovalAnswer{}
 	}
 	policy, _ := ctx.Value(approvalContextKey{}).(approvalPolicy)
 	if policy.yolo {
-		return true
+		return ApprovalAnswer{Allow: true}
 	}
 	if policy.review != nil {
 		allow, reason := policy.review(ctx, emit, title, preview)
@@ -192,46 +213,14 @@ func (backend *App) confirm(ctx context.Context, emit emitter, title, preview st
 			if reason != "" { // the reviewer's approval: kept in the chat
 				emit("note", "Auto-approved · "+actionSummary(title, preview)+" · "+reason)
 			}
-			return true
+			return ApprovalAnswer{Allow: true}
 		}
 		if ctx.Err() != nil {
-			return false
+			return ApprovalAnswer{}
 		}
 		if reason != "" {
 			preview = "Auto-review asks you: " + reason + "\n\n" + preview
 		}
 	}
-	return backend.askApproval(ctx, emit, title, preview)
-}
-
-// askApproval asks the user, whatever the approval mode.
-func (backend *App) askApproval(ctx context.Context, emit emitter, title, preview string) bool {
-	if ctx.Err() != nil {
-		return false
-	}
-	id := core.Identifier()
-	ch := make(chan bool, 1)
-	backend.mu.Lock()
-	backend.Approvals[id] = ch
-	backend.mu.Unlock()
-	defer func() { backend.mu.Lock(); delete(backend.Approvals, id); backend.mu.Unlock() }()
-	emit("approval", map[string]any{"id": id, "title": title, "preview": preview})
-	select {
-	case allowed := <-ch:
-		return allowed
-	case <-ctx.Done():
-		return false
-	}
-}
-
-func (backend *App) Approve(id string, allow bool) {
-	backend.mu.Lock()
-	ch := backend.Approvals[id]
-	backend.mu.Unlock()
-	if ch != nil {
-		select {
-		case ch <- allow:
-		default:
-		}
-	}
+	return backend.askAnswer(ctx, emit, title, preview, files)
 }

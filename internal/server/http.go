@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"net/http"
 	"path/filepath"
+	"slices"
 	"strings"
 	"time"
 
@@ -21,6 +22,7 @@ import (
 	"1loop/internal/githubconnector"
 	"1loop/internal/gitrepo"
 	"1loop/internal/remoteapi"
+	"1loop/internal/usage"
 )
 
 func (server *headlessServer) routes() http.Handler {
@@ -69,6 +71,7 @@ func (server *headlessServer) routes() http.Handler {
 		mux.HandleFunc("GET /api/local/claude/login", server.localOnly(server.claudeLoginState))
 		mux.HandleFunc("POST /api/local/claude/login", server.localOnly(server.beginClaudeLogin))
 		mux.HandleFunc("POST /api/local/sync", server.localOnly(server.localSync))
+		mux.HandleFunc("POST /api/local/move", server.localOnly(server.localMove))
 		mux.HandleFunc("GET /api/local/sharing", server.localOnly(server.sharingState))
 		mux.HandleFunc("POST /api/local/sharing", server.localOnly(server.setSharing))
 		mux.HandleFunc("POST /api/local/pairings/{id}", server.localOnly(server.answerPairing))
@@ -82,10 +85,14 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/projects":                            server.projectFolders,
 		"POST /api/projects":                           server.addProject,
 		"POST /api/projects/{action}":                  server.changeProject,
+		"GET /api/projects/env":                        server.readProjectEnv,
+		"POST /api/projects/env":                       server.saveProjectEnv,
 		"GET /api/state":                               server.state,
+		"POST /api/install/{what}":                     server.install,
 		"GET /api/limits":                              server.limits,
 		"GET /api/chats/{id}":                          server.chat,
 		"POST /api/chats/{id}/delete":                  server.deleteChat,
+		"POST /api/chats/{id}/rename":                  server.renameChat,
 		"POST /api/chats/{id}/tasks/{task}/stop":       server.stopTask,
 		"POST /api/browser/clear":                      server.clearBrowser,
 		"GET /api/events":                              server.events,
@@ -103,16 +110,19 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/send":                               server.send,
 		"POST /api/stop":                               server.stop,
 		"POST /api/approve":                            server.approve,
+		"GET /api/review":                              server.review,
 		"POST /api/answer":                             server.answer,
 		"POST /api/preferences":                        server.setPreferences,
 		"POST /api/memory":                             server.setMemory,
 		"POST /api/wrap-up":                            server.setWrapUp,
 		"POST /api/model":                              server.setModel,
 		"POST /api/auto-resume":                        server.setAutoResume,
+		"POST /api/naming-model":                       server.setNamingModel,
 		"POST /api/model/compaction":                   server.setModelCompaction,
 		"POST /api/model/defaults":                     server.setDefaultModels,
 		"POST /api/approval-mode":                      server.setApprovalMode,
 		"GET /api/chats/{id}/context":                  server.chatContext,
+		"GET /api/chats/{id}/compactions":              server.compactions,
 		"GET /api/mentions":                            server.mentions,
 		"GET /api/chats/{id}/panel":                    server.panelTabs,
 		"GET /api/chats/{id}/panel/{key}":              server.panelTab,
@@ -123,6 +133,8 @@ func (server *headlessServer) routes() http.Handler {
 		"GET /api/hooks":                               remoteapi.GetHooks,
 		"POST /api/hooks":                              remoteapi.SaveHooks,
 		"GET /api/chats/{id}/items/{index}/images/{n}": server.itemImage,
+		"GET /api/devices":                             server.pairedDevices,
+		"POST /api/devices/{id}/revoke":                server.revokePairedDevice,
 	}
 	if !server.local {
 		// The server's accounts, for its paired devices; the phone app's own
@@ -139,6 +151,8 @@ func (server *headlessServer) routes() http.Handler {
 	syncEngine := server.syncEngine()
 	syncManifest, syncExport, syncImport := syncEngine.Routes()
 	endpoints["GET /api/sync/base"] = syncEngine.BaseRoute
+	pause, resume, moved := syncEngine.MoveRoutes()
+	endpoints["POST /api/chats/{id}/pause"], endpoints["POST /api/chats/{id}/resume"], endpoints["POST /api/chats/{id}/moved"] = pause, resume, moved
 	endpoints["POST /api/sync/base"] = syncEngine.BaseRoute
 	endpoints["GET /api/sync/manifest"] = syncManifest
 	endpoints["POST /api/sync/export"] = syncExport
@@ -153,6 +167,18 @@ func (server *headlessServer) routes() http.Handler {
 		endpoints[path] = handler
 	}
 	for path, handler := range githubconnector.Handlers() {
+		endpoints[path] = handler
+	}
+	for path, handler := range usage.Handlers(server.usage, server.prices, server.usageNames, nil) {
+		if path == "GET /api/usage" {
+			serve := handler
+			handler = func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Query().Get("chat") == "" {
+					server.noteAllLimits() // the subscriptions' pace, read fresh
+				}
+				serve(w, r)
+			}
+		}
 		endpoints[path] = handler
 	}
 	for path, handler := range gitrepo.Handlers(gitTarget{server}, githubconnector.Default.Authorizations) {
@@ -171,6 +197,9 @@ func (server *headlessServer) routes() http.Handler {
 			r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
 		}
 		w.Header().Set("X-Content-Type-Options", "nosniff")
+		if !server.local && crossOrigin(w, r) {
+			return
+		}
 		mux.ServeHTTP(w, r)
 	})
 }
@@ -189,6 +218,9 @@ func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 		"projectActions":    true,
 		"chats":             server.summariesLocked(),
 		"settings":          server.settingsLocked(),
+		"browser":           server.hasBrowser(), // false: no Browser Use here (the slim image)
+		"claudeCode":        hasClaudeCode(),     // false: no claude command (the slim image)
+		"installs":          server.installsLocked(),
 	})
 }
 
@@ -231,6 +263,18 @@ func (server *headlessServer) chatContext(w http.ResponseWriter, r *http.Request
 	core.WriteJSON(w, 200, usage)
 }
 
+// compactions are the chat's last ones, before and after (#128).
+func (server *headlessServer) compactions(w http.ResponseWriter, r *http.Request) {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	chat := server.chatLocked(r.PathValue("id"))
+	if chat == nil {
+		core.Fail(w, 404, "Chat not found")
+		return
+	}
+	core.WriteJSON(w, 200, map[string]any{"records": chat.Compaction.List()})
+}
+
 // mentions are what a chat's composer offers after "@" (?chat=, a new
 // chat's without it).
 func (server *headlessServer) mentions(w http.ResponseWriter, r *http.Request) {
@@ -247,6 +291,37 @@ func (server *headlessServer) mentions(w http.ResponseWriter, r *http.Request) {
 	core.WriteJSON(w, 200, map[string]any{"mentions": mentions})
 }
 
+// renameChat gives a chat the title typed on a phone or in the web client.
+func (server *headlessServer) renameChat(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		Title string `json:"title"`
+	}
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	title := remoteapi.CleanChatTitle(args.Title)
+	if title == "" {
+		core.Fail(w, 400, "A chat needs a title")
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	chat := server.chatLocked(r.PathValue("id"))
+	if chat == nil {
+		core.Fail(w, 404, "Chat not found")
+		return
+	}
+	if err := server.setTitleLocked(chat, title); err != nil {
+		core.Fail(w, 500, err.Error())
+		return
+	}
+	core.WriteJSON(w, 200, map[string]any{"ok": true, "title": title})
+}
+
+// deleteChat deletes a chat with its subchats at every level: those that
+// run stop first. The worktrees they were given go too when asked, unless
+// they have uncommitted changes or another chat works in them.
 func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request) {
 	var args struct {
 		Worktree bool `json:"worktree"` // a subchat's: remove its worktree and branch too
@@ -259,54 +334,70 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 		core.Fail(w, 404, "Chat not found")
 		return
 	}
-	worktree := ""
+	gone := append([]*serverChat{chat}, server.subtreeLocked(chat)...)
+	var worktrees []string
+	projects := map[string]string{}
 	if args.Worktree {
-		worktree = server.subchatWorktreeLocked(chat)
+		for _, member := range gone {
+			if folder := server.ownWorktreeLocked(member, gone); folder != "" && !slices.Contains(worktrees, folder) {
+				worktrees = append(worktrees, folder)
+				projects[folder] = server.worktrees[folder]
+			}
+		}
 	}
-	project := server.worktrees[worktree]
 	previous := server.chats
-	kept := make([]*serverChat, 0, len(previous)-1)
+	kept := make([]*serverChat, 0, len(previous))
 	for _, candidate := range previous {
-		if candidate != chat {
+		if !slices.Contains(gone, candidate) {
 			kept = append(kept, candidate)
 		}
 	}
 	server.chats = kept
-	if err := server.saveLocked(); err != nil {
-		server.chats = previous
+	if err := server.saveOutsideLocked(); err != nil {
+		server.chats = restoredChats(previous, server.chats, gone)
 		server.mu.Unlock()
 		core.Fail(w, 500, err.Error())
 		return
 	}
-	if chat.run != nil {
-		chat.run.cancel()
-		chat.run = nil
+	var tabs []*serverTab
+	deleted := make([]string, 0, len(gone))
+	for _, member := range gone {
+		deleted = append(deleted, member.ID)
+		if member.run != nil {
+			member.run.cancel()
+			member.run = nil
+		}
+		member.queue, member.steer = nil, nil
+		member.tasks.StopAll()
+		agent.DropClaudeChat(member.ID)
+		if member.Config.Scratch != "" {
+			go func(path string) { _ = agent.RemoveScratchWorkspace(server.scratchBase(), path) }(member.Config.Scratch)
+		}
+		tabs = append(tabs, member.tabs...)
+		member.tabs = nil
 	}
-	chat.queue, chat.steer = nil, nil
-	chat.tasks.StopAll()
-	if chat.Config.Scratch != "" {
-		go func(path string) { _ = agent.RemoveScratchWorkspace(server.scratchBase(), path) }(chat.Config.Scratch)
-	}
-	tabs := chat.tabs
-	chat.tabs = nil
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
 	server.mu.Unlock()
 	for _, tab := range tabs {
 		tab.close()
 	}
-	reply := map[string]any{"ok": true}
-	if worktree != "" {
+	reply := map[string]any{"ok": true, "deleted": deleted}
+	var notes []string
+	for _, worktree := range worktrees {
 		ctx, cancel := context.WithTimeout(r.Context(), time.Minute)
 		kept, err := agent.RemoveSubchatWorktree(ctx, gitrepo.Local, worktree, false)
 		cancel()
 		if err != nil {
 			kept = "The worktree " + worktree + " was kept: " + err.Error()
 		} else {
-			gitTarget{server}.Removed(project, worktree)
+			gitTarget{server}.Removed(projects[worktree], worktree)
 		}
 		if kept != "" {
-			reply["note"] = kept
+			notes = append(notes, kept)
 		}
+	}
+	if len(notes) > 0 {
+		reply["note"] = strings.Join(notes, "\n")
 	}
 	core.WriteJSON(w, 200, reply)
 }
@@ -420,6 +511,24 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		core.WriteJSON(w, 200, map[string]string{"chat": args.Chat})
 		return
 	}
+	// /goal is 1loop's, never the model's (agent/goal.go).
+	goal, isGoal := agent.ParseGoalCommand(args.Text)
+	isGoal = isGoal && len(args.Attachments) == 0 && len(args.Images) == 0
+	if isGoal && chat != nil {
+		err := server.goalCommandLocked(chat, goal)
+		server.mu.Unlock()
+		if err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		core.WriteJSON(w, 200, map[string]string{"chat": chat.ID})
+		return
+	}
+	if isGoal && goal.Action != "set" {
+		server.mu.Unlock()
+		core.Fail(w, 400, "This chat has no goal yet: /goal <objective> sets one and starts working on it")
+		return
+	}
 	workspace := args.Workspace
 	if chat != nil {
 		if workspace != "" && workspace != chat.Config.Workspace {
@@ -474,6 +583,17 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.Images = append(m.Images, args.Images...)
+	var newGoal *agent.GoalState // a new chat started by /goal
+	if isGoal {
+		newGoal = &agent.GoalState{}
+		outcome, err := newGoal.Command(goal, false, server.cfg.Provider)
+		if err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		m = *outcome.Start
+		args.Text = goal.Objective // the chat's title
+	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	if chat == nil {
@@ -506,7 +626,11 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(server.panelHomes, "home:"+workspace)
 		chat.ID, chat.Title, chat.Config = core.Identifier()[:16], string(title), cfg
+		if newGoal != nil {
+			chat.Goal = newGoal
+		}
 		server.chats = append([]*serverChat{chat}, server.chats...)
+		server.nameNewChatLocked(chat, m)
 	}
 
 	if chat.handoff == nil && chat.run == nil {
@@ -527,10 +651,13 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if chat.run != nil {
-		// A message sent while the agent works joins it at its next step,
-		// whatever the client asked (older clients say "queue" or "send"):
-		// clients show it greyed at the conversation's end until then.
-		chat.steer = append(chat.steer, m)
+		// A message sent while the agent works is queued for the next turn
+		// ("send", "queue"); "steer" joins the task at its next step (#433).
+		if args.Mode == "steer" {
+			chat.steer = append(chat.steer, m)
+		} else {
+			chat.queue = append(chat.queue, m)
+		}
 		server.changedLocked(chat, -1)
 	} else {
 		server.runLocked(chat, m)
@@ -546,7 +673,10 @@ func (server *headlessServer) stop(w http.ResponseWriter, r *http.Request) {
 	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	if chat := server.chatLocked(args.Chat); chat != nil && chat.run != nil {
+	if chat := server.chatLocked(args.Chat); chat != nil && chat.Subchat != nil { // a subchat stops with the subchats under it
+		server.stopTreeLocked(chat, 0)
+		chat.queue, chat.steer = nil, nil
+	} else if chat != nil && chat.run != nil {
 		chat.run.cancel()
 		chat.queue = nil
 		chat.steer = nil
@@ -572,15 +702,28 @@ func (server *headlessServer) answer(w http.ResponseWriter, r *http.Request) {
 
 func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 	var args struct {
-		ID    string
-		Allow bool
+		ID string
+		agent.ApprovalAnswer
 	}
 	if core.ReadJSON(r, &args) != nil {
 		core.Fail(w, 400, "Invalid request")
 		return
 	}
-	server.backend.Approve(args.ID, args.Allow)
+	if !server.backend.AnswerApproval(args.ID, args.ApprovalAnswer) {
+		core.Fail(w, 404, "This approval is no longer waiting")
+		return
+	}
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// review is the files of an edit waiting for approval (#242).
+func (server *headlessServer) review(w http.ResponseWriter, r *http.Request) {
+	files := server.backend.Review(r.URL.Query().Get("id"))
+	if files == nil {
+		core.Fail(w, 404, "This approval is no longer waiting")
+		return
+	}
+	core.WriteJSON(w, 200, map[string]any{"files": files})
 }
 
 func (server *headlessServer) setAutoResume(w http.ResponseWriter, r *http.Request) {
@@ -920,4 +1063,21 @@ func (server *headlessServer) setDefaultModels(w http.ResponseWriter, r *http.Re
 		return
 	}
 	core.Fail(w, 404, "Connection not found")
+}
+
+// restoredChats puts back the chats a failed delete removed, in their
+// order, keeping those created while the state was being saved.
+func restoredChats(previous, current, gone []*serverChat) []*serverChat {
+	var chats []*serverChat
+	for _, chat := range current {
+		if !slices.Contains(previous, chat) {
+			chats = append(chats, chat)
+		}
+	}
+	for _, chat := range previous {
+		if slices.Contains(gone, chat) || slices.Contains(current, chat) {
+			chats = append(chats, chat)
+		}
+	}
+	return chats
 }

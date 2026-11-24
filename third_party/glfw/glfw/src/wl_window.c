@@ -347,14 +347,28 @@ static void setContentAreaOpaque(_GLFWwindow* window)
 }
 
 
+// 1loop: the scale the window's buffer is drawn at: the compositor's
+// fractional scale when it sends one (125 % on GNOME draws at 1.25, not at
+// 2 for the compositor to shrink, which blurred everything unevenly),
+// otherwise the integer buffer scale.
+static double bufferScale(_GLFWwindow* window)
+{
+    if (window->wl.fractionalScale)
+        return window->wl.fractionalScaleFactor > 0 ? window->wl.fractionalScaleFactor : 1;
+    return window->wl.contentScale;
+}
+
 static void resizeWindow(_GLFWwindow* window)
 {
-    int scale = window->wl.contentScale;
-    int scaledWidth = window->wl.width * scale;
-    int scaledHeight = window->wl.height * scale;
+    double scale = bufferScale(window);
+    int scaledWidth = (int) (window->wl.width * scale + 0.5);
+    int scaledHeight = (int) (window->wl.height * scale + 0.5);
 
     if (window->wl.egl.window)
         wl_egl_window_resize(window->wl.egl.window, scaledWidth, scaledHeight, 0, 0);
+    if (window->wl.scalingViewport && window->wl.width > 0 && window->wl.height > 0)
+        wp_viewport_set_destination(window->wl.scalingViewport,
+                                    window->wl.width, window->wl.height);
     if (!window->wl.transparent)
         setContentAreaOpaque(window);
     _glfwInputFramebufferSize(window, scaledWidth, scaledHeight);
@@ -397,6 +411,14 @@ void _glfwUpdateContentScaleWayland(_GLFWwindow* window)
     for (int i = 0; i < window->wl.scaleCount; i++)
         maxScale = _glfw_max(window->wl.scales[i].factor, maxScale);
 
+    // 1loop: with a fractional scale the buffer scale stays 1; the
+    // integer scale only picks the cursor's size.
+    if (window->wl.fractionalScale)
+    {
+        window->wl.contentScale = maxScale;
+        return;
+    }
+
     // Only change the framebuffer size if the scale changed.
     if (window->wl.contentScale != maxScale)
     {
@@ -409,6 +431,32 @@ void _glfwUpdateContentScaleWayland(_GLFWwindow* window)
             _glfwInputWindowDamage(window);
     }
 }
+
+static void fractionalScaleHandlePreferredScale(void* userData,
+                                                struct wp_fractional_scale_v1* fractionalScale,
+                                                uint32_t numerator)
+{
+    _GLFWwindow* window = userData;
+    const double scale = numerator / 120.0;
+
+    if (scale <= 0 || scale == window->wl.fractionalScaleFactor)
+        return;
+
+    window->wl.fractionalScaleFactor = scale;
+    // The EGL window gets its new size before the content scale is told:
+    // a handler of that event may use the GL context, and the back buffer
+    // it makes Mesa allocate would keep the old size until the next frame.
+    resizeWindow(window);
+    _glfwInputWindowContentScale(window, (float) scale, (float) scale);
+
+    if (window->wl.visible)
+        _glfwInputWindowDamage(window);
+}
+
+static const struct wp_fractional_scale_v1_listener fractionalScaleListener =
+{
+    fractionalScaleHandlePreferredScale
+};
 
 static void surfaceHandleEnter(void* userData,
                                struct wl_surface* surface,
@@ -797,6 +845,8 @@ static GLFWbool createLibdecorFrame(_GLFWwindow* window)
 
     if (strlen(window->wl.title))
         libdecor_frame_set_title(window->wl.libdecor.frame, window->wl.title);
+    if (window->wl.appId)
+        libdecor_frame_set_app_id(window->wl.libdecor.frame, window->wl.appId);
 
     if (window->minwidth != GLFW_DONT_CARE &&
         window->minheight != GLFW_DONT_CARE)
@@ -867,6 +917,10 @@ static GLFWbool createXdgShellObjects(_GLFWwindow* window)
 
     if (window->wl.title)
         xdg_toplevel_set_title(window->wl.xdg.toplevel, window->wl.title);
+    // 1loop: the app id goes with the toplevel, before its first commit, so
+    // the desktop knows which application this is from the first frame on.
+    if (window->wl.appId)
+        xdg_toplevel_set_app_id(window->wl.xdg.toplevel, window->wl.appId);
 
     if (window->monitor)
     {
@@ -991,7 +1045,24 @@ static GLFWbool createNativeSurface(_GLFWwindow* window,
     window->wl.width = wndconfig->width;
     window->wl.height = wndconfig->height;
     window->wl.contentScale = 1;
+
+    if (_glfw.wl.fractionalScaleManager && _glfw.wl.viewporter)
+    {
+        window->wl.scalingViewport =
+            wp_viewporter_get_viewport(_glfw.wl.viewporter, window->wl.surface);
+        window->wl.fractionalScale =
+            wp_fractional_scale_manager_v1_get_fractional_scale(
+                _glfw.wl.fractionalScaleManager, window->wl.surface);
+        wp_fractional_scale_v1_add_listener(window->wl.fractionalScale,
+                                            &fractionalScaleListener,
+                                            window);
+        if (window->wl.width > 0 && window->wl.height > 0)
+            wp_viewport_set_destination(window->wl.scalingViewport,
+                                        window->wl.width, window->wl.height);
+    }
     window->wl.title = _glfw_strdup(wndconfig->title);
+    if (wndconfig->x11.className[0])
+        window->wl.appId = _glfw_strdup(wndconfig->x11.className);
 
     window->wl.maximized = wndconfig->maximized;
 
@@ -1853,10 +1924,15 @@ static void dataOfferHandleOffer(void* userData,
     {
         if (_glfw.wl.offers[i].offer == offer)
         {
+            char* image = _glfw.wl.offers[i].image;
             if (strcmp(mimeType, "text/plain;charset=utf-8") == 0)
                 _glfw.wl.offers[i].text_plain_utf8 = GLFW_TRUE;
             else if (strcmp(mimeType, "text/uri-list") == 0)
                 _glfw.wl.offers[i].text_uri_list = GLFW_TRUE;
+            else if (strncmp(mimeType, "image/", 6) == 0 && strcmp(image, "image/png") != 0 &&
+                     (!image[0] || strcmp(mimeType, "image/png") == 0) &&
+                     strlen(mimeType) < sizeof(_glfw.wl.offers[i].image))
+                strcpy(image, mimeType);
 
             break;
         }
@@ -2012,12 +2088,23 @@ static void dataDeviceHandleSelection(void* userData,
         _glfw.wl.selectionOffer = NULL;
     }
 
+    _glfw.wl.selectionText = GLFW_FALSE;
+    _glfw.wl.selectionImage[0] = '\0';
+
     for (unsigned int i = 0; i < _glfw.wl.offerCount; i++)
     {
         if (_glfw.wl.offers[i].offer == offer)
         {
-            if (_glfw.wl.offers[i].text_plain_utf8)
+            // 1loop: an image is kept too, for 1loop to paste. 1loop reads
+            // images through this device: with a second data device of its
+            // own, GNOME (Mutter) most often left this one without the
+            // selection, and the text clipboard empty (#334).
+            if (_glfw.wl.offers[i].text_plain_utf8 || _glfw.wl.offers[i].image[0])
+            {
                 _glfw.wl.selectionOffer = offer;
+                _glfw.wl.selectionText = _glfw.wl.offers[i].text_plain_utf8;
+                strcpy(_glfw.wl.selectionImage, _glfw.wl.offers[i].image);
+            }
             else
                 wl_data_offer_destroy(offer);
 
@@ -2152,10 +2239,17 @@ void _glfwPlatformDestroyWindow(_GLFWwindow* window)
     if (window->wl.egl.window)
         wl_egl_window_destroy(window->wl.egl.window);
 
+    if (window->wl.fractionalScale)
+        wp_fractional_scale_v1_destroy(window->wl.fractionalScale);
+
+    if (window->wl.scalingViewport)
+        wp_viewport_destroy(window->wl.scalingViewport);
+
     if (window->wl.surface)
         wl_surface_destroy(window->wl.surface);
 
     free(window->wl.title);
+    free(window->wl.appId);
     free(window->wl.scales);
 }
 
@@ -2317,9 +2411,9 @@ void _glfwPlatformGetFramebufferSize(_GLFWwindow* window,
 {
     _glfwPlatformGetWindowSize(window, width, height);
     if (width)
-        *width *= window->wl.contentScale;
+        *width = (int) (*width * bufferScale(window) + 0.5);
     if (height)
-        *height *= window->wl.contentScale;
+        *height = (int) (*height * bufferScale(window) + 0.5);
 }
 
 void _glfwPlatformGetWindowFrameSize(_GLFWwindow* window,
@@ -2343,9 +2437,9 @@ void _glfwPlatformGetWindowContentScale(_GLFWwindow* window,
                                         float* xscale, float* yscale)
 {
     if (xscale)
-        *xscale = (float) window->wl.contentScale;
+        *xscale = (float) bufferScale(window);
     if (yscale)
-        *yscale = (float) window->wl.contentScale;
+        *yscale = (float) bufferScale(window);
 }
 
 void _glfwPlatformIconifyWindow(_GLFWwindow* window)
@@ -2981,6 +3075,13 @@ const char* _glfwPlatformGetClipboardString(void)
     if (_glfw.wl.selectionSource)
         return _glfw.wl.clipboardString;
 
+    if (!_glfw.wl.selectionText) // 1loop: an image alone
+    {
+        _glfwInputError(GLFW_FORMAT_UNAVAILABLE,
+                        "Wayland: No text in the clipboard");
+        return NULL;
+    }
+
     free(_glfw.wl.clipboardString);
     _glfw.wl.clipboardString =
         readDataOfferAsString(_glfw.wl.selectionOffer, "text/plain;charset=utf-8");
@@ -3059,6 +3160,28 @@ GLFWAPI struct wl_display* glfwGetWaylandDisplay(void)
 {
     _GLFW_REQUIRE_INIT_OR_RETURN(NULL);
     return _glfw.wl.display;
+}
+
+// 1loop: the image type the clipboard can be read as (image/png when it is
+// offered), or NULL when it holds no image.
+GLFWAPI const char* glfwGetWaylandClipboardImageType(void)
+{
+    _GLFW_REQUIRE_INIT_OR_RETURN(NULL);
+    if (!_glfw.wl.selectionOffer || !_glfw.wl.selectionImage[0])
+        return NULL;
+    return _glfw.wl.selectionImage;
+}
+
+// 1loop: asks the clipboard's owner to write it, as mimeType, into fd, which
+// the caller still closes; GLFW_FALSE when the clipboard is empty.
+GLFWAPI int glfwReceiveWaylandClipboard(const char* mimeType, int fd)
+{
+    _GLFW_REQUIRE_INIT_OR_RETURN(GLFW_FALSE);
+    if (!_glfw.wl.selectionOffer)
+        return GLFW_FALSE;
+    wl_data_offer_receive(_glfw.wl.selectionOffer, mimeType, fd);
+    flushDisplay();
+    return GLFW_TRUE;
 }
 
 GLFWAPI struct wl_surface* glfwGetWaylandWindow(GLFWwindow* handle)

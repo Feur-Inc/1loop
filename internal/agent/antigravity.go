@@ -318,6 +318,7 @@ type agyEvent struct {
 
 type agyUsage struct {
 	Input     int `json:"input_tokens"`
+	Output    int `json:"output_tokens"`
 	CacheRead int `json:"cache_read_tokens"`
 }
 
@@ -484,7 +485,7 @@ func (backend *App) runAntigravity(ctx context.Context, cfg Config, history []Me
 	prompt := messages[len(messages)-1]
 	session := HarnessSession(cfg)
 	preface := ""
-	budget := ModelContextWindow(cfg) * 4 * 40 / 100
+	budget := RecapBudget(cfg)
 	if session == "" && len(messages) > 1 {
 		preface = "[Earlier conversation in this chat, for context]\n" + core.TruncateText(levelText(messages[:len(messages)-1], LevelEverything, ModelContextWindow(cfg)), budget) + "\n[End of the earlier conversation]\n\n"
 	} else if session != "" && cfg.HandoffSummary != "" {
@@ -646,6 +647,7 @@ func (backend *App) agyProcess(ctx context.Context, cfg Config, session *string,
 	lines := make(chan []byte)
 	done := make(chan struct{})
 	defer close(done)
+	var readErr error // set before lines closes
 	go func() {
 		defer close(lines)
 		scanner := bufio.NewScanner(stdout)
@@ -657,6 +659,14 @@ func (backend *App) agyProcess(ctx context.Context, cfg Config, session *string,
 				io.Copy(io.Discard, stdout)
 				return
 			}
+		}
+		if err := scanner.Err(); err != nil {
+			// A line over 64 MB: agy is stopped and drained, or it would
+			// block on a full pipe and Wait with it.
+			platform.Devf("agy", "output unreadable: %v", err)
+			readErr = fmt.Errorf("Antigravity's output could not be read: %w", err)
+			platform.KillProcessTree(cmd)
+			io.Copy(io.Discard, stdout)
 		}
 	}()
 	tick := time.NewTicker(200 * time.Millisecond)
@@ -757,6 +767,7 @@ func (backend *App) agyProcess(ctx context.Context, cfg Config, session *string,
 				break
 			}
 			turns--
+			recordUsage(cfg, spentTokens{tokens: usageTokens(result.Usage.Input, result.Usage.Output, result.Usage.CacheRead)})
 			if text != "" { // an answer cut short: keep what was written
 				*messages = append(*messages, Message{Role: "assistant", Content: text, Usage: usage})
 				emit("message_end", nil)
@@ -822,6 +833,9 @@ func (backend *App) agyProcess(ctx context.Context, cfg Config, session *string,
 				finish()
 			}
 		}
+	}
+	if failure == nil && lines == nil && readErr != nil {
+		failure = readErr
 	}
 	if failure != nil {
 		return outcome, failure

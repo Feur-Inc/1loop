@@ -33,6 +33,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/agent"
+	"1loop/internal/core"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	"1loop/internal/sshmachine"
@@ -83,7 +84,7 @@ func (ui *desktopUI) trustHost(ctx context.Context, machine, address, keyType, f
 		body := container.NewVBox(
 			plainFlow("1loop has never connected to "+machine+" ("+address+"). Its host key is:", 13, colText),
 			plainFlow(keyType+" "+fingerprint, 13, colText),
-			plainFlow("Trust it only if it is the machine's key: on the machine, ssh-keygen -lf /etc/ssh/ssh_host_"+hostKeyFile(keyType)+"_key.pub shows it. 1loop remembers it and refuses the connection if it ever changes.", 12.5, colMuted))
+			plainFlow("Trust it only if it is the machine's key: on the machine, ssh-keygen -lf /etc/ssh/ssh_host_"+sshmachine.HostKeyFile(keyType)+"_key.pub shows it. 1loop remembers it and refuses the connection if it ever changes.", 12.5, colMuted))
 		cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
 		trust := newRow("Trust", nil, stylePrimary, func() { reply(true); dialog.dismiss() })
 		dialog = ui.modal("Trust this SSH machine?", body, 560, func() { reply(false) }, cancel, trust)
@@ -94,17 +95,6 @@ func (ui *desktopUI) trustHost(ctx context.Context, machine, address, keyType, f
 	case <-ctx.Done():
 		return false
 	}
-}
-
-// hostKeyFile is the name sshd gives the host key of this type.
-func hostKeyFile(keyType string) string {
-	switch {
-	case strings.Contains(keyType, "ed25519"):
-		return "ed25519"
-	case strings.HasPrefix(keyType, "ecdsa"):
-		return "ecdsa"
-	}
-	return "rsa"
 }
 
 func (ui *desktopUI) machineSettings(id string) (sshmachine.Settings, bool) {
@@ -129,7 +119,11 @@ func (ui *desktopUI) targetLabel() string { return ui.targetLabelOf(ui.cfg.Machi
 
 // useMachine makes an SSH machine the target: connected first, then its
 // first project, or none until one is made.
-func (ui *desktopUI) useMachine(id string) {
+func (ui *desktopUI) useMachine(id string) { ui.useMachineOn(id, "") }
+
+// useMachineOn makes an SSH machine the target on one of its projects ("":
+// its first). The sidebar marks it offline when it cannot be reached.
+func (ui *desktopUI) useMachineOn(id, project string) {
 	machine := ui.machineFor(id)
 	if machine == nil || ui.server == nil && ui.cfg.MachineID == id {
 		return
@@ -142,17 +136,19 @@ func (ui *desktopUI) useMachine(id string) {
 		fyne.Do(func() {
 			if err != nil {
 				ui.machine.SetText(ui.targetLabel())
+				ui.setReach(sshTarget(id), reachOffline, err.Error())
 				ui.notice(machine.Label(), err.Error())
 				return
 			}
+			ui.setReach(sshTarget(id), reachOnline, "")
 			if ui.server != nil {
 				ui.useComputer()
 			}
 			if ui.cfg.MachineID == "" {
 				ui.localWorkspace = ui.cfg.Workspace
 			}
-			workspace := ""
-			if projects := ui.machineProjects[id]; len(projects) > 0 {
+			workspace := project
+			if projects := ui.machineProjects[id]; workspace == "" && len(projects) > 0 {
 				workspace = projects[0]
 			}
 			platform.Devf("ui", "target: SSH machine %s, project %s", machine.Label(), workspace)
@@ -215,17 +211,6 @@ func (ui *desktopUI) targetProjects() []string {
 	return ui.projects
 }
 
-func (ui *desktopUI) setTargetProjects(projects []string) {
-	if ui.cfg.MachineID == "" {
-		ui.projects = projects
-		return
-	}
-	if ui.machineProjects == nil {
-		ui.machineProjects = map[string][]string{}
-	}
-	ui.machineProjects[ui.cfg.MachineID] = projects
-}
-
 func (ui *desktopUI) ensureTargetProject(path string) {
 	if ui.cfg.MachineID == "" {
 		ui.ensureProject(path)
@@ -276,60 +261,6 @@ func (ui *desktopUI) projectNameSeen(project string, seen map[string]bool) strin
 		return path.Base(project)
 	}
 	return filepath.Base(project)
-}
-
-// addMachineProject makes a project on the machine: a folder of its
-// projects folder, made there unless it exists.
-func (ui *desktopUI) addMachineProject() {
-	id := ui.cfg.MachineID
-	machine := ui.machineFor(id)
-	if machine == nil {
-		return
-	}
-	settings := machine.Settings()
-	entry := widget.NewEntry()
-	entry.SetPlaceHolder("Project name")
-	problem := plainFlow("", 12.5, colDanger)
-	var dialog *sheet
-	var create *tapRow
-	apply := func() {
-		name := strings.TrimSpace(entry.Text)
-		if name == "" || name == "." || name == ".." || strings.ContainsAny(name, "/\\\x00\r\n") {
-			setFlow(problem, "Enter a folder name, without / or \\.")
-			return
-		}
-		create.Disable()
-		go func() {
-			ctx, cancel := context.WithTimeout(ui.ctx, time.Minute)
-			defer cancel()
-			folder, err := machine.ProjectsFolder(ctx)
-			project := path.Join(folder, name)
-			if err == nil {
-				err = machine.MkdirAll(ctx, project)
-			}
-			fyne.Do(func() {
-				create.Enable()
-				if err != nil {
-					setFlow(problem, err.Error())
-					return
-				}
-				dialog.Hide()
-				if ui.cfg.MachineID != id {
-					return
-				}
-				ui.ensureMachineProject(id, project)
-				ui.selectProject(project)
-			})
-		}()
-	}
-	entry.OnSubmitted = func(string) { apply() }
-	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
-	create = newRow("Create", nil, stylePrimary, apply)
-	body := container.NewVBox(
-		note("A folder in "+settings.Projects+" on "+machine.Label()+". An existing folder of that name is opened as it is."),
-		entry, problem)
-	dialog = ui.modal("New project on "+machine.Label(), body, 480, nil, cancel, create)
-	ui.window.Canvas().Focus(entry)
 }
 
 // ---------------------------------------------------------------------------
@@ -495,10 +426,10 @@ func (ui *desktopUI) machineFiles(machine *sshmachine.Machine, root string) file
 			switch {
 			case strings.HasPrefix(kind, "image/"):
 				preview.Image = true
-			case bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(trimHalfRune(data)):
+			case bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(core.TrimRune(data)):
 				preview.Binary = true
 			default:
-				preview.Text = string(trimHalfRune(data))
+				preview.Text = string(core.TrimRune(data))
 			}
 			return preview, nil
 		},
@@ -534,13 +465,6 @@ func (ui *desktopUI) machineFiles(machine *sshmachine.Machine, root string) file
 			return nil
 		},
 	}
-}
-
-func trimHalfRune(data []byte) []byte {
-	for i := 0; i < 3 && len(data) > 0 && !utf8.Valid(data); i++ {
-		data = data[:len(data)-1]
-	}
-	return data
 }
 
 // machineFilesTab is filesTab for a machine's project.

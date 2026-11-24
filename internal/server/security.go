@@ -12,9 +12,12 @@ import (
 	"crypto/subtle"
 	"encoding/json"
 	"fmt"
+	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
+	"slices"
 	"strings"
 	"time"
 
@@ -24,6 +27,7 @@ import (
 
 type serverPair struct {
 	Device, Code string
+	Address      string // the client that asked: pairingsPerAddress pending each
 	Expires      time.Time
 	Approved     bool
 	Tries        int
@@ -60,6 +64,9 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 		core.Fail(writer, 400, "Provide a device name")
 		return
 	}
+	if origin := foreignOrigin(req); origin != "" { // a page of another server (cors.go)
+		args.Device += " · " + origin
+	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	for id, pair := range server.pairs {
@@ -67,7 +74,21 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 			delete(server.pairs, id)
 		}
 	}
-	if len(server.pairs) >= 8 {
+	// Per client, so that one device on the network cannot hold every slot
+	// and keep the real phone from pairing (#532): past its share, a new
+	// request replaces the client's oldest one still waiting for approval.
+	address := clientAddress(req)
+	var mine []string
+	for id, pair := range server.pairs {
+		if pair.Address == address && !pair.Approved {
+			mine = append(mine, id)
+		}
+	}
+	if len(mine) >= pairingsPerAddress {
+		oldest := slices.MinFunc(mine, func(a, b string) int { return server.pairs[a].Expires.Compare(server.pairs[b].Expires) })
+		delete(server.pairs, oldest)
+	}
+	if len(server.pairs) >= maxPendingPairings {
 		core.Fail(writer, 429, "Too many pending pairings; try again later")
 		return
 	}
@@ -78,7 +99,7 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 	}
 	id := core.Identifier()[:12]
 	code := fmt.Sprintf("%06d", number)
-	pair := &serverPair{Device: args.Device, Code: remoteapi.TokenHash(code), Expires: time.Now().Add(2 * time.Minute)}
+	pair := &serverPair{Device: args.Device, Code: remoteapi.TokenHash(code), Address: address, Expires: time.Now().Add(2 * time.Minute)}
 	server.pairs[id] = pair
 	if server.setup != "" && len(server.devices) == 0 && subtle.ConstantTimeCompare([]byte(server.setup), []byte(args.Setup)) == 1 {
 		// The setup link: approved at once, and used up.
@@ -86,9 +107,12 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 		fmt.Fprintf(os.Stderr, "\n%q paired with the setup link.\n", args.Device)
 	} else {
 		fmt.Fprintf(os.Stderr, "\nPairing requested by %q. Approve it in 1loop on a paired device, or type: pair %s <code shown on that device>\n", args.Device, id)
+		if server.adminReady.Load() { // "1loop-server pair" reaches this server only through its admin socket
+			fmt.Fprintf(os.Stderr, "(or from another shell: %s)\n", server.pairCommand(id, "<code>"))
+		}
 		server.pairingChangedLocked()
 	}
-	core.WriteJSON(writer, 200, map[string]any{"pairing": id, "code": code, "console": true, "phone": server.local, "approved": pair.Approved, "expiresIn": 120})
+	core.WriteJSON(writer, 200, map[string]any{"pairing": id, "code": code, "console": true, "phone": server.local, "approved": pair.Approved, "expiresIn": 120, "command": server.adminCommandFor(id, code)})
 }
 
 // pairingChangedLocked tells the clients that can approve pairings: the
@@ -127,7 +151,16 @@ func (server *headlessServer) offerSetupLocked() {
 		return
 	}
 	server.setup = core.Identifier()
-	fmt.Fprintf(os.Stderr, "\nNo device is paired yet. To pair the first one, open this link in a browser,\nwith this server's address in place of <server> (it works once):\n\n  https://<server>:%d/app/#setup=%s\n\n", server.setupPort, server.setup)
+	fmt.Fprint(os.Stderr, setupMessage(server.setupPort, server.setup, server.proxied))
+}
+
+// setupMessage is the setup link's announcement: behind a reverse proxy,
+// the link is the proxy's address, without the server's own port.
+func setupMessage(port int, secret string, proxied bool) string {
+	if proxied {
+		return fmt.Sprintf("\nNo device is paired yet. To pair the first one, open this link in a browser,\nwith your reverse proxy's address in place of <proxy> (it works once):\n\n  https://<proxy>/app/#setup=%s\n\nWithout the proxy: https://<server>:%d/app/#setup=%s\n\n", secret, port, secret)
+	}
+	return fmt.Sprintf("\nNo device is paired yet. To pair the first one, open this link in a browser,\nwith this server's address in place of <server> (it works once):\n\n  https://<server>:%d/app/#setup=%s\n\n", port, secret)
 }
 
 func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.Request) {
@@ -156,12 +189,13 @@ func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.
 	token := core.Identifier()
 	device := remoteapi.PairedDevice{Name: pair.Device, TokenHash: remoteapi.TokenHash(token), Added: time.Now()}
 	server.devices = append(server.devices, device)
-	if err := server.saveLocked(); err != nil {
-		server.devices = server.devices[:len(server.devices)-1]
+	delete(server.pairs, args.Pairing) // the same code cannot pair twice while the state is saved
+	if err := server.saveOutsideLocked(); err != nil {
+		server.devices = slices.DeleteFunc(server.devices, func(paired remoteapi.PairedDevice) bool { return paired.TokenHash == device.TokenHash })
+		server.pairs[args.Pairing] = pair
 		core.Fail(writer, 500, "Unable to save paired device")
 		return
 	}
-	delete(server.pairs, args.Pairing)
 	server.setup = "" // a device is paired: no more setup link
 	if server.local {
 		server.broadcastLocked("sharing", map[string]bool{"enabled": server.sharing != nil})
@@ -169,66 +203,149 @@ func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.
 	core.WriteJSON(writer, 200, map[string]string{"token": token})
 }
 
+// console reads the server's commands from its standard input.
 func (server *headlessServer) console() {
 	scanner := bufio.NewScanner(os.Stdin)
 	for scanner.Scan() {
-		parts := strings.Fields(scanner.Text())
-		if len(parts) == 0 {
-			continue
-		}
-		server.mu.Lock()
-		switch parts[0] {
-		case "pair":
-			if len(parts) != 3 {
-				fmt.Fprintln(os.Stderr, "Usage: pair <pairing ID> <six-digit code>")
-				break
-			}
-			pair := server.pairs[parts[1]]
-			if pair == nil || time.Now().After(pair.Expires) || pair.Tries >= 5 {
-				fmt.Fprintln(os.Stderr, "Pairing expired or unknown")
-				break
-			}
-			hash := remoteapi.TokenHash(parts[2])
-			if subtle.ConstantTimeCompare([]byte(pair.Code), []byte(hash)) != 1 {
-				pair.Tries++
-				fmt.Fprintln(os.Stderr, "Incorrect code")
-				break
-			}
-			pair.Approved = true
-			server.pairingChangedLocked()
-			fmt.Fprintf(os.Stderr, "Approved %q. Finish connecting on that device.\n", pair.Device)
-		case "devices":
-			for index, device := range server.devices {
-				fmt.Fprintf(os.Stderr, "%d  %s  %s\n", index+1, device.Name, device.Added.Format(time.RFC3339))
-			}
-		case "revoke":
-			if len(parts) != 2 {
-				fmt.Fprintln(os.Stderr, "Usage: revoke <device number from devices>")
-				break
-			}
-			var index int
-			_, err := fmt.Sscan(parts[1], &index)
-			if err != nil || index < 1 || index > len(server.devices) {
-				fmt.Fprintln(os.Stderr, "Unknown device")
-				break
-			}
-			before := append([]remoteapi.PairedDevice{}, server.devices...)
-			server.devices = append(server.devices[:index-1], server.devices[index:]...)
-			if err := server.saveLocked(); err != nil {
-				server.devices = before
-				fmt.Fprintln(os.Stderr, err)
-			} else {
-				server.disconnectStreamsLocked()
-				fmt.Fprintln(os.Stderr, "Device revoked")
-				server.offerSetupLocked()
-			}
-		case "ssh", "trust", "refuse":
-			server.machineConsole(parts)
-		default:
-			fmt.Fprintln(os.Stderr, "Commands: pair <id> <code>, devices, revoke <number>, ssh, trust <number>, refuse <number>")
-		}
-		server.mu.Unlock()
+		server.command(strings.Fields(scanner.Text()), os.Stderr)
 	}
+}
+
+// command runs one of the console's commands (pair, devices, revoke, ssh,
+// trust, refuse), typed in the console or sent to the admin socket by
+// "1loop-server pair …" (admin.go), and tells whether it succeeded.
+func (server *headlessServer) command(parts []string, out io.Writer) bool {
+	if len(parts) == 0 {
+		return true
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	switch parts[0] {
+	case "pair":
+		if len(parts) != 3 {
+			fmt.Fprintln(out, "Usage: pair <pairing ID> <six-digit code>")
+			return false
+		}
+		pair := server.pairs[parts[1]]
+		if pair == nil || time.Now().After(pair.Expires) || pair.Tries >= 5 {
+			fmt.Fprintln(out, "Pairing expired or unknown")
+			return false
+		}
+		hash := remoteapi.TokenHash(parts[2])
+		if subtle.ConstantTimeCompare([]byte(pair.Code), []byte(hash)) != 1 {
+			pair.Tries++
+			fmt.Fprintln(out, "Incorrect code")
+			return false
+		}
+		pair.Approved = true
+		server.pairingChangedLocked()
+		fmt.Fprintf(out, "Approved %q. Finish connecting on that device.\n", pair.Device)
+	case "devices":
+		if len(server.devices) == 0 {
+			fmt.Fprintln(out, "No paired devices")
+		}
+		for index, device := range server.devices {
+			fmt.Fprintf(out, "%d  %s  %s\n", index+1, device.Name, device.Added.Format(time.RFC3339))
+		}
+	case "revoke":
+		if len(parts) != 2 {
+			fmt.Fprintln(out, "Usage: revoke <device number from devices>")
+			return false
+		}
+		var index int
+		_, err := fmt.Sscan(parts[1], &index)
+		if err != nil || index < 1 || index > len(server.devices) {
+			fmt.Fprintln(out, "Unknown device")
+			return false
+		}
+		if err := server.removeDeviceLocked(index - 1); err != nil {
+			fmt.Fprintln(out, err)
+			return false
+		}
+		fmt.Fprintln(out, "Device revoked")
+	case "ssh", "trust", "refuse":
+		return server.machineConsole(parts, out)
+	default:
+		fmt.Fprintln(out, "Commands: pair <id> <code>, devices, revoke <number>, ssh, trust <number>, refuse <number>")
+		return false
+	}
+	return true
+}
+
+// deviceID names a paired device in the API: the start of its token's
+// hash, which tells nothing of the token and stays the same across restarts.
+func deviceID(device remoteapi.PairedDevice) string {
+	if len(device.TokenHash) < 16 {
+		return device.TokenHash
+	}
+	return device.TokenHash[:16]
+}
+
+// requestHash is the hash of the token a request carries, "" without one.
+func requestHash(req *http.Request) string {
+	token := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
+	if token == "" || token == req.Header.Get("Authorization") {
+		return ""
+	}
+	return remoteapi.TokenHash(token)
+}
+
+// removeDeviceLocked unpairs the device at index: its token stops working
+// on its next request, and the open streams end so that no device keeps one
+// it no longer may (the others reconnect at once). With no device left, a
+// new setup link is offered.
+func (server *headlessServer) removeDeviceLocked(index int) error {
+	if index < 0 || index >= len(server.devices) {
+		return fmt.Errorf("Unknown device")
+	}
+	removed := server.devices[index]
+	server.devices = slices.Delete(slices.Clone(server.devices), index, index+1)
+	server.disconnectStreamsLocked() // before the save: its streams end now
+	if err := server.saveOutsideLocked(); err != nil {
+		if !slices.ContainsFunc(server.devices, func(paired remoteapi.PairedDevice) bool { return paired.TokenHash == removed.TokenHash }) {
+			server.devices = append(server.devices, removed)
+		}
+		return err
+	}
+	if !server.local {
+		fmt.Fprintf(os.Stderr, "\n%q is no longer paired.\n", removed.Name)
+	}
+	server.offerSetupLocked()
+	return nil
+}
+
+// pairedDevices is GET /api/devices: the devices paired with the server,
+// the one asking marked current (#428).
+func (server *headlessServer) pairedDevices(w http.ResponseWriter, r *http.Request) {
+	hash := requestHash(r)
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	devices := []map[string]any{}
+	for _, device := range server.devices {
+		current := subtle.ConstantTimeCompare([]byte(device.TokenHash), []byte(hash)) == 1
+		devices = append(devices, map[string]any{"id": deviceID(device), "name": device.Name, "added": device.Added, "current": current})
+	}
+	core.WriteJSON(w, 200, map[string]any{"devices": devices})
+}
+
+// revokePairedDevice is POST /api/devices/{id}/revoke: a paired device
+// unpairs another one, or itself when it forgets the server (#428).
+func (server *headlessServer) revokePairedDevice(w http.ResponseWriter, r *http.Request) {
+	id := r.PathValue("id")
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	index := slices.IndexFunc(server.devices, func(device remoteapi.PairedDevice) bool {
+		return id != "" && deviceID(device) == id
+	})
+	if index < 0 {
+		core.Fail(w, 404, "This device is not paired")
+		return
+	}
+	if err := server.removeDeviceLocked(index); err != nil {
+		core.Fail(w, 500, "Unable to unpair the device: "+err.Error())
+		return
+	}
+	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }
 
 func saveServerJSON(path string, value any) error {
@@ -237,4 +354,19 @@ func saveServerJSON(path string, value any) error {
 		return err
 	}
 	return core.WriteFileSafely(path, 0600, false, data)
+}
+
+// Pending pairings: a few per client address, and a bound on them all.
+const (
+	pairingsPerAddress = 2
+	maxPendingPairings = 32
+)
+
+// clientAddress is the IP address a request comes from.
+func clientAddress(req *http.Request) string {
+	host, _, err := net.SplitHostPort(req.RemoteAddr)
+	if err != nil {
+		return req.RemoteAddr
+	}
+	return host
 }

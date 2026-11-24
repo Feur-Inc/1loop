@@ -68,6 +68,7 @@ fun SharingSection(app: RemoteApp) {
     val scope = rememberCoroutineScope()
     val state = app.sharing
     var problem by remember { mutableStateOf<String?>(null) }
+    var removing by remember { mutableStateOf<Pair<Int, PairedDevice>?>(null) }
     Text("Share this phone", style = Type.title)
     Text("Lets the 1loop desktop or another phone on this network use this phone's agent: there, add a Remote server with the address and fingerprint below, then type here the code it shows. Off each time the engine starts.", style = Type.small)
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -92,9 +93,15 @@ fun SharingSection(app: RemoteApp) {
         state.devices.forEachIndexed { index, device ->
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Text(device.name, style = Type.body, modifier = Modifier.weight(1f))
-                Pill("Remove") { scope.launch { runCatching { app.revokeDevice(index) }.onFailure { problem = it.message } } }
+                Pill("Remove") { removing = index to device }
             }
         }
+    }
+    removing?.let { (index, device) ->
+        ConfirmDialog(
+            "Remove ${device.name}?", "${device.name} is unpaired from this phone: its access stops at once, and it must be paired again to use it.",
+            "Remove", { removing = null },
+        ) { scope.launch { runCatching { app.revokeDevice(index) }.onFailure { problem = it.message } } }
     }
     problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }
 }

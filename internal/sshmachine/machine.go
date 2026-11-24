@@ -17,6 +17,7 @@ import (
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
 
+	"1loop/internal/platform"
 	"1loop/internal/terminal"
 )
 
@@ -28,7 +29,16 @@ type Machine struct {
 	secrets  Secrets
 	trust    TrustFunc
 	conns    []*connection
-	home     string // the user's home folder there, for ~/
+	home     string    // the user's home folder there, for ~/
+	dialing  *dialCall // the connection being opened, outside mu (#521)
+}
+
+// dialCall is one connection being opened: the others who need one wait
+// for it rather than dial too, or wait for mu meanwhile.
+type dialCall struct {
+	done chan struct{}
+	conn *connection
+	err  error
 }
 
 // maxConnections bounds the connections to one machine. OpenSSH allows 10
@@ -73,18 +83,18 @@ func (machine *Machine) connect(ctx context.Context) (*connection, error) {
 		close(conn.broken)
 	}()
 	go conn.keepAlive()
-	if machine.home == "" {
-		if home, err := files.Getwd(); err == nil {
+	if home, err := files.Getwd(); err == nil {
+		machine.mu.Lock()
+		if machine.home == "" {
 			machine.home = home
 		}
+		machine.mu.Unlock()
 	}
 	return conn, nil
 }
 
-// first is a working connection: the first one alive, or a new one.
-func (machine *Machine) first(ctx context.Context) (*connection, error) {
-	machine.mu.Lock()
-	defer machine.mu.Unlock()
+// pruneLocked drops the connections the network broke; mu is held.
+func (machine *Machine) pruneLocked() {
 	kept := machine.conns[:0]
 	for _, conn := range machine.conns {
 		if conn.alive() {
@@ -94,15 +104,49 @@ func (machine *Machine) first(ctx context.Context) (*connection, error) {
 		}
 	}
 	machine.conns = kept
+}
+
+// dialOne opens a connection and keeps it, mu not held meanwhile: a slow
+// or unreachable machine, or a host key the user has not answered yet, no
+// longer blocks Path() and the calls that have a connection already. One
+// dial at a time; who comes meanwhile waits for it, with its own context.
+func (machine *Machine) dialOne(ctx context.Context) (*connection, error) {
+	machine.mu.Lock()
+	call := machine.dialing
+	if call == nil {
+		call = &dialCall{done: make(chan struct{})}
+		machine.dialing = call
+		machine.mu.Unlock()
+		call.conn, call.err = machine.connect(ctx)
+		machine.mu.Lock()
+		machine.dialing = nil
+		if call.err == nil {
+			machine.conns = append(machine.conns, call.conn)
+		}
+		machine.mu.Unlock()
+		close(call.done)
+		return call.conn, call.err
+	}
+	machine.mu.Unlock()
+	select {
+	case <-call.done:
+		return call.conn, call.err
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+// first is a working connection: the first one alive, or a new one.
+func (machine *Machine) first(ctx context.Context) (*connection, error) {
+	machine.mu.Lock()
+	machine.pruneLocked()
 	if len(machine.conns) > 0 {
-		return machine.conns[0], nil
+		conn := machine.conns[0]
+		machine.mu.Unlock()
+		return conn, nil
 	}
-	conn, err := machine.connect(ctx)
-	if err != nil {
-		return nil, err
-	}
-	machine.conns = append(machine.conns, conn)
-	return conn, nil
+	machine.mu.Unlock()
+	return machine.dialOne(ctx)
 }
 
 // session opens a session on a connection that still has room for one.
@@ -110,10 +154,12 @@ func (machine *Machine) session(ctx context.Context) (*ssh.Session, error) {
 	if _, err := machine.first(ctx); err != nil {
 		return nil, err
 	}
+	// Opening a session is a round trip: not under mu.
 	machine.mu.Lock()
-	defer machine.mu.Unlock()
+	conns := append([]*connection(nil), machine.conns...)
+	machine.mu.Unlock()
 	var last error
-	for _, conn := range machine.conns {
+	for _, conn := range conns {
 		if !conn.alive() {
 			continue
 		}
@@ -123,14 +169,13 @@ func (machine *Machine) session(ctx context.Context) (*ssh.Session, error) {
 		}
 		last = err
 	}
-	if len(machine.conns) >= maxConnections {
+	if len(conns) >= maxConnections {
 		return nil, fmt.Errorf("%s accepts no more sessions: close a terminal or stop a background task (%v)", machine.Label(), last)
 	}
-	conn, err := machine.connect(ctx)
+	conn, err := machine.dialOne(ctx)
 	if err != nil {
 		return nil, err
 	}
-	machine.conns = append(machine.conns, conn)
 	return conn.client.NewSession()
 }
 
@@ -290,9 +335,10 @@ func quote(word string) string {
 // a time limit), the watcher ends the whole group, as closing a session
 // alone leaves the command running. The watcher reads that input from fd 3:
 // a background list without job control would get /dev/null instead.
-func commandScript(dir, command string) string {
+func commandScript(dir, command string, env ...string) string {
 	return "exec 3<&0\n" +
 		"cd " + quote(dir) + " || exit 1\n" +
+		strings.Join(env, "") +
 		"export PAGER=cat GIT_PAGER=cat GIT_TERMINAL_PROMPT=0 TERM=dumb\n" +
 		"shell=sh; command -v bash >/dev/null 2>&1 && shell=bash\n" +
 		"if command -v setsid >/dev/null 2>&1; then setsid $shell -c " + quote(command) + " </dev/null &\n" +
@@ -327,7 +373,7 @@ func (machine *Machine) StartStreams(ctx context.Context, dir, command string, s
 		return nil, err
 	}
 	session.Stdout, session.Stderr = stdout, stderr
-	if err := session.Start("sh -c " + quote(commandScript(dir, command))); err != nil {
+	if err := session.Start("sh -c " + quote(commandScript(dir, command, platform.ExportScript(ctx)))); err != nil {
 		session.Close()
 		return nil, err
 	}
@@ -407,7 +453,9 @@ func (machine *Machine) Terminal(ctx context.Context, dir string) (terminal.Proc
 		return nil, err
 	}
 	session.Stderr = io.Discard // a pseudo-terminal sends both on one stream
-	shell := `cd ` + quote(dir) + ` 2>/dev/null; export COLORTERM=truecolor; exec "${SHELL:-/bin/sh}" -l`
+	// The project's variables (#408) are exported before the login shell,
+	// which inherits them.
+	shell := `cd ` + quote(dir) + ` 2>/dev/null; export COLORTERM=truecolor; ` + platform.ExportScript(ctx) + `exec "${SHELL:-/bin/sh}" -l`
 	if err := session.Start("sh -c " + quote(shell)); err != nil {
 		session.Close()
 		return nil, err

@@ -174,13 +174,22 @@ func sectionHeader(text string, action fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewBorder(nil, nil, nil, padded(10, 0, 0, 2, action), label)
 }
 
+// moreButtonInset is the room withMore keeps at a row's end for its ⋯:
+// a styleWindow row's width (tapRowRenderer.metrics: its icon and padding,
+// which no theme changes), and 4. A constant, not a row built and measured
+// for each row of the sidebar.
+func moreButtonInset() float32 {
+	const padX, icon = 8, 18 // styleWindow
+	return icon + 2*padX + 4
+}
+
 // withMore adds a "⋯" button that appears while the row is hovered; it and a
 // right click on the row open the row's context menu. A name cut short by
 // the sidebar's width shows in full while the row is hovered.
 func (ui *desktopUI) withMore(row *tapRow, open func(anchor fyne.CanvasObject) *sheet) fyne.CanvasObject {
 	more := newRow("", iconMore, styleWindow, nil)
 	row.tips = ui.tips
-	row.endInset = more.MinSize().Width + 4
+	row.endInset = moreButtonInset()
 	more.Hide()
 	// The ⋯ sits over the row's trailing text (a project's branch): that text
 	// hides while the ⋯ shows, also when the pointer has left the row for it.
@@ -265,27 +274,6 @@ func (ui *desktopUI) selectProject(path string) {
 	ui.startNew()
 }
 
-func (ui *desktopUI) addProject() {
-	if ui.server == nil && ui.cfg.MachineID != "" {
-		ui.addMachineProject()
-		return
-	}
-	start := filepath.Dir(ui.cfg.Workspace)
-	ui.pick(pickRequest{title: "Add a project folder", start: start, folder: true}, func(paths []string) {
-		root, err := agent.ResolveWorkspace(paths[0])
-		if err != nil {
-			ui.notice("Add project", err.Error())
-			return
-		}
-		ui.ensureProject(root)
-		if root == ui.cfg.Workspace {
-			ui.renderChats()
-			return
-		}
-		ui.selectProject(root)
-	})
-}
-
 // chatsIn are the chats of a project of the target.
 func (ui *desktopUI) chatsIn(path string) []*conversation {
 	if ui.cfg.InScratch() && path == ui.cfg.Workspace {
@@ -321,17 +309,25 @@ func (ui *desktopUI) renameProject(path string) {
 	ui.window.Canvas().Focus(entry)
 }
 
-func (ui *desktopUI) removeProject(path string) {
-	chats := ui.chatsIn(path)
-	text := fmt.Sprintf("“%s” will no longer be listed in 1loop.", ui.projectName(path))
-	if len(chats) > 0 {
-		text += fmt.Sprintf(" Its %d chat(s) will be removed from 1loop.", len(chats))
+// removeProject forgets a project of this computer or of an SSH machine,
+// and its chats.
+func (ui *desktopUI) removeProject(target projectTarget, path string) {
+	machine := target.id // "" for this computer
+	chats := 0
+	for _, chat := range ui.chats {
+		if chat.Config.Workspace == path && chat.Config.MachineID == machine {
+			chats++
+		}
+	}
+	text := fmt.Sprintf("“%s” will no longer be listed in 1loop.", targetProjectName(target, path))
+	if chats > 0 {
+		text += fmt.Sprintf(" Its %d chat(s) will be removed from 1loop.", chats)
 	}
 	text += " No files in the directory will be changed."
 	ui.confirm("Remove project?", text, "Remove", func() {
 		var kept []*conversation
 		for _, chat := range ui.chats {
-			if chat.Config.Workspace != path || chat.Config.MachineID != ui.cfg.MachineID {
+			if chat.Config.Workspace != path || chat.Config.MachineID != machine {
 				kept = append(kept, chat)
 			} else if chat.run != nil {
 				chat.run.cancel()
@@ -339,13 +335,14 @@ func (ui *desktopUI) removeProject(path string) {
 		}
 		ui.chats = kept
 		var projects []string
-		for _, p := range ui.targetProjects() {
+		for _, p := range ui.projectsOn(target) {
 			if p != path {
 				projects = append(projects, p)
 			}
 		}
-		ui.setTargetProjects(projects)
-		if ui.cfg.Workspace == path {
+		ui.setProjectsOn(target, projects)
+		ui.keepProjectEnv(target, path, nil)
+		if ui.server == nil && ui.cfg.MachineID == machine && ui.cfg.Workspace == path {
 			next := ""
 			if len(projects) > 0 {
 				next = projects[0]
@@ -388,7 +385,7 @@ func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
 	if ui.cfg.MachineID != "" {
 		add = "New project…"
 	}
-	actions = append(actions, menuAction{label: add, icon: iconPlus, run: ui.addProject})
+	actions = append(actions, menuAction{label: add, icon: iconPlus, run: func() { ui.addProjectOn(ui.activeTarget()) }}) // the chip's target
 	showMenu(ui.window, anchor, actions)
 }
 
@@ -399,7 +396,21 @@ func (ui *desktopUI) openChat(chat *conversation) {
 	if chat == ui.current {
 		return
 	}
+	if view := ui.viewOf(chat); view != ui { // on screen in another window: that one comes forward
+		view.raise()
+		return
+	}
 	ui.loadChat(chat, true)
+}
+
+// markRead clears a subchat's unread mark as the user opens it: its dot in
+// the sidebar goes, and so does its count in the summary row. Kept for the
+// next start.
+func (ui *desktopUI) markRead(chat *conversation) {
+	if chat.Subchat != nil && chat.Subchat.Unseen {
+		chat.Subchat.Unseen = false
+		ui.save()
+	}
 }
 
 func (ui *desktopUI) reloadChat(chat *conversation) {
@@ -414,15 +425,18 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 	ui.prefs.close()
 	ui.clearSelection()
 	ui.current = chat
+	ui.activate()
 	if chat.failed { // seen now
 		chat.failed = false
 		ui.syncTray()
 	}
+	ui.markRead(chat)
 	ui.cfg = chat.Config
+	ui.syncProjectTheme()
 	ui.prompt.switchDraft(chat.ID)
 	ui.scroll.rest() // what the wheel still owed the last chat
 	ui.followTail = true
-	ui.panel.switchTo(chat)
+	ui.showPanel(chat)
 	if reuse {
 		ui.curtain.reveal() // another chat takes the page: not a reload of this one
 	}
@@ -462,15 +476,7 @@ func (ui *desktopUI) renameChat(chat *conversation) {
 	entry.SetText(chat.Title)
 	var dialog *sheet
 	apply := func() {
-		if title := []rune(entry.Text); len(title) > 0 {
-			if len(title) > 80 {
-				title = title[:80]
-			}
-			chat.Title = string(title)
-			ui.save()
-			ui.updateHeader()
-			ui.renderChats()
-		}
+		ui.setChatTitle(chat, entry.Text)
 		dialog.Hide()
 	}
 	entry.OnSubmitted = func(string) { apply() }
@@ -480,49 +486,75 @@ func (ui *desktopUI) renameChat(chat *conversation) {
 	ui.window.Canvas().Focus(entry)
 }
 
+// setChatTitle gives chat a title (Rename, the phone, the agent's chats
+// tool or the naming model), saved and shown in every window and on the
+// paired phones. A blank title changes nothing; it returns the title kept.
+func (ui *desktopUI) setChatTitle(chat *conversation, title string) string {
+	if title = remoteapi.CleanChatTitle(title); title == "" {
+		return ""
+	}
+	chat.Title = title
+	ui.save()
+	ui.updateHeader()
+	ui.renderChats()
+	return title
+}
+
 func (ui *desktopUI) deleteChat(chat *conversation) {
 	text := fmt.Sprintf("“%s” will be permanently deleted from 1loop.", chat.Title)
 	if chat.Config.Scratch != "" {
 		text = fmt.Sprintf("“%s” and the folder 1loop made for it will be permanently deleted.", chat.Title)
 	}
-	if ui.subchatWorktree(chat) != "" {
+	text += agent.SubtreeNote(len(ui.subtreeOf(chat)))
+	if len(ui.treeWorktrees(chat)) > 0 {
 		ui.confirmDeleteSubchat(chat, text)
 		return
 	}
 	ui.confirm("Delete chat?", text, "Delete", func() {
-		ui.removeChat(chat)
+		ui.removeTree(chat)
 	})
 }
 
+// removeTree deletes a chat and its subchats at every level, stopping
+// those that run, and returns them all, the chat first.
+func (ui *desktopUI) removeTree(chat *conversation) []*conversation {
+	gone := append([]*conversation{chat}, ui.subtreeOf(chat)...)
+	ui.removeChats(gone...)
+	return gone
+}
+
 func (ui *desktopUI) removeChat(chat *conversation) {
+	ui.removeChats(chat)
+}
+
+// removeChats deletes these chats alone: what is under them stays.
+func (ui *desktopUI) removeChats(chats ...*conversation) {
 	var kept []*conversation
 	for _, conversationValue := range ui.chats {
-		if conversationValue != chat {
+		if !slices.Contains(chats, conversationValue) {
 			kept = append(kept, conversationValue)
 		}
 	}
 	ui.chats = kept
-	if chat.run != nil {
-		chat.run.cancel()
+	for _, chat := range chats {
+		if chat.run != nil {
+			chat.run.cancel()
+		}
+		chat.queue, chat.steer = nil, nil
+		chat.tasks.StopAll()
+		agent.DropClaudeChat(chat.ID)
+		ui.prompt.drafts.set(chat.ID, "")
+		for _, view := range ui.allPanes() {
+			if view.current == chat {
+				view.current = nil
+				view.startNew()
+			}
+		}
+		chat.disposePanel()
+		ui.removeScratch(chat)
 	}
-	chat.queue, chat.steer = nil, nil
-	chat.tasks.StopAll()
-	ui.prompt.drafts.set(chat.ID, "")
-	if ui.current == chat {
-		ui.current = nil
-		ui.startNew()
-	}
-	chat.disposePanel()
-	ui.removeScratch(chat)
 	ui.save()
 	ui.renderChats()
-}
-
-func (ui *desktopUI) chatMenu(chat *conversation, anchor fyne.CanvasObject) *sheet {
-	return showMenu(ui.window, anchor, []menuAction{
-		{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
-		{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
-	})
 }
 
 // confirm asks before a destructive action.
@@ -536,60 +568,26 @@ func (ui *desktopUI) confirm(title, text, verb string, run func()) {
 	dialog = ui.modal(title, label, 440, nil, cancel, row)
 }
 
-// renderChats redraws the projects and their chats.
+// renderChats redraws every target's projects and their chats, in every
+// window's sidebar.
 func (ui *desktopUI) renderChats() {
-	if ui.cachedChat != nil && !slices.Contains(ui.chats, ui.cachedChat.chat) {
-		ui.cachedChat = nil
-	}
 	ui.remote.chatsChanged()
-	ui.syncTray() // a chat removed, or its run started or ended
-	if ui.server != nil {
-		ui.server.renderChats()
-		return
+	ui.syncTray()                        // a chat removed, or its run started or ended
+	for _, view := range ui.allPanes() { // every pane of every window (panes.go)
+		if view.cachedChat != nil && !slices.Contains(ui.chats, view.cachedChat.chat) {
+			view.cachedChat = nil
+		}
+		if view.server == nil && view.worktreeMap()[view.cfg.Workspace] == "" && !view.cfg.InScratch() {
+			view.ensureTargetProject(view.cfg.Workspace)
+		}
+		if view != ui && view.header != nil {
+			view.updateHeader() // a rename, from another window or pane
+		}
 	}
-	worktrees := ui.worktreeMap()
-	if worktrees[ui.cfg.Workspace] == "" && !ui.cfg.InScratch() {
-		ui.ensureTargetProject(ui.cfg.Workspace)
+	for _, window := range ui.allWindows() {
+		view := window.focused() // the sidebar shows the pane with the focus
+		view.renderSidebar(view.sidebarGroups())
 	}
-	var chats []sideChat
-	for _, chat := range ui.chats {
-		if chat.Config.MachineID != ui.cfg.MachineID {
-			continue
-		}
-		chat := chat
-		status, blocked := agent.WrapUpStatus(chat.Items)
-		menu := []menuAction{
-			{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
-			{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
-		}
-		parent := ""
-		if chat.Subchat != nil {
-			parent = chat.Subchat.Parent
-			menu = append([]menuAction{{label: "Open parent", icon: iconSubchat, run: func() {
-				if parent := ui.parentOf(chat); parent != nil {
-					ui.openChat(parent)
-				}
-			}}}, menu...)
-			if chat.run != nil {
-				menu = append([]menuAction{{label: "Stop", icon: iconStop, run: func() { ui.stopSubchat(chat) }}}, menu...)
-			}
-		}
-		chats = append(chats, sideChat{
-			id: chat.ID, parent: parent,
-			title: chat.Title, folder: chat.Config.Workspace, scratch: chat.Config.InScratch(), running: chat.run != nil, selected: chat == ui.current,
-			status: status, blocked: blocked,
-			open: func() { ui.openChat(chat) },
-			menu: menu,
-			text: func() []string { return chatTexts(chat.Items) },
-		})
-	}
-	ui.renderSidebar(ui.targetProjects(), chats, ui.selectProject, func(p string) []menuAction {
-		actions := append(ui.repositoryActions(p), ui.projectMemoryAction(p))
-		if ui.cfg.MachineID == "" { // a machine's folder is renamed there, in its terminal
-			actions = append(actions, menuAction{label: "Rename", icon: iconRename, run: func() { ui.renameProject(p) }})
-		}
-		return append(actions, menuAction{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { ui.removeProject(p) }})
-	})
 }
 
 // chatTexts are a chat's messages, what search reads: not tool output.
@@ -622,9 +620,10 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	// A new version shows above Settings until it is installed.
 	ui.updateRow = newRow("", iconArrowTurn, styleNav, func() { ui.settings(); ui.prefs.show("Updates") })
 	ui.updateRow.Hide()
-	bottom := container.NewVBox(divider, padded(6, 0, 0, 0, ui.updateRow), padded(0, 8, 0, 0, ui.connections))
+	ui.usageRow = newRow("Usage", iconUsage, styleNav, ui.showUsage)
+	bottom := container.NewVBox(divider, padded(6, 0, 0, 0, ui.updateRow), padded(0, 0, 0, 0, ui.usageRow), padded(0, 8, 0, 0, ui.connections))
 	// Under the logo: the chats, or the settings' sections while they are open.
 	ui.sideApp = container.NewBorder(ui.sideActions(), bottom, nil, nil, newKineticVScroll(lists))
 	content := padded(0, 0, 12, 12, container.NewBorder(brand, nil, nil, nil, container.NewStack(ui.sideApp, ui.prefs.side)))
-	return container.NewStack(canvas.NewRectangle(colSidebar), content)
+	return container.NewStack(blurBehind("sidebar", canvas.NewRectangle(colSidebar), &colSidebar), content)
 }

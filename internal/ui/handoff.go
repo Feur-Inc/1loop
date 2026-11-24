@@ -16,6 +16,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/agent"
+	"1loop/internal/core"
 )
 
 // pendingHandoff is the user's choice, applied when the turn starts.
@@ -93,6 +94,7 @@ func (ui *desktopUI) modelName(cfg agent.Config) string {
 
 // askHandoff shows the dialog for chat, then calls proceed with the choice.
 func (ui *desktopUI) askHandoff(chat *conversation, proceed func()) {
+	ui = ui.viewOf(chat) // the window showing it (windows.go)
 	previous := ui.previousConfig(chat)
 	next := ui.runConfig(chat)
 	plan := agent.PlanHandoff(previous, next, chat.History, chat.Items, ui.previousName(chat), ui.modelName(next))
@@ -159,7 +161,7 @@ func showHandoffDialog(window fyne.Window, plan agent.HandoffPlan, done func(age
 	levelIDs := map[string]string{}
 	var levelLabels []string
 	for _, level := range plan.Levels {
-		label := fmt.Sprintf("%s · ~%s tokens", level.Name, agent.Tokens(level.Tokens))
+		label := fmt.Sprintf("%s · ~%s tokens", level.Name, core.CompactCount(level.Tokens))
 		levelIDs[label] = level.ID
 		levelLabels = append(levelLabels, label)
 	}

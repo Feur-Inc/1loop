@@ -39,7 +39,7 @@ type glidePlace struct{ target, offset float32 }
 
 func newGlideLayout() *glideLayout {
 	pill := canvas.NewRectangle(colSelected)
-	pill.CornerRadius = 6
+	pill.CornerRadius = rounded(6)
 	pill.Hide()
 	return &glideLayout{keys: map[fyne.CanvasObject]string{}, places: map[string]glidePlace{}, progress: 1, pill: pill}
 }
@@ -106,6 +106,11 @@ func (glide *glideLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 		} else {
 			if old, seen := glide.places[key]; seen {
 				place.offset = glide.at(old) - y
+				// A row still fading in when the sidebar was built again
+				// (a server chosen, then its state arriving) is no longer
+				// new: finish its fade, or it stays transparent with the
+				// selection's fill drawn alone where it is.
+				fadeRows(object, 1)
 			} else if glide.laidOut {
 				fresh[object] = true
 				place.offset = -6 // drops in from just above

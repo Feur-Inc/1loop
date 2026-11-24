@@ -54,6 +54,12 @@ type painter struct {
 	roundRectangleProgram ProgramState
 	polygonProgram        ProgramState
 	arcProgram            ProgramState
+	userPrograms          map[string]*userProgram // canvas.Shader sources, compiled (1loop)
+	blur                  *blurState              // canvas.Blur's programs and textures (1loop)
+	blurFailed            bool
+	clipping              bool     // a clip is on (1loop: the blur turns it off and back)
+	clip                  [4]int32 // and where
+	outWidth, outHeight   int
 	texScale              float32
 	pixScale              float32 // pre-calculate scale*texScale for each draw
 }
@@ -113,7 +119,8 @@ var _ Painter = (*painter)(nil)
 
 func (p *painter) Clear() {
 	r, g, b, a := theme.Color(theme.ColorNameBackground).RGBA()
-	p.ctx.ClearColor(float32(r)/max16bit, float32(g)/max16bit, float32(b)/max16bit, float32(a)/max16bit)
+	_ = a // 1loop: always opaque, a translucent background is laid over a shader (#464)
+	p.ctx.ClearColor(float32(r)/max16bit, float32(g)/max16bit, float32(b)/max16bit, 1)
 	p.ctx.Clear(bitColorBuffer | bitDepthBuffer)
 	p.logError()
 }
@@ -134,6 +141,7 @@ func (p *painter) SetFrameBufferScale(scale float32) {
 }
 
 func (p *painter) SetOutputSize(width, height int) {
+	p.outWidth, p.outHeight = width, height
 	p.ctx.Viewport(0, 0, width, height)
 	p.logError()
 }
@@ -143,12 +151,14 @@ func (p *painter) StartClipping(pos fyne.Position, size fyne.Size) {
 	y := p.textureScale(p.canvas.Size().Height - pos.Y - size.Height)
 	w := p.textureScale(size.Width)
 	h := p.textureScale(size.Height)
+	p.clipping, p.clip = true, [4]int32{int32(x), int32(y), int32(w), int32(h)}
 	p.ctx.Scissor(int32(x), int32(y), int32(w), int32(h))
 	p.ctx.Enable(scissorTest)
 	p.logError()
 }
 
 func (p *painter) StopClipping() {
+	p.clipping = false
 	p.ctx.Disable(scissorTest)
 	p.logError()
 }

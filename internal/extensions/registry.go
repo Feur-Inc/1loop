@@ -23,6 +23,8 @@ import (
 	"strings"
 	"sync"
 	"time"
+
+	"1loop/internal/core"
 )
 
 // Skill is an Agent Skill: a folder with a SKILL.md whose front matter gives
@@ -88,9 +90,6 @@ func defaultDir() string {
 // Dir is the extensions folder.
 func Dir() string { return dirFunc() }
 
-// SetDir moves the folder (tests).
-func SetDir(dir string) { dirFunc = func() string { return dir } }
-
 func registryPath() string { return filepath.Join(Dir(), "extensions.json") }
 
 // Load reads what is installed. A missing file is an empty registry.
@@ -123,11 +122,7 @@ func save(registry Registry) error {
 	if err != nil {
 		return err
 	}
-	temp := registryPath() + ".tmp"
-	if err := os.WriteFile(temp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temp, registryPath())
+	return core.WriteFileSafely(registryPath(), 0o600, false, data)
 }
 
 // Update changes the registry under the lock and writes it.

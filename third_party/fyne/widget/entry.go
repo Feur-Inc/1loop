@@ -76,6 +76,11 @@ type Entry struct {
 	CursorRow, CursorColumn int
 	OnCursorChanged         func() `json:"-"`
 
+	// 1loop: OnScrolled is told where the text has scrolled to, by the
+	// user or to follow the cursor, so that a line-number gutter beside the
+	// entry can follow it.
+	OnScrolled func(fyne.Position) `json:"-"`
+
 	// Icon is displayed at the outer left of the entry.
 	// It is not clickable, but can be used to indicate the purpose of the entry.
 	// Since: 2.7
@@ -198,6 +203,11 @@ func (e *Entry) CreateRenderer() fyne.WidgetRenderer {
 		objects = append(objects, e.content)
 	}
 	e.content.scroll = e.scroll
+	e.scroll.OnScrolled = func(offset fyne.Position) { // 1loop
+		if f := e.OnScrolled; f != nil {
+			f(offset)
+		}
+	}
 
 	if e.Password && e.ActionItem == nil {
 		// An entry widget has been created via struct setting manually
@@ -1291,6 +1301,28 @@ func (e *Entry) syncSelectable() {
 }
 
 // textProvider returns the text handler for this entry
+// LineStarts is, for each row the entry shows (a long line wraps over
+// several), whether that row starts a line of the text. 1loop: its prompt
+// editor numbers the lines in a gutter beside the entry.
+func (e *Entry) LineStarts() []bool {
+	provider := e.textProvider()
+	text := []rune(provider.String())
+	starts := make([]bool, provider.rows())
+	for row := range starts {
+		begin := provider.rowBoundary(row).begin
+		starts[row] = row == 0 || begin > 0 && begin <= len(text) && text[begin-1] == '\n'
+	}
+	return starts
+}
+
+// ScrollOffset is how far the text has scrolled in the entry (1loop).
+func (e *Entry) ScrollOffset() fyne.Position {
+	if e.scroll == nil {
+		return fyne.Position{}
+	}
+	return e.scroll.Offset
+}
+
 func (e *Entry) textProvider() *RichText {
 	if len(e.text.Segments) > 0 {
 		return &e.text
@@ -1883,6 +1915,9 @@ func (r *entryContentRenderer) ensureCursorVisible() {
 	}
 	if r.content.scroll.Content != nil {
 		r.content.scroll.ScrollToOffset(r.content.scroll.Offset.Add(move))
+		if f := r.content.entry.OnScrolled; f != nil { // 1loop
+			f(r.content.scroll.Offset)
+		}
 	}
 }
 

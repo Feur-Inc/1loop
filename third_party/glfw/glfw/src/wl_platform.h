@@ -59,6 +59,7 @@ typedef VkBool32 (APIENTRY *PFN_vkGetPhysicalDeviceWaylandPresentationSupportKHR
 #include "wayland-xdg-shell-client-protocol.h"
 #include "wayland-xdg-decoration-client-protocol.h"
 #include "wayland-viewporter-client-protocol.h"
+#include "wayland-fractional-scale-v1-client-protocol.h"
 #include "wayland-relative-pointer-unstable-v1-client-protocol.h"
 #include "wayland-pointer-constraints-unstable-v1-client-protocol.h"
 #include "wayland-idle-inhibit-unstable-v1-client-protocol.h"
@@ -285,6 +286,9 @@ typedef struct _GLFWofferWayland
     struct wl_data_offer*       offer;
     GLFWbool                    text_plain_utf8;
     GLFWbool                    text_uri_list;
+    // 1loop: the image type the offer can be read as, image/png when it is
+    // offered, else the first image/* type (glfwGetWaylandClipboardImageType).
+    char                        image[128];
 } _GLFWofferWayland;
 
 typedef struct _GLFWscaleWayland
@@ -335,9 +339,16 @@ typedef struct _GLFWwindowWayland
     double                      cursorPosX, cursorPosY;
 
     char*                       title;
+    char*                       appId; // 1loop: GLFW_X11_CLASS_NAME, sent before the first commit
 
     // We need to track the monitors the window spans on to calculate the
     // optimal scaling factor.
+    // 1loop: with a fractional scale from the compositor, the window draws
+    // its buffer at that scale (buffer scale 1) and a viewport gives it its
+    // size in surface coordinates. 0 until the compositor sends one.
+    struct wp_fractional_scale_v1* fractionalScale;
+    struct wp_viewport*         scalingViewport;
+    double                      fractionalScaleFactor;
     int                         contentScale;
     _GLFWscaleWayland*          scales;
     int                         scaleCount;
@@ -372,6 +383,8 @@ typedef struct _GLFWlibraryWayland
     struct xdg_wm_base*         wmBase;
     struct zxdg_decoration_manager_v1*      decorationManager;
     struct wp_viewporter*       viewporter;
+    // 1loop: the compositor's fractional scales (wp_fractional_scale_v1)
+    struct wp_fractional_scale_manager_v1* fractionalScaleManager;
     struct zwp_relative_pointer_manager_v1* relativePointerManager;
     struct zwp_pointer_constraints_v1*      pointerConstraints;
     struct zwp_idle_inhibit_manager_v1*     idleInhibitManager;
@@ -381,6 +394,9 @@ typedef struct _GLFWlibraryWayland
 
     struct wl_data_offer*       selectionOffer;
     struct wl_data_source*      selectionSource;
+    // 1loop: what the selection offers: text, and the image type, if any.
+    GLFWbool                    selectionText;
+    char                        selectionImage[128];
 
     struct wl_data_offer*       dragOffer;
     _GLFWwindow*                dragFocus;

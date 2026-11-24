@@ -267,7 +267,7 @@ func systemInstructions(cfg Config) string {
 	if cfg.InScratch() { // never its path (scratchInstructions)
 		workspace = "a folder 1loop made for this chat (the project root of your tools)"
 	}
-	return prompt + scratchInstructions(cfg) + "\nWorkspace: " + workspace + "\nShell: " + shell + "." + citationInstructions + calculationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + wrapUpInstructions(cfg) + contextInstructions(cfg) + subchatParentInstructions(cfg) + toolSearchInstructions(cfg)
+	return prompt + scratchInstructions(cfg) + "\nWorkspace: " + workspace + "\nShell: " + shell + "." + citationInstructions + calculationInstructions + skillInstructions(cfg) + todoInstructions(cfg) + goalInstructions(cfg) + wrapUpInstructions(cfg) + contextInstructions(cfg) + subchatParentInstructions(cfg) + toolSearchInstructions(cfg)
 }
 
 type approvalContextKey struct{}
@@ -289,6 +289,7 @@ func toolContext(ctx context.Context, cfg Config) context.Context {
 	ctx = context.WithValue(ctx, browserContextKey{}, modelBrowser(cfg.Browser))
 	ctx = context.WithValue(ctx, recallContextKey{}, cfg.Recall)
 	ctx = context.WithValue(ctx, todoContextKey{}, cfg.Todo)
+	ctx = context.WithValue(ctx, goalContextKey{}, cfg.Goal)
 	ctx = context.WithValue(ctx, tasksContextKey{}, cfg.Tasks)
 	ctx = context.WithValue(ctx, grantsContextKey{}, cfg.Grants)
 	if cfg.Machine != nil {

@@ -511,6 +511,24 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		core.WriteJSON(w, 200, map[string]string{"chat": args.Chat})
 		return
 	}
+	// /goal is 1loop's, never the model's (agent/goal.go).
+	goal, isGoal := agent.ParseGoalCommand(args.Text)
+	isGoal = isGoal && len(args.Attachments) == 0 && len(args.Images) == 0
+	if isGoal && chat != nil {
+		err := server.goalCommandLocked(chat, goal)
+		server.mu.Unlock()
+		if err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		core.WriteJSON(w, 200, map[string]string{"chat": chat.ID})
+		return
+	}
+	if isGoal && goal.Action != "set" {
+		server.mu.Unlock()
+		core.Fail(w, 400, "This chat has no goal yet: /goal <objective> sets one and starts working on it")
+		return
+	}
 	workspace := args.Workspace
 	if chat != nil {
 		if workspace != "" && workspace != chat.Config.Workspace {
@@ -565,6 +583,17 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.Images = append(m.Images, args.Images...)
+	var newGoal *agent.GoalState // a new chat started by /goal
+	if isGoal {
+		newGoal = &agent.GoalState{}
+		outcome, err := newGoal.Command(goal, false, server.cfg.Provider)
+		if err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		m = *outcome.Start
+		args.Text = goal.Objective // the chat's title
+	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	if chat == nil {
@@ -597,6 +626,9 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(server.panelHomes, "home:"+workspace)
 		chat.ID, chat.Title, chat.Config = core.Identifier()[:16], string(title), cfg
+		if newGoal != nil {
+			chat.Goal = newGoal
+		}
 		server.chats = append([]*serverChat{chat}, server.chats...)
 		server.nameNewChatLocked(chat, m)
 	}

@@ -67,7 +67,8 @@ type panelTab struct {
 	todoContextText string
 	todoUsage       *contextUsageState // what the user opened in the context breakdown
 	todoTimes       map[string]*canvas.Text
-	todoMarks       []*taskMark // the rings of the list as drawn, stopped when it is drawn again
+	todoMarks       []*taskMark  // the rings of the list as drawn, stopped when it is drawn again
+	goalClock       *canvas.Text // the goal card's time spent, ticking while the agent works (goal.go)
 	web             bool
 	webKey          string // the ChatGPT page shown: its chat's
 	webAccount      *agent.ChatGPTWeb

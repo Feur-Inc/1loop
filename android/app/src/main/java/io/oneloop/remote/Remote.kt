@@ -109,6 +109,26 @@ data class Item(
 
 data class Task(val id: String, val text: String, val status: String, val started: Long, val completed: Long)
 
+/**
+ * The chat's /goal (#444, agent/goal.go): its objective and state, and what it
+ * used. [seconds] is the time spent, the running turn apart: that one counts
+ * from [running], Unix milliseconds, while the agent works on it.
+ */
+data class Goal(
+    val id: String, val objective: String, val status: String, val label: String, val by: String, val reason: String, val idle: Boolean,
+    val tokensUsed: Int, val tokenBudget: Int, val turns: Int, val maxTurns: Int, val timeBudget: Int, val seconds: Double, val running: Long,
+) {
+    fun spentMillis(now: Long): Long = (seconds * 1000).toLong() + if (running > 0) (now - running).coerceAtLeast(0) else 0
+
+    companion object {
+        fun from(o: JSONObject) = Goal(
+            o.optString("id"), o.optString("objective"), o.optString("status"), o.optString("label"), o.optString("by"),
+            o.optString("reason"), o.optBoolean("idle"), o.optInt("tokensUsed"), o.optInt("tokenBudget"), o.optInt("turns"),
+            o.optInt("maxTurns"), o.optInt("timeBudget"), o.optDouble("seconds", 0.0), o.optLong("running"),
+        )
+    }
+}
+
 /** A tab of the chat's side panel on the computer. */
 data class PanelTab(val key: String, val kind: String, val title: String, val url: String, val index: Int)
 
@@ -252,6 +272,7 @@ data class Meta(
     val parent: String = "", val parentTitle: String = "", // a subchat's parent
     val subchats: List<Subchat> = emptyList(), // the chat's own, newest first
     val spent: String = "", // what the chat and its subchats spent (Usage.kt)
+    val goal: Goal? = null, // its /goal
 ) {
     companion object {
         fun from(o: JSONObject) = Meta(
@@ -277,6 +298,7 @@ data class Meta(
                 (0 until (array?.length() ?: 0)).map { i -> Subchat.from(array!!.getJSONObject(i)) }
             },
             spentText(o.optJSONObject("spent")),
+            o.optJSONObject("goal")?.let { Goal.from(it) },
         )
     }
 }
@@ -1628,6 +1650,23 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
 
     /** A background task's own Stop; the list follows through the "meta" event. */
     fun stopTask(id: String) = chatAction("/tasks/$id/stop", JSONObject())
+
+    /** A goal card's control: the /goal command it names, sent as typed (agent/goal.go). */
+    fun goalCommand(text: String) {
+        val generation = connectionGeneration
+        val target = server ?: return
+        val id = current ?: return
+        problem = null
+        scope.launch {
+            try {
+                onConnection(target, generation) { it.post("/api/send", JSONObject().put("chat", id).put("text", text)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                actionFailed(generation, e)
+            }
+        }
+    }
 
     /** The chat reloads through the "replace" event; a refusal (a reply under way) shows. */
     private fun chatAction(path: String, body: JSONObject) {

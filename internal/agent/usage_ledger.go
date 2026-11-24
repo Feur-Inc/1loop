@@ -37,6 +37,8 @@ func withTurn(cfg Config) Config {
 }
 
 func recordUsage(cfg Config, spent spentTokens) {
+	// The goal counts the tokens the model processed anew: not its cache reads.
+	cfg.Goal.addTokens(spent.tokens.Input + spent.tokens.CacheWrite + spent.tokens.Output)
 	tag := cfg.Usage
 	if tag == nil || tag.Ledger == nil {
 		return

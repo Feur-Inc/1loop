@@ -190,7 +190,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
                     "changes" -> ChangesView(app, chat, tab)
                     "tool" -> ToolView(app, app.items.getOrNull(tab.index))
                     else -> Column {
-                        Box(Modifier.weight(1f)) { TasksView(tasks, app.meta?.background.orEmpty(), app::stopTask, app.meta?.subchats.orEmpty(), { app.open(it) }, { app.stop(it) }) }
+                        Box(Modifier.weight(1f)) { TasksView(tasks, app.meta?.background.orEmpty(), app::stopTask, app.meta?.subchats.orEmpty(), { app.open(it) }, { app.stop(it) }, app.meta?.goal, app::goalCommand) }
                         ContextFooter(app, chat, app.meta)
                     }
                 }
@@ -242,8 +242,9 @@ private fun Empty(title: String, detail: String) {
 private fun TasksView(
     tasks: List<Task>, background: List<BackgroundTask> = emptyList(), onStop: (String) -> Unit = {},
     subchats: List<Subchat> = emptyList(), onOpenSubchat: (String) -> Unit = {}, onStopSubchat: (String) -> Unit = {},
+    goal: Goal? = null, onGoal: (String) -> Unit = {},
 ) {
-    if (tasks.isEmpty() && background.isEmpty() && subchats.isEmpty()) {
+    if (tasks.isEmpty() && background.isEmpty() && subchats.isEmpty() && goal == null) {
         Empty("No tasks yet", "When the agent plans its work, its task list shows here and follows its progress.")
         return
     }
@@ -251,6 +252,7 @@ private fun TasksView(
     LaunchedEffect(Unit) { while (true) { delay(1000); now = System.currentTimeMillis() } }
     val done = tasks.count { it.status == "completed" }
     LazyColumn(Modifier.fillMaxSize(), contentPadding = PaddingValues(horizontal = 18.dp, vertical = 16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+        if (goal != null) item(key = "goal") { GoalCard(goal, now, onGoal) } // above the plan, as on the desktop
         if (tasks.isNotEmpty()) item {
             Column(Modifier.padding(bottom = 12.dp)) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -363,6 +365,70 @@ fun TaskMark(done: Boolean, diameter: Dp = 20.dp) {
             drawPath(path, Palette.amber, style = Stroke(2.dp.toPx(), cap = StrokeCap.Round))
         } else drawCircle(Palette.faint, r, style = Stroke(1.5.dp.toPx()))
     }
+}
+
+/**
+ * The chat's goal (#444): its objective, state, time spent (counting while the
+ * agent works), turns and tokens against their limits, and its controls, which
+ * send the /goal command they name, as the desktop's card does (goal.go).
+ */
+@Composable
+private fun GoalCard(goal: Goal, now: Long, onGoal: (String) -> Unit) {
+    val shape = RoundedCornerShape(14.dp)
+    val (ink, fill) = when {
+        goal.status == "active" && !goal.idle -> Palette.amber to Palette.amber.copy(alpha = 0.16f)
+        goal.status == "complete" -> Palette.added to Palette.added.copy(alpha = 0.16f)
+        goal.status == "blocked" || goal.status == "budgetLimited" -> Palette.danger to Palette.danger.copy(alpha = 0.16f)
+        else -> Palette.muted to Palette.raised
+    }
+    Column(
+        Modifier.fillMaxWidth().padding(bottom = 16.dp).clip(shape).background(Palette.surface).border(1.dp, Palette.border, shape).padding(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Text("Goal", style = Type.body.copy(fontWeight = FontWeight.SemiBold))
+            GoalTag(goal.label, ink, fill)
+            if (goal.by == "agent") GoalTag("Set by the agent", Palette.muted, Palette.raised)
+        }
+        Text(goal.objective, style = Type.body)
+        var time = span(goal.spentMillis(now))
+        if (goal.timeBudget > 0) time += " of " + span(goal.timeBudget * 1000L)
+        val turns = if (goal.maxTurns > 0) "${goal.turns} of ${goal.maxTurns} turns" else if (goal.turns == 1) "1 turn" else "${goal.turns} turns"
+        val tokens = tokenText(goal.tokensUsed) + (if (goal.tokenBudget > 0) " of " + tokenText(goal.tokenBudget) else "") + " tokens"
+        Text("$time · $turns · $tokens", style = Type.small.copy(color = Palette.textSoft, fontFeatureSettings = "tnum"))
+        if (goal.tokenBudget > 0) {
+            val used = (goal.tokensUsed / goal.tokenBudget.toFloat()).coerceIn(0f, 1f)
+            Box(Modifier.fillMaxWidth().height(3.dp).clip(RoundedCornerShape(2.dp)).background(Palette.raised)) {
+                Box(Modifier.fillMaxWidth(used).fillMaxHeight().background(if (used >= 1f) Palette.danger else Palette.amber))
+            }
+        }
+        val reason = if (goal.idle) "The last turn made no progress: 1loop waits for you. Send a message, or resume." else goal.reason
+        if (reason.isNotEmpty()) Text(reason, style = Type.small.copy(color = Palette.muted))
+        // Clear keeps the right end: a goal that ends under the thumb never turns a tap on Pause into Clear.
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            when {
+                goal.status == "active" && !goal.idle -> Pill("Pause") { onGoal("/goal pause") }
+                goal.status != "complete" && goal.status != "budgetLimited" -> Pill("Resume", primary = true) { onGoal("/goal resume") }
+            }
+            Spacer(Modifier.weight(1f))
+            Pill("Clear") { onGoal("/goal clear") }
+        }
+    }
+}
+
+@Composable
+private fun GoalTag(text: String, ink: Color, fill: Color) {
+    Text(
+        text, style = Type.caption.copy(color = ink, fontWeight = FontWeight.SemiBold),
+        modifier = Modifier.clip(RoundedCornerShape(6.dp)).background(fill).padding(horizontal = 7.dp, vertical = 2.dp),
+    )
+}
+
+/** A token count as the desktop shows it: 950, 12.5K, 1.2M. */
+private fun tokenText(tokens: Int): String = when {
+    tokens >= 1_000_000 -> String.format(java.util.Locale.ROOT, "%.1f", tokens / 1e6).removeSuffix(".0") + "M"
+    tokens >= 1000 -> String.format(java.util.Locale.ROOT, "%.1f", tokens / 1e3).removeSuffix(".0") + "K"
+    else -> tokens.toString()
 }
 
 private fun span(ms: Long): String {

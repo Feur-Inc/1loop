@@ -727,6 +727,10 @@ func (backend *App) Run(ctx context.Context, cfg Config, history []Message, inbo
 		return err
 	}
 	cfg = withTurn(cfg)
+	if cfg.Goal != nil {
+		emit, inboxValue = goalTurn(ctx, cfg, history, inboxValue, emit)
+		defer func() { cfg.Goal.turnEnd(err, ctx.Err() != nil); emit("goal", nil) }()
+	}
 	if cfg.AutoResume != nil && cfg.AutoResume.Enabled {
 		return backend.runWithResume(ctx, cfg, history, inboxValue, emit)
 	}

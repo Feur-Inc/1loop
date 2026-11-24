@@ -69,7 +69,7 @@ func coreToolDefinitions() []map[string]any {
 			"parameters":  map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false},
 		}})
 	}
-	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), wrapUpToolDefinition(), recallToolDefinition(), memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), chatsToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition())
+	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), wrapUpToolDefinition(), recallToolDefinition(), memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), chatsToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition(), goalToolDefinitions()[0], goalToolDefinitions()[1], goalToolDefinitions()[2])
 }
 
 // allToolDefinitions are every tool, loaded or not.
@@ -532,6 +532,11 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		state, _ := ctx.Value(todoContextKey{}).(*TodoState)
 		begin()
 		output, err = wrapUp(state, call.Function.Arguments, emit)
+		return
+	}
+	if isGoalTool(call.Function.Name) {
+		begin()
+		output, err = backend.goalTool(ctx, call.Function.Name, call.Function.Arguments, emit)
 		return
 	}
 	if call.Function.Name == "update_todo" {

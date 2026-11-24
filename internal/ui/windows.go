@@ -232,6 +232,11 @@ func (ui *desktopUI) newWindowView(cfg agent.Config, size fyne.Size) *desktopUI 
 	view.window.SetCloseIntercept(view.closeWindow)
 	view.registerShortcuts()
 	view.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { view.focused().copySelection() })
+	view.window.Canvas().SetOnTypedKey(func(key *fyne.KeyEvent) {
+		if key.Name == fyne.KeyEscape { // with no field focused: the conversation's selection goes
+			view.focused().clearSelection()
+		}
+	})
 	view.updateHeader()
 	view.renderSidebar(view.sidebarGroups())
 	view.adoptModels(ui.mainView())

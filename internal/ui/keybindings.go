@@ -187,6 +187,9 @@ func (ui *desktopUI) registerShortcuts() {
 			ui.registered = append(ui.registered, shortcut)
 		}
 	}
+	// Ctrl+A (Cmd+A) with no field focused, after a click in the
+	// conversation: the whole conversation. A field takes it first.
+	canvas.AddShortcut(&fyne.ShortcutSelectAll{}, func(fyne.Shortcut) { ui.focused().chatSel.selectAll() })
 	if ui.newChat != nil {
 		ui.newChat.trailing = ui.shortcutLabel(registry.ShortcutNewChat)
 		ui.newChat.Refresh()

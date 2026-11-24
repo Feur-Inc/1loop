@@ -389,8 +389,9 @@ func (backend *App) machineTool(ctx context.Context, machine Machine, root strin
 	if err != nil {
 		return "", "", err
 	}
-	if !backend.confirm(ctx, emit, "Apply changes to "+rel+"?", diff) {
-		return "", diff, fmt.Errorf("Edit denied")
+	after, diff, note, err := backend.approveEdit(ctx, emit, rel, before, after, diff, create)
+	if err != nil {
+		return "", diff, err
 	}
 	begin()
 	// Recheck the target after approval: it may have changed while the user reviewed the diff.
@@ -409,7 +410,7 @@ func (backend *App) machineTool(ctx context.Context, machine Machine, root strin
 	if err != nil {
 		return "", diff, err
 	}
-	return "Changes applied: " + rel + "\n" + diff, diff, nil
+	return "Changes applied: " + rel + "\n" + note + diff, diff, nil
 }
 
 // applyMachinePatch is applyPatch on a machine.
@@ -481,8 +482,13 @@ func (backend *App) applyMachinePatch(ctx context.Context, machine Machine, root
 	if deletes {
 		title = "Delete or change " + strings.Join(names, ", ") + "?"
 	}
-	if !backend.confirm(ctx, emit, title, diff) {
-		return "", diff, fmt.Errorf("Patch denied")
+	changes, diff, note, err := backend.reviewPatch(ctx, emit, title, diff, changes)
+	if err != nil {
+		return "", diff, err
+	}
+	names = names[:0]
+	for _, change := range changes {
+		names = append(names, change.targetRel)
 	}
 	begin()
 	// Recheck after the approval: a file may have changed while the user read.
@@ -514,7 +520,7 @@ func (backend *App) applyMachinePatch(ctx context.Context, machine Machine, root
 			return "", diff, fmt.Errorf("%s: %w (the files before it in the patch were written)", change.rel, err)
 		}
 	}
-	return "Patch applied: " + strings.Join(names, ", ") + "\n" + diff, diff, nil
+	return "Patch applied: " + strings.Join(names, ", ") + "\n" + note + diff, diff, nil
 }
 
 // workspaceInstructions is the workspace's AGENTS.md, read where the

@@ -176,7 +176,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		dir:          dir,
 		usage:        usage.Open(filepath.Join(dir, "usage.jsonl")),
 		prices:       usage.OpenPrices(filepath.Join(dir, "usage-prices.json")),
-		backend:      &agent.App{Approvals: map[string]chan bool{}},
+		backend:      &agent.App{Approvals: map[string]chan agent.ApprovalAnswer{}},
 		keys:         map[string]string{},
 		pairs:        map[string]*serverPair{},
 		subs:         map[chan serverEvent]bool{},
@@ -1076,7 +1076,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		run.mark, run.label = "approval", "Waiting for your answer"
 	case "approval":
 		data := value.(map[string]any)
-		run.approval = &remoteapi.Approval{Chat: chat.ID, ID: fmt.Sprint(data["id"]), Title: fmt.Sprint(data["title"]), Preview: fmt.Sprint(data["preview"])}
+		run.approval = &remoteapi.Approval{Chat: chat.ID, ID: fmt.Sprint(data["id"]), Title: fmt.Sprint(data["title"]), Preview: fmt.Sprint(data["preview"]), Review: data["review"] == true}
 		run.mark, run.label = "approval", "Waiting for your approval"
 	case "context_note", "note":
 		index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: value.(string)})

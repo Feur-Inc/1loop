@@ -50,7 +50,7 @@ func Main() {
 		crash.Clean() // ended on purpose (logout, Ctrl+C): no crash
 		os.Exit(130)
 	}()
-	backend := &agent.App{Approvals: make(map[string]chan bool)}
+	backend := &agent.App{Approvals: make(map[string]chan agent.ApprovalAnswer)}
 	runDesktop(backend, root, asked)
 }
 

@@ -52,6 +52,12 @@ Choose in the composer:
   Claude Code and Antigravity CLI run with `--dangerously-skip-permissions`
   (Claude Code refuses it as root: 1loop then approves each of its requests).
 
+An edit opens in a **Review** tab of the side panel: the whole file with its
+changes. Click a change to leave it out, **Edit** the proposed text, leave out
+a file of a patch, or say why with **Deny**; the model is told what you
+changed. Ctrl+Enter approves, Escape denies. For a chat that is not on screen,
+or on a server, the dialog offers **Review…**; the phone shows the diff.
+
 Commands run with your user's permissions: approving one lets it act on your
 machine.
 

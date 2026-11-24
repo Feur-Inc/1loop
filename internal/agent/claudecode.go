@@ -933,6 +933,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		name    string // Claude Code's name for the tool
 		running bool   // false while Claude Code holds it back (claudeRunning)
 	}
+	var editNotes []string         // files whose edits the user changed, to tell Claude Code
 	calls := map[string]*pending{} // tool calls without a result yet
 	var queue []*pending           // the same, in the order the model asked for them
 	// start marks the calls Claude Code runs now as started: it does not say
@@ -1226,9 +1227,40 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			}
 			response := map[string]any{"behavior": "deny", "message": "The user denied this action."}
 			name := strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__")
+			// An edit's file can be reviewed, and its text changed (#242).
+			var review *ReviewFile
+			var edited json.RawMessage
+			if cfg.ProjectTools == nil && cfg.MachineID == "" {
+				review = claudeReview(cfg.Workspace, claudeEventValue.Request.ToolName, claudeEventValue.Request.Input)
+			}
+			ask := func() bool {
+				var files []ReviewFile
+				if review != nil {
+					files = []ReviewFile{*review}
+				}
+				answer := backend.confirmEdits(ctx, emit, title, preview, files)
+				if note := strings.TrimSpace(answer.Note); note != "" && !answer.Allow {
+					response["message"] = "The user denied this action: " + note
+				}
+				if review != nil && answer.Allow {
+					if text, changed := answer.text(review.Path, review.After); changed {
+						input, err := claudeEditedInput(claudeEventValue.Request.ToolName, claudeEventValue.Request.Input, review, text)
+						if err != nil { // never the text the user replaced
+							response["message"] = "The user's own changes to this edit could not be applied: " + err.Error()
+							return false
+						}
+						edited = input
+					}
+				}
+				return answer.Allow
+			}
 			projectRead := cfg.ProjectTools != nil && (name == "read_file" || name == "list_directory" || name == "search_files" || name == "command_output" || name == "recall" || name == "request_user_input")
-			if projectRead || claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__wrap_up" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__memory" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__settings" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__subchat" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__chats" || name == "change_directory" || name == "request_directory" || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || backend.confirm(ctx, emit, title, preview) {
+			if projectRead || claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__wrap_up" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__memory" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__settings" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__subchat" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__chats" || name == "change_directory" || name == "request_directory" || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || ask() {
 				response = map[string]any{"behavior": "allow", "updatedInput": claudeEventValue.Request.Input}
+				if edited != nil {
+					response["updatedInput"] = edited
+					editNotes = append(editNotes, review.Path)
+				}
 				for _, p := range calls { // the approved call starts now
 					if p.running {
 						p.started = time.Now()
@@ -1270,6 +1302,15 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 					Message{Role: "tool", ToolCallID: b.ToolUseID, Content: p.outcome.modelText(), Images: p.outcome.Images})
 				emit("tool_result", p.outcome)
 				start() // the next ones in Claude Code's queue, if any
+			}
+			// The result shows Claude Code the text written, not that it is
+			// the user's.
+			if len(editNotes) > 0 && len(calls) == 0 {
+				message := Message{Role: "user", Internal: true, Content: "[1loop] The user edited your proposal before approving it: " + strings.Join(editNotes, ", ") + ". What is in the file is their version: keep it, and read the file again before changing it."}
+				editNotes = nil
+				messages = append(messages, message)
+				send(claudePrompt(message, ""))
+				emit("context_note", "Told the model about your edits")
 			}
 			// The gap between two tool calls: steered messages go in now.
 			for _, extra := range inboxValue.Steer() {

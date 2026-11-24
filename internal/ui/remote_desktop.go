@@ -1059,7 +1059,7 @@ func (remote *remoteDesktop) showMeta(conv *conversation) {
 		}
 		remote.approvalID = approvalID
 		if approval := meta.Approval; approval != nil {
-			remote.approvalSheet = ui.showApproval(conv, map[string]any{"id": approval.ID, "title": approval.Title, "preview": approval.Preview})
+			remote.approvalSheet = ui.showApproval(conv, map[string]any{"id": approval.ID, "title": approval.Title, "preview": approval.Preview, "review": approval.Review})
 		}
 	}
 	questionID := ""

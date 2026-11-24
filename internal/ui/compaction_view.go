@@ -13,6 +13,7 @@ import (
 	"fyne.io/fyne/v2/layout"
 
 	"1loop/internal/agent"
+	"1loop/internal/core"
 )
 
 // compactionNote says a note of the conversation tells a compaction of
@@ -60,7 +61,7 @@ func (ui *desktopUI) showCompaction(record agent.CompactionRecord) {
 	side := func(title string, tokens, count int, messages []agent.CompactedMessage) fyne.CanvasObject {
 		heading := textLine(title, 14, colText)
 		heading.TextStyle.Bold = true
-		total := textLine(fmt.Sprintf("~%s tokens  ·  %d messages", agent.Tokens(tokens), count), 12, colMuted)
+		total := textLine(fmt.Sprintf("~%s tokens  ·  %d messages", core.CompactCount(tokens), count), 12, colMuted)
 		list := newKineticVScroll(padded(10, 10, 12, 12, compactionBlocks(messages)))
 		return container.NewBorder(padded(0, 8, 2, 2, container.NewBorder(nil, nil, heading, total)), nil, nil, nil, surface(list, colCode, colBorder, 10, 0))
 	}
@@ -88,7 +89,7 @@ func compactionBlocks(messages []agent.CompactedMessage) fyne.CanvasObject {
 			ink = colAmber
 		}
 		if message.Tokens > 0 {
-			who += "  ·  ~" + agent.Tokens(message.Tokens)
+			who += "  ·  ~" + core.CompactCount(message.Tokens)
 		}
 		text := newFlowText(plainSpans(message.Text), 12.5, colText)
 		text.tail, text.tight = "", true

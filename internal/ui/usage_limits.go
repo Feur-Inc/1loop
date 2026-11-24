@@ -130,7 +130,6 @@ func percentText(value float64) string { return usage.Percent(value) }
 // what its pace means.
 func limitPace(limit usage.Limit) fyne.CanvasObject {
 	name := textLine(limit.Title, 14, colText)
-	head := container.NewBorder(nil, nil, container.NewCenter(name), container.NewCenter(statusPill(limit)))
 	leftInk := colText
 	if limit.Status == "out" {
 		leftInk = colDanger
@@ -163,7 +162,7 @@ func limitPace(limit usage.Limit) fyne.CanvasObject {
 	curveChip = newRow("Curve", nil, styleChip, func() { show(false) })
 	daysChip = newRow("By day", nil, styleChip, func() { show(true) })
 	show(limitByDay[key])
-	head = container.NewBorder(nil, nil, container.NewCenter(name), container.NewHBox(curveChip, daysChip, spacer(8, 0), container.NewCenter(statusPill(limit))))
+	head := container.NewBorder(nil, nil, container.NewCenter(name), container.NewHBox(curveChip, daysChip, spacer(8, 0), container.NewCenter(statusPill(limit))))
 	return padded(12, 16, 16, 16, container.New(layout.NewCustomPaddedVBoxLayout(12),
 		head, tiles, view, plainFlow(limit.Advice, 13, colTextSoft)))
 }

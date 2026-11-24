@@ -129,13 +129,13 @@ func (ui *desktopUI) syncEngine() *projectsync.Local {
 					// The chat goes on here with this desktop's model; a Claude
 					// Code session here reads what happened elsewhere.
 					cfg := existing.Config
-					cfg.RanWith = copiedRanWith(copied.Config)
+					cfg.RanWith = agent.CopiedRanWith(copied.Config)
 					copied = copied.AtWorkspace(cfg)
 					existing.Config.ClearSessions() // every login's: none of them saw the copied turns
 					existing.Cache = &agent.ContextCache{}
 					existing.Title, existing.History, existing.Items = copied.Title, copied.History, copied.Items
 					existing.Todo, existing.Version, existing.Versions = copied.Todo, copied.Version, copied.Versions
-					existing.Config.RanWith = copiedRanWith(copied.Config)
+					existing.Config.RanWith = agent.CopiedRanWith(copied.Config)
 					if existing == ui.current {
 						ui.reloadChat(existing)
 					}
@@ -143,8 +143,8 @@ func (ui *desktopUI) syncEngine() *projectsync.Local {
 				}
 				cfg := ui.cfg
 				cfg.Workspace = workspace
-				cfg.ClearSessions()                        // ui.cfg is the chat on screen: none of its sessions belong to the copy
-				cfg.RanWith = copiedRanWith(copied.Config) // its next turn here goes through a handoff
+				cfg.ClearSessions()                              // ui.cfg is the chat on screen: none of its sessions belong to the copy
+				cfg.RanWith = agent.CopiedRanWith(copied.Config) // its next turn here goes through a handoff
 				copied = copied.AtWorkspace(cfg)
 				ui.chats = append([]*conversation{{ID: copied.ID, Title: copied.Title, Config: cfg, History: copied.History, Items: copied.Items,
 					Todo: copied.Todo, Version: copied.Version, Versions: copied.Versions}}, ui.chats...)
@@ -163,18 +163,6 @@ func (ui *desktopUI) syncEngine() *projectsync.Local {
 			return err
 		},
 	}
-}
-
-func copiedRanWith(cfg agent.Config) *agent.RunIdentity {
-	if cfg.RanWith != nil {
-		identity := *cfg.RanWith
-		return &identity
-	}
-	if cfg.Provider == "" {
-		return nil
-	}
-	identity := agent.IdentityOf(cfg)
-	return &identity
 }
 
 // copyProject is the remote desktop's Copy project dialog: the server's

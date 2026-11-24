@@ -353,17 +353,17 @@ func (plan *Plan) explain() {
 	plan.Folders = append(plan.Folders, registryPath())
 	plan.Risks = append(plan.Risks, "It comes from github.com/"+plan.Repo+", which 1loop does not review. Install only what you trust.")
 	if mcp > 0 {
-		plan.Risks = append(plan.Risks, fmt.Sprintf("%s start on this computer, with your account's rights, as soon as the agent can use them.", plural(mcp, "MCP server")))
+		plan.Risks = append(plan.Risks, fmt.Sprintf("%s start on this computer, with your account's rights, as soon as the agent can use them.", core.Plural(mcp, "MCP server")))
 	}
 	if hooks > 0 {
-		plan.Risks = append(plan.Risks, fmt.Sprintf("%s run automatically around the agent's tools and messages, without asking.", plural(hooks, "hook command")))
+		plan.Risks = append(plan.Risks, fmt.Sprintf("%s run automatically around the agent's tools and messages, without asking.", core.Plural(hooks, "hook command")))
 	}
 	if scriptCount > 0 {
-		plan.Risks = append(plan.Risks, fmt.Sprintf("It includes %s the model may run through the shell, with your approval like any command.", plural(scriptCount, "script")))
+		plan.Risks = append(plan.Risks, fmt.Sprintf("It includes %s the model may run through the shell, with your approval like any command.", core.Plural(scriptCount, "script")))
 	}
 	plan.Risks = append(plan.Risks, "Skills are instructions the model follows: they can steer what it does in your projects.")
 	if commands+agents > 0 {
-		plan.Notes = append(plan.Notes, fmt.Sprintf("%s and %s are kept but not offered in 1loop (no / commands yet); Claude Code sessions can use them.", plural(commands, "command"), plural(agents, "agent")))
+		plan.Notes = append(plan.Notes, fmt.Sprintf("%s and %s are kept but not offered in 1loop (no / commands yet); Claude Code sessions can use them.", core.Plural(commands, "command"), core.Plural(agents, "agent")))
 	}
 	for _, skill := range plan.Skills {
 		if skill.Replaces {
@@ -656,13 +656,6 @@ func safeName(name string) string {
 		name = "extension"
 	}
 	return name
-}
-
-func plural(n int, word string) string {
-	if n == 1 {
-		return "1 " + word
-	}
-	return fmt.Sprintf("%d %ss", n, word)
 }
 
 func fileExists(path string) bool {

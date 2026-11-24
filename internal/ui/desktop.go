@@ -1005,7 +1005,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.model.row.truncate = true // a long model name is cut short rather than pushed out of the card
 	settings := container.New(composerSettingsLayout{model: ui.model.row}, container.NewCenter(ui.approvalControl), ui.model.row, ui.contextRing)
 	actions := container.New(composerActionsLayout{}, ui.steer, ui.stop, ui.send)
-	ui.controls = container.New(&composerControlsLayout{transient: []fyne.CanvasObject{ui.steer, ui.stop, ui.send}}, settings, actions)
+	ui.controls = container.New(&composerControlsLayout{}, settings, actions)
 	ui.model.relayout = ui.controls.Refresh
 
 	// The card: no line of light along its top edge, which showed as a

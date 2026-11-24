@@ -187,15 +187,7 @@ func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size
 	previousWidth := objects[0].Size().Width
 	full := layoutSpec.width(size.Width)
 	width := full * layoutSpec.toolPanel.shown
-	conversationWidth := size.Width - width
-	if layoutSpec.toolPanel.snap {
-		conversationWidth = size.Width - full*layoutSpec.toolPanel.target
-	}
 	covered := panelCovers(size.Width)
-	if covered {
-		conversationWidth = size.Width
-	}
-	layoutSpec.toolPanel.ui.controls.Layout.(*composerControlsLayout).available = fyne.Min(760, conversationWidth-48) - 20
 	if covered { // at its full width, under the panel
 		objects[0].Resize(size)
 	} else if layoutSpec.toolPanel.snap {

@@ -39,6 +39,19 @@ Always start `bin/1loop`: in a Wayland session it hands over to
 Linux downloads. Natively on Windows: MinGW-w64 GCC on `PATH`, then
 `go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe ./cmd/1loop`.
 
+### Environment variables
+
+For work on 1loop itself; those of an installation are in
+[INSTALL.md](INSTALL.md).
+
+| Variable | Effect |
+|---|---|
+| `ONELOOP_DEV=1` | The developer log, as with `-dev` |
+| `ONELOOP_BENCH=<kind>` | With `-dev`, drives the window and measures it: see `internal/ui/bench.go` for the kinds, `ONELOOP_BENCH_SECONDS` and `ONELOOP_BENCH_PROFILE` |
+| `ONELOOP_VSYNC=1` | Wayland: leaves frame pacing to the OpenGL driver |
+| `ONELOOP_UPDATE_URL=<url>` | The update manifest to read instead of the release page's |
+| `ONELOOP_COMPUTER_BACKEND=<path>` | The `codex-computer-use-linux` to run, instead of the one found on `PATH` |
+
 ## Checks
 
 The CI runs them before building:

@@ -99,7 +99,7 @@ func TestFinishMoveCopiesTheFiles(t *testing.T) {
 
 // changeDirectory runs the tool as a model would, answering its approval.
 func changeDirectory(t *testing.T, cfg Config, arguments string, allow bool) (ToolOutcome, bool) {
-	backend := &App{Approvals: map[string]chan bool{}}
+	backend := &App{Approvals: map[string]chan ApprovalAnswer{}}
 	asked := false
 	emit := func(kind string, value any) {
 		if kind == "approval" {

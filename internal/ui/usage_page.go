@@ -176,7 +176,11 @@ func (page *usagePage) change(edit func(query *usage.Query)) {
 
 func (page *usagePage) show(report usage.Report) {
 	page.body.Objects = nil
-	if limits := limitsSection(report.Limits); limits != nil {
+	choose := func(connection string) {
+		page.ui.usageAccount = connection
+		page.show(report)
+	}
+	if limits := limitsSection(report.Limits, page.ui.usageAccount, choose); limits != nil {
 		page.body.Add(limits)
 	}
 	page.body.Objects = append(page.body.Objects,

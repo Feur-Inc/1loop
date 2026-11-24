@@ -103,7 +103,7 @@ func runTool(t *testing.T, tool string, cfg Config, yolo, allow bool, arguments 
 	raw, _ := json.Marshal(arguments)
 	call := ToolCall{ID: "call"}
 	call.Function.Name, call.Function.Arguments = tool, string(raw)
-	backend := &App{Approvals: map[string]chan bool{}}
+	backend := &App{Approvals: map[string]chan ApprovalAnswer{}}
 	output, _, err = backend.runTool(ctx, t.TempDir(), call, func() {}, func(event string, value any) {
 		if event == "approval" {
 			request := value.(map[string]any)

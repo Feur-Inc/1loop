@@ -252,6 +252,56 @@ func (entry *chatEntry) FocusLost() {
 // on the right of one line.
 type composerControlsLayout struct{}
 
+// composerActionsLayout lines up the run controls, Steer first. Where there
+// is no room for all of them, the first go out of sight (Steer keeps its
+// shortcut), so that none is drawn over the settings (#429).
+type composerActionsLayout struct{}
+
+const composerActionsGap = 4
+
+// natural is the width of every control shown.
+func (composerActionsLayout) natural(o []fyne.CanvasObject) float32 {
+	width := float32(0)
+	for _, object := range o {
+		if object.Visible() {
+			if width > 0 {
+				width += composerActionsGap
+			}
+			width += object.MinSize().Width
+		}
+	}
+	return width
+}
+
+func (spec composerActionsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
+	height := float32(0)
+	for _, object := range o {
+		if object.Visible() {
+			height = fyne.Max(height, object.MinSize().Height)
+		}
+	}
+	return fyne.NewSize(spec.natural(o[1:]), height)
+}
+
+func (composerActionsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
+	x := size.Width
+	room := true
+	for i := len(o) - 1; i >= 0; i-- {
+		if !o[i].Visible() {
+			continue
+		}
+		min := o[i].MinSize()
+		o[i].Resize(min)
+		room = room && x-min.Width >= -0.5
+		if !room {
+			o[i].Move(fyne.NewPos(-10000, 0))
+			continue
+		}
+		o[i].Move(fyne.NewPos(x-min.Width, (size.Height-min.Height)/2))
+		x -= min.Width + composerActionsGap
+	}
+}
+
 // MinSize keeps the controls on one line: the settings shrink first
 // (composerSettingsLayout), so the send button always ends the line.
 func (layoutSpec *composerControlsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
@@ -261,6 +311,18 @@ func (layoutSpec *composerControlsLayout) MinSize(o []fyne.CanvasObject) fyne.Si
 
 func (layoutSpec *composerControlsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
 	left, right := o[0].MinSize(), o[1].MinSize()
+	// Every run control, when the settings keep room for their shortest.
+	if actions, ok := o[1].(*fyne.Container); ok {
+		if spec, ok := actions.Layout.(composerActionsLayout); ok {
+			natural, least := spec.natural(actions.Objects), float32(0)
+			if settings, ok := o[0].(*fyne.Container); ok && len(settings.Objects) > 0 {
+				least = settings.Objects[0].MinSize().Width + composerSettingsGap + composerModelLeast
+			}
+			if size.Width-natural-8 >= least {
+				right.Width = natural
+			}
+		}
+	}
 	width := fyne.Max(0, fyne.Min(left.Width, size.Width-right.Width-8))
 	o[0].Resize(fyne.NewSize(width, left.Height))
 	o[0].Move(fyne.NewPos(0, (size.Height-left.Height)/2))
@@ -292,6 +354,9 @@ type composerSettingsLayout struct{ model *tapRow }
 
 const composerSettingsGap = 4
 
+// composerModelLeast is the narrowest the model's name is cut to.
+const composerModelLeast = 56
+
 func (layoutSpec composerSettingsLayout) natural() float32 {
 	layoutSpec.model.truncate = false
 	defer func() { layoutSpec.model.truncate = true }()
@@ -322,7 +387,10 @@ func (layoutSpec composerSettingsLayout) Layout(o []fyne.CanvasObject, size fyne
 		ring = fyne.Size{}
 		model = fyne.Min(natural, size.Width-approval.Width-gaps)
 	}
-	model = fyne.Max(36, model)
+	if model < composerModelLeast-1 { // not even its start: out of sight
+		model = 0
+		o[1].Move(fyne.NewPos(-10000, 0))
+	}
 	o[2].Move(fyne.NewPos(-10000, 0)) // out of sight unless placed below
 	x := float32(0)
 	for i, s := range []fyne.Size{approval, fyne.NewSize(model, o[1].MinSize().Height), ring} {

@@ -69,8 +69,9 @@ type painter struct {
 	blurFailed            bool
 	retain                *retained // the frame kept between frames (1loop)
 	retainFailed          bool
-	clipping              bool     // a clip is on (1loop: the blur turns it off and back)
-	clip                  [4]int32 // and where
+	points                []float32 // vertex data, reused from object to object (1loop: coords)
+	clipping              bool      // a clip is on (1loop: the blur turns it off and back)
+	clip                  [4]int32  // and where
 	outWidth, outHeight   int
 	texScale              float32
 	pixScale              float32 // pre-calculate scale*texScale for each draw

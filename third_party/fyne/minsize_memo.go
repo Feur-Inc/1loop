@@ -11,16 +11,30 @@ package fyne
 
 var minSizeMemo map[CanvasObject]Size
 
+// minSizeKept is the memory's map, emptied and used again from one pass
+// to the next: a new one at each frame and each layout was most of a
+// frame's allocations (#474).
+var minSizeKept = make(map[CanvasObject]Size, 512)
+
 // BeginMinSizeMemo starts remembering minimum sizes; EndMinSizeMemo stops.
-func BeginMinSizeMemo() { minSizeMemo = make(map[CanvasObject]Size, 512) }
+func BeginMinSizeMemo() { minSizeMemo = minSizeKept }
 
 // EndMinSizeMemo forgets the remembered sizes and stops remembering.
-func EndMinSizeMemo() { minSizeMemo = nil }
+func EndMinSizeMemo() {
+	forgetMinSizes(minSizeKept)
+	minSizeMemo = nil
+}
 
 // ForgetMinSizes drops what was remembered: something was laid out.
 func ForgetMinSizes() {
 	if minSizeMemo != nil {
-		minSizeMemo = make(map[CanvasObject]Size, 512)
+		forgetMinSizes(minSizeMemo)
+	}
+}
+
+func forgetMinSizes(memo map[CanvasObject]Size) {
+	for object := range memo { // the compiler makes this a map clear
+		delete(memo, object)
 	}
 }
 

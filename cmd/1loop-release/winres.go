@@ -58,6 +58,17 @@ func winres(args []string) {
 	if *version == "" || *file == "" || *out == "" || flags.NArg() != 0 {
 		fail("usage: 1loop-release winres -version VERSION -file NAME.exe [-description TEXT] -o FILE.syso")
 	}
+	data, err := winresObject(winresIcons(), winresInfo{Version: *version, Description: *description, File: *file})
+	if err != nil {
+		fail(err.Error())
+	}
+	if err := os.WriteFile(*out, data, 0o644); err != nil {
+		fail(err.Error())
+	}
+}
+
+// winresIcons is the launcher icon at every size of the exe's icon.
+func winresIcons() []image.Image {
 	ring, err := png.Decode(bytes.NewReader(must(assets.Artwork.ReadFile("1loop-ring.png"))))
 	if err != nil {
 		fail("Cannot read the ring artwork: " + err.Error())
@@ -66,13 +77,7 @@ func winres(args []string) {
 	for _, size := range winresIconSizes {
 		icons = append(icons, launcherIcon(ring, size))
 	}
-	data, err := winresObject(icons, winresInfo{Version: *version, Description: *description, File: *file})
-	if err != nil {
-		fail(err.Error())
-	}
-	if err := os.WriteFile(*out, data, 0o644); err != nil {
-		fail(err.Error())
-	}
+	return icons
 }
 
 // resource is one leaf of the directory: a type, an ID and its bytes.

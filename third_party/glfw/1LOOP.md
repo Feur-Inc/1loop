@@ -43,6 +43,16 @@ untouched upstream copy, so `git diff` against it shows every change.
   at 2 and Mutter shrank every frame to 1.25, so text and icons were soft,
   more or less depending on where they fell on the pixel grid (sharper while
   hovered, a pixel's move changing them). GLFW 3.4 has the same support.
+- `glfw/src/wl_window.c`, `wl_init.c`, `wl_platform.h`,
+  `include/GLFW/glfw3native.h`, `wayland-primary-selection-unstable-v1-client-protocol.{c,h}`
+  (written in wayland-scanner's layout from wayland-protocols'
+  `unstable/primary-selection/primary-selection-unstable-v1.xml`, only what
+  GLFW uses) and `c_glfw_lin.go`, `c_glfw_bsd.go` (1loop #626): on a
+  compositor with `zwp_primary_selection_device_manager_v1`, GLFW gets a
+  primary selection device for its seat, and the native
+  `glfwSetWaylandPrimarySelection` offers text as the primary selection
+  (what a middle click pastes), with the serial of the last input. The
+  offers of other programs are only released: nothing reads them.
 - `glfw_tree_rebuild.go`: `upstreamTreeSHA` is the git tree of `glfw/` after
-  the change above, so that a build cache made before it compiles the C
+  the changes above, so that a build cache made before it compiles the C
   sources again (Go does not hash them).

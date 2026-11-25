@@ -146,6 +146,8 @@ func (server *headlessServer) routes() http.Handler {
 		endpoints["POST /api/connections/models"] = server.draftLocalConnectionModels
 		endpoints["GET /api/connections/{id}/models"] = server.localConnectionModels
 		endpoints["POST /api/connections/{id}/disconnect"] = server.localConnectionDisconnect
+		endpoints["POST /api/connections/{id}/login"] = server.networkConnectionLogin
+		endpoints["POST /api/connections/{id}/login/complete"] = server.networkConnectionLoginComplete
 		endpoints["POST /api/connections/refresh"] = server.refreshLocalModels
 	}
 	syncEngine := server.syncEngine()

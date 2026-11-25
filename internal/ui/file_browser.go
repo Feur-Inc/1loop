@@ -19,7 +19,6 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
-	"fyne.io/fyne/v2/scrollbar"
 	"fyne.io/fyne/v2/widget"
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
@@ -71,8 +70,8 @@ func buildFileBrowser(ctx context.Context, window fyne.Window, source fileSource
 		icon := widget.NewIcon(iconDocument)
 		name := textLine("", 13, colText)
 		size := textLine("", 11, colMuted)
-		// The sizes end clear of the list's scrollbar, wide under the pointer (#633).
-		return container.NewBorder(nil, nil, icon, padded(0, 0, 0, scrollbar.Edge+scrollbar.Wide, size), name)
+		// The sizes end clear of the list's scrollbar (#633).
+		return container.NewBorder(nil, nil, icon, padded(0, 0, 0, barRoom, size), name)
 	}, func(i widget.ListItemID, object fyne.CanvasObject) {
 		entry := browser.entries[i]
 		row := object.(*fyne.Container)

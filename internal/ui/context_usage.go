@@ -171,7 +171,7 @@ func contextUsageView(usage *agent.ContextUsage, state *contextUsageState, tools
 		}
 		// The footer does not scroll with the tasks: a long list scrolls on
 		// its own instead of pushing the panel's top out.
-		scroll := container.NewVScroll(names)
+		scroll := container.NewVScroll(clearOfBar(names))
 		scroll.SetMinSize(fyne.NewSize(0, min(names.MinSize().Height, 180)))
 		box.Add(scroll)
 	}

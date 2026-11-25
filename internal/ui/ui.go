@@ -1646,8 +1646,8 @@ func (pickerControl *picker) show() {
 	}
 	var content fyne.CanvasObject = list
 	if len(pickerControl.Options) > 9 {
-		scroll := newKineticVScroll(list)
-		scroll.SetMinSize(fyne.NewSize(list.MinSize().Width, 9*list.Objects[0].MinSize().Height))
+		scroll := newKineticVScroll(clearOfBar(list))
+		scroll.SetMinSize(fyne.NewSize(list.MinSize().Width+barRoom, 9*list.Objects[0].MinSize().Height))
 		content = scroll
 	}
 	width := fyne.Max(content.MinSize().Width+10, 200)
@@ -1762,7 +1762,7 @@ func showMenu(window fyne.Window, anchor fyne.CanvasObject, actions []menuAction
 	var content fyne.CanvasObject = list
 	var field *keyEntry
 	if len(items) > menuFilterAt {
-		scroll := newKineticVScroll(list)
+		scroll := newKineticVScroll(clearOfBar(list))
 		scroll.SetMinSize(fyne.NewSize(0, menuRows*(items[0].MinSize().Height+2)))
 		field = newKeyEntry()
 		field.SetPlaceHolder("Filter")

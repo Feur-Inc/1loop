@@ -31,6 +31,7 @@ import (
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/lang"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/scrollbar"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -728,6 +729,16 @@ func (themeSpec flatScrollTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVar
 func stripScroll(content fyne.CanvasObject) (*container.Scroll, fyne.CanvasObject) {
 	scroll := container.NewHScroll(content)
 	return scroll, container.NewThemeOverride(scroll, barlessTheme{loopTheme{theme.DefaultTheme()}})
+}
+
+// barRoom is what content keeps free along a scroll's right edge, where its
+// bar is drawn, wide under the pointer (#633): for rows whose last element
+// sits at that edge (a size, a count, a check mark).
+const barRoom = scrollbar.Edge + scrollbar.Wide + 4
+
+// clearOfBar pads content so the scroll's bar never covers its right end.
+func clearOfBar(content fyne.CanvasObject) fyne.CanvasObject {
+	return padded(0, 0, 0, barRoom, content)
 }
 
 // strip is stripScroll where only the strip itself is wanted.

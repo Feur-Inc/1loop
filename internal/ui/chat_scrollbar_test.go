@@ -233,3 +233,25 @@ func TestStripScrollHasNoBar(t *testing.T) {
 		t.Fatal("the wheel no longer scrolls the strip")
 	}
 }
+
+// Rows that end with a size, a count or a check keep clear of the bar,
+// even widened under the pointer (#633).
+func TestClearOfBarKeepsRowEndsUncovered(t *testing.T) {
+	test.NewTempApp(t).Settings().SetTheme(loopTheme{theme.DefaultTheme()})
+	count := textLine("12.3k", 12, colMuted)
+	rows := container.NewVBox(container.NewBorder(nil, nil, nil, count, textLine("tool", 12, colText)))
+	tall := canvas.NewRectangle(nil)
+	tall.SetMinSize(fyne.NewSize(10, 5000))
+	rows.Add(tall)
+	scroll := container.NewVScroll(clearOfBar(rows))
+	window := test.NewTempWindow(t, scroll)
+	window.Resize(fyne.NewSize(300, 300))
+	area, _ := scrollBarIn(t, scroll)
+	area.MouseIn(nil)
+	thumb := test.TempWidgetRenderer(t, area).Objects()[1].(*canvas.Rectangle)
+	thumbLeft := area.Position().X + thumb.Position().X
+	countRight := fyne.CurrentApp().Driver().AbsolutePositionForObject(count).X - fyne.CurrentApp().Driver().AbsolutePositionForObject(scroll).X + count.Size().Width
+	if countRight > thumbLeft {
+		t.Fatalf("the count ends at x=%v, under the wide thumb from x=%v", countRight, thumbLeft)
+	}
+}

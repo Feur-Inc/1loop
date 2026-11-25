@@ -3,42 +3,18 @@
 package ui
 
 import (
-	"math"
+	"image/color"
 	"testing"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/scrollbar"
+	"fyne.io/fyne/v2/test"
 	"fyne.io/fyne/v2/theme"
+	"fyne.io/fyne/v2/widget"
 )
-
-// A long chat still has a thumb one can grab, and it runs the whole track
-// (#610).
-func TestScrollThumbNeverTooShort(t *testing.T) {
-	length, pos, ok := scrollThumb(600, 600, 60000, 0)
-	if !ok || length != chatBarMin || pos != 0 {
-		t.Fatalf("top of a long chat: length %v, pos %v, ok %v", length, pos, ok)
-	}
-	length, pos, _ = scrollThumb(600, 600, 60000, 60000-600)
-	if pos+length != 600 {
-		t.Fatalf("end of a long chat: the thumb ends at %v, not the track's end", pos+length)
-	}
-	if length, _, _ := scrollThumb(600, 600, 1200, 0); length != 300 {
-		t.Fatalf("half the chat in view: thumb %v, want half the track", length)
-	}
-	if _, _, ok := scrollThumb(600, 600, 500, 0); ok {
-		t.Fatal("a chat that fits its view has a thumb")
-	}
-}
-
-// Moving the thumb and reading it back agree.
-func TestScrollOffsetForIsTheInverse(t *testing.T) {
-	for _, offset := range []float32{0, 1234, 30000, 59400} {
-		length, pos, _ := scrollThumb(600, 600, 60000, offset)
-		if back := scrollOffsetFor(600, 600, 60000, length, pos); math.Abs(float64(back-offset)) > 1 {
-			t.Fatalf("offset %v: thumb at %v reads back %v", offset, pos, back)
-		}
-	}
-}
 
 // The chat's scroll draws no bar of its own; the settings page keeps its.
 func TestChatScrollThemeHidesOnlyTheChatsBar(t *testing.T) {
@@ -85,8 +61,8 @@ func TestChatScrollBarPlacement(t *testing.T) {
 	if bottom := bar.Position().Y + bar.Size().Height; bottom > composerTop {
 		t.Fatalf("the bar ends at y=%v, below the composer's top at %v", bottom, composerTop)
 	}
-	if bar.Size().Width < chatBarHit {
-		t.Fatalf("hit area %v wide, want %v", bar.Size().Width, chatBarHit)
+	if bar.Size().Width < scrollbar.Hit {
+		t.Fatalf("hit area %v wide, want %v", bar.Size().Width, scrollbar.Hit)
 	}
 }
 
@@ -116,4 +92,124 @@ func TestChatScrollBarDragAndPage(t *testing.T) {
 	if got := window.scroll.Offset.Y - before; got < window.scroll.Size().Height/2 {
 		t.Fatalf("a tap below the thumb scrolled %v, want about a page", got)
 	}
+}
+
+// The conversation's bar looks as it did before it shared its parts
+// (#625): a 6 px thumb in colScrollBar 2 px inside its hit area, 10 px in
+// the muted colour over a faint track under the pointer.
+func TestChatScrollBarLooksAsBefore(t *testing.T) {
+	window := scrolledWindow(t)
+	fyne.CurrentApp().Settings().SetTheme(loopTheme{theme.DefaultTheme()})
+	bar := window.chatBar
+	renderer := test.TempWidgetRenderer(t, bar).(*chatScrollBarRenderer)
+	renderer.Refresh()
+	width := bar.Size().Width
+	if renderer.thumb.Size().Width != 6 || renderer.thumb.Position().X != width-8 || renderer.thumb.FillColor != colScrollBar {
+		t.Fatalf("thumb at rest: %v wide at x=%v in %v", renderer.thumb.Size().Width, renderer.thumb.Position().X, renderer.thumb.FillColor)
+	}
+	if renderer.track.FillColor != color.Transparent {
+		t.Fatalf("track at rest: %v", renderer.track.FillColor)
+	}
+	bar.MouseIn(nil)
+	if renderer.thumb.Size().Width != 10 || renderer.thumb.Position().X != width-12 {
+		t.Fatalf("thumb under the pointer: %v wide at x=%v", renderer.thumb.Size().Width, renderer.thumb.Position().X)
+	}
+	if renderer.thumb.FillColor != withAlpha(colMuted, 0.85) || renderer.track.FillColor != overlay(0x0c) {
+		t.Fatalf("colours under the pointer: thumb %v, track %v", renderer.thumb.FillColor, renderer.track.FillColor)
+	}
+	if renderer.thumb.CornerRadius != 5 {
+		t.Fatalf("radius %v", renderer.thumb.CornerRadius)
+	}
+	bar.MouseOut()
+}
+
+// scrollBarIn finds the bar area of the scroll inside object, a widget or
+// container.
+func scrollBarIn(t *testing.T, object fyne.CanvasObject) (area interface {
+	fyne.Widget
+	fyne.Tappable
+	fyne.Draggable
+	desktop.Hoverable
+}, scroll *container.Scroll) {
+	t.Helper()
+	var walk func(fyne.CanvasObject) bool
+	walk = func(object fyne.CanvasObject) bool {
+		var children []fyne.CanvasObject
+		switch o := object.(type) {
+		case *container.Scroll:
+			scroll = o
+			children = test.TempWidgetRenderer(t, o).Objects()
+		case *fyne.Container:
+			children = o.Objects
+		case fyne.Widget:
+			children = test.TempWidgetRenderer(t, o).Objects()
+		}
+		for _, child := range children {
+			if a, ok := child.(interface {
+				fyne.Widget
+				fyne.Tappable
+				fyne.Draggable
+				desktop.Hoverable
+			}); ok && scroll != nil && child.Visible() {
+				area = a
+				return true
+			}
+			if walk(child) {
+				return true
+			}
+		}
+		return false
+	}
+	if !walk(object) {
+		t.Fatal("no visible scrollbar")
+	}
+	return area, scroll
+}
+
+// barCheck: the bar of the scroll in object takes the pointer over 16 px,
+// draws a thumb of at least 40 px and pages on a tap below it.
+func barCheck(t *testing.T, object fyne.CanvasObject) {
+	t.Helper()
+	area, scroll := scrollBarIn(t, object)
+	if area.Size().Width != scrollbar.Hit {
+		t.Fatalf("hit area %v wide, want %v", area.Size().Width, scrollbar.Hit)
+	}
+	objects := test.TempWidgetRenderer(t, area).Objects()
+	thumb := objects[1].(*canvas.Rectangle)
+	if thumb.Size().Height < scrollbar.MinThumb || thumb.Size().Width != scrollbar.Thin {
+		t.Fatalf("thumb %v", thumb.Size())
+	}
+	if thumb.FillColor != colScrollBar {
+		t.Fatalf("thumb colour %v, want colScrollBar", thumb.FillColor)
+	}
+	area.MouseIn(nil)
+	if thumb.Size().Width != scrollbar.Wide || thumb.FillColor != withAlpha(colMuted, 0.85) {
+		t.Fatalf("thumb under the pointer: %v wide in %v", thumb.Size().Width, thumb.FillColor)
+	}
+	area.MouseOut()
+	before := scroll.Offset.Y
+	area.Tapped(&fyne.PointEvent{Position: fyne.NewPos(8, thumb.Position().Y+thumb.Size().Height+20)})
+	if got := scroll.Offset.Y - before; got != scrollbar.Page(scroll.Size().Height) {
+		t.Fatalf("a tap below the thumb scrolled %v, want a page of %v", got, scrollbar.Page(scroll.Size().Height))
+	}
+}
+
+// Every scroll gets the bar (#633): a plain container.Scroll and a List.
+func TestEveryScrollGetsTheBar(t *testing.T) {
+	test.NewTempApp(t).Settings().SetTheme(loopTheme{theme.DefaultTheme()})
+	t.Run("scroll", func(t *testing.T) {
+		tall := canvas.NewRectangle(nil)
+		tall.SetMinSize(fyne.NewSize(10, 20000))
+		scroll := container.NewVScroll(tall)
+		window := test.NewTempWindow(t, scroll)
+		window.Resize(fyne.NewSize(300, 400))
+		barCheck(t, scroll)
+	})
+	t.Run("list", func(t *testing.T) {
+		list := widget.NewList(func() int { return 1000 }, func() fyne.CanvasObject { return widget.NewLabel("row") },
+			func(widget.ListItemID, fyne.CanvasObject) {})
+		window := test.NewTempWindow(t, list)
+		window.Resize(fyne.NewSize(300, 400))
+		barCheck(t, list)
+	})
 }

@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/scrollbar"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -125,8 +126,10 @@ func (themeSpec loopTheme) Color(name fyne.ThemeColorName, _ fyne.ThemeVariant) 
 		return colBorderSoft
 	case theme.ColorNameScrollBar:
 		return colScrollBar
-	case theme.ColorNameScrollBarBackground:
-		return color.Transparent
+	case theme.ColorNameScrollBarBackground: // the track, under the pointer
+		return overlay(0x0c)
+	case scrollbar.ColorNameHover:
+		return withAlpha(colMuted, 0.85)
 	case theme.ColorNameShadow:
 		return color.NRGBA{A: 0x30} // scroll edge fades; dialog dims are drawn by our sheets
 	}
@@ -207,9 +210,9 @@ func (themeSpec loopTheme) Size(name fyne.ThemeSizeName) float32 {
 	case theme.SizeNameSelectionRadius:
 		return rounded(3)
 	case theme.SizeNameScrollBar:
-		return 6
+		return scrollbar.Wide
 	case theme.SizeNameScrollBarSmall:
-		return 3
+		return scrollbar.Thin
 	case theme.SizeNameSeparatorThickness:
 		return 1
 	}

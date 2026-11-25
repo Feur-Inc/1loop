@@ -27,16 +27,19 @@ data class LoopyField(val label: String, val value: String)
 
 data class LoopyOption(val label: String, val detail: String, val aside: String, val action: String)
 
+/** The kinds of card the user types in. */
+private val TYPED = listOf("signin", "unlock")
+
 data class LoopyCard(
     val kind: String, val title: String, val subtitle: String, val fields: List<LoopyField>, val body: String,
     val options: List<LoopyOption>, val warning: String, val actions: List<String>, val editable: Boolean,
-    val ask: String, val secret: Boolean, val keep: Boolean, val answer: String, val result: String, val task: String,
+    val ask: String, val secret: Boolean, val keep: Boolean, val answer: String, val result: String, val task: String, val link: String = "",
 ) {
     /** The card still waits for the user (loopy.Card.Waiting). */
     val waiting get() = answer.isEmpty() && kind != "summary" && (actions.isNotEmpty() || options.isNotEmpty() || ask.isNotEmpty())
 
     /** Its buttons need nothing typed: a notification can carry them. */
-    val plainActions get() = if (!waiting || ask.isNotEmpty() || kind == "signin") emptyList() else actions.ifEmpty { options.map { it.label } }
+    val plainActions get() = if (!waiting || ask.isNotEmpty() || kind in TYPED || kind == "autolink") emptyList() else actions.ifEmpty { options.map { it.label } }
 
     companion object {
         fun from(o: JSONObject) = LoopyCard(
@@ -44,7 +47,7 @@ data class LoopyCard(
             o.objects("fields") { LoopyField(it.optString("label"), it.optString("value")) }, o.optString("body"),
             o.objects("options") { LoopyOption(it.optString("label"), it.optString("detail"), it.optString("aside"), it.optString("action")) },
             o.optString("warning"), o.strings("actions"), o.optBoolean("editable"), o.optString("ask"), o.optBoolean("secret"),
-            o.optBoolean("keep"), o.optString("answer"), o.optString("result"), o.optString("task"),
+            o.optBoolean("keep"), o.optString("answer"), o.optString("result"), o.optString("task"), o.optString("link"),
         )
     }
 }
@@ -177,6 +180,9 @@ class LoopyStore(private val app: RemoteApp, private val scope: CoroutineScope) 
     var routines by mutableStateOf(listOf<LoopyRoutine>())
     var rules by mutableStateOf(listOf<JSONObject>())
     var vault by mutableStateOf(listOf<JSONObject>())
+    var vaultState by mutableStateOf("")
+    var vaultStays by mutableStateOf(false)
+    var links by mutableStateOf(listOf<LoopyLink>())
     var accounts by mutableStateOf(listOf<JSONObject>())
     var settings by mutableStateOf(JSONObject())
     var model by mutableStateOf("")
@@ -195,7 +201,7 @@ class LoopyStore(private val app: RemoteApp, private val scope: CoroutineScope) 
         reading?.cancel()
         messages.clear()
         loaded = false; more = false; host = ""; state = "idle"; label = ""; running = false
-        waiting = emptyList(); tasks = emptyList(); routines = emptyList(); rules = emptyList(); vault = emptyList(); accounts = emptyList()
+        waiting = emptyList(); tasks = emptyList(); routines = emptyList(); rules = emptyList(); vault = emptyList(); accounts = emptyList(); links = emptyList(); vaultState = ""; vaultStays = false
         settings = JSONObject(); model = ""; models = emptyList(); facts = 0; browser = false; taken = false
         problem = null; supported = true; version = 0
     }
@@ -230,7 +236,8 @@ class LoopyStore(private val app: RemoteApp, private val scope: CoroutineScope) 
         waiting = view.strings("waiting")
         tasks = view.objects("tasks") { LoopyTask.from(it) }
         routines = view.objects("routines") { LoopyRoutine(it) }
-        rules = view.objects("rules") { it }; vault = view.objects("vault") { it }; accounts = view.objects("accounts") { it }
+        rules = view.objects("rules") { it }; vault = view.objects("vault") { it }; vaultState = view.optString("vaultState"); vaultStays = view.optBoolean("vaultStays")
+        links = view.objects("links") { LoopyLink(it) }; accounts = view.objects("accounts") { it }
         settings = view.optJSONObject("settings") ?: JSONObject()
         model = view.optString("model")
         models = view.objects("models") { LoopyModel(it.optString("connection"), it.optString("id"), it.optString("label"), it.strings("efforts")) }

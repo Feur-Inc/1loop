@@ -1907,6 +1907,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var loopyOpen by mutableStateOf(prefs.getBoolean("loopyOpen", false))
         private set
     var loopyPage by mutableStateOf<String?>(null) // "memory", "files", "settings", "routine:<id>"
+    var loopyTab by mutableStateOf("General") // of its settings
     var loopyShow by mutableStateOf<String?>(null) // the message to bring on screen
     var loopyDraft by mutableStateOf<String?>(null) // a text shared to Loopy
     var loopySpeak by mutableStateOf(false) // asked aloud: answered aloud

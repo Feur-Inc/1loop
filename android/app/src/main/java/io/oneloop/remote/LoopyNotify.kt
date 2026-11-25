@@ -29,17 +29,18 @@ import org.json.JSONObject
 // every quarter of an hour at the Loopy of the target it lives on.
 
 /** Shows what Loopy says; [message] is the card it is about, whose buttons it carries. */
-fun notifyLoopy(context: Context, server: Server, title: String, text: String, message: JSONObject?) {
+fun notifyLoopy(context: Context, server: Server, title: String, text: String, message: JSONObject?, level: String = "", picture: String = "") {
     if (Build.VERSION.SDK_INT >= 33 && context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) return
     val said = message?.let { LoopyMessage.from(it) }
-    val id = said?.id ?: "loopy:$text"
+    val id = said?.id ?: "loopy:$title$text"
     if (said != null && !LoopySeen.first(context, said.id)) return // the look and the stream say it once
     val open = PendingIntent.getActivity(
         context, 2, Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP).putExtra(LOOPY_OPEN, said?.id ?: ""),
         PendingIntent.FLAG_IMMUTABLE or PendingIntent.FLAG_UPDATE_CURRENT,
     )
-    val builder = NotificationCompat.Builder(context, Notifier.LOOPY)
+    val builder = NotificationCompat.Builder(context, if (level == "urgent") Notifier.LOOPY_URGENT else Notifier.LOOPY)
         .setSmallIcon(R.drawable.ic_launcher_foreground)
+        .setSilent(level == "silent").setPriority(if (level == "urgent") NotificationCompat.PRIORITY_MAX else NotificationCompat.PRIORITY_HIGH)
         .setContentTitle(title.ifEmpty { "Loopy" }).setContentText(text)
         .setStyle(NotificationCompat.BigTextStyle().bigText(text))
         .setContentIntent(open).setAutoCancel(true)
@@ -56,6 +57,19 @@ fun notifyLoopy(context: Context, server: Server, title: String, text: String, m
     }
     Notifier(context)
     NotificationManagerCompat.from(context).notify(id.hashCode(), builder.build())
+    if (picture.isNotEmpty()) CoroutineScope(Dispatchers.IO).launch { // it comes after: the words do not wait for it
+        runCatching {
+            val data = Api(server).bytes("/api/loopy/file?path=" + java.net.URLEncoder.encode(picture, "UTF-8"))
+            val bounds = android.graphics.BitmapFactory.Options().apply { inJustDecodeBounds = true }
+            android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size, bounds)
+            var sample = 1
+            while (maxOf(bounds.outWidth, bounds.outHeight) / sample > 1600) sample *= 2
+            val bitmap = android.graphics.BitmapFactory.decodeByteArray(data, 0, data.size, android.graphics.BitmapFactory.Options().apply { inSampleSize = sample }) ?: return@runCatching
+            builder.setLargeIcon(bitmap).setStyle(NotificationCompat.BigPictureStyle().bigPicture(bitmap).setSummaryText(text)).setSilent(true)
+            if (Build.VERSION.SDK_INT < 33 || context.checkSelfPermission(android.Manifest.permission.POST_NOTIFICATIONS) == PackageManager.PERMISSION_GRANTED)
+                NotificationManagerCompat.from(context).notify(id.hashCode(), builder.build())
+        }
+    }
 }
 
 const val LOOPY_OPEN = "io.oneloop.remote.LOOPY_OPEN"

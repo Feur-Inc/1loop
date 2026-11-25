@@ -40,13 +40,15 @@ import java.net.URLEncoder
 // loopy_settings.go): what it remembers, its folder, a routine, its settings.
 
 @Composable
-fun LoopyPage(app: RemoteApp, page: String, onBack: () -> Unit) {
+fun LoopyPage(app: RemoteApp, page: String, onClose: () -> Unit) {
+    val onBack = { if (page.startsWith("link:")) { app.loopyTab = "AutoLinks"; app.loopyPage = "settings" } else onClose() }
     val back = predictiveBack(onBack = onBack)
     Column(back.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         val title = when {
             page == "memory" -> "What Loopy remembers"
             page == "files" -> "Loopy's folder"
             page == "settings" -> "Loopy's settings"
+            page.startsWith("link:") -> app.loopy.links.firstOrNull { "link:${it.id}" == page }?.name ?: "AutoLink"
             else -> app.loopy.routines.firstOrNull { "routine:${it.id}" == page }?.title ?: "Routine"
         }
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -59,6 +61,7 @@ fun LoopyPage(app: RemoteApp, page: String, onBack: () -> Unit) {
                 page == "memory" -> MemoryPage(app)
                 page == "files" -> FilesPage(app)
                 page == "settings" -> LoopySettingsPage(app)
+                page.startsWith("link:") -> LinkPage(app, page.removePrefix("link:"), onBack)
                 else -> RoutinePage(app, page.removePrefix("routine:"), onBack)
             }
         }
@@ -66,14 +69,14 @@ fun LoopyPage(app: RemoteApp, page: String, onBack: () -> Unit) {
 }
 
 @Composable
-private fun Group(title: String, content: @Composable ColumnScope.() -> Unit) {
+internal fun Group(title: String, content: @Composable ColumnScope.() -> Unit) {
     if (title.isNotEmpty()) Text(title, style = Type.body.copy(fontWeight = FontWeight.SemiBold), modifier = Modifier.padding(top = 10.dp))
     Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface).padding(horizontal = 14.dp, vertical = 8.dp), content = content)
 }
 
 /** A line of a page: its title, what it says, and what acts on it. */
 @Composable
-private fun Line(title: String, detail: String, control: (@Composable () -> Unit)? = null) {
+internal fun Line(title: String, detail: String, control: (@Composable () -> Unit)? = null) {
     Row(Modifier.fillMaxWidth().padding(vertical = 7.dp), verticalAlignment = Alignment.CenterVertically) {
         Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(2.dp)) {
             Text(title, style = Type.body.copy(fontSize = 14.sp))
@@ -84,14 +87,14 @@ private fun Line(title: String, detail: String, control: (@Composable () -> Unit
 }
 
 @Composable
-private fun Link(text: String, onClick: () -> Unit) = Text(
+internal fun Link(text: String, onClick: () -> Unit) = Text(
     text, style = Type.small.copy(color = Palette.textSoft, fontWeight = FontWeight.Medium),
     modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable(onClick = onClick).padding(horizontal = 8.dp, vertical = 8.dp),
 )
 
 /** A dialog with fields; [onSave] says what is wrong through its argument, and closes it. */
 @Composable
-private fun Form(title: String, save: String, onDismiss: () -> Unit, onSave: (problem: (String) -> Unit) -> Unit, content: @Composable ColumnScope.() -> Unit) {
+internal fun Form(title: String, save: String, onDismiss: () -> Unit, onSave: (problem: (String) -> Unit) -> Unit, content: @Composable ColumnScope.() -> Unit) {
     var problem by remember { mutableStateOf<String?>(null) }
     GlassBackdrop()
     AlertDialog(
@@ -110,7 +113,7 @@ private fun Form(title: String, save: String, onDismiss: () -> Unit, onSave: (pr
 
 /** A value picked in a menu. */
 @Composable
-private fun Choose(value: String, values: List<Pair<String, String>>, onPick: (String) -> Unit) {
+internal fun Choose(value: String, values: List<Pair<String, String>>, onPick: (String) -> Unit) {
     var open by remember { mutableStateOf(false) }
     Box {
         Row(
@@ -310,8 +313,12 @@ private fun RoutineForm(app: RemoteApp, routine: LoopyRoutine, onDone: () -> Uni
 @Composable
 private fun LoopySettingsPage(app: RemoteApp) {
     val loopy = app.loopy
+    LoopyTabs(app.loopyTab) { app.loopyTab = it }
+    when (app.loopyTab) {
+        "AutoLinks" -> return AutoLinksTab(app)
+        "Vault" -> return VaultTab(app)
+    }
     var account by remember { mutableStateOf<String?>(null) }
-    var secret by remember { mutableStateOf<JSONObject?>(null) }
     var removing by remember { mutableStateOf<Pair<String, JSONObject>?>(null) } // what (an action), the entry
     val settings = loopy.settings
     Group("Home") {
@@ -355,24 +362,17 @@ private fun LoopySettingsPage(app: RemoteApp) {
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) { Pill("Mail", icon = Icons.plus) { account = "mail" }; Pill("Calendar", icon = Icons.plus) { account = "calendar" } }
         Spacer(Modifier.height(6.dp))
     }
-    Group("Vault") {
-        for (entry in loopy.vault) Line(entry.optString("name"), listOf("Sign-in of ${entry.optString("site")}", entry.optString("hint")).filter { it.isNotEmpty() }.joinToString(" · ")) {
-            Row { Link("Edit") { secret = entry }; Link("Remove") { removing = "vault.remove" to entry } }
-        }
-        Line("Add a sign-in", "Encrypted where Loopy lives. It knows the entry is there, never its password: 1loop types it in the page.") { Link("Add") { secret = JSONObject().put("kind", "signin") } }
-    }
     if (loopy.rules.isNotEmpty()) Group("Always allowed") {
         for (rule in loopy.rules) {
             val kind = rule.optString("kind")
-            val what = if (kind.startsWith("browser:")) kind.removePrefix("browser:").replaceFirstChar(Char::uppercase) + " on " + rule.optString("site") else "Sign in to ${rule.optString("site")} with the vault"
+            val what = if (kind.startsWith("browser:")) kind.removePrefix("browser:").replaceFirstChar(Char::uppercase) + " on " + rule.optString("site") else if (kind == "script") "Scripts that act on ${rule.optString("site")}" else "Sign in to ${rule.optString("site")} with the vault"
             Line(what, "Allowed without asking since ${day(instant(rule.optString("t")))}") { Link("Ask again") { loopy.change("rule.remove", rule.optString("id")) } }
         }
     }
     account?.let { AccountForm(app, it) { account = null } }
-    secret?.let { SecretForm(app, it) { secret = null } }
     removing?.let { (what, entry) ->
         val name = entry.optString("name").ifEmpty { entry.optString("address") }
-        ConfirmDialog("Remove $name?", if (what == "vault.remove") "The vault forgets it. This can't be undone." else "Loopy no longer reaches this account. Its password is forgotten.", "Remove", { removing = null }) { removing = null; loopy.change(what, entry.optString("id")) }
+        ConfirmDialog("Remove $name?", "Loopy no longer reaches this account. Its password is forgotten.", "Remove", { removing = null }) { removing = null; loopy.change(what, entry.optString("id")) }
     }
 }
 
@@ -394,25 +394,5 @@ private fun AccountForm(app: RemoteApp, kind: String, onDone: () -> Unit) {
             Field(smtp, { smtp = it }, "SMTP server (known for the common providers)", KeyboardType.Uri)
         } else Field(caldav, { caldav = it }, "https://… (known for the common providers)", KeyboardType.Uri)
         Text("Most providers want a password made for apps, in their security settings. It is kept encrypted in Loopy's vault.", style = Type.small)
-    }
-}
-
-@Composable
-private fun SecretForm(app: RemoteApp, entry: JSONObject, onDone: () -> Unit) {
-    val known = entry.optString("id").isNotEmpty()
-    var site by remember { mutableStateOf(entry.optString("site")) }
-    var name by remember { mutableStateOf(entry.optString("name")) }
-    var user by remember { mutableStateOf("") }
-    var password by remember { mutableStateOf("") }
-    var hint by remember { mutableStateOf(entry.optString("hint")) }
-    Form("A sign-in in Loopy's vault", "Save", onDone, { problem ->
-        val changed = JSONObject(entry.toString()).put("site", site.trim()).put("name", name.trim().ifEmpty { site.trim() }).put("hint", hint.trim())
-        app.loopy.change(JSONObject().put("do", "vault.save").put("entry", changed).put("values", JSONObject().put("user", user).put("password", password)), problem, onDone)
-    }) {
-        Field(site, { site = it }, "example.com", KeyboardType.Uri)
-        Field(name, { name = it }, "Name (the site's by default)", KeyboardType.Text)
-        Field(user, { user = it }, if (known) "User name (empty: unchanged)" else "User name or address", KeyboardType.Email)
-        Field(password, { password = it }, if (known) "Password (empty: unchanged)" else "Password", KeyboardType.Password, password = true)
-        Field(hint, { hint = it }, "When to use it (work account…)", KeyboardType.Text)
     }
 }

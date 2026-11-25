@@ -241,7 +241,8 @@ private fun SideNote(text: String) = Text(text, style = Type.caption, modifier =
 private fun loopyIcon(kind: String): ImageVector = when (kind) {
     "mail", "message" -> Icons.send
     "event", "routine" -> Icons.refresh
-    "signin", "secret" -> Icons.lock
+    "signin", "secret", "unlock" -> Icons.lock
+    "autolink", "autolink_run" -> Icons.terminal
     "approval" -> Icons.shield
     "delegate" -> Icons.terminal
     "summary" -> Icons.tasks
@@ -407,7 +408,7 @@ private fun CardView(app: RemoteApp, message: LoopyMessage, card: LoopyCard) {
             if (text.isNotEmpty()) Box(Modifier.widthIn(max = 130.dp)) { Tag(text, ink, ink.copy(alpha = 0.16f)) }
         }
         if (card.warning.isNotEmpty()) Text("⚠ " + card.warning, style = Type.small.copy(color = Palette.danger))
-        if (card.kind != "signin") card.fields.forEachIndexed { i, field ->
+        if (card.kind != "signin" && card.kind != "unlock") card.fields.forEachIndexed { i, field ->
             Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
                 Text(field.label, style = Type.caption)
                 if (editable && card.kind != "delegate") Field(values[i] ?: field.value, { values[i] = it }, field.label, KeyboardType.Text)
@@ -416,21 +417,22 @@ private fun CardView(app: RemoteApp, message: LoopyMessage, card: LoopyCard) {
         }
         if (editable) TextBox(body, { body = it }, "") else if (card.body.isNotEmpty()) Text(card.body, style = Type.body.copy(fontSize = 14.sp))
         if (card.waiting && card.ask.isNotEmpty()) Field(typed, { typed = it }, card.ask, KeyboardType.Text, password = card.secret)
-        if (card.waiting && card.kind == "signin") {
+        if (card.waiting && (card.kind == "signin" || card.kind == "unlock")) {
             for (field in card.fields) Field(
-                secrets[field.label].orEmpty(), { secrets[field.label] = it }, if (field.label == "password") "Password" else "User name or address",
-                if (field.label == "password") KeyboardType.Password else KeyboardType.Email, password = field.label == "password",
+                secrets[field.label].orEmpty(), { secrets[field.label] = it }, when (field.label) { "password" -> "Password"; "master" -> "Master password"; else -> "User name or address" },
+                if (field.label == "user") KeyboardType.Email else KeyboardType.Password, password = field.label != "user",
             )
             if (card.keep) {
                 Row(verticalAlignment = Alignment.CenterVertically) { Text("Keep in Loopy's vault", style = Type.small, modifier = Modifier.weight(1f)); Toggle(keep, true) { keep = it } }
                 if (keep) Field(hint, { hint = it }, "When to use it (work account…), optional", KeyboardType.Text)
             }
-            Text("It goes straight into the page: Loopy never sees it.", style = Type.caption)
+            if (card.kind == "signin") Text("It goes straight into the page: Loopy never sees it.", style = Type.caption)
         }
         card.options.forEachIndexed { i, option -> OptionRow(card, option, i) { answer(option.label) } }
         if (card.result.isNotEmpty()) Text(card.result, style = Type.small)
         if (card.waiting && card.actions.isNotEmpty()) FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
             card.actions.forEachIndexed { i, action -> Pill(action, primary = i == 0) { answer(action) } }
+            if (card.kind == "autolink" && card.link.isNotEmpty()) Pill("See it", icon = Icons.terminal) { app.loopyPage = "link:${card.link}" }
             if (card.kind == "needs_you" && card.ask.isEmpty() && loopy.browser && !loopy.taken) Pill("Take over the browser", icon = Icons.globe) { loopy.change("browser.take") }
         }
         if (task != null && task.status != "proposed") TaskSteps(app, task)

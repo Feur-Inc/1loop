@@ -27,6 +27,9 @@ func (layoutSpec *transcriptLayout) audit(lo, hi int, width float32) {
 	if layoutSpec.reported == nil {
 		layoutSpec.reported = map[fyne.CanvasObject]string{}
 	}
+	// Inside a frame's pass the minimum sizes are remembered: measure
+	// afresh, or a stale one would agree with the stale slot.
+	fyne.ForgetMinSizes()
 	for i := lo; i < hi && i < len(layoutSpec.rows); i++ {
 		row := layoutSpec.rows[i]
 		object := row.object

@@ -295,6 +295,13 @@ raise ValueError(s.password)
 	if _, err := use(t, e, "loopy_autolink_run", m{"id": other.ID}); err == nil || !strings.Contains(err.Error(), "not one of this AutoLink's sites") {
 		t.Errorf("%v", err)
 	}
+	// A local site, as a name without a dot: the same one is its own.
+	e.SaveSecret(loopy.VaultEntry{Kind: "signin", Site: "localhost", Name: "Local"}, map[string]string{"user": "u", "password": "local-secret"})
+	local := made(t, e, m{"name": "Local", "code": "import autolink\nprint(autolink.secret('Local').user)", "secrets": []string{"Local"}, "sites": []string{"localhost"}}, linkAuto)
+	running(e, "")
+	if got, err := use(t, e, "loopy_autolink_run", m{"id": local.ID}); err != nil || !strings.Contains(got.Text, "u") {
+		t.Errorf("%v %s", err, got.Text)
+	}
 	ended(e)
 
 	// Locked: the schedule's run waits for the user to open it.

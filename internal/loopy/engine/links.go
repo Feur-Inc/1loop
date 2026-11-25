@@ -943,7 +943,7 @@ func (s *linkScript) entry(name string) (secretEntry, error) {
 		return entry, err
 	}
 	if entry.Kind == "signin" && entry.Site != "" && !slices.ContainsFunc(s.link.Sites, func(site string) bool {
-		return site == "*" || sameSite(site, entry.Site) || sameSite(entry.Site, site) || related(site, entry.Site)
+		return site == "*" || site == entry.Site || sameSite(site, entry.Site) || sameSite(entry.Site, site) || related(site, entry.Site)
 	}) {
 		return entry, fmt.Errorf("%q is for %s, which is not one of this AutoLink's sites", name, entry.Site)
 	}

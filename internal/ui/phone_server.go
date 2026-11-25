@@ -1158,7 +1158,7 @@ func (server *remoteServer) limits(writer http.ResponseWriter, req *http.Request
 		}
 		for i, conn := range accounts {
 			server.ui.accountLimits[conn.ID] = results[i]
-			value := remoteapi.Limits{Account: conn.ID, Note: results[i].Note, Windows: []remoteapi.LimitWindow{}}
+			value := remoteapi.Limits{Account: conn.ID, Note: results[i].Note, Windows: []remoteapi.LimitWindow{}, Checked: results[i].Checked.UnixMilli()}
 			for _, window := range results[i].Windows {
 				reset := int64(0)
 				if !window.ResetAt.IsZero() {

@@ -397,7 +397,7 @@ func (server *headlessServer) limits(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		server.limitsCache[connection.ID] = results[index]
-		value := remoteapi.Limits{Account: connection.ID, Note: results[index].Note, Windows: []remoteapi.LimitWindow{}}
+		value := remoteapi.Limits{Account: connection.ID, Note: results[index].Note, Windows: []remoteapi.LimitWindow{}, Checked: results[index].Checked.UnixMilli()}
 		for _, window := range results[index].Windows {
 			reset := int64(0)
 			if !window.ResetAt.IsZero() {

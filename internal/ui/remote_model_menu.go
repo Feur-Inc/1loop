@@ -11,7 +11,6 @@ import (
 	"context"
 	"slices"
 	"strings"
-	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -84,16 +83,11 @@ func (remote *remoteDesktop) modelMenu() {
 	menu.menu, menu.columns, menu.anchor = true, true, ui.model.row
 	groups := [3][]*tapRow{}
 	shown := ""
-	values := map[string]agent.AccountLimits{}
 	refreshStrip := func() {
 		for _, account := range accounts {
 			if account.ID == shown {
-				limits, ok := values[account.ID]
-				if !ok {
-					limits = agent.AccountLimits{Note: "Loading limits…"}
-				}
 				conn := agent.Connection{ID: account.ID, Name: account.Name, Provider: account.Provider}
-				strip.Objects = []fyne.CanvasObject{modelLimitsStrip(conn, limits, account.Problem)}
+				strip.Objects = []fyne.CanvasObject{modelLimitsStrip(conn, remote.limits.of(account.ID), account.Problem)}
 			}
 		}
 		strip.Refresh()
@@ -279,45 +273,11 @@ func (remote *remoteDesktop) modelMenu() {
 	ui.model.setOpen(true)
 	menu.Show()
 	ui.window.Canvas().Focus(menu)
-	go remote.watchLimits(ctx, func(limits []remoteapi.Limits) {
-		if menu.closing {
-			return
+	remote.watchLimits(ctx, func() {
+		if !menu.closing {
+			refreshStrip()
 		}
-		for _, account := range limits {
-			value := agent.AccountLimits{Note: account.Note, Checked: time.Now()}
-			for _, window := range account.Windows {
-				reset := time.Time{}
-				if window.Reset > 0 {
-					reset = time.UnixMilli(window.Reset)
-				}
-				value.Windows = append(value.Windows, agent.NewAccountLimitWindow(window.Label, window.Left, reset))
-			}
-			values[account.Account] = value
-		}
-		refreshStrip()
 	})
-}
-
-// watchLimits reads the server's account limits while the picker is open:
-// at once, then every minute, as the desktop does.
-func (remote *remoteDesktop) watchLimits(ctx context.Context, show func([]remoteapi.Limits)) {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for {
-		var limits []remoteapi.Limits
-		if remote.client.json(ctx, "GET", "/api/limits", nil, &limits) == nil {
-			fyne.Do(func() {
-				if ctx.Err() == nil {
-					show(limits)
-				}
-			})
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
 }
 
 // speedToggle is the desktop's bolt button (model_controls.go) for a

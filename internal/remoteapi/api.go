@@ -200,6 +200,7 @@ type Limits struct {
 	Account string        `json:"account"`
 	Note    string        `json:"note,omitempty"`
 	Windows []LimitWindow `json:"windows"`
+	Checked int64         `json:"checked,omitempty"` // Unix milliseconds: when the provider was asked
 }
 
 type LimitWindow struct {

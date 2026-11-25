@@ -20,7 +20,7 @@ func (ui *desktopUI) loadAccountLimits(ctx context.Context, menu *sheet, conn ag
 		}
 	}
 	if conn.Provider != "openai" && conn.Provider != "claudecode" && conn.Provider != "antigravity" && conn.Provider != "openrouter" {
-		show(agent.AccountLimits{Note: "Limits not provided"})
+		show(agent.AccountLimits{Note: agent.NoLimitsNote})
 		return
 	}
 	if _, ok := ui.accountLimits[conn.ID]; !ok {

@@ -286,3 +286,39 @@ func TestLentBrowserRunsTools(t *testing.T) {
 		t.Fatalf("snapshot in the next lent browser: %s %v", text, err)
 	}
 }
+
+// An idle lending socket stays open: the pong that answers the client's
+// ping long after the last message gets a deadline of its own.
+func TestLentBrowserIdlePing(t *testing.T) {
+	server, address, token := lendServer(t)
+	saved := lendWrite
+	lendWrite = 200 * time.Millisecond
+	t.Cleanup(func() { lendWrite = saved })
+	dialer := ws.Dialer{Header: ws.HandshakeHeaderHTTP(http.Header{"Authorization": {"Bearer " + token}})}
+	conn, _, _, err := dialer.Dial(context.Background(), "ws"+strings.TrimPrefix(address, "http")+browser.LendPath)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer conn.Close()
+	waitUntil(t, "the client to attach", func() bool { return server.lenders.current() != nil })
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go server.lenders.Connect(ctx) // a write from the server: its deadline passes below
+	data, err := wsutil.ReadServerText(conn)
+	if err != nil || !strings.Contains(string(data), `"open":true`) {
+		t.Fatalf("open: %s %v", data, err)
+	}
+	time.Sleep(3 * lendWrite)
+	if err := wsutil.WriteClientMessage(conn, ws.OpPing, nil); err != nil {
+		t.Fatal(err)
+	}
+	conn.SetReadDeadline(time.Now().Add(5 * time.Second))
+	frame, err := ws.ReadFrame(conn)
+	if err != nil || frame.Header.OpCode != ws.OpPong {
+		t.Fatalf("answer to a ping on an idle socket: %v %v", frame.Header.OpCode, err)
+	}
+	time.Sleep(100 * time.Millisecond)
+	if server.lenders.current() == nil {
+		t.Fatal("the client was dropped after an idle minute")
+	}
+}

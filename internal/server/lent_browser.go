@@ -32,6 +32,10 @@ import (
 // time, it downloads one.
 var lendReady = 5 * time.Minute
 
+// lendWrite is how long a write on a lending socket may take: every write,
+// the pongs that answer the client's pings too, gets its own deadline.
+var lendWrite = time.Minute
+
 // browserLenders are the clients lending their browser, the last one to
 // come first: the engine uses it (browser.RemoteHost).
 type browserLenders struct {
@@ -146,7 +150,7 @@ func (lender *browserLender) send(frame browser.LendFrame) error {
 	}
 	lender.writeMu.Lock()
 	defer lender.writeMu.Unlock()
-	lender.conn.SetWriteDeadline(time.Now().Add(time.Minute))
+	lender.conn.SetWriteDeadline(time.Now().Add(lendWrite))
 	return wsutil.WriteServerText(lender.conn, data)
 }
 
@@ -249,6 +253,7 @@ type lockedConn struct {
 func (locked lockedConn) Write(data []byte) (int, error) {
 	locked.mu.Lock()
 	defer locked.mu.Unlock()
+	locked.conn.SetWriteDeadline(time.Now().Add(lendWrite)) // not the last write's, long past on an idle socket
 	return locked.conn.Write(data)
 }
 
@@ -327,7 +332,7 @@ func (lender *browserLender) run() {
 				continue
 			}
 			link.writeMu.Lock()
-			engine.SetWriteDeadline(time.Now().Add(time.Minute))
+			engine.SetWriteDeadline(time.Now().Add(lendWrite))
 			err := wsutil.WriteServerText(engine, frame.Message)
 			link.writeMu.Unlock()
 			if err != nil {

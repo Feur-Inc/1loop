@@ -162,6 +162,7 @@ type lockedConn struct {
 func (locked lockedConn) Write(data []byte) (int, error) {
 	locked.mu.Lock()
 	defer locked.mu.Unlock()
+	locked.conn.SetWriteDeadline(time.Now().Add(time.Minute)) // not the last write's, long past on an idle socket
 	return locked.conn.Write(data)
 }
 

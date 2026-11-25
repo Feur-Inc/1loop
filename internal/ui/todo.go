@@ -75,6 +75,10 @@ func (panel *toolPanel) todoChanged(chat *conversation) {
 			return panel.owner == chat && chat != nil && chat.run != nil && panel.shown > 0 &&
 				panel.active >= 0 && panel.active < len(panel.tabs) && panel.tabs[panel.active].todoView == box
 		}
+		tab.goalClock = nil
+		if chat != nil { // the goal first, as Codex shows it above the plan (#444)
+			tab.goalClock = drawGoalCard(box, chat.Goal.Snapshot(), func(command string) { panel.ui.goalButton(chat, command) })
+		}
 		tab.todoMarks = drawTaskList(box, items, live, tab.todoTimes)
 		panel.addBackgroundTasks(box, chat)
 		panel.addSubchats(box, chat)
@@ -353,6 +357,7 @@ func (panel *toolPanel) refreshTodoStatus(rebuild ...bool) {
 	}
 	now := time.Now()
 	if panel.owner != nil {
+		tickGoalClock(tab.goalClock, panel.owner.Goal.Snapshot())
 		for _, item := range panel.owner.Todo.Snapshot() {
 			if clock := tab.todoTimes[item.ID]; clock != nil {
 				value := taskElapsed(item, now)
@@ -375,6 +380,9 @@ func (panel *toolPanel) refreshTodoStatus(rebuild ...bool) {
 		return
 	}
 	text := agent.TaskContextText(cfg, panel.ui.contextUsed, panel.ui.contextWindow, panel.ui.classicCompaction, state)
+	if panel.owner != nil && panel.owner.run == nil && panel.owner.Compaction.Interrupted() != nil {
+		text += "\nA compaction was interrupted: it goes on with the next message."
+	}
 	usage := panel.ui.contextUsage(panel.owner)
 	if tab.todoUsage == nil {
 		tab.todoUsage = &contextUsageState{}

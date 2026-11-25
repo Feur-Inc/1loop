@@ -166,7 +166,7 @@ func (ui *desktopUI) chatsStatus() trayStatus {
 		chats[i] = trayChat{title: chat.Title, failed: chat.failed}
 		if run := chat.run; run != nil {
 			chats[i].running = true
-			chats[i].waiting = run.approval != nil || run.questions != nil
+			chats[i].waiting = run.approvalID != "" || run.questions != nil
 			chats[i].started = run.started.UnixNano()
 		}
 	}

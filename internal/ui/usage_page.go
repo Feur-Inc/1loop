@@ -26,6 +26,7 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
+	"1loop/internal/core"
 	"1loop/internal/usage"
 )
 
@@ -175,7 +176,11 @@ func (page *usagePage) change(edit func(query *usage.Query)) {
 
 func (page *usagePage) show(report usage.Report) {
 	page.body.Objects = nil
-	if limits := limitsSection(report.Limits); limits != nil {
+	choose := func(connection string) {
+		page.ui.usageAccount = connection
+		page.show(report)
+	}
+	if limits := limitsSection(report.Limits, page.ui.usageAccount, choose); limits != nil {
 		page.body.Add(limits)
 	}
 	page.body.Objects = append(page.body.Objects,
@@ -308,7 +313,7 @@ func usageAmount(totals usage.Totals, previous *usage.Totals) fyne.CanvasObject 
 
 func costText(totals usage.Totals) string {
 	if totals.Cost == 0 && totals.Unpriced > 0 {
-		return usage.Count(totals.Total()) + " tokens"
+		return core.CompactCount(totals.Total()) + " tokens"
 	}
 	return usage.Money(totals.Cost)
 }
@@ -336,15 +341,15 @@ func usageDetail(detail string, totals usage.Totals) string {
 }
 
 func tokenBreakdown(tokens usage.Tokens) string {
-	parts := []string{usage.Count(tokens.Input) + " in", usage.Count(tokens.Output) + " out"}
+	parts := []string{core.CompactCount(tokens.Input) + " in", core.CompactCount(tokens.Output) + " out"}
 	if tokens.CacheRead > 0 {
-		parts = append(parts, usage.Count(tokens.CacheRead)+" cached")
+		parts = append(parts, core.CompactCount(tokens.CacheRead)+" cached")
 	}
 	if tokens.CacheWrite > 0 {
-		parts = append(parts, usage.Count(tokens.CacheWrite)+" cache writes")
+		parts = append(parts, core.CompactCount(tokens.CacheWrite)+" cache writes")
 	}
 	if tokens.Reasoning > 0 {
-		parts = append(parts, usage.Count(tokens.Reasoning)+" reasoning")
+		parts = append(parts, core.CompactCount(tokens.Reasoning)+" reasoning")
 	}
 	return strings.Join(parts, ", ")
 }
@@ -374,7 +379,7 @@ func usageSummary(report usage.Report) fyne.CanvasObject {
 	}
 	tiles := []fyne.CanvasObject{
 		statTile("Spent", usage.Money(totals.Cost), spentUnder, colText),
-		statTile("Tokens", usage.Count(totals.Total()), calls, colText),
+		statTile("Tokens", core.CompactCount(totals.Total()), calls, colText),
 		statTile("From the cache", cache, "of the prompt tokens read", colText),
 	}
 	switch pace, compare := report.Pace, report.Compare; {
@@ -394,7 +399,7 @@ func usageSummary(report usage.Report) fyne.CanvasObject {
 	}
 	lines := container.New(layout.NewCustomPaddedVBoxLayout(10), container.NewGridWithColumns(4, tiles...))
 	if totals.Unpriced > 0 {
-		lines.Add(plainFlow(usage.Count(totals.Unpriced)+" tokens are on models with no known price and are not in the cost. Set a price under Prices.", 12.5, colMuted))
+		lines.Add(plainFlow(core.CompactCount(totals.Unpriced)+" tokens are on models with no known price and are not in the cost. Set a price under Prices.", 12.5, colMuted))
 	}
 	return padded(0, 10, 0, 0, card(padded(14, 14, 16, 16, lines)))
 }
@@ -442,7 +447,7 @@ func rowDetail(row usage.Row) string {
 	if row.Calls == 1 {
 		calls = "1 call"
 	}
-	return strings.Join(append(parts, usage.Count(row.Total())+" tokens", calls), " · ")
+	return strings.Join(append(parts, core.CompactCount(row.Total())+" tokens", calls), " · ")
 }
 
 // shareRow is a breakdown row: its name and detail, a bar of its share of
@@ -475,7 +480,7 @@ func usageChart(report usage.Report) fyne.CanvasObject {
 	}
 	scale := func(v float64) string {
 		if byTokens {
-			return usage.Count(int(v))
+			return core.CompactCount(int(v))
 		}
 		return usage.Money(v)
 	}
@@ -799,7 +804,7 @@ func todayText(totals usage.Totals) string {
 	case totals.Cost > 0:
 		return usage.Money(totals.Cost)
 	}
-	return usage.Count(totals.Total()) + " tok"
+	return core.CompactCount(totals.Total()) + " tok"
 }
 
 // followUsage keeps today's spend up to date in the sidebar and the tray.

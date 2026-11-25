@@ -10,7 +10,7 @@ package ui
 // Opening a project or a chat makes its target the one the window works
 // on: there is no switch to flip before reaching it.
 //
-// A new chat with no folder runs on the device in use (noFolderTarget);
+// A new chat with no folder runs on the device in use;
 // the target chip under the composer moves a new chat to another target.
 
 import (
@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/theme"
 
 	"1loop/internal/agent"
 	"1loop/internal/remoteapi"
@@ -103,13 +104,6 @@ func targetProjectName(target projectTarget, project string) string {
 	}
 	return path.Base(filepath.ToSlash(project))
 }
-
-// noFolderTarget is where a new chat with no folder runs: the device in
-// use, which is this computer. One function, so that another default is a
-// one-line change; the target chip under the composer moves a new chat
-// elsewhere. (The browser client has no folder of its own to offer: its
-// chats run on the page's server.)
-func noFolderTarget() projectTarget { return localTarget }
 
 // reach is whether a target answers, as last seen.
 type reach int
@@ -251,12 +245,17 @@ func (ui *desktopUI) serverGroups() []targetGroup {
 // serverGroup is a server's: the window's own connection to it while it
 // works on it, else what its link last read. Until either has answered,
 // its projects are those remembered from the last time it did, and its
-// chats are not at hand.
+// chats are not at hand. A connection just opened lists nothing until
+// its first state arrives: meanwhile the link's listing stays, or its
+// projects and chats left the sidebar for seconds after a click on it.
 func (ui *desktopUI) serverGroup(address string) targetGroup {
 	var listing *serverListing
 	active := false
-	if remote := ui.server; remote != nil && remote.client.address.URL == address {
+	remote := ui.server
+	if remote != nil && remote.client.address.URL == address {
 		active = true
+	}
+	if active && remote.shown {
 		listing = &serverListing{name: remote.name, projects: remote.projects, chats: remote.chats, worktrees: remote.worktrees}
 	} else if link := ui.linkTo(address); link != nil && link.answered {
 		listing = &link.listing
@@ -327,10 +326,9 @@ func (ui *desktopUI) rememberServerProjects(address string, projects []string) {
 // sidebar lists it.
 func (ui *desktopUI) sideChatOf(chat *conversation) sideChat {
 	status, blocked := agent.WrapUpStatus(chat.Items)
-	menu := []menuAction{
-		{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
-		{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
-	}
+	menu := []menuAction{{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }}}
+	menu = append(menu, ui.moveActions(chat)...) // chat_move.go
+	menu = append(menu, menuAction{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }})
 	var window func()
 	if ui.canOpenWindow(chat) { // windows.go
 		window = func() { ui.openWindow(chat) }
@@ -377,12 +375,16 @@ func (ui *desktopUI) serverSideChats(target projectTarget, chats []remoteapi.Cha
 	for _, chat := range chats {
 		chat := chat
 		side = append(side, sideChat{
-			id: chat.ID, parent: chat.Parent, ended: chat.Ended,
+			target: target.id, id: chat.ID, parent: chat.Parent, ended: chat.Ended,
 			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
 			status: chat.Status, blocked: chat.Blocked,
 			selected: current != nil && current.server != nil && current.server.client.address.URL == target.id && current.serverID == chat.ID,
 			open:     onServer(func(remote *remoteDesktop) { remote.openChat(chat.ID) }),
-			menu:     []menuAction{{label: "Delete", icon: iconTrash, danger: true, run: onServer(func(remote *remoteDesktop) { remote.deleteChat(chat) })}},
+			menu: []menuAction{
+				{label: "Move to this computer…", icon: theme.ComputerIcon(), run: onServer(func(remote *remoteDesktop) {
+					remote.moveHere(chat.ID, chat.Title, chat.Workspace, chat.Running)
+				})},
+				{label: "Delete", icon: iconTrash, danger: true, run: onServer(func(remote *remoteDesktop) { remote.deleteChat(chat) })}},
 		})
 	}
 	return side

@@ -359,14 +359,16 @@ func readClaudeSession(r io.Reader, folder string) (ImportedChat, error) {
 				path, _, _ := ToolArgs(item.Args)
 				item.Diff = claudeDiff(path, entry.ToolUseResult)
 			}
+			item.ID = core.Identifier()[:16]
 			chat.Items = append(chat.Items, item)
 			chat.History = append(chat.History, Message{Role: "assistant", ToolCalls: []ToolCall{call}},
-				Message{Role: "tool", ToolCallID: call.ID, Content: item.Text})
+				Message{Role: "tool", ToolCallID: call.ID, Content: item.Text, RecallID: item.ID})
 		}
 		if text != "" || len(images) > 0 {
 			flush()
-			chat.Items = append(chat.Items, ChatItem{ID: core.Identifier()[:16], Kind: "user", Text: text, Images: images})
-			chat.History = append(chat.History, Message{Role: "user", Content: text, Images: images})
+			id := core.Identifier()[:16]
+			chat.Items = append(chat.Items, ChatItem{ID: id, Kind: "user", Text: text, Images: images})
+			chat.History = append(chat.History, Message{Role: "user", Content: text, Images: images, RecallID: id})
 		}
 	}
 	flush()
@@ -549,8 +551,9 @@ func readCodexSession(r io.Reader, folder string) (ImportedChat, error) {
 	var chat ImportedChat
 	addUser := func(text string) {
 		if text = strings.TrimSpace(text); text != "" {
-			chat.Items = append(chat.Items, ChatItem{ID: core.Identifier()[:16], Kind: "user", Text: text})
-			chat.History = append(chat.History, Message{Role: "user", Content: text})
+			id := core.Identifier()[:16]
+			chat.Items = append(chat.Items, ChatItem{ID: id, Kind: "user", Text: text})
+			chat.History = append(chat.History, Message{Role: "user", Content: text, RecallID: id})
 		}
 	}
 	addAnswer := func(text string) {
@@ -567,9 +570,10 @@ func readCodexSession(r io.Reader, folder string) (ImportedChat, error) {
 		if item.Diff != "" { // the model continuing the chat sees what the edit changed
 			output += "\n" + item.Diff
 		}
+		item.ID = core.Identifier()[:16]
 		chat.Items = append(chat.Items, item)
 		chat.History = append(chat.History, Message{Role: "assistant", ToolCalls: []ToolCall{call}},
-			Message{Role: "tool", ToolCallID: id, Content: output})
+			Message{Role: "tool", ToolCallID: id, Content: output, RecallID: item.ID})
 	}
 	outputs := map[string]string{}
 	for _, call := range calls {

@@ -20,7 +20,7 @@ func runShell(t *testing.T, ctx context.Context, workspace string, arguments map
 	raw, _ := json.Marshal(full)
 	call := ToolCall{ID: "call"}
 	call.Function.Name, call.Function.Arguments = "shell", string(raw)
-	output, _, err := (&App{Approvals: map[string]chan bool{}}).runTool(ctx, workspace, call, func() {}, func(string, any) {})
+	output, _, err := (&App{Approvals: map[string]chan ApprovalAnswer{}}).runTool(ctx, workspace, call, func() {}, func(string, any) {})
 	return output, err
 }
 

@@ -36,6 +36,7 @@ var oneloopCommands = []commandOption{
 	{"clear", "", "Start a new chat with an empty context (this one stays in the sidebar)"},
 	{"compact", "[instructions]", "Free up context by summarizing the conversation so far"},
 	{"login", "", "Sign in to Claude Code"},
+	{"goal", "[objective]", "Give the chat a goal: 1loop keeps working on it, turn after turn, until it is done"},
 }
 
 // oneloopAliases are other names of oneloopCommands, as in Claude Code.
@@ -293,6 +294,11 @@ func (ui *desktopUI) commandTyped() (string, bool) {
 func (ui *desktopUI) updateCommandMenu() {
 	if ui.commandTray == nil {
 		return
+	}
+	// A dismissal holds for the text it was made on only: any other text,
+	// the empty composer included, shows the menu again (#453).
+	if ui.prompt.Text != ui.commandDismissed {
+		ui.commandDismissed = ""
 	}
 	typed, ok := ui.commandTyped()
 	if !ok {

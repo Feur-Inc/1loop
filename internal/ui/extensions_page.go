@@ -10,16 +10,12 @@ package ui
 import (
 	"context"
 	"fmt"
-	"image"
 	"image/color"
 	_ "image/jpeg"
 	_ "image/png"
-	"io"
-	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -28,6 +24,7 @@ import (
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
+	"1loop/internal/core"
 	"1loop/internal/extensions"
 )
 
@@ -204,7 +201,7 @@ func (page *extensionsPage) card(listing extensions.Listing) fyne.CanvasObject {
 	}
 	badge := surface(textLine(kind, 11, colMuted), colRaised, nil, 6, 4)
 	owner := textLine("by "+listing.Owner, 12.5, colMuted)
-	stars := container.NewHBox(iconImage(iconStar, colAmber, 13), textLine(compactCount(listing.Stars), 12.5, colText), textLine("· updated "+ago(listing.Updated), 12.5, colFaint))
+	stars := container.NewHBox(iconImage(iconStar, colAmber, 13), textLine(core.CompactCount(listing.Stars), 12.5, colText), textLine("· updated "+ago(listing.Updated), 12.5, colFaint))
 	description := listing.Description
 	if description == "" {
 		description = "No description."
@@ -244,7 +241,7 @@ func (page *extensionsPage) details(listing extensions.Listing) {
 			fyne.CurrentApp().OpenURL(address)
 		}
 	})
-	facts := []string{compactCount(listing.Stars) + " stars", compactCount(listing.Forks) + " forks", "updated " + ago(listing.Updated)}
+	facts := []string{core.CompactCount(listing.Stars) + " stars", core.CompactCount(listing.Forks) + " forks", "updated " + ago(listing.Updated)}
 	if listing.License != "" {
 		facts = append(facts, listing.License)
 	}
@@ -790,11 +787,6 @@ func extensionRow(title string, lines []string, control fyne.CanvasObject) fyne.
 	return padded(13, 13, 16, 16, container.NewBorder(nil, nil, nil, end, container.NewVBox(layout.NewSpacer(), text, layout.NewSpacer())))
 }
 
-var (
-	picturesMu sync.Mutex
-	pictures   = map[string]image.Image{}
-)
-
 // remotePicture shows a picture from the web once it has loaded.
 func remotePicture(address string, size fyne.Size) fyne.CanvasObject {
 	view := canvas.NewImageFromImage(nil)
@@ -802,36 +794,10 @@ func remotePicture(address string, size fyne.Size) fyne.CanvasObject {
 	view.SetMinSize(size)
 	background := canvas.NewRectangle(colCode)
 	background.CornerRadius = rounded(8)
-	picturesMu.Lock()
-	cached := pictures[address]
-	picturesMu.Unlock()
-	if cached != nil {
+	if cached := catalogPictures.get(address); cached != nil {
 		view.Image = cached
-	} else if address != "" {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			request, err := http.NewRequestWithContext(ctx, "GET", address, nil)
-			if err != nil {
-				return
-			}
-			response, err := http.DefaultClient.Do(request)
-			if err != nil {
-				return
-			}
-			defer response.Body.Close()
-			decoded, _, err := image.Decode(io.LimitReader(response.Body, 8<<20))
-			if err != nil {
-				return
-			}
-			picturesMu.Lock()
-			pictures[address] = decoded
-			picturesMu.Unlock()
-			fyne.Do(func() {
-				view.Image = decoded
-				view.Refresh()
-			})
-		}()
+	} else if pictureAllowed(address) && catalogPictures.join(address, view) {
+		go fetchPicture(address, size)
 	}
 	return container.NewStack(background, view)
 }
@@ -842,23 +808,11 @@ func iconImage(icon fyne.Resource, ink color.NRGBA, size float32) fyne.CanvasObj
 	return container.NewCenter(view)
 }
 
-func compactCount(n int) string {
-	switch {
-	case n >= 1000000:
-		return fmt.Sprintf("%.1fM", float64(n)/1e6)
-	case n >= 10000:
-		return fmt.Sprintf("%dk", n/1000)
-	case n >= 1000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	}
-	return fmt.Sprint(n)
-}
-
 func countText(n int, word string) string {
 	if n == 1 {
 		return "1 " + word
 	}
-	return fmt.Sprintf("%s %ss", compactCount(n), word)
+	return fmt.Sprintf("%s %ss", core.CompactCount(n), word)
 }
 
 // ago says how long ago a time was, as people say it.

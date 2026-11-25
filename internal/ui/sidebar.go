@@ -557,18 +557,6 @@ func (ui *desktopUI) removeChats(chats ...*conversation) {
 	ui.renderChats()
 }
 
-func (ui *desktopUI) chatMenu(chat *conversation, anchor fyne.CanvasObject) *sheet {
-	var window []menuAction
-	if ui.canOpenWindow(chat) { // windows.go, panes.go
-		window = append(window, menuAction{label: "Open in new window", icon: iconWindow, run: func() { ui.openWindow(chat) }},
-			menuAction{label: "Open in split view", icon: iconPanel, run: func() { ui.splitPane(chat, false) }})
-	}
-	return showMenu(ui.window, anchor, append(window, []menuAction{
-		{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
-		{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
-	}...))
-}
-
 // confirm asks before a destructive action.
 func (ui *desktopUI) confirm(title, text, verb string, run func()) {
 	label := widget.NewLabel(text)

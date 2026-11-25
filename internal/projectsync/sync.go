@@ -95,7 +95,7 @@ func (chat Chat) Portable() Chat {
 	cleanItems := func(items []agent.ChatItem) []agent.ChatItem {
 		out := items[:0]
 		for _, item := range items {
-			if item.Kind != "note" || !strings.HasPrefix(item.Text, relocationPrefix) {
+			if item.Kind != "note" || !strings.HasPrefix(item.Text, relocationPrefix) && !strings.HasPrefix(item.Text, movedPrefix) {
 				out = append(out, item)
 			}
 		}

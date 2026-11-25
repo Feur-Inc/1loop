@@ -67,14 +67,16 @@ type panelTab struct {
 	todoContextText string
 	todoUsage       *contextUsageState // what the user opened in the context breakdown
 	todoTimes       map[string]*canvas.Text
-	todoMarks       []*taskMark // the rings of the list as drawn, stopped when it is drawn again
+	todoMarks       []*taskMark  // the rings of the list as drawn, stopped when it is drawn again
+	goalClock       *canvas.Text // the goal card's time spent, ticking while the agent works (goal.go)
 	web             bool
 	webKey          string // the ChatGPT page shown: its chat's
 	webAccount      *agent.ChatGPTWeb
 	webPage         *browser.Page
 	workspace       string // manual tabs belong to a workspace, not a transcript item
 	files           *fileBrowser
-	ref             string // github: the issue or pull request shown, owner/name#N
+	review          *reviewView // an edit waiting for approval (review.go)
+	ref             string      // github: the issue or pull request shown, owner/name#N
 }
 
 const panelWidth = 840
@@ -158,8 +160,18 @@ func (layoutSpec splitLayout) width(total float32) float32 {
 	return panelWidthWithin(width, total)
 }
 
+// The least the chat and the panel get side by side; with less than both,
+// the panel covers the chat instead of crushing it (#429).
+const chatLeast, panelLeast = 300, 280
+
+func panelCovers(total float32) bool { return total < chatLeast+panelLeast }
+
 func panelWidthWithin(width, total float32) float32 {
-	return fyne.Max(320, fyne.Min(width, total-360))
+	if panelCovers(total) {
+		return fyne.Max(0, total)
+	}
+	chat := fyne.Max(chatLeast, fyne.Min(360, total-320)) // the chat gives up room first
+	return fyne.Max(panelLeast, fyne.Min(width, total-chat))
 }
 
 func (layoutSpec splitLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
@@ -176,17 +188,21 @@ func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size
 	previousWidth := objects[0].Size().Width
 	full := layoutSpec.width(size.Width)
 	width := full * layoutSpec.toolPanel.shown
-	conversationWidth := size.Width - width
-	if layoutSpec.toolPanel.snap {
-		conversationWidth = size.Width - full*layoutSpec.toolPanel.target
-	}
-	layoutSpec.toolPanel.ui.controls.Layout.(*composerControlsLayout).available = fyne.Min(760, conversationWidth-48) - 20
-	if layoutSpec.toolPanel.snap {
+	covered := panelCovers(size.Width)
+	if covered { // at its full width, under the panel
+		objects[0].Resize(size)
+	} else if layoutSpec.toolPanel.snap {
 		// Wrapping a long conversation again on every frame is what made
 		// the slide stutter: it takes its final width at once instead.
 		objects[0].Resize(fyne.NewSize(size.Width-full*layoutSpec.toolPanel.target, size.Height))
 	} else {
 		objects[0].Resize(fyne.NewSize(size.Width-width, size.Height))
+	}
+	// Covered for good, nothing of it shows through a translucent panel.
+	if covered && layoutSpec.toolPanel.shown >= 1 {
+		objects[0].Hide()
+	} else {
+		objects[0].Show()
 	}
 	if objects[0].Size().Width != previousWidth {
 		for i, pane := range panes {

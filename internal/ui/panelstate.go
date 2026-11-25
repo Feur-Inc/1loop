@@ -80,7 +80,13 @@ func (state *panelState) saved() *savedPanel {
 		return nil
 	}
 	out := &savedPanel{Open: state.open, Width: state.width, Active: state.active}
-	for _, tab := range state.tabs {
+	for i, tab := range state.tabs {
+		if tab.review != nil { // ends with its run
+			if state.active >= i {
+				out.Active--
+			}
+			continue
+		}
 		saved := savedTab{Kind: tab.kind, Index: tab.index, Ref: tab.ref}
 		if tab.browser != nil {
 			info := tab.browser.Snapshot()
@@ -246,6 +252,9 @@ func (chat *conversation) disposePanel() {
 func (panel *toolPanel) showTodo(chat *conversation) {
 	panel = panel.of(chat)
 	if chat == panel.owner {
+		if panel.ui.split != nil && panel.target == 0 && panelCovers(panel.ui.split.Size().Width) {
+			return // it would cover the chat the user reads: they open it
+		}
 		panel.openTodo()
 		return
 	}

@@ -103,7 +103,7 @@ func runTool(t *testing.T, tool string, cfg Config, yolo, allow bool, arguments 
 	raw, _ := json.Marshal(arguments)
 	call := ToolCall{ID: "call"}
 	call.Function.Name, call.Function.Arguments = tool, string(raw)
-	backend := &App{Approvals: map[string]chan bool{}}
+	backend := &App{Approvals: map[string]chan ApprovalAnswer{}}
 	output, _, err = backend.runTool(ctx, t.TempDir(), call, func() {}, func(event string, value any) {
 		if event == "approval" {
 			request := value.(map[string]any)
@@ -241,7 +241,7 @@ func TestSubchatFollow(t *testing.T) {
 }
 
 func TestSubchatReport(t *testing.T) {
-	report := SubchatReport(SubchatInfo{ID: "s1", Title: "Fix", State: SubchatDone, Branch: "subchat/fix", Folder: "/w/fix", Last: strings.Repeat("x", 3000)})
+	report := TurnReport(ChatSender{ID: "s1", Title: "Fix"}, RelationSubchat, SubchatInfo{ID: "s1", Title: "Fix", State: SubchatDone, Branch: "subchat/fix", Folder: "/w/fix", Last: strings.Repeat("x", 3000)})
 	if !report.Internal || WakeSummary(report) != "Subchat s1 “Fix” ended its turn: done" || !strings.HasSuffix(report.Content, "Branch subchat/fix · worktree /w/fix") || len(report.Content) > 2300 {
 		t.Fatalf("report %q (summary %q)", report.Content, WakeSummary(report))
 	}

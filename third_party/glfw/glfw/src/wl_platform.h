@@ -60,6 +60,7 @@ typedef VkBool32 (APIENTRY *PFN_vkGetPhysicalDeviceWaylandPresentationSupportKHR
 #include "wayland-xdg-decoration-client-protocol.h"
 #include "wayland-viewporter-client-protocol.h"
 #include "wayland-fractional-scale-v1-client-protocol.h"
+#include "wayland-primary-selection-unstable-v1-client-protocol.h"
 #include "wayland-relative-pointer-unstable-v1-client-protocol.h"
 #include "wayland-pointer-constraints-unstable-v1-client-protocol.h"
 #include "wayland-idle-inhibit-unstable-v1-client-protocol.h"
@@ -418,6 +419,13 @@ typedef struct _GLFWlibraryWayland
     int                         keyRepeatScancode;
 
     char*                       clipboardString;
+    // 1loop: the primary selection (zwp_primary_selection_v1), which a
+    // middle click pastes: the text selected last.
+    struct zwp_primary_selection_device_manager_v1* primarySelectionManager;
+    struct zwp_primary_selection_device_v1* primarySelectionDevice;
+    struct zwp_primary_selection_source_v1* primarySelectionSource;
+    struct zwp_primary_selection_offer_v1* primarySelectionOffer;
+    char*                       primarySelectionString;
     short int                   keycodes[256];
     short int                   scancodes[GLFW_KEY_LAST + 1];
     char                        keynames[GLFW_KEY_LAST + 1][5];
@@ -543,4 +551,5 @@ void _glfwUpdateContentScaleWayland(_GLFWwindow* window);
 
 void _glfwAddSeatListenerWayland(struct wl_seat* seat);
 void _glfwAddDataDeviceListenerWayland(struct wl_data_device* device);
+void _glfwAddPrimarySelectionListenerWayland(struct zwp_primary_selection_device_v1* device);
 

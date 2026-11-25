@@ -29,6 +29,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -389,6 +390,7 @@ func LaunchLent(ctx context.Context) (string, func(), error) {
 	if err := os.MkdirAll(dir, 0700); err != nil {
 		return "", nil, err
 	}
+	lentOrphan(dir)
 	address, stop, err := launchLent(ctx, binary, dir, false)
 	if err != nil && binary.own && strings.Contains(err.Error(), "No usable sandbox") {
 		platform.Devf("browser", "1loop's Chromium has no usable sandbox here: lending it without")
@@ -398,6 +400,37 @@ func LaunchLent(ctx context.Context) (string, func(), error) {
 		err = chromiumStartError(err)
 	}
 	return address, stop, err
+}
+
+// lentOrphan stops a lent browser that outlived the 1loop that started
+// it (killed, or crashed): it holds the profile's lock, and the next one
+// would not start. Chromium's lock names its process; only one whose
+// command line names this profile is stopped. Linux only, where /proc
+// says it.
+func lentOrphan(dir string) {
+	target, err := os.Readlink(filepath.Join(dir, "SingletonLock"))
+	if err != nil {
+		return
+	}
+	cut := strings.LastIndex(target, "-")
+	pid, err := strconv.Atoi(target[cut+1:])
+	if cut < 0 || err != nil || pid <= 1 || pid == os.Getpid() {
+		return
+	}
+	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
+	if err != nil || !strings.Contains(string(cmdline), "--user-data-dir="+dir+"\x00") {
+		return
+	}
+	if process, err := os.FindProcess(pid); err == nil {
+		platform.Devf("browser", "stopping the lent browser a previous run left (pid %d)", pid)
+		process.Kill()
+		for i := 0; i < 50; i++ { // gone: the next browser takes its lock over
+			if _, err := os.Stat(fmt.Sprintf("/proc/%d", pid)); err != nil {
+				return
+			}
+			time.Sleep(100 * time.Millisecond)
+		}
+	}
 }
 
 func launchLent(ctx context.Context, binary browserBinary, dir string, noSandbox bool) (string, func(), error) {
@@ -416,6 +449,7 @@ func launchLent(ctx context.Context, binary browserBinary, dir string, noSandbox
 	}
 	command := exec.Command(binary.path, append(args, "about:blank")...)
 	command.Env = append(os.Environ(), binary.env...)
+	lentProcess(command)
 	stderr, err := command.StderrPipe()
 	if err != nil {
 		return "", nil, err

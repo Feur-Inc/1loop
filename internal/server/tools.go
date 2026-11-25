@@ -202,6 +202,11 @@ func (server *headlessServer) browserTools(chat *serverChat) agent.PanelToolHand
 		if err != nil && lender != nil && lender.left() {
 			return result, fmt.Errorf("The browser %s lent went away during this call, which did not finish: %s stopped lending it (%v). The tabs open again when a paired desktop app lends its browser", lender.device, lender.device, err)
 		}
+		if err != nil && lender != nil && !page.Started() {
+			// The lent browser did not start: the next call tries again
+			// in a new one, rather than failing as this one did.
+			server.reopenBrowsers()
+		}
 		return result, err
 	}
 }

@@ -322,3 +322,47 @@ func TestLentBrowserIdlePing(t *testing.T) {
 		t.Fatal("the client was dropped after an idle minute")
 	}
 }
+
+// A lent browser that could not start fails the call saying why; the next
+// call tries again, in a new one.
+func TestLentBrowserStartsAgain(t *testing.T) {
+	if _, err := exec.LookPath("chromium"); err != nil {
+		if _, err := exec.LookPath("google-chrome"); err != nil {
+			t.Skip("no Chromium to lend here")
+		}
+	}
+	server, address, token := lendServer(t)
+	chat := &serverChat{ID: "c1", Title: "t", Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}
+	server.mu.Lock()
+	server.chats = []*serverChat{chat}
+	server.mu.Unlock()
+	site := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `<!doctype html><title>Again</title>`)
+	}))
+	defer site.Close()
+	failed := false
+	launch := func(ctx context.Context) (string, func(), error) {
+		if !failed {
+			failed = true
+			return "", nil, errors.New("the profile is locked")
+		}
+		return browser.LaunchLent(ctx)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	go browser.Lending{URL: address, Token: token, Launch: launch}.Run(ctx)
+	waitUntil(t, "the client to attach", func() bool { return server.lenders.current() != nil })
+	tools := server.browserTools(chat)
+	run := func(name, args string) (string, error) {
+		ctx, cancel := context.WithTimeout(context.Background(), time.Minute)
+		defer cancel()
+		result, err := tools(ctx, name, json.RawMessage(args))
+		return result.Text, err
+	}
+	if _, err := run("browser_tabs", `{"action":"open","url":"`+site.URL+`"}`); err == nil || !strings.Contains(err.Error(), "the profile is locked") {
+		t.Fatalf("first call: %v", err)
+	}
+	if text, err := run("browser_evaluate", `{"expression":"document.title"}`); err != nil || text != `"Again"` {
+		t.Fatalf("evaluate: %s %v", text, err)
+	}
+}

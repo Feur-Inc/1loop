@@ -375,6 +375,17 @@ func NewBrowserPage(session *Session, info Info) *Page {
 	return browser
 }
 
+// Started says whether the page started: false while it starts, and for
+// good when its browser could not.
+func (browser *Page) Started() bool {
+	select {
+	case <-browser.ready:
+		return browser.Ctx != nil
+	default:
+		return false
+	}
+}
+
 func (browser *Page) Snapshot() Info {
 	browser.mu.Lock()
 	defer browser.mu.Unlock()

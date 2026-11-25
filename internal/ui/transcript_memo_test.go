@@ -106,3 +106,26 @@ func TestTranscriptResizedInAMinSizePass(t *testing.T) {
 		checkSlots(t, ui, fmt.Sprintf("scrolled to %.0f%% at 700", at*100))
 	}
 }
+
+// The developer log's check (audit) names a row whose slot is not the
+// height of its content, and says nothing of a row laid out right.
+func TestAuditNamesAStaleRow(t *testing.T) {
+	ui, _ := perfWindow(t, 60)
+	layout := ui.items
+	at := -1
+	for i, row := range layout.rows {
+		if row.object.Visible() {
+			if report := layout.auditRow(i, layout.width); report != "" {
+				t.Fatalf("row %d laid out right, the check says: %s", i, report)
+			}
+			at = i
+		}
+	}
+	if at < 0 {
+		t.Fatal("nothing on screen")
+	}
+	layout.rows[at].size.Height += 70 // the slot of #497's gaps
+	if report := layout.auditRow(at, layout.width); !strings.Contains(report, "content needs") {
+		t.Fatalf("a slot 70 px too high, the check says %q", report)
+	}
+}

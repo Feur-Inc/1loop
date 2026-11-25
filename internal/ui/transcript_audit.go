@@ -27,32 +27,12 @@ func (layoutSpec *transcriptLayout) audit(lo, hi int, width float32) {
 	if layoutSpec.reported == nil {
 		layoutSpec.reported = map[fyne.CanvasObject]string{}
 	}
-	// Inside a frame's pass the minimum sizes are remembered: measure
-	// afresh, or a stale one would agree with the stale slot.
-	fyne.ForgetMinSizes()
 	for i := lo; i < hi && i < len(layoutSpec.rows); i++ {
-		row := layoutSpec.rows[i]
-		object := row.object
+		object := layoutSpec.rows[i].object
 		if !object.Visible() {
 			continue
 		}
-		var problems []string
-		if need := object.MinSize().Height; abs32(need-row.size.Height) > auditSlack {
-			problems = append(problems, fmt.Sprintf("slot %.0f high, content needs %.0f", row.size.Height, need))
-		}
-		if abs32(object.Size().Height-row.size.Height) > auditSlack {
-			problems = append(problems, fmt.Sprintf("drawn %.0f high, slot %.0f", object.Size().Height, row.size.Height))
-		}
-		if y := object.Position().Y; abs32(y-layoutSpec.tops[i]) > auditSlack {
-			if _, rising := layoutSpec.arrivals[object]; !rising {
-				problems = append(problems, fmt.Sprintf("at y %.0f, expected %.0f", y, layoutSpec.tops[i]))
-			}
-		}
-		if row.width != width {
-			problems = append(problems, fmt.Sprintf("measured at width %.0f, shown at %.0f", row.width, width))
-		}
-		problems = auditParts(object, problems)
-		report := strings.Join(problems, "; ")
+		report := layoutSpec.auditRow(i, width)
 		if report == layoutSpec.reported[object] {
 			continue
 		}
@@ -61,6 +41,31 @@ func (layoutSpec *transcriptLayout) audit(lo, hi int, width float32) {
 			platform.Devf("layout", "row %d of %d (%s): %s", i, len(layoutSpec.rows), describeRow(object), report)
 		}
 	}
+}
+
+// auditRow is what is wrong with row i, shown at width; "" when nothing.
+func (layoutSpec *transcriptLayout) auditRow(i int, width float32) string {
+	// Inside a frame's pass the minimum sizes are remembered: measure
+	// afresh, or a stale one would agree with the stale slot.
+	fyne.ForgetMinSizes()
+	row := layoutSpec.rows[i]
+	object := row.object
+	var problems []string
+	if need := object.MinSize().Height; abs32(need-row.size.Height) > auditSlack {
+		problems = append(problems, fmt.Sprintf("slot %.0f high, content needs %.0f", row.size.Height, need))
+	}
+	if abs32(object.Size().Height-row.size.Height) > auditSlack {
+		problems = append(problems, fmt.Sprintf("drawn %.0f high, slot %.0f", object.Size().Height, row.size.Height))
+	}
+	if y := object.Position().Y; abs32(y-layoutSpec.tops[i]) > auditSlack {
+		if _, rising := layoutSpec.arrivals[object]; !rising {
+			problems = append(problems, fmt.Sprintf("at y %.0f, expected %.0f", y, layoutSpec.tops[i]))
+		}
+	}
+	if row.width != width {
+		problems = append(problems, fmt.Sprintf("measured at width %.0f, shown at %.0f", row.width, width))
+	}
+	return strings.Join(auditParts(object, problems), "; ")
 }
 
 // auditParts finds, inside a row, a vertical box whose parts are laid out

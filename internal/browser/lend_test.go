@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"syscall"
 	"testing"
 	"time"
@@ -39,6 +40,22 @@ func TestLendRefusal(t *testing.T) {
 	}
 }
 
+func TestNamesProfile(t *testing.T) {
+	for cmdline, want := range map[string]bool{
+		"chrome\x00--headless=new\x00--user-data-dir=/p/lent\x00about:blank\x00":        true,
+		"/snap/chromium/x/chrome --headless=new --user-data-dir=/p/lent --no-first-run": true, // snap's, in one string
+		"chrome --user-data-dir=/p/lent":                                                true,
+		"chrome --user-data-dir=/p/lent-other --x":                                      false,
+		"chrome --user-data-dir=/p/lent2\x00":                                           false,
+		"chrome --user-data-dir=/p/lent-other --user-data-dir=/p/lent":                  true,
+		"sleep\x0030\x00": false,
+	} {
+		if got := namesProfile(cmdline, "/p/lent"); got != want {
+			t.Errorf("%q: %v, want %v", cmdline, got, want)
+		}
+	}
+}
+
 // A lent browser that outlived its 1loop holds the profile's lock: the
 // next lending stops it, but never a process that is not that browser.
 func TestLentOrphan(t *testing.T) {
@@ -52,6 +69,13 @@ func TestLentOrphan(t *testing.T) {
 			t.Fatal(err)
 		}
 		t.Cleanup(func() { command.Process.Kill(); command.Wait() })
+		for i := 0; i < 100; i++ { // until sh runs: before, /proc shows this test's command line
+			cmdline, _ := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", command.Process.Pid))
+			if strings.Contains(string(cmdline), "--user-data-dir=") {
+				break
+			}
+			time.Sleep(20 * time.Millisecond)
+		}
 		return command
 	}
 	lock := func(pid int) {

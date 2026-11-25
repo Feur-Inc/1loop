@@ -418,7 +418,7 @@ func lentOrphan(dir string) {
 		return
 	}
 	cmdline, err := os.ReadFile(fmt.Sprintf("/proc/%d/cmdline", pid))
-	if err != nil || !strings.Contains(string(cmdline), "--user-data-dir="+dir+"\x00") {
+	if err != nil || !namesProfile(string(cmdline), dir) {
 		return
 	}
 	if process, err := os.FindProcess(pid); err == nil {
@@ -429,6 +429,22 @@ func lentOrphan(dir string) {
 				return
 			}
 			time.Sleep(100 * time.Millisecond)
+		}
+	}
+}
+
+// namesProfile says whether a command line starts a browser on dir: its
+// arguments apart, or in one string as snap's Chromium rewrites them.
+func namesProfile(cmdline, dir string) bool {
+	flag := "--user-data-dir=" + dir
+	for rest := cmdline; ; {
+		at := strings.Index(rest, flag)
+		if at < 0 {
+			return false
+		}
+		rest = rest[at+len(flag):]
+		if rest == "" || rest[0] == 0 || rest[0] == ' ' {
+			return true
 		}
 	}
 }

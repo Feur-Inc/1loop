@@ -77,6 +77,18 @@ func (e *Engine) Do(ctx context.Context, a loopy.Action) error {
 		return e.SaveSecret(*a.Entry, a.Values)
 	case "vault.remove":
 		return e.RemoveSecret(a.ID)
+	case "link.on", "link.off", "link.ask", "link.allow", "link.run", "link.stop", "link.remove", "link.edit":
+		return e.doLink(a)
+	case "vault.create":
+		return e.CreateVault(a.Values["master"])
+	case "vault.unlock":
+		return e.UnlockVault(a.Values["master"])
+	case "vault.lock":
+		return e.LockVault()
+	case "vault.master":
+		return e.changeSafe(func(s *safe) error { return s.Change(a.Values["old"], a.Values["master"]) })
+	case "vault.stay":
+		return e.changeSafe(func(s *safe) error { return s.Stay(a.On, a.Values["master"]) })
 	case "account.save":
 		if a.Account == nil {
 			return errors.New("no account given")
@@ -148,6 +160,12 @@ func (c localClient) Set(_ context.Context, settings loopy.Settings) error {
 func (c localClient) Clear(context.Context) error { c.e.Clear(); return nil }
 func (c localClient) Do(ctx context.Context, action loopy.Action) error {
 	return c.e.Do(ctx, action)
+}
+func (c localClient) Link(_ context.Context, id string) (loopy.LinkCode, error) {
+	return c.e.linkCode(id), nil
+}
+func (c localClient) Reveal(_ context.Context, id string) (map[string]string, error) {
+	return c.e.RevealSecret(id)
 }
 func (c localClient) Memory(context.Context) (loopy.MemoryView, error) { return c.e.Memory(), nil }
 func (c localClient) Files(_ context.Context, path string) ([]loopy.File, error) {
@@ -249,6 +267,23 @@ func Handlers(get func() (*Engine, error)) map[string]http.HandlerFunc {
 				return err
 			}
 			done(w)
+			return nil
+		}),
+		"GET /api/loopy/link": with(func(e *Engine, w http.ResponseWriter, r *http.Request) error {
+			core.WriteJSON(w, 200, e.linkCode(r.URL.Query().Get("id")))
+			return nil
+		}),
+		"POST /api/loopy/reveal": with(func(e *Engine, w http.ResponseWriter, r *http.Request) error {
+			var in struct{ ID string }
+			if err := read(r, &in); err != nil {
+				return err
+			}
+			values, err := e.RevealSecret(in.ID)
+			if err != nil {
+				return err
+			}
+			w.Header().Set("Cache-Control", "no-store")
+			core.WriteJSON(w, 200, values)
 			return nil
 		}),
 		"GET /api/loopy/memory": with(func(e *Engine, w http.ResponseWriter, r *http.Request) error {

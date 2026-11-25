@@ -85,6 +85,11 @@ type fakeHost struct {
 	auth    string
 	changes int
 	browser agent.PanelToolHandler
+	session *browser.Session
+	engine  *browser.Engine
+	pages   []*browser.Page
+	chats   []loopy.Chat
+	told    []loopy.Notice
 }
 
 func (h *fakeHost) Name() string        { return "test" }
@@ -97,8 +102,61 @@ func (h *fakeHost) Config(_ loopy.Settings, workspace string) (agent.Config, err
 	return cfg, nil
 }
 func (h *fakeHost) Models() []loopy.Model { return nil }
-func (h *fakeHost) Page() *browser.Page   { return nil }
-func (h *fakeHost) Projects() []string    { return []string{"/src/app"} }
+func (h *fakeHost) Page() *browser.Page {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if len(h.pages) == 0 {
+		return nil
+	}
+	return h.pages[len(h.pages)-1]
+}
+func (h *fakeHost) Pages() []*browser.Page {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.pages)
+}
+func (h *fakeHost) OpenPage(info browser.Info) (*browser.Page, error) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if h.session == nil {
+		return nil, errors.New("no browser")
+	}
+	if len(h.pages) == 0 {
+		h.session = browser.NewBrowserSession(h.engine)
+	}
+	page := browser.NewBrowserPage(h.session, info)
+	page.Record()
+	h.pages = append(h.pages, page)
+	go page.Start()
+	return page, nil
+}
+func (h *fakeHost) ClosePage(id string) {
+	h.closePages(func(p *browser.Page) bool { return p.Snapshot().ID == id })
+}
+func (h *fakeHost) ClosePages() { h.closePages(func(*browser.Page) bool { return true }) }
+func (h *fakeHost) closePages(which func(*browser.Page) bool) {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.pages = slices.DeleteFunc(h.pages, func(p *browser.Page) bool {
+		if which(p) {
+			p.Close()
+			return true
+		}
+		return false
+	})
+}
+func (h *fakeHost) Chats() []loopy.Chat {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return slices.Clone(h.chats)
+}
+func (h *fakeHost) DeleteChat(id string) error {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	h.chats = slices.DeleteFunc(h.chats, func(c loopy.Chat) bool { return c.ID == id })
+	return nil
+}
+func (h *fakeHost) Projects() []string { return []string{"/src/app"} }
 func (h *fakeHost) StartChat(project, title, brief string) (string, error) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
@@ -106,10 +164,18 @@ func (h *fakeHost) StartChat(project, title, brief string) (string, error) {
 	return "chat1", nil
 }
 func (h *fakeHost) StopChat(id string) { h.stopped = append(h.stopped, id) }
-func (h *fakeHost) Notify(title, text string, card *loopy.Message) {
+func (h *fakeHost) Notify(notice loopy.Notice) {
 	h.mu.Lock()
 	defer h.mu.Unlock()
-	h.notices = append(h.notices, title+": "+text)
+	h.told = append(h.told, notice)
+	h.notices = append(h.notices, notice.Title+": "+notice.Text)
+}
+
+// said is what the user was notified of.
+func (h *fakeHost) said() string {
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	return strings.Join(h.notices, "|")
 }
 func (h *fakeHost) GitHub(context.Context) string { return h.auth }
 func (h *fakeHost) Changed(loopy.Change)          { h.mu.Lock(); h.changes++; h.mu.Unlock() }

@@ -238,6 +238,19 @@ func (host loopyHost) Page() *browser.Page {
 	return nil
 }
 
+func (host loopyHost) Pages() (out []*browser.Page) {
+	host.server.mu.Lock()
+	defer host.server.mu.Unlock()
+	if chat := host.server.panelHomes[loopyChat]; chat != nil {
+		for _, tab := range chat.tabs {
+			if tab.browser != nil {
+				out = append(out, tab.browser)
+			}
+		}
+	}
+	return
+}
+
 func (host loopyHost) Projects() []string {
 	host.server.mu.Lock()
 	defer host.server.mu.Unlock()
@@ -282,11 +295,69 @@ func (host loopyHost) StopChat(id string) {
 	}
 }
 
-// Notify is for the clients: each says it when nobody looks at it.
-func (host loopyHost) Notify(title, text string, card *loopy.Message) {
+// OpenPage opens a page for a script, in a tab of Loopy's panel.
+func (host loopyHost) OpenPage(info browser.Info) (*browser.Page, error) {
+	server := host.server
+	if !server.hasBrowser() {
+		return nil, errors.New(browser.NoBrowserProblem)
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	if server.ctx.Err() != nil {
+		return nil, errors.New("The server is stopping")
+	}
+	chat := server.loopyChatLocked()
+	server.ensureTabsLocked(chat)
+	return server.addBrowserLocked(chat, info, ""), nil
+}
+
+func (host loopyHost) ClosePage(id string) {
+	host.closePages(func(page *browser.Page) bool { return page.Snapshot().ID == id })
+}
+
+func (host loopyHost) ClosePages() {
+	host.closePages(func(*browser.Page) bool { return true })
+}
+
+func (host loopyHost) closePages(which func(*browser.Page) bool) {
+	server := host.server
+	server.mu.Lock()
+	chat := server.panelHomes[loopyChat]
+	var closed []*serverTab
+	if chat != nil {
+		for i := len(chat.tabs) - 1; i >= 0; i-- {
+			if chat.tabs[i].browser != nil && which(chat.tabs[i].browser) {
+				closed = append(closed, server.detachTabLocked(chat, i))
+			}
+		}
+		if len(closed) > 0 {
+			server.scheduleSaveLocked()
+		}
+	}
+	server.mu.Unlock()
+	for _, tab := range closed {
+		tab.close()
+	}
+}
+
+func (host loopyHost) Chats() (out []loopy.Chat) {
 	host.server.mu.Lock()
 	defer host.server.mu.Unlock()
-	host.server.broadcastLocked("loopy_notice", map[string]any{"title": title, "text": text, "message": card})
+	for _, chat := range host.server.chats {
+		out = append(out, loopy.Chat{ID: chat.ID, Title: chat.Title, Project: chat.Config.Workspace, Running: chat.run != nil})
+	}
+	return
+}
+
+func (host loopyHost) DeleteChat(id string) error {
+	return host.server.removeChat(id)
+}
+
+// Notify is for the clients: each says it when nobody looks at it.
+func (host loopyHost) Notify(notice loopy.Notice) {
+	host.server.mu.Lock()
+	defer host.server.mu.Unlock()
+	host.server.broadcastLocked("loopy_notice", notice)
 }
 
 func (host loopyHost) GitHub(ctx context.Context) string {

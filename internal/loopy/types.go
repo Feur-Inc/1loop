@@ -38,7 +38,8 @@ type Message struct {
 // "Waiting for you" while it waits.
 type Card struct {
 	// Kind is "mail", "message" (Slack…), "event", "choice", "approval",
-	// "signin", "secret", "needs_you", "summary", "delegate" or "routine".
+	// "signin", "secret", "unlock", "needs_you", "summary", "delegate", "routine",
+	// "autolink", "autolink_run" or "chats".
 	Kind     string   `json:"kind"`
 	Title    string   `json:"title"`
 	Subtitle string   `json:"subtitle,omitempty"`
@@ -64,9 +65,12 @@ type Card struct {
 	Answer string `json:"answer,omitempty"`
 	// Result says what came of it: "Sent to paul@example.com".
 	Result string `json:"result,omitempty"`
-	// Task, Routine are the delegated task or routine it is about.
-	Task    string `json:"task,omitempty"`
-	Routine string `json:"routine,omitempty"`
+	// Task, Routine, Link are the delegated task, routine or AutoLink it is
+	// about; Chats the chats to delete.
+	Task    string   `json:"task,omitempty"`
+	Routine string   `json:"routine,omitempty"`
+	Link    string   `json:"link,omitempty"`
+	Chats   []string `json:"chats,omitempty"`
 }
 
 // Field is a labelled value of a card (To, Subject…).
@@ -161,6 +165,8 @@ type VaultEntry struct {
 	Name   string   `json:"name"`
 	Hint   string   `json:"hint,omitempty"` // when to use it: "work account"
 	Fields []string `json:"fields,omitempty"`
+	// Changed is when it last was.
+	Changed time.Time `json:"changed,omitzero"`
 }
 
 // Account is a mail or calendar account, without its password.
@@ -198,6 +204,9 @@ type Settings struct {
 	AskToRemember bool `json:"askToRemember,omitempty"`
 	// JournalOff: Loopy keeps no journal of what it did.
 	JournalOff bool `json:"journalOff,omitempty"`
+	// VaultLock locks the vault after so many minutes unused; 0: only when
+	// 1loop closes.
+	VaultLock int `json:"vaultLock,omitempty"`
 }
 
 // Fact is one thing known of the user, for the memory page.
@@ -258,17 +267,22 @@ type View struct {
 	Waiting  []string     `json:"waiting,omitempty"` // the cards that wait, the latest first
 	Tasks    []Task       `json:"tasks,omitempty"`
 	Routines []Routine    `json:"routines,omitempty"`
+	Links    []AutoLink   `json:"links,omitempty"`
 	Rules    []Rule       `json:"rules,omitempty"`
 	Vault    []VaultEntry `json:"vault,omitempty"`
 	Accounts []Account    `json:"accounts,omitempty"`
-	Settings Settings     `json:"settings"`
-	Model    string       `json:"model,omitempty"` // the one it uses now
-	Models   []Model      `json:"models,omitempty"`
-	Facts    int          `json:"facts"`
-	Used     int          `json:"used,omitempty"`
-	Window   int          `json:"window,omitempty"`
-	Browser  bool         `json:"browser,omitempty"` // it has a page open
-	Taken    bool         `json:"taken,omitempty"`   // the user took its browser over
+	// VaultState is "none" (no master password yet), "locked" or "unlocked";
+	// VaultStays: this machine opens it by itself.
+	VaultState string   `json:"vaultState,omitempty"`
+	VaultStays bool     `json:"vaultStays,omitempty"`
+	Settings   Settings `json:"settings"`
+	Model      string   `json:"model,omitempty"` // the one it uses now
+	Models     []Model  `json:"models,omitempty"`
+	Facts      int      `json:"facts"`
+	Used       int      `json:"used,omitempty"`
+	Window     int      `json:"window,omitempty"`
+	Browser    bool     `json:"browser,omitempty"` // it has a page open
+	Taken      bool     `json:"taken,omitempty"`   // the user took its browser over
 }
 
 // Change is what changed since a version.
@@ -295,6 +309,18 @@ type Answer struct {
 	Values  map[string]string `json:"values,omitempty"` // a sign-in's fields: never shown to Loopy
 	Keep    bool              `json:"keep,omitempty"`   // in the vault
 	Hint    string            `json:"hint,omitempty"`
+}
+
+// Notice is a notification to the user.
+type Notice struct {
+	Title string `json:"title"`
+	Text  string `json:"text"`
+	// Level is "" (normal), "silent" or "urgent".
+	Level string `json:"level,omitempty"`
+	// Picture is a file of Loopy's folder it shows.
+	Picture string `json:"picture,omitempty"`
+	// Card is what its buttons answer.
+	Card *Message `json:"message,omitempty"`
 }
 
 // Reactions are the emojis of a reaction, by name.

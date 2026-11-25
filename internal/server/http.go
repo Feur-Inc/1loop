@@ -8,6 +8,7 @@ package server
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
@@ -322,6 +323,59 @@ func (server *headlessServer) renameChat(w http.ResponseWriter, r *http.Request)
 	core.WriteJSON(w, 200, map[string]any{"ok": true, "title": title})
 }
 
+// deleteChatsLocked deletes these chats, stopping those that run, and
+// releases the lock.
+func (server *headlessServer) deleteChatsLocked(gone []*serverChat) ([]string, error) {
+	previous := server.chats
+	kept := make([]*serverChat, 0, len(previous))
+	for _, candidate := range previous {
+		if !slices.Contains(gone, candidate) {
+			kept = append(kept, candidate)
+		}
+	}
+	server.chats = kept
+	if err := server.saveOutsideLocked(); err != nil {
+		server.chats = restoredChats(previous, server.chats, gone)
+		server.mu.Unlock()
+		return nil, err
+	}
+	var tabs []*serverTab
+	deleted := make([]string, 0, len(gone))
+	for _, member := range gone {
+		deleted = append(deleted, member.ID)
+		if member.run != nil {
+			member.run.cancel()
+			member.run = nil
+		}
+		member.queue, member.steer = nil, nil
+		member.tasks.StopAll()
+		agent.DropClaudeChat(member.ID)
+		if member.Config.Scratch != "" {
+			go func(path string) { _ = agent.RemoveScratchWorkspace(server.scratchBase(), path) }(member.Config.Scratch)
+		}
+		tabs = append(tabs, member.tabs...)
+		member.tabs = nil
+	}
+	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.mu.Unlock()
+	for _, tab := range tabs {
+		tab.close()
+	}
+	return deleted, nil
+}
+
+// removeChat deletes a chat with its subchats; their worktrees stay.
+func (server *headlessServer) removeChat(id string) error {
+	server.mu.Lock()
+	chat := server.chatLocked(id)
+	if chat == nil {
+		server.mu.Unlock()
+		return errors.New("it is gone already")
+	}
+	_, err := server.deleteChatsLocked(append([]*serverChat{chat}, server.subtreeLocked(chat)...))
+	return err
+}
+
 // deleteChat deletes a chat with its subchats at every level: those that
 // run stop first. The worktrees they were given go too when asked, unless
 // they have uncommitted changes or another chat works in them.
@@ -348,41 +402,10 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-	previous := server.chats
-	kept := make([]*serverChat, 0, len(previous))
-	for _, candidate := range previous {
-		if !slices.Contains(gone, candidate) {
-			kept = append(kept, candidate)
-		}
-	}
-	server.chats = kept
-	if err := server.saveOutsideLocked(); err != nil {
-		server.chats = restoredChats(previous, server.chats, gone)
-		server.mu.Unlock()
+	deleted, err := server.deleteChatsLocked(gone)
+	if err != nil {
 		core.Fail(w, 500, err.Error())
 		return
-	}
-	var tabs []*serverTab
-	deleted := make([]string, 0, len(gone))
-	for _, member := range gone {
-		deleted = append(deleted, member.ID)
-		if member.run != nil {
-			member.run.cancel()
-			member.run = nil
-		}
-		member.queue, member.steer = nil, nil
-		member.tasks.StopAll()
-		agent.DropClaudeChat(member.ID)
-		if member.Config.Scratch != "" {
-			go func(path string) { _ = agent.RemoveScratchWorkspace(server.scratchBase(), path) }(member.Config.Scratch)
-		}
-		tabs = append(tabs, member.tabs...)
-		member.tabs = nil
-	}
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
-	server.mu.Unlock()
-	for _, tab := range tabs {
-		tab.close()
 	}
 	reply := map[string]any{"ok": true, "deleted": deleted}
 	var notes []string

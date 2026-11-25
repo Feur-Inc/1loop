@@ -94,9 +94,9 @@ func (ui *desktopUI) followLoopy(ctx context.Context, at string) {
 							fyne.Do(func() { ui.loopyChanged(at, change) })
 						}
 					case "loopy_notice":
-						var notice struct{ Title, Text string }
+						var notice loopy.Notice
 						if json.Unmarshal([]byte(event.Data), &notice) == nil {
-							fyne.Do(func() { ui.loopyNotice(notice.Title, notice.Text) })
+							fyne.Do(func() { ui.loopyNotice(notice) })
 						}
 					}
 				}
@@ -150,12 +150,14 @@ func (ui *desktopUI) loopyChanged(at string, change loopy.Change) {
 }
 
 // loopyNotice is a notification of Loopy's, unless the user is looking at it.
-func (ui *desktopUI) loopyNotice(title, text string) {
+// (an urgent one all the same).
+func (ui *desktopUI) loopyNotice(notice loopy.Notice) {
+	title, text := notice.Title, notice.Text
 	if ui.notificationsOffNow() {
 		return
 	}
 	for _, view := range ui.windows {
-		if view.inLoopy && ui.inForeground {
+		if view.inLoopy && ui.inForeground && notice.Level != "urgent" {
 			return
 		}
 	}

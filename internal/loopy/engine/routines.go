@@ -269,6 +269,9 @@ func (e *Engine) clockLoop() {
 		case <-ticker.C:
 		}
 		e.tick(e.now())
+		e.tickLinks(e.now())
+		e.restBrowser(e.now())
+		e.lockSoon()
 		if time.Since(polled) >= 2*time.Minute {
 			polled = time.Now()
 			e.poll(e.ctx)

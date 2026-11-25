@@ -39,6 +39,12 @@ func (e *Engine) Answer(answer loopy.Answer) error {
 	if card.Kind == "signin" && answer.Answer == card.Actions[0] && strings.TrimSpace(strings.Join(slices.Collect(maps.Values(answer.Values)), "")) == "" {
 		return errors.New("type them first")
 	}
+	if card.Kind == "unlock" && answer.Answer == card.Actions[0] {
+		if err := e.UnlockVault(answer.Values["master"]); err != nil {
+			return err
+		}
+	}
+	answer.Values = withoutMaster(answer.Values)
 	e.mu.Lock()
 	waiting := e.waits[answer.Message]
 	delete(e.waits, answer.Message)
@@ -50,12 +56,19 @@ func (e *Engine) Answer(answer loopy.Answer) error {
 		return nil
 	}
 	switch card.Kind {
+	case "unlock":
+		e.close(message.ID, answer.Answer, "")
+		return nil
 	case "mail", "message", "event":
 		return e.answerDraft(message, answer)
 	case "delegate":
 		return e.answerDelegate(message, answer)
 	case "routine":
 		return e.answerRoutine(message, answer)
+	case "autolink":
+		return e.answerLink(message, answer)
+	case "autolink_run":
+		return e.answerLinkRun(message, answer)
 	}
 	if card.Kind == "needs_you" {
 		e.TakeBrowser(false) // done with it, or dropped
@@ -195,17 +208,21 @@ func (e *Engine) answerDraft(message loopy.Message, answer loopy.Answer) error {
 // Coding tasks.
 
 func (e *Engine) proposeTask(r *run, project, title, brief string) (string, error) {
-	found := ""
-	for _, p := range e.host.Projects() {
-		if p == project || found == "" && strings.EqualFold(filepath.Base(p), filepath.Base(project)) {
-			found = p
-		}
-	}
-	if found == "" {
-		return "", fmt.Errorf("%q is not one of the user's projects", project)
+	found, err := e.project(project)
+	if err != nil {
+		return "", err
 	}
 	if strings.TrimSpace(title) == "" || strings.TrimSpace(brief) == "" {
 		return "", errors.New("give a title and a brief")
+	}
+	// An AutoLink the user let start coding agents by itself woke this run.
+	if link, ok := e.link(r.link); ok && r.link != "" && !link.Ask && slices.Contains(link.Rights, "agent") {
+		s := &linkScript{e: e, link: link}
+		if err := s.often("agent", linkAgents); err != nil {
+			return "", err
+		}
+		r.said = true
+		return e.startTask(found, title, brief, "the AutoLink "+link.Name)
 	}
 	task := loopy.Task{ID: loopy.NewID(), Title: title, Project: found, Brief: brief, Status: "proposed", Time: e.now()}
 	e.store.Lock()
@@ -216,6 +233,43 @@ func (e *Engine) proposeTask(r *run, project, title, brief string) (string, erro
 		Body: brief, Editable: true, Actions: []string{"Start", "Cancel"}, Task: task.ID}})
 	e.notify("A coding task to start", title, &message, false)
 	return "Proposed as task " + task.ID + ". The user starts it from the card: end your turn now.", nil
+}
+
+func (e *Engine) project(name string) (string, error) {
+	found := ""
+	for _, p := range e.host.Projects() {
+		if p == name || found == "" && strings.EqualFold(filepath.Base(p), filepath.Base(name)) {
+			found = p
+		}
+	}
+	if found == "" {
+		return "", fmt.Errorf("%q is not one of the user's projects (%s)", name, strings.Join(e.host.Projects(), ", "))
+	}
+	return found, nil
+}
+
+// startTask starts a coding agent the user allowed beforehand, and shows it.
+func (e *Engine) startTask(project, title, brief, by string) (string, error) {
+	found, err := e.project(project)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(title) == "" || strings.TrimSpace(brief) == "" {
+		return "", errors.New("give a title and a brief")
+	}
+	chat, err := e.host.StartChat(found, title, brief)
+	if err != nil {
+		return "", err
+	}
+	task := loopy.Task{ID: loopy.NewID(), Title: title, Project: found, Brief: brief, Chat: chat, Status: "running", Time: e.now(),
+		Steps: []loopy.Step{{Time: e.now(), Text: "Started by " + by + " in " + filepath.Base(found)}}}
+	e.store.Lock()
+	e.store.Tasks = append(e.store.Tasks, task)
+	e.store.Unlock()
+	message := e.add(loopy.Message{From: "loopy", Card: &loopy.Card{Kind: "delegate", Title: title, Subtitle: "project " + filepath.Base(found) + ", by " + by, Body: brief, Task: task.ID, Answer: "Started"}})
+	e.notify("A coding agent started", title, &message, false)
+	e.log(fmt.Sprintf("%s handed %q to a coding agent in %s.", by, title, filepath.Base(found)))
+	return "Started as task " + task.ID + ".", nil
 }
 
 func (e *Engine) answerDelegate(message loopy.Message, answer loopy.Answer) error {

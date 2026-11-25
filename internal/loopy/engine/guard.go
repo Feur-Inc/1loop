@@ -8,11 +8,16 @@ package engine
 // was made to say by a page or a mail.
 
 import (
+	"encoding/base64"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
+	"html"
 	"net/url"
 	"regexp"
 	"strings"
 	"unicode"
+	"unicode/utf16"
 
 	"golang.org/x/text/unicode/norm"
 )
@@ -161,12 +166,32 @@ func redact(text string, secrets []string) string {
 	for _, secret := range secrets {
 		if len(secret) >= 4 {
 			text = strings.ReplaceAll(text, secret, "••••")
-			if escaped := url.QueryEscape(secret); escaped != secret {
-				text = strings.ReplaceAll(text, escaped, "••••")
+			quoted, _ := json.Marshal(secret)
+			for _, form := range []string{url.QueryEscape(secret), url.PathEscape(secret), html.EscapeString(secret), strings.Trim(string(quoted), `"`), asciiJSON(secret),
+				base64.StdEncoding.EncodeToString([]byte(secret)), base64.RawURLEncoding.EncodeToString([]byte(secret)), hex.EncodeToString([]byte(secret))} {
+				if form != secret {
+					text = strings.ReplaceAll(text, form, "••••")
+				}
 			}
 		}
 	}
 	return text
+}
+
+// asciiJSON is a text as JSON in ASCII holds it, as browsers and Python
+// write it.
+func asciiJSON(text string) string {
+	var b strings.Builder
+	for _, r := range text {
+		if r < 0x80 {
+			b.WriteRune(r)
+		} else {
+			for _, unit := range utf16.Encode([]rune{r}) {
+				fmt.Fprintf(&b, `\u%04x`, unit)
+			}
+		}
+	}
+	return b.String()
 }
 
 // untrusted wraps what someone else wrote, so that it is never read as the

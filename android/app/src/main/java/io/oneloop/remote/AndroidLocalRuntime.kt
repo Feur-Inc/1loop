@@ -65,9 +65,9 @@ class AndroidLocalRuntime private constructor(private val context: Context) : Lo
     val browser = LocalBrowser(context)
     private val chatgptBrowsers = ConcurrentHashMap<String, LocalBrowser>() // ChatGPT (Web) accounts, by WebView profile
 
-    /** A ChatGPT (Web) account's browser: its own WebView profile, never Browser Use's. */
+    /** A ChatGPT (Web) account's browser, or Loopy's: its own WebView profile, never Browser Use's. */
     fun chatgptBrowser(profile: String): LocalBrowser {
-        require(profile.matches(Regex("chatgpt-[a-zA-Z0-9-]{1,80}"))) { "Invalid ChatGPT browser profile." }
+        require(profile.matches(Regex("loopy|chatgpt-[a-zA-Z0-9-]{1,80}"))) { "Invalid ChatGPT browser profile." }
         return chatgptBrowsers.getOrPut(profile) { LocalBrowser(context, profile) }
     }
     private val phone = LocalAdb(context, scope)

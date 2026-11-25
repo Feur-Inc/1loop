@@ -26,6 +26,10 @@ var weekdayNames = map[string]time.Weekday{"mon": 1, "tue": 2, "wed": 3, "thu": 
 const scheduleHelp = "say when as \"daily 08:00\", \"weekdays 09:30\", \"mon,thu 18:00\", \"monthly 1 09:00\", \"once 2026-12-24 18:00\", \"every 2h\" or \"every 30m\""
 
 func parseSchedule(when string, zone *time.Location) (schedule, error) {
+	return parseEvery(when, zone, time.Minute)
+}
+
+func parseEvery(when string, zone *time.Location, least time.Duration) (schedule, error) {
 	fields := strings.Fields(strings.ToLower(strings.TrimSpace(when)))
 	wrong := fmt.Errorf(scheduleHelp)
 	if len(fields) < 2 {
@@ -33,8 +37,8 @@ func parseSchedule(when string, zone *time.Location) (schedule, error) {
 	}
 	if fields[0] == "every" && len(fields) == 2 {
 		d, err := time.ParseDuration(fields[1])
-		if err != nil || d < 5*time.Minute {
-			return schedule{}, fmt.Errorf("\"every\" takes a duration of 5m or more, such as 30m or 2h")
+		if err != nil || d < least {
+			return schedule{}, fmt.Errorf("\"every\" takes a duration of %d minutes or more, such as 30m or 2h", int(least.Minutes()))
 		}
 		return schedule{every: d}, nil
 	}
@@ -74,7 +78,13 @@ func parseSchedule(when string, zone *time.Location) (schedule, error) {
 
 // ValidSchedule says why when cannot be a routine's time, nil when it can.
 func ValidSchedule(when string) error {
-	_, err := parseSchedule(when, time.Local)
+	_, err := parseEvery(when, time.Local, 5*time.Minute)
+	return err
+}
+
+// CheckSchedule says what is wrong with when; least is how often at most.
+func CheckSchedule(when string, least time.Duration) error {
+	_, err := parseEvery(when, time.Local, least)
 	return err
 }
 

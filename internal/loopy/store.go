@@ -19,6 +19,7 @@ type State struct {
 	Messages []Message       `json:"messages"`
 	Tasks    []Task          `json:"tasks"`
 	Routines []Routine       `json:"routines"`
+	Links    []AutoLink      `json:"links,omitempty"`
 	Rules    []Rule          `json:"rules,omitempty"`
 	Accounts []Account       `json:"accounts,omitempty"`
 	Settings Settings        `json:"settings"`

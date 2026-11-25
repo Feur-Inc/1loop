@@ -31,11 +31,12 @@ import (
 
 // loopyHome is the Loopy of this computer.
 type loopyHome struct {
-	mu     sync.Mutex
-	engine *engine.Engine
-	closed bool
-	chat   *conversation // hidden: what runConfig and its browser need
-	events chan func(*engine.Engine)
+	mu      sync.Mutex
+	engine  *engine.Engine
+	closed  bool
+	chat    *conversation // hidden: what runConfig and its browser need
+	events  chan func(*engine.Engine)
+	browser *browser.Engine // its own
 }
 
 func (app *desktopApp) loopyDir() string {
@@ -251,6 +252,26 @@ func (host loopyDesktop) Page() (page *browser.Page) {
 	return
 }
 
+func (host loopyDesktop) Pages() (out []*browser.Page) {
+	host.on(func() {
+		panel, chat := host.ui.panel, host.ui.loopyHome.chat
+		if panel == nil || chat == nil {
+			return
+		}
+		panel = panel.of(chat)
+		tabs := panel.stateOf(chat).tabs
+		if chat == panel.owner {
+			tabs = panel.tabs
+		}
+		for _, tab := range tabs {
+			if tab.browser != nil {
+				out = append(out, tab.browser)
+			}
+		}
+	})
+	return
+}
+
 // loopyPage is the page Loopy works in, on the interface's thread.
 func (ui *desktopUI) loopyPage() *browser.Page {
 	if ui.loopyHome.chat == nil || ui.panel == nil {
@@ -267,6 +288,108 @@ func (ui *desktopUI) loopyPage() *browser.Page {
 		}
 	}
 	return page
+}
+
+// loopyBrowser is Loopy's own browser: another process and another profile
+// than Browser Use's.
+func (ui *desktopUI) loopyBrowser() *browser.Engine {
+	if ui.loopyHome.browser == nil {
+		ui.loopyHome.browser = browser.NewBrowserEngine(ui.ctx)
+		ui.loopyHome.browser.Scale = float64(ui.window.Canvas().Scale())
+		if ui.loopyDir() != "" {
+			ui.loopyHome.browser.Profile = filepath.Join(ui.loopyDir(), "browser")
+		}
+	}
+	return ui.loopyHome.browser
+}
+
+// OpenPage opens a page for a script, in a tab of Loopy's panel which it
+// does not bring forward.
+func (host loopyDesktop) OpenPage(info browser.Info) (page *browser.Page, err error) {
+	if !host.on(func() {
+		panel, chat := host.ui.panel, host.ui.loopyHome.chat
+		if panel == nil || chat == nil {
+			err = errors.New("the window is not ready")
+			return
+		}
+		panel = panel.of(chat)
+		state := panel.stateOf(chat)
+		tabs := state.tabs
+		if chat == panel.owner {
+			tabs = panel.tabs
+		}
+		tab := panel.browserTab(chat, info, tabs)
+		page = tab.browser
+		tabs = append(tabs, tab)
+		state.tabs = tabs
+		if state.active < 0 {
+			state.active = len(tabs) - 1
+		}
+		if chat == panel.owner {
+			panel.tabs = tabs
+			if panel.active < 0 {
+				panel.active = len(tabs) - 1
+			}
+			panel.render()
+		}
+	}) {
+		err = errors.New("1loop is closing")
+	}
+	return
+}
+
+func (host loopyDesktop) ClosePage(id string) {
+	host.closePages(func(page *browser.Page) bool { return page.Snapshot().ID == id })
+}
+
+func (host loopyDesktop) ClosePages() {
+	host.closePages(func(*browser.Page) bool { return true })
+}
+
+func (host loopyDesktop) closePages(which func(*browser.Page) bool) {
+	host.on(func() {
+		panel, chat := host.ui.panel, host.ui.loopyHome.chat
+		if panel == nil || chat == nil {
+			return
+		}
+		panel = panel.of(chat)
+		tabs := panel.stateOf(chat).tabs
+		if chat == panel.owner {
+			tabs = panel.tabs
+		}
+		var pages []*browser.Page
+		for _, tab := range tabs {
+			if tab.browser != nil && which(tab.browser) {
+				pages = append(pages, tab.browser)
+			}
+		}
+		for _, page := range pages {
+			panel.removeBrowser(chat, page)
+		}
+	})
+}
+
+func (host loopyDesktop) Chats() (out []loopy.Chat) {
+	host.on(func() {
+		for _, chat := range host.ui.chats {
+			out = append(out, loopy.Chat{ID: chat.ID, Title: chat.Title, Project: chat.Config.Workspace, Running: chat.run != nil})
+		}
+	})
+	return
+}
+
+func (host loopyDesktop) DeleteChat(id string) (err error) {
+	if !host.on(func() {
+		chat := host.ui.chatByID(id)
+		if chat == nil {
+			err = errors.New("it is gone already")
+			return
+		}
+		host.ui.removeTree(chat)
+	}) {
+		err = errors.New("1loop is closing")
+	}
+	return
 }
 
 func (host loopyDesktop) Projects() (out []string) {
@@ -308,12 +431,12 @@ func (host loopyDesktop) StopChat(id string) {
 	})
 }
 
-func (host loopyDesktop) Notify(title, text string, card *loopy.Message) {
-	host.ui.remote.broadcastLoopy("loopy_notice", map[string]any{"title": title, "text": text, "message": card})
+func (host loopyDesktop) Notify(notice loopy.Notice) {
+	host.ui.remote.broadcastLoopy("loopy_notice", notice)
 	if host.ui.ctx.Err() != nil {
 		return
 	}
-	fyne.Do(func() { host.ui.loopyNotice(title, text) })
+	fyne.Do(func() { host.ui.loopyNotice(notice) })
 }
 
 func (host loopyDesktop) GitHub(ctx context.Context) string {

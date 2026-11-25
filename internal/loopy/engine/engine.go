@@ -26,6 +26,7 @@ import (
 	"1loop/internal/loopy"
 	"1loop/internal/loopy/box"
 	"1loop/internal/loopy/memory"
+	"1loop/internal/loopy/python"
 )
 
 // Host is where Loopy lives.
@@ -36,15 +37,26 @@ type Host interface {
 	// when settings name none), in workspace, its browser included.
 	Config(settings loopy.Settings, workspace string) (agent.Config, error)
 	Models() []loopy.Model
-	// Page is the browser page Loopy works in, nil without one.
+	// Page is the browser page Loopy works in, nil without one. Its browser
+	// is its own: another process and profile than Browser Use's.
 	Page() *browser.Page
+	// Pages are all that are open.
+	Pages() []*browser.Page
+	// OpenPage opens one for a script, which records its requests; ClosePage
+	// closes it, ClosePages all of them, and the browser with them.
+	OpenPage(info browser.Info) (*browser.Page, error)
+	ClosePage(id string)
+	ClosePages()
 	Projects() []string
 	// StartChat starts a project chat on a brief; FollowChat tells of it.
 	StartChat(project, title, brief string) (string, error)
 	StopChat(id string)
-	// Notify tells the user, when they are not looking at Loopy. Actions
-	// are the buttons of a card.
-	Notify(title, text string, card *loopy.Message)
+	// Chats are 1loop's; DeleteChat deletes one, with its subchats.
+	Chats() []loopy.Chat
+	DeleteChat(id string) error
+	// Notify tells the user, when they are not looking at Loopy (whatever
+	// they look at, for an urgent one).
+	Notify(notice loopy.Notice)
 	// GitHub is what to authorize a request to GitHub with, "" without the
 	// connector.
 	GitHub(ctx context.Context) string
@@ -60,7 +72,8 @@ type Engine struct {
 	memory *memory.Memory
 	folder *folder
 	box    *box.Box
-	vault  *vault
+	vault  *vault // the accounts' passwords, and what came before the safe
+	safe   *safe  // the user's vault, behind their master password
 	ctx    context.Context
 	cancel context.CancelFunc
 
@@ -84,6 +97,8 @@ type Engine struct {
 	closed     bool
 	wait       sync.WaitGroup
 	github     map[string]string // etags
+	browsed    time.Time         // its browser was last used
+	links      links
 	mails      map[string]uint32
 	now        func() time.Time
 }
@@ -96,8 +111,9 @@ type run struct {
 	record  string // the memory record of the exchange
 	stream  string // the message being written
 	steer   []string
-	said    bool // it wrote something or showed a card
-	quiet   bool // it has nothing to say (loopy_quiet)
+	said    bool   // it wrote something or showed a card
+	quiet   bool   // it has nothing to say (loopy_quiet)
+	link    string // the AutoLink that woke it
 	stopped bool
 	answer  strings.Builder
 }
@@ -107,6 +123,7 @@ type queued struct {
 	message string // the user's message, when it is one
 	why     string
 	routine string
+	link    string
 }
 
 // Open wakes the Loopy kept in dir.
@@ -138,8 +155,12 @@ func Open(ctx context.Context, dir string, host Host) (*Engine, error) {
 	}
 	e := &Engine{host: host, dir: dir, store: store, memory: mem, folder: home, box: box.New(filepath.Join(dir, "box")),
 		state: "idle", waits: map[string]chan loopy.Answer{}, granted: map[string]time.Time{}, github: map[string]string{}, mails: map[string]uint32{}, now: time.Now}
+	e.links = links{python: python.New(filepath.Join(dir, "python")), running: map[string]context.CancelFunc{}, slots: make(chan struct{}, 3), waiting: map[string]linkWait{}, did: map[string][]time.Time{}, pages: map[string]int{}}
 	if e.vault, err = openVault(dir); err != nil {
 		e.problem = err.Error() // the rest of Loopy works without it
+	}
+	if e.safe, err = openSafe(dir); err != nil {
+		e.problem = err.Error()
 	}
 	e.ctx, e.cancel = context.WithCancel(ctx)
 	store.Lock()
@@ -149,7 +170,7 @@ func Open(ctx context.Context, dir string, host Host) (*Engine, error) {
 	for i := range store.Messages { // a run cut by the end of 1loop
 		m := &store.Messages[i]
 		m.Pending = false
-		if m.Card.Waiting() && (m.Card.Kind == "approval" || m.Card.Kind == "signin" || m.Card.Kind == "secret") && m.Card.Task == "" {
+		if m.Card.Waiting() && (m.Card.Kind == "approval" || m.Card.Kind == "unlock" || m.Card.Kind == "chats" || m.Card.Kind == "signin" || m.Card.Kind == "secret") && m.Card.Task == "" {
 			m.Card.Answer, m.Card.Result = "Expired", "1loop closed before your answer. Ask again."
 		}
 	}
@@ -165,6 +186,7 @@ func Open(ctx context.Context, dir string, host Host) (*Engine, error) {
 	for _, fact := range old {
 		mem.Remember(memory.Fact{Text: fact.Text, Kind: fact.Category, Pinned: fact.Pinned, Since: fact.Time, Said: true}, "")
 	}
+	e.cleanTemp()
 	e.wait.Add(1)
 	go func() { defer e.wait.Done(); e.clockLoop() }()
 	return e, nil
@@ -203,6 +225,11 @@ func (e *Engine) Wakes() bool {
 	defer e.store.Unlock()
 	for _, routine := range e.store.Routines {
 		if routine.On {
+			return true
+		}
+	}
+	for _, link := range e.store.Links {
+		if link.On {
 			return true
 		}
 	}
@@ -400,14 +427,15 @@ func (e *Engine) View() loopy.View {
 	}
 	view.Settings = e.store.Settings
 	e.store.Unlock()
-	if e.vault != nil {
-		view.Vault = e.vault.list()
+	if e.safe != nil {
+		view.Vault, view.VaultState, view.VaultStays = e.safe.list(), e.safe.State(), e.safe.Stays()
 	}
 	if problem != "" && view.Label == "" {
 		view.State, view.Label = "blocked", problem
 	}
 	view.Facts = len(e.memory.Facts(false))
 	view.Models = e.host.Models()
+	view.Links = e.viewLinks()
 	view.Browser = e.host.Page() != nil
 	view.Taken = view.Browser && e.taken()
 	if cfg, err := e.host.Config(view.Settings, e.folder.dir); err == nil {
@@ -501,7 +529,7 @@ func (e *Engine) next() {
 	q := e.queue[0]
 	e.queue = e.queue[1:]
 	ctx, cancel := context.WithCancel(e.ctx)
-	r := &run{cancel: cancel, why: q.why, routine: q.routine}
+	r := &run{cancel: cancel, why: q.why, routine: q.routine, link: q.link}
 	e.run = r
 	e.wait.Add(1)
 	e.mu.Unlock()
@@ -594,7 +622,7 @@ func (e *Engine) work(ctx context.Context, r *run, q queued) {
 	history = append(history, agent.Message{Role: "user", Content: content, Internal: q.message == ""})
 
 	cfg.ToolAllowed = allowed
-	cfg.Assistant = &agent.AssistantTools{Prompt: e.prompt(r), Definitions: tools(e), Run: e.tool}
+	cfg.Assistant = &agent.AssistantTools{Prompt: e.prompt(r), Definitions: tools(e), Run: e.toolRun}
 	cfg.Browser = e.guardBrowser(cfg.Browser)
 	e.mu.Lock()
 	e.window = agent.ModelContextWindow(cfg)
@@ -822,6 +850,10 @@ func toolActivity(tool, detail string) (state, label string) {
 		return "reading", "Remembering"
 	case "loopy_mail", "loopy_calendar":
 		return "reading", "Reading your " + strings.TrimPrefix(tool, "loopy_")
+	case "loopy_autolink_run":
+		return "copy", "Running an AutoLink"
+	case "loopy_inspect":
+		return "reading", "Inspecting the page"
 	case "loopy_sign_in":
 		return "waiting", "Signing in"
 	}
@@ -961,7 +993,20 @@ func (e *Engine) notify(title, text string, card *loopy.Message, urgent bool) {
 	if !urgent && e.night(e.now()) {
 		return
 	}
-	e.host.Notify(title, firstWords(text, 30), card)
+	e.host.Notify(loopy.Notice{Title: title, Text: firstWords(text, 30), Card: card})
+}
+
+// notice is a notification as Loopy or a script made it: an urgent one
+// comes at night too, a silent one makes no sound.
+func (e *Engine) notice(notice loopy.Notice) {
+	notice.Title, notice.Text = firstWords(notice.Title, 20), firstWords(notice.Text, 80)
+	if notice.Title == "" {
+		notice.Title = "Loopy"
+	}
+	if notice.Level != "urgent" && e.night(e.now()) {
+		return
+	}
+	e.host.Notify(notice)
 }
 
 func (e *Engine) night(at time.Time) bool {

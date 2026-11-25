@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 
+	"1loop/internal/agent"
 	"1loop/internal/loopy"
 	"1loop/internal/loopy/memory"
 )
@@ -92,9 +93,23 @@ func tools(e *Engine) []map[string]any {
 			"trigger": one("", "", "github", "mail", "webhook"), "filter": text("github: \"owner/name issue\", \"… pr\" or \"… ci\"; mail: words of the sender or subject, or empty; else empty."),
 			"watch": map[string]any{"type": "boolean", "description": "It keeps an eye on something, at night too, and wakes the user only if it breaks."}}, "id", "title", "task", "when", "trigger", "filter", "watch"),
 		define("loopy_sign_in", "Have the user signed in on the page open in your browser. They type in a form of 1loop's, or allow their vault's entry; it goes straight into the page's fields: you never see it. Then press the page's button yourself.",
-			map[string]any{"why": text("What for, in a few words."), "user_field": text("CSS selector of the user name's field, or empty."), "password_field": text("CSS selector of the password's field, or empty when the page asks for it next."), "entry": text("The vault entry's name to use when there are several, or empty.")}, "why", "user_field", "password_field", "entry"),
+			map[string]any{"why": text("What for, in a few words."), "user_field": text("CSS selector of the user name's field, or empty."), "password_field": text("CSS selector of the password's field, or empty when the page asks for it next."), "code_field": text("CSS selector of the field of a code the vault can make (two steps), or empty."), "entry": text("The vault entry's name to use when there are several, or empty.")}, "why", "user_field", "password_field", "code_field", "entry"),
 		define("loopy_quiet", "This run of your own has nothing to tell the user: it ends without a word.", map[string]any{"note": text("What you checked, for your journal.")}, "note"),
-		define("loopy_notify", "Wake the user with a notification at once, even at night. Only when something they asked you to watch breaks or cannot wait.", map[string]any{"text": text("One sentence.")}, "text"),
+		define("loopy_notify", "Send the user a notification, on their computer and their phone. level: normal, silent (no sound), or urgent (at night too: only what they asked you to watch and cannot wait). With buttons, their answer comes back as a message.", map[string]any{
+			"title": text("A few words."), "text": text("A sentence or two."), "level": one("", "normal", "silent", "urgent"), "buttons": list("Up to three answers, or none.", plain), "picture": text("A picture in your folder to show, or empty.")}, "title", "text", "level", "buttons", "picture"),
+		define("loopy_autolinks", "Your AutoLinks: the scripts you made, to reach a service or do a job without the model. list: all, with what each takes and its last runs; read: one's script and runs; help: how to write one (read it before you write).", map[string]any{"action": one("", "list", "read", "help"), "id": text("read: the AutoLink; empty otherwise.")}, "action", "id"),
+		define("loopy_autolink_save", "Make an AutoLink, or change one (id). The user allows it on a card, with what it may reach and use. Read loopy_autolinks help first.", map[string]any{
+			"action": one("", "save", "remove"), "id": text("The one to change or remove, or empty for a new one."), "name": text("A few words: \"EcoleDirecte grades\"."), "about": text("What it does, in a sentence, for the user."),
+			"input": text("What JSON input it takes, in words, or empty."), "code": text("The Python script; empty to leave it as it is; with old, the text that replaces it."), "old": text("A text that is once in the script, to replace only that; or empty."),
+			"sites": list("Host names it reaches, and no other: \"api.ecoledirecte.com\".", plain), "secrets": list("Names of vault entries it uses.", plain),
+			"rights":    list("github: read GitHub; github_write; agent: start coding agents by itself; act: press buttons that send, buy or change things.", one("", "github", "github_write", "agent", "act")),
+			"libraries": list("PyPI libraries: \"requests\", \"ecoledirecte>=0.4\".", plain), "when": text("When it runs by itself: \"every 5m\" (1m at least), \"daily 08:00\"…; empty: only when you run it."),
+			"do": text("What you are to do when the script wakes you, as a message to yourself; empty if it never does.")}, "action", "id", "name", "about", "input", "code", "old", "sites", "secrets", "rights", "libraries", "when", "do"),
+		define("loopy_autolink_run", "Run one of your AutoLinks; what it gives back comes here, its files in your folder, its pictures to your eyes. test: it wakes nobody and sends nothing.", map[string]any{
+			"id": text("Its id or name."), "input_json": text("Its input, as JSON, or empty."), "test": map[string]any{"type": "boolean"}, "seconds": map[string]any{"type": "integer", "description": "At most; 120 by default, up to 1800."}}, "id", "input_json", "test", "seconds"),
+		define("loopy_inspect", "Look inside the page open in your browser, to write a script for it. html: an element's HTML; elements: what matches a selector (path, attributes, box, style); requests: what the page asked the network (match, kind); request: one, with its headers and bodies (secrets are masked).", map[string]any{
+			"action": one("", "html", "elements", "requests", "request"), "selector": text("CSS selector, or empty."), "match": text("requests: a part of the address, or empty."), "kind": text("requests: xhr, document, script, image…; empty for all."), "id": text("request: its id.")}, "action", "selector", "match", "kind", "id"),
+		define("loopy_chats", "The user's chats with 1loop's coding agents (not this conversation). list; delete: those whose ids you give, when they asked for it: they confirm on a card. Give \"loopy\" as the id to empty this conversation.", map[string]any{"action": one("", "list", "delete"), "words": text("list: words of the title or project, or empty."), "ids": list("delete: the ids.", plain)}, "action", "words", "ids"),
 	}
 	mail, calendar := e.accounts()
 	if mail {
@@ -114,11 +129,36 @@ type toolArgs struct {
 	Why, Entry, Note, From                                           string
 	UserField                                                        string `json:"user_field"`
 	PasswordField                                                    string `json:"password_field"`
+	CodeField                                                        string `json:"code_field"`
 	Pinned, Exchanges, Watch, Unread                                 bool
 	Line, Seconds                                                    int
 	Queries, Actions                                                 []string
+	Name, About, Input, Code, Do, Level, Picture, Selector, Match    string
+	InputJSON                                                        string `json:"input_json"`
+	Sites, Secrets, Rights, Libraries, Buttons, IDs                  []string
+	Test                                                             bool
 	Fields                                                           []loopy.Field
 	Options                                                          []loopy.Option
+}
+
+// toolRun runs one of Loopy's tools, with the pictures it gives back.
+func (e *Engine) toolRun(ctx context.Context, name string, arguments json.RawMessage) (agent.PanelToolResult, error) {
+	if name == "loopy_autolink_run" {
+		var args toolArgs
+		if err := json.Unmarshal(arguments, &args); err != nil {
+			return agent.PanelToolResult{}, fmt.Errorf("these arguments cannot be read: %w", err)
+		}
+		e.mu.Lock()
+		r := e.run
+		e.mu.Unlock()
+		if r == nil || ctx.Err() != nil {
+			return agent.PanelToolResult{}, context.Canceled
+		}
+		args.Input = args.InputJSON
+		return e.runLinkTool(ctx, r, args)
+	}
+	text, err := e.tool(ctx, name, arguments)
+	return agent.PanelToolResult{Text: text}, err
 }
 
 // tool runs one of Loopy's tools.
@@ -173,9 +213,15 @@ func (e *Engine) tool(ctx context.Context, name string, arguments json.RawMessag
 		e.log(args.Note)
 		return "Good. End your turn without words.", nil
 	case "loopy_notify":
-		e.notify("Loopy", args.Text, nil, true)
-		r.said = true
-		return "Sent.", nil
+		return e.notifyTool(r, args)
+	case "loopy_autolinks":
+		return e.linksTool(args)
+	case "loopy_autolink_save":
+		return e.saveLink(ctx, r, args)
+	case "loopy_inspect":
+		return e.inspect(ctx, args)
+	case "loopy_chats":
+		return e.chatsTool(ctx, r, args)
 	case "loopy_mail":
 		return e.mailTool(ctx, args)
 	case "loopy_calendar":
@@ -364,8 +410,12 @@ func (e *Engine) script(ctx context.Context, args toolArgs) (string, error) {
 }
 
 func (e *Engine) secrets() []string {
-	if e.vault == nil {
-		return nil
+	var out []string
+	if e.vault != nil {
+		out = e.vault.secrets()
 	}
-	return e.vault.secrets()
+	if e.safe != nil {
+		out = append(out, e.safe.secrets()...)
+	}
+	return out
 }

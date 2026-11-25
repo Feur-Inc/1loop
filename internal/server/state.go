@@ -106,8 +106,9 @@ type headlessServer struct {
 	loopyClosed                bool
 	loopyOnce                  sync.Once
 	loopyEvents                chan func()
-	adminReady                 atomic.Bool   // its admin socket listens: "1loop-server pair" reaches it
-	usage                      *usage.Ledger // every model call's tokens (internal/usage)
+	loopyBrowser               *browser.Engine // Loopy's own
+	adminReady                 atomic.Bool     // its admin socket listens: "1loop-server pair" reaches it
+	usage                      *usage.Ledger   // every model call's tokens (internal/usage)
 	prices                     *usage.Prices
 	terminalRevision           uint64
 	closing                    bool

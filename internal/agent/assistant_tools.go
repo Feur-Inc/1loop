@@ -9,7 +9,6 @@ package agent
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 )
 
@@ -20,8 +19,8 @@ type AssistantTools struct {
 	Prompt string
 	// Definitions are the tools, as chat completions declares them.
 	Definitions []map[string]any
-	// Run executes one of them; its text goes back to the model.
-	Run func(ctx context.Context, name string, arguments json.RawMessage) (string, error)
+	// Run executes one of them; its text and pictures go back to the model.
+	Run PanelToolHandler
 }
 
 // has says whether name is one of the assistant's tools.

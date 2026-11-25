@@ -143,13 +143,18 @@ func (backend *App) startTodoMCP(binding *todoMCPBinding) (string, func(), error
 			if cfg.Assistant.has(call.Name) {
 				operation, cancel := context.WithCancel(ctx)
 				stop := context.AfterFunc(requestValue.Context(), cancel)
-				text, err := cfg.Assistant.Run(context.WithValue(operation, configContextKey{}, cfg), call.Name, call.Arguments)
+				result, err := cfg.Assistant.Run(context.WithValue(operation, configContextKey{}, cfg), call.Name, call.Arguments)
 				stop()
 				cancel()
 				if err != nil {
-					text = err.Error()
+					result.Text = err.Error()
 				}
-				response["result"] = map[string]any{"isError": err != nil, "content": []any{map[string]string{"type": "text", "text": text}}}
+				content := []any{map[string]any{"type": "text", "text": result.Text}}
+				for _, picture := range result.Images {
+					picture = compactToolImage(picture)
+					content = append(content, map[string]any{"type": "image", "data": picture.Data, "mimeType": picture.Mime})
+				}
+				response["result"] = map[string]any{"isError": err != nil, "content": content}
 				break
 			}
 			if call.Name == "memory" {

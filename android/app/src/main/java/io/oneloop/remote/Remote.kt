@@ -1281,7 +1281,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             "settings" -> applySettings(data)
             "extensions" -> extensionsRevision++
             "loopy" -> loopy.apply(data)
-            "loopy_notice" -> if (!foreground && !target.localPhone) notifyLoopy(context, target, data.optString("title"), data.optString("text"), data.optJSONObject("message"))
+            "loopy_notice" -> if (!foreground && !target.localPhone) notifyLoopy(context, target, data.optString("title"), data.optString("text"), data.optJSONObject("message"), data.optString("level"), data.optString("picture"))
             "sharing" -> if (target.localPhone) scope.launch {
                 try {
                     refreshSharing(true)

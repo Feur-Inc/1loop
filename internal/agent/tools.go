@@ -428,6 +428,10 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 			result, err := handler(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
 			outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
 		}
+	} else if assistant := assistantOf(ctx); assistant.has(call.Function.Name) {
+		begin()
+		result, err := assistant.Run(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
+		outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
 	} else {
 		outcome.Output, outcome.Diff, outcome.Err = backend.runTool(ctx, root, call, begin, emit)
 	}
@@ -452,11 +456,6 @@ type toolArgs struct {
 }
 
 func (backend *App) runTool(ctx context.Context, root string, call ToolCall, begin func(), emit emitter) (output, diff string, err error) {
-	if assistant := assistantOf(ctx); assistant.has(call.Function.Name) {
-		begin()
-		output, err = assistant.Run(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
-		return
-	}
 	if call.Function.Name == "search_files" {
 		begin()
 		output, err = searchFiles(ctx, root, call.Function.Arguments)

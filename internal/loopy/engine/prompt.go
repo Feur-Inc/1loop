@@ -31,9 +31,11 @@ Your tools:
 - loopy_remember, loopy_forget, loopy_recall: your memory of them.
 - loopy_files is your own folder, kept for good: /notes for what you want to find again (keep it tidy: one file a subject), /inbox for what the user sends you, /work for the rest. Write there what is too long for a message and what a later task will need.
 - loopy_run runs JavaScript in your own small computer: for any sum, date, sorting, table or file to transform; never work those out in your head. It sees your folder as / and nothing else (no network, no other file). console.log what you need. Ready there: files.read/write/append/list/exists/remove/json, csv.parse(text) and csv.format(rows), number("1 234,50 €"), table(rows).
-- browser_* (load panel_browser with tool_search first if you do not see them): the web, in a browser the user sees and can take over. When a page wants a CAPTCHA, a QR code or a passkey, show a needs_you card with the action "I'm done" and wait.
+- browser_* (load panel_browser with tool_search first if you do not see them): the web, in a browser of your own, kept signed in, which the user sees and can take over; it closes by itself when unused, so open a tab again. loopy_inspect looks inside its page. When a page wants a CAPTCHA, a QR code or a passkey, show a needs_you card with the action "I'm done" and wait.
 - loopy_mail and loopy_calendar read the user's accounts, when they connected some.
 - loopy_delegate proposes a coding task for a coding agent in a project, with a complete brief; the user starts it, you follow it.
+- AutoLinks (loopy_autolinks, loopy_autolink_save, loopy_autolink_run): Python scripts of your own that reach a service or drive your browser without you. Look in the list before you open the browser for a service. When you did something by hand that will be done again (reading grades, a price, a form), or the user wants it watched or automated, make an AutoLink of it, test it, and use it from then on; when one breaks, read it, look at what the site changed, and fix it.
+- loopy_notify sends a notification the way they want it. loopy_chats lists their chats with the coding agents and deletes those they ask you to.
 - loopy_routine proposes something you do by yourself, on a schedule or when something happens (an issue, a mail, a webhook); the user turns it on.
 - loopy_quiet ends a run of your own (a routine, a watch) that has nothing to tell: say nothing then.
 `
@@ -87,8 +89,14 @@ func (e *Engine) prompt(r *run) string {
 	if projects := e.host.Projects(); len(projects) > 0 {
 		b.WriteString("- Their projects, for loopy_delegate: " + strings.Join(projects[:min(30, len(projects))], ", ") + "\n")
 	}
-	if e.vault != nil {
-		for _, entry := range e.vault.list() {
+	if e.safe != nil {
+		switch e.safe.State() {
+		case "none":
+			b.WriteString("- Vault: the user has not made one yet (Settings → Loopy → Vault).\n")
+		case "locked":
+			b.WriteString("- Vault: locked; loopy_sign_in and an AutoLink that needs it ask the user to open it.\n")
+		}
+		for _, entry := range e.safe.list() {
 			fmt.Fprintf(&b, "- Vault: %s %q", entry.Kind, entry.Name)
 			if entry.Site != "" {
 				b.WriteString(" for " + entry.Site)
@@ -97,6 +105,22 @@ func (e *Engine) prompt(r *run) string {
 				b.WriteString(" (" + entry.Hint + ")")
 			}
 			b.WriteString("\n")
+		}
+	}
+	if links := e.viewLinks(); len(links) > 0 {
+		b.WriteString("- Your AutoLinks:\n")
+		for _, link := range links {
+			state := ""
+			if !link.Allowed {
+				state = " (not allowed yet)"
+			} else if link.Failed > 0 {
+				state = " (failing)"
+			}
+			input := ""
+			if link.Input != "" {
+				input = " Input: " + firstWords(link.Input, 30)
+			}
+			fmt.Fprintf(&b, "  - %s: %s%s%s\n", link.Name, firstWords(link.About, 30), state, input)
 		}
 	}
 	if files, err := e.folder.list("/notes", true); err == nil && len(files) > 0 {

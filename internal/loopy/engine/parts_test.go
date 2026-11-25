@@ -76,16 +76,11 @@ func TestVault(t *testing.T) {
 	if v, err = openVault(dir); err != nil {
 		t.Fatal(err)
 	}
-	if list := v.list(); len(list) != 1 || list[0].ID != entry.ID || strings.Join(list[0].Fields, ",") != "password,user" {
+	if list := v.users(); len(list) != 1 || list[0].ID != entry.ID || strings.Join(list[0].Fields, ",") != "password,user" {
 		t.Errorf("%+v", list)
 	}
 	if got := v.secrets(); len(got) != 1 || got[0] != "correct horse" {
 		t.Errorf("%v", got)
-	}
-	for host, want := range map[string]int{"https://example.com/login": 1, "www.example.com": 1, "accounts.example.com": 1, "example.com.evil.org": 0, "notexample.com": 0, "com": 0} {
-		if got := len(v.forSite(host)); got != want {
-			t.Errorf("%s: %d", host, got)
-		}
 	}
 	os.Remove(filepath.Join(dir, "vault.key"))
 	if _, err := openVault(dir); err == nil {

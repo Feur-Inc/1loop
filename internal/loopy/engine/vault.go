@@ -4,10 +4,10 @@
 
 package engine
 
-// The vault: sign-ins, keys and the passwords of the accounts, encrypted
-// (AES-256-GCM) with a key kept apart, where the system keeps secrets
-// when it does (key_windows.go, key_other.go). Loopy's model never sees a
-// value: 1loop fills it in the page itself.
+// The vault: the passwords of the mail and calendar accounts, which Loopy
+// reads with nobody there, encrypted (AES-256-GCM) with a key kept apart,
+// where the system keeps secrets when it does (key_windows.go,
+// key_other.go). The user's own entries are in the safe (safe.go).
 
 import (
 	"crypto/aes"
@@ -124,20 +124,6 @@ func (v *vault) remove(id string) error {
 	return v.save()
 }
 
-// list is the entries without their values; hidden ones (the accounts'
-// passwords) are left out.
-func (v *vault) list() []loopy.VaultEntry {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	var out []loopy.VaultEntry
-	for _, e := range v.entries {
-		if e.Kind != "account" {
-			out = append(out, e.VaultEntry)
-		}
-	}
-	return out
-}
-
 func (v *vault) get(id string) (secretEntry, bool) {
 	v.mu.Lock()
 	defer v.mu.Unlock()
@@ -149,13 +135,13 @@ func (v *vault) get(id string) (secretEntry, bool) {
 	return secretEntry{}, false
 }
 
-// forSite are the sign-ins a page at host may get.
-func (v *vault) forSite(host string) []secretEntry {
+// users are the entries the user made, which the safe takes over.
+func (v *vault) users() []secretEntry {
 	v.mu.Lock()
 	defer v.mu.Unlock()
 	var out []secretEntry
 	for _, e := range v.entries {
-		if e.Kind == "signin" && sameSite(host, e.Site) {
+		if e.Kind != "account" {
 			out = append(out, e)
 		}
 	}

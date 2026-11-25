@@ -34,7 +34,14 @@ func (e *Engine) guardBrowser(tools agent.PanelToolHandler) agent.PanelToolHandl
 		if was && name == "browser_interact" {
 			return agent.PanelToolResult{}, errors.New("the user just used the browser themselves: read the page again before acting in it")
 		}
-		page := e.host.Page()
+		e.usedBrowser()
+		page, err := e.ownPage(args.TabID)
+		if err != nil {
+			return agent.PanelToolResult{}, err
+		}
+		if page != nil && args.TabID == "" && name != "browser_tabs" && e.scripts() > 0 {
+			raw = withTab(raw, page.Snapshot().ID) // not the tab of a script
+		}
 		// What leaves by an address, a script or the keyboard.
 		for _, out := range []string{args.Text, args.URL, args.Expression} {
 			if _, found := sensitive(out, e.secrets()); len(found) > 0 {
@@ -44,7 +51,9 @@ func (e *Engine) guardBrowser(tools agent.PanelToolHandler) agent.PanelToolHandl
 		switch name {
 		case "browser_evaluate":
 			if clickScript.MatchString(args.Expression) {
-				return agent.PanelToolResult{}, errors.New("refused: a script may only read the page. Click and type with browser_interact")
+				if err := e.allowScript(ctx, page); err != nil {
+					return agent.PanelToolResult{}, err
+				}
 			}
 			if page != nil && e.holdsSecret(page) && !e.clearsSecret(ctx, page) {
 				return agent.PanelToolResult{}, errors.New("refused: a password is still in this page. Press its button if you have not, and read it with browser_read")
@@ -65,7 +74,7 @@ func (e *Engine) guardBrowser(tools agent.PanelToolHandler) agent.PanelToolHandl
 			result.Text = untrusted("web page", result.Text)
 		}
 		if name == "browser_navigate" {
-			e.holdsSecret(e.host.Page()) // forgets a page that was left
+			e.holdsSecret(page) // forgets a page that was left
 		}
 		return result, err
 	}
@@ -283,11 +292,14 @@ const fill = `(() => { const s = %s; const el = document.querySelector(s.selecto
  el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true})); return ''; })()`
 
 func (e *Engine) signIn(ctx context.Context, args toolArgs) (string, error) {
-	page := e.host.Page()
+	page, err := e.ownPage("")
+	if err != nil {
+		return "", err
+	}
 	if page == nil {
 		return "", errors.New("open the site's sign-in page in the browser first")
 	}
-	if args.UserField == "" && args.PasswordField == "" {
+	if args.UserField == "" && args.PasswordField == "" && args.CodeField == "" {
 		return "", errors.New("name the fields to fill")
 	}
 	address := page.Snapshot().URL
@@ -295,52 +307,9 @@ func (e *Engine) signIn(ctx context.Context, args toolArgs) (string, error) {
 	if !strings.HasPrefix(address, "https://") && host != "localhost" && host != "127.0.0.1" {
 		return "", errors.New("this page is not https: nothing is typed there")
 	}
-	values := map[string]string{}
-	if e.vault != nil {
-		entries := e.vault.forSite(host)
-		if args.Entry != "" {
-			entries = slices.DeleteFunc(entries, func(s secretEntry) bool { return !strings.EqualFold(s.Name, args.Entry) })
-		}
-		if len(entries) > 0 {
-			entry := entries[0]
-			if !e.rule("signin", host) {
-				answer, err := e.ask(ctx, loopy.Card{Kind: "approval", Title: "Sign in to " + host, Subtitle: "with your vault's " + entry.Name, Body: args.Why, Warning: "Filled directly on " + host + ": Loopy does not see it",
-					Actions: []string{"Allow once", "Always allow on " + host, "Deny"}})
-				if err != nil {
-					return "", err
-				}
-				if answer.Answer == "Deny" {
-					return "", errors.New("the user said no. Do not try again before their next message")
-				}
-				if strings.HasPrefix(answer.Answer, "Always") {
-					e.addRule("signin", host)
-				}
-			}
-			values = entry.Values
-		}
-	}
-	if len(values) == 0 {
-		var fields []loopy.Field
-		if args.UserField != "" {
-			fields = append(fields, loopy.Field{Label: "user"})
-		}
-		if args.PasswordField != "" {
-			fields = append(fields, loopy.Field{Label: "password"})
-		}
-		answer, err := e.ask(ctx, loopy.Card{Kind: "signin", Title: "Sign in to " + host, Body: args.Why, Subtitle: "Filled directly on " + host, Site: host, Fields: fields, Keep: e.vault != nil, Actions: []string{"Sign in", "Not now"}})
-		if err != nil {
-			return "", err
-		}
-		if answer.Answer != "Sign in" {
-			return "", errors.New("the user does not want to sign in now")
-		}
-		values = answer.Values
-		if answer.Keep && e.vault != nil && len(values) > 0 {
-			if _, err := e.vault.put(loopy.VaultEntry{Kind: "signin", Site: host, Name: host, Hint: answer.Hint}, values); err != nil {
-				e.add(loopy.Message{From: "loopy", Note: "The vault could not keep it: " + err.Error()})
-			}
-			e.tell(nil, nil, true)
-		}
+	values, err := e.signInValues(ctx, args, host)
+	if err != nil {
+		return "", err
 	}
 	// Only on the page it was asked for.
 	if now := site(page.Snapshot().URL); now != host {
@@ -349,7 +318,7 @@ func (e *Engine) signIn(ctx context.Context, args toolArgs) (string, error) {
 	for _, f := range []struct {
 		selector, name string
 		secret         bool
-	}{{args.UserField, "user", false}, {args.PasswordField, "password", true}} {
+	}{{args.UserField, "user", false}, {args.PasswordField, "password", true}, {args.CodeField, "totp", false}} {
 		if f.selector == "" || values[f.name] == "" {
 			continue
 		}
@@ -370,45 +339,4 @@ func (e *Engine) signIn(ctx context.Context, args toolArgs) (string, error) {
 	}
 	e.log("Filled the sign-in of " + host + ".")
 	return "Filled, without your seeing it. Press the page's button now.", nil
-}
-
-// Vault changes: the settings' page.
-
-// SaveSecret keeps an entry of the vault.
-func (e *Engine) SaveSecret(entry loopy.VaultEntry, values map[string]string) error {
-	if e.vault == nil {
-		return errors.New("the vault is not open")
-	}
-	if entry.Kind != "signin" && entry.Kind != "key" && entry.Kind != "contact" {
-		return errors.New("unknown kind of entry")
-	}
-	if strings.TrimSpace(entry.Name) == "" || len(values) == 0 {
-		return errors.New("give it a name and a value")
-	}
-	if entry.Kind == "signin" {
-		entry.Site = site(entry.Site)
-		if !strings.Contains(entry.Site, ".") && entry.Site != "localhost" {
-			return errors.New("name the site, as example.com")
-		}
-	}
-	if old, ok := e.vault.get(entry.ID); ok { // an empty field keeps its value
-		for name, value := range old.Values {
-			if values[name] == "" {
-				values[name] = value
-			}
-		}
-	}
-	_, err := e.vault.put(entry, values)
-	e.tell(nil, nil, true)
-	return err
-}
-
-// RemoveSecret takes an entry out of the vault.
-func (e *Engine) RemoveSecret(id string) error {
-	if e.vault == nil {
-		return errors.New("the vault is not open")
-	}
-	err := e.vault.remove(id)
-	e.tell(nil, nil, true)
-	return err
 }

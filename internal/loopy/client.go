@@ -20,7 +20,12 @@ type Client interface {
 	Set(ctx context.Context, settings Settings) error
 	Clear(ctx context.Context) error
 	Do(ctx context.Context, action Action) error
+	// Reveal is a vault entry's values, for the user's own eyes (a new
+	// password, for no id).
+	Reveal(ctx context.Context, id string) (map[string]string, error)
 	Memory(ctx context.Context) (MemoryView, error)
+	// Link is an AutoLink's script.
+	Link(ctx context.Context, id string) (LinkCode, error)
 	Files(ctx context.Context, path string) ([]File, error)
 	Read(ctx context.Context, path string) ([]byte, error)
 	Write(ctx context.Context, dir, name string, data []byte) (string, error)
@@ -30,7 +35,10 @@ type Client interface {
 type Action struct {
 	// Do is "routine.on", "routine.off", "routine.run", "routine.remove",
 	// "routine.edit", "task.stop", "fact.change", "fact.add", "fact.forget",
-	// "rule.remove", "vault.save", "vault.remove", "account.save",
+	// "rule.remove", "vault.save", "vault.remove", "vault.create", "vault.unlock", "vault.lock",
+	// "link.on", "link.off", "link.ask", "link.allow", "link.run",
+	// "link.stop", "link.remove", "link.edit" (the script in Text),
+	// "vault.master", "vault.stay", "account.save",
 	// "account.remove", "file.remove", "summary", "learn", "browser.take", "browser.give".
 	Do      string            `json:"do"`
 	ID      string            `json:"id,omitempty"`
@@ -41,6 +49,7 @@ type Action struct {
 	Entry   *VaultEntry       `json:"entry,omitempty"`
 	Values  map[string]string `json:"values,omitempty"`
 	Account *Account          `json:"account,omitempty"`
+	Link    *AutoLink         `json:"link,omitempty"`
 }
 
 // Caller makes a request of a 1loop's API: out is read from the answer.
@@ -99,6 +108,16 @@ func (remote Remote) Clear(ctx context.Context) error {
 
 func (remote Remote) Do(ctx context.Context, action Action) error {
 	return remote.post(ctx, "do", action)
+}
+
+func (remote Remote) Reveal(ctx context.Context, id string) (values map[string]string, err error) {
+	err = remote.Caller.JSON(ctx, "POST", "/api/loopy/reveal", map[string]string{"id": id}, &values)
+	return
+}
+
+func (remote Remote) Link(ctx context.Context, id string) (code LinkCode, err error) {
+	err = remote.Caller.JSON(ctx, "GET", "/api/loopy/link?id="+url.QueryEscape(id), nil, &code)
+	return
 }
 
 func (remote Remote) Memory(ctx context.Context) (view MemoryView, err error) {

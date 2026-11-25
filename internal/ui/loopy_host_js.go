@@ -27,3 +27,6 @@ func (ui *desktopUI) loopyEnded(chat *conversation, ended string)           {}
 func (ui *desktopUI) loopyPage() *browser.Page                              { return nil }
 func (server *remoteServer) loopyHandlers() map[string]http.HandlerFunc     { return nil }
 func (server *remoteServer) loopyHook() http.HandlerFunc                    { return nil }
+
+// The browser client drives no browser of Loopy's.
+func (ui *desktopUI) loopyBrowser() *browser.Engine { return ui.browser }

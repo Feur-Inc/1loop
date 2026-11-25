@@ -133,6 +133,9 @@ type desktopUI struct {
 	brand                    *brandMark // 1loop's logo in its sidebar
 	inLoopy                  bool
 	loopySettingsShown       func() // draws Settings → Loopy again
+	loopyTab                 string // the tab it shows
+	loopyLink                string // the AutoLink it shows
+	loopyVaultFind           string
 	oneloopSide, oneloopMain fyne.CanvasObject
 
 	// Split views (panes.go). A pane other than its window's first has an

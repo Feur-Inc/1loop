@@ -8,6 +8,7 @@ package ui
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"fyne.io/fyne/v2"
@@ -56,6 +57,16 @@ func (ui *desktopUI) loopySettingsRows(mode *loopyMode) []fyne.CanvasObject {
 	view := ui.prefs
 	if view == nil {
 		return nil
+	}
+	if !slices.Contains(loopyTabs, ui.loopyTab) {
+		ui.loopyTab = loopyTabGeneral
+	}
+	bar := ui.loopyTabBar(ui.loopySettingsShown)
+	switch ui.loopyTab {
+	case loopyTabLinks:
+		return append([]fyne.CanvasObject{bar}, ui.loopyLinkRows(mode, ui.loopySettingsShown)...)
+	case loopyTabVault:
+		return append([]fyne.CanvasObject{bar}, ui.loopyVaultRows(mode)...)
 	}
 	settings := mode.view.Settings
 	change := func(edit func(*loopy.Settings)) {
@@ -206,35 +217,21 @@ func (ui *desktopUI) loopySettingsRows(mode *loopyMode) []fyne.CanvasObject {
 	accounts = append(accounts, settingRow("Connect an account", "Mail (IMAP and SMTP) or a calendar (CalDAV), with an app password.", container.NewHBox(
 		newRow("Mail", iconPlus, styleChip, func() { mode.addAccount("mail") }), newRow("Calendar", iconPlus, styleChip, func() { mode.addAccount("calendar") }))))
 
-	// The vault.
-	var vault []fyne.CanvasObject
-	for _, entry := range mode.view.Vault {
-		detail := map[string]string{"signin": "Sign-in of " + entry.Site, "key": "Secret", "contact": "Contact details"}[entry.Kind]
-		if entry.Hint != "" {
-			detail += " · " + entry.Hint
-		}
-		vault = append(vault, settingRow(entry.Name, detail, container.NewHBox(
-			newRow("Edit", nil, styleChip, func() { mode.editSecret(entry) }),
-			newRow("Remove", nil, styleChip, func() {
-				ui.confirm("Remove "+entry.Name+"?", "The vault forgets it. This can't be undone.", "Remove", func() {
-					mode.action(loopy.Action{Do: "vault.remove", ID: entry.ID}, nil)
-				})
-			}))))
-	}
-	vault = append(vault, settingRow("Add a sign-in", "Encrypted where Loopy lives. It knows the entry is there, never its password: 1loop types it in the page.", newRow("Add", iconPlus, styleChip, func() { mode.editSecret(loopy.VaultEntry{Kind: "signin"}) })))
-
 	out := []fyne.CanvasObject{
+		bar,
 		sectionTitle("Home"), card(view.mark("loopy.home", home)),
 		sectionTitle("Model"), card(models...),
 		sectionTitle("Every day"), card(day...),
 		sectionTitle("Memory"), card(memory...),
 		sectionTitle("Accounts"), card(view.mark("loopy.accounts", container.NewVBox(accounts...))),
-		sectionTitle("Vault"), card(view.mark("loopy.vault", container.NewVBox(vault...))),
 	}
 	if len(mode.view.Rules) > 0 {
 		var rules []fyne.CanvasObject
 		for _, rule := range mode.view.Rules {
 			what := "Sign in to " + rule.Site + " with the vault"
+			if rule.Kind == "script" {
+				what = "Scripts that act on " + rule.Site
+			}
 			if kind, ok := strings.CutPrefix(rule.Kind, "browser:"); ok {
 				what = strings.ToUpper(kind[:1]) + kind[1:] + " on " + rule.Site
 			}
@@ -287,46 +284,4 @@ func (mode *loopyMode) addAccount(kind string) {
 		})
 	})
 	dialog = mode.ui.modal(title, container.NewVBox(fields...), 480, nil, newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() }), connect)
-}
-
-// editSecret adds or changes a sign-in of the vault.
-func (mode *loopyMode) editSecret(entry loopy.VaultEntry) {
-	site, name, hint := widget.NewEntry(), widget.NewEntry(), widget.NewEntry()
-	user, password := widget.NewEntry(), widget.NewPasswordEntry()
-	site.SetText(entry.Site)
-	site.SetPlaceHolder("example.com")
-	name.SetText(entry.Name)
-	name.SetPlaceHolder("Name (the site's by default)")
-	hint.SetText(entry.Hint)
-	hint.SetPlaceHolder("When to use it (work account…)")
-	user.SetPlaceHolder("User name or address")
-	password.SetPlaceHolder("Password")
-	if entry.ID != "" {
-		user.SetPlaceHolder("User name (empty: unchanged)")
-		password.SetPlaceHolder("Password (empty: unchanged)")
-	}
-	problem := textLine("", 12.5, colDanger)
-	var dialog *sheet
-	dialog = mode.ui.modal("A sign-in in Loopy's vault", container.NewVBox(site, name, user, password, hint, problem), 460, nil,
-		newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() }),
-		newRow("Save", nil, stylePrimary, func() {
-			changed := entry
-			changed.Site, changed.Name, changed.Hint = site.Text, name.Text, hint.Text
-			if changed.Name == "" {
-				changed.Name = changed.Site
-			}
-			values := map[string]string{"user": user.Text, "password": password.Text}
-			mode.do(func(ctx context.Context, client loopy.Client) error {
-				return client.Do(ctx, loopy.Action{Do: "vault.save", Entry: &changed, Values: values})
-			}, func(err error) {
-				mode.say("")
-				if err != nil {
-					problem.Text = err.Error()
-					problem.Refresh()
-					return
-				}
-				dialog.dismiss()
-				mode.reload()
-			})
-		}))
 }

@@ -41,8 +41,10 @@ func loopyCardIcon(kind string) fyne.Resource {
 		return iconMail
 	case "event":
 		return iconClock
-	case "signin", "secret":
+	case "signin", "secret", "unlock":
 		return iconShield
+	case "autolink", "autolink_run":
+		return iconCode
 	case "message":
 		return iconChat
 	case "approval":
@@ -303,7 +305,7 @@ func (mode *loopyMode) draft(message loopy.Message) *loopyDraft {
 		draft.ask.SetPlaceHolder(card.Ask)
 		draft.ask.OnSubmitted = func(string) { mode.answer(message, card.Actions[0]) }
 	}
-	if card.Kind == "signin" {
+	if card.Kind == "signin" || card.Kind == "unlock" {
 		draft.values = map[string]*widget.Entry{}
 		for _, field := range card.Fields {
 			entry := widget.NewEntry()
@@ -311,6 +313,10 @@ func (mode *loopyMode) draft(message loopy.Message) *loopyDraft {
 			if field.Label == "password" {
 				entry = widget.NewPasswordEntry()
 				entry.SetPlaceHolder("Password")
+			}
+			if field.Label == "master" {
+				entry = widget.NewPasswordEntry()
+				entry.SetPlaceHolder("Master password")
 			}
 			entry.OnSubmitted = func(string) { mode.answer(message, card.Actions[0]) }
 			draft.values[field.Label] = entry
@@ -323,6 +329,24 @@ func (mode *loopyMode) draft(message loopy.Message) *loopyDraft {
 	}
 	mode.drafts[message.ID] = draft
 	return draft
+}
+
+// loopyLabelWidth is the room of a card's labels.
+func loopyLabelWidth(kind string) float32 {
+	if kind == "autolink" {
+		return 150
+	}
+	return 72
+}
+
+// link is an AutoLink of the view.
+func (mode *loopyMode) link(id string) loopy.AutoLink {
+	for _, link := range mode.view.Links {
+		if link.ID == id {
+			return link
+		}
+	}
+	return loopy.AutoLink{ID: id}
 }
 
 // cardView draws a card and wires its buttons.
@@ -362,11 +386,11 @@ func (mode *loopyMode) cardView(message loopy.Message) fyne.CanvasObject {
 		rows = append(rows, padded(8, 8, 13, 13, plainFlow("⚠ "+c.Warning, 12.5, colDanger)))
 	}
 	var draft *loopyDraft
-	if waiting && (c.Editable || c.Ask != "" || c.Kind == "signin") {
+	if waiting && (c.Editable || c.Ask != "" || c.Kind == "signin" || c.Kind == "unlock") {
 		draft = mode.draft(message)
 	}
 	editing := draft != nil && draft.fields != nil
-	if len(c.Fields) > 0 && c.Kind != "signin" {
+	if len(c.Fields) > 0 && c.Kind != "signin" && c.Kind != "unlock" {
 		grid := container.New(layout.NewCustomPaddedVBoxLayout(6))
 		for i, field := range c.Fields {
 			label := textLine(field.Label, 13, colMuted)
@@ -374,7 +398,7 @@ func (mode *loopyMode) cardView(message loopy.Message) fyne.CanvasObject {
 			if editing {
 				value = draft.fields[i]
 			}
-			grid.Add(container.NewBorder(nil, nil, sized(72, container.NewVBox(layout.NewSpacer(), label, layout.NewSpacer())), nil, value))
+			grid.Add(container.NewBorder(nil, nil, sized(loopyLabelWidth(c.Kind), container.NewVBox(layout.NewSpacer(), label, layout.NewSpacer())), nil, value))
 		}
 		rows = append(rows, padded(10, 10, 13, 13, grid))
 	}
@@ -396,7 +420,9 @@ func (mode *loopyMode) cardView(message loopy.Message) fyne.CanvasObject {
 			form.Add(draft.keep)
 			form.Add(draft.hint)
 		}
-		form.Add(plainFlow("It goes straight into the page: Loopy never sees it.", 12, colMuted))
+		if c.Kind == "signin" {
+			form.Add(plainFlow("It goes straight into the page: Loopy never sees it.", 12, colMuted))
+		}
 		rows = append(rows, padded(10, 10, 13, 13, form))
 	}
 	if len(c.Options) > 0 {
@@ -409,6 +435,9 @@ func (mode *loopyMode) cardView(message loopy.Message) fyne.CanvasObject {
 		buttons := container.New(&wrapLayout{gap: 8})
 		if c.Kind == "needs_you" && c.Ask == "" && mode.view.Browser && !mode.view.Taken {
 			buttons.Add(newRow("Take over the browser", iconBrowser, styleOutline, mode.takeBrowser))
+		}
+		if c.Kind == "autolink" {
+			buttons.Add(newRow("Script", iconCode, styleOutline, func() { mode.linkScript(mode.link(c.Link)) }))
 		}
 		for i, action := range c.Actions {
 			style := styleOutline

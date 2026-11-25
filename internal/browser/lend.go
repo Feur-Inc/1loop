@@ -370,9 +370,9 @@ var devToolsListening = regexp.MustCompile(`DevTools listening on (ws://\S+)`)
 
 // LaunchLent starts a headless Chromium for a server, on the lent
 // profile: the computer's Chromium, Chrome or Edge, else 1loop's Chromium,
-// downloaded the first time (findBrowser).
+// downloaded the first time (anyBrowser).
 func LaunchLent(ctx context.Context) (string, func(), error) {
-	binary, err := findBrowser(ctx)
+	binary, err := anyBrowser(ctx)
 	if err != nil {
 		return "", nil, err
 	}

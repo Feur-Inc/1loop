@@ -124,7 +124,7 @@ func wake(t *testing.T, dir string, reply func(messages []heard) any) (*Engine, 
 		t.Fatal(err)
 	}
 	e.now = func() time.Time { return time.Now().Add(time.Duration(later.Load())) }
-	e.Set(loopy.Settings{QuietFrom: "00:00", QuietTo: "00:00"}) // the tests run at night too
+	e.Set(loopy.Settings{Summary: "off", QuietFrom: "00:00", QuietTo: "00:00"}) // whatever the hour the tests run at
 	t.Cleanup(e.Close)
 	return e, host
 }
@@ -709,6 +709,23 @@ func TestSummaryHasLinesToPress(t *testing.T) {
 	if !strings.Contains(heardTexts[1], "Voir") || !strings.Contains(heardTexts[1], "PR de Paul") {
 		t.Errorf("%q", heardTexts)
 	}
+}
+
+func TestNoSummaryBeforeItIsUsed(t *testing.T) {
+	var asked atomic.Int32
+	e, _ := wake(t, t.TempDir(), func([]heard) any { asked.Add(1); return "ok" })
+	e.Set(loopy.Settings{Summary: "08:00"})
+	at := time.Date(2026, 11, 25, 8, 30, 0, 0, time.Local)
+	e.tick(at)
+	until(t, "nothing runs", e.idle)
+	if asked.Load() != 0 {
+		t.Error("a Loopy nobody has written to summed up")
+	}
+	e.Send("salut", nil)
+	until(t, "answered", func() bool { return e.idle() && asked.Load() == 1 })
+	e.tick(at)
+	e.tick(at.Add(time.Minute)) // once a day
+	until(t, "summed up", func() bool { return e.idle() && asked.Load() == 2 })
 }
 
 func TestNight(t *testing.T) {

@@ -288,6 +288,8 @@ func (e *Engine) tick(now time.Time) {
 		}
 	}
 	summary, last := e.store.Settings.Summary, e.store.Settings.LastSummary
+	// Nobody has written to this Loopy yet: it does not start by itself.
+	used := len(e.store.Routines)+len(e.store.Accounts) > 0 || slices.ContainsFunc(e.store.Messages, func(m loopy.Message) bool { return m.From == "me" })
 	e.store.Unlock()
 	for _, routine := range due { // one missed while 1loop was closed runs once
 		e.start(routine, "schedule", "")
@@ -295,7 +297,7 @@ func (e *Engine) tick(now time.Time) {
 	if summary == "" {
 		summary = "08:00"
 	}
-	if at, err := time.Parse("15:04", summary); err == nil {
+	if at, err := time.Parse("15:04", summary); err == nil && used {
 		today := time.Date(now.Year(), now.Month(), now.Day(), at.Hour(), at.Minute(), 0, 0, now.Location())
 		if !now.Before(today) && last.Before(today) && now.Sub(today) < 3*time.Hour {
 			e.store.Lock()

@@ -253,6 +253,7 @@ type remoteDesktop struct {
 	status           interface{ SetText(string) } // the line beside the target, under the conversation
 	wake             chan struct{}
 	name             string // as the server calls itself
+	shown            bool   // its first state arrived: name, projects and chats are its own (show)
 	defaultWorkspace string
 	current          string // the open chat's ID on the server, "" on the start screen
 	mentionsChat     string // the chat mentionList is for
@@ -799,6 +800,8 @@ func (remote *remoteDesktop) refreshLoop() {
 func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat, listed []string) {
 	ui := remote.parent
 	remote.name, remote.defaultWorkspace = name, workspace
+	first := !remote.shown
+	remote.shown = true
 	projects := serverProjectList(workspace, listed, chats, remote.worktrees)
 	ui.rememberServerProjects(remote.client.address.URL, projects)
 	if ui.cfg.Workspace == "" {
@@ -812,7 +815,7 @@ func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat
 		remote.connected = status
 		remote.status.SetText(status)
 	}
-	if slices.Equal(remote.chats, chats) && slices.Equal(remote.projects, projects) {
+	if !first && slices.Equal(remote.chats, chats) && slices.Equal(remote.projects, projects) {
 		return
 	}
 	remote.chats, remote.projects = chats, projects

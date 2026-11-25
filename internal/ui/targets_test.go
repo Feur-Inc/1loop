@@ -174,7 +174,7 @@ func TestServerProjectsRemembered(t *testing.T) {
 // listed as the window's connection last read them.
 func TestLeavingTheServerKeepsItListed(t *testing.T) {
 	ui := linkedUI(t)
-	remote := &remoteDesktop{parent: ui, client: &remoteClient{address: serverAddress{URL: testServer}}, name: "box",
+	remote := &remoteDesktop{parent: ui, shown: true, client: &remoteClient{address: serverAddress{URL: testServer}}, name: "box",
 		projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "s1", Title: "Server chat", Workspace: "/srv/api"}}}
 	ui.handOver(remote)
 	if link := ui.links[0]; !link.answered || !slices.Equal(link.listing.projects, []string{"/srv/api"}) {

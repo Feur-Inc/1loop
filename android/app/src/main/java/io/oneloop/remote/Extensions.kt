@@ -636,9 +636,25 @@ private fun ExtensionRow(title: String, lines: List<String>, controls: @Composab
 }
 
 // Pictures from the web (the listings' social previews), decoded at most
-// 1000 px wide and kept for a few screens.
+// 1000 px on a side and kept for a few screens.
 private val webPictures = object : LruCache<String, ImageBitmap>(24 shl 20) {
     override fun sizeOf(key: String, value: ImageBitmap) = value.width * value.height * 4
+}
+
+// The most a picture's download may take, as on the desktop (#525).
+internal const val WEB_PICTURE_BYTES = 8 shl 20
+
+// readAtMost reads input whole if it holds at most limit bytes, else gives
+// null: a picture cut short would not decode, and one too big is not kept.
+internal fun readAtMost(input: java.io.InputStream, limit: Int): ByteArray? {
+    val out = java.io.ByteArrayOutputStream()
+    val buffer = ByteArray(64 shl 10)
+    while (true) {
+        val read = input.read(buffer)
+        if (read < 0) return out.toByteArray()
+        if (out.size() + read > limit) return null
+        out.write(buffer, 0, read)
+    }
 }
 
 @Composable
@@ -651,11 +667,17 @@ private fun WebPicture(address: String, modifier: Modifier) {
                 connection.connectTimeout = 15000
                 connection.readTimeout = 30000
                 connection.setRequestProperty("User-Agent", "1loop")
-                val bytes = try { connection.inputStream.use { it.readBytes() } } finally { connection.disconnect() }
+                val bytes = try {
+                    // Said too big, or found too big while read: no picture (#525).
+                    if (connection.contentLengthLong > WEB_PICTURE_BYTES) null
+                    else connection.inputStream.use { readAtMost(it, WEB_PICTURE_BYTES) }
+                } finally {
+                    connection.disconnect()
+                } ?: return@runCatching null
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
                 var sample = 1
-                while (bounds.outWidth / sample > 1000) sample *= 2
+                while (bounds.outWidth / sample > 1000 || bounds.outHeight / sample > 1000) sample *= 2
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size, BitmapFactory.Options().apply { inSampleSize = sample })?.asImageBitmap()
             }.getOrNull()
         }?.also { webPictures.put(address, it) }

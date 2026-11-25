@@ -97,6 +97,9 @@ func (engine *Engine) start() error {
 	var binary browserBinary
 	var lookup error
 	engine.mu.Lock()
+	if engine.lentGone() {
+		engine.stopLocked() // a new connection, to the client lending its browser now
+	}
 	stopped := engine.Native == nil && !engine.lends() && engine.root == nil && engine.err == nil
 	engine.mu.Unlock()
 	if stopped {
@@ -106,6 +109,7 @@ func (engine *Engine) start() error {
 	defer engine.mu.Unlock()
 	engine.once.Do(func() {
 		if engine.Native == nil && engine.lends() {
+			engine.lent.Store(true)
 			engine.err = engine.startLent()
 			return
 		}
@@ -234,15 +238,6 @@ func (engine *Engine) stopIfIdle() {
 	if engine.refs.Load() != 0 {
 		return
 	}
-	engine.stopLocked()
-}
-
-// Reset ends the browser's generation even while tabs still count on it:
-// the server closed them when a lent browser came or went, and reopens
-// them on the next generation.
-func (engine *Engine) Reset() {
-	engine.mu.Lock()
-	defer engine.mu.Unlock()
 	engine.stopLocked()
 }
 

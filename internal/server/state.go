@@ -109,6 +109,7 @@ type headlessServer struct {
 	shutdown                   context.CancelFunc
 	backend                    *agent.App
 	engine                     *browser.Engine
+	lenders                    *browserLenders // the paired clients lending their browser (lent_browser.go)
 	name, root, dir            string
 	projects                   []string
 	worktrees                  map[string]string              // worktree folder → project (worktrees.go)
@@ -263,6 +264,8 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 	browser.BrowserProfileOverride = filepath.Join(dir, "browser") // and Install Chromium's, beside it
 	agent.ClaudeInstallDir = filepath.Join(dir, "claude-code")
 	server.engine = browser.NewBrowserEngine(ctx)
+	server.lenders = &browserLenders{changed: server.lentBrowserChanged}
+	server.engine.Remote = server.lenders
 	for _, chat := range server.chats {
 		if chat.Config.Workspace == "" {
 			chat.Config.Workspace = root

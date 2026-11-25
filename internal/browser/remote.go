@@ -47,7 +47,6 @@ func (engine *Engine) startLent() error {
 	root, stopRoot := chromedp.NewContext(alloc, chromedp.WithErrorf(func(f string, a ...any) { platform.Devf("browser", f, a...) }))
 	context.AfterFunc(engine.runCtx, func() { stopRoot(); stopAlloc() })
 	engine.root = root
-	engine.lent.Store(true)
 	var native struct {
 		UserAgent string
 		Metadata  *emulation.UserAgentMetadata
@@ -59,6 +58,13 @@ func (engine *Engine) startLent() error {
 	engine.metadata = native.Metadata
 	engine.listen(root)
 	return nil
+}
+
+// lentGone says whether the generation used a lent browser that is gone:
+// no client lent one, or the connection to it ended. Its tabs failed or
+// closed, and those the server opens again need a new connection.
+func (engine *Engine) lentGone() bool {
+	return engine.lent.Load() && (engine.err != nil || engine.root != nil && engine.root.Err() != nil)
 }
 
 // Lent says whether the browser in use is a lent one.

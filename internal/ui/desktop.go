@@ -918,6 +918,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		if key.Name == fyne.KeyEscape && ui.prefs.open { // Escape goes back a page, then to the conversation
 			ui.prefs.back()
 		}
+		ui.selectionKey(key)
 	})
 	ui.prompt.shortcut = ui.shortcut
 	ui.prompt.paste = ui.pasteFromClipboard

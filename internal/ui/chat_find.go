@@ -211,8 +211,7 @@ func (find *chatFind) show() {
 		ui.clearSelection()
 		return
 	}
-	layer.from, layer.point, layer.active = start, end, true
-	layer.Refresh()
+	layer.markPoints(start, end)
 	ui.selectIn(layer)
 	if at, ok := offsetIn(ui.scroll.Content, layer); ok {
 		piece := layer.pieces[start.index]

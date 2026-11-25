@@ -65,6 +65,8 @@ type browserLog struct {
 // final tab closes; another tab starts a fresh generation using the profile.
 type Engine struct {
 	Native    NativeHost
+	Remote    RemoteHost // a browser a paired client lends, where there is none here (remote.go)
+	lent      atomic.Bool
 	Profile   string // a separate persistent profile, when this is not Browser Use
 	Language  string // native pages' requests and navigator.language (WebView follows the phone's)
 	ctx       context.Context
@@ -95,7 +97,7 @@ func (engine *Engine) start() error {
 	var binary browserBinary
 	var lookup error
 	engine.mu.Lock()
-	stopped := engine.Native == nil && engine.root == nil && engine.err == nil
+	stopped := engine.Native == nil && !engine.lends() && engine.root == nil && engine.err == nil
 	engine.mu.Unlock()
 	if stopped {
 		binary, lookup = findBrowser(engine.ctx)
@@ -103,6 +105,10 @@ func (engine *Engine) start() error {
 	engine.mu.Lock()
 	defer engine.mu.Unlock()
 	engine.once.Do(func() {
+		if engine.Native == nil && engine.lends() {
+			engine.err = engine.startLent()
+			return
+		}
 		if engine.Native != nil {
 			address, id, err := engine.Native.Connect(engine.runCtx)
 			if err != nil {
@@ -228,6 +234,19 @@ func (engine *Engine) stopIfIdle() {
 	if engine.refs.Load() != 0 {
 		return
 	}
+	engine.stopLocked()
+}
+
+// Reset ends the browser's generation even while tabs still count on it:
+// the server closed them when a lent browser came or went, and reopens
+// them on the next generation.
+func (engine *Engine) Reset() {
+	engine.mu.Lock()
+	defer engine.mu.Unlock()
+	engine.stopLocked()
+}
+
+func (engine *Engine) stopLocked() {
 	if engine.root == nil && engine.err == nil {
 		return
 	}
@@ -240,6 +259,7 @@ func (engine *Engine) stopIfIdle() {
 	waitBrowserClosed(engine.closed)
 	engine.once = sync.Once{}
 	engine.root, engine.err, engine.closed = nil, nil, nil
+	engine.lent.Store(false)
 	engine.runCtx, engine.runCancel = context.WithCancel(engine.ctx)
 }
 
@@ -415,7 +435,7 @@ func (browser *Page) Start() {
 		browser.change(func(info *Info) { info.Status = "" })
 	}
 	native := browser.Session.engine.Native
-	if err == nil && native != nil {
+	if err == nil && (native != nil || browser.Session.engine.lent.Load()) {
 		err = nativeURL(browser.Snapshot().URL)
 	}
 	if err == nil && native != nil {
@@ -858,7 +878,7 @@ func (browser *Page) Navigate(ctx context.Context, action, raw string) error {
 			return fmt.Errorf("Give the address to open")
 		}
 		u, err := URL(raw)
-		if err == nil && browser.Session.engine.Native != nil {
+		if err == nil && (browser.Session.engine.Native != nil || browser.Session.engine.lent.Load()) {
 			err = nativeURL(u)
 		}
 		if err != nil {

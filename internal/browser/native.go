@@ -28,7 +28,7 @@ func nativeURL(raw string) error {
 		return err
 	}
 	if parsed.Scheme != "http" && parsed.Scheme != "https" && raw != "about:blank" {
-		return fmt.Errorf("Local browser allows http, https and about:blank URLs only")
+		return fmt.Errorf("This browser opens http, https and about:blank addresses only")
 	}
 	return nil
 }

@@ -27,6 +27,7 @@ const (
 	// Since: 2.0
 	ScrollNone
 )
+
 type scrollBarOrientation int
 
 // We default to vertical as 0 due to that being the original orientation offered

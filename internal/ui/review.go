@@ -236,7 +236,7 @@ func newReviewView(ui *desktopUI, window fyne.Window, title string, files []agen
 	heading.TextStyle.Bold = true
 	top := container.NewVBox(padded(12, 2, 14, 14, container.New(&clipLayout{}, heading)))
 	if len(files) > 1 {
-		top.Add(padded(2, 2, 14, 14, container.NewHScroll(view.strip)))
+		top.Add(padded(2, 2, 14, 14, strip(view.strip)))
 	}
 	view.bar = container.NewBorder(nil, nil, container.NewCenter(view.state), view.tools)
 	top.Add(padded(0, 4, 14, 14, view.bar))

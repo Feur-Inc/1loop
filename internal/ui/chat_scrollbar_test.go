@@ -213,3 +213,23 @@ func TestEveryScrollGetsTheBar(t *testing.T) {
 		barCheck(t, list)
 	})
 }
+
+// A strip of controls that scrolls sideways draws no bar, so its controls
+// keep the pointer; it still scrolls (#633).
+func TestStripScrollHasNoBar(t *testing.T) {
+	test.NewTempApp(t).Settings().SetTheme(loopTheme{theme.DefaultTheme()})
+	wide := canvas.NewRectangle(nil)
+	wide.SetMinSize(fyne.NewSize(2000, 30))
+	scroll, object := stripScroll(wide)
+	window := test.NewTempWindow(t, object)
+	window.Resize(fyne.NewSize(300, 30))
+	for _, child := range test.TempWidgetRenderer(t, scroll).Objects() {
+		if _, ok := child.(fyne.Draggable); ok && child.Visible() {
+			t.Fatalf("a strip shows a bar %v", child.Size())
+		}
+	}
+	scroll.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.NewDelta(-40, 0)})
+	if scroll.Offset.X <= 0 {
+		t.Fatal("the wheel no longer scrolls the strip")
+	}
+}

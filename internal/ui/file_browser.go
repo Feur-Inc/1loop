@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/scrollbar"
 	"fyne.io/fyne/v2/widget"
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
@@ -70,11 +71,12 @@ func buildFileBrowser(ctx context.Context, window fyne.Window, source fileSource
 		icon := widget.NewIcon(iconDocument)
 		name := textLine("", 13, colText)
 		size := textLine("", 11, colMuted)
-		return container.NewBorder(nil, nil, icon, size, name)
+		// The sizes end clear of the list's scrollbar, wide under the pointer (#633).
+		return container.NewBorder(nil, nil, icon, padded(0, 0, 0, scrollbar.Edge+scrollbar.Wide, size), name)
 	}, func(i widget.ListItemID, object fyne.CanvasObject) {
 		entry := browser.entries[i]
 		row := object.(*fyne.Container)
-		name, icon, size := row.Objects[0].(*canvas.Text), row.Objects[1].(*widget.Icon), row.Objects[2].(*canvas.Text)
+		name, icon, size := row.Objects[0].(*canvas.Text), row.Objects[1].(*widget.Icon), row.Objects[2].(*fyne.Container).Objects[0].(*canvas.Text)
 		name.Text = entry.Name
 		icon.SetResource(fileTypeIcon(entry.Name, entry.Dir))
 		if entry.Dir {
@@ -185,7 +187,7 @@ func (browser *fileBrowser) show(file remoteapi.FileEntry) {
 	from, to := browser.from, browser.to
 	browser.from, browser.to = 0, 0
 	body := container.NewStack(padded(20, 20, 18, 18, note("Loading…")))
-	header := padded(8, 8, 10, 10, container.NewVBox(container.NewBorder(nil, nil, back, nil, title), container.NewHScroll(buttons)))
+	header := padded(8, 8, 10, 10, container.NewVBox(container.NewBorder(nil, nil, back, nil, title), strip(buttons)))
 	browser.content.Objects = []fyne.CanvasObject{container.NewBorder(header, nil, nil, nil, body)}
 	browser.content.Refresh()
 	go func() {

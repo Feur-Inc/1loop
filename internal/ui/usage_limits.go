@@ -72,7 +72,7 @@ func limitsSection(limits []usage.Limit, chosen string, choose func(connection s
 			tab.SetSelected(account.connection == shown.connection)
 			tabs.Add(tab)
 		}
-		section.Add(padded(0, 8, 0, 0, container.NewHScroll(tabs)))
+		section.Add(padded(0, 8, 0, 0, strip(tabs)))
 	}
 	title := textLine(shown.name, 15, colText)
 	title.TextStyle = fyne.TextStyle{Bold: true}

@@ -36,6 +36,17 @@ func (server *headlessServer) connectionLocked(id string) (agent.Connection, boo
 	return agent.Connection{}, false
 }
 
+// profileUsedLocked tells whether a ChatGPT connection still signs in
+// with this account profile.
+func (server *headlessServer) profileUsedLocked(profile string) bool {
+	for _, connection := range server.connections {
+		if connection.Provider == "openai" && connection.AuthProfile == profile {
+			return true
+		}
+	}
+	return false
+}
+
 func (server *headlessServer) localConnections(w http.ResponseWriter, r *http.Request) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
@@ -196,6 +207,13 @@ func (server *headlessServer) saveConnection(w http.ResponseWriter, r *http.Requ
 			ctx, cancel := context.WithTimeout(server.ctx, 25*time.Second)
 			defer cancel()
 			_ = agent.SignOutClaude(ctx, existing)
+		}()
+	}
+	if args.Remove && existing.Provider == "openai" && existing.AuthProfile != "" && !server.profileUsedLocked(existing.AuthProfile) {
+		go func() { // its tokens would stay on the disk: sign out, as Settings does
+			ctx, cancel := context.WithTimeout(server.ctx, 25*time.Second)
+			defer cancel()
+			_, _ = server.backend.DisconnectOpenAI(ctx, existing.AuthProfile)
 		}()
 	}
 	if login := server.logins[connection.ID]; login != nil && login.cancel != nil {

@@ -49,7 +49,7 @@ func TestPairedChatGPTSignIn(t *testing.T) {
 	}))
 	defer openAI.Close()
 	defer agent.StubOpenAISignIn(openAI.URL, &oidc.StaticKeySet{PublicKeys: []crypto.PublicKey{&key.PublicKey}})()
-	_, call := pairedServer(t)
+	server, call := pairedServer(t)
 
 	if _, body := call("GET", "/api/connections", nil, true); !strings.Contains(body, `"chatGPTSignIn":true`) {
 		t.Fatalf("sign-in not offered: %s", body)
@@ -98,5 +98,27 @@ func TestPairedChatGPTSignIn(t *testing.T) {
 	}
 	if _, body := call("GET", "/api/connections", nil, true); !strings.Contains(body, `"signedIn":false`) {
 		t.Fatalf("list after signing out: %s", body)
+	}
+
+	// Removed, the connection takes its sign-in along.
+	_, body = call("POST", login, nil, true)
+	json.Unmarshal([]byte(body), &begun)
+	if code, body := call("POST", login+"/complete", map[string]string{"state": begun.State, "code": "good-code"}, true); code != 200 {
+		t.Fatalf("sign in again: %d %s", code, body)
+	}
+	if code, body := call("POST", "/api/connections", map[string]any{"connection": map[string]any{"id": saved.Connection.ID}, "remove": true}, true); code != 200 {
+		t.Fatalf("remove: %d %s", code, body)
+	}
+	auth, _ := server.backend.GetOpenAI(saved.Connection.ID)
+	for deadline := time.Now().Add(10 * time.Second); ; time.Sleep(20 * time.Millisecond) {
+		auth.Mu.Lock()
+		signedIn := auth.Account.Tokens.Access != ""
+		auth.Mu.Unlock()
+		if !signedIn {
+			break
+		}
+		if time.Now().After(deadline) {
+			t.Fatal("still signed in after the connection was removed")
+		}
 	}
 }

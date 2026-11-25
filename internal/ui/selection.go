@@ -147,7 +147,7 @@ type selectLayer struct {
 	dragged bool
 	plain   bool // the last press was a plain click: its release goes to what is below
 	over    *selTap
-	hand    bool // the pointer is on a link
+	hand    bool    // the pointer is on a link
 	onBar   bool    // the pointer is on a scrollbar (#633)
 	grabbed *selTap // the scrollbar the press was on: it gets the drag
 }

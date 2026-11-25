@@ -75,3 +75,21 @@ shows every change.
   its position at a fractional scale: at 1.25 the logo's ring (26 pixels)
   was drawn 26×25, stretched and resampled out of round, and icons and text
   were resampled by a pixel. `round_test.go` checks it.
+- `scrollbar/` (new), `internal/widget/scroller.go` (1loop #633): every
+  scroll (container.Scroll, List, Table, Tree, a multi-line Entry) has
+  1loop's bar, the one the conversation's own bar (#625) also draws from
+  the `scrollbar` package, so the two share their sizes, geometry and look.
+  The bar's area takes the pointer over 16 px, wider than the thumb it
+  draws, 4 px from the scroll's edge and from its track's ends (1loop's
+  resize handles and the window's resize edges reach 4 px over what lies
+  beside them). The thumb is never shorter than 40 px; under the pointer
+  it widens from `SizeNameScrollBarSmall` (6) to `SizeNameScrollBar` (10)
+  in `scrollbar.ColorNameHover` over a track in
+  `ColorNameScrollBarBackground`. Dragging the thumb or the track scrolls
+  (from the track, the thumb comes under the pointer by its middle); a tap
+  on the track pages, keeping 40 px of the view, on every platform
+  (`scroller_behavior_*.go`, which jumped there except on macOS, are
+  gone); the wheel over the bar goes on to the scroll. Where both bars
+  show, each ends before the other's corner. A theme giving
+  `SizeNameScrollBar` 0 has no bar. `container/scroll_1loop_test.go` and
+  `scrollbar/scrollbar_test.go` check it.

@@ -14,6 +14,8 @@ shows every change.
 - `minsize_memo.go`, `container.go`, `widget/widget.go`,
   `internal/driver/common/canvas.go`: during the per-frame minimum-size
   pass each object's MinSize is computed once, not once per tree level.
+  A Resize that changes a size forgets the remembered sizes (an era
+  counter), so text wrapped again at a new width is measured anew.
 - `internal/driver/common/structures.go`, `canvas.go` (walkTree): when the
   visible children of an object change, the render nodes after the change
   are kept (and those of hidden objects kept aside for their return)

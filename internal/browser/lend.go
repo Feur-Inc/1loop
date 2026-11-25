@@ -67,6 +67,8 @@ type Lending struct {
 	URL   string // the server's address, https://host:port
 	Token string // this device's pairing token there
 	TLS   *tls.Config
+	// OnAttach says the server took the offer: it may use the browser.
+	OnAttach func()
 	// OnUse says whether the server's agent is using the browser now.
 	OnUse func(bool)
 	// Launch starts a browser and returns its DevTools WebSocket address
@@ -99,6 +101,9 @@ func (lending Lending) Run(ctx context.Context) error {
 			return ErrLendUnsupported
 		}
 		return err
+	}
+	if lending.OnAttach != nil {
+		lending.OnAttach()
 	}
 	relay := &lendRelay{lending: lending, conn: conn, links: map[int]*lendLink{}}
 	relay.reader = io.Reader(conn)

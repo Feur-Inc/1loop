@@ -152,6 +152,9 @@ type desktopUI struct {
 	localCfg         agent.Config    // this computer's settings while a server is the target
 	machine          *tapRow         // the target: this computer, an SSH machine or a server
 	serverStatus     *fitLabel       // the server's state beside it
+	lendBar          *fyne.Container // "the server's agent is using this computer's browser", with Stop (browser_lend.go)
+	lendText         *flowText       // what the bar says
+	lendStatus       *flowText       // the lending's state, in Settings → General
 	modelsLoading    bool
 	pendingGoal      *agent.GoalState // a /goal on the start screen, for the chat it makes
 
@@ -1099,7 +1102,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.serverStatus = newFitLabel("", 12, colFaint)
 	ui.serverStatus.Hide()
 	contextRow := container.NewBorder(nil, nil, container.NewHBox(ui.folder, ui.machine), nil, ui.serverStatus)
-	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.buildCommandMenu(), ui.queueTray, composer)
+	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), ui.buildLendBar(), padded(0, 6, 4, 4, contextRow), ui.buildCommandMenu(), ui.queueTray, composer)
 	return padded(0, 0, 24, 24, container.New(columnLayout{width: 760, inset: 0}, padded(0, 18, 0, 0, stack)))
 }
 

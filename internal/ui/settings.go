@@ -594,6 +594,9 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 	}
 	if ui.server != nil { // Install Chromium / Claude Code, while the server lacks them
 		page.Add(ui.server.installRows())
+		if rows := ui.lendRows(); rows != nil { // or this computer's browser, lent to it
+			page.Add(rows)
+		}
 	}
 	page.Add(sectionTitle("Appearance"))
 	page.Add(card(ui.appearanceRows(view)...))

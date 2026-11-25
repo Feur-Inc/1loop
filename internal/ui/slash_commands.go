@@ -297,6 +297,11 @@ func (ui *desktopUI) updateCommandMenu() {
 	if ui.commandTray == nil {
 		return
 	}
+	// A dismissal holds for the text it was made on only: any other text,
+	// the empty composer included, shows the menu again (#453).
+	if ui.prompt.Text != ui.commandDismissed {
+		ui.commandDismissed = ""
+	}
 	typed, ok := ui.commandTyped()
 	if !ok {
 		ui.updateMentionMenu() // or an "@" mention (mentions.go)

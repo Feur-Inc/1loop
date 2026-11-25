@@ -96,7 +96,7 @@ func newLoopyBubble(text string, mine bool, reaction string) *loopyBubble {
 	if mine {
 		fill, ink = colLoopyMe, color.NRGBA{R: 0xf4, G: 0xf4, B: 0xf4, A: 0xff}
 	}
-	bubble.text = plainFlow(text, 14.5, ink)
+	bubble.text = loopyText(text, 14.5, ink)
 	bubble.fill = canvas.NewRectangle(fill)
 	bubble.fill.CornerRadius = 18
 	tap := &bubbleTap{bubble: bubble}
@@ -116,10 +116,26 @@ func newLoopyBubble(text string, mine bool, reaction string) *loopyBubble {
 
 // setText changes what a streaming bubble says.
 func (bubble *loopyBubble) setText(text string) {
-	bubble.text.spans = []span{{text: text}}
+	bubble.text.spans = lineSpans(text)
 	bubble.text.width = 0
 	bubble.text.Refresh()
 	bubble.row.Refresh()
+}
+
+// loopyText is a text as written, its line breaks kept.
+func loopyText(text string, size float32, ink color.Color) *flowText {
+	return newFlowText(lineSpans(text), size, ink)
+}
+
+func lineSpans(text string) []span {
+	var out []span
+	for i, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+		if i > 0 {
+			out = append(out, span{hard: true})
+		}
+		out = append(out, span{text: strings.TrimRight(line, "\r")})
+	}
+	return out
 }
 
 // plain says whether the bubble can show a message by its text alone.
@@ -354,7 +370,7 @@ func (mode *loopyMode) cardView(message loopy.Message) fyne.CanvasObject {
 		grid := container.New(layout.NewCustomPaddedVBoxLayout(6))
 		for i, field := range c.Fields {
 			label := textLine(field.Label, 13, colMuted)
-			var value fyne.CanvasObject = plainFlow(field.Value, 13, colText)
+			var value fyne.CanvasObject = loopyText(field.Value, 13, colText)
 			if editing {
 				value = draft.fields[i]
 			}
@@ -366,7 +382,7 @@ func (mode *loopyMode) cardView(message loopy.Message) fyne.CanvasObject {
 	case draft != nil && draft.body != nil:
 		rows = append(rows, padded(8, 8, 13, 13, draft.body))
 	case c.Body != "":
-		rows = append(rows, padded(10, 10, 13, 13, plainFlow(c.Body, 13.5, colText)))
+		rows = append(rows, padded(10, 10, 13, 13, loopyText(c.Body, 13.5, colText)))
 	}
 	if draft != nil && draft.ask != nil {
 		rows = append(rows, padded(8, 8, 13, 13, draft.ask))
@@ -387,7 +403,7 @@ func (mode *loopyMode) cardView(message loopy.Message) fyne.CanvasObject {
 		rows = append(rows, mode.cardOptions(message))
 	}
 	if c.Result != "" {
-		rows = append(rows, padded(8, 8, 13, 13, plainFlow(c.Result, 12.5, colMuted)))
+		rows = append(rows, padded(8, 8, 13, 13, loopyText(c.Result, 12.5, colMuted)))
 	}
 	if waiting && len(c.Actions) > 0 {
 		buttons := container.New(&wrapLayout{gap: 8})
@@ -418,7 +434,7 @@ func (mode *loopyMode) cardOptions(message loopy.Message) fyne.CanvasObject {
 		chosen := c.Answer == option.Label
 		text := container.New(layout.NewCustomPaddedVBoxLayout(1), plainFlow(option.Label, 13.5, colText))
 		if option.Detail != "" {
-			text.Add(plainFlow(option.Detail, 12.5, colMuted))
+			text.Add(loopyText(option.Detail, 12.5, colMuted))
 		}
 		if c.Kind == "summary" {
 			var right fyne.CanvasObject

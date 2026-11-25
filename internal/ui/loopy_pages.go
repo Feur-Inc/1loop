@@ -296,7 +296,7 @@ func (mode *loopyMode) openFile(file loopy.File) {
 			mode.saveFile(file)
 			return
 		}
-		var content fyne.CanvasObject = plainFlow(text, 13, colText)
+		var content fyne.CanvasObject = loopyText(text, 13, colText)
 		if path.Ext(file.Path) == ".md" {
 			content = newMarkdownView(text).box
 		}

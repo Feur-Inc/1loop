@@ -403,6 +403,23 @@ func (s *Scroll) CreateRenderer() fyne.WidgetRenderer {
 	return scr
 }
 
+// Bars are the scroll's bar areas that show, in the scroll's coordinates:
+// for a layer drawn over the scroll that passes the pointer on to what is
+// below it (1loop's text selection over a code block).
+func (s *Scroll) Bars() []fyne.CanvasObject {
+	r, ok := cache.Renderer(s.super()).(*scrollContainerRenderer)
+	if !ok {
+		return nil
+	}
+	var bars []fyne.CanvasObject
+	for _, area := range []*scrollBarArea{r.vertArea, r.horizArea} {
+		if area.Visible() {
+			bars = append(bars, area)
+		}
+	}
+	return bars
+}
+
 // ScrollToBottom will scroll content to container bottom - to show latest info which end user just added
 func (s *Scroll) ScrollToBottom() {
 	s.scrollBy(0, -1*(s.Content.MinSize().Height-s.Size().Height-s.Offset.Y))

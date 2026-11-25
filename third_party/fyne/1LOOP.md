@@ -91,5 +91,7 @@ shows every change.
   (`scroller_behavior_*.go`, which jumped there except on macOS, are
   gone); the wheel over the bar goes on to the scroll. Where both bars
   show, each ends before the other's corner. A theme giving
-  `SizeNameScrollBar` 0 has no bar. `container/scroll_1loop_test.go` and
+  `SizeNameScrollBar` 0 has no bar. `Scroll.Bars` gives the bar areas that show,
+  for 1loop's text selection, which lies over code blocks and passes the
+  pointer on to them. `container/scroll_1loop_test.go` and
   `scrollbar/scrollbar_test.go` check it.

@@ -257,6 +257,7 @@ type desktopApp struct {
 	usage            *usage.Ledger // every model call this computer made (internal/usage)
 	prices           *usage.Prices
 	usageQuery       usage.Query // what the Usage page shows, kept while 1loop runs
+	usageHere        bool        // in a server window, the Usage page shows this computer's ledger
 	computer         *computeruse.ComputerSession
 	browser          *browser.Engine
 	backend          *agent.App

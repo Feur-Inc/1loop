@@ -609,6 +609,7 @@ func (ui *desktopUI) release() {
 		chat.tasks.StopAll() // a background server must not outlive 1loop
 	}
 	agent.StopEveryClaude()
+	browser.StopLent() // nor the browser lent to a server
 	for _, view := range ui.allPanes() {
 		if view != ui {
 			view.releaseWindow() // its chat's panel goes back to the chat, disposed with it below

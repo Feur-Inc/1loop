@@ -373,6 +373,22 @@ func lendRefusal(raw json.RawMessage) string {
 	return ""
 }
 
+// lentRunning are the lent browsers running, for StopLent.
+var lentRunning struct {
+	sync.Mutex
+	processes map[*os.Process]bool
+}
+
+// StopLent stops every lent browser, as 1loop quits: under snap, the
+// signal that ends them with 1loop (lentProcess) does not reach them.
+func StopLent() {
+	lentRunning.Lock()
+	defer lentRunning.Unlock()
+	for process := range lentRunning.processes {
+		process.Kill()
+	}
+}
+
 var devToolsListening = regexp.MustCompile(`DevTools listening on (ws://\S+)`)
 
 // LaunchLent starts a headless Chromium for a server, on the lent
@@ -473,6 +489,12 @@ func launchLent(ctx context.Context, binary browserBinary, dir string, noSandbox
 	if err := command.Start(); err != nil {
 		return "", nil, err
 	}
+	lentRunning.Lock()
+	if lentRunning.processes == nil {
+		lentRunning.processes = map[*os.Process]bool{}
+	}
+	lentRunning.processes[command.Process] = true
+	lentRunning.Unlock()
 	exited := make(chan struct{})
 	found := make(chan string, 1)
 	var output strings.Builder
@@ -491,6 +513,9 @@ func launchLent(ctx context.Context, binary browserBinary, dir string, noSandbox
 			}
 		}
 		command.Wait()
+		lentRunning.Lock()
+		delete(lentRunning.processes, command.Process)
+		lentRunning.Unlock()
 		close(exited)
 	}()
 	stop := func() {

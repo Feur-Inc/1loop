@@ -3,6 +3,7 @@
 package browser
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -99,5 +100,26 @@ func TestLentOrphan(t *testing.T) {
 	case <-done:
 	case <-time.After(5 * time.Second):
 		t.Fatal("the orphan lent browser still runs")
+	}
+}
+
+// Quitting 1loop stops the browsers it lent.
+func TestStopLent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("a shell script stands for the browser")
+	}
+	script := filepath.Join(t.TempDir(), "chromium")
+	os.WriteFile(script, []byte("#!/bin/sh\necho 'DevTools listening on ws://127.0.0.1:1/devtools/browser/x' >&2\nexec sleep 30\n"), 0755)
+	address, stop, err := launchLent(context.Background(), browserBinary{path: script}, t.TempDir(), false)
+	if err != nil || address != "ws://127.0.0.1:1/devtools/browser/x" {
+		t.Fatalf("launch: %q %v", address, err)
+	}
+	StopLent()
+	stopped := make(chan struct{})
+	go func() { stop(); close(stopped) }()
+	select {
+	case <-stopped: // it had exited: stop did not wait to kill it
+	case <-time.After(2 * time.Second):
+		t.Fatal("the lent browser still runs after StopLent")
 	}
 }

@@ -857,3 +857,31 @@ func TestBrowserRests(t *testing.T) {
 	engine.WaitClosed()
 	until(t, "its processes end", func() bool { return browsers(engine.Profile) == 0 })
 }
+
+// The real GitHub, read only: LOOPY_GITHUB_TOKEN and LOOPY_GITHUB_REPO
+// (owner/name). The watch reads who the user is and the latest comments.
+func TestRealGitHub(t *testing.T) {
+	token, repo := os.Getenv("LOOPY_GITHUB_TOKEN"), os.Getenv("LOOPY_GITHUB_REPO")
+	if token == "" || repo == "" {
+		t.Skip("LOOPY_GITHUB_TOKEN, LOOPY_GITHUB_REPO")
+	}
+	e, host := wake(t, t.TempDir(), func([]heard) any { return "ok" })
+	host.auth = "Bearer " + token
+	havePython(t, e)
+	code := `
+import autolink
+me = autolink.github("/user").json()["login"]
+comments = autolink.github("/repos/` + repo + `/issues/comments?sort=updated&direction=desc&per_page=30").json()
+pulls = autolink.github("/repos/` + repo + `/pulls?state=open&per_page=5").json()
+mine = [c["html_url"] for c in comments if "@" + me.lower() in c["body"].lower()]
+autolink.output({"login": bool(me), "comments": len(comments), "pulls": len(pulls), "mentions": len(mine)})
+print("first run sees nothing new:", autolink.new("mentions", mine) == [])
+`
+	link := made(t, e, m{"code": code, "rights": []string{"github"}}, linkAuto)
+	running(e, "")
+	got, err := use(t, e, "loopy_autolink_run", m{"id": link.ID})
+	t.Log(got.Text)
+	if err != nil || !strings.Contains(got.Text, `"login": true`) || !strings.Contains(got.Text, "first run sees nothing new: True") || strings.Contains(got.Text, token) {
+		t.Fatal(err)
+	}
+}

@@ -12,6 +12,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"maps"
+	"math"
 	"os"
 	"os/exec"
 	"regexp"
@@ -165,14 +167,14 @@ func TestLongMemEvalAnswers(t *testing.T) {
 				t.Error(err)
 				return
 			}
-			verdict, err := ask(t.Context(), "You grade answers.", gradePrompt(q, answer)+"\n\nCheck it in a few words, then end with a line that is exactly VERDICT: yes or VERDICT: no.")
+			verdict, err := ask(t.Context(), "You grade the answers of an assistant that remembers its past conversations with the user, which you do not see. Compare the answer with the right answer only: the dates, quotes and details it adds from those conversations are not yours to check, and are never a reason to say no.", gradePrompt(q, answer)+"\n\nCheck it in a few words, then end with a line that is exactly VERDICT: yes or VERDICT: no.")
 			if err != nil {
 				t.Error(err)
 				return
 			}
 			ok := yes(verdict)
 			if !ok {
-				t.Logf("missed, %s: %s\n  right: %v\n  got: %s", way, q.Question, q.Answer, clip(answer, 500))
+				t.Logf("missed, %s: %s\n  right: %v\n  got: %s\n  because: %s", way, q.Question, q.Answer, clip(answer, 500), clip(verdict, 300))
 			}
 			mu.Lock()
 			for _, name := range []string{"all", q.Type} {
@@ -208,12 +210,31 @@ func TestLongMemEvalAnswers(t *testing.T) {
 	}
 }
 
+// wordsOnly is a plain search by words (BM25), without the meaning.
 func wordsOnly(ix *index, query string, n int) []string {
-	var out []string
-	for _, f := range ix.search(query, len(ix.entries), nil) {
-		if f.share > 0 && len(out) < n {
-			out = append(out, f.id)
+	scores := map[int]float64{}
+	average := float64(ix.total) / float64(ix.live)
+	seen := map[string]bool{}
+	for _, word := range words(query) {
+		if seen[word] {
+			continue
 		}
+		seen[word] = true
+		df := float64(len(ix.posting[word]))
+		idf := math.Log(1 + (float64(ix.live)-df+.5)/(df+.5))
+		for _, at := range ix.posting[word] {
+			e := ix.entries[at]
+			c := float64(e.counts[word])
+			scores[at] += idf * c * 2.2 / (c + 1.2*(.25+.75*float64(e.length)/average))
+		}
+	}
+	order := slices.Collect(maps.Keys(scores))
+	sort.Slice(order, func(i, j int) bool {
+		return scores[order[i]] > scores[order[j]] || scores[order[i]] == scores[order[j]] && order[i] < order[j]
+	})
+	var out []string
+	for _, at := range order[:min(n, len(order))] {
+		out = append(out, ix.entries[at].id)
 	}
 	return out
 }

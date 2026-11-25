@@ -270,6 +270,7 @@ type remoteDesktop struct {
 	approvalMode     string
 	autoMode         bool
 	namingModel      *agent.NamingModel       // the server's chat naming model
+	chatGPTSignIn    bool                     // it signs a ChatGPT account in with this computer's browser (remote_chatgpt.go)
 	convs            map[string]*conversation // the server's chats as this window shows them
 	fileAttachments  []agent.FileAttachment
 	thumbnails       map[string]image.Image // the pictures uploaded from here, by their path on the server

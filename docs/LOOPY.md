@@ -148,7 +148,7 @@ dessert?" is not close to "allergic to nuts".
   as a whole. Earlier runs of the two tables above came out lower (73 to 79 %
   for answers) because the grader refused right answers: it did not know the
   assistant has a memory, or its verdict was misread. Both were found by
-  reading the misses, and every miss of the last run was read.
+  reading the misses; those of the two searches in the last run were all read.
 - 105 questions: a few points between two rows are noise. "One search" and
   "several searches" are equal here; 86 against 80 % is a lead, not a proof.
 - The settings (k, passage length, answer length, thresholds) were chosen on
@@ -180,7 +180,8 @@ LOOPY_ASK=./ask.sh LOOPY_EACH=3 \
 LOOPY_REAL=haiku go test -run RealModel -v ./internal/loopy/engine
 ```
 
-The tables above cost about 1 dollar of Haiku, as Claude Code counts it.
+The answers table costs about 0.9 dollar of Haiku and the habits one 0.3, as
+Claude Code counts it.
 
 ## The box
 

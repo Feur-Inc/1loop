@@ -122,6 +122,8 @@ func TestLimitsByAccount(t *testing.T) {
 				}
 			case *container.Scroll:
 				walk(object.Content)
+			case *container.ThemeOverride: // a strip of tabs (stripScroll)
+				walk(object.Content)
 			case *tapRow:
 				if object.text == "Claude Code" || object.text == "Work" || object.text == "Subscription" {
 					tabs++

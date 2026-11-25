@@ -134,6 +134,12 @@ func (p *Python) Install(ctx context.Context, dir string, requirements []string,
 	return os.WriteFile(mark, []byte(want), 0600)
 }
 
+// Prepare gets the interpreter ready, downloading it the first time;
+// progress is told how far.
+func (p *Python) Prepare(ctx context.Context, progress func(string)) error {
+	return p.ensure(ctx, progress)
+}
+
 // Check compiles a script without running it.
 func (p *Python) Check(ctx context.Context, code string) error {
 	if err := p.ensure(ctx, nil); err != nil {

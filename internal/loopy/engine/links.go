@@ -261,6 +261,10 @@ func (e *Engine) saveLink(ctx context.Context, r *run, args toolArgs) (string, e
 		return "", errors.New("refused: the script holds a key. The user puts it in their vault (Settings → Loopy → Vault); use autolink.secret(\"entry\")")
 	}
 	e.set("copy", "Checking the script")
+	if err := e.links.python.Prepare(ctx, func(text string) { e.set("copy", text) }); err != nil { // the first time, Python comes
+		return "", err
+	}
+	e.set("copy", "Checking the script")
 	if err := e.links.python.Check(ctx, code); err != nil {
 		return "", err
 	}

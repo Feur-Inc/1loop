@@ -122,8 +122,8 @@ func TestServerLimitsAfterFailure(t *testing.T) {
 		t.Fatalf("after a failure: %+v", got)
 	}
 	limits.apply(nil, remoteError{http.StatusMethodNotAllowed, "Method Not Allowed"}, now)
-	if got := limits.of("key"); got.Note != remoteLimitsTooOld {
-		t.Fatalf("no route: %+v", got)
+	if got := limits.of("plan"); got.Note != remoteLimitsTooOld || len(got.Windows) != 0 {
+		t.Fatalf("no route, and no numbers left: %+v", got)
 	}
 }
 

@@ -40,11 +40,15 @@ func (limits *remoteLimits) due(now time.Time) bool {
 }
 
 // apply keeps an answer of /api/limits, or why there was none. The last
-// good numbers stay after a failed read.
+// good numbers stay after a failed read, unless the server has no limits
+// any more.
 func (limits *remoteLimits) apply(accounts []remoteapi.Limits, err error, now time.Time) {
 	limits.read = now
 	if err != nil {
 		limits.problem = remoteLimitsProblem(err)
+		if limits.problem == remoteLimitsTooOld {
+			limits.values = nil // a server put back to an older version: its numbers are gone
+		}
 		return
 	}
 	limits.problem = ""

@@ -498,7 +498,9 @@ func titleInfo(tips *tipLayer, title, explanation string) fyne.CanvasObject {
 			tips.hide()
 		}
 	}
-	return container.NewHBox(plainFlow(title, 14, colText), padded(2, 0, 6, 0, mark))
+	// One line: in a box a wrapping text gets its narrowest width and
+	// breaks after every word.
+	return container.NewHBox(container.NewCenter(textLine(title, 14, colText)), padded(2, 0, 6, 0, mark))
 }
 
 // widthLayout gives its content a width of its own and the height it

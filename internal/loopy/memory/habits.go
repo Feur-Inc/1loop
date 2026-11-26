@@ -61,7 +61,13 @@ func (h *Habits) note(text string, at time.Time) {
 		return
 	}
 	if h.Rates == nil {
-		h.Rates, h.Shorts, h.Asked = map[string]float64{}, map[string]int{}, map[string]int{}
+		h.Rates = map[string]float64{}
+	}
+	if h.Shorts == nil {
+		h.Shorts = map[string]int{}
+	}
+	if h.Asked == nil {
+		h.Asked = map[string]int{}
 	}
 	h.Messages++
 	h.Hours[at.Hour()]++

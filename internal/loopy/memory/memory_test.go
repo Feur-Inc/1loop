@@ -245,6 +245,34 @@ func TestHabits(t *testing.T) {
 	}
 }
 
+func TestHabitsNoteAfterReloadWithOmittedMaps(t *testing.T) {
+	// Issue #654: saving Habits before any shorthand or ask is seen omits
+	// Shorts and Asked via omitempty, leaving them nil on reload while Rates
+	// is non-nil.
+	dir := t.TempDir()
+	m, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	add(t, m, "2026-11-01 10:00", "Hello there, how is the weather today?", "")
+	if _, err := m.Remember(Fact{Text: "Likes sunny weather", Kind: Preference, Said: true}, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	reopened, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	add(t, reopened, "2026-11-01 11:00", "ok make it shorter plz", "")
+	habits := reopened.Habits()
+	if habits.Shorts["ok"] != 1 || habits.Shorts["plz"] != 1 {
+		t.Fatalf("unexpected shorts after reload: %+v", habits.Shorts)
+	}
+	if habits.Asked["shorter"] != 1 {
+		t.Fatalf("unexpected asked after reload: %+v", habits.Asked)
+	}
+}
+
 func TestRecallStaysOutOfPlace(t *testing.T) {
 	m, _ := Open("")
 	m.Remember(Fact{Text: "Préfère les trains avant 10 h", Kind: Preference, Said: true}, "")

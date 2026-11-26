@@ -477,7 +477,7 @@ func (p *painter) lineCoords(pos, pos1, pos2 fyne.Position, lineWidth, feather f
 	halfWidth := (roundToPixel(lineWidth+feather, p.pixScale) * 0.5) / widthMultiplier
 	featherWidth := feather / widthMultiplier
 
-	return []float32{
+	return append(p.coords(),
 		// coord x, y normal x, y
 		x1, y1, normalX, normalY,
 		x2, y2, normalX, normalY,
@@ -485,7 +485,7 @@ func (p *painter) lineCoords(pos, pos1, pos2 fyne.Position, lineWidth, feather f
 		x2, y2, -normalX, -normalY,
 		x1, y1, normalX, normalY,
 		x1, y1, -normalX, -normalY,
-	}, halfWidth, featherWidth
+	), halfWidth, featherWidth
 }
 
 // rectCoords calculates the openGL coordinate space of a rectangle
@@ -524,13 +524,13 @@ func (p *painter) rectCoords(size fyne.Size, pos fyne.Position, frame fyne.Size,
 
 	insets := [4]float32{xInset, yInset, 1.0 - xInset, 1.0 - yInset}
 
-	return []float32{
+	return append(p.coords(),
 		// coord x, y, z texture x, y
 		x1, y2, 0, insets[0], insets[3], // top left
 		x1, y1, 0, insets[0], insets[1], // bottom left
 		x2, y2, 0, insets[2], insets[3], // top right
 		x2, y1, 0, insets[2], insets[1], // bottom right
-	}, insets
+	), insets
 }
 
 func rectInnerCoords(size fyne.Size, pos fyne.Position, fill canvas.ImageFill, aspect float32) (fyne.Size, fyne.Position) {
@@ -597,12 +597,12 @@ func (p *painter) vecRectCoordsWithPad(pos fyne.Position, rect fyne.CanvasObject
 	y2Norm := 1 - (y2Pos+edgeSoftnessScaled)*2/frame.Height
 
 	// output a norm for the fill and the vert is unused, but we pass 0 to avoid optimisation issues
-	coords := []float32{
+	coords := append(p.coords(),
 		0, 0, x1Norm, y1Norm, // first triangle
 		0, 0, x2Norm, y1Norm, // second triangle
 		0, 0, x1Norm, y2Norm,
 		0, 0, x2Norm, y2Norm,
-	}
+	)
 
 	return [4]float32{x1Pos, y1Pos, x2Pos, y2Pos}, coords
 }

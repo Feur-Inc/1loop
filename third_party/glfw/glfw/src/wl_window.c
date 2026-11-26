@@ -3184,6 +3184,119 @@ GLFWAPI int glfwReceiveWaylandClipboard(const char* mimeType, int fd)
     return GLFW_TRUE;
 }
 
+// 1loop: the primary selection (zwp_primary_selection_v1), which a middle
+// click pastes in other programs. GLFW only offers it: the offers of other
+// programs are released when the next one comes.
+static void primarySelectionHandleDataOffer(void* userData,
+                                            struct zwp_primary_selection_device_v1* device,
+                                            struct zwp_primary_selection_offer_v1* offer)
+{
+}
+
+static void primarySelectionHandleSelection(void* userData,
+                                            struct zwp_primary_selection_device_v1* device,
+                                            struct zwp_primary_selection_offer_v1* offer)
+{
+    if (_glfw.wl.primarySelectionOffer && _glfw.wl.primarySelectionOffer != offer)
+        zwp_primary_selection_offer_v1_destroy(_glfw.wl.primarySelectionOffer);
+    _glfw.wl.primarySelectionOffer = offer;
+}
+
+static const struct zwp_primary_selection_device_v1_listener primarySelectionListener =
+{
+    primarySelectionHandleDataOffer,
+    primarySelectionHandleSelection,
+};
+
+void _glfwAddPrimarySelectionListenerWayland(struct zwp_primary_selection_device_v1* device)
+{
+    zwp_primary_selection_device_v1_add_listener(device, &primarySelectionListener, NULL);
+}
+
+static const char* const primarySelectionTypes[] =
+{
+    "text/plain;charset=utf-8", "text/plain", "UTF8_STRING", "STRING", "TEXT",
+};
+
+static void primarySourceHandleSend(void* userData,
+                                    struct zwp_primary_selection_source_v1* source,
+                                    const char* mimeType,
+                                    int fd)
+{
+    int known = GLFW_FALSE;
+    for (size_t i = 0; i < sizeof(primarySelectionTypes) / sizeof(primarySelectionTypes[0]); i++)
+    {
+        if (strcmp(mimeType, primarySelectionTypes[i]) == 0)
+            known = GLFW_TRUE;
+    }
+    if (_glfw.wl.primarySelectionSource != source || !known || !_glfw.wl.primarySelectionString)
+    {
+        close(fd);
+        return;
+    }
+
+    const char* string = _glfw.wl.primarySelectionString;
+    size_t length = strlen(string);
+    while (length > 0)
+    {
+        const ssize_t result = write(fd, string, length);
+        if (result == -1)
+        {
+            if (errno == EINTR)
+                continue;
+            break;
+        }
+        length -= result;
+        string += result;
+    }
+    close(fd);
+}
+
+static void primarySourceHandleCancelled(void* userData,
+                                         struct zwp_primary_selection_source_v1* source)
+{
+    zwp_primary_selection_source_v1_destroy(source);
+    if (_glfw.wl.primarySelectionSource == source)
+        _glfw.wl.primarySelectionSource = NULL;
+}
+
+static const struct zwp_primary_selection_source_v1_listener primarySourceListener =
+{
+    primarySourceHandleSend,
+    primarySourceHandleCancelled,
+};
+
+// 1loop: offers string as the primary selection; GLFW_FALSE when the
+// compositor has no primary selection.
+GLFWAPI int glfwSetWaylandPrimarySelection(const char* string)
+{
+    _GLFW_REQUIRE_INIT_OR_RETURN(GLFW_FALSE);
+    if (!_glfw.wl.primarySelectionManager || !_glfw.wl.primarySelectionDevice)
+        return GLFW_FALSE;
+
+    char* copy = _glfw_strdup(string);
+    if (!copy)
+        return GLFW_FALSE;
+    free(_glfw.wl.primarySelectionString);
+    _glfw.wl.primarySelectionString = copy;
+
+    if (_glfw.wl.primarySelectionSource)
+        zwp_primary_selection_source_v1_destroy(_glfw.wl.primarySelectionSource);
+    _glfw.wl.primarySelectionSource =
+        zwp_primary_selection_device_manager_v1_create_source(_glfw.wl.primarySelectionManager);
+    if (!_glfw.wl.primarySelectionSource)
+        return GLFW_FALSE;
+    zwp_primary_selection_source_v1_add_listener(_glfw.wl.primarySelectionSource,
+                                                 &primarySourceListener, NULL);
+    for (size_t i = 0; i < sizeof(primarySelectionTypes) / sizeof(primarySelectionTypes[0]); i++)
+        zwp_primary_selection_source_v1_offer(_glfw.wl.primarySelectionSource, primarySelectionTypes[i]);
+    zwp_primary_selection_device_v1_set_selection(_glfw.wl.primarySelectionDevice,
+                                                  _glfw.wl.primarySelectionSource,
+                                                  _glfw.wl.serial);
+    flushDisplay();
+    return GLFW_TRUE;
+}
+
 GLFWAPI struct wl_surface* glfwGetWaylandWindow(GLFWwindow* handle)
 {
     _GLFWwindow* window = (_GLFWwindow*) handle;

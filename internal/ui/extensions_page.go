@@ -10,16 +10,12 @@ package ui
 import (
 	"context"
 	"fmt"
-	"image"
 	"image/color"
 	_ "image/jpeg"
 	_ "image/png"
-	"io"
-	"net/http"
 	"net/url"
 	"regexp"
 	"strings"
-	"sync"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -62,8 +58,9 @@ type extensionsPage struct {
 
 var storeOrders = map[string]string{"Most stars": "stars", "Recently updated": "updated", "Best match": "best"}
 
-func (ui *desktopUI) extensionSettings() fyne.CanvasObject {
-	page := &extensionsPage{ui: ui, source: ui.extensionSource(), tab: "store", tabs: map[string]*tapRow{}, kind: "all", kinds: map[string]*tapRow{}, body: container.NewVBox(), statuses: map[string]extensions.MCPStatus{}}
+// extensionSettings is the Extensions page of a source, under its title.
+func (ui *desktopUI) extensionSettings(source extensionSource, title fyne.CanvasObject) fyne.CanvasObject {
+	page := &extensionsPage{ui: ui, source: source, tab: "store", tabs: map[string]*tapRow{}, kind: "all", kinds: map[string]*tapRow{}, body: container.NewVBox(), statuses: map[string]extensions.MCPStatus{}}
 	ui.extPage = page
 	tabs := container.New(layout.NewCustomPaddedHBoxLayout(6))
 	for _, tab := range []struct{ id, label string }{{"store", "Store"}, {"installed", "Installed"}, {"mcp", "MCP servers"}} {
@@ -72,15 +69,15 @@ func (ui *desktopUI) extensionSettings() fyne.CanvasObject {
 		page.tabs[tab.id] = row
 		tabs.Add(row)
 	}
-	intro := note("Skills teach the agent a task; plugins bundle skills, MCP servers and hooks. Both work with 1loop's agent and with Claude Code. MCP servers give the agent the tools of other apps.")
+	intro := note("Skills teach a task; plugins bundle skills, MCP servers and hooks.")
 	page.show("store")
-	return container.NewVBox(ui.prefs.pageTitle("Extensions", "Tools & extensions", nil), intro, padded(6, 10, 0, 0, tabs), page.body)
+	return container.NewVBox(title, intro, padded(6, 10, 0, 0, tabs), page.body)
 }
 
 // extensionsChanged redraws the section after a change made elsewhere
 // (the phone).
 func (ui *desktopUI) extensionsChanged() {
-	if page := ui.extPage; page != nil && ui.prefs.at("Extensions") {
+	if page := ui.extPage; page != nil && ui.prefs.at(page.source.page()) {
 		page.show(page.tab)
 	}
 }
@@ -262,7 +259,7 @@ func (page *extensionsPage) details(listing extensions.Listing) {
 		padded(10, 0, 0, 0, textLine(listing.Repo, 13, colMuted)),
 		plainFlow(listing.Description, 14, colText),
 		textLine(strings.Join(facts, " · "), 12.5, colMuted),
-		container.NewHScroll(topics),
+		strip(topics),
 		padded(10, 10, 0, 0, container.NewHBox(install, github)),
 		sectionTitle("README"),
 		readme,
@@ -289,13 +286,14 @@ func (page *extensionsPage) details(listing extensions.Listing) {
 // installFromStore downloads a repository, shows what installing it does,
 // and installs what the user keeps.
 func (ui *desktopUI) installFromStore(repo string) {
+	source := ui.extPage.source // the page the store is on
 	progress := note("Downloading " + repo + " to see what it holds…")
 	var waiting *sheet
 	waiting = ui.modal("Install "+repo, progress, 520, nil, newRow("Cancel", nil, styleOutline, func() { waiting.dismiss() }))
 	go func() {
 		ctx, cancel := context.WithTimeout(ui.ctx, 5*time.Minute)
 		defer cancel()
-		plan, err := ui.extensionSource().prepare(ctx, repo)
+		plan, err := source.prepare(ctx, repo)
 		fyne.Do(func() {
 			if !waiting.open {
 				return // cancelled
@@ -305,14 +303,14 @@ func (ui *desktopUI) installFromStore(repo string) {
 				ui.notice("Install "+repo, err.Error())
 				return
 			}
-			ui.confirmInstall(plan)
+			ui.confirmInstall(source, plan)
 		})
 	}()
 }
 
 // confirmInstall is the confirmation: what it adds, the folders it writes,
 // the commands it may run and the risks.
-func (ui *desktopUI) confirmInstall(plan *extensions.Plan) {
+func (ui *desktopUI) confirmInstall(source extensionSource, plan *extensions.Plan) {
 	keep := map[string]bool{}
 	body := container.NewVBox()
 	if len(plan.Plugins) > 0 {
@@ -396,7 +394,7 @@ func (ui *desktopUI) confirmInstall(plan *extensions.Plan) {
 		go func() {
 			ctx, cancel := context.WithTimeout(ui.ctx, 5*time.Minute)
 			defer cancel()
-			err := ui.extensionSource().install(ctx, plan.ID, chosen)
+			err := source.install(ctx, plan.ID, chosen)
 			fyne.Do(func() {
 				dialog.dismiss()
 				if err != nil {
@@ -410,8 +408,8 @@ func (ui *desktopUI) confirmInstall(plan *extensions.Plan) {
 						}
 					}
 				}
-				if ui.prefs.on("Extensions") {
-					ui.prefs.show("Extensions")
+				if id := source.page(); ui.prefs.on(id) {
+					ui.prefs.show(id)
 					if page := ui.extPage; page != nil {
 						page.show("installed")
 					}
@@ -547,7 +545,7 @@ func (page *extensionsPage) mcpList(view extensions.Installed) fyne.CanvasObject
 	ui := page.ui
 	add := newRow("Add server", iconPlus, stylePrimary, func() { page.editMCP(extensions.MCPServer{Type: "stdio", Enabled: true}, "") })
 	check := newRow("Check connections", iconArrowTurn, styleOutline, page.checkMCP)
-	box := container.NewVBox(note("1loop connects to these servers as a client: their tools join the agent's, and Claude Code gets them too. A command starts in the chat's project."),
+	box := container.NewVBox(note("Their tools join the agent's, and Claude Code gets them too."),
 		padded(4, 6, 0, 0, container.NewHBox(add, check)))
 	var rows []fyne.CanvasObject
 	for _, server := range view.MCP {
@@ -565,7 +563,7 @@ func (page *extensionsPage) mcpList(view extensions.Installed) fyne.CanvasObject
 		rows = append(rows, extensionRow(server.Name, append(page.mcpDetail(server), "from the plugin "+server.Plugin+" (turn the plugin off in Installed)"), nil))
 	}
 	if len(rows) == 0 {
-		box.Add(note("No server yet. Add one with its command (for example npx -y @modelcontextprotocol/server-filesystem ~/docs) or its address."))
+		box.Add(note("No server yet. Add one by command or address."))
 	} else {
 		box.Add(card(rows...))
 	}
@@ -616,10 +614,7 @@ func (page *extensionsPage) checkMCP() {
 	if page.tab == "mcp" {
 		page.show("mcp")
 	}
-	workspace := page.ui.cfg.Workspace
-	if page.ui.cfg.MachineID != "" && page.ui.server == nil { // MCP servers run on this computer, not in the machine's project
-		workspace = ""
-	}
+	workspace := page.source.workspace()
 	go func() {
 		ctx, cancel := context.WithTimeout(page.ui.ctx, time.Minute)
 		defer cancel()
@@ -632,7 +627,7 @@ func (page *extensionsPage) checkMCP() {
 			for _, status := range statuses {
 				page.statuses[status.Name+"\x00"+status.Plugin] = status
 			}
-			if page.tab == "mcp" && page.ui.prefs.at("Extensions") {
+			if page.tab == "mcp" && page.ui.prefs.at(page.source.page()) {
 				page.show("mcp")
 			}
 		})
@@ -791,11 +786,6 @@ func extensionRow(title string, lines []string, control fyne.CanvasObject) fyne.
 	return padded(13, 13, 16, 16, container.NewBorder(nil, nil, nil, end, container.NewVBox(layout.NewSpacer(), text, layout.NewSpacer())))
 }
 
-var (
-	picturesMu sync.Mutex
-	pictures   = map[string]image.Image{}
-)
-
 // remotePicture shows a picture from the web once it has loaded.
 func remotePicture(address string, size fyne.Size) fyne.CanvasObject {
 	view := canvas.NewImageFromImage(nil)
@@ -803,36 +793,10 @@ func remotePicture(address string, size fyne.Size) fyne.CanvasObject {
 	view.SetMinSize(size)
 	background := canvas.NewRectangle(colCode)
 	background.CornerRadius = rounded(8)
-	picturesMu.Lock()
-	cached := pictures[address]
-	picturesMu.Unlock()
-	if cached != nil {
+	if cached := catalogPictures.get(address); cached != nil {
 		view.Image = cached
-	} else if address != "" {
-		go func() {
-			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-			defer cancel()
-			request, err := http.NewRequestWithContext(ctx, "GET", address, nil)
-			if err != nil {
-				return
-			}
-			response, err := http.DefaultClient.Do(request)
-			if err != nil {
-				return
-			}
-			defer response.Body.Close()
-			decoded, _, err := image.Decode(io.LimitReader(response.Body, 8<<20))
-			if err != nil {
-				return
-			}
-			picturesMu.Lock()
-			pictures[address] = decoded
-			picturesMu.Unlock()
-			fyne.Do(func() {
-				view.Image = decoded
-				view.Refresh()
-			})
-		}()
+	} else if pictureAllowed(address) && catalogPictures.join(address, view) {
+		go fetchPicture(address, size)
 	}
 	return container.NewStack(background, view)
 }

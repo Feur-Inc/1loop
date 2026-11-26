@@ -686,6 +686,9 @@ func (w *window) processKeyPressed(keyName fyne.KeyName, keyASCII fyne.KeyName, 
 		}
 		return // ignore key up in other core events
 	case press:
+		if hook := desktop.OnKeyDown; hook != nil && hook(w.canvas, keyEvent) { // 1loop
+			return
+		}
 		switch keyName {
 		case desktop.KeyAltLeft, desktop.KeyAltRight:
 			// compensate for GLFW modifiers bug https://github.com/glfw/glfw/issues/1630

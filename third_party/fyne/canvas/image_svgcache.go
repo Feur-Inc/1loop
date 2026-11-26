@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"fmt"
 	"io"
+	"strconv"
 	"sync"
 	"unsafe"
 
@@ -99,4 +100,10 @@ func (i *Image) refreshCachedSVG() bool {
 	i.previousRender = true
 	Refresh(i)
 	return true
+}
+
+// svgSizedName is the name an SVG's rasterised copy of w × h pixels is
+// cached under.
+func svgSizedName(name string, w, h int) string {
+	return name + "@" + strconv.Itoa(w) + "x" + strconv.Itoa(h)
 }

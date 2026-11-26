@@ -133,6 +133,9 @@ func (ui *desktopUI) setReach(target projectTarget, state reach, problem string)
 	if ui.projectList != nil {
 		ui.renderChats()
 	}
+	if target.kind == targetServer && ui.prefs != nil {
+		ui.prefs.serverChanged(target.id) // its row under Settings → Servers
+	}
 	return true
 }
 
@@ -245,14 +248,19 @@ func (ui *desktopUI) serverGroups() []targetGroup {
 // serverGroup is a server's: the window's own connection to it while it
 // works on it, else what its link last read. Until either has answered,
 // its projects are those remembered from the last time it did, and its
-// chats are not at hand.
+// chats are not at hand. A connection just opened lists nothing until
+// its first state arrives: meanwhile the link's listing stays, or its
+// projects and chats left the sidebar for seconds after a click on it.
 func (ui *desktopUI) serverGroup(address string) targetGroup {
 	var listing *serverListing
 	active := false
-	if remote := ui.server; remote != nil && remote.client.address.URL == address {
+	remote := ui.server
+	if remote != nil && remote.client.address.URL == address {
 		active = true
+	}
+	if active && remote.shown {
 		listing = &serverListing{name: remote.name, projects: remote.projects, chats: remote.chats, worktrees: remote.worktrees}
-	} else if link := ui.linkTo(address); link != nil && link.answered {
+	} else if link := ui.linkTo(address); link != nil && link.answered { // until the window's own connection answers
 		listing = &link.listing
 	}
 	target := serverTarget(address)
@@ -375,7 +383,7 @@ func (ui *desktopUI) serverSideChats(target projectTarget, chats []remoteapi.Cha
 			status: chat.Status, blocked: chat.Blocked,
 			selected: current != nil && current.server != nil && current.server.client.address.URL == target.id && current.serverID == chat.ID,
 			open:     onServer(func(remote *remoteDesktop) { remote.openChat(chat.ID) }),
-			menu: []menuAction{
+			menu: []menuAction{{label: "Rename", icon: iconRename, run: onServer(func(remote *remoteDesktop) { remote.renameChat(chat) })},
 				{label: "Move to this computer…", icon: theme.ComputerIcon(), run: onServer(func(remote *remoteDesktop) {
 					remote.moveHere(chat.ID, chat.Title, chat.Workspace, chat.Running)
 				})},

@@ -25,7 +25,14 @@ class Notifier(private val context: Context) {
         val updates = NotificationChannel(UPDATES, "Updates", NotificationManager.IMPORTANCE_DEFAULT).apply {
             description = "A new version of 1loop is out"
         }
-        context.getSystemService(NotificationManager::class.java).createNotificationChannels(listOf(channel, updates))
+        val loopy = NotificationChannel(LOOPY, "Loopy", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "Loopy needs you, or tells you something"
+        }
+        val urgent = NotificationChannel(LOOPY_URGENT, "Loopy, urgent", NotificationManager.IMPORTANCE_HIGH).apply {
+            description = "What you asked Loopy to watch and cannot wait"
+            enableVibration(true)
+        }
+        context.getSystemService(NotificationManager::class.java).createNotificationChannels(listOf(channel, updates, loopy, urgent))
     }
 
     /** A chat finished or waits for the user: not while Settings turns these off (#439). */
@@ -82,6 +89,8 @@ class Notifier(private val context: Context) {
 
         const val CHANNEL = "chats"
         const val UPDATES = "updates"
+        const val LOOPY = "loopy"
+        const val LOOPY_URGENT = "loopy_urgent"
         const val SHOW_UPDATE = "io.oneloop.remote.SHOW_UPDATE"
     }
 }

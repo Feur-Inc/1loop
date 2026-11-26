@@ -55,7 +55,9 @@ func (ui *desktopUI) usageSource() usageSource {
 type localUsage struct{ ui *desktopUI }
 
 func (local localUsage) report(_ context.Context, query usage.Query) (usage.Report, error) {
-	return usage.Build(local.ui.usage, local.ui.prices, local.ui.usageNames, query, time.Now()), nil
+	report := usage.Build(local.ui.usage, local.ui.prices, local.ui.usageNames, query, time.Now())
+	report.HideLimits(local.ui.accountDisabled)
+	return report, nil
 }
 
 func (local localUsage) priceTable(context.Context) ([]usage.PriceRow, error) {
@@ -80,6 +82,17 @@ func (ui *desktopUI) usageNames(group, key string) string {
 		return chat.Title
 	}
 	return ""
+}
+
+// accountDisabled says whether a connection is kept but turned off: its
+// limits are not shown on the Usage page.
+func (ui *desktopUI) accountDisabled(id string) bool {
+	for _, conn := range ui.connectionsList {
+		if conn.ID == id {
+			return !conn.Enabled
+		}
+	}
+	return false
 }
 
 // serverUsage is the server's ledger (internal/usage/http.go).
@@ -190,7 +203,7 @@ func (page *usagePage) show(report usage.Report) {
 		usageChart(report),
 		page.groupBar(report.Group),
 		page.rows(report),
-		padded(10, 24, 2, 2, note(fmt.Sprintf("A call costs what its provider reported (OpenRouter), else your price under Prices, else the price its provider lists, else the model's API list price (as of %s); \":free\" models cost nothing. Subscriptions are not billed by the token: their cost is what the same tokens would cost on the API.", report.AsOf))),
+		padded(10, 24, 2, 2, note(fmt.Sprintf("Prices as of %s: the provider's, else yours, else the list.", report.AsOf))),
 	)
 	page.body.Refresh()
 }
@@ -399,7 +412,7 @@ func usageSummary(report usage.Report) fyne.CanvasObject {
 	}
 	lines := container.New(layout.NewCustomPaddedVBoxLayout(10), container.NewGridWithColumns(4, tiles...))
 	if totals.Unpriced > 0 {
-		lines.Add(plainFlow(core.CompactCount(totals.Unpriced)+" tokens are on models with no known price and are not in the cost. Set a price under Prices.", 12.5, colMuted))
+		lines.Add(plainFlow(core.CompactCount(totals.Unpriced)+" tokens are on models with no known price. Set one under Prices.", 12.5, colMuted))
 	}
 	return padded(0, 10, 0, 0, card(padded(14, 14, 16, 16, lines)))
 }
@@ -659,7 +672,7 @@ func (page *usagePage) openPrices() {
 		}
 		add := newRow("Price another model", iconPlus, styleChip, func() { page.editPrice(usage.PriceRow{}, refresh) })
 		body.Objects = []fyne.CanvasObject{
-			note("In US dollars per million tokens. A call is costed at what its provider reported (OpenRouter), else at your price here, else at the price its provider lists (OpenRouter's catalog, or a compatible API that lists prices), else at 1loop's list prices. \":free\" models cost nothing. Your prices apply to past calls too."),
+			note("US dollars per million tokens. Your prices also apply to past calls."),
 			spacer(0, 8), card(items...), padded(10, 0, 0, 0, container.NewHBox(add)),
 		}
 		body.Refresh()
@@ -784,7 +797,7 @@ func (page *usagePage) editPrice(row usage.PriceRow, done func()) {
 		detail = "1loop's price, as shipped."
 	}
 	if row.Model == "" {
-		detail = "A model 1loop has no price for, or one whose price differs for you (a discount, a reseller)."
+		detail = "A model without a price here, or one that differs for you."
 	}
 	content := container.NewVBox(ui.prefs.pageTitle(title, "Prices", nil), note(detail), spacer(0, 8), card(form), problem)
 	ui.prefs.push(settingsFrame{content: content, actions: actions})

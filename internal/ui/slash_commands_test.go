@@ -3,7 +3,10 @@
 package ui
 
 import (
+	"errors"
 	"testing"
+
+	"fyne.io/fyne/v2"
 
 	"1loop/internal/agent"
 )
@@ -46,5 +49,34 @@ func TestMatchCommands(t *testing.T) {
 	}
 	if got := matchCommands(options, ""); len(got) != len(options) {
 		t.Errorf("all commands for /: %+v", got)
+	}
+}
+
+// #453: "/" shows the command menu, also after Escape dismissed it at "/"
+// and the composer was emptied: a dismissal stays for the text it was made
+// on, not for the next "/" typed.
+func TestCommandMenuShowsAgainAfterADismissal(t *testing.T) {
+	ui, _ := perfWindow(t, 4)
+	ui.backend = &agent.App{}
+	ui.cfg.Provider = "claudecode"
+	ui.commandsErr = errors.New("not in this test") // no Claude Code is started
+	type_ := func(text string) {
+		ui.prompt.SetText(text)
+		ui.prompt.OnChanged(text)
+	}
+	shown := func() bool { return ui.commandTray.Visible() }
+
+	type_("/")
+	if !shown() {
+		t.Fatal("/ shows no command menu")
+	}
+	ui.commandMenuKey(&fyne.KeyEvent{Name: fyne.KeyEscape})
+	if shown() {
+		t.Fatal("Escape did not hide the menu")
+	}
+	type_("")
+	type_("/")
+	if !shown() {
+		t.Fatal("/ after Escape at / and an empty composer shows no command menu")
 	}
 }

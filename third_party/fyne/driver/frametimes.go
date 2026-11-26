@@ -25,3 +25,10 @@ var Refreshes atomic.Uint64
 // already shaped: only colours changed. (1loop: a change of accent set the
 // theme again, and every text of the window was shaped again.)
 var KeepFonts bool
+
+// PreloadFonts, when set (by the painter), reads the index of the system's
+// fonts, which the first text measured otherwise waits for: tens to
+// hundreds of milliseconds with many fonts installed. It can be called from
+// any goroutine, once or more. (1loop: read beside the window's creation,
+// not on the interface's thread before the first frame.)
+var PreloadFonts func()

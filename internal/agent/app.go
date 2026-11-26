@@ -116,6 +116,9 @@ type Config struct {
 	// Usage keeps the run's model calls in the usage ledger; nil keeps none.
 	Usage       *UsageTag    `json:"-"`
 	WebSettings *WebSettings `json:"webSettings,omitempty"`
+
+	// Assistant are a host's own tools and prompt for this run (Loopy).
+	Assistant *AssistantTools `json:"-"`
 }
 
 type emitter func(string, any)

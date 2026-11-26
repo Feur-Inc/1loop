@@ -261,9 +261,19 @@ func (c *glCanvas) overlayChanged() {
 }
 
 func (c *glCanvas) paint(size fyne.Size) {
+	c.paintArea(size, nil)
+}
+
+// paintArea paints the canvas, or only what lies in area when it is set
+// (1loop: damage.go): the rest of the frame is the last one, kept.
+func (c *glCanvas) paintArea(size fyne.Size, area *damageArea) {
 	clips := &internal.ClipStack{}
 	if c.Content() == nil {
 		return
+	}
+	if area != nil {
+		// Every clip is within the area, which is cleared alone.
+		c.Painter().StartClipping(clips.Push(area.pos, area.size).Rect())
 	}
 	c.Painter().Clear()
 
@@ -274,6 +284,9 @@ func (c *glCanvas) paint(size fyne.Size) {
 			c.Painter().StartClipping(inner.Rect())
 		}
 		if size.Width <= 0 || size.Height <= 0 { // iconifying on Windows can do bad things
+			return
+		}
+		if area != nil && !area.reaches(obj, pos) {
 			return
 		}
 		c.Painter().Paint(obj, pos, size, clips.Top())
@@ -293,6 +306,9 @@ func (c *glCanvas) paint(size fyne.Size) {
 		}
 	}
 	c.WalkTrees(paint, afterPaint)
+	if area != nil {
+		c.Painter().StopClipping()
+	}
 }
 
 func (c *glCanvas) setContent(content fyne.CanvasObject) {

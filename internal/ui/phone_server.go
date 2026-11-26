@@ -230,7 +230,7 @@ func (ui *desktopUI) startRemote() {
 	mux.HandleFunc("GET /api/chats/{id}/panel/{key}/screen", server.authorized(server.panelScreen))
 	mux.HandleFunc("GET /api/chats/{id}/panel/{key}/stream", server.authorized(server.panelStream))
 	mux.HandleFunc("POST /api/chats/{id}/panel/{key}/input", server.authorized(server.panelInput))
-	server.http = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
+	server.http = remoteapi.NewServer(remoteapi.Harden(mux)) // the limits and headers a headless server has (#518)
 	go server.http.Serve(ln)
 	if udp, err := net.ListenUDP("udp4", &net.UDPAddr{Port: remoteDiscoveryPort}); err == nil {
 		server.udp = udp

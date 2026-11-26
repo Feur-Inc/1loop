@@ -206,25 +206,15 @@ func Main() {
 	// Browsers that do not trust the certificate fail a handshake on every
 	// visit: summed up, so the pairing messages stay readable.
 	errorLog := newHandshakeLog(os.Stderr, time.Hour).Logger()
-	httpServer := &http.Server{
-		Handler:           server.handler,
-		ReadHeaderTimeout: 10 * time.Second,
-		IdleTimeout:       90 * time.Second,
-		MaxHeaderBytes:    32 << 10,
-		TLSConfig:         &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}},
-		ErrorLog:          errorLog,
-	}
+	httpServer := remoteapi.NewServer(server.handler) // the desktop remote's limits
+	httpServer.TLSConfig = &tls.Config{MinVersion: tls.VersionTLS12, Certificates: []tls.Certificate{certificate}}
+	httpServer.ErrorLog = errorLog
 	server.tlsConfig = httpServer.TLSConfig
 	fmt.Fprintf(os.Stderr, "1loop server listening on https://%s\nCertificate SHA-256: %s\nWorkspace: %s\nCommands (in this console, or as \"1loop-server <command>\" from another shell): pair <id> <code>, devices, revoke <number>, ssh\n", listener.Addr(), remoteapi.Fingerprint(certificate), root)
 	var plainServer *http.Server
 	if plain != nil {
-		plainServer = &http.Server{
-			Handler:           server.handler,
-			ReadHeaderTimeout: httpServer.ReadHeaderTimeout,
-			IdleTimeout:       httpServer.IdleTimeout,
-			MaxHeaderBytes:    httpServer.MaxHeaderBytes,
-			ErrorLog:          errorLog,
-		}
+		plainServer = remoteapi.NewServer(server.handler)
+		plainServer.ErrorLog = errorLog
 		server.proxied = true
 		fmt.Fprintf(os.Stderr, "Plain HTTP for a reverse proxy on http://%s: open the proxy's https:// address, not this one\n", plain.Addr())
 		go func() {

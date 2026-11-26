@@ -61,8 +61,7 @@ func (server *headlessServer) networkRoutes(local http.Handler) http.Handler {
 		case strings.HasPrefix(r.URL.Path, "/api/local/"):
 			core.Fail(w, http.StatusForbidden, "Not available over the network")
 		case r.URL.Path == "/api/pair" || r.URL.Path == "/api/pair/confirm" || r.URL.Path == "/api/info":
-			r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
-			w.Header().Set("X-Content-Type-Options", "nosniff")
+			remoteapi.Protect(w, r)
 			mux.ServeHTTP(w, r)
 		default:
 			local.ServeHTTP(w, r)
@@ -108,13 +107,8 @@ func (server *headlessServer) setSharing(w http.ResponseWriter, r *http.Request)
 			return
 		}
 		server.sharingPort = listener.Addr().(*net.TCPAddr).Port
-		shared := &http.Server{
-			Handler:           server.networkRoutes(server.handler),
-			ReadHeaderTimeout: 10 * time.Second,
-			IdleTimeout:       90 * time.Second,
-			MaxHeaderBytes:    32 << 10,
-			TLSConfig:         server.tlsConfig,
-		}
+		shared := remoteapi.NewServer(server.networkRoutes(server.handler))
+		shared.TLSConfig = server.tlsConfig
 		server.sharing = shared
 		go shared.Serve(tls.NewListener(listener, shared.TLSConfig))
 	}

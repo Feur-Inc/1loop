@@ -192,15 +192,7 @@ func (server *headlessServer) routes() http.Handler {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		switch r.URL.Path {
-		case "/api/attachments", "/api/files/upload", "/api/sync/import", "/api/loopy/file":
-			// Files: their handlers set their own limits.
-		case "/api/sync/export":
-			r.Body = http.MaxBytesReader(w, r.Body, 64<<20) // the list of a large project's files
-		default:
-			r.Body = http.MaxBytesReader(w, r.Body, 2<<20)
-		}
-		w.Header().Set("X-Content-Type-Options", "nosniff")
+		remoteapi.Protect(w, r) // the limits and headers the desktop's remote shares
 		if !server.local && crossOrigin(w, r) {
 			return
 		}

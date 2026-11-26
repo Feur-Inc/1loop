@@ -43,7 +43,6 @@ func (server *headlessServer) authorized(next http.HandlerFunc) http.HandlerFunc
 			core.Fail(writer, 401, "This device is not paired with the server")
 			return
 		}
-		writer.Header().Set("Cache-Control", "no-store")
 		next(writer, req)
 	}
 }

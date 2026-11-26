@@ -118,9 +118,7 @@ func newLoopyBubble(text string, mine bool, reaction string) *loopyBubble {
 
 // setText changes what a streaming bubble says.
 func (bubble *loopyBubble) setText(text string) {
-	bubble.text.spans = lineSpans(text)
-	bubble.text.width = 0
-	bubble.text.Refresh()
+	bubble.text.setSpans(lineSpans(text))
 	bubble.row.Refresh()
 }
 

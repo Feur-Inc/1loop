@@ -359,13 +359,14 @@ func (mode *loopyMode) face(state, text string) {
 
 func (mode *loopyMode) buildSidebar() {
 	ui := mode.ui
-	mode.bigFace = newLoopyFace(76, "hello", false, false)
+	mode.bigFace = newLoopyFaceRoom(76, bigFaceHead, "hello", false, false)
 	mode.status = textLine("Here when you need me", 13, colMuted)
 	mode.status.Alignment = fyne.TextAlignCenter
 	name := textLine("Loopy", 15, colText)
 	name.TextStyle = fyne.TextStyle{Bold: true}
 	name.Alignment = fyne.TextAlignCenter
-	hero := container.NewVBox(spacer(0, 8), container.NewCenter(mode.bigFace.image), spacer(0, 6), name, mode.status, spacer(0, 10))
+	hero := container.NewVBox(container.NewCenter(mode.bigFace.image), // its room above takes the top margin
+		spacer(0, 6), name, mode.status, spacer(0, 10))
 
 	mode.waiting = container.NewVBox()
 	mode.tasks = container.NewVBox()

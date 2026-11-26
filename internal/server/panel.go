@@ -23,6 +23,9 @@ import (
 
 // Home panels are scoped to an authorized project, without creating a conversation.
 func (server *headlessServer) panelChatLocked(id string) *serverChat {
+	if id == loopyChat && !server.closing {
+		return server.loopyChatLocked()
+	}
 	if !strings.HasPrefix(id, "home:") {
 		return server.chatLocked(id)
 	}

@@ -18,6 +18,10 @@ import (
 
 const noFolderLabel = "No folder"
 
+// thisComputerLabel names the chats with no folder in the sidebar and the
+// menu: the chats this computer keeps, as the composer's chip says (#437).
+const thisComputerLabel = "This computer"
+
 // scratchBase holds this computer's chat folders, beside the state file.
 func (ui *desktopUI) scratchBase() string {
 	return filepath.Join(filepath.Dir(ui.statePath), "scratch")

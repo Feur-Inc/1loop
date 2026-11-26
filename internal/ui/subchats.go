@@ -296,7 +296,7 @@ func (ui *desktopUI) confirmDeleteSubchat(chat *conversation, text string) {
 	if chat.Subchat != nil && len(folders) == 1 && folders[0] == ui.subchatWorktree(chat) {
 		title += " " + chat.Subchat.Branch
 	} else {
-		title = fmt.Sprintf("Also remove the %s of its subchats", plural(len(folders), "worktree"))
+		title = fmt.Sprintf("Also remove the %s of its subchats", core.Plural(len(folders), "worktree"))
 		if len(folders) == 1 {
 			title = "Also remove its subchat's worktree"
 		}
@@ -438,7 +438,7 @@ func (panel *toolPanel) addSubchats(box *fyne.Container, chat *conversation) {
 	for _, sub := range subs {
 		total += ui.subchatInfo(sub).Used
 	}
-	box.Add(padded(22, 6, 0, 0, container.NewBorder(nil, nil, title, textLine(fmt.Sprintf("%s tokens together", compactTokens(total)), 12.5, colMuted))))
+	box.Add(padded(22, 6, 0, 0, container.NewBorder(nil, nil, title, textLine(fmt.Sprintf("%s tokens together", core.CompactCount(total)), 12.5, colMuted))))
 	for _, sub := range subs {
 		sub := sub
 		info := ui.subchatInfo(sub)
@@ -466,19 +466,6 @@ func (panel *toolPanel) addSubchats(box *fyne.Container, chat *conversation) {
 			padded(1, 0, 12, 8, container.NewVBox(name, textLine(state, 11.5, colMuted))))))
 	}
 	box.Add(layout.NewSpacer())
-}
-
-// compactTokens is a token count at a glance: 950, 12k, 1.2M.
-func compactTokens(n int) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	case n >= 10_000:
-		return fmt.Sprintf("%dk", n/1000)
-	case n >= 1000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	}
-	return fmt.Sprint(n)
 }
 
 // openSubchat opens a subchat from its parent's start call: on this

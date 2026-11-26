@@ -410,17 +410,6 @@ func Money(cost float64) string {
 	return fmt.Sprintf("$%.0f", cost)
 }
 
-// Count writes a number of tokens: 950, 12.3k, 4.1M.
-func Count(tokens int) string {
-	switch {
-	case tokens < 1000:
-		return fmt.Sprint(tokens)
-	case tokens < 1_000_000:
-		return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(tokens)/1e3), ".0") + "k"
-	}
-	return strings.TrimSuffix(fmt.Sprintf("%.1f", float64(tokens)/1e6), ".0") + "M"
-}
-
 // priceDetail says how a model's calls are costed.
 func priceDetail(prices *Prices, record Record) string {
 	switch prices.PriceSource(record) {

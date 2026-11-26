@@ -232,6 +232,7 @@ func (ui *desktopUI) newWindowView(cfg agent.Config, size fyne.Size) *desktopUI 
 	view.window.SetCloseIntercept(view.closeWindow)
 	view.registerShortcuts()
 	view.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { view.focused().copySelection() })
+	view.window.Canvas().SetOnTypedKey(view.selectionKey)
 	view.updateHeader()
 	view.renderSidebar(view.sidebarGroups())
 	view.adoptModels(ui.mainView())
@@ -376,5 +377,5 @@ func (ui *desktopUI) adoptModels(from *desktopUI) {
 	}
 	ui.model.SetSelected(selected)
 	ui.send.Enable()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 }

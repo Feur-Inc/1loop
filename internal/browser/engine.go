@@ -324,6 +324,8 @@ type Page struct {
 	closeOnce    sync.Once
 	OnPopup      func(target.ID, string)
 	OnClosed     func()
+	requests     *requestLog // kept when Record was called (requests.go)
+	used         time.Time   // the user's last input
 }
 
 func NewBrowserPage(session *Session, info Info) *Page {
@@ -496,6 +498,7 @@ func (browser *Page) Start() {
 }
 
 func (browser *Page) event(event any) {
+	browser.record(event)
 	switch e := event.(type) {
 	case *page.EventScreencastFrame:
 		// Event handlers must not issue synchronous CDP commands: that would
@@ -647,6 +650,7 @@ func (browser *Page) Input(action chromedp.Action) {
 		}
 	}
 	browser.inputs = append(browser.inputs, action)
+	browser.used = time.Now()
 	browser.inputMu.Unlock()
 	browser.wakeInput()
 }

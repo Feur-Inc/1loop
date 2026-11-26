@@ -6,14 +6,21 @@ import (
 	"archive/tar"
 	"bytes"
 	"context"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
 	"crypto/sha256"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/hex"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"1loop/internal/agent"
 )
@@ -204,6 +211,32 @@ func TestCopyOverHTTPS(t *testing.T) {
 	wrong := &Peer{URL: server.URL, Token: "t", Fingerprint: strings.Repeat("0", 64)}
 	if _, err := Copy(context.Background(), wrong, "proj", phone, "proj", bases, true); err == nil {
 		t.Fatal("another certificate is refused")
+	}
+}
+
+// A paired engine's certificate past its dates still connects: the server
+// never renews it, since a new one would unpair every device (#517).
+func TestPinnedPeerIgnoresDates(t *testing.T) {
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().AddDate(-2, 0, 0), NotAfter: time.Now().AddDate(-1, 0, 0)}
+	raw, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := httptest.NewUnstartedServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	server.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{raw}, PrivateKey: key}}}
+	server.StartTLS()
+	defer server.Close()
+	sum := sha256.Sum256(raw)
+	peer := &Peer{URL: server.URL, Token: "t", Fingerprint: hex.EncodeToString(sum[:])}
+	response, err := peer.request(context.Background(), "GET", "/", nil, "")
+	if err != nil {
+		t.Fatalf("expired pinned certificate: %v", err)
+	}
+	response.Body.Close()
+	wrong := &Peer{URL: server.URL, Token: "t", Fingerprint: strings.Repeat("0", 64)}
+	if _, err := wrong.request(context.Background(), "GET", "/", nil, ""); err == nil || !strings.Contains(err.Error(), "certificate changed") {
+		t.Fatalf("another fingerprint: %v", err)
 	}
 }
 

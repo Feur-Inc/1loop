@@ -15,6 +15,7 @@ import (
 	"fyne.io/fyne/v2/layout"
 
 	"1loop/internal/agent"
+	"1loop/internal/core"
 )
 
 // contextUsage is a chat's breakdown (the new chat's when chat is nil).
@@ -89,7 +90,7 @@ func contextUsageView(usage *agent.ContextUsage, state *contextUsageState, tools
 	header := newRow("Context", chevron, styleChip, func() { state.closed = !state.closed; changed() })
 	header.iconAfter = true
 	total := container.NewBorder(nil, nil, textLine(fmt.Sprintf("%d%% used", min(100, usage.Used*100/window)), 13, colText), nil,
-		container.NewHBox(layout.NewSpacer(), textLine(agent.Tokens(usage.Used)+" / "+agent.Tokens(usage.Window), 12, colMuted)))
+		container.NewHBox(layout.NewSpacer(), textLine(core.CompactCount(usage.Used)+" / "+core.CompactCount(usage.Window), 12, colMuted)))
 	track := canvas.NewRectangle(colBorder)
 	track.CornerRadius = 2
 	segments := []fyne.CanvasObject{track}
@@ -118,7 +119,7 @@ func contextUsageView(usage *agent.ContextUsage, state *contextUsageState, tools
 			name.Color = colMuted
 		}
 		return container.NewBorder(nil, nil, container.NewHBox(container.NewCenter(swatch), name), nil,
-			container.NewHBox(layout.NewSpacer(), textLine(agent.Tokens(category.Tokens), 12, colMuted), sized(46, container.NewHBox(layout.NewSpacer(), textLine(share, 12, colMuted)))))
+			container.NewHBox(layout.NewSpacer(), textLine(core.CompactCount(category.Tokens), 12, colMuted), sized(46, container.NewHBox(layout.NewSpacer(), textLine(share, 12, colMuted)))))
 	}
 	rows := container.New(layout.NewCustomPaddedVBoxLayout(4))
 	deferred := container.New(layout.NewCustomPaddedVBoxLayout(4))
@@ -166,7 +167,7 @@ func contextUsageView(usage *agent.ContextUsage, state *contextUsageState, tools
 			if !tool.Loaded {
 				name.Color = colMuted
 			}
-			names.Add(container.NewBorder(nil, nil, name, textLine(agent.Tokens(tool.Tokens), 11.5, colMuted)))
+			names.Add(container.NewBorder(nil, nil, name, textLine(core.CompactCount(tool.Tokens), 11.5, colMuted)))
 		}
 		// The footer does not scroll with the tasks: a long list scrolls on
 		// its own instead of pushing the panel's top out.

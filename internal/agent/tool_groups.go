@@ -33,7 +33,7 @@ type toolGroup struct {
 const appToolGroup = "app_1loop"
 
 func appToolDefinitions() []map[string]any {
-	return []map[string]any{memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), chatsToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition()}
+	return []map[string]any{memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), chatsToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition(), goalToolDefinitions()[1]}
 }
 
 // isAppTool: a tool of appToolGroup.
@@ -94,13 +94,19 @@ func (cfg Config) toolAvailable(name string) bool {
 	if name == "chats" {
 		return cfg.Chats != nil
 	}
+	if name == "computer_use" { // drives this computer's screen: off on an SSH machine (machine.go)
+		return cfg.Computer != nil && cfg.MachineID == ""
+	}
+	if isGoalTool(name) { // a chat that keeps a goal (goal.go)
+		return cfg.Goal != nil
+	}
 	switch groupOfTool(name) {
 	case "panel_browser":
 		return cfg.Browser != nil
 	case "panel_terminal":
 		return cfg.Terminal != nil
 	case "desktop_computer":
-		return cfg.Computer != nil
+		return cfg.Computer != nil && cfg.MachineID == ""
 	case "local_phone":
 		return cfg.Phone != nil
 	case "local_debian":

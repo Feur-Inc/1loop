@@ -120,6 +120,8 @@ func (panel *toolPanel) stateOf(chat *conversation) *panelState {
 			opened = panelTab{kind: "tool", chat: chat, index: tab.Index}
 		case "todo":
 			opened = panel.todoTab(chat)
+		case "commands":
+			opened = panel.backgroundTab(chat)
 		case "changes":
 			opened = panel.changesTab(chat.Config.Workspace, chat.Config.MachineID)
 		case "files":

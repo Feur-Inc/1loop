@@ -453,3 +453,55 @@ func startMachineBackground(ctx context.Context, tasks *BackgroundTasks, machine
 	}
 	return backgroundStarted(id, command), nil
 }
+
+// Output is a task's state and the end of its output, at most limit bytes
+// cut at a line start, for the side panel's Background tab.
+func (tasks *BackgroundTasks) Output(id string, limit int) (BackgroundTaskInfo, string, bool) {
+	if tasks == nil {
+		return BackgroundTaskInfo{}, "", false
+	}
+	tasks.mu.Lock()
+	task := tasks.find(id)
+	tasks.mu.Unlock()
+	if task == nil {
+		return BackgroundTaskInfo{}, "", false
+	}
+	tasks.mu.Lock()
+	info := task.info
+	tasks.mu.Unlock()
+	task.output.mu.Lock()
+	text := ""
+	if task.output.buffer.total <= limit {
+		text = task.output.buffer.String()
+	} else {
+		text = task.output.buffer.last(limit) // without making the whole of it
+		if cut := strings.IndexByte(text, '\n'); cut >= 0 && cut < len(text)-1 {
+			text = text[cut+1:]
+		}
+	}
+	task.output.mu.Unlock()
+	text = strings.ToValidUTF8(text, "")
+	return info, text, true
+}
+
+// BackgroundTaskOf is the background task a tool call is about: the one a
+// command started (its result says "Started background task N"), or the
+// one background_task followed. "" when none.
+func BackgroundTaskOf(tool, args, result string) string {
+	if tool == "background_task" {
+		var call struct{ ID *string }
+		if json.Unmarshal([]byte(args), &call) == nil && call.ID != nil {
+			return *call.ID
+		}
+		return ""
+	}
+	rest, ok := strings.CutPrefix(result, "Started background task ")
+	if !ok {
+		return ""
+	}
+	id, _, ok := strings.Cut(rest, ":")
+	if !ok || id == "" || strings.ContainsAny(id, " \n") {
+		return ""
+	}
+	return id
+}

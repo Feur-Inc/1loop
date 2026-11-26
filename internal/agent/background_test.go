@@ -162,3 +162,50 @@ func TestBackgroundWait(t *testing.T) {
 		t.Fatal("no wake after a wait that gave up")
 	}
 }
+
+func TestBackgroundTaskOf(t *testing.T) {
+	cases := []struct{ tool, args, result, want string }{
+		{"shell", `{"command":"npm run dev","run_in_background":true}`, "Started background task 3: $ npm run dev\nIt has no time limit.", "3"},
+		{"shell", `{"command":"ls"}`, "exit 0\nREADME.md", ""},
+		{"background_task", `{"action":"output","id":"7"}`, "7 · running", "7"},
+		{"background_task", `{"action":"list","id":null}`, "", ""},
+	}
+	for _, c := range cases {
+		if got := BackgroundTaskOf(c.tool, c.args, c.result); got != c.want {
+			t.Errorf("%s %s: %q, want %q", c.tool, c.args, got, c.want)
+		}
+	}
+}
+
+// The Background tab reads a task's state and the end of its output, cut at
+// a line start (#597).
+func TestBackgroundOutput(t *testing.T) {
+	tasks := &BackgroundTasks{}
+	dir := t.TempDir()
+	command := "for i in $(seq 1 300); do echo line-$i; done"
+	if runtime.GOOS == "windows" {
+		command = `1..300 | ForEach-Object { "line-$_" }`
+	}
+	result, err := startBackground(context.Background(), tasks, dir, dir, command, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	id := BackgroundTaskOf("shell", "{}", result)
+	if id == "" {
+		t.Fatalf("no task in %q", result)
+	}
+	tasks.mu.Lock()
+	task := tasks.find(id)
+	tasks.mu.Unlock()
+	<-task.done
+	info, out, ok := tasks.Output(id, 200)
+	if !ok || info.Running || info.ExitCode != 0 {
+		t.Fatalf("task %+v ok %v", info, ok)
+	}
+	if !strings.HasSuffix(strings.TrimSpace(out), "line-300") || strings.HasPrefix(out, "ine") || len(out) > 200 {
+		t.Fatalf("the end of the output, cut at a line: %q", out)
+	}
+	if _, _, ok := tasks.Output("nope", 200); ok {
+		t.Fatal("an unknown task has an output")
+	}
+}

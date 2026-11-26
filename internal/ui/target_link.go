@@ -4,8 +4,8 @@ package ui
 
 // Each paired server's projects and chats stay in the sidebar while the
 // window works on another target (#359, #383): a link per server reads
-// them every few seconds, which also says whether it answers. While the
-// window works on a server, its own connection does it (remote_desktop.go),
+// them every few seconds, which also says whether it answers. While a
+// pane of a window works on a server, its connection does it (remote_desktop.go),
 // and that server's link waits.
 
 import (
@@ -84,12 +84,12 @@ func (ui *desktopUI) linkTo(address string) *serverLink {
 }
 
 // followServer reads the server's projects and chats until the link ends,
-// but not while the window works on the server.
+// but not while a pane of a window works on the server.
 func (ui *desktopUI) followServer(ctx context.Context, link *serverLink, client *remoteClient) {
 	target := serverTarget(link.address.URL)
 	for ctx.Err() == nil {
 		var inUse bool
-		fyne.DoAndWait(func() { inUse = ui.server != nil && ui.server.client.address.URL == link.address.URL })
+		fyne.DoAndWait(func() { inUse = ui.serverInUse(link.address.URL) != nil })
 		wait := linkEvery
 		if !inUse {
 			listing, err := readServerListing(ctx, client)
@@ -100,7 +100,7 @@ func (ui *desktopUI) followServer(ctx context.Context, link *serverLink, client 
 				wait = linkRetry
 			}
 			fyne.Do(func() {
-				if !slices.Contains(ui.links, link) || ui.server != nil && ui.server.client.address.URL == link.address.URL {
+				if !slices.Contains(ui.links, link) || ui.serverInUse(link.address.URL) != nil {
 					return
 				}
 				if err != nil {

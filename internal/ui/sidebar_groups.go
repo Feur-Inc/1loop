@@ -16,6 +16,7 @@ import (
 	"fyne.io/fyne/v2/theme"
 
 	"1loop/internal/agent"
+	"1loop/internal/platform"
 	registry "1loop/internal/settings"
 )
 
@@ -396,7 +397,9 @@ func (ui *desktopUI) reuseObject(key string, make func() fyne.CanvasObject) fyne
 }
 
 func (ui *desktopUI) addSide(key string, object fyne.CanvasObject) {
-	ui.sideGlide.key(object, key)
+	if !ui.sideGlide.key(object, key) {
+		platform.Devf("ui", "sidebar: %s is listed twice, one of its rows is not drawn (#600)", key)
+	}
 	ui.projectList.Add(object)
 }
 
@@ -587,7 +590,7 @@ func (ui *desktopUI) addSubchatRows(subs []sideChat, depth int, trunk treeTrunk)
 		subRow.badge = subchatBadge(sub.subchatState())
 		// Its own key for reuse, its guide's depth and line in it: a row
 		// moved in the tree is made again with the guide of its new place.
-		ui.addSide("chat:"+sub.id, ui.reuseRow(fmt.Sprintf("sub:%s/%d/%d", sub.id, depth, own), subRow, subchatPlace(depth, own), func(anchor fyne.CanvasObject) *sheet {
+		ui.addSide(chatKey(sub.target, sub.id), ui.reuseRow(fmt.Sprintf("sub:%s/%d/%d", chatKey(sub.target, sub.id), depth, own), subRow, subchatPlace(depth, own), func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, sub.menu)
 		}))
 		below := own // under it, the line runs on only if more subchats follow

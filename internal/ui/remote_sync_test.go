@@ -172,6 +172,45 @@ func TestServerStateOlderThanEventsKeepsThem(t *testing.T) {
 	}
 }
 
+// A chats event that comes before the first state but is newer than it
+// (a chat made while the state was on its way) was dropped, as the state
+// was to bring it: that state did not, and the chat was missing from the
+// sidebar until the next chats event (#600).
+func TestServerChatsEventBeforeFirstState(t *testing.T) {
+	ui, remote, _ := serverWindow(t, nil)
+	remote.live.answered, remote.chats = false, nil
+	chats, _ := json.Marshal(map[string]any{"chats": []remoteapi.Chat{{ID: "c3", Title: "Made meanwhile"}, {ID: "c1", Title: "First"}}})
+	remote.apply(serverEvent{"chats", 50, string(chats)})
+	projects := []string{}
+	remote.applyState(remoteState{Name: "box", Chats: []remoteapi.Chat{{ID: "c1", Title: "First"}}, Projects: &projects},
+		remoteChatRead{changed: true, seq: 40}, nil)
+	if group := ui.serverGroup(remote.client.address.URL); len(group.chats) != 2 {
+		t.Fatalf("the chat of the newer event is missing: %+v", remote.chats)
+	}
+	remote.applyState(remoteState{Name: "box", Chats: []remoteapi.Chat{{ID: "c1", Title: "First"}}, Projects: &projects},
+		remoteChatRead{changed: true, seq: 60}, nil)
+	if len(remote.chats) != 1 {
+		t.Fatalf("a newer state was not applied: %+v", remote.chats)
+	}
+}
+
+// The server's events are numbered from 1 again when it restarts. The
+// window kept the last numbers it saw, so once connected again every read
+// of the state seemed older than its events and was not applied: the
+// chats made while it was away were missing from the sidebar (#600).
+func TestServerStateAfterServerRestart(t *testing.T) {
+	ui, remote, _ := serverWindow(t, nil)
+	chats, _ := json.Marshal(map[string]any{"chats": []remoteapi.Chat{{ID: "c1", Title: "First"}}})
+	remote.apply(serverEvent{"chats", 500, string(chats)})
+	remote.eventsConnected() // the server restarted, the window connects again
+	projects := []string{}
+	remote.applyState(remoteState{Name: "box", Chats: []remoteapi.Chat{{ID: "c4", Title: "Made while away"}, {ID: "c1", Title: "First"}}, Projects: &projects},
+		remoteChatRead{changed: true, seq: 3}, nil)
+	if group := ui.serverGroup(remote.client.address.URL); len(group.chats) != 2 {
+		t.Fatalf("the state of the restarted server was not applied: %+v", remote.chats)
+	}
+}
+
 // A server chat opened before its items came shows a light placeholder,
 // not the chat shown before nor an empty page, until they come (#591).
 func TestServerChatPlaceholderUntilItsItems(t *testing.T) {

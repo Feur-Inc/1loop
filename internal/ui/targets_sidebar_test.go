@@ -7,6 +7,7 @@ import (
 	"slices"
 	"testing"
 
+	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/test"
 
@@ -108,8 +109,84 @@ func TestSidebarKeepsAServerWhileItsConnectionOpens(t *testing.T) {
 	wantListed(t, ui, "api", "Server chat")
 
 	// Its state in: its own listing.
-	ui.server.shown, ui.server.name = true, "box"
+	ui.server.shown, ui.server.live.answered, ui.server.name = true, true, "box"
 	ui.server.projects, ui.server.chats = []string{"/srv/api", "/srv/web"}, []remoteapi.Chat{{ID: "s1", Title: "Server chat", Workspace: "/srv/api"}}
 	ui.renderChats()
 	wantListed(t, ui, "api", "web", "Server chat")
+}
+
+// A project copied to a server keeps its chats' IDs (projectsync): the
+// same ID is then this computer's chat and the server's. Their rows shared
+// one key, so from the second rendering on they shared one row, drawn at
+// the second place only: the first chat was gone, an empty gap where it
+// was (#600).
+func TestSidebarSameChatIDOnAServer(t *testing.T) {
+	ui := sidebarUI(t)
+	ui.server = &remoteDesktop{parent: ui, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: "https://box.lan:47101"}}, name: "box",
+		projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "here", Title: "Fix the parser, on the server", Workspace: "/srv/api"}}, convs: map[string]*conversation{}}
+	for range 2 { // the rows are reused from the second rendering on
+		ui.renderChats()
+	}
+	wantListed(t, ui, "Fix the parser", "Fix the parser, on the server")
+	seen := map[fyne.CanvasObject]bool{}
+	for _, object := range ui.projectList.Objects {
+		if seen[object] {
+			t.Errorf("%q is listed twice", firstRow(object).text)
+		}
+		seen[object] = true
+	}
+	keys := map[string]bool{}
+	for _, key := range ui.sideGlide.keys {
+		if keys[key] {
+			t.Errorf("two rows have the key %q: the glide puts them at one place", key)
+		}
+		keys[key] = true
+	}
+}
+
+// A server's chat with no folder runs in a folder the server made for it:
+// it is listed under the server's Other chats, not as a project of that
+// folder's name, nor under This computer.
+func TestSidebarServerChatWithNoFolder(t *testing.T) {
+	ui := sidebarUI(t)
+	chats := []remoteapi.Chat{{ID: "q", Title: "Quick question", Workspace: "/data/scratch/x600", Scratch: true}}
+	projects := serverProjectList("/srv/api", nil, chats, nil)
+	if slices.Contains(projects, "/data/scratch/x600") {
+		t.Errorf("its folder is a project of the server: %q", projects)
+	}
+	ui.server = &remoteDesktop{parent: ui, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: "https://box.lan:47101"}}, name: "box",
+		projects: projects, chats: chats, convs: map[string]*conversation{}}
+	ui.renderChats()
+	wantListed(t, ui, "Other chats", "Quick question")
+	if slices.Contains(sidebarTexts(ui), thisComputerLabel) {
+		t.Errorf("a server's chat is listed under %s: %q", thisComputerLabel, sidebarTexts(ui))
+	}
+	if slices.Contains(sidebarTexts(ui), "x600") {
+		t.Errorf("its folder is listed as a project: %q", sidebarTexts(ui))
+	}
+}
+
+// A pane of the window works on a server while the other pane, on this
+// computer, has the focus: the sidebar shows the focused pane, and it
+// listed the server's chats as the link last read them, which stops
+// reading while a pane works on that server. A chat made on the server
+// since was missing (#600).
+func TestSidebarServerChatsFromTheOtherPane(t *testing.T) {
+	ui := sidebarUI(t)
+	const address = "https://box.lan:47101"
+	old := remoteapi.Chat{ID: "s1", Title: "Server chat", Workspace: "/srv/api"}
+	ui.links = []*serverLink{{address: serverAddress{URL: address}, answered: true,
+		listing: serverListing{name: "box", projects: []string{"/srv/api"}, chats: []remoteapi.Chat{old}}}}
+	ui.server = &remoteDesktop{parent: ui, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: address}}, name: "box",
+		projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "s2", Title: "Made since", Workspace: "/srv/api"}, old}, convs: map[string]*conversation{}}
+	right := &desktopUI{desktopApp: ui.desktopApp}
+	ui.tree = &splitNode{pane: ui}
+	ui.tree.splitWith(right, false, 0.5)
+	right.shareWindow(ui)
+	ui.focus = right
+	if right.serverInUse(address) != ui.server {
+		t.Error("the server is not seen in use: its link goes on reading it")
+	}
+	ui.renderChats()
+	wantListed(t, ui, "api", "Server chat", "Made since")
 }

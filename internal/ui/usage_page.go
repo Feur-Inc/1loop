@@ -8,13 +8,17 @@ package ui
 // time) with arrows to move it, its total and the month's pace, the last 30
 // days, then the period cut by model, connection, project, branch or chat.
 // A chat opens its turns. The page reads this computer's ledger, or, while
-// a server's chats are on screen, the server's through its API.
+// a server's chats are on screen, the server's through its API, with a
+// switch back to this computer's.
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"image/color"
 	"math"
+	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,6 +28,7 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/core"
@@ -44,7 +49,7 @@ type usageSource interface {
 }
 
 func (ui *desktopUI) usageSource() usageSource {
-	if ui.server != nil {
+	if ui.server != nil && !ui.usageHere {
 		return serverUsage{ui.server}
 	}
 	return localUsage{ui}
@@ -116,6 +121,7 @@ func (server serverUsage) setPrice(ctx context.Context, model string, price *usa
 type usagePage struct {
 	ui      *desktopUI
 	source  usageSource
+	where   *fyne.Container // in a server window: whose ledger, the server's or this computer's
 	body    *fyne.Container
 	loading int // the latest load: an older answer is dropped
 }
@@ -134,11 +140,34 @@ func openUsage(statePath string) (*usage.Ledger, *usage.Prices) {
 }
 
 func (ui *desktopUI) usageSettings() fyne.CanvasObject {
-	page := &usagePage{ui: ui, source: ui.usageSource(), body: container.NewVBox()}
+	page := &usagePage{ui: ui, where: container.NewVBox(), body: container.NewVBox()}
 	if ui.usageQuery.Group == "" {
 		ui.usageQuery = usage.Query{Period: "month", Group: "model"}
 	}
 	prices := newRow("Prices", iconPencil, styleChip, page.openPrices)
+	page.pick()
+	return container.NewVBox(ui.prefs.pageTitle("Usage", "", prices), page.where, page.body)
+}
+
+// pick shows the ledger chosen. In a server window it is the server's or
+// this computer's, with a switch and a line saying which.
+func (page *usagePage) pick() {
+	ui := page.ui
+	page.source = ui.usageSource()
+	page.where.Objects, page.body.Objects = nil, nil
+	if ui.server != nil {
+		name := cmp.Or(ui.server.name, serverName(ui.server.client.address.URL))
+		server := newRow(name, iconBrowser, styleChip, func() { ui.usageHere = false; page.pick() })
+		here := newRow("This computer", theme.ComputerIcon(), styleChip, func() { ui.usageHere = true; page.pick() })
+		server.SetSelected(!ui.usageHere)
+		here.SetSelected(ui.usageHere)
+		about := "The chats run on the server " + name + ", and its accounts' subscription limits."
+		if ui.usageHere {
+			about = "The chats run on this computer, and its accounts' subscription limits. The server's are under " + name + "."
+		}
+		page.where.Objects = []fyne.CanvasObject{padded(0, 4, 0, 0, container.NewHBox(server, here)), padded(0, 10, 2, 2, plainFlow(about, 12.5, colMuted))}
+	}
+	page.where.Refresh()
 	page.load()
 	if _, local := page.source.(localUsage); local {
 		// The subscriptions' windows as they are now, for their pace; a
@@ -149,7 +178,6 @@ func (ui *desktopUI) usageSettings() fyne.CanvasObject {
 			}
 		}
 	}
-	return container.NewVBox(ui.prefs.pageTitle("Usage", "", prices), page.body)
 }
 
 // load asks for the report of ui.usageQuery and shows it.
@@ -173,13 +201,22 @@ func (page *usagePage) load() {
 				return
 			}
 			if err != nil {
-				page.body.Objects = []fyne.CanvasObject{note("The server's usage could not be read: " + err.Error())}
+				page.body.Objects = []fyne.CanvasObject{note(serverUsageProblem(err))}
 				page.body.Refresh()
 				return
 			}
 			page.show(report)
 		})
 	}()
+}
+
+// serverUsageProblem says why the server's usage could not be read.
+func serverUsageProblem(err error) string {
+	var refused remoteError
+	if errors.As(err, &refused) && (refused.status == http.StatusNotFound || refused.status == http.StatusMethodNotAllowed) {
+		return "This server is too old to show its usage: update it"
+	}
+	return "The server's usage could not be read: " + err.Error()
 }
 
 func (page *usagePage) change(edit func(query *usage.Query)) {

@@ -263,6 +263,7 @@ type remoteDesktop struct {
 	meta             remoteapi.Meta
 	models           []remoteapi.Model
 	accounts         []remoteapi.Account
+	limits           remoteLimits // the accounts' usage limits (remote_limits.go)
 	defaultPresets   bool
 	model, effort    string // the server's defaults, for a new chat
 	tier             string // and its speed
@@ -714,6 +715,7 @@ func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat
 	if !first && slices.Equal(remote.chats, chats) && slices.Equal(remote.projects, projects) {
 		return
 	}
+	remote.limits.noteTurns(remote.chats, chats)
 	remote.chats, remote.projects = chats, projects
 	for _, chat := range chats {
 		if conv := remote.convs[chat.ID]; conv != nil && conv.Title != chat.Title {

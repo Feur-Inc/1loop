@@ -27,6 +27,9 @@ var (
 	// elementGlasses are the long-lived blurred backgrounds, synced on each
 	// theme change.
 	elementGlasses []*elementGlass
+	// onBlurSync runs after elementGlasses sync, for dynamic blurred elements
+	// (such as Loopy's message bubbles) that manage their own lifetime.
+	onBlurSync []func()
 )
 
 // elementOpacity is how opaque an element's own colour stays over its blur
@@ -85,6 +88,9 @@ func blurBehind(element string, fill *canvas.Rectangle, base *color.NRGBA) fyne.
 func syncElementGlasses() {
 	for _, glass := range elementGlasses {
 		glass.sync()
+	}
+	for _, hook := range onBlurSync {
+		hook()
 	}
 }
 

@@ -2,9 +2,9 @@
 
 package ui
 
-// Settings → Connections while a server's chats are on screen: the
-// server's accounts (internal/server: /api/connections), which its chats
-// use. Their keys stay on the server: the page only says one is saved, and
+// A server's Connections page (Settings → Servers, and the browser
+// client's Models & accounts): the server's accounts (internal/server:
+// /api/connections), which its chats use. Their keys stay on the server: the page only says one is saved, and
 // sends a new one when it is typed.
 
 import (
@@ -43,15 +43,15 @@ func serverConnectionTypes(chatGPTSignIn bool) []string {
 	return types
 }
 
-func (remote *remoteDesktop) connectionSettings() fyne.CanvasObject {
-	ui := remote.parent
+// connectionSettings is the server's connections, under the page's head.
+func (remote *remoteDesktop) connectionSettings(head serverHead) fyne.CanvasObject {
 	content := container.NewStack(note("Loading the server's connections…"))
 	add := newRow("Add connection", iconPlus, stylePrimary, func() {
 		remote.connectionEditor(serverConnection{Connection: agent.Connection{Name: "New connection", Provider: "compatible", Enabled: true, AllModels: true}})
 	})
 	add.Hide()
-	page := container.NewVBox(ui.prefs.pageTitle("Connections", "", container.NewCenter(add)),
-		padded(0, 10, 2, 0, plainFlow("The server's accounts: chats on "+remote.name+" use the models of every enabled one. Their keys stay on the server.", 13, colMuted)),
+	page := container.NewVBox(head(container.NewCenter(add)),
+		padded(0, 10, 2, 0, plainFlow("The models of every enabled one are offered. Keys stay on the server.", 13, colMuted)),
 		content)
 	go func() {
 		ctx, cancel := context.WithTimeout(remote.ctx, 20*time.Second)
@@ -64,11 +64,8 @@ func (remote *remoteDesktop) connectionSettings() fyne.CanvasObject {
 		fyne.Do(func() {
 			remote.chatGPTSignIn = list.ChatGPTSignIn
 			switch {
-			case err != nil && strings.HasPrefix(err.Error(), "404"): // an older server: its Default presets only
+			case olderServer(err) || err != nil && strings.HasPrefix(err.Error(), "404"): // an older server: its Default presets only
 				content.Objects = []fyne.CanvasObject{remote.defaultPresetSettings()}
-				page.Objects = []fyne.CanvasObject{content}
-				page.Refresh()
-				return
 			case err != nil:
 				content.Objects = []fyne.CanvasObject{note(err.Error())}
 			default:
@@ -141,7 +138,7 @@ func (remote *remoteDesktop) saveConnection(body map[string]any, done func(error
 			if err != nil {
 				remote.parent.notice("Connections", err.Error())
 			}
-			remote.parent.prefs.show("Connections")
+			remote.parent.prefs.show(remote.settingsPage("Connections"))
 		})
 	}()
 }

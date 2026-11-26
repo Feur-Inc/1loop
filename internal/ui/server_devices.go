@@ -2,10 +2,10 @@
 
 package ui
 
-// Unpairing (#428), in Settings → General: Forget on a paired server
+// Unpairing (#428): Forget on a paired server, in Settings → General,
 // unpairs this device there (its token stops working) before forgetting the
-// server here, and the server in use lists the devices paired with it, each
-// with Remove. Both ask first. The desktop and the browser client share
+// server here, and each server's Devices page (Settings → Servers) lists
+// the devices paired with it, each with Remove. Both ask first. The desktop and the browser client share
 // this; the server's side is internal/server/security.go.
 
 import (
@@ -97,17 +97,18 @@ func (ui *desktopUI) dropServer(address string) {
 		forgetServerAddress(address)
 		ui.linkServers()
 	}
-	ui.reshowGeneral()
+	ui.reshowGeneral(address)
 }
 
-// reshowGeneral redraws Settings → General when it is on screen.
-func (ui *desktopUI) reshowGeneral() {
-	if ui.prefs != nil && ui.prefs.at("General") {
-		ui.prefs.show("General")
+// reshowGeneral redraws Settings → General when it is on screen, and leaves
+// the pages of a server just forgotten for it.
+func (ui *desktopUI) reshowGeneral(forgotten string) {
+	if view := ui.prefs; view != nil && (view.at("General") || view.open && view.server == forgotten) {
+		view.show("General")
 	}
 }
 
-// serverDevicesCard lists the devices paired with the server in use, each
+// serverDevicesCard lists the devices paired with a server, each
 // with Remove; this device's own Remove forgets the server. A removal
 // reloads the list in place, where the page stays scrolled.
 func (ui *desktopUI) serverDevicesCard(remote *remoteDesktop) fyne.CanvasObject {
@@ -124,7 +125,11 @@ func (ui *desktopUI) serverDevicesCard(remote *remoteDesktop) fyne.CanvasObject 
 				}
 				var rows []fyne.CanvasObject
 				if err != nil {
-					rows = append(rows, settingRow("The paired devices cannot be listed", err.Error(), nil))
+					detail := err.Error()
+					if olderServer(err) {
+						detail = olderText(remote)
+					}
+					rows = append(rows, settingRow("The paired devices cannot be listed", detail, nil))
 				}
 				for _, device := range devices {
 					rows = append(rows, ui.serverDeviceRow(remote, device, load))

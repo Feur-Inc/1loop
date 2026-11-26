@@ -542,7 +542,7 @@ fun ChatScreen(app: RemoteApp) {
     SharedFilesDialog(app) // files shared to 1loop from another app
     val page = app.repositoryOpen?.let { ChatPage("repository", it) }
         ?: if (app.searchOpen) ChatPage("search")
-        else if (!app.settingsOpen) ChatPage("chat")
+        else if (!app.settingsOpen) ChatPage(if (app.loopyOpen) "loopy" else "chat")
         else if (app.extensionsOpen) ChatPage("extensions")
         else if (app.linuxOpen) ChatPage("linux")
         else if (app.usageOpen) ChatPage("usage")
@@ -564,6 +564,7 @@ fun ChatScreen(app: RemoteApp) {
             "usage" -> UsageScreen(app) { app.usageOpen = false }
             "settings" -> MobileSettings(app) { app.settingsOpen = false }
             "search" -> SearchScreen(app) { app.searchOpen = false }
+            "loopy" -> LoopyScreen(app)
             else -> ChatMain(app)
         }
     }
@@ -581,7 +582,7 @@ fun ChatScreen(app: RemoteApp) {
 
 /** A page of the connected app: the chat, Settings or one of its pages, a project's repository. */
 private data class ChatPage(val name: String, val project: String? = null) {
-    val depth get() = when (name) { "chat" -> 0; "settings", "repository", "search" -> 1; else -> 2 }
+    val depth get() = when (name) { "chat", "loopy" -> 0; "settings", "repository", "search" -> 1; else -> 2 }
 }
 
 @Composable

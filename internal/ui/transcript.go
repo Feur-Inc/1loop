@@ -1396,6 +1396,7 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		}
 		ui.showApproval(currentTurn.chat, p)
 		currentTurn.show(agent.Activity{State: "approval", Detail: approvalSubject(p)})
+		ui.loopyStep(currentTurn.chat, "Waiting for your approval", true)
 	case "question":
 		request := uiEventValue.data.(agent.QuestionRequest)
 		ui.showQuestions(currentTurn.chat, request)
@@ -1406,6 +1407,8 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 			currentTurn.setRow(index, "running")
 		}
 		currentTurn.showRun(toolOutcomeValue)
+		verb, target, _ := agent.DescribeTool(agent.ChatItem{Tool: toolOutcomeValue.Name, Args: toolOutcomeValue.Args}, true)
+		ui.loopyStep(currentTurn.chat, strings.TrimSpace(verb+" "+target), false)
 	case "tool_output": // a running command's output so far
 		o := uiEventValue.data.(agent.ToolOutcome)
 		if index, ok := currentTurn.calls[o.ID]; ok {

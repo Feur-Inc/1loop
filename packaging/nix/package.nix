@@ -73,7 +73,7 @@ buildGoModule {
   # with go.sum. CI commits a new one to a pull request when it does
   # (.github/workflows/nix-hash.yml).
   proxyVendor = true;
-  vendorHash = "sha256-Uq5qXLu+HGAwZj0jDWloOSJ2l3fdzXXTcXKghfhjLm4=";
+  vendorHash = "sha256-t+7Z1f+ErXB1N6pQ5tOZJ7eQ78oPShgpIllnn64E4tE=";
 
   nativeBuildInputs = [
     pkg-config

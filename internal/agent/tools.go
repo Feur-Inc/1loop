@@ -90,6 +90,9 @@ func availableCoreTools(cfg Config) []map[string]any {
 	if skill := skillToolDefinition(); skill != nil && cfg.toolAvailable("skill") {
 		definitions = append(definitions, skill)
 	}
+	if cfg.Assistant != nil {
+		definitions = append(definitions, cfg.Assistant.Definitions...)
+	}
 	return definitions
 }
 
@@ -425,6 +428,10 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 			result, err := handler(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
 			outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
 		}
+	} else if assistant := assistantOf(ctx); assistant.has(call.Function.Name) {
+		begin()
+		result, err := assistant.Run(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
+		outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
 	} else {
 		outcome.Output, outcome.Diff, outcome.Err = backend.runTool(ctx, root, call, begin, emit)
 	}

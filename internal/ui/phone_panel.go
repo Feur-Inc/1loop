@@ -367,10 +367,7 @@ func (server *remoteServer) panelStream(writer http.ResponseWriter, req *http.Re
 		core.Fail(writer, 404, "This browser tab is closed")
 		return
 	}
-	revoked := make(chan struct{})
-	server.mu.Lock()
-	server.streams[revoked] = true
-	server.mu.Unlock()
-	defer func() { server.mu.Lock(); delete(server.streams, revoked); server.mu.Unlock() }()
+	revoked, release := server.hub.Stream()
+	defer release()
 	browser.ServeBrowserStream(writer, req, tab.browser, revoked)
 }

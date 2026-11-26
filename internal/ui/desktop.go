@@ -345,7 +345,8 @@ type desktopApp struct {
 	serverProjects   map[string][]string      // their projects as last listed, by address: listed while it does not answer
 	reaches          map[string]targetReach   // whether each target answered, by its key (targets.go)
 	remoteEnabled    bool                     // see phone_server.go
-	devices          []remoteapi.PairedDevice // phones paired with the remote
+	devices          []remoteapi.PairedDevice // phones paired with the remote (setDevices)
+	tokens           remoteapi.Tokens         // their tokens, read by the remote's requests
 	chrome           bool
 	titleBar         fyne.CanvasObject // the bar over the conversation: its title, and the window buttons with chrome
 	pictureLayer     *fyne.Container   // where pictures open, under titleBar (picture_viewer.go); nil without chrome
@@ -2653,7 +2654,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	if state.RemoteEnabled != nil {
 		ui.remoteEnabled = *state.RemoteEnabled
 	}
-	ui.devices = state.Devices
+	ui.setDevices(state.Devices)
 	ui.panelWidth = state.PanelWidth
 	ui.sidebarWidth = state.SidebarWidth
 	ui.claudeOffered = state.ClaudeOffered

@@ -28,7 +28,7 @@ const adminSocketName = "admin.sock"
 
 // adminCommands are the console's commands, which "1loop-server <command>"
 // sends to the running server.
-var adminCommands = map[string]bool{"pair": true, "devices": true, "revoke": true, "ssh": true, "trust": true, "refuse": true}
+var adminCommands = map[string]bool{"pair": true, "unlock": true, "devices": true, "revoke": true, "ssh": true, "trust": true, "refuse": true}
 
 type adminReply struct {
 	OK     bool   `json:"ok"`

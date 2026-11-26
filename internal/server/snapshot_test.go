@@ -3,10 +3,13 @@
 package server
 
 import (
+	"bufio"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
+	"strings"
 	"testing"
+	"time"
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
@@ -66,14 +69,42 @@ func TestSnapshotSeqAndETag(t *testing.T) {
 // The event stream writes each event's number as its id.
 func TestEventsCarrySeq(t *testing.T) {
 	server, _, _ := testServer(t)
-	channel := make(chan serverEvent, 4)
+	token := core.Identifier()
 	server.mu.Lock()
-	server.subs[channel] = true
+	server.devices = append(server.devices, remoteapi.PairedDevice{Name: "desk", TokenHash: remoteapi.TokenHash(token)})
+	server.mu.Unlock()
+	web := httptest.NewServer(server.routes())
+	defer web.Close()
+	req, _ := http.NewRequest("GET", web.URL+"/api/events", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := web.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	deadline := time.Now().Add(5 * time.Second)
+	for !server.hub.Listening() {
+		if time.Now().After(deadline) {
+			t.Fatal("event stream did not attach")
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	server.mu.Lock()
 	server.broadcastLocked("meta", map[string]string{"chat": "c1"})
 	server.broadcastLocked("meta", map[string]string{"chat": "c1"})
 	server.mu.Unlock()
-	one, two := <-channel, <-channel
-	if one.seq == 0 || two.seq != one.seq+1 {
-		t.Fatalf("seqs %d, %d", one.seq, two.seq)
+	scanner := bufio.NewScanner(resp.Body)
+	var ids []uint64
+	for len(ids) < 2 && scanner.Scan() {
+		if line := scanner.Text(); strings.HasPrefix(line, "id: ") {
+			seq, err := strconv.ParseUint(strings.TrimPrefix(line, "id: "), 10, 64)
+			if err != nil {
+				t.Fatalf("bad id %q: %v", line, err)
+			}
+			ids = append(ids, seq)
+		}
+	}
+	if len(ids) != 2 || ids[0] == 0 || ids[1] != ids[0]+1 {
+		t.Fatalf("seqs %v", ids)
 	}
 }

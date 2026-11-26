@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 )
 
 // TestPairingWithoutConsole: the first device pairs with the setup link, the
@@ -30,6 +31,8 @@ func TestPairingWithoutConsole(t *testing.T) {
 	if setup == "" {
 		t.Fatal("no setup link while no device is paired")
 	}
+	at := time.Now()
+	server.pairing.Now = func() time.Time { return at }
 	routes := server.routes()
 	call := func(method, path, token string, body any) (int, map[string]any) {
 		t.Helper()
@@ -46,6 +49,7 @@ func TestPairingWithoutConsole(t *testing.T) {
 	}
 	pair := func(device, setup string) (id, code string, approved bool) {
 		t.Helper()
+		at = at.Add(4 * time.Second) // past the shared policy's interval between a client's requests
 		status, reply := call("POST", "/api/pair", "", map[string]string{"device": device, "setup": setup})
 		if status != http.StatusOK {
 			t.Fatalf("pair %s: %d %v", device, status, reply)

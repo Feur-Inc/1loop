@@ -6,14 +6,20 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
+
+	"1loop/internal/remoteapi"
 )
 
 // One client cannot hold every pending pairing: past pairingsPerAddress its
 // new request replaces its own oldest one, and the other devices' stay (#532).
 func TestPairingLimitedPerAddress(t *testing.T) {
 	server, _, _ := testServer(t)
+	at := time.Now()
+	server.pairing.Now = func() time.Time { return at }
 	routes := server.routes()
 	pair := func(address string) int {
+		at = at.Add(4 * time.Second) // past the shared policy's interval between a client's requests
 		recorder := httptest.NewRecorder()
 		req := httptest.NewRequest("POST", "/api/pair", strings.NewReader(`{"device":"Phone"}`))
 		req.RemoteAddr = address
@@ -21,11 +27,9 @@ func TestPairingLimitedPerAddress(t *testing.T) {
 		return recorder.Code
 	}
 	pending := func(address string) int {
-		server.mu.Lock()
-		defer server.mu.Unlock()
 		n := 0
-		for _, pair := range server.pairs {
-			if pair.Address == address {
+		for _, pair := range server.pairing.Waiting() {
+			if pair.Client == address {
 				n++
 			}
 		}
@@ -34,7 +38,7 @@ func TestPairingLimitedPerAddress(t *testing.T) {
 	if code := pair("192.0.2.8:4000"); code != 200 {
 		t.Fatalf("the phone: %d", code)
 	}
-	for i := 0; i < maxPendingPairings; i++ { // a device flooding requests
+	for i := 0; i < 20; i++ { // a device flooding requests
 		if code := pair("192.0.2.7:4000"); code != 200 {
 			t.Fatalf("request %d: %d", i, code)
 		}
@@ -44,5 +48,69 @@ func TestPairingLimitedPerAddress(t *testing.T) {
 	}
 	if code := pair("192.0.2.9:4000"); code != 200 {
 		t.Fatalf("another device after the flood: %d", code)
+	}
+	// Faster than the policy allows, a client is told to wait.
+	at = at.Add(-4 * time.Second)
+	if code := pair("192.0.2.9:4000"); code != 429 {
+		t.Fatalf("a second request at once: %d", code)
+	}
+}
+
+// The headless server and the desktop share the pairing policy: wrong codes
+// typed by devices that are not paired lock pairing until the console
+// unlocks it.
+func TestPairingLockAndUnlock(t *testing.T) {
+	server, _, _ := testServer(t)
+	at := time.Now()
+	server.pairing.Now = func() time.Time { return at }
+	routes := server.routes()
+	call := func(path, body string) (int, string) {
+		recorder := httptest.NewRecorder()
+		routes.ServeHTTP(recorder, httptest.NewRequest("POST", path, strings.NewReader(body)))
+		return recorder.Code, recorder.Body.String()
+	}
+	for failures := 0; failures < remoteapi.MaxFailedCodes; {
+		at = at.Add(4 * time.Second)
+		code, reply := call("/api/pair", `{"device":"Guess"}`)
+		if code != 200 {
+			t.Fatalf("pair after %d wrong codes: %d %s", failures, code, reply)
+		}
+		id := reply[strings.Index(reply, `"pairing":"`)+11:]
+		id = id[:strings.Index(id, `"`)]
+		for try := 0; try < remoteapi.TriesPerPairing && failures < remoteapi.MaxFailedCodes; try++ {
+			call("/api/pair/confirm", `{"pairing":"`+id+`","code":"x"}`)
+			failures++
+		}
+	}
+	at = at.Add(4 * time.Second)
+	if code, _ := call("/api/pair", `{"device":"Phone"}`); code != 429 {
+		t.Fatalf("pairing while locked: %d", code)
+	}
+	var out strings.Builder
+	if !server.command([]string{"unlock"}, &out) {
+		t.Fatalf("unlock: %s", out.String())
+	}
+	if code, _ := call("/api/pair", `{"device":"Phone"}`); code != 200 {
+		t.Fatalf("pairing after unlock: %d", code)
+	}
+}
+
+// The phone sees the same API from a server as from a desktop (#518):
+// remoteapi.PhoneRoutes, and a server's own routes only where listed.
+func TestRouteParity(t *testing.T) {
+	server, _, _ := testServer(t)
+	routes := server.Routes()
+	missing, extra := remoteapi.RouteDifference(routes, remoteapi.ServerOnlyRoutes)
+	if len(missing) > 0 || len(extra) > 0 {
+		t.Fatalf("missing %v; neither shared nor in remoteapi.ServerOnlyRoutes: %v", missing, extra)
+	}
+	for route := range remoteapi.ServerOnlyRoutes {
+		if routes[route] == nil {
+			t.Errorf("%s is listed as the server's but not served", route)
+		}
+	}
+	server.local = true // a phone's own engine: no approvals, no accounts over the API
+	if missing, extra := remoteapi.RouteDifference(server.Routes(), remoteapi.ServerOnlyRoutes); len(missing) > 0 || len(extra) > 0 {
+		t.Fatalf("local engine: missing %v, extra %v", missing, extra)
 	}
 }

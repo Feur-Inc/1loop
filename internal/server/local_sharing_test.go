@@ -154,8 +154,8 @@ func TestPhoneSharing(t *testing.T) {
 	network = fmt.Sprintf("https://127.0.0.1:%d", server.sharingPort)
 	_, pairing = call(network, "POST", "/api/pair", "", map[string]string{"device": "Expired laptop"})
 	id = pairing["pairing"].(string)
-	server.mu.Lock()
-	server.pairs[id].Expires = time.Now().Add(-time.Second)
+	server.mu.Lock() // the handlers use the book under the server's lock
+	server.pairing.Now = func() time.Time { return time.Now().Add(remoteapi.PairingTTL + time.Second) }
 	server.mu.Unlock()
 	if _, state := call(local.URL, "GET", "/api/local/sharing", localToken, nil); len(state["pending"].([]any)) != 0 {
 		t.Fatalf("expired pairing still pending: %v", state)

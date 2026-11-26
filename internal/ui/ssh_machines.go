@@ -193,15 +193,6 @@ func (ui *desktopUI) pickStart() string {
 	return ui.cfg.Workspace
 }
 
-// projectFolderRow is Settings → General's project folder: on an SSH
-// machine it is chosen in the sidebar, not with this computer's picker.
-func (ui *desktopUI) projectFolderRow(change fyne.CanvasObject) fyne.CanvasObject {
-	if ui.cfg.MachineID != "" {
-		return settingRow("Project folder", ui.targetLabel()+": "+ui.cfg.Workspace+". Choose another project of the machine in the sidebar.", nil)
-	}
-	return settingRow("Project folder", ui.cfg.Workspace, change)
-}
-
 // targetProjects are the target's projects: this computer's, or the
 // machine's (paths there).
 func (ui *desktopUI) targetProjects() []string {

@@ -253,7 +253,10 @@ func Main() {
 		}
 		go server.checkMachines()
 	}
-	go server.loadModels()
+	go func() {
+		server.loadModels()
+		server.wakeLoopy() // its routines go on
+	}()
 	reportLastCrash(*dir)
 	go func() {
 		<-ctx.Done()

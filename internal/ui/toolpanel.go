@@ -319,6 +319,9 @@ func (panel *toolPanel) slide(to float32) {
 	})
 	panel.ui.panelToggle.SetSelected(to > 0)
 	panel.syncRows()
+	if to > 0 { // the context changed while the panel was folded: it was not redrawn
+		panel.refreshTodoStatus()
+	}
 	panel.ui.save() // open or folded is part of what the chat remembers
 }
 
@@ -376,6 +379,7 @@ func (panel *toolPanel) open(chat *conversation, index int) {
 func (panel *toolPanel) choose(i int) {
 	panel.active = i
 	panel.render()
+	panel.refreshTodoStatus() // the context changed while another tab was shown: it was not redrawn
 	panel.body.ScrollToTop()
 	if terminal := panel.tabs[i].terminal; terminal != nil {
 		panel.ui.window.Canvas().Focus(terminal.widget)

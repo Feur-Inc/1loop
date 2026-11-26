@@ -379,7 +379,7 @@ func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
 		if ui.cfg.InScratch() {
 			icon = iconCheck
 		}
-		actions = append(actions, menuAction{label: noFolderLabel, icon: icon, run: ui.chooseNoFolder})
+		actions = append(actions, menuAction{label: thisComputerLabel, icon: icon, run: ui.chooseNoFolder})
 	}
 	add := "Add folder…"
 	if ui.cfg.MachineID != "" {
@@ -468,7 +468,7 @@ func (ui *desktopUI) finishChatLoad() {
 	ui.updateHeader()
 	ui.renderChats()
 	ui.showChatModel()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 }
 
 func (ui *desktopUI) renameChat(chat *conversation) {
@@ -557,18 +557,6 @@ func (ui *desktopUI) removeChats(chats ...*conversation) {
 	ui.renderChats()
 }
 
-func (ui *desktopUI) chatMenu(chat *conversation, anchor fyne.CanvasObject) *sheet {
-	var window []menuAction
-	if ui.canOpenWindow(chat) { // windows.go, panes.go
-		window = append(window, menuAction{label: "Open in new window", icon: iconWindow, run: func() { ui.openWindow(chat) }},
-			menuAction{label: "Open in split view", icon: iconPanel, run: func() { ui.splitPane(chat, false) }})
-	}
-	return showMenu(ui.window, anchor, append(window, []menuAction{
-		{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
-		{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
-	}...))
-}
-
 // confirm asks before a destructive action.
 func (ui *desktopUI) confirm(title, text, verb string, run func()) {
 	label := widget.NewLabel(text)
@@ -619,13 +607,15 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	ui.sideGlide = newGlideLayout()
 	ui.projectList = container.New(ui.sideGlide)
 
-	logo := brandLogo(30*1483.0/512.0, 30)
+	ui.brand = newBrandMark(false)
 	collapse := newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
-	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, logo, container.NewCenter(collapse)))
+	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, ui.spaceSwitch(ui.brand.object()), container.NewCenter(collapse)))
 	if ui.chrome {
 		brand = container.NewStack(newDragArea(ui.window), brand)
 	}
-	ui.sideLists = container.NewVBox(sectionHeader("Projects", nil), container.NewStack(container.NewWithoutLayout(ui.sideGlide.pill), ui.projectList))
+	ui.sideMarker = canvas.NewRectangle(colAmber)
+	ui.sideMarker.Hide()
+	ui.sideLists = container.NewVBox(sectionHeader("Projects", nil), container.NewStack(container.NewWithoutLayout(ui.sideGlide.pill, ui.sideMarker), ui.projectList))
 	lists := ui.sideLists
 	divider := canvas.NewRectangle(colBorderSoft)
 	divider.SetMinSize(fyne.NewSize(0, 1))

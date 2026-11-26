@@ -115,15 +115,21 @@ func (ink artInk) draw(art image.Image) *image.NRGBA {
 // brandLogo is the logo with its letters in the theme's text colour, drawn
 // again when the theme changes.
 func brandLogo(width, height float32) *canvas.Image {
+	return inkedBrand("1loop-logo.png", width, height)
+}
+
+// inkedBrand is a logo's artwork with its letters in the theme's text
+// colour, drawn again when the theme changes.
+func inkedBrand(name string, width, height float32) *canvas.Image {
 	logo := canvas.NewImageFromImage(nil)
 	logo.FillMode = canvas.ImageFillContain
 	logo.SetMinSize(fyne.NewSize(width, height))
-	// Decoding, inking and resampling the 1483 px logo takes tens of ms:
+	// Decoding, inking and resampling a 1483 px logo takes tens of ms:
 	// done once per ink, off the UI thread, and shared by the windows
 	// (#475). The logo shows as soon as it is ready.
 	show := func() {
 		ink := currentArtInk()
-		key := fmt.Sprintf("%s/%.0fx%.0f", ink.key(), width, height)
+		key := fmt.Sprintf("%s/%s/%.0fx%.0f", name, ink.key(), width, height)
 		if inked := logosInked[key]; inked != nil {
 			if logo.Image != inked { // the same ink: nothing to draw
 				logo.Image = inked
@@ -134,10 +140,10 @@ func brandLogo(width, height float32) *canvas.Image {
 		brandRingWait.Add(1)
 		go func() {
 			defer brandRingWait.Done()
-			inked := inkedLogo(ink, width, height)
+			inked := inkedLogo(name, ink, width, height)
 			fyne.Do(func() {
 				if inked == nil { // never with the embedded artwork
-					logo.Resource = brandResource("1loop-logo.png")
+					logo.Resource = brandResource(name)
 					logo.Refresh()
 					return
 				}
@@ -158,25 +164,25 @@ func brandLogo(width, height float32) *canvas.Image {
 }
 
 var (
-	logoOnce  sync.Once
-	logoImage image.Image
-	// logosInked are the logo by ink and size, shared by the windows. UI
-	// thread only.
+	logoArts sync.Map // the logos' artwork, decoded once, by name
+	// logosInked are the logos by name, ink and size, shared by the
+	// windows. UI thread only.
 	logosInked = map[string]image.Image{}
 )
 
-func logoArt() image.Image {
-	logoOnce.Do(func() {
-		logoImage, _ = png.Decode(bytes.NewReader(brandResource("1loop-logo.png").Content()))
-	})
-	return logoImage
+func logoArt(name string) image.Image {
+	decode, _ := logoArts.LoadOrStore(name, sync.OnceValue(func() image.Image {
+		art, _ := png.Decode(bytes.NewReader(brandResource(name).Content()))
+		return art
+	}))
+	return decode.(func() image.Image)()
 }
 
-// inkedLogo is the logo in an ink, resampled to three times its size:
+// inkedLogo is a logo in an ink, resampled to three times its size:
 // sharp up to a scale of 3, and small enough that the painter's own
 // resampling for the screen costs nothing. Any goroutine.
-func inkedLogo(ink artInk, width, height float32) image.Image {
-	art := logoArt()
+func inkedLogo(name string, ink artInk, width, height float32) image.Image {
+	art := logoArt(name)
 	if art == nil {
 		return nil
 	}

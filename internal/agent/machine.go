@@ -4,8 +4,9 @@ package agent
 
 // A conversation on an SSH machine (internal/sshmachine): its files, shell
 // commands, background tasks, terminal and Git changes are there. The
-// agent itself, its models, Browser Use, Computer Use, hooks, skills and
-// MCP servers stay on this computer.
+// agent itself, its models, Browser Use, hooks, skills and MCP servers stay
+// on this computer; Computer Use, which would drive this computer's screen
+// from a chat about another one, is off.
 
 import (
 	"bytes"
@@ -62,13 +63,11 @@ func machineErr(cfg Config) error {
 	if cfg.Machine == nil {
 		return fmt.Errorf("This conversation's SSH machine is no longer in Settings → General")
 	}
-	switch cfg.Provider {
-	case "claudecode":
-		return fmt.Errorf("Claude Code works on this computer's projects only. Choose another model for %s", cfg.Machine.Label())
-	case "antigravity":
+	// Claude Code runs 1loop's tools instead of its own there (claudecode.go)
+	// and ChatGPT (Web) only ever calls 1loop's: both reach the machine.
+	// agy's own tools cannot be turned off, and would run on this computer.
+	if cfg.Provider == "antigravity" {
 		return fmt.Errorf("Antigravity works on this computer's projects only. Choose another model for %s", cfg.Machine.Label())
-	case "chatgptweb":
-		return fmt.Errorf("ChatGPT (Web) works on this computer's projects only. Choose another model for %s", cfg.Machine.Label())
 	}
 	return nil
 }
@@ -390,8 +389,9 @@ func (backend *App) machineTool(ctx context.Context, machine Machine, root strin
 	if err != nil {
 		return "", "", err
 	}
-	if !backend.confirm(ctx, emit, "Apply changes to "+rel+"?", diff) {
-		return "", diff, fmt.Errorf("Edit denied")
+	after, diff, note, err := backend.approveEdit(ctx, emit, rel, before, after, diff, create)
+	if err != nil {
+		return "", diff, err
 	}
 	begin()
 	// Recheck the target after approval: it may have changed while the user reviewed the diff.
@@ -410,7 +410,7 @@ func (backend *App) machineTool(ctx context.Context, machine Machine, root strin
 	if err != nil {
 		return "", diff, err
 	}
-	return "Changes applied: " + rel + "\n" + diff, diff, nil
+	return "Changes applied: " + rel + "\n" + note + diff, diff, nil
 }
 
 // applyMachinePatch is applyPatch on a machine.
@@ -482,8 +482,13 @@ func (backend *App) applyMachinePatch(ctx context.Context, machine Machine, root
 	if deletes {
 		title = "Delete or change " + strings.Join(names, ", ") + "?"
 	}
-	if !backend.confirm(ctx, emit, title, diff) {
-		return "", diff, fmt.Errorf("Patch denied")
+	changes, diff, note, err := backend.reviewPatch(ctx, emit, title, diff, changes)
+	if err != nil {
+		return "", diff, err
+	}
+	names = names[:0]
+	for _, change := range changes {
+		names = append(names, change.targetRel)
 	}
 	begin()
 	// Recheck after the approval: a file may have changed while the user read.
@@ -515,7 +520,7 @@ func (backend *App) applyMachinePatch(ctx context.Context, machine Machine, root
 			return "", diff, fmt.Errorf("%s: %w (the files before it in the patch were written)", change.rel, err)
 		}
 	}
-	return "Patch applied: " + strings.Join(names, ", ") + "\n" + diff, diff, nil
+	return "Patch applied: " + strings.Join(names, ", ") + "\n" + note + diff, diff, nil
 }
 
 // workspaceInstructions is the workspace's AGENTS.md, read where the
@@ -524,7 +529,7 @@ func workspaceInstructions(cfg Config) string {
 	if cfg.Machine == nil {
 		return projectInstructions(cfg.Workspace)
 	}
-	text := "\n\nThe workspace is on the SSH machine " + cfg.Machine.Label() + ": your file tools, shell commands, background tasks and the terminal run there, as the machine's user; there is no sandbox. Browser Use and Computer Use run on the user's own computer, not on the machine."
+	text := "\n\nThe workspace is on the SSH machine " + cfg.Machine.Label() + ": your file tools, shell commands, background tasks and the terminal run there, as the machine's user; there is no sandbox. Browser Use runs on the user's own computer, not on the machine; Computer Use is off in a chat on a machine."
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
 	data, err := cfg.Machine.ReadFile(ctx, path.Join(cfg.Workspace, "AGENTS.md"))

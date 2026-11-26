@@ -164,7 +164,7 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 	note := ""
 	if request.Isolation == "worktree" {
 		if cfg.MachineID != "" {
-			note = "Worktrees are not made on SSH machines yet, so the subchat shares this folder."
+			note = "No worktrees on SSH machines yet: the subchat shares this folder."
 		} else if created, note, err = agent.SubchatWorktree(ctx, gitrepo.Local, cfg.Workspace, request.Title, id); err != nil {
 			return info, fmt.Errorf("Could not make the subchat's worktree: %v", err)
 		}
@@ -292,15 +292,15 @@ func (ui *desktopUI) confirmDeleteSubchat(chat *conversation, text string) {
 	for _, folder := range folders {
 		projects[folder] = ui.worktrees[folder]
 	}
-	title, detail := "Also remove its worktree and branch", "The folder "+worktreeFolder(folders[0])+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own."
+	title, detail := "Also remove its worktree and branch", "The folder "+worktreeFolder(folders[0])+" goes unless it has uncommitted changes; its branch only if merged."
 	if chat.Subchat != nil && len(folders) == 1 && folders[0] == ui.subchatWorktree(chat) {
 		title += " " + chat.Subchat.Branch
 	} else {
-		title = fmt.Sprintf("Also remove the %s of its subchats", plural(len(folders), "worktree"))
+		title = fmt.Sprintf("Also remove the %s of its subchats", core.Plural(len(folders), "worktree"))
 		if len(folders) == 1 {
 			title = "Also remove its subchat's worktree"
 		}
-		detail = "Each folder goes unless it has uncommitted changes; each branch only if it is merged or has no commits of its own."
+		detail = "Each folder goes unless changed; each branch only if merged."
 	}
 	removeWorktree := true
 	body := container.New(layout.NewCustomPaddedVBoxLayout(10), note(text),
@@ -358,7 +358,7 @@ func (ui *desktopUI) splitOff(parent *conversation, brief string) string {
 	brief = strings.TrimSpace(brief)
 	switch {
 	case brief == "":
-		return "Write what the subchat should do after /subchat: the task, the files and what done means."
+		return "Write the task for the subchat: its files and what done means."
 	case parent == nil:
 		return "Open the conversation to start the subchat from first."
 	case agent.SubchatLimit(ui.subchatDepth(parent)) != "":
@@ -438,7 +438,7 @@ func (panel *toolPanel) addSubchats(box *fyne.Container, chat *conversation) {
 	for _, sub := range subs {
 		total += ui.subchatInfo(sub).Used
 	}
-	box.Add(padded(22, 6, 0, 0, container.NewBorder(nil, nil, title, textLine(fmt.Sprintf("%s tokens together", compactTokens(total)), 12.5, colMuted))))
+	box.Add(padded(22, 6, 0, 0, container.NewBorder(nil, nil, title, textLine(fmt.Sprintf("%s tokens together", core.CompactCount(total)), 12.5, colMuted))))
 	for _, sub := range subs {
 		sub := sub
 		info := ui.subchatInfo(sub)
@@ -466,19 +466,6 @@ func (panel *toolPanel) addSubchats(box *fyne.Container, chat *conversation) {
 			padded(1, 0, 12, 8, container.NewVBox(name, textLine(state, 11.5, colMuted))))))
 	}
 	box.Add(layout.NewSpacer())
-}
-
-// compactTokens is a token count at a glance: 950, 12k, 1.2M.
-func compactTokens(n int) string {
-	switch {
-	case n >= 1_000_000:
-		return fmt.Sprintf("%.1fM", float64(n)/1_000_000)
-	case n >= 10_000:
-		return fmt.Sprintf("%dk", n/1000)
-	case n >= 1000:
-		return fmt.Sprintf("%.1fk", float64(n)/1000)
-	}
-	return fmt.Sprint(n)
 }
 
 // openSubchat opens a subchat from its parent's start call: on this

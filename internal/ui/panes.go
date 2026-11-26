@@ -119,7 +119,7 @@ func (pane *desktopUI) shareWindow(window *desktopUI) {
 	pane.projectList, pane.sideGlide, pane.sideLists = window.projectList, window.sideGlide, window.sideLists
 	pane.pane, pane.sideHandle, pane.root = window.pane, window.sideHandle, window.root
 	pane.usageRow, pane.updateRow = window.usageRow, window.updateRow
-	pane.sideChats, pane.sideOrder = window.sideChats, window.sideOrder
+	pane.sideChats, pane.sideOrder, pane.sideMarker = window.sideChats, window.sideOrder, window.sideMarker
 	pane.panel, pane.panelToggle, pane.split = window.panel, window.panelToggle, window.split
 }
 
@@ -139,7 +139,7 @@ func (ui *desktopUI) buildPaneBox() {
 	ui.paneMark.SetMinSize(fyne.NewSize(0, 2))
 	bg := canvas.NewRectangle(colSidebar)
 	row := container.NewBorder(nil, nil, nil, container.NewCenter(close), padded(0, 0, 14, 4, ui.paneTitle))
-	head := container.NewStack(blurBehind("headers", bg, &colSidebar), newTapArea(ui.activate), container.NewBorder(nil, ui.paneMark, nil, nil, row))
+	head := container.NewStack(blurBehind("headers", bg, &colSidebar), newPaneGrip(ui), container.NewBorder(nil, ui.paneMark, nil, nil, row))
 	ui.paneHead = container.New(fixedHeight{paneHeadHeight}, head)
 	ui.paneHead.Hide()
 	ui.paneBox = container.NewBorder(ui.paneHead, nil, nil, nil, ui.conversation)
@@ -178,22 +178,29 @@ func (ui *desktopUI) splitPane(chat *conversation, vertical bool) *desktopUI {
 			from.startNew()
 		}
 	}
-	cfg := ui.cfg
-	if ui.server != nil {
-		cfg = ui.localCfg
+	return window.addPane(ui, chat, vertical, false)
+}
+
+// addPane splits beside's pane in two, a new pane on chat (nil: a new chat
+// in beside's project) left of it or above it when before is set, else
+// right of it or under it. chat must be on screen nowhere.
+func (window *desktopUI) addPane(beside *desktopUI, chat *conversation, vertical, before bool) *desktopUI {
+	cfg := beside.cfg
+	if beside.server != nil {
+		cfg = beside.localCfg
 	}
 	pane := window.newPane(cfg)
 	if window.tree == nil {
 		window.tree = &splitNode{pane: window}
 	}
-	window.tree.find(ui).splitWith(pane, vertical, 0.5)
+	window.tree.find(beside).splitBeside(pane, vertical, before, 0.5)
 	window.layoutPanes()
 	if chat != nil {
 		pane.openLocalChat(chat)
 	}
 	pane.activate()
 	pane.window.Canvas().Focus(pane.prompt)
-	ui.save()
+	beside.save()
 	return pane
 }
 
@@ -201,20 +208,23 @@ func (ui *desktopUI) splitPane(chat *conversation, vertical bool) *desktopUI {
 // halves keep minPaneSize, else the other one, else none. A pane not laid
 // out yet (zero size) splits as asked.
 func splitFits(size fyne.Size, vertical bool) (bool, bool) {
-	room := func(vertical bool) bool {
-		length := size.Width
-		if vertical {
-			length = size.Height - paneHeadHeight // the new pane's header
-		}
-		return length >= 2*minPaneSize+dividerSize
-	}
 	switch {
-	case size.Width == 0 && size.Height == 0, room(vertical):
+	case size.Width == 0 && size.Height == 0, splitRoom(size, vertical):
 		return vertical, true
-	case room(!vertical):
+	case splitRoom(size, !vertical):
 		return !vertical, true
 	}
 	return vertical, false
+}
+
+// splitRoom reports whether a pane of size splits that way with both
+// halves keeping minPaneSize.
+func splitRoom(size fyne.Size, vertical bool) bool {
+	length := size.Width
+	if vertical {
+		length = size.Height - paneHeadHeight // the new pane's header
+	}
+	return length >= 2*minPaneSize+dividerSize
 }
 
 // newPane builds a pane of window on the start screen of cfg's project.
@@ -253,8 +263,17 @@ func (node *splitNode) find(pane *desktopUI) *splitNode {
 
 // splitWith turns the leaf into two halves: its pane first, pane second.
 func (node *splitNode) splitWith(pane *desktopUI, vertical bool, ratio float32) {
-	node.first = &splitNode{pane: node.pane, parent: node}
-	node.second = &splitNode{pane: pane, parent: node}
+	node.splitBeside(pane, vertical, false, ratio)
+}
+
+// splitBeside turns the leaf into two halves, pane first (left or top)
+// when before is set, else second.
+func (node *splitNode) splitBeside(pane *desktopUI, vertical, before bool, ratio float32) {
+	kept, added := &splitNode{pane: node.pane, parent: node}, &splitNode{pane: pane, parent: node}
+	node.first, node.second = kept, added
+	if before {
+		node.first, node.second = added, kept
+	}
 	node.pane, node.vertical, node.ratio = nil, vertical, ratio
 }
 
@@ -510,6 +529,38 @@ func (window *desktopUI) dropPane(closed, gone *desktopUI) {
 	if window.tree.pane != nil {
 		window.tree = nil
 	}
+}
+
+// movePane takes pane, of the window, to zone of target, another of its
+// panes: beside it on a side, the two halves even; in its place for the
+// middle, target taking pane's (they swap). Each pane keeps its chat, its
+// scroll and its draft: only the tree changes.
+func (window *desktopUI) movePane(pane, target *desktopUI, zone dropZone) {
+	if !window.tree.move(pane, target, zone) {
+		return
+	}
+	window.layoutPanes()
+	pane.activate()
+	window.drawPaneFocus()
+	pane.window.Canvas().Focus(pane.prompt)
+	window.save()
+}
+
+// move is movePane in the tree, of which node is the root. It reports
+// whether pane moved.
+func (node *splitNode) move(pane, target *desktopUI, zone dropZone) bool {
+	from, to := node.find(pane), node.find(target)
+	if from == nil || to == nil || from == to || zone == dropNone {
+		return false
+	}
+	if zone == dropHere {
+		from.pane, to.pane = target, pane
+		return true
+	}
+	from.remove()
+	vertical, before := splitSide(zone)
+	node.find(target).splitBeside(pane, vertical, before, 0.5)
+	return true
 }
 
 // sibling is the other half of the leaf's parent.

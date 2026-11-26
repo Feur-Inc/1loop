@@ -53,14 +53,14 @@ func (view *settingsView) find(query string) {
 		}
 		return
 	}
-	matches := registry.Search(registry.On(registry.OnDesktop), query)
+	matches := view.findSettings(query)
 	page := container.NewVBox(view.pageTitle("Search", "", nil))
 	if len(matches) == 0 {
-		page.Add(card(settingRow("No setting matches “"+strings.TrimSpace(query)+"”", "Try another word, such as server, model, phone or browser: its name, what it does, or a synonym.", nil)))
+		page.Add(card(settingRow("No setting matches “"+strings.TrimSpace(query)+"”", "Try another word, such as server, model or phone.", nil)))
 	} else {
 		rows := make([]fyne.CanvasObject, 0, len(matches))
 		for _, match := range matches {
-			rows = append(rows, view.result(match.Setting))
+			rows = append(rows, view.result(match))
 		}
 		page.Add(card(rows...))
 	}
@@ -72,21 +72,37 @@ func (view *settingsView) find(query string) {
 	view.scroll.ScrollToTop()
 }
 
-// result is a found setting: its title, where it is and what it does.
-func (view *settingsView) result(setting registry.Setting) fyne.CanvasObject {
+// result is a found setting: its title, where it is and what it does. A
+// server's is under its name.
+func (view *settingsView) result(found serverMatch) fyne.CanvasObject {
+	setting := found.match.Setting
 	where := registry.SectionTitle(setting.Section)
-	if setting.Page != "" {
+	switch {
+	case found.address != "":
+		where = "Servers › " + view.ui.serverLabel(found.address) + " › " + found.page
+	case setting.Page == UsagePage: // an entry of the menu
+		where = setting.Page
+	case setting.Page != "":
 		where += " › " + setting.Page
 	}
 	text := container.New(layout.NewCustomPaddedVBoxLayout(3),
 		plainFlow(setting.Title, 14, colText),
 		plainFlow(where, 12, colFaint),
 		plainFlow(setting.Description, 12.5, colMuted))
-	key := setting.Key
 	arrow := canvas.NewImageFromResource(tinted(iconChevronRight, colMuted))
 	arrow.SetMinSize(fyne.NewSquareSize(14))
 	row := padded(12, 12, 16, 16, container.NewBorder(nil, nil, nil, container.NewCenter(arrow), text))
-	return container.NewStack(row, newTapArea(func() { view.jump(key) }))
+	return container.NewStack(row, newTapArea(func() { view.openMatch(found) }))
+}
+
+// openMatch opens a found setting: this computer's at its row, a server's
+// on its page.
+func (view *settingsView) openMatch(found serverMatch) {
+	if found.address == "" {
+		view.jump(found.match.Setting.Key)
+		return
+	}
+	view.show(serverPageID(found.address, found.page))
 }
 
 // clearSearch empties the box without showing the page again: the caller
@@ -113,6 +129,9 @@ func (view *settingsView) jump(key string) {
 		page = setting.Page
 	}
 	view.confirmLeave(0, func() {
+		if page == loopySettingsPage {
+			view.ui.loopyTab, view.ui.loopyLink = loopyTabOf(key), ""
+		}
 		view.showNow(page)
 		anchor := view.anchors[key]
 		if anchor == nil {

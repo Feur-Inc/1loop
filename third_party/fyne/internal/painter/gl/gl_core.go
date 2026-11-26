@@ -194,12 +194,14 @@ func (c *coreContext) BlendFunc(srcFactor, destFactor uint32) {
 	gl.BlendFunc(srcFactor, destFactor)
 }
 
+// 1loop: the points are passed without gl.Ptr, which boxed the slice in
+// an interface: an allocation at every object drawn.
 func (c *coreContext) BufferData(target uint32, points []float32, usage uint32) {
-	gl.BufferData(target, 4*len(points), gl.Ptr(points), usage)
+	gl.BufferData(target, 4*len(points), floatsPtr(points), usage)
 }
 
 func (c *coreContext) BufferSubData(target uint32, points []float32) {
-	gl.BufferSubData(target, 0, 4*len(points), gl.Ptr(points))
+	gl.BufferSubData(target, 0, 4*len(points), floatsPtr(points))
 }
 
 func (c *coreContext) Clear(mask uint32) {

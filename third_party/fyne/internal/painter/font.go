@@ -255,6 +255,15 @@ func systemEmoji() *font.Face {
 		if face := lookupLangFont(fontscan.Emoji, font.Aspect{Style: font.StyleNormal}); face != nil {
 			if _, ok := face.NominalGlyph(0x1F600); ok {
 				systemEmojiFont = face.Font
+				return
+			}
+		}
+		// Asked for a language's font, some systems answer with a text one:
+		// the families by their names then.
+		for _, family := range []string{"Noto Color Emoji", "Twemoji", "Twitter Color Emoji", "JoyPixels", "OpenMoji Color", fontscan.Emoji} {
+			if face := lookupRuneFont(0x1F600, family, font.Aspect{}); face != nil && strings.Contains(strings.ToLower(face.Describe().Family), "moji") || face != nil && strings.EqualFold(face.Describe().Family, family) {
+				systemEmojiFont = face.Font
+				return
 			}
 		}
 	})
@@ -432,7 +441,27 @@ type dynamicFontMap struct {
 	emojiTried bool
 }
 
+// picture is an emoji drawn in colour even when the text font has a plain
+// glyph for it, as Inter does for a few faces and hearts (1loop, #352).
+func picture(r rune) bool { return r >= 0x1F300 && r <= 0x1FAFF || r == 0x2764 }
+
 func (d *dynamicFontMap) ResolveFace(r rune) *font.Face {
+	if picture(r) {
+		if theme.DefaultEmojiFont() == nil && !d.emojiTried {
+			d.emojiTried = true
+			if f := systemEmoji(); f != nil {
+				d.addFace(f)
+			}
+		}
+		for _, f := range d.faces {
+			if _, ok := f.NominalGlyph(0x1F600); !ok {
+				continue
+			}
+			if _, ok := f.NominalGlyph(r); ok {
+				return f // the emoji font
+			}
+		}
+	}
 	for _, f := range d.faces {
 		if _, ok := f.NominalGlyph(r); ok {
 			return f

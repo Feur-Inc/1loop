@@ -9,6 +9,8 @@ import (
 	"image/draw"
 	"math"
 	"os"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -291,7 +293,26 @@ func fitText(text string, size float32, style fyne.TextStyle, width float32) str
 
 func lineIcon(name, body string) fyne.Resource {
 	svg := `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">` + body + `</svg>`
-	return fyne.NewStaticResource("1loop-"+name+".svg", []byte(svg))
+	return fyne.NewStaticResource("1loop-"+name+".svg", []byte(heavierStrokes(svg)))
+}
+
+// iconStrokeWeight thickens every stroke of the interface's icons (line and
+// file type icons) by 10 %. Drawn sharp at a fractional scale (125 %), the
+// 1.5 strokes read thinner than they did through the compositor's blur.
+const iconStrokeWeight = 1.1
+
+var strokeWidthAttr = regexp.MustCompile(`stroke-width="([0-9.]+)"`)
+
+// heavierStrokes multiplies each stroke-width of an icon's SVG by
+// iconStrokeWeight.
+func heavierStrokes(svg string) string {
+	return strokeWidthAttr.ReplaceAllStringFunc(svg, func(attr string) string {
+		width, err := strconv.ParseFloat(strokeWidthAttr.FindStringSubmatch(attr)[1], 64)
+		if err != nil {
+			return attr
+		}
+		return `stroke-width="` + strconv.FormatFloat(math.Round(width*iconStrokeWeight*1000)/1000, 'f', -1, 64) + `"`
+	})
 }
 
 var (
@@ -394,6 +415,8 @@ type tapRow struct {
 	icon      fyne.Resource
 	style     rowStyle
 	onTap     func()
+	onDrag    func(*fyne.DragEvent) // a sidebar row dragged among its siblings, or to the panes (sidebar_drag.go)
+	onDrop    func()
 	selected  bool
 	disabled  bool
 	accent    bool
@@ -490,6 +513,19 @@ func (row *tapRow) MouseDown(e *desktop.MouseEvent) {
 	}
 }
 func (row *tapRow) MouseUp(*desktop.MouseEvent) { row.setSink(0) }
+
+// Dragged and DragEnd pass a drag on to onDrag and onDrop, when a row has them.
+func (row *tapRow) Dragged(e *fyne.DragEvent) {
+	if row.onDrag != nil {
+		row.onDrag(e)
+	}
+}
+
+func (row *tapRow) DragEnd() {
+	if row.onDrop != nil {
+		row.onDrop()
+	}
+}
 
 // setSink presses the row in (1) or lets it back out (0): in quickly, out
 // a little slower, like a key.
@@ -600,6 +636,9 @@ type tapRowRenderer struct {
 	markedBy fyne.Resource // the mark's resource, as tinted
 	markTint color.NRGBA
 	markText *canvas.Text // row.markText
+
+	objects []fyne.CanvasObject // Objects, kept while the row has the same parts
+	parts   [3]bool             // icon, badge, mark: what objects was made with
 }
 
 // The mark after a row's text: its size, the gap before it, and the room
@@ -1023,17 +1062,24 @@ func (renderer *tapRowRenderer) Refresh() {
 	renderer.markText.Refresh()
 }
 
+// Objects are made again only when the row gains or loses a part: Fyne
+// asks for them at every walk of the window, several times a frame (#474).
 func (renderer *tapRowRenderer) Objects() []fyne.CanvasObject {
+	parts := [3]bool{renderer.row.icon != nil, renderer.row.badge != nil, renderer.row.mark != nil}
+	if renderer.objects != nil && parts == renderer.parts {
+		return renderer.objects
+	}
 	objects := []fyne.CanvasObject{renderer.bg, renderer.label, renderer.trailing, renderer.detail}
-	if renderer.row.icon != nil {
+	if parts[0] {
 		objects = append(objects, renderer.icon)
 	}
-	if renderer.row.badge != nil {
+	if parts[1] {
 		objects = append(objects, renderer.badge)
 	}
-	if renderer.row.mark != nil {
+	if parts[2] {
 		objects = append(objects, renderer.mark, renderer.markText)
 	}
+	renderer.objects, renderer.parts = objects, parts
 	return objects
 }
 
@@ -1347,7 +1393,8 @@ func (renderer *sheetRenderer) Layout(size fyne.Size) {
 	}
 	sheet.dim.Resize(size)
 	box := sheet.panelRect()
-	panelPos, panelSize := box.pos, fyne.NewSize(box.size.X, box.size.Y)
+	var panelPos fyne.Position
+	panelSize := fyne.NewSize(box.size.X, box.size.Y)
 	if sheet.menu {
 		// zoom-in-95 from the side facing the trigger, like web popovers
 		k := 0.95 + 0.05*sheet.progress
@@ -1834,9 +1881,43 @@ func newTipLayer() *tipLayer {
 	tooltip.bg.CornerRadius = rounded(8)
 	tooltip.bg.StrokeColor = colPopBorder
 	tooltip.bg.StrokeWidth = 1
-	tooltip.layer = container.NewWithoutLayout(tooltip.bg)
+	tooltip.layer = container.New(tipLayout{}, tooltip.bg)
 	tooltip.layer.Hide()
 	return tooltip
+}
+
+// tipLayout leaves the hint where placeAt puts it and asks for no room: a
+// container without a layout is as big as its widest child, and a long
+// hint made the whole window that wide.
+type tipLayout struct{}
+
+func (tipLayout) MinSize([]fyne.CanvasObject) fyne.Size { return fyne.NewSize(0, 0) }
+func (tipLayout) Layout([]fyne.CanvasObject, fyne.Size) {}
+
+// tipWidth is the widest a hint's line gets before it wraps.
+const tipWidth = 360
+
+// wrapTip breaks the plain lines wider than tipWidth at spaces; a line of
+// several colours stays as it is.
+func wrapTip(lines [][]tipRun) [][]tipRun {
+	var wrapped [][]tipRun
+	for _, line := range lines {
+		if len(line) != 1 || fyne.MeasureText(line[0].text, 12.5, fyne.TextStyle{}).Width <= tipWidth {
+			wrapped = append(wrapped, line)
+			continue
+		}
+		current := ""
+		for _, word := range strings.Fields(line[0].text) {
+			if next := strings.TrimSpace(current + " " + word); current == "" || fyne.MeasureText(next, 12.5, fyne.TextStyle{}).Width <= tipWidth {
+				current = next
+				continue
+			}
+			wrapped = append(wrapped, []tipRun{{current, line[0].ink}})
+			current = word
+		}
+		wrapped = append(wrapped, []tipRun{{current, line[0].ink}})
+	}
+	return wrapped
 }
 
 // show displays text (one hint per line) above anchor after a short delay,
@@ -1896,7 +1977,7 @@ func (tooltip *tipLayer) placeAt(at fyne.Position, area fyne.Size, lines [][]tip
 	tooltip.layer.Objects = []fyne.CanvasObject{tooltip.bg}
 	tooltip.lines, tooltip.inks = nil, nil
 	width, height := float32(0), float32(0)
-	for _, line := range lines {
+	for _, line := range wrapTip(lines) {
 		x, tall := float32(0), float32(0)
 		for _, run := range line {
 			label := textLine(run.text, 12.5, withAlpha(run.ink, quantize(tooltip.alpha, 4))) // the fade brings it up

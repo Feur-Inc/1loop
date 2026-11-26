@@ -166,7 +166,7 @@ func (ui *desktopUI) chatsStatus() trayStatus {
 		chats[i] = trayChat{title: chat.Title, failed: chat.failed}
 		if run := chat.run; run != nil {
 			chats[i].running = true
-			chats[i].waiting = run.approval != nil || run.questions != nil
+			chats[i].waiting = run.approvalID != "" || run.questions != nil
 			chats[i].started = run.started.UnixNano()
 		}
 	}
@@ -222,7 +222,7 @@ func (ui *desktopUI) closeWindow() {
 // trayNotice says once, the first time the window is closed, that 1loop
 // keeps running in the tray, and lets the user choose to quit instead.
 func (ui *desktopUI) trayNotice() {
-	text := widget.NewLabel("Closing the window keeps 1loop running in the system tray, so running tasks and the phone connection go on. Click the tray icon to bring the window back. Quit is in the icon's menu, or press Ctrl+Q.\n\nYou can change this in Settings → General.")
+	text := widget.NewLabel("Closing the window keeps 1loop in the tray. Quit: Ctrl+Q.\n\nYou can change this in Settings → General.")
 	text.Wrapping = fyne.TextWrapWord
 	var dialog *sheet
 	quit := newRow("Always quit", nil, styleOutline, func() {

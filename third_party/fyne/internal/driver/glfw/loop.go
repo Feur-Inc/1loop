@@ -121,6 +121,7 @@ func (d *gLDriver) runGL() {
 		d.trayStart()
 	}
 
+	driver.Recoloured = d.recoloured // 1loop
 	fyne.CurrentApp().Settings().AddListener(func(set fyne.Settings) {
 		if app.VariantOnly { // 1loop: the theme is the same (internal/app.VariantOnly)
 			return
@@ -242,6 +243,26 @@ func (d *gLDriver) runGL() {
 	}
 }
 
+// recoloured is driver.Recoloured (1loop): what a change of colours makes
+// stale is dropped, and the windows are painted again.
+func (d *gLDriver) recoloured(objects []fyne.CanvasObject) {
+	cache.ResetThemeColourCaches()
+	for _, win := range d.windowList() {
+		w := win.(*window)
+		if w.view() == nil || w.canvas.Painter() == nil {
+			continue
+		}
+		w.RunWithContext(func() {
+			for _, obj := range objects {
+				if c, ok := cache.TextureCanvas(obj); ok && c == w.canvas {
+					w.canvas.Painter().Free(obj)
+				}
+			}
+		})
+		w.canvas.SetDirty()
+	}
+}
+
 func (d *gLDriver) destroyWindow(w *window, index int) {
 	w.visible = false
 	w.viewport.Destroy()
@@ -269,7 +290,31 @@ func (d *gLDriver) repaintWindow(w *window) bool {
 	sized := time.Now()
 
 	updateGLContext(w)
-	canvas.paint(canvas.Size())
+	// 1loop: the frame is painted into a texture kept from frame to frame,
+	// and when only small shapes were refreshed (the caret), only where
+	// they are (damage.go).
+	damaged, full := canvas.TakeDamage()
+	held, retained := false, false
+	if w.retention.retains(started) {
+		held, retained = canvas.Painter().StartRetained()
+	} else {
+		canvas.Painter().ForgetRetained()
+	}
+	partial := false
+	if held && !full {
+		var area damageArea
+		if area, partial = canvas.damageOf(damaged); partial {
+			canvas.paintArea(canvas.Size(), &area)
+			driver.PartialFrames.Add(1)
+		}
+	}
+	if !partial {
+		canvas.paint(canvas.Size())
+	}
+	if retained {
+		canvas.Painter().EndRetained()
+	}
+	w.retention = retention{last: started, partial: partial}
 	painted := time.Now()
 
 	view := w.viewport

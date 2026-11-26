@@ -36,6 +36,7 @@ var oneloopCommands = []commandOption{
 	{"clear", "", "Start a new chat with an empty context (this one stays in the sidebar)"},
 	{"compact", "[instructions]", "Free up context by summarizing the conversation so far"},
 	{"login", "", "Sign in to Claude Code"},
+	{"goal", "[objective]", "Give the chat a goal: 1loop keeps working on it, turn after turn, until it is done"},
 }
 
 // oneloopAliases are other names of oneloopCommands, as in Claude Code.
@@ -220,12 +221,10 @@ func (ui *desktopUI) showClaudeStatus() {
 	}
 	account := textLine("Loading…", 13, colMuted)
 	version := textLine("", 13, colMuted)
-	usage := "Shown after this connection's next turn. Send /usage for Claude Code's full report."
+	usage := "Shown after the next turn. /usage gives Claude Code's full report."
 	if ui.plan != (agent.PlanUsage{}) {
 		usage = fmt.Sprintf("%.0f%% of the 5-hour window · %.0f%% of the week", ui.plan.FiveHour*100, ui.plan.Week*100)
 	}
-	contextLines := strings.Split(ui.contextRing.describe(), "\n") // the plan line is shown below
-	contextUse := strings.Join(contextLines[:min(2, len(contextLines))], " · ")
 	line := func(label string, value fyne.CanvasObject) fyne.CanvasObject {
 		return container.NewBorder(nil, nil, container.NewGridWrap(fyne.NewSize(110, 20), textLine(label, 13, colFaint)), nil, value)
 	}
@@ -233,7 +232,7 @@ func (ui *desktopUI) showClaudeStatus() {
 		line("Connection", textLine(conn.Name, 13, colText)),
 		line("Account", account),
 		line("Model", textLine(model, 13, colText)),
-		line("Context", plainFlow(contextUse, 13, colText)),
+		line("Context", plainFlow(ui.describeContext(), 13, colText)),
 		line("Plan usage", plainFlow(usage, 13, colText)),
 		line("Claude Code", version))
 	ui.modal("Status", body, 520, nil)
@@ -295,6 +294,11 @@ func (ui *desktopUI) commandTyped() (string, bool) {
 func (ui *desktopUI) updateCommandMenu() {
 	if ui.commandTray == nil {
 		return
+	}
+	// A dismissal holds for the text it was made on only: any other text,
+	// the empty composer included, shows the menu again (#453).
+	if ui.prompt.Text != ui.commandDismissed {
+		ui.commandDismissed = ""
 	}
 	typed, ok := ui.commandTyped()
 	if !ok {

@@ -21,12 +21,15 @@ package agent
 import (
 	"bufio"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"slices"
 	"strconv"
@@ -722,10 +725,24 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		cfg.Session = ""
 	}
 	ctx = toolContext(ctx, cfg)
-	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" {
+	// On the phone, and in a chat on an SSH machine, Claude Code's own tools
+	// would run outside the project: on the phone's Debian, or on this
+	// computer instead of the machine. 1loop's tools take their place, over
+	// MCP, and run where the project is (#585).
+	machineDir := "" // on a machine, the local folder Claude Code starts in
+	if cfg.Machine != nil {
+		var err error
+		if machineDir, err = claudeMachineDir(cfg); err != nil {
+			return err
+		}
+	}
+	if os.Getenv("ONELOOP_PROJECT_LAUNCHER") != "" || cfg.Machine != nil {
 		cfg.ProjectTools = func(operation context.Context, name string, raw json.RawMessage) (PanelToolResult, error) {
 			// Claude's permission handler has already approved this MCP call.
 			operation = context.WithValue(operation, approvalContextKey{}, approvalPolicy{yolo: true})
+			if machineDir != "" {
+				raw = machineArgs(raw, machineDir, cfg.Workspace)
+			}
 			call := ToolCall{ID: core.Identifier()}
 			call.Function.Name, call.Function.Arguments = name, string(raw)
 			outcome := backend.executeTool(operation, cfg.Workspace, call, func(event string, value any) {
@@ -737,7 +754,13 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		}
 	}
 	args := append([]string{"--include-partial-messages", "--permission-prompt-tool", "stdio"}, claudePermissionArgs(cfg)...)
-	if claudeDisabledTools != "" {
+	if cfg.Machine != nil && os.Getenv("ONELOOP_PROJECT_LAUNCHER") == "" {
+		// WebSearch runs on Anthropic's servers, as on the phone (claudeCommand).
+		args = append(args, "--tools", "WebSearch")
+	}
+	if cfg.Assistant != nil { // its tools are the host's only (claudeMCPDefinitions)
+		args = append(args, "--tools", "")
+	} else if claudeDisabledTools != "" {
 		args = append(args, "--disallowedTools", claudeDisabledTools)
 	}
 	if cfg.Model != "" && cfg.Model != "default" {
@@ -752,12 +775,16 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 	// prompt holds: what changes (the TODO list, the tools the message
 	// mentions) goes with the prompt, and the rules of a deferred tool in its
 	// own description, read when the tool is loaded.
-	appendPrompt := mobileInstructions(cfg) + projectInstructions(cfg.Workspace) + scratchInstructions(cfg) + citationInstructions + calculationInstructions + todoInstructions(cfg) + wrapUpInstructions(cfg) + subchatParentInstructions(cfg) + modelNote(cfg)
-	if cfg.ProjectTools != nil {
+	appendPrompt := mobileInstructions(cfg) + workspaceInstructions(cfg) + scratchInstructions(cfg) + citationInstructions + calculationInstructions + todoInstructions(cfg) + goalInstructions(cfg) + wrapUpInstructions(cfg) + subchatParentInstructions(cfg) + modelNote(cfg)
+	if cfg.Machine != nil {
+		appendPrompt += "\n\nClaude Code's own Bash, Read, Edit, Write, Glob and Grep tools are off in this chat: they would run on the user's computer, not on " + cfg.Machine.Label() + ". The project is " + cfg.Workspace + " on the machine; the working directory Claude Code reports is an empty folder of the user's computer that stands for it. Use 1loop's MCP tools for all project work: shell, read_file, list_directory, search_files, edit_file, apply_patch and the terminals run on the machine. Use recall to retrieve older conversation details. Your own context compaction remains managed by Claude Code."
+	} else if cfg.ProjectTools != nil {
 		appendPrompt += "\n\nUse 1loop's MCP shell, read_file, list_directory, edit_file and apply_patch tools for project work. Follow the phone's selected execution policy and stay strictly inside the requested project. Use recall to retrieve older conversation details. Your own context compaction remains managed by Claude Code."
 	}
 	appendPrompt += claudeCodeGuidance(cfg)
-	if appendPrompt != "" {
+	if cfg.Assistant != nil {
+		args = append(args, "--append-system-prompt", "\n\n"+cfg.Assistant.Prompt+"\n\nYou are not a coding agent in this session: what the prompt above says of software tasks does not apply. Your tools are the mcp__1loop_todo__ ones.")
+	} else if appendPrompt != "" {
 		// 1loop's rules under their own heading, the user's text after them
 		// under its own: one must not read as the other (#211).
 		appendPrompt = "\n\n# 1loop\nYou run inside 1loop, an app that drives Claude Code. Its rules for this session:" + appendPrompt + userPreferenceInstructions(cfg)
@@ -788,7 +815,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		args = append(args, sessionArgs...)
 		var binding *todoMCPBinding
 		var cleanup []func()
-		if cfg.Todo != nil {
+		if cfg.Todo != nil || cfg.Assistant != nil {
 			binding = newTodoMCPBinding(ctx, cfg, emit)
 			config, close, err := backend.startTodoMCP(binding)
 			if err != nil {
@@ -798,11 +825,21 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			args = append(args, "--mcp-config", config)
 		}
 		// The user's MCP servers, plugins and skills, for this session only.
-		extensionArgs, cleanExtensions := claudeExtensionArgs()
-		cleanup = append(cleanup, cleanExtensions)
-		args = append(args, extensionArgs...)
+		if cfg.Assistant == nil {
+			extensionArgs, cleanExtensions := claudeExtensionArgs()
+			cleanup = append(cleanup, cleanExtensions)
+			args = append(args, extensionArgs...)
+		} else { // none of the user's own MCP servers, hooks or project files
+			args = append(args, "--strict-mcp-config", "--setting-sources", "")
+		}
 		// Its own context: a kept process outlives this turn's.
-		cmd, err := claudeCommand(context.Background(), cfg.ClaudeHome, cfg.Workspace, args...)
+		dir := cfg.Workspace
+		if machineDir != "" {
+			// The workspace is a path on the machine: Claude Code starts in
+			// an empty folder of this computer that stands for it.
+			dir = machineDir
+		}
+		cmd, err := claudeCommand(context.Background(), cfg.ClaudeHome, dir, args...)
 		if err != nil {
 			for _, clean := range cleanup {
 				clean()
@@ -904,6 +941,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		name    string // Claude Code's name for the tool
 		running bool   // false while Claude Code holds it back (claudeRunning)
 	}
+	var editNotes []string         // files whose edits the user changed, to tell Claude Code
 	calls := map[string]*pending{} // tool calls without a result yet
 	var queue []*pending           // the same, in the order the model asked for them
 	// start marks the calls Claude Code runs now as started: it does not say
@@ -1192,11 +1230,45 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				break
 			}
 			title, preview := claudeApproval(cfg.Workspace, claudeEventValue.Request.ToolName, claudeEventValue.Request.Input)
+			if cfg.Machine != nil && cfg.ProjectTools != nil && strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__") && isProjectMCPTool(cfg, strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__")) {
+				preview = cfg.Machine.Label() + ": " + preview // as 1loop's own approvals name it (shellApproval)
+			}
 			response := map[string]any{"behavior": "deny", "message": "The user denied this action."}
 			name := strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__")
+			// An edit's file can be reviewed, and its text changed (#242).
+			var review *ReviewFile
+			var edited json.RawMessage
+			if cfg.ProjectTools == nil && cfg.MachineID == "" {
+				review = claudeReview(cfg.Workspace, claudeEventValue.Request.ToolName, claudeEventValue.Request.Input)
+			}
+			ask := func() bool {
+				var files []ReviewFile
+				if review != nil {
+					files = []ReviewFile{*review}
+				}
+				answer := backend.confirmEdits(ctx, emit, title, preview, files)
+				if note := strings.TrimSpace(answer.Note); note != "" && !answer.Allow {
+					response["message"] = "The user denied this action: " + note
+				}
+				if review != nil && answer.Allow {
+					if text, changed := answer.text(review.Path, review.After); changed {
+						input, err := claudeEditedInput(claudeEventValue.Request.ToolName, claudeEventValue.Request.Input, review, text)
+						if err != nil { // never the text the user replaced
+							response["message"] = "The user's own changes to this edit could not be applied: " + err.Error()
+							return false
+						}
+						edited = input
+					}
+				}
+				return answer.Allow
+			}
 			projectRead := cfg.ProjectTools != nil && (name == "read_file" || name == "list_directory" || name == "search_files" || name == "command_output" || name == "recall" || name == "request_user_input")
-			if projectRead || claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__wrap_up" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__memory" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__settings" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__subchat" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__chats" || name == "change_directory" || name == "request_directory" || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || backend.confirm(ctx, emit, title, preview) {
+			if projectRead || claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__wrap_up" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__memory" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__settings" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__subchat" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__chats" || name == "change_directory" || name == "request_directory" || isGoalTool(name) || cfg.Assistant.has(name) || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || ask() {
 				response = map[string]any{"behavior": "allow", "updatedInput": claudeEventValue.Request.Input}
+				if edited != nil {
+					response["updatedInput"] = edited
+					editNotes = append(editNotes, review.Path)
+				}
 				for _, p := range calls { // the approved call starts now
 					if p.running {
 						p.started = time.Now()
@@ -1238,6 +1310,20 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 					Message{Role: "tool", ToolCallID: b.ToolUseID, Content: p.outcome.modelText(), Images: p.outcome.Images})
 				emit("tool_result", p.outcome)
 				start() // the next ones in Claude Code's queue, if any
+			}
+			// The result shows Claude Code the text written, not that it is
+			// the user's.
+			if len(editNotes) > 0 && len(calls) == 0 {
+				message := Message{Role: "user", Internal: true, Content: "[1loop] The user edited your proposal before approving it: " + strings.Join(editNotes, ", ") + ". What is in the file is their version: keep it, and read the file again before changing it."}
+				editNotes = nil
+				messages = append(messages, message)
+				send(claudePrompt(message, ""))
+				emit("context_note", "Told the model about your edits")
+			}
+			if cfg.Pause.asked() && len(calls) == 0 {
+				failure = ErrPaused // the deferred kill stops it between two steps
+				emit("history", append([]Message(nil), messages...))
+				return failure
 			}
 			// The gap between two tool calls: steered messages go in now.
 			for _, extra := range inboxValue.Steer() {
@@ -1389,4 +1475,48 @@ func itemsText(items []ChatItem) string {
 		}
 	}
 	return builder.String()
+}
+
+// claudeMachineDir is the empty folder of this computer Claude Code starts
+// in for a chat on an SSH machine: one per machine and workspace, kept so
+// Claude Code, which keeps sessions by folder, resumes the chat's session.
+func claudeMachineDir(cfg Config) (string, error) {
+	cache, err := os.UserCacheDir()
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256([]byte(cfg.MachineID + "\n" + cfg.Workspace))
+	dir := filepath.Join(cache, "1loop", "claude-machines", hex.EncodeToString(sum[:8]))
+	return dir, os.MkdirAll(dir, 0o700)
+}
+
+// machineArgs points a path argument of a 1loop tool that Claude Code gave
+// in its local folder (dir, its working directory) at the same place in
+// the machine's workspace: Claude Code passes its working directory as the
+// shell's workdir, which does not exist on the machine.
+func machineArgs(raw json.RawMessage, dir, workspace string) json.RawMessage {
+	var args map[string]any
+	if json.Unmarshal(raw, &args) != nil {
+		return raw
+	}
+	changed := false
+	for _, key := range []string{"workdir", "path", "cwd"} {
+		value, ok := args[key].(string)
+		if !ok {
+			continue
+		}
+		if value == dir {
+			args[key], changed = workspace, true
+		} else if rest, ok := strings.CutPrefix(value, dir+string(filepath.Separator)); ok {
+			args[key], changed = path.Join(workspace, filepath.ToSlash(rest)), true
+		}
+	}
+	if !changed {
+		return raw
+	}
+	data, err := json.Marshal(args)
+	if err != nil {
+		return raw
+	}
+	return data
 }

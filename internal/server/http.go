@@ -7,11 +7,15 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -21,6 +25,7 @@ import (
 	"1loop/internal/extensions"
 	"1loop/internal/githubconnector"
 	"1loop/internal/gitrepo"
+	"1loop/internal/loopy/engine"
 	"1loop/internal/remoteapi"
 	"1loop/internal/usage"
 )
@@ -71,6 +76,7 @@ func (server *headlessServer) routes() http.Handler {
 		mux.HandleFunc("GET /api/local/claude/login", server.localOnly(server.claudeLoginState))
 		mux.HandleFunc("POST /api/local/claude/login", server.localOnly(server.beginClaudeLogin))
 		mux.HandleFunc("POST /api/local/sync", server.localOnly(server.localSync))
+		mux.HandleFunc("POST /api/local/move", server.localOnly(server.localMove))
 		mux.HandleFunc("GET /api/local/sharing", server.localOnly(server.sharingState))
 		mux.HandleFunc("POST /api/local/sharing", server.localOnly(server.setSharing))
 		mux.HandleFunc("POST /api/local/pairings/{id}", server.localOnly(server.answerPairing))
@@ -109,6 +115,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/send":                               server.send,
 		"POST /api/stop":                               server.stop,
 		"POST /api/approve":                            server.approve,
+		"GET /api/review":                              server.review,
 		"POST /api/answer":                             server.answer,
 		"POST /api/preferences":                        server.setPreferences,
 		"POST /api/memory":                             server.setMemory,
@@ -120,6 +127,7 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/model/defaults":                     server.setDefaultModels,
 		"POST /api/approval-mode":                      server.setApprovalMode,
 		"GET /api/chats/{id}/context":                  server.chatContext,
+		"GET /api/chats/{id}/compactions":              server.compactions,
 		"GET /api/mentions":                            server.mentions,
 		"GET /api/chats/{id}/panel":                    server.panelTabs,
 		"GET /api/chats/{id}/panel/{key}":              server.panelTab,
@@ -143,11 +151,15 @@ func (server *headlessServer) routes() http.Handler {
 		endpoints["POST /api/connections/models"] = server.draftLocalConnectionModels
 		endpoints["GET /api/connections/{id}/models"] = server.localConnectionModels
 		endpoints["POST /api/connections/{id}/disconnect"] = server.localConnectionDisconnect
+		endpoints["POST /api/connections/{id}/login"] = server.networkConnectionLogin
+		endpoints["POST /api/connections/{id}/login/complete"] = server.networkConnectionLoginComplete
 		endpoints["POST /api/connections/refresh"] = server.refreshLocalModels
 	}
 	syncEngine := server.syncEngine()
 	syncManifest, syncExport, syncImport := syncEngine.Routes()
 	endpoints["GET /api/sync/base"] = syncEngine.BaseRoute
+	pause, resume, moved := syncEngine.MoveRoutes()
+	endpoints["POST /api/chats/{id}/pause"], endpoints["POST /api/chats/{id}/resume"], endpoints["POST /api/chats/{id}/moved"] = pause, resume, moved
 	endpoints["POST /api/sync/base"] = syncEngine.BaseRoute
 	endpoints["GET /api/sync/manifest"] = syncManifest
 	endpoints["POST /api/sync/export"] = syncExport
@@ -164,7 +176,7 @@ func (server *headlessServer) routes() http.Handler {
 	for path, handler := range githubconnector.Handlers() {
 		endpoints[path] = handler
 	}
-	for path, handler := range usage.Handlers(server.usage, server.prices, server.usageNames, nil) {
+	for path, handler := range usage.Handlers(server.usage, server.prices, server.usageNames, server.accountDisabled, nil) {
 		if path == "GET /api/usage" {
 			serve := handler
 			handler = func(w http.ResponseWriter, r *http.Request) {
@@ -176,6 +188,8 @@ func (server *headlessServer) routes() http.Handler {
 		}
 		endpoints[path] = handler
 	}
+	server.loopyRoutes(endpoints)
+	mux.HandleFunc("POST /api/loopy/hook/{token}", engine.HookHandler(server.loopyEngine)) // the token is the key
 	for path, handler := range gitrepo.Handlers(gitTarget{server}, githubconnector.Default.Authorizations) {
 		endpoints[path] = handler
 	}
@@ -184,7 +198,7 @@ func (server *headlessServer) routes() http.Handler {
 	}
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/api/attachments", "/api/files/upload", "/api/sync/import":
+		case "/api/attachments", "/api/files/upload", "/api/sync/import", "/api/loopy/file":
 			// Files: their handlers set their own limits.
 		case "/api/sync/export":
 			r.Body = http.MaxBytesReader(w, r.Body, 64<<20) // the list of a large project's files
@@ -202,7 +216,7 @@ func (server *headlessServer) routes() http.Handler {
 func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	core.WriteJSON(w, 200, map[string]any{
+	server.writeSnapshotLocked(w, r, map[string]any{
 		"name":              server.name,
 		"projects":          server.projects,
 		"worktrees":         server.worktrees,
@@ -232,13 +246,37 @@ func (server *headlessServer) chat(w http.ResponseWriter, r *http.Request) {
 	for i := first; i < end; i++ {
 		items = append(items, server.itemLocked(chat, i))
 	}
-	core.WriteJSON(w, 200, map[string]any{
+	server.writeSnapshotLocked(w, r, map[string]any{
 		"chat":  remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Items: len(chat.Items)},
 		"items": items,
 		"first": first,
 		"total": len(chat.Items),
 		"meta":  server.metaLocked(chat),
 	})
+}
+
+// writeSnapshotLocked answers a read of the state or of a chat with the
+// number of the last event sent (X-1loop-Seq): the events after it are
+// newer than this answer. Its ETag spares the body when nothing changed
+// since the client's copy (If-None-Match). Both are new with #591: older
+// clients ignore them.
+func (server *headlessServer) writeSnapshotLocked(w http.ResponseWriter, r *http.Request, value any) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		core.Fail(w, 500, "Unable to encode the reply")
+		return
+	}
+	sum := sha256.Sum256(data)
+	tag := `"` + hex.EncodeToString(sum[:12]) + `"`
+	w.Header().Set("ETag", tag)
+	w.Header().Set("X-1loop-Seq", strconv.FormatUint(server.eventSeq, 10))
+	if r.Header.Get("If-None-Match") == tag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	w.Write(append(data, '\n'))
 }
 
 // chatContext is the chat's window by category with the MCP tools' list.
@@ -256,6 +294,18 @@ func (server *headlessServer) chatContext(w http.ResponseWriter, r *http.Request
 		return
 	}
 	core.WriteJSON(w, 200, usage)
+}
+
+// compactions are the chat's last ones, before and after (#128).
+func (server *headlessServer) compactions(w http.ResponseWriter, r *http.Request) {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	chat := server.chatLocked(r.PathValue("id"))
+	if chat == nil {
+		core.Fail(w, 404, "Chat not found")
+		return
+	}
+	core.WriteJSON(w, 200, map[string]any{"records": chat.Compaction.List()})
 }
 
 // mentions are what a chat's composer offers after "@" (?chat=, a new
@@ -302,6 +352,59 @@ func (server *headlessServer) renameChat(w http.ResponseWriter, r *http.Request)
 	core.WriteJSON(w, 200, map[string]any{"ok": true, "title": title})
 }
 
+// deleteChatsLocked deletes these chats, stopping those that run, and
+// releases the lock.
+func (server *headlessServer) deleteChatsLocked(gone []*serverChat) ([]string, error) {
+	previous := server.chats
+	kept := make([]*serverChat, 0, len(previous))
+	for _, candidate := range previous {
+		if !slices.Contains(gone, candidate) {
+			kept = append(kept, candidate)
+		}
+	}
+	server.chats = kept
+	if err := server.saveOutsideLocked(); err != nil {
+		server.chats = restoredChats(previous, server.chats, gone)
+		server.mu.Unlock()
+		return nil, err
+	}
+	var tabs []*serverTab
+	deleted := make([]string, 0, len(gone))
+	for _, member := range gone {
+		deleted = append(deleted, member.ID)
+		if member.run != nil {
+			member.run.cancel()
+			member.run = nil
+		}
+		member.queue, member.steer = nil, nil
+		member.tasks.StopAll()
+		agent.DropClaudeChat(member.ID)
+		if member.Config.Scratch != "" {
+			go func(path string) { _ = agent.RemoveScratchWorkspace(server.scratchBase(), path) }(member.Config.Scratch)
+		}
+		tabs = append(tabs, member.tabs...)
+		member.tabs = nil
+	}
+	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.mu.Unlock()
+	for _, tab := range tabs {
+		tab.close()
+	}
+	return deleted, nil
+}
+
+// removeChat deletes a chat with its subchats; their worktrees stay.
+func (server *headlessServer) removeChat(id string) error {
+	server.mu.Lock()
+	chat := server.chatLocked(id)
+	if chat == nil {
+		server.mu.Unlock()
+		return errors.New("it is gone already")
+	}
+	_, err := server.deleteChatsLocked(append([]*serverChat{chat}, server.subtreeLocked(chat)...))
+	return err
+}
+
 // deleteChat deletes a chat with its subchats at every level: those that
 // run stop first. The worktrees they were given go too when asked, unless
 // they have uncommitted changes or another chat works in them.
@@ -328,41 +431,10 @@ func (server *headlessServer) deleteChat(w http.ResponseWriter, r *http.Request)
 			}
 		}
 	}
-	previous := server.chats
-	kept := make([]*serverChat, 0, len(previous))
-	for _, candidate := range previous {
-		if !slices.Contains(gone, candidate) {
-			kept = append(kept, candidate)
-		}
-	}
-	server.chats = kept
-	if err := server.saveOutsideLocked(); err != nil {
-		server.chats = restoredChats(previous, server.chats, gone)
-		server.mu.Unlock()
+	deleted, err := server.deleteChatsLocked(gone)
+	if err != nil {
 		core.Fail(w, 500, err.Error())
 		return
-	}
-	var tabs []*serverTab
-	deleted := make([]string, 0, len(gone))
-	for _, member := range gone {
-		deleted = append(deleted, member.ID)
-		if member.run != nil {
-			member.run.cancel()
-			member.run = nil
-		}
-		member.queue, member.steer = nil, nil
-		member.tasks.StopAll()
-		agent.DropClaudeChat(member.ID)
-		if member.Config.Scratch != "" {
-			go func(path string) { _ = agent.RemoveScratchWorkspace(server.scratchBase(), path) }(member.Config.Scratch)
-		}
-		tabs = append(tabs, member.tabs...)
-		member.tabs = nil
-	}
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
-	server.mu.Unlock()
-	for _, tab := range tabs {
-		tab.close()
 	}
 	reply := map[string]any{"ok": true, "deleted": deleted}
 	var notes []string
@@ -462,7 +534,7 @@ func (server *headlessServer) events(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.kind, event.data); err != nil {
+			if _, err := fmt.Fprintf(w, "event: %s\nid: %d\ndata: %s\n\n", event.kind, event.seq, event.data); err != nil {
 				return
 			}
 		}
@@ -492,6 +564,24 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		core.WriteJSON(w, 200, map[string]string{"chat": args.Chat})
+		return
+	}
+	// /goal is 1loop's, never the model's (agent/goal.go).
+	goal, isGoal := agent.ParseGoalCommand(args.Text)
+	isGoal = isGoal && len(args.Attachments) == 0 && len(args.Images) == 0
+	if isGoal && chat != nil {
+		err := server.goalCommandLocked(chat, goal)
+		server.mu.Unlock()
+		if err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		core.WriteJSON(w, 200, map[string]string{"chat": chat.ID})
+		return
+	}
+	if isGoal && goal.Action != "set" {
+		server.mu.Unlock()
+		core.Fail(w, 400, "This chat has no goal yet: /goal <objective> sets one and starts working on it")
 		return
 	}
 	workspace := args.Workspace
@@ -548,6 +638,17 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	m.Images = append(m.Images, args.Images...)
+	var newGoal *agent.GoalState // a new chat started by /goal
+	if isGoal {
+		newGoal = &agent.GoalState{}
+		outcome, err := newGoal.Command(goal, false, server.cfg.Provider)
+		if err != nil {
+			core.Fail(w, 400, err.Error())
+			return
+		}
+		m = *outcome.Start
+		args.Text = goal.Objective // the chat's title
+	}
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	if chat == nil {
@@ -580,6 +681,9 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		}
 		delete(server.panelHomes, "home:"+workspace)
 		chat.ID, chat.Title, chat.Config = core.Identifier()[:16], string(title), cfg
+		if newGoal != nil {
+			chat.Goal = newGoal
+		}
 		server.chats = append([]*serverChat{chat}, server.chats...)
 		server.nameNewChatLocked(chat, m)
 	}
@@ -653,18 +757,28 @@ func (server *headlessServer) answer(w http.ResponseWriter, r *http.Request) {
 
 func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 	var args struct {
-		ID    string
-		Allow bool
+		ID string
+		agent.ApprovalAnswer
 	}
 	if core.ReadJSON(r, &args) != nil {
 		core.Fail(w, 400, "Invalid request")
 		return
 	}
-	if !server.backend.Approve(args.ID, args.Allow) {
+	if !server.backend.AnswerApproval(args.ID, args.ApprovalAnswer) {
 		core.Fail(w, 404, "This approval is no longer waiting")
 		return
 	}
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// review is the files of an edit waiting for approval (#242).
+func (server *headlessServer) review(w http.ResponseWriter, r *http.Request) {
+	files := server.backend.Review(r.URL.Query().Get("id"))
+	if files == nil {
+		core.Fail(w, 404, "This approval is no longer waiting")
+		return
+	}
+	core.WriteJSON(w, 200, map[string]any{"files": files})
 }
 
 func (server *headlessServer) setAutoResume(w http.ResponseWriter, r *http.Request) {

@@ -422,7 +422,11 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		}
 		icon := canvas.NewImageFromResource(tinted(glyph, colFaint))
 		icon.SetMinSize(fyne.NewSquareSize(15))
-		ui.place(container.NewBorder(nil, nil, container.NewCenter(icon), nil, newFlowText([]span{{text: item.Text}}, 12.5, colFaint)))
+		var compare fyne.CanvasObject
+		if compactionNote(item) {
+			compare = newRow("Compare", nil, styleChip, func() { ui.compareCompaction(chat, item.Text) })
+		}
+		ui.place(container.NewBorder(nil, nil, container.NewCenter(icon), compare, newFlowText([]span{{text: item.Text}}, 12.5, colFaint)))
 	case "tool":
 		if agent.WrapUpTool(item.Tool) {
 			return // drawn as the next-step card
@@ -486,6 +490,8 @@ type transcriptLayout struct {
 	added   int                                     // rows from here on came since: shown, perhaps
 	widest  float32                                 // the widest row
 	pending bool                                    // some rows were never measured, or changed
+	todo    []int                                   // those rows (pending), so a change costs no walk of the chat
+	swapped bool                                    // a row was put in another's place (replaced): sync compares them all
 	width   float32                                 // the column's width
 	stale   bool                                    // items out of sight keep an earlier width's size (remeasure)
 	shift   float32                                 // how much the items above the view grew since the scroll last moved
@@ -500,6 +506,8 @@ type transcriptLayout struct {
 	cards   *fyne.Container            // under the transcript, in its coordinates
 	cardSet []fyne.CanvasObject        // the cards made so far, reused
 	apart   map[fyne.CanvasObject]bool // rows that are in no card (the user's messages)
+	// What the developer log last said of each row (audit).
+	reported map[fyne.CanvasObject]string
 }
 
 // transcriptRow is an item of the transcript and its measured size.
@@ -583,7 +591,9 @@ func (layoutSpec *transcriptLayout) reset() {
 	layoutSpec.early = map[fyne.CanvasObject]transcriptRow{}
 	layoutSpec.apart = map[fyne.CanvasObject]bool{}
 	layoutSpec.lo, layoutSpec.hi, layoutSpec.added, layoutSpec.widest, layoutSpec.pending = 0, 0, 0, 0, false
+	layoutSpec.todo, layoutSpec.swapped = layoutSpec.todo[:0], false
 	layoutSpec.stale, layoutSpec.shift = false, 0
+	layoutSpec.reported = nil
 	layoutSpec.settle()
 }
 
@@ -607,8 +617,11 @@ func (layoutSpec *transcriptLayout) restore(state transcriptState) {
 		state.rows, state.index, state.owner, state.early, state.apart, state.width
 	layoutSpec.hi = len(layoutSpec.rows) // any of them may be shown: the next layout looks at each once
 	layoutSpec.pending = true
-	for _, row := range layoutSpec.rows {
+	for i, row := range layoutSpec.rows {
 		layoutSpec.widest = fyne.Max(layoutSpec.widest, row.size.Width)
+		if !row.known {
+			layoutSpec.todo = append(layoutSpec.todo, i)
+		}
 	}
 }
 
@@ -627,16 +640,23 @@ func (layoutSpec *transcriptLayout) own(part, row fyne.CanvasObject) {
 
 // sync follows the transcript's objects: rows added at the end are the
 // usual change; anything else builds the list again, keeping the sizes
-// of the rows still there.
+// of the rows still there. Rows are added at the end, or all of them
+// change (another chat, a row removed): the same first and last rows
+// mean the same rows, unless one was put in another's place (replaced).
 func (layoutSpec *transcriptLayout) sync(objects []fyne.CanvasObject) {
 	rows := layoutSpec.rows
 	same := len(objects) >= len(rows)
-	for i := range rows {
-		if !same {
-			break
+	if n := len(rows); same && n > 0 && !layoutSpec.swapped && objects[0] == rows[0].object && objects[n-1] == rows[n-1].object {
+		// Comparing every row cost a walk of the chat at each layout.
+	} else {
+		for i := range rows {
+			if !same {
+				break
+			}
+			same = objects[i] == rows[i].object
 		}
-		same = objects[i] == rows[i].object
 	}
+	layoutSpec.swapped = false
 	if same && len(objects) == len(rows) {
 		return
 	}
@@ -649,6 +669,7 @@ func (layoutSpec *transcriptLayout) sync(objects []fyne.CanvasObject) {
 		}
 		rows, start = make([]transcriptRow, 0, len(objects)), 0
 		clear(layoutSpec.index)
+		layoutSpec.todo = layoutSpec.todo[:0] // the places changed: those below are found again
 		for _, object := range objects {
 			row, ok := known[object]
 			if !ok {
@@ -676,6 +697,7 @@ func (layoutSpec *transcriptLayout) sync(objects []fyne.CanvasObject) {
 		layoutSpec.index[objects[i]] = i
 		if !rows[i].known {
 			layoutSpec.pending = true
+			layoutSpec.todo = append(layoutSpec.todo, i)
 		}
 	}
 	layoutSpec.rows = rows
@@ -715,9 +737,18 @@ func (layoutSpec *transcriptLayout) changed(part fyne.CanvasObject) {
 func (layoutSpec *transcriptLayout) forget(row fyne.CanvasObject) {
 	delete(layoutSpec.early, row)
 	if i, ok := layoutSpec.index[row]; ok && i < len(layoutSpec.rows) && layoutSpec.rows[i].object == row {
+		if layoutSpec.rows[i].known {
+			layoutSpec.todo = append(layoutSpec.todo, i)
+		}
 		layoutSpec.rows[i].known = false
 		layoutSpec.pending = true
 	}
+}
+
+// replaced tells that a row was put in the place of old, which goes.
+func (layoutSpec *transcriptLayout) replaced(old fyne.CanvasObject) {
+	layoutSpec.forget(old)
+	layoutSpec.swapped = true
 }
 
 // known tells whether a row was measured.
@@ -739,8 +770,12 @@ func (layoutSpec *transcriptLayout) measure(object fyne.CanvasObject, width floa
 	min := measureRow(object, width)
 	if i, ok := layoutSpec.index[object]; ok && i < len(layoutSpec.rows) && layoutSpec.rows[i].object == object {
 		layoutSpec.store(i, min, width)
+		layoutSpec.rest(i)
 	} else {
 		layoutSpec.early[object] = transcriptRow{object: object, size: min, width: width, known: true}
+		if !object.Visible() {
+			releaseTranscriptText(object)
+		}
 	}
 	return min
 }
@@ -748,7 +783,17 @@ func (layoutSpec *transcriptLayout) measure(object fyne.CanvasObject, width floa
 func (layoutSpec *transcriptLayout) measureAt(i int, width float32) fyne.Size {
 	min := measureRow(layoutSpec.rows[i].object, width)
 	layoutSpec.store(i, min, width)
+	layoutSpec.rest(i)
 	return min
+}
+
+// rest lets row i, measured out of sight, drop its words and lines: only
+// its height counts until it is shown. Not the last row: the answer being
+// written keeps them, so each delta lays out only what it adds (grow).
+func (layoutSpec *transcriptLayout) rest(i int) {
+	if object := layoutSpec.rows[i].object; !object.Visible() && i < len(layoutSpec.rows)-1 {
+		releaseTranscriptText(object)
+	}
 }
 
 func (layoutSpec *transcriptLayout) store(i int, measured fyne.Size, width float32) {
@@ -852,8 +897,8 @@ func (layoutSpec *transcriptLayout) prepare(objects []fyne.CanvasObject, width f
 	layoutSpec.sync(objects)
 	if layoutSpec.pending {
 		layoutSpec.pending = false
-		for i := range layoutSpec.rows {
-			if !layoutSpec.rows[i].known {
+		for _, i := range layoutSpec.todo {
+			if i < len(layoutSpec.rows) && !layoutSpec.rows[i].known {
 				if width > 0 {
 					layoutSpec.measureAt(i, width)
 				} else {
@@ -861,6 +906,7 @@ func (layoutSpec *transcriptLayout) prepare(objects []fyne.CanvasObject, width f
 				}
 			}
 		}
+		layoutSpec.todo = layoutSpec.todo[:0]
 	}
 	layoutSpec.sum()
 }
@@ -986,6 +1032,7 @@ func (layoutSpec *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyn
 			layoutSpec.placeArrival(object, coming)
 		}
 	}
+	layoutSpec.audit(lo, hi, size.Width)
 }
 
 // Cards reach a little past their rows: the text keeps a margin inside.
@@ -1392,6 +1439,7 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		}
 		ui.showApproval(currentTurn.chat, p)
 		currentTurn.show(agent.Activity{State: "approval", Detail: approvalSubject(p)})
+		ui.loopyStep(currentTurn.chat, "Waiting for your approval", true)
 	case "question":
 		request := uiEventValue.data.(agent.QuestionRequest)
 		ui.showQuestions(currentTurn.chat, request)
@@ -1402,6 +1450,8 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 			currentTurn.setRow(index, "running")
 		}
 		currentTurn.showRun(toolOutcomeValue)
+		verb, target, _ := agent.DescribeTool(agent.ChatItem{Tool: toolOutcomeValue.Name, Args: toolOutcomeValue.Args}, true)
+		ui.loopyStep(currentTurn.chat, strings.TrimSpace(verb+" "+target), false)
 	case "tool_output": // a running command's output so far
 		o := uiEventValue.data.(agent.ToolOutcome)
 		if index, ok := currentTurn.calls[o.ID]; ok {
@@ -1442,7 +1492,7 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		ui.save()
 	case "history":
 		currentTurn.chat.History = uiEventValue.data.([]agent.Message)
-	case "cache":
+	case "cache", "compaction":
 		ui.save()
 	case "context_note", "note":
 		ui.addItem(currentTurn.chat, agent.ChatItem{Kind: "note", Text: uiEventValue.data.(string)})
@@ -1450,8 +1500,13 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 	case "todo":
 		ui.todoUpdated(currentTurn.chat)
 		ui.save()
+	case "goal": // its state, time or tokens changed (goal.go)
+		ui.goalUpdated(currentTurn.chat)
 	case "usage":
 		currentTurn.usage = uiEventValue.data.(int)
+		if currentTurn.cfg.Provider == "claudecode" { // its own count comes when the turn ends
+			currentTurn.chat.ContextUsage = currentTurn.chat.ContextUsage.At(currentTurn.usage)
+		}
 		ui.remote.metaChanged(currentTurn.chat)
 		if currentTurn.chat == ui.current {
 			ui.setContextUsage(uiEventValue.data.(int), agent.ModelContextWindow(currentTurn.cfg))
@@ -1488,9 +1543,6 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		ui.save()
 	case "plan":
 		ui.plan = uiEventValue.data.(agent.PlanUsage)
-		if currentTurn.chat == ui.current {
-			ui.contextRing.plan = ui.plan
-		}
 	}
 }
 

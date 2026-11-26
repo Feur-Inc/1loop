@@ -80,7 +80,7 @@ func launcherIcon(ring image.Image, size int) image.Image {
 	return icon
 }
 
-func must(data []byte, err error) []byte {
+func must[T any](data T, err error) T {
 	if err != nil {
 		fail(err.Error())
 	}

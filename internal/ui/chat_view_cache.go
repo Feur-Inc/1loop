@@ -3,7 +3,7 @@
 package ui
 
 import (
-	"reflect"
+	"slices"
 
 	"fyne.io/fyne/v2"
 
@@ -45,7 +45,7 @@ func (ui *desktopUI) restoreChatView(chat *conversation) bool {
 		return false
 	}
 	width := fyne.Min(760, fyne.Max(0, ui.chatViewport.Size().Width-48))
-	if width != cache.width || ui.window.Canvas().Scale() != cache.scale || !reflect.DeepEqual(chat.Items, cache.items) {
+	if width != cache.width || ui.window.Canvas().Scale() != cache.scale || !slices.EqualFunc(chat.Items, cache.items, sameItem) {
 		ui.cachedChat = nil
 		return false
 	}

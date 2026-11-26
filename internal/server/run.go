@@ -253,7 +253,13 @@ func Main() {
 		}
 		go server.checkMachines()
 	}
-	go server.loadModels()
+	go func() {
+		server.loadModels()
+		server.mu.Lock()
+		server.resumeCutOffLocked(server.runLocked) // the turns the last stop cut off (#584)
+		server.mu.Unlock()
+		server.wakeLoopy() // its routines go on
+	}()
 	reportLastCrash(*dir)
 	go func() {
 		<-ctx.Done()

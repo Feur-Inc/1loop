@@ -175,13 +175,6 @@ func TestViewerZoomAndPan(t *testing.T) {
 	}
 }
 
-func abs32(v float32) float32 {
-	if v < 0 {
-		return -v
-	}
-	return v
-}
-
 // Save as asks each desktop's own dialog where to write the picture.
 func TestSaveChooserArguments(t *testing.T) {
 	request := pickRequest{title: "Save picture", start: "/home/me", save: true, name: "image.png", filterName: "PNG images", extensions: []string{".png"}}

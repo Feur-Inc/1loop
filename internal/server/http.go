@@ -381,7 +381,8 @@ func (server *headlessServer) deleteChatsLocked(gone []*serverChat) ([]string, e
 			member.run.cancel()
 			member.run = nil
 		}
-		member.queuedSubchat = nil
+		member.QueuedSubchat = nil
+		member.QueuedReason = ""
 		member.queue, member.steer = nil, nil
 		member.tasks.StopAll()
 		agent.DropClaudeChat(member.ID)

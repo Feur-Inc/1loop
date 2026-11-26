@@ -9,11 +9,25 @@ package server
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"1loop/internal/agent"
 	"1loop/internal/platform"
 )
+
+// queuedSubchatLabel turns an agent-facing queue reason into a short UI status
+// label for the chat header.
+func queuedSubchatLabel(reason string) string {
+	switch {
+	case strings.Contains(reason, "already working"):
+		return "Queued · limit reached"
+	case strings.Contains(reason, "memory") || strings.Contains(reason, "RAM"):
+		return "Queued · waiting for memory"
+	default:
+		return "Queued"
+	}
+}
 
 const defaultSubchatQueuePoll = 5 * time.Second
 
@@ -60,12 +74,13 @@ func (server *headlessServer) startOrQueueSubchatLocked(sub *serverChat, prompt 
 		reason = "Waiting behind earlier queued subchats."
 	}
 	msg := prompt
-	sub.queuedSubchat = &msg
-	sub.queuedReason = reason
+	sub.QueuedSubchat = &msg
+	sub.QueuedReason = reason
 	server.subchatQueue = append(server.subchatQueue, sub)
 	server.ensureSubchatQueueTimerLocked()
 	server.broadcastLocked("meta", server.metaLocked(sub))
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.scheduleSaveLocked()
 	return true, reason
 }
 
@@ -97,7 +112,7 @@ func (server *headlessServer) drainSubchatQueueLocked() {
 	}
 	for len(server.subchatQueue) > 0 {
 		sub := server.subchatQueue[0]
-		if server.chatLocked(sub.ID) != sub || sub.queuedSubchat == nil || sub.run != nil {
+		if server.chatLocked(sub.ID) != sub || sub.QueuedSubchat == nil || sub.run != nil {
 			server.subchatQueue = server.subchatQueue[1:]
 			continue
 		}
@@ -106,9 +121,9 @@ func (server *headlessServer) drainSubchatQueueLocked() {
 			return
 		}
 		server.subchatQueue = server.subchatQueue[1:]
-		msg := *sub.queuedSubchat
-		sub.queuedSubchat = nil
-		sub.queuedReason = ""
+		msg := *sub.QueuedSubchat
+		sub.QueuedSubchat = nil
+		sub.QueuedReason = ""
 		server.runLocked(sub, msg)
 	}
 	if server.subchatQueueTimer != nil {
@@ -117,18 +132,29 @@ func (server *headlessServer) drainSubchatQueueLocked() {
 	}
 }
 
-// cancelQueuedSubchatLocked removes a queued subchat from the queue and marks
-// it stopped, notifying its parent just like stopping a running subchat.
-func (server *headlessServer) cancelQueuedSubchatLocked(sub *serverChat) {
-	if sub.queuedSubchat == nil {
+// cancelQueuedSubchatNoDrainLocked removes a queued subchat from the queue and
+// marks it stopped without draining the remaining queue. Callers stopping a
+// subtree drain once after cancelling the whole tree so sibling queued subchats
+// are not briefly started only to be stopped right after.
+func (server *headlessServer) cancelQueuedSubchatNoDrainLocked(sub *serverChat) {
+	if sub.QueuedSubchat == nil {
 		return
 	}
-	sub.queuedSubchat = nil
-	sub.queuedReason = ""
+	sub.QueuedSubchat = nil
+	sub.QueuedReason = ""
 	server.subchatQueue = slices.DeleteFunc(server.subchatQueue, func(c *serverChat) bool { return c == sub })
 	server.broadcastLocked("meta", server.metaLocked(sub))
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
 	server.turnEndedLocked(sub, agent.SubchatStopped)
 	server.scheduleSaveLocked()
+}
+
+// cancelQueuedSubchatLocked removes a queued subchat from the queue, marks it
+// stopped, and drains the remaining queue.
+func (server *headlessServer) cancelQueuedSubchatLocked(sub *serverChat) {
+	if sub.QueuedSubchat == nil {
+		return
+	}
+	server.cancelQueuedSubchatNoDrainLocked(sub)
 	server.drainSubchatQueueLocked()
 }

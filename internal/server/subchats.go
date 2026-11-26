@@ -41,7 +41,7 @@ func (server *headlessServer) subchatInfoLocked(chat *serverChat) agent.SubchatI
 		used = chat.run.used
 	}
 	state := agent.SubchatState(chat.run != nil, waiting, chat.Subchat.Ended)
-	if chat.queuedSubchat != nil {
+	if chat.QueuedSubchat != nil {
 		state = agent.SubchatQueued
 	}
 	return agent.SubchatInfo{ID: chat.ID, Title: chat.Title, State: state,
@@ -120,8 +120,15 @@ func (server *headlessServer) subchatDepthLocked(chat *serverChat) int {
 
 // stopTreeLocked stops a chat's turn, and those of the subchats under it.
 func (server *headlessServer) stopTreeLocked(chat *serverChat, depth int) {
-	if chat.queuedSubchat != nil {
-		server.cancelQueuedSubchatLocked(chat)
+	server.stopTreeNoDrainLocked(chat, depth)
+	if depth == 0 {
+		server.drainSubchatQueueLocked()
+	}
+}
+
+func (server *headlessServer) stopTreeNoDrainLocked(chat *serverChat, depth int) {
+	if chat.QueuedSubchat != nil {
+		server.cancelQueuedSubchatNoDrainLocked(chat)
 	}
 	if chat.run != nil {
 		chat.run.cancel()
@@ -130,14 +137,14 @@ func (server *headlessServer) stopTreeLocked(chat *serverChat, depth int) {
 		return
 	}
 	for _, sub := range server.subchatsLocked(chat) {
-		server.stopTreeLocked(sub, depth+1)
+		server.stopTreeNoDrainLocked(sub, depth+1)
 	}
 }
 
 // treeWorkingLocked says whether a subchat under chat, at any depth, works.
 func (server *headlessServer) treeWorkingLocked(chat *serverChat, depth int) bool {
 	for _, sub := range server.subchatsLocked(chat) {
-		if sub.run != nil || sub.queuedSubchat != nil || depth < agent.MaxSubchatDepth && server.treeWorkingLocked(sub, depth+1) {
+		if sub.run != nil || sub.QueuedSubchat != nil || depth < agent.MaxSubchatDepth && server.treeWorkingLocked(sub, depth+1) {
 			return true
 		}
 	}
@@ -164,7 +171,7 @@ func (server *headlessServer) subchatAccess(chat *serverChat) *agent.SubchatAcce
 			if sub == nil || sub.Subchat == nil || sub.Subchat.Parent != chat.ID {
 				return fmt.Errorf("No subchat %s here", id)
 			}
-			if sub.run == nil && sub.queuedSubchat == nil && !server.treeWorkingLocked(sub, 0) {
+			if sub.run == nil && sub.QueuedSubchat == nil && !server.treeWorkingLocked(sub, 0) {
 				return agent.SubchatNotWorking(server.subchatInfoLocked(sub))
 			}
 			server.stopTreeLocked(sub, 0)
@@ -382,6 +389,9 @@ func (server *headlessServer) resumeCutOffLocked(start func(*serverChat, agent.M
 		}
 	}
 	server.scheduleSaveLocked()
+	if len(server.subchatQueue) > 0 {
+		server.drainSubchatQueueLocked()
+	}
 }
 
 // reportToLocked is reportTo with chat's parent, for a subchat whose

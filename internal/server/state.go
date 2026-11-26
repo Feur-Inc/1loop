@@ -67,8 +67,8 @@ type serverChat struct {
 	tabs          []*serverTab
 	session       *browser.Session
 	queue, steer  []agent.Message
-	queuedSubchat *agent.Message  // initial brief waiting in server.subchatQueue (#649)
-	queuedReason  string          // why queuedSubchat is waiting (#649)
+	QueuedSubchat *agent.Message  `json:"queuedSubchat,omitempty"` // initial brief waiting in server.subchatQueue (#649)
+	QueuedReason  string          `json:"queuedReason,omitempty"`  // why QueuedSubchat is waiting (#649)
 	handoff       *pendingHandoff // how the next turn's new model receives the chat
 }
 
@@ -305,6 +305,13 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 			chat.Compaction = &agent.CompactionState{}
 		}
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
+		// A queued subchat has not started its turn yet: keep its brief and
+		// ReportTo and re-enqueue it instead of marking it interrupted (#649).
+		if chat.QueuedSubchat != nil {
+			server.subchatQueue = append(server.subchatQueue, chat)
+			chat.Working, chat.Resumed = false, false
+			continue
+		}
 		// A turn that was working (or, saved before Working, reporting) was
 		// cut off: it shows so at once, and goes on or is told once the
 		// models are loaded (#584).
@@ -354,11 +361,16 @@ func (server *headlessServer) stateLocked() (write func() error) {
 	// Messages are never edited in place: copying the lists is enough.
 	chats := make([]*serverChat, len(server.chats))
 	for i, chat := range server.chats {
+		var queued *agent.Message
+		if chat.QueuedSubchat != nil {
+			msg := *chat.QueuedSubchat
+			queued = &msg
+		}
 		chats[i] = &serverChat{ID: chat.ID, Title: chat.Title, Config: chat.Config, History: append([]agent.Message{}, chat.History...),
 			Items: append([]agent.ChatItem{}, chat.Items...), Version: chat.Version, Versions: agent.CopyVersions(chat.Versions),
 			Todo: chat.Todo.Copy(), Goal: chat.Goal.Copy(), Cache: chat.Cache.Copy(), Compaction: chat.Compaction.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
 			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...), // its parent: forgetting it detached every subchat on restart (#356)
-			Working: chat.Working, Resumed: chat.Resumed}
+			Working: chat.Working, Resumed: chat.Resumed, QueuedSubchat: queued, QueuedReason: chat.QueuedReason}
 	}
 	devices := append([]remoteapi.PairedDevice{}, server.devices...)
 	server.saveCount++
@@ -672,7 +684,7 @@ func (server *headlessServer) summariesLocked() []remoteapi.Chat {
 	out := []remoteapi.Chat{}
 	for _, chat := range server.chats {
 		status, blocked := agent.WrapUpStatus(chat.Items)
-		summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Queued: chat.queuedSubchat != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
+		summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Queued: chat.QueuedSubchat != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
 		if chat.Subchat != nil {
 			summary.Parent, summary.Ended = chat.Subchat.Parent, chat.Subchat.Ended
 			if server.subchatWorktreeLocked(chat) != "" {
@@ -727,12 +739,8 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		if chat.run.used > 0 {
 			meta.Used = chat.run.used
 		}
-	} else if chat.queuedSubchat != nil {
-		label := "Queued (waiting for memory)"
-		if chat.queuedReason != "" {
-			label = "Queued: " + chat.queuedReason
-		}
-		meta.Label, meta.Mark = label, "wait"
+	} else if chat.QueuedSubchat != nil {
+		meta.Label, meta.Mark = queuedSubchatLabel(chat.QueuedReason), "wait"
 	}
 	if parent := server.parentLocked(chat); parent != nil {
 		meta.Parent, meta.ParentTitle = parent.ID, parent.Title

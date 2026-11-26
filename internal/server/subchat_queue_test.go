@@ -90,7 +90,7 @@ func TestSubchatQueueByLimitAndDrain(t *testing.T) {
 		s1 := server.chatLocked(info1.ID)
 		s2 := server.chatLocked(info2.ID)
 		return s1.run == nil && s1.Subchat.Ended == agent.SubchatDone &&
-			s2.run == nil && s2.queuedSubchat == nil && s2.Subchat.Ended == agent.SubchatDone
+			s2.run == nil && s2.QueuedSubchat == nil && s2.Subchat.Ended == agent.SubchatDone
 	})
 }
 
@@ -134,7 +134,7 @@ func TestSubchatQueueByMemoryRecovery(t *testing.T) {
 
 	waitFor(t, server, "queued subchat to run once memory returns", func() bool {
 		sub := server.chatLocked(info.ID)
-		return sub != nil && sub.queuedSubchat == nil && sub.run == nil && sub.Subchat.Ended == agent.SubchatDone
+		return sub != nil && sub.QueuedSubchat == nil && sub.run == nil && sub.Subchat.Ended == agent.SubchatDone
 	})
 }
 
@@ -190,8 +190,8 @@ func TestSubchatQueueStopAndSettingAPI(t *testing.T) {
 		t.Fatalf("stop queued q1: %v", err)
 	}
 	server.mu.Lock()
-	if s := server.chatLocked(q1.ID); s.queuedSubchat != nil || s.Subchat.Ended != agent.SubchatStopped {
-		t.Fatalf("stopped q1: queued=%v ended=%q", s.queuedSubchat != nil, s.Subchat.Ended)
+	if s := server.chatLocked(q1.ID); s.QueuedSubchat != nil || s.Subchat.Ended != agent.SubchatStopped {
+		t.Fatalf("stopped q1: queued=%v ended=%q", s.QueuedSubchat != nil, s.Subchat.Ended)
 	}
 	server.mu.Unlock()
 
@@ -210,6 +210,131 @@ func TestSubchatQueueStopAndSettingAPI(t *testing.T) {
 	}
 	waitFor(t, server, "q2 to finish after raising limit", func() bool {
 		s := server.chatLocked(q2.ID)
-		return s != nil && s.queuedSubchat == nil && s.run == nil && s.Subchat.Ended == agent.SubchatDone
+		return s != nil && s.QueuedSubchat == nil && s.run == nil && s.Subchat.Ended == agent.SubchatDone
 	})
+}
+
+func TestSubchatQueueSurvivesRestart(t *testing.T) {
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	gate := make(chan struct{})
+	close(gate)
+	baseURL := blockingSubchatModel(t, gate)
+
+	dir := t.TempDir()
+	root := t.TempDir()
+	ctx, cancel := context.WithCancel(context.Background())
+	s1, err := newHeadlessServer(ctx, root, dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s1.mu.Lock()
+	s1.readMemory = func() platform.MemoryStatus {
+		return platform.MemoryStatus{TotalBytes: 2 << 30, AvailableBytes: 300 << 20}
+	}
+	s1.subchatQueuePoll = time.Hour
+	parent := &serverChat{ID: "parent", Title: "Main", Todo: &agent.TodoState{}, Cache: &agent.ContextCache{},
+		Config: agent.Config{Provider: "compatible", BaseURL: baseURL, Model: "mock", Workspace: root}}
+	s1.chats = []*serverChat{parent}
+	s1.mu.Unlock()
+
+	subInfo, err := s1.startSubchat(ctx, parent, agent.SubchatRequest{Title: "Saved", Brief: "keep this brief", Context: "fresh", Isolation: "shared"})
+	if err != nil || subInfo.State != agent.SubchatQueued {
+		t.Fatalf("startSubchat = %+v, %v", subInfo, err)
+	}
+	s1.mu.Lock()
+	if err := s1.saveLocked(); err != nil {
+		t.Fatal(err)
+	}
+	s1.mu.Unlock()
+	s1.close()
+	cancel()
+
+	// Restart from the same dir with plenty of memory: the queued subchat must
+	// not be marked interrupted, must keep its brief, and must start and finish.
+	ctx2, cancel2 := context.WithCancel(context.Background())
+	defer cancel2()
+	s2, err := newHeadlessServer(ctx2, root, dir, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s2.close()
+	s2.mu.Lock()
+	if len(s2.cutOffs) != 0 {
+		t.Fatalf("queued subchat was wrongly marked cut off: %+v", s2.cutOffs)
+	}
+	sub := s2.chatLocked(subInfo.ID)
+	if sub == nil || sub.QueuedSubchat == nil || !strings.Contains(sub.QueuedSubchat.Content, "keep this brief") {
+		t.Fatalf("reloaded queued subchat lost its brief: %+v", sub)
+	}
+	if got := s2.metaLocked(sub).Label; got != "Queued · waiting for memory" {
+		t.Fatalf("meta label = %q, want %q", got, "Queued · waiting for memory")
+	}
+	s2.readMemory = func() platform.MemoryStatus {
+		return platform.MemoryStatus{TotalBytes: 8 << 30, AvailableBytes: 4 << 30}
+	}
+	s2.resumeCutOffLocked(s2.runLocked)
+	s2.mu.Unlock()
+
+	waitFor(t, s2, "reloaded queued subchat to finish with its brief", func() bool {
+		c := s2.chatLocked(subInfo.ID)
+		return c != nil && c.QueuedSubchat == nil && c.run == nil && c.Subchat.Ended == agent.SubchatDone && len(c.Items) >= 2
+	})
+}
+
+func TestSubchatStopParentDoesNotStartQueuedSibling(t *testing.T) {
+	started := make(chan string, 10)
+	model := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Messages []struct{ Content string } `json:"messages"`
+		}
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		for _, m := range body.Messages {
+			if strings.Contains(m.Content, "brief-") {
+				started <- m.Content
+			}
+		}
+		w.Header().Set("Content-Type", "text/event-stream")
+		fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{\"content\":\"ok\"}}]}\n\n")
+		fmt.Fprint(w, "data: {\"choices\":[{\"index\":0,\"delta\":{},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer model.Close()
+
+	server, _, _ := testServer(t)
+	ctx := context.Background()
+	server.mu.Lock()
+	server.readMemory = func() platform.MemoryStatus {
+		return platform.MemoryStatus{TotalBytes: 2 << 30, AvailableBytes: 300 << 20}
+	}
+	server.subchatQueuePoll = time.Hour
+	parent := &serverChat{ID: "parent", Title: "Main", Todo: &agent.TodoState{}, Cache: &agent.ContextCache{},
+		Config: agent.Config{Provider: "compatible", BaseURL: model.URL + "/v1", Model: "mock", Workspace: server.root}}
+	server.chats = []*serverChat{parent}
+	server.mu.Unlock()
+
+	q1, err := server.startSubchat(ctx, parent, agent.SubchatRequest{Title: "Q1", Brief: "brief-1", Context: "fresh", Isolation: "shared"})
+	if err != nil || q1.State != agent.SubchatQueued {
+		t.Fatalf("q1 = %+v, %v", q1, err)
+	}
+	q2, err := server.startSubchat(ctx, parent, agent.SubchatRequest{Title: "Q2", Brief: "brief-2", Context: "fresh", Isolation: "shared"})
+	if err != nil || q2.State != agent.SubchatQueued {
+		t.Fatalf("q2 = %+v, %v", q2, err)
+	}
+
+	// Now memory is available, and we stop the parent: neither q1 nor q2 should start.
+	server.mu.Lock()
+	server.readMemory = func() platform.MemoryStatus {
+		return platform.MemoryStatus{TotalBytes: 8 << 30, AvailableBytes: 4 << 30}
+	}
+	server.stopTreeLocked(parent, 0)
+	s1, s2 := server.chatLocked(q1.ID), server.chatLocked(q2.ID)
+	if s1.QueuedSubchat != nil || s2.QueuedSubchat != nil || s1.Subchat.Ended != agent.SubchatStopped || s2.Subchat.Ended != agent.SubchatStopped {
+		t.Fatalf("expected both queued siblings stopped: s1=%+v s2=%+v", s1.Subchat, s2.Subchat)
+	}
+	server.mu.Unlock()
+
+	select {
+	case msg := <-started:
+		t.Fatalf("sibling subchat was started while stopping parent: %q", msg)
+	case <-time.After(100 * time.Millisecond):
+	}
 }

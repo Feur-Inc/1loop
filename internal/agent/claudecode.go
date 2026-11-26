@@ -758,7 +758,9 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		// WebSearch runs on Anthropic's servers, as on the phone (claudeCommand).
 		args = append(args, "--tools", "WebSearch")
 	}
-	if claudeDisabledTools != "" {
+	if cfg.Assistant != nil { // its tools are the host's only (claudeMCPDefinitions)
+		args = append(args, "--tools", "")
+	} else if claudeDisabledTools != "" {
 		args = append(args, "--disallowedTools", claudeDisabledTools)
 	}
 	if cfg.Model != "" && cfg.Model != "default" {
@@ -780,7 +782,9 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		appendPrompt += "\n\nUse 1loop's MCP shell, read_file, list_directory, edit_file and apply_patch tools for project work. Follow the phone's selected execution policy and stay strictly inside the requested project. Use recall to retrieve older conversation details. Your own context compaction remains managed by Claude Code."
 	}
 	appendPrompt += claudeCodeGuidance(cfg)
-	if appendPrompt != "" {
+	if cfg.Assistant != nil {
+		args = append(args, "--append-system-prompt", "\n\n"+cfg.Assistant.Prompt+"\n\nYou are not a coding agent in this session: what the prompt above says of software tasks does not apply. Your tools are the mcp__1loop_todo__ ones.")
+	} else if appendPrompt != "" {
 		// 1loop's rules under their own heading, the user's text after them
 		// under its own: one must not read as the other (#211).
 		appendPrompt = "\n\n# 1loop\nYou run inside 1loop, an app that drives Claude Code. Its rules for this session:" + appendPrompt + userPreferenceInstructions(cfg)
@@ -811,7 +815,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 		args = append(args, sessionArgs...)
 		var binding *todoMCPBinding
 		var cleanup []func()
-		if cfg.Todo != nil {
+		if cfg.Todo != nil || cfg.Assistant != nil {
 			binding = newTodoMCPBinding(ctx, cfg, emit)
 			config, close, err := backend.startTodoMCP(binding)
 			if err != nil {
@@ -821,9 +825,13 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 			args = append(args, "--mcp-config", config)
 		}
 		// The user's MCP servers, plugins and skills, for this session only.
-		extensionArgs, cleanExtensions := claudeExtensionArgs()
-		cleanup = append(cleanup, cleanExtensions)
-		args = append(args, extensionArgs...)
+		if cfg.Assistant == nil {
+			extensionArgs, cleanExtensions := claudeExtensionArgs()
+			cleanup = append(cleanup, cleanExtensions)
+			args = append(args, extensionArgs...)
+		} else { // none of the user's own MCP servers, hooks or project files
+			args = append(args, "--strict-mcp-config", "--setting-sources", "")
+		}
 		// Its own context: a kept process outlives this turn's.
 		dir := cfg.Workspace
 		if machineDir != "" {
@@ -1255,7 +1263,7 @@ func (backend *App) runClaudeCode(ctx context.Context, cfg Config, history []Mes
 				return answer.Allow
 			}
 			projectRead := cfg.ProjectTools != nil && (name == "read_file" || name == "list_directory" || name == "search_files" || name == "command_output" || name == "recall" || name == "request_user_input")
-			if projectRead || claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__wrap_up" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__memory" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__settings" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__subchat" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__chats" || name == "change_directory" || name == "request_directory" || isGoalTool(name) || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || ask() {
+			if projectRead || claudeEventValue.Request.ToolName == "mcp__1loop_todo__update_todo" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__wrap_up" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__memory" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__settings" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__subchat" || claudeEventValue.Request.ToolName == "mcp__1loop_todo__chats" || name == "change_directory" || name == "request_directory" || isGoalTool(name) || cfg.Assistant.has(name) || (claudeEventValue.Request.ToolName == "mcp__1loop_todo__computer_use" && !computerNeedsApproval(claudeEventValue.Request.Input)) || strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__browser_") || (strings.HasPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__terminal_") && !terminalNeedsApproval(strings.TrimPrefix(claudeEventValue.Request.ToolName, "mcp__1loop_todo__"), claudeEventValue.Request.Input)) || ask() {
 				response = map[string]any{"behavior": "allow", "updatedInput": claudeEventValue.Request.Input}
 				if edited != nil {
 					response["updatedInput"] = edited

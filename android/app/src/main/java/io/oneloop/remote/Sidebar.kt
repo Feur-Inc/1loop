@@ -97,9 +97,14 @@ internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit)
     val side = SideChats(groups.flatMap { it.chats })
     Column(modifier.background(Palette.sidebar).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
         // The ring and the "1" take the accent, drawn over the rest of the logo.
-        Box(Modifier.padding(start = 6.dp, top = 14.dp, bottom = 14.dp).height(28.dp)) {
-            Image(painterResource(if (Palette.dark) R.drawable.logo else R.drawable.logo_light), "1loop", modifier = Modifier.height(28.dp))
-            Image(painterResource(R.drawable.logo_accent), null, modifier = Modifier.height(28.dp), colorFilter = ColorFilter.tint(Palette.amber))
+        // It switches between 1loop and Loopy, as on the desktop.
+        Box(Modifier.padding(top = 10.dp, bottom = 10.dp)) {
+            SpaceSwitch(app, false, onPicked) {
+                Box(Modifier.height(28.dp)) {
+                    Image(painterResource(if (Palette.dark) R.drawable.logo else R.drawable.logo_light), "1loop", modifier = Modifier.height(28.dp))
+                    Image(painterResource(R.drawable.logo_accent), null, modifier = Modifier.height(28.dp), colorFilter = ColorFilter.tint(Palette.amber))
+                }
+            }
         }
         // The labelled actions, in the desktop's order.
         NavRow("New chat", Icons.plus, selected = false) { app.open(null); onPicked() }

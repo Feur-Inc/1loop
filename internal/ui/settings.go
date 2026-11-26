@@ -84,6 +84,7 @@ var subPages = map[string]string{
 	"Extensions":           registry.Tools,
 	"Connectors":           registry.Tools,
 	registry.ShortcutsPage: registry.General,
+	loopySettingsPage:      registry.Agent,
 }
 
 // pageAliases are pages of earlier versions, still named by links and
@@ -115,8 +116,10 @@ type settingsFrame struct {
 type settingsView struct {
 	ui      *desktopUI
 	open    bool
-	section string // the section selected in the sidebar
-	page    string // the page shown: the section, or one of its sub-pages
+	toLoopy bool    // closing goes back to Loopy's space
+	leave   *tapRow // what closes it
+	section string  // the section selected in the sidebar
+	page    string  // the page shown: the section, or one of its sub-pages
 	rows    map[string]*tapRow
 	side    fyne.CanvasObject // what the sidebar shows
 	view    *fyne.Container   // what the main area shows
@@ -144,6 +147,7 @@ type settingsView struct {
 func (ui *desktopUI) buildSettings() {
 	view := &settingsView{ui: ui, rows: map[string]*tapRow{}, section: "General", page: "General", anchors: map[string]*settingAnchor{}, servers: map[string]*settingsServer{}}
 	back := newRow("Back to 1loop", iconChevronLeft, styleNav, view.close)
+	view.leave = back
 	nav := container.New(layout.NewCustomPaddedVBoxLayout(1))
 	for _, section := range registry.Sections() {
 		name := section.Title
@@ -241,6 +245,11 @@ func (view *settingsView) closeNow() {
 	ui.relayoutColumn()
 	ui.curtain.reveal()
 	ui.window.Canvas().Focus(ui.prompt)
+	if view.toLoopy { // opened from there
+		view.toLoopy = false
+		view.leave.SetText("Back to 1loop")
+		ui.openLoopy()
+	}
 }
 
 // show opens a page, leaving whatever was open.
@@ -325,6 +334,8 @@ func (view *settingsView) build(page string) fyne.CanvasObject {
 		return ui.advancedSettings()
 	case registry.ShortcutsPage:
 		return ui.shortcutSettings()
+	case loopySettingsPage:
+		return ui.loopySettings()
 	case "Extensions":
 		return ui.extensionSettings(localExtensions{ui}, container.NewVBox(view.pageTitle("Extensions", "Tools & extensions", nil), view.scope()))
 	case "Connectors":
@@ -826,6 +837,8 @@ func (ui *desktopUI) agentSettings() fyne.CanvasObject {
 		view.mark("agent.project_memory", card(settingRow("Project memory",
 			"Each project's AGENTS.md. Edit it from the project's … menu.", nil))),
 	)
+	page.Add(sectionTitle("Loopy"))
+	page.Add(card(settingRow("Loopy, the personal agent", "Its model, its morning summary, its context and its memory.", newRow("Open", iconChevronRight, styleChip, view.link(loopySettingsPage)))))
 	page.Add(sectionTitle("Context"))
 	page.Add(card(view.mark(registry.KeyDynamicCompaction, settingRow("Dynamic compaction", "Compacts at natural breaks in the work, not when nearly full.",
 		newToggle(!ui.classicCompaction, func(on bool) { ui.setDynamicCompaction(on) })))))
@@ -1024,6 +1037,9 @@ func (ui *desktopUI) connectionRows() fyne.CanvasObject {
 		if connectionValue.Provider == "claudecode" {
 			detail += " · " + claudeAccountText(connectionValue)
 		}
+		if ui.keyMissing(connectionValue.ID) && !ui.keysLoading {
+			detail += " · " + keyNeeded
+		}
 		rows = append(rows, settingRow(connectionValue.Name, detail, container.New(layout.NewCustomPaddedHBoxLayout(14), container.NewCenter(enabled), edit)))
 	}
 	if len(rows) == 0 {
@@ -1043,7 +1059,7 @@ func (ui *desktopUI) removeConnection(conn agent.Connection, done func()) {
 				}
 			}
 			ui.connectionsList = kept
-			delete(ui.keys, conn.ID)
+			ui.setKey(conn.ID, "") // out of the secret store too
 			ui.save()
 			ui.refreshModels()
 			done()
@@ -1099,6 +1115,15 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	key := widget.NewPasswordEntry()
 	key.SetText(ui.keys[draft.ID])
 	key.SetPlaceHolder("Kept in memory until 1loop closes")
+	typedKey := key.Text // a key the field leaves as it was is not saved over one loaded meanwhile
+	keyNote := noKeyStore
+	if ui.vault.kept() {
+		key.SetPlaceHolder("Kept in the system's secret store")
+		keyNote = ""
+		if ui.keyMissing(draft.ID) && !ui.keysLoading {
+			keyNote = keyNeeded + "."
+		}
+	}
 	enabled := newToggle(draft.Enabled, func(on bool) { draft.Enabled = on })
 	typePicker := newPicker(ui.window, "Connection type", styleField, nil)
 	typePicker.Options = []string{"Local vLLM", "OpenRouter", "ChatGPT account", "OpenAI-compatible API", "Claude Code", "Antigravity CLI", "ChatGPT (Web)"}
@@ -1130,7 +1155,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	// Access: an address and a key, a ChatGPT sign-in, or nothing (Claude Code).
 	apiFields := card(
 		settingRow("API base URL", "", sized(340, base)),
-		settingRow("API key", "", sized(340, key)))
+		settingRow("API key", keyNote, sized(340, key)))
 	loginLink := widget.NewHyperlink("Open sign-in in your browser", nil)
 	loginLink.Hide()
 	account := plainFlow("Not signed in.", 12.5, colMuted)
@@ -1510,7 +1535,9 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		if !found {
 			ui.connectionsList = append(ui.connectionsList, cloneConnection(draft))
 		}
-		ui.keys[draft.ID] = key.Text
+		if key.Text != typedKey {
+			ui.setKey(draft.ID, key.Text)
+		}
 		platform.Devf("ui", "connection %q saved", draft.Name)
 		ui.save()
 		ui.refreshModels()

@@ -17,6 +17,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -272,6 +273,13 @@ func (ledger *Ledger) Limits(names Names, now time.Time) []Limit {
 		return limits[i].Name < limits[j].Name
 	})
 	return limits
+}
+
+// HideLimits takes the windows of the connections hidden says out of the
+// report: a disabled account's last readings stay in the file but are not
+// read again, so they say nothing of now. What it spent stays.
+func (report *Report) HideLimits(hidden func(connection string) bool) {
+	report.Limits = slices.DeleteFunc(report.Limits, func(limit Limit) bool { return hidden(limit.Connection) })
 }
 
 // pace works the window's pace out from its readings.

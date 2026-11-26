@@ -129,6 +129,9 @@ func (view *settingsView) jump(key string) {
 		page = setting.Page
 	}
 	view.confirmLeave(0, func() {
+		if page == loopySettingsPage {
+			view.ui.loopyTab, view.ui.loopyLink = loopyTabOf(key), ""
+		}
 		view.showNow(page)
 		anchor := view.anchors[key]
 		if anchor == nil {

@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -23,6 +24,7 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/browser"
 	"1loop/internal/core"
+	"1loop/internal/loopy/engine"
 	"1loop/internal/remoteapi"
 	"1loop/internal/sshmachine"
 	"1loop/internal/usage"
@@ -100,8 +102,14 @@ type serverSettings struct {
 
 type headlessServer struct {
 	mu                         sync.Mutex
-	adminReady                 atomic.Bool   // its admin socket listens: "1loop-server pair" reaches it
-	usage                      *usage.Ledger // every model call's tokens (internal/usage)
+	loopyMu                    sync.Mutex // Loopy (loopy.go), woken on first use
+	loopy                      *engine.Engine
+	loopyClosed                bool
+	loopyOnce                  sync.Once
+	loopyEvents                chan func()
+	loopyBrowser               *browser.Engine // Loopy's own
+	adminReady                 atomic.Bool     // its admin socket listens: "1loop-server pair" reaches it
+	usage                      *usage.Ledger   // every model call's tokens (internal/usage)
 	prices                     *usage.Prices
 	terminalRevision           uint64
 	closing                    bool
@@ -195,24 +203,15 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		trust:        &hostTrust{out: os.Stderr},
 		cfg:          agent.Config{Provider: "compatible", Workspace: root},
 	}
-	var saved struct {
-		Chats   []*serverChat
-		Devices []remoteapi.PairedDevice
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "state.json"))
-	if err == nil {
-		if err = json.Unmarshal(data, &saved); err != nil {
-			return nil, err
-		}
-	} else if !os.IsNotExist(err) {
+	var err error
+	if server.chats, server.devices, err = readServerState(filepath.Join(dir, "state.json")); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-	server.chats, server.devices = saved.Chats, saved.Devices
 	customConfig := configPath != ""
 	if configPath == "" {
 		configPath = filepath.Join(dir, "config.json")
 	}
-	data, err = os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath)
 	if err == nil {
 		var settings serverSettings
 		if err = json.Unmarshal(data, &settings); err != nil {
@@ -334,14 +333,69 @@ func (server *headlessServer) stateLocked() (write func() error) {
 			return nil // a newer state is already on disk
 		}
 		server.saveDone = count
-		for _, chat := range chats {
-			chat.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
-		}
-		return saveServerJSON(path, struct {
-			Chats   []*serverChat            `json:"chats"`
-			Devices []remoteapi.PairedDevice `json:"devices"`
-		}{chats, devices})
+		return core.WriteFileStreamed(path, 0600, false, func(w io.Writer) error { return writeServerState(w, chats, devices) })
 	}
+}
+
+// writeServerState writes the state, message by message (agent.WriteChatJSON):
+// encoded whole, it took several times its size in memory at every save.
+func writeServerState(w io.Writer, chats []*serverChat, devices []remoteapi.PairedDevice) error {
+	writer := core.NewJSONWriter(w)
+	writer.Raw([]byte(`{"chats":`))
+	core.WriteJSONList(writer, chats, func(chat **serverChat) {
+		copied := **chat
+		copied.Versions = agent.CompactVersions(copied.Versions, copied.History, copied.Items)
+		agent.WriteChatJSON(writer, &copied, &copied.History, &copied.Items, &copied.Versions)
+	})
+	writer.Raw([]byte(`,"devices":`))
+	writer.Value(devices)
+	writer.Raw([]byte{'}'})
+	return writer.Err()
+}
+
+// readServerState reads it the same way; what is found several times (a
+// picture, a tool's output) is kept once.
+func readServerState(path string) (chats []*serverChat, devices []remoteapi.PairedDevice, err error) {
+	type savedServer struct {
+		Chats   []*serverChat
+		Devices []remoteapi.PairedDevice
+	}
+	var saved savedServer
+	err = func() error {
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		reader := core.NewJSONReader(file)
+		rest, err := reader.Object(map[string]func() error{"chats": func() (err error) {
+			saved.Chats, err = core.ReadJSONList(reader, func(read **serverChat) error {
+				chat := &serverChat{}
+				null, err := agent.ReadChatJSON(reader, chat, &chat.History, &chat.Items, &chat.Versions)
+				if !null {
+					*read = chat
+				}
+				return err
+			})
+			return err
+		}})
+		if err == nil && rest != nil {
+			err = json.Unmarshal(rest, &saved)
+		}
+		if err == nil {
+			err = reader.End()
+		}
+		return err
+	}()
+	if err != nil && !os.IsNotExist(err) {
+		// What is wrong with it is encoding/json's to say, from the whole file.
+		var data []byte
+		if data, err = os.ReadFile(path); err == nil {
+			saved = savedServer{}
+			err = json.Unmarshal(data, &saved)
+		}
+	}
+	return saved.Chats, saved.Devices, err
 }
 
 func (server *headlessServer) scheduleSaveLocked() {
@@ -359,6 +413,7 @@ func (server *headlessServer) scheduleSaveLocked() {
 }
 
 func (server *headlessServer) close() {
+	server.closeLoopy()
 	server.mu.Lock()
 	server.closing = true
 	shared := server.sharing
@@ -619,6 +674,9 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 	}
 	meta.Goal = remoteapi.GoalOf(chat.Goal.Snapshot())
 	meta.Used = agent.HistoryEstimate(chat.History) + agent.ContextOverhead(chat.Config)
+	if chat.Config.Provider == "claudecode" && chat.ContextUsage != nil {
+		meta.Used = chat.ContextUsage.Used // Claude Code keeps its own history
+	}
 	if chat.run != nil {
 		meta.Label, meta.Mark, meta.Approval, meta.Question = chat.run.label, chat.run.mark, chat.run.approval, chat.run.question
 		meta.Tool = chat.run.tool
@@ -1022,6 +1080,7 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			server.runLocked(chat, next) // the goal's next turn (agent/goal.go)
 		}
 		if chat.run == nil { // the last turn of the chain: it reports to who caused it
+			server.loopyEnded(chat, ended)
 			server.turnEndedLocked(chat, ended)
 		}
 	}()
@@ -1113,6 +1172,9 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: value.(string)})
 	case "usage":
 		run.used = value.(int)
+		if chat.Config.Provider == "claudecode" { // its own count comes when the turn ends
+			chat.ContextUsage = chat.ContextUsage.At(run.used)
+		}
 	case "context_usage":
 		usage := value.(agent.ContextUsage)
 		chat.ContextUsage = &usage
@@ -1127,6 +1189,7 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		run.label = value.(string)
 	case "goal": // its state, time or tokens changed: the meta goes out with the change
 	}
+	server.loopyFollow(chat, run, kind)
 	server.changedLocked(chat, index)
 }
 
@@ -1171,6 +1234,15 @@ func (server *headlessServer) usageNames(group, key string) string {
 		return chat.Title
 	}
 	return ""
+}
+
+// accountDisabled says whether a connection is kept but turned off: its
+// limits are not shown on the Usage page.
+func (server *headlessServer) accountDisabled(id string) bool {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	connection, ok := server.connectionLocked(id)
+	return ok && !connection.Enabled
 }
 
 // noteLimits reads a subscription's usage windows into the usage ledger

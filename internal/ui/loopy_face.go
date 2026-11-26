@@ -303,16 +303,29 @@ type loopyFace struct {
 	px     int
 	shown  bool
 	frozen bool // drawn once and kept: an old message's avatar
+	// head is room drawn above it, as a share of its size: what a jump
+	// reaches, which would be cut at the picture's edge.
+	head float64
 }
 
 // newLoopyFace makes a face size points wide. A frozen face is drawn once
 // in its state's first pose and never moves (the avatars of past messages).
 func newLoopyFace(size float32, state string, plate, frozen bool) *loopyFace {
-	face := &loopyFace{size: size, plate: plate, frozen: frozen, pose: restPose()}
+	return newLoopyFaceRoom(size, 0, state, plate, frozen)
+}
+
+// bigFaceHead is the room above the big face: its highest jump, measured
+// (TestLoopyFaceJumpsStayInside).
+const bigFaceHead = 0.22
+
+// newLoopyFaceRoom is a face with head of its size free above it, for its
+// jumps.
+func newLoopyFaceRoom(size float32, head float64, state string, plate, frozen bool) *loopyFace {
+	face := &loopyFace{size: size, plate: plate, frozen: frozen, pose: restPose(), head: head}
 	face.image = canvas.NewImageFromImage(image.NewNRGBA(image.Rect(0, 0, 1, 1)))
 	face.image.FillMode = canvas.ImageFillContain
 	face.image.ScaleMode = canvas.ImageScaleSmooth
-	face.image.SetMinSize(fyne.NewSquareSize(size))
+	face.image.SetMinSize(fyne.NewSize(size, size*float32(1+head)))
 	if frozen {
 		// The avatars of past messages are all the same picture: drawn once
 		// for each size and state.
@@ -335,7 +348,7 @@ func frozenFace(pose facePose, px int, state string, plate bool) image.Image {
 	frozenMu.Lock()
 	defer frozenMu.Unlock()
 	if frozenFaces[key] == nil {
-		frozenFaces[key] = drawLoopy(pose, px, plate)
+		frozenFaces[key] = drawLoopy(pose, px, plate, 0)
 	}
 	return frozenFaces[key]
 }
@@ -433,16 +446,17 @@ func (face *loopyFace) render() {
 	if px <= 0 {
 		px = int(2 * face.size)
 	}
-	face.image.Image = drawLoopy(face.pose, px, face.plate)
+	face.image.Image = drawLoopy(face.pose, px, face.plate, face.head)
 	face.image.Refresh()
 }
 
 // drawLoopy draws one pose: every point is placed here, in pixels, so oksvg
-// only fills and strokes plain paths.
-func drawLoopy(p facePose, px int, plate bool) image.Image {
+// only fills and strokes plain paths. head is room above, a share of px.
+func drawLoopy(p facePose, px int, plate bool, head float64) image.Image {
 	k := float64(px) / 120
+	top := int(head*float64(px) + .5)
 	// The art direction draws inside translate(6 6) scale(.9).
-	out := func(x, y float64) (float64, float64) { return (6 + .9*x) * k, (6 + .9*y) * k }
+	out := func(x, y float64) (float64, float64) { return (6 + .9*x) * k, (6+.9*y)*k + float64(top) }
 	turn := (p.rot + p.turn) * math.Pi / 180
 	body := func(x, y float64) (float64, float64) {
 		// rotate around the centre, squash from the bottom, then move
@@ -452,9 +466,9 @@ func drawLoopy(p facePose, px int, plate bool) image.Image {
 		return out(x+p.tx, y+p.ty)
 	}
 	var svg strings.Builder
-	fmt.Fprintf(&svg, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d">`, px, px)
+	fmt.Fprintf(&svg, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d">`, px, px+top)
 	if plate {
-		fmt.Fprintf(&svg, `<rect width="%d" height="%d" rx="%.2f" fill="#121212"/>`, px, px, 27*k)
+		fmt.Fprintf(&svg, `<rect y="%d" width="%d" height="%d" rx="%.2f" fill="#121212"/>`, top, px, px, 27*k)
 	}
 	// The ring: from -12° the long way round to -108°.
 	var ring strings.Builder
@@ -493,12 +507,12 @@ func drawLoopy(p facePose, px int, plate bool) image.Image {
 	}
 	svg.WriteString(`</svg>`)
 	icon, err := oksvg.ReadIconStream(strings.NewReader(svg.String()))
-	img := image.NewNRGBA(image.Rect(0, 0, px, px))
+	img := image.NewNRGBA(image.Rect(0, 0, px, px+top))
 	if err != nil {
 		return img
 	}
-	icon.SetTarget(0, 0, float64(px), float64(px))
-	icon.Draw(rasterx.NewDasher(px, px, rasterx.NewScannerGV(px, px, img, img.Bounds())), 1)
+	icon.SetTarget(0, 0, float64(px), float64(px+top))
+	icon.Draw(rasterx.NewDasher(px, px+top, rasterx.NewScannerGV(px, px+top, img, img.Bounds())), 1)
 	return img
 }
 

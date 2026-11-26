@@ -300,6 +300,12 @@ func (flow *flowText) lines(atoms []atom, width float32) []flowLine {
 }
 
 // flow lays the block out for a width and rebuilds what it draws.
+// setSpans changes what the text says: its words are measured again.
+func (flow *flowText) setSpans(spans []span) {
+	flow.spans, flow.cut, flow.width = spans, nil, 0
+	flow.Refresh()
+}
+
 func (flow *flowText) flow(width float32) {
 	flow.width = width
 	if !flow.measuring {

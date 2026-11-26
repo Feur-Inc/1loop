@@ -279,7 +279,7 @@ func (mode *loopyMode) linkScript(link loopy.AutoLink) {
 				}, func(err error) {
 					mode.say("")
 					if err != nil {
-						problem.spans, problem.width = []span{{text: err.Error()}}, 0
+						problem.setSpans([]span{{text: err.Error()}})
 						problem.Refresh()
 						return
 					}
@@ -353,7 +353,7 @@ func (mode *loopyMode) editLink(link loopy.AutoLink) {
 			}, func(err error) {
 				mode.say("")
 				if err != nil {
-					problem.spans, problem.width = []span{{text: err.Error()}}, 0
+					problem.setSpans([]span{{text: err.Error()}})
 					problem.Refresh()
 					return
 				}
@@ -379,7 +379,7 @@ func (mode *loopyMode) secretForm(title, about, verb string, fields []*widget.En
 	problem := plainFlow("", 12.5, colDanger)
 	body.Add(problem)
 	say := func(text string) {
-		problem.spans, problem.width = []span{{text: text}}, 0
+		problem.setSpans([]span{{text: text}})
 		problem.Refresh()
 	}
 	var dialog *sheet

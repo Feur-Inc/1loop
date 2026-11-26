@@ -274,9 +274,7 @@ func (mode *loopyMode) addAccount(kind string) {
 			connect.Enable()
 			mode.say("")
 			if err != nil {
-				problem.spans = []span{{text: err.Error()}}
-				problem.width = 0
-				problem.Refresh()
+				problem.setSpans([]span{{text: err.Error()}})
 				return
 			}
 			dialog.dismiss()

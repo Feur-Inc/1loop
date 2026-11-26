@@ -607,6 +607,7 @@ func (backend *App) agyProcess(ctx context.Context, cfg Config, session *string,
 	if err := cmd.Start(); err != nil {
 		return outcome, err
 	}
+	platform.OOMFirst(cmd) // it, its tools and builds go before 1loop when memory runs out (#584)
 	defer func() {
 		finish()
 		cmd.Wait()

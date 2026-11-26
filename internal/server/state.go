@@ -53,8 +53,14 @@ type serverChat struct {
 	Subchat *agent.SubchatLink `json:"subchat,omitempty"`
 	// ReportTo: the chats whose message caused the running turn, told when
 	// it ends (chats.go). Saved, so a turn cut off by a restart shows so.
-	ReportTo     []string `json:"reportTo,omitempty"`
-	hops         int      // messages between chats since the user last wrote (agent.TurnHops)
+	ReportTo []string `json:"reportTo,omitempty"`
+	// Working: a turn was running at the last save. Still set when the
+	// server starts, the turn was cut off (agent.CutOffTurn, #584).
+	Working bool `json:"working,omitempty"`
+	// Resumed: 1loop resumed the chat after a restart cut its turn off,
+	// and that turn has not ended yet: cut off again, it waits for a message.
+	Resumed      bool `json:"resumed,omitempty"`
+	hops         int  // messages between chats since the user last wrote (agent.TurnHops)
 	run          *serverRun
 	moving       bool // paused to move to another device: it starts nothing (chat_move.go)
 	tabs         []*serverTab
@@ -176,6 +182,9 @@ type headlessServer struct {
 	pending  map[*serverChat]map[int]bool
 	flushing bool
 	installs map[string]*installJob // Install Chromium / Claude Code (install.go)
+	// The turns the last stop cut off, resumed and reported once the
+	// models are loaded (resumeCutOffLocked).
+	cutOffs []cutOffTurn
 }
 
 type serverEvent struct {
@@ -279,7 +288,17 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 			chat.Compaction = &agent.CompactionState{}
 		}
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
-		chat.Subchat.Restored(len(chat.ReportTo) > 0)
+		// A turn that was working (or, saved before Working, reporting) was
+		// cut off: it shows so at once, and goes on or is told once the
+		// models are loaded (#584).
+		if cutOff := chat.Working || len(chat.ReportTo) > 0; cutOff {
+			resume := chat.Subchat != nil || len(chat.ReportTo) > 0
+			turn := agent.CutOffTurn(chat.Config, serverRestarted, resume, chat.Resumed)
+			server.addLocked(chat, turn.Item)
+			server.cutOffs = append(server.cutOffs, cutOffTurn{chat: chat, reportTo: chat.ReportTo, resume: turn.Resume})
+			chat.Subchat.Restored(true)
+		}
+		chat.Working, chat.Resumed = false, false
 		chat.ReportTo = nil
 	}
 	return server, nil
@@ -321,7 +340,8 @@ func (server *headlessServer) stateLocked() (write func() error) {
 		chats[i] = &serverChat{ID: chat.ID, Title: chat.Title, Config: chat.Config, History: append([]agent.Message{}, chat.History...),
 			Items: append([]agent.ChatItem{}, chat.Items...), Version: chat.Version, Versions: agent.CopyVersions(chat.Versions),
 			Todo: chat.Todo.Copy(), Goal: chat.Goal.Copy(), Cache: chat.Cache.Copy(), Compaction: chat.Compaction.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
-			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...)} // its parent: forgetting it detached every subchat on restart (#356)
+			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...), // its parent: forgetting it detached every subchat on restart (#356)
+			Working: chat.Working, Resumed: chat.Resumed}
 	}
 	devices := append([]remoteapi.PairedDevice{}, server.devices...)
 	server.saveCount++
@@ -962,6 +982,7 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 	}
 	chat.History = append(chat.History, m)
 	chat.hops = agent.TurnHops(chat.hops, false, m)
+	chat.Working = true
 	// The user's words, another chat's under its name, or a note for
 	// 1loop's own (a task's end, a report).
 	index := server.addLocked(chat, agent.MessageItem(id, m))
@@ -1033,6 +1054,12 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		}
 		chat.run = nil
 		defer close(run.ended)
+		if server.ctx.Err() != nil && err != nil {
+			// The server stops: the turn stays working in the state it
+			// saves, cut off, which its next start shows (#584).
+			return
+		}
+		chat.Working = false
 		ended := agent.SubchatDone
 		paused := errors.Is(err, agent.ErrPaused)
 		if paused {
@@ -1067,8 +1094,10 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			return
 		}
 		// A message can arrive after the agent's last look at its inbox and
-		// before this: it starts the next turn rather than wait unseen.
-		if len(chat.steer) > 0 && err == nil {
+		// before this: it starts the next turn rather than wait unseen. So
+		// does one a failed turn never read: a subchat's report, left there,
+		// was never heard (#584). After a stop, it waits for the next turn.
+		if len(chat.steer) > 0 && ended != agent.SubchatStopped {
 			next := chat.steer[0]
 			chat.steer = chat.steer[1:]
 			server.runLocked(chat, next)

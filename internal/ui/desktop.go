@@ -1396,7 +1396,10 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	}
 	// A prompt can arrive after the provider's final inbox check but before
 	// this UI callback. Close that gap before announcing that the chat is done.
-	if ended == "done" && !chat.moving {
+	// So does another chat's message or 1loop's note a failed turn never
+	// read: a subchat's report, left there, was never heard (#584).
+	failed := run != nil && !run.stopped && ended == "stopped"
+	if (ended == "done" || failed && slices.ContainsFunc(chat.steer, func(m agent.Message) bool { return m.Internal || m.From != nil })) && !chat.moving {
 		if next, ok := ui.takeNext(chat); ok {
 			ui.startIn(chat, next, "")
 			ui.save()
@@ -2590,7 +2593,12 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 		chat.Items = upgradeItems(chat.Items)
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
 		chat.todoCount = len(chat.Todo.Snapshot())
-		chat.Subchat.Restored(len(chat.ReportTo) > 0)
+		if len(chat.ReportTo) > 0 { // its turn was to report when 1loop closed: cut off (#584)
+			item := agent.CutOffTurn(chat.Config, "1loop closed", false, false).Item
+			item.ID = core.Identifier()[:16]
+			chat.Items = append(chat.Items, item)
+			chat.Subchat.Restored(true)
+		}
 		chat.ReportTo = nil
 		ui.chats = append(ui.chats, chat)
 		if chat.Config.MachineID != "" {

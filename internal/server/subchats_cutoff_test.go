@@ -141,10 +141,10 @@ func TestCutOffTurnsAfterRestart(t *testing.T) {
 	}
 }
 
-// reportModel answers "ok", fails (400) a message with FAIL, holds one with
-// HOLD until release is closed and then fails it, and acknowledges a
-// subchat's report.
-func reportModel(t *testing.T, release chan struct{}) string {
+// reportModel answers, fails (400) a message with FAIL, holds one with
+// HOLD (held: it arrived) until release is closed and then fails it, and
+// acknowledges a subchat's report.
+func reportModel(t *testing.T, held, release chan struct{}) string {
 	t.Helper()
 	service := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		raw, _ := io.ReadAll(r.Body)
@@ -176,6 +176,7 @@ func reportModel(t *testing.T, release chan struct{}) string {
 		case strings.Contains(content, "[Subchat "):
 			answer("Got the report.")
 		case strings.Contains(content, "HOLD"):
+			close(held)
 			<-release
 			fail()
 		case strings.Contains(content, "FAIL"):
@@ -201,7 +202,7 @@ func TestSubchatReportsAreNotDropped(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer server.close()
-	release := make(chan struct{})
+	held, release := make(chan struct{}), make(chan struct{})
 	defer func() {
 		select {
 		case <-release:
@@ -209,7 +210,7 @@ func TestSubchatReportsAreNotDropped(t *testing.T) {
 			close(release)
 		}
 	}()
-	cfg := agent.Config{Provider: "compatible", BaseURL: reportModel(t, release), Model: "mock", Workspace: t.TempDir()}
+	cfg := agent.Config{Provider: "compatible", BaseURL: reportModel(t, held, release), Model: "mock", Workspace: t.TempDir()}
 	parent := &serverChat{ID: "parent", Title: "Main", Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}, Config: cfg}
 	sub := &serverChat{ID: "sub", Title: "Fix parser", Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}, Config: cfg,
 		Subchat: &agent.SubchatLink{Parent: "parent"}, ReportTo: []string{"parent"}}
@@ -244,6 +245,9 @@ func TestSubchatReportsAreNotDropped(t *testing.T) {
 	// The parent works on a turn that will fail; the subchat ends a turn it
 	// caused meanwhile: the report waits in the parent's steer.
 	server.runLocked(parent, agent.Message{Role: "user", Content: "HOLD this turn"})
+	server.mu.Unlock()
+	<-held // past its last look at the inbox
+	server.mu.Lock()
 	sub.ReportTo = []string{"parent"}
 	server.turnEndedLocked(sub, agent.SubchatDone)
 	if len(parent.steer) != 1 {

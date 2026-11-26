@@ -656,14 +656,40 @@
       "section": "agent",
       "page": "Loopy",
       "title": "Loopy's vault",
-      "description": "Sign-ins 1loop types in a page for Loopy, which never sees them.",
+      "description": "Your password manager, behind a master password: sign-ins, keys and two-step codes 1loop types in a page or hands to an AutoLink, which Loopy never sees.",
       "keywords": [
         "loopy",
         "vault",
         "password",
+        "manager",
+        "master",
         "sign in",
         "login",
-        "secret"
+        "secret",
+        "totp",
+        "two-step",
+        "api key"
+      ],
+      "kind": "action",
+      "where": "both",
+      "protected": true
+    },
+    {
+      "key": "loopy.autolinks",
+      "section": "agent",
+      "page": "Loopy",
+      "title": "Loopy's AutoLinks",
+      "description": "The scripts Loopy made to reach a service or watch something: what each may do, when it runs, its history, its script.",
+      "keywords": [
+        "loopy",
+        "autolink",
+        "connector",
+        "script",
+        "python",
+        "automation",
+        "automate",
+        "watch",
+        "trigger"
       ],
       "kind": "action",
       "where": "both",

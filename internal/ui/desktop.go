@@ -266,8 +266,12 @@ type desktopUI struct {
 	sideRows      map[string]*sideRow // the rows of the last rendering, by key, reused by the next (sidebar_groups.go)
 	sideRowsNext  map[string]*sideRow
 	sideLists     *fyne.Container
-	sideChats     []sideChat // the chats listed, for search
-	sideOrder     []sideChat // the same in the sidebar's order, for the previous and next chat
+	sideChats     []sideChat        // the chats listed, for search
+	sideOrder     []sideChat        // the same in the sidebar's order, for the previous and next chat
+	sideRank      map[string]int64  // when each project and chat was last used or moved (sidebar_order.go)
+	pinned        []string          // the pinned projects and chats, in order (sidebar_order.go)
+	sideDrag      *sideDrag         // the sidebar row being dragged, nil when none (sidebar_drag.go)
+	sideMarker    *canvas.Rectangle // the line where a dragged sidebar row would land
 	searchRow     *tapRow
 	find          *chatFind
 	subchatsShown map[string]bool           // chats whose many subchats the user unfolded (true) or folded (false), by ID
@@ -1722,6 +1726,7 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		}
 	}
 	ui.panel.todoChanged(chat)
+	ui.touchChatOrder(chat) // the sidebar lists it first (sidebar_order.go)
 	chat.History = append(chat.History, messageValue)
 	if chat == ui.current {
 		ui.showTranscript(true)
@@ -2301,6 +2306,9 @@ type savedState struct {
 	ProjectThemes map[string]string `json:"projectThemes,omitempty"`
 	// The Shader background setting; 30 fps when unset.
 	ShaderFPS string `json:"shaderFPS,omitempty"`
+	// The sidebar's order: when each project and chat was last used or moved, and the pinned ones (sidebar_order.go).
+	SidebarRank map[string]int64 `json:"sidebarRank,omitempty"`
+	Pinned      []string         `json:"pinned,omitempty"`
 	// The connections that had an API key, kept in the secret store
 	// (connection_keys.go): never the keys themselves.
 	KeyedConnections []string `json:"keyedConnections,omitempty"`
@@ -2404,6 +2412,8 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.savedLayout(),
 		ui.projectThemes,
 		shaderFPSSaved(),
+		ui.sideRank,
+		ui.pinned,
 		ui.keyedList(),
 	})
 	for _, view := range ui.allPanes() {
@@ -2565,6 +2575,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.projectEnv = state.ProjectEnv
 	ui.theme = themeChoice{theme: state.Theme, accent: state.Accent}
 	ui.projectThemes = state.ProjectThemes
+	ui.sideRank, ui.pinned = state.SidebarRank, state.Pinned
 	if state.ShaderFPS != "" {
 		shaderFPS = state.ShaderFPS
 	}

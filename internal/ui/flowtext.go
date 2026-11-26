@@ -228,6 +228,7 @@ func (flow *flowText) atoms() []atom {
 type flowLine struct {
 	atoms []atom
 	hard  bool // ended by a line break, not by the width
+	cut   bool // ended inside a word too long for the line: copied without a space
 }
 
 // lines breaks the atoms into lines no wider than width.
@@ -239,7 +240,7 @@ func (flow *flowText) lines(atoms []atom, width float32) []flowLine {
 		for len(line) > 0 && line[len(line)-1].space { // a line does not end with a space
 			line = line[:len(line)-1]
 		}
-		lines = append(lines, flowLine{line, hard})
+		lines = append(lines, flowLine{atoms: line, hard: hard})
 		line, x = nil, 0
 	}
 	for _, atomValue := range atoms {
@@ -281,6 +282,7 @@ func (flow *flowText) lines(atoms []atom, width float32) []flowLine {
 				head.trail = 0
 				line = append(line, head)
 				flush(false)
+				lines[len(lines)-1].cut = true
 				start += fit
 				atomValue.lead = 0
 			}
@@ -298,6 +300,12 @@ func (flow *flowText) lines(atoms []atom, width float32) []flowLine {
 }
 
 // flow lays the block out for a width and rebuilds what it draws.
+// setSpans changes what the text says: its words are measured again.
+func (flow *flowText) setSpans(spans []span) {
+	flow.spans, flow.cut, flow.width = spans, nil, 0
+	flow.Refresh()
+}
+
 func (flow *flowText) flow(width float32) {
 	flow.width = width
 	if !flow.measuring {
@@ -332,7 +340,7 @@ func (flow *flowText) flow(width float32) {
 		mark.Resize(fyne.NewSize(w, h))
 		texts = append(texts, mark)
 		flow.pieces = append(flow.pieces, selPiece{runes: []rune(flow.marker + " "), at: mark.Position(), size: fyne.NewSize(w, h),
-			textSize: flow.size, solid: true})
+			textSize: flow.size, solid: true, mark: true})
 	}
 	y := float32(0)
 	for n, line := range lines {
@@ -387,6 +395,7 @@ func (flow *flowText) flow(width float32) {
 					after = flow.tail
 				case line.hard:
 					after = "\n"
+				case line.cut: // the line ends inside a word too long for it
 				default:
 					after = " "
 				}
@@ -399,7 +408,8 @@ func (flow *flowText) flow(width float32) {
 				picture.Move(fyne.NewPos(x, top))
 				picture.Resize(size)
 				pictures = append(pictures, picture)
-				flow.pieces = append(flow.pieces, selPiece{runes: []rune(first.text), at: fyne.NewPos(x, top), size: size, solid: true, after: after})
+				flow.pieces = append(flow.pieces, selPiece{runes: []rune(first.text), at: fyne.NewPos(x, top), size: size, solid: true, after: after,
+					span: &flow.spans[first.span]})
 			default:
 				textWidth := float32(0)
 				if text != "" { // an empty line of code draws nothing but still counts
@@ -413,7 +423,7 @@ func (flow *flowText) flow(width float32) {
 					texts = append(texts, drawn)
 				}
 				flow.pieces = append(flow.pieces, selPiece{runes: []rune(text), at: at, size: fyne.NewSize(textWidth, first.height),
-					textSize: first.size, style: first.style, after: after})
+					textSize: first.size, style: first.style, after: after, span: &flow.spans[first.span]})
 				if span.code || span.cite || (span.math != "" && first.image == nil) {
 					chip := canvas.NewRectangle(colCodeChip)
 					chip.CornerRadius = rounded(4)

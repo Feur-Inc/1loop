@@ -62,6 +62,7 @@ object Icons {
         line("M8 6.4a1.6 1.6 0 1 0 0 3.2a1.6 1.6 0 1 0 0-3.2z"))
     val image = lineIcon("image", line("M3.5 3h9a1 1 0 0 1 1 1v8a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1z"), line("M2.8 11.2 6 8l3 3 1.5-1.5 2.7 2.7"),
         line("M10.3 5.2a1 1 0 1 0 0 2a1 1 0 1 0 0-2z"))
+    val mic = lineIcon("mic", line("M8 2.2a2 2 0 0 1 2 2v3.6a2 2 0 0 1-4 0V4.2a2 2 0 0 1 2-2z"), line("M3.8 7.6a4.2 4.2 0 0 0 8.4 0M8 11.8v2"))
     val camera = lineIcon("camera", line("M2.5 5.8a1 1 0 0 1 1-1h1.9l1-1.6h3.2l1 1.6h1.9a1 1 0 0 1 1 1v6a1 1 0 0 1-1 1h-9a1 1 0 0 1-1-1z"),
         line("M8 6.4a2.3 2.3 0 1 0 0 4.6a2.3 2.3 0 1 0 0-4.6z"))
     val play = lineIcon("play", line("M5.5 3.8v8.4L12 8z", 1.8f))

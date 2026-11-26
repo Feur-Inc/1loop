@@ -325,3 +325,14 @@ func (conn *connection) keepAlive() {
 		}
 	}
 }
+
+// HostKeyFile is the name sshd gives the host key of this type.
+func HostKeyFile(keyType string) string {
+	switch {
+	case strings.Contains(keyType, "ed25519"):
+		return "ed25519"
+	case strings.HasPrefix(keyType, "ecdsa"):
+		return "ecdsa"
+	}
+	return "rsa"
+}

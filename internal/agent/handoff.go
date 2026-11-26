@@ -174,7 +174,7 @@ func (plan HandoffPlan) Problem(choice HandoffChoice) string {
 		for _, level := range plan.Levels {
 			if level.ID == choice.Level {
 				if !LevelFits(summarizer.Window, level.Tokens) {
-					return fmt.Sprintf("%s cannot read ~%s tokens: its window is %s.", summarizer.Name, Tokens(level.Tokens), Tokens(summarizer.Window))
+					return fmt.Sprintf("%s cannot read ~%s tokens: its window is %s.", summarizer.Name, core.CompactCount(level.Tokens), core.CompactCount(summarizer.Window))
 				}
 				return ""
 			}
@@ -201,15 +201,15 @@ func PlanHandoff(previous *Config, next Config, history []Message, items []ChatI
 		if HarnessMark(next) < end {
 			plan.AsIsTokens = len(itemsText(items[HarnessMark(next):end]))/4 + 1
 		}
-		plan.AsIsNote = fmt.Sprintf("%s resumes its own session and reads only what happened meanwhile (~%s tokens).", to, Tokens(plan.AsIsTokens))
+		plan.AsIsNote = fmt.Sprintf("%s resumes its own session and reads only what happened meanwhile (~%s tokens).", to, core.CompactCount(plan.AsIsTokens))
 		if plan.AsIsTokens > window*4/10 {
 			plan.AsIsProblem = "The exchanges since this session last ran are too large: choose a summary."
 		}
 	} else {
 		plan.AsIsTokens = HistoryEstimate(clean) + ContextOverhead(next)
-		plan.AsIsNote = fmt.Sprintf("Sends the whole conversation (~%s tokens) to %s, which has none of it in cache: its first request reads all of it at full price.", Tokens(plan.AsIsTokens), to)
+		plan.AsIsNote = fmt.Sprintf("Sends the whole conversation (~%s tokens) to %s, which has none of it in cache: its first request reads all of it at full price.", core.CompactCount(plan.AsIsTokens), to)
 		if plan.AsIsTokens > contextThreshold(next, .9) {
-			plan.AsIsProblem = fmt.Sprintf("This conversation (~%s tokens) does not fit in %s's %s window: choose a summary.", Tokens(plan.AsIsTokens), to, Tokens(window))
+			plan.AsIsProblem = fmt.Sprintf("This conversation (~%s tokens) does not fit in %s's %s window: choose a summary.", core.CompactCount(plan.AsIsTokens), to, core.CompactCount(window))
 		}
 	}
 	plan.Levels = handoffLevels(clean, window)
@@ -251,7 +251,7 @@ func PlanHandoff(previous *Config, next Config, history []Message, items []ChatI
 		plan.Recommended, plan.Reason = HandoffChoice{Mode: "as_is"}, plan.AsIsNote
 	case small && plan.AsIsProblem == "":
 		plan.Recommended = HandoffChoice{Mode: "as_is"}
-		plan.Reason = fmt.Sprintf("The conversation is small (~%s tokens): sending it as is costs little and keeps every detail.", Tokens(plan.AsIsTokens))
+		plan.Reason = fmt.Sprintf("The conversation is small (~%s tokens): sending it as is costs little and keeps every detail.", core.CompactCount(plan.AsIsTokens))
 	case previousEntry.Problem == "":
 		plan.Recommended = HandoffChoice{Mode: "summary", Summarizer: "previous", Level: LevelEverything}
 		if !previousEntry.Cached {
@@ -400,7 +400,7 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 	}
 	clean := forProvider(history, next)
 	if choice.Mode == "as_is" {
-		return HandoffResult{History: clean, Note: fmt.Sprintf("Continued with %s · conversation sent as it is (~%s tokens).", plan.To, Tokens(plan.AsIsTokens))}, nil
+		return HandoffResult{History: clean, Note: fmt.Sprintf("Continued with %s · conversation sent as it is (~%s tokens).", plan.To, core.CompactCount(plan.AsIsTokens))}, nil
 	}
 	summarizer, cached, name := next, false, plan.To
 	if choice.Summarizer == "previous" {
@@ -510,7 +510,7 @@ func (backend *App) ApplyHandoff(ctx context.Context, previous *Config, next Con
 	return HandoffResult{
 		History: kept,
 		Summary: note,
-		Note:    fmt.Sprintf("Continued with %s · summary by %s (%s) · ~%s → ~%s tokens. Earlier details remain available through recall.", plan.To, name, level, Tokens(plan.AsIsTokens), Tokens(estimate)),
+		Note:    fmt.Sprintf("Continued with %s · summary by %s (%s) · ~%s → ~%s tokens. Earlier details remain available through recall.", plan.To, name, level, core.CompactCount(plan.AsIsTokens), core.CompactCount(estimate)),
 	}, nil
 }
 
@@ -640,4 +640,17 @@ func claudeHandoffNote(ctx context.Context, cfg Config, prompt string) (string, 
 		return "", fmt.Errorf("%s", core.TruncateText(text, 300))
 	}
 	return "", fmt.Errorf("Claude Code ended without an answer")
+}
+
+// CopiedRanWith is who a copied chat last ran with, for the handoff here.
+func CopiedRanWith(cfg Config) *RunIdentity {
+	if cfg.RanWith != nil {
+		identity := *cfg.RanWith
+		return &identity
+	}
+	if cfg.Provider == "" {
+		return nil
+	}
+	identity := IdentityOf(cfg)
+	return &identity
 }

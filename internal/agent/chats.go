@@ -135,11 +135,6 @@ func TurnReport(sender ChatSender, relation string, info SubchatInfo) Message {
 	return Message{Role: "user", Internal: true, From: &sender, Content: strings.TrimSpace(text.String())}
 }
 
-// SubchatReport tells the parent its subchat's turn ended.
-func SubchatReport(info SubchatInfo) Message {
-	return TurnReport(ChatSender{ID: info.ID, Title: info.Title}, RelationSubchat, info)
-}
-
 // ReportTo is who a chat's turn reports to once m has reached it: the
 // sender of a message, and for a subchat (parent its parent's id) its
 // parent when 1loop woke it (its own task's end, a report).

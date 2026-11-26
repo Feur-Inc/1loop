@@ -121,7 +121,7 @@ func (ui *desktopUI) selectModel(choice agent.ModelChoice) {
 	if ui.current != nil {
 		ui.current.Config = cfg
 	}
-	ui.model.row.SetTrailing(modelTrailing(choice, cfg))
+	ui.showModelTrailing(choice, cfg)
 	ui.updateApprovalControl() // Auto mode exists only with Claude Code
 	if ui.model.relayout != nil {
 		ui.model.relayout()

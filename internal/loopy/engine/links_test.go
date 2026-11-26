@@ -662,6 +662,9 @@ func withBrowser(t *testing.T, host *fakeHost) *browser.Engine {
 	if !found || testing.Short() {
 		t.Skip("no browser here")
 	}
+	// A container or a CI runner (Ubuntu's AppArmor) gives Chromium no
+	// sandbox of its own, as for the browser package's own tests.
+	t.Setenv("ONELOOP_CHROMIUM_NO_SANDBOX", "1")
 	ctx, cancel := context.WithCancel(context.Background())
 	engine := browser.NewBrowserEngine(ctx)
 	engine.Profile = filepath.Join(t.TempDir(), "profile")

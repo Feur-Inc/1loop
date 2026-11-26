@@ -444,6 +444,21 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		if id := startedSubchat(item); id != "" { // the subchat itself, rather than the call
 			row.onTap = func() { ui.openSubchat(chat, id) }
 		}
+		// A background command: the command in the Background tab, rather
+		// than the call, while 1loop still holds it (#597). Asked at the
+		// click: the row is made before the call's result says which task.
+		if chat.server == nil && (item.Tool == "shell" || item.Tool == "background_task") {
+			call := row.onTap
+			row.onTap = func() {
+				if id := agent.BackgroundTaskOf(row.item.Tool, row.item.Args, row.item.Text); id != "" && chat.tasks != nil {
+					if _, _, ok := chat.tasks.Output(id, 1); ok {
+						ui.panel.openBackground(chat, id)
+						return
+					}
+				}
+				call()
+			}
+		}
 		row.selected = ui.panel.showing(chat, index)
 		ui.views[index] = row
 		if item.Tool == "imagegen" {

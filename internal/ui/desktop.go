@@ -1771,6 +1771,7 @@ func (ui *desktopUI) chatTasks(chat *conversation) *agent.BackgroundTasks {
 						ui.panel.showTodo(chat)
 					}
 					ui.panel.todoChanged(chat)
+					ui.panel.backgroundChanged(chat)
 				})
 			},
 		}

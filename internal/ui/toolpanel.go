@@ -49,6 +49,11 @@ type toolPanel struct {
 
 	resizePending bool
 	openCommands  map[string]bool // the background commands shown in full in the Tasks tab, by task
+
+	// The Background tab (background_tab.go, #597): the command to bring
+	// into view, and whose output is open, by task.
+	backgroundFocus string
+	backgroundOpen  map[string]bool
 }
 
 type panelTab struct {
@@ -77,12 +82,16 @@ type panelTab struct {
 	files           *fileBrowser
 	review          *reviewView // an edit waiting for approval (review.go)
 	ref             string      // github: the issue or pull request shown, owner/name#N
+
+	backgroundChat   *conversation // commands: the chat whose background commands it shows
+	backgroundView   *fyne.Container
+	backgroundScroll *kineticScroll
 }
 
 const panelWidth = 840
 
 func newToolPanel(ui *desktopUI) *toolPanel {
-	panel := &toolPanel{ui: ui, active: -1, openCommands: map[string]bool{}}
+	panel := &toolPanel{ui: ui, active: -1, openCommands: map[string]bool{}, backgroundOpen: map[string]bool{}}
 	go func() {
 		timer := time.NewTicker(time.Second)
 		defer timer.Stop()
@@ -94,6 +103,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 				fyne.Do(func() {
 					if ui.ctx.Err() == nil {
 						panel.tickTodoClocks()
+						panel.tickBackground()
 					}
 				})
 			}

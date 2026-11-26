@@ -27,19 +27,16 @@ import (
 	"1loop/internal/usage"
 )
 
+// routes are the server's HTTP API: the phone API's shared layer
+// (remoteapi.NewMux) with this engine's routes, and the server's own
+// public ones: its web client, the phone app's /api/local/*, Loopy's hook.
 func (server *headlessServer) routes() http.Handler {
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/info", func(w http.ResponseWriter, r *http.Request) {
-		core.WriteJSON(w, 200, map[string]any{"name": server.name, "protocol": 1, "headless": true, "secure": true, "consolePairing": !server.local})
-	})
+	mux := remoteapi.NewMux(server, !server.local) // a phone's engine pairs on its sharing listener (networkRoutes)
 	if server.webDir != "" && !server.local {
 		mux.Handle("GET /app/", webClient(server.webDir))
 		mux.Handle("GET /{$}", http.RedirectHandler("/app/", http.StatusFound))
 	}
-	if !server.local {
-		mux.HandleFunc("POST /api/pair", server.pair)
-		mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)
-	} else {
+	if server.local {
 		mux.HandleFunc("POST /api/local/capabilities", server.localOnly(func(w http.ResponseWriter, r *http.Request) {
 			var state struct{ Phone bool }
 			if core.ReadJSON(r, &state) != nil {
@@ -83,6 +80,27 @@ func (server *headlessServer) routes() http.Handler {
 			server.shutdown()
 		}))
 	}
+	mux.HandleFunc("POST /api/loopy/hook/{token}", engine.HookHandler(server.loopyEngine)) // the token is the key
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		remoteapi.Protect(w, r) // the limits and headers the desktop's remote shares
+		if !server.local && crossOrigin(w, r) {
+			return
+		}
+		mux.ServeHTTP(w, r)
+	})
+}
+
+// Info is GET /api/info (remoteapi.Engine).
+func (server *headlessServer) Info() map[string]any {
+	return map[string]any{"name": server.name, "protocol": 1, "headless": true, "secure": true, "consolePairing": !server.local}
+}
+
+// Events are GET /api/events (remoteapi.Engine).
+func (server *headlessServer) Events() *remoteapi.Events { return server.hub }
+
+// Routes are the server's routes behind a paired device's token
+// (remoteapi.Engine).
+func (server *headlessServer) Routes() map[string]http.HandlerFunc {
 	endpoints := map[string]http.HandlerFunc{
 		"GET /api/projects":                            server.projectFolders,
 		"POST /api/projects":                           server.addProject,
@@ -97,7 +115,6 @@ func (server *headlessServer) routes() http.Handler {
 		"POST /api/chats/{id}/rename":                  server.renameChat,
 		"POST /api/chats/{id}/tasks/{task}/stop":       server.stopTask,
 		"POST /api/browser/clear":                      server.clearBrowser,
-		"GET /api/events":                              server.events,
 		"POST /api/chats/{id}/message":                 server.editMessage,
 		"POST /api/chats/{id}/version":                 server.selectVersion,
 		"POST /api/attachments":                        server.uploadAttachment,
@@ -184,20 +201,10 @@ func (server *headlessServer) routes() http.Handler {
 		endpoints[path] = handler
 	}
 	server.loopyRoutes(endpoints)
-	mux.HandleFunc("POST /api/loopy/hook/{token}", engine.HookHandler(server.loopyEngine)) // the token is the key
 	for path, handler := range gitrepo.Handlers(gitTarget{server}, githubconnector.Default.Authorizations) {
 		endpoints[path] = handler
 	}
-	for path, handler := range endpoints {
-		mux.HandleFunc(path, server.authorized(handler))
-	}
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		remoteapi.Protect(w, r) // the limits and headers the desktop's remote shares
-		if !server.local && crossOrigin(w, r) {
-			return
-		}
-		mux.ServeHTTP(w, r)
-	})
+	return endpoints
 }
 
 func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
@@ -467,42 +474,6 @@ func (server *headlessServer) stopTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
-}
-
-func (server *headlessServer) events(w http.ResponseWriter, r *http.Request) {
-	flusher, ok := w.(http.Flusher)
-	if !ok {
-		core.Fail(w, 500, "Streaming unsupported")
-		return
-	}
-	channel := make(chan serverEvent, 256)
-	server.mu.Lock()
-	server.subs[channel] = true
-	server.mu.Unlock()
-	defer func() { server.mu.Lock(); delete(server.subs, channel); server.mu.Unlock() }()
-	w.Header().Set("Content-Type", "text/event-stream")
-	fmt.Fprint(w, ": 1loop\n\n")
-	flusher.Flush()
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-r.Context().Done():
-			return
-		case <-server.ctx.Done():
-			return
-		case <-ticker.C:
-			fmt.Fprint(w, ": ping\n\n")
-		case event, ok := <-channel:
-			if !ok {
-				return
-			}
-			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.kind, event.data); err != nil {
-				return
-			}
-		}
-		flusher.Flush()
-	}
 }
 
 func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {

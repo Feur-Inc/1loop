@@ -194,11 +194,8 @@ func (server *headlessServer) panelStream(w http.ResponseWriter, r *http.Request
 		core.Fail(w, 404, "Browser closed")
 		return
 	}
-	revoked := make(chan struct{})
-	server.mu.Lock()
-	server.streams[revoked] = true
-	server.mu.Unlock()
-	defer func() { server.mu.Lock(); delete(server.streams, revoked); server.mu.Unlock() }()
+	revoked, release := server.hub.Stream()
+	defer release()
 	browser.ServeBrowserStream(w, r, tab.browser, revoked)
 }
 

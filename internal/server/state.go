@@ -137,8 +137,7 @@ type headlessServer struct {
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
 	pairing                    *remoteapi.PairingBook // the pairings waiting (security.go)
-	subs                       map[chan serverEvent]bool
-	streams                    map[chan struct{}]bool
+	hub                        *remoteapi.Events // the clients' event and browser streams
 	choices                    map[string]agent.ModelChoice
 	modelReload                sync.Mutex
 	modelRevision              uint64
@@ -177,11 +176,6 @@ type headlessServer struct {
 	installs map[string]*installJob // Install Chromium / Claude Code (install.go)
 }
 
-type serverEvent struct {
-	kind string
-	data []byte
-}
-
 func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*headlessServer, error) {
 	host, _ := os.Hostname()
 	server := &headlessServer{
@@ -194,8 +188,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		backend:      &agent.App{Approvals: map[string]chan agent.ApprovalAnswer{}},
 		keys:         map[string]string{},
 		pairing:      &remoteapi.PairingBook{Slots: maxPendingPairings, PerClient: pairingsPerAddress, Approval: true},
-		subs:         map[chan serverEvent]bool{},
-		streams:      map[chan struct{}]bool{},
+		hub:          remoteapi.NewEvents(ctx),
 		choices:      map[string]agent.ModelChoice{},
 		approvalMode: "approval",
 		loading:      true,
@@ -684,29 +677,11 @@ func (server *headlessServer) itemLocked(chat *serverChat, index int) remoteapi.
 }
 
 func (server *headlessServer) broadcastLocked(kind string, value any) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return
-	}
-	for channel := range server.subs {
-		select {
-		case channel <- serverEvent{kind, data}:
-		default:
-			close(channel)
-			delete(server.subs, channel)
-		}
-	}
+	server.hub.Broadcast(kind, value)
 }
 
 func (server *headlessServer) disconnectStreamsLocked() {
-	for channel := range server.subs {
-		close(channel)
-		delete(server.subs, channel)
-	}
-	for done := range server.streams {
-		close(done)
-		delete(server.streams, done)
-	}
+	server.hub.Disconnect()
 }
 
 // changedLocked queues a chat's change (an item, or only its meta when

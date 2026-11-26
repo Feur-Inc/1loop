@@ -23,36 +23,27 @@ import (
 	"1loop/internal/remoteapi"
 )
 
-func (server *headlessServer) authorized(next http.HandlerFunc) http.HandlerFunc {
-	return func(writer http.ResponseWriter, req *http.Request) {
-		token := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
-		if token == "" || token == req.Header.Get("Authorization") {
-			core.Fail(writer, 401, "Pair this device with the server first")
-			return
-		}
-		hash := remoteapi.TokenHash(token)
-		server.mu.Lock()
-		allowed := server.localHash != "" && subtle.ConstantTimeCompare([]byte(server.localHash), []byte(hash)) == 1
-		for _, device := range server.devices {
-			if subtle.ConstantTimeCompare([]byte(device.TokenHash), []byte(hash)) == 1 {
-				allowed = true
-			}
-		}
-		server.mu.Unlock()
-		if !allowed {
-			core.Fail(writer, 401, "This device is not paired with the server")
-			return
-		}
-		next(writer, req)
+// Allows tells whether a token's hash is the phone app's or a paired
+// device's (remoteapi.Engine).
+func (server *headlessServer) Allows(hash string) bool {
+	if hash == "" {
+		return false
 	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	allowed := server.localHash != "" && subtle.ConstantTimeCompare([]byte(server.localHash), []byte(hash)) == 1
+	for _, device := range server.devices {
+		if subtle.ConstantTimeCompare([]byte(device.TokenHash), []byte(hash)) == 1 {
+			allowed = true
+		}
+	}
+	return allowed
 }
 
-func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request) {
-	var args struct{ Device, Setup string }
-	if core.ReadJSON(req, &args) != nil {
-		core.Fail(writer, 400, "Provide a device name")
-		return
-	}
+// RequestPairing is POST /api/pair (remoteapi.Engine): the device gets
+// the code to show, and the pairing waits for approval, unless it carries
+// the setup link's secret.
+func (server *headlessServer) RequestPairing(req *http.Request, args remoteapi.PairRequest) (map[string]any, error) {
 	device := remoteapi.DeviceName(args.Device)
 	if origin := foreignOrigin(req); origin != "" { // a page of another server (cors.go)
 		device += " · " + origin
@@ -61,8 +52,7 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 	defer server.mu.Unlock()
 	pair, err := server.pairing.Request(device, remoteapi.ClientAddress(req))
 	if err != nil {
-		core.Fail(writer, 429, err.Error())
-		return
+		return nil, err
 	}
 	if server.setup != "" && len(server.devices) == 0 && subtle.ConstantTimeCompare([]byte(server.setup), []byte(args.Setup)) == 1 {
 		// The setup link: approved at once, and used up.
@@ -76,7 +66,7 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 		}
 		server.pairingChangedLocked()
 	}
-	core.WriteJSON(writer, 200, map[string]any{"pairing": pair.ID, "code": pair.Code, "console": true, "phone": server.local, "approved": pair.Approved, "expiresIn": int(remoteapi.PairingTTL.Seconds()), "command": server.adminCommandFor(pair.ID, pair.Code)})
+	return map[string]any{"pairing": pair.ID, "code": pair.Code, "console": true, "phone": server.local, "approved": pair.Approved, "expiresIn": int(remoteapi.PairingTTL.Seconds()), "command": server.adminCommandFor(pair.ID, pair.Code)}, nil
 }
 
 // pairingChangedLocked tells the clients that can approve pairings: the
@@ -125,29 +115,21 @@ func setupMessage(port int, secret string, proxied bool) string {
 	return fmt.Sprintf("\nNo device is paired yet. To pair the first one, open this link in a browser,\nwith this server's address in place of <server> (it works once):\n\n  https://<server>:%d/app/#setup=%s\n\n", port, secret)
 }
 
-func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.Request) {
-	var args struct{ Pairing, Code, Device string }
-	if core.ReadJSON(req, &args) != nil {
-		core.Fail(writer, 400, "Invalid pairing request")
-		return
-	}
+// ConfirmPairing is POST /api/pair/confirm (remoteapi.Engine): an
+// approved pairing's device gets its token.
+func (server *headlessServer) ConfirmPairing(_ *http.Request, args remoteapi.PairConfirm) (map[string]any, error) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	pair, err := server.pairing.Confirm(args.Pairing, args.Code, args.Device)
 	switch {
-	case errors.Is(err, remoteapi.ErrPairingNotApproved):
-		core.Fail(writer, 409, err.Error())
-		return
 	case errors.Is(err, remoteapi.ErrPairingLocked):
 		server.pairingLockedLocked()
-		core.Fail(writer, 403, err.Error())
-		return
+		return nil, err
+	case errors.Is(err, remoteapi.ErrTooManyTries):
+		server.pairingChangedLocked()
+		return nil, err
 	case err != nil:
-		if errors.Is(err, remoteapi.ErrTooManyTries) {
-			server.pairingChangedLocked()
-		}
-		core.Fail(writer, 403, err.Error())
-		return
+		return nil, err
 	}
 	token := core.Identifier()
 	device := remoteapi.PairedDevice{Name: pair.Device, TokenHash: remoteapi.TokenHash(token), Added: time.Now()}
@@ -155,14 +137,13 @@ func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.
 	if err := server.saveOutsideLocked(); err != nil {
 		server.devices = slices.DeleteFunc(server.devices, func(paired remoteapi.PairedDevice) bool { return paired.TokenHash == device.TokenHash })
 		server.pairing.Restore(pair)
-		core.Fail(writer, 500, "Unable to save paired device")
-		return
+		return nil, remoteapi.StatusError{Status: 500, Err: errors.New("Unable to save paired device")}
 	}
 	server.setup = "" // a device is paired: no more setup link
 	if server.local {
 		server.broadcastLocked("sharing", map[string]bool{"enabled": server.sharing != nil})
 	}
-	core.WriteJSON(writer, 200, map[string]string{"token": token})
+	return map[string]any{"token": token}, nil
 }
 
 // pairingLockedLocked tells the console that too many wrong codes stopped
@@ -253,15 +234,6 @@ func deviceID(device remoteapi.PairedDevice) string {
 	return device.TokenHash[:16]
 }
 
-// requestHash is the hash of the token a request carries, "" without one.
-func requestHash(req *http.Request) string {
-	token := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
-	if token == "" || token == req.Header.Get("Authorization") {
-		return ""
-	}
-	return remoteapi.TokenHash(token)
-}
-
 // removeDeviceLocked unpairs the device at index: its token stops working
 // on its next request, and the open streams end so that no device keeps one
 // it no longer may (the others reconnect at once). With no device left, a
@@ -289,7 +261,7 @@ func (server *headlessServer) removeDeviceLocked(index int) error {
 // pairedDevices is GET /api/devices: the devices paired with the server,
 // the one asking marked current (#428).
 func (server *headlessServer) pairedDevices(w http.ResponseWriter, r *http.Request) {
-	hash := requestHash(r)
+	hash := remoteapi.RequestTokenHash(r)
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	devices := []map[string]any{}

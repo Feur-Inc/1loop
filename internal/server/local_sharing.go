@@ -51,8 +51,8 @@ func (server *headlessServer) localOnly(next http.HandlerFunc) http.HandlerFunc 
 // it; never the phone app's own /api/local/*.
 func (server *headlessServer) networkRoutes(local http.Handler) http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("POST /api/pair", server.pair)
-	mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)
+	mux.HandleFunc("POST /api/pair", remoteapi.PairHandler(server))
+	mux.HandleFunc("POST /api/pair/confirm", remoteapi.ConfirmHandler(server))
 	mux.HandleFunc("GET /api/info", func(w http.ResponseWriter, r *http.Request) {
 		core.WriteJSON(w, 200, map[string]any{"name": server.name, "protocol": 1, "headless": true, "secure": true, "consolePairing": true})
 	})

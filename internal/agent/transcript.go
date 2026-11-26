@@ -122,7 +122,7 @@ func DescribeTool(item ChatItem, running bool) (verb, target string, mono bool) 
 		return pick("Fetched", "Fetching"), target, false
 	case "Task", "Agent":
 		return pick("Ran an agent:", "Running an agent:"), target, false
-	case "TodoWrite", "update_todo", "mcp__1loop_todo__update_todo":
+	case "TodoWrite", "update_todo", "mcp__1loop_todo__update_todo": // TodoTool
 		return pick("Updated", "Updating"), "the task list", false
 	case "wrap_up", "mcp__1loop_todo__wrap_up":
 		return pick("Wrapped up", "Wrapping up"), "the turn", false
@@ -205,4 +205,14 @@ func describeChatMessage(id string, pick func(done, doing string) string) (verb,
 		return pick("Asked", "Asking"), "the parent conversation", false
 	}
 	return pick("Messaged", "Messaging"), "chat " + id, false
+}
+
+// TodoTool says whether a tool call updates the chat's task list: 1loop's
+// own, through its MCP server, or Claude Code's TodoWrite.
+func TodoTool(name string) bool {
+	switch name {
+	case "TodoWrite", "update_todo", "mcp__1loop_todo__update_todo":
+		return true
+	}
+	return false
 }

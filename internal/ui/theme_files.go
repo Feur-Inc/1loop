@@ -331,21 +331,17 @@ func refreshRadii() {
 	if app == nil {
 		return
 	}
-	for _, window := range app.Driver().AllWindows() {
-		c := window.Canvas()
-		roots := append([]fyne.CanvasObject{c.Content()}, c.Overlays().List()...)
-		for _, root := range roots {
-			fynedriver.WalkObjects(root, func(object fyne.CanvasObject) {
-				if r, ok := object.(*canvas.Rectangle); ok {
-					r.CornerRadius *= scale
-					r.TopLeftCornerRadius *= scale
-					r.TopRightCornerRadius *= scale
-					r.BottomLeftCornerRadius *= scale
-					r.BottomRightCornerRadius *= scale
-					r.Refresh()
-				}
-			})
-		}
+	for _, root := range allThemeRoots() {
+		fynedriver.WalkObjects(root, func(object fyne.CanvasObject) {
+			if r, ok := object.(*canvas.Rectangle); ok {
+				r.CornerRadius *= scale
+				r.TopLeftCornerRadius *= scale
+				r.TopRightCornerRadius *= scale
+				r.BottomLeftCornerRadius *= scale
+				r.BottomRightCornerRadius *= scale
+				r.Refresh()
+			}
+		})
 	}
 }
 

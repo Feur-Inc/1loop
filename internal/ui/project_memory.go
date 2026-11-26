@@ -11,6 +11,7 @@ package ui
 
 import (
 	"context"
+	"fmt"
 	"net/url"
 	"os"
 	"path"
@@ -32,15 +33,19 @@ type memoryFile struct {
 	save func(ctx context.Context, before, after string) error
 }
 
-// projectMemoryAction is the sidebar menu's entry for a project.
-func (ui *desktopUI) projectMemoryAction(project string) menuAction {
-	return menuAction{label: "Project memory…", icon: iconDocument, run: func() { ui.editProjectMemory(project) }}
+// projectMemoryAction is the sidebar menu's entry for a project, on its
+// target whether the window works there or not (#607).
+func (ui *desktopUI) projectMemoryAction(target projectTarget, project string) menuAction {
+	return menuAction{label: "Project memory…", icon: iconDocument, run: func() { ui.editProjectMemory(target, project) }}
 }
 
-// projectMemoryFile is the project's AGENTS.md where the agent works now.
-func (ui *desktopUI) projectMemoryFile(project string) memoryFile {
-	if ui.server != nil {
-		client := ui.server.client
+// projectMemoryFile is the project's AGENTS.md on its target.
+func (ui *desktopUI) projectMemoryFile(target projectTarget, project string) (memoryFile, error) {
+	if target.kind == targetServer {
+		client, err := ui.serverClient(target)
+		if err != nil {
+			return memoryFile{}, err
+		}
 		query := "/api/projects/memory?workspace=" + url.QueryEscape(project)
 		file := memoryFile{path: path.Join(project, "AGENTS.md")}
 		file.read = func(ctx context.Context) (string, bool, error) {
@@ -55,9 +60,13 @@ func (ui *desktopUI) projectMemoryFile(project string) memoryFile {
 		file.save = func(ctx context.Context, before, after string) error {
 			return client.json(ctx, "POST", query, map[string]string{"before": before, "after": after}, nil)
 		}
-		return file
+		return file, nil
 	}
-	if machine := ui.machineFor(ui.cfg.MachineID); machine != nil {
+	if target.kind == targetSSH {
+		machine := ui.machineFor(target.id)
+		if machine == nil {
+			return memoryFile{}, fmt.Errorf("This SSH machine is no longer in Settings.")
+		}
 		return memoryFile{
 			path: machine.Label() + ":" + path.Join(project, "AGENTS.md"),
 			read: func(ctx context.Context) (string, bool, error) {
@@ -66,7 +75,7 @@ func (ui *desktopUI) projectMemoryFile(project string) memoryFile {
 			save: func(ctx context.Context, before, after string) error {
 				return agent.SaveMachineProjectMemory(ctx, machine, project, before, after)
 			},
-		}
+		}, nil
 	}
 	shown := filepath.Join(project, "AGENTS.md")
 	if home, err := os.UserHomeDir(); err == nil && strings.HasPrefix(shown, home+string(filepath.Separator)) {
@@ -81,13 +90,17 @@ func (ui *desktopUI) projectMemoryFile(project string) memoryFile {
 		save: func(_ context.Context, before, after string) error {
 			return agent.SaveProjectMemory(project, before, after)
 		},
-	}
+	}, nil
 }
 
 // editProjectMemory reads the project's AGENTS.md, off the window's thread
 // since it may be on a machine or the server, then opens its editor.
-func (ui *desktopUI) editProjectMemory(project string) {
-	file := ui.projectMemoryFile(project)
+func (ui *desktopUI) editProjectMemory(target projectTarget, project string) {
+	file, err := ui.projectMemoryFile(target, project)
+	if err != nil {
+		ui.notice("Project memory", err.Error())
+		return
+	}
 	go func() {
 		ctx, cancel := context.WithTimeout(ui.ctx, 15*time.Second)
 		defer cancel()

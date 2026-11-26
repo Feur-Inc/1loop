@@ -291,30 +291,34 @@ func (d *gLDriver) repaintWindow(w *window) bool {
 
 	updateGLContext(w)
 	// 1loop: the frame is painted into a texture kept from frame to frame,
-	// and when only small shapes were refreshed (the caret), only where
-	// they are (damage.go).
+	// and when only small shapes or images were refreshed (the caret, the work
+	// ring), only where they are (damage.go).
 	damaged, full := canvas.TakeDamage()
+	var area damageArea
+	canPartial := false
+	if w.retention.held && !full {
+		area, canPartial = canvas.damageOf(damaged)
+	}
 	held, retained := false, false
-	if w.retention.retains(started) {
+	if w.retention.retains(started, canPartial) {
 		held, retained = canvas.Painter().StartRetained()
 	} else {
 		canvas.Painter().ForgetRetained()
 	}
 	partial := false
-	if held && !full {
-		var area damageArea
-		if area, partial = canvas.damageOf(damaged); partial {
-			canvas.paintArea(canvas.Size(), &area)
-			driver.PartialFrames.Add(1)
-		}
+	if held && canPartial {
+		canvas.paintArea(canvas.Size(), &area)
+		driver.PartialFrames.Add(1)
+		partial = true
 	}
 	if !partial {
 		canvas.paint(canvas.Size())
+		cache.ExpireStaleTextTexturesFor(canvas, 15*time.Second)
 	}
 	if retained {
 		canvas.Painter().EndRetained()
 	}
-	w.retention = retention{last: started, partial: partial}
+	w.retention = retention{last: started, partial: partial, held: retained}
 	painted := time.Now()
 
 	view := w.viewport

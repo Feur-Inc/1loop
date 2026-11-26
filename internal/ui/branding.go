@@ -551,6 +551,7 @@ type ringArt struct {
 	dots   []image.Image // its dot, which the page shows and hides without a fade
 	closed map[string]image.Image
 	icons  map[string]image.Image // by state and scale
+	steady map[string][]*image.RGBA
 }
 
 const spinSteps = 72
@@ -578,6 +579,7 @@ func newRingArt(px int) *ringArt {
 		dots:   make([]image.Image, spinSteps),
 		closed: map[string]image.Image{},
 		icons:  map[string]image.Image{},
+		steady: map[string][]*image.RGBA{},
 	}
 }
 
@@ -591,7 +593,7 @@ func (art *ringArt) inked(markup string) string {
 	}
 	if ink != art.ink {
 		fresh := newRingArt(art.px)
-		art.spin, art.dots, art.closed, art.icons, art.ink = fresh.spin, fresh.dots, fresh.closed, fresh.icons, ink
+		art.spin, art.dots, art.closed, art.icons, art.steady, art.ink = fresh.spin, fresh.dots, fresh.closed, fresh.icons, fresh.steady, ink
 	}
 	return strings.ReplaceAll(markup, brandHex, ink)
 }
@@ -700,6 +702,22 @@ type workRing struct {
 	fullColor   string
 	glyphs      []glyphLayer
 	thinkOrigin time.Time
+	scratch     [2]*image.RGBA // reused for transitions and "think"
+	buf         int
+}
+
+// nextBuffer returns a cleared RGBA buffer of px×px, alternating between two
+// so the image handed to canvas.Image is not overwritten before upload.
+func (ring *workRing) nextBuffer(px int) *image.RGBA {
+	ring.buf ^= 1
+	img := ring.scratch[ring.buf]
+	if img == nil || img.Bounds().Dx() != px || img.Bounds().Dy() != px {
+		img = image.NewRGBA(image.Rect(0, 0, px, px))
+		ring.scratch[ring.buf] = img
+	} else {
+		clear(img.Pix)
+	}
+	return img
 }
 
 // change starts the page's transitions towards a new state.
@@ -743,14 +761,51 @@ func (ring *workRing) frame(now time.Time) (img image.Image, still bool) {
 		ring.angle = math.Mod(ring.angle+float64(now.Sub(ring.last))/float64(1100*time.Millisecond)*360, 360)
 	}
 	ring.last = now
-	if now.Sub(ring.drawn) < 28*time.Millisecond { // ~33 frames a second is smooth
+	if now.Sub(ring.drawn) < 50*time.Millisecond { // 20 fps is smooth for a 20 px ring and keeps frames retained
 		return nil, false
 	}
 	ring.drawn = now
 	px := ring.art.px
-	out := image.NewNRGBA(image.Rect(0, 0, px, px))
+	settled := ring.open.settled(now) && ring.full.settled(now)
+	kept := ring.glyphs[:0]
+	for _, glyphLayer := range ring.glyphs {
+		elapsed := float64(now.Sub(glyphLayer.at))
+		if glyphLayer.leaving && elapsed >= float64(320*time.Millisecond) {
+			continue // gone
+		}
+		if elapsed < float64(320*time.Millisecond) {
+			settled = false
+		}
+		kept = append(kept, glyphLayer)
+	}
+	ring.glyphs = kept
+	// Steady spinning state (e.g. "write", "bash", "read"): cache the composed
+	// RGBA frame per rotation step so each tick does zero compositing and zero
+	// allocations, and GL uploads RGBA directly without NRGBA conversion.
+	if !closed && settled && len(kept) == 1 && !kept[0].leaving && kept[0].state != "think" {
+		ring.art.inked("")
+		step := int(math.Round(ring.angle/360*spinSteps)) % spinSteps
+		frames := ring.art.steady[kept[0].state]
+		if frames == nil {
+			frames = make([]*image.RGBA, spinSteps)
+			ring.art.steady[kept[0].state] = frames
+		}
+		if frames[step] == nil {
+			out := image.NewRGBA(image.Rect(0, 0, px, px))
+			draw.Draw(out, out.Bounds(), ring.art.open(ring.angle), image.Point{}, draw.Over)
+			draw.Draw(out, out.Bounds(), ring.art.dot(ring.angle), image.Point{}, draw.Over)
+			draw.Draw(out, out.Bounds(), ring.art.icon(kept[0].state, 1), image.Point{}, draw.Over)
+			frames[step] = out
+		}
+		return frames[step], false
+	}
+	out := ring.nextBuffer(px)
 	layer := func(src image.Image, opacity float64) {
 		if opacity <= 0.004 {
+			return
+		}
+		if opacity >= 0.996 {
+			draw.Draw(out, out.Bounds(), src, image.Point{}, draw.Over)
 			return
 		}
 		mask := image.NewUniform(color.Alpha{A: uint8(math.Min(1, opacity)*255 + 0.5)})
@@ -761,8 +816,6 @@ func (ring *workRing) frame(now time.Time) (img image.Image, still bool) {
 		layer(ring.art.dot(ring.angle), 1)
 	}
 	layer(ring.art.full(ring.fullColor), ring.full.value(now))
-	settled := ring.open.settled(now) && ring.full.settled(now)
-	kept := ring.glyphs[:0]
 	for _, glyphLayer := range ring.glyphs {
 		elapsed := float64(now.Sub(glyphLayer.at))
 		opacity := cssEase(elapsed / float64(220*time.Millisecond))
@@ -770,13 +823,6 @@ func (ring *workRing) frame(now time.Time) (img image.Image, still bool) {
 		if glyphLayer.leaving {
 			opacity, scale = 1-opacity, 1.7-scale
 		}
-		if glyphLayer.leaving && elapsed >= float64(320*time.Millisecond) {
-			continue // gone
-		}
-		if elapsed < float64(320*time.Millisecond) {
-			settled = false
-		}
-		kept = append(kept, glyphLayer)
 		if glyphLayer.state == "think" {
 			// The page's think keyframes: each dot breathes over 1.2 s,
 			// the next ones 0.15 s and 0.3 s later.
@@ -788,7 +834,6 @@ func (ring *workRing) frame(now time.Time) (img image.Image, still bool) {
 		}
 		layer(ring.art.icon(glyphLayer.state, scale), opacity)
 	}
-	ring.glyphs = kept
 	return out, closed && settled
 }
 

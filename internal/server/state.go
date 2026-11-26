@@ -153,10 +153,8 @@ type headlessServer struct {
 	panelHomes                 map[string]*serverChat // project panels before the first prompt; not persisted
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
-	pairs                      map[string]*serverPair
-	subs                       map[chan serverEvent]bool
-	eventSeq                   uint64 // the events sent so far: a client tells a read's snapshot from the events after it (#591)
-	streams                    map[chan struct{}]bool
+	pairing                    *remoteapi.PairingBook // the pairings waiting (security.go)
+	hub                        *remoteapi.Events      // the clients' event and browser streams
 	choices                    map[string]agent.ModelChoice
 	modelReload                sync.Mutex
 	modelRevision              uint64
@@ -198,12 +196,6 @@ type headlessServer struct {
 	cutOffs []cutOffTurn
 }
 
-type serverEvent struct {
-	kind string
-	data []byte
-	seq  uint64 // its place among the events, sent as the event's id
-}
-
 func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*headlessServer, error) {
 	host, _ := os.Hostname()
 	server := &headlessServer{
@@ -215,9 +207,8 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		prices:           usage.OpenPrices(filepath.Join(dir, "usage-prices.json")),
 		backend:          &agent.App{Approvals: map[string]chan agent.ApprovalAnswer{}},
 		keys:             map[string]string{},
-		pairs:            map[string]*serverPair{},
-		subs:             map[chan serverEvent]bool{},
-		streams:          map[chan struct{}]bool{},
+		pairing:          &remoteapi.PairingBook{Slots: maxPendingPairings, PerClient: pairingsPerAddress, Approval: true},
+		hub:              remoteapi.NewEvents(ctx),
 		choices:          map[string]agent.ModelChoice{},
 		approvalMode:     "approval",
 		loading:          true,
@@ -792,30 +783,11 @@ func (server *headlessServer) itemLocked(chat *serverChat, index int) remoteapi.
 }
 
 func (server *headlessServer) broadcastLocked(kind string, value any) {
-	data, err := json.Marshal(value)
-	if err != nil {
-		return
-	}
-	server.eventSeq++
-	for channel := range server.subs {
-		select {
-		case channel <- serverEvent{kind, data, server.eventSeq}:
-		default:
-			close(channel)
-			delete(server.subs, channel)
-		}
-	}
+	server.hub.Broadcast(kind, value)
 }
 
 func (server *headlessServer) disconnectStreamsLocked() {
-	for channel := range server.subs {
-		close(channel)
-		delete(server.subs, channel)
-	}
-	for done := range server.streams {
-		close(done)
-		delete(server.streams, done)
-	}
+	server.hub.Disconnect()
 }
 
 // changedLocked queues a chat's change (an item, or only its meta when

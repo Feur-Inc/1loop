@@ -26,6 +26,7 @@ import (
 
 	"1loop/internal/browser"
 	"1loop/internal/core"
+	"1loop/internal/remoteapi"
 )
 
 // lendReady is how long a client may take to start its browser: the first
@@ -363,7 +364,7 @@ func (lender *browserLender) leave() {
 // pairedDeviceName is the name of the paired device a request's token is
 // for; ok is false for any other token, the phone app's local one too.
 func (server *headlessServer) pairedDeviceName(req *http.Request) (string, bool) {
-	hash := requestHash(req)
+	hash := remoteapi.RequestTokenHash(req)
 	if hash == "" {
 		return "", false
 	}
@@ -393,11 +394,8 @@ func (server *headlessServer) attachBrowser(w http.ResponseWriter, r *http.Reque
 	if reader != nil { // it holds what the client sent right after its handshake
 		lender.reader = reader.Reader
 	}
-	revoked := make(chan struct{})
-	server.mu.Lock()
-	server.streams[revoked] = true
-	server.mu.Unlock()
-	defer func() { server.mu.Lock(); delete(server.streams, revoked); server.mu.Unlock() }()
+	revoked, release := server.hub.Stream()
+	defer release()
 	go func() {
 		select {
 		case <-revoked: // a device was unpaired: this one comes back if it still may

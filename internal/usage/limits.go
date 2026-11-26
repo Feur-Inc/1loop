@@ -244,6 +244,9 @@ func (ledger *Ledger) Limits(names Names, now time.Time) []Limit {
 		limit := Limit{Connection: k.connection, Window: k.window, Hours: hours, Reset: last.Reset, Checked: last.Time, Left: last.Left}
 		if names != nil {
 			limit.Name = names("connection", k.connection)
+			if limit.Name == "" && k.connection != "" {
+				continue // removed from Settings: its windows say nothing of now (#593)
+			}
 		}
 		if !last.Reset.After(now) {
 			// Reset since: a new window, untouched as far as 1loop knows.

@@ -19,6 +19,7 @@ import (
 // serverInstall is /api/state's part about what the server can install.
 type serverInstall struct {
 	Browser    *bool // nil: a server from before #406, which always has it
+	OwnBrowser *bool // its own, not lent by a client (nil: from before lending)
 	ClaudeCode *bool
 	Installs   map[string]struct {
 		Running     bool
@@ -41,10 +42,20 @@ func (remote *remoteDesktop) installRows(full bool) fyne.CanvasObject {
 	items := []*item{
 		{what: "chromium", title: "Chromium", button: "Install Chromium",
 			detail: "For Browser Use: about 200 MB in its data folder, no admin.",
-			has:    func(state serverInstall) *bool { return state.Browser }},
+			has: func(state serverInstall) *bool {
+				if state.OwnBrowser != nil {
+					return state.OwnBrowser // a browser a client lends does not make it installed
+				}
+				return state.Browser
+			}},
 		{what: "claude-code", title: "Claude Code", button: "Install Claude Code",
 			detail: "For Claude Code connections. Downloads the claude command.",
 			has:    func(state serverInstall) *bool { return state.ClaudeCode }},
+	}
+	if browserClient {
+		items[0].detail += " Or use the 1loop desktop app on a computer paired with this server: it can lend the server that computer's browser (in its Settings, the server's Installs page). This browser page cannot."
+	} else {
+		items[0].detail += " Or let the server use this computer's browser, below."
 	}
 	box := container.NewVBox()
 	if full {

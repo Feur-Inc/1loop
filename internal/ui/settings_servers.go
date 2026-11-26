@@ -99,9 +99,13 @@ func serverPages() []serverPage {
 		{name: "Installs", find: []registry.Setting{
 			{Key: "server.installs", Title: "Chromium and Claude Code", Kind: registry.Action,
 				Description: "Install the browser and Claude Code on the server.",
-				Keywords:    []string{"install", "chromium", "browser", "claude code", "download"}}},
-			build: func(_ *settingsView, remote *remoteDesktop, _ string, head serverHead) fyne.CanvasObject {
-				return container.NewVBox(head(nil), remote.installRows(true))
+				Keywords:    []string{"install", "chromium", "browser", "claude code", "download", "lend"}}},
+			build: func(view *settingsView, remote *remoteDesktop, _ string, head serverHead) fyne.CanvasObject {
+				page := container.NewVBox(head(nil), remote.installRows(true))
+				if rows := view.ui.lendRows(remote.client.address.URL); rows != nil { // or this computer's browser, lent to it
+					page.Add(rows)
+				}
+				return page
 			}},
 		{name: "Devices", find: []registry.Setting{
 			{Key: "server.devices", Title: "Paired devices", Kind: registry.Action,

@@ -168,6 +168,10 @@ type desktopUI struct {
 	machine          *tapRow         // the target: this computer, an SSH machine or a server
 	serverStatus     *fitLabel       // the server's state beside it
 	serverBusy       *activityLine   // under the title bar while the server is slow to answer (remote_activity.go)
+	lendBar          *fyne.Container // "the server's agent is using this computer's browser", with Stop (browser_lend.go)
+	lendText         *flowText       // what the bar says
+	lendStatus       *flowText       // the lending's state, on its server's Installs page in Settings
+	lendAddress      string          // the server lendStatus is about
 	modelsLoading    bool
 	pendingGoal      *agent.GoalState // a /goal on the start screen, for the chat it makes
 
@@ -692,6 +696,7 @@ func (ui *desktopUI) release() {
 		chat.tasks.StopAll() // a background server must not outlive 1loop
 	}
 	agent.StopEveryClaude()
+	browser.StopLent() // nor the browser lent to a server
 	for _, view := range ui.allPanes() {
 		if view != ui {
 			view.releaseWindow() // its chat's panel goes back to the chat, disposed with it below
@@ -1230,7 +1235,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	// to the chat, not to the message being written (#434).
 	ui.questionSlot = container.New(&questionSlotLayout{gap: 8})
 	ui.questionSlot.Hide()
-	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.buildCommandMenu(), ui.questionSlot, ui.queueTray, composer)
+	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), ui.buildLendBar(), padded(0, 6, 4, 4, contextRow), ui.buildCommandMenu(), ui.questionSlot, ui.queueTray, composer)
 	return padded(0, 0, 24, 24, container.New(columnLayout{width: 760, inset: 0}, padded(0, 18, 0, 0, stack)))
 }
 

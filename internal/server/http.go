@@ -86,6 +86,8 @@ func (server *headlessServer) routes() http.Handler {
 			server.shutdown()
 		}))
 	}
+	// A paired device's own token only (lent_browser.go).
+	mux.HandleFunc("GET "+browser.LendPath, server.attachBrowser)
 	endpoints := map[string]http.HandlerFunc{
 		"GET /api/projects":                            server.projectFolders,
 		"POST /api/projects":                           server.addProject,
@@ -227,8 +229,10 @@ func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 		"projectActions":    true,
 		"chats":             server.summariesLocked(),
 		"settings":          server.settingsLocked(),
-		"browser":           server.hasBrowser(), // false: no Browser Use here (the slim image)
-		"claudeCode":        hasClaudeCode(),     // false: no claude command (the slim image)
+		"browser":           server.hasBrowser(), // false: no Browser Use here (the slim image, no client lending its browser)
+		"ownBrowser":        server.ownBrowser(), // false: no Chromium of its own (Install Chromium)
+		"lentBrowser":       server.browserStateLocked()["lentBrowser"],
+		"claudeCode":        hasClaudeCode(), // false: no claude command (the slim image)
 		"installs":          server.installsLocked(),
 	})
 }

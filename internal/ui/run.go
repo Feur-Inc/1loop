@@ -15,6 +15,7 @@ import (
 	"syscall"
 
 	"1loop/internal/agent"
+	"1loop/internal/browser"
 	"1loop/internal/crash"
 	"1loop/internal/platform"
 	"1loop/internal/update"
@@ -47,7 +48,8 @@ func Main() {
 		<-stop
 		agent.StopEveryTask()
 		agent.StopEveryClaude()
-		crash.Clean() // ended on purpose (logout, Ctrl+C): no crash
+		browser.StopLent() // the browser lent to a server (browser_lend.go)
+		crash.Clean()      // ended on purpose (logout, Ctrl+C): no crash
 		os.Exit(130)
 	}()
 	backend := &agent.App{Approvals: make(map[string]chan agent.ApprovalAnswer)}

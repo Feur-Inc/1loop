@@ -122,9 +122,15 @@ func (server *headlessServer) engineOf(chat *serverChat) *browser.Engine {
 	return server.loopyBrowser
 }
 
-// hasBrowser says whether Browser Use can start a browser: the phone's
-// WebView, or a Chromium unless ONELOOP_BROWSER=none (the slim image).
+// hasBrowser says whether Browser Use can start a browser: its own, or
+// one a paired client lends (lent_browser.go).
 func (server *headlessServer) hasBrowser() bool {
+	return server.ownBrowser() || server.lenders.current() != nil
+}
+
+// ownBrowser says whether the server has a browser of its own: the phone's
+// WebView, or a Chromium unless ONELOOP_BROWSER=none (the slim image).
+func (server *headlessServer) ownBrowser() bool {
 	return server.engine.Native != nil || !browser.Disabled()
 }
 
@@ -199,14 +205,29 @@ func (server *headlessServer) browserTools(chat *serverChat) agent.PanelToolHand
 		if page == nil {
 			return agent.PanelToolResult{}, fmt.Errorf("Open a browser tab with browser_tabs first")
 		}
-		if err := page.Run(ctx); err != nil {
-			return agent.PanelToolResult{}, err
+		var lender *browserLender
+		if !server.ownBrowser() {
+			lender = server.lenders.current()
 		}
-		if name == "browser_tabs" {
-			data, _ := json.Marshal(page.Snapshot())
-			return agent.PanelToolResult{Text: string(data)}, nil
+		result, err := func() (agent.PanelToolResult, error) {
+			if err := page.Run(ctx); err != nil {
+				return agent.PanelToolResult{}, err
+			}
+			if name == "browser_tabs" {
+				data, _ := json.Marshal(page.Snapshot())
+				return agent.PanelToolResult{Text: string(data)}, nil
+			}
+			return agent.ExecuteBrowserTool(ctx, page, name, args)
+		}()
+		if err != nil && lender != nil && lender.left() {
+			return result, fmt.Errorf("The browser %s lent went away during this call, which did not finish: %s stopped lending it (%v). The tabs open again when a paired desktop app lends its browser", lender.device, lender.device, err)
 		}
-		return agent.ExecuteBrowserTool(ctx, page, name, args)
+		if err != nil && lender != nil && !page.Started() {
+			// The lent browser did not start: the next call tries again
+			// in a new one, rather than failing as this one did.
+			server.reopenBrowsers()
+		}
+		return result, err
 	}
 }
 

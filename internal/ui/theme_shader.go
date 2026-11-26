@@ -274,5 +274,6 @@ func (ui *desktopUI) syncMainFill() {
 	sync(ui.mainFill)
 	if ui.loopy != nil {
 		sync(ui.loopy.mainFill)
+		ui.loopy.syncBubblesBlur() // their blur follows the background too
 	}
 }

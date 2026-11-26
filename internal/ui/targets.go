@@ -10,7 +10,7 @@ package ui
 // Opening a project or a chat makes its target the one the window works
 // on: there is no switch to flip before reaching it.
 //
-// A new chat with no folder runs on the device in use (noFolderTarget);
+// A new chat with no folder runs on the device in use;
 // the target chip under the composer moves a new chat to another target.
 
 import (
@@ -23,6 +23,7 @@ import (
 	"time"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/theme"
 
 	"1loop/internal/agent"
 	"1loop/internal/remoteapi"
@@ -104,13 +105,6 @@ func targetProjectName(target projectTarget, project string) string {
 	return path.Base(filepath.ToSlash(project))
 }
 
-// noFolderTarget is where a new chat with no folder runs: the device in
-// use, which is this computer. One function, so that another default is a
-// one-line change; the target chip under the composer moves a new chat
-// elsewhere. (The browser client has no folder of its own to offer: its
-// chats run on the page's server.)
-func noFolderTarget() projectTarget { return localTarget }
-
 // reach is whether a target answers, as last seen.
 type reach int
 
@@ -138,6 +132,9 @@ func (ui *desktopUI) setReach(target projectTarget, state reach, problem string)
 	ui.reaches[target.key()] = next
 	if ui.projectList != nil {
 		ui.renderChats()
+	}
+	if target.kind == targetServer && ui.prefs != nil {
+		ui.prefs.serverChanged(target.id) // its row under Settings → Servers
 	}
 	return true
 }
@@ -248,10 +245,12 @@ func (ui *desktopUI) serverGroups() []targetGroup {
 	return groups
 }
 
-// serverGroup is a server's: the window's own connection to it while it
-// works on it, else what its link last read. Until either has answered,
+// serverGroup is a server's: the own connection of a pane that works on
+// it (serverInUse), else what its link last read. Until either has answered,
 // its projects are those remembered from the last time it did, and its
-// chats are not at hand.
+// chats are not at hand. A connection just opened lists nothing until
+// its first state arrives: meanwhile the link's listing stays, or its
+// projects and chats left the sidebar for seconds after a click on it.
 func (ui *desktopUI) serverGroup(address string) targetGroup {
 	var listing *serverListing
 	active := false
@@ -259,8 +258,8 @@ func (ui *desktopUI) serverGroup(address string) targetGroup {
 	if remote != nil && remote.client.address.URL == address {
 		active = true
 	}
-	if active && remote.live.answered {
-		listing = &serverListing{name: remote.name, projects: remote.projects, chats: remote.chats, worktrees: remote.worktrees}
+	if live := ui.serverInUse(address); live != nil && live.live.answered { // this pane's, or another's (#600)
+		listing = &serverListing{name: live.name, projects: live.projects, chats: live.chats, worktrees: live.worktrees}
 	} else if link := ui.linkTo(address); link != nil && link.answered { // until the window's own connection answers
 		listing = &link.listing
 	}
@@ -276,6 +275,22 @@ func (ui *desktopUI) serverGroup(address string) targetGroup {
 	return group
 }
 
+// serverInUse is the connection of a pane that works on the server at
+// address, this one's first, nil when no pane of any window does. While
+// one does, the server's link stops reading it: the sidebar of every
+// window and pane lists the server from that connection, which keeps up.
+func (ui *desktopUI) serverInUse(address string) *remoteDesktop {
+	if remote := ui.server; remote != nil && remote.client.address.URL == address {
+		return remote
+	}
+	for _, view := range ui.allPanes() {
+		if remote := view.server; remote != nil && remote.client.address.URL == address {
+			return remote
+		}
+	}
+	return nil
+}
+
 // serverListing is what a server lists of itself for the sidebar.
 type serverListing struct {
 	name      string
@@ -286,7 +301,8 @@ type serverListing struct {
 
 // serverProjectList is a server's projects as the sidebar lists them: its
 // default folder, those it lists, then its chats' folders, each once, its
-// worktrees left out (they show under their project).
+// worktrees left out (they show under their project), and so are the
+// folders it made for chats with no folder (listed under No folder).
 func serverProjectList(workspace string, listed []string, chats []remoteapi.Chat, worktrees map[string]string) []string {
 	projects := []string{}
 	add := func(folder string) {
@@ -299,7 +315,9 @@ func serverProjectList(workspace string, listed []string, chats []remoteapi.Chat
 		add(folder)
 	}
 	for _, chat := range chats {
-		add(chat.Workspace)
+		if !chat.Scratch {
+			add(chat.Workspace)
+		}
 	}
 	return projects
 }
@@ -330,10 +348,9 @@ func (ui *desktopUI) rememberServerProjects(address string, projects []string) {
 // sidebar lists it.
 func (ui *desktopUI) sideChatOf(chat *conversation) sideChat {
 	status, blocked := agent.WrapUpStatus(chat.Items)
-	menu := []menuAction{
-		{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
-		{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
-	}
+	menu := []menuAction{{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }}}
+	menu = append(menu, ui.moveActions(chat)...) // chat_move.go
+	menu = append(menu, menuAction{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }})
 	var window func()
 	if ui.canOpenWindow(chat) { // windows.go
 		window = func() { ui.openWindow(chat) }
@@ -380,12 +397,15 @@ func (ui *desktopUI) serverSideChats(target projectTarget, chats []remoteapi.Cha
 	for _, chat := range chats {
 		chat := chat
 		side = append(side, sideChat{
-			id: chat.ID, parent: chat.Parent, ended: chat.Ended,
+			target: target.id, id: chat.ID, parent: chat.Parent, ended: chat.Ended,
 			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
 			status: chat.Status, blocked: chat.Blocked,
 			selected: current != nil && current.server != nil && current.server.client.address.URL == target.id && current.serverID == chat.ID,
 			open:     onServer(func(remote *remoteDesktop) { remote.openChat(chat.ID) }),
 			menu: []menuAction{{label: "Rename", icon: iconRename, run: onServer(func(remote *remoteDesktop) { remote.renameChat(chat) })},
+				{label: "Move to this computer…", icon: theme.ComputerIcon(), run: onServer(func(remote *remoteDesktop) {
+					remote.moveHere(chat.ID, chat.Title, chat.Workspace, chat.Running)
+				})},
 				{label: "Delete", icon: iconTrash, danger: true, run: onServer(func(remote *remoteDesktop) { remote.deleteChat(chat) })}},
 		})
 	}

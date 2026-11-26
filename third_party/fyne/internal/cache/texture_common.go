@@ -25,6 +25,16 @@ func GetTextTexture(ent FontCacheEntry) (TextureType, bool) {
 	return texInfo.texture, true
 }
 
+// TextureCanvas is the canvas an object's texture was made for, if it has
+// one (1loop: driver.Recoloured).
+func TextureCanvas(obj fyne.CanvasObject) (fyne.Canvas, bool) {
+	texInfo, ok := objectTextures.Load(obj)
+	if texInfo == nil || !ok {
+		return nil, false
+	}
+	return texInfo.canvas, true
+}
+
 // GetTexture gets cached texture.
 func GetTexture(obj fyne.CanvasObject) (TextureType, bool) {
 	texInfo, ok := objectTextures.Load(obj)

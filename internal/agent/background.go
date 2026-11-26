@@ -418,6 +418,7 @@ func startBackground(ctx context.Context, tasks *BackgroundTasks, root, dir, com
 		if err := cmd.Start(); err != nil {
 			return nil, err
 		}
+		platform.OOMFirst(cmd)
 		return func() (int, error) {
 			err := cmd.Wait()
 			return cmd.ProcessState.ExitCode(), err

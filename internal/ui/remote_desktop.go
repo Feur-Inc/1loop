@@ -84,7 +84,7 @@ func (ui *desktopUI) connectServer() {
 					return
 				}
 				if !reply.Console {
-					ui.notice("Remote server", "This address is a desktop's phone remote. Connect to a headless HTTPS server.")
+					ui.notice("Remote server", "That is a desktop's phone remote. Use a headless HTTPS server.")
 					return
 				}
 				sheet.dismiss()
@@ -93,7 +93,7 @@ func (ui *desktopUI) connectServer() {
 		}()
 	}
 	sheet = ui.modal("Connect a server", container.NewVBox(
-		note("A headless 1loop server runs the agent, its files, browser and terminals on its own machine. The next step asks you to approve this computer from a device already paired with it, or in its console."),
+		note("Runs the agent and files on its own machine. Approve it next."),
 		widget.NewLabel("HTTPS address"), address,
 		widget.NewLabel("Certificate fingerprint (only for a self-signed certificate)"), pin,
 		note("The server's console prints this SHA-256 fingerprint when it starts.")), 620, nil, connect)
@@ -160,7 +160,7 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code, co
 	}
 	copyCommand := newRow("Copy command", nil, styleChip, func() { fyne.CurrentApp().Clipboard().SetContent(command) })
 	body := container.NewVBox(
-		note("Approve it in 1loop on a device already paired with this server: it asks for this code. This connects by itself once approved; the pairing expires after two minutes."),
+		note("Approve it on a paired device with this code. Expires in 2 min."),
 		codeBlock(code, 80),
 		note(where),
 		codeBlock(command, 80),
@@ -168,7 +168,7 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code, co
 		status,
 	)
 	if phone { // a phone shared on the network: its user types the code in 1loop's request
-		body = container.NewVBox(note("On the phone, type this code in 1loop's request, then tap Allow. The pairing expires after two minutes."), codeBlock(code, 80), status)
+		body = container.NewVBox(note("On the phone, type this code, then tap Allow. Expires in 2 min."), codeBlock(code, 80), status)
 	}
 	sheet = ui.modal("Approve this device", body, 620, stop)
 }
@@ -235,7 +235,7 @@ func (remote *remoteDesktop) askPairing(data string) {
 		allow := newRow("Allow", nil, stylePrimary, func() { answer(true) })
 		entry.OnSubmitted = func(string) { answer(true) }
 		sheet = remote.parent.modal("“"+asked.Device+"” wants to use this server", container.NewVBox(
-			note("It will run the agent, its commands and files on the server, like this device. Type the six-digit code that device shows."),
+			note("Runs the agent, commands and files on the server. Type its code."),
 			entry, status), 560, nil, refuse, allow)
 		remote.parent.window.Canvas().Focus(entry)
 		remote.pairingSheet, remote.pairingID = sheet, asked.ID
@@ -252,6 +252,7 @@ type remoteDesktop struct {
 	status           interface{ SetText(string) } // the line beside the target, under the conversation
 	wake             chan struct{}
 	name             string // as the server calls itself
+	shown            bool   // its first state arrived: name, projects and chats are its own (show)
 	defaultWorkspace string
 	current          string // the open chat's ID on the server, "" on the start screen
 	mentionsChat     string // the chat mentionList is for
@@ -269,6 +270,7 @@ type remoteDesktop struct {
 	approvalMode     string
 	autoMode         bool
 	namingModel      *agent.NamingModel       // the server's chat naming model
+	chatGPTSignIn    bool                     // it signs a ChatGPT account in with this computer's browser (remote_chatgpt.go)
 	convs            map[string]*conversation // the server's chats as this window shows them
 	fileAttachments  []agent.FileAttachment
 	thumbnails       map[string]image.Image // the pictures uploaded from here, by their path on the server
@@ -278,7 +280,7 @@ type remoteDesktop struct {
 	pairingID        string // a device asking to use the server (askPairing)
 	pairingSheet     *sheet
 	questionID       string
-	questionSheet    *sheet
+	questionSheet    *questionCard
 	// The open chat's server tabs (browser, terminal, tasks, files).
 	tabViews      map[string]fyne.CanvasObject
 	tabCancel     map[string]context.CancelFunc
@@ -291,6 +293,7 @@ type remoteDesktop struct {
 	todoUsage     *contextUsageState
 	todoTimes     map[string]*canvas.Text // each task's clock, ticking in place
 	todoMarks     []*taskMark
+	goalClock     *canvas.Text // the goal card's time spent (goal.go)
 	todoSignature string
 	openCommands  map[string]bool // the background commands shown in full, by task
 	connected     string          // the connection line show last wrote in status
@@ -470,7 +473,7 @@ func (remote *remoteDesktop) openChat(id string) {
 	conv := remote.conv(id)
 	remote.parent.openChat(conv)
 	if conv.Config.Model != "" {
-		remote.parent.model.row.SetText(remote.modelText(conv.Config.Model, conv.Config.Effort))
+		remote.showModel(conv.Config.Model, conv.Config.Effort)
 	}
 	cache := remote.chatCache(id)
 	if !cache.loaded { // not the previous chat's items, nor an empty page
@@ -495,7 +498,7 @@ func (remote *remoteDesktop) selectChat(id string) {
 	if id != "" {
 		remote.want(wantChat | wantPanel) // read in full on opening, then kept by the events
 	} else if remote.model != "" { // a new chat takes the server's model
-		remote.parent.model.row.SetText(remote.modelText(remote.model, remote.effort))
+		remote.showModel(remote.model, remote.effort)
 	}
 }
 
@@ -575,7 +578,8 @@ func (remote *remoteDesktop) submit(mode string) {
 func (remote *remoteDesktop) post(chat, text, mode string, handoff *agent.HandoffChoice, files []agent.FileAttachment, pending string) {
 	ui := remote.parent
 	workspace := ui.cfg.Workspace
-	draft := ui.draftKey() // where its files go back if it fails
+	ui.touchOrder(ui.activeTarget(), workspace, chat) // the sidebar lists it first (sidebar_order.go)
+	draft := ui.draftKey()                            // where its files go back if it fails
 	// With files, the server may spend up to 2 minutes copying them to an SSH
 	// machine's project before it answers: a follow-up must not time out here
 	// while the server takes it (#545).
@@ -693,6 +697,8 @@ func (remote *remoteDesktop) showTab(key string) {
 func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat, listed []string) {
 	ui := remote.parent
 	remote.name, remote.defaultWorkspace = name, workspace
+	first := !remote.shown
+	remote.shown = true
 	projects := serverProjectList(workspace, listed, chats, remote.worktrees)
 	ui.rememberServerProjects(remote.client.address.URL, projects)
 	if ui.cfg.Workspace == "" {
@@ -706,7 +712,7 @@ func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat
 		remote.connected = status
 		remote.status.SetText(status)
 	}
-	if slices.Equal(remote.chats, chats) && slices.Equal(remote.projects, projects) {
+	if !first && slices.Equal(remote.chats, chats) && slices.Equal(remote.projects, projects) {
 		return
 	}
 	remote.limits.noteTurns(remote.chats, chats)
@@ -785,13 +791,13 @@ func (remote *remoteDesktop) deleteChat(chat remoteapi.Chat) {
 		return
 	}
 	title, detail := "Also remove its worktree and branch "+chat.Branch,
-		"The folder "+worktreeFolder(chat.Workspace)+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own."
+		"The folder "+worktreeFolder(chat.Workspace)+" goes unless it has uncommitted changes; its branch only if merged."
 	if chat.Branch == "" || branches > 1 {
 		title = "Also remove the worktrees of its subchats"
 		if chat.Branch != "" {
 			title = "Also remove its worktree and those of its subchats"
 		}
-		detail = "Each folder goes unless it has uncommitted changes or another chat works in it; each branch only if it is merged or has no commits of its own."
+		detail = "Each folder goes unless changed or in use; each branch if merged."
 	}
 	body := container.New(layout.NewCustomPaddedVBoxLayout(10), note(text),
 		card(settingRow(title, detail, newToggle(true, func(on bool) { removeWorktree = on }))))
@@ -967,7 +973,7 @@ func (remote *remoteDesktop) showMeta(conv *conversation) {
 		}
 		remote.approvalID = approvalID
 		if approval := meta.Approval; approval != nil {
-			remote.approvalSheet = ui.showApproval(conv, map[string]any{"id": approval.ID, "title": approval.Title, "preview": approval.Preview})
+			remote.approvalSheet = ui.showApproval(conv, map[string]any{"id": approval.ID, "title": approval.Title, "preview": approval.Preview, "review": approval.Review})
 		}
 	}
 	questionID := ""
@@ -1018,23 +1024,32 @@ func (remote *remoteDesktop) syncRun() {
 	remote.syncSending()
 }
 
-// modelText names the chat's model on the composer's chip.
-func (remote *remoteDesktop) modelText(label, effort string) string {
-	text := label
+// modelChip is what the composer's chip shows for a server chat's model: its
+// name, and its effort after it, as for this computer's chats (#581).
+func (remote *remoteDesktop) modelChip(label, effort string) (text, trailing string) {
+	text = label
 	for _, model := range remote.models {
 		if model.Label == label {
 			text = model.Name
 			for _, entry := range model.Efforts {
 				if entry.Value == effort {
-					text += " · " + entry.Label
+					trailing = entry.Label
 				}
 			}
 		}
 	}
 	if text == "" {
-		return "Model"
+		text = "Model"
 	}
-	return text
+	return text, trailing
+}
+
+// showModel puts a server chat's model on the composer's chip. The effort is
+// the server's: this computer's own never shows here.
+func (remote *remoteDesktop) showModel(label, effort string) {
+	text, trailing := remote.modelChip(label, effort)
+	remote.parent.model.row.text = text
+	remote.parent.model.row.SetTrailing(trailing)
 }
 
 // modelMenu chooses the chat's model and reasoning among the server's.
@@ -1182,7 +1197,7 @@ func (remote *remoteDesktop) editHooks() {
 				}()
 			}
 			buttons := container.NewHBox(layout.NewSpacer(), cancelButton, save)
-			body := container.NewBorder(note("Hooks of the server: commands before or after its tools, when a message is sent, or when its agent stops."), container.NewVBox(problem, buttons), nil, nil, scroll)
+			body := container.NewBorder(note("The server's commands around its tools, prompts and stops."), container.NewVBox(problem, buttons), nil, nil, scroll)
 			dialog = newSheet(remote.window.Canvas(), body, 640)
 			dialog.Show()
 		})
@@ -1193,7 +1208,7 @@ func (remote *remoteDesktop) renderTasks() {
 	if remote.tabViews["todo"] == nil || remote.todoTasks == nil {
 		return
 	}
-	signature, _ := json.Marshal([]any{remote.meta.Todo, remote.meta.Tasks, remote.meta.Subchats})
+	signature, _ := json.Marshal([]any{remote.meta.Todo, remote.meta.Tasks, remote.meta.Subchats, remote.meta.Goal})
 	if string(signature) != remote.todoSignature {
 		remote.todoSignature = string(signature)
 		remote.todoTasks.RemoveAll()
@@ -1203,7 +1218,12 @@ func (remote *remoteDesktop) renderTasks() {
 		remote.todoTimes = map[string]*canvas.Text{}
 		tasks := remote.todoTasks
 		live := func() bool { return remote.meta.Running && remote.todoTasks == tasks && remote.tabViews["todo"] != nil }
-		// Drawn as this computer's chats draw theirs (#542).
+		// Drawn as this computer's chats draw theirs (#542), the goal first:
+		// its controls send the /goal command they name (goal.go).
+		chatID := remote.meta.Chat
+		remote.goalClock = drawGoalCard(remote.todoTasks, remote.meta.Goal.AgentGoal(), func(command string) {
+			remote.action("/api/send", map[string]any{"chat": chatID, "text": command})
+		})
 		remote.todoMarks = drawTaskList(remote.todoTasks, remote.todoItems(), live, remote.todoTimes)
 		// The server's background commands, newest first, each with its own Stop.
 		if len(remote.meta.Tasks) > 0 {
@@ -1235,6 +1255,7 @@ func (remote *remoteDesktop) renderTasks() {
 		remote.addSubchats()
 	}
 	now := time.Now()
+	tickGoalClock(remote.goalClock, remote.meta.Goal.AgentGoal())
 	for _, item := range remote.todoItems() {
 		if clock := remote.todoTimes[item.ID]; clock != nil {
 			if value := taskElapsed(item, now); value != clock.Text {

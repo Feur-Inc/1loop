@@ -12,8 +12,8 @@ import (
 	"fyne.io/fyne/v2/test"
 )
 
-// until waits for done, running what goroutines handed to the window.
-func until(t *testing.T, what string, done func() bool) {
+// untilDrained waits for done, running what goroutines handed to the window.
+func untilDrained(t *testing.T, what string, done func() bool) {
 	t.Helper()
 	deadline := time.Now().Add(5 * time.Second)
 	for !done() {
@@ -75,7 +75,7 @@ func TestServerActionSentOncePerClick(t *testing.T) {
 	ui, remote, _ := serverWindow(t, held.handle)
 	openRead(remote, "c1", 1)
 	remote.stop()
-	until(t, "the first stop to reach the server", func() bool { return held.count("/api/stop") == 1 })
+	untilDrained(t, "the first stop to reach the server", func() bool { return held.count("/api/stop") == 1 })
 	if !ui.stop.disabled {
 		t.Fatal("Stop is not disabled while its request is on its way")
 	}
@@ -86,12 +86,12 @@ func TestServerActionSentOncePerClick(t *testing.T) {
 		t.Fatalf("%d stops sent for three clicks while the first was on its way", n)
 	}
 	close(held.release)
-	until(t, "Stop to come back", func() bool { return !ui.stop.disabled })
+	untilDrained(t, "Stop to come back", func() bool { return !ui.stop.disabled })
 	if remote.sending("stop:c1") {
 		t.Fatal("the stop is still marked as on its way")
 	}
 	remote.stop() // answered: a new click sends again
-	until(t, "the second stop", func() bool { return held.count("/api/stop") == 2 })
+	untilDrained(t, "the second stop", func() bool { return held.count("/api/stop") == 2 })
 }
 
 // The model chosen while the first choice is on its way is sent once it
@@ -104,15 +104,15 @@ func TestServerModelChoiceKeepsTheLatest(t *testing.T) {
 		remote.act("/api/model", map[string]string{"chat": "c1", "label": label}, remoteAction{key: "model:label:c1", control: ui.model, latest: true})
 	}
 	choose("first")
-	until(t, "the first choice to reach the server", func() bool { return held.count("/api/model") == 1 })
+	untilDrained(t, "the first choice to reach the server", func() bool { return held.count("/api/model") == 1 })
 	choose("second")
 	choose("third")
 	if !ui.model.row.disabled {
 		t.Fatal("the model chip is not disabled while the choice is on its way")
 	}
 	close(held.release)
-	until(t, "the last choice", func() bool { return held.count("/api/model") == 2 })
-	until(t, "the chip to come back", func() bool { return !ui.model.row.disabled && !remote.sending("model:label:c1") })
+	untilDrained(t, "the last choice", func() bool { return held.count("/api/model") == 2 })
+	untilDrained(t, "the chip to come back", func() bool { return !ui.model.row.disabled && !remote.sending("model:label:c1") })
 	held.mu.Lock()
 	defer held.mu.Unlock()
 	if last := held.bodies["/api/model"][1]["label"]; last != "third" {
@@ -131,7 +131,7 @@ func TestServerActionErrorShown(t *testing.T) {
 	openRead(remote, "c1", 1)
 	overlays := len(ui.window.Canvas().Overlays().List())
 	remote.action("/api/approval-mode", map[string]string{"mode": "yolo"})
-	until(t, "the refusal", func() bool { return status.text != "" })
+	untilDrained(t, "the refusal", func() bool { return status.text != "" })
 	if status.text != "The server refused it" {
 		t.Fatalf("status line: %q", status.text)
 	}
@@ -148,7 +148,7 @@ func TestServerSendOncePerClick(t *testing.T) {
 	openRead(remote, "c1", 1)
 	ui.prompt.SetText("first")
 	remote.submit("send")
-	until(t, "the message to reach the server", func() bool { return held.count("/api/send") == 1 })
+	untilDrained(t, "the message to reach the server", func() bool { return held.count("/api/send") == 1 })
 	if !ui.send.disabled {
 		t.Fatal("Send is not disabled while the message is on its way")
 	}
@@ -159,5 +159,5 @@ func TestServerSendOncePerClick(t *testing.T) {
 		t.Fatalf("%d sends, composer %q", held.count("/api/send"), ui.prompt.Text)
 	}
 	close(held.release)
-	until(t, "Send to come back", func() bool { return !ui.send.disabled })
+	untilDrained(t, "Send to come back", func() bool { return !ui.send.disabled })
 }

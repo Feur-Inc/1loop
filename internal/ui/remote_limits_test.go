@@ -44,7 +44,7 @@ func limitsServer(t *testing.T, status int, body string) (*desktopUI, *remoteDes
 // menuShows waits for the open model menu to show text.
 func menuShows(t *testing.T, ui *desktopUI, text string) {
 	t.Helper()
-	until(t, fmt.Sprintf("the model menu to show %q", text), func() bool {
+	untilDrained(t, fmt.Sprintf("the model menu to show %q", text), func() bool {
 		return ui.model.open != nil && slices.Contains(visibleTexts(ui.model.open.content), text)
 	})
 }
@@ -52,7 +52,7 @@ func menuShows(t *testing.T, ui *desktopUI, text string) {
 func closeModelMenu(t *testing.T, ui *desktopUI) {
 	t.Helper()
 	ui.model.open.Hide()
-	until(t, "the menu to close", func() bool { return ui.model.open == nil })
+	untilDrained(t, "the menu to close", func() bool { return ui.model.open == nil })
 }
 
 // The menu shows the server's limits as this computer's: each window's
@@ -89,7 +89,7 @@ func TestServerLimitsInModelMenu(t *testing.T) {
 	remote.show("srv", "", []remoteapi.Chat{{ID: "c1", Title: "First"}}, nil)
 	remote.modelMenu()
 	menuShows(t, ui, "64 % left") // the old figures meanwhile
-	until(t, "a new read after the turn", func() bool { return reads.Load() == 2 })
+	untilDrained(t, "a new read after the turn", func() bool { return reads.Load() == 2 })
 }
 
 // A server older than /api/limits says so instead of showing nothing.
@@ -136,7 +136,7 @@ func TestServerUsagePageSaysWhere(t *testing.T) {
 	})
 	remote.name = "srv"
 	page := ui.usageSettings()
-	until(t, "the server's usage", func() bool {
+	untilDrained(t, "the server's usage", func() bool {
 		return slices.Contains(labelTexts(page), "This server is too old to show its usage: update it")
 	})
 	if texts := visibleTexts(page); !slices.Contains(texts, "srv") || !slices.Contains(texts, "This computer") ||

@@ -75,6 +75,10 @@ func (panel *toolPanel) todoChanged(chat *conversation) {
 			return panel.owner == chat && chat != nil && chat.run != nil && panel.shown > 0 &&
 				panel.active >= 0 && panel.active < len(panel.tabs) && panel.tabs[panel.active].todoView == box
 		}
+		tab.goalClock = nil
+		if chat != nil { // the goal first, as Codex shows it above the plan (#444)
+			tab.goalClock = drawGoalCard(box, chat.Goal.Snapshot(), func(command string) { panel.ui.goalButton(chat, command) })
+		}
 		tab.todoMarks = drawTaskList(box, items, live, tab.todoTimes)
 		panel.addBackgroundTasks(box, chat)
 		panel.addSubchats(box, chat)
@@ -98,7 +102,7 @@ func drawTaskList(box *fyne.Container, items []agent.TodoItem, live func() bool,
 	title.TextStyle = fyne.TextStyle{Bold: true}
 	if len(items) == 0 {
 		box.Add(title)
-		box.Add(padded(8, 0, 0, 0, plainFlow("No tasks yet. The agent lists them here when it plans your request, and ticks them off as it goes.", 13, colMuted)))
+		box.Add(padded(8, 0, 0, 0, plainFlow("No tasks yet. The agent lists and ticks them off here.", 13, colMuted)))
 		return nil
 	}
 	// The whole list at a glance: how many are done, and a line that fills.
@@ -353,6 +357,7 @@ func (panel *toolPanel) refreshTodoStatus(rebuild ...bool) {
 	}
 	now := time.Now()
 	if panel.owner != nil {
+		tickGoalClock(tab.goalClock, panel.owner.Goal.Snapshot())
 		for _, item := range panel.owner.Todo.Snapshot() {
 			if clock := tab.todoTimes[item.ID]; clock != nil {
 				value := taskElapsed(item, now)
@@ -374,7 +379,10 @@ func (panel *toolPanel) refreshTodoStatus(rebuild ...bool) {
 	if len(rebuild) > 0 && !rebuild[0] && tab.todoContextText != "" {
 		return
 	}
-	text := agent.TaskContextText(cfg, panel.ui.contextRing.used, panel.ui.contextRing.window, panel.ui.classicCompaction, state)
+	text := agent.TaskContextText(cfg, panel.ui.contextUsed, panel.ui.contextWindow, panel.ui.classicCompaction, state)
+	if panel.owner != nil && panel.owner.run == nil && panel.owner.Compaction.Interrupted() != nil {
+		text += "\nA compaction was interrupted: it goes on with the next message."
+	}
 	usage := panel.ui.contextUsage(panel.owner)
 	if tab.todoUsage == nil {
 		tab.todoUsage = &contextUsageState{}

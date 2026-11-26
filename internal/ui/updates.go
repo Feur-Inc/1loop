@@ -74,7 +74,7 @@ func (ui *desktopUI) checkUpdates(done func()) {
 					ui.settings()
 					ui.prefs.show("Updates")
 				})
-				prompt = ui.modal("1loop "+status.Latest+" is available", note("Review the release notes and install the update when you are ready. Your chats and settings stay."), 520, nil, later, view)
+				prompt = ui.modal("1loop "+status.Latest+" is available", note("Review the release notes, then install when ready. Chats are kept."), 520, nil, later, view)
 			}
 			ui.showUpdateRow()
 			if done != nil {
@@ -171,7 +171,7 @@ func (ui *desktopUI) updateSettings() fyne.CanvasObject {
 	}
 	box.Add(ui.prefs.pageTitle("Updates", "", nil))
 	box.Add(ui.prefs.intro(registry.Updates))
-	box.Add(card(ui.prefs.mark("updates.check", settingStack("1loop updates", "1loop checks its release page when it starts and every six hours, and tells you when a new version is out. An update replaces 1loop's files in their folder, keeping the previous ones as .old, then restarts 1loop. Downloads are checked against the release's signature before anything is replaced.",
+	box.Add(card(ui.prefs.mark("updates.check", settingStack("1loop updates", "Checks the release page every six hours. Verified by signature.",
 		container.NewVBox(status, container.NewHBox(check, install))))))
 	box.Add(notes.box)
 	render()

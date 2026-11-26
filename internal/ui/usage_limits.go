@@ -23,39 +23,68 @@ import (
 	"1loop/internal/usage"
 )
 
-// limitsSection is every subscription's windows, a card per connection.
-func limitsSection(limits []usage.Limit) fyne.CanvasObject {
-	if len(limits) == 0 {
+// limitAccount is a subscription's windows.
+type limitAccount struct {
+	connection, name string
+	windows          []usage.Limit
+}
+
+// limitAccounts groups the windows by account, in the order they come.
+func limitAccounts(limits []usage.Limit) []limitAccount {
+	var accounts []limitAccount
+	at := map[string]int{}
+	for _, limit := range limits {
+		i, ok := at[limit.Connection]
+		if !ok {
+			i = len(accounts)
+			at[limit.Connection] = i
+			name := limit.Name
+			if name == "" {
+				name = "Subscription"
+			}
+			accounts = append(accounts, limitAccount{connection: limit.Connection, name: name})
+		}
+		accounts[i].windows = append(accounts[i].windows, limit)
+	}
+	return accounts
+}
+
+// limitsSection is the windows of one account, with a tab per account when
+// there are several (#415): chosen is the connection shown, the first one
+// when it is not (any more) among them, and choose shows another.
+func limitsSection(limits []usage.Limit, chosen string, choose func(connection string)) fyne.CanvasObject {
+	accounts := limitAccounts(limits)
+	if len(accounts) == 0 {
 		return nil
 	}
 	section := container.NewVBox(sectionTitle("Subscription limits"),
-		padded(0, 8, 2, 2, plainFlow("How much of each subscription window is left, and the pace that makes it last until it resets.", 12.5, colMuted)))
-	var order []string
-	byConnection := map[string][]usage.Limit{}
-	for _, limit := range limits {
-		if byConnection[limit.Connection] == nil {
-			order = append(order, limit.Connection)
+		padded(0, 8, 2, 2, plainFlow("How much of each subscription window is left, and its pace.", 12.5, colMuted)))
+	shown := accounts[0]
+	for _, account := range accounts {
+		if account.connection == chosen {
+			shown = account
 		}
-		byConnection[limit.Connection] = append(byConnection[limit.Connection], limit)
 	}
-	for _, connection := range order {
-		windows := byConnection[connection]
-		name := windows[0].Name
-		if name == "" {
-			name = "Subscription"
+	if len(accounts) > 1 {
+		tabs := container.New(layout.NewCustomPaddedHBoxLayout(4))
+		for _, account := range accounts {
+			tab := newRow(account.name, nil, styleChip, func() { choose(account.connection) })
+			tab.SetSelected(account.connection == shown.connection)
+			tabs.Add(tab)
 		}
-		title := textLine(name, 15, colText)
-		title.TextStyle = fyne.TextStyle{Bold: true}
-		rows := []fyne.CanvasObject{padded(14, 0, 16, 16, title)}
-		for _, limit := range windows {
-			if limit.Hours >= 24 {
-				rows = append(rows, limitPace(limit))
-			} else {
-				rows = append(rows, limitLine(limit))
-			}
-		}
-		section.Add(padded(0, 12, 0, 0, card(rows...)))
+		section.Add(padded(0, 8, 0, 0, strip(tabs)))
 	}
+	title := textLine(shown.name, 15, colText)
+	title.TextStyle = fyne.TextStyle{Bold: true}
+	rows := []fyne.CanvasObject{padded(14, 0, 16, 16, title)}
+	for _, limit := range shown.windows {
+		if limit.Hours >= 24 {
+			rows = append(rows, limitPace(limit))
+		} else {
+			rows = append(rows, limitLine(limit))
+		}
+	}
+	section.Add(padded(0, 12, 0, 0, card(rows...)))
 	return section
 }
 
@@ -101,7 +130,6 @@ func percentText(value float64) string { return usage.Percent(value) }
 // what its pace means.
 func limitPace(limit usage.Limit) fyne.CanvasObject {
 	name := textLine(limit.Title, 14, colText)
-	head := container.NewBorder(nil, nil, container.NewCenter(name), container.NewCenter(statusPill(limit)))
 	leftInk := colText
 	if limit.Status == "out" {
 		leftInk = colDanger
@@ -134,7 +162,7 @@ func limitPace(limit usage.Limit) fyne.CanvasObject {
 	curveChip = newRow("Curve", nil, styleChip, func() { show(false) })
 	daysChip = newRow("By day", nil, styleChip, func() { show(true) })
 	show(limitByDay[key])
-	head = container.NewBorder(nil, nil, container.NewCenter(name), container.NewHBox(curveChip, daysChip, spacer(8, 0), container.NewCenter(statusPill(limit))))
+	head := container.NewBorder(nil, nil, container.NewCenter(name), container.NewHBox(curveChip, daysChip, spacer(8, 0), container.NewCenter(statusPill(limit))))
 	return padded(12, 16, 16, 16, container.New(layout.NewCustomPaddedVBoxLayout(12),
 		head, tiles, view, plainFlow(limit.Advice, 13, colTextSoft)))
 }

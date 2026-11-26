@@ -14,29 +14,6 @@ import (
 	"fyne.io/fyne/v2/widget"
 )
 
-// overlayRows are the texts of the rows of the topmost sheet.
-func overlayRows(t *testing.T, ui *desktopUI) (rows []string) {
-	t.Helper()
-	top := ui.window.Canvas().Overlays().Top()
-	dialog, ok := top.(*sheet)
-	if !ok {
-		t.Fatalf("no sheet is open (top overlay %T)", top)
-	}
-	var walk func(fyne.CanvasObject)
-	walk = func(object fyne.CanvasObject) {
-		switch object := object.(type) {
-		case *tapRow:
-			rows = append(rows, object.text)
-		case *fyne.Container:
-			for _, child := range object.Objects {
-				walk(child)
-			}
-		}
-	}
-	walk(dialog.content)
-	return rows
-}
-
 // addProjectUI is sidebarUI in a window, an SSH machine in use and a
 // server paired: three targets a project can live on.
 func addProjectUI(t *testing.T) *desktopUI {
@@ -154,6 +131,8 @@ func visibleTexts(object fyne.CanvasObject) (texts []string) {
 				walk(child)
 			}
 		case *container.Scroll:
+			walk(object.Content)
+		case *container.ThemeOverride: // a strip's scroll without a bar (strip)
 			walk(object.Content)
 		}
 	}

@@ -66,6 +66,22 @@ func (saved *pairings) remove(address string) {
 	}
 }
 
+// setLendBrowser turns lending this computer's browser to the server at
+// an address on or off, wherever the record holds it. It says whether the
+// server is paired.
+func (saved *pairings) setLendBrowser(address string, on bool) bool {
+	found := false
+	if saved.URL == address {
+		saved.LendBrowser, found = on, true
+	}
+	for i := range saved.Servers {
+		if saved.Servers[i].URL == address {
+			saved.Servers[i].LendBrowser, found = on, true
+		}
+	}
+	return found
+}
+
 func (saved pairings) encode() []byte {
 	data, _ := json.Marshal(saved)
 	return data

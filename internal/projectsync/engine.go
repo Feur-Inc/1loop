@@ -43,6 +43,11 @@ type Local struct {
 	Chats    func(workspace string) []Chat                                    // its conversations
 	AddChat  func(workspace string, chat Chat, conflict bool) (string, error) // stores one; returns its title
 	Saved    func() error                                                     // after an import
+
+	// Moving a chat (move.go).
+	PauseChat  func(ctx context.Context, chat string) (Paused, error)
+	ResumeChat func(chat, from, problem string, paused Paused) error
+	MovedChat  func(chat, to string) error
 }
 
 func (local *Local) ID() string {
@@ -317,6 +322,38 @@ func (local *Local) Routes() (manifest, export, importing http.HandlerFunc) {
 	return manifest, export, importing
 }
 
+// MoveRoutes are the routes a peer moves a chat with.
+func (local *Local) MoveRoutes() (pause, resume, moved http.HandlerFunc) {
+	answer := func(w http.ResponseWriter, value any, err error) {
+		if err != nil {
+			core.Fail(w, 409, err.Error())
+			return
+		}
+		core.WriteJSON(w, 200, value)
+	}
+	pause = func(w http.ResponseWriter, r *http.Request) {
+		paused, err := local.PauseChat(r.Context(), r.PathValue("id"))
+		answer(w, paused, err)
+	}
+	resume = func(w http.ResponseWriter, r *http.Request) {
+		var args ResumeRequest
+		if core.ReadJSON(r, &args) != nil {
+			core.Fail(w, 400, "Invalid request")
+			return
+		}
+		answer(w, map[string]bool{"ok": true}, local.ResumeChat(r.PathValue("id"), args.From, args.Problem, args.Paused))
+	}
+	moved = func(w http.ResponseWriter, r *http.Request) {
+		var args struct{ To string }
+		if core.ReadJSON(r, &args) != nil {
+			core.Fail(w, 400, "Invalid request")
+			return
+		}
+		answer(w, map[string]bool{"ok": true}, local.MovedChat(r.PathValue("id"), args.To))
+	}
+	return pause, resume, moved
+}
+
 // Report is a copy, done or only planned.
 type Report struct {
 	Plan      Plan   `json:"plan"`
@@ -450,21 +487,9 @@ func (report Report) Summary() string {
 	if n := len(plan.Conflicts) + len(plan.ChatConflicts); n > 0 {
 		parts = append(parts, fmt.Sprintf("%d changed on both sides, kept twice", n))
 	}
-	text := strings.Join(parts, ", ") + fmt.Sprintf(" · %s of file data", size(plan.Bytes))
+	text := strings.Join(parts, ", ") + fmt.Sprintf(" · %s of file data", core.ByteSize(plan.Bytes))
 	if len(plan.Kept) > 0 {
 		text += fmt.Sprintf(" · %d file(s) changed only on the target stay as they are", len(plan.Kept))
 	}
 	return text
-}
-
-func size(n int64) string {
-	switch {
-	case n >= 1<<30:
-		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
-	case n >= 1<<20:
-		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
-	case n >= 1<<10:
-		return fmt.Sprintf("%.0f KB", float64(n)/(1<<10))
-	}
-	return fmt.Sprintf("%d B", n)
 }

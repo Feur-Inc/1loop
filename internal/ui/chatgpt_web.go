@@ -144,12 +144,12 @@ func (ui *desktopUI) chatGPTWebSettings(draft *agent.Connection, say func(string
 		return widget.NewHyperlink(label, u)
 	}
 	return card(
-			settingStack("ChatGPT (Web) setup", "Desktop only. Uses the ChatGPT website in a separate browser. This is unofficial and can break when ChatGPT changes. ChatGPT's normal usage limits still apply.", container.NewVBox(
-				note("1. Sign in to ChatGPT using the dedicated browser. Browser Use and your normal browser keep separate cookies."), open,
-				note("2. Create a Secure MCP Tunnel in your OpenAI organization, associated with this ChatGPT workspace."), link("Open tunnel settings", "https://platform.openai.com/settings/organization/tunnels"), tunnel,
-				note("3. Create a restricted key with Tunnels Read + Use. Save it in a private file (chmod 600). Enter only its file path here. The key is never saved in chats or sent to the model."), link("Open API key settings", "https://platform.openai.com/settings/organization/api-keys"), keyFile, start, status,
-				note("4. With the tunnel started, open ChatGPT Plugins in the sign-in window, then Add → Add custom MCP server. Name: 1loop. Connection: Tunnel, with the ID above. Authentication: No authentication. Tick \"I understand and want to continue\", choose Create as a plugin, then Connect 1loop."), link("Open ChatGPT Plugins", "https://chatgpt.com/plugins"),
-				note("5. Every chat 1loop opens goes in the ChatGPT project named 1loop. It is found, or created, on the first message; prepare it now if you like. The models come from your account."), project, prepare,
+			settingStack("ChatGPT (Web) setup", "Desktop only. Uses the ChatGPT website; unofficial, may break.", container.NewVBox(
+				note("1. Sign in to ChatGPT in the dedicated browser."), open,
+				note("2. Create a Secure MCP Tunnel in your OpenAI organization."), link("Open tunnel settings", "https://platform.openai.com/settings/organization/tunnels"), tunnel,
+				note("3. Make a key with Tunnels Read + Use. Enter its file here."), link("Open API key settings", "https://platform.openai.com/settings/organization/api-keys"), keyFile, start, status,
+				note("4. Add a custom MCP server named 1loop, via the tunnel, no auth."), link("Open ChatGPT Plugins", "https://chatgpt.com/plugins"),
+				note("5. Chats go in a ChatGPT project named 1loop, made on first use."), project, prepare,
 			)),
 		), func() {
 			if releaseTunnel != nil {
@@ -179,11 +179,11 @@ func (ui *desktopUI) webBrowserWindow(bridge *agent.ChatGPTWeb, key, address str
 			control.SetText("Take control")
 			return
 		}
-		ui.confirm("Take control of ChatGPT?", "Clicks and typing can interrupt the automated conversation. Complete sign-in or security checks yourself, then lock the browser again.", "Take control", func() { unlocked = true; control.SetText("Lock browser") })
+		ui.confirm("Take control of ChatGPT?", "Clicks can interrupt the chat. Complete sign-in checks yourself.", "Take control", func() { unlocked = true; control.SetText("Lock browser") })
 	}
 	header := container.NewVBox(note("ChatGPT · separate account browser"), container.NewHBox(control))
 	if setup {
-		header = container.NewVBox(note("Sign in normally. This separate browser is ready for typing, paste and right-click. Complete any security check yourself, then close this window and return to connection setup."))
+		header = container.NewVBox(note("Sign in normally, then close this window to go back to setup."))
 	}
 	view.content = container.NewBorder(header, nil, nil, nil, view.screen)
 	tab.OnFrame = view.frame

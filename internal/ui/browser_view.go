@@ -77,10 +77,17 @@ func (panel *toolPanel) browserTabAttached(chat *conversation, info browser.Info
 		}
 	}
 	if session == nil {
-		session = browser.NewBrowserSession(panel.ui.browser)
+		engine := panel.ui.browser
+		if chat != nil && chat.ID == loopyChatID {
+			engine = panel.ui.loopyBrowser()
+		}
+		session = browser.NewBrowserSession(engine)
 	}
 	page := browser.NewBrowserPage(session, info)
 	page.AttachTarget = attach
+	if chat != nil && chat.ID == loopyChatID {
+		page.Record() // for its inspector and its scripts
+	}
 	view := newBrowserView(panel, chat, page)
 	page.View = view
 	page.OnFrame = view.frame

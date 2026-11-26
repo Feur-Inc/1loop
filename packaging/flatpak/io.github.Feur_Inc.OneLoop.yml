@@ -73,6 +73,9 @@ finish-args:
   # ID: 2 in the sandbox, where 1loop-flatpak execs 1loop. The item is
   # registered by its object path too, so the tray works without the name.
   - --own-name=org.kde.StatusNotifierItem-2-1
+  # The API keys of the connections, kept in the Secret Service (GNOME
+  # Keyring, KWallet) rather than in a file (internal/keyring).
+  - --talk-name=org.freedesktop.secrets
 modules:
   - name: 1loop
     buildsystem: simple

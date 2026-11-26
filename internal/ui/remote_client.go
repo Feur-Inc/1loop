@@ -28,6 +28,9 @@ type serverAddress struct {
 	URL         string `json:"url"`
 	Fingerprint string `json:"fingerprint,omitempty"`
 	Token       string `json:"token,omitempty"`
+	// LendBrowser lets the server use this computer's browser where it
+	// has none (browser_lend.go). Off unless the user turns it on.
+	LendBrowser bool `json:"lendBrowser,omitempty"`
 }
 
 type remoteClient struct {

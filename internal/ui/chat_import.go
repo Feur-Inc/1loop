@@ -26,7 +26,7 @@ import (
 
 func (ui *desktopUI) importRow() fyne.CanvasObject {
 	return settingRow("Claude Code and Codex chats",
-		"Copy your Claude Code and Codex conversations on this computer into 1loop, with their messages, tool calls and edits. Choose whole projects or single chats: each one goes to the project of the folder it worked in. A Claude Code chat continued with a Claude Code model resumes its own session; another model receives it through a handoff.",
+		"Copies your Claude Code and Codex chats into 1loop.",
 		newRow("Import…", nil, styleOutline, ui.importChats))
 }
 
@@ -80,7 +80,7 @@ func (ui *desktopUI) importChats() {
 	importButton.disabled = true
 	page := container.NewVBox(
 		settings.pageTitle("Import chats", "General", nil),
-		note("Conversations found in Claude Code's and Codex's history on this computer, by the folder they worked in. Choose a project to take all its chats, or single chats. The files are only read: Claude Code and Codex keep them."),
+		note("Chats on this computer, by project. Pick whole projects or chats."),
 		list,
 	)
 	left, busy := false, false

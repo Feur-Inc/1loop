@@ -65,7 +65,7 @@ Full instructions are in the [install guide](docs/INSTALL.md).
 1. Open a project, either with the command above or from the sidebar.
 2. Connect a model in **Settings → Connections** ([details](docs/USAGE.md#getting-started)).
 3. Ask for something. Tool calls, diffs and tasks show up as the agent works.
-4. Optionally, pair your phone from **Settings → Phone remote → Pair a phone**
+4. Optionally, pair your phone from **Settings → Remote → Phone app → Pair a phone**
    and scan the QR code in the app.
 
 The [guide](docs/USAGE.md) covers approval modes, the side panel, extensions,

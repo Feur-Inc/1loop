@@ -85,6 +85,7 @@ fun phoneSettingsShown(app: RemoteApp, list: SettingsList, workProfile: Boolean)
         when (setting.key) {
             "models.connections", "tools.linux", "phone.adb", "phone.background", "phone.sharing" -> local
             "phone.work_profile" -> workProfile
+            "phone.pairing" -> app.server?.let { !it.localPhone && !it.desktop } == true // the headless server's devices
             "models.default_preset" -> app.defaultPresets
             "agent.memory" -> app.memoryEnabled != null
             "agent.wrap_up" -> app.wrapUpEnabled != null
@@ -102,7 +103,7 @@ private fun SettingsHome(app: RemoteApp, list: SettingsList, shown: List<Setting
         if (query.isBlank()) {
             Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface)) {
                 list.sections.filter { section -> shown.any { it.section == section.id } }.forEach { section ->
-                    val summary = if (section.id == "general") app.server?.name?.let { "Now: $it" } ?: section.intro else section.intro
+                    val summary = if (section.id == "remote") app.server?.name?.let { "Now: $it" } ?: section.intro else section.intro
                     SettingsRow(sectionIcon(section.id), section.title, summary) { onOpen(section.id, null) }
                 }
             }
@@ -129,8 +130,8 @@ private fun sectionIcon(id: String) = when (id) {
     "general" -> Icons.sliders
     "models" -> Icons.plug
     "agent" -> Icons.shield
+    "remote" -> Icons.globe
     "tools" -> Icons.puzzle
-    "phone" -> Icons.phone
     "updates" -> Icons.arrowTurn
     "advanced" -> Icons.terminal
     else -> Icons.settings
@@ -169,11 +170,19 @@ private fun SettingsSectionPage(app: RemoteApp, section: SettingsSection, settin
     }
     Column(Modifier.fillMaxSize().verticalScroll(scroll).padding(horizontal = 12.dp, vertical = 8.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Text(section.intro, style = Type.small, modifier = Modifier.padding(horizontal = 8.dp))
-        for (setting in settings) {
+        settings.forEachIndexed { i, setting ->
+            // Remote's parts (#443): a heading where a part starts.
+            if (setting.group.isNotEmpty() && setting.group != settings.getOrNull(i - 1)?.group) PartHeading(setting.group)
             SettingBlock(setting.key, anchors) { SettingContent(app, setting.key, adb) }
         }
         Spacer(Modifier.height(24.dp))
     }
+}
+
+/** The heading of a part of a section's page: Where the agent runs, Devices that control this 1loop, Phone app. */
+@Composable
+private fun PartHeading(title: String) {
+    Text(title, style = Type.body.copy(fontWeight = FontWeight.SemiBold, color = Palette.muted), modifier = Modifier.padding(start = 8.dp, top = 14.dp))
 }
 
 /** Where each setting is in the page, and the one glowing after a search. */
@@ -201,6 +210,7 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
         "general.target" -> {
             // The phone links several targets (#380): the menu lists every one's projects.
             var forgetting by remember { mutableStateOf<Server?>(null) }
+            var unlinking by remember { mutableStateOf<LinkedTarget?>(null) }
             Text("Linked targets", style = Type.title)
             Text("Where the agent works: each project runs on its own target. The menu lists the projects of every target linked here; Settings apply to the one open now.", style = Type.small)
             for (linked in app.linked) {
@@ -216,14 +226,18 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
                     Text(linked.name + (state?.let { " · $it" } ?: ""), style = Type.body, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.weight(1f))
                     val paired = app.servers.firstOrNull { it.key == linked.key }
                     if (paired != null) Pill("Forget") { forgetting = paired } // #428: unpairs this phone there too
-                    else if (!open) Pill("Unlink") { app.unlink(linked.key) }
+                    else if (!open) Pill("Unlink") { unlinking = linked } // #443: asks first
                 }
             }
             Pill("Link a target") { app.linkTarget() }
             forgetting?.let { ForgetServerDialog(app, it) { forgetting = null } }
-            ServerDevicesSection(app)
+            unlinking?.let { target ->
+                ConfirmDialog("Unlink ${target.name}?", unlinkText(target), "Unlink", { unlinking = null }) { app.unlink(target.key) }
+            }
+            // The paired phones moved to their own setting, phone.pairing (#443).
             if (app.server?.localPhone == false) ServerInstallSection(app) // Install Chromium / Claude Code (#406)
         }
+        "phone.pairing" -> ServerDevicesSection(app)
         "models.connections" -> {
             Text("Connections", style = Type.title)
             Text("The services and accounts this phone's agent takes its models from.", style = Type.small)

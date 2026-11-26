@@ -73,8 +73,8 @@ var sectionIcons = map[string]fyne.Resource{
 	registry.General:  iconSliders,
 	registry.Models:   iconPlug,
 	registry.Agent:    iconShield,
+	registry.Remote:   iconGlobe,
 	registry.Tools:    iconPuzzle,
-	registry.Phone:    iconPhone,
 	registry.Updates:  iconArrowTurn,
 	registry.Advanced: iconTerminal,
 }
@@ -90,10 +90,12 @@ var subPages = map[string]string{
 // pageAliases are pages of earlier versions, still named by links and
 // messages: they open where their settings went.
 var pageAliases = map[string]string{
-	"SSH machines": "General",
-	"Connections":  "Models & accounts",
-	"Instructions": "Agent & approvals",
-	"Phone remote": "Phone",
+	"SSH machines":  "Remote", // #443: everything remote is on one page
+	"Remote server": "Remote",
+	"Phone":         "Remote",
+	"Phone remote":  "Remote",
+	"Connections":   "Models & accounts",
+	"Instructions":  "Agent & approvals",
 }
 
 // pageSection is the title of the section a page belongs to.
@@ -326,7 +328,7 @@ func (view *settingsView) build(page string) fyne.CanvasObject {
 		return ui.agentSettings()
 	case "Tools & extensions":
 		return ui.toolSettings()
-	case "Phone":
+	case "Remote":
 		return ui.remoteSettings()
 	case "Updates":
 		return ui.updateSettings()
@@ -656,9 +658,6 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 	worktrees := view.mark(registry.KeyWorktreeSort, settingRow(order.Title, "", sized(230, sortPicker.row)))
 	page := container.NewVBox(view.pageTitle("General", "", nil), view.intro(registry.General), sectionTitle("Workspace"))
 	page.Add(card(view.mark("general.workspace", settingRow("Project folder", "", change)), worktrees))
-	for _, object := range ui.targetRows() {
-		page.Add(object)
-	}
 	page.Add(sectionTitle("Appearance"))
 	page.Add(card(ui.appearanceRows(view)...))
 	page.Add(sectionTitle("Window"))

@@ -20,6 +20,7 @@ data class SettingEntry(
     val keywords: List<String>,
     val values: List<String>, // the labels of a choice's values
     val where: String,
+    val group: String = "", // the part of its section's page it is in (Remote's), under a heading
 )
 
 class SettingsList(val sections: List<SettingsSection>, val settings: List<SettingEntry>) {
@@ -50,6 +51,7 @@ class SettingsList(val sections: List<SettingsSection>, val settings: List<Setti
                         if (keywords == null) emptyList() else (0 until keywords.length()).map { keywords.getString(it) },
                         if (values == null) emptyList() else (0 until values.length()).map { values.getJSONObject(it).optString("label") },
                         setting.optString("where", "both"),
+                        setting.optString("group"),
                     )
                 }
             }

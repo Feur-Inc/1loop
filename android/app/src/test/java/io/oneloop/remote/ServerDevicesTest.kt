@@ -28,4 +28,11 @@ class ServerDevicesTest {
         assertEquals("/api/devices/0123456789abcdef/revoke", revokePath("0123456789abcdef"))
         assertEquals("/api/devices/..%2Fstate/revoke", revokePath("../state"))
     }
+
+    // #443: Unlink asks first, and says what it does to this phone and to a computer.
+    @Test
+    fun unlinkSaysWhatLeaves() {
+        assertEquals("This phone's projects and chats leave the menu. Link it again with Link a target.", unlinkText(LinkedTarget(PHONE_TARGET, "This phone", TargetKind.Phone)))
+        assertEquals("Office PC is forgotten on this phone: link it again to use it.", unlinkText(LinkedTarget("k", "Office PC", TargetKind.Desktop)))
+    }
 }

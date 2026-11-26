@@ -260,13 +260,19 @@ func (ui *desktopUI) setShaderFPS(value string) {
 // their own backdrop, and the gaps, the user's messages and the composer
 // show the background itself (#503).
 func (ui *desktopUI) syncMainFill() {
-	if ui.mainFill == nil {
-		return
+	sync := func(fill *canvas.Rectangle) {
+		if fill == nil {
+			return
+		}
+		if shaderBehind {
+			fill.FillColor = color.NRGBA{}
+		} else {
+			fill.FillColor = colBackground
+		}
+		fill.Refresh()
 	}
-	if shaderBehind {
-		ui.mainFill.FillColor = color.NRGBA{}
-	} else {
-		ui.mainFill.FillColor = colBackground
+	sync(ui.mainFill)
+	if ui.loopy != nil {
+		sync(ui.loopy.mainFill)
 	}
-	ui.mainFill.Refresh()
 }

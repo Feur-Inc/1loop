@@ -36,9 +36,6 @@ import (
 	"1loop/internal/remoteapi"
 )
 
-// The user's bubbles: the art direction's deep teal.
-var colLoopyMe = color.NRGBA{R: 0x0f, G: 0x7a, B: 0x6e, A: 0xff}
-
 // loopyMode is the Loopy space of a window, built the first time it opens.
 type loopyMode struct {
 	ui     *desktopUI
@@ -46,14 +43,17 @@ type loopyMode struct {
 	loaded bool
 	load   int // the latest reload: an older answer is dropped
 
-	sidebar, main fyne.CanvasObject
-	bigFace       *loopyFace
-	status        *canvas.Text
-	waiting       *fyne.Container
-	tasks         *fyne.Container
-	routines      *fyne.Container
-	memoryRow     *tapRow
-	sideList      *fyne.Container // everything under the face, laid out again when a list changes
+	sidebar, main  fyne.CanvasObject
+	mainFill       *canvas.Rectangle // the window colour behind the conversation, clear over a shader
+	browserBg      fyne.CanvasObject // blurred panel backdrop for the browser pane
+	bigFace        *loopyFace
+	status         *canvas.Text
+	waiting        *fyne.Container
+	tasks          *fyne.Container
+	routines       *fyne.Container
+	memoryRow      *tapRow
+	sideList       *fyne.Container // everything under the face, laid out again when a list changes
+	welcomeBubbles []*loopyBubble
 
 	feed        *fyne.Container
 	rows        map[string]*loopyRow // what is drawn, by message
@@ -89,6 +89,7 @@ type loopyRow struct {
 	object  fyne.CanvasObject
 	day     fyne.CanvasObject // the line above the first of a day
 	bubble  *loopyBubble
+	glass   *loopyResponseGlass // backdrop for a markdown response
 }
 
 // openLoopy is the switch's Loopy: built once, then shown.
@@ -154,9 +155,42 @@ func newLoopyMode(ui *desktopUI) *loopyMode {
 	mode := &loopyMode{ui: ui, rows: map[string]*loopyRow{}, drafts: map[string]*loopyDraft{}}
 	mode.buildSidebar()
 	mode.buildMain()
+	extraRoots = append(extraRoots, func() []fyne.CanvasObject {
+		if ui.inLoopy {
+			return []fyne.CanvasObject{ui.oneloopSide, ui.oneloopMain}
+		}
+		return []fyne.CanvasObject{mode.sidebar, mode.main}
+	})
+	onRepaint = append(onRepaint, mode.recolourFaces)
+	onBlurSync = append(onBlurSync, mode.syncBubblesBlur)
 	mode.renderSide()
 	mode.reload()
 	return mode
+}
+
+// recolourFaces redraws Loopy's faces (sidebar hero, typing indicator, and
+// message avatars) in the active theme's accent and ink colours.
+func (mode *loopyMode) recolourFaces() {
+	mode.bigFace.recolour()
+	mode.typeFace.recolour()
+	for _, bubble := range mode.welcomeBubbles {
+		bubble.recolour()
+	}
+	for _, row := range mode.rows {
+		row.bubble.recolour()
+	}
+}
+
+// syncBubblesBlur updates the live blur and tint of Loopy's bubbles and
+// markdown response cards when the theme's [blur] settings change.
+func (mode *loopyMode) syncBubblesBlur() {
+	for _, bubble := range mode.welcomeBubbles {
+		bubble.syncBlur()
+	}
+	for _, row := range mode.rows {
+		row.bubble.syncBlur()
+		row.glass.sync()
+	}
 }
 
 // do asks something of Loopy, off the interface's thread; what goes wrong
@@ -357,6 +391,12 @@ func (mode *loopyMode) face(state, text string) {
 	}
 }
 
+func loopySectionHeader(text string) fyne.CanvasObject {
+	label := textLine(text, 12.5, colMuted)
+	label.TextStyle = fyne.TextStyle{Bold: true}
+	return padded(16, 6, 10, 0, label)
+}
+
 func (mode *loopyMode) buildSidebar() {
 	ui := mode.ui
 	mode.bigFace = newLoopyFaceRoom(76, bigFaceHead, "hello", false, false)
@@ -376,10 +416,10 @@ func (mode *loopyMode) buildSidebar() {
 	summary := newRow("Sum up now", iconSun, styleNav, func() { mode.closePage(); mode.action(loopy.Action{Do: "summary"}, nil) })
 	fresh := newRow("Start fresh", iconPlus, styleNav, mode.askClear)
 	mode.sideList = container.NewVBox(hero,
-		sectionHeader("Waiting for you", nil), mode.waiting,
-		sectionHeader("Delegated tasks", nil), mode.tasks,
-		sectionHeader("Routines", nil), mode.routines,
-		sectionHeader("Loopy", nil), mode.memoryRow, files, summary, fresh)
+		loopySectionHeader("Waiting for you"), mode.waiting,
+		loopySectionHeader("Delegated tasks"), mode.tasks,
+		loopySectionHeader("Routines"), mode.routines,
+		loopySectionHeader("Loopy"), mode.memoryRow, files, summary, fresh)
 
 	mode.brand = newBrandMark(true)
 	collapse := newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
@@ -392,7 +432,7 @@ func (mode *loopyMode) buildSidebar() {
 	settings := newRow("Settings", theme.SettingsIcon(), styleNav, func() { mode.openSettings() })
 	bottom := container.NewVBox(divider, padded(6, 8, 0, 0, settings))
 	content := padded(0, 0, 12, 12, container.NewBorder(brand, bottom, nil, nil, newKineticVScroll(mode.sideList)))
-	mode.sidebar = container.NewStack(canvas.NewRectangle(colSidebar), content)
+	mode.sidebar = container.NewStack(blurBehind("sidebar", canvas.NewRectangle(colSidebar), &colSidebar), content)
 }
 
 func (mode *loopyMode) openSettings() {
@@ -442,7 +482,38 @@ func (mode *loopyMode) buildMain() {
 	mode.fileRow = container.NewHBox()
 	mode.fileRow.Hide()
 	line := container.NewBorder(nil, nil, container.NewCenter(attach), container.NewHBox(container.NewCenter(mode.stopBtn), container.NewCenter(mode.sendBtn)), input)
-	composer := surface(padded(6, 6, 8, 8, container.NewVBox(mode.fileRow, line)), colSurface, colBorder, 20, 0)
+	card := canvas.NewRectangle(colSurface)
+	card.CornerRadius = rounded(18)
+	card.StrokeColor = colBorder
+	card.StrokeWidth = 1
+	drop, glow := newShadow(2.2), newGlow(colAmber, 0.28)
+	onRepaint = append(onRepaint, func() { drop.setOpacity(1); drop.refresh() })
+	var glowAnim *fyne.Animation
+	glowLevel := float32(0)
+	mode.prompt.onFocus = func(focused bool) {
+		from, to := colBorder, colBorderHot
+		if !focused {
+			from, to = to, from
+		}
+		canvas.NewColorRGBAAnimation(from, to, 160*time.Millisecond, func(c color.Color) {
+			card.StrokeColor = c
+			card.Refresh()
+		}).Start()
+		if glowAnim != nil {
+			glowAnim.Stop()
+		}
+		start, target := glowLevel, float32(0)
+		if focused {
+			target = 1
+		}
+		glowAnim = motion(200*time.Millisecond, fyne.AnimationEaseOut, func(p float32) {
+			glowLevel = start + (target-start)*p
+			glow.setOpacity(glowLevel)
+			glow.refresh()
+		})
+	}
+	composerBody := container.NewStack(blurBehind("composer", card, &colSurface), padded(6, 6, 8, 8, container.NewVBox(mode.fileRow, line)))
+	composer := container.New(&haloLayout{drop: drop, glow: glow, radius: 18}, append(append(drop.objects(), glow.objects()...), composerBody)...)
 	footer := container.New(columnLayout{width: 720, inset: 24}, container.NewVBox(mode.problem, padded(0, 6, 4, 0, mode.typing), padded(0, 16, 0, 0, composer)))
 
 	mode.body = container.NewStack(mode.scroll)
@@ -467,7 +538,11 @@ func (mode *loopyMode) buildMain() {
 	mode.browserPane = container.NewStack()
 	mode.browserPane.Hide()
 	conversation := container.NewBorder(nil, footer, nil, nil, mode.body)
-	mode.main = container.NewStack(canvas.NewRectangle(colBackground),
+	mode.mainFill = canvas.NewRectangle(colBackground)
+	if shaderBehind {
+		mode.mainFill.FillColor = color.NRGBA{}
+	}
+	mode.main = container.NewStack(mode.mainFill,
 		container.NewBorder(header, nil, nil, nil, container.New(&loopySplit{pane: mode.browserPane}, conversation, mode.browserPane)))
 }
 
@@ -626,10 +701,13 @@ func (mode *loopyMode) task(id string) (loopy.Task, bool) {
 
 // welcome is the conversation before its first message.
 func (mode *loopyMode) welcome() []fyne.CanvasObject {
+	mode.welcomeBubbles = nil
 	var out []fyne.CanvasObject
 	for _, text := range []string{"Hi, I'm Loopy. I take care of the everyday things: mail, errands, reminders, and the coding tasks I can hand to an agent in your projects. I always ask before anything that matters.",
 		"Tell me what you need, and how you like things: I learn your ways as we talk."} {
-		out = append(out, padded(3, 3, 0, 0, newLoopyBubble(text, false, "").row))
+		bubble := newLoopyBubble(text, false, "")
+		mode.welcomeBubbles = append(mode.welcomeBubbles, bubble)
+		out = append(out, padded(3, 3, 0, 0, bubble.row))
 	}
 	return out
 }
@@ -675,7 +753,7 @@ func loopyDay(day time.Time) fyne.CanvasObject {
 	} else if y := now.AddDate(0, 0, -1); day.YearDay() == y.YearDay() && day.Year() == y.Year() {
 		text = "Yesterday"
 	}
-	label := textLine(strings.ToUpper(text), 11, colFaint)
+	label := textLine(strings.ToUpper(text), 11, colMuted)
 	label.TextStyle = fyne.TextStyle{Monospace: true}
 	left, right := canvas.NewRectangle(colBorderSoft), canvas.NewRectangle(colBorderSoft)
 	left.SetMinSize(fyne.NewSize(0, 1))
@@ -704,14 +782,14 @@ func (dayRuleLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 
 // draw makes what a message is drawn with: a bubble, a note or a card.
 func (mode *loopyMode) draw(row *loopyRow, message loopy.Message) {
-	row.version, row.bubble = message.Version, nil
+	row.version, row.bubble, row.glass = message.Version, nil, nil
 	switch {
 	case message.Card != nil:
 		row.object = padded(4, 4, 34, 0, mode.cardView(message))
 	case message.Memory != "":
 		row.object = mode.memoryNote(message)
 	case message.Note != "":
-		row.object = padded(2, 6, 34, 0, plainFlow(message.Note, 12, colFaint))
+		row.object = padded(2, 6, 34, 0, plainFlow(message.Note, 12, colMuted))
 	case message.From == "me":
 		text := message.Text
 		for _, name := range message.Files {
@@ -723,7 +801,12 @@ func (mode *loopyMode) draw(row *loopyRow, message loopy.Message) {
 		}
 		row.object = padded(3, 3, 0, 0, row.bubble.row)
 	case loopyMarkup(message.Text):
-		row.object = padded(3, 3, 34, 0, newMarkdownView(message.Text).box)
+		fill := canvas.NewRectangle(colSurface)
+		fill.CornerRadius = rounded(16)
+		fill.StrokeColor = colBorderSoft
+		fill.StrokeWidth = 1
+		row.glass = newLoopyResponseGlass(fill)
+		row.object = padded(3, 3, 34, 0, container.NewStack(row.glass.object(), padded(10, 10, 14, 14, newMarkdownView(message.Text).box)))
 	default:
 		row.bubble = newLoopyBubble(message.Text, false, message.Reaction)
 		row.bubble.onMenu = func() { mode.reactMenu(message, row.bubble) }
@@ -808,7 +891,7 @@ func (mode *loopyMode) renderSide() {
 		}
 	}
 	if len(mode.waiting.Objects) == 0 {
-		mode.waiting.Add(padded(0, 6, 10, 0, textLine("Nothing right now", 12.5, colFaint)))
+		mode.waiting.Add(padded(0, 6, 10, 0, textLine("Nothing right now", 12.5, colMuted)))
 	}
 
 	mode.tasks.Objects = nil
@@ -824,7 +907,7 @@ func (mode *loopyMode) renderSide() {
 		mode.tasks.Add(row)
 	}
 	if len(mode.tasks.Objects) == 0 {
-		mode.tasks.Add(padded(0, 6, 10, 0, textLine("None yet", 12.5, colFaint)))
+		mode.tasks.Add(padded(0, 6, 10, 0, textLine("None yet", 12.5, colMuted)))
 	}
 
 	mode.routines.Objects = nil
@@ -837,7 +920,7 @@ func (mode *loopyMode) renderSide() {
 		mode.routines.Add(row)
 	}
 	if len(mode.routines.Objects) == 0 {
-		mode.routines.Add(padded(0, 6, 10, 0, textLine("Ask Loopy to set one up", 12.5, colFaint)))
+		mode.routines.Add(padded(0, 6, 10, 0, textLine("Ask Loopy to set one up", 12.5, colMuted)))
 	}
 	if mode.loaded {
 		mode.memoryRow.SetTrailing(fmt.Sprint(view.Facts))
@@ -918,6 +1001,7 @@ func (mode *loopyMode) closePage() {
 		return
 	}
 	mode.page = nil
+	mode.scroll.Show()
 	mode.body.Objects = []fyne.CanvasObject{mode.scroll}
 	mode.body.Refresh()
 }
@@ -933,14 +1017,13 @@ func (mode *loopyMode) openPage(draw func()) {
 func (mode *loopyMode) putPage(content fyne.CanvasObject) {
 	offset := fyne.NewPos(0, 0)
 	if len(mode.body.Objects) == 2 {
-		if stack, ok := mode.body.Objects[1].(*fyne.Container); ok && len(stack.Objects) == 2 {
-			if old, ok := stack.Objects[1].(*kineticScroll); ok {
-				offset = old.Offset
-			}
+		if old, ok := mode.body.Objects[1].(*kineticScroll); ok {
+			offset = old.Offset
 		}
 	}
 	scroll := newKineticVScroll(container.New(columnLayout{width: 720, inset: 24}, padded(18, 24, 0, 0, content)))
-	mode.body.Objects = []fyne.CanvasObject{mode.scroll, container.NewStack(canvas.NewRectangle(colBackground), scroll)}
+	mode.scroll.Hide()
+	mode.body.Objects = []fyne.CanvasObject{mode.scroll, scroll}
 	mode.body.Refresh()
 	if offset.Y > 0 {
 		scroll.ScrollToOffset(offset)
@@ -993,9 +1076,11 @@ func (mode *loopyMode) showBrowser(view fyne.CanvasObject) {
 	mode.browserBtn.SetSelected(mode.browserOn)
 	if view != mode.browserTab {
 		mode.browserTab = view
-		frame := canvas.NewRectangle(colSidebar)
+		if mode.browserBg == nil {
+			mode.browserBg = blurBehind("panel", canvas.NewRectangle(colSurface), &colSurface)
+		}
 		mode.browserBar = container.NewStack()
-		mode.browserPane.Objects = []fyne.CanvasObject{frame, padded(0, 12, 0, 12, container.NewBorder(mode.browserBar, nil, nil, nil, view))}
+		mode.browserPane.Objects = []fyne.CanvasObject{mode.browserBg, padded(0, 12, 0, 12, container.NewBorder(mode.browserBar, nil, nil, nil, view))}
 	}
 	mode.browserBar.Objects = []fyne.CanvasObject{mode.browserHands()}
 	mode.browserBar.Refresh()

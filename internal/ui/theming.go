@@ -235,13 +235,8 @@ func repaint(changed recolour, fontsChanged bool) {
 			o.repaint(changed)
 		}
 	}
-	for _, window := range app.Driver().AllWindows() {
-		c := window.Canvas()
-		objects := []fyne.CanvasObject{c.Content()}
-		objects = append(objects, c.Overlays().List()...)
-		for _, root := range objects {
-			fynedriver.WalkObjects(root, paint)
-		}
+	for _, root := range allThemeRoots() {
+		fynedriver.WalkObjects(root, paint)
 	}
 	if recoloured != nil && !fontsChanged {
 		// Texts need nothing more: Fyne keeps their textures by colour.
@@ -419,6 +414,31 @@ func (view *outputView) repaint(changed recolour) {
 // onRepaint are what draws itself again on a change of theme, beyond its
 // colours: artwork recoloured for the theme.
 var onRepaint []func()
+
+// extraRoots returns off-screen subtrees (such as the detached 1loop or Loopy
+// space) so repaint and refreshRadii update them alongside visible windows.
+var extraRoots []func() []fyne.CanvasObject
+
+func allThemeRoots() []fyne.CanvasObject {
+	var roots []fyne.CanvasObject
+	if app := fyne.CurrentApp(); app != nil {
+		for _, window := range app.Driver().AllWindows() {
+			c := window.Canvas()
+			if c.Content() != nil {
+				roots = append(roots, c.Content())
+			}
+			roots = append(roots, c.Overlays().List()...)
+		}
+	}
+	for _, provider := range extraRoots {
+		for _, root := range provider() {
+			if root != nil {
+				roots = append(roots, root)
+			}
+		}
+	}
+	return roots
+}
 
 // glows are the accent's halos (newGlow): their tint is kept to set
 // their opacity, outside the window's tree.

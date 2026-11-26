@@ -68,9 +68,74 @@ func loopyCardIcon(kind string) fyne.Resource {
 func reactionBadge(name string) fyne.CanvasObject {
 	label := canvas.NewText(loopy.Emoji(name), colText)
 	label.TextSize = 13
-	background := canvas.NewRectangle(colRaised)
-	background.CornerRadius, background.StrokeColor, background.StrokeWidth = 11, colBackground, 2
+	background := canvas.NewRectangle(colSurface)
+	background.CornerRadius, background.StrokeColor, background.StrokeWidth = rounded(11), colBorderSoft, 1
 	return container.NewStack(background, padded(2, 2, 7, 7, container.NewCenter(label)))
+}
+
+// ---------------------------------------------------------------------------
+// Response glass (for Loopy's bubbles and markdown response cards).
+
+// loopyResponseGlass lays a live GPU blur behind a response card or bubble
+// when the active theme enables [blur] responses, without adding to the
+// global elementGlasses list.
+type loopyResponseGlass struct {
+	blur   *canvas.Blur
+	fill   *canvas.Rectangle
+	tinted bool
+}
+
+func newLoopyResponseGlass(fill *canvas.Rectangle) *loopyResponseGlass {
+	g := &loopyResponseGlass{blur: canvasBlur(), fill: fill}
+	g.sync()
+	return g
+}
+
+func (g *loopyResponseGlass) object() fyne.CanvasObject {
+	return container.New(loopyGlassLayout{g}, g.blur, g.fill)
+}
+
+func (g *loopyResponseGlass) copyCorners() {
+	b, f := g.blur, g.fill
+	b.CornerRadius, b.TopLeftCornerRadius, b.TopRightCornerRadius = f.CornerRadius, f.TopLeftCornerRadius, f.TopRightCornerRadius
+	b.BottomLeftCornerRadius, b.BottomRightCornerRadius = f.BottomLeftCornerRadius, f.BottomRightCornerRadius
+}
+
+func (g *loopyResponseGlass) sync() {
+	if g == nil {
+		return
+	}
+	radius := blurRadius("responses")
+	if radius <= 0 {
+		g.blur.Hide()
+		if g.tinted {
+			g.tinted = false
+			g.fill.FillColor = colSurface
+			g.fill.Refresh()
+		}
+		return
+	}
+	g.tinted = true
+	g.blur.Radius = radius
+	g.copyCorners()
+	g.fill.FillColor = blurTint("responses", colSurface, elementOpacity)
+	g.blur.Show()
+	g.blur.Refresh()
+	g.fill.Refresh()
+}
+
+type loopyGlassLayout struct{ glass *loopyResponseGlass }
+
+func (l loopyGlassLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	l.glass.copyCorners()
+	for _, object := range objects {
+		object.Move(fyne.Position{})
+		object.Resize(size)
+	}
+}
+
+func (l loopyGlassLayout) MinSize([]fyne.CanvasObject) fyne.Size {
+	return l.glass.fill.MinSize()
 }
 
 // ---------------------------------------------------------------------------
@@ -83,6 +148,8 @@ type loopyBubble struct {
 	box      *fyne.Container
 	text     *flowText
 	fill     *canvas.Rectangle
+	glass    *loopyResponseGlass
+	avatar   *loopyFace
 	mine     bool
 	dimmed   bool
 	reaction string
@@ -94,19 +161,27 @@ const loopyBubbleMax = 460
 func newLoopyBubble(text string, mine bool, reaction string) *loopyBubble {
 	bubble := &loopyBubble{mine: mine, reaction: reaction}
 	ink := colText
-	fill := colRaised
+	fill := colSurface
 	if mine {
-		fill, ink = colLoopyMe, color.NRGBA{R: 0xf4, G: 0xf4, B: 0xf4, A: 0xff}
+		fill, ink = colAmber, colInk
 	}
 	bubble.text = loopyText(text, 14.5, ink)
 	bubble.fill = canvas.NewRectangle(fill)
-	bubble.fill.CornerRadius = 18
+	bubble.fill.CornerRadius = rounded(18)
+	var bg fyne.CanvasObject = bubble.fill
+	if !mine {
+		bubble.fill.StrokeColor = colBorderSoft
+		bubble.fill.StrokeWidth = 1
+		bubble.glass = newLoopyResponseGlass(bubble.fill)
+		bg = bubble.glass.object()
+	}
 	tap := &bubbleTap{bubble: bubble}
 	tap.ExtendBaseWidget(tap)
-	bubble.box = container.NewStack(bubble.fill, padded(8, 8, 13, 13, bubble.text), tap)
+	bubble.box = container.NewStack(bg, padded(8, 8, 13, 13, bubble.text), tap)
 	var avatar fyne.CanvasObject = spacer(0, 0)
 	if !mine {
-		avatar = newLoopyFace(26, "idle", true, true).image
+		bubble.avatar = newLoopyFace(26, "idle", true, true)
+		avatar = bubble.avatar.image
 	}
 	var badge fyne.CanvasObject = spacer(0, 0)
 	if reaction != "" {
@@ -114,6 +189,18 @@ func newLoopyBubble(text string, mine bool, reaction string) *loopyBubble {
 	}
 	bubble.row = container.New(&loopyBubbleLayout{bubble: bubble}, avatar, bubble.box, badge)
 	return bubble
+}
+
+func (bubble *loopyBubble) syncBlur() {
+	if bubble != nil && bubble.glass != nil {
+		bubble.glass.sync()
+	}
+}
+
+func (bubble *loopyBubble) recolour() {
+	if bubble != nil && bubble.avatar != nil {
+		bubble.avatar.recolour()
+	}
 }
 
 // setText changes what a streaming bubble says.
@@ -146,7 +233,7 @@ func (bubble *loopyBubble) plain(message loopy.Message) bool {
 // dim greys a message that waits for Loopy to be free.
 func (bubble *loopyBubble) dim() {
 	bubble.dimmed = true
-	bubble.fill.FillColor = color.NRGBA{R: 0x0f, G: 0x7a, B: 0x6e, A: 0x80}
+	bubble.fill.FillColor = withAlpha(colAmber, 0.5)
 }
 
 // bubbleTap opens a bubble's reactions on a right click.
@@ -477,7 +564,7 @@ func (mode *loopyMode) cardOptions(message loopy.Message) fyne.CanvasObject {
 			number.Color, dotFill = colInk, colAmber
 		}
 		dot := canvas.NewRectangle(dotFill)
-		dot.CornerRadius = 6
+		dot.CornerRadius = rounded(6)
 		dot.SetMinSize(fyne.NewSquareSize(20))
 		badge := container.NewStack(dot, container.NewCenter(number))
 		var aside fyne.CanvasObject = layout.NewSpacer()
@@ -543,7 +630,7 @@ func loopyPill(text string, ink color.Color) fyne.CanvasObject {
 	label.TextStyle = fyne.TextStyle{Bold: true}
 	r, g, b, _ := ink.RGBA()
 	fill := canvas.NewRectangle(color.NRGBA{R: uint8(r >> 8), G: uint8(g >> 8), B: uint8(b >> 8), A: 40})
-	fill.CornerRadius = 6
+	fill.CornerRadius = rounded(6)
 	return container.NewStack(fill, padded(2, 2, 7, 7, label))
 }
 

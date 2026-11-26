@@ -140,6 +140,19 @@ the phone) switches between 1loop and Loopy.
   **I'm done**.
 - **Routines.** On a schedule, or when a GitHub issue, a mail or a webhook
   comes. A morning summary says what needs you.
+- **AutoLinks.** Ask Loopy to make one ("read my grades on EcoleDirecte",
+  "tell me when someone mentions me in a pull request of acme/app, in
+  French"): a Python script of its own that reaches a service, or drives its
+  own browser, without it. You allow each one on a card, with the sites it
+  reaches and what it may use, and choose **Run by itself** or **Ask me each
+  time**. It can watch something and wake Loopy, notify you, or start a
+  coding agent. Settings → Loopy → **AutoLinks** lists them: turn one on or
+  off, run it, read or change its script, see its history.
+- **The vault.** Settings → Loopy → **Vault**: a password manager behind a
+  master password, kept where Loopy lives and nowhere else. Sign-ins (with
+  two-step codes), keys and contact details. Loopy knows an entry is there,
+  never its value: 1loop types it in the page, or hands it to an AutoLink
+  you allowed. If you forget the master password, what it holds is lost.
 
 How it works, and how its memory was measured: [LOOPY.md](LOOPY.md).
 

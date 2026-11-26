@@ -11,6 +11,8 @@ made, what its memory was measured to do, and what it does not do well.
 | `internal/loopy/engine` | Loopy at work: its runs, tools, cards, guard, vault, routines, mail and calendar, and its HTTP API. |
 | `internal/loopy/memory` | Its memory. |
 | `internal/loopy/box` | Its WebAssembly computer. |
+| `internal/loopy/python` | The Python its AutoLinks run with: downloaded, checked, kept to its sites and folders (`boot.py`), and the `autolink` module scripts import. |
+| `internal/browser/requests.go` | The requests a page of Loopy's browser made, for its inspector and its scripts. |
 | `internal/ui/loopy_*.go`, `android/.../Loopy*.kt` | Views: they show the engine and answer its cards. |
 | `internal/server/loopy.go`, `internal/ui/loopy_host.go` | The places it lives: what the engine needs of a host (models, browser, projects, notifications). |
 
@@ -28,7 +30,12 @@ Everything is in one folder, `loopy` beside the app's or the server's state:
 | `memory/records.jsonl` | Every exchange as it was said, dated. Appended; rewritten only to erase. |
 | `memory/facts.json` | Facts, habits, what was forgotten. |
 | `home/` | Loopy's folder: `notes`, `inbox`, `work`. |
-| `vault`, `vault.key` | Sign-ins and account passwords, encrypted. |
+| `vault.safe` | The user's vault, behind their master password. |
+| `vault`, `vault.key` | The mail and calendar accounts' passwords, encrypted, which Loopy reads with nobody there. |
+| `autolinks/<id>/` | An AutoLink: `main.py`, `next.py` (a change that waits for a yes), `lib/` (its libraries), `data/` (what it keeps). |
+| `home/temp/` | What AutoLinks gave back: files and pictures, kept three days. |
+| `python/` | 1loop's Python, downloaded the first time an AutoLink is checked. |
+| `browser/` | Loopy's browser profile: its sign-ins, apart from Browser Use's. |
 
 Loopy works with any model 1loop runs with its own tools (the providers' APIs,
 ChatGPT accounts, OpenAI-compatible servers) and with Claude Code, whose own
@@ -195,6 +202,82 @@ Starting takes about half a second once (compiled code is cached in the
 `box` folder), then 5 ms a script. Where code cannot be compiled at run time
 it is interpreted, 10 to 20 times slower.
 
+## AutoLinks
+
+An AutoLink is a Python script Loopy writes for itself, so that a job takes
+one tool call, or none, instead of driving the browser each time: reading
+grades on EcoleDirecte through its library, watching a repository's
+comments, a price on a page. Loopy has five tools for them, not one per
+AutoLink: `loopy_autolinks` (list, read, help), `loopy_autolink_save`,
+`loopy_autolink_run` (what it gives back comes back as text, its files land
+in `home/temp`, its pictures go to the model's eyes), and to write one,
+`loopy_inspect` (a page's HTML, its elements, the requests it made and their
+bodies) beside the browser's own tools.
+
+- **Allowed on a card.** Each one says what it reaches (host names), the
+  vault entries it uses, its rights (`github`, `github_write`, `agent`,
+  `act`) and its libraries. The user answers **Run by itself** or **Ask me
+  each time**, and can change it in Settings → Loopy → AutoLinks. A change
+  of its script, or one that asks for more, waits for another card; the old
+  one runs meanwhile. Only its name and description change without one.
+- **Python.** python-build-standalone 3.14, downloaded once and checked
+  against its SHA-256 (the system's `python3` where it does not run: NixOS,
+  other processors). Libraries come from PyPI as built wheels only, so that
+  none runs code while it installs. 2 minutes a run by default, 30 at most;
+  three at once.
+- **Kept to its place**, by an audit hook: it reads its own folder and
+  Python's, writes in its `data` and its run's folder, reaches its sites
+  (by name or the addresses they resolve to), starts no program and loads no
+  native code (ctypes, cffi). Its environment holds nothing of the user's.
+- **The vault without Loopy seeing it.** `autolink.secret("Name")` gives a
+  script an entry it was allowed, a sign-in only when its site is one of the
+  AutoLink's; `page.fill_secret(...)` types it in a page of that site. What
+  a run gives back is cleared of those values, also in base64, hex, URL,
+  JSON or HTML forms, before Loopy reads it.
+- **Watching.** With `when` ("every 5m", 1 minute at least) it runs by
+  itself; `autolink.new` keeps what it saw; `autolink.wake(text, key)` wakes
+  Loopy, who does what the AutoLink's `do` says, in the conversation, and
+  says so there. `autolink.notify` tells the user directly;
+  `autolink.agent` starts a coding agent in a project (right `agent`), once
+  per key. 12 wakes and 4 agents an hour at most. A schedule's run waits for
+  the vault when it is locked, and three failures in a row ask Loopy, once,
+  to mend it.
+
+## Its browser
+
+Loopy has a browser of its own, another process with another profile than
+Browser Use's: on the desktop and on a server, a Chromium where Loopy lives;
+on the phone, Android WebView with the profile `loopy`. It starts when Loopy
+or a script needs a page and closes when nobody used it for 3 minutes (15
+while the user has it on show, never under the user's hands or while a card
+of it waits). Its pages record their requests, for `loopy_inspect` and for
+scripts (`page.requests`, `page.response`). A script's pages are its own:
+Loopy's browser tools never act in them.
+
+A script drives pages as Playwright does (`goto`, `click(text=…)`, `fill`,
+`wait`, `wait_idle`, `table`, `eval`, `screenshot`…), on its sites only; a
+press that sends, buys or deletes needs the right `act`, and never happens in
+a test. `loopy_autolinks help` is what Loopy reads before writing one.
+
+## The vault
+
+A password manager of the user's, where Loopy lives: sign-ins (with their
+two-step secret: 1loop types the code of the moment), keys and contact
+details. Its entries are sealed (AES-256-GCM) with a random key, sealed with
+one made from the master password (Argon2id, 64 MB, 3 passes). The master
+password is kept nowhere: it goes from the form to the safe, never to Loopy,
+a log or a file. Wrong tries wait longer and longer. It locks when 1loop
+closes, or after so many minutes unused; then a card asks to open it. The
+user may let the machine open it by itself (for AutoLinks at night after a
+restart), which keeps its key as `vault.key` is, and is said to be less
+safe. The settings show an entry's values for a minute; a copy leaves the
+clipboard after 45 seconds.
+
+`loopy_notify` sends a notification as Loopy chooses (silent, normal, or
+urgent, which comes at night too; up to three buttons; a picture of its
+folder). `loopy_chats` lists the user's chats and deletes those they ask for,
+on a card, only in a run they started.
+
 ## What protects the user
 
 Decided by code, whatever the model was made to say:
@@ -216,9 +299,13 @@ Decided by code, whatever the model was made to say:
   key is protected by Windows (DPAPI) there, and is a file of the user's
   alone elsewhere, as 1loop's other keys are.
 - **No shell, no file of the user's, no screen**: its tools are its own, the
-  browser's, and nothing else.
+  browser's, and nothing else. An AutoLink is the one way Loopy runs code on
+  the machine, and only one the user allowed.
 
-Limits: the words of a button are read in French and English, so a button
+Limits: an AutoLink's guard is inside Python. It stops mistakes and plain
+attempts, not a script written to undo it (Python can reach its own memory
+in ways no hook sees). What keeps it safe is that every script that runs was
+shown to the user and allowed on a card. The words of a button are read in French and English, so a button
 that says nothing, or in another language, is not caught; what is fenced can
 still mislead a model, which is why the rest does not depend on it. Memory
 and the conversation are not encrypted on disk.
@@ -229,7 +316,9 @@ and the conversation are not encrypted on disk.
 - Moving a Loopy from one place to another.
 - Services other than mail (IMAP, SMTP) and calendars (CalDAV): through the
   browser only. Gmail and Outlook accounts need an app password.
-- The vault's other kinds of entries in the settings, and password managers.
+- Importing from another password manager.
+- An AutoLink in the phone's own engine is not tested on a device: its Python is the Linux one, which needs the engine's Debian. The phone was tested paired to a computer, whose Python and browser ran the AutoLink.
+- A system sandbox (namespaces, AppContainer) around AutoLinks.
 - The engine on a real arm64 phone is not tested: its tests pass on Android
   x86-64, and on arm64 emulated by QEMU but for the box's memory-limit test,
   which that emulation is too slow for.

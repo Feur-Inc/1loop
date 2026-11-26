@@ -27,13 +27,15 @@ const retainGap = 50 * time.Millisecond
 type retention struct {
 	last    time.Time // when it was painted
 	partial bool      // it was painted in part
+	held    bool      // the retained framebuffer holds the last frame
 }
 
 // retains says whether the frame painted at now goes into the retained
 // frame: when frames come far apart (an idle window, a caret's blink,
-// typing), or the last was painted in part.
-func (r *retention) retains(now time.Time) bool {
-	return r.partial || now.Sub(r.last) >= retainGap
+// typing, streaming), the last was painted in part, or the next one can
+// be painted in part over the frame already held.
+func (r *retention) retains(now time.Time, canPartial bool) bool {
+	return r.partial || (r.held && canPartial) || now.Sub(r.last) >= retainGap
 }
 
 // damageArea is the part of a window a frame paints, in canvas units.
@@ -58,8 +60,10 @@ func (c *glCanvas) damageOf(objects []fyne.CanvasObject) (area damageArea, ok bo
 			stroke = fyne.Max(stroke, o.StrokeWidth)
 		case *canvas.Line:
 			stroke = fyne.Max(stroke, o.StrokeWidth)
+		case *canvas.Image:
+			// An image draws strictly within its bounds and triggers no layout.
 		default:
-			return area, false // text, images, widgets: they may lay out, or draw past their bounds
+			return area, false // text, widgets: they may lay out, or draw past their bounds
 		}
 	}
 	var found [common.MaxDamaged]bool
@@ -116,9 +120,8 @@ func (a *damageArea) overlaps(pos fyne.Position, size fyne.Size) bool {
 }
 
 // reaches says whether painting obj at pos may change a pixel of the area.
-// Shapes draw within their bounds and strokes, so they are skipped when
-// far from it; everything else is painted and clipped to it (text culls
-// itself against the clip, and may be wider than its bounds).
+// Shapes and images draw within their bounds (plus strokes); text is culled
+// by its vertical band so off-band lines skip Painter.Paint.
 func (a *damageArea) reaches(obj fyne.CanvasObject, pos fyne.Position) bool {
 	var stroke float32
 	switch o := obj.(type) {
@@ -128,6 +131,11 @@ func (a *damageArea) reaches(obj fyne.CanvasObject, pos fyne.Position) bool {
 		stroke = o.StrokeWidth
 	case *canvas.Line:
 		stroke = o.StrokeWidth
+	case *canvas.Image:
+	case *canvas.Text:
+		pad := float32(damageMargin)
+		h := fyne.Max(o.Size().Height, o.TextSize*2)
+		return pos.Y-pad < a.pos.Y+a.size.Height && pos.Y+h+pad > a.pos.Y
 	default:
 		return true
 	}

@@ -118,6 +118,15 @@ shows every change.
   frame on llvmpipe. `driver.PartialFrames` counts the frames painted in
   part. A clip outside the area is empty (`StartClipping` takes no
   negative size).
+- `internal/driver/glfw/damage.go`, `canvas.go` (`paintArea`), `loop.go`
+  (`repaintWindow`), `internal/cache/texture_common.go` (#491): partial-frame
+  painting now also accepts `*canvas.Image` (so the work ring ticks without
+  repainting the whole window), culls clip subtrees that do not overlap the
+  damaged area and skips off-band `*canvas.Text` objects, and keeps the
+  retained frame when a partial frame arrives within 50 ms of a full one.
+  After a full frame, `cache.ExpireStaleTextTexturesFor` frees text textures
+  unused for 15 s (checked every 5 s) so abandoned streamed line prefixes do
+  not linger for a full minute.
 - `internal/driver/glfw/window_desktop.go` (`InFront`, #474): a window
   says whether it has the keyboard focus and is not minimised, from its own
   focus and iconify events, whichever window of the app had the focus

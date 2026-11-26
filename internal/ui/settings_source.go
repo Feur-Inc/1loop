@@ -3,9 +3,8 @@
 package ui
 
 // Where Settings → Extensions and Connectors read and change what they
-// show: this computer's, or, while a server's chats are on screen (the
-// desktop's remote mode, the browser client), the server's through its API,
-// since its agent is the one using them.
+// show: this computer's, or a server's through its API (its page under
+// Servers, and the browser client's), since its agent is the one using them.
 
 import (
 	"context"
@@ -27,13 +26,10 @@ type extensionSource interface {
 	mcpStatus(ctx context.Context, workspace string) ([]extensions.MCPStatus, error)
 	// where says where the extensions are, for the page's notes.
 	where() string
-}
-
-func (ui *desktopUI) extensionSource() extensionSource {
-	if ui.server != nil {
-		return serverExtensions{ui.server}
-	}
-	return localExtensions{ui}
+	// page is the settings page that shows them.
+	page() string
+	// workspace is the project whose MCP servers are checked.
+	workspace() string
 }
 
 // localExtensions are this computer's; a change is told to the phone.
@@ -104,10 +100,25 @@ func (localExtensions) mcpStatus(ctx context.Context, workspace string) ([]exten
 }
 
 func (localExtensions) where() string { return "" }
+func (localExtensions) page() string  { return "Extensions" }
+
+// workspace is this computer's project, none while an SSH machine's is open:
+// MCP servers run on this computer, not in the machine's project.
+func (local localExtensions) workspace() string {
+	cfg := local.ui.computerConfig()
+	if cfg.MachineID != "" {
+		return ""
+	}
+	return cfg.Workspace
+}
 
 // serverExtensions are the server's (internal/extensions/http.go). Its
-// answers hide the MCP servers' environment and header values.
-type serverExtensions struct{ remote *remoteDesktop }
+// answers hide the MCP servers' environment and header values. id is the
+// settings page that shows them.
+type serverExtensions struct {
+	remote *remoteDesktop
+	id     string
+}
 
 func (server serverExtensions) call(ctx context.Context, path string, body, result any) error {
 	method := "POST"
@@ -169,7 +180,16 @@ func (server serverExtensions) mcpStatus(ctx context.Context, workspace string) 
 	return result.Servers, err
 }
 
-func (server serverExtensions) where() string { return "the server " + server.remote.name }
+func (server serverExtensions) where() string { return "the server " + server.remote.label() }
+func (server serverExtensions) page() string  { return server.id }
+
+// workspace is the project open on the server, its default one otherwise.
+func (server serverExtensions) workspace() string {
+	if remote := server.remote; remote.parent.server == remote && remote.parent.cfg.Workspace != "" {
+		return remote.parent.cfg.Workspace
+	}
+	return server.remote.defaultWorkspace
+}
 
 // githubSource is the GitHub connector of this computer or of the server.
 type githubSource interface {
@@ -180,16 +200,16 @@ type githubSource interface {
 	enable(ctx context.Context, on bool) error
 	setAttachmentToken(ctx context.Context, token string) error
 	disconnect(ctx context.Context) error
-}
-
-func (ui *desktopUI) githubSource() githubSource {
-	if ui.server != nil {
-		return serverGitHub{ui.server}
-	}
-	return localGitHub{}
+	// where names the machine whose connector it is, for the page's notes.
+	where() string
+	// page is the settings page that shows it.
+	page() string
 }
 
 type localGitHub struct{}
+
+func (localGitHub) where() string { return "this computer" }
+func (localGitHub) page() string  { return "Connectors" }
 
 func (localGitHub) status(context.Context) (githubconnector.Status, error) {
 	return githubconnector.Default.Status(), nil
@@ -224,7 +244,14 @@ func (localGitHub) disconnect(context.Context) error {
 
 // serverGitHub is the server's (internal/githubconnector/http.go): its
 // device sign-in shows the code here, and the token stays on the server.
-type serverGitHub struct{ remote *remoteDesktop }
+// id is the settings page that shows it.
+type serverGitHub struct {
+	remote *remoteDesktop
+	id     string
+}
+
+func (server serverGitHub) where() string { return "the server " + server.remote.label() }
+func (server serverGitHub) page() string  { return server.id }
 
 func (server serverGitHub) post(ctx context.Context, path string, body any) error {
 	if body == nil {

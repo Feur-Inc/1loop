@@ -134,10 +134,19 @@ type settingsView struct {
 	search    *widget.Entry
 	searching bool                      // the results are on screen
 	anchors   map[string]*settingAnchor // the rows of the page shown, by setting
+
+	// Servers (settings_servers.go).
+	serverNav  *fyne.Container            // the Servers group of the sidebar
+	sideScroll *settingsScroll            // the sidebar's sections and servers, scrolled
+	server     string                     // the server whose page is shown, "" for this computer's
+	folded     bool                       // that server's row folded its pages
+	serverRow  *tapRow                    // and its row
+	servers    map[string]*settingsServer // the settings' own connections, by address
+	waiting    bool                       // the server's page shows only that it connects or does not answer
 }
 
 func (ui *desktopUI) buildSettings() {
-	view := &settingsView{ui: ui, rows: map[string]*tapRow{}, section: "General", page: "General", anchors: map[string]*settingAnchor{}}
+	view := &settingsView{ui: ui, rows: map[string]*tapRow{}, section: "General", page: "General", anchors: map[string]*settingAnchor{}, servers: map[string]*settingsServer{}}
 	back := newRow("Back to 1loop", iconChevronLeft, styleNav, view.close)
 	view.leave = back
 	nav := container.New(layout.NewCustomPaddedVBoxLayout(1))
@@ -159,11 +168,16 @@ func (ui *desktopUI) buildSettings() {
 	view.search.SetPlaceHolder("Search settings")
 	view.search.OnChanged = view.find
 	view.search.OnSubmitted = func(query string) {
-		if matches := registry.Search(registry.On(registry.OnDesktop), query); len(matches) > 0 {
-			view.jump(matches[0].Setting.Key)
+		if matches := view.findSettings(query); len(matches) > 0 {
+			view.openMatch(matches[0])
 		}
 	}
-	view.side = container.NewVBox(back, padded(14, 6, 12, 0, textLine("Settings", 13, colFaint)), padded(0, 8, 6, 6, view.search), nav)
+	view.serverNav = container.New(layout.NewCustomPaddedVBoxLayout(1))
+	// The sections and servers scroll, under what stays at the top: with a
+	// server's pages listed, they run below a small window's bottom.
+	view.sideScroll = newSettingsScroll(container.NewVBox(nav, view.serverNav))
+	view.side = newSideColumn(container.NewBorder(container.NewVBox(back, padded(14, 6, 12, 0, textLine("Settings", 13, colFaint)), padded(0, 8, 6, 6, view.search)),
+		nil, nil, nil, view.sideScroll), view.sideScroll)
 	view.side.Hide()
 
 	view.column = container.NewStack()
@@ -195,6 +209,7 @@ func (view *settingsView) openOn(page string) {
 		ui.panelToggle.Hide()
 		ui.sideApp.Hide()
 		view.side.Show()
+		view.sideScroll.fit()
 		ui.paneArea().Hide()
 		view.view.Show()
 		ui.header.SetText("Settings")
@@ -216,6 +231,7 @@ func (view *settingsView) closeNow() {
 		view.drop()
 	}
 	view.open = false
+	view.release("")
 	view.clearSearch()
 	view.side.Hide()
 	ui.sideApp.Show()
@@ -243,7 +259,7 @@ func (view *settingsView) show(page string) {
 }
 
 // base is how many frames the page shown has of its own: a sub-page is
-// opened over its section.
+// opened over its section. A server's page is its own section.
 func (view *settingsView) base() int {
 	if _, ok := subPages[view.page]; ok {
 		return 2
@@ -268,10 +284,21 @@ func (view *settingsView) showNow(page string) {
 		page = alias
 	}
 	section := pageSection(page)
+	view.server = ""
+	if address, name, ok := serverPageOf(page); ok {
+		if _, known := serverPageNamed(name); known {
+			view.server, section = address, page
+		}
+	}
+	view.release(view.server)
+	view.page, view.folded = page, false // the group's pages are listed under its server
+	view.renderServers()
 	if _, ok := view.rows[section]; !ok {
-		section, page = "General", "General"
+		section, page, view.server = "General", "General", ""
+		view.renderServers()
 	}
 	view.section, view.page = section, page
+	view.waiting = false
 	for name, row := range view.rows {
 		row.SetSelected(name == section)
 	}
@@ -281,11 +308,15 @@ func (view *settingsView) showNow(page string) {
 		view.frames = append(view.frames, settingsFrame{content: view.build(page)})
 	}
 	view.present()
+	view.keepInView()
 }
 
 // build makes a page from what is stored now.
 func (view *settingsView) build(page string) fyne.CanvasObject {
 	ui := view.ui
+	if address, name, ok := serverPageOf(page); ok {
+		return view.buildServer(address, name)
+	}
 	if content := ui.browserSettings(page); content != nil {
 		return content
 	}
@@ -307,9 +338,9 @@ func (view *settingsView) build(page string) fyne.CanvasObject {
 	case loopySettingsPage:
 		return ui.loopySettings()
 	case "Extensions":
-		return ui.extensionSettings()
+		return ui.extensionSettings(localExtensions{ui}, container.NewVBox(view.pageTitle("Extensions", "Tools & extensions", nil), view.scope()))
 	case "Connectors":
-		return ui.connectorSettings()
+		return ui.connectorSettings(localGitHub{}, container.NewVBox(view.pageTitle("Connectors", "Tools & extensions", nil), view.scope()))
 	case UsagePage:
 		return ui.usageSettings()
 	}
@@ -563,13 +594,14 @@ func (renderer *toggleRenderer) Destroy() {}
 
 func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 	view := ui.prefs
-	change := newRow("Change…", nil, styleOutline, func() {
-		ui.pick(pickRequest{title: "Choose the workspace", start: ui.cfg.Workspace, folder: true}, func(paths []string) {
+	change := newRow("Open…", nil, styleOutline, func() {
+		ui.pick(pickRequest{title: "Open a project", start: ui.computerConfig().Workspace, folder: true}, func(paths []string) {
 			root, err := agent.ResolveWorkspace(paths[0])
 			if err != nil {
 				ui.notice("Workspace", err.Error())
 				return
 			}
+			ui.useComputer() // a folder of this computer: its chats run here
 			if root != ui.cfg.Workspace {
 				ui.selectProject(root) // shows the project's start screen: come back here
 				view.openOn("General")
@@ -595,29 +627,20 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 	}
 	worktrees := view.mark(registry.KeyWorktreeSort, settingRow(order.Title, "How the sidebar and the Repository window order a project's git worktrees.", sized(230, sortPicker.row)))
 	page := container.NewVBox(view.pageTitle("General", "", nil), view.intro(registry.General), sectionTitle("Workspace"))
-	if ui.server == nil { // on a server, its projects are chosen in the sidebar
-		page.Add(card(view.mark("general.workspace", ui.projectFolderRow(change)), worktrees))
-	} else {
-		page.Add(card(worktrees))
-	}
+	page.Add(card(view.mark("general.workspace", settingRow("Project folder", "Open a folder of this computer as a project. Switch projects in the sidebar.", change)), worktrees))
 	for _, object := range ui.targetRows() {
 		page.Add(object)
 	}
-	if ui.server != nil { // Install Chromium / Claude Code, while the server lacks them
-		page.Add(ui.server.installRows())
-	}
 	page.Add(sectionTitle("Appearance"))
 	page.Add(card(ui.appearanceRows(view)...))
-	if ui.server == nil {
-		page.Add(sectionTitle("Window"))
-		page.Add(card(view.mark("general.close_to_tray", settingRow("Close to tray",
-			"On: closing the window keeps 1loop running in the system tray, so running tasks and the phone connection go on. Quit from the tray icon's menu or with Ctrl+Q. Off: closing the window quits. Without a tray (GNOME without an AppIndicator extension, a bar that shows no tray items) closing always quits.",
-			newToggle(!ui.closeQuits, func(on bool) {
-				ui.closeQuits = !on
-				platform.Devf("ui", "close to tray %v", on)
-				ui.save()
-			})))))
-	}
+	page.Add(sectionTitle("Window"))
+	page.Add(card(view.mark("general.close_to_tray", settingRow("Close to tray",
+		"On: closing the window keeps 1loop running in the system tray, so running tasks and the phone connection go on. Quit from the tray icon's menu or with Ctrl+Q. Off: closing the window quits. Without a tray (GNOME without an AppIndicator extension, a bar that shows no tray items) closing always quits.",
+		newToggle(!ui.closeQuits, func(on bool) {
+			ui.closeQuits = !on
+			platform.Devf("ui", "close to tray %v", on)
+			ui.save()
+		})))))
 	page.Add(sectionTitle("Motion"))
 	page.Add(card(view.mark(registry.KeyAnimations, settingRow("Animations",
 		"Short animations as you click and hover, as menus and dialogs open, as messages arrive and the sidebar changes. Off, every change shows at once. They are off too while the system asks for reduced motion.",
@@ -629,10 +652,8 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 		view.mark(registry.KeyDiscordDetails, settingRow("Share the chat",
 			"Also shows the chat's title, its project and the command or file the agent is on. Off, they stay on this computer.",
 			newToggle(ui.discordDetails, func(on bool) { ui.setDiscordPresence(ui.discordPresence, on) })))))
-	if ui.server == nil {
-		page.Add(sectionTitle("Keyboard"))
-		page.Add(card(settingRow(registry.ShortcutsPage, "New chat, search, find in the chat and more: see their keys, and change them.", view.pageButton(registry.ShortcutsPage))))
-	}
+	page.Add(sectionTitle("Keyboard"))
+	page.Add(card(settingRow(registry.ShortcutsPage, "New chat, search, find in the chat and more: see their keys, and change them.", view.pageButton(registry.ShortcutsPage))))
 	page.Add(sectionTitle("Usage"))
 	page.Add(card(view.mark("general.usage", settingRow("Usage & spend", "Where the tokens and the money went, by model, connection, project, branch and chat, and the prices behind it.", view.pageButton(UsagePage)))))
 	page.Add(sectionTitle("Import"))
@@ -691,10 +712,6 @@ func (view *settingsView) intro(section string) fyne.CanvasObject {
 // a rate limit.
 func (ui *desktopUI) modelSettings() fyne.CanvasObject {
 	view := ui.prefs
-	if ui.server != nil { // the server's chats use the server's
-		return container.NewVBox(view.mark("models.connections", ui.server.connectionSettings()),
-			sectionTitle("Chat names"), card(view.mark(registry.KeyNamingModel, ui.server.namingSetting())))
-	}
 	add := newRow("Add connection", iconPlus, stylePrimary, func() {
 		id := core.Identifier()
 		ui.connectionEditor(agent.Connection{ID: id, AuthProfile: id, Name: "New connection", Provider: "compatible", Enabled: true, AllModels: true})
@@ -710,6 +727,7 @@ func (ui *desktopUI) modelSettings() fyne.CanvasObject {
 	return container.NewVBox(
 		view.pageTitle("Models & accounts", "", nil),
 		view.intro(registry.Models),
+		view.scope(),
 		container.NewBorder(nil, nil, nil, padded(14, 4, 0, 0, add), sectionTitle("Connections")),
 		padded(0, 10, 2, 0, plainFlow("Connect several services and accounts at once. The models of every enabled connection appear together in the composer.", 13, colMuted)),
 		view.mark("models.connections", ui.connectionRows()),
@@ -743,7 +761,7 @@ func (ui *desktopUI) agentSettings() fyne.CanvasObject {
 	mode := newPicker(ui.window, "Tool permissions", styleField, nil)
 	mode.Options = []string{"Approval required", "YOLO mode"}
 	modes := []string{"approval", "yolo"}
-	if agent.AutoModeOffered(ui.cfg) { // ChatGPT and Claude Code only
+	if agent.AutoModeOffered(ui.computerConfig()) { // ChatGPT and Claude Code only
 		mode.Options, modes = append(mode.Options, "Auto mode"), append(modes, "auto")
 	}
 	selected := mode.Options[0]
@@ -776,6 +794,7 @@ func (ui *desktopUI) agentSettings() fyne.CanvasObject {
 	page := container.NewVBox(
 		view.pageTitle("Agent & approvals", "", nil),
 		view.intro(registry.Agent),
+		view.scope(),
 		sectionTitle("Permissions"),
 		card(view.mark(registry.KeyApprovalMode, settingRow("Tool permissions",
 			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto works as Codex: reads run at once, other commands run in a sandbox that writes only the workspace, and destructive ones go to Codex's review (ChatGPT account) or Claude Code's own Auto mode; other connections have no Auto mode and ask.",

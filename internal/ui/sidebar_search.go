@@ -184,7 +184,7 @@ func (ui *desktopUI) search() {
 	field.tabs = true
 	tags := container.New(layout.NewCustomPaddedHBoxLayout(6))
 	list := container.New(layout.NewCustomPaddedVBoxLayout(2))
-	scroll := container.NewVScroll(list)
+	scroll := container.NewVScroll(clearOfBar(list))
 	scroll.SetMinSize(fyne.NewSize(0, 360))
 	var dialog *sheet
 	var rows []*tapRow

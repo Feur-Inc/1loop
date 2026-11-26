@@ -36,7 +36,7 @@ func (ui *desktopUI) configureAutoResume() {
 	say := func(text string) { problem.SetText(text); problem.Hidden = text == ""; problem.Refresh() }
 	steps := &stepList{box: container.NewWithoutLayout(), dragging: -1}
 	steps.box.Layout = stepLayout{steps}
-	list := container.NewVScroll(steps.box)
+	list := container.NewVScroll(clearOfBar(steps.box))
 	hint := textLine("Drag to reorder", 12, colFaint)
 	var render func()
 	render = func() {

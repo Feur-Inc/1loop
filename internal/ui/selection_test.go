@@ -10,7 +10,9 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/scrollbar"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/theme"
 )
 
 // answer lays a markdown answer with its selection layer in a window, as the
@@ -165,4 +167,65 @@ func TestSelectionCopiesTableCells(t *testing.T) {
 	selects("the table and its surroundings", at("Before", 7), at("After", 5),
 		"the table.\n\nCible\tÉtat\tCe que j'ai vérifié\nDocker X11\t✅ OK\tL'image a Xvfb.\n"+
 			"Docker Wayland\t❌ absent\t"+why+"\nDev local\t✅ OK\tGo 1.25.0 correspond.\nAfter")
+}
+
+// A code block's sideways bar lies under the answer's selection layer: the
+// layer passes the press, the drag and a tap on it on to the bar, and
+// selects nothing (#633).
+func TestSelectionPassesTheCodeBarOn(t *testing.T) {
+	test.NewTempApp(t).Settings().SetTheme(loopTheme{theme.DefaultTheme()})
+	ui := &desktopUI{desktopApp: &desktopApp{}}
+	ui.chatSel.ui = ui
+	line := "x := compute(" + strings.Repeat("argument, ", 40) + ")"
+	layer, content := answer(t, ui, "Wide:\n\n```go\n"+line+"\n```")
+	ui.transcript = container.NewVBox(content)
+	window := test.NewWindow(ui.transcript)
+	defer window.Close()
+	window.Resize(fyne.NewSize(600, 400))
+
+	layer.gather()
+	var bar *selTap
+	var code *sideScroll
+	for i, tap := range layer.taps {
+		if isScrollBar(tap.object) {
+			bar = &layer.taps[i]
+		}
+	}
+	collectScrolls(layer.under, &code)
+	if bar == nil || code == nil {
+		t.Fatal("the code block's bar is not among what the layer passes the pointer to")
+	}
+	at := bar.at.AddXY(scrollbar.Edge+scrollbar.MinThumb/2, bar.object.Size().Height/2) // on the thumb
+	layer.MouseMoved(&desktop.MouseEvent{PointEvent: fyne.PointEvent{Position: at}})
+	if layer.Cursor() != desktop.DefaultCursor {
+		t.Fatal("no plain pointer over the bar")
+	}
+	press(layer, at)
+	layer.Dragged(&fyne.DragEvent{PointEvent: fyne.PointEvent{Position: at.AddXY(100, 0)}, Dragged: fyne.NewDelta(100, 0)})
+	layer.DragEnd()
+	layer.MouseUp(&desktop.MouseEvent{Button: desktop.MouseButtonPrimary, PointEvent: fyne.PointEvent{Position: at.AddXY(100, 0)}})
+	if code.Offset.X <= 0 {
+		t.Fatal("dragging the code block's thumb did not scroll it")
+	}
+	if got := ui.chatSel.selectedText(); got != "" {
+		t.Fatalf("dragging the bar selected %q", got)
+	}
+	before := code.Offset.X
+	end := bar.at.AddXY(bar.object.Size().Width-scrollbar.Edge-2, bar.object.Size().Height/2)
+	press(layer, end)
+	layer.MouseUp(&desktop.MouseEvent{Button: desktop.MouseButtonPrimary, PointEvent: fyne.PointEvent{Position: end}})
+	if code.Offset.X <= before {
+		t.Fatal("a tap on the code block's track did not page")
+	}
+}
+
+func collectScrolls(object fyne.CanvasObject, found **sideScroll) {
+	switch o := object.(type) {
+	case *sideScroll:
+		*found = o
+	case *fyne.Container:
+		for _, child := range o.Objects {
+			collectScrolls(child, found)
+		}
+	}
 }

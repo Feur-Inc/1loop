@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/scrollbar"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -125,8 +126,10 @@ func (themeSpec loopTheme) Color(name fyne.ThemeColorName, _ fyne.ThemeVariant) 
 		return colBorderSoft
 	case theme.ColorNameScrollBar:
 		return colScrollBar
-	case theme.ColorNameScrollBarBackground:
-		return color.Transparent
+	case theme.ColorNameScrollBarBackground: // the track, under the pointer
+		return overlay(0x0c)
+	case scrollbar.ColorNameHover:
+		return withAlpha(colMuted, 0.85)
 	case theme.ColorNameShadow:
 		return color.NRGBA{A: 0x30} // scroll edge fades; dialog dims are drawn by our sheets
 	}
@@ -207,9 +210,9 @@ func (themeSpec loopTheme) Size(name fyne.ThemeSizeName) float32 {
 	case theme.SizeNameSelectionRadius:
 		return rounded(3)
 	case theme.SizeNameScrollBar:
-		return 6
+		return scrollbar.Wide
 	case theme.SizeNameScrollBarSmall:
-		return 3
+		return scrollbar.Thin
 	case theme.SizeNameSeparatorThickness:
 		return 1
 	}
@@ -1668,8 +1671,8 @@ func (pickerControl *picker) show() {
 	}
 	var content fyne.CanvasObject = list
 	if len(pickerControl.Options) > 9 {
-		scroll := newKineticVScroll(list)
-		scroll.SetMinSize(fyne.NewSize(list.MinSize().Width, 9*list.Objects[0].MinSize().Height))
+		scroll := newKineticVScroll(clearOfBar(list))
+		scroll.SetMinSize(fyne.NewSize(list.MinSize().Width+barRoom, 9*list.Objects[0].MinSize().Height))
 		content = scroll
 	}
 	width := fyne.Max(content.MinSize().Width+10, 200)
@@ -1784,7 +1787,7 @@ func showMenu(window fyne.Window, anchor fyne.CanvasObject, actions []menuAction
 	var content fyne.CanvasObject = list
 	var field *keyEntry
 	if len(items) > menuFilterAt {
-		scroll := newKineticVScroll(list)
+		scroll := newKineticVScroll(clearOfBar(list))
 		scroll.SetMinSize(fyne.NewSize(0, menuRows*(items[0].MinSize().Height+2)))
 		field = newKeyEntry()
 		field.SetPlaceHolder("Filter")

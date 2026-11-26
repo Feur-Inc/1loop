@@ -242,7 +242,7 @@ func TestSidebarRowToPanes(t *testing.T) {
 		t.Fatal("the window did not split with the new pane focused")
 	}
 	window.renderChats()
-	key := chatKey("c")
+	key := chatKey("", "c")
 	kept := pane.sideRows[key]
 	if kept == nil {
 		t.Fatalf("the focused pane's sidebar has no row for C: %v", pane.sideRows)

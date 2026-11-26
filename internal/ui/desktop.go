@@ -32,6 +32,7 @@ import (
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/lang"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/scrollbar"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -804,6 +805,43 @@ func (themeSpec flatScrollTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVar
 	return themeSpec.Theme.Color(name, v)
 }
 
+// stripScroll is container.NewHScroll for a strip of controls (tabs, chips,
+// buttons) that may run past its width. It draws no bar: on a strip one row
+// high, the bar would take the pointer over the lower half of the controls
+// (#633). The wheel still scrolls it, and its edge shadows show that more
+// lies beyond.
+func stripScroll(content fyne.CanvasObject) (*container.Scroll, fyne.CanvasObject) {
+	scroll := container.NewHScroll(content)
+	return scroll, container.NewThemeOverride(scroll, barlessTheme{loopTheme{theme.DefaultTheme()}})
+}
+
+// barRoom is what content keeps free along a scroll's right edge, where its
+// bar is drawn, wide under the pointer (#633): for rows whose last element
+// sits at that edge (a size, a count, a check mark).
+const barRoom = scrollbar.Edge + scrollbar.Wide + 4
+
+// clearOfBar pads content so the scroll's bar never covers its right end.
+func clearOfBar(content fyne.CanvasObject) fyne.CanvasObject {
+	return padded(0, 0, 0, barRoom, content)
+}
+
+// strip is stripScroll where only the strip itself is wanted.
+func strip(content fyne.CanvasObject) fyne.CanvasObject {
+	_, object := stripScroll(content)
+	return object
+}
+
+// barlessTheme gives a scroll no bar: no width, so nothing takes the pointer.
+type barlessTheme struct{ fyne.Theme }
+
+func (themeSpec barlessTheme) Size(name fyne.ThemeSizeName) float32 {
+	switch name {
+	case theme.SizeNameScrollBar, theme.SizeNameScrollBarSmall:
+		return 0
+	}
+	return themeSpec.Theme.Size(name)
+}
+
 func (ui *desktopUI) build() fyne.CanvasObject {
 	if ui == ui.mainView() { // once, not for each window
 		watchReducedMotion()
@@ -1149,7 +1187,8 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.attachRow = container.New(layout.NewCustomPaddedHBoxLayout(8))
 	// The optional rows are hidden with their margins: a hidden child inside
 	// a visible padded box would still take its padding and the gap after it.
-	ui.attachTray = padded(2, 4, 2, 0, container.NewHScroll(ui.attachRow))
+	_, tray := stripScroll(ui.attachRow)
+	ui.attachTray = padded(2, 4, 2, 0, tray)
 	ui.attachTray.Hide()
 	input := container.NewThemeOverride(ui.prompt, bareInputTheme{loopTheme{theme.DefaultTheme()}})
 	ui.editor = newPromptEditor(ui)

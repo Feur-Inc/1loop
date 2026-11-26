@@ -259,7 +259,7 @@ func (page *extensionsPage) details(listing extensions.Listing) {
 		padded(10, 0, 0, 0, textLine(listing.Repo, 13, colMuted)),
 		plainFlow(listing.Description, 14, colText),
 		textLine(strings.Join(facts, " · "), 12.5, colMuted),
-		container.NewHScroll(topics),
+		strip(topics),
 		padded(10, 10, 0, 0, container.NewHBox(install, github)),
 		sectionTitle("README"),
 		readme,

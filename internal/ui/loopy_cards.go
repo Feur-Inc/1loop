@@ -180,7 +180,7 @@ func newLoopyBubble(text string, mine bool, reaction string) *loopyBubble {
 	bubble.box = container.NewStack(bg, padded(8, 8, 13, 13, bubble.text), tap)
 	var avatar fyne.CanvasObject = spacer(0, 0)
 	if !mine {
-		bubble.avatar = newLoopyFace(26, "idle", true, true)
+		bubble.avatar = newLoopyFace(26, "idle", false, true)
 		avatar = bubble.avatar.image
 	}
 	var badge fyne.CanvasObject = spacer(0, 0)

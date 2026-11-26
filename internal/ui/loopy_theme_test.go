@@ -86,6 +86,10 @@ func TestLoopyBubblesThemeAndLiveSwitch(t *testing.T) {
 	loopyMsg := newLoopyBubble("Hello from Loopy", false, "")
 	userMsg := newLoopyBubble("Hello from me", true, "")
 
+	if corner := color.NRGBAModel.Convert(loopyMsg.avatar.image.Image.At(0, 0)).(color.NRGBA); corner.A != 0 {
+		t.Fatalf("loopy message avatar corner alpha = %d, want 0 (transparent background)", corner.A)
+	}
+
 	if loopyMsg.fill.FillColor != color.Color(colSurface) {
 		t.Fatalf("loopy bubble fill = %v, want colSurface %v", loopyMsg.fill.FillColor, colSurface)
 	}

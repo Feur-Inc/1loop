@@ -106,6 +106,9 @@ func (g *loopyResponseGlass) sync() {
 		return
 	}
 	radius := blurRadius("responses")
+	if !shaderBehind {
+		radius = 0 // over the plain window colour there is nothing to blur, as for 1loop's answers (#503)
+	}
 	if radius <= 0 {
 		g.blur.Hide()
 		if g.tinted {
@@ -198,8 +201,15 @@ func (bubble *loopyBubble) syncBlur() {
 }
 
 func (bubble *loopyBubble) recolour() {
-	if bubble != nil && bubble.avatar != nil {
+	if bubble == nil {
+		return
+	}
+	if bubble.avatar != nil {
 		bubble.avatar.recolour()
+	}
+	if bubble.dimmed { // a half-transparent accent is not one the repaint maps
+		bubble.dim()
+		bubble.fill.Refresh()
 	}
 }
 

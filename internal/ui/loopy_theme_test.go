@@ -186,6 +186,15 @@ func TestLoopyResponseGlassSyncsBlurAndTint(t *testing.T) {
 		Blur:     map[string]float64{"responses": 16},
 		BlurTint: map[string]color.NRGBA{"responses": tint},
 	}, true)
+	saved := shaderBehind
+	defer func() { shaderBehind = saved }()
+	// Over the plain window colour there is nothing to blur: no blur, no tint.
+	shaderBehind = false
+	bubble.syncBlur()
+	if bubble.glass.blur.Visible() || bubble.fill.FillColor != color.Color(colSurface) {
+		t.Fatalf("without a shader or picture behind: blur visible=%v, fill %v, want hidden and colSurface", bubble.glass.blur.Visible(), bubble.fill.FillColor)
+	}
+	shaderBehind = true
 	bubble.syncBlur()
 	if canvas.BlurSupported() {
 		if !bubble.glass.blur.Visible() || bubble.glass.blur.Radius != 16 {
@@ -203,5 +212,21 @@ func TestLoopyResponseGlassSyncsBlurAndTint(t *testing.T) {
 	}
 	if bubble.fill.FillColor != color.Color(colSurface) {
 		t.Fatalf("bubble fill after disabling blur = %v, want colSurface %v", bubble.fill.FillColor, colSurface)
+	}
+}
+
+// A bubble waiting for Loopy keeps its dimmed look in the new accent after
+// a theme switch: the repaint does not map a half-transparent colour.
+func TestLoopyDimmedBubbleFollowsAccent(t *testing.T) {
+	test.NewTempApp(t)
+	defer setColours(palette.Dark, palette.AccentColor(""))
+	setColours(palette.Dark, palette.AccentColor(""))
+	bubble := newLoopyBubble("Waiting", true, "")
+	bubble.dim()
+	teal := color.NRGBA{R: 0x2f, G: 0xc2, B: 0xa4, A: 0xff}
+	repaint(recolour(setColours(palette.Dark, teal)), false)
+	bubble.recolour()
+	if want := color.Color(withAlpha(colAmber, 0.5)); bubble.fill.FillColor != want {
+		t.Fatalf("dimmed bubble after an accent switch = %v, want %v", bubble.fill.FillColor, want)
 	}
 }

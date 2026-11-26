@@ -179,7 +179,7 @@ func Build(ledger *Ledger, prices *Prices, names Names, query Query, now time.Ti
 			continue
 		}
 		report.Totals.add(prices, record)
-		key := groupKey(query.Group, record)
+		key := rowKey(query.Group, record, names)
 		row := rows[key]
 		if row == nil {
 			row = &Row{Key: key}
@@ -202,7 +202,7 @@ func Build(ledger *Ledger, prices *Prices, names Names, query Query, now time.Ti
 				continue
 			}
 			report.Compare.Totals.add(prices, record)
-			key := groupKey(query.Group, record)
+			key := rowKey(query.Group, record, names)
 			if previous[key] == nil {
 				previous[key] = &Totals{}
 			}
@@ -250,6 +250,25 @@ func Build(ledger *Ledger, prices *Prices, names Names, query Query, now time.Ti
 	return report
 }
 
+// RemovedKey is the row of the connections removed from Settings: what they
+// spent still counts, apart from the connections there now (#593).
+const RemovedKey = "removed"
+
+// removed says whether a record's connection is no longer in Settings.
+// Records older than connection ids (no Connection) keep their provider.
+func removed(record Record, names Names) bool {
+	return names != nil && record.Connection != "" && names("connection", record.Connection) == ""
+}
+
+// rowKey is the row a record counts in: by connection, the removed ones
+// share one row.
+func rowKey(group string, record Record, names Names) string {
+	if group == "connection" && removed(record, names) {
+		return RemovedKey
+	}
+	return groupKey(group, record)
+}
+
 func groupKey(group string, record Record) string {
 	switch group {
 	case "connection":
@@ -289,6 +308,9 @@ func rowLabel(group string, record Record, names Names, prices *Prices, now time
 	}
 	switch group {
 	case "connection":
+		if removed(record, names) {
+			return "Removed", "No longer in Settings: what it spent before"
+		}
 		label = name(record.Connection)
 		if label == "" {
 			label = record.Provider

@@ -379,7 +379,7 @@ func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
 		if ui.cfg.InScratch() {
 			icon = iconCheck
 		}
-		actions = append(actions, menuAction{label: noFolderLabel, icon: icon, run: ui.chooseNoFolder})
+		actions = append(actions, menuAction{label: thisComputerLabel, icon: icon, run: ui.chooseNoFolder})
 	}
 	add := "Add folder…"
 	if ui.cfg.MachineID != "" {
@@ -468,7 +468,7 @@ func (ui *desktopUI) finishChatLoad() {
 	ui.updateHeader()
 	ui.renderChats()
 	ui.showChatModel()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 }
 
 func (ui *desktopUI) renameChat(chat *conversation) {

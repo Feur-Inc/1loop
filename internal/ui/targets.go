@@ -133,6 +133,9 @@ func (ui *desktopUI) setReach(target projectTarget, state reach, problem string)
 	if ui.projectList != nil {
 		ui.renderChats()
 	}
+	if target.kind == targetServer && ui.prefs != nil {
+		ui.prefs.serverChanged(target.id) // its row under Settings → Servers
+	}
 	return true
 }
 

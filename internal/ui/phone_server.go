@@ -174,7 +174,11 @@ func (ui *desktopUI) startRemote() {
 		server.onUI(func() { name = server.ui.usageNames(group, key) })
 		return name
 	}
-	for path, handler := range usage.Handlers(ui.usage, ui.prices, names, func() { server.onUI(ui.usageChanged) }) {
+	disabled := func(connection string) (off bool) {
+		server.onUI(func() { off = server.ui.accountDisabled(connection) })
+		return off
+	}
+	for path, handler := range usage.Handlers(ui.usage, ui.prices, names, disabled, func() { server.onUI(ui.usageChanged) }) {
 		if path == "GET /api/usage" {
 			serve := handler
 			handler = func(w http.ResponseWriter, r *http.Request) {
@@ -585,6 +589,9 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 	}
 	for _, h := range chat.History {
 		remoteMetaValue.Used = max(remoteMetaValue.Used, h.Usage)
+	}
+	if chat.Config.Provider == "claudecode" && chat.ContextUsage != nil {
+		remoteMetaValue.Used = chat.ContextUsage.Used // Claude Code keeps its own history
 	}
 	if run := chat.run; run != nil {
 		if run.turn.usage > 0 {

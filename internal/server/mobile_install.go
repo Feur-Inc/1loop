@@ -3,8 +3,6 @@
 package server
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -19,6 +17,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"1loop/internal/core"
 )
 
 // One official Debian bookworm-slim arm64 layer, pinned independently of the
@@ -115,20 +115,21 @@ func installMobileDebian(ctx context.Context, destination string) (err error) {
 	if _, err := archive.Seek(0, io.SeekStart); err != nil {
 		return err
 	}
-	compressed, err := gzip.NewReader(archive)
-	if err != nil {
-		return err
-	}
-	defer compressed.Close()
 	fmt.Println("Installing Debian…")
-	if err := extractMobileDebian(destination, tar.NewReader(compressed)); err != nil {
+	if err := extractMobileDebian(destination, archive); err != nil {
 		return err
 	}
 	fmt.Println("Debian installed.")
 	return nil
 }
 
-func extractMobileDebian(destination string, archive *tar.Reader) (err error) {
+// extractMobileDebian unpacks the Debian root (a gzipped tar) into
+// destination, which it creates. It is a root filesystem: its links may
+// name absolute paths, read from that root once installed. No archive link
+// exists while files are written, and links are made only in folders that
+// really are inside the root, so nothing reaches the phone's Android
+// filesystem (core.Unpack, #524).
+func extractMobileDebian(destination string, archive io.Reader) (err error) {
 	root, err := filepath.Abs(destination)
 	if err != nil {
 		return err
@@ -141,121 +142,20 @@ func extractMobileDebian(destination string, archive *tar.Reader) (err error) {
 			err = errors.Join(err, os.RemoveAll(root))
 		}
 	}()
-	type archiveLink struct{ name, target string }
-	var symlinks, hardlinks []archiveLink
-	var expanded int64
-	for {
-		header, err := archive.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-		name := path.Clean(header.Name)
-		if path.IsAbs(name) || name == ".." || strings.HasPrefix(name, "../") || strings.HasPrefix(path.Base(name), ".wh.") {
-			return fmt.Errorf("Unsupported Debian archive path %q", header.Name)
-		}
-		if name == "." && header.Typeflag == tar.TypeDir {
-			continue
-		}
-		target := filepath.Join(root, filepath.FromSlash(name))
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0755); err != nil {
-				return err
+	_, err = core.Unpack{
+		Check: func(name string) error {
+			if strings.HasPrefix(path.Base(name), ".wh.") {
+				return fmt.Errorf("Unsupported Debian archive path %q", name)
 			}
-		case tar.TypeReg: // the reader reports old regular entries (TypeRegA) as TypeReg
-			expanded += header.Size
-			if header.Size < 0 || expanded > 1<<30 {
-				return fmt.Errorf("The Debian archive exceeds its expanded size limit")
-			}
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-				return err
-			}
-			file, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_EXCL, os.FileMode(header.Mode)&0777)
-			if err != nil {
-				return err
-			}
-			_, copyErr := io.Copy(file, archive)
-			closeErr := file.Close()
-			if copyErr != nil {
-				return copyErr
-			}
-			if closeErr != nil {
-				return closeErr
-			}
-		case tar.TypeSymlink:
-			linked := path.Clean(path.Join(path.Dir(name), header.Linkname))
-			if !path.IsAbs(header.Linkname) && (linked == ".." || strings.HasPrefix(linked, "../")) {
-				return fmt.Errorf("Debian symlink escapes its root: %q", name)
-			}
-			symlinks = append(symlinks, archiveLink{name, header.Linkname})
-		case tar.TypeLink:
-			linked := path.Clean(header.Linkname)
-			if path.IsAbs(linked) || linked == ".." || strings.HasPrefix(linked, "../") {
-				return fmt.Errorf("Debian hardlink escapes its root: %q", name)
-			}
-			hardlinks = append(hardlinks, archiveLink{name, linked})
-		case tar.TypeXGlobalHeader:
-		default:
-			return fmt.Errorf("Unsupported Debian archive entry %q", name)
-		}
-	}
-	// No archive symlink exists while files and hardlinks are created. This
-	// prevents extraction through a link into the phone's Android filesystem.
-	for _, link := range hardlinks {
+			return nil
+		},
+		Mode:          func(perm os.FileMode) os.FileMode { return perm },
+		Links:         true,
+		AbsoluteLinks: true,
 		// Android's app SELinux policy can prohibit hardlinks even when both
-		// files belong to the app. Independent copies have the same contents.
-		if err := copyMobileLink(root, link.target, link.name, &expanded); err != nil {
-			return err
-		}
-	}
-	for _, link := range symlinks {
-		parent, err := filepath.EvalSymlinks(filepath.Join(root, filepath.Dir(link.name)))
-		if err != nil {
-			return err
-		}
-		rel, err := filepath.Rel(root, parent)
-		if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-			return fmt.Errorf("Debian symlink parent escapes its root: %q", link.name)
-		}
-		if err := os.Symlink(link.target, filepath.Join(parent, filepath.Base(link.name))); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func copyMobileLink(root, target, name string, expanded *int64) error {
-	source, err := os.Open(filepath.Join(root, target))
-	if err != nil {
-		return err
-	}
-	defer source.Close()
-	info, err := source.Stat()
-	if err != nil {
-		return err
-	}
-	if !info.Mode().IsRegular() {
-		return fmt.Errorf("Debian hardlink target is not a regular file")
-	}
-	*expanded += info.Size()
-	if *expanded > 1<<30 {
-		return fmt.Errorf("The Debian archive exceeds its expanded size limit")
-	}
-	destination := filepath.Join(root, name)
-	if err := os.MkdirAll(filepath.Dir(destination), 0755); err != nil {
-		return err
-	}
-	file, err := os.OpenFile(destination, os.O_WRONLY|os.O_CREATE|os.O_EXCL, info.Mode().Perm())
-	if err != nil {
-		return err
-	}
-	_, err = io.Copy(file, source)
-	closeErr := file.Close()
-	if err != nil {
-		return err
-	}
-	return closeErr
+		// files belong to the app: they become copies, the same contents.
+		HardLinks: true,
+		MaxTotal:  1 << 30,
+	}.Tar(archive, root)
+	return err
 }

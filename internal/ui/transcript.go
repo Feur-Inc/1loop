@@ -504,6 +504,8 @@ type transcriptLayout struct {
 	cards   *fyne.Container            // under the transcript, in its coordinates
 	cardSet []fyne.CanvasObject        // the cards made so far, reused
 	apart   map[fyne.CanvasObject]bool // rows that are in no card (the user's messages)
+	// What the developer log last said of each row (audit).
+	reported map[fyne.CanvasObject]string
 }
 
 // transcriptRow is an item of the transcript and its measured size.
@@ -588,6 +590,7 @@ func (layoutSpec *transcriptLayout) reset() {
 	layoutSpec.apart = map[fyne.CanvasObject]bool{}
 	layoutSpec.lo, layoutSpec.hi, layoutSpec.added, layoutSpec.widest, layoutSpec.pending = 0, 0, 0, 0, false
 	layoutSpec.stale, layoutSpec.shift = false, 0
+	layoutSpec.reported = nil
 	layoutSpec.settle()
 }
 
@@ -990,6 +993,7 @@ func (layoutSpec *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyn
 			layoutSpec.placeArrival(object, coming)
 		}
 	}
+	layoutSpec.audit(lo, hi, size.Width)
 }
 
 // Cards reach a little past their rows: the text keeps a margin inside.
@@ -1461,6 +1465,9 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		ui.goalUpdated(currentTurn.chat)
 	case "usage":
 		currentTurn.usage = uiEventValue.data.(int)
+		if currentTurn.cfg.Provider == "claudecode" { // its own count comes when the turn ends
+			currentTurn.chat.ContextUsage = currentTurn.chat.ContextUsage.At(currentTurn.usage)
+		}
 		ui.remote.metaChanged(currentTurn.chat)
 		if currentTurn.chat == ui.current {
 			ui.setContextUsage(uiEventValue.data.(int), agent.ModelContextWindow(currentTurn.cfg))
@@ -1497,9 +1504,6 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		ui.save()
 	case "plan":
 		ui.plan = uiEventValue.data.(agent.PlanUsage)
-		if currentTurn.chat == ui.current {
-			ui.contextRing.plan = ui.plan
-		}
 	}
 }
 

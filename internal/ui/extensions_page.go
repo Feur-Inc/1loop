@@ -58,8 +58,9 @@ type extensionsPage struct {
 
 var storeOrders = map[string]string{"Most stars": "stars", "Recently updated": "updated", "Best match": "best"}
 
-func (ui *desktopUI) extensionSettings() fyne.CanvasObject {
-	page := &extensionsPage{ui: ui, source: ui.extensionSource(), tab: "store", tabs: map[string]*tapRow{}, kind: "all", kinds: map[string]*tapRow{}, body: container.NewVBox(), statuses: map[string]extensions.MCPStatus{}}
+// extensionSettings is the Extensions page of a source, under its title.
+func (ui *desktopUI) extensionSettings(source extensionSource, title fyne.CanvasObject) fyne.CanvasObject {
+	page := &extensionsPage{ui: ui, source: source, tab: "store", tabs: map[string]*tapRow{}, kind: "all", kinds: map[string]*tapRow{}, body: container.NewVBox(), statuses: map[string]extensions.MCPStatus{}}
 	ui.extPage = page
 	tabs := container.New(layout.NewCustomPaddedHBoxLayout(6))
 	for _, tab := range []struct{ id, label string }{{"store", "Store"}, {"installed", "Installed"}, {"mcp", "MCP servers"}} {
@@ -70,13 +71,13 @@ func (ui *desktopUI) extensionSettings() fyne.CanvasObject {
 	}
 	intro := note("Skills teach the agent a task; plugins bundle skills, MCP servers and hooks. Both work with 1loop's agent and with Claude Code. MCP servers give the agent the tools of other apps.")
 	page.show("store")
-	return container.NewVBox(ui.prefs.pageTitle("Extensions", "Tools & extensions", nil), intro, padded(6, 10, 0, 0, tabs), page.body)
+	return container.NewVBox(title, intro, padded(6, 10, 0, 0, tabs), page.body)
 }
 
 // extensionsChanged redraws the section after a change made elsewhere
 // (the phone).
 func (ui *desktopUI) extensionsChanged() {
-	if page := ui.extPage; page != nil && ui.prefs.at("Extensions") {
+	if page := ui.extPage; page != nil && ui.prefs.at(page.source.page()) {
 		page.show(page.tab)
 	}
 }
@@ -285,13 +286,14 @@ func (page *extensionsPage) details(listing extensions.Listing) {
 // installFromStore downloads a repository, shows what installing it does,
 // and installs what the user keeps.
 func (ui *desktopUI) installFromStore(repo string) {
+	source := ui.extPage.source // the page the store is on
 	progress := note("Downloading " + repo + " to see what it holds…")
 	var waiting *sheet
 	waiting = ui.modal("Install "+repo, progress, 520, nil, newRow("Cancel", nil, styleOutline, func() { waiting.dismiss() }))
 	go func() {
 		ctx, cancel := context.WithTimeout(ui.ctx, 5*time.Minute)
 		defer cancel()
-		plan, err := ui.extensionSource().prepare(ctx, repo)
+		plan, err := source.prepare(ctx, repo)
 		fyne.Do(func() {
 			if !waiting.open {
 				return // cancelled
@@ -301,14 +303,14 @@ func (ui *desktopUI) installFromStore(repo string) {
 				ui.notice("Install "+repo, err.Error())
 				return
 			}
-			ui.confirmInstall(plan)
+			ui.confirmInstall(source, plan)
 		})
 	}()
 }
 
 // confirmInstall is the confirmation: what it adds, the folders it writes,
 // the commands it may run and the risks.
-func (ui *desktopUI) confirmInstall(plan *extensions.Plan) {
+func (ui *desktopUI) confirmInstall(source extensionSource, plan *extensions.Plan) {
 	keep := map[string]bool{}
 	body := container.NewVBox()
 	if len(plan.Plugins) > 0 {
@@ -392,7 +394,7 @@ func (ui *desktopUI) confirmInstall(plan *extensions.Plan) {
 		go func() {
 			ctx, cancel := context.WithTimeout(ui.ctx, 5*time.Minute)
 			defer cancel()
-			err := ui.extensionSource().install(ctx, plan.ID, chosen)
+			err := source.install(ctx, plan.ID, chosen)
 			fyne.Do(func() {
 				dialog.dismiss()
 				if err != nil {
@@ -406,8 +408,8 @@ func (ui *desktopUI) confirmInstall(plan *extensions.Plan) {
 						}
 					}
 				}
-				if ui.prefs.on("Extensions") {
-					ui.prefs.show("Extensions")
+				if id := source.page(); ui.prefs.on(id) {
+					ui.prefs.show(id)
 					if page := ui.extPage; page != nil {
 						page.show("installed")
 					}
@@ -612,10 +614,7 @@ func (page *extensionsPage) checkMCP() {
 	if page.tab == "mcp" {
 		page.show("mcp")
 	}
-	workspace := page.ui.cfg.Workspace
-	if page.ui.cfg.MachineID != "" && page.ui.server == nil { // MCP servers run on this computer, not in the machine's project
-		workspace = ""
-	}
+	workspace := page.source.workspace()
 	go func() {
 		ctx, cancel := context.WithTimeout(page.ui.ctx, time.Minute)
 		defer cancel()
@@ -628,7 +627,7 @@ func (page *extensionsPage) checkMCP() {
 			for _, status := range statuses {
 				page.statuses[status.Name+"\x00"+status.Plugin] = status
 			}
-			if page.tab == "mcp" && page.ui.prefs.at("Extensions") {
+			if page.tab == "mcp" && page.ui.prefs.at(page.source.page()) {
 				page.show("mcp")
 			}
 		})

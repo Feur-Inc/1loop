@@ -384,8 +384,13 @@ start, with its options then.
 
 On first start the server generates an ECDSA TLS certificate, valid for one
 year, and prints its SHA-256 fingerprint. It reuses that certificate on later
-starts. You can instead supply a certificate and private key with
-`-tls-cert /path/server.crt -tls-key /path/server.key`.
+starts and never renews it, since a new one would have a new fingerprint:
+paired desktops and phones pin that exact certificate and ignore its dates,
+so they keep connecting after its first year. It is kept as `server.crt`
+and `server.key` in the data directory; back up both together. If one is missing or damaged, the server does not start and says
+which file: restore it, or delete both to make a new certificate, and then
+pair every device again. You can instead supply a certificate and private
+key with `-tls-cert /path/server.crt -tls-key /path/server.key`.
 Browsers cannot pin the fingerprint: for the web client without a
 certificate warning, see [Behind a reverse proxy](#behind-a-reverse-proxy).
 
@@ -466,7 +471,9 @@ or `docker attach` with a container started with `-it` (Compose:
 Certificate replacement requires verifying and entering the new fingerprint
 on each client. A private certificate's fingerprint replaces normal hostname
 verification only for that explicitly pinned connection. The clients still
-check certificate validity dates and the TLS proof of the private key.
+check the TLS proof of the private key, but not the pinned certificate's
+validity dates. A browser does check them: after the generated certificate's
+first year, it warns about it again.
 
 ## Models and configuration
 

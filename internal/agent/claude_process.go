@@ -9,7 +9,6 @@ package agent
 // mode, 1loop's instructions, extensions…), for claudeIdleLimit at most.
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"1loop/internal/core"
 	"1loop/internal/extensions"
 	"1loop/internal/platform"
 )
@@ -77,12 +77,11 @@ func startClaudeProcess(cmd *exec.Cmd, key string, binding *todoMCPBinding, clea
 	}
 	platform.OOMFirst(cmd) // it, its tools and builds go before 1loop when memory runs out (#584)
 	go func() {
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 64<<10), 64<<20)
+		scanner := core.NewLineReader(stdout, 64<<20)
 	read:
 		for scanner.Scan() {
 			select {
-			case process.lines <- append([]byte(nil), scanner.Bytes()...):
+			case process.lines <- scanner.Bytes():
 			case <-process.quit:
 				io.Copy(io.Discard, stdout)
 				break read

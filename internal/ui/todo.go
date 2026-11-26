@@ -379,7 +379,7 @@ func (panel *toolPanel) refreshTodoStatus(rebuild ...bool) {
 	if len(rebuild) > 0 && !rebuild[0] && tab.todoContextText != "" {
 		return
 	}
-	text := agent.TaskContextText(cfg, panel.ui.contextRing.used, panel.ui.contextRing.window, panel.ui.classicCompaction, state)
+	text := agent.TaskContextText(cfg, panel.ui.contextUsed, panel.ui.contextWindow, panel.ui.classicCompaction, state)
 	if panel.owner != nil && panel.owner.run == nil && panel.owner.Compaction.Interrupted() != nil {
 		text += "\nA compaction was interrupted: it goes on with the next message."
 	}

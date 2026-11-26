@@ -41,6 +41,7 @@ import (
 	"1loop/internal/crash"
 	"1loop/internal/discord"
 	"1loop/internal/extensions"
+	"1loop/internal/keyring"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	registry "1loop/internal/settings"
@@ -198,7 +199,7 @@ type desktopUI struct {
 	queueTitle                      *fitLabel
 	model                           *picker
 	approvalControl                 *tapRow
-	contextRing                     *contextRing
+	contextUsed, contextWindow      int // the open conversation's use of its model's window
 	send                            *tapRow
 	steer                           *tapRow
 	stop                            *tapRow
@@ -284,6 +285,9 @@ type desktopApp struct {
 	browser          *browser.Engine
 	backend          *agent.App
 	keys             map[string]string
+	keyed            map[string]bool // connections that had a key (connection_keys.go)
+	keysLoading      bool            // the saved keys are still being read
+	vault            *keyVault
 	connectionsList  []agent.Connection
 	webSetupWindows  map[*agent.ChatGPTWeb]fyne.Window
 	choices          map[string]agent.ModelChoice
@@ -412,7 +416,7 @@ func runDesktop(backend *agent.App, root, asked string) {
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
 	backend.EnableChatGPTWeb(ctx)
-	ui := &desktopUI{desktopApp: &desktopApp{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), shortcutKeys: map[string]string{}, statePath: statePath(root),
+	ui := &desktopUI{desktopApp: &desktopApp{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), keyed: map[string]bool{}, vault: newKeyVault(keyring.System()), shortcutKeys: map[string]string{}, statePath: statePath(root),
 		foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}, lastCrash: lastCrash},
 		cfg: agent.Config{Provider: "compatible", Workspace: root}}
 	ui.windows = []*desktopUI{ui}
@@ -467,8 +471,9 @@ func runDesktop(backend *agent.App, root, asked string) {
 	ui.updateHeader()
 	ui.renderChats()
 	benchMark("sidebar rendered")
+	ui.loadKeys()
 	ui.refreshModels()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 	// What the first frame does not show starts right after it (#475): the
 	// phone remote (its certificate), the linked servers, the update check
 	// and the other windows of the last run.
@@ -1012,7 +1017,6 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		ui.approvalMenu()
 	})
 	ui.updateApprovalControl()
-	ui.contextRing = newContextRing(ui.tips)
 	ui.attach = newIconButton(iconPlus, overlay(0x0d), color.NRGBA{}, nil)
 	ui.attach.iconPx, ui.attach.padPx = 18, 6
 	ui.attach.onTap = func() {
@@ -1038,7 +1042,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	// last: Steer and Stop come and go in the free space between the two,
 	// so nothing else moves when a task starts or ends.
 	ui.model.row.truncate = true // a long model name is cut short rather than pushed out of the card
-	settings := container.New(composerSettingsLayout{model: ui.model.row}, container.NewCenter(ui.approvalControl), ui.model.row, ui.contextRing)
+	settings := container.New(composerSettingsLayout{model: ui.model.row}, container.NewCenter(ui.approvalControl), ui.model.row)
 	actions := container.New(composerActionsLayout{}, ui.steer, ui.stop, ui.send)
 	ui.controls = container.New(&composerControlsLayout{}, settings, actions)
 	ui.model.relayout = ui.controls.Refresh
@@ -1183,7 +1187,7 @@ func (ui *desktopUI) startNew() {
 	ui.mark.intro()
 	ui.updateHeader()
 	ui.renderChats()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 	ui.window.Canvas().Focus(ui.prompt)
 }
 
@@ -1430,7 +1434,7 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 		return
 	}
 	ui.syncRun()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 	// The closed ring stays briefly under the answer, then goes away.
 	ui.showActivityLine(true)
 	ui.workMark.setState(ended)
@@ -2110,6 +2114,12 @@ func (ui *desktopUI) refreshModels() {
 	for id, key := range ui.keys {
 		keys[id] = key
 	}
+	keyProblems := map[string]string{}
+	for _, conn := range connections {
+		if problem := ui.keyProblem(conn); problem != "" {
+			keyProblems[conn.ID] = problem
+		}
+	}
 	ui.model.Disable()
 	ui.model.placeholder = "Loading models…"
 	ui.model.ClearSelected()
@@ -2123,7 +2133,7 @@ func (ui *desktopUI) refreshModels() {
 		results := make([]result, len(connections))
 		var wg sync.WaitGroup
 		for i, conn := range connections {
-			if !conn.Enabled {
+			if !conn.Enabled || keyProblems[conn.ID] != "" { // no request bound to fail with a 401
 				continue
 			}
 			wg.Add(1)
@@ -2156,6 +2166,10 @@ func (ui *desktopUI) refreshModels() {
 			var options []string
 			selected := ""
 			for i, result := range results {
+				if problem := keyProblems[connections[i].ID]; problem != "" && connections[i].Enabled {
+					ui.modelUnavailable[connections[i].ID] = problem
+					continue
+				}
 				if result.err != nil {
 					problem := "Models unavailable"
 					if agent.CLIHarness(connections[i].Provider) {
@@ -2207,6 +2221,9 @@ func (ui *desktopUI) refreshModels() {
 			if len(options) == 0 {
 				ui.cfg.Model = ""
 				ui.model.placeholder = "No model available"
+				if conn, ok := ui.keyNeededConnection(); ok {
+					ui.model.placeholder = conn.Name + " needs its API key again"
+				}
 				ui.model.refresh()
 				return
 			}
@@ -2215,7 +2232,7 @@ func (ui *desktopUI) refreshModels() {
 			}
 			ui.model.SetSelected(selected)
 			ui.send.Enable()
-			ui.refreshContextRing()
+			ui.refreshContextUsage()
 		})
 	}()
 }
@@ -2268,6 +2285,9 @@ type savedState struct {
 	ProjectThemes map[string]string `json:"projectThemes,omitempty"`
 	// The Shader background setting; 30 fps when unset.
 	ShaderFPS string `json:"shaderFPS,omitempty"`
+	// The connections that had an API key, kept in the secret store
+	// (connection_keys.go): never the keys themselves.
+	KeyedConnections []string `json:"keyedConnections,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -2282,39 +2302,25 @@ func (ui *desktopUI) save() {
 func (ui *desktopUI) saveNow() { ui.persist(false) }
 
 // writeChats writes the state: head before the chats, the chats as a JSON
-// list, one encoded at a time, and the rest of the head. written counts the
-// bytes.
+// list, message by message (agent.WriteChatJSON), and the rest of the head.
+// written counts the bytes. It is what json.Marshal makes of the whole,
+// which a chat of 200 MB took a gigabyte to encode, at every save.
 func writeChats(w io.Writer, written *int64, before []byte, chats []*conversation, after []byte) error {
-	put := func(b []byte) error {
-		n, err := w.Write(b)
-		*written += int64(n)
-		return err
-	}
-	if err := put(before); err != nil {
-		return err
-	}
-	if err := put([]byte(`"chats":[`)); err != nil {
-		return err
-	}
+	writer := core.NewJSONWriter(w)
+	writer.Raw(before)
+	writer.Raw([]byte(`"chats":[`))
 	for i, chat := range chats {
-		chat.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
-		data, err := json.Marshal(chat)
-		if err != nil {
-			return err
-		}
 		if i > 0 {
-			if err := put([]byte{','}); err != nil {
-				return err
-			}
+			writer.Raw([]byte{','})
 		}
-		if err := put(data); err != nil {
-			return err
-		}
+		copied := *chat
+		copied.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
+		agent.WriteChatJSON(writer, &copied, &copied.History, &copied.Items, &copied.Versions)
 	}
-	if err := put([]byte{']'}); err != nil {
-		return err
-	}
-	return put(after)
+	writer.Raw([]byte{']'})
+	writer.Raw(after)
+	*written += writer.Written
+	return writer.Err()
 }
 
 // persist writes the state file. The conversations are nearly all of it
@@ -2382,6 +2388,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.savedLayout(),
 		ui.projectThemes,
 		shaderFPSSaved(),
+		ui.keyedList(),
 	})
 	for _, view := range ui.allPanes() {
 		if view.panel != nil {
@@ -2405,9 +2412,9 @@ func (ui *desktopUI) persist(wait bool) {
 		}
 		ui.saveDone = count
 		// The chats go into the place the head keeps for them, encoded and
-		// written one at a time: the whole list encoded at once was a buffer
-		// the size of the file (100 MB with long conversations), grown by
-		// doubling, at every save (#476).
+		// written message by message: the whole list encoded at once, or one
+		// long chat, was a buffer the size of the file (200 MB with many
+		// pictures), grown by doubling, at every save (#476).
 		var written int64
 		before, after, found := bytes.Cut(head, []byte(`"chats":null`))
 		if err == nil && !found {
@@ -2450,9 +2457,44 @@ func (ui *desktopUI) load() {
 // it (a large state takes a few hundred milliseconds): it touches nothing
 // else, so it can run while the window is being created.
 func readSavedState(path string) (state savedState, err error) {
+	if state, err = streamSavedState(path); err == nil || os.IsNotExist(err) {
+		return state, err
+	}
+	// What is wrong with it is encoding/json's to say, from the whole file.
 	data, err := os.ReadFile(path)
+	state = savedState{}
 	if err == nil {
 		err = json.Unmarshal(data, &state)
+	}
+	return state, err
+}
+
+// streamSavedState reads the state message by message: read whole and then
+// decoded, it was twice in memory, and stayed there for minutes. A picture
+// or a text found several times is kept once.
+func streamSavedState(path string) (state savedState, err error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return state, err
+	}
+	defer file.Close()
+	reader := core.NewJSONReader(file)
+	rest, err := reader.Object(map[string]func() error{"chats": func() (err error) {
+		state.Chats, err = core.ReadJSONList(reader, func(read **conversation) error {
+			chat := &conversation{}
+			null, err := agent.ReadChatJSON(reader, chat, &chat.History, &chat.Items, &chat.Versions)
+			if !null {
+				*read = chat
+			}
+			return err
+		})
+		return err
+	}})
+	if err == nil && rest != nil {
+		err = json.Unmarshal(rest, &state)
+	}
+	if err == nil {
+		err = reader.End()
 	}
 	return state, err
 }
@@ -2524,6 +2566,9 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 		ui.cfg.MachineID, ui.cfg.Workspace = "", ui.lastLocalWorkspace()
 	}
 	ui.connectionsList = state.Connections
+	for _, id := range state.KeyedConnections {
+		ui.keyed[id] = true
+	}
 	ui.userInstructions = state.UserInstructions
 	ui.approvalMode = state.ApprovalMode
 	ui.classicCompaction = state.ClassicCompaction

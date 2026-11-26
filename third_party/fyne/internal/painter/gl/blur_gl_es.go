@@ -30,6 +30,15 @@ func (c *esContext) FramebufferTexture(texture Texture) bool {
 	return gl.CheckFramebufferStatus(gl.FRAMEBUFFER) == gl.FRAMEBUFFER_COMPLETE
 }
 
+// BlitToWindow copies framebuffer fb into the window's (1loop: the
+// retained frame, retained.go).
+func (c *esContext) BlitToWindow(fb uint32, width, height int) {
+	gl.BindFramebuffer(gl.READ_FRAMEBUFFER, fb)
+	gl.BindFramebuffer(gl.DRAW_FRAMEBUFFER, 0)
+	gl.BlitFramebuffer(0, 0, int32(width), int32(height), 0, 0, int32(width), int32(height), gl.COLOR_BUFFER_BIT, gl.NEAREST)
+	gl.BindFramebuffer(gl.FRAMEBUFFER, 0)
+}
+
 func (c *esContext) FramebufferBinding() uint32 {
 	var fb int32
 	gl.GetIntegerv(gl.FRAMEBUFFER_BINDING, &fb)

@@ -621,6 +621,9 @@ type tapRowRenderer struct {
 	markedBy fyne.Resource // the mark's resource, as tinted
 	markTint color.NRGBA
 	markText *canvas.Text // row.markText
+
+	objects []fyne.CanvasObject // Objects, kept while the row has the same parts
+	parts   [3]bool             // icon, badge, mark: what objects was made with
 }
 
 // The mark after a row's text: its size, the gap before it, and the room
@@ -1044,17 +1047,24 @@ func (renderer *tapRowRenderer) Refresh() {
 	renderer.markText.Refresh()
 }
 
+// Objects are made again only when the row gains or loses a part: Fyne
+// asks for them at every walk of the window, several times a frame (#474).
 func (renderer *tapRowRenderer) Objects() []fyne.CanvasObject {
+	parts := [3]bool{renderer.row.icon != nil, renderer.row.badge != nil, renderer.row.mark != nil}
+	if renderer.objects != nil && parts == renderer.parts {
+		return renderer.objects
+	}
 	objects := []fyne.CanvasObject{renderer.bg, renderer.label, renderer.trailing, renderer.detail}
-	if renderer.row.icon != nil {
+	if parts[0] {
 		objects = append(objects, renderer.icon)
 	}
-	if renderer.row.badge != nil {
+	if parts[1] {
 		objects = append(objects, renderer.badge)
 	}
-	if renderer.row.mark != nil {
+	if parts[2] {
 		objects = append(objects, renderer.mark, renderer.markText)
 	}
+	renderer.objects, renderer.parts = objects, parts
 	return objects
 }
 

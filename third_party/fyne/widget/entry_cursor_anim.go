@@ -39,27 +39,38 @@ func newEntryCursorAnimation(cursor *canvas.Rectangle) *entryCursorAnimation {
 
 // creates fyne animation
 func (a *entryCursorAnimation) createAnim(inverted bool) *fyne.Animation {
-	cursorOpaque := theme.Color(theme.ColorNamePrimary)
-	ri, gi, bi, ai := col.ToNRGBA(cursorOpaque)
-	r := uint8(ri >> 8)
-	g := uint8(gi >> 8)
-	b := uint8(bi >> 8)
-	endA := uint8(ai >> 8)
-	startA := cursorFadeAlpha
-	cursorDim := color.NRGBA{R: r, G: g, B: b, A: cursorFadeAlpha}
+	var cursorOpaque, cursorDim color.Color
+	var r, g, b, startA, endA, deltaA uint8
+	// 1loop: read again when the accent changes, which no longer sets the
+	// theme again (driver.Recoloured): the caret blinked in the old one.
+	colours := func(primary color.Color) {
+		cursorOpaque = primary
+		ri, gi, bi, ai := col.ToNRGBA(cursorOpaque)
+		r = uint8(ri >> 8)
+		g = uint8(gi >> 8)
+		b = uint8(bi >> 8)
+		endA = uint8(ai >> 8)
+		startA = cursorFadeAlpha
+		cursorDim = color.NRGBA{R: r, G: g, B: b, A: cursorFadeAlpha}
+		if inverted {
+			startA, endA = endA, startA
+		}
+		deltaA = endA - startA
+	}
+	colours(theme.Color(theme.ColorNamePrimary))
 	if inverted {
 		a.cursor.FillColor = cursorOpaque
-		startA, endA = endA, startA
 	} else {
 		a.cursor.FillColor = cursorDim
 	}
-
-	deltaA := endA - startA
 	fadeStart := float32(0.5 - cursorFadeRatio)
 	fadeStop := float32(0.5 + cursorFadeRatio)
 
 	interrupted := false
 	anim := fyne.NewAnimation(time.Second/2, func(f float32) {
+		if primary := theme.Color(theme.ColorNamePrimary); primary != cursorOpaque {
+			colours(primary) // 1loop
+		}
 		since := timeNow().Sub(a.lastInterruptTime)
 		if since > cursorBlinkFor || (CaretBlinks != nil && !CaretBlinks()) {
 			// Solid until the next key: the animation stops, so the

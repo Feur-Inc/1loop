@@ -81,3 +81,59 @@ shows every change.
   has a plain glyph for (a few faces and the heart, in Inter) is drawn with
   the colour emoji font; and on Linux that font is also looked for by its
   family, for the query by language could answer with a text font.
+- `driver/frametimes.go` (`TurnHook`, `Refreshes`, `KeepFonts`),
+  `internal/driver/glfw/loop.go`, `canvas/canvas.go`,
+  `widget/entry_cursor_anim.go`, `internal/cache/base.go`, `theme.go`
+  (#474, from #489): 1loop's frame hook runs at each turn of the loop
+  instead of as a never-ending animation; `canvas.Refresh` counts the
+  refreshes asked (the hook's safety redraw only follows a window that
+  changed); the caret stops blinking 10 s after the last key or focus, and
+  stays solid with Animations off (`widget.CaretBlinks`); with `KeepFonts`
+  a theme set again keeps the shaped text, and `ThemeOverride` resets the
+  themed icons once per apply instead of every cache once per widget
+  (`cache.ResetThemeColourCaches`).
+- `internal/cache/canvases.go` (#474): `SetCanvasForObject` renews an
+  entry already there in place. It kept it as it was (`LoadOrStore`), so
+  the entries of objects nobody refreshed expired after a minute of frames,
+  and it allocated an entry per object per frame only to drop it. 1loop
+  walked the whole window every 5 s to renew them; it no longer does.
+- `internal/painter/gl/retained.go`, `blur_gl_core.go`, `blur_gl_es.go`
+  (`BlitToWindow`), `painter.go`, `internal/driver/glfw/damage.go`,
+  `canvas.go` (`paintArea`), `loop.go` (`repaintWindow`),
+  `internal/driver/common/canvas.go` (`TakeDamage`, `MaxDamaged`),
+  `driver/partialframes.go` (#474): the retained frame. A frame is painted
+  into a texture kept from one frame to the next and blitted into the
+  window (GL 3 / GL ES 3; elsewhere painted straight into the window as
+  before). When the only objects refreshed since the last frame are a few
+  small shapes (rectangles, circles, lines: the caret) found in the window
+  and not under a blur, the next frame clears and paints only their area,
+  every clip within it and shapes far from it skipped; `SetDirty` (moves,
+  resizes, layouts) and any other refresh paint the frame whole. Frames
+  closer than 50 ms apart that follow a whole one (a shader, a scroll) are
+  painted straight into the window: the blit costs a pass over it, 2 ms a
+  frame on llvmpipe. `driver.PartialFrames` counts the frames painted in
+  part. A clip outside the area is empty (`StartClipping` takes no
+  negative size).
+- `internal/driver/glfw/window_desktop.go` (`InFront`, #474): a window
+  says whether it has the keyboard focus and is not minimised, from its own
+  focus and iconify events, whichever window of the app had the focus
+  before; 1loop's shader background pauses otherwise.
+- `driver/recoloured.go`, `internal/driver/glfw/loop.go` (`recoloured`),
+  `internal/cache/texture_common.go` (`TextureCanvas`) (#474): a change of
+  colours with the fonts kept is told to the driver instead of setting the
+  theme again, which laid out and refreshed every object and so dropped
+  every texture (each picture resampled on the CPU). The driver clears the
+  themed icons, drops the textures of the objects it is given and paints
+  the windows again. `widget/entry_cursor_anim.go`: the caret's blink reads
+  the primary colour again when it changes.
+- `minsize_memo.go`, `internal/painter/gl/floats.go`, `draw.go`,
+  `gl_core.go`, `gl_es.go` (#474): fewer allocations per frame. The
+  minimum-size memory's map is emptied and used again instead of made at
+  each frame and each layout; vertex data goes through one buffer per
+  painter, uploaded without `gl.Ptr` (which boxed each slice). `geometry.go`
+  (`Size.Larger`), `container.go`, `layout/{stack,custompadded,padded,center,
+  grid,border}layout.go`: a child's minimum size is compared without
+  `Size.Max`, whose `Vector2` parameter put the size on the heap, once per
+  child per frame; `RememberedMinSize`/`RememberMinSize` replace
+  `MemoMinSize`, which took the computation as a method value. A full frame
+  of the audit's state: 4,499 → 121 allocations.

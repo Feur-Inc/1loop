@@ -71,13 +71,18 @@ func (w *BaseWidget) Move(pos fyne.Position) {
 // MinSize for the widget - it should never be resized below this value.
 func (w *BaseWidget) MinSize() fyne.Size {
 	impl := w.super()
+	if size, ok := fyne.RememberedMinSize(impl); ok {
+		return size
+	}
 
 	r := cache.Renderer(impl)
 	if r == nil {
 		return fyne.Size{}
 	}
 
-	return fyne.MemoMinSize(impl, r.MinSize)
+	size := r.MinSize()
+	fyne.RememberMinSize(impl, size)
+	return size
 }
 
 // Visible returns whether or not this widget should be visible.

@@ -32,12 +32,22 @@ func (ui *desktopUI) watchPointer() {
 		}
 		x, y := pixelAt(e.Canvas, e.Position)
 		held := e.Button != 0
+		next := at
 		if held && !at.held {
-			at.pressX, at.pressY = x, y
+			next.pressX, next.pressY = x, y
 		}
-		at.x, at.y, at.held, at.inside, at.seen = x, y, held, e.Inside, true
+		next.x, next.y, next.held, next.inside, next.seen = x, y, held, e.Inside, true
+		if next == at {
+			return // the same as drawn: nothing to draw again (#474)
+		}
+		at = next
 		setMouseUniforms(b.shader, at)
-		b.shader.Refresh()
+		// While the shader animates its next frame shows the pointer; a
+		// still one (Animations off) is drawn again for it. Behind another
+		// window it waits for the focus, like the animation (#474).
+		if animationsOff && !ui.backdropPaused() {
+			b.shader.Refresh()
+		}
 	}
 }
 

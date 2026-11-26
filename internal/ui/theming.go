@@ -138,8 +138,17 @@ func (changed recolour) of(c color.NRGBA) color.NRGBA {
 }
 
 func (changed recolour) any(c color.Color) color.Color {
-	if n, ok := c.(color.NRGBA); ok {
+	switch n := c.(type) {
+	case color.NRGBA:
 		return changed.of(n)
+	case color.RGBA:
+		// Where a colour animation left it (canvas.NewColorRGBAAnimation):
+		// the composer's outline kept the old theme's until its next focus.
+		if n.A == 0xff {
+			if next := changed.of(color.NRGBA{R: n.R, G: n.G, B: n.B, A: 0xff}); next != (color.NRGBA{R: n.R, G: n.G, B: n.B, A: 0xff}) {
+				return next
+			}
+		}
 	}
 	return c
 }
@@ -175,7 +184,25 @@ func repaint(changed recolour, fontsChanged bool) {
 	if app == nil {
 		return
 	}
+	// Without the theme set again (#474): the pictures drawn in a colour
+	// that changed lose their texture, and the widgets are refreshed, which
+	// work out their colours again (from the theme, mixed with hovers and
+	// fades). Fyne's ApplyThemeTo also refreshed every container and
+	// picture, and laid them all out.
+	recoloured := fynedriver.Recoloured
+	var stale []fyne.CanvasObject
+	var widgets []fyne.Widget
+	fresh := map[color.NRGBA]bool{} // the colours some token takes now
+	for was, next := range changed {
+		if next != was {
+			fresh[next] = true
+		}
+	}
+	themed, variant := app.Settings().Theme(), app.Settings().ThemeVariant()
 	paint := func(object fyne.CanvasObject) {
+		if w, ok := object.(fyne.Widget); ok && recoloured != nil {
+			widgets = append(widgets, w)
+		}
 		switch o := object.(type) {
 		case *canvas.Rectangle:
 			o.FillColor, o.StrokeColor = changed.any(o.FillColor), changed.any(o.StrokeColor)
@@ -188,11 +215,20 @@ func repaint(changed recolour, fontsChanged bool) {
 		case *canvas.Arc:
 			o.FillColor, o.StrokeColor = changed.any(o.FillColor), changed.any(o.StrokeColor)
 		case *canvas.LinearGradient:
-			o.StartColor, o.EndColor = changed.any(o.StartColor), changed.any(o.EndColor)
+			start, end := changed.any(o.StartColor), changed.any(o.EndColor)
+			if start != o.StartColor || end != o.EndColor {
+				o.StartColor, o.EndColor = start, end
+				stale = append(stale, o)
+			}
 		case *canvas.Image:
 			if from, ok := tintedFrom[o.Resource]; ok {
 				if next := changed.of(from.ink); next != from.ink {
 					o.Resource = tinted(from.icon, next)
+					stale = append(stale, o)
+				}
+			} else if icon, ok := o.Resource.(fyne.ThemedResource); ok {
+				if ink, ok := themed.Color(icon.ThemeColorName(), variant).(color.NRGBA); ok && fresh[ink] {
+					stale = append(stale, o) // drawn in the theme's colour of the moment
 				}
 			}
 		case repaintable:
@@ -206,6 +242,14 @@ func repaint(changed recolour, fontsChanged bool) {
 		for _, root := range objects {
 			fynedriver.WalkObjects(root, paint)
 		}
+	}
+	if recoloured != nil && !fontsChanged {
+		// Texts need nothing more: Fyne keeps their textures by colour.
+		recoloured(stale)
+		for _, w := range widgets {
+			w.Refresh()
+		}
+		return
 	}
 	// Fyne's own widgets read the theme: setting it again draws every
 	// window anew. When the fonts are the same, the text already shaped is

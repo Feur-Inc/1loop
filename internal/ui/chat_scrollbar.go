@@ -246,4 +246,12 @@ func (layoutSpec chatBarLayout) Layout(objects []fyne.CanvasObject, size fyne.Si
 	if bar, ok := objects[1].(*chatScrollBar); ok {
 		bar.sync()
 	}
+	if len(objects) > 2 { // the arrow back to the end, centred above the composer (#605)
+		footer := float32(0)
+		if layoutSpec.footer != nil {
+			footer = layoutSpec.footer.MinSize().Height
+		}
+		objects[2].Resize(fyne.NewSize(jumpEndSize, jumpEndSize))
+		objects[2].Move(fyne.NewPos((size.Width-jumpEndSize)/2, size.Height-footer-jumpEndGap-jumpEndSize))
+	}
 }

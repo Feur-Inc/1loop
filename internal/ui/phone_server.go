@@ -41,7 +41,6 @@ package ui
 
 import (
 	"bytes"
-	"crypto/subtle"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -275,21 +274,7 @@ func (server *remoteServer) answerDiscovery() {
 // authorized lets a request through only with a paired device's token.
 func (server *remoteServer) authorized(next http.HandlerFunc) http.HandlerFunc {
 	return func(writer http.ResponseWriter, req *http.Request) {
-		token := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
-		if token == "" || token == req.Header.Get("Authorization") {
-			core.Fail(writer, http.StatusUnauthorized, "This phone is not paired with 1loop")
-			return
-		}
-		hash := remoteapi.TokenHash(token)
-		ok := false
-		server.onUI(func() {
-			for _, pairedDevice := range server.ui.devices {
-				if subtle.ConstantTimeCompare([]byte(pairedDevice.TokenHash), []byte(hash)) == 1 {
-					ok = true
-				}
-			}
-		})
-		if !ok {
+		if !server.ui.tokens.Allows(remoteapi.RequestTokenHash(req)) { // no UI hop (#518)
 			core.Fail(writer, http.StatusUnauthorized, "This phone is not paired with 1loop")
 			return
 		}
@@ -359,7 +344,7 @@ func (server *remoteServer) confirmPair(writer http.ResponseWriter, req *http.Re
 			return
 		}
 		token = core.Identifier()
-		server.ui.devices = append(server.ui.devices, remoteapi.PairedDevice{Name: paired.Device, TokenHash: remoteapi.TokenHash(token), Added: time.Now()})
+		server.ui.setDevices(append(server.ui.devices, remoteapi.PairedDevice{Name: paired.Device, TokenHash: remoteapi.TokenHash(token), Added: time.Now()}))
 		server.ui.save()
 		if server.ui.prefs.on("Phone") {
 			server.ui.prefs.show("Phone")
@@ -1413,7 +1398,7 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 		name := pairedDevice.Name
 		remove := newRow("Forget", iconTrash, styleChip, func() {
 			ui.confirm("Forget "+name+"?", name+" is unpaired from this computer: its access stops at once, and it must be paired again to use 1loop here.", "Forget", func() { // #428
-				ui.devices = append(ui.devices[:i], ui.devices[i+1:]...)
+				ui.setDevices(slices.Delete(slices.Clone(ui.devices), i, i+1))
 				ui.save()
 				if ui.remote != nil {
 					ui.remote.disconnectAll()
@@ -1438,6 +1423,13 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 	page.Add(sectionTitle("Paired phones"))
 	page.Add(view.mark("phone.pairing", card(phones...)))
 	return page
+}
+
+// setDevices changes the paired phones (UI thread) and the tokens the
+// remote checks every request against.
+func (ui *desktopUI) setDevices(devices []remoteapi.PairedDevice) {
+	ui.devices = devices
+	ui.tokens.Set(devices)
 }
 
 // remoteDefaults gives conversations saved before the remote an id.

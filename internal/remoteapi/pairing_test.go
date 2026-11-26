@@ -5,6 +5,8 @@ package remoteapi
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
@@ -268,4 +270,29 @@ func TestPairingConcurrent(t *testing.T) {
 		}()
 	}
 	wait.Wait()
+}
+
+// A token is checked against the paired devices without any other lock.
+func TestTokens(t *testing.T) {
+	var tokens Tokens
+	request := func(header string) *http.Request {
+		req := httptest.NewRequest("GET", "/api/state", nil)
+		if header != "" {
+			req.Header.Set("Authorization", header)
+		}
+		return req
+	}
+	if tokens.Allows(RequestTokenHash(request(""))) {
+		t.Fatal("no token allowed")
+	}
+	tokens.Set([]PairedDevice{{Name: "Pixel", TokenHash: TokenHash("secret")}})
+	for header, want := range map[string]bool{"Bearer secret": true, "Bearer other": false, "secret": false, "Bearer ": false, "": false} {
+		if got := tokens.Allows(RequestTokenHash(request(header))); got != want {
+			t.Errorf("%q: %v", header, got)
+		}
+	}
+	tokens.Set(nil)
+	if tokens.Allows(TokenHash("secret")) {
+		t.Fatal("a forgotten device still allowed")
+	}
 }

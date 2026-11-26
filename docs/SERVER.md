@@ -46,6 +46,31 @@ use `0700`. Keep that directory outside Git and back it up privately. The
 server's workspace is fixed by `-workspace`: clients cannot select another
 server-side project directory through the remote API.
 
+### Run it as a systemd service
+
+[`packaging/server/1loop-server.service`](../packaging/server/1loop-server.service)
+runs the server at boot and restarts it when it fails. Copy it to
+`/etc/systemd/system/`, set its `User`, paths and arguments, then
+`sudo systemctl daemon-reload && sudo systemctl enable --now 1loop-server`.
+
+On a small machine, builds and tests the agents run can fill the memory. The
+unit's `OOMScoreAdjust=-500` and the `oom_score_adj` of 500 that 1loop gives
+every process it starts for its agents (Claude Code, agy, shell commands,
+background tasks, terminals, and what they start in turn) make the kernel's
+out-of-memory killer pick that build, not the server and every chat with it.
+To add it to a unit you already have: `sudo systemctl edit 1loop-server`, then
+
+```ini
+[Service]
+OOMScoreAdjust=-500
+```
+
+When the server restarts all the same (a crash, a reboot, an update), a turn
+it cut off says *Interrupted: the server restarted*. A subchat working in
+Claude Code or Antigravity resumes in its session, once; the chats it was to
+report to, its parent always, are told, with its last answer. Other chats
+wait for a message to continue.
+
 ## Docker
 
 The image `ghcr.io/feur-inc/1loop-server` holds the server with Bash, Git,

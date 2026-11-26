@@ -170,6 +170,7 @@ func runHooks(ctx context.Context, event, target string, payload map[string]any)
 						result.problems = append(result.problems, fmt.Sprintf("Hook %q failed (%s): %s", hook.Command, event, err))
 						continue
 					}
+					platform.OOMFirst(cmd)
 					go func() {
 						err := cmd.Wait()
 						cancel()

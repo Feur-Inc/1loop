@@ -607,7 +607,11 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		cmd.Stdout = io.MultiWriter(&capture.stdout, output)
 		cmd.Stderr = io.MultiWriter(&capture.stderr, output)
 		stop := output.stream(call.ID, emit)
-		err := cmd.Run()
+		err := cmd.Start()
+		if err == nil {
+			platform.OOMFirst(cmd) // a build that fills the memory goes before 1loop (#584)
+			err = cmd.Wait()
+		}
 		stop()
 		code := -1
 		if cmd.ProcessState != nil {

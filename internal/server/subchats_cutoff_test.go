@@ -214,7 +214,9 @@ func TestSubchatReportsAreNotDropped(t *testing.T) {
 	parent := &serverChat{ID: "parent", Title: "Main", Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}, Config: cfg}
 	sub := &serverChat{ID: "sub", Title: "Fix parser", Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}, Config: cfg,
 		Subchat: &agent.SubchatLink{Parent: "parent"}, ReportTo: []string{"parent"}}
-	reports := func(state string) int { return countNotes(parent, "Subchat sub “Fix parser” ended its turn: "+state) }
+	reports := func(state string) int {
+		return countNotes(parent, "Subchat sub “Fix parser” ended its turn: "+state)
+	}
 	idle := func() bool { return parent.run == nil && sub.run == nil }
 
 	server.mu.Lock()

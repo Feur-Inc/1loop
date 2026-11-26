@@ -75,6 +75,7 @@ func startClaudeProcess(cmd *exec.Cmd, key string, binding *todoMCPBinding, clea
 		process.release()
 		return nil, err
 	}
+	platform.OOMFirst(cmd) // it, its tools and builds go before 1loop when memory runs out (#584)
 	go func() {
 		scanner := bufio.NewScanner(stdout)
 		scanner.Buffer(make([]byte, 64<<10), 64<<20)

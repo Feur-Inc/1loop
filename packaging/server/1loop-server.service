@@ -1,0 +1,24 @@
+# SPDX-License-Identifier: MPL-2.0
+# The headless 1loop server as a systemd service (docs/SERVER.md#run-it-as-a-systemd-service).
+# Copy it to /etc/systemd/system/, set User, the paths and the arguments, then:
+#
+#   sudo systemctl daemon-reload && sudo systemctl enable --now 1loop-server
+#   journalctl -u 1loop-server        # the certificate's fingerprint, the setup link
+[Unit]
+Description=1loop server
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=oneloop
+WorkingDirectory=/home/oneloop
+ExecStart=/home/oneloop/bin/1loop-server -workspace /home/oneloop/projects -listen :47101
+Restart=on-failure
+RestartSec=5
+# When the memory runs out, the kernel kills the agents' processes first
+# (1loop starts them with oom_score_adj 500: Claude Code, agy, their
+# commands and builds), not the server and every chat with it.
+OOMScoreAdjust=-500
+
+[Install]
+WantedBy=multi-user.target

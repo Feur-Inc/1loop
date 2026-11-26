@@ -60,12 +60,12 @@ type serverChat struct {
 	Working bool `json:"working,omitempty"`
 	// Resumed: 1loop resumed the chat after a restart cut its turn off,
 	// and that turn has not ended yet: cut off again, it waits for a message.
-	Resumed      bool `json:"resumed,omitempty"`
-	hops         int  // messages between chats since the user last wrote (agent.TurnHops)
-	run          *serverRun
-	moving       bool // paused to move to another device: it starts nothing (chat_move.go)
-	tabs         []*serverTab
-	session      *browser.Session
+	Resumed       bool `json:"resumed,omitempty"`
+	hops          int  // messages between chats since the user last wrote (agent.TurnHops)
+	run           *serverRun
+	moving        bool // paused to move to another device: it starts nothing (chat_move.go)
+	tabs          []*serverTab
+	session       *browser.Session
 	queue, steer  []agent.Message
 	queuedSubchat *agent.Message  // initial brief waiting in server.subchatQueue (#649)
 	queuedReason  string          // why queuedSubchat is waiting (#649)
@@ -141,11 +141,11 @@ type headlessServer struct {
 	keys                       map[string]string
 	instructions, approvalMode string
 	classic                    bool
-	memoryOff                  bool                   // the agent's memory tool turned off
-	wrapUpOff                  bool                   // the next-step card (wrap_up tool) turned off
-	autoResume                 *agent.AutoResume      // what a rate limit does to a run, for every chat
-	namingModel                *agent.NamingModel     // the model that names new chats, nil for none
-	maxSubchats                int                    // 0 = automatic from machine memory (#649)
+	memoryOff                  bool               // the agent's memory tool turned off
+	wrapUpOff                  bool               // the next-step card (wrap_up tool) turned off
+	autoResume                 *agent.AutoResume  // what a rate limit does to a run, for every chat
+	namingModel                *agent.NamingModel // the model that names new chats, nil for none
+	maxSubchats                int                // 0 = automatic from machine memory (#649)
 	readMemory                 func() platform.MemoryStatus
 	subchatQueue               []*serverChat // subchats waiting for a slot or memory (#649)
 	subchatQueueTimer          *time.Timer
@@ -207,20 +207,20 @@ type serverEvent struct {
 func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*headlessServer, error) {
 	host, _ := os.Hostname()
 	server := &headlessServer{
-		ctx:          ctx,
-		name:         host,
-		root:         root,
-		dir:          dir,
-		usage:        usage.Open(filepath.Join(dir, "usage.jsonl")),
-		prices:       usage.OpenPrices(filepath.Join(dir, "usage-prices.json")),
-		backend:      &agent.App{Approvals: map[string]chan agent.ApprovalAnswer{}},
-		keys:         map[string]string{},
-		pairs:        map[string]*serverPair{},
-		subs:         map[chan serverEvent]bool{},
-		streams:      map[chan struct{}]bool{},
-		choices:      map[string]agent.ModelChoice{},
-		approvalMode: "approval",
-		loading:      true,
+		ctx:              ctx,
+		name:             host,
+		root:             root,
+		dir:              dir,
+		usage:            usage.Open(filepath.Join(dir, "usage.jsonl")),
+		prices:           usage.OpenPrices(filepath.Join(dir, "usage-prices.json")),
+		backend:          &agent.App{Approvals: map[string]chan agent.ApprovalAnswer{}},
+		keys:             map[string]string{},
+		pairs:            map[string]*serverPair{},
+		subs:             map[chan serverEvent]bool{},
+		streams:          map[chan struct{}]bool{},
+		choices:          map[string]agent.ModelChoice{},
+		approvalMode:     "approval",
+		loading:          true,
 		trust:            &hostTrust{out: os.Stderr},
 		cfg:              agent.Config{Provider: "compatible", Workspace: root},
 		readMemory:       platform.ReadMemory,

@@ -630,15 +630,14 @@ func inside(root, relative string) (string, error) {
 		return "", fmt.Errorf("invalid path in the copy: %q", relative)
 	}
 	target := filepath.Join(root, filepath.FromSlash(clean))
-	rel, err := filepath.Rel(root, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	// No link on the way may lead outside the project: its folder is
+	// resolved as agent.WorkspacePath does (core.NewPath). The path itself
+	// is kept as written, so a link of the project is read as a link.
+	if !core.Within(root, target) {
 		return "", fmt.Errorf("invalid path in the copy: %q", relative)
 	}
-	// No link on the way may lead outside the project.
-	for dir := filepath.Dir(target); dir != root && strings.HasPrefix(dir, root); dir = filepath.Dir(dir) {
-		if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("invalid path in the copy: %q", relative)
-		}
+	if _, err := core.NewPath(root, filepath.Dir(target)); err != nil {
+		return "", fmt.Errorf("invalid path in the copy: %q", relative)
 	}
 	return target, nil
 }

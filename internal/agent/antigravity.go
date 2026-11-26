@@ -138,7 +138,7 @@ func agyProcess(ctx context.Context, dir string, args ...string) (*exec.Cmd, err
 // answered by agy without a model turn (no tokens). 1loop still never reads
 // agy's sign-in.
 func agyLimits(ctx context.Context) (AccountLimits, error) {
-	limits := AccountLimits{Note: "Limits not provided"}
+	limits := AccountLimits{Note: NoLimitsNote}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return limits, err
@@ -171,7 +171,7 @@ func agyGroupName(name string) string {
 // parseAgyUsage reads agy's /usage result: model groups, each with its
 // usage windows (5 hours, a week), shortest window first in each group.
 func parseAgyUsage(out []byte) (AccountLimits, error) {
-	limits := AccountLimits{Note: "Limits not provided"}
+	limits := AccountLimits{Note: NoLimitsNote}
 	var result struct {
 		Command struct {
 			Name string `json:"name"`
@@ -607,6 +607,7 @@ func (backend *App) agyProcess(ctx context.Context, cfg Config, session *string,
 	if err := cmd.Start(); err != nil {
 		return outcome, err
 	}
+	platform.OOMFirst(cmd) // it, its tools and builds go before 1loop when memory runs out (#584)
 	defer func() {
 		finish()
 		cmd.Wait()
@@ -650,11 +651,10 @@ func (backend *App) agyProcess(ctx context.Context, cfg Config, session *string,
 	var readErr error // set before lines closes
 	go func() {
 		defer close(lines)
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 64<<10), 64<<20)
+		scanner := core.NewLineReader(stdout, 64<<20)
 		for scanner.Scan() {
 			select {
-			case lines <- append([]byte(nil), scanner.Bytes()...):
+			case lines <- scanner.Bytes():
 			case <-done:
 				io.Copy(io.Discard, stdout)
 				return

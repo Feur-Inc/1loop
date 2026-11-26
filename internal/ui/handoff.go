@@ -165,7 +165,7 @@ func showHandoffDialog(window fyne.Window, plan agent.HandoffPlan, done func(age
 		levelIDs[label] = level.ID
 		levelLabels = append(levelLabels, label)
 	}
-	intro := note(fmt.Sprintf("This conversation last ran with %s. %s starts without its cache: choose how it receives the conversation.", plan.From, plan.To))
+	intro := note(fmt.Sprintf("Last run with %s. %s starts without its cache: pick how it gets it.", plan.From, plan.To))
 	recommended := note("Recommended by 1loop: " + plan.Reason)
 	asIs := note(plan.AsIsNote)
 	summarizerNote, levelNote, problem := note(""), note(""), note("")

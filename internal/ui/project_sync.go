@@ -219,7 +219,7 @@ func (remote *remoteDesktop) copyProject() {
 	toHere := newRow("Bring “"+filepath.Base(serverProject)+"” to this computer", nil, styleOutline, func() { run(true, true) })
 	toServer := newRow("Send “"+filepath.Base(localProject)+"” to the server", nil, styleOutline, func() { run(false, true) })
 	body := container.NewVBox(
-		note("Copies the project's files and its conversations. Each copy sends only what changed since the last one; what changed on both sides is kept twice, and a file deleted on one side goes to the other side's trash. Local credentials, .env files, private keys and generated caches are excluded. Links are not copied. Compare again after an interruption to retry only what is still missing."),
+		note("Copies the project's files and chats. Only changes are sent."),
 		toHere, toServer, status)
 	dialog = showModal(remote.window.Canvas(), "Copy project", body, 620, nil)
 }

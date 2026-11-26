@@ -29,7 +29,7 @@ func browserUI(t *testing.T) *desktopUI {
 	ui := &desktopUI{desktopApp: &desktopApp{ctx: context.Background(), home: testServer, foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}}}
 	ui.sideGlide = newGlideLayout()
 	ui.projectList = container.New(ui.sideGlide)
-	ui.server = &remoteDesktop{parent: ui, shown: true, client: &remoteClient{address: serverAddress{URL: testServer}}, name: "box",
+	ui.server = &remoteDesktop{parent: ui, shown: true, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: testServer}}, name: "box",
 		projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "s1", Title: "Home chat", Workspace: "/srv/api"}}, convs: map[string]*conversation{}}
 	ui.links = []*serverLink{
 		{address: serverAddress{URL: testServer, Token: "a"}},
@@ -78,7 +78,7 @@ func TestBrowserKeepsHomeOnALinkedServer(t *testing.T) {
 	ui := browserUI(t)
 	home := ui.server
 	ui.handOver(home)
-	ui.server = &remoteDesktop{parent: ui, shown: true, client: &remoteClient{address: serverAddress{URL: shopServer}}, name: "shop",
+	ui.server = &remoteDesktop{parent: ui, shown: true, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: shopServer}}, name: "shop",
 		projects: []string{"/srv/shop"}, chats: []remoteapi.Chat{{ID: "s2", Title: "Shop chat", Workspace: "/srv/shop"}}, convs: map[string]*conversation{}}
 	if !ui.links[0].answered {
 		t.Fatal("the page's server's link was not handed what the window last read")

@@ -40,7 +40,7 @@ var installers = map[string]func(ctx context.Context, progress func(string)) err
 // installed says whether what an install would add is there already.
 func (server *headlessServer) installed(what string) bool {
 	if what == "chromium" {
-		return server.hasBrowser()
+		return server.ownBrowser() // a lent browser is not the server's
 	}
 	return hasClaudeCode()
 }

@@ -28,9 +28,11 @@ import (
 	fyneapp "fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	fynedriver "fyne.io/fyne/v2/driver"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/lang"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/scrollbar"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -41,6 +43,7 @@ import (
 	"1loop/internal/crash"
 	"1loop/internal/discord"
 	"1loop/internal/extensions"
+	"1loop/internal/keyring"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	registry "1loop/internal/settings"
@@ -81,6 +84,7 @@ type conversation struct {
 	taskCount int         // background tasks last seen: a new one opens the panel on them
 
 	run     *chatRun        // the agent loop working on this chat, if any
+	asking  *questionCard   // the model's questions while they wait, this computer's or a server's (questions.go)
 	moving  bool            // paused to move to another device: it starts nothing (chat_move.go)
 	handoff *pendingHandoff // how the next turn's new model receives the chat
 	queue   []agent.Message // Enter while it runs: the next turns
@@ -108,7 +112,7 @@ type chatRun struct {
 	answer                                     func(agent.ApprovalAnswer)
 	closeReview                                func() // its tab in the side panel (review.go)
 	// The pending questions (request_user_input), for the phone as well.
-	questions       *sheet
+	questions       *questionCard
 	questionID      string
 	questionList    []agent.Question
 	answerQuestions func(map[string]string)
@@ -163,6 +167,11 @@ type desktopUI struct {
 	localCfg         agent.Config    // this computer's settings while a server is the target
 	machine          *tapRow         // the target: this computer, an SSH machine or a server
 	serverStatus     *fitLabel       // the server's state beside it
+	serverBusy       *activityLine   // under the title bar while the server is slow to answer (remote_activity.go)
+	lendBar          *fyne.Container // "the server's agent is using this computer's browser", with Stop (browser_lend.go)
+	lendText         *flowText       // what the bar says
+	lendStatus       *flowText       // the lending's state, on its server's Installs page in Settings
+	lendAddress      string          // the server lendStatus is about
 	modelsLoading    bool
 	pendingGoal      *agent.GoalState // a /goal on the start screen, for the chat it makes
 
@@ -181,6 +190,8 @@ type desktopUI struct {
 	editing         *queueEdit // a queued message being edited in the prompt
 	editBar         *fyne.Container
 	queueTray       *fyne.Container
+	questionSlot    *fyne.Container // the open chat's questions, above the composer (questions.go)
+	shownQuestions  *questionCard   // what questionSlot shows, nil when nothing
 	queueList       *fyne.Container
 	pendingBox      *fyne.Container // messages sent while the agent works, greyed at the conversation's end
 	nextStep        *fyne.Container // the turn's next-step card, while it waits on the user (next_step.go)
@@ -198,7 +209,7 @@ type desktopUI struct {
 	queueTitle                      *fitLabel
 	model                           *picker
 	approvalControl                 *tapRow
-	contextRing                     *contextRing
+	contextUsed, contextWindow      int // the open conversation's use of its model's window
 	send                            *tapRow
 	steer                           *tapRow
 	stop                            *tapRow
@@ -261,8 +272,14 @@ type desktopUI struct {
 	sideRows      map[string]*sideRow // the rows of the last rendering, by key, reused by the next (sidebar_groups.go)
 	sideRowsNext  map[string]*sideRow
 	sideLists     *fyne.Container
-	sideChats     []sideChat // the chats listed, for search
-	sideOrder     []sideChat // the same in the sidebar's order, for the previous and next chat
+	sideChats     []sideChat        // the chats listed, for search
+	sideOrder     []sideChat        // the same in the sidebar's order, for the previous and next chat
+	sideRank      map[string]int64  // when each project and chat was last used or moved (sidebar_order.go)
+	pinned        []string          // the pinned projects and chats, in order (sidebar_order.go)
+	sideDrag      *sideDrag         // the sidebar row being dragged, nil when none (sidebar_drag.go)
+	sideMarker    *canvas.Rectangle // the line where a dragged sidebar row would land
+	sideColumn    fyne.CanvasObject // the sidebar, where a chat row dragged reorders rather than splits (split_drag.go)
+	drops         *dropView         // a split drag's preview over the window (split_drag.go)
 	searchRow     *tapRow
 	find          *chatFind
 	subchatsShown map[string]bool           // chats whose many subchats the user unfolded (true) or folded (false), by ID
@@ -276,14 +293,19 @@ type desktopUI struct {
 // desktopApp is what the windows share: the backend, the chats and
 // projects, the settings, the tray and the phone remote.
 type desktopApp struct {
+	carry            *paneDrag     // the chat or pane being dragged towards the panes, nil when none (split_drag.go)
 	usage            *usage.Ledger // every model call this computer made (internal/usage)
 	prices           *usage.Prices
 	usageQuery       usage.Query // what the Usage page shows, kept while 1loop runs
+	usageHere        bool        // in a server window, the Usage page shows this computer's ledger
 	usageAccount     string      // the account whose limits the Usage page shows
 	computer         *computeruse.ComputerSession
 	browser          *browser.Engine
 	backend          *agent.App
 	keys             map[string]string
+	keyed            map[string]bool // connections that had a key (connection_keys.go)
+	keysLoading      bool            // the saved keys are still being read
+	vault            *keyVault
 	connectionsList  []agent.Connection
 	webSetupWindows  map[*agent.ChatGPTWeb]fyne.Window
 	choices          map[string]agent.ModelChoice
@@ -343,6 +365,7 @@ type desktopApp struct {
 	loopyShown        bool               // the Loopy space was on screen when 1loop closed
 	loopyHome         loopyHome          // this computer's Loopy (loopy_host.go)
 	loopyUnlink       context.CancelFunc
+	notificationsOff  bool                       // settings: no system notification (notify.go)
 	lastCrash         *crash.Crash               // the last run's, offered once the window is up
 	trayNoticeShown   bool                       // the first close said that 1loop stays in the tray
 	tray              *trayIcon                  // the system tray icon (tray.go), nil without one
@@ -399,6 +422,11 @@ func runDesktop(backend *agent.App, root, asked string) {
 		state, err := readSavedState(statePath(root))
 		saved <- stateRead{state, err}
 	}()
+	// The index of the system's fonts, which the first text measured waits
+	// for (~100 ms on a desktop with many fonts), is read meanwhile too (#475).
+	if fynedriver.PreloadFonts != nil {
+		go fynedriver.PreloadFonts()
+	}
 	// Follow the desktop's own scale (Xft.dpi) instead of Fyne's guess from
 	// the panel's physical DPI, which made everything ~40 % larger than other
 	// apps. An explicit FYNE_SCALE from the user still wins.
@@ -413,7 +441,7 @@ func runDesktop(backend *agent.App, root, asked string) {
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
 	backend.EnableChatGPTWeb(ctx)
-	ui := &desktopUI{desktopApp: &desktopApp{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), shortcutKeys: map[string]string{}, statePath: statePath(root),
+	ui := &desktopUI{desktopApp: &desktopApp{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), keyed: map[string]bool{}, vault: newKeyVault(keyring.System()), shortcutKeys: map[string]string{}, statePath: statePath(root),
 		foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}, lastCrash: lastCrash},
 		cfg: agent.Config{Provider: "compatible", Workspace: root}}
 	ui.windows = []*desktopUI{ui}
@@ -445,7 +473,13 @@ func runDesktop(backend *agent.App, root, asked string) {
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
 	ui.backdrop = newBackdrop()
 	ui.watchPointer()
-	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.backdrop.picture, ui.build()))
+	ui.catchDragEscape()
+	// The first frame shows the launch screen alone, opaque over the whole
+	// window: the content under it is laid out and drawn from the next one
+	// (reveal, #475), so the window shows without waiting for it.
+	content := ui.build()
+	content.Hide()
+	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.backdrop.picture, content))
 	benchMark("content built")
 	ui.syncBackdrop()
 	ui.followUsage()
@@ -466,14 +500,20 @@ func runDesktop(backend *agent.App, root, asked string) {
 	ui.registerShortcuts()
 	ui.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { ui.focused().copySelection() })
 	ui.updateHeader()
-	ui.renderChats()
-	benchMark("sidebar rendered")
+	ui.loadKeys()
 	ui.refreshModels()
-	ui.refreshContextRing()
-	// What the first frame does not show starts right after it (#475): the
-	// phone remote (its certificate), the linked servers, the update check
-	// and the other windows of the last run.
-	afterFirstFrame := func() {
+	ui.refreshContextUsage()
+	// What the first frame does not show comes right after it (#475), still
+	// under the launch screen: the content, its sidebar and the main
+	// window's panes of the last run; one frame later the tray (its own
+	// hidden window and GL context), the phone remote (its certificate),
+	// the linked servers, the update check and the other windows of the
+	// last run.
+	started := time.Now()
+	var launch *launchScreen
+	afterContent := func() {
+		ui.startTray(a)
+		benchMark("tray started")
 		ui.startRemote()
 		ui.wakeLoopy() // its routines go on
 		ui.linkLoopy()
@@ -483,10 +523,22 @@ func runDesktop(backend *agent.App, root, asked string) {
 		ui.restoreWindows(read.state.Windows) // the other windows of the last run, on their chats
 		benchMark("windows restored")
 	}
-	ui.window.Canvas().Focus(ui.prompt)
+	reveal := func() {
+		content.Show()
+		ui.renderChats()
+		benchMark("sidebar rendered")
+		ui.restoreLayout(read.state.Split) // the main window's panes of the last run
+		ui.window.Canvas().Focus(ui.focused().prompt)
+		benchMark("content shown")
+		benchContentDrawn()
+		// The sequence starts once the content is drawn under it, at least
+		// 180 ms after the window came: before, it would play unseen.
+		time.AfterFunc(max(16*time.Millisecond, 180*time.Millisecond-time.Since(started)), func() { fyne.Do(launch.play) })
+		time.AfterFunc(50*time.Millisecond, func() { fyne.Do(afterContent) })
+	}
 	// The launch sequence covers the first frames and only starts once the
 	// window is really on screen, otherwise it would play unseen.
-	launch := newLaunchScreen(ui.window.Canvas(), func() {
+	launch = newLaunchScreen(ui.window.Canvas(), func() {
 		ui.window.Canvas().Focus(ui.focused().prompt) // a restored split's pane with the focus keeps it (panes.go)
 		ui.warnFlatpakPermissions()
 		if ui.stateProblem != "" {
@@ -506,14 +558,13 @@ func runDesktop(backend *agent.App, root, asked string) {
 		clipboardReady()
 		windowIdentity(ui.window) // again, should the window not have existed yet below
 		ui.startFrames()
-		// Started now, it would run before the first frame: the queue is
+		// Queued now, it would run before the first frame: the queue is
 		// emptied before each one.
-		time.AfterFunc(100*time.Millisecond, func() { fyne.Do(afterFirstFrame) })
+		started = time.Now()
+		time.AfterFunc(20*time.Millisecond, func() { fyne.Do(reveal) })
 		size := ui.window.Canvas().Size()
 		platform.Devf("app", "window %.0f x %.0f at scale %.2f, own title bar %v", size.Width, size.Height, ui.window.Canvas().Scale(), ui.chrome)
-		time.AfterFunc(180*time.Millisecond, func() { fyne.Do(launch.play) })
 	})
-	ui.startTray(a)
 	serveInstance(instance, func() { fyne.Do(ui.showWindow) }, func(folder string) {
 		fyne.Do(func() {
 			ui.mainView().openProjectOn(localTarget, folder)
@@ -541,9 +592,28 @@ func runDesktop(backend *agent.App, root, asked string) {
 		go ui.bench(kind)
 	}
 	windowIdentity(ui.window)
-	ui.restoreLayout(read.state.Split) // the main window's panes of the last run
 	benchMark("main loop")
 	a.Run()
+}
+
+// benchContentDrawn notes, when benchmarking, the first frame drawn after
+// the content was revealed under the launch screen: the window as it is
+// once the launch screen goes. The bench's own frame hook (bench.go) is set
+// by then and goes on.
+func benchContentDrawn() {
+	if !benchOn {
+		return
+	}
+	next, noted := fynedriver.FrameTimes, false
+	fynedriver.FrameTimes = func(sizes, paint, present time.Duration) {
+		if !noted {
+			noted = true
+			benchMark("content drawn")
+		}
+		if next != nil {
+			next(sizes, paint, present)
+		}
+	}
 }
 
 // statePath keeps conversations and settings in the user's config folder
@@ -628,6 +698,7 @@ func (ui *desktopUI) release() {
 		chat.tasks.StopAll() // a background server must not outlive 1loop
 	}
 	agent.StopEveryClaude()
+	browser.StopLent() // nor the browser lent to a server
 	for _, view := range ui.allPanes() {
 		if view != ui {
 			view.releaseWindow() // its chat's panel goes back to the chat, disposed with it below
@@ -742,6 +813,43 @@ func (themeSpec flatScrollTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVar
 	return themeSpec.Theme.Color(name, v)
 }
 
+// stripScroll is container.NewHScroll for a strip of controls (tabs, chips,
+// buttons) that may run past its width. It draws no bar: on a strip one row
+// high, the bar would take the pointer over the lower half of the controls
+// (#633). The wheel still scrolls it, and its edge shadows show that more
+// lies beyond.
+func stripScroll(content fyne.CanvasObject) (*container.Scroll, fyne.CanvasObject) {
+	scroll := container.NewHScroll(content)
+	return scroll, container.NewThemeOverride(scroll, barlessTheme{loopTheme{theme.DefaultTheme()}})
+}
+
+// barRoom is what content keeps free along a scroll's right edge, where its
+// bar is drawn, wide under the pointer (#633): for rows whose last element
+// sits at that edge (a size, a count, a check mark).
+const barRoom = scrollbar.Edge + scrollbar.Wide + 4
+
+// clearOfBar pads content so the scroll's bar never covers its right end.
+func clearOfBar(content fyne.CanvasObject) fyne.CanvasObject {
+	return padded(0, 0, 0, barRoom, content)
+}
+
+// strip is stripScroll where only the strip itself is wanted.
+func strip(content fyne.CanvasObject) fyne.CanvasObject {
+	_, object := stripScroll(content)
+	return object
+}
+
+// barlessTheme gives a scroll no bar: no width, so nothing takes the pointer.
+type barlessTheme struct{ fyne.Theme }
+
+func (themeSpec barlessTheme) Size(name fyne.ThemeSizeName) float32 {
+	switch name {
+	case theme.SizeNameScrollBar, theme.SizeNameScrollBarSmall:
+		return 0
+	}
+	return themeSpec.Theme.Size(name)
+}
+
 func (ui *desktopUI) build() fyne.CanvasObject {
 	if ui == ui.mainView() { // once, not for each window
 		watchReducedMotion()
@@ -759,13 +867,15 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	hoverReference = func(link string, at fyne.Position) { ui.activeView().hoverReference(link, at) }
 	refRepository = func() string { return ui.activeView().chatRepository() }
 	ui.buildTitleBar(sidebar)
+	ui.sideColumn = sidebar
+	ui.drops = newDropView()
 	layers := []fyne.CanvasObject{ui.root}
 	if ui.chrome {
 		ui.pictureLayer = container.New(underTitleBar{ui})
 		ui.pictureLayer.Hide()
 		layers = append(layers, ui.pictureLayer, resizeEdges(ui.window))
 	}
-	return container.NewStack(append(layers, ui.tips.layer)...)
+	return container.NewStack(append(layers, ui.drops.layer, ui.tips.layer)...)
 }
 
 // buildChat builds a pane's chat area (ui.split): the conversation, the
@@ -898,6 +1008,8 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	if ui.chrome {
 		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, ui.headerBar))
 	}
+	ui.serverBusy = newActivityLine()
+	header = container.NewStack(header, container.NewBorder(nil, ui.serverBusy, nil, nil))
 	ui.titleBar = header
 	// The settings page takes the conversation's place while it is open.
 	ui.curtain = newPageCurtain()
@@ -914,7 +1026,7 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 // card: the card's own outline is the only edge of the input area.
 func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.prompt = newChatEntry()
-	ui.prompt.placeholders = []string{"Describe what you want to build…", "What shall we build?", "Message…"}
+	ui.prompt.placeholders = promptPlaceholders
 	ui.prompt.SetPlaceHolder(ui.prompt.placeholders[0])
 	ui.prompt.send = ui.submit
 	ui.prompt.steer = ui.steerNow
@@ -1013,7 +1125,6 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 		ui.approvalMenu()
 	})
 	ui.updateApprovalControl()
-	ui.contextRing = newContextRing(ui.tips)
 	ui.attach = newIconButton(iconPlus, overlay(0x0d), color.NRGBA{}, nil)
 	ui.attach.iconPx, ui.attach.padPx = 18, 6
 	ui.attach.onTap = func() {
@@ -1039,7 +1150,7 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	// last: Steer and Stop come and go in the free space between the two,
 	// so nothing else moves when a task starts or ends.
 	ui.model.row.truncate = true // a long model name is cut short rather than pushed out of the card
-	settings := container.New(composerSettingsLayout{model: ui.model.row}, container.NewCenter(ui.approvalControl), ui.model.row, ui.contextRing)
+	settings := container.New(composerSettingsLayout{model: ui.model.row}, container.NewCenter(ui.approvalControl), ui.model.row)
 	actions := container.New(composerActionsLayout{}, ui.steer, ui.stop, ui.send)
 	ui.controls = container.New(&composerControlsLayout{}, settings, actions)
 	ui.model.relayout = ui.controls.Refresh
@@ -1084,7 +1195,8 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.attachRow = container.New(layout.NewCustomPaddedHBoxLayout(8))
 	// The optional rows are hidden with their margins: a hidden child inside
 	// a visible padded box would still take its padding and the gap after it.
-	ui.attachTray = padded(2, 4, 2, 0, container.NewHScroll(ui.attachRow))
+	_, tray := stripScroll(ui.attachRow)
+	ui.attachTray = padded(2, 4, 2, 0, tray)
 	ui.attachTray.Hide()
 	input := container.NewThemeOverride(ui.prompt, bareInputTheme{loopTheme{theme.DefaultTheme()}})
 	ui.editor = newPromptEditor(ui)
@@ -1121,7 +1233,11 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.serverStatus = newFitLabel("", 12, colFaint)
 	ui.serverStatus.Hide()
 	contextRow := container.NewBorder(nil, nil, container.NewHBox(ui.folder, ui.machine), nil, ui.serverStatus)
-	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.buildCommandMenu(), ui.queueTray, composer)
+	// The model's questions sit just above the card, with a gap: they belong
+	// to the chat, not to the message being written (#434).
+	ui.questionSlot = container.New(&questionSlotLayout{gap: 8})
+	ui.questionSlot.Hide()
+	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), ui.buildLendBar(), padded(0, 6, 4, 4, contextRow), ui.buildCommandMenu(), ui.questionSlot, ui.queueTray, composer)
 	return padded(0, 0, 24, 24, container.New(columnLayout{width: 760, inset: 0}, padded(0, 18, 0, 0, stack)))
 }
 
@@ -1184,7 +1300,7 @@ func (ui *desktopUI) startNew() {
 	ui.mark.intro()
 	ui.updateHeader()
 	ui.renderChats()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 	ui.window.Canvas().Focus(ui.prompt)
 }
 
@@ -1393,7 +1509,10 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	}
 	// A prompt can arrive after the provider's final inbox check but before
 	// this UI callback. Close that gap before announcing that the chat is done.
-	if ended == "done" && !chat.moving {
+	// So does another chat's message or 1loop's note a failed turn never
+	// read: a subchat's report, left there, was never heard (#584).
+	failed := run != nil && !run.stopped && ended == "stopped"
+	if (ended == "done" || failed && slices.ContainsFunc(chat.steer, func(m agent.Message) bool { return m.Internal || m.From != nil })) && !chat.moving {
 		if next, ok := ui.takeNext(chat); ok {
 			ui.startIn(chat, next, "")
 			ui.save()
@@ -1428,7 +1547,7 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 		return
 	}
 	ui.syncRun()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 	// The closed ring stays briefly under the answer, then goes away.
 	ui.showActivityLine(true)
 	ui.workMark.setState(ended)
@@ -1477,6 +1596,15 @@ func (ui *desktopUI) submit() {
 	if ui.editing != nil {
 		ui.finishEdit(true)
 		return
+	}
+	// While the model's questions wait, a message answers them in the user's
+	// own words, as "Something else" does (#434).
+	if card := ui.shownQuestions; card != nil && card.shown() && len(ui.attachments)+len(ui.fileAttachments) == 0 {
+		if text := strings.TrimSpace(ui.prompt.Text); text != "" {
+			ui.prompt.clearSent()
+			card.reply(text)
+			return
+		}
 	}
 	if ui.server != nil {
 		ui.server.submit("send")
@@ -1697,6 +1825,7 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		}
 	}
 	ui.panel.todoChanged(chat)
+	ui.touchChatOrder(chat) // the sidebar lists it first (sidebar_order.go)
 	chat.History = append(chat.History, messageValue)
 	if chat == ui.current {
 		ui.showTranscript(true)
@@ -2089,10 +2218,7 @@ func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) *sheet {
 // approve answers an approval: this computer's agent, or the server's.
 func (ui *desktopUI) approve(chat *conversation, id string, answer agent.ApprovalAnswer) {
 	if chat.server != nil {
-		chat.server.action("/api/approve", struct {
-			ID string `json:"id"`
-			agent.ApprovalAnswer
-		}{id, answer})
+		chat.server.approve(id, answer)
 		return
 	}
 	ui.backend.AnswerApproval(id, answer)
@@ -2108,6 +2234,12 @@ func (ui *desktopUI) refreshModels() {
 	for id, key := range ui.keys {
 		keys[id] = key
 	}
+	keyProblems := map[string]string{}
+	for _, conn := range connections {
+		if problem := ui.keyProblem(conn); problem != "" {
+			keyProblems[conn.ID] = problem
+		}
+	}
 	ui.model.Disable()
 	ui.model.placeholder = "Loading models…"
 	ui.model.ClearSelected()
@@ -2121,7 +2253,7 @@ func (ui *desktopUI) refreshModels() {
 		results := make([]result, len(connections))
 		var wg sync.WaitGroup
 		for i, conn := range connections {
-			if !conn.Enabled {
+			if !conn.Enabled || keyProblems[conn.ID] != "" { // no request bound to fail with a 401
 				continue
 			}
 			wg.Add(1)
@@ -2154,6 +2286,10 @@ func (ui *desktopUI) refreshModels() {
 			var options []string
 			selected := ""
 			for i, result := range results {
+				if problem := keyProblems[connections[i].ID]; problem != "" && connections[i].Enabled {
+					ui.modelUnavailable[connections[i].ID] = problem
+					continue
+				}
 				if result.err != nil {
 					problem := "Models unavailable"
 					if agent.CLIHarness(connections[i].Provider) {
@@ -2205,6 +2341,9 @@ func (ui *desktopUI) refreshModels() {
 			if len(options) == 0 {
 				ui.cfg.Model = ""
 				ui.model.placeholder = "No model available"
+				if conn, ok := ui.keyNeededConnection(); ok {
+					ui.model.placeholder = conn.Name + " needs its API key again"
+				}
 				ui.model.refresh()
 				return
 			}
@@ -2213,7 +2352,7 @@ func (ui *desktopUI) refreshModels() {
 			}
 			ui.model.SetSelected(selected)
 			ui.send.Enable()
-			ui.refreshContextRing()
+			ui.refreshContextUsage()
 		})
 	}()
 }
@@ -2244,6 +2383,7 @@ type savedState struct {
 	FoldedProjects    []string              `json:"foldedProjects,omitempty"` // sidebar groups folded
 	CloseQuits        bool                  `json:"closeQuits,omitempty"`
 	CrashReportsOff   bool                  `json:"crashReportsOff,omitempty"`
+	NotificationsOff  bool                  `json:"notificationsOff,omitempty"`
 	LoopyAt           string                `json:"loopyAt,omitempty"`
 	LoopyShown        bool                  `json:"loopyShown,omitempty"`
 	AnimationsOff     bool                  `json:"animationsOff,omitempty"`
@@ -2266,6 +2406,12 @@ type savedState struct {
 	ProjectThemes map[string]string `json:"projectThemes,omitempty"`
 	// The Shader background setting; 30 fps when unset.
 	ShaderFPS string `json:"shaderFPS,omitempty"`
+	// The sidebar's order: when each project and chat was last used or moved, and the pinned ones (sidebar_order.go).
+	SidebarRank map[string]int64 `json:"sidebarRank,omitempty"`
+	Pinned      []string         `json:"pinned,omitempty"`
+	// The connections that had an API key, kept in the secret store
+	// (connection_keys.go): never the keys themselves.
+	KeyedConnections []string `json:"keyedConnections,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -2280,39 +2426,25 @@ func (ui *desktopUI) save() {
 func (ui *desktopUI) saveNow() { ui.persist(false) }
 
 // writeChats writes the state: head before the chats, the chats as a JSON
-// list, one encoded at a time, and the rest of the head. written counts the
-// bytes.
+// list, message by message (agent.WriteChatJSON), and the rest of the head.
+// written counts the bytes. It is what json.Marshal makes of the whole,
+// which a chat of 200 MB took a gigabyte to encode, at every save.
 func writeChats(w io.Writer, written *int64, before []byte, chats []*conversation, after []byte) error {
-	put := func(b []byte) error {
-		n, err := w.Write(b)
-		*written += int64(n)
-		return err
-	}
-	if err := put(before); err != nil {
-		return err
-	}
-	if err := put([]byte(`"chats":[`)); err != nil {
-		return err
-	}
+	writer := core.NewJSONWriter(w)
+	writer.Raw(before)
+	writer.Raw([]byte(`"chats":[`))
 	for i, chat := range chats {
-		chat.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
-		data, err := json.Marshal(chat)
-		if err != nil {
-			return err
-		}
 		if i > 0 {
-			if err := put([]byte{','}); err != nil {
-				return err
-			}
+			writer.Raw([]byte{','})
 		}
-		if err := put(data); err != nil {
-			return err
-		}
+		copied := *chat
+		copied.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
+		agent.WriteChatJSON(writer, &copied, &copied.History, &copied.Items, &copied.Versions)
 	}
-	if err := put([]byte{']'}); err != nil {
-		return err
-	}
-	return put(after)
+	writer.Raw([]byte{']'})
+	writer.Raw(after)
+	*written += writer.Written
+	return writer.Err()
 }
 
 // persist writes the state file. The conversations are nearly all of it
@@ -2365,6 +2497,7 @@ func (ui *desktopUI) persist(wait bool) {
 		slices.Sorted(maps.Keys(ui.foldedProjects)),
 		ui.closeQuits,
 		ui.crashReportsOff,
+		ui.notificationsOff,
 		ui.loopyAt,
 		ui.loopyShown,
 		animationsOff,
@@ -2380,6 +2513,9 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.savedLayout(),
 		ui.projectThemes,
 		shaderFPSSaved(),
+		ui.sideRank,
+		ui.pinned,
+		ui.keyedList(),
 	})
 	for _, view := range ui.allPanes() {
 		if view.panel != nil {
@@ -2395,6 +2531,7 @@ func (ui *desktopUI) persist(wait bool) {
 	}
 	ui.saveCount++
 	count, path := ui.saveCount, ui.statePath
+	snapshot := time.Since(started) // what the interface's thread spent on this save
 	write := func() {
 		ui.saveLock.Lock()
 		defer ui.saveLock.Unlock()
@@ -2403,9 +2540,9 @@ func (ui *desktopUI) persist(wait bool) {
 		}
 		ui.saveDone = count
 		// The chats go into the place the head keeps for them, encoded and
-		// written one at a time: the whole list encoded at once was a buffer
-		// the size of the file (100 MB with long conversations), grown by
-		// doubling, at every save (#476).
+		// written message by message: the whole list encoded at once, or one
+		// long chat, was a buffer the size of the file (200 MB with many
+		// pictures), grown by doubling, at every save (#476).
 		var written int64
 		before, after, found := bytes.Cut(head, []byte(`"chats":null`))
 		if err == nil && !found {
@@ -2416,7 +2553,8 @@ func (ui *desktopUI) persist(wait bool) {
 				return writeChats(w, &written, before, chats, after)
 			})
 		}
-		platform.Devf("app", "state saved: %d chats, %d KiB, %s in all (error: %v)", len(chats), written>>10, time.Since(started).Round(time.Millisecond), err)
+		platform.Devf("app", "state saved: %d chats, %d KiB, %s in all, %s of it on the interface's thread (error: %v)",
+			len(chats), written>>10, time.Since(started).Round(time.Millisecond), snapshot.Round(10*time.Microsecond), err)
 		report := func() {
 			if err != nil && err.Error() != ui.saveError && ui.ctx.Err() == nil {
 				ui.notice("Unable to save", err.Error()) // once per distinct problem
@@ -2448,9 +2586,44 @@ func (ui *desktopUI) load() {
 // it (a large state takes a few hundred milliseconds): it touches nothing
 // else, so it can run while the window is being created.
 func readSavedState(path string) (state savedState, err error) {
+	if state, err = streamSavedState(path); err == nil || os.IsNotExist(err) {
+		return state, err
+	}
+	// What is wrong with it is encoding/json's to say, from the whole file.
 	data, err := os.ReadFile(path)
+	state = savedState{}
 	if err == nil {
 		err = json.Unmarshal(data, &state)
+	}
+	return state, err
+}
+
+// streamSavedState reads the state message by message: read whole and then
+// decoded, it was twice in memory, and stayed there for minutes. A picture
+// or a text found several times is kept once.
+func streamSavedState(path string) (state savedState, err error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return state, err
+	}
+	defer file.Close()
+	reader := core.NewJSONReader(file)
+	rest, err := reader.Object(map[string]func() error{"chats": func() (err error) {
+		state.Chats, err = core.ReadJSONList(reader, func(read **conversation) error {
+			chat := &conversation{}
+			null, err := agent.ReadChatJSON(reader, chat, &chat.History, &chat.Items, &chat.Versions)
+			if !null {
+				*read = chat
+			}
+			return err
+		})
+		return err
+	}})
+	if err == nil && rest != nil {
+		err = json.Unmarshal(rest, &state)
+	}
+	if err == nil {
+		err = reader.End()
 	}
 	return state, err
 }
@@ -2505,6 +2678,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.projectEnv = state.ProjectEnv
 	ui.theme = themeChoice{theme: state.Theme, accent: state.Accent}
 	ui.projectThemes = state.ProjectThemes
+	ui.sideRank, ui.pinned = state.SidebarRank, state.Pinned
 	if state.ShaderFPS != "" {
 		shaderFPS = state.ShaderFPS
 	}
@@ -2522,6 +2696,9 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 		ui.cfg.MachineID, ui.cfg.Workspace = "", ui.lastLocalWorkspace()
 	}
 	ui.connectionsList = state.Connections
+	for _, id := range state.KeyedConnections {
+		ui.keyed[id] = true
+	}
 	ui.userInstructions = state.UserInstructions
 	ui.approvalMode = state.ApprovalMode
 	ui.classicCompaction = state.ClassicCompaction
@@ -2529,6 +2706,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.wrapUpOff = state.WrapUpOff
 	ui.closeQuits, ui.trayNoticeShown = state.CloseQuits, state.TrayNoticeShown
 	ui.crashReportsOff = state.CrashReportsOff
+	ui.notificationsOff = state.NotificationsOff
 	ui.loopyAt, ui.loopyShown = state.LoopyAt, state.LoopyShown
 	animationsOff = state.AnimationsOff
 	ui.autoResume = state.AutoResume
@@ -2546,7 +2724,12 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 		chat.Items = upgradeItems(chat.Items)
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
 		chat.todoCount = len(chat.Todo.Snapshot())
-		chat.Subchat.Restored(len(chat.ReportTo) > 0)
+		if len(chat.ReportTo) > 0 { // its turn was to report when 1loop closed: cut off (#584)
+			item := agent.CutOffTurn(chat.Config, "1loop closed", false, false).Item
+			item.ID = core.Identifier()[:16]
+			chat.Items = append(chat.Items, item)
+			chat.Subchat.Restored(true)
+		}
 		chat.ReportTo = nil
 		ui.chats = append(ui.chats, chat)
 		if chat.Config.MachineID != "" {

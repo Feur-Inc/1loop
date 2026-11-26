@@ -84,7 +84,7 @@ func (ui *desktopUI) trustHost(ctx context.Context, machine, address, keyType, f
 		body := container.NewVBox(
 			plainFlow("1loop has never connected to "+machine+" ("+address+"). Its host key is:", 13, colText),
 			plainFlow(keyType+" "+fingerprint, 13, colText),
-			plainFlow("Trust it only if it is the machine's key: on the machine, ssh-keygen -lf /etc/ssh/ssh_host_"+sshmachine.HostKeyFile(keyType)+"_key.pub shows it. 1loop remembers it and refuses the connection if it ever changes.", 12.5, colMuted))
+			plainFlow("Check it on the machine: ssh-keygen -lf /etc/ssh/ssh_host_"+sshmachine.HostKeyFile(keyType)+"_key.pub. 1loop refuses it if it ever changes.", 12.5, colMuted))
 		cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
 		trust := newRow("Trust", nil, stylePrimary, func() { reply(true); dialog.dismiss() })
 		dialog = ui.modal("Trust this SSH machine?", body, 560, func() { reply(false) }, cancel, trust)
@@ -191,15 +191,6 @@ func (ui *desktopUI) pickStart() string {
 		return home
 	}
 	return ui.cfg.Workspace
-}
-
-// projectFolderRow is Settings → General's project folder: on an SSH
-// machine it is chosen in the sidebar, not with this computer's picker.
-func (ui *desktopUI) projectFolderRow(change fyne.CanvasObject) fyne.CanvasObject {
-	if ui.cfg.MachineID != "" {
-		return settingRow("Project folder", ui.targetLabel()+": "+ui.cfg.Workspace+". Choose another project of the machine in the sidebar.", nil)
-	}
-	return settingRow("Project folder", ui.cfg.Workspace, change)
 }
 
 // targetProjects are the target's projects: this computer's, or the
@@ -545,11 +536,11 @@ func (ui *desktopUI) sshEditor(original sshmachine.Settings) {
 			keyPath.SetText(paths[0])
 		})
 	})
-	passwordRow := settingRow("Password", "Kept in 1loop's settings folder, readable by your user only.", sized(340, password))
+	passwordRow := settingRow("Password", "Kept in 1loop's settings, readable by your user only.", sized(340, password))
 	keyRows := container.NewVBox(
 		settingRow("Private key", "A key file of this computer, as ssh -i takes it.", container.NewBorder(nil, nil, nil, browse, sized(260, keyPath))),
-		settingRow("Key passphrase", "Kept in 1loop's settings folder, readable by your user only.", sized(340, passphrase)))
-	agentRow := settingRow("SSH agent", "Uses the keys of the agent of this session (SSH_AUTH_SOCK), as ssh does.", nil)
+		settingRow("Key passphrase", "Kept in 1loop's settings, readable by your user only.", sized(340, passphrase)))
+	agentRow := settingRow("SSH agent", "Uses the keys of this session's SSH agent, as ssh does.", nil)
 	access := container.NewVBox(passwordRow, keyRows, agentRow)
 	showAccess := func(choice string) {
 		passwordRow.Hide()
@@ -645,19 +636,19 @@ func (ui *desktopUI) sshEditor(original sshmachine.Settings) {
 			settingRow("Sign in with", "", sized(340, auth.row))),
 		card(access),
 		sectionTitle("Projects"),
-		card(settingRow("Projects folder", "On the machine: a new project there is a folder in it. ~/ is the user's home folder.", sized(340, projects))),
-		card(settingStack("Connection", "Connects with these settings, and asks you to trust the machine's host key the first time.", container.NewHBox(test))),
+		card(settingRow("Projects folder", "A new project is a folder there. ~/ is the user's home.", sized(340, projects))),
+		card(settingStack("Connection", "Asks you to trust its host key the first time.", container.NewHBox(test))),
 	)
 	if existing {
 		remove := newRow("Remove", iconTrash, styleOutline, func() {
-			ui.confirm("Remove SSH machine?", "Remove “"+original.Label()+"” from 1loop? Its chats stay in 1loop; its files on the machine are not touched.", "Remove", func() {
+			ui.confirm("Remove SSH machine?", "Remove “"+original.Label()+"” from 1loop? Its chats stay; its files are not touched.", "Remove", func() {
 				ui.removeMachine(original.ID)
 				settings.done()
 			})
 		})
 		remove.danger = true
 		page.Add(sectionTitle("Remove"))
-		page.Add(card(settingRow("Remove this machine", "Its projects and chats are kept but cannot run until it is added again.", remove)))
+		page.Add(card(settingRow("Remove this machine", "Projects and chats are kept; they cannot run until re-added.", remove)))
 	}
 	page.Add(spacer(0, 16))
 	save := newRow("Save machine", nil, stylePrimary, func() {

@@ -7,11 +7,14 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -80,6 +83,8 @@ func (server *headlessServer) routes() http.Handler {
 		}))
 	}
 	mux.HandleFunc("POST /api/loopy/hook/{token}", engine.HookHandler(server.loopyEngine)) // the token is the key
+	// A paired device's own token only (lent_browser.go).
+	mux.HandleFunc("GET "+browser.LendPath, server.attachBrowser)
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		remoteapi.Protect(w, r) // the limits and headers the desktop's remote shares
 		if !server.local && crossOrigin(w, r) {
@@ -164,6 +169,8 @@ func (server *headlessServer) Routes() map[string]http.HandlerFunc {
 		endpoints["POST /api/connections/models"] = server.draftLocalConnectionModels
 		endpoints["GET /api/connections/{id}/models"] = server.localConnectionModels
 		endpoints["POST /api/connections/{id}/disconnect"] = server.localConnectionDisconnect
+		endpoints["POST /api/connections/{id}/login"] = server.networkConnectionLogin
+		endpoints["POST /api/connections/{id}/login/complete"] = server.networkConnectionLoginComplete
 		endpoints["POST /api/connections/refresh"] = server.refreshLocalModels
 	}
 	syncEngine := server.syncEngine()
@@ -187,7 +194,7 @@ func (server *headlessServer) Routes() map[string]http.HandlerFunc {
 	for path, handler := range githubconnector.Handlers() {
 		endpoints[path] = handler
 	}
-	for path, handler := range usage.Handlers(server.usage, server.prices, server.usageNames, nil) {
+	for path, handler := range usage.Handlers(server.usage, server.prices, server.usageNames, server.accountDisabled, nil) {
 		if path == "GET /api/usage" {
 			serve := handler
 			handler = func(w http.ResponseWriter, r *http.Request) {
@@ -209,7 +216,7 @@ func (server *headlessServer) Routes() map[string]http.HandlerFunc {
 func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	core.WriteJSON(w, 200, map[string]any{
+	server.writeSnapshotLocked(w, r, map[string]any{
 		"name":              server.name,
 		"projects":          server.projects,
 		"worktrees":         server.worktrees,
@@ -220,8 +227,10 @@ func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 		"projectActions":    true,
 		"chats":             server.summariesLocked(),
 		"settings":          server.settingsLocked(),
-		"browser":           server.hasBrowser(), // false: no Browser Use here (the slim image)
-		"claudeCode":        hasClaudeCode(),     // false: no claude command (the slim image)
+		"browser":           server.hasBrowser(), // false: no Browser Use here (the slim image, no client lending its browser)
+		"ownBrowser":        server.ownBrowser(), // false: no Chromium of its own (Install Chromium)
+		"lentBrowser":       server.browserStateLocked()["lentBrowser"],
+		"claudeCode":        hasClaudeCode(), // false: no claude command (the slim image)
 		"installs":          server.installsLocked(),
 	})
 }
@@ -239,13 +248,37 @@ func (server *headlessServer) chat(w http.ResponseWriter, r *http.Request) {
 	for i := first; i < end; i++ {
 		items = append(items, server.itemLocked(chat, i))
 	}
-	core.WriteJSON(w, 200, map[string]any{
+	server.writeSnapshotLocked(w, r, map[string]any{
 		"chat":  remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Items: len(chat.Items)},
 		"items": items,
 		"first": first,
 		"total": len(chat.Items),
 		"meta":  server.metaLocked(chat),
 	})
+}
+
+// writeSnapshotLocked answers a read of the state or of a chat with the
+// number of the last event sent (X-1loop-Seq): the events after it are
+// newer than this answer. Its ETag spares the body when nothing changed
+// since the client's copy (If-None-Match). Both are new with #591: older
+// clients ignore them.
+func (server *headlessServer) writeSnapshotLocked(w http.ResponseWriter, r *http.Request, value any) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		core.Fail(w, 500, "Unable to encode the reply")
+		return
+	}
+	sum := sha256.Sum256(data)
+	tag := `"` + hex.EncodeToString(sum[:12]) + `"`
+	w.Header().Set("ETag", tag)
+	w.Header().Set("X-1loop-Seq", strconv.FormatUint(server.hub.Seq(), 10))
+	if r.Header.Get("If-None-Match") == tag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	w.Write(append(data, '\n'))
 }
 
 // chatContext is the chat's window by category with the MCP tools' list.

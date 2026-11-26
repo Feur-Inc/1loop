@@ -123,19 +123,20 @@ func (ui *desktopUI) sideScroller() *kineticScroll {
 	return nil
 }
 
-// benchScroll scrolls down and up at a steady 1500 px/s, one step per 8 ms.
-func benchScroll(scroll *kineticScroll, until time.Time) {
+// benchScroll scrolls down and up at a steady 1500 px/s, one step per 8 ms,
+// and tells how far the view really moved.
+func benchScroll(scroll *kineticScroll, until time.Time) (moved float32) {
 	if scroll == nil {
 		time.Sleep(time.Until(until))
-		return
+		return 0
 	}
-	speed, offset := float32(1500), float32(0)
+	speed := float32(1500)
 	tick := time.NewTicker(8 * time.Millisecond)
 	defer tick.Stop()
 	last := time.Now()
 	for now := range tick.C {
 		if now.After(until) {
-			return
+			return moved
 		}
 		step := speed * float32(now.Sub(last).Seconds())
 		last = now
@@ -144,17 +145,30 @@ func benchScroll(scroll *kineticScroll, until time.Time) {
 			// tells OnScrolled: ScrollToOffset alone brings no item into
 			// view), then a frame is due. canvas.Refresh would free the
 			// textures of the whole transcript, which a wheel does not.
+			// The view's own offset, not a count of the steps: it turns
+			// back at the real ends, wherever it started.
 			bottom := scroll.Content.Size().Height - scroll.Size().Height
-			if offset+step > bottom || offset+step < 0 {
+			if at := scroll.Offset.Y; at+step > bottom || at+step < 0 {
 				speed, step = -speed, -step
 			}
-			offset += step
+			before := scroll.Offset.Y
 			scroll.Scrolled(&fyne.ScrollEvent{Scrolled: fyne.Delta{DY: -step}})
+			moved += max(scroll.Offset.Y-before, before-scroll.Offset.Y)
 			if dirty, ok := fyne.CurrentApp().Driver().CanvasForObject(scroll).(interface{ SetDirty() }); ok {
 				dirty.SetDirty()
 			}
 		})
 	}
+	return moved
+}
+
+// benchTop shows the start of the chat and stops following its end, as
+// a reader who scrolled up would.
+func (ui *desktopUI) benchTop() {
+	ui.followTail = false
+	ui.scroll.ScrollToOffset(fyne.NewPos(0, 0))
+	ui.scroll.OnScrolled(ui.scroll.Offset) // ScrollToOffset tells no one: bring the items there in
+	ui.relayoutColumn()
 }
 
 var benchWords = strings.Fields("the layout of each item is measured again when its width changes and the " +
@@ -247,15 +261,18 @@ func (ui *desktopUI) bench(kind string) {
 				ui.openChat(longest)
 				benchMark(fmt.Sprintf("open %d items: %.0f ms", len(longest.Items), float64(time.Since(opened).Microseconds())/1000))
 			}
-			ui.scroll.ScrollToOffset(fyne.NewPos(0, 0))
 		})
 		time.Sleep(3 * time.Second) // the chat's items arrive over a few frames (chat_loading.go)
-		if kind != "scroll" {
-			fyne.DoAndWait(func() {
-				ui.followTail = true
-				ui.scroll.ScrollToOffset(fyne.NewPos(0, ui.scroll.Content.Size().Height))
-			})
-		}
+		fyne.DoAndWait(func() {
+			if kind == "scroll" {
+				// From the top, once loaded: while followTail is on, each
+				// layout of the loading chat took the view back down.
+				ui.benchTop()
+				return
+			}
+			ui.followTail = true
+			ui.scroll.ScrollToOffset(fyne.NewPos(0, ui.scroll.Content.Size().Height))
+		})
 	case "split":
 		fyne.DoAndWait(func() {
 			if longest := ui.longestChat(); longest != nil {
@@ -264,6 +281,7 @@ func (ui *desktopUI) bench(kind string) {
 			}
 		})
 		time.Sleep(3 * time.Second)
+		fyne.DoAndWait(ui.benchTop)
 	case "idle", "type":
 		fyne.DoAndWait(func() { ui.window.Canvas().Focus(ui.prompt) })
 	case "idleblur":
@@ -304,16 +322,17 @@ func (ui *desktopUI) bench(kind string) {
 		frames.present = append(frames.present, present)
 		frames.mu.Unlock()
 	}
-	cpu, started := platform.CpuTime(), time.Now()
+	cpu, started, partial := platform.CpuTime(), time.Now(), driver.PartialFrames.Load()
 	until := started.Add(span)
 	var reloads []time.Duration // theme: read, themeChanged, setAccent of each round
+	var scrolled float32        // scroll, split, sidebar: how far the view moved
 	switch kind {
 	case "scroll", "split":
-		benchScroll(ui.scroll, until)
+		scrolled = benchScroll(ui.scroll, until)
 	case "sidebar":
 		var side *kineticScroll
 		fyne.DoAndWait(func() { side = ui.sideScroller() })
-		benchScroll(side, until)
+		scrolled = benchScroll(side, until)
 	case "stream":
 		ui.benchStream(until, nil)
 	case "soak":
@@ -349,7 +368,7 @@ func (ui *desktopUI) bench(kind string) {
 	default:
 		time.Sleep(span)
 	}
-	elapsed, used := time.Since(started), platform.CpuTime()-cpu
+	elapsed, used, partial := time.Since(started), platform.CpuTime()-cpu, driver.PartialFrames.Load()-partial
 	driver.FrameTimes = nil
 	if profileDir != "" {
 		pprof.StopCPUProfile()
@@ -362,13 +381,14 @@ func (ui *desktopUI) bench(kind string) {
 	marks := strings.Join(benchMarks, "\n")
 	benchMu.Unlock()
 	report := strings.Join([]string{
-		fmt.Sprintf("bench %s: %d frames in %s (%.0f per second), CPU %.1f %% of a core", kind, len(frames.paint), elapsed.Round(time.Millisecond), float64(len(frames.paint))/elapsed.Seconds(), 100*used.Seconds()/elapsed.Seconds()),
+		fmt.Sprintf("bench %s: %d frames in %s (%.0f per second, %d of them painted in part), CPU %.1f %% of a core", kind, len(frames.paint), elapsed.Round(time.Millisecond), float64(len(frames.paint))/elapsed.Seconds(), partial, 100*used.Seconds()/elapsed.Seconds()),
 		"  sizes   " + percentiles(frames.sizes),
 		"  paint   " + percentiles(frames.paint),
 		"  present " + percentiles(frames.present),
 		"  frame   " + percentiles(sumFrames(frames)),
 		fmt.Sprintf("  allocs  %d per frame, %.1f KB per frame, %d GC cycles in the span", (memAfter.Mallocs-memBefore.Mallocs)/uint64(count), float64(memAfter.TotalAlloc-memBefore.TotalAlloc)/1024/float64(count), memAfter.NumGC-memBefore.NumGC),
 		themeTimes(reloads),
+		fmt.Sprintf("  scrolled %.0f px", scrolled),
 		"  memory after launch  " + afterLaunch,
 		"  memory before span   " + before,
 		"  memory after span    " + benchMemory(),

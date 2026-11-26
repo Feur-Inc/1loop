@@ -36,7 +36,7 @@ func (ui *desktopUI) configureAutoResume() {
 	say := func(text string) { problem.SetText(text); problem.Hidden = text == ""; problem.Refresh() }
 	steps := &stepList{box: container.NewWithoutLayout(), dragging: -1}
 	steps.box.Layout = stepLayout{steps}
-	list := container.NewVScroll(steps.box)
+	list := container.NewVScroll(clearOfBar(steps.box))
 	hint := textLine("Drag to reorder", 12, colFaint)
 	var render func()
 	render = func() {
@@ -115,7 +115,7 @@ func (ui *desktopUI) configureAutoResume() {
 		dialog.dismiss()
 	})
 	enabled := card(settingRow("Resume automatically",
-		"When a rate limit stops a conversation, 1loop tries these steps in order, in every conversation. Stop cancels a wait.",
+		"At a rate limit, 1loop tries these steps in order.",
 		newToggle(policy.Enabled, func(on bool) { policy.Enabled = on })))
 	heading := container.NewBorder(nil, nil, textLine("Steps", 13.5, colText), hint)
 	body := container.NewVBox(enabled, padded(18, 8, 2, 2, heading), list,
@@ -388,6 +388,6 @@ func (ui *desktopUI) addResumeModel(added func(agent.ResumeStep)) {
 	summary.Hide()
 	transfer.onChanged = func(value string) { summary.Hidden = value != transfer.Options[1]; summary.Refresh() }
 	levels.row.Show()
-	dialog = ui.modal("Add a resume model", container.NewVBox(note("The new model receives the conversation as chosen below and uses its own account's quota."),
+	dialog = ui.modal("Add a resume model", container.NewVBox(note("The new model gets the chat as chosen below, on its own quota."),
 		label("Model"), models.row, label("Reasoning"), effort.row, label("Conversation sent to it"), transfer.row, summary), 550, nil, cancel, accept)
 }

@@ -8,6 +8,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/driver/desktop"
+	"fyne.io/fyne/v2/scrollbar"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 )
@@ -17,18 +18,15 @@ import (
 // shrinks with the chat; the side panel's resize handle also covers the
 // chat's last pixels, where that strip is. This bar is drawn over the
 // conversation instead: its track runs from under the side panel's toggle
-// down to the composer, its thumb is never shorter than chatBarMin, and
-// its hit area is wider than what it draws and ends clear of the handle.
+// down to the composer. What it shares with every other scroll's bar (its
+// sizes, its thumb, its look, #633) is Fyne's scrollbar package; what is
+// its own is where it sits.
 
 const (
-	chatBarHit   = 16 // the width that takes the pointer
-	chatBarThin  = 6  // the thumb's width at rest
-	chatBarWide  = 10 // its width under the pointer or while dragged
-	chatBarMin   = 40 // the shortest thumb
 	chatBarRight = 6  // from the conversation's right edge: the panel's handle reaches 4 px in
 	chatBarTop   = 52 // the side panel's toggle sits above
 	chatBarGap   = 8  // above the composer
-	chatBarPage  = 40 // what a page keeps of the view it leaves
+	chatBarInset = 2  // from the drawn bar to its hit area's right side
 )
 
 // chatScrollTheme is flatScrollTheme without the scroll's own bar: no
@@ -50,32 +48,6 @@ func (themeSpec chatScrollTheme) Size(name fyne.ThemeSizeName) float32 {
 		return 0
 	}
 	return themeSpec.flatScrollTheme.Size(name)
-}
-
-// scrollThumb is the thumb on a track of length track, for a view of
-// length view over content of length content scrolled to offset: its
-// length and its position from the track's start. ok is false when the
-// content fits the view: no thumb then.
-func scrollThumb(track, view, content, offset float32) (length, pos float32, ok bool) {
-	if content <= view || track <= 0 {
-		return 0, 0, false
-	}
-	length = fyne.Min(track, fyne.Max(chatBarMin, track*view/content))
-	offset = fyne.Min(fyne.Max(0, offset), content-view)
-	if room := track - length; room > 0 {
-		pos = room * offset / (content - view)
-	}
-	return length, pos, true
-}
-
-// scrollOffsetFor is the offset that puts a thumb of length length at pos.
-func scrollOffsetFor(track, view, content, length, pos float32) float32 {
-	room := track - length
-	if content <= view || room <= 0 {
-		return 0
-	}
-	pos = fyne.Min(fyne.Max(0, pos), room)
-	return pos / room * (content - view)
 }
 
 type chatScrollBar struct {
@@ -102,7 +74,7 @@ func (bar *chatScrollBar) metrics() (view, content, offset float32) {
 // thumb is the thumb's length and position on the bar as it is now.
 func (bar *chatScrollBar) thumb() (length, pos float32, ok bool) {
 	view, content, offset := bar.metrics()
-	return scrollThumb(bar.Size().Height, view, content, offset)
+	return scrollbar.Thumb(bar.Size().Height, view, content, offset)
 }
 
 // sync shows the bar when the conversation is longer than its view, and
@@ -133,7 +105,7 @@ func (bar *chatScrollBar) scrollTo(pos float32) {
 		return
 	}
 	view, content, _ := bar.metrics()
-	bar.setOffset(scrollOffsetFor(bar.Size().Height, view, content, length, pos))
+	bar.setOffset(scrollbar.OffsetFor(bar.Size().Height, view, content, length, pos))
 }
 
 func (bar *chatScrollBar) setOffset(offset float32) {
@@ -155,11 +127,7 @@ func (bar *chatScrollBar) Dragged(e *fyne.DragEvent) {
 	}
 	if !bar.dragging {
 		bar.dragging = true
-		y := e.Position.Y - e.Dragged.DY // where the press was
-		bar.grab = length / 2            // a press on the track takes the thumb by its middle
-		if y >= pos && y <= pos+length {
-			bar.grab = y - pos
-		}
+		bar.grab = scrollbar.Grab(e.Position.Y-e.Dragged.DY, length, pos) // from where the press was
 	}
 	bar.scrollTo(e.Position.Y - bar.grab)
 }
@@ -176,12 +144,11 @@ func (bar *chatScrollBar) Tapped(e *fyne.PointEvent) {
 		return
 	}
 	view, _, offset := bar.metrics()
-	page := fyne.Max(view-chatBarPage, view/2)
 	switch {
 	case e.Position.Y < pos:
-		bar.setOffset(offset - page)
+		bar.setOffset(offset - scrollbar.Page(view))
 	case e.Position.Y > pos+length:
-		bar.setOffset(offset + page)
+		bar.setOffset(offset + scrollbar.Page(view))
 	}
 }
 
@@ -203,7 +170,7 @@ func (bar *chatScrollBar) MouseOut() {
 }
 
 func (bar *chatScrollBar) CreateRenderer() fyne.WidgetRenderer {
-	renderer := &chatScrollBarRenderer{bar: bar, track: canvas.NewRectangle(color.Transparent), thumb: canvas.NewRectangle(colScrollBar)}
+	renderer := &chatScrollBarRenderer{bar: bar, track: canvas.NewRectangle(color.Transparent), thumb: canvas.NewRectangle(color.Transparent)}
 	renderer.Refresh()
 	return renderer
 }
@@ -216,15 +183,12 @@ type chatScrollBarRenderer struct {
 
 func (renderer *chatScrollBarRenderer) Layout(size fyne.Size) {
 	bar := renderer.bar
-	width := float32(chatBarThin)
-	if bar.hovered || bar.dragging {
-		width = chatBarWide
-	}
-	x := size.Width - width - 2
+	width, _, _ := scrollbar.Look(theme.CurrentForWidget(bar), bar.hovered || bar.dragging)
+	x := size.Width - width - chatBarInset
 	renderer.track.Move(fyne.NewPos(x, 0))
 	renderer.track.Resize(fyne.NewSize(width, size.Height))
 	view, content, offset := bar.metricsOrZero()
-	length, pos, ok := scrollThumb(size.Height, view, content, offset)
+	length, pos, ok := scrollbar.Thumb(size.Height, view, content, offset)
 	renderer.thumb.Hidden = !ok
 	renderer.thumb.Move(fyne.NewPos(x, pos))
 	renderer.thumb.Resize(fyne.NewSize(width, length))
@@ -240,23 +204,14 @@ func (bar *chatScrollBar) metricsOrZero() (view, content, offset float32) {
 }
 
 func (renderer *chatScrollBarRenderer) MinSize() fyne.Size {
-	return fyne.NewSize(chatBarHit, chatBarMin)
+	return fyne.NewSize(scrollbar.Hit, scrollbar.MinThumb)
 }
 
 func (renderer *chatScrollBarRenderer) Refresh() {
 	bar := renderer.bar
-	active := bar.hovered || bar.dragging
-	renderer.thumb.FillColor = colScrollBar
-	renderer.track.FillColor = color.Transparent
-	if active {
-		renderer.thumb.FillColor = withAlpha(colMuted, 0.85)
-		renderer.track.FillColor = overlay(0x0c)
-	}
-	radius := float32(chatBarThin) / 2
-	if active {
-		radius = chatBarWide / 2
-	}
-	renderer.thumb.CornerRadius, renderer.track.CornerRadius = radius, radius
+	width, thumb, track := scrollbar.Look(theme.CurrentForWidget(bar), bar.hovered || bar.dragging)
+	renderer.thumb.FillColor, renderer.track.FillColor = thumb, track
+	renderer.thumb.CornerRadius, renderer.track.CornerRadius = width/2, width/2
 	renderer.Layout(bar.Size())
 	renderer.track.Refresh()
 	renderer.thumb.Refresh()
@@ -286,8 +241,8 @@ func (layoutSpec chatBarLayout) Layout(objects []fyne.CanvasObject, size fyne.Si
 	if layoutSpec.footer != nil {
 		bottom -= layoutSpec.footer.MinSize().Height
 	}
-	objects[1].Move(fyne.NewPos(size.Width-chatBarRight-chatBarHit, chatBarTop))
-	objects[1].Resize(fyne.NewSize(chatBarHit, fyne.Max(0, bottom-chatBarTop)))
+	objects[1].Move(fyne.NewPos(size.Width-chatBarRight-scrollbar.Hit, chatBarTop))
+	objects[1].Resize(fyne.NewSize(scrollbar.Hit, fyne.Max(0, bottom-chatBarTop)))
 	if bar, ok := objects[1].(*chatScrollBar); ok {
 		bar.sync()
 	}

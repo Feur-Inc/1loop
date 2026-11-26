@@ -32,6 +32,10 @@ type AccountLimitWindow struct {
 	Scoped bool
 }
 
+// NoLimitsNote is what an account whose provider reports no usage limits
+// (an API key, a local model) says instead of its windows.
+const NoLimitsNote = "No usage limits for this account"
+
 type AccountLimits struct {
 	Windows []AccountLimitWindow
 	Note    string
@@ -95,7 +99,7 @@ func (backend *App) ConnectionLimits(ctx context.Context, conn Connection, key s
 }
 
 func (backend *App) connectionLimits(ctx context.Context, conn Connection, key string) (AccountLimits, error) {
-	limits := AccountLimits{Note: "Limits not provided"}
+	limits := AccountLimits{Note: NoLimitsNote}
 	switch conn.Provider {
 	case "openai":
 		cfg, err := backend.openAIConfig(ctx, conn.Config(""))

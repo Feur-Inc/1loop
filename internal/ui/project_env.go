@@ -158,7 +158,7 @@ func (ui *desktopUI) envEditor(title string, env map[string]string, done func(ma
 				continue
 			}
 			if !platform.ValidEnvName(name) {
-				setFlow(problem, fmt.Sprintf("“%s” is not a variable name: letters, digits and _, not starting with a digit.", name))
+				setFlow(problem, fmt.Sprintf("“%s” is not a variable name: letters, digits and _.", name))
 				return
 			}
 			if _, twice := values[name]; twice {
@@ -171,7 +171,7 @@ func (ui *desktopUI) envEditor(title string, env map[string]string, done func(ma
 		done(values)
 	}
 	body := container.New(layout.NewCustomPaddedVBoxLayout(8),
-		note("Set for the shell commands, background tasks and terminals of this project's chats, where the project lives. They are not shown to the model, which reads one only by running a command that prints it."),
+		note("Set for this project's commands and terminals; hidden from the model."),
 		list, container.NewHBox(addButton), problem)
 	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
 	dialog = ui.modal(title, body, 560, nil, cancel, newRow("Save", nil, stylePrimary, save))

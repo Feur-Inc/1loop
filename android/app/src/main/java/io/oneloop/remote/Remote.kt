@@ -591,7 +591,6 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var defaultPresets by mutableStateOf(false)
     var defaultEffort by mutableStateOf("")
     var defaultTier by mutableStateOf("")
-    var defaultWindow by mutableStateOf(0)
     var approvalMode by mutableStateOf("approval")
     var autoMode by mutableStateOf(false) // the computer offers Auto mode
     var current by mutableStateOf<String?>(null) // null: a new chat
@@ -969,7 +968,6 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         defaultModel = ""
         defaultEffort = ""
         defaultTier = ""
-        defaultWindow = 0
         messageVersions = false
         attachmentsEnabled = false
         chats.clear()
@@ -1223,7 +1221,6 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         defaultModel = settings.optString("model")
         defaultEffort = settings.optString("effort")
         defaultTier = settings.optString("tier")
-        defaultWindow = settings.optInt("window")
         approvalMode = settings.optString("approvalMode", "approval")
         revokeAdbInApprovalMode()
         autoMode = settings.optBoolean("autoMode")
@@ -1240,11 +1237,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         AgentStatus.update(context, m)
         // On this phone, LocalRuntimeService notifies: it runs even without the app.
         val notify = !foreground && server?.localPhone != true
-        if (notify && wasRunning == true && !m.running) notifier.show(m.chat, m.title, "Done.")
+        if (notify && wasRunning == true && !m.running) notifier.showChat(m.chat, m.title, "Done.")
         if (!foreground && wasRunning == true && !m.running) loadNextStep(m.chat)
         if (notify) {
-            if (m.approval != null && approvals[m.chat]?.id != m.approval.id) notifier.show(m.chat, m.title, "Waiting for your approval: " + m.approval.title)
-            if (m.question != null && questions[m.chat]?.id != m.question.id) notifier.show(m.chat, m.title, m.question.questions.firstOrNull()?.text ?: "1loop has a question")
+            if (m.approval != null && approvals[m.chat]?.id != m.approval.id) notifier.showChat(m.chat, m.title, "Waiting for your approval: " + m.approval.title)
+            if (m.question != null && questions[m.chat]?.id != m.question.id) notifier.showChat(m.chat, m.title, m.question.questions.firstOrNull()?.text ?: "1loop has a question")
         }
         if (m.approval != null) approvals[m.chat] = m.approval else approvals.remove(m.chat)
         val previous = if (m.question != null) questions.put(m.chat, m.question) else questions.remove(m.chat)

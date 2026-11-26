@@ -74,6 +74,7 @@ type backdrop struct {
 	state        float32
 	stateChanged time.Duration
 	stop         chan struct{}
+	paused       bool // animateBackdrop's own: the window is not in front
 }
 
 func newBackdrop() *backdrop {
@@ -187,7 +188,11 @@ func (ui *desktopUI) animateBackdrop(b *backdrop, stop chan struct{}) {
 			return
 		case <-time.After(time.Second / time.Duration(fps)):
 		}
-		if !ui.inForeground || (ui.tray != nil && ui.tray.hidden) {
+		if paused := ui.backdropPaused(); paused != b.paused {
+			b.paused = paused
+			platform.Devf("frame", "shader background paused %v", paused)
+		}
+		if b.paused {
 			// Paused (#490): no frame and no trip to the UI thread; look again in a moment.
 			select {
 			case <-stop:
@@ -201,7 +206,7 @@ func (ui *desktopUI) animateBackdrop(b *backdrop, stop chan struct{}) {
 		step := now.Sub(last)
 		last = now
 		fyne.Do(func() {
-			if ui.backdrop != b || b.stop != stop || animationsOff || !ui.inForeground || (ui.tray != nil && ui.tray.hidden) {
+			if ui.backdrop != b || b.stop != stop || animationsOff || ui.backdropPaused() {
 				return
 			}
 			b.mu.Lock()
@@ -214,6 +219,23 @@ func (ui *desktopUI) animateBackdrop(b *backdrop, stop chan struct{}) {
 			b.shader.Refresh()
 		})
 	}
+}
+
+// backdropPaused says whether the window's background stands still: the
+// window is hidden in the tray, minimised, or another window has the
+// focus. The window's own focus events are asked first (third_party/fyne):
+// the app's foreground missed the window losing the focus on Xwayland,
+// and the shader went on at full rate behind another window (#474).
+func (ui *desktopUI) backdropPaused() bool {
+	if ui.tray != nil && ui.tray.hidden {
+		return true
+	}
+	if w, ok := ui.window.(interface{ InFront() (bool, bool) }); ok {
+		if front, known := w.InFront(); known {
+			return !front
+		}
+	}
+	return !ui.inForeground
 }
 
 // shaderFPSSaved is the setting as saved: empty for the default.

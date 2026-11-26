@@ -36,6 +36,17 @@ func (server *headlessServer) connectionLocked(id string) (agent.Connection, boo
 	return agent.Connection{}, false
 }
 
+// profileUsedLocked tells whether a ChatGPT connection still signs in
+// with this account profile.
+func (server *headlessServer) profileUsedLocked(profile string) bool {
+	for _, connection := range server.connections {
+		if connection.Provider == "openai" && connection.AuthProfile == profile {
+			return true
+		}
+	}
+	return false
+}
+
 func (server *headlessServer) localConnections(w http.ResponseWriter, r *http.Request) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
@@ -68,16 +79,18 @@ func (server *headlessServer) localConnections(w http.ResponseWriter, r *http.Re
 	}
 	_, installed := exec.LookPath("claude")
 	_, ready := os.Stat(filepath.Join(server.dir, "claude.ready"))
-	core.WriteJSON(w, 200, map[string]any{"connections": rows, "claudeInstalled": installed == nil && ready == nil})
+	// chatGPTSignIn: a paired device can sign a ChatGPT account in
+	// (networkConnectionLogin); an older server refuses one.
+	core.WriteJSON(w, 200, map[string]any{"connections": rows, "claudeInstalled": installed == nil && ready == nil, "chatGPTSignIn": !server.local})
 }
 
 func (server *headlessServer) saveLocalConnection(w http.ResponseWriter, r *http.Request) {
 	server.saveConnection(w, r, true)
 }
 
-// saveNetworkConnection is a paired device's: a ChatGPT sign-in comes back
-// to an address on the server itself (the account's) or rides the phone's
-// web view (ChatGPT (Web)), so neither is added from another device.
+// saveNetworkConnection is a paired device's. ChatGPT (Web) rides the
+// phone's web view, so it is not added from another device; a ChatGPT
+// account is, and signs in through networkConnectionLogin.
 func (server *headlessServer) saveNetworkConnection(w http.ResponseWriter, r *http.Request) {
 	server.saveConnection(w, r, false)
 }
@@ -112,8 +125,8 @@ func (server *headlessServer) saveConnection(w http.ResponseWriter, r *http.Requ
 			core.Fail(w, 404, "Connection not found")
 			return
 		}
-		if !signIns && (connection.Provider == "openai" || connection.Provider == "chatgptweb") && (!found || existing.Provider != connection.Provider) {
-			core.Fail(w, 400, "Add a ChatGPT connection where the server runs: its sign-in returns there")
+		if !signIns && connection.Provider == "chatgptweb" && (!found || existing.Provider != connection.Provider) {
+			core.Fail(w, 400, "Add a ChatGPT (Web) connection where the server runs: it signs in in a browser there")
 			return
 		}
 		if strings.TrimSpace(connection.Name) == "" || !agent.Contains([]string{"openai", "claudecode", "antigravity", "compatible", "openrouter", "vllm", "chatgptweb"}, connection.Provider) {
@@ -194,6 +207,13 @@ func (server *headlessServer) saveConnection(w http.ResponseWriter, r *http.Requ
 			ctx, cancel := context.WithTimeout(server.ctx, 25*time.Second)
 			defer cancel()
 			_ = agent.SignOutClaude(ctx, existing)
+		}()
+	}
+	if args.Remove && existing.Provider == "openai" && existing.AuthProfile != "" && !server.profileUsedLocked(existing.AuthProfile) {
+		go func() { // its tokens would stay on the disk: sign out, as Settings does
+			ctx, cancel := context.WithTimeout(server.ctx, 25*time.Second)
+			defer cancel()
+			_, _ = server.backend.DisconnectOpenAI(ctx, existing.AuthProfile)
 		}()
 	}
 	if login := server.logins[connection.ID]; login != nil && login.cancel != nil {
@@ -314,6 +334,59 @@ func (server *headlessServer) localConnectionLogin(w http.ResponseWriter, r *htt
 	core.WriteJSON(w, 200, login)
 }
 
+// networkConnectionLogin starts a ChatGPT sign-in for a paired device:
+// its browser runs there, and OpenAI sends it back to that device's
+// localhost:1455, which hands the code to networkConnectionLoginComplete.
+// The verifier and the tokens never leave the server.
+func (server *headlessServer) networkConnectionLogin(w http.ResponseWriter, r *http.Request) {
+	server.mu.Lock()
+	connection, found := server.connectionLocked(r.PathValue("id"))
+	server.mu.Unlock()
+	if !found || connection.Provider != "openai" {
+		core.Fail(w, 400, "Choose a ChatGPT connection")
+		return
+	}
+	link, state, err := server.backend.BeginOpenAIRelay(connection.AuthProfile)
+	if err != nil {
+		core.Fail(w, 400, err.Error())
+		return
+	}
+	core.WriteJSON(w, 200, map[string]string{"url": link, "state": state})
+}
+
+func (server *headlessServer) networkConnectionLoginComplete(w http.ResponseWriter, r *http.Request) {
+	var args struct{ State, Code string }
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid sign-in")
+		return
+	}
+	server.mu.Lock()
+	connection, found := server.connectionLocked(r.PathValue("id"))
+	server.mu.Unlock()
+	if !found || connection.Provider != "openai" {
+		core.Fail(w, 400, "Choose a ChatGPT connection")
+		return
+	}
+	if err := server.backend.CompleteOpenAI(r.Context(), connection.AuthProfile, args.State, args.Code); err != nil {
+		core.Fail(w, 400, err.Error())
+		return
+	}
+	email := ""
+	if auth, err := server.backend.GetOpenAI(connection.AuthProfile); err == nil {
+		auth.Mu.Lock()
+		email = auth.Account.Email
+		auth.Mu.Unlock()
+	}
+	server.mu.Lock()
+	delete(server.limitsCache, connection.ID)
+	server.modelRevision++ // a reading begun before the sign-in is stale
+	server.loading = true
+	server.broadcastLocked("settings", server.settingsLocked())
+	server.mu.Unlock()
+	go server.loadModels()
+	core.WriteJSON(w, 200, map[string]any{"signedIn": true, "email": email})
+}
+
 func (server *headlessServer) localConnectionDisconnect(w http.ResponseWriter, r *http.Request) {
 	server.mu.Lock()
 	connection, found := server.connectionLocked(r.PathValue("id"))
@@ -397,7 +470,7 @@ func (server *headlessServer) limits(w http.ResponseWriter, r *http.Request) {
 			continue
 		}
 		server.limitsCache[connection.ID] = results[index]
-		value := remoteapi.Limits{Account: connection.ID, Note: results[index].Note, Windows: []remoteapi.LimitWindow{}}
+		value := remoteapi.Limits{Account: connection.ID, Note: results[index].Note, Windows: []remoteapi.LimitWindow{}, Checked: results[index].Checked.UnixMilli()}
 		for _, window := range results[index].Windows {
 			reset := int64(0)
 			if !window.ResetAt.IsZero() {

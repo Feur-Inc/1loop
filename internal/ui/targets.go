@@ -133,6 +133,9 @@ func (ui *desktopUI) setReach(target projectTarget, state reach, problem string)
 	if ui.projectList != nil {
 		ui.renderChats()
 	}
+	if target.kind == targetServer && ui.prefs != nil {
+		ui.prefs.serverChanged(target.id) // its row under Settings → Servers
+	}
 	return true
 }
 
@@ -242,8 +245,8 @@ func (ui *desktopUI) serverGroups() []targetGroup {
 	return groups
 }
 
-// serverGroup is a server's: the window's own connection to it while it
-// works on it, else what its link last read. Until either has answered,
+// serverGroup is a server's: the own connection of a pane that works on
+// it (serverInUse), else what its link last read. Until either has answered,
 // its projects are those remembered from the last time it did, and its
 // chats are not at hand. A connection just opened lists nothing until
 // its first state arrives: meanwhile the link's listing stays, or its
@@ -255,9 +258,9 @@ func (ui *desktopUI) serverGroup(address string) targetGroup {
 	if remote != nil && remote.client.address.URL == address {
 		active = true
 	}
-	if active && remote.shown {
-		listing = &serverListing{name: remote.name, projects: remote.projects, chats: remote.chats, worktrees: remote.worktrees}
-	} else if link := ui.linkTo(address); link != nil && link.answered {
+	if live := ui.serverInUse(address); live != nil && live.live.answered { // this pane's, or another's (#600)
+		listing = &serverListing{name: live.name, projects: live.projects, chats: live.chats, worktrees: live.worktrees}
+	} else if link := ui.linkTo(address); link != nil && link.answered { // until the window's own connection answers
 		listing = &link.listing
 	}
 	target := serverTarget(address)
@@ -272,6 +275,22 @@ func (ui *desktopUI) serverGroup(address string) targetGroup {
 	return group
 }
 
+// serverInUse is the connection of a pane that works on the server at
+// address, this one's first, nil when no pane of any window does. While
+// one does, the server's link stops reading it: the sidebar of every
+// window and pane lists the server from that connection, which keeps up.
+func (ui *desktopUI) serverInUse(address string) *remoteDesktop {
+	if remote := ui.server; remote != nil && remote.client.address.URL == address {
+		return remote
+	}
+	for _, view := range ui.allPanes() {
+		if remote := view.server; remote != nil && remote.client.address.URL == address {
+			return remote
+		}
+	}
+	return nil
+}
+
 // serverListing is what a server lists of itself for the sidebar.
 type serverListing struct {
 	name      string
@@ -282,7 +301,8 @@ type serverListing struct {
 
 // serverProjectList is a server's projects as the sidebar lists them: its
 // default folder, those it lists, then its chats' folders, each once, its
-// worktrees left out (they show under their project).
+// worktrees left out (they show under their project), and so are the
+// folders it made for chats with no folder (listed under No folder).
 func serverProjectList(workspace string, listed []string, chats []remoteapi.Chat, worktrees map[string]string) []string {
 	projects := []string{}
 	add := func(folder string) {
@@ -295,7 +315,9 @@ func serverProjectList(workspace string, listed []string, chats []remoteapi.Chat
 		add(folder)
 	}
 	for _, chat := range chats {
-		add(chat.Workspace)
+		if !chat.Scratch {
+			add(chat.Workspace)
+		}
 	}
 	return projects
 }
@@ -380,7 +402,7 @@ func (ui *desktopUI) serverSideChats(target projectTarget, chats []remoteapi.Cha
 			status: chat.Status, blocked: chat.Blocked,
 			selected: current != nil && current.server != nil && current.server.client.address.URL == target.id && current.serverID == chat.ID,
 			open:     onServer(func(remote *remoteDesktop) { remote.openChat(chat.ID) }),
-			menu: []menuAction{
+			menu: []menuAction{{label: "Rename", icon: iconRename, run: onServer(func(remote *remoteDesktop) { remote.renameChat(chat) })},
 				{label: "Move to this computer…", icon: theme.ComputerIcon(), run: onServer(func(remote *remoteDesktop) {
 					remote.moveHere(chat.ID, chat.Title, chat.Workspace, chat.Running)
 				})},

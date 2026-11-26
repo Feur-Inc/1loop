@@ -19,6 +19,7 @@ const eventPing = 15 * time.Second
 type event struct {
 	kind string
 	data []byte
+	seq  uint64
 }
 
 // Events are the server-sent events of GET /api/events and the other long
@@ -30,6 +31,7 @@ type Events struct {
 	Done <-chan struct{}
 
 	mu      sync.Mutex
+	seq     uint64 // events sent so far: clients match snapshots against later events (#591)
 	subs    map[chan event]bool
 	streams map[chan struct{}]bool
 }
@@ -37,6 +39,13 @@ type Events struct {
 // NewEvents is the events of an engine that stops with ctx.
 func NewEvents(ctx context.Context) *Events {
 	return &Events{Done: ctx.Done()}
+}
+
+// Seq is the sequence number of the last event broadcast.
+func (events *Events) Seq() uint64 {
+	events.mu.Lock()
+	defer events.mu.Unlock()
+	return events.seq
 }
 
 // Broadcast hands an event to every device; a device too slow to keep up
@@ -48,9 +57,10 @@ func (events *Events) Broadcast(kind string, value any) {
 	}
 	events.mu.Lock()
 	defer events.mu.Unlock()
+	events.seq++
 	for channel := range events.subs {
 		select {
-		case channel <- event{kind, data}:
+		case channel <- event{kind, data, events.seq}:
 		default:
 			close(channel)
 			delete(events.subs, channel)
@@ -135,7 +145,7 @@ func (events *Events) Serve(w http.ResponseWriter, r *http.Request) {
 			if !open {
 				return
 			}
-			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", next.kind, next.data); err != nil {
+			if _, err := fmt.Fprintf(w, "event: %s\nid: %d\ndata: %s\n\n", next.kind, next.seq, next.data); err != nil {
 				return
 			}
 		}

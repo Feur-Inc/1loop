@@ -95,7 +95,7 @@ func modelLimitsStrip(conn agent.Connection, limits agent.AccountLimits, problem
 		}
 		// Four windows fit at the reference width; extra windows remain
 		// accessible by scrolling rather than squeezing their dates.
-		body = container.NewHScroll(container.New(limitStripCellsLayout{}, cells...))
+		body = strip(container.New(limitStripCellsLayout{}, cells...))
 	}
 	rule := canvas.NewRectangle(colBorderSoft)
 	return container.New(limitStripLayout{}, rule, header, body)

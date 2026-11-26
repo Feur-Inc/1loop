@@ -130,7 +130,7 @@ func (ui *desktopUI) appearanceRows(view *settingsView) []fyne.CanvasObject {
 	// The theme files' note and buttons are part of the Theme row, with its
 	// inset, and the card's divider comes after them (#508).
 	themeRow := view.mark(registry.KeyTheme, container.New(layout.NewCustomPaddedVBoxLayout(0),
-		settingRow(themes.Title, "Dark is 1loop's own look. System follows this computer's dark mode, and changes with it. Theme files of your own are listed too.", sized(180, themePicker.row)),
+		settingRow(themes.Title, "", sized(180, themePicker.row)),
 		ui.themeFileControls()))
 	themeRows := []fyne.CanvasObject{themeRow}
 
@@ -178,7 +178,7 @@ func (ui *desktopUI) appearanceRows(view *settingsView) []fyne.CanvasObject {
 	customSwatch.blank = current != "custom" // no colour of the user's own yet
 	controls := container.NewHBox(swatches, padded(0, 0, 10, 0, container.NewCenter(customSwatch)), padded(0, 0, 6, 0, sized(110, custom)))
 	accentRow := view.mark(registry.KeyAccent, settingStack(accents.Title,
-		"Buttons, links and highlights. A colour of your own: type it as #rrggbb and press Enter. On the light theme it is darkened until it reads on white.", controls))
+		"Your own colour: type #rrggbb and press Enter.", controls))
 	fpsSetting, _ := registry.Lookup(registry.KeyShaderFPS)
 	fps := newPicker(ui.window, fpsSetting.Title, styleField, nil)
 	for _, value := range fpsSetting.Values {
@@ -193,7 +193,7 @@ func (ui *desktopUI) appearanceRows(view *settingsView) []fyne.CanvasObject {
 		}
 	}
 	fpsRow := view.mark(registry.KeyShaderFPS, settingRow(fpsSetting.Title,
-		"For themes with a shader background. It pauses while the window is hidden or in the background, and is still while animations are off.", sized(180, fps.row)))
+		"For themes with a shader background. Pauses when hidden.", sized(180, fps.row)))
 	rows := append(themeRows, accentRow, fpsRow)
 	if shaderError != "" {
 		problem := note("The theme's shader did not compile, its plain colours are shown: " + shaderError)

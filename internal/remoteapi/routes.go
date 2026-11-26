@@ -120,14 +120,16 @@ var ServerOnlyRoutes = map[string]string{
 	"POST /api/update":         serverUpdates,
 	"POST /api/install/{what}": "it installs Chromium or Claude Code on the server; a desktop's user installs them from its window",
 	// Not served by a phone's own engine either (internal/server's local mode).
-	"GET /api/pairings":                     serverApprovals,
-	"POST /api/pairings/{id}":               serverApprovals,
-	"GET /api/connections":                  serverAccounts,
-	"POST /api/connections":                 serverAccounts,
-	"POST /api/connections/models":          serverAccounts,
-	"GET /api/connections/{id}/models":      serverAccounts,
-	"POST /api/connections/{id}/disconnect": serverAccounts,
-	"POST /api/connections/refresh":         serverAccounts,
+	"GET /api/pairings":                         serverApprovals,
+	"POST /api/pairings/{id}":                   serverApprovals,
+	"GET /api/connections":                      serverAccounts,
+	"POST /api/connections":                     serverAccounts,
+	"POST /api/connections/models":              serverAccounts,
+	"GET /api/connections/{id}/models":          serverAccounts,
+	"POST /api/connections/{id}/disconnect":     serverAccounts,
+	"POST /api/connections/{id}/login":          serverAccounts,
+	"POST /api/connections/{id}/login/complete": serverAccounts,
+	"POST /api/connections/refresh":             serverAccounts,
 }
 
 const (

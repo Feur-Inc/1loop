@@ -18,6 +18,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
 
 	"1loop/internal/agent"
@@ -27,11 +28,15 @@ type serverAddress struct {
 	URL         string `json:"url"`
 	Fingerprint string `json:"fingerprint,omitempty"`
 	Token       string `json:"token,omitempty"`
+	// LendBrowser lets the server use this computer's browser where it
+	// has none (browser_lend.go). Off unless the user turns it on.
+	LendBrowser bool `json:"lendBrowser,omitempty"`
 }
 
 type remoteClient struct {
 	http    *http.Client
 	address serverAddress
+	traffic *remoteTraffic // for the developer log (remote_traffic.go)
 }
 
 func newRemoteClient(address serverAddress) (*remoteClient, error) {
@@ -40,10 +45,16 @@ func newRemoteClient(address serverAddress) (*remoteClient, error) {
 		return nil, err
 	}
 	address.URL = base
-	return &remoteClient{client, address}, nil
+	return &remoteClient{http: client, address: address, traffic: &remoteTraffic{}}, nil
 }
 
 func (client *remoteClient) request(ctx context.Context, method, path string, body any) (*http.Response, error) {
+	return client.requestTagged(ctx, method, path, body, "")
+}
+
+// requestTagged is request asking for the body only if it is no longer the
+// one tagged tag (If-None-Match); "" asks for it whatever it is.
+func (client *remoteClient) requestTagged(ctx context.Context, method, path string, body any, tag string) (*http.Response, error) {
 	var reader io.Reader
 	kind := "application/json"
 	if raw, ok := body.(io.Reader); ok { // a file sent as it is
@@ -60,12 +71,20 @@ func (client *remoteClient) request(ctx context.Context, method, path string, bo
 		return nil, err
 	}
 	req.Header.Set("Content-Type", kind)
+	if tag != "" {
+		req.Header.Set("If-None-Match", tag)
+	}
 	if client.address.Token != "" {
 		req.Header.Set("Authorization", "Bearer "+client.address.Token)
 	}
+	client.traffic.request(path)
 	response, err := client.http.Do(req)
 	if err != nil {
 		return nil, err
+	}
+	response.Body = client.traffic.body(response.Body)
+	if response.StatusCode == http.StatusNotModified { // asked with If-None-Match (snapshot)
+		return response, nil
 	}
 	if response.StatusCode < 200 || response.StatusCode >= 300 {
 		defer response.Body.Close()
@@ -105,6 +124,27 @@ func (client *remoteClient) json(ctx context.Context, method, path string, body,
 		return err
 	}
 	return json.NewDecoder(io.LimitReader(response.Body, 32<<20)).Decode(result)
+}
+
+// snapshot reads the state or a chat into result, unless the copy tagged
+// tag is still the server's: changed is then false and result untouched.
+// It returns the answer's ETag and the number of the server's last event
+// before it (0 from a server older than #591, which has neither).
+func (client *remoteClient) snapshot(ctx context.Context, path, tag string, result any) (changed bool, newTag string, seq uint64, err error) {
+	response, err := client.requestTagged(ctx, "GET", path, nil, tag)
+	if err != nil {
+		return false, "", 0, err
+	}
+	defer response.Body.Close()
+	seq, _ = strconv.ParseUint(response.Header.Get("X-1loop-Seq"), 10, 64)
+	newTag = response.Header.Get("ETag")
+	if response.StatusCode == http.StatusNotModified {
+		return false, tag, seq, nil
+	}
+	if err := json.NewDecoder(io.LimitReader(response.Body, 32<<20)).Decode(result); err != nil {
+		return false, "", 0, err
+	}
+	return true, newTag, seq, nil
 }
 
 // secureRemoteClient trusts a self-hosted server by the fingerprint read

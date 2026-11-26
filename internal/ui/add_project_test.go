@@ -132,6 +132,8 @@ func visibleTexts(object fyne.CanvasObject) (texts []string) {
 			}
 		case *container.Scroll:
 			walk(object.Content)
+		case *container.ThemeOverride: // a strip's scroll without a bar (strip)
+			walk(object.Content)
 		}
 	}
 	walk(object)

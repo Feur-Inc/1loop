@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -52,8 +53,14 @@ type serverChat struct {
 	Subchat *agent.SubchatLink `json:"subchat,omitempty"`
 	// ReportTo: the chats whose message caused the running turn, told when
 	// it ends (chats.go). Saved, so a turn cut off by a restart shows so.
-	ReportTo     []string `json:"reportTo,omitempty"`
-	hops         int      // messages between chats since the user last wrote (agent.TurnHops)
+	ReportTo []string `json:"reportTo,omitempty"`
+	// Working: a turn was running at the last save. Still set when the
+	// server starts, the turn was cut off (agent.CutOffTurn, #584).
+	Working bool `json:"working,omitempty"`
+	// Resumed: 1loop resumed the chat after a restart cut its turn off,
+	// and that turn has not ended yet: cut off again, it waits for a message.
+	Resumed      bool `json:"resumed,omitempty"`
+	hops         int  // messages between chats since the user last wrote (agent.TurnHops)
 	run          *serverRun
 	moving       bool // paused to move to another device: it starts nothing (chat_move.go)
 	tabs         []*serverTab
@@ -116,6 +123,7 @@ type headlessServer struct {
 	shutdown                   context.CancelFunc
 	backend                    *agent.App
 	engine                     *browser.Engine
+	lenders                    *browserLenders // the paired clients lending their browser (lent_browser.go)
 	name, root, dir            string
 	projects                   []string
 	worktrees                  map[string]string              // worktree folder → project (worktrees.go)
@@ -174,6 +182,9 @@ type headlessServer struct {
 	pending  map[*serverChat]map[int]bool
 	flushing bool
 	installs map[string]*installJob // Install Chromium / Claude Code (install.go)
+	// The turns the last stop cut off, resumed and reported once the
+	// models are loaded (resumeCutOffLocked).
+	cutOffs []cutOffTurn
 }
 
 func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*headlessServer, error) {
@@ -195,24 +206,15 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		trust:        &hostTrust{out: os.Stderr},
 		cfg:          agent.Config{Provider: "compatible", Workspace: root},
 	}
-	var saved struct {
-		Chats   []*serverChat
-		Devices []remoteapi.PairedDevice
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "state.json"))
-	if err == nil {
-		if err = json.Unmarshal(data, &saved); err != nil {
-			return nil, err
-		}
-	} else if !os.IsNotExist(err) {
+	var err error
+	if server.chats, server.devices, err = readServerState(filepath.Join(dir, "state.json")); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-	server.chats, server.devices = saved.Chats, saved.Devices
 	customConfig := configPath != ""
 	if configPath == "" {
 		configPath = filepath.Join(dir, "config.json")
 	}
-	data, err = os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath)
 	if err == nil {
 		var settings serverSettings
 		if err = json.Unmarshal(data, &settings); err != nil {
@@ -263,6 +265,8 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 	browser.BrowserProfileOverride = filepath.Join(dir, "browser") // and Install Chromium's, beside it
 	agent.ClaudeInstallDir = filepath.Join(dir, "claude-code")
 	server.engine = browser.NewBrowserEngine(ctx)
+	server.lenders = &browserLenders{changed: server.lentBrowserChanged}
+	server.engine.Remote = server.lenders
 	for _, chat := range server.chats {
 		if chat.Config.Workspace == "" {
 			chat.Config.Workspace = root
@@ -280,7 +284,17 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 			chat.Compaction = &agent.CompactionState{}
 		}
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
-		chat.Subchat.Restored(len(chat.ReportTo) > 0)
+		// A turn that was working (or, saved before Working, reporting) was
+		// cut off: it shows so at once, and goes on or is told once the
+		// models are loaded (#584).
+		if cutOff := chat.Working || len(chat.ReportTo) > 0; cutOff {
+			resume := chat.Subchat != nil || len(chat.ReportTo) > 0
+			turn := agent.CutOffTurn(chat.Config, serverRestarted, resume, chat.Resumed)
+			server.addLocked(chat, turn.Item)
+			server.cutOffs = append(server.cutOffs, cutOffTurn{chat: chat, reportTo: chat.ReportTo, resume: turn.Resume})
+			chat.Subchat.Restored(true)
+		}
+		chat.Working, chat.Resumed = false, false
 		chat.ReportTo = nil
 	}
 	return server, nil
@@ -322,7 +336,8 @@ func (server *headlessServer) stateLocked() (write func() error) {
 		chats[i] = &serverChat{ID: chat.ID, Title: chat.Title, Config: chat.Config, History: append([]agent.Message{}, chat.History...),
 			Items: append([]agent.ChatItem{}, chat.Items...), Version: chat.Version, Versions: agent.CopyVersions(chat.Versions),
 			Todo: chat.Todo.Copy(), Goal: chat.Goal.Copy(), Cache: chat.Cache.Copy(), Compaction: chat.Compaction.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
-			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...)} // its parent: forgetting it detached every subchat on restart (#356)
+			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...), // its parent: forgetting it detached every subchat on restart (#356)
+			Working: chat.Working, Resumed: chat.Resumed}
 	}
 	devices := append([]remoteapi.PairedDevice{}, server.devices...)
 	server.saveCount++
@@ -334,14 +349,69 @@ func (server *headlessServer) stateLocked() (write func() error) {
 			return nil // a newer state is already on disk
 		}
 		server.saveDone = count
-		for _, chat := range chats {
-			chat.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
-		}
-		return saveServerJSON(path, struct {
-			Chats   []*serverChat            `json:"chats"`
-			Devices []remoteapi.PairedDevice `json:"devices"`
-		}{chats, devices})
+		return core.WriteFileStreamed(path, 0600, false, func(w io.Writer) error { return writeServerState(w, chats, devices) })
 	}
+}
+
+// writeServerState writes the state, message by message (agent.WriteChatJSON):
+// encoded whole, it took several times its size in memory at every save.
+func writeServerState(w io.Writer, chats []*serverChat, devices []remoteapi.PairedDevice) error {
+	writer := core.NewJSONWriter(w)
+	writer.Raw([]byte(`{"chats":`))
+	core.WriteJSONList(writer, chats, func(chat **serverChat) {
+		copied := **chat
+		copied.Versions = agent.CompactVersions(copied.Versions, copied.History, copied.Items)
+		agent.WriteChatJSON(writer, &copied, &copied.History, &copied.Items, &copied.Versions)
+	})
+	writer.Raw([]byte(`,"devices":`))
+	writer.Value(devices)
+	writer.Raw([]byte{'}'})
+	return writer.Err()
+}
+
+// readServerState reads it the same way; what is found several times (a
+// picture, a tool's output) is kept once.
+func readServerState(path string) (chats []*serverChat, devices []remoteapi.PairedDevice, err error) {
+	type savedServer struct {
+		Chats   []*serverChat
+		Devices []remoteapi.PairedDevice
+	}
+	var saved savedServer
+	err = func() error {
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		reader := core.NewJSONReader(file)
+		rest, err := reader.Object(map[string]func() error{"chats": func() (err error) {
+			saved.Chats, err = core.ReadJSONList(reader, func(read **serverChat) error {
+				chat := &serverChat{}
+				null, err := agent.ReadChatJSON(reader, chat, &chat.History, &chat.Items, &chat.Versions)
+				if !null {
+					*read = chat
+				}
+				return err
+			})
+			return err
+		}})
+		if err == nil && rest != nil {
+			err = json.Unmarshal(rest, &saved)
+		}
+		if err == nil {
+			err = reader.End()
+		}
+		return err
+	}()
+	if err != nil && !os.IsNotExist(err) {
+		// What is wrong with it is encoding/json's to say, from the whole file.
+		var data []byte
+		if data, err = os.ReadFile(path); err == nil {
+			saved = savedServer{}
+			err = json.Unmarshal(data, &saved)
+		}
+	}
+	return saved.Chats, saved.Devices, err
 }
 
 func (server *headlessServer) scheduleSaveLocked() {
@@ -620,6 +690,9 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 	}
 	meta.Goal = remoteapi.GoalOf(chat.Goal.Snapshot())
 	meta.Used = agent.HistoryEstimate(chat.History) + agent.ContextOverhead(chat.Config)
+	if chat.Config.Provider == "claudecode" && chat.ContextUsage != nil {
+		meta.Used = chat.ContextUsage.Used // Claude Code keeps its own history
+	}
 	if chat.run != nil {
 		meta.Label, meta.Mark, meta.Approval, meta.Question = chat.run.label, chat.run.mark, chat.run.approval, chat.run.question
 		meta.Tool = chat.run.tool
@@ -887,6 +960,7 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 	}
 	chat.History = append(chat.History, m)
 	chat.hops = agent.TurnHops(chat.hops, false, m)
+	chat.Working = true
 	// The user's words, another chat's under its name, or a note for
 	// 1loop's own (a task's end, a report).
 	index := server.addLocked(chat, agent.MessageItem(id, m))
@@ -958,6 +1032,12 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		}
 		chat.run = nil
 		defer close(run.ended)
+		if server.ctx.Err() != nil && err != nil {
+			// The server stops: the turn stays working in the state it
+			// saves, cut off, which its next start shows (#584).
+			return
+		}
+		chat.Working = false
 		ended := agent.SubchatDone
 		paused := errors.Is(err, agent.ErrPaused)
 		if paused {
@@ -992,8 +1072,10 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			return
 		}
 		// A message can arrive after the agent's last look at its inbox and
-		// before this: it starts the next turn rather than wait unseen.
-		if len(chat.steer) > 0 && err == nil {
+		// before this: it starts the next turn rather than wait unseen. So
+		// does one a failed turn never read: a subchat's report, left there,
+		// was never heard (#584). After a stop, it waits for the next turn.
+		if len(chat.steer) > 0 && ended != agent.SubchatStopped {
 			next := chat.steer[0]
 			chat.steer = chat.steer[1:]
 			server.runLocked(chat, next)
@@ -1097,6 +1179,9 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: value.(string)})
 	case "usage":
 		run.used = value.(int)
+		if chat.Config.Provider == "claudecode" { // its own count comes when the turn ends
+			chat.ContextUsage = chat.ContextUsage.At(run.used)
+		}
 	case "context_usage":
 		usage := value.(agent.ContextUsage)
 		chat.ContextUsage = &usage
@@ -1156,6 +1241,15 @@ func (server *headlessServer) usageNames(group, key string) string {
 		return chat.Title
 	}
 	return ""
+}
+
+// accountDisabled says whether a connection is kept but turned off: its
+// limits are not shown on the Usage page.
+func (server *headlessServer) accountDisabled(id string) bool {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	connection, ok := server.connectionLocked(id)
+	return ok && !connection.Enabled
 }
 
 // noteLimits reads a subscription's usage windows into the usage ledger

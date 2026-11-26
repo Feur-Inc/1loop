@@ -125,7 +125,7 @@ func (ui *desktopUI) playPicture(b *backdrop, stop chan struct{}, frames []image
 		case <-time.After(max(delays[i], 20*time.Millisecond)):
 		}
 		fyne.DoAndWait(func() { // i is read again for the next delay
-			if b.picStop != stop || animationsOff || !ui.inForeground || (ui.tray != nil && ui.tray.hidden) {
+			if b.picStop != stop || animationsOff || ui.backdropPaused() {
 				return
 			}
 			i = (i + 1) % len(frames)

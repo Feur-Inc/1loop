@@ -102,7 +102,7 @@ func drawTaskList(box *fyne.Container, items []agent.TodoItem, live func() bool,
 	title.TextStyle = fyne.TextStyle{Bold: true}
 	if len(items) == 0 {
 		box.Add(title)
-		box.Add(padded(8, 0, 0, 0, plainFlow("No tasks yet. The agent lists them here when it plans your request, and ticks them off as it goes.", 13, colMuted)))
+		box.Add(padded(8, 0, 0, 0, plainFlow("No tasks yet. The agent lists and ticks them off here.", 13, colMuted)))
 		return nil
 	}
 	// The whole list at a glance: how many are done, and a line that fills.
@@ -379,7 +379,7 @@ func (panel *toolPanel) refreshTodoStatus(rebuild ...bool) {
 	if len(rebuild) > 0 && !rebuild[0] && tab.todoContextText != "" {
 		return
 	}
-	text := agent.TaskContextText(cfg, panel.ui.contextRing.used, panel.ui.contextRing.window, panel.ui.classicCompaction, state)
+	text := agent.TaskContextText(cfg, panel.ui.contextUsed, panel.ui.contextWindow, panel.ui.classicCompaction, state)
 	if panel.owner != nil && panel.owner.run == nil && panel.owner.Compaction.Interrupted() != nil {
 		text += "\nA compaction was interrupted: it goes on with the next message."
 	}

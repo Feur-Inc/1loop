@@ -1,6 +1,8 @@
 package cache
 
 import (
+	"time"
+
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/internal/async"
 )
@@ -8,6 +10,7 @@ import (
 var (
 	textTextures   async.Map[FontCacheEntry, *textureInfo]
 	objectTextures async.Map[fyne.CanvasObject, *textureInfo]
+	lastTextSweep  time.Time
 )
 
 // DeleteTexture deletes the texture from the cache map.
@@ -64,6 +67,26 @@ func RangeExpiredTexturesFor(canvas fyne.Canvas, f func(fyne.CanvasObject)) {
 	objectTextures.Range(func(obj fyne.CanvasObject, tinfo *textureInfo) bool {
 		if tinfo.isExpired(now) && tinfo.canvas == canvas {
 			f(obj)
+		}
+		return true
+	})
+}
+
+// ExpireStaleTextTexturesFor frees text textures on canvas that have not been
+// drawn for at least maxAge. Called only after a full-frame paint (when every
+// visible text just refreshed its expiry), at most once every 5 s, so abandoned
+// streaming line prefixes do not linger for the full ValidDuration (1loop #491).
+func ExpireStaleTextTexturesFor(canvas fyne.Canvas, maxAge time.Duration) {
+	now := timeNow()
+	if now.Sub(lastTextSweep) < 5*time.Second {
+		return
+	}
+	lastTextSweep = now
+	cutoff := now.Add(ValidDuration - maxAge)
+	textTextures.Range(func(key FontCacheEntry, tinfo *textureInfo) bool {
+		if tinfo.canvas == canvas && tinfo.expires.Before(cutoff) {
+			textTextures.Delete(key)
+			tinfo.textFree()
 		}
 		return true
 	})

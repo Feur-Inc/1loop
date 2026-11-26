@@ -14,6 +14,7 @@ package ui
 import (
 	"fmt"
 	"image"
+	"image/color"
 	"math"
 	"strings"
 	"sync"
@@ -34,15 +35,27 @@ const (
 )
 
 var (
-	faceAmber = [3]float64{255, 176, 0}
-	faceRed   = [3]float64{232, 106, 95}
-	faceGreen = [3]float64{127, 200, 143}
-	faceE1    = [2]float64{50, 47} // the inner eye
-	faceE2    = facePoint(-60)     // the dot on the ring
-	faceMid   = [2]float64{(faceE1[0] + faceE2[0]) / 2, (faceE1[1] + faceE2[1]) / 2}
+	faceE1  = [2]float64{50, 47} // the inner eye
+	faceE2  = facePoint(-60)     // the dot on the ring
+	faceMid = [2]float64{(faceE1[0] + faceE2[0]) / 2, (faceE1[1] + faceE2[1]) / 2}
 	// The eye shapes lean a little with the pair.
 	faceLean = math.Atan2(faceE2[1]-faceE1[1], faceE2[0]-faceE1[0]) * 180 / math.Pi * .45
 )
+
+func rgbTriple(c color.NRGBA) [3]float64 {
+	return [3]float64{float64(c.R), float64(c.G), float64(c.B)}
+}
+
+func hexRGB(c color.NRGBA) string {
+	return fmt.Sprintf("#%02X%02X%02X", c.R, c.G, c.B)
+}
+
+func faceInkKey(plate bool) string {
+	if plate {
+		return fmt.Sprintf("%s/%s/%s/%s/%s", hexRGB(colAmber), hexRGB(colDanger), hexRGB(colAdded), hexRGB(colText), hexRGB(opaque(colBackground)))
+	}
+	return fmt.Sprintf("%s/%s/%s/%s", hexRGB(colAmber), hexRGB(colDanger), hexRGB(colAdded), hexRGB(colText))
+}
 
 func facePoint(deg float64) [2]float64 {
 	a := deg * math.Pi / 180
@@ -344,13 +357,29 @@ var (
 )
 
 func frozenFace(pose facePose, px int, state string, plate bool) image.Image {
-	key := fmt.Sprintf("%s/%d/%v", state, px, plate)
+	key := fmt.Sprintf("%s/%d/%v/%s", state, px, plate, faceInkKey(plate))
 	frozenMu.Lock()
 	defer frozenMu.Unlock()
 	if frozenFaces[key] == nil {
+		if len(frozenFaces) > 64 {
+			clear(frozenFaces)
+		}
 		frozenFaces[key] = drawLoopy(pose, px, plate, 0)
 	}
 	return frozenFaces[key]
+}
+
+// recolour redraws the face in the active theme's accent and ink colours.
+func (face *loopyFace) recolour() {
+	if face == nil {
+		return
+	}
+	if face.frozen {
+		face.image.Image = frozenFace(face.pose, int(2*face.size), face.state, face.plate)
+		face.image.Refresh()
+		return
+	}
+	face.render()
 }
 
 // set moves the face to a state; the springs carry it there.
@@ -468,7 +497,7 @@ func drawLoopy(p facePose, px int, plate bool, head float64) image.Image {
 	var svg strings.Builder
 	fmt.Fprintf(&svg, `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 %d %d">`, px, px+top)
 	if plate {
-		fmt.Fprintf(&svg, `<rect y="%d" width="%d" height="%d" rx="%.2f" fill="#121212"/>`, top, px, px, 27*k)
+		fmt.Fprintf(&svg, `<rect y="%d" width="%d" height="%d" rx="%.2f" fill="%s"/>`, top, px, px, 27*k, hexRGB(opaque(colBackground)))
 	}
 	// The ring: from -12° the long way round to -108°.
 	var ring strings.Builder
@@ -483,8 +512,8 @@ func drawLoopy(p facePose, px int, plate bool, head float64) image.Image {
 			fmt.Fprintf(&ring, "L%.2f %.2f", x, y)
 		}
 	}
-	color := faceMix(faceAmber, faceRed, unit(p.red))
-	color = faceMix(color, faceGreen, unit(p.green))
+	color := faceMix(rgbTriple(colAmber), rgbTriple(colDanger), unit(p.red))
+	color = faceMix(color, rgbTriple(colAdded), unit(p.green))
 	width := faceSW * .9 * k * p.ringScale * (p.sx + p.sy) / 2
 	fmt.Fprintf(&svg, `<path d="%s" fill="none" stroke="rgb(%d,%d,%d)" stroke-width="%.2f" stroke-linecap="round" stroke-linejoin="round"/>`,
 		ring.String(), int(color[0]), int(color[1]), int(color[2]), width)
@@ -502,8 +531,9 @@ func drawLoopy(p facePose, px int, plate bool, head float64) image.Image {
 		a1 = [2]float64{a1[0] + dx, a1[1] + dy}
 		a2 = [2]float64{a2[0] + dx*.5, a2[1] + dy*.5}
 	}
+	eyeFill := hexRGB(colText)
 	for i, eye := range [][2]float64{a1, a2} {
-		fmt.Fprintf(&svg, `<path d="%s" fill="#F4F4F4"/>`, eyePath(eye, shape, i == 1, body))
+		fmt.Fprintf(&svg, `<path d="%s" fill="%s"/>`, eyePath(eye, shape, i == 1, body), eyeFill)
 	}
 	svg.WriteString(`</svg>`)
 	icon, err := oksvg.ReadIconStream(strings.NewReader(svg.String()))

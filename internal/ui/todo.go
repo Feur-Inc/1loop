@@ -21,6 +21,17 @@ import (
 	"1loop/internal/agent"
 )
 
+// openTasks shows a chat's tasks in the side panel: a task list update in
+// the conversation opens them, rather than the call's arguments (#612). A
+// server chat's tasks are the server's tab.
+func (ui *desktopUI) openTasks(chat *conversation) {
+	if chat != nil && chat.server != nil {
+		chat.server.showTab("todo")
+		return
+	}
+	ui.panel.of(chat).openTodo()
+}
+
 func (panel *toolPanel) openTodo() {
 	for i, tab := range panel.tabs {
 		if tab.kind == "todo" {

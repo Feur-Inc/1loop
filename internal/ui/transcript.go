@@ -459,6 +459,9 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 				call()
 			}
 		}
+		if agent.TodoTool(item.Tool) { // the tasks it updated, rather than the call (#612)
+			row.onTap = func() { ui.openTasks(chat) }
+		}
 		row.selected = ui.panel.showing(chat, index)
 		ui.views[index] = row
 		if item.Tool == "imagegen" {
@@ -867,6 +870,8 @@ func measureTranscriptText(object fyne.CanvasObject, measuring bool) {
 		if !measuring && !object.Visible() {
 			object.release()
 		}
+	case *sideScroll:
+		measureTranscriptText(object.Content, measuring)
 	case *fyne.Container:
 		for _, child := range object.Objects {
 			measureTranscriptText(child, measuring)
@@ -880,6 +885,8 @@ func releaseTranscriptText(object fyne.CanvasObject) {
 	switch object := object.(type) {
 	case *flowText:
 		object.release()
+	case *sideScroll:
+		releaseTranscriptText(object.Content)
 	case *fyne.Container:
 		for _, child := range object.Objects {
 			releaseTranscriptText(child)
@@ -1397,9 +1404,10 @@ func (currentTurn *turn) render(force bool) {
 	currentTurn.lastParse = time.Now()
 	currentTurn.view().remote.itemChanged(currentTurn.chat, currentTurn.index)
 	if view, ok := currentTurn.view().liveView(currentTurn.chat, currentTurn.index).(*markdownView); ok {
-		view.ParseMarkdown(currentTurn.chat.Items[currentTurn.index].Text)
-		currentTurn.view().items.changed(view.box) // measured again even if the reader is elsewhere in the chat
-		currentTurn.view().relayoutColumn()
+		if view.ParseMarkdown(currentTurn.chat.Items[currentTurn.index].Text) || !view.box.Visible() || view.box.Size().Width == 0 {
+			currentTurn.view().items.changed(view.box) // measured again even if the reader is elsewhere in the chat
+			currentTurn.view().relayoutColumn()
+		}
 	}
 }
 
@@ -1429,7 +1437,9 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		}
 		currentTurn.chat.Items[currentTurn.index].Text += uiEventValue.data.(string)
 		currentTurn.render(false)
-		currentTurn.show(agent.Activity{State: "write"})
+		if currentTurn.mark != "write" || currentTurn.label != "Writing…" {
+			currentTurn.show(agent.Activity{State: "write"})
+		}
 	case "text": // the streaming answer rewritten as a whole (ChatGPT (Web))
 		if currentTurn.index < 0 {
 			currentTurn.index = len(currentTurn.chat.Items)
@@ -1589,15 +1599,17 @@ func approvalSubject(p map[string]any) string {
 	return strings.TrimSuffix(title, "?")
 }
 
+var activityLabels = map[string]string{
+	"wait":    "Waiting for the model",
+	"think":   "Thinking",
+	"write":   "Writing",
+	"compact": "Compacting the conversation",
+}
+
 // show tells, under the conversation, what the agent is doing.
 func (currentTurn *turn) show(activityValue agent.Activity) {
 	currentTurn.waiting++ // the command is over: no more counting
-	label := map[string]string{
-		"wait":    "Waiting for the model",
-		"think":   "Thinking",
-		"write":   "Writing",
-		"compact": "Compacting the conversation",
-	}[activityValue.State]
+	label := activityLabels[activityValue.State]
 	switch activityValue.State {
 	case "call":
 		label = agent.CallLabel(activityValue.Tool, activityValue.Detail)

@@ -604,7 +604,7 @@ func (flow *flowText) grow(spans []span) {
 // nothing holds.
 func (flow *flowText) kept(spans []span) (keep, from, at int) {
 	old := flow.spans
-	if flow.cut == nil || flow.mono || flow.waiting {
+	if flow.cut == nil || flow.waiting {
 		return -1, 0, 0
 	}
 	from = 0
@@ -616,7 +616,7 @@ func (flow *flowText) kept(spans []span) (keep, from, at int) {
 	for keep > 0 && flow.cut[keep-1].span >= from {
 		keep--
 	}
-	if from == len(old) || from == len(spans) {
+	if from == len(old) || from == len(spans) || flow.mono {
 		return keep, from, 0
 	}
 	was, now := old[from], spans[from]
@@ -728,8 +728,16 @@ func (flow *flowText) extent() (natural, widest float32) {
 }
 
 func (renderer *flowRenderer) Layout(size fyne.Size) {
-	if size.Width > 0 && (size.Width != renderer.flowText.width || (!renderer.flowText.measuring && size.Width != renderer.flowText.paintedWidth)) {
-		renderer.flowText.flow(size.Width)
+	text := renderer.flowText
+	if size.Width <= 0 {
+		return
+	}
+	if text.mono && !text.measuring && text.drawn && text.paintedWidth > 0 {
+		text.width, text.paintedWidth = size.Width, size.Width
+		return // code never wraps: a wider scroll area needs no reflow
+	}
+	if size.Width != text.width || (!text.measuring && size.Width != text.paintedWidth) {
+		text.flow(size.Width)
 	}
 }
 

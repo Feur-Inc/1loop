@@ -4,7 +4,9 @@ package remoteapi
 
 import (
 	"1loop/internal/agent"
+	"1loop/internal/core"
 	"fmt"
+	"net/http"
 	"os"
 	"path/filepath"
 	"slices"
@@ -140,4 +142,30 @@ func ChangeProject(projects []string, privateDir, action string, args ProjectCha
 	default:
 		return "", fmt.Errorf("Unknown project action")
 	}
+}
+
+// ProjectMemory is GET /api/projects/memory?workspace=: the project's
+// AGENTS.md, for the desktop's Project memory dialog.
+func ProjectMemory(w http.ResponseWriter, r *http.Request, workspace string) {
+	text, err := agent.ProjectMemory(workspace)
+	if err != nil {
+		core.Fail(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	core.WriteJSON(w, http.StatusOK, map[string]any{"text": text, "exists": agent.ProjectMemoryExists(workspace), "path": filepath.Join(workspace, "AGENTS.md")})
+}
+
+// SaveProjectMemory is POST /api/projects/memory?workspace= with
+// {before, after}: refused when the file changed since it was read.
+func SaveProjectMemory(w http.ResponseWriter, r *http.Request, workspace string) {
+	var args struct{ Before, After string }
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	if err := agent.SaveProjectMemory(workspace, args.Before, args.After); err != nil {
+		core.Fail(w, http.StatusConflict, err.Error())
+		return
+	}
+	core.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }

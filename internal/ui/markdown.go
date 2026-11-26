@@ -30,7 +30,15 @@ type markdownView struct {
 	starts []int  // where each block starts in source
 	source string // the text last parsed
 	objs   []fyne.CanvasObject
-	media  *mdMedia // draws its images and videos; nil: they are links
+	codes  map[int]*codeView // live fenced/indented code blocks, grown in place while streaming
+	media  *mdMedia          // draws its images and videos; nil: they are links
+}
+
+type codeView struct {
+	lang string
+	text string
+	code *flowText
+	box  fyne.CanvasObject
 }
 
 // mdBlock identifies a top-level block: while an answer streams, a block
@@ -56,8 +64,9 @@ func newMarkdownMediaView(text string, media *mdMedia) *markdownView {
 }
 
 // ParseMarkdown re-renders the text. Unchanged blocks keep their widgets:
-// while an answer streams, only its last block is built again.
-func (view *markdownView) ParseMarkdown(text string) {
+// while an answer streams, only its last block is built again. It reports
+// whether the layout (block list or a block's height) changed.
+func (view *markdownView) ParseMarkdown(text string) bool {
 	text = hideOpenTag(text)
 	// A streamed answer only grows: the blocks before the last two are
 	// final, only the text from there on is parsed again. Parsing the
@@ -92,8 +101,33 @@ func (view *markdownView) ParseMarkdown(text string) {
 			objs[i], grown = text, grown || text.height != before
 			continue
 		}
+		// A code block being written grows in place too, keeping its frame,
+		// scroll container and earlier lines.
+		if cv, codeText, ok := view.codeBlock(i, nodes[i-keep], source); ok {
+			before := cv.code.height
+			cv.text = codeText
+			cv.code.grow(codeSpans(codeText))
+			objs[i], grown = cv.box, grown || cv.code.height != before
+			continue
+		}
+		if lang, codeText, ok := nodeCode(nodes[i-keep], source); ok {
+			cv := newMarkdownCode(lang, codeText)
+			if view.codes == nil {
+				view.codes = map[int]*codeView{}
+			}
+			view.codes[i] = cv
+			objs[i] = cv.box
+			reshaped = true
+			continue
+		}
+		delete(view.codes, i)
 		objs[i] = renderNode(nodes[i-keep], source, colText, view.media)
 		reshaped = true
+	}
+	for i := range view.codes {
+		if i >= len(blocks) {
+			delete(view.codes, i)
+		}
 	}
 	view.starts, view.source = starts, text
 	view.blocks, view.objs = blocks, objs
@@ -119,6 +153,32 @@ func (view *markdownView) ParseMarkdown(text string) {
 	if view.layer != nil {
 		view.layer.changed()
 	}
+	return grown || reshaped
+}
+
+func nodeCode(node ast.Node, source []byte) (lang, text string, ok bool) {
+	switch node := node.(type) {
+	case *ast.FencedCodeBlock:
+		return string(node.Language(source)), codeBlockText(node, source), true
+	case *ast.CodeBlock:
+		return "", codeBlockText(node, source), true
+	}
+	return "", "", false
+}
+
+func (view *markdownView) codeBlock(i int, node ast.Node, source []byte) (*codeView, string, bool) {
+	if i >= len(view.blocks) || view.blocks[i].kind != "code" || view.codes == nil {
+		return nil, "", false
+	}
+	cv := view.codes[i]
+	if cv == nil || cv.box != view.objs[i] {
+		return nil, "", false
+	}
+	lang, text, ok := nodeCode(node, source)
+	if !ok || lang != cv.lang {
+		return nil, "", false
+	}
+	return cv, text, true
 }
 
 // paragraph is block i's widget when it is a paragraph drawn by one
@@ -368,32 +428,44 @@ func tableSpans(table *east.Table, source []byte) [][][]span {
 	return rows
 }
 
-// markdownCode frames a fenced block with its language and a copy button.
-func markdownCode(lang, text string) fyne.CanvasObject {
-	var spans []span
-	for i, line := range strings.Split(text, "\n") {
+func codeSpans(text string) []span {
+	lines := strings.Split(text, "\n")
+	spans := make([]span, 0, len(lines)*2)
+	for i, line := range lines {
 		if i > 0 {
 			spans = append(spans, span{hard: true})
 		}
 		spans = append(spans, span{text: line})
 	}
-	code := newFlowText(spans, 13, colText)
+	return spans
+}
+
+// markdownCode frames a fenced block with its language and a copy button.
+func markdownCode(lang, text string) fyne.CanvasObject {
+	return newMarkdownCode(lang, text).box
+}
+
+func newMarkdownCode(lang, text string) *codeView {
+	code := newFlowText(codeSpans(text), 13, colText)
 	code.mono = true
 	scroll := newSideScroll(code)
-	if lang == "" {
-		lang = "code"
+	label := lang
+	if label == "" {
+		label = "code"
 	}
+	cv := &codeView{lang: lang, text: text, code: code}
 	var copyButton *tapRow
 	copyButton = newRow("Copy", iconCopy, styleChip, func() {
-		fyne.CurrentApp().Clipboard().SetContent(text)
+		fyne.CurrentApp().Clipboard().SetContent(cv.text)
 		copyButton.SetText("Copied")
 		time.AfterFunc(1400*time.Millisecond, func() { fyne.Do(func() { copyButton.SetText("Copy") }) })
 	})
-	header := container.NewBorder(nil, nil, padded(0, 0, 10, 0, textLine(lang, 12, colMuted)), copyButton)
+	header := container.NewBorder(nil, nil, padded(0, 0, 10, 0, textLine(label, 12, colMuted)), copyButton)
 	rule := canvas.NewRectangle(colBorderSoft)
 	rule.SetMinSize(fyne.NewSize(0, 1))
 	body := container.NewBorder(container.NewVBox(padded(2, 2, 0, 2, header), rule), nil, nil, nil, padded(10, 12, 12, 12, scroll))
-	return surface(body, colCode, colBorderSoft, 10, 0)
+	cv.box = surface(body, colCode, colBorderSoft, 10, 0)
+	return cv
 }
 
 // ---------------------------------------------------------------------------

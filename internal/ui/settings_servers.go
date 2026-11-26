@@ -267,8 +267,8 @@ func (view *settingsView) dial(entry *settingsServer) {
 		err := client.json(attempt, "GET", "/api/state", nil, &state)
 		done()
 		fyne.Do(func() {
-			if entry.remote != remote {
-				return // left meanwhile
+			if entry.remote != remote || ctx.Err() != nil {
+				return // left meanwhile, or the window closed
 			}
 			if err != nil {
 				view.hangUp(entry)
@@ -293,7 +293,7 @@ func (view *settingsView) checkUpdate(entry *settingsServer, remote *remoteDeskt
 		return // up to date, a dev build, or an older server without updates
 	}
 	fyne.Do(func() {
-		if entry.remote == remote {
+		if entry.remote == remote && remote.ctx.Err() == nil {
 			remote.update = &status
 			view.serverChanged(entry.address.URL)
 		}

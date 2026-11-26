@@ -230,6 +230,19 @@ type chatBarLayout struct {
 	footer fyne.CanvasObject // the composer and what sits on it (buildFooter)
 }
 
+// jumpEndAt is where the arrow back to the end goes: its right edge on the
+// composer's, just above it. The footer centres a 760 wide column between
+// 24 px margins, the composer 18 px off the bottom (buildFooter).
+func (layoutSpec chatBarLayout) jumpEndAt(size fyne.Size) fyne.Position {
+	column := fyne.Min(760, size.Width-48)
+	right := 24 + (size.Width-48-column)/2 + column
+	card := float32(0)
+	if composer := layoutSpec.ui.composer; composer != nil {
+		card = fyne.Max(composer.Size().Height, composer.MinSize().Height)
+	}
+	return fyne.NewPos(right-jumpEndSize, size.Height-18-card-jumpEndGap-jumpEndSize)
+}
+
 func (layoutSpec chatBarLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 	return objects[0].MinSize()
 }
@@ -245,5 +258,9 @@ func (layoutSpec chatBarLayout) Layout(objects []fyne.CanvasObject, size fyne.Si
 	objects[1].Resize(fyne.NewSize(scrollbar.Hit, fyne.Max(0, bottom-chatBarTop)))
 	if bar, ok := objects[1].(*chatScrollBar); ok {
 		bar.sync()
+	}
+	if len(objects) > 2 { // the arrow back to the end, above the composer's right end (#605)
+		objects[2].Resize(fyne.NewSize(jumpEndSize, jumpEndSize))
+		objects[2].Move(layoutSpec.jumpEndAt(size))
 	}
 }

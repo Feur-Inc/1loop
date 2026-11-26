@@ -70,12 +70,13 @@ func buildFileBrowser(ctx context.Context, window fyne.Window, source fileSource
 		icon := widget.NewIcon(iconDocument)
 		name := textLine("", 13, colText)
 		size := textLine("", 11, colMuted)
-		// The sizes end clear of the list's scrollbar (#633).
-		return container.NewBorder(nil, nil, icon, padded(0, 0, 0, barRoom, size), name)
+		// The icons line up with the header's back button, not against the
+		// panel's edge; the sizes end clear of the list's scrollbar (#633).
+		return container.NewBorder(nil, nil, padded(0, 0, 8, 2, icon), padded(0, 0, 0, barRoom, size), name)
 	}, func(i widget.ListItemID, object fyne.CanvasObject) {
 		entry := browser.entries[i]
 		row := object.(*fyne.Container)
-		name, icon, size := row.Objects[0].(*canvas.Text), row.Objects[1].(*widget.Icon), row.Objects[2].(*fyne.Container).Objects[0].(*canvas.Text)
+		name, icon, size := row.Objects[0].(*canvas.Text), row.Objects[1].(*fyne.Container).Objects[0].(*widget.Icon), row.Objects[2].(*fyne.Container).Objects[0].(*canvas.Text)
 		name.Text = entry.Name
 		icon.SetResource(fileTypeIcon(entry.Name, entry.Dir))
 		if entry.Dir {

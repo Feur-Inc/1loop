@@ -35,6 +35,7 @@ func newBrandMark(inLoopy bool) *brandMark {
 		face:    newLoopyFace(76.67*brandHeight/248/0.3, "idle", false, true),
 		inLoopy: inLoopy,
 	}
+	onRepaint = append(onRepaint, mark.face.recolour)
 	mark.set(1)
 	return mark
 }

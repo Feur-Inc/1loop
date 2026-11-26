@@ -28,7 +28,7 @@ package ui
 //   POST /api/pair/confirm {pairing,code,device} → {token}
 //   GET  /api/state                     projects, chats, settings
 //   GET  /api/chats/{id}                one chat with its items
-//   GET  /api/events                    server-sent events (see remoteEvent)
+//   GET  /api/events                    server-sent events (remoteapi.Events)
 //   POST /api/send       {chat,text,mode,workspace}  mode: send, queue or steer
 //   POST /api/stop       {chat}
 //   POST /api/approve    {id,allow,note,files,denied}
@@ -38,10 +38,15 @@ package ui
 //   GET  /api/limits                    every account's usage windows
 //   POST /api/approval-mode {mode}              "approval" or "yolo"
 //   /api/chats/{id}/panel…                      the chat's side panel (phone_panel.go)
+//   GET  /api/devices, POST /api/devices/{id}/revoke, /api/projects/env,
+//   /api/projects/memory, POST /api/naming-model    as on a server (phone_parity.go)
+//
+// The HTTP layer (info, pairing, the token check, events, limits and
+// headers) is remoteapi's, shared with a headless server; the routes both
+// serve are remoteapi.PhoneRoutes, the server's own remoteapi.ServerOnlyRoutes.
 
 import (
 	"bytes"
-	"crypto/subtle"
 	"crypto/tls"
 	"encoding/json"
 	"errors"
@@ -80,27 +85,20 @@ const (
 	remoteProtocol      = 2 // 2: HTTPS with a pinned certificate
 )
 
-type remoteEvent struct {
-	kind string
-	data []byte
-}
-
+// remoteServer is the desktop's remoteapi.Engine: the shared HTTP layer
+// (remoteapi.NewMux) serves its routes.
 type remoteServer struct {
-	ui   *desktopUI
-	name string
-	port int
-	http *http.Server
-	udp  *net.UDPConn
-	mu   sync.Mutex
-	subs map[chan remoteEvent]bool
-	// Browser streams, closed with the event streams when a phone is forgotten.
+	ui          *desktopUI
+	name        string
+	port        int
+	http        *http.Server
+	udp         *net.UDPConn
+	hub         *remoteapi.Events        // the phones' event and browser streams
 	panelHomes  map[string]*conversation // project panels before the first prompt; not persisted
-	streams     map[chan struct{}]bool
 	fingerprint string
 
-	// The pending pairing and its sheet (UI thread only).
-	book      remoteapi.PairingBook
-	pairSheet *sheet
+	book      remoteapi.PairingBook // the pending pairing, its own lock
+	pairSheet *sheet                // its sheet (UI thread only)
 
 	// Changes waiting for the next flush (UI thread only).
 	dirty     map[*conversation]map[int]bool
@@ -126,7 +124,7 @@ func (ui *desktopUI) startRemote() {
 		platform.Devf("remote", "certificate: %v", err)
 		return
 	}
-	server := &remoteServer{ui: ui, name: host, subs: map[chan remoteEvent]bool{}, streams: map[chan struct{}]bool{},
+	server := &remoteServer{ui: ui, name: host, hub: remoteapi.NewEvents(ui.ctx),
 		fingerprint: remoteapi.Fingerprint(certificate), dirty: map[*conversation]map[int]bool{}, meta: map[*conversation]bool{}}
 	ln, err := net.Listen("tcp", fmt.Sprintf(":%d", remoteHTTPPort))
 	if err != nil {
@@ -137,36 +135,47 @@ func (ui *desktopUI) startRemote() {
 	}
 	server.port = ln.Addr().(*net.TCPAddr).Port
 	ln = tls.NewListener(ln, &tls.Config{Certificates: []tls.Certificate{certificate}, MinVersion: tls.VersionTLS12})
-	mux := http.NewServeMux()
-	mux.HandleFunc("GET /api/info", server.info)
-	mux.HandleFunc("POST /api/pair", server.pair)
-	mux.HandleFunc("POST /api/pair/confirm", server.confirmPair)
-	mux.HandleFunc("GET /api/state", server.authorized(server.state))
-	mux.HandleFunc("GET /api/chats/{id}", server.authorized(server.chat))
-	mux.HandleFunc("GET /api/chats/{id}/context", server.authorized(server.chatContext))
-	mux.HandleFunc("GET /api/chats/{id}/compactions", server.authorized(server.compactions))
-	mux.HandleFunc("GET /api/mentions", server.authorized(server.mentions))
-	mux.HandleFunc("POST /api/chats/{id}/delete", server.authorized(server.deleteChat))
-	mux.HandleFunc("POST /api/chats/{id}/rename", server.authorized(server.renameChat))
-	mux.HandleFunc("POST /api/chats/{id}/tasks/{task}/stop", server.authorized(server.stopTask))
-	mux.HandleFunc("POST /api/browser/clear", server.authorized(server.clearBrowser))
+	mux := remoteapi.NewMux(server, true)
+	if hook := server.loopyHook(); hook != nil {
+		mux.HandleFunc("POST /api/loopy/hook/{token}", hook) // the token is the key
+	}
+	server.http = remoteapi.NewServer(remoteapi.Harden(mux)) // the limits and headers a headless server has (#518)
+	go server.http.Serve(ln)
+	if udp, err := net.ListenUDP("udp4", &net.UDPAddr{Port: remoteDiscoveryPort}); err == nil {
+		server.udp = udp
+		go server.answerDiscovery()
+	}
+	ui.remote = server
+}
+
+// Routes are the remote's routes behind a paired phone's token
+// (remoteapi.Engine); NewMux adds /api/info, pairing and /api/events.
+func (server *remoteServer) Routes() map[string]http.HandlerFunc {
+	ui := server.ui
+	routes := map[string]http.HandlerFunc{}
+	routes["GET /api/state"] = server.state
+	routes["GET /api/chats/{id}"] = server.chat
+	routes["GET /api/chats/{id}/context"] = server.chatContext
+	routes["GET /api/chats/{id}/compactions"] = server.compactions
+	routes["GET /api/mentions"] = server.mentions
+	routes["POST /api/chats/{id}/delete"] = server.deleteChat
+	routes["POST /api/chats/{id}/rename"] = server.renameChat
+	routes["POST /api/chats/{id}/tasks/{task}/stop"] = server.stopTask
+	routes["POST /api/browser/clear"] = server.clearBrowser
 	for path, handler := range extensions.Handlers(func() {
 		server.broadcast("extensions", map[string]bool{"changed": true})
 		server.onUI(server.ui.extensionsChanged)
 	}) {
-		mux.HandleFunc(path, server.authorized(handler))
+		routes[path] = handler
 	}
 	for path, handler := range server.loopyHandlers() { // this computer's Loopy
-		mux.HandleFunc(path, server.authorized(handler))
-	}
-	if hook := server.loopyHook(); hook != nil {
-		mux.HandleFunc("POST /api/loopy/hook/{token}", hook) // the token is the key
+		routes[path] = handler
 	}
 	for path, handler := range githubconnector.Handlers() {
-		mux.HandleFunc(path, server.authorized(handler))
+		routes[path] = handler
 	}
 	for path, handler := range gitrepo.Handlers(phoneGitTarget{server}, githubconnector.Default.Authorizations) {
-		mux.HandleFunc(path, server.authorized(handler))
+		routes[path] = handler
 	}
 	// The Usage screen: this computer's ledger, as a server serves its own.
 	names := func(group, key string) (name string) {
@@ -187,61 +196,61 @@ func (ui *desktopUI) startRemote() {
 				serve(w, r)
 			}
 		}
-		mux.HandleFunc(path, server.authorized(handler))
+		routes[path] = handler
 	}
-	mux.HandleFunc("GET /api/hooks", server.authorized(remoteapi.GetHooks))
-	mux.HandleFunc("POST /api/hooks", server.authorized(remoteapi.SaveHooks))
-	mux.HandleFunc("GET /api/chats/{id}/items/{index}/images/{n}", server.authorized(server.itemImage))
-	mux.HandleFunc("GET /api/events", server.authorized(server.events))
-	mux.HandleFunc("POST /api/chats/{id}/message", server.authorized(server.editMessage))
-	mux.HandleFunc("POST /api/chats/{id}/version", server.authorized(server.selectVersion))
-	mux.HandleFunc("POST /api/attachments", server.authorized(server.uploadAttachment))
+	routes["GET /api/hooks"] = remoteapi.GetHooks
+	routes["POST /api/hooks"] = remoteapi.SaveHooks
+	routes["GET /api/chats/{id}/items/{index}/images/{n}"] = server.itemImage
+	routes["POST /api/chats/{id}/message"] = server.editMessage
+	routes["POST /api/chats/{id}/version"] = server.selectVersion
+	routes["POST /api/attachments"] = server.uploadAttachment
 	syncEngine := server.ui.syncEngine()
 	syncEngine.Identity = server.fingerprint
 	syncManifest, syncExport, syncImport := syncEngine.Routes()
 	pause, resume, moved := syncEngine.MoveRoutes()
-	mux.HandleFunc("POST /api/chats/{id}/pause", server.authorized(pause))
-	mux.HandleFunc("POST /api/chats/{id}/resume", server.authorized(resume))
-	mux.HandleFunc("POST /api/chats/{id}/moved", server.authorized(moved))
-	mux.HandleFunc("GET /api/sync/base", server.authorized(syncEngine.BaseRoute))
-	mux.HandleFunc("POST /api/sync/base", server.authorized(syncEngine.BaseRoute))
-	mux.HandleFunc("GET /api/sync/manifest", server.authorized(syncManifest))
-	mux.HandleFunc("POST /api/sync/export", server.authorized(syncExport))
-	mux.HandleFunc("POST /api/sync/import", server.authorized(syncImport))
-	mux.HandleFunc("GET /api/files", server.authorized(server.projectFiles(remoteapi.ListFiles)))
-	mux.HandleFunc("GET /api/files/content", server.authorized(server.projectFiles(remoteapi.FileContent)))
-	mux.HandleFunc("GET /api/files/download", server.authorized(server.projectFiles(remoteapi.DownloadFile)))
-	mux.HandleFunc("POST /api/files/upload", server.authorized(server.projectFiles(remoteapi.UploadFile)))
-	mux.HandleFunc("POST /api/send", server.authorized(server.send))
-	mux.HandleFunc("POST /api/stop", server.authorized(server.stop))
-	mux.HandleFunc("POST /api/approve", server.authorized(server.approve))
-	mux.HandleFunc("GET /api/review", server.authorized(server.review))
-	mux.HandleFunc("POST /api/answer", server.authorized(server.answer))
-	mux.HandleFunc("POST /api/preferences", server.authorized(server.setPreferences))
-	mux.HandleFunc("POST /api/memory", server.authorized(server.setMemory))
-	mux.HandleFunc("POST /api/wrap-up", server.authorized(server.setWrapUp))
-	mux.HandleFunc("GET /api/projects", server.authorized(server.projectFolders))
-	mux.HandleFunc("POST /api/projects", server.authorized(server.addProject))
-	mux.HandleFunc("POST /api/projects/{action}", server.authorized(server.changeProject))
-	mux.HandleFunc("POST /api/model", server.authorized(server.setModel))
-	mux.HandleFunc("POST /api/auto-resume", server.authorized(server.setAutoResume))
-	mux.HandleFunc("POST /api/model/compaction", server.authorized(server.setModelCompaction))
-	mux.HandleFunc("POST /api/model/defaults", server.authorized(server.setDefaultModels))
-	mux.HandleFunc("GET /api/limits", server.authorized(server.limits))
-	mux.HandleFunc("POST /api/approval-mode", server.authorized(server.setApprovalMode))
-	mux.HandleFunc("POST /api/chats/{id}/panel", server.authorized(server.editPanel))
-	mux.HandleFunc("GET /api/chats/{id}/panel", server.authorized(server.panelTabs))
-	mux.HandleFunc("GET /api/chats/{id}/panel/{key}", server.authorized(server.panelTab))
-	mux.HandleFunc("GET /api/chats/{id}/panel/{key}/screen", server.authorized(server.panelScreen))
-	mux.HandleFunc("GET /api/chats/{id}/panel/{key}/stream", server.authorized(server.panelStream))
-	mux.HandleFunc("POST /api/chats/{id}/panel/{key}/input", server.authorized(server.panelInput))
-	server.http = &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
-	go server.http.Serve(ln)
-	if udp, err := net.ListenUDP("udp4", &net.UDPAddr{Port: remoteDiscoveryPort}); err == nil {
-		server.udp = udp
-		go server.answerDiscovery()
-	}
-	ui.remote = server
+	routes["POST /api/chats/{id}/pause"] = pause
+	routes["POST /api/chats/{id}/resume"] = resume
+	routes["POST /api/chats/{id}/moved"] = moved
+	routes["GET /api/sync/base"] = syncEngine.BaseRoute
+	routes["POST /api/sync/base"] = syncEngine.BaseRoute
+	routes["GET /api/sync/manifest"] = syncManifest
+	routes["POST /api/sync/export"] = syncExport
+	routes["POST /api/sync/import"] = syncImport
+	routes["GET /api/projects/memory"] = server.projectFiles(remoteapi.ProjectMemory)
+	routes["POST /api/projects/memory"] = server.projectFiles(remoteapi.SaveProjectMemory)
+	routes["GET /api/projects/env"] = server.readProjectEnv
+	routes["POST /api/projects/env"] = server.saveProjectEnv
+	routes["POST /api/naming-model"] = server.setNamingModel
+	routes["GET /api/devices"] = server.pairedDevices
+	routes["POST /api/devices/{id}/revoke"] = server.revokePairedDevice
+	routes["GET /api/files"] = server.projectFiles(remoteapi.ListFiles)
+	routes["GET /api/files/content"] = server.projectFiles(remoteapi.FileContent)
+	routes["GET /api/files/download"] = server.projectFiles(remoteapi.DownloadFile)
+	routes["POST /api/files/upload"] = server.projectFiles(remoteapi.UploadFile)
+	routes["POST /api/send"] = server.send
+	routes["POST /api/stop"] = server.stop
+	routes["POST /api/approve"] = server.approve
+	routes["GET /api/review"] = server.review
+	routes["POST /api/answer"] = server.answer
+	routes["POST /api/preferences"] = server.setPreferences
+	routes["POST /api/memory"] = server.setMemory
+	routes["POST /api/wrap-up"] = server.setWrapUp
+	routes["GET /api/projects"] = server.projectFolders
+	routes["POST /api/projects"] = server.addProject
+	routes["POST /api/projects/{action}"] = server.changeProject
+	routes["POST /api/model"] = server.setModel
+	routes["POST /api/auto-resume"] = server.setAutoResume
+	routes["POST /api/model/compaction"] = server.setModelCompaction
+	routes["POST /api/model/defaults"] = server.setDefaultModels
+	routes["GET /api/limits"] = server.limits
+	routes["POST /api/approval-mode"] = server.setApprovalMode
+	routes["POST /api/chats/{id}/panel"] = server.editPanel
+	routes["GET /api/chats/{id}/panel"] = server.panelTabs
+	routes["GET /api/chats/{id}/panel/{key}"] = server.panelTab
+	routes["GET /api/chats/{id}/panel/{key}/screen"] = server.panelScreen
+	routes["GET /api/chats/{id}/panel/{key}/stream"] = server.panelStream
+	routes["POST /api/chats/{id}/panel/{key}/input"] = server.panelInput
+	return routes
 }
 
 func (server *remoteServer) close() {
@@ -276,30 +285,14 @@ func (server *remoteServer) answerDiscovery() {
 // ---------------------------------------------------------------------------
 // HTTP helpers
 
-// authorized lets a request through only with a paired device's token.
-func (server *remoteServer) authorized(next http.HandlerFunc) http.HandlerFunc {
-	return func(writer http.ResponseWriter, req *http.Request) {
-		token := strings.TrimPrefix(req.Header.Get("Authorization"), "Bearer ")
-		if token == "" || token == req.Header.Get("Authorization") {
-			core.Fail(writer, http.StatusUnauthorized, "This phone is not paired with 1loop")
-			return
-		}
-		hash := remoteapi.TokenHash(token)
-		ok := false
-		server.onUI(func() {
-			for _, pairedDevice := range server.ui.devices {
-				if subtle.ConstantTimeCompare([]byte(pairedDevice.TokenHash), []byte(hash)) == 1 {
-					ok = true
-				}
-			}
-		})
-		if !ok {
-			core.Fail(writer, http.StatusUnauthorized, "This phone is not paired with 1loop")
-			return
-		}
-		next(writer, req)
-	}
+// Allows tells whether a token's hash is a paired phone's
+// (remoteapi.Engine), without a UI hop (#518).
+func (server *remoteServer) Allows(hash string) bool {
+	return server.ui.tokens.Allows(hash)
 }
+
+// Events are GET /api/events (remoteapi.Engine).
+func (server *remoteServer) Events() *remoteapi.Events { return server.hub }
 
 // onUI runs f on the window's thread, where all chat state lives.
 func (server *remoteServer) onUI(f func()) {
@@ -311,32 +304,20 @@ func (server *remoteServer) onUI(f func()) {
 // ---------------------------------------------------------------------------
 // Pairing
 
-func (server *remoteServer) info(writer http.ResponseWriter, _ *http.Request) {
-	core.WriteJSON(writer, http.StatusOK, map[string]any{"service": "1loop", "name": server.name, "protocol": remoteProtocol})
+// Info is GET /api/info (remoteapi.Engine).
+func (server *remoteServer) Info() map[string]any {
+	return map[string]any{"service": "1loop", "name": server.name, "protocol": remoteProtocol}
 }
 
-func (server *remoteServer) pair(writer http.ResponseWriter, req *http.Request) {
-	var body struct {
-		Device string `json:"device"`
-	}
-	if core.ReadJSON(req, &body) != nil {
-		core.Fail(writer, http.StatusBadRequest, "Invalid request")
-		return
-	}
-	var id string
-	var err error
-	server.onUI(func() {
-		var pending *remoteapi.Pairing
-		if pending, err = server.book.Request(body.Device); err == nil {
-			id = pending.ID
-			server.showPairSheet(server.ui.showPairing(pending, server.fingerprint))
-		}
-	})
+// RequestPairing is POST /api/pair (remoteapi.Engine): the computer shows
+// the code the phone must type.
+func (server *remoteServer) RequestPairing(req *http.Request, args remoteapi.PairRequest) (map[string]any, error) {
+	pending, err := server.book.Request(args.Device, remoteapi.ClientAddress(req))
 	if err != nil {
-		core.Fail(writer, http.StatusTooManyRequests, err.Error())
-		return
+		return nil, err
 	}
-	core.WriteJSON(writer, http.StatusOK, map[string]string{"pairing": id})
+	server.onUI(func() { server.showPairSheet(server.ui.showPairing(pending, server.fingerprint)) })
+	return map[string]any{"pairing": pending.ID}, nil
 }
 
 // showPairSheet replaces the sheet of an earlier pairing.
@@ -347,22 +328,13 @@ func (server *remoteServer) showPairSheet(next *sheet) {
 	server.pairSheet = next
 }
 
-func (server *remoteServer) confirmPair(writer http.ResponseWriter, req *http.Request) {
-	var body struct {
-		Pairing string `json:"pairing"`
-		Code    string `json:"code"`
-		Device  string `json:"device"`
-	}
-	if core.ReadJSON(req, &body) != nil {
-		core.Fail(writer, http.StatusBadRequest, "Invalid request")
-		return
-	}
+// ConfirmPairing is POST /api/pair/confirm (remoteapi.Engine): the right
+// code gives the phone its token.
+func (server *remoteServer) ConfirmPairing(_ *http.Request, body remoteapi.PairConfirm) (map[string]any, error) {
 	var token string
-	var err error
+	paired, err := server.book.Confirm(body.Pairing, body.Code, body.Device)
 	server.onUI(func() {
-		var paired *remoteapi.Pairing
-		paired, err = server.book.Confirm(body.Pairing, body.Code, body.Device)
-		if server.book.Pending == nil {
+		if server.book.Pending() == 0 {
 			server.showPairSheet(nil)
 		}
 		if errors.Is(err, remoteapi.ErrPairingLocked) {
@@ -372,32 +344,22 @@ func (server *remoteServer) confirmPair(writer http.ResponseWriter, req *http.Re
 			return
 		}
 		token = core.Identifier()
-		server.ui.devices = append(server.ui.devices, remoteapi.PairedDevice{Name: paired.Device, TokenHash: remoteapi.TokenHash(token), Added: time.Now()})
+		server.ui.setDevices(append(server.ui.devices, remoteapi.PairedDevice{Name: paired.Device, TokenHash: remoteapi.TokenHash(token), Added: time.Now()}))
 		server.ui.save()
 		if server.ui.prefs.on("Remote") {
 			server.ui.prefs.show("Remote")
 		}
 	})
 	if err != nil {
-		core.Fail(writer, http.StatusForbidden, err.Error())
-		return
+		return nil, err
 	}
-	core.WriteJSON(writer, http.StatusOK, map[string]string{"token": token, "name": server.name})
+	return map[string]any{"token": token, "name": server.name}, nil
 }
 
 // disconnectAll closes every phone's streams: a forgotten phone's requests
 // fail from now on, the others reconnect with their token.
 func (server *remoteServer) disconnectAll() {
-	server.mu.Lock()
-	defer server.mu.Unlock()
-	for ch := range server.subs {
-		close(ch)
-		delete(server.subs, ch)
-	}
-	for done := range server.streams {
-		close(done)
-		delete(server.streams, done)
-	}
+	server.hub.Disconnect()
 }
 
 // fingerprintCheck is the start of the certificate fingerprint, shown on the
@@ -412,7 +374,7 @@ func fingerprintCheck(fingerprint string) string {
 }
 
 // showPairing shows the code a phone must type.
-func (ui *desktopUI) showPairing(pending *remoteapi.Pairing, fingerprint string) *sheet {
+func (ui *desktopUI) showPairing(pending remoteapi.Pairing, fingerprint string) *sheet {
 	code := textLine(pending.Code[:3]+" "+pending.Code[3:], 40, colAmber)
 	code.TextStyle = fyne.TextStyle{Monospace: true, Bold: true}
 	intro := widget.NewLabel("“" + pending.Device + "” wants to control 1loop. Type its code in the app to allow it.")
@@ -788,61 +750,9 @@ func (server *remoteServer) stopTask(writer http.ResponseWriter, req *http.Reque
 // ---------------------------------------------------------------------------
 // Live events (server-sent events)
 
-func (server *remoteServer) events(writer http.ResponseWriter, req *http.Request) {
-	flusher, ok := writer.(http.Flusher)
-	if !ok {
-		core.Fail(writer, http.StatusInternalServerError, "Streaming unsupported")
-		return
-	}
-	writer.Header().Set("Content-Type", "text/event-stream")
-	writer.Header().Set("Cache-Control", "no-cache")
-	writer.WriteHeader(http.StatusOK)
-	fmt.Fprint(writer, ": 1loop\n\n")
-	flusher.Flush()
-	ch := make(chan remoteEvent, 256)
-	server.mu.Lock()
-	server.subs[ch] = true
-	server.mu.Unlock()
-	defer func() {
-		server.mu.Lock()
-		delete(server.subs, ch)
-		server.mu.Unlock()
-	}()
-	ping := time.NewTicker(20 * time.Second) // keeps phones and routers from dropping an idle stream
-	defer ping.Stop()
-	for {
-		select {
-		case <-req.Context().Done():
-			return
-		case <-ping.C:
-			fmt.Fprint(writer, ": ping\n\n")
-		case remoteEventValue, open := <-ch:
-			if !open {
-				return
-			}
-			fmt.Fprintf(writer, "event: %s\ndata: %s\n\n", remoteEventValue.kind, remoteEventValue.data)
-		}
-		flusher.Flush()
-	}
-}
-
-// broadcast hands an event to every phone; a phone too slow to keep up is
-// dropped and reconnects with a fresh state.
+// broadcast hands an event to every phone (remoteapi.Events).
 func (server *remoteServer) broadcast(kind string, v any) {
-	data, err := json.Marshal(v)
-	if err != nil {
-		return
-	}
-	server.mu.Lock()
-	defer server.mu.Unlock()
-	for ch := range server.subs {
-		select {
-		case ch <- remoteEvent{kind, data}:
-		default:
-			close(ch)
-			delete(server.subs, ch)
-		}
-	}
+	server.hub.Broadcast(kind, v)
 }
 
 // The window reports its changes here (UI thread); they reach the phones in
@@ -905,10 +815,7 @@ func (server *remoteServer) schedule() {
 
 func (server *remoteServer) flush() {
 	server.flushing = false
-	server.mu.Lock()
-	listening := len(server.subs) > 0
-	server.mu.Unlock()
-	if !listening {
+	if !server.hub.Listening() {
 		server.dirty, server.meta, server.chatsDirt, server.settings = map[*conversation]map[int]bool{}, map[*conversation]bool{}, false, false
 		return
 	}
@@ -1159,6 +1066,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 		}
 	}
 	return map[string]any{"defaultPresets": true, "autoResume": ui.autoResume, "userPreferences": ui.userInstructions, "preferencesEditable": true, "memory": !ui.memoryOff, "wrapUp": !ui.wrapUpOff, "messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
+		"namingModel":  ui.namingModel,
 		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": agent.AutoModeOffered(ui.cfg), "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.resolveModel(ui.cfg))}
 }
 
@@ -1450,18 +1358,25 @@ func (ui *desktopUI) pairedPhoneRows() []fyne.CanvasObject {
 // forgetPhone asks, then unpairs a phone from this computer: its token
 // stops working and its open connections end.
 func (ui *desktopUI) forgetPhone(device remoteapi.PairedDevice) {
-	ui.confirm("Forget "+device.Name+"?", device.Name+" is unpaired from this computer: its access stops at once, and it must be paired again to use 1loop here.", "Forget", func() { // #428, #443
+	ui.confirm("Forget "+device.Name+"?", device.Name+" is unpaired: its access stops at once. It must pair again.", "Forget", func() { // #428, #443
 		i := slices.IndexFunc(ui.devices, func(have remoteapi.PairedDevice) bool { return have.TokenHash == device.TokenHash })
 		if i < 0 {
 			return // forgotten meanwhile
 		}
-		ui.devices = slices.Delete(ui.devices, i, i+1)
+		ui.setDevices(slices.Delete(slices.Clone(ui.devices), i, i+1))
 		ui.save()
 		if ui.remote != nil {
 			ui.remote.disconnectAll()
 		}
 		ui.reshowRemote()
 	})
+}
+
+// setDevices changes the paired phones (UI thread) and the tokens the
+// remote checks every request against.
+func (ui *desktopUI) setDevices(devices []remoteapi.PairedDevice) {
+	ui.devices = devices
+	ui.tokens.Set(devices)
 }
 
 // remoteDefaults gives conversations saved before the remote an id.

@@ -224,6 +224,7 @@ type desktopUI struct {
 	scroll        *kineticScroll
 	chatBar       *chatScrollBar // the conversation's scrollbar, over it (chat_scrollbar.go)
 	followTail    bool
+	jumpEnd       *fyne.Container // the arrow back to the conversation's end (jump_end.go)
 	items         *transcriptLayout
 	frames        *frameHook
 	prefs         *settingsView     // the settings page
@@ -345,7 +346,8 @@ type desktopApp struct {
 	serverProjects   map[string][]string      // their projects as last listed, by address: listed while it does not answer
 	reaches          map[string]targetReach   // whether each target answered, by its key (targets.go)
 	remoteEnabled    bool                     // see phone_server.go
-	devices          []remoteapi.PairedDevice // phones paired with the remote
+	devices          []remoteapi.PairedDevice // phones paired with the remote (setDevices)
+	tokens           remoteapi.Tokens         // their tokens, read by the remote's requests
 	chrome           bool
 	titleBar         fyne.CanvasObject // the bar over the conversation: its title, and the window buttons with chrome
 	pictureLayer     *fyne.Container   // where pictures open, under titleBar (picture_viewer.go); nil without chrome
@@ -959,7 +961,8 @@ func (ui *desktopUI) buildChat() {
 	// The scrollbar is drawn over all of it, above the composer's fade
 	// (#609), clear of the side panel's handle (#610).
 	ui.chatBar = newChatScrollBar(ui)
-	conversation = container.New(chatBarLayout{ui: ui, footer: footer}, conversation, ui.chatBar)
+	ui.jumpEnd = ui.newJumpEnd()
+	conversation = container.New(chatBarLayout{ui: ui, footer: footer}, conversation, ui.chatBar, ui.jumpEnd)
 	ui.conversation = conversation
 }
 
@@ -1322,6 +1325,7 @@ func (ui *desktopUI) syncFooterFade() {
 	bottom := fyne.Max(0, ui.scroll.Content.Size().Height-ui.scroll.Size().Height)
 	ui.footerGlass.veil(ui.scroll.Visible() && bottom-ui.scroll.Offset.Y > 2)
 	ui.chatBar.sync() // the same moments move the scrollbar's thumb
+	ui.syncJumpEnd()
 }
 
 func codeText(text string) fyne.CanvasObject {
@@ -2654,7 +2658,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	if state.RemoteEnabled != nil {
 		ui.remoteEnabled = *state.RemoteEnabled
 	}
-	ui.devices = state.Devices
+	ui.setDevices(state.Devices)
 	ui.panelWidth = state.PanelWidth
 	ui.sidebarWidth = state.SidebarWidth
 	ui.claudeOffered = state.ClaudeOffered

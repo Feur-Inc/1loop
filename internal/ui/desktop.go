@@ -224,6 +224,7 @@ type desktopUI struct {
 	scroll        *kineticScroll
 	chatBar       *chatScrollBar // the conversation's scrollbar, over it (chat_scrollbar.go)
 	followTail    bool
+	jumpEnd       *fyne.Container // the arrow back to the conversation's end (jump_end.go)
 	items         *transcriptLayout
 	frames        *frameHook
 	prefs         *settingsView     // the settings page
@@ -960,7 +961,8 @@ func (ui *desktopUI) buildChat() {
 	// The scrollbar is drawn over all of it, above the composer's fade
 	// (#609), clear of the side panel's handle (#610).
 	ui.chatBar = newChatScrollBar(ui)
-	conversation = container.New(chatBarLayout{ui: ui, footer: footer}, conversation, ui.chatBar)
+	ui.jumpEnd = ui.newJumpEnd()
+	conversation = container.New(chatBarLayout{ui: ui, footer: footer}, conversation, ui.chatBar, ui.jumpEnd)
 	ui.conversation = conversation
 }
 
@@ -1323,6 +1325,7 @@ func (ui *desktopUI) syncFooterFade() {
 	bottom := fyne.Max(0, ui.scroll.Content.Size().Height-ui.scroll.Size().Height)
 	ui.footerGlass.veil(ui.scroll.Visible() && bottom-ui.scroll.Offset.Y > 2)
 	ui.chatBar.sync() // the same moments move the scrollbar's thumb
+	ui.syncJumpEnd()
 }
 
 func codeText(text string) fyne.CanvasObject {

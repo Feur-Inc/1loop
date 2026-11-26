@@ -79,7 +79,7 @@ func (view *settingsView) result(found serverMatch) fyne.CanvasObject {
 	where := registry.SectionTitle(setting.Section)
 	switch {
 	case found.address != "":
-		where = "Servers › " + serverName(found.address) + " › " + found.page
+		where = "Servers › " + view.ui.serverLabel(found.address) + " › " + found.page
 	case setting.Page == UsagePage: // an entry of the menu
 		where = setting.Page
 	case setting.Page != "":

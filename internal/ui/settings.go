@@ -133,10 +133,13 @@ type settingsView struct {
 	anchors   map[string]*settingAnchor // the rows of the page shown, by setting
 
 	// Servers (settings_servers.go).
-	serverNav *fyne.Container            // the Servers group of the sidebar
-	server    string                     // the server whose page is shown, "" for this computer's
-	servers   map[string]*settingsServer // the settings' own connections, by address
-	waiting   bool                       // the server's page shows only that it connects or does not answer
+	serverNav  *fyne.Container            // the Servers group of the sidebar
+	sideScroll *kineticScroll             // the sidebar's sections and servers, scrolled
+	server     string                     // the server whose page is shown, "" for this computer's
+	folded     bool                       // that server's row folded its pages
+	serverRow  *tapRow                    // and its row
+	servers    map[string]*settingsServer // the settings' own connections, by address
+	waiting    bool                       // the server's page shows only that it connects or does not answer
 }
 
 func (ui *desktopUI) buildSettings() {
@@ -166,7 +169,11 @@ func (ui *desktopUI) buildSettings() {
 		}
 	}
 	view.serverNav = container.New(layout.NewCustomPaddedVBoxLayout(1))
-	view.side = container.NewVBox(back, padded(14, 6, 12, 0, textLine("Settings", 13, colFaint)), padded(0, 8, 6, 6, view.search), nav, view.serverNav)
+	// The sections and servers scroll, under what stays at the top: with a
+	// server's pages listed, they run below a small window's bottom.
+	view.sideScroll = newKineticVScroll(container.NewVBox(nav, view.serverNav))
+	view.side = container.NewBorder(container.NewVBox(back, padded(14, 6, 12, 0, textLine("Settings", 13, colFaint)), padded(0, 8, 6, 6, view.search)),
+		nil, nil, nil, view.sideScroll)
 	view.side.Hide()
 
 	view.column = container.NewStack()
@@ -274,7 +281,7 @@ func (view *settingsView) showNow(page string) {
 		}
 	}
 	view.release(view.server)
-	view.page = page // the group's pages are listed under its server
+	view.page, view.folded = page, false // the group's pages are listed under its server
 	view.renderServers()
 	if _, ok := view.rows[section]; !ok {
 		section, page, view.server = "General", "General", ""
@@ -291,6 +298,7 @@ func (view *settingsView) showNow(page string) {
 		view.frames = append(view.frames, settingsFrame{content: view.build(page)})
 	}
 	view.present()
+	view.keepInView()
 }
 
 // build makes a page from what is stored now.

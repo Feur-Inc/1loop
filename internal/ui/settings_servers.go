@@ -19,6 +19,7 @@ import (
 	"errors"
 	"image/color"
 	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 	"time"
@@ -137,18 +138,40 @@ type settingsServer struct {
 	failed  bool // it could not connect: Reconnect tries again
 }
 
-// label is how the settings name a server: its host, as the target menu
-// and the sidebar do.
-func (remote *remoteDesktop) label() string { return serverName(remote.client.address.URL) }
+// label is how the settings name a server (serverLabel).
+func (remote *remoteDesktop) label() string {
+	return remote.parent.serverLabel(remote.client.address.URL)
+}
+
+// serverLabel is how the settings name a paired server: its host, as the
+// target menu and the sidebar do, or its host and port when another paired
+// server has the same host (two servers on one machine).
+func (ui *desktopUI) serverLabel(address string) string {
+	name := serverName(address)
+	for _, other := range ui.serverAddresses() {
+		if other != address && serverName(other) == name {
+			if parsed, err := url.Parse(address); err == nil && parsed.Host != "" {
+				return parsed.Host
+			}
+		}
+	}
+	return name
+}
+
+// releaseBehind says that a server runs an older release than the latest:
+// a dev build is never behind, whatever the release page says.
+func releaseBehind(status *update.Status) bool {
+	return status != nil && status.Available && update.Code(status.Current) > 0
+}
 
 // serverStatus is how a server is, as last seen: by the window's
 // connection while it works on it, else by the settings' own connection,
-// else by its sidebar link. outdated is a newer version being out.
+// else by its sidebar link. outdated is a newer release being out.
 func (view *settingsView) serverStatus(address string) (state reach, problem string, outdated bool) {
 	ui := view.ui
 	reached := ui.reaches[serverTarget(address).key()]
 	if remote := ui.server; remote != nil && remote.client.address.URL == address {
-		outdated = remote.update != nil && remote.update.Available
+		outdated = releaseBehind(remote.update)
 		switch {
 		case reached.state == reachOffline:
 			return reachOffline, reached.problem, outdated
@@ -159,7 +182,7 @@ func (view *settingsView) serverStatus(address string) (state reach, problem str
 	}
 	if entry := view.servers[address]; entry != nil && (entry.remote != nil || entry.failed) {
 		if entry.remote != nil {
-			outdated = entry.remote.update != nil && entry.remote.update.Available
+			outdated = releaseBehind(entry.remote.update)
 		}
 		return entry.state, entry.problem, outdated
 	}
@@ -256,8 +279,8 @@ func (view *settingsView) checkUpdate(entry *settingsServer, remote *remoteDeskt
 	ctx, cancel := context.WithTimeout(remote.ctx, 40*time.Second)
 	defer cancel()
 	var status update.Status
-	if remote.client.json(ctx, "GET", "/api/update", nil, &status) != nil || !status.Available {
-		return // up to date, or an older server without updates
+	if remote.client.json(ctx, "GET", "/api/update", nil, &status) != nil || !releaseBehind(&status) {
+		return // up to date, a dev build, or an older server without updates
 	}
 	fyne.Do(func() {
 		if entry.remote == remote {
@@ -330,26 +353,29 @@ type serverNote struct {
 
 func (note serverNote) SetText(text string) {
 	if text != "" {
-		note.view.ui.notice(serverName(note.address), text)
+		note.view.ui.notice(note.view.ui.serverLabel(note.address), text)
 	}
 }
 
-// serverWord is a server's state in a word or two, as the sidebar and its
-// pages say it.
-func serverWord(state reach, outdated bool) (string, color.Color) {
-	switch {
-	case state == reachOffline:
+// serverWord is a server's state in a word, as the sidebar and its pages
+// say it. An update being out is said beside it, not instead.
+func serverWord(state reach) (string, color.Color) {
+	switch state {
+	case reachOffline:
 		return "offline", colFaint
-	case state == reachUnknown:
+	case reachUnknown:
 		return "connecting…", colAmber
-	case outdated:
-		return "outdated", colAmber
 	}
 	return "connected", colAdded
 }
 
+// updateNote is what a server's Updates row and page heading say while a
+// newer release is out.
+const updateNote = "update available"
+
 // renderServers lists the paired servers under the sections, each with its
-// state; the one whose page is shown has its pages under it.
+// state; the one whose page is shown has its pages under it, unless its
+// row folded them.
 func (view *settingsView) renderServers() {
 	if view.serverNav == nil {
 		return
@@ -359,7 +385,7 @@ func (view *settingsView) renderServers() {
 			delete(view.rows, key)
 		}
 	}
-	view.serverNav.Objects = nil
+	view.serverNav.Objects, view.serverRow = nil, nil
 	addresses := view.ui.serverAddresses()
 	if view.ui.home != "" || len(addresses) == 0 { // the browser's settings are its server's already
 		view.serverNav.Refresh()
@@ -367,17 +393,31 @@ func (view *settingsView) renderServers() {
 	}
 	view.serverNav.Add(padded(14, 6, 12, 0, textLine("Servers", 13, colFaint)))
 	for _, address := range addresses {
+		address := address
 		state, _, outdated := view.serverStatus(address)
-		word, _ := serverWord(state, outdated)
-		open := address == view.server
+		word, _ := serverWord(state)
+		shown := address == view.server // one of its pages is on screen
+		open := shown && !view.folded
 		icon := iconChevronRight
 		if open {
 			icon = iconChevron
 		}
-		header := newRow(serverName(address), icon, styleNav, view.link(serverPageID(address, "Connections")))
+		header := newRow(view.ui.serverLabel(address), icon, styleNav, func() {
+			if shown { // its chevron folds or unfolds its pages, the page stays
+				view.folded = !view.folded
+				view.renderServers()
+				view.keepInView()
+				return
+			}
+			view.show(serverPageID(address, "Connections"))
+		})
 		header.mark = serverTarget(address).mark("")
-		header.accent = open
+		header.accent = shown
+		header.selected = shown && view.folded // where you are, its pages folded
 		header.truncate = true
+		if shown {
+			view.serverRow = header
+		}
 		dot := "●"
 		if state != reachOnline {
 			dot = "○"
@@ -391,11 +431,50 @@ func (view *settingsView) renderServers() {
 			id := serverPageID(address, page.name)
 			row := newRow(page.name, nil, styleNav, view.link(id))
 			row.selected = id == view.page
+			if page.name == "Updates" && outdated {
+				row.trailing = updateNote
+			}
 			view.rows[id] = row
 			view.serverNav.Add(padded(0, 0, 22, 0, row))
 		}
 	}
 	view.serverNav.Refresh()
+}
+
+// keepInView scrolls the settings' sidebar to the selected entry, or the
+// open server's row, when it is out of sight.
+func (view *settingsView) keepInView() {
+	scroll := view.sideScroll
+	if scroll == nil || scroll.Size().Height <= 0 {
+		return
+	}
+	var target fyne.CanvasObject
+	for _, row := range view.rows {
+		if row.selected {
+			target = row
+		}
+	}
+	if target == nil && view.serverRow != nil { // its pages folded
+		target = view.serverRow
+	}
+	if target == nil {
+		return
+	}
+	scroll.Refresh() // the rows just listed take their places
+	scroll.Content.Refresh()
+	at, ok := offsetIn(scroll.Content, target)
+	if !ok {
+		return
+	}
+	y := at.Y
+	top, height := scroll.Offset.Y, scroll.Size().Height
+	bottom := y + target.Size().Height
+	switch {
+	case y < top:
+		scroll.ScrollToOffset(fyne.NewPos(0, max(0, y-8)))
+	case bottom > top+height:
+		scroll.ScrollToOffset(fyne.NewPos(0, bottom-height+8))
+	}
 }
 
 // buildServer makes a server's page: its heading, then what the server
@@ -411,7 +490,7 @@ func (view *settingsView) buildServer(address, name string) fyne.CanvasObject {
 	if !view.waiting {
 		return page.build(view, remote, serverPageID(address, name), head)
 	}
-	label := serverName(address)
+	label := view.ui.serverLabel(address)
 	body := settingRow("Connecting to "+label+"…", "Its "+strings.ToLower(name)+" show here once it answers.", nil)
 	if state == reachOffline {
 		detail := "Its settings show here once it's back. Check that it runs and that this computer reaches it."
@@ -427,12 +506,15 @@ func (view *settingsView) buildServer(address, name string) fyne.CanvasObject {
 // server's state under it: a Reconnect button while it does not answer,
 // and whose chats the page's settings are for.
 func (view *settingsView) serverHeading(address string, page serverPage, state reach, outdated bool, trailing fyne.CanvasObject) fyne.CanvasObject {
-	label := serverName(address)
-	word, ink := serverWord(state, outdated)
+	label := view.ui.serverLabel(address)
+	word, ink := serverWord(state)
 	dot := canvas.NewCircle(ink)
 	line := container.New(layout.NewCustomPaddedHBoxLayout(6),
 		container.NewCenter(container.NewGridWrap(fyne.NewSquareSize(8), dot)),
 		textLine(strings.ToUpper(word[:1])+word[1:], 12.5, colMuted))
+	if outdated && state == reachOnline {
+		line.Add(textLine("· "+strings.ToUpper(updateNote[:1])+updateNote[1:], 12.5, colAmber))
+	}
 	if page.scoped {
 		line.Add(textLine("· Used by chats on "+label, 12.5, colMuted))
 	}
@@ -482,7 +564,7 @@ func (view *settingsView) findSettings(query string) []serverMatch {
 	}
 	if view.ui.home == "" {
 		for _, address := range view.ui.serverAddresses() {
-			label := serverName(address)
+			label := view.ui.serverLabel(address)
 			var settings []registry.Setting
 			pageOf := map[string]string{}
 			for _, page := range serverPages() {

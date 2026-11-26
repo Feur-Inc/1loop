@@ -64,7 +64,7 @@ func unpairSelf(ctx context.Context, saved serverAddress) error {
 // A server that does not answer is forgotten here all the same, and the
 // user told how to finish on its side.
 func (ui *desktopUI) forgetServer(saved serverAddress) {
-	name := serverName(saved.URL)
+	name := ui.serverLabel(saved.URL)
 	ui.confirm("Forget "+name+"?",
 		"This device is unpaired from "+name+": its access stops at once, and using the server again needs a new pairing, approved on a paired device or in the server's console.",
 		"Forget", func() {
@@ -153,7 +153,7 @@ func (ui *desktopUI) serverDeviceRow(remote *remoteDesktop, device serverDevice,
 	if device.Current {
 		title += " · this device"
 	}
-	server := serverName(remote.client.address.URL)
+	server := remote.label()
 	remove := newRow("Remove", iconTrash, styleChip, func() {
 		if device.Current {
 			ui.forgetServer(remote.client.address)

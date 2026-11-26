@@ -60,7 +60,7 @@ func (ui *desktopUI) serverRows() []fyne.CanvasObject {
 		open := newRow("Settings", iconChevronRight, styleChip, ui.prefs.link(serverPageID(saved.URL, "Connections")))
 		open.iconAfter = true
 		forget := newRow("Forget", iconTrash, styleChip, func() { ui.forgetServer(saved) })
-		rows = append(rows, settingRow(serverName(saved.URL), saved.URL, container.New(layout.NewCustomPaddedHBoxLayout(10), open, forget)))
+		rows = append(rows, settingRow(ui.serverLabel(saved.URL), saved.URL, container.New(layout.NewCustomPaddedHBoxLayout(10), open, forget)))
 	}
 	steps := container.New(layout.NewCustomPaddedVBoxLayout(4))
 	for i, step := range []string{

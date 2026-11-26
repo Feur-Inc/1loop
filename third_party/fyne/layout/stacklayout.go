@@ -44,7 +44,7 @@ func (m stackLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
 			continue
 		}
 
-		minSize = minSize.Max(child.MinSize())
+		minSize = minSize.Larger(child.MinSize()) // 1loop: Larger, no allocation
 	}
 
 	return minSize

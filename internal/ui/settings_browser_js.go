@@ -25,7 +25,7 @@ func (ui *desktopUI) browserSettings(section string) fyne.CanvasObject {
 	remote := ui.server
 	if remote == nil {
 		return container.NewVBox(ui.prefs.pageTitle(section, "", nil),
-			card(settingRow("Not connected", "Settings are the server's: they show once this page is connected to it.", nil)))
+			card(settingRow("Not connected", "The server's settings show once this page connects.", nil)))
 	}
 	view := ui.prefs
 	title := func(section, back string) serverHead {

@@ -121,7 +121,7 @@ func (remote *remoteDesktop) modelMenu() {
 		if !slices.ContainsFunc(model.Efforts, func(e remoteapi.Effort) bool { return e.Value == effort }) {
 			effort = model.DefaultEffort
 		}
-		remote.action("/api/model", map[string]string{"chat": remote.current, "label": model.Label})
+		remote.act("/api/model", map[string]string{"chat": remote.current, "label": model.Label}, remoteAction{key: "model:label:" + remote.current, control: remote.parent.model, latest: true, title: "Model"})
 		update(model.Account)
 	}
 	for _, account := range accounts {
@@ -201,7 +201,7 @@ func (remote *remoteDesktop) modelMenu() {
 				return
 			}
 			effort = efforts[index].Value
-			remote.action("/api/model", map[string]string{"chat": remote.current, "effort": effort})
+			remote.act("/api/model", map[string]string{"chat": remote.current, "effort": effort}, remoteAction{key: "model:effort:" + remote.current, control: remote.parent.model, latest: true, title: "Model"})
 			title.Text, about.Text = efforts[index].Label, fitText(efforts[index].About, 12, fyne.TextStyle{}, 180)
 			title.Refresh()
 			about.Refresh()
@@ -341,7 +341,7 @@ func (remote *remoteDesktop) speedToggle(model remoteapi.Model, tier *string) fy
 	row = newRow(names[index], iconBolt, styleChip, func() {
 		index = (index + 1) % len(ids)
 		*tier = ids[index]
-		remote.action("/api/model", map[string]any{"chat": remote.current, "tier": ids[index]})
+		remote.act("/api/model", map[string]any{"chat": remote.current, "tier": ids[index]}, remoteAction{key: "model:tier:" + remote.current, control: remote.parent.model, latest: true, title: "Model"})
 		row.text, row.accent = names[index], index > 0
 		row.Refresh()
 	})

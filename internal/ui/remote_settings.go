@@ -66,13 +66,13 @@ func (remote *remoteDesktop) permissionRow() fyne.CanvasObject {
 		ui.updateApprovalControl()
 	}
 	return settingRow("Tool permissions",
-		"Approval asks before each shell command or file edit on the server. YOLO runs them at once, with the server user's rights.",
+		"Asks before commands and edits on the server. YOLO runs them at once.",
 		sized(230, mode.row))
 }
 
 // hooksRow edits the server's hooks.
 func (remote *remoteDesktop) hooksRow() fyne.CanvasObject {
-	return settingRow("Hook commands", "The server's commands around the agent's work, in Claude Code's format.",
+	return settingRow("Hook commands", "",
 		newRow("Edit", nil, styleOutline, remote.editHooks))
 }
 
@@ -106,16 +106,16 @@ func (remote *remoteDesktop) instructionCards(rows int) []fyne.CanvasObject {
 	entry := widget.NewMultiLineEntry()
 	entry.Wrapping = fyne.TextWrapWord
 	entry.SetMinRowsVisible(rows)
-	entry.SetPlaceHolder("Describe your preferences: language, tone, coding conventions, level of detail…")
+	entry.SetPlaceHolder("Language, tone, coding conventions, level of detail…")
 	entry.Disable() // until the server's text is in
 	memory := container.NewStack()
 	wrapUp := container.NewStack()
 	cards := []fyne.CanvasObject{
 		card(settingStack("Your preferences",
-			"Added to the server agent's system prompt in every chat. Saved as you type; they apply from the next turn.",
+			"Added to every chat's system prompt, from the next turn.",
 			entry),
-			settingRow("Memory", "The agent adds what it learns about you to these preferences, each change shown to you for approval.", memory)),
-		card(settingRow("Next-step card", "At the end of a turn that did work, the agent sums it up in a card and, when the next move is yours, asks with one or two reply buttons. Off: it is not offered the wrap_up tool.", wrapUp)),
+			settingRow("Memory", "The agent proposes what it learns; you approve each change.", memory)),
+		card(settingRow("Next-step card", "A recap at the end of each turn, with buttons for your reply.", wrapUp)),
 	}
 	go func() {
 		ctx, cancel := context.WithTimeout(remote.ctx, 15*time.Second)
@@ -165,7 +165,7 @@ func (remote *remoteDesktop) updateSettings(head serverHead) fyne.CanvasObject {
 	notes := newMarkdownView("")
 	install := newRow("Update the server", nil, stylePrimary, func() {
 		remote.updateServer()
-		status.SetText("The server is downloading its update; this page reconnects when it restarts.")
+		status.SetText("Downloading its update; this page reconnects when done.")
 	})
 	install.Hide()
 	check := newRow("Check now", nil, styleOutline, nil)
@@ -203,7 +203,7 @@ func (remote *remoteDesktop) updateSettings(head serverHead) fyne.CanvasObject {
 	return container.NewVBox(
 		head(nil),
 		card(settingStack("Server updates",
-			"The server checks the release page and updates itself; downloads are checked against the release's signature.",
+			"Checks for updates and installs them, checked by signature.",
 			container.NewVBox(status, container.NewHBox(check, install)))),
 		notes.box,
 	)

@@ -102,7 +102,7 @@ func drawTaskList(box *fyne.Container, items []agent.TodoItem, live func() bool,
 	title.TextStyle = fyne.TextStyle{Bold: true}
 	if len(items) == 0 {
 		box.Add(title)
-		box.Add(padded(8, 0, 0, 0, plainFlow("No tasks yet. The agent lists them here when it plans your request, and ticks them off as it goes.", 13, colMuted)))
+		box.Add(padded(8, 0, 0, 0, plainFlow("No tasks yet. The agent lists and ticks them off here.", 13, colMuted)))
 		return nil
 	}
 	// The whole list at a glance: how many are done, and a line that fills.

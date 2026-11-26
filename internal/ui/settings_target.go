@@ -28,8 +28,8 @@ func (ui *desktopUI) targetRows() []fyne.CanvasObject {
 	})
 	return []fyne.CanvasObject{
 		sectionTitle("Where the agent runs"),
-		padded(0, 10, 2, 0, plainFlow("Switch with the target button under the conversation, or open a project in the sidebar.", 13, colMuted)),
-		card(view.mark("general.target", settingRow("This computer", "The agent works here, with your user's rights. Computer Use works only here.", nil))),
+		padded(0, 10, 2, 0, plainFlow("Switch with the target button under a chat.", 13, colMuted)),
+		card(view.mark("general.target", settingRow("This computer", "Runs here, with your rights. Computer Use works only here.", nil))),
 		container.NewBorder(nil, nil, nil, padded(14, 4, 0, 0, add), sectionTitle("SSH machines")),
 		view.mark("general.ssh", card(ui.sshRows()...)),
 		sectionTitle("Remote servers"),
@@ -47,7 +47,7 @@ func (ui *desktopUI) sshRows() []fyne.CanvasObject {
 		rows = append(rows, settingRow(machine.Label(), machine.User+"@"+machine.Address()+" · projects in "+machine.Projects, edit))
 	}
 	if len(rows) == 0 {
-		rows = append(rows, settingRow("No SSH machine yet", "Add a computer the agent reaches over SSH: its projects are folders there, and it runs commands and a terminal there, while this computer keeps the models, Browser Use and Computer Use.", nil))
+		rows = append(rows, settingRow("No SSH machine yet", "Commands run there; models, browser and screen stay here.", nil))
 	}
 	return rows
 }
@@ -65,14 +65,14 @@ func (ui *desktopUI) serverRows() []fyne.CanvasObject {
 	steps := container.New(layout.NewCustomPaddedVBoxLayout(4))
 	for i, step := range []string{
 		"Start the server on its machine (1loop-server, or its Docker image).",
-		"Enter its HTTPS address. For a self-signed certificate, also paste the SHA-256 fingerprint the console prints.",
-		"Approve this computer in 1loop on a device already paired with the server, or type the pairing command in the server's console.",
+		"Enter its HTTPS address, and its fingerprint if self-signed.",
+		"Approve this computer on a paired device or in its console.",
 	} {
 		number := textLine(string(rune('1'+i))+".", 12.5, colAmber)
 		steps.Add(container.NewBorder(nil, nil, padded(0, 0, 0, 8, number), nil, plainFlow(step, 12.5, colMuted)))
 	}
 	rows = append(rows, settingStack("Connect a server",
-		"A headless 1loop server runs the agent, its files, browser and terminals on another machine (see docs/SERVER.md).",
+		"Runs the agent, files and terminals on another machine.",
 		container.NewVBox(steps, container.NewHBox(newRow("Connect a server…", iconPlus, styleOutline, ui.connectServer)))))
 	return rows
 }

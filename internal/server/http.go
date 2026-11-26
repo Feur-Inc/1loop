@@ -7,12 +7,15 @@ package server
 
 import (
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -213,7 +216,7 @@ func (server *headlessServer) routes() http.Handler {
 func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 	server.mu.Lock()
 	defer server.mu.Unlock()
-	core.WriteJSON(w, 200, map[string]any{
+	server.writeSnapshotLocked(w, r, map[string]any{
 		"name":              server.name,
 		"projects":          server.projects,
 		"worktrees":         server.worktrees,
@@ -243,13 +246,37 @@ func (server *headlessServer) chat(w http.ResponseWriter, r *http.Request) {
 	for i := first; i < end; i++ {
 		items = append(items, server.itemLocked(chat, i))
 	}
-	core.WriteJSON(w, 200, map[string]any{
+	server.writeSnapshotLocked(w, r, map[string]any{
 		"chat":  remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Items: len(chat.Items)},
 		"items": items,
 		"first": first,
 		"total": len(chat.Items),
 		"meta":  server.metaLocked(chat),
 	})
+}
+
+// writeSnapshotLocked answers a read of the state or of a chat with the
+// number of the last event sent (X-1loop-Seq): the events after it are
+// newer than this answer. Its ETag spares the body when nothing changed
+// since the client's copy (If-None-Match). Both are new with #591: older
+// clients ignore them.
+func (server *headlessServer) writeSnapshotLocked(w http.ResponseWriter, r *http.Request, value any) {
+	data, err := json.Marshal(value)
+	if err != nil {
+		core.Fail(w, 500, "Unable to encode the reply")
+		return
+	}
+	sum := sha256.Sum256(data)
+	tag := `"` + hex.EncodeToString(sum[:12]) + `"`
+	w.Header().Set("ETag", tag)
+	w.Header().Set("X-1loop-Seq", strconv.FormatUint(server.eventSeq, 10))
+	if r.Header.Get("If-None-Match") == tag {
+		w.WriteHeader(http.StatusNotModified)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(200)
+	w.Write(append(data, '\n'))
 }
 
 // chatContext is the chat's window by category with the MCP tools' list.
@@ -507,7 +534,7 @@ func (server *headlessServer) events(w http.ResponseWriter, r *http.Request) {
 			if !ok {
 				return
 			}
-			if _, err := fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.kind, event.data); err != nil {
+			if _, err := fmt.Fprintf(w, "event: %s\nid: %d\ndata: %s\n\n", event.kind, event.seq, event.data); err != nil {
 				return
 			}
 		}

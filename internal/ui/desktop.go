@@ -83,6 +83,7 @@ type conversation struct {
 	taskCount int         // background tasks last seen: a new one opens the panel on them
 
 	run     *chatRun        // the agent loop working on this chat, if any
+	asking  *questionCard   // the model's questions while they wait, this computer's or a server's (questions.go)
 	moving  bool            // paused to move to another device: it starts nothing (chat_move.go)
 	handoff *pendingHandoff // how the next turn's new model receives the chat
 	queue   []agent.Message // Enter while it runs: the next turns
@@ -110,7 +111,7 @@ type chatRun struct {
 	answer                                     func(agent.ApprovalAnswer)
 	closeReview                                func() // its tab in the side panel (review.go)
 	// The pending questions (request_user_input), for the phone as well.
-	questions       *sheet
+	questions       *questionCard
 	questionID      string
 	questionList    []agent.Question
 	answerQuestions func(map[string]string)
@@ -165,6 +166,7 @@ type desktopUI struct {
 	localCfg         agent.Config    // this computer's settings while a server is the target
 	machine          *tapRow         // the target: this computer, an SSH machine or a server
 	serverStatus     *fitLabel       // the server's state beside it
+	serverBusy       *activityLine   // under the title bar while the server is slow to answer (remote_activity.go)
 	modelsLoading    bool
 	pendingGoal      *agent.GoalState // a /goal on the start screen, for the chat it makes
 
@@ -183,6 +185,8 @@ type desktopUI struct {
 	editing         *queueEdit // a queued message being edited in the prompt
 	editBar         *fyne.Container
 	queueTray       *fyne.Container
+	questionSlot    *fyne.Container // the open chat's questions, above the composer (questions.go)
+	shownQuestions  *questionCard   // what questionSlot shows, nil when nothing
 	queueList       *fyne.Container
 	pendingBox      *fyne.Container // messages sent while the agent works, greyed at the conversation's end
 	nextStep        *fyne.Container // the turn's next-step card, while it waits on the user (next_step.go)
@@ -263,8 +267,14 @@ type desktopUI struct {
 	sideRows      map[string]*sideRow // the rows of the last rendering, by key, reused by the next (sidebar_groups.go)
 	sideRowsNext  map[string]*sideRow
 	sideLists     *fyne.Container
-	sideChats     []sideChat // the chats listed, for search
-	sideOrder     []sideChat // the same in the sidebar's order, for the previous and next chat
+	sideChats     []sideChat        // the chats listed, for search
+	sideOrder     []sideChat        // the same in the sidebar's order, for the previous and next chat
+	sideRank      map[string]int64  // when each project and chat was last used or moved (sidebar_order.go)
+	pinned        []string          // the pinned projects and chats, in order (sidebar_order.go)
+	sideDrag      *sideDrag         // the sidebar row being dragged, nil when none (sidebar_drag.go)
+	sideMarker    *canvas.Rectangle // the line where a dragged sidebar row would land
+	sideColumn    fyne.CanvasObject // the sidebar, where a chat row dragged reorders rather than splits (split_drag.go)
+	drops         *dropView         // a split drag's preview over the window (split_drag.go)
 	searchRow     *tapRow
 	find          *chatFind
 	subchatsShown map[string]bool           // chats whose many subchats the user unfolded (true) or folded (false), by ID
@@ -278,6 +288,7 @@ type desktopUI struct {
 // desktopApp is what the windows share: the backend, the chats and
 // projects, the settings, the tray and the phone remote.
 type desktopApp struct {
+	carry            *paneDrag     // the chat or pane being dragged towards the panes, nil when none (split_drag.go)
 	usage            *usage.Ledger // every model call this computer made (internal/usage)
 	prices           *usage.Prices
 	usageQuery       usage.Query // what the Usage page shows, kept while 1loop runs
@@ -449,6 +460,7 @@ func runDesktop(backend *agent.App, root, asked string) {
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
 	ui.backdrop = newBackdrop()
 	ui.watchPointer()
+	ui.catchDragEscape()
 	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.backdrop.picture, ui.build()))
 	benchMark("content built")
 	ui.syncBackdrop()
@@ -801,13 +813,15 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	hoverReference = func(link string, at fyne.Position) { ui.activeView().hoverReference(link, at) }
 	refRepository = func() string { return ui.activeView().chatRepository() }
 	ui.buildTitleBar(sidebar)
+	ui.sideColumn = sidebar
+	ui.drops = newDropView()
 	layers := []fyne.CanvasObject{ui.root}
 	if ui.chrome {
 		ui.pictureLayer = container.New(underTitleBar{ui})
 		ui.pictureLayer.Hide()
 		layers = append(layers, ui.pictureLayer, resizeEdges(ui.window))
 	}
-	return container.NewStack(append(layers, ui.tips.layer)...)
+	return container.NewStack(append(layers, ui.drops.layer, ui.tips.layer)...)
 }
 
 // buildChat builds a pane's chat area (ui.split): the conversation, the
@@ -940,6 +954,8 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	if ui.chrome {
 		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, ui.headerBar))
 	}
+	ui.serverBusy = newActivityLine()
+	header = container.NewStack(header, container.NewBorder(nil, ui.serverBusy, nil, nil))
 	ui.titleBar = header
 	// The settings page takes the conversation's place while it is open.
 	ui.curtain = newPageCurtain()
@@ -956,7 +972,7 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 // card: the card's own outline is the only edge of the input area.
 func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.prompt = newChatEntry()
-	ui.prompt.placeholders = []string{"Describe what you want to build…", "What shall we build?", "Message…"}
+	ui.prompt.placeholders = promptPlaceholders
 	ui.prompt.SetPlaceHolder(ui.prompt.placeholders[0])
 	ui.prompt.send = ui.submit
 	ui.prompt.steer = ui.steerNow
@@ -1163,7 +1179,11 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.serverStatus = newFitLabel("", 12, colFaint)
 	ui.serverStatus.Hide()
 	contextRow := container.NewBorder(nil, nil, container.NewHBox(ui.folder, ui.machine), nil, ui.serverStatus)
-	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.buildCommandMenu(), ui.queueTray, composer)
+	// The model's questions sit just above the card, with a gap: they belong
+	// to the chat, not to the message being written (#434).
+	ui.questionSlot = container.New(&questionSlotLayout{gap: 8})
+	ui.questionSlot.Hide()
+	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.buildCommandMenu(), ui.questionSlot, ui.queueTray, composer)
 	return padded(0, 0, 24, 24, container.New(columnLayout{width: 760, inset: 0}, padded(0, 18, 0, 0, stack)))
 }
 
@@ -1435,7 +1455,10 @@ func (ui *desktopUI) runEnded(chat *conversation, ended string) {
 	}
 	// A prompt can arrive after the provider's final inbox check but before
 	// this UI callback. Close that gap before announcing that the chat is done.
-	if ended == "done" && !chat.moving {
+	// So does another chat's message or 1loop's note a failed turn never
+	// read: a subchat's report, left there, was never heard (#584).
+	failed := run != nil && !run.stopped && ended == "stopped"
+	if (ended == "done" || failed && slices.ContainsFunc(chat.steer, func(m agent.Message) bool { return m.Internal || m.From != nil })) && !chat.moving {
 		if next, ok := ui.takeNext(chat); ok {
 			ui.startIn(chat, next, "")
 			ui.save()
@@ -1519,6 +1542,15 @@ func (ui *desktopUI) submit() {
 	if ui.editing != nil {
 		ui.finishEdit(true)
 		return
+	}
+	// While the model's questions wait, a message answers them in the user's
+	// own words, as "Something else" does (#434).
+	if card := ui.shownQuestions; card != nil && card.shown() && len(ui.attachments)+len(ui.fileAttachments) == 0 {
+		if text := strings.TrimSpace(ui.prompt.Text); text != "" {
+			ui.prompt.clearSent()
+			card.reply(text)
+			return
+		}
 	}
 	if ui.server != nil {
 		ui.server.submit("send")
@@ -1739,6 +1771,7 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 		}
 	}
 	ui.panel.todoChanged(chat)
+	ui.touchChatOrder(chat) // the sidebar lists it first (sidebar_order.go)
 	chat.History = append(chat.History, messageValue)
 	if chat == ui.current {
 		ui.showTranscript(true)
@@ -2131,10 +2164,7 @@ func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) *sheet {
 // approve answers an approval: this computer's agent, or the server's.
 func (ui *desktopUI) approve(chat *conversation, id string, answer agent.ApprovalAnswer) {
 	if chat.server != nil {
-		chat.server.action("/api/approve", struct {
-			ID string `json:"id"`
-			agent.ApprovalAnswer
-		}{id, answer})
+		chat.server.approve(id, answer)
 		return
 	}
 	ui.backend.AnswerApproval(id, answer)
@@ -2321,6 +2351,9 @@ type savedState struct {
 	ProjectThemes map[string]string `json:"projectThemes,omitempty"`
 	// The Shader background setting; 30 fps when unset.
 	ShaderFPS string `json:"shaderFPS,omitempty"`
+	// The sidebar's order: when each project and chat was last used or moved, and the pinned ones (sidebar_order.go).
+	SidebarRank map[string]int64 `json:"sidebarRank,omitempty"`
+	Pinned      []string         `json:"pinned,omitempty"`
 	// The connections that had an API key, kept in the secret store
 	// (connection_keys.go): never the keys themselves.
 	KeyedConnections []string `json:"keyedConnections,omitempty"`
@@ -2424,6 +2457,8 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.savedLayout(),
 		ui.projectThemes,
 		shaderFPSSaved(),
+		ui.sideRank,
+		ui.pinned,
 		ui.keyedList(),
 	})
 	for _, view := range ui.allPanes() {
@@ -2585,6 +2620,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.projectEnv = state.ProjectEnv
 	ui.theme = themeChoice{theme: state.Theme, accent: state.Accent}
 	ui.projectThemes = state.ProjectThemes
+	ui.sideRank, ui.pinned = state.SidebarRank, state.Pinned
 	if state.ShaderFPS != "" {
 		shaderFPS = state.ShaderFPS
 	}
@@ -2629,7 +2665,12 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 		chat.Items = upgradeItems(chat.Items)
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
 		chat.todoCount = len(chat.Todo.Snapshot())
-		chat.Subchat.Restored(len(chat.ReportTo) > 0)
+		if len(chat.ReportTo) > 0 { // its turn was to report when 1loop closed: cut off (#584)
+			item := agent.CutOffTurn(chat.Config, "1loop closed", false, false).Item
+			item.ID = core.Identifier()[:16]
+			chat.Items = append(chat.Items, item)
+			chat.Subchat.Restored(true)
+		}
 		chat.ReportTo = nil
 		ui.chats = append(ui.chats, chat)
 		if chat.Config.MachineID != "" {

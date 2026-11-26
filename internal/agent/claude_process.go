@@ -75,6 +75,7 @@ func startClaudeProcess(cmd *exec.Cmd, key string, binding *todoMCPBinding, clea
 		process.release()
 		return nil, err
 	}
+	platform.OOMFirst(cmd) // it, its tools and builds go before 1loop when memory runs out (#584)
 	go func() {
 		scanner := core.NewLineReader(stdout, 64<<20)
 	read:

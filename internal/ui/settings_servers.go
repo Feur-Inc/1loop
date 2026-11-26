@@ -214,7 +214,8 @@ func (view *settingsView) serverFor(address string) (*remoteDesktop, reach, stri
 	return entry.remote, entry.state, entry.problem
 }
 
-// serverSettingsState is what /api/state says of a server's settings.
+// serverSettingsState is what a server says of its settings, in /api/state
+// and its settings event.
 type serverSettingsState struct {
 	Models                      []remoteapi.Model
 	Accounts                    []remoteapi.Account
@@ -223,11 +224,14 @@ type serverSettingsState struct {
 	Tier                        string
 	AutoMode                    bool // the server's model has an Auto mode
 	NamingModel                 *agent.NamingModel
+	Loading                     bool // its accounts' models are still being read
 }
 
 // takeSettings keeps what the server says of its settings.
 func (remote *remoteDesktop) takeSettings(settings serverSettingsState) {
-	remote.models = settings.Models
+	if len(settings.Models) > 0 || !settings.Loading { // kept while the server reads them again
+		remote.models = settings.Models
+	}
 	remote.accounts, remote.defaultPresets = settings.Accounts, settings.DefaultPresets
 	remote.model, remote.effort, remote.tier = settings.Model, settings.Effort, settings.Tier
 	remote.approvalMode, remote.autoMode = settings.ApprovalMode, settings.AutoMode
@@ -341,7 +345,12 @@ func (view *settingsView) serverChanged(address string) {
 	}
 	view.renderServers()
 	if view.server == address && view.waiting && !view.searching && view.at(view.page) {
+		folded := view.folded // showNow unfolds: a row folded meanwhile stays folded
 		view.showNow(view.page)
+		if folded && view.server == address {
+			view.folded = true
+			view.renderServers()
+		}
 	}
 }
 
@@ -594,7 +603,7 @@ func (view *settingsView) buildServer(address, name string) fyne.CanvasObject {
 	label := view.ui.serverLabel(address)
 	body := settingRow("Connecting to "+label+"…", "Its "+strings.ToLower(name)+" show here once it answers.", nil)
 	if state == reachOffline {
-		detail := "Its settings show here once it's back. Check that it runs and that this computer reaches it."
+		detail := "Its settings show here once it is back."
 		if problem != "" {
 			detail += "\n" + plainProblem(address, problem)
 		}
@@ -646,7 +655,7 @@ func olderServer(err error) bool {
 
 // olderText is what a page says of a server too old for it.
 func olderText(remote *remoteDesktop) string {
-	return remote.label() + " runs an older 1loop without this page. Update it from its Updates page."
+	return remote.label() + " runs an older 1loop without this page. Update it there."
 }
 
 // serverMatch is a server's setting the search found.

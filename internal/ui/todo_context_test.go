@@ -13,8 +13,8 @@ import (
 	"1loop/internal/agent"
 )
 
-// shownText is every text drawn under object, joined.
-func shownText(object fyne.CanvasObject) string {
+// drawnText is every text drawn under object, joined.
+func drawnText(object fyne.CanvasObject) string {
 	var parts []string
 	var walk func(fyne.CanvasObject)
 	walk = func(object fyne.CanvasObject) {
@@ -58,7 +58,7 @@ func TestTodoContextFollowsWhatChangedOffScreen(t *testing.T) {
 	ui.openLocalChat(chat)
 	ui.panel.openTodo()
 	todo := ui.panel.active
-	footer := func() string { return shownText(ui.panel.tabs[todo].todoContext) }
+	footer := func() string { return drawnText(ui.panel.tabs[todo].todoContext) }
 	if !strings.Contains(footer(), "7% used") {
 		t.Fatalf("the panel does not show the first count: %q", footer())
 	}

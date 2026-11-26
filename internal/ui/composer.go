@@ -792,6 +792,7 @@ func (ui *desktopUI) renderQueue() {
 	chat := ui.current
 	ui.remote.metaChanged(chat)
 	ui.renderPending()
+	ui.renderQuestions() // the open chat's questions, if it has any
 	if chat == nil || len(chat.queue) == 0 {
 		ui.queueTray.Hide()
 		return

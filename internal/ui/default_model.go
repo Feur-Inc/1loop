@@ -11,7 +11,7 @@ import (
 
 func (ui *desktopUI) defaultModelFields(draft *agent.Connection, models []agent.ModelChoice) fyne.CanvasObject {
 	rows := []fyne.CanvasObject{settingRow("Default for this account",
-		"Optional: choose a model for each preset level. Select Default in the composer to use it. Only configured levels are offered; other accounts are unchanged.", nil)}
+		"Optional: a model per preset level. Default in the composer uses it.", nil)}
 	if len(models) == 0 {
 		rows = append(rows, settingRow("Load this account's models above", "Load the catalog to choose models, or clear levels below.", nil))
 	}
@@ -64,7 +64,7 @@ func (ui *desktopUI) defaultModelFields(draft *agent.Connection, models []agent.
 }
 
 func (remote *remoteDesktop) defaultPresetSettings() fyne.CanvasObject {
-	rows := container.NewVBox(note("Default presets for the connected server. Changes are saved on that server, separately for each account."))
+	rows := container.NewVBox(note("Default presets on the connected server, per account."))
 	if !remote.defaultPresets {
 		rows.Add(note("Update the server to configure Default presets here."))
 		return rows
@@ -116,10 +116,7 @@ func (remote *remoteDesktop) presetRows() []fyne.CanvasObject {
 							return
 						}
 						dialog.dismiss()
-						select {
-						case remote.wake <- struct{}{}:
-						default:
-						}
+						remote.want(wantState)
 					})
 				}()
 			}

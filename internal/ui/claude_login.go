@@ -31,9 +31,9 @@ func (ui *desktopUI) signInClaude(conn agent.Connection, signedIn func()) {
 	submit.Disable()
 	var dialog *sheet
 	close := newRow("Close", nil, styleOutline, func() { dialog.dismiss() })
-	explanation := "Use your Claude subscription in Claude Code's own sign-in page. If the browser gives you a code, paste it below. Credentials are saved by Claude Code, not by 1loop."
+	explanation := "Sign in with your Claude subscription. Paste any code it gives you."
 	if conn.ClaudeHome() != "" {
-		explanation += " This connection has its own login: the account you choose is used by this connection only, and the other connections stay signed in to theirs. If your browser is already signed in to another Claude account, sign out there first or use a private window."
+		explanation += " This connection has its own login, separate from the others."
 	}
 	dialog = ui.modal("Sign in to Claude Code", container.NewVBox(
 		note(explanation),

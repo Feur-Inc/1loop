@@ -14,6 +14,8 @@ import (
 	"strings"
 
 	"gopkg.in/yaml.v3"
+
+	"1loop/internal/core"
 )
 
 // ReadSkill reads a skill's SKILL.md front matter:
@@ -79,9 +81,16 @@ func ReadSkill(dir string) (Skill, bool) {
 
 // FindSkills lists the skill folders under root (a SKILL.md in each), the
 // deepest first excluded: a skill's own subfolders are its files.
-func FindSkills(root string) []Skill {
+func FindSkills(root string) []Skill { return findSkills(root, nil) }
+
+// findSkills is FindSkills stamping the folders it lists and the SKILL.md
+// files it reads.
+func findSkills(root string, stamps *core.FileStamps) []Skill {
 	var skills []Skill
 	filepath.WalkDir(root, func(path string, entry fs.DirEntry, err error) error {
+		if entry == nil || entry.IsDir() {
+			stamps.Add(path) // before its entries are listed (or that it is missing)
+		}
 		if err != nil {
 			return nil
 		}
@@ -92,6 +101,7 @@ func FindSkills(root string) []Skill {
 			return nil
 		}
 		dir := filepath.Dir(path)
+		stamps.Add(path)
 		if skill, ok := ReadSkill(dir); ok {
 			skills = append(skills, skill)
 		}
@@ -130,19 +140,28 @@ func IsPlugin(dir string) bool {
 
 // ReadPlugin reads a plugin folder: its manifest, skills, MCP servers
 // (.mcp.json or the manifest's mcpServers) and hooks.
-func ReadPlugin(dir string) PluginContents {
+func ReadPlugin(dir string) PluginContents { return readPlugin(dir, nil) }
+
+// readPlugin is ReadPlugin stamping what Enabled keeps of it: the manifest,
+// the skills, the MCP servers and the hooks file (not the commands and
+// agents it counts).
+func readPlugin(dir string, stamps *core.FileStamps) PluginContents {
 	var contents PluginContents
-	if data, err := os.ReadFile(filepath.Join(dir, ".claude-plugin", "plugin.json")); err == nil {
+	manifest := filepath.Join(dir, ".claude-plugin", "plugin.json")
+	stamps.Add(manifest)
+	if data, err := os.ReadFile(manifest); err == nil {
 		json.Unmarshal(data, &contents.Manifest)
 	}
 	if contents.Manifest.Name == "" {
 		contents.Manifest.Name = filepath.Base(dir)
 	}
-	contents.Skills = FindSkills(filepath.Join(dir, "skills"))
+	contents.Skills = findSkills(filepath.Join(dir, "skills"), stamps)
 	servers := contents.Manifest.MCPServers
 	if path := pathIn(dir, servers); path != "" { // "mcpServers": "./.mcp.json"
+		stamps.Add(path)
 		servers, _ = os.ReadFile(path)
 	} else if len(servers) == 0 {
+		stamps.Add(filepath.Join(dir, ".mcp.json"))
 		servers, _ = os.ReadFile(filepath.Join(dir, ".mcp.json"))
 	}
 	contents.MCP = parseMCPServers(servers, dir)
@@ -150,6 +169,7 @@ func ReadPlugin(dir string) PluginContents {
 	if path := pathIn(dir, contents.Manifest.Hooks); path != "" {
 		hooks = path
 	}
+	stamps.Add(hooks)
 	if data, err := os.ReadFile(hooks); err == nil {
 		contents.HooksFile = hooks
 		contents.Hooks = hookCommands(data, dir)

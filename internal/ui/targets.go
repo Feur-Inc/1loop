@@ -518,22 +518,74 @@ func (ui *desktopUI) setProjectsOn(target projectTarget, projects []string) {
 
 // projectActionsOn are a project's menu after New chat: every one when the
 // window works on its target, else those that need no connection to it.
+//
+// They are the same whether the window works on the project's target or
+// not (#607), and depend on the target only for what it can do:
+//
+//	                        this computer   SSH machine   server
+//	New worktree…, Repository…  a Git repo   —             a Git repo
+//	Project memory…             ✓            ✓             ✓
+//	Theme…                      ✓            ✓             ✓
+//	Environment variables…      ✓            ✓             ✓
+//	Rename                      ✓            —             —
+//	Remove from 1loop           ✓            ✓             —
+//
+// An SSH machine's repository is not read yet, and its folder is renamed
+// there, in its terminal; a server keeps its own list of projects. The
+// repository's dialogs work where the window works: on another target,
+// they open the project there first.
 func (ui *desktopUI) projectActionsOn(group targetGroup, project string) []menuAction {
-	remove := menuAction{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { ui.removeProject(group.target, project) }}
-	env := ui.projectEnvAction(group.target, project)
-	switch {
-	case group.target.kind == targetServer && group.active:
-		return append(ui.repositoryActions(project), ui.projectMemoryAction(project), env)
-	case group.target.kind == targetServer: // the server keeps its own list
-		return []menuAction{env}
-	case !group.active:
-		return []menuAction{env, remove}
-	}
-	actions := append(ui.repositoryActions(project), ui.projectMemoryAction(project), ui.projectThemeAction(project), env)
-	if group.target.kind == targetLocal { // a machine's folder is renamed there, in its terminal
+	target := group.target
+	actions := ui.repositoryActionsOn(group, project)
+	actions = append(actions, ui.projectMemoryAction(target, project), ui.projectThemeAction(project), ui.projectEnvAction(target, project))
+	if target.kind == targetLocal {
 		actions = append(actions, menuAction{label: "Rename", icon: iconRename, run: func() { ui.renameProject(project) }})
 	}
-	return append(actions, remove)
+	if target.kind != targetServer {
+		actions = append(actions, menuAction{label: "Remove from 1loop", icon: iconTrash, danger: true, run: func() { ui.removeProject(target, project) }})
+	}
+	return actions
+}
+
+// repositoryActionsOn are a Git project's entries on its target. Where the
+// window does not work, the project is opened there first, then the
+// dialog shows.
+func (ui *desktopUI) repositoryActionsOn(group targetGroup, project string) []menuAction {
+	if group.active {
+		return ui.repositoryActions(project)
+	}
+	if group.target.kind == targetSSH {
+		return nil
+	}
+	if state := ui.repoStateOn(group.target, project); state == nil || state.repo == nil {
+		return nil
+	}
+	there := func(run func()) func() {
+		return func() { ui.openProjectThen(group.target, project, run) }
+	}
+	return []menuAction{
+		{label: "New worktree…", icon: iconBranch, run: there(func() { ui.newWorktreeDialog(project) })},
+		{label: "Repository…", icon: iconBranch, run: there(func() { ui.showRepository(project, "worktrees") })},
+	}
+}
+
+// openProjectThen opens a project on its target, then runs then once the
+// window works there: at once on this computer, once a server answered.
+func (ui *desktopUI) openProjectThen(target projectTarget, project string, then func()) {
+	if target.kind != targetServer {
+		ui.openProjectOn(target, project)
+		then()
+		return
+	}
+	if remote := ui.server; remote != nil && remote.client.address.URL == target.id {
+		remote.selectProject(project)
+		then()
+		return
+	}
+	ui.reachServer(target, func(remote *remoteDesktop) {
+		remote.selectProject(project)
+		then()
+	})
 }
 
 // repoStateOn is what the window read of a project's repository on a

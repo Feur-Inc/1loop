@@ -28,8 +28,10 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/agent"
+	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	registry "1loop/internal/settings"
 	"1loop/internal/update"
@@ -369,6 +371,51 @@ func serverWord(state reach) (string, color.Color) {
 	return "connected", colAdded
 }
 
+// serverMark is a server's state beside its name in the sidebar, short
+// enough for a narrow one: a dot while it answers or connects, the word
+// too while it does not. Its page's heading says it in full.
+func serverMark(state reach, word string) string {
+	switch state {
+	case reachOnline:
+		return "●"
+	case reachUnknown:
+		return "◌"
+	}
+	return "○ " + word
+}
+
+// plainProblem says why a server does not answer in words, from the error
+// its client gave; the error itself goes to the developer log.
+func plainProblem(address, problem string) string {
+	if problem == "" {
+		return ""
+	}
+	platform.Devf("remote", "%s does not answer: %s", address, problem)
+	where := address
+	if parsed, err := url.Parse(address); err == nil && parsed.Host != "" {
+		where = parsed.Host
+	}
+	lower := strings.ToLower(problem)
+	switch {
+	case strings.Contains(lower, "connection refused"):
+		return "Connection refused: nothing answers at " + where + "."
+	case strings.Contains(lower, "no such host"), strings.Contains(lower, "server misbehaving"):
+		return where + " can't be found on the network."
+	case strings.Contains(lower, "timeout"), strings.Contains(lower, "deadline exceeded"):
+		return "No answer from " + where + " in time."
+	case strings.Contains(lower, "no route to host"), strings.Contains(lower, "network is unreachable"):
+		return where + " can't be reached from this computer's network."
+	case strings.Contains(lower, "connection reset"), strings.Contains(lower, "eof"):
+		return where + " closed the connection."
+	case strings.Contains(lower, "unauthorized"), strings.Contains(lower, "not paired"):
+		return "It no longer accepts this computer: pair it again."
+	}
+	if _, rest, ok := strings.Cut(problem, "\": "); ok { // Get "https://…": what went wrong
+		return rest
+	}
+	return problem
+}
+
 // updateNote is what a server's Updates row and page heading say while a
 // newer release is out.
 const updateNote = "update available"
@@ -418,11 +465,7 @@ func (view *settingsView) renderServers() {
 		if shown {
 			view.serverRow = header
 		}
-		dot := "●"
-		if state != reachOnline {
-			dot = "○"
-		}
-		header.trailing = dot + " " + word
+		header.trailing = serverMark(state, word)
 		view.serverNav.Add(header)
 		if !open {
 			continue
@@ -439,7 +482,65 @@ func (view *settingsView) renderServers() {
 		}
 	}
 	view.serverNav.Refresh()
+	if view.sideScroll != nil {
+		view.sideScroll.fit() // the rows just listed can be scrolled to at once
+	}
 }
+
+// settingsScroll is the settings' sidebar scroll. Fyne's scroll moves only
+// as far as its content's size, which follows the content's rows when it
+// is laid out again: fit sizes it to them first, so a server's pages
+// just listed can be scrolled to.
+type settingsScroll struct{ kineticScroll }
+
+func newSettingsScroll(content fyne.CanvasObject) *settingsScroll {
+	scroll := &settingsScroll{}
+	scroll.Direction = container.ScrollVerticalOnly
+	scroll.Content = content
+	scroll.ExtendBaseWidget(scroll)
+	return scroll
+}
+
+// fit gives the content the height its rows need, and the bar its length.
+func (scroll *settingsScroll) fit() {
+	if scroll.Content == nil {
+		return
+	}
+	if want := scroll.Content.MinSize().Max(scroll.Size()); scroll.Content.Size() != want {
+		scroll.Content.Resize(want)
+		scroll.Refresh()
+	}
+}
+
+func (scroll *settingsScroll) Scrolled(ev *fyne.ScrollEvent) {
+	scroll.fit()
+	before := scroll.Offset.Y
+	scroll.kineticScroll.Scrolled(ev)
+	platform.Devf("ui", "settings sidebar wheel %.0f: offset %.0f → %.0f, view %.0f, content %.0f (rows %.0f)",
+		ev.Scrolled.DY, before, scroll.Offset.Y, scroll.Size().Height, scroll.Content.Size().Height, scroll.Content.MinSize().Height)
+}
+
+// sideColumn is the settings' sidebar column: a wheel anywhere on it, its
+// search and title included, scrolls its sections and servers. The driver
+// gives a wheel to the last scroll under the pointer: the column's own
+// takes it where nothing inside it is one.
+type sideColumn struct {
+	widget.BaseWidget
+	content fyne.CanvasObject
+	scroll  *settingsScroll
+}
+
+func newSideColumn(content fyne.CanvasObject, scroll *settingsScroll) *sideColumn {
+	column := &sideColumn{content: content, scroll: scroll}
+	column.ExtendBaseWidget(column)
+	return column
+}
+
+func (column *sideColumn) CreateRenderer() fyne.WidgetRenderer {
+	return widget.NewSimpleRenderer(column.content)
+}
+
+func (column *sideColumn) Scrolled(ev *fyne.ScrollEvent) { column.scroll.Scrolled(ev) }
 
 // keepInView scrolls the settings' sidebar to the selected entry, or the
 // open server's row, when it is out of sight.
@@ -495,7 +596,7 @@ func (view *settingsView) buildServer(address, name string) fyne.CanvasObject {
 	if state == reachOffline {
 		detail := "Its settings show here once it's back. Check that it runs and that this computer reaches it."
 		if problem != "" {
-			detail += "\n" + problem
+			detail += "\n" + plainProblem(address, problem)
 		}
 		body = settingRow(label+" doesn't answer", detail, nil)
 	}

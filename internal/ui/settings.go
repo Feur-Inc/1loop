@@ -134,7 +134,7 @@ type settingsView struct {
 
 	// Servers (settings_servers.go).
 	serverNav  *fyne.Container            // the Servers group of the sidebar
-	sideScroll *kineticScroll             // the sidebar's sections and servers, scrolled
+	sideScroll *settingsScroll            // the sidebar's sections and servers, scrolled
 	server     string                     // the server whose page is shown, "" for this computer's
 	folded     bool                       // that server's row folded its pages
 	serverRow  *tapRow                    // and its row
@@ -171,9 +171,9 @@ func (ui *desktopUI) buildSettings() {
 	view.serverNav = container.New(layout.NewCustomPaddedVBoxLayout(1))
 	// The sections and servers scroll, under what stays at the top: with a
 	// server's pages listed, they run below a small window's bottom.
-	view.sideScroll = newKineticVScroll(container.NewVBox(nav, view.serverNav))
-	view.side = container.NewBorder(container.NewVBox(back, padded(14, 6, 12, 0, textLine("Settings", 13, colFaint)), padded(0, 8, 6, 6, view.search)),
-		nil, nil, nil, view.sideScroll)
+	view.sideScroll = newSettingsScroll(container.NewVBox(nav, view.serverNav))
+	view.side = newSideColumn(container.NewBorder(container.NewVBox(back, padded(14, 6, 12, 0, textLine("Settings", 13, colFaint)), padded(0, 8, 6, 6, view.search)),
+		nil, nil, nil, view.sideScroll), view.sideScroll)
 	view.side.Hide()
 
 	view.column = container.NewStack()
@@ -205,6 +205,7 @@ func (view *settingsView) openOn(page string) {
 		ui.panelToggle.Hide()
 		ui.sideApp.Hide()
 		view.side.Show()
+		view.sideScroll.fit()
 		ui.paneArea().Hide()
 		view.view.Show()
 		ui.header.SetText("Settings")

@@ -243,7 +243,8 @@ func TestOfflineServerPageExplains(t *testing.T) {
 	until(t, "the offline explanation", func() bool { return contains(shownPage(ui.prefs), label+" doesn't answer") })
 	fyne.DoAndWait(func() {
 		page := shownPage(ui.prefs)
-		if !contains(page, "Reconnect") || !contains(page, "Offline") || !contains(page, "Connections · on "+label) {
+		if !contains(page, "Reconnect") || !contains(page, "Offline") || !contains(page, "Connections · on "+label) ||
+			!contains(page, "Connection refused: nothing answers at "+label) || contains(page, "dial tcp") {
 			t.Errorf("the offline page shows %q", page)
 		}
 		if !contains(serverNavTexts(ui.prefs), "○ offline") {
@@ -383,4 +384,108 @@ func TestDevBuildIsNotOutdated(t *testing.T) {
 	if word, _ := serverWord(reachOnline); word != "connected" {
 		t.Errorf("a server that answers is %q", word)
 	}
+}
+
+// The wheel over the settings' sidebar, sent through the window's canvas
+// as the driver does, scrolls it to the servers below the window's bottom:
+// in the window size of a small laptop screen.
+func TestSettingsSidebarTakesTheWheel(t *testing.T) {
+	ui := settingsUI(t)
+	ui.window.Resize(fyne.NewSize(1180, 746))
+	_, alpha := settingsServerAPI(t, "alpha")
+	stopped, beta := settingsServerAPI(t, "beta")
+	stopped.Close()
+	saveServerAddress(alpha)
+	saveServerAddress(beta)
+	ui.linkServers()
+	fyne.DoAndWait(func() {
+		ui.settings()
+		ui.prefs.show(serverPageID(alpha.URL, "Connections"))
+	})
+	until(t, "the server's page", func() bool { return contains(shownPage(ui.prefs), "Server OpenRouter") })
+	fyne.DoAndWait(func() {
+		scroll := ui.prefs.sideScroll
+		driver := fyne.CurrentApp().Driver()
+		at := driver.AbsolutePositionForObject(scroll)
+		point := at.Add(fyne.NewPos(scroll.Size().Width/2, scroll.Size().Height*3/4))
+		found := scrollableAt(ui.window.Canvas().Content(), fyne.Position{}, point)
+		t.Logf("scroll at %v size %v, content size %v min %v; the wheel at %v goes to %T", at, scroll.Size(), scroll.Content.Size(), scroll.Content.MinSize(), point, found)
+		for range 20 {
+			test.Scroll(ui.window.Canvas(), point, 0, -30)
+		}
+		if found != fyne.Scrollable(scroll) {
+			t.Errorf("the wheel over the sidebar goes to %T, not its scroll", found)
+		}
+		last := serverRowOf(ui.prefs, ui.serverLabel(beta.URL))
+		end, _ := offsetIn(scroll.Content, last)
+		if scroll.Offset.Y == 0 || end.Y+last.Size().Height > scroll.Offset.Y+scroll.Size().Height+1 {
+			t.Errorf("after the wheel: offset %v, the second server's row ends at %v, the view at %v", scroll.Offset.Y, end.Y+last.Size().Height, scroll.Offset.Y+scroll.Size().Height)
+		}
+
+		// Over the title, above the scroll: the column takes the wheel.
+		title := at.Add(fyne.NewPos(scroll.Size().Width/2, -60))
+		if got := scrollableAt(ui.window.Canvas().Content(), fyne.Position{}, title); got != fyne.Scrollable(ui.prefs.side.(*sideColumn)) {
+			t.Errorf("the wheel over the sidebar's title goes to %T", got)
+		}
+		for range 20 {
+			test.Scroll(ui.window.Canvas(), title, 0, 30)
+		}
+		if scroll.Offset.Y != 0 {
+			t.Errorf("the wheel over the title left the sidebar at %v", scroll.Offset.Y)
+		}
+	})
+}
+
+// A server's state beside its name stays short; why one does not answer
+// is said in words.
+func TestServerStateInWords(t *testing.T) {
+	for state, want := range map[reach]string{reachOnline: "●", reachUnknown: "◌", reachOffline: "○ offline"} {
+		word, _ := serverWord(state)
+		if got := serverMark(state, word); got != want {
+			t.Errorf("state %v reads %q, want %q", state, got, want)
+		}
+	}
+	for raw, want := range map[string]string{
+		`Get "https://127.0.0.1:47102/api/state": dial tcp 127.0.0.1:47102: connect: connection refused`:        "Connection refused: nothing answers at 127.0.0.1:47102.",
+		`Get "https://nas:47101/api/state": dial tcp: lookup nas: no such host`:                                 "nas:47101 can't be found on the network.",
+		`Get "https://nas:47101/api/state": context deadline exceeded (Client.Timeout exceeded while awaiting)`: "No answer from nas:47101 in time.",
+		`Server certificate fingerprint changed; verify it on the server console`:                               "Server certificate fingerprint changed; verify it on the server console",
+	} {
+		address := "https://" + strings.Split(strings.Split(strings.TrimPrefix(raw, `Get "https://`), "/")[0], `"`)[0]
+		if !strings.HasPrefix(raw, "Get") {
+			address = "https://nas:47101"
+		}
+		if got := plainProblem(address, raw); got != want {
+			t.Errorf("%s\nreads %q, want %q", raw, got, want)
+		}
+	}
+}
+
+// scrollableAt is the scroll the driver gives a wheel at a point: the last
+// visible one under it, in the order the tree is drawn.
+func scrollableAt(object fyne.CanvasObject, origin, point fyne.Position) (found fyne.Scrollable) {
+	if object == nil || !object.Visible() {
+		return nil
+	}
+	at := origin.Add(object.Position())
+	size := object.Size()
+	if point.X < at.X || point.Y < at.Y || point.X >= at.X+size.Width || point.Y >= at.Y+size.Height {
+		return nil
+	}
+	if scrollable, ok := object.(fyne.Scrollable); ok {
+		found = scrollable
+	}
+	var children []fyne.CanvasObject
+	switch shown := object.(type) {
+	case *fyne.Container:
+		children = shown.Objects
+	case fyne.Widget:
+		children = test.WidgetRenderer(shown).Objects()
+	}
+	for _, child := range children {
+		if inner := scrollableAt(child, at, point); inner != nil {
+			found = inner
+		}
+	}
+	return found
 }

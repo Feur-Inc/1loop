@@ -1856,9 +1856,43 @@ func newTipLayer() *tipLayer {
 	tooltip.bg.CornerRadius = rounded(8)
 	tooltip.bg.StrokeColor = colPopBorder
 	tooltip.bg.StrokeWidth = 1
-	tooltip.layer = container.NewWithoutLayout(tooltip.bg)
+	tooltip.layer = container.New(tipLayout{}, tooltip.bg)
 	tooltip.layer.Hide()
 	return tooltip
+}
+
+// tipLayout leaves the hint where placeAt puts it and asks for no room: a
+// container without a layout is as big as its widest child, and a long
+// hint made the whole window that wide.
+type tipLayout struct{}
+
+func (tipLayout) MinSize([]fyne.CanvasObject) fyne.Size { return fyne.NewSize(0, 0) }
+func (tipLayout) Layout([]fyne.CanvasObject, fyne.Size) {}
+
+// tipWidth is the widest a hint's line gets before it wraps.
+const tipWidth = 360
+
+// wrapTip breaks the plain lines wider than tipWidth at spaces; a line of
+// several colours stays as it is.
+func wrapTip(lines [][]tipRun) [][]tipRun {
+	var wrapped [][]tipRun
+	for _, line := range lines {
+		if len(line) != 1 || fyne.MeasureText(line[0].text, 12.5, fyne.TextStyle{}).Width <= tipWidth {
+			wrapped = append(wrapped, line)
+			continue
+		}
+		current := ""
+		for _, word := range strings.Fields(line[0].text) {
+			if next := strings.TrimSpace(current + " " + word); current == "" || fyne.MeasureText(next, 12.5, fyne.TextStyle{}).Width <= tipWidth {
+				current = next
+				continue
+			}
+			wrapped = append(wrapped, []tipRun{{current, line[0].ink}})
+			current = word
+		}
+		wrapped = append(wrapped, []tipRun{{current, line[0].ink}})
+	}
+	return wrapped
 }
 
 // show displays text (one hint per line) above anchor after a short delay,
@@ -1918,7 +1952,7 @@ func (tooltip *tipLayer) placeAt(at fyne.Position, area fyne.Size, lines [][]tip
 	tooltip.layer.Objects = []fyne.CanvasObject{tooltip.bg}
 	tooltip.lines, tooltip.inks = nil, nil
 	width, height := float32(0), float32(0)
-	for _, line := range lines {
+	for _, line := range wrapTip(lines) {
 		x, tall := float32(0), float32(0)
 		for _, run := range line {
 			label := textLine(run.text, 12.5, withAlpha(run.ink, quantize(tooltip.alpha, 4))) // the fade brings it up

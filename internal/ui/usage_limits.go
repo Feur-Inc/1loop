@@ -58,7 +58,7 @@ func limitsSection(limits []usage.Limit, chosen string, choose func(connection s
 		return nil
 	}
 	section := container.NewVBox(sectionTitle("Subscription limits"),
-		padded(0, 8, 2, 2, plainFlow("How much of each subscription window is left, and the pace that makes it last until it resets.", 12.5, colMuted)))
+		padded(0, 8, 2, 2, plainFlow("How much of each subscription window is left, and its pace.", 12.5, colMuted)))
 	shown := accounts[0]
 	for _, account := range accounts {
 		if account.connection == chosen {

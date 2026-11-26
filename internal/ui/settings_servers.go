@@ -599,7 +599,7 @@ func (view *settingsView) buildServer(address, name string) fyne.CanvasObject {
 	label := view.ui.serverLabel(address)
 	body := settingRow("Connecting to "+label+"…", "Its "+strings.ToLower(name)+" show here once it answers.", nil)
 	if state == reachOffline {
-		detail := "Its settings show here once it's back. Check that it runs and that this computer reaches it."
+		detail := "Its settings show here once it is back."
 		if problem != "" {
 			detail += "\n" + plainProblem(address, problem)
 		}
@@ -651,7 +651,7 @@ func olderServer(err error) bool {
 
 // olderText is what a page says of a server too old for it.
 func olderText(remote *remoteDesktop) string {
-	return remote.label() + " runs an older 1loop without this page. Update it from its Updates page."
+	return remote.label() + " runs an older 1loop without this page. Update it there."
 }
 
 // serverMatch is a server's setting the search found.

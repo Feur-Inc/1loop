@@ -8,12 +8,12 @@
     {
       "id": "models",
       "title": "Models \u0026 accounts",
-      "intro": "The services and accounts the models come from, and what happens at a rate limit."
+      "intro": "Services and accounts the models come from."
     },
     {
       "id": "agent",
       "title": "Agent \u0026 approvals",
-      "intro": "What the agent may do without asking, what it is told in every chat and what it remembers."
+      "intro": "What the agent may do, is told and remembers."
     },
     {
       "id": "tools",
@@ -41,7 +41,7 @@
       "key": "general.workspace",
       "section": "general",
       "title": "Project folder",
-      "description": "The folder the agent works in, with its files, terminals and git.",
+      "description": "",
       "keywords": [
         "workspace",
         "directory",
@@ -58,7 +58,7 @@
       "key": "general.target",
       "section": "general",
       "title": "Execution target",
-      "description": "Where the agent works: this computer, an SSH machine, a server or this phone.",
+      "description": "Where the agent runs: this computer, SSH, a server or phone.",
       "keywords": [
         "server",
         "computer",
@@ -67,7 +67,9 @@
         "machine",
         "local",
         "connect",
-        "this computer"
+        "this computer",
+        "phone",
+        "ssh"
       ],
       "kind": "action",
       "where": "both",
@@ -77,7 +79,7 @@
       "key": "general.remote_server",
       "section": "general",
       "title": "Connect a server",
-      "description": "Pair this computer with a headless 1loop server, then work on it.",
+      "description": "",
       "keywords": [
         "remote",
         "server",
@@ -98,7 +100,7 @@
       "key": "general.ssh",
       "section": "general",
       "title": "SSH machines",
-      "description": "Other computers the agent can work on over SSH.",
+      "description": "",
       "keywords": [
         "ssh",
         "remote",
@@ -116,7 +118,7 @@
       "key": "general.worktree_sort",
       "section": "general",
       "title": "Worktree order",
-      "description": "How the sidebar and the Repository window order a project's git worktrees.",
+      "description": "",
       "keywords": [
         "worktree",
         "sort",
@@ -146,7 +148,7 @@
       "key": "general.theme",
       "section": "general",
       "title": "Theme",
-      "description": "Dark, light, the system's (follows the computer's or the phone's dark mode as it changes), or on the computer a theme file of your own.",
+      "description": "",
       "keywords": [
         "theme",
         "dark",
@@ -184,7 +186,7 @@
       "key": "general.accent",
       "section": "general",
       "title": "Accent colour",
-      "description": "The colour of buttons, links and highlights: amber, another preset or a colour of your own.",
+      "description": "",
       "keywords": [
         "accent",
         "color",
@@ -236,7 +238,7 @@
       "key": "general.close_to_tray",
       "section": "general",
       "title": "Close to tray",
-      "description": "Closing the window keeps 1loop running in the system tray; quit from the tray menu or with Ctrl+Q.",
+      "description": "",
       "keywords": [
         "tray",
         "close",
@@ -252,7 +254,7 @@
       "key": "general.discord_presence",
       "section": "general",
       "title": "Discord status",
-      "description": "Shows on your Discord profile that 1loop is working: the model, what it is doing and for how long.",
+      "description": "Shows on your Discord profile what the agent is doing.",
       "keywords": [
         "discord",
         "rich presence",
@@ -270,7 +272,7 @@
       "key": "general.discord_details",
       "section": "general",
       "title": "Share the chat on Discord",
-      "description": "Adds the chat's title, its project and the current command or file to the Discord status.",
+      "description": "Adds the chat's title and project to the Discord status.",
       "keywords": [
         "discord",
         "rich presence",
@@ -288,7 +290,7 @@
       "key": "general.shader_fps",
       "section": "general",
       "title": "Shader background",
-      "description": "How often a theme's shader background is drawn, or off for its plain colour (a background picture too). It pauses while the window is hidden or in the background.",
+      "description": "Redraws of a theme's shader background. Off saves battery.",
       "keywords": [
         "shader",
         "background",
@@ -325,7 +327,7 @@
       "key": "general.animations",
       "section": "general",
       "title": "Animations",
-      "description": "Short animations as you click, hover and as things change. Also off while the system asks for reduced motion.",
+      "description": "",
       "keywords": [
         "animation",
         "motion",
@@ -344,7 +346,7 @@
       "section": "general",
       "page": "Usage",
       "title": "Usage \u0026 spend",
-      "description": "Where the tokens and the money went, by model, connection, project, branch and chat, and the prices behind it.",
+      "description": "",
       "keywords": [
         "usage",
         "spend",
@@ -365,7 +367,7 @@
       "key": "general.import",
       "section": "general",
       "title": "Import chats",
-      "description": "Bring conversations over from Claude Code, Codex and other apps.",
+      "description": "Bring chats over from Claude Code, Codex and other apps.",
       "keywords": [
         "import",
         "history",
@@ -381,7 +383,7 @@
       "key": "models.connections",
       "section": "models",
       "title": "Connections",
-      "description": "The services and accounts the models come from, with their keys and sign-ins.",
+      "description": "Services and accounts the models come from, with their keys.",
       "keywords": [
         "accounts",
         "api key",
@@ -403,7 +405,7 @@
       "key": "models.default_preset",
       "section": "models",
       "title": "Default model preset",
-      "description": "For each account, a model per level, used when Default is selected in the composer.",
+      "description": "A model per level for each account, used by Default.",
       "keywords": [
         "default",
         "preset",
@@ -417,7 +419,7 @@
       "key": "models.context",
       "section": "models",
       "title": "Model context",
-      "description": "For each model, the size in tokens at which 1loop compacts a conversation.",
+      "description": "Tokens at which each model's chats are compacted.",
       "keywords": [
         "context",
         "tokens",
@@ -432,7 +434,7 @@
       "key": "models.auto_resume",
       "section": "models",
       "title": "Automatic resumption",
-      "description": "At a rate limit, wait for the reset or go on with another model, in the order you choose.",
+      "description": "At a rate limit, wait for the reset or switch model.",
       "keywords": [
         "rate limit",
         "quota",
@@ -450,7 +452,7 @@
       "key": "models.naming_model",
       "section": "models",
       "title": "Chat naming model",
-      "description": "A model that names each new chat from the words of its first message, never its pictures or files. None: a chat is named after the start of its first message.",
+      "description": "",
       "keywords": [
         "name",
         "naming",
@@ -460,7 +462,9 @@
         "auto title",
         "summarize",
         "summary",
-        "chat name"
+        "chat name",
+        "files",
+        "privacy"
       ],
       "kind": "action",
       "where": "desktop"
@@ -469,7 +473,7 @@
       "key": "agent.approval_mode",
       "section": "agent",
       "title": "Tool permissions",
-      "description": "Ask before each command and edit, run safe ones on their own (Auto), or run everything (YOLO).",
+      "description": "Asks before commands and edits, or runs them at once (YOLO).",
       "keywords": [
         "approval",
         "approve",
@@ -504,7 +508,7 @@
       "key": "agent.preferences",
       "section": "agent",
       "title": "Your preferences",
-      "description": "Added to 1loop's system prompt in every chat: language, tone, conventions.",
+      "description": "Added to every chat: language, tone, conventions.",
       "keywords": [
         "instructions",
         "system prompt",
@@ -513,7 +517,8 @@
         "tone",
         "language",
         "rules",
-        "claude.md"
+        "claude.md",
+        "conventions"
       ],
       "kind": "text",
       "where": "both"
@@ -522,7 +527,7 @@
       "key": "agent.memory",
       "section": "agent",
       "title": "Memory",
-      "description": "The agent adds what it learns about you to your preferences, each change approved by you.",
+      "description": "The agent proposes what it learns; you approve each change.",
       "keywords": [
         "memory",
         "remember",
@@ -536,7 +541,7 @@
       "key": "agent.wrap_up",
       "section": "agent",
       "title": "Next-step card",
-      "description": "At the end of a turn that did work, the agent sums it up in a card and, when the next move is yours, asks with one or two reply buttons. Off: it is not offered the wrap_up tool.",
+      "description": "A recap at the end of each turn, with buttons for your reply.",
       "keywords": [
         "wrap up",
         "next step",
@@ -552,7 +557,7 @@
       "key": "agent.project_memory",
       "section": "agent",
       "title": "Project memory",
-      "description": "Each project's AGENTS.md, which every agent reads there, edited from the project's … menu in the sidebar.",
+      "description": "Each project's AGENTS.md, read by every agent.",
       "keywords": [
         "agents.md",
         "project",
@@ -699,7 +704,7 @@
       "key": "agent.dynamic_compaction",
       "section": "agent",
       "title": "Dynamic compaction",
-      "description": "Compact the context at natural breaks in the work instead of once when it is nearly full.",
+      "description": "Compacts at natural breaks in the work, not when nearly full.",
       "keywords": [
         "context",
         "compact",
@@ -716,7 +721,7 @@
       "section": "tools",
       "page": "Extensions",
       "title": "Skills, plugins and MCP servers",
-      "description": "Skills and plugins from GitHub, and the MCP servers the agent uses.",
+      "description": "",
       "keywords": [
         "extensions",
         "skills",
@@ -733,7 +738,7 @@
       "section": "tools",
       "page": "Connectors",
       "title": "GitHub connector",
-      "description": "Lets the agent read and act on your GitHub repositories, issues and pull requests.",
+      "description": "Lets the agent work on your GitHub repositories and issues.",
       "keywords": [
         "github",
         "git",
@@ -741,7 +746,8 @@
         "token",
         "oauth",
         "pull request",
-        "issues"
+        "issues",
+        "repositories"
       ],
       "kind": "action",
       "where": "both",
@@ -751,7 +757,7 @@
       "key": "tools.browser_data",
       "section": "tools",
       "title": "Browsing data",
-      "description": "The agent's browser keeps its cookies, logins and history. Clear erases all of it.",
+      "description": "Cookies, logins and history the agent's browser keeps.",
       "keywords": [
         "browser",
         "cookies",
@@ -768,13 +774,15 @@
       "key": "tools.import_cookies",
       "section": "tools",
       "title": "Import cookies",
-      "description": "Import a cookie export or a local browser profile into the agent's browser.",
+      "description": "Cookies from an export or a browser profile, for the agent.",
       "keywords": [
         "cookies",
         "browser",
         "login",
         "import",
-        "session"
+        "session",
+        "export",
+        "profile"
       ],
       "kind": "action",
       "where": "desktop",
@@ -801,7 +809,7 @@
       "key": "tools.linux",
       "section": "tools",
       "title": "Linux",
-      "description": "The Debian the local agent works in: storage, packages, a terminal and a reset.",
+      "description": "Debian for the local agent: packages, terminal and reset.",
       "keywords": [
         "linux",
         "debian",
@@ -817,7 +825,7 @@
       "key": "phone.remote",
       "section": "phone",
       "title": "Phone app on this network",
-      "description": "Lets the 1loop phone app find and reach this computer, once paired.",
+      "description": "",
       "keywords": [
         "phone",
         "mobile",
@@ -834,7 +842,7 @@
       "key": "phone.pairing",
       "section": "phone",
       "title": "Paired phones",
-      "description": "Pair a phone with a QR code, or forget one.",
+      "description": "",
       "keywords": [
         "pair",
         "qr",
@@ -851,7 +859,7 @@
       "key": "phone.status",
       "section": "phone",
       "title": "While a model runs",
-      "description": "What shows over your other apps while the agent works: a small badge, a Live Update or nothing.",
+      "description": "What shows over other apps while the agent works.",
       "keywords": [
         "badge",
         "status",
@@ -882,7 +890,7 @@
       "key": "phone.adb",
       "section": "phone",
       "title": "Phone access",
-      "description": "Lets the local agent use this phone through Shizuku and local ADB.",
+      "description": "Lets the local agent use this phone, via Shizuku or ADB.",
       "keywords": [
         "shizuku",
         "adb",
@@ -898,7 +906,7 @@
       "key": "phone.work_profile",
       "section": "phone",
       "title": "Work profile for the agent",
-      "description": "A separate Android profile where the agent installs and uses its apps.",
+      "description": "A separate Android profile for the agent's apps.",
       "keywords": [
         "work profile",
         "profile",
@@ -914,7 +922,7 @@
       "key": "phone.background",
       "section": "phone",
       "title": "Background execution",
-      "description": "Keeps long local tasks running when 1loop is not on screen.",
+      "description": "",
       "keywords": [
         "battery",
         "background",
@@ -930,7 +938,7 @@
       "key": "phone.sharing",
       "section": "phone",
       "title": "Share this phone",
-      "description": "Lets the desktop or another phone on this network use this phone's agent.",
+      "description": "Lets the desktop or another phone use this phone's agent.",
       "keywords": [
         "share",
         "pair",
@@ -947,7 +955,7 @@
       "key": "updates.check",
       "section": "updates",
       "title": "1loop updates",
-      "description": "Check the release page now, and update to the newest version.",
+      "description": "",
       "keywords": [
         "update",
         "upgrade",
@@ -963,7 +971,7 @@
       "key": "advanced.hooks",
       "section": "advanced",
       "title": "Hook commands",
-      "description": "Your commands around the agent's work, in Claude Code's format: before and after tools, on a prompt, when it stops.",
+      "description": "",
       "keywords": [
         "hooks",
         "pretooluse",
@@ -979,7 +987,7 @@
       "key": "advanced.crash_reports",
       "section": "advanced",
       "title": "Offer to report crashes",
-      "description": "After 1loop closes unexpectedly, the next start shows an anonymous report you can file on GitHub from your own account. Nothing is sent by 1loop itself.",
+      "description": "Offer an anonymous crash report. You file it on GitHub.",
       "keywords": [
         "crash",
         "report",
@@ -988,7 +996,9 @@
         "github",
         "closed unexpectedly",
         "don't ask again",
-        "feedback"
+        "feedback",
+        "anonymous",
+        "privacy"
       ],
       "kind": "toggle",
       "where": "both"
@@ -998,7 +1008,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Find in the chat",
-      "description": "Finds words in the conversation on screen, from one match to the next.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1021,7 +1031,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Search chats and settings",
-      "description": "Opens the search of the sidebar, over every chat and setting.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1044,7 +1054,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "New chat",
-      "description": "Starts a new chat in the project open.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1065,7 +1075,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "New window",
-      "description": "Opens another 1loop window, on a new chat in the project open.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1088,7 +1098,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Close the pane or window",
-      "description": "Closes the pane with the focus when the window is split, else the window. The last window follows the tray setting.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1110,7 +1120,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Split side by side",
-      "description": "Opens a new chat in a pane beside the one with the focus.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1133,7 +1143,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Split top and bottom",
-      "description": "Opens a new chat in a pane under the one with the focus.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1157,7 +1167,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Pane on the left",
-      "description": "Moves the focus to the pane on the left of a split window.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1179,7 +1189,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Pane on the right",
-      "description": "Moves the focus to the pane on the right of a split window.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1201,7 +1211,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Pane above",
-      "description": "Moves the focus to the pane above in a split window.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1223,7 +1233,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Pane below",
-      "description": "Moves the focus to the pane below in a split window.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1245,7 +1255,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Add a project",
-      "description": "Opens a folder as a new project.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1268,7 +1278,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Open Settings",
-      "description": "Opens 1loop's settings.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1289,7 +1299,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Show or hide the sidebar",
-      "description": "Folds the sidebar away, or brings it back.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1311,7 +1321,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Go to the message box",
-      "description": "Puts the cursor in the message box, ready to type.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1334,7 +1344,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Expand the message box",
-      "description": "Opens the message box as a large editor with line numbers over the conversation, or puts it back.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1359,7 +1369,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Choose the model",
-      "description": "Opens the model menu of the composer.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1381,7 +1391,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Stop the agent",
-      "description": "Stops the turn running in the chat on screen.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1403,7 +1413,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Copy the last answer",
-      "description": "Copies the newest answer of the chat on screen.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1425,7 +1435,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Previous chat",
-      "description": "Opens the chat above in the sidebar.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1448,7 +1458,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Next chat",
-      "description": "Opens the chat below in the sidebar.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1492,7 +1502,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Quit 1loop",
-      "description": "Quits 1loop, even when closing the window keeps it in the tray.",
+      "description": "Quits 1loop, even when it stays in the tray.",
       "keywords": [
         "shortcut",
         "keyboard",

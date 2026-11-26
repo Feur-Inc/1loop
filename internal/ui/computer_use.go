@@ -175,12 +175,12 @@ func (ui *desktopUI) computerTools(chat *conversation) agent.PanelToolHandler {
 // why start or an action can't work. On Linux the accessibility backend
 // runs without sharing; on Windows it is the sharing session itself.
 func computerBeforeStart(ctx context.Context, session *computeruse.ComputerSession, action string, arguments map[string]any) (agent.PanelToolResult, error) {
-	const notStarted = "Desktop sharing: not started (start asks the user to share the screen and allow keyboard and pointer control)."
+	const notStarted = "Desktop sharing: not started. Start asks to share the screen."
 	if runtime.GOOS == "windows" {
 		if action == "describe" {
 			return agent.PanelToolResult{}, fmt.Errorf("On Windows, the accessibility schemas come with desktop sharing: call start first")
 		}
-		return agent.PanelToolResult{Text: notStarted + "\nAccessibility and window operations: available once sharing is approved."}, nil
+		return agent.PanelToolResult{Text: notStarted + "\nAccessibility: available once sharing is approved."}, nil
 	}
 	backend, err := session.Backend(ctx)
 	if action == "describe" {

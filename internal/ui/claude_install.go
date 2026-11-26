@@ -26,8 +26,8 @@ func setFlow(flow *flowText, text string) {
 func (ui *desktopUI) installClaudeCode(done func()) {
 	home, _ := os.UserHomeDir()
 	paragraphs := []string{
-		"Claude Code is not installed on this computer, and Claude Code connections need it. 1loop can install it with Anthropic's official installer, as its install script does:",
-		"1. Download the latest Claude Code from downloads.claude.ai and check it against Anthropic's release signature and the SHA-256 checksum of the release's manifest.",
+		"Claude Code is not installed here. Install it for these connections.",
+		"1. Download Claude Code from downloads.claude.ai, verified.",
 		"2. Run its claude install, which puts Claude Code in " + filepath.Join(home, ".local", "bin") + " and its data in " + filepath.Join(home, ".claude") + ", for your user only. No administrator rights are needed.",
 		"Claude Code then uses its own sign-in: your Claude subscription.",
 	}
@@ -58,7 +58,7 @@ func (ui *desktopUI) installClaudeCode(done func()) {
 				}
 				dialog.dismiss()
 				done()
-				ui.notice("Claude Code installed", "Claude Code is installed in "+path+". If it was never signed in on this computer, run claude once in a terminal to sign in.")
+				ui.notice("Claude Code installed", "Claude Code is installed in "+path+". Never signed in here? Run claude once in a terminal.")
 			})
 		}()
 	}

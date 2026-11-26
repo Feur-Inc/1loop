@@ -85,7 +85,7 @@ func (ui *desktopUI) connectServer() {
 					return
 				}
 				if !reply.Console {
-					ui.notice("Remote server", "This address is a desktop's phone remote. Connect to a headless HTTPS server.")
+					ui.notice("Remote server", "That is a desktop's phone remote. Use a headless HTTPS server.")
 					return
 				}
 				sheet.dismiss()
@@ -94,7 +94,7 @@ func (ui *desktopUI) connectServer() {
 		}()
 	}
 	sheet = ui.modal("Connect a server", container.NewVBox(
-		note("A headless 1loop server runs the agent, its files, browser and terminals on its own machine. The next step asks you to approve this computer from a device already paired with it, or in its console."),
+		note("Runs the agent and files on its own machine. Approve it next."),
 		widget.NewLabel("HTTPS address"), address,
 		widget.NewLabel("Certificate fingerprint (only for a self-signed certificate)"), pin,
 		note("The server's console prints this SHA-256 fingerprint when it starts.")), 620, nil, connect)
@@ -161,7 +161,7 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code, co
 	}
 	copyCommand := newRow("Copy command", nil, styleChip, func() { fyne.CurrentApp().Clipboard().SetContent(command) })
 	body := container.NewVBox(
-		note("Approve it in 1loop on a device already paired with this server: it asks for this code. This connects by itself once approved; the pairing expires after two minutes."),
+		note("Approve it on a paired device with this code. Expires in 2 min."),
 		codeBlock(code, 80),
 		note(where),
 		codeBlock(command, 80),
@@ -169,7 +169,7 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code, co
 		status,
 	)
 	if phone { // a phone shared on the network: its user types the code in 1loop's request
-		body = container.NewVBox(note("On the phone, type this code in 1loop's request, then tap Allow. The pairing expires after two minutes."), codeBlock(code, 80), status)
+		body = container.NewVBox(note("On the phone, type this code, then tap Allow. Expires in 2 min."), codeBlock(code, 80), status)
 	}
 	sheet = ui.modal("Approve this device", body, 620, stop)
 }
@@ -236,7 +236,7 @@ func (remote *remoteDesktop) askPairing(data string) {
 		allow := newRow("Allow", nil, stylePrimary, func() { answer(true) })
 		entry.OnSubmitted = func(string) { answer(true) }
 		sheet = remote.parent.modal("“"+asked.Device+"” wants to use this server", container.NewVBox(
-			note("It will run the agent, its commands and files on the server, like this device. Type the six-digit code that device shows."),
+			note("Runs the agent, commands and files on the server. Type its code."),
 			entry, status), 560, nil, refuse, allow)
 		remote.parent.window.Canvas().Focus(entry)
 		remote.pairingSheet, remote.pairingID = sheet, asked.ID
@@ -887,13 +887,13 @@ func (remote *remoteDesktop) deleteChat(chat remoteapi.Chat) {
 		return
 	}
 	title, detail := "Also remove its worktree and branch "+chat.Branch,
-		"The folder "+worktreeFolder(chat.Workspace)+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own."
+		"The folder "+worktreeFolder(chat.Workspace)+" goes unless it has uncommitted changes; its branch only if merged."
 	if chat.Branch == "" || branches > 1 {
 		title = "Also remove the worktrees of its subchats"
 		if chat.Branch != "" {
 			title = "Also remove its worktree and those of its subchats"
 		}
-		detail = "Each folder goes unless it has uncommitted changes or another chat works in it; each branch only if it is merged or has no commits of its own."
+		detail = "Each folder goes unless changed or in use; each branch if merged."
 	}
 	body := container.New(layout.NewCustomPaddedVBoxLayout(10), note(text),
 		card(settingRow(title, detail, newToggle(true, func(on bool) { removeWorktree = on }))))
@@ -1273,7 +1273,7 @@ func (remote *remoteDesktop) editHooks() {
 				}()
 			}
 			buttons := container.NewHBox(layout.NewSpacer(), cancelButton, save)
-			body := container.NewBorder(note("Hooks of the server: commands before or after its tools, when a message is sent, or when its agent stops."), container.NewVBox(problem, buttons), nil, nil, scroll)
+			body := container.NewBorder(note("The server's commands around its tools, prompts and stops."), container.NewVBox(problem, buttons), nil, nil, scroll)
 			dialog = newSheet(remote.window.Canvas(), body, 640)
 			dialog.Show()
 		})

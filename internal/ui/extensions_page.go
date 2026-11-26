@@ -69,7 +69,7 @@ func (ui *desktopUI) extensionSettings(source extensionSource, title fyne.Canvas
 		page.tabs[tab.id] = row
 		tabs.Add(row)
 	}
-	intro := note("Skills teach the agent a task; plugins bundle skills, MCP servers and hooks. Both work with 1loop's agent and with Claude Code. MCP servers give the agent the tools of other apps.")
+	intro := note("Skills teach a task; plugins bundle skills, MCP servers and hooks.")
 	page.show("store")
 	return container.NewVBox(title, intro, padded(6, 10, 0, 0, tabs), page.body)
 }
@@ -545,7 +545,7 @@ func (page *extensionsPage) mcpList(view extensions.Installed) fyne.CanvasObject
 	ui := page.ui
 	add := newRow("Add server", iconPlus, stylePrimary, func() { page.editMCP(extensions.MCPServer{Type: "stdio", Enabled: true}, "") })
 	check := newRow("Check connections", iconArrowTurn, styleOutline, page.checkMCP)
-	box := container.NewVBox(note("1loop connects to these servers as a client: their tools join the agent's, and Claude Code gets them too. A command starts in the chat's project."),
+	box := container.NewVBox(note("Their tools join the agent's, and Claude Code gets them too."),
 		padded(4, 6, 0, 0, container.NewHBox(add, check)))
 	var rows []fyne.CanvasObject
 	for _, server := range view.MCP {
@@ -563,7 +563,7 @@ func (page *extensionsPage) mcpList(view extensions.Installed) fyne.CanvasObject
 		rows = append(rows, extensionRow(server.Name, append(page.mcpDetail(server), "from the plugin "+server.Plugin+" (turn the plugin off in Installed)"), nil))
 	}
 	if len(rows) == 0 {
-		box.Add(note("No server yet. Add one with its command (for example npx -y @modelcontextprotocol/server-filesystem ~/docs) or its address."))
+		box.Add(note("No server yet. Add one by command or address."))
 	} else {
 		box.Add(card(rows...))
 	}

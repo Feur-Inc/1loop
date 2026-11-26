@@ -49,6 +49,12 @@ type toolPanel struct {
 
 	resizePending bool
 	openCommands  map[string]bool // the background commands shown in full in the Tasks tab, by task
+
+	// The strip's arrows and list (panel_strip.go, #596), and each tab's
+	// view in it, by tab.
+	stripLeft, stripRight, stripList *tapRow
+	stripViews                       map[int]fyne.CanvasObject
+	stripMotion                      *fyne.Animation
 }
 
 type panelTab struct {
@@ -127,8 +133,16 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 		panel.openTodo()
 	})
 	var strips fyne.CanvasObject
-	panel.strips, strips = stripScroll(panel.strip)
-	header := container.NewBorder(nil, nil, nil, container.NewHBox(todo, add, fold), strips)
+	panel.strips, strips = panelStripScroll(panel.strip)
+	panel.strips.OnScrolled = func(fyne.Position) { panel.syncStripArrows() }
+	panel.stripLeft = newStripArrow(iconChevronLeft, func() { panel.scrollStrip(-panel.stripStep()) })
+	panel.stripRight = newStripArrow(iconChevronRight, func() { panel.scrollStrip(panel.stripStep()) })
+	panel.stripList = newStripArrow(iconChevron, panel.listTabs)
+	panel.stripList.Show()
+	strips = container.New(stripFrame{panel}, strips)
+	// The right arrow and the list button sit together, no gap between them.
+	ends := container.New(layout.NewCustomPaddedHBoxLayout(0), panel.stripRight, panel.stripList)
+	header := container.NewBorder(nil, nil, panel.stripLeft, container.NewHBox(ends, todo, add, fold), strips)
 	panel.header = header
 	rule := canvas.NewRectangle(colBorderSoft)
 	rule.SetMinSize(fyne.NewSize(0, 1))
@@ -452,20 +466,17 @@ func (panel *toolPanel) changed(chat *conversation, index int) {
 
 func (panel *toolPanel) renderStrip() {
 	panel.strip.RemoveAll()
+	panel.stripViews = map[int]fyne.CanvasObject{}
 	others := panel.otherPanes() // a split window's panel lists every pane's tabs (panes.go)
 	if len(others) == 0 {
-		for i, tab := range panel.tabs {
-			panel.strip.Add(panel.tabView(i, tab))
-		}
+		panel.addOrderedTabs()
 	}
 	for _, pane := range others {
 		if pane == nil { // the pane with the focus: its tabs, as usual
 			if len(panel.tabs) > 0 {
 				panel.addStripGroup(panel.ui)
 			}
-			for i, tab := range panel.tabs {
-				panel.strip.Add(panel.tabView(i, tab))
-			}
+			panel.addOrderedTabs()
 			continue
 		}
 		panel.addPaneTabs(pane)
@@ -475,6 +486,12 @@ func (panel *toolPanel) renderStrip() {
 	// left the old width, and empty space past the last tab, until the
 	// next layout.
 	panel.strips.Refresh()
+	if len(panel.tabs) == 0 { // nothing to list
+		panel.stripList.Hide()
+	} else {
+		panel.stripList.Show()
+	}
+	fyne.Do(panel.revealActive) // once laid out: the tab shown in view, the arrows in step
 }
 
 func (panel *toolPanel) render() {

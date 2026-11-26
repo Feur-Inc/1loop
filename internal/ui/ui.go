@@ -1124,6 +1124,7 @@ type sheet struct {
 	sharp      *canvas.Image // a dialog's: the window buttons as they were, over the frosted backdrop
 	live       *canvas.Blur  // a theme's blur instead ([blur] menus, dialogs: theme_blur.go)
 	liveTint   color.NRGBA   // the panel's colour over it
+	solid      bool          // an opaque panel, no glass: over busy text, the blur reads as a smudge
 	open       bool
 	closing    bool
 	items      []*tapRow
@@ -1163,7 +1164,7 @@ func (dialog *sheet) Show() {
 	dialog.openSize = dialog.canvas.Size()
 	var shot image.Image
 	dialog.syncLive()
-	if !dialog.live.Visible() {
+	if !dialog.live.Visible() && !dialog.solid {
 		dialog.glass, shot = frostedBackdrop(dialog.canvas) // before the sheet is drawn: what it covers
 	}
 	if dialog.sharp != nil {
@@ -1380,7 +1381,7 @@ func (dialog *sheet) syncLive() {
 	}
 	dialog.live.Radius = blurRadius(element)
 	dialog.liveTint = blurTint(element, base, opacity)
-	if dialog.live.Radius > 0 {
+	if dialog.live.Radius > 0 && !dialog.solid {
 		dialog.live.Show()
 	} else {
 		dialog.live.Hide()
@@ -1756,6 +1757,11 @@ const (
 
 // showMenu opens a web-style popover menu of actions next to anchor.
 func showMenu(window fyne.Window, anchor fyne.CanvasObject, actions []menuAction) *sheet {
+	return showMenuOf(window, anchor, actions, false)
+}
+
+// showMenuOf is showMenu, its panel opaque when solid.
+func showMenuOf(window fyne.Window, anchor fyne.CanvasObject, actions []menuAction, solid bool) *sheet {
 	list := container.New(layout.NewCustomPaddedVBoxLayout(2))
 	var menu *sheet
 	var items []*tapRow
@@ -1809,7 +1815,7 @@ func showMenu(window fyne.Window, anchor fyne.CanvasObject, actions []menuAction
 		content = container.NewBorder(padded(2, 6, 2, 2, field), nil, nil, nil, scroll)
 	}
 	menu = newSheet(window.Canvas(), content, fyne.Max(list.MinSize().Width+10, 240))
-	menu.menu = true
+	menu.menu, menu.solid = true, solid
 	menu.anchor = anchor
 	menu.items = items
 	menu.Show()

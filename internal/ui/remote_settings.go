@@ -72,7 +72,7 @@ func (remote *remoteDesktop) permissionRow() fyne.CanvasObject {
 
 // hooksRow edits the server's hooks.
 func (remote *remoteDesktop) hooksRow() fyne.CanvasObject {
-	return settingRow("Hook commands", "The server's commands around its work, as in Claude Code.",
+	return settingRow("Hook commands", "",
 		newRow("Edit", nil, styleOutline, remote.editHooks))
 }
 
@@ -106,7 +106,7 @@ func (remote *remoteDesktop) instructionCards(rows int) []fyne.CanvasObject {
 	entry := widget.NewMultiLineEntry()
 	entry.Wrapping = fyne.TextWrapWord
 	entry.SetMinRowsVisible(rows)
-	entry.SetPlaceHolder("Describe your preferences: language, tone, coding conventions, level of detail…")
+	entry.SetPlaceHolder("Language, tone, coding conventions, level of detail…")
 	entry.Disable() // until the server's text is in
 	memory := container.NewStack()
 	wrapUp := container.NewStack()

@@ -41,7 +41,7 @@
       "key": "general.workspace",
       "section": "general",
       "title": "Project folder",
-      "description": "The folder the agent works in, with its files and git.",
+      "description": "",
       "keywords": [
         "workspace",
         "directory",
@@ -79,7 +79,7 @@
       "key": "general.remote_server",
       "section": "general",
       "title": "Connect a server",
-      "description": "Pair with a headless 1loop server, then work on it there.",
+      "description": "",
       "keywords": [
         "remote",
         "server",
@@ -100,7 +100,7 @@
       "key": "general.ssh",
       "section": "general",
       "title": "SSH machines",
-      "description": "Other computers the agent can work on over SSH.",
+      "description": "",
       "keywords": [
         "ssh",
         "remote",
@@ -118,7 +118,7 @@
       "key": "general.worktree_sort",
       "section": "general",
       "title": "Worktree order",
-      "description": "How a project's git worktrees are ordered in the sidebar.",
+      "description": "",
       "keywords": [
         "worktree",
         "sort",
@@ -148,7 +148,7 @@
       "key": "general.theme",
       "section": "general",
       "title": "Theme",
-      "description": "Dark, light or the system's. Also your own theme files.",
+      "description": "",
       "keywords": [
         "theme",
         "dark",
@@ -186,7 +186,7 @@
       "key": "general.accent",
       "section": "general",
       "title": "Accent colour",
-      "description": "The colour of buttons, links and highlights.",
+      "description": "",
       "keywords": [
         "accent",
         "color",
@@ -238,7 +238,7 @@
       "key": "general.close_to_tray",
       "section": "general",
       "title": "Close to tray",
-      "description": "Closing the window keeps 1loop in the tray. Quit: Ctrl+Q.",
+      "description": "",
       "keywords": [
         "tray",
         "close",
@@ -327,7 +327,7 @@
       "key": "general.animations",
       "section": "general",
       "title": "Animations",
-      "description": "Short motion as things change. Off with reduced motion.",
+      "description": "",
       "keywords": [
         "animation",
         "motion",
@@ -346,7 +346,7 @@
       "section": "general",
       "page": "Usage",
       "title": "Usage \u0026 spend",
-      "description": "Tokens and money spent, by model, project, chat and more.",
+      "description": "",
       "keywords": [
         "usage",
         "spend",
@@ -452,7 +452,7 @@
       "key": "models.naming_model",
       "section": "models",
       "title": "Chat naming model",
-      "description": "Names new chats from their first message, never its files.",
+      "description": "",
       "keywords": [
         "name",
         "naming",
@@ -589,7 +589,7 @@
       "section": "tools",
       "page": "Extensions",
       "title": "Skills, plugins and MCP servers",
-      "description": "Skills, plugins and the MCP servers the agent uses.",
+      "description": "",
       "keywords": [
         "extensions",
         "skills",
@@ -693,7 +693,7 @@
       "key": "phone.remote",
       "section": "phone",
       "title": "Phone app on this network",
-      "description": "Lets a paired phone find and reach this computer.",
+      "description": "",
       "keywords": [
         "phone",
         "mobile",
@@ -710,7 +710,7 @@
       "key": "phone.pairing",
       "section": "phone",
       "title": "Paired phones",
-      "description": "Pair a phone with a QR code, or forget one.",
+      "description": "",
       "keywords": [
         "pair",
         "qr",
@@ -790,7 +790,7 @@
       "key": "phone.background",
       "section": "phone",
       "title": "Background execution",
-      "description": "Keeps long local tasks running when 1loop is not on screen.",
+      "description": "",
       "keywords": [
         "battery",
         "background",
@@ -823,7 +823,7 @@
       "key": "updates.check",
       "section": "updates",
       "title": "1loop updates",
-      "description": "Check for a newer version now.",
+      "description": "",
       "keywords": [
         "update",
         "upgrade",
@@ -839,7 +839,7 @@
       "key": "advanced.hooks",
       "section": "advanced",
       "title": "Hook commands",
-      "description": "Your commands around the agent's work, as in Claude Code.",
+      "description": "",
       "keywords": [
         "hooks",
         "pretooluse",
@@ -876,7 +876,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Find in the chat",
-      "description": "Finds words in the chat on screen, one match at a time.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -899,7 +899,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Search chats and settings",
-      "description": "Searches chats and settings from the sidebar.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -922,7 +922,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "New chat",
-      "description": "Starts a new chat in the project open.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -943,7 +943,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "New window",
-      "description": "Opens another window, on a new chat in the open project.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -966,7 +966,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Close the pane or window",
-      "description": "Closes the focused pane, or the window when it is not split.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -988,7 +988,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Split side by side",
-      "description": "Opens a new chat in a pane beside the focused one.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1011,7 +1011,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Split top and bottom",
-      "description": "Opens a new chat in a pane below the focused one.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1035,7 +1035,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Pane on the left",
-      "description": "Moves the focus to the pane on the left.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1057,7 +1057,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Pane on the right",
-      "description": "Moves the focus to the pane on the right.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1079,7 +1079,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Pane above",
-      "description": "Moves the focus to the pane above.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1101,7 +1101,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Pane below",
-      "description": "Moves the focus to the pane below.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1123,7 +1123,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Add a project",
-      "description": "Opens a folder as a new project.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1146,7 +1146,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Open Settings",
-      "description": "Opens 1loop's settings.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1167,7 +1167,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Show or hide the sidebar",
-      "description": "Folds the sidebar away, or brings it back.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1189,7 +1189,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Go to the message box",
-      "description": "Puts the cursor in the message box, ready to type.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1212,7 +1212,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Expand the message box",
-      "description": "Opens the message box as a large editor, or closes it.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1237,7 +1237,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Choose the model",
-      "description": "Opens the model menu of the composer.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1259,7 +1259,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Stop the agent",
-      "description": "Stops the turn running in the chat on screen.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1281,7 +1281,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Copy the last answer",
-      "description": "Copies the newest answer of the chat on screen.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1303,7 +1303,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Previous chat",
-      "description": "Opens the chat above in the sidebar.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",
@@ -1326,7 +1326,7 @@
       "section": "general",
       "page": "Keyboard shortcuts",
       "title": "Next chat",
-      "description": "Opens the chat below in the sidebar.",
+      "description": "",
       "keywords": [
         "shortcut",
         "keyboard",

@@ -40,7 +40,7 @@ func (remote *remoteDesktop) installRows(full bool) fyne.CanvasObject {
 	}
 	items := []*item{
 		{what: "chromium", title: "Chromium", button: "Install Chromium",
-			detail: "For Browser Use: about 200 MB, in its data folder, with no admin rights.",
+			detail: "For Browser Use: about 200 MB in its data folder, no admin.",
 			has:    func(state serverInstall) *bool { return state.Browser }},
 		{what: "claude-code", title: "Claude Code", button: "Install Claude Code",
 			detail: "For Claude Code connections. Downloads the claude command.",

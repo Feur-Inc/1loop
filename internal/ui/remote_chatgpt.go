@@ -205,7 +205,7 @@ func (remote *remoteDesktop) chatGPTSignInFields(draft *agent.Connection, row se
 		}()
 	}
 	signOut.onTap = func() {
-		ui.confirm("Sign out of ChatGPT?", "The server forgets this account's sign-in. The connection and its chats are kept.", "Sign out", func() {
+		ui.confirm("Sign out of ChatGPT?", "The server forgets this sign-in. Chats are kept.", "Sign out", func() {
 			id := draft.ID
 			go func() {
 				ctx, done := context.WithTimeout(remote.ctx, 30*time.Second)

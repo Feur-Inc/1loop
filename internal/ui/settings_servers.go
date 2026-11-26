@@ -646,7 +646,7 @@ func olderServer(err error) bool {
 
 // olderText is what a page says of a server too old for it.
 func olderText(remote *remoteDesktop) string {
-	return remote.label() + " runs an older 1loop without this page. Update it from its Updates page."
+	return remote.label() + " runs an older 1loop without this page. Update it there."
 }
 
 // serverMatch is a server's setting the search found.

@@ -164,7 +164,7 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 	note := ""
 	if request.Isolation == "worktree" {
 		if cfg.MachineID != "" {
-			note = "Worktrees are not made on SSH machines yet, so the subchat shares this folder."
+			note = "No worktrees on SSH machines yet: the subchat shares this folder."
 		} else if created, note, err = agent.SubchatWorktree(ctx, gitrepo.Local, cfg.Workspace, request.Title, id); err != nil {
 			return info, fmt.Errorf("Could not make the subchat's worktree: %v", err)
 		}
@@ -292,7 +292,7 @@ func (ui *desktopUI) confirmDeleteSubchat(chat *conversation, text string) {
 	for _, folder := range folders {
 		projects[folder] = ui.worktrees[folder]
 	}
-	title, detail := "Also remove its worktree and branch", "The folder "+worktreeFolder(folders[0])+" goes unless it has uncommitted changes; the branch only if it is merged or has no commits of its own."
+	title, detail := "Also remove its worktree and branch", "The folder "+worktreeFolder(folders[0])+" goes unless it has uncommitted changes; its branch only if merged."
 	if chat.Subchat != nil && len(folders) == 1 && folders[0] == ui.subchatWorktree(chat) {
 		title += " " + chat.Subchat.Branch
 	} else {
@@ -300,7 +300,7 @@ func (ui *desktopUI) confirmDeleteSubchat(chat *conversation, text string) {
 		if len(folders) == 1 {
 			title = "Also remove its subchat's worktree"
 		}
-		detail = "Each folder goes unless it has uncommitted changes; each branch only if it is merged or has no commits of its own."
+		detail = "Each folder goes unless changed; each branch only if merged."
 	}
 	removeWorktree := true
 	body := container.New(layout.NewCustomPaddedVBoxLayout(10), note(text),
@@ -358,7 +358,7 @@ func (ui *desktopUI) splitOff(parent *conversation, brief string) string {
 	brief = strings.TrimSpace(brief)
 	switch {
 	case brief == "":
-		return "Write what the subchat should do after /subchat: the task, the files and what done means."
+		return "Write the task for the subchat: its files and what done means."
 	case parent == nil:
 		return "Open the conversation to start the subchat from first."
 	case agent.SubchatLimit(ui.subchatDepth(parent)) != "":

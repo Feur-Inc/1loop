@@ -641,7 +641,7 @@ func (ui *desktopUI) sshEditor(original sshmachine.Settings) {
 	)
 	if existing {
 		remove := newRow("Remove", iconTrash, styleOutline, func() {
-			ui.confirm("Remove SSH machine?", "Remove “"+original.Label()+"” from 1loop? Its chats stay in 1loop; its files on the machine are not touched.", "Remove", func() {
+			ui.confirm("Remove SSH machine?", "Remove “"+original.Label()+"” from 1loop? Its chats stay; its files are not touched.", "Remove", func() {
 				ui.removeMachine(original.ID)
 				settings.done()
 			})

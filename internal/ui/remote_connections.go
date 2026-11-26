@@ -169,7 +169,7 @@ func (remote *remoteDesktop) connectionEditor(row serverConnection) {
 	typePicker := newPicker(ui.window, "Connection type", styleField, nil)
 	typePicker.Options = types
 	apiFields := card(
-		settingRow("API base URL", "The service's /v1 address, as the server reaches it.", sized(340, base)),
+		settingRow("API base URL", "", sized(340, base)),
 		settingRow("API key", "", sized(340, key)))
 	harness := note("")
 	harnessFields := card(settingStack("On the server", "", harness))

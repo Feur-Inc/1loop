@@ -66,14 +66,14 @@ func unpairSelf(ctx context.Context, saved serverAddress) error {
 func (ui *desktopUI) forgetServer(saved serverAddress) {
 	name := ui.serverLabel(saved.URL)
 	ui.confirm("Forget "+name+"?",
-		"This device is unpaired from "+name+": its access stops at once. Using the server again needs a new pairing.",
+		"This device is unpaired from "+name+": its access stops at once. It must be paired again to use it.",
 		"Forget", func() {
 			go func() {
 				err := unpairSelf(ui.ctx, saved)
 				fyne.Do(func() {
 					ui.dropServer(saved.URL)
 					if err != nil {
-						ui.notice("Remote server", fmt.Sprintf("%s is forgotten here, but it could not be told (%v). Remove this device from its paired devices on another device, or type devices then revoke in its console.", name, err))
+						ui.notice("Remote server", fmt.Sprintf("%s is forgotten here; it could not be told (%v). Unpair it there too.", name, err))
 					}
 				})
 			}()

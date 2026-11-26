@@ -221,7 +221,7 @@ func (ui *desktopUI) showClaudeStatus() {
 	}
 	account := textLine("Loading…", 13, colMuted)
 	version := textLine("", 13, colMuted)
-	usage := "Shown after this connection's next turn. Send /usage for Claude Code's full report."
+	usage := "Shown after the next turn. /usage gives Claude Code's full report."
 	if ui.plan != (agent.PlanUsage{}) {
 		usage = fmt.Sprintf("%.0f%% of the 5-hour window · %.0f%% of the week", ui.plan.FiveHour*100, ui.plan.Week*100)
 	}

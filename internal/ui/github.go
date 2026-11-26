@@ -193,7 +193,7 @@ func (ui *desktopUI) githubAttachmentSettings(source githubSource, state githubc
 		return append(objects, newRow("Remove token", nil, styleOutline, func() { save("") }))
 	}
 	token := widget.NewPasswordEntry()
-	token.SetPlaceHolder("Personal access token (classic with repo scope, or fine-grained with write access)")
+	token.SetPlaceHolder("Personal access token (classic with repo, or fine-grained)")
 	return append(objects, token,
 		newRow("Save token", nil, stylePrimary, func() {
 			if strings.TrimSpace(token.Text) != "" {

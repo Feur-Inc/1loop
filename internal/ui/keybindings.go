@@ -410,7 +410,7 @@ func (ui *desktopUI) captureShortcut(setting registry.Setting) {
 		}
 		if owner, taken := ui.shortcutOwner(setting.Key, value); taken {
 			wanted = value
-			message.SetText(fmt.Sprintf("%s is the key of “%s”. Use it here, and that one will have none, or press other keys.", chordLabel(value), owner.Title))
+			message.SetText(fmt.Sprintf("%s belongs to “%s”. Take it here, and that one gets none.", chordLabel(value), owner.Title))
 			take.Show()
 			return
 		}

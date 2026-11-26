@@ -130,7 +130,7 @@ func (ui *desktopUI) appearanceRows(view *settingsView) []fyne.CanvasObject {
 	// The theme files' note and buttons are part of the Theme row, with its
 	// inset, and the card's divider comes after them (#508).
 	themeRow := view.mark(registry.KeyTheme, container.New(layout.NewCustomPaddedVBoxLayout(0),
-		settingRow(themes.Title, "Dark or light, or follow this computer's mode.", sized(180, themePicker.row)),
+		settingRow(themes.Title, "", sized(180, themePicker.row)),
 		ui.themeFileControls()))
 	themeRows := []fyne.CanvasObject{themeRow}
 

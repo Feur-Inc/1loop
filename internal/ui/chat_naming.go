@@ -64,7 +64,7 @@ type namingOption struct {
 
 const namingNone = "None"
 
-const namingDetail = "Names new chats from their first message, never its files."
+const namingDetail = ""
 
 // namingPicker chooses the chat naming model among options; set saves a
 // choice (nil for None), and calls failed on the interface thread when it

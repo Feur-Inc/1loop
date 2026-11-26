@@ -29,6 +29,7 @@ class MainActivity : ComponentActivity() {
         receiveShared(intent)
         showUpdate(intent)
         openChat(intent)
+        openLoopy(intent)
     }
 
     override fun onNewIntent(intent: Intent) {
@@ -36,6 +37,16 @@ class MainActivity : ComponentActivity() {
         receiveShared(intent)
         showUpdate(intent)
         openChat(intent)
+        openLoopy(intent)
+    }
+
+    /** A notification of Loopy's, or a text shared to 1loop: for Loopy's composer. */
+    private fun openLoopy(intent: Intent?) {
+        intent?.getStringExtra(LOOPY_OPEN)?.let { app.openLoopy(it.ifEmpty { null }) }
+        if (intent?.action == Intent.ACTION_SEND && !intent.hasExtra(Intent.EXTRA_STREAM)) intent.getStringExtra(Intent.EXTRA_TEXT)?.takeIf { it.isNotBlank() }?.let {
+            app.loopyDraft = it
+            app.openLoopy()
+        }
     }
 
     /** Talk to the agent (the badge) or Open (the Live Update): its chat. */

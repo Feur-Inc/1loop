@@ -379,7 +379,7 @@ func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
 		if ui.cfg.InScratch() {
 			icon = iconCheck
 		}
-		actions = append(actions, menuAction{label: noFolderLabel, icon: icon, run: ui.chooseNoFolder})
+		actions = append(actions, menuAction{label: thisComputerLabel, icon: icon, run: ui.chooseNoFolder})
 	}
 	add := "Add folder…"
 	if ui.cfg.MachineID != "" {
@@ -468,7 +468,7 @@ func (ui *desktopUI) finishChatLoad() {
 	ui.updateHeader()
 	ui.renderChats()
 	ui.showChatModel()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 }
 
 func (ui *desktopUI) renameChat(chat *conversation) {
@@ -607,9 +607,9 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	ui.sideGlide = newGlideLayout()
 	ui.projectList = container.New(ui.sideGlide)
 
-	logo := brandLogo(30*1483.0/512.0, 30)
+	ui.brand = newBrandMark(false)
 	collapse := newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
-	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, logo, container.NewCenter(collapse)))
+	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, ui.spaceSwitch(ui.brand.object()), container.NewCenter(collapse)))
 	if ui.chrome {
 		brand = container.NewStack(newDragArea(ui.window), brand)
 	}

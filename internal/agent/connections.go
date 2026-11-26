@@ -224,7 +224,7 @@ func userPreferenceInstructions(cfg Config) string {
 // Only the model and effort: never the connection's name, which may hold an
 // account name.
 func modelNote(cfg Config) string {
-	if cfg.Model == "" {
+	if cfg.Model == "" || cfg.Assistant != nil {
 		return ""
 	}
 	model, credit := fmt.Sprintf("the model %q", cfg.Model), cfg.Model
@@ -247,6 +247,9 @@ func modelNote(cfg Config) string {
 
 func systemInstructions(cfg Config) string {
 	prompt := instructions
+	if cfg.Assistant != nil { // an agent of its own: none of the coding agent's rules
+		return cfg.Assistant.Prompt + contextInstructions(cfg) + toolSearchInstructions(cfg)
+	}
 	if cfg.ApprovalMode == "yolo" {
 		prompt = strings.Replace(prompt, "Shell commands and file edits require user approval; never bypass a refusal.", "The user enabled YOLO mode: shell commands (deletions included) and edits run without asking. Stay inside the workspace.", 1)
 	}

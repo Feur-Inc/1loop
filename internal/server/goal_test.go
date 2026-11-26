@@ -95,14 +95,14 @@ func TestGoalOnTheServer(t *testing.T) {
 	}
 
 	// Commands on the chat: a note each, and errors as they are. In this
-	// order: /goal shows the goal before /goal clear removes it.
-	for _, c := range []struct {
+	// order: a map ran them in any, and "/goal" after "/goal clear" failed.
+	for _, command := range []struct {
 		text string
 		want int
 	}{{"/goal pause", 400}, {"/goal", 200}, {"/goal clear", 200}, {"/goal resume", 400}} {
-		raw, _ := json.Marshal(map[string]any{"chat": chat.ID, "text": c.text})
-		if code, data := call("POST", "/api/send", bytes.NewReader(raw)); code != c.want {
-			t.Errorf("%s: %d %s", c.text, code, data)
+		raw, _ := json.Marshal(map[string]any{"chat": chat.ID, "text": command.text})
+		if code, data := call("POST", "/api/send", bytes.NewReader(raw)); code != command.want {
+			t.Errorf("%s: %d %s", command.text, code, data)
 		}
 	}
 	server.mu.Lock()

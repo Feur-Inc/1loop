@@ -82,6 +82,7 @@ type conversation struct {
 	taskCount int         // background tasks last seen: a new one opens the panel on them
 
 	run     *chatRun        // the agent loop working on this chat, if any
+	asking  *questionCard   // the model's questions while they wait, this computer's or a server's (questions.go)
 	moving  bool            // paused to move to another device: it starts nothing (chat_move.go)
 	handoff *pendingHandoff // how the next turn's new model receives the chat
 	queue   []agent.Message // Enter while it runs: the next turns
@@ -109,7 +110,7 @@ type chatRun struct {
 	answer                                     func(agent.ApprovalAnswer)
 	closeReview                                func() // its tab in the side panel (review.go)
 	// The pending questions (request_user_input), for the phone as well.
-	questions       *sheet
+	questions       *questionCard
 	questionID      string
 	questionList    []agent.Question
 	answerQuestions func(map[string]string)
@@ -183,6 +184,8 @@ type desktopUI struct {
 	editing         *queueEdit // a queued message being edited in the prompt
 	editBar         *fyne.Container
 	queueTray       *fyne.Container
+	questionSlot    *fyne.Container // the open chat's questions, above the composer (questions.go)
+	shownQuestions  *questionCard   // what questionSlot shows, nil when nothing
 	queueList       *fyne.Container
 	pendingBox      *fyne.Container // messages sent while the agent works, greyed at the conversation's end
 	nextStep        *fyne.Container // the turn's next-step card, while it waits on the user (next_step.go)
@@ -921,7 +924,7 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 // card: the card's own outline is the only edge of the input area.
 func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.prompt = newChatEntry()
-	ui.prompt.placeholders = []string{"Describe what you want to build…", "What shall we build?", "Message…"}
+	ui.prompt.placeholders = promptPlaceholders
 	ui.prompt.SetPlaceHolder(ui.prompt.placeholders[0])
 	ui.prompt.send = ui.submit
 	ui.prompt.steer = ui.steerNow
@@ -1127,7 +1130,11 @@ func (ui *desktopUI) buildFooter() fyne.CanvasObject {
 	ui.serverStatus = newFitLabel("", 12, colFaint)
 	ui.serverStatus.Hide()
 	contextRow := container.NewBorder(nil, nil, container.NewHBox(ui.folder, ui.machine), nil, ui.serverStatus)
-	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.buildCommandMenu(), ui.queueTray, composer)
+	// The model's questions sit just above the card, with a gap: they belong
+	// to the chat, not to the message being written (#434).
+	ui.questionSlot = container.New(&questionSlotLayout{gap: 8})
+	ui.questionSlot.Hide()
+	stack := container.New(layout.NewCustomPaddedVBoxLayout(0), padded(0, 6, 4, 4, contextRow), ui.buildCommandMenu(), ui.questionSlot, ui.queueTray, composer)
 	return padded(0, 0, 24, 24, container.New(columnLayout{width: 760, inset: 0}, padded(0, 18, 0, 0, stack)))
 }
 
@@ -1486,6 +1493,15 @@ func (ui *desktopUI) submit() {
 	if ui.editing != nil {
 		ui.finishEdit(true)
 		return
+	}
+	// While the model's questions wait, a message answers them in the user's
+	// own words, as "Something else" does (#434).
+	if card := ui.shownQuestions; card != nil && card.shown() && len(ui.attachments)+len(ui.fileAttachments) == 0 {
+		if text := strings.TrimSpace(ui.prompt.Text); text != "" {
+			ui.prompt.clearSent()
+			card.reply(text)
+			return
+		}
 	}
 	if ui.server != nil {
 		ui.server.submit("send")

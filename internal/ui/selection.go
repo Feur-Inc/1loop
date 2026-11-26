@@ -474,6 +474,17 @@ func (selection *selectLayer) below(at fyne.Position) *selTap {
 	return nil
 }
 
+// isScrollBar tells a scroll's bar among what lies under the layer: it is
+// dragged. A row is draggable too (the sidebar's, #283), but one in a
+// message is a button.
+func isScrollBar(object fyne.CanvasObject) bool {
+	if _, row := object.(*tapRow); row {
+		return false
+	}
+	_, ok := object.(fyne.Draggable)
+	return ok
+}
+
 // Hovering is passed on to what is below, and decides the pointer: the
 // hand on a link or a button, the text cursor elsewhere.
 func (selection *selectLayer) MouseIn(e *desktop.MouseEvent) {
@@ -501,7 +512,7 @@ func (selection *selectLayer) MouseMoved(e *desktop.MouseEvent) {
 	}
 	selection.hand, selection.onBar = false, false
 	if tap != nil {
-		_, selection.onBar = tap.object.(fyne.Draggable)
+		selection.onBar = isScrollBar(tap.object)
 	}
 	link := ""
 	if tap != nil && !selection.onBar {
@@ -559,7 +570,7 @@ func (selection *selectLayer) MouseDown(e *desktop.MouseEvent) {
 	}
 	selection.dragged, selection.grabbed = false, nil
 	if tap := selection.below(e.Position); tap != nil {
-		if _, ok := tap.object.(fyne.Draggable); ok { // a scrollbar: it scrolls, nothing is selected
+		if isScrollBar(tap.object) { // it scrolls, nothing is selected
 			selection.grabbed = tap
 			return
 		}

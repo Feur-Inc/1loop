@@ -187,7 +187,7 @@ func TestSelectionPassesTheCodeBarOn(t *testing.T) {
 	var bar *selTap
 	var code *sideScroll
 	for i, tap := range layer.taps {
-		if _, ok := tap.object.(fyne.Draggable); ok {
+		if isScrollBar(tap.object) {
 			bar = &layer.taps[i]
 		}
 	}

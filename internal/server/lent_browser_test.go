@@ -224,6 +224,9 @@ func TestLentBrowserRunsTools(t *testing.T) {
 			t.Skip("no Chromium to lend here")
 		}
 	}
+	// Ubuntu 24.04 CI runners restrict unprivileged user namespaces via AppArmor,
+	// so system Chrome fails with "No usable sandbox" unless --no-sandbox is passed.
+	t.Setenv("ONELOOP_CHROMIUM_NO_SANDBOX", "1")
 	server, address, token := lendServer(t)
 	chat := &serverChat{ID: "c1", Title: "t", Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}
 	server.mu.Lock()
@@ -331,6 +334,7 @@ func TestLentBrowserStartsAgain(t *testing.T) {
 			t.Skip("no Chromium to lend here")
 		}
 	}
+	t.Setenv("ONELOOP_CHROMIUM_NO_SANDBOX", "1")
 	server, address, token := lendServer(t)
 	chat := &serverChat{ID: "c1", Title: "t", Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}
 	server.mu.Lock()

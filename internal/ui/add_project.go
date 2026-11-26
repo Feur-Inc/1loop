@@ -3,7 +3,7 @@
 package ui
 
 // Add project is one dialog, New project (#408): where the project lives
-// (#381: this computer, an SSH machine of Settings → General, or a paired
+// (#381: this computer, an SSH machine of Settings → Remote, or a paired
 // server), its name, the folders of this computer it is made of (each
 // with its branch, and a Worktree box to work in a new worktree of it),
 // and its environment variables. The project is kept under its target and

@@ -158,3 +158,47 @@ func TestShortcuts(t *testing.T) {
 		}
 	}
 }
+
+// Everything remote is in one section, in its parts' order (#443): where
+// the agent runs, the devices that control this 1loop, the phone app.
+func TestRemoteSection(t *testing.T) {
+	if SectionTitle("phone") != "" {
+		t.Fatal("the Phone section is still listed: it is part of Remote")
+	}
+	if sections := Sections(); sections[1].ID != Remote {
+		t.Fatalf("Remote is not after General: %v", sections)
+	}
+	want := map[string]string{
+		"general.target": GroupTargets, "general.ssh": GroupTargets, "general.remote_server": GroupTargets,
+		"phone.pairing": GroupDevices, "phone.sharing": GroupDevices,
+		"phone.remote": GroupPhone, "phone.status": GroupPhone, "phone.adb": GroupPhone, "phone.work_profile": GroupPhone, "phone.background": GroupPhone,
+	}
+	for key, group := range want {
+		if setting, _ := Lookup(key); setting.Section != Remote || setting.Group != group {
+			t.Errorf("%s is in %s / %q, want %s / %q", key, setting.Section, setting.Group, Remote, group)
+		}
+	}
+	order := []string{GroupTargets, GroupDevices, GroupPhone}
+	at := 0
+	for _, setting := range All() {
+		if setting.Section != Remote {
+			if setting.Group != "" {
+				t.Errorf("%s has a group outside Remote", setting.Key)
+			}
+			continue
+		}
+		if want[setting.Key] == "" {
+			t.Errorf("%s is in Remote but not checked here", setting.Key)
+		}
+		for at < len(order) && order[at] != setting.Group {
+			at++
+		}
+		if at == len(order) {
+			t.Errorf("%s (%s) is out of the parts' order", setting.Key, setting.Group)
+		}
+	}
+	// Paired devices are listed on both: the phone lists the server's.
+	if setting, _ := Lookup("phone.pairing"); setting.Where != OnBoth {
+		t.Errorf("phone.pairing is shown %s, want both", setting.Where)
+	}
+}

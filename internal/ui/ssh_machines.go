@@ -2,7 +2,7 @@
 
 package ui
 
-// SSH machines (internal/sshmachine): Settings → General adds them,
+// SSH machines (internal/sshmachine): Settings → Remote adds them,
 // the target menu chooses one, and its projects are folders in its
 // projects folder there. The agent keeps running here; its files,
 // commands, terminal and Git changes are on the machine (agent.Machine).

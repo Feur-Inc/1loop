@@ -61,7 +61,7 @@ func machineErr(cfg Config) error {
 		return nil
 	}
 	if cfg.Machine == nil {
-		return fmt.Errorf("This conversation's SSH machine is no longer in Settings → General")
+		return fmt.Errorf("This conversation's SSH machine is no longer in Settings → Remote")
 	}
 	// Claude Code runs 1loop's tools instead of its own there (claudecode.go)
 	// and ChatGPT (Web) only ever calls 1loop's: both reach the machine.

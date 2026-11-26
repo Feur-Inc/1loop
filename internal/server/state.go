@@ -1230,6 +1230,15 @@ func (server *headlessServer) usageNames(group, key string) string {
 	return ""
 }
 
+// accountDisabled says whether a connection is kept but turned off: its
+// limits are not shown on the Usage page.
+func (server *headlessServer) accountDisabled(id string) bool {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	connection, ok := server.connectionLocked(id)
+	return ok && !connection.Enabled
+}
+
 // noteLimits reads a subscription's usage windows into the usage ledger
 // (agent.App.NoteLimits) and keeps them as the account's current limits.
 func (server *headlessServer) noteLimits(connection agent.Connection, key string, every time.Duration) {

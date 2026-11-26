@@ -59,11 +59,14 @@ func (ledger *Ledger) Models() []string {
 }
 
 // Handlers serves the ledger. names gives chats and connections their
-// names; changed is told when a price changes.
-func Handlers(ledger *Ledger, prices *Prices, names Names, changed func()) map[string]http.HandlerFunc {
+// names, disabled the connections whose limits are not shown; changed is
+// told when a price changes.
+func Handlers(ledger *Ledger, prices *Prices, names Names, disabled func(connection string) bool, changed func()) map[string]http.HandlerFunc {
 	return map[string]http.HandlerFunc{
 		"GET /api/usage": func(w http.ResponseWriter, r *http.Request) {
-			core.WriteJSON(w, 200, Build(ledger, prices, names, QueryOf(r), time.Now()))
+			report := Build(ledger, prices, names, QueryOf(r), time.Now())
+			report.HideLimits(disabled)
+			core.WriteJSON(w, 200, report)
 		},
 		"GET /api/usage/prices": func(w http.ResponseWriter, r *http.Request) {
 			core.WriteJSON(w, 200, prices.Table(ledger.Models()))

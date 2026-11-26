@@ -545,10 +545,10 @@ func drawLayer(markup string, px int, scale float64) image.Image {
 // ringArt caches the layers drawn for one screen size.
 type ringArt struct {
 	px     int
-	brand  bool                   // keeps the brand's amber (the Discord status)
-	ink    string                 // the amber the layers below were drawn in
-	spin   []image.Image          // the open ring, every 5 degrees
-	dots   []image.Image          // its dot, which the page shows and hides without a fade
+	brand  bool          // keeps the brand's amber (the Discord status)
+	ink    string        // the amber the layers below were drawn in
+	spin   []image.Image // the open ring, every 5 degrees
+	dots   []image.Image // its dot, which the page shows and hides without a fade
 	closed map[string]image.Image
 	icons  map[string]image.Image // by state and scale
 	steady map[string][]*image.RGBA

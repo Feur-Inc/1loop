@@ -2279,39 +2279,25 @@ func (ui *desktopUI) save() {
 func (ui *desktopUI) saveNow() { ui.persist(false) }
 
 // writeChats writes the state: head before the chats, the chats as a JSON
-// list, one encoded at a time, and the rest of the head. written counts the
-// bytes.
+// list, message by message (agent.WriteChatJSON), and the rest of the head.
+// written counts the bytes. It is what json.Marshal makes of the whole,
+// which a chat of 200 MB took a gigabyte to encode, at every save.
 func writeChats(w io.Writer, written *int64, before []byte, chats []*conversation, after []byte) error {
-	put := func(b []byte) error {
-		n, err := w.Write(b)
-		*written += int64(n)
-		return err
-	}
-	if err := put(before); err != nil {
-		return err
-	}
-	if err := put([]byte(`"chats":[`)); err != nil {
-		return err
-	}
+	writer := core.NewJSONWriter(w)
+	writer.Raw(before)
+	writer.Raw([]byte(`"chats":[`))
 	for i, chat := range chats {
-		chat.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
-		data, err := json.Marshal(chat)
-		if err != nil {
-			return err
-		}
 		if i > 0 {
-			if err := put([]byte{','}); err != nil {
-				return err
-			}
+			writer.Raw([]byte{','})
 		}
-		if err := put(data); err != nil {
-			return err
-		}
+		copied := *chat
+		copied.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
+		agent.WriteChatJSON(writer, &copied, &copied.History, &copied.Items, &copied.Versions)
 	}
-	if err := put([]byte{']'}); err != nil {
-		return err
-	}
-	return put(after)
+	writer.Raw([]byte{']'})
+	writer.Raw(after)
+	*written += writer.Written
+	return writer.Err()
 }
 
 // persist writes the state file. The conversations are nearly all of it
@@ -2402,9 +2388,9 @@ func (ui *desktopUI) persist(wait bool) {
 		}
 		ui.saveDone = count
 		// The chats go into the place the head keeps for them, encoded and
-		// written one at a time: the whole list encoded at once was a buffer
-		// the size of the file (100 MB with long conversations), grown by
-		// doubling, at every save (#476).
+		// written message by message: the whole list encoded at once, or one
+		// long chat, was a buffer the size of the file (200 MB with many
+		// pictures), grown by doubling, at every save (#476).
 		var written int64
 		before, after, found := bytes.Cut(head, []byte(`"chats":null`))
 		if err == nil && !found {
@@ -2447,9 +2433,44 @@ func (ui *desktopUI) load() {
 // it (a large state takes a few hundred milliseconds): it touches nothing
 // else, so it can run while the window is being created.
 func readSavedState(path string) (state savedState, err error) {
+	if state, err = streamSavedState(path); err == nil || os.IsNotExist(err) {
+		return state, err
+	}
+	// What is wrong with it is encoding/json's to say, from the whole file.
 	data, err := os.ReadFile(path)
+	state = savedState{}
 	if err == nil {
 		err = json.Unmarshal(data, &state)
+	}
+	return state, err
+}
+
+// streamSavedState reads the state message by message: read whole and then
+// decoded, it was twice in memory, and stayed there for minutes. A picture
+// or a text found several times is kept once.
+func streamSavedState(path string) (state savedState, err error) {
+	file, err := os.Open(path)
+	if err != nil {
+		return state, err
+	}
+	defer file.Close()
+	reader := core.NewJSONReader(file)
+	rest, err := reader.Object(map[string]func() error{"chats": func() (err error) {
+		state.Chats, err = core.ReadJSONList(reader, func(read **conversation) error {
+			chat := &conversation{}
+			null, err := agent.ReadChatJSON(reader, chat, &chat.History, &chat.Items, &chat.Versions)
+			if !null {
+				*read = chat
+			}
+			return err
+		})
+		return err
+	}})
+	if err == nil && rest != nil {
+		err = json.Unmarshal(rest, &state)
+	}
+	if err == nil {
+		err = reader.End()
 	}
 	return state, err
 }

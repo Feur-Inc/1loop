@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -202,24 +203,15 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		trust:        &hostTrust{out: os.Stderr},
 		cfg:          agent.Config{Provider: "compatible", Workspace: root},
 	}
-	var saved struct {
-		Chats   []*serverChat
-		Devices []remoteapi.PairedDevice
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "state.json"))
-	if err == nil {
-		if err = json.Unmarshal(data, &saved); err != nil {
-			return nil, err
-		}
-	} else if !os.IsNotExist(err) {
+	var err error
+	if server.chats, server.devices, err = readServerState(filepath.Join(dir, "state.json")); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-	server.chats, server.devices = saved.Chats, saved.Devices
 	customConfig := configPath != ""
 	if configPath == "" {
 		configPath = filepath.Join(dir, "config.json")
 	}
-	data, err = os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath)
 	if err == nil {
 		var settings serverSettings
 		if err = json.Unmarshal(data, &settings); err != nil {
@@ -341,14 +333,69 @@ func (server *headlessServer) stateLocked() (write func() error) {
 			return nil // a newer state is already on disk
 		}
 		server.saveDone = count
-		for _, chat := range chats {
-			chat.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
-		}
-		return saveServerJSON(path, struct {
-			Chats   []*serverChat            `json:"chats"`
-			Devices []remoteapi.PairedDevice `json:"devices"`
-		}{chats, devices})
+		return core.WriteFileStreamed(path, 0600, false, func(w io.Writer) error { return writeServerState(w, chats, devices) })
 	}
+}
+
+// writeServerState writes the state, message by message (agent.WriteChatJSON):
+// encoded whole, it took several times its size in memory at every save.
+func writeServerState(w io.Writer, chats []*serverChat, devices []remoteapi.PairedDevice) error {
+	writer := core.NewJSONWriter(w)
+	writer.Raw([]byte(`{"chats":`))
+	core.WriteJSONList(writer, chats, func(chat **serverChat) {
+		copied := **chat
+		copied.Versions = agent.CompactVersions(copied.Versions, copied.History, copied.Items)
+		agent.WriteChatJSON(writer, &copied, &copied.History, &copied.Items, &copied.Versions)
+	})
+	writer.Raw([]byte(`,"devices":`))
+	writer.Value(devices)
+	writer.Raw([]byte{'}'})
+	return writer.Err()
+}
+
+// readServerState reads it the same way; what is found several times (a
+// picture, a tool's output) is kept once.
+func readServerState(path string) (chats []*serverChat, devices []remoteapi.PairedDevice, err error) {
+	type savedServer struct {
+		Chats   []*serverChat
+		Devices []remoteapi.PairedDevice
+	}
+	var saved savedServer
+	err = func() error {
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		reader := core.NewJSONReader(file)
+		rest, err := reader.Object(map[string]func() error{"chats": func() (err error) {
+			saved.Chats, err = core.ReadJSONList(reader, func(read **serverChat) error {
+				chat := &serverChat{}
+				null, err := agent.ReadChatJSON(reader, chat, &chat.History, &chat.Items, &chat.Versions)
+				if !null {
+					*read = chat
+				}
+				return err
+			})
+			return err
+		}})
+		if err == nil && rest != nil {
+			err = json.Unmarshal(rest, &saved)
+		}
+		if err == nil {
+			err = reader.End()
+		}
+		return err
+	}()
+	if err != nil && !os.IsNotExist(err) {
+		// What is wrong with it is encoding/json's to say, from the whole file.
+		var data []byte
+		if data, err = os.ReadFile(path); err == nil {
+			saved = savedServer{}
+			err = json.Unmarshal(data, &saved)
+		}
+	}
+	return saved.Chats, saved.Devices, err
 }
 
 func (server *headlessServer) scheduleSaveLocked() {

@@ -341,7 +341,12 @@ func (view *settingsView) serverChanged(address string) {
 	}
 	view.renderServers()
 	if view.server == address && view.waiting && !view.searching && view.at(view.page) {
+		folded := view.folded // showNow unfolds: a row folded meanwhile stays folded
 		view.showNow(view.page)
+		if folded && view.server == address {
+			view.folded = true
+			view.renderServers()
+		}
 	}
 }
 

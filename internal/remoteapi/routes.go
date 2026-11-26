@@ -119,6 +119,7 @@ var ServerOnlyRoutes = map[string]string{
 	"GET /api/update":          serverUpdates,
 	"POST /api/update":         serverUpdates,
 	"POST /api/install/{what}": "it installs Chromium or Claude Code on the server; a desktop's user installs them from its window",
+	"POST /api/max-subchats":   "the server's concurrent subchat cap, configured from a paired desktop's Servers page",
 	// Not served by a phone's own engine either (internal/server's local mode).
 	"GET /api/pairings":                         serverApprovals,
 	"POST /api/pairings/{id}":                   serverApprovals,

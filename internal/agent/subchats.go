@@ -63,6 +63,7 @@ func SubchatLimit(depth int) string {
 const (
 	SubchatWorking = "working"
 	SubchatWaiting = "waiting" // for the user: an approval or a question
+	SubchatQueued  = "queued"  // waiting for memory or another subchat to finish (#649)
 	SubchatDone    = "done"
 	SubchatFailed  = "failed"
 	SubchatStopped = "stopped"
@@ -136,6 +137,7 @@ func (link *SubchatLink) Copy() *SubchatLink {
 type SubchatAccess struct {
 	ParentTitle string
 	Depth       int
+	MaxSubchats int // host limit when higher than MaxRunningSubchats; 0 uses MaxRunningSubchats
 	Start       func(ctx context.Context, request SubchatRequest) (SubchatInfo, error)
 	Model       func(ctx context.Context, name string) (string, error)
 	ForkSize    func(ctx context.Context) int // the parent's context, in tokens: what a fork carries
@@ -216,7 +218,7 @@ func SubchatState(running, waiting bool, ended string) string {
 
 // SubchatActive says whether a subchat counts against MaxRunningSubchats.
 func SubchatActive(info SubchatInfo) bool {
-	return info.State == SubchatWorking || info.State == SubchatWaiting
+	return info.State == SubchatWorking || info.State == SubchatWaiting || info.State == SubchatQueued
 }
 
 // SubchatTitle is a subchat's title on one line: control characters and
@@ -509,7 +511,8 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 				running++
 			}
 		}
-		if running >= MaxRunningSubchats {
+		maxActive := max(MaxRunningSubchats, access.MaxSubchats)
+		if running >= maxActive {
 			return "", fmt.Errorf("%d subchats are already working, the most at once: wait for a report, or stop one", running)
 		}
 		place := "in its own worktree and branch"
@@ -555,7 +558,12 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 		if err != nil {
 			return "", err
 		}
-		out := fmt.Sprintf("Started subchat %s “%s”. %s\nIt works in parallel; you will receive its report when its turn ends.", info.ID, info.Title, subchatPlace(info))
+		var out string
+		if info.State == SubchatQueued {
+			out = fmt.Sprintf("Queued subchat %s “%s”. %s\nIt will start automatically when a slot and memory are free; you will receive its report when its turn ends.", info.ID, info.Title, subchatPlace(info))
+		} else {
+			out = fmt.Sprintf("Started subchat %s “%s”. %s\nIt works in parallel; you will receive its report when its turn ends.", info.ID, info.Title, subchatPlace(info))
+		}
 		if info.Note != "" {
 			out += "\n" + info.Note
 		}

@@ -63,7 +63,18 @@ To add it to a unit you already have: `sudo systemctl edit 1loop-server`, then
 ```ini
 [Service]
 OOMScoreAdjust=-500
+# Optional: slow down memory-hungry builds before the OOM killer fires (cgroup v2).
+MemoryAccounting=yes
+MemoryHigh=75%
 ```
+
+Before starting a subchat, the server also checks available memory (`MemAvailable`
+and `/proc/pressure/memory`) and how many subchats are already working. When the
+limit is reached or memory is short, the new subchat waits in a queue (*queued*)
+and starts automatically once another ends or memory returns. The concurrency
+limit defaults to a value based on the machine's total memory (1 under 2.5 GiB,
+2 under 5.5 GiB, 3 under 9.5 GiB, 4 above) and can be changed in the server's
+Settings → Agent.
 
 When the server restarts all the same (a crash, a reboot, an update), a turn
 it cut off says *Interrupted: the server restarted*. A subchat working in

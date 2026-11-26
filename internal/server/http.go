@@ -138,6 +138,7 @@ func (server *headlessServer) Routes() map[string]http.HandlerFunc {
 		"POST /api/preferences":                        server.setPreferences,
 		"POST /api/memory":                             server.setMemory,
 		"POST /api/wrap-up":                            server.setWrapUp,
+		"POST /api/max-subchats":                       server.setMaxSubchats,
 		"POST /api/model":                              server.setModel,
 		"POST /api/auto-resume":                        server.setAutoResume,
 		"POST /api/naming-model":                       server.setNamingModel,
@@ -378,6 +379,8 @@ func (server *headlessServer) deleteChatsLocked(gone []*serverChat) ([]string, e
 			member.run.cancel()
 			member.run = nil
 		}
+		member.QueuedSubchat = nil
+		member.QueuedReason = ""
 		member.queue, member.steer = nil, nil
 		member.tasks.StopAll()
 		agent.DropClaudeChat(member.ID)
@@ -387,6 +390,8 @@ func (server *headlessServer) deleteChatsLocked(gone []*serverChat) ([]string, e
 		tabs = append(tabs, member.tabs...)
 		member.tabs = nil
 	}
+	server.subchatQueue = slices.DeleteFunc(server.subchatQueue, func(c *serverChat) bool { return slices.Contains(gone, c) })
+	server.drainSubchatQueueLocked()
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
 	server.mu.Unlock()
 	for _, tab := range tabs {

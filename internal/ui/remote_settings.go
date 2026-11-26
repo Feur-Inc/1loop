@@ -10,12 +10,15 @@ package ui
 
 import (
 	"context"
+	"fmt"
+	"strconv"
 	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 
+	"1loop/internal/agent"
 	"1loop/internal/update"
 )
 
@@ -30,15 +33,74 @@ func (remote *remoteDesktop) settingsPage(name string) string {
 }
 
 // agentSettings is the server's Agent page: what its agent may do without
-// asking, what it is told and its hooks.
+// asking, its subchat limit, what it is told and its hooks.
 func (remote *remoteDesktop) agentSettings(head serverHead) fyne.CanvasObject {
-	page := container.NewVBox(head(nil), sectionTitle("Permissions"), card(remote.permissionRow()), sectionTitle("Instructions and memory"))
+	page := container.NewVBox(head(nil), sectionTitle("Permissions"), card(remote.permissionRow()), sectionTitle("Subchats"), card(remote.maxSubchatsRow()), sectionTitle("Instructions and memory"))
 	for _, object := range remote.instructionCards(10) {
 		page.Add(object)
 	}
 	page.Add(sectionTitle("Hooks"))
 	page.Add(card(remote.hooksRow()))
 	return page
+}
+
+// maxSubchatsRow edits the server's maximum concurrent subchats (#649).
+func (remote *remoteDesktop) maxSubchatsRow() fyne.CanvasObject {
+	ui := remote.parent
+	slot := container.NewStack(textLine("Loading…", 12.5, colMuted))
+	go func() {
+		ctx, cancel := context.WithTimeout(remote.ctx, 15*time.Second)
+		defer cancel()
+		var state struct {
+			Settings struct {
+				MaxSubchats        int `json:"maxSubchats"`
+				DefaultMaxSubchats int `json:"defaultMaxSubchats"`
+			}
+		}
+		err := remote.client.json(ctx, "GET", "/api/state", nil, &state)
+		fyne.Do(func() {
+			if err != nil {
+				slot.Objects = []fyne.CanvasObject{textLine(err.Error(), 12, colMuted)}
+				slot.Refresh()
+				return
+			}
+			def := state.Settings.DefaultMaxSubchats
+			if def <= 0 {
+				def = agent.MaxRunningSubchats
+			}
+			autoLabel := fmt.Sprintf("Auto (%d)", def)
+			options := make([]string, 0, agent.MaxSubchatsSettingLimit+1)
+			values := make([]int, 0, agent.MaxSubchatsSettingLimit+1)
+			options = append(options, autoLabel)
+			values = append(values, 0)
+			for n := 1; n <= agent.MaxSubchatsSettingLimit; n++ {
+				options = append(options, strconv.Itoa(n))
+				values = append(values, n)
+			}
+			picker := newPicker(ui.window, "Subchats at once", styleField, nil)
+			picker.Options = options
+			picker.SetSelected(autoLabel)
+			for i, v := range values {
+				if v == state.Settings.MaxSubchats {
+					picker.SetSelected(options[i])
+					break
+				}
+			}
+			picker.onChanged = func(label string) {
+				for i, option := range options {
+					if label == option {
+						remote.action("/api/max-subchats", map[string]int{"maxSubchats": values[i]})
+						return
+					}
+				}
+			}
+			slot.Objects = []fyne.CanvasObject{sized(160, picker.row)}
+			slot.Refresh()
+		})
+	}()
+	return settingRow("Subchats at once",
+		"Extra subchats wait in a queue when this limit is reached or memory is low.",
+		slot)
 }
 
 // permissionRow is the server's Tool permissions.
@@ -84,6 +146,8 @@ func (remote *remoteDesktop) generalSettings() fyne.CanvasObject {
 		remote.parent.prefs.pageTitle("General", "", nil),
 		sectionTitle("Permissions"),
 		card(remote.permissionRow()),
+		sectionTitle("Subchats"),
+		card(remote.maxSubchatsRow()),
 		sectionTitle("Hooks"),
 		card(remote.hooksRow()),
 		remote.installRows(false),

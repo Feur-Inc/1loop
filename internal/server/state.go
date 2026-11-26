@@ -25,6 +25,7 @@ import (
 	"1loop/internal/browser"
 	"1loop/internal/core"
 	"1loop/internal/loopy/engine"
+	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	"1loop/internal/sshmachine"
 	"1loop/internal/usage"
@@ -59,14 +60,16 @@ type serverChat struct {
 	Working bool `json:"working,omitempty"`
 	// Resumed: 1loop resumed the chat after a restart cut its turn off,
 	// and that turn has not ended yet: cut off again, it waits for a message.
-	Resumed      bool `json:"resumed,omitempty"`
-	hops         int  // messages between chats since the user last wrote (agent.TurnHops)
-	run          *serverRun
-	moving       bool // paused to move to another device: it starts nothing (chat_move.go)
-	tabs         []*serverTab
-	session      *browser.Session
-	queue, steer []agent.Message
-	handoff      *pendingHandoff // how the next turn's new model receives the chat
+	Resumed       bool `json:"resumed,omitempty"`
+	hops          int  // messages between chats since the user last wrote (agent.TurnHops)
+	run           *serverRun
+	moving        bool // paused to move to another device: it starts nothing (chat_move.go)
+	tabs          []*serverTab
+	session       *browser.Session
+	queue, steer  []agent.Message
+	QueuedSubchat *agent.Message  `json:"queuedSubchat,omitempty"` // initial brief waiting in server.subchatQueue (#649)
+	QueuedReason  string          `json:"queuedReason,omitempty"`  // why QueuedSubchat is waiting (#649)
+	handoff       *pendingHandoff // how the next turn's new model receives the chat
 }
 
 type serverRun struct {
@@ -97,6 +100,7 @@ type serverSettings struct {
 	WrapUpOff         bool               `json:"wrapUpOff,omitempty"`
 	AutoResume        *agent.AutoResume  `json:"autoResume,omitempty"`
 	NamingModel       *agent.NamingModel `json:"namingModel,omitempty"`
+	MaxSubchats       int                `json:"maxSubchats,omitempty"` // 0 = automatic from machine memory (#649)
 	// Worktrees of the projects, by folder: their chats belong to the project.
 	Worktrees map[string]string `json:"worktrees,omitempty"`
 	// SSH machines (machines.go), and the projects that are folders of one.
@@ -137,10 +141,15 @@ type headlessServer struct {
 	keys                       map[string]string
 	instructions, approvalMode string
 	classic                    bool
-	memoryOff                  bool                   // the agent's memory tool turned off
-	wrapUpOff                  bool                   // the next-step card (wrap_up tool) turned off
-	autoResume                 *agent.AutoResume      // what a rate limit does to a run, for every chat
-	namingModel                *agent.NamingModel     // the model that names new chats, nil for none
+	memoryOff                  bool               // the agent's memory tool turned off
+	wrapUpOff                  bool               // the next-step card (wrap_up tool) turned off
+	autoResume                 *agent.AutoResume  // what a rate limit does to a run, for every chat
+	namingModel                *agent.NamingModel // the model that names new chats, nil for none
+	maxSubchats                int                // 0 = automatic from machine memory (#649)
+	readMemory                 func() platform.MemoryStatus
+	subchatQueue               []*serverChat // subchats waiting for a slot or memory (#649)
+	subchatQueueTimer          *time.Timer
+	subchatQueuePoll           time.Duration
 	panelHomes                 map[string]*serverChat // project panels before the first prompt; not persisted
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
@@ -190,21 +199,23 @@ type headlessServer struct {
 func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*headlessServer, error) {
 	host, _ := os.Hostname()
 	server := &headlessServer{
-		ctx:          ctx,
-		name:         host,
-		root:         root,
-		dir:          dir,
-		usage:        usage.Open(filepath.Join(dir, "usage.jsonl")),
-		prices:       usage.OpenPrices(filepath.Join(dir, "usage-prices.json")),
-		backend:      &agent.App{Approvals: map[string]chan agent.ApprovalAnswer{}},
-		keys:         map[string]string{},
-		pairing:      &remoteapi.PairingBook{Slots: maxPendingPairings, PerClient: pairingsPerAddress, Approval: true},
-		hub:          remoteapi.NewEvents(ctx),
-		choices:      map[string]agent.ModelChoice{},
-		approvalMode: "approval",
-		loading:      true,
-		trust:        &hostTrust{out: os.Stderr},
-		cfg:          agent.Config{Provider: "compatible", Workspace: root},
+		ctx:              ctx,
+		name:             host,
+		root:             root,
+		dir:              dir,
+		usage:            usage.Open(filepath.Join(dir, "usage.jsonl")),
+		prices:           usage.OpenPrices(filepath.Join(dir, "usage-prices.json")),
+		backend:          &agent.App{Approvals: map[string]chan agent.ApprovalAnswer{}},
+		keys:             map[string]string{},
+		pairing:          &remoteapi.PairingBook{Slots: maxPendingPairings, PerClient: pairingsPerAddress, Approval: true},
+		hub:              remoteapi.NewEvents(ctx),
+		choices:          map[string]agent.ModelChoice{},
+		approvalMode:     "approval",
+		loading:          true,
+		trust:            &hostTrust{out: os.Stderr},
+		cfg:              agent.Config{Provider: "compatible", Workspace: root},
+		readMemory:       platform.ReadMemory,
+		subchatQueuePoll: defaultSubchatQueuePoll,
 	}
 	var err error
 	if server.chats, server.devices, err = readServerState(filepath.Join(dir, "state.json")); err != nil && !os.IsNotExist(err) {
@@ -236,6 +247,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		server.wrapUpOff = settings.WrapUpOff
 		server.autoResume = settings.AutoResume
 		server.namingModel = settings.NamingModel
+		server.maxSubchats = settings.MaxSubchats
 		if settings.ApprovalMode != "" {
 			server.approvalMode = settings.ApprovalMode
 		}
@@ -284,6 +296,13 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 			chat.Compaction = &agent.CompactionState{}
 		}
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
+		// A queued subchat has not started its turn yet: keep its brief and
+		// ReportTo and re-enqueue it instead of marking it interrupted (#649).
+		if chat.QueuedSubchat != nil {
+			server.subchatQueue = append(server.subchatQueue, chat)
+			chat.Working, chat.Resumed = false, false
+			continue
+		}
 		// A turn that was working (or, saved before Working, reporting) was
 		// cut off: it shows so at once, and goes on or is told once the
 		// models are loaded (#584).
@@ -333,11 +352,16 @@ func (server *headlessServer) stateLocked() (write func() error) {
 	// Messages are never edited in place: copying the lists is enough.
 	chats := make([]*serverChat, len(server.chats))
 	for i, chat := range server.chats {
+		var queued *agent.Message
+		if chat.QueuedSubchat != nil {
+			msg := *chat.QueuedSubchat
+			queued = &msg
+		}
 		chats[i] = &serverChat{ID: chat.ID, Title: chat.Title, Config: chat.Config, History: append([]agent.Message{}, chat.History...),
 			Items: append([]agent.ChatItem{}, chat.Items...), Version: chat.Version, Versions: agent.CopyVersions(chat.Versions),
 			Todo: chat.Todo.Copy(), Goal: chat.Goal.Copy(), Cache: chat.Cache.Copy(), Compaction: chat.Compaction.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
 			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...), // its parent: forgetting it detached every subchat on restart (#356)
-			Working: chat.Working, Resumed: chat.Resumed}
+			Working: chat.Working, Resumed: chat.Resumed, QueuedSubchat: queued, QueuedReason: chat.QueuedReason}
 	}
 	devices := append([]remoteapi.PairedDevice{}, server.devices...)
 	server.saveCount++
@@ -436,6 +460,10 @@ func (server *headlessServer) close() {
 	server.sharing = nil
 	if server.saveTimer != nil {
 		server.saveTimer.Stop()
+	}
+	if server.subchatQueueTimer != nil {
+		server.subchatQueueTimer.Stop()
+		server.subchatQueueTimer = nil
 	}
 	for _, chat := range server.chats {
 		if chat.run != nil {
@@ -621,6 +649,9 @@ func (server *headlessServer) settingsLocked() map[string]any {
 		"defaultPresets":      true,
 		"autoResume":          server.autoResume,
 		"namingModel":         server.namingModel,
+		"maxSubchats":         server.maxSubchats,
+		"defaultMaxSubchats":  server.defaultMaxSubchats(),
+		"memoryTotalBytes":    server.memoryStatus().TotalBytes,
 		"userPreferences":     server.instructions,
 		"preferencesEditable": true,
 		"memory":              !server.memoryOff,
@@ -644,7 +675,7 @@ func (server *headlessServer) summariesLocked() []remoteapi.Chat {
 	out := []remoteapi.Chat{}
 	for _, chat := range server.chats {
 		status, blocked := agent.WrapUpStatus(chat.Items)
-		summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
+		summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Queued: chat.QueuedSubchat != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
 		if chat.Subchat != nil {
 			summary.Parent, summary.Ended = chat.Subchat.Parent, chat.Subchat.Ended
 			if server.subchatWorktreeLocked(chat) != "" {
@@ -699,6 +730,8 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		if chat.run.used > 0 {
 			meta.Used = chat.run.used
 		}
+	} else if chat.QueuedSubchat != nil {
+		meta.Label, meta.Mark = queuedSubchatLabel(chat.QueuedReason), "wait"
 	}
 	if parent := server.parentLocked(chat); parent != nil {
 		meta.Parent, meta.ParentTitle = parent.ID, parent.Title
@@ -1089,6 +1122,7 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		if chat.run == nil { // the last turn of the chain: it reports to who caused it
 			server.loopyEnded(chat, ended)
 			server.turnEndedLocked(chat, ended)
+			server.drainSubchatQueueLocked()
 		}
 	}()
 }
@@ -1213,6 +1247,7 @@ func (server *headlessServer) saveSettingsLocked() error {
 		WrapUpOff:         server.wrapUpOff,
 		AutoResume:        server.autoResume,
 		NamingModel:       server.namingModel,
+		MaxSubchats:       server.maxSubchats,
 		Worktrees:         server.worktrees,
 		SSHMachines:       server.machines,
 		ProjectMachines:   server.projectMachines,

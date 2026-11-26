@@ -446,6 +446,8 @@ func (panel *toolPanel) addSubchats(box *fyne.Container, chat *conversation) {
 		switch info.State {
 		case agent.SubchatWaiting:
 			state = "Waiting for you"
+		case agent.SubchatQueued:
+			status, state = "pending", "Queued"
 		case agent.SubchatDone:
 			status, state = "completed", "Done"
 		case agent.SubchatFailed:
@@ -550,7 +552,7 @@ func (remote *remoteDesktop) addSubchats() {
 	remote.todoTasks.Add(sectionTitle("Subchats"))
 	for _, sub := range remote.meta.Subchats {
 		sub := sub
-		state := map[string]string{agent.SubchatWorking: "Working", agent.SubchatWaiting: "Waiting for you", agent.SubchatDone: "Done",
+		state := map[string]string{agent.SubchatWorking: "Working", agent.SubchatWaiting: "Waiting for you", agent.SubchatQueued: "Queued", agent.SubchatDone: "Done",
 			agent.SubchatFailed: "Failed", agent.SubchatStopped: "Stopped"}[sub.State]
 		if sub.Branch != "" {
 			state += " · " + sub.Branch

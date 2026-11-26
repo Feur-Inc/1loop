@@ -19,6 +19,10 @@ RestartSec=5
 # (1loop starts them with oom_score_adj 500: Claude Code, agy, their
 # commands and builds), not the server and every chat with it.
 OOMScoreAdjust=-500
+# Optional: throttle memory-hungry builds before the OOM killer fires.
+# Uncomment on small servers (requires cgroup v2).
+# MemoryAccounting=yes
+# MemoryHigh=75%
 
 [Install]
 WantedBy=multi-user.target

@@ -68,6 +68,28 @@ func (server *headlessServer) setWrapUp(w http.ResponseWriter, r *http.Request) 
 	core.WriteJSON(w, 200, map[string]any{"wrapUp": args.Enabled})
 }
 
+func (server *headlessServer) setMaxSubchats(w http.ResponseWriter, r *http.Request) {
+	var args struct {
+		MaxSubchats int `json:"maxSubchats"`
+	}
+	if core.ReadJSON(r, &args) != nil || args.MaxSubchats < 0 || args.MaxSubchats > agent.MaxSubchatsSettingLimit {
+		core.Fail(w, 400, fmt.Sprintf("Max subchats must be 0 (automatic) or 1 to %d", agent.MaxSubchatsSettingLimit))
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	previous := server.maxSubchats
+	server.maxSubchats = args.MaxSubchats
+	if err := server.saveSettingsLocked(); err != nil {
+		server.maxSubchats = previous
+		core.Fail(w, 500, "Unable to save the setting")
+		return
+	}
+	server.broadcastLocked("settings", server.settingsLocked())
+	server.drainSubchatQueueLocked()
+	core.WriteJSON(w, 200, map[string]any{"maxSubchats": server.maxSubchats, "defaultMaxSubchats": server.defaultMaxSubchats()})
+}
+
 // updatePreferences is the memory tool's way to the preferences: saved and
 // sent to the phone like a change made in its settings.
 func (server *headlessServer) updatePreferences(ctx context.Context, update func(string) (string, error)) error {

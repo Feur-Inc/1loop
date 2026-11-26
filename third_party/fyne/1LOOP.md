@@ -58,6 +58,10 @@ shows every change.
 - `driver/desktop/pointer.go`, `internal/driver/glfw/window_desktop.go`
   (#464): `desktop.OnPointer` hears every pointer move, press and exit over
   a window, whatever object is under it.
+- `driver/desktop/key_hook.go`, `internal/driver/glfw/window.go`
+  (processKeyPressed, #577): `desktop.OnKeyDown` hears every key pressed in
+  a window before the focused object, and can keep it from it: Escape
+  cancels a drag whatever has the focus.
 - `internal/driver/glfw/window.go` (Resize), `window_desktop.go`,
   `window_wasm.go`: a window is never sized larger than the work area of
   its screen (glfw's work area, the screen less its panels), or than nine

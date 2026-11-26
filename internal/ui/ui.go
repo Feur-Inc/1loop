@@ -415,7 +415,7 @@ type tapRow struct {
 	icon      fyne.Resource
 	style     rowStyle
 	onTap     func()
-	onDrag    func(dy float32) // a sidebar row dragged among its siblings (sidebar_drag.go)
+	onDrag    func(*fyne.DragEvent) // a sidebar row dragged among its siblings, or to the panes (sidebar_drag.go)
 	onDrop    func()
 	selected  bool
 	disabled  bool
@@ -517,7 +517,7 @@ func (row *tapRow) MouseUp(*desktop.MouseEvent) { row.setSink(0) }
 // Dragged and DragEnd pass a drag on to onDrag and onDrop, when a row has them.
 func (row *tapRow) Dragged(e *fyne.DragEvent) {
 	if row.onDrag != nil {
-		row.onDrag(e.Dragged.DY)
+		row.onDrag(e)
 	}
 }
 

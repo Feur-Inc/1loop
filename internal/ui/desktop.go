@@ -272,6 +272,8 @@ type desktopUI struct {
 	pinned        []string          // the pinned projects and chats, in order (sidebar_order.go)
 	sideDrag      *sideDrag         // the sidebar row being dragged, nil when none (sidebar_drag.go)
 	sideMarker    *canvas.Rectangle // the line where a dragged sidebar row would land
+	sideColumn    fyne.CanvasObject // the sidebar, where a chat row dragged reorders rather than splits (split_drag.go)
+	drops         *dropView         // a split drag's preview over the window (split_drag.go)
 	searchRow     *tapRow
 	find          *chatFind
 	subchatsShown map[string]bool           // chats whose many subchats the user unfolded (true) or folded (false), by ID
@@ -285,6 +287,7 @@ type desktopUI struct {
 // desktopApp is what the windows share: the backend, the chats and
 // projects, the settings, the tray and the phone remote.
 type desktopApp struct {
+	carry            *paneDrag     // the chat or pane being dragged towards the panes, nil when none (split_drag.go)
 	usage            *usage.Ledger // every model call this computer made (internal/usage)
 	prices           *usage.Prices
 	usageQuery       usage.Query // what the Usage page shows, kept while 1loop runs
@@ -456,6 +459,7 @@ func runDesktop(backend *agent.App, root, asked string) {
 	ui.window.SetIcon(brandResource("1loop-ring-on-black.png"))
 	ui.backdrop = newBackdrop()
 	ui.watchPointer()
+	ui.catchDragEscape()
 	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.backdrop.picture, ui.build()))
 	benchMark("content built")
 	ui.syncBackdrop()
@@ -771,13 +775,15 @@ func (ui *desktopUI) build() fyne.CanvasObject {
 	hoverReference = func(link string, at fyne.Position) { ui.activeView().hoverReference(link, at) }
 	refRepository = func() string { return ui.activeView().chatRepository() }
 	ui.buildTitleBar(sidebar)
+	ui.sideColumn = sidebar
+	ui.drops = newDropView()
 	layers := []fyne.CanvasObject{ui.root}
 	if ui.chrome {
 		ui.pictureLayer = container.New(underTitleBar{ui})
 		ui.pictureLayer.Hide()
 		layers = append(layers, ui.pictureLayer, resizeEdges(ui.window))
 	}
-	return container.NewStack(append(layers, ui.tips.layer)...)
+	return container.NewStack(append(layers, ui.drops.layer, ui.tips.layer)...)
 }
 
 // buildChat builds a pane's chat area (ui.split): the conversation, the

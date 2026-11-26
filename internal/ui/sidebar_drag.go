@@ -4,6 +4,7 @@ package ui
 
 import (
 	"slices"
+	"strings"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -12,39 +13,64 @@ import (
 // A project or chat row can be dragged among its siblings (#283): the row
 // follows the pointer, a line shows where it would land, and letting go
 // places it there, as its menu's Move up and Move down would. The pinned
-// section's rows are dragged among the pinned ones.
+// section's rows are dragged among the pinned ones. A chat row carried out
+// of the sidebar goes back to its place, dimmed, and the panes show where
+// it would open instead (split_drag.go); Escape cancels either drag.
 
 // sideDrag is the row being dragged: its key, the keys it goes among in the
 // sidebar's order, the row itself, where it was drawn and how far it has
-// moved since.
+// moved since. A chat row has its chat, which it can take to the panes.
 type sideDrag struct {
-	key      string
-	siblings []string
-	object   fyne.CanvasObject
-	home     fyne.Position
-	height   float32
-	dy       float32
+	key       string
+	siblings  []string
+	object    fyne.CanvasObject
+	home      fyne.Position
+	height    float32
+	dy        float32
+	chat      *conversation // a chat that can have a pane of its own, else nil
+	away      bool          // carried out of the sidebar, towards the panes
+	cancelled bool          // Escape: the rest of the gesture does nothing
 }
 
 // dragRow makes a sidebar row draggable among siblings.
 func (ui *desktopUI) dragRow(row *tapRow, key string, siblings []string) {
-	row.onDrag = func(dy float32) { ui.dragSide(key, siblings, dy) }
+	row.onDrag = func(e *fyne.DragEvent) { ui.dragSide(key, siblings, e) }
 	row.onDrop = ui.dropSide
 }
 
-// dragSide moves the dragged row with the pointer by dy, and shows where it
-// would land. The row's first drag event starts the drag.
-func (ui *desktopUI) dragSide(key string, siblings []string, dy float32) {
+// dragSide moves the dragged row with the pointer, and shows where it would
+// land: among its siblings while the pointer is over the sidebar, in the
+// panes once a chat's row is carried out of it. The row's first drag event
+// starts the drag.
+func (ui *desktopUI) dragSide(key string, siblings []string, e *fyne.DragEvent) {
 	if ui.sideDrag == nil || ui.sideDrag.key != key {
 		kept := ui.sideRows[key]
 		if kept == nil {
 			return
 		}
 		ui.sideDrag = &sideDrag{key: key, siblings: slices.Clone(siblings), object: kept.object,
-			home: kept.object.Position(), height: kept.object.Size().Height}
+			home: kept.object.Position(), height: kept.object.Size().Height, chat: ui.splittable(key)}
 	}
 	drag := ui.sideDrag
-	drag.dy += dy
+	if drag.cancelled {
+		return
+	}
+	drag.dy += e.Dragged.DY
+	if drag.chat != nil && !ui.overSidebar(e.AbsolutePosition) {
+		if !drag.away {
+			drag.away = true
+			ui.sideMarker.Hide()
+			relayout(ui.projectList) // the row back to its place
+		}
+		fadeRows(drag.object, carriedAlpha) // again after a rebuild of the sidebar
+		ui.carryTo(drag.chat, nil, drag.chat.Title, e.AbsolutePosition)
+		return
+	}
+	if drag.away {
+		drag.away = false
+		fadeRows(drag.object, 1)
+		ui.endCarry()
+	}
 	drag.object.Move(drag.home.AddXY(0, drag.dy))
 	to := ui.dropIndex(drag)
 	ui.showDropLine(drag, to)
@@ -91,10 +117,21 @@ func (ui *desktopUI) showDropLine(drag *sideDrag, to int) {
 func (ui *desktopUI) dropSide() {
 	drag := ui.sideDrag
 	if drag == nil {
+		ui.endCarry()
 		return
 	}
 	ui.sideDrag = nil
 	ui.sideMarker.Hide()
+	if drag.cancelled {
+		ui.endCarry()
+		return
+	}
+	if drag.away { // let go over the panes, or off the window: no reordering
+		fadeRows(drag.object, 1)
+		ui.dropCarried()
+		ui.renderChats()
+		return
+	}
 	to := ui.dropIndex(drag)
 	if ui.isPinned(drag.key) {
 		ui.pinned = reorderKeys(drag.siblings, drag.key, to)
@@ -106,4 +143,29 @@ func (ui *desktopUI) dropSide() {
 	}
 	ui.save()
 	ui.renderChats()
+}
+
+// splittable is the chat a sidebar row of key shows, when it can have a
+// pane or a window of its own (not a server's): its row can be carried to
+// the panes.
+func (ui *desktopUI) splittable(key string) *conversation {
+	id, ok := strings.CutPrefix(key, chatKey(""))
+	if !ok || ui.desktopApp == nil {
+		return nil
+	}
+	if chat := ui.chatByID(id); chat != nil && ui.canOpenWindow(chat) {
+		return chat
+	}
+	return nil
+}
+
+// overSidebar reports whether the point at (canvas coordinates) is over the
+// window's sidebar.
+func (ui *desktopUI) overSidebar(at fyne.Position) bool {
+	column := ui.windowOf().sideColumn
+	if column == nil || !column.Visible() {
+		return true
+	}
+	origin, size := fyne.CurrentApp().Driver().AbsolutePositionForObject(column), column.Size()
+	return at.X >= origin.X && at.X < origin.X+size.Width && at.Y >= origin.Y && at.Y < origin.Y+size.Height
 }

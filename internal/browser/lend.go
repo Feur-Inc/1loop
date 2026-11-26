@@ -407,8 +407,9 @@ func LaunchLent(ctx context.Context) (string, func(), error) {
 		return "", nil, err
 	}
 	lentOrphan(dir)
-	address, stop, err := launchLent(ctx, binary, dir, false)
-	if err != nil && binary.own && strings.Contains(err.Error(), "No usable sandbox") {
+	noSandbox := os.Getenv("ONELOOP_CHROMIUM_NO_SANDBOX") == "1"
+	address, stop, err := launchLent(ctx, binary, dir, noSandbox)
+	if err != nil && !noSandbox && binary.own && strings.Contains(err.Error(), "No usable sandbox") {
 		platform.Devf("browser", "1loop's Chromium has no usable sandbox here: lending it without")
 		address, stop, err = launchLent(ctx, binary, dir, true)
 	}

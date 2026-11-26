@@ -468,7 +468,7 @@ func (ui *desktopUI) finishChatLoad() {
 	ui.updateHeader()
 	ui.renderChats()
 	ui.showChatModel()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 }
 
 func (ui *desktopUI) renameChat(chat *conversation) {

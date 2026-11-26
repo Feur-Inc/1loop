@@ -590,6 +590,9 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 	for _, h := range chat.History {
 		remoteMetaValue.Used = max(remoteMetaValue.Used, h.Usage)
 	}
+	if chat.Config.Provider == "claudecode" && chat.ContextUsage != nil {
+		remoteMetaValue.Used = chat.ContextUsage.Used // Claude Code keeps its own history
+	}
 	if run := chat.run; run != nil {
 		if run.turn.usage > 0 {
 			remoteMetaValue.Used = run.turn.usage

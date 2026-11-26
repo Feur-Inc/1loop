@@ -1160,8 +1160,6 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                     if (history.undo.isNotEmpty()) RoundButton(Icons.undo, Color.Transparent, Palette.muted, size = 32.dp, iconSize = 17.dp, description = "Undo") { walk(true) }
                     if (history.redo.isNotEmpty()) RoundButton(Icons.redo, Color.Transparent, Palette.muted, size = 32.dp, iconSize = 17.dp, description = "Redo") { walk(false) }
                 }
-                val meta = app.meta
-                ContextRing(meta?.used?.takeIf { app.current != null } ?: 0, meta?.window?.takeIf { app.current != null && it > 0 } ?: app.defaultWindow)
                 // Not while a file is still on its way, or one failed and is still listed.
                 val staged = app.staged(draft)
                 val blocked = staged.any { it.sending || it.problem != null }

@@ -1461,6 +1461,9 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		ui.goalUpdated(currentTurn.chat)
 	case "usage":
 		currentTurn.usage = uiEventValue.data.(int)
+		if currentTurn.cfg.Provider == "claudecode" { // its own count comes when the turn ends
+			currentTurn.chat.ContextUsage = currentTurn.chat.ContextUsage.At(currentTurn.usage)
+		}
 		ui.remote.metaChanged(currentTurn.chat)
 		if currentTurn.chat == ui.current {
 			ui.setContextUsage(uiEventValue.data.(int), agent.ModelContextWindow(currentTurn.cfg))
@@ -1497,9 +1500,6 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		ui.save()
 	case "plan":
 		ui.plan = uiEventValue.data.(agent.PlanUsage)
-		if currentTurn.chat == ui.current {
-			ui.contextRing.plan = ui.plan
-		}
 	}
 }
 

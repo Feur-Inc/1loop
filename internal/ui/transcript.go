@@ -444,6 +444,9 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		if id := startedSubchat(item); id != "" { // the subchat itself, rather than the call
 			row.onTap = func() { ui.openSubchat(chat, id) }
 		}
+		if agent.TodoTool(item.Tool) { // the tasks it updated, rather than the call (#612)
+			row.onTap = func() { ui.openTasks(chat) }
+		}
 		row.selected = ui.panel.showing(chat, index)
 		ui.views[index] = row
 		if item.Tool == "imagegen" {

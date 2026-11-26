@@ -49,6 +49,7 @@ func (panel *toolPanel) openTerminal() {
 		panel.ui.notice("Terminal", err.Error())
 		return
 	}
+	tab.title = panel.nextTitle(tab.kind, tab.title)
 	panel.tabs = append(panel.tabs, tab)
 	panel.choose(len(panel.tabs) - 1)
 	panel.unfold()

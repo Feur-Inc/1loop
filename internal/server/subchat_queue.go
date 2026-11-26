@@ -85,7 +85,7 @@ func (server *headlessServer) startOrQueueSubchatLocked(sub *serverChat, prompt 
 }
 
 func (server *headlessServer) ensureSubchatQueueTimerLocked() {
-	if server.subchatQueueTimer != nil || server.closing || server.ctx.Err() != nil {
+	if server.subchatQueueTimer != nil || server.closing || (server.ctx != nil && server.ctx.Err() != nil) {
 		return
 	}
 	interval := server.subchatQueuePoll
@@ -103,7 +103,7 @@ func (server *headlessServer) ensureSubchatQueueTimerLocked() {
 // drainSubchatQueueLocked starts queued subchats in FIFO order as long as
 // slots and memory allow.
 func (server *headlessServer) drainSubchatQueueLocked() {
-	if server.closing || server.ctx.Err() != nil {
+	if server.closing || (server.ctx != nil && server.ctx.Err() != nil) {
 		if server.subchatQueueTimer != nil {
 			server.subchatQueueTimer.Stop()
 			server.subchatQueueTimer = nil

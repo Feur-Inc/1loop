@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/theme"
 )
 
 // tabFamily is a tab's family: its rank in the strip and its name.
@@ -103,26 +104,21 @@ func (panel *toolPanel) nextTitle(kind, title string) string {
 	return fmt.Sprintf("%s %d", title, highest+1)
 }
 
-// listTabs shows every tab of the panel by family, the one shown checked;
-// the first tab of each family says the family's name.
+// listTabs shows every tab of the panel in the strip's order, the one
+// shown checked. The panel is opaque: it opens over the terminal's text,
+// which the glass blurred into a smudge.
 func (panel *toolPanel) listTabs() {
 	var actions []menuAction
-	last := ""
 	for _, i := range stripOrder(panel.tabs) {
 		i := i
 		tab := panel.tabs[i]
-		_, family := tabFamily(tab)
-		detail := ""
-		if family != last {
-			detail, last = family, family
-		}
-		actions = append(actions, menuAction{label: fitText(tabLabel(tab), 13, fyne.TextStyle{}, 300), detail: detail, icon: tabIcon(tab),
+		actions = append(actions, menuAction{label: fitText(tabLabel(tab), 13, fyne.TextStyle{}, 300), icon: tabIcon(tab),
 			checked: i == panel.active, run: func() { panel.choose(i); panel.unfold() }})
 	}
 	if len(actions) == 0 {
 		actions = append(actions, menuAction{label: "No tabs open", run: func() {}})
 	}
-	showMenu(panel.ui.window, panel.stripList, actions)
+	showMenuOf(panel.ui.window, panel.stripList, actions, true)
 }
 
 // stripStep is how far an arrow scrolls the strip: most of what shows.
@@ -206,12 +202,30 @@ func (panel *toolPanel) syncStripArrows() {
 	}
 }
 
-// newStripArrow is one of the strip's arrows.
+// newStripArrow is one of the strip's small buttons: an arrow, or the list.
+// Narrow, so the tabs keep the room.
 func newStripArrow(icon fyne.Resource, onTap func()) *tapRow {
 	arrow := newIconButton(icon, color.NRGBA{}, color.NRGBA{}, onTap)
-	arrow.iconPx, arrow.padPx = 15, 7
+	arrow.iconPx, arrow.padPx = 13, 4
 	arrow.Hide()
 	return arrow
+}
+
+// panelStripScroll is the strip's scroll: no bar (stripScroll), and no
+// shadows at its ends either, the arrows saying more tabs lie beyond.
+func panelStripScroll(content fyne.CanvasObject) (*container.Scroll, fyne.CanvasObject) {
+	scroll := container.NewHScroll(content)
+	return scroll, container.NewThemeOverride(scroll, shadowlessTheme{barlessTheme{loopTheme{theme.DefaultTheme()}}})
+}
+
+// shadowlessTheme draws no shadow.
+type shadowlessTheme struct{ fyne.Theme }
+
+func (themeSpec shadowlessTheme) Color(name fyne.ThemeColorName, variant fyne.ThemeVariant) color.Color {
+	if name == theme.ColorNameShadow {
+		return color.Transparent
+	}
+	return themeSpec.Theme.Color(name, variant)
 }
 
 // stripFrame lays the strip's scroll out and keeps its arrows in step with

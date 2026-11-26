@@ -133,13 +133,16 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 		panel.openTodo()
 	})
 	var strips fyne.CanvasObject
-	panel.strips, strips = stripScroll(panel.strip)
+	panel.strips, strips = panelStripScroll(panel.strip)
 	panel.strips.OnScrolled = func(fyne.Position) { panel.syncStripArrows() }
 	panel.stripLeft = newStripArrow(iconChevronLeft, func() { panel.scrollStrip(-panel.stripStep()) })
 	panel.stripRight = newStripArrow(iconChevronRight, func() { panel.scrollStrip(panel.stripStep()) })
-	panel.stripList = newRow("", iconChevron, styleWindow, panel.listTabs)
+	panel.stripList = newStripArrow(iconChevron, panel.listTabs)
+	panel.stripList.Show()
 	strips = container.New(stripFrame{panel}, strips)
-	header := container.NewBorder(nil, nil, panel.stripLeft, container.NewHBox(panel.stripRight, panel.stripList, todo, add, fold), strips)
+	// The right arrow and the list button sit together, no gap between them.
+	ends := container.New(layout.NewCustomPaddedHBoxLayout(0), panel.stripRight, panel.stripList)
+	header := container.NewBorder(nil, nil, panel.stripLeft, container.NewHBox(ends, todo, add, fold), strips)
 	panel.header = header
 	rule := canvas.NewRectangle(colBorderSoft)
 	rule.SetMinSize(fyne.NewSize(0, 1))

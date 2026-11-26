@@ -3,7 +3,7 @@
 package ui
 
 // The jump to the end (#605): while the conversation is scrolled up, a
-// round down arrow floats above the composer, in the middle of the chat.
+// small round down arrow sits just above the composer, at its right end.
 // A click brings the conversation back to its end and follows the live
 // answer again. At the end, it is hidden.
 
@@ -16,8 +16,8 @@ import (
 var iconArrowDown = lineIcon("arrow-down", `<path d="M8 3.2v9.4M3.9 8.5 8 12.6l4.1-4.1"/>`)
 
 const (
-	jumpEndSize = 38 // the disc
-	jumpEndGap  = 14 // between the disc and the composer
+	jumpEndSize = 28 // the disc
+	jumpEndGap  = 6  // between the disc and the composer
 	// jumpEndAway is how far from the end the view must be: closer, the
 	// conversation's end is in view and the arrow would only flicker.
 	jumpEndAway = 24
@@ -25,9 +25,11 @@ const (
 
 // newJumpEnd builds the floating arrow, hidden.
 func (ui *desktopUI) newJumpEnd() *fyne.Container {
-	disc := canvas.NewCircle(colPopover)
-	disc.StrokeColor, disc.StrokeWidth = colPopBorder, 1
-	button := newIconButton(iconArrowDown, colPopover, colText, ui.jumpToEnd)
+	// Discreet: the chat's own surface, a soft edge, a muted arrow.
+	disc := canvas.NewCircle(colSurface)
+	disc.StrokeColor, disc.StrokeWidth = colBorder, 1
+	button := newIconButton(iconArrowDown, colSurface, colMuted, ui.jumpToEnd)
+	button.iconPx, button.padPx = 14, 5
 	jump := container.NewStack(disc, container.NewCenter(button))
 	jump.Hide()
 	return jump

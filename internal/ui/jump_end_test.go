@@ -8,7 +8,7 @@ import (
 	"fyne.io/fyne/v2"
 )
 
-// Scrolled up, the arrow shows above the composer, in the middle; a click
+// Scrolled up, the arrow shows just above the composer, at its right end; a click
 // brings the conversation to its end, follows it again and hides the arrow
 // (#605).
 func TestJumpToEnd(t *testing.T) {
@@ -24,13 +24,15 @@ func TestJumpToEnd(t *testing.T) {
 	if !jump.Visible() || window.followTail {
 		t.Fatalf("scrolled up: arrow shown %v, following %v", jump.Visible(), window.followTail)
 	}
-	size := window.conversation.Size()
-	composerTop := size.Height - window.composer.Size().Height
-	if bottom := jump.Position().Y + jump.Size().Height; bottom > composerTop || bottom < composerTop-80 {
-		t.Errorf("the arrow ends at y=%v, the composer starts at %v", bottom, composerTop)
+	at := func(object fyne.CanvasObject) fyne.Position {
+		return fyne.CurrentApp().Driver().AbsolutePositionForObject(object)
 	}
-	if mid := jump.Position().X + jump.Size().Width/2; mid < size.Width/2-1 || mid > size.Width/2+1 {
-		t.Errorf("the arrow's middle at x=%v, the chat's at %v", mid, size.Width/2)
+	arrow, composer := at(jump), at(window.composer)
+	if bottom := arrow.Y + jump.Size().Height; bottom > composer.Y || bottom < composer.Y-12 {
+		t.Errorf("the arrow ends at y=%v, the composer starts at %v", bottom, composer.Y)
+	}
+	if right, end := arrow.X+jump.Size().Width, composer.X+window.composer.Size().Width; right < end-2 || right > end+2 {
+		t.Errorf("the arrow ends at x=%v, the composer at %v", right, end)
 	}
 	window.jumpToEnd()
 	bottom := window.scroll.Content.Size().Height - window.scroll.Size().Height

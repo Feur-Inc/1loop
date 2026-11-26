@@ -20,6 +20,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/agent"
+	"1loop/internal/update"
 )
 
 // settingsUI is a window with its settings built, a project of this
@@ -277,4 +278,109 @@ func TestSearchFindsServerSettings(t *testing.T) {
 			t.Errorf("the result opened %q", ui.prefs.page)
 		}
 	})
+}
+
+// serverRowOf is a server's row under Servers.
+func serverRowOf(view *settingsView, label string) *tapRow {
+	for _, object := range view.serverNav.Objects {
+		if row, ok := object.(*tapRow); ok && row.text == label {
+			return row
+		}
+	}
+	return nil
+}
+
+// In a small window, the settings' sidebar scrolls to a server's last
+// pages and the servers after it, and keeps the entry shown in view.
+func TestSettingsSidebarScrolls(t *testing.T) {
+	ui := settingsUI(t)
+	ui.window.Resize(fyne.NewSize(1180, 480))
+	_, alpha := settingsServerAPI(t, "alpha")
+	stopped, beta := settingsServerAPI(t, "beta")
+	stopped.Close()
+	saveServerAddress(alpha)
+	saveServerAddress(beta)
+	ui.linkServers()
+	updates := serverPageID(alpha.URL, "Updates")
+	fyne.DoAndWait(func() {
+		ui.settings()
+		ui.prefs.show(updates)
+	})
+	fyne.DoAndWait(func() {
+		scroll := ui.prefs.sideScroll
+		if scroll.Content.MinSize().Height <= scroll.Size().Height {
+			t.Fatalf("the sidebar's entries (%v high) fit its %v: nothing to scroll", scroll.Content.MinSize().Height, scroll.Size().Height)
+		}
+		row := ui.prefs.rows[updates]
+		at, ok := offsetIn(scroll.Content, row)
+		if !ok || at.Y < scroll.Offset.Y || at.Y+row.Size().Height > scroll.Offset.Y+scroll.Size().Height {
+			t.Errorf("the selected Updates entry at %v is out of the sidebar's view (%v, %v high)", at.Y, scroll.Offset.Y, scroll.Size().Height)
+		}
+		last := serverRowOf(ui.prefs, ui.serverLabel(beta.URL))
+		if last == nil {
+			t.Fatal("the second server is not listed")
+		}
+		end, _ := offsetIn(scroll.Content, last)
+		if end.Y+last.Size().Height > scroll.Content.Size().Height {
+			t.Errorf("the second server's row ends at %v, past the scrolled content's %v", end.Y+last.Size().Height, scroll.Content.Size().Height)
+		}
+	})
+}
+
+// The open server's row folds its pages, and unfolds them; the page shown
+// stays, and the server's row says where you are meanwhile.
+func TestOpenServerFolds(t *testing.T) {
+	ui := settingsUI(t)
+	_, alpha := settingsServerAPI(t, "alpha")
+	saveServerAddress(alpha)
+	ui.linkServers()
+	connections := serverPageID(alpha.URL, "Connections")
+	label := ui.serverLabel(alpha.URL)
+	fyne.DoAndWait(func() {
+		ui.settings()
+		ui.prefs.show(connections)
+		serverRowOf(ui.prefs, label).onTap()
+	})
+	fyne.DoAndWait(func() {
+		header := serverRowOf(ui.prefs, label)
+		if contains(serverNavTexts(ui.prefs), "Devices") || ui.prefs.page != connections || !header.selected || header.icon != iconChevronRight {
+			t.Errorf("folded: sidebar %q, page %q, row selected %v", serverNavTexts(ui.prefs), ui.prefs.page, header.selected)
+		}
+		header.onTap()
+		if !contains(serverNavTexts(ui.prefs), "Devices") || ui.prefs.rows[connections] == nil || !ui.prefs.rows[connections].selected {
+			t.Errorf("unfolded: sidebar %q", serverNavTexts(ui.prefs))
+		}
+	})
+}
+
+// Two servers on one host are told apart by their ports; one alone keeps
+// its host's name.
+func TestServerLabelsTellServersApart(t *testing.T) {
+	ui := sidebarUI(t)
+	ui.links = []*serverLink{{address: serverAddress{URL: "https://127.0.0.1:47101"}}, {address: serverAddress{URL: "https://127.0.0.1:47102"}},
+		{address: serverAddress{URL: "https://dietpi:47101"}}}
+	for address, want := range map[string]string{"https://127.0.0.1:47101": "127.0.0.1:47101", "https://127.0.0.1:47102": "127.0.0.1:47102", "https://dietpi:47101": "dietpi"} {
+		if got := ui.serverLabel(address); got != want {
+			t.Errorf("serverLabel(%s) = %q, want %q", address, got, want)
+		}
+	}
+}
+
+// A dev build is not behind the release page: only an older release is.
+func TestDevBuildIsNotOutdated(t *testing.T) {
+	for _, c := range []struct {
+		status update.Status
+		behind bool
+	}{
+		{update.Status{Current: "dev", Latest: "0.3.2", Available: true}, false},
+		{update.Status{Current: "0.3.1", Latest: "0.3.2", Available: true}, true},
+		{update.Status{Current: "0.3.2", Latest: "0.3.2"}, false},
+	} {
+		if got := releaseBehind(&c.status); got != c.behind {
+			t.Errorf("%s with %s out: behind %v, want %v", c.status.Current, c.status.Latest, got, c.behind)
+		}
+	}
+	if word, _ := serverWord(reachOnline); word != "connected" {
+		t.Errorf("a server that answers is %q", word)
+	}
 }

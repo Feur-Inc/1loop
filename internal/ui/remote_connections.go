@@ -51,7 +51,7 @@ func (remote *remoteDesktop) connectionSettings(head serverHead) fyne.CanvasObje
 	})
 	add.Hide()
 	page := container.NewVBox(head(container.NewCenter(add)),
-		padded(0, 10, 2, 0, plainFlow("The models of every enabled one are offered. Keys stay on the server.", 13, colMuted)),
+		padded(0, 10, 2, 0, plainFlow("Their models are offered. Keys stay on the server.", 13, colMuted)),
 		content)
 	go func() {
 		ctx, cancel := context.WithTimeout(remote.ctx, 20*time.Second)
@@ -169,7 +169,7 @@ func (remote *remoteDesktop) connectionEditor(row serverConnection) {
 	typePicker := newPicker(ui.window, "Connection type", styleField, nil)
 	typePicker.Options = types
 	apiFields := card(
-		settingRow("API base URL", "The address of the service's /v1 API, as the server reaches it.", sized(340, base)),
+		settingRow("API base URL", "The service's /v1 address, as the server reaches it.", sized(340, base)),
 		settingRow("API key", "", sized(340, key)))
 	harness := note("")
 	harnessFields := card(settingStack("On the server", "", harness))
@@ -287,10 +287,10 @@ func (remote *remoteDesktop) connectionEditor(row serverConnection) {
 		chatGPTFields.Hide()
 		switch draft.Provider {
 		case "claudecode":
-			harness.SetText("Uses the Claude Code installed on the server, with its sign-in there (run claude once where the server runs, as its user).")
+			harness.SetText("Uses the server's claude. Run claude there once to sign in.")
 			harnessFields.Show()
 		case "antigravity":
-			harness.SetText("Uses the agy command installed on the server, with its Google sign-in there (run agy once where the server runs, as its user).")
+			harness.SetText("Uses the server's agy. Run agy there once to sign in.")
 			harnessFields.Show()
 		case "openai":
 			chatGPTFields.Show()
@@ -336,7 +336,7 @@ func (remote *remoteDesktop) connectionEditor(row serverConnection) {
 		sectionTitle("Models"),
 		card(
 			settingRow("Show every model", "Turn off to choose them one by one below.", allModels),
-			settingRow("Catalog", "Ask the service, from the server, which models it offers.", load),
+			settingRow("Catalog", "Ask the service which models it offers.", load),
 			padded(10, 10, 16, 16, search),
 			modelRows),
 	)

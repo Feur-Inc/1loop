@@ -233,5 +233,5 @@ func (remote *remoteDesktop) chatGPTSignInFields(draft *agent.Connection, row se
 		login.Hide()
 		below.Add(note(errOldServer.Error() + "."))
 	}
-	return card(settingStack("ChatGPT account", "Uses a ChatGPT subscription on the server. You sign in with this computer's browser; the account stays on the server.", below)), stop
+	return card(settingStack("ChatGPT account", "Uses a ChatGPT subscription on the server. Sign in here.", below)), stop
 }

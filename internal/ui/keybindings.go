@@ -365,7 +365,7 @@ func (ui *desktopUI) shortcutSettings() fyne.CanvasObject {
 	}
 	return container.NewVBox(
 		view.pageTitle(registry.ShortcutsPage, "General", container.NewCenter(reset)),
-		padded(0, 4, 2, 0, plainFlow("Click a key to change it. The text boxes keep Ctrl+A, C, V, X, Z and Y, and Ctrl+Enter steers a running task.", 13, colMuted)),
+		padded(0, 4, 2, 0, plainFlow("Click a key to change it. Text boxes keep their own Ctrl keys.", 13, colMuted)),
 		card(rows...),
 	)
 }

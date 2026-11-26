@@ -594,7 +594,7 @@ func (view *settingsView) buildServer(address, name string) fyne.CanvasObject {
 	label := view.ui.serverLabel(address)
 	body := settingRow("Connecting to "+label+"…", "Its "+strings.ToLower(name)+" show here once it answers.", nil)
 	if state == reachOffline {
-		detail := "Its settings show here once it's back. Check that it runs and that this computer reaches it."
+		detail := "Its settings show here once it is back."
 		if problem != "" {
 			detail += "\n" + plainProblem(address, problem)
 		}

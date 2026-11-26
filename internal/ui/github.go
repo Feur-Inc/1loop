@@ -60,7 +60,7 @@ func (ui *desktopUI) githubSettings(source githubSource, state githubconnector.S
 	}
 	target := source.where()
 	body := container.NewVBox(
-		sectionTitle("GitHub"), note("Connect the GitHub account whose repositories the agent may use. Tools come from GitHub's official MCP server and follow your approval mode. Signing in does not authorize unrelated changes."),
+		sectionTitle("GitHub"), note("Connect the GitHub account the agent may use."),
 		card(settingRow("GitHub account", status, nil)))
 	if state.Error != "" {
 		body.Add(note(state.Error))
@@ -69,7 +69,7 @@ func (ui *desktopUI) githubSettings(source githubSource, state githubconnector.S
 		id := widget.NewEntry()
 		id.PlaceHolder = "Public GitHub App client ID"
 		body.Add(sectionTitle("Publisher setup"))
-		body.Add(note("This build has no GitHub App configured yet. The publisher registers one GitHub App with Device flow enabled; users then sign in to that app. Enter its public client ID, never an app secret or private key."))
+		body.Add(note("No GitHub App in this build. Enter its public client ID only."))
 		body.Add(id)
 		body.Add(newRow("Save client ID", nil, stylePrimary, func() {
 			clientID := id.Text
@@ -79,7 +79,7 @@ func (ui *desktopUI) githubSettings(source githubSource, state githubconnector.S
 		return body
 	}
 	if state.Connected {
-		body.Add(card(settingRow("Enable GitHub tools", "Turning this off removes GitHub tools from subsequent model requests and rejects calls made after access is disabled.", newToggle(state.Enabled, func(on bool) {
+		body.Add(card(settingRow("Enable GitHub tools", "Off removes GitHub tools from the model's requests.", newToggle(state.Enabled, func(on bool) {
 			ui.githubChange(source, func(ctx context.Context) error { return source.enable(ctx, on) })
 		}))))
 		body.Add(newRow("Review access on GitHub", nil, styleOutline, func() { openLink("https://github.com/settings/apps/authorizations") }))
@@ -88,12 +88,12 @@ func (ui *desktopUI) githubSettings(source githubSource, state githubconnector.S
 			body.Add(object)
 		}
 		body.Add(newRow("Disconnect", nil, styleOutline, func() { ui.githubChange(source, source.disconnect) }))
-		body.Add(note("Disconnect removes 1loop's authorization on " + target + ". You can also revoke the app in your GitHub settings. Credentials stay on " + target + "; they are not sent to the model."))
+		body.Add(note("Disconnect removes 1loop's authorization on " + target + ". Keys never reach the model."))
 		return body
 	}
 	body.Add(newRow("Choose repositories on GitHub", nil, styleOutline, func() { openLink(state.InstallURL) }))
 	body.Add(newRow("Connect GitHub…", nil, stylePrimary, func() { ui.connectGitHub(source, state) }))
-	body.Add(note("Authorize the account in your browser. Review the app's access and choose which repositories to grant on GitHub. The sign-in code is shown only in these settings."))
+	body.Add(note("Authorize in your browser, and pick the repositories there."))
 	return body
 }
 
@@ -155,7 +155,7 @@ func (ui *desktopUI) connectGitHub(source githubSource, current githubconnector.
 					return
 				}
 				shown = state
-				message.SetText("Open GitHub in your browser, enter this code and review the requested access. This code expires in a few minutes.")
+				message.SetText("Open GitHub, enter this code, and review the access.")
 				code.SetText(state.Code)
 				open.Enable()
 				copy.Enable()
@@ -176,15 +176,15 @@ func (ui *desktopUI) connectGitHub(source githubSource, current githubconnector.
 // githubAttachmentSettings: GitHub refuses the app's sign-in for images and
 // videos, so they need a personal access token or GitHub CLI's sign-in.
 func (ui *desktopUI) githubAttachmentSettings(source githubSource, state githubconnector.Status, target string) []fyne.CanvasObject {
-	detail := "Not set up: the agent cannot upload screenshots or videos. Add a token, or sign in to GitHub CLI (gh auth login)."
+	detail := "Not set up: add a token, or sign in to GitHub CLI."
 	switch {
 	case state.AttachmentLogin != "":
 		detail = "Personal access token of @" + state.AttachmentLogin
 	case state.GitHubCLI:
-		detail = "GitHub CLI is installed: uploads use its sign-in (gh auth login), read at each upload and never saved by 1loop"
+		detail = "GitHub CLI is installed: uploads use its sign-in."
 	}
 	objects := []fyne.CanvasObject{sectionTitle("Images and videos"),
-		note("GitHub accepts attachments to issues, pull requests and comments only from a personal access token or GitHub CLI, not from this app's sign-in. Uploads ask for your approval; they cannot be deleted from GitHub."),
+		note("Uploads need a token or GitHub CLI, and your approval."),
 		card(settingRow("Uploads as", detail, nil))}
 	save := func(token string) {
 		ui.githubChange(source, func(ctx context.Context) error { return source.setAttachmentToken(ctx, token) })
@@ -203,5 +203,5 @@ func (ui *desktopUI) githubAttachmentSettings(source githubSource, state githubc
 		newRow("Create a token on GitHub", nil, styleOutline, func() {
 			openLink("https://github.com/settings/tokens/new?scopes=repo&description=1loop+attachments")
 		}),
-		note("The token stays in the GitHub connector's private file on "+target+"; it is never sent to the model. Disconnect removes it."))
+		note("Kept in a private file on "+target+", never sent to the model."))
 }

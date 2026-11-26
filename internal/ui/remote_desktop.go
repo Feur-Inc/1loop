@@ -94,7 +94,7 @@ func (ui *desktopUI) connectServer() {
 		}()
 	}
 	sheet = ui.modal("Connect a server", container.NewVBox(
-		note("A headless 1loop server runs the agent, its files, browser and terminals on its own machine. The next step asks you to approve this computer from a device already paired with it, or in its console."),
+		note("Runs the agent, files and terminals on its own machine. The next step asks you to approve this computer."),
 		widget.NewLabel("HTTPS address"), address,
 		widget.NewLabel("Certificate fingerprint (only for a self-signed certificate)"), pin,
 		note("The server's console prints this SHA-256 fingerprint when it starts.")), 620, nil, connect)
@@ -161,7 +161,7 @@ func (ui *desktopUI) confirmServerPair(client *remoteClient, pairingID, code, co
 	}
 	copyCommand := newRow("Copy command", nil, styleChip, func() { fyne.CurrentApp().Clipboard().SetContent(command) })
 	body := container.NewVBox(
-		note("Approve it in 1loop on a device already paired with this server: it asks for this code. This connects by itself once approved; the pairing expires after two minutes."),
+		note("Approve it on a paired device: it asks for this code. It expires in two minutes."),
 		codeBlock(code, 80),
 		note(where),
 		codeBlock(command, 80),

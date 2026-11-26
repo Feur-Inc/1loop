@@ -453,7 +453,12 @@ func card(rows ...fyne.CanvasObject) fyne.CanvasObject {
 
 // settingRow is a title and its explanation, with a control at the end.
 func settingRow(title, detail string, control fyne.CanvasObject) fyne.CanvasObject {
-	text := container.New(layout.NewCustomPaddedVBoxLayout(3), plainFlow(title, 14, colText))
+	return settingRowTitled(plainFlow(title, 14, colText), detail, control)
+}
+
+// settingRowTitled is settingRow with a title of its own, such as titleInfo's.
+func settingRowTitled(title fyne.CanvasObject, detail string, control fyne.CanvasObject) fyne.CanvasObject {
+	text := container.New(layout.NewCustomPaddedVBoxLayout(3), title)
 	if detail != "" {
 		text.Add(plainFlow(detail, 12.5, colMuted))
 	}
@@ -467,11 +472,33 @@ func settingRow(title, detail string, control fyne.CanvasObject) fyne.CanvasObje
 
 // settingStack is a title and its explanation above a wide control.
 func settingStack(title, detail string, below fyne.CanvasObject) fyne.CanvasObject {
-	text := container.New(layout.NewCustomPaddedVBoxLayout(3), plainFlow(title, 14, colText))
+	return settingStackTitled(plainFlow(title, 14, colText), detail, below)
+}
+
+// settingStackTitled is settingStack with a title of its own.
+func settingStackTitled(title fyne.CanvasObject, detail string, below fyne.CanvasObject) fyne.CanvasObject {
+	text := container.New(layout.NewCustomPaddedVBoxLayout(3), title)
 	if detail != "" {
 		text.Add(plainFlow(detail, 12.5, colMuted))
 	}
 	return padded(13, 14, 16, 16, container.New(layout.NewCustomPaddedVBoxLayout(9), text, below))
+}
+
+// iconInfo is the (i) after a title that has a longer explanation.
+var iconInfo = lineIcon("info", `<circle cx="8" cy="8" r="5.5"/><path d="M8 7.2v3.8M8 4.8h.01" stroke-width="1.8"/>`)
+
+// titleInfo is a title with an (i) after it: the explanation shows in a
+// tooltip while the (i) is hovered, so the row's own text can stay short.
+func titleInfo(tips *tipLayer, title, explanation string) fyne.CanvasObject {
+	mark := newRow("", iconInfo, styleIcon, nil)
+	mark.onHover = func(in bool) {
+		if in {
+			tips.show(mark, explanation)
+		} else {
+			tips.hide()
+		}
+	}
+	return container.NewHBox(plainFlow(title, 14, colText), padded(2, 0, 6, 0, mark))
 }
 
 // widthLayout gives its content a width of its own and the height it
@@ -614,37 +641,34 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 			}
 		}
 	}
-	worktrees := view.mark(registry.KeyWorktreeSort, settingRow(order.Title, "How the sidebar and the Repository window order a project's git worktrees.", sized(230, sortPicker.row)))
+	worktrees := view.mark(registry.KeyWorktreeSort, settingRow(order.Title, "How a project's git worktrees are ordered in the sidebar.", sized(230, sortPicker.row)))
 	page := container.NewVBox(view.pageTitle("General", "", nil), view.intro(registry.General), sectionTitle("Workspace"))
-	page.Add(card(view.mark("general.workspace", settingRow("Project folder", "Open a folder of this computer as a project. Switch projects in the sidebar.", change)), worktrees))
+	page.Add(card(view.mark("general.workspace", settingRow("Project folder", "Opens a folder of this computer as a project.", change)), worktrees))
 	for _, object := range ui.targetRows() {
 		page.Add(object)
 	}
 	page.Add(sectionTitle("Appearance"))
 	page.Add(card(ui.appearanceRows(view)...))
 	page.Add(sectionTitle("Window"))
-	page.Add(card(view.mark("general.close_to_tray", settingRow("Close to tray",
-		"On: closing the window keeps 1loop running in the system tray, so running tasks and the phone connection go on. Quit from the tray icon's menu or with Ctrl+Q. Off: closing the window quits. Without a tray (GNOME without an AppIndicator extension, a bar that shows no tray items) closing always quits.",
+	page.Add(card(view.mark("general.close_to_tray", settingRowTitled(titleInfo(ui.tips, "Close to tray", "On: closing the window keeps 1loop running in the system tray, so running tasks and the phone connection go on. Quit from the tray icon's menu or with Ctrl+Q. Off: closing the window quits. Without a tray (GNOME without an AppIndicator extension, a bar that shows no tray items) closing always quits."), "Closing the window keeps 1loop in the tray. Quit: Ctrl+Q.",
 		newToggle(!ui.closeQuits, func(on bool) {
 			ui.closeQuits = !on
 			platform.Devf("ui", "close to tray %v", on)
 			ui.save()
 		})))))
 	page.Add(sectionTitle("Motion"))
-	page.Add(card(view.mark(registry.KeyAnimations, settingRow("Animations",
-		"Short animations as you click and hover, as menus and dialogs open, as messages arrive and the sidebar changes. Off, every change shows at once. They are off too while the system asks for reduced motion.",
+	page.Add(card(view.mark(registry.KeyAnimations, settingRow("Animations", "Short motion as things change. Off with reduced motion.",
 		newToggle(!animationsOff, ui.setAnimations)))))
 	page.Add(sectionTitle("Discord"))
-	page.Add(card(view.mark(registry.KeyDiscordPresence, settingRow("Discord status",
-		"While the agent works, your Discord profile shows “Playing 1loop” with the model, what it is doing (thinking, running a command, editing files…) and for how long; “Idle” the rest of the time. Needs the Discord app open on this computer.",
+	page.Add(card(view.mark(registry.KeyDiscordPresence, settingRowTitled(titleInfo(ui.tips, "Discord status", "While the agent works, your Discord profile shows “Playing 1loop” with the model, what it is doing (thinking, running a command, editing files…) and for how long; “Idle” the rest of the time. Needs the Discord app open on this computer."), "Shows what the agent is doing on your Discord profile.",
 		newToggle(ui.discordPresence, func(on bool) { ui.setDiscordPresence(on, ui.discordDetails) }))),
 		view.mark(registry.KeyDiscordDetails, settingRow("Share the chat",
-			"Also shows the chat's title, its project and the command or file the agent is on. Off, they stay on this computer.",
+			"Adds the chat's title and project to the status.",
 			newToggle(ui.discordDetails, func(on bool) { ui.setDiscordPresence(ui.discordPresence, on) })))))
 	page.Add(sectionTitle("Keyboard"))
-	page.Add(card(settingRow(registry.ShortcutsPage, "New chat, search, find in the chat and more: see their keys, and change them.", view.pageButton(registry.ShortcutsPage))))
+	page.Add(card(settingRow(registry.ShortcutsPage, "Keys for new chat, search, find and more.", view.pageButton(registry.ShortcutsPage))))
 	page.Add(sectionTitle("Usage"))
-	page.Add(card(view.mark("general.usage", settingRow("Usage & spend", "Where the tokens and the money went, by model, connection, project, branch and chat, and the prices behind it.", view.pageButton(UsagePage)))))
+	page.Add(card(view.mark("general.usage", settingRow("Usage & spend", "Tokens and money spent, by model, project, chat and more.", view.pageButton(UsagePage)))))
 	page.Add(sectionTitle("Import"))
 	page.Add(card(view.mark("general.import", ui.importRow())))
 	return page
@@ -718,11 +742,11 @@ func (ui *desktopUI) modelSettings() fyne.CanvasObject {
 		view.intro(registry.Models),
 		view.scope(),
 		container.NewBorder(nil, nil, nil, padded(14, 4, 0, 0, add), sectionTitle("Connections")),
-		padded(0, 10, 2, 0, plainFlow("Connect several services and accounts at once. The models of every enabled connection appear together in the composer.", 13, colMuted)),
+		padded(0, 10, 2, 0, plainFlow("Each enabled connection's models appear in the composer.", 13, colMuted)),
 		view.mark("models.connections", ui.connectionRows()),
 		sectionTitle("Rate limits"),
 		card(view.mark(registry.KeyAutoResume, settingRow("Automatic resumption",
-			"What 1loop does when a conversation reaches a rate limit: wait for the reset, or go on with another model, in the order you choose.",
+			"Waits for the reset, or switches model in your order.",
 			container.New(layout.NewCustomPaddedHBoxLayout(14), container.NewCenter(resumeToggle), newRow("Configure…", nil, styleOutline, ui.configureAutoResume))))),
 		sectionTitle("Chat names"),
 		card(view.mark(registry.KeyNamingModel, ui.namingSetting())),
@@ -785,26 +809,24 @@ func (ui *desktopUI) agentSettings() fyne.CanvasObject {
 		view.intro(registry.Agent),
 		view.scope(),
 		sectionTitle("Permissions"),
-		card(view.mark(registry.KeyApprovalMode, settingRow("Tool permissions",
-			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto works as Codex: reads run at once, other commands run in a sandbox that writes only the workspace, and destructive ones go to Codex's review (ChatGPT account) or Claude Code's own Auto mode; other connections have no Auto mode and ask.",
+		card(view.mark(registry.KeyApprovalMode, settingRowTitled(titleInfo(ui.tips, "Tool permissions", "Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto works as Codex: reads run at once, other commands run in a sandbox that writes only the workspace, and destructive ones go to Codex's review (ChatGPT account) or Claude Code's own Auto mode; other connections have no Auto mode and ask."), "Asks before commands and edits. YOLO runs them at once.",
 			sized(230, mode.row)))),
 		sectionTitle("Instructions and memory"),
 		card(view.mark("agent.preferences", settingStack("Your preferences",
-			"Added to 1loop's own system prompt, whose workspace and tool rules stay in place, in every chat. Saved as you type; they apply from the next turn.",
+			"Added to every chat's system prompt, from the next turn.",
 			entry)),
 			view.mark(registry.KeyMemory, settingRow("Memory",
-				"The agent adds what it learns about you to these preferences, each change shown to you for approval. Off: it is not offered the memory tool.",
+				"The agent proposes what it learns; you approve each change.",
 				newToggle(!ui.memoryOff, func(on bool) { ui.setMemory(on) })))),
 		card(view.mark(registry.KeyWrapUp, settingRow("Next-step card",
-			"At the end of a turn that did work, the agent sums it up in a card and, when the next move is yours, asks with one or two reply buttons. Off: it is not offered the wrap_up tool.",
+			"A recap at the end of each turn, with buttons for your reply.",
 			newToggle(!ui.wrapUpOff, func(on bool) { ui.setWrapUp(on) })))),
 		sectionTitle("Project memory"),
 		view.mark("agent.project_memory", card(settingRow("Project memory",
-			"Each project's AGENTS.md, which 1loop and the other agents read there. Open it with Project memory… in the project's … menu in the sidebar.", nil))),
+			"Each project's AGENTS.md. Edit it from the project's … menu.", nil))),
 	)
 	page.Add(sectionTitle("Context"))
-	page.Add(card(view.mark(registry.KeyDynamicCompaction, settingRow("Dynamic compaction",
-		"On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way.",
+	page.Add(card(view.mark(registry.KeyDynamicCompaction, settingRowTitled(titleInfo(ui.tips, "Dynamic compaction", "On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way."), "Compacts at natural breaks in the work, not when nearly full.",
 		newToggle(!ui.classicCompaction, func(on bool) { ui.setDynamicCompaction(on) })))))
 	return page
 }
@@ -839,14 +861,14 @@ func (ui *desktopUI) toolSettings() fyne.CanvasObject {
 		view.pageTitle("Tools & extensions", "", nil),
 		view.intro(registry.Tools),
 		sectionTitle("Extensions"),
-		card(view.mark("tools.extensions", settingRow("Skills, plugins and MCP servers", "Skills and plugins from GitHub, and the MCP servers the agent uses.", view.pageButton("Extensions"))),
-			view.mark("tools.github", settingRow("GitHub connector", "Lets the agent use your GitHub repositories, issues and pull requests. "+github, view.pageButton("Connectors")))),
+		card(view.mark("tools.extensions", settingRow("Skills, plugins and MCP servers", "Skills, plugins and MCP servers the agent uses.", view.pageButton("Extensions"))),
+			view.mark("tools.github", settingRow("GitHub connector", "Lets the agent work on your repositories and issues. "+github, view.pageButton("Connectors")))),
 		sectionTitle("Browser"),
-		card(view.mark("tools.browser_data", settingRow("Browsing data",
-			"The agents' browser keeps its cookies and logins, cache, site data and history from one session to the next, in "+browser.ProfileDir()+". Clear erases all of it.",
+		card(view.mark("tools.browser_data", settingRowTitled(titleInfo(ui.tips, "Browsing data", "Stored in "+browser.ProfileDir()+". Clear erases all of it."),
+			"Cookies, logins and history the agents' browser keeps.",
 			ui.clearBrowserButton())),
 			view.mark("tools.import_cookies", settingRow("Import cookies",
-				"Import a cookie JSON export or a compatible local browser profile into Browser Use. Review the accounts you are sharing before confirming.",
+				"Cookies from an export or a browser profile. Review them first.",
 				newRow("Import…", nil, styleOutline, ui.importCookies)))),
 		sectionTitle("Computer Use"),
 		card(view.mark("tools.computer_screen", ui.computerScreenRow())),
@@ -862,8 +884,7 @@ func (ui *desktopUI) advancedSettings() fyne.CanvasObject {
 		sectionTitle("Hooks"),
 		card(view.mark("advanced.hooks", ui.hooksRow())),
 		sectionTitle("Crashes"),
-		card(view.mark(registry.KeyCrashReports, settingRow("Offer to report crashes",
-			"After 1loop closes unexpectedly, the next start shows what happened, anonymized, and offers to open a GitHub issue with it that you check and submit from your own account. 1loop sends nothing by itself. Off after Don't ask again.",
+		card(view.mark(registry.KeyCrashReports, settingRowTitled(titleInfo(ui.tips, "Offer to report crashes", "After 1loop closes unexpectedly, the next start shows what happened, anonymized, and offers to open a GitHub issue with it that you check and submit from your own account. 1loop sends nothing by itself. Off after Don't ask again."), "After a crash, offers an anonymous report to file on GitHub.",
 			newToggle(!ui.crashReportsOff, ui.setCrashReports)))),
 	)
 }
@@ -880,9 +901,9 @@ func (ui *desktopUI) setCrashReports(on bool) {
 func (ui *desktopUI) hooksRow() fyne.CanvasObject {
 	path := agent.HooksPath()
 	count := agent.HookCount()
-	detail := fmt.Sprintf("Your commands around the agent's work, in Claude Code's format: PreToolUse (exit code 2 blocks the tool), PostToolUse, UserPromptSubmit and Stop. They apply to 1loop's own agent (Claude Code has its own hooks). %d configured, in %s.", count, path)
+	detail := fmt.Sprintf("%d configured, in %s.", count, path)
 	edit := newRow("Edit", nil, styleOutline, ui.editHooks)
-	return settingRow("Hook commands", detail, container.NewHBox(edit, newRow("Open file", nil, styleChip, func() {
+	return settingRowTitled(titleInfo(ui.tips, "Hook commands", "PreToolUse (exit code 2 blocks the tool), PostToolUse, UserPromptSubmit and Stop. They apply to 1loop's own agent, not Claude Code's."), detail, container.NewHBox(edit, newRow("Open file", nil, styleChip, func() {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
 			_ = os.MkdirAll(filepath.Dir(path), 0700)
 			_ = os.WriteFile(path, []byte("{\n  \"hooks\": {\n    \"PreToolUse\": [],\n    \"PostToolUse\": [],\n    \"UserPromptSubmit\": [],\n    \"Stop\": []\n  }\n}\n"), 0600)
@@ -946,9 +967,9 @@ func (ui *desktopUI) clearBrowserButton() fyne.CanvasObject {
 // pick another one in the desktop's dialog or to forget the permission.
 func (ui *desktopUI) computerScreenRow() fyne.CanvasObject {
 	grant := computeruse.LoadComputerGrant()
-	detail := "The first use asks which screen to share. Select \u201cRemember this permission\u201d or \u201cRemember this choice\u201d in that dialog and 1loop will not ask again, even after a restart."
+	detail := "Asks which screen to share. Choose \u201cRemember\u201d to stop asking."
 	if grant.Token != "" {
-		detail = fmt.Sprintf("Shared without asking, even after a restart: the screen of %d \u00d7 %d at %d, %d. Change screen opens the desktop's dialog to pick another; Forget stops sharing and asks next time.",
+		detail = fmt.Sprintf("Shared without asking: %d \u00d7 %d at %d, %d. Forget stops it.",
 			grant.Width, grant.Height, grant.X, grant.Y)
 	}
 	refresh := func() { // the page, if it is still the one on screen
@@ -1176,7 +1197,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 			})
 		}()
 	}
-	oauthFields := card(settingStack("ChatGPT account", "Uses your ChatGPT subscription, with a sign-in in your browser (OAuth with PKCE).",
+	oauthFields := card(settingStack("ChatGPT account", "Uses your ChatGPT subscription. Sign in with your browser.",
 		container.NewVBox(account, container.NewHBox(login), loginLink)))
 	claudeState := plainFlow("", 12.5, colMuted)
 	claudeAccount := plainFlow("", 12.5, colMuted)
@@ -1218,28 +1239,26 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		}
 	}
 	installClaude.onTap = func() { ui.installClaudeCode(showClaude) }
-	claudeFields := card(settingStack("Claude Code on this computer",
-		"Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it.",
+	claudeFields := card(settingStackTitled(titleInfo(ui.tips, "Claude Code on this computer", "Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it."), "Runs the Claude Code installed here, with its own sign-in.",
 		container.NewVBox(claudeState, container.NewHBox(installClaude))),
-		settingRow("Login", "The system login is the one claude uses in a terminal. A connection with its own login signs in to its own account, keeps its own usage limits and sessions, and leaves the other connections signed in.", sized(340, claudeLogin.row)),
+		settingRowTitled(titleInfo(ui.tips, "Login", "The system login is the one claude uses in a terminal. A connection with its own login signs in to its own account, keeps its own usage limits and sessions, and leaves the other connections signed in."), "The system login, or this connection's own account.", sized(340, claudeLogin.row)),
 		settingStack("Account", "", container.NewVBox(claudeAccount, container.NewHBox(signInClaude))))
 	agyState := plainFlow("", 12.5, colMuted)
 	showAgy := func() {
 		if path, err := agent.AgyExecutable(); err == nil {
 			setFlow(agyState, "Installed: "+path+". Sign in by running agy once in a terminal.")
 		} else {
-			setFlow(agyState, "Not installed on this computer. Install the Antigravity CLI with Google's instructions (antigravity.google), then run agy once in a terminal to sign in.")
+			setFlow(agyState, "Not installed. Install the Antigravity CLI (antigravity.google), then run agy once.")
 		}
 	}
-	agyFields := card(settingStack("Antigravity CLI on this computer",
-		"Uses the agy command installed here with its own Google sign-in, tools, settings and MCP servers. The work runs in Antigravity's harness: 1loop sends your messages and shows what it does. Headless agy cannot ask for permissions: when it refuses a command, 1loop asks you and, if you allow it, runs it again with a rule for that command only.",
+	agyFields := card(settingStackTitled(titleInfo(ui.tips, "Antigravity CLI on this computer", "Uses the agy command installed here with its own Google sign-in, tools, settings and MCP servers. The work runs in Antigravity's harness: 1loop sends your messages and shows what it does. Headless agy cannot ask for permissions: when it refuses a command, 1loop asks you and, if you allow it, runs it again with a rule for that command only."), "Runs the agy command here, with its own Google sign-in.",
 		container.NewVBox(agyState, plainFlow(agent.AgyTerms, 12, colMuted))))
 	webFields, releaseWebSetup := ui.chatGPTWebSettings(&draft, say)
 	access := container.NewStack(apiFields, oauthFields, claudeFields, agyFields, webFields)
 
 	routing := jsonEntry(draft.Routing)
 	parameters := jsonEntry(draft.Parameters)
-	routingRow := settingStack("OpenRouter routing (JSON)", "Provider order, fallbacks and the other routing options, for every model of this connection.", routing)
+	routingRow := settingStack("OpenRouter routing (JSON)", "Provider order and fallbacks, for every model here.", routing)
 	advanced := container.NewVBox()
 	showAdvanced := func() {
 		rows := []fyne.CanvasObject{}
@@ -1247,7 +1266,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 			rows = append(rows, routingRow)
 		}
 		rows = append(rows, settingStack("Request parameters (JSON)",
-			"For instance temperature, top_p, max_tokens, seed, chat_template_kwargs. The model, the tools and streaming are 1loop's own.", parameters))
+			"Such as temperature or seed. Model and tools stay 1loop's.", parameters))
 		advanced.Objects = []fyne.CanvasObject{card(rows...)}
 		advanced.Refresh()
 	}
@@ -1310,7 +1329,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		}
 		switch {
 		case len(models) == 0:
-			modelRows.Add(settingRow("No catalog loaded", "Load the models to choose which ones to show and to configure them one by one.", nil))
+			modelRows.Add(settingRow("No catalog loaded", "Load the models to choose which ones to show.", nil))
 		case matching == 0:
 			modelRows.Add(settingRow("No model matches", "", nil))
 		case matching > count:
@@ -1444,7 +1463,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		})
 		remove.danger = true
 		page.Add(sectionTitle("Remove"))
-		page.Add(card(settingRow("Remove this connection", "Existing chats are kept. A ChatGPT account, or a Claude Code account with its own login, is signed out.", remove)))
+		page.Add(card(settingRow("Remove this connection", "Chats are kept; any account here is signed out.", remove)))
 	}
 	page.Add(spacer(0, 16))
 
@@ -1617,7 +1636,7 @@ func (ui *desktopUI) modelPreferencesEditor(conn *agent.Connection, model agent.
 		})
 		page.Add(sectionTitle("Routing"))
 		page.Add(card(
-			settingRow("Upstream provider", "Which provider OpenRouter sends this model's requests to.", container.New(layout.NewCustomPaddedHBoxLayout(8), fetch, sized(220, upstream.row))),
+			settingRow("Upstream provider", "The provider OpenRouter sends this model's requests to.", container.New(layout.NewCustomPaddedHBoxLayout(8), fetch, sized(220, upstream.row))),
 			settingRow("Allow fallback providers", "", fallbacks),
 			settingStack("Routing overrides (JSON)", "", routing)))
 	}
@@ -1625,7 +1644,7 @@ func (ui *desktopUI) modelPreferencesEditor(conn *agent.Connection, model agent.
 	page.Add(card(settingStack("Compact at (tokens)", agent.CompactHelp(compactConfig), compactAt)))
 	page.Add(sectionTitle("Parameters"))
 	page.Add(card(settingStack("Request parameter overrides (JSON)",
-		"They replace the matching defaults of the connection. Save the connection afterwards to apply them.", parameters)))
+		"Replace this connection's defaults. Save to apply them.", parameters)))
 	page.Add(spacer(0, 16))
 	save := newRow("Save model settings", nil, stylePrimary, func() {
 		compact := 0
@@ -1712,7 +1731,7 @@ func (ui *desktopUI) chatGPTConnected(email string, loadModels func()) {
 		padded(16, 2, 0, 0, next),
 		step("1", "Load models: 1loop asks this account which models it can use."),
 		step("2", "Choose the models to show and, if you like, one for each level."),
-		step("3", "Save connection, at the bottom of the page. Its models then show in the model menu under the message box."),
+		step("3", "Save at the bottom of the page. Its models then show in the model menu."),
 	)
 	var dialog *sheet
 	later := newRow("Later", nil, styleOutline, func() { dialog.dismiss() })

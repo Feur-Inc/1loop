@@ -59,6 +59,7 @@ type Chat struct {
 	Scratch   bool   `json:"scratch,omitempty"` // a chat without a folder: show "No folder", never the path
 	Machine   string `json:"machine,omitempty"` // the SSH machine its project is on, by its label
 	Running   bool   `json:"running"`
+	Queued    bool   `json:"queued,omitempty"` // a subchat waiting in the memory queue (#649)
 	Items     int    `json:"items"`
 	Parent    string `json:"parent,omitempty"` // a subchat's parent chat (agent/subchats.go)
 	Branch    string `json:"branch,omitempty"` // a subchat's own worktree's branch, removable with it

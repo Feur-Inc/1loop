@@ -183,6 +183,8 @@ func subchatBadge(state string) fyne.Resource {
 		return iconDot // tinted amber, as a chat at work
 	case agent.SubchatWaiting:
 		return iconWaiting
+	case agent.SubchatQueued:
+		return tinted(iconDot, colMuted)
 	case agent.SubchatDone:
 		return tinted(iconDot, colAdded)
 	case agent.SubchatFailed:

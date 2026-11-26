@@ -398,7 +398,7 @@ func (ui *desktopUI) serverSideChats(target projectTarget, chats []remoteapi.Cha
 		chat := chat
 		side = append(side, sideChat{
 			target: target.id, id: chat.ID, parent: chat.Parent, ended: chat.Ended,
-			title: chat.Title, folder: chat.Workspace, running: chat.Running, // the agent works on it on the server
+			title: chat.Title, folder: chat.Workspace, running: chat.Running, queued: chat.Queued, // the agent works on it on the server
 			status: chat.Status, blocked: chat.Blocked,
 			selected: current != nil && current.server != nil && current.server.client.address.URL == target.id && current.serverID == chat.ID,
 			open:     onServer(func(remote *remoteDesktop) { remote.openChat(chat.ID) }),

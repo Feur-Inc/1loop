@@ -25,6 +25,7 @@ import (
 	"1loop/internal/browser"
 	"1loop/internal/core"
 	"1loop/internal/loopy/engine"
+	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	"1loop/internal/sshmachine"
 	"1loop/internal/usage"
@@ -65,8 +66,10 @@ type serverChat struct {
 	moving       bool // paused to move to another device: it starts nothing (chat_move.go)
 	tabs         []*serverTab
 	session      *browser.Session
-	queue, steer []agent.Message
-	handoff      *pendingHandoff // how the next turn's new model receives the chat
+	queue, steer  []agent.Message
+	queuedSubchat *agent.Message  // initial brief waiting in server.subchatQueue (#649)
+	queuedReason  string          // why queuedSubchat is waiting (#649)
+	handoff       *pendingHandoff // how the next turn's new model receives the chat
 }
 
 type serverRun struct {
@@ -97,6 +100,7 @@ type serverSettings struct {
 	WrapUpOff         bool               `json:"wrapUpOff,omitempty"`
 	AutoResume        *agent.AutoResume  `json:"autoResume,omitempty"`
 	NamingModel       *agent.NamingModel `json:"namingModel,omitempty"`
+	MaxSubchats       int                `json:"maxSubchats,omitempty"` // 0 = automatic from machine memory (#649)
 	// Worktrees of the projects, by folder: their chats belong to the project.
 	Worktrees map[string]string `json:"worktrees,omitempty"`
 	// SSH machines (machines.go), and the projects that are folders of one.
@@ -141,6 +145,11 @@ type headlessServer struct {
 	wrapUpOff                  bool                   // the next-step card (wrap_up tool) turned off
 	autoResume                 *agent.AutoResume      // what a rate limit does to a run, for every chat
 	namingModel                *agent.NamingModel     // the model that names new chats, nil for none
+	maxSubchats                int                    // 0 = automatic from machine memory (#649)
+	readMemory                 func() platform.MemoryStatus
+	subchatQueue               []*serverChat // subchats waiting for a slot or memory (#649)
+	subchatQueueTimer          *time.Timer
+	subchatQueuePoll           time.Duration
 	panelHomes                 map[string]*serverChat // project panels before the first prompt; not persisted
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
@@ -212,8 +221,10 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		choices:      map[string]agent.ModelChoice{},
 		approvalMode: "approval",
 		loading:      true,
-		trust:        &hostTrust{out: os.Stderr},
-		cfg:          agent.Config{Provider: "compatible", Workspace: root},
+		trust:            &hostTrust{out: os.Stderr},
+		cfg:              agent.Config{Provider: "compatible", Workspace: root},
+		readMemory:       platform.ReadMemory,
+		subchatQueuePoll: defaultSubchatQueuePoll,
 	}
 	var err error
 	if server.chats, server.devices, err = readServerState(filepath.Join(dir, "state.json")); err != nil && !os.IsNotExist(err) {
@@ -245,6 +256,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		server.wrapUpOff = settings.WrapUpOff
 		server.autoResume = settings.AutoResume
 		server.namingModel = settings.NamingModel
+		server.maxSubchats = settings.MaxSubchats
 		if settings.ApprovalMode != "" {
 			server.approvalMode = settings.ApprovalMode
 		}
@@ -446,6 +458,10 @@ func (server *headlessServer) close() {
 	if server.saveTimer != nil {
 		server.saveTimer.Stop()
 	}
+	if server.subchatQueueTimer != nil {
+		server.subchatQueueTimer.Stop()
+		server.subchatQueueTimer = nil
+	}
 	for _, chat := range server.chats {
 		if chat.run != nil {
 			chat.run.cancel()
@@ -630,6 +646,9 @@ func (server *headlessServer) settingsLocked() map[string]any {
 		"defaultPresets":      true,
 		"autoResume":          server.autoResume,
 		"namingModel":         server.namingModel,
+		"maxSubchats":         server.maxSubchats,
+		"defaultMaxSubchats":  server.defaultMaxSubchats(),
+		"memoryTotalBytes":    server.memoryStatus().TotalBytes,
 		"userPreferences":     server.instructions,
 		"preferencesEditable": true,
 		"memory":              !server.memoryOff,
@@ -653,7 +672,7 @@ func (server *headlessServer) summariesLocked() []remoteapi.Chat {
 	out := []remoteapi.Chat{}
 	for _, chat := range server.chats {
 		status, blocked := agent.WrapUpStatus(chat.Items)
-		summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
+		summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Machine: server.machineLabelLocked(chat.Config.MachineID), Running: chat.run != nil, Queued: chat.queuedSubchat != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
 		if chat.Subchat != nil {
 			summary.Parent, summary.Ended = chat.Subchat.Parent, chat.Subchat.Ended
 			if server.subchatWorktreeLocked(chat) != "" {
@@ -708,6 +727,12 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		if chat.run.used > 0 {
 			meta.Used = chat.run.used
 		}
+	} else if chat.queuedSubchat != nil {
+		label := "Queued (waiting for memory)"
+		if chat.queuedReason != "" {
+			label = "Queued: " + chat.queuedReason
+		}
+		meta.Label, meta.Mark = label, "wait"
 	}
 	if parent := server.parentLocked(chat); parent != nil {
 		meta.Parent, meta.ParentTitle = parent.ID, parent.Title
@@ -1117,6 +1142,7 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		if chat.run == nil { // the last turn of the chain: it reports to who caused it
 			server.loopyEnded(chat, ended)
 			server.turnEndedLocked(chat, ended)
+			server.drainSubchatQueueLocked()
 		}
 	}()
 }
@@ -1241,6 +1267,7 @@ func (server *headlessServer) saveSettingsLocked() error {
 		WrapUpOff:         server.wrapUpOff,
 		AutoResume:        server.autoResume,
 		NamingModel:       server.namingModel,
+		MaxSubchats:       server.maxSubchats,
 		Worktrees:         server.worktrees,
 		SSHMachines:       server.machines,
 		ProjectMachines:   server.projectMachines,

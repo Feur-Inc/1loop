@@ -35,6 +35,7 @@ type sideChat struct {
 	folder   string // its project, or a worktree of it
 	scratch  bool   // in a folder 1loop made for it: listed under No folder
 	running  bool
+	queued   bool   // a subchat waiting in the server's memory queue (#649)
 	status   string // its last wrap-up's recap, first sentence
 	blocked  bool   // that wrap-up waits on the user
 	selected bool
@@ -104,6 +105,8 @@ func (chat sideChat) subchatState() string {
 		return agent.SubchatWaiting
 	case chat.running:
 		return agent.SubchatWorking
+	case chat.queued:
+		return agent.SubchatQueued
 	case chat.seen:
 		return "" // read since it ended: no dot
 	case chat.ended == agent.SubchatDone || chat.ended == agent.SubchatFailed:

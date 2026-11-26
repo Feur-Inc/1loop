@@ -84,7 +84,10 @@ func serverPages() []serverPage {
 			build: func(_ *settingsView, remote *remoteDesktop, _ string, head serverHead) fyne.CanvasObject {
 				return container.NewVBox(head(nil), card(remote.namingSetting()))
 			}},
-		{name: "Agent", scoped: true, find: same(registry.KeyApprovalMode, "agent.preferences", registry.KeyMemory, registry.KeyWrapUp, "advanced.hooks"),
+		{name: "Agent", scoped: true, find: append(same(registry.KeyApprovalMode, "agent.preferences", registry.KeyMemory, registry.KeyWrapUp, "advanced.hooks"),
+			registry.Setting{Key: "server.max_subchats", Title: "Subchats at once", Kind: registry.Choice,
+				Description: "Most subchats working at once; extra ones queue when memory is low.",
+				Keywords:    []string{"subchat", "subchats", "parallel", "concurrent", "memory", "queue", "limit"}}),
 			build: func(_ *settingsView, remote *remoteDesktop, _ string, head serverHead) fyne.CanvasObject {
 				return remote.agentSettings(head)
 			}},

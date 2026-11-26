@@ -104,6 +104,10 @@ func TestHostKeyConfirmation(t *testing.T) {
 	answers := make(chan bool, 1)
 	go func() { answers <- ask(context.Background(), "Host", "h:22", "ssh-ed25519", "SHA256:new") }()
 	request := waitRequest(t, trust)
+	// The request waits before the console shows it.
+	for deadline := time.Now().Add(5 * time.Second); !strings.Contains(printed(), fmt.Sprintf("trust %d", request.number)) && time.Now().Before(deadline); {
+		time.Sleep(5 * time.Millisecond)
+	}
 	if !strings.Contains(printed(), "SHA256:new") || !strings.Contains(printed(), fmt.Sprintf("trust %d", request.number)) {
 		t.Fatalf("the console shows the key and how to answer: %q", printed())
 	}

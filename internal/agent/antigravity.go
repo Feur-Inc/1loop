@@ -650,11 +650,10 @@ func (backend *App) agyProcess(ctx context.Context, cfg Config, session *string,
 	var readErr error // set before lines closes
 	go func() {
 		defer close(lines)
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 64<<10), 64<<20)
+		scanner := core.NewLineReader(stdout, 64<<20)
 		for scanner.Scan() {
 			select {
-			case lines <- append([]byte(nil), scanner.Bytes()...):
+			case lines <- scanner.Bytes():
 			case <-done:
 				io.Copy(io.Discard, stdout)
 				return

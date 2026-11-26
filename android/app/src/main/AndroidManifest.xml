@@ -101,6 +101,12 @@
             android:name=".UpdateCheckJob"
             android:exported="false"
             android:permission="android.permission.BIND_JOB_SERVICE" />
+        <!-- Loopy: a notification's button answers its card; a look every quarter of an hour at what waits. -->
+        <receiver android:name=".LoopyActionReceiver" android:exported="false" />
+        <service
+            android:name=".LoopyCheckJob"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
         <!-- The checked update APK, readable by Android's installer only (Updates.kt),
              and the camera's photo for the next message (MediaSheet.kt). -->
         <provider

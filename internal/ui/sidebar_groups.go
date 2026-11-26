@@ -12,6 +12,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 
 	"1loop/internal/agent"
 	registry "1loop/internal/settings"
@@ -23,6 +24,7 @@ const groupChatLimit = 5
 // sideChat is a chat as the sidebar lists it: this computer's, a machine's
 // or a server's.
 type sideChat struct {
+	target   string // the server it is on, "" here: a moved chat has its ID on both
 	id       string
 	parent   string // a subchat's parent, "" for another chat
 	ended    string // how a subchat's last turn ended: done, stopped or failed
@@ -316,7 +318,8 @@ func (ui *desktopUI) addScratchGroup(chats []sideChat) {
 	if folded {
 		icon = iconChevronRight
 	}
-	header := newRow(noFolderLabel, icon, styleNav, func() { ui.foldProject(scratchGroup, !folded) })
+	header := newRow(thisComputerLabel, icon, styleNav, func() { ui.foldProject(scratchGroup, !folded) })
+	header.mark = theme.ComputerIcon()
 	header.accent = true
 	header.selected = ui.cfg.InScratch() && ui.current == nil
 	if folded && groupRunning(chats) {
@@ -369,7 +372,8 @@ func (ui *desktopUI) addGroupChats(key, project string, chats []sideChat) {
 		if nested, _ := nestedCount(chat.subchats); nested > 0 {
 			row.mark, row.markText = iconBranch, strconv.Itoa(nested)
 		}
-		ui.addSide("chat:"+chat.id, ui.reuseRow("chat:"+chat.id, row, func(object fyne.CanvasObject) fyne.CanvasObject {
+		key := "chat:" + chat.target + ":" + chat.id
+		ui.addSide(key, ui.reuseRow(key, row, func(object fyne.CanvasObject) fyne.CanvasObject {
 			return padded(0, 0, 28, 0, object)
 		}, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, chat.menu)

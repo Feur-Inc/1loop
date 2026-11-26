@@ -43,6 +43,7 @@ func (w *BaseWidget) Resize(size fyne.Size) {
 	}
 
 	w.size = size
+	fyne.ForgetMinSizes() // 1loop: a text may wrap again (minsize_memo.go)
 
 	impl := w.super()
 	if impl == nil {

@@ -14,6 +14,8 @@ shows every change.
 - `minsize_memo.go`, `container.go`, `widget/widget.go`,
   `internal/driver/common/canvas.go`: during the per-frame minimum-size
   pass each object's MinSize is computed once, not once per tree level.
+  A Resize that changes a size forgets the remembered sizes (an era
+  counter), so text wrapped again at a new width is measured anew.
 - `internal/driver/common/structures.go`, `canvas.go` (walkTree): when the
   visible children of an object change, the render nodes after the change
   are kept (and those of hidden objects kept aside for their return)
@@ -65,6 +67,20 @@ shows every change.
   screen): on Wayland the compositor keeps the size a window is created
   with, and the canvas was stretched over it. `window_workarea_test.go`
   checks the arithmetic.
+- `internal/driver/glfw/window_desktop.go` (scaled): on Wayland, a change of
+  content scale also throws the text textures away, as RescaleContext does.
+  They are kept by text and colour, so text drawn before the compositor's
+  fractional scale arrived was stretched from 1.0 to 1.25.
+- `internal/painter/gl/draw.go` (roundToPixelCoords): a texture's
+  rectangle keeps the size its texture is drawn at (`round(size × scale)`)
+  instead of the distance between its rounded edges, which changed with
+  its position at a fractional scale: at 1.25 the logo's ring (26 pixels)
+  was drawn 26×25, stretched and resampled out of round, and icons and text
+  were resampled by a pixel. `round_test.go` checks it.
+- **Colour emoji** (`internal/painter/font.go`, #352): an emoji the text font
+  has a plain glyph for (a few faces and the heart, in Inter) is drawn with
+  the colour emoji font; and on Linux that font is also looked for by its
+  family, for the query by language could answer with a text font.
 - `driver/frametimes.go` (`TurnHook`, `Refreshes`, `KeepFonts`),
   `internal/driver/glfw/loop.go`, `canvas/canvas.go`,
   `widget/entry_cursor_anim.go`, `internal/cache/base.go`, `theme.go`

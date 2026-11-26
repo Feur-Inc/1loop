@@ -4,9 +4,8 @@
 
 package ui
 
-// The XDG desktop portal over D-Bus: file choosers (filepicker.go) and the
-// Flatpak's notifications (notify.go). The browser client has none
-// (portal_js.go).
+// The XDG desktop portal's file choosers over D-Bus (filepicker.go). The
+// browser client has none (portal_js.go).
 
 import (
 	"strings"
@@ -16,9 +15,6 @@ import (
 	"fyne.io/fyne/v2/driver"
 	"github.com/rymdport/portal"
 	"github.com/rymdport/portal/filechooser"
-	"github.com/rymdport/portal/notification"
-
-	"1loop/internal/platform"
 )
 
 // portalHandle names the parent window so the portal can keep its dialog
@@ -93,11 +89,3 @@ func portalSave(handle string, pickRequestValue pickRequest) ([]string, bool) {
 // portalNotification numbers the portal's notifications: one id each, so a
 // new one does not replace the last.
 var portalNotification atomic.Uint64
-
-// portalNotify shows a notification through the portal, with the
-// application's own icon.
-func portalNotify(title, text string) {
-	if err := notification.Add(uint(portalNotification.Add(1)), notification.Content{Title: title, Body: text}); err != nil {
-		platform.Devf("app", "notification portal: %v", err)
-	}
-}

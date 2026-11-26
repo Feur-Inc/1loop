@@ -164,6 +164,7 @@ func (c *Container) Resize(size Size) {
 	}
 
 	c.size = size
+	ForgetMinSizes() // 1loop: what it holds may wrap again (minsize_memo.go)
 	c.layout()
 }
 

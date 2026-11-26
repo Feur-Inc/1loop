@@ -253,6 +253,7 @@ type remoteDesktop struct {
 	status           interface{ SetText(string) } // the line beside the target, under the conversation
 	wake             chan struct{}
 	name             string // as the server calls itself
+	shown            bool   // its first state arrived: name, projects and chats are its own (show)
 	defaultWorkspace string
 	current          string // the open chat's ID on the server, "" on the start screen
 	mentionsChat     string // the chat mentionList is for
@@ -269,6 +270,7 @@ type remoteDesktop struct {
 	approvalMode     string
 	autoMode         bool
 	namingModel      *agent.NamingModel       // the server's chat naming model
+	chatGPTSignIn    bool                     // it signs a ChatGPT account in with this computer's browser (remote_chatgpt.go)
 	convs            map[string]*conversation // the server's chats as this window shows them
 	fileAttachments  []agent.FileAttachment
 	thumbnails       map[string]image.Image // the pictures uploaded from here, by their path on the server
@@ -291,6 +293,7 @@ type remoteDesktop struct {
 	todoUsage     *contextUsageState
 	todoTimes     map[string]*canvas.Text // each task's clock, ticking in place
 	todoMarks     []*taskMark
+	goalClock     *canvas.Text // the goal card's time spent (goal.go)
 	todoSignature string
 	openCommands  map[string]bool // the background commands shown in full, by task
 	connected     string          // the connection line show last wrote in status
@@ -725,15 +728,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			Name, Workspace string
 			Chats           []remoteapi.Chat
 			Worktrees       map[string]string
-			Settings        struct {
-				Models                      []remoteapi.Model
-				Accounts                    []remoteapi.Account
-				DefaultPresets              bool
-				Model, Effort, ApprovalMode string
-				Tier                        string
-				AutoMode                    bool // the server's model has an Auto mode
-				NamingModel                 *agent.NamingModel
-			}
+			Settings        serverSettingsState
 		}
 		err := remote.client.json(ctx, "GET", "/api/state", nil, &state)
 		stateErr := err // whether the server answers (an open chat's error may only be the chat's)
@@ -773,11 +768,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			}
 			remote.worktrees = state.Worktrees
 			remote.show(state.Name, state.Workspace, state.Chats, projects.Projects)
-			remote.models = state.Settings.Models
-			remote.accounts, remote.defaultPresets = state.Settings.Accounts, state.Settings.DefaultPresets
-			remote.model, remote.effort, remote.tier = state.Settings.Model, state.Settings.Effort, state.Settings.Tier
-			remote.approvalMode, remote.autoMode = state.Settings.ApprovalMode, state.Settings.AutoMode
-			remote.namingModel = state.Settings.NamingModel
+			remote.takeSettings(state.Settings)
 			remote.parent.updateApprovalControl()
 			if id == "" {
 				remote.showModel(remote.model, remote.effort)
@@ -798,6 +789,8 @@ func (remote *remoteDesktop) refreshLoop() {
 func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat, listed []string) {
 	ui := remote.parent
 	remote.name, remote.defaultWorkspace = name, workspace
+	first := !remote.shown
+	remote.shown = true
 	projects := serverProjectList(workspace, listed, chats, remote.worktrees)
 	ui.rememberServerProjects(remote.client.address.URL, projects)
 	if ui.cfg.Workspace == "" {
@@ -811,7 +804,7 @@ func (remote *remoteDesktop) show(name, workspace string, chats []remoteapi.Chat
 		remote.connected = status
 		remote.status.SetText(status)
 	}
-	if slices.Equal(remote.chats, chats) && slices.Equal(remote.projects, projects) {
+	if !first && slices.Equal(remote.chats, chats) && slices.Equal(remote.projects, projects) {
 		return
 	}
 	remote.chats, remote.projects = chats, projects
@@ -1059,7 +1052,7 @@ func (remote *remoteDesktop) showMeta(conv *conversation) {
 		}
 		remote.approvalID = approvalID
 		if approval := meta.Approval; approval != nil {
-			remote.approvalSheet = ui.showApproval(conv, map[string]any{"id": approval.ID, "title": approval.Title, "preview": approval.Preview})
+			remote.approvalSheet = ui.showApproval(conv, map[string]any{"id": approval.ID, "title": approval.Title, "preview": approval.Preview, "review": approval.Review})
 		}
 	}
 	questionID := ""
@@ -1291,7 +1284,7 @@ func (remote *remoteDesktop) renderTasks() {
 	if remote.tabViews["todo"] == nil || remote.todoTasks == nil {
 		return
 	}
-	signature, _ := json.Marshal([]any{remote.meta.Todo, remote.meta.Tasks, remote.meta.Subchats})
+	signature, _ := json.Marshal([]any{remote.meta.Todo, remote.meta.Tasks, remote.meta.Subchats, remote.meta.Goal})
 	if string(signature) != remote.todoSignature {
 		remote.todoSignature = string(signature)
 		remote.todoTasks.RemoveAll()
@@ -1301,7 +1294,12 @@ func (remote *remoteDesktop) renderTasks() {
 		remote.todoTimes = map[string]*canvas.Text{}
 		tasks := remote.todoTasks
 		live := func() bool { return remote.meta.Running && remote.todoTasks == tasks && remote.tabViews["todo"] != nil }
-		// Drawn as this computer's chats draw theirs (#542).
+		// Drawn as this computer's chats draw theirs (#542), the goal first:
+		// its controls send the /goal command they name (goal.go).
+		chatID := remote.meta.Chat
+		remote.goalClock = drawGoalCard(remote.todoTasks, remote.meta.Goal.AgentGoal(), func(command string) {
+			remote.action("/api/send", map[string]any{"chat": chatID, "text": command})
+		})
 		remote.todoMarks = drawTaskList(remote.todoTasks, remote.todoItems(), live, remote.todoTimes)
 		// The server's background commands, newest first, each with its own Stop.
 		if len(remote.meta.Tasks) > 0 {
@@ -1333,6 +1331,7 @@ func (remote *remoteDesktop) renderTasks() {
 		remote.addSubchats()
 	}
 	now := time.Now()
+	tickGoalClock(remote.goalClock, remote.meta.Goal.AgentGoal())
 	for _, item := range remote.todoItems() {
 		if clock := remote.todoTimes[item.ID]; clock != nil {
 			if value := taskElapsed(item, now); value != clock.Text {

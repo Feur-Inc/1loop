@@ -32,7 +32,7 @@ func autoShell(t *testing.T, workspace string, arguments map[string]any) (output
 	raw, _ := json.Marshal(arguments)
 	call := ToolCall{ID: "call"}
 	call.Function.Name, call.Function.Arguments = "shell", string(raw)
-	output, _, err = (&App{Approvals: map[string]chan bool{}}).runTool(ctx, workspace, call, func() {}, func(string, any) {})
+	output, _, err = (&App{Approvals: map[string]chan ApprovalAnswer{}}).runTool(ctx, workspace, call, func() {}, func(string, any) {})
 	return output, err, reviewed
 }
 

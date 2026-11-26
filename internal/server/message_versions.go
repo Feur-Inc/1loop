@@ -68,7 +68,7 @@ func (server *headlessServer) editMessage(w http.ResponseWriter, r *http.Request
 	id := state.ForkMessage(index, args.Action == "retry")
 	chat.applyBranch(state)
 	chat.queue, chat.steer = nil, nil
-	chat.Cache, chat.review = &agent.ContextCache{}, nil
+	chat.Cache, chat.Compaction, chat.review = &agent.ContextCache{}, &agent.CompactionState{}, nil
 	server.replaceLocked(chat)
 	server.runWithIDLocked(chat, agent.PromptMessage(text, item.Images, item.Files), id)
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
@@ -101,7 +101,7 @@ func (server *headlessServer) selectVersion(w http.ResponseWriter, r *http.Reque
 	}
 	chat.applyBranch(state)
 	chat.queue, chat.steer = nil, nil
-	chat.Cache, chat.review = &agent.ContextCache{}, nil
+	chat.Cache, chat.Compaction, chat.review = &agent.ContextCache{}, &agent.CompactionState{}, nil
 	server.replaceLocked(chat)
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }

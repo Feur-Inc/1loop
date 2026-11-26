@@ -625,7 +625,9 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	ui.usageRow = newRow("Usage", iconUsage, styleNav, ui.showUsage)
 	bottom := container.NewVBox(divider, padded(6, 0, 0, 0, ui.updateRow), padded(0, 0, 0, 0, ui.usageRow), padded(0, 8, 0, 0, ui.connections))
 	// Under the logo: the chats, or the settings' sections while they are open.
-	ui.sideApp = container.NewBorder(ui.sideActions(), bottom, nil, nil, newKineticVScroll(lists))
+	scroll := newKineticVScroll(lists)
+	ui.sideGlide.scroll = scroll
+	ui.sideApp = container.NewBorder(ui.sideActions(), bottom, nil, nil, scroll)
 	content := padded(0, 0, 12, 12, container.NewBorder(brand, nil, nil, nil, container.NewStack(ui.sideApp, ui.prefs.side)))
 	return container.NewStack(blurBehind("sidebar", canvas.NewRectangle(colSidebar), &colSidebar), content)
 }

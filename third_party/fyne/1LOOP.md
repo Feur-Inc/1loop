@@ -161,3 +161,16 @@ shows every change.
   for 1loop's text selection, which lies over code blocks and passes the
   pointer on to them. `container/scroll_1loop_test.go` and
   `scrollbar/scrollbar_test.go` check it.
+- `canvas/image.go` (renderSVG), `canvas/image_svgcache.go` (#475): an
+  SVG's rasterised copy is cached per pixel size, not one per name: an
+  icon shown at two sizes (a row's 18 px, a chip's 16 px) drew itself
+  again each time the other size was asked for. (The decoder kept per
+  resource and colour is #485's.)
+- `driver/frametimes.go` (`PreloadFonts`), `internal/painter/font.go`
+  (#475): the system's font index can be read on any goroutine ahead of
+  the first text measured, which waited for it on the UI thread
+  (~100 ms on the test VM).
+- `internal/driver/glfw/driver_desktop.go` (runSystray, #475): a tray set
+  once the app runs is started at once; before, only `runGL` started it,
+  so 1loop had to make the tray (its hidden window and GL context,
+  ~100 ms) before the first frame.

@@ -398,7 +398,11 @@ func (i *Image) renderSVG(width, height float32) (image.Image, error) {
 		screenHeight *= 2
 	}
 
-	tex := cache.GetSvg(i.name(), i, screenWidth, screenHeight)
+	// 1loop: one rasterised copy per size, not one per name: an icon shown
+	// at two sizes (a row's 18 px, a chip's 16 px) drew itself again each
+	// time the other size was asked for.
+	name := svgSizedName(i.name(), screenWidth, screenHeight)
+	tex := cache.GetSvg(name, i, screenWidth, screenHeight)
 	if tex != nil {
 		return tex, nil
 	}
@@ -410,7 +414,7 @@ func (i *Image) renderSVG(width, height float32) (image.Image, error) {
 	if err != nil {
 		return nil, err
 	}
-	cache.SetSvg(i.name(), i, tex, screenWidth, screenHeight)
+	cache.SetSvg(name, i, tex, screenWidth, screenHeight)
 	return tex, nil
 }
 

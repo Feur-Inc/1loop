@@ -28,6 +28,7 @@ import (
 	fyneapp "fyne.io/fyne/v2/app"
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
+	fynedriver "fyne.io/fyne/v2/driver"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/lang"
 	"fyne.io/fyne/v2/layout"
@@ -414,6 +415,11 @@ func runDesktop(backend *agent.App, root, asked string) {
 		state, err := readSavedState(statePath(root))
 		saved <- stateRead{state, err}
 	}()
+	// The index of the system's fonts, which the first text measured waits
+	// for (~100 ms on a desktop with many fonts), is read meanwhile too (#475).
+	if fynedriver.PreloadFonts != nil {
+		go fynedriver.PreloadFonts()
+	}
 	// Follow the desktop's own scale (Xft.dpi) instead of Fyne's guess from
 	// the panel's physical DPI, which made everything ~40 % larger than other
 	// apps. An explicit FYNE_SCALE from the user still wins.
@@ -461,7 +467,12 @@ func runDesktop(backend *agent.App, root, asked string) {
 	ui.backdrop = newBackdrop()
 	ui.watchPointer()
 	ui.catchDragEscape()
-	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.backdrop.picture, ui.build()))
+	// The first frame shows the launch screen alone, opaque over the whole
+	// window: the content under it is laid out and drawn from the next one
+	// (reveal, #475), so the window shows without waiting for it.
+	content := ui.build()
+	content.Hide()
+	ui.window.SetContent(container.NewStack(ui.backdrop.shader, ui.backdrop.picture, content))
 	benchMark("content built")
 	ui.syncBackdrop()
 	ui.followUsage()
@@ -482,15 +493,20 @@ func runDesktop(backend *agent.App, root, asked string) {
 	ui.registerShortcuts()
 	ui.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { ui.focused().copySelection() })
 	ui.updateHeader()
-	ui.renderChats()
-	benchMark("sidebar rendered")
 	ui.loadKeys()
 	ui.refreshModels()
 	ui.refreshContextUsage()
-	// What the first frame does not show starts right after it (#475): the
-	// phone remote (its certificate), the linked servers, the update check
-	// and the other windows of the last run.
-	afterFirstFrame := func() {
+	// What the first frame does not show comes right after it (#475), still
+	// under the launch screen: the content, its sidebar and the main
+	// window's panes of the last run; one frame later the tray (its own
+	// hidden window and GL context), the phone remote (its certificate),
+	// the linked servers, the update check and the other windows of the
+	// last run.
+	started := time.Now()
+	var launch *launchScreen
+	afterContent := func() {
+		ui.startTray(a)
+		benchMark("tray started")
 		ui.startRemote()
 		ui.wakeLoopy() // its routines go on
 		ui.linkLoopy()
@@ -500,10 +516,22 @@ func runDesktop(backend *agent.App, root, asked string) {
 		ui.restoreWindows(read.state.Windows) // the other windows of the last run, on their chats
 		benchMark("windows restored")
 	}
-	ui.window.Canvas().Focus(ui.prompt)
+	reveal := func() {
+		content.Show()
+		ui.renderChats()
+		benchMark("sidebar rendered")
+		ui.restoreLayout(read.state.Split) // the main window's panes of the last run
+		ui.window.Canvas().Focus(ui.focused().prompt)
+		benchMark("content shown")
+		benchContentDrawn()
+		// The sequence starts once the content is drawn under it, at least
+		// 180 ms after the window came: before, it would play unseen.
+		time.AfterFunc(max(16*time.Millisecond, 180*time.Millisecond-time.Since(started)), func() { fyne.Do(launch.play) })
+		time.AfterFunc(50*time.Millisecond, func() { fyne.Do(afterContent) })
+	}
 	// The launch sequence covers the first frames and only starts once the
 	// window is really on screen, otherwise it would play unseen.
-	launch := newLaunchScreen(ui.window.Canvas(), func() {
+	launch = newLaunchScreen(ui.window.Canvas(), func() {
 		ui.window.Canvas().Focus(ui.focused().prompt) // a restored split's pane with the focus keeps it (panes.go)
 		ui.warnFlatpakPermissions()
 		if ui.stateProblem != "" {
@@ -523,14 +551,13 @@ func runDesktop(backend *agent.App, root, asked string) {
 		clipboardReady()
 		windowIdentity(ui.window) // again, should the window not have existed yet below
 		ui.startFrames()
-		// Started now, it would run before the first frame: the queue is
+		// Queued now, it would run before the first frame: the queue is
 		// emptied before each one.
-		time.AfterFunc(100*time.Millisecond, func() { fyne.Do(afterFirstFrame) })
+		started = time.Now()
+		time.AfterFunc(20*time.Millisecond, func() { fyne.Do(reveal) })
 		size := ui.window.Canvas().Size()
 		platform.Devf("app", "window %.0f x %.0f at scale %.2f, own title bar %v", size.Width, size.Height, ui.window.Canvas().Scale(), ui.chrome)
-		time.AfterFunc(180*time.Millisecond, func() { fyne.Do(launch.play) })
 	})
-	ui.startTray(a)
 	serveInstance(instance, func() { fyne.Do(ui.showWindow) }, func(folder string) {
 		fyne.Do(func() {
 			ui.mainView().openProjectOn(localTarget, folder)
@@ -558,9 +585,28 @@ func runDesktop(backend *agent.App, root, asked string) {
 		go ui.bench(kind)
 	}
 	windowIdentity(ui.window)
-	ui.restoreLayout(read.state.Split) // the main window's panes of the last run
 	benchMark("main loop")
 	a.Run()
+}
+
+// benchContentDrawn notes, when benchmarking, the first frame drawn after
+// the content was revealed under the launch screen: the window as it is
+// once the launch screen goes. The bench's own frame hook (bench.go) is set
+// by then and goes on.
+func benchContentDrawn() {
+	if !benchOn {
+		return
+	}
+	next, noted := fynedriver.FrameTimes, false
+	fynedriver.FrameTimes = func(sizes, paint, present time.Duration) {
+		if !noted {
+			noted = true
+			benchMark("content drawn")
+		}
+		if next != nil {
+			next(sizes, paint, present)
+		}
+	}
 }
 
 // statePath keeps conversations and settings in the user's config folder
@@ -2475,6 +2521,7 @@ func (ui *desktopUI) persist(wait bool) {
 	}
 	ui.saveCount++
 	count, path := ui.saveCount, ui.statePath
+	snapshot := time.Since(started) // what the interface's thread spent on this save
 	write := func() {
 		ui.saveLock.Lock()
 		defer ui.saveLock.Unlock()
@@ -2496,7 +2543,8 @@ func (ui *desktopUI) persist(wait bool) {
 				return writeChats(w, &written, before, chats, after)
 			})
 		}
-		platform.Devf("app", "state saved: %d chats, %d KiB, %s in all (error: %v)", len(chats), written>>10, time.Since(started).Round(time.Millisecond), err)
+		platform.Devf("app", "state saved: %d chats, %d KiB, %s in all, %s of it on the interface's thread (error: %v)",
+			len(chats), written>>10, time.Since(started).Round(time.Millisecond), snapshot.Round(10*time.Microsecond), err)
 		report := func() {
 			if err != nil && err.Error() != ui.saveError && ui.ctx.Err() == nil {
 				ui.notice("Unable to save", err.Error()) // once per distinct problem

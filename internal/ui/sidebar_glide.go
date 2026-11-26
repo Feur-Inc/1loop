@@ -31,6 +31,9 @@ type glideLayout struct {
 	pillFrom rect              // where the pill was when the glide started
 	pillTo   rect
 	pillFade [2]float32 // the pill's opacity at the start and the end of the glide
+	// scroll is what the list scrolls in, told when the list's height
+	// changed (renderSidebar).
+	scroll *kineticScroll
 }
 
 // glidePlace is a row's place: target is where the layout puts it, and
@@ -54,7 +57,11 @@ func (glide *glideLayout) key(object fyne.CanvasObject, key string) { glide.keys
 
 func (glide *glideLayout) end(list *fyne.Container) {
 	glide.building, glide.changed = false, true
-	list.Refresh() // lays the new rows out from where the old ones were
+	// Lays the new rows out from where the old ones were. Not Refresh,
+	// which refreshed every row, changed or not: a row kept from the last
+	// rendering refreshes itself when it changed (reuseRow, #475).
+	relayout(list)
+	canvas.Refresh(list)
 }
 
 // at is where a place's row is drawn now, part way through a glide.

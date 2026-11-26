@@ -164,6 +164,7 @@ type desktopUI struct {
 	localCfg         agent.Config    // this computer's settings while a server is the target
 	machine          *tapRow         // the target: this computer, an SSH machine or a server
 	serverStatus     *fitLabel       // the server's state beside it
+	serverBusy       *activityLine   // under the title bar while the server is slow to answer (remote_activity.go)
 	modelsLoading    bool
 	pendingGoal      *agent.GoalState // a /goal on the start screen, for the chat it makes
 
@@ -902,6 +903,8 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	if ui.chrome {
 		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, ui.headerBar))
 	}
+	ui.serverBusy = newActivityLine()
+	header = container.NewStack(header, container.NewBorder(nil, ui.serverBusy, nil, nil))
 	ui.titleBar = header
 	// The settings page takes the conversation's place while it is open.
 	ui.curtain = newPageCurtain()
@@ -2095,10 +2098,7 @@ func (ui *desktopUI) showApproval(chat *conversation, p map[string]any) *sheet {
 // approve answers an approval: this computer's agent, or the server's.
 func (ui *desktopUI) approve(chat *conversation, id string, answer agent.ApprovalAnswer) {
 	if chat.server != nil {
-		chat.server.action("/api/approve", struct {
-			ID string `json:"id"`
-			agent.ApprovalAnswer
-		}{id, answer})
+		chat.server.approve(id, answer)
 		return
 	}
 	ui.backend.AnswerApproval(id, answer)

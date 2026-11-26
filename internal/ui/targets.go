@@ -260,7 +260,7 @@ func (ui *desktopUI) serverGroup(address string) targetGroup {
 	}
 	if active && remote.shown {
 		listing = &serverListing{name: remote.name, projects: remote.projects, chats: remote.chats, worktrees: remote.worktrees}
-	} else if link := ui.linkTo(address); link != nil && link.answered {
+	} else if link := ui.linkTo(address); link != nil && link.answered { // until the window's own connection answers
 		listing = &link.listing
 	}
 	target := serverTarget(address)
@@ -383,7 +383,7 @@ func (ui *desktopUI) serverSideChats(target projectTarget, chats []remoteapi.Cha
 			status: chat.Status, blocked: chat.Blocked,
 			selected: current != nil && current.server != nil && current.server.client.address.URL == target.id && current.serverID == chat.ID,
 			open:     onServer(func(remote *remoteDesktop) { remote.openChat(chat.ID) }),
-			menu: []menuAction{
+			menu: []menuAction{{label: "Rename", icon: iconRename, run: onServer(func(remote *remoteDesktop) { remote.renameChat(chat) })},
 				{label: "Move to this computer…", icon: theme.ComputerIcon(), run: onServer(func(remote *remoteDesktop) {
 					remote.moveHere(chat.ID, chat.Title, chat.Workspace, chat.Running)
 				})},

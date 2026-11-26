@@ -214,7 +214,8 @@ func (view *settingsView) serverFor(address string) (*remoteDesktop, reach, stri
 	return entry.remote, entry.state, entry.problem
 }
 
-// serverSettingsState is what /api/state says of a server's settings.
+// serverSettingsState is what a server says of its settings, in /api/state
+// and its settings event.
 type serverSettingsState struct {
 	Models                      []remoteapi.Model
 	Accounts                    []remoteapi.Account
@@ -223,11 +224,14 @@ type serverSettingsState struct {
 	Tier                        string
 	AutoMode                    bool // the server's model has an Auto mode
 	NamingModel                 *agent.NamingModel
+	Loading                     bool // its accounts' models are still being read
 }
 
 // takeSettings keeps what the server says of its settings.
 func (remote *remoteDesktop) takeSettings(settings serverSettingsState) {
-	remote.models = settings.Models
+	if len(settings.Models) > 0 || !settings.Loading { // kept while the server reads them again
+		remote.models = settings.Models
+	}
 	remote.accounts, remote.defaultPresets = settings.Accounts, settings.DefaultPresets
 	remote.model, remote.effort, remote.tier = settings.Model, settings.Effort, settings.Tier
 	remote.approvalMode, remote.autoMode = settings.ApprovalMode, settings.AutoMode

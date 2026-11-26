@@ -145,6 +145,7 @@ type headlessServer struct {
 	devices                    []remoteapi.PairedDevice
 	pairs                      map[string]*serverPair
 	subs                       map[chan serverEvent]bool
+	eventSeq                   uint64 // the events sent so far: a client tells a read's snapshot from the events after it (#591)
 	streams                    map[chan struct{}]bool
 	choices                    map[string]agent.ModelChoice
 	modelReload                sync.Mutex
@@ -190,6 +191,7 @@ type headlessServer struct {
 type serverEvent struct {
 	kind string
 	data []byte
+	seq  uint64 // its place among the events, sent as the event's id
 }
 
 func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*headlessServer, error) {
@@ -758,9 +760,10 @@ func (server *headlessServer) broadcastLocked(kind string, value any) {
 	if err != nil {
 		return
 	}
+	server.eventSeq++
 	for channel := range server.subs {
 		select {
-		case channel <- serverEvent{kind, data}:
+		case channel <- serverEvent{kind, data, server.eventSeq}:
 		default:
 			close(channel)
 			delete(server.subs, channel)

@@ -116,10 +116,7 @@ func (remote *remoteDesktop) presetRows() []fyne.CanvasObject {
 							return
 						}
 						dialog.dismiss()
-						select {
-						case remote.wake <- struct{}{}:
-						default:
-						}
+						remote.want(wantState)
 					})
 				}()
 			}

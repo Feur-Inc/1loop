@@ -5,6 +5,7 @@ package agent
 import (
 	"context"
 	"crypto/sha256"
+	"crypto/subtle"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -52,6 +53,7 @@ type openAIAuth struct {
 	Mu      sync.Mutex    `json:"-"`
 	Account openAIAccount `json:"account"`
 	path    string
+	relay   *openAIPending // a relayed sign-in waiting for its code (Mu)
 }
 
 func newOpenAIAuth(profiles ...string) (*openAIAuth, error) {
@@ -104,7 +106,7 @@ func (auth *openAIAuth) save() error {
 
 func tokenExchange(ctx context.Context, form url.Values) (openAITokens, error) {
 	var openAITokensValue openAITokens
-	req, err := http.NewRequestWithContext(ctx, "POST", openAIIssuer+"/oauth/token", strings.NewReader(form.Encode()))
+	req, err := http.NewRequestWithContext(ctx, "POST", openAITokenURL, strings.NewReader(form.Encode()))
 	if err != nil {
 		return openAITokensValue, err
 	}
@@ -172,85 +174,105 @@ func (auth *openAIAuth) credential(ctx context.Context) (string, error) {
 	return auth.Account.Tokens.Access, nil
 }
 
-// begin starts only a loopback callback. The user opens the authorization link.
-func (auth *openAIAuth) begin(ctx context.Context) (string, <-chan error, error) {
-	listener, err := net.Listen("tcp", "127.0.0.1:1455")
-	if err != nil {
-		return "", nil, err
-	}
-	state, verifier := core.Identifier(), core.Identifier()
-	digest := sha256.Sum256([]byte(verifier))
-	callback := "http://localhost:1455/auth/callback"
+// openAICallback is where OpenAI sends the browser back: the public client
+// accepts only this address, so a relayed sign-in names it too.
+const openAICallback = "http://localhost:1455/auth/callback"
+
+// openAITokenURL is OpenAI's token endpoint; a test points it at its own.
+var openAITokenURL = openAIIssuer + "/oauth/token"
+
+// openAIPending is a sign-in between its link and the code that comes back:
+// the PKCE verifier stays here, and the account it may replace.
+type openAIPending struct {
+	state, verifier string
+	original        openAIAccount
+	expires         time.Time
+}
+
+// authorize starts a sign-in: its link and what checks the code returned.
+func (auth *openAIAuth) authorize() (string, *openAIPending) {
+	pending := &openAIPending{state: core.Identifier(), verifier: core.Identifier(), expires: time.Now().Add(5 * time.Minute)}
+	digest := sha256.Sum256([]byte(pending.verifier))
 	auth.Mu.Lock()
-	original := auth.Account
+	pending.original = auth.Account
 	auth.Mu.Unlock()
-	clientID := openAIClientID
 	q := url.Values{
-		"client_id":                  {clientID},
+		"client_id":                  {openAIClientID},
 		"response_type":              {"code"},
-		"redirect_uri":               {callback},
+		"redirect_uri":               {openAICallback},
 		"scope":                      {"openid profile email offline_access"},
-		"state":                      {state},
+		"state":                      {pending.state},
 		"code_challenge_method":      {"S256"},
 		"code_challenge":             {base64.RawURLEncoding.EncodeToString(digest[:])},
 		"id_token_add_organizations": {"true"},
 		"codex_cli_simplified_flow":  {"true"},
 		"originator":                 {"1loop"},
 	}
+	return openAIIssuer + "/oauth/authorize?" + q.Encode(), pending
+}
+
+// finish trades the code for tokens, checks the identity and saves the
+// account: the one path of every sign-in, wherever its browser ran.
+func (auth *openAIAuth) finish(ctx context.Context, pending *openAIPending, code string) error {
+	if code == "" {
+		return fmt.Errorf("Missing authorization code")
+	}
+	openAITokens, err := tokenExchange(ctx, url.Values{
+		"grant_type":    {"authorization_code"},
+		"client_id":     {openAIClientID},
+		"code":          {code},
+		"code_verifier": {pending.verifier},
+		"redirect_uri":  {openAICallback},
+	})
+	if err != nil {
+		return err
+	}
+	sub, email, err := validateOpenAIID(ctx, openAITokens.ID, openAIClientID, "")
+	if err != nil {
+		return err
+	}
+	original := pending.original
+	if original.ClientID == openAIClientID && original.Subject != "" && sub != original.Subject {
+		return fmt.Errorf("The account does not match the selected session")
+	}
+	auth.Mu.Lock()
+	defer auth.Mu.Unlock()
+	previous := auth.Account
+	auth.Account = openAIAccount{
+		ClientID: openAIClientID,
+		Subject:  sub,
+		Email:    email,
+		Tokens:   openAITokens,
+		Expires:  time.Now().Add(time.Duration(openAITokens.ExpiresIn) * time.Second),
+	}
+	if err = auth.save(); err != nil {
+		auth.Account = previous
+	}
+	return err
+}
+
+// begin starts only a loopback callback. The user opens the authorization link.
+func (auth *openAIAuth) begin(ctx context.Context) (string, <-chan error, error) {
+	listener, err := net.Listen("tcp", "127.0.0.1:1455")
+	if err != nil {
+		return "", nil, err
+	}
+	link, pending := auth.authorize()
 
 	result := make(chan error, 1)
 	var once sync.Once
 	finish := func(err error) { once.Do(func() { result <- err }) }
 	mux := http.NewServeMux()
 	mux.HandleFunc("/auth/callback", func(writer http.ResponseWriter, request *http.Request) {
-		if request.Method != "GET" || request.URL.Query().Get("state") != state {
+		if request.Method != "GET" || request.URL.Query().Get("state") != pending.state {
 			http.Error(writer, "Invalid OAuth state", 400)
 			return
 		}
-		var loginErr error
 		once.Do(func() {
 			returned := request.URL.Query()
-			if returned.Get("error") != "" {
-				loginErr = fmt.Errorf("OpenAI sign-in denied")
-			} else {
-				issued := clientID
-				if loginErr == nil && returned.Get("code") == "" {
-					loginErr = fmt.Errorf("Missing authorization code")
-				}
-				if loginErr == nil {
-					openAITokens, errorValue := tokenExchange(ctx, url.Values{
-						"grant_type":    {"authorization_code"},
-						"client_id":     {issued},
-						"code":          {returned.Get("code")},
-						"code_verifier": {verifier},
-						"redirect_uri":  {callback},
-					})
-					loginErr = errorValue
-					if errorValue == nil {
-						sub, email, e := validateOpenAIID(ctx, openAITokens.ID, issued, "")
-						loginErr = e
-						if e == nil && original.ClientID == issued && original.Subject != "" && sub != original.Subject {
-							loginErr = fmt.Errorf("The account does not match the selected session")
-						}
-
-						if loginErr == nil {
-							auth.Mu.Lock()
-							previous := auth.Account
-							auth.Account = openAIAccount{
-								ClientID: issued,
-								Subject:  sub,
-								Email:    email,
-								Tokens:   openAITokens,
-								Expires:  time.Now().Add(time.Duration(openAITokens.ExpiresIn) * time.Second),
-							}
-							loginErr = auth.save()
-							if loginErr != nil {
-								auth.Account = previous
-							}
-							auth.Mu.Unlock()
-						}
-					}
-				}
+			loginErr := fmt.Errorf("OpenAI sign-in denied")
+			if returned.Get("error") == "" {
+				loginErr = auth.finish(ctx, pending, returned.Get("code"))
 			}
 			if loginErr != nil {
 				http.Error(writer, "Sign-in failed. Check 1loop for details.", 400)
@@ -280,7 +302,7 @@ func (auth *openAIAuth) begin(ctx context.Context) (string, <-chan error, error)
 		defer shutdownCancel()
 		_ = server.Shutdown(shutdownCtx)
 	}()
-	return openAIIssuer + "/oauth/authorize?" + q.Encode(), done, nil
+	return link, done, nil
 }
 
 // openAIKeys are OpenAI's signing keys, fetched once and again when a token
@@ -366,6 +388,47 @@ func (backend *App) BeginOpenAI(ctx context.Context, profiles ...string) (string
 	return auth.begin(ctx)
 }
 
+// BeginOpenAIRelay starts a sign-in whose browser runs on another device
+// (a paired desktop): it gives the link to open there and its state. The
+// device catches OpenAI's redirect on its own localhost:1455 and hands the
+// code to CompleteOpenAI; the verifier and the tokens stay here. A new one
+// replaces the profile's previous one, and it lasts five minutes.
+func (backend *App) BeginOpenAIRelay(profile string) (link, state string, err error) {
+	auth, err := backend.GetOpenAI(profile)
+	if err != nil {
+		return "", "", err
+	}
+	link, pending := auth.authorize()
+	auth.Mu.Lock()
+	auth.relay = pending
+	auth.Mu.Unlock()
+	return link, pending.state, nil
+}
+
+// CompleteOpenAI finishes the profile's relayed sign-in with the code
+// OpenAI returned to the other device, if state is the one it began with.
+// The sign-in is used up either way: a code is good once.
+func (backend *App) CompleteOpenAI(ctx context.Context, profile, state, code string) error {
+	auth, err := backend.GetOpenAI(profile)
+	if err != nil {
+		return err
+	}
+	auth.Mu.Lock()
+	pending := auth.relay
+	if pending == nil || time.Now().After(pending.expires) {
+		auth.relay = nil
+		auth.Mu.Unlock()
+		return fmt.Errorf("This sign-in has expired; start it again")
+	}
+	if state == "" || subtle.ConstantTimeCompare([]byte(state), []byte(pending.state)) != 1 {
+		auth.Mu.Unlock()
+		return fmt.Errorf("Invalid OAuth state")
+	}
+	auth.relay = nil
+	auth.Mu.Unlock()
+	return auth.finish(ctx, pending, code)
+}
+
 func (backend *App) DisconnectOpenAI(ctx context.Context, profile string) (string, error) {
 	auth, err := backend.GetOpenAI(profile)
 	if err != nil {
@@ -381,6 +444,7 @@ func (backend *App) DisconnectOpenAI(ctx context.Context, profile string) (strin
 		}
 	}
 	auth.Account.Tokens = openAITokens{}
+	auth.relay = nil
 	return warning, auth.save()
 }
 
@@ -466,4 +530,14 @@ func openAIAccountMetadata(tokens openAITokens) (accountID, residency string) {
 		}
 	}
 	return
+}
+
+// StubOpenAISignIn sends the sign-ins' code exchanges to tokenURL and
+// checks their ID tokens with keys, until restore: for the tests of the
+// packages that relay a sign-in. Nothing else calls it.
+func StubOpenAISignIn(tokenURL string, keys oidc.KeySet) (restore func()) {
+	openAIKeysOnce.Do(func() {})
+	savedURL, savedKeys := openAITokenURL, openAIKeys
+	openAITokenURL, openAIKeys = tokenURL, keys
+	return func() { openAITokenURL, openAIKeys = savedURL, savedKeys }
 }

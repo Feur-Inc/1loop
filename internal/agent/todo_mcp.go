@@ -140,6 +140,23 @@ func (backend *App) startTodoMCP(binding *todoMCPBinding) (string, func(), error
 				response["error"] = map[string]any{"code": -32602, "message": "This tool is unavailable or its permission was revoked"}
 				break
 			}
+			if cfg.Assistant.has(call.Name) {
+				operation, cancel := context.WithCancel(ctx)
+				stop := context.AfterFunc(requestValue.Context(), cancel)
+				result, err := cfg.Assistant.Run(context.WithValue(operation, configContextKey{}, cfg), call.Name, call.Arguments)
+				stop()
+				cancel()
+				if err != nil {
+					result.Text = err.Error()
+				}
+				content := []any{map[string]any{"type": "text", "text": result.Text}}
+				for _, picture := range result.Images {
+					picture = compactToolImage(picture)
+					content = append(content, map[string]any{"type": "image", "data": picture.Data, "mimeType": picture.Mime})
+				}
+				response["result"] = map[string]any{"isError": err != nil, "content": content}
+				break
+			}
 			if call.Name == "memory" {
 				// Claude Code lets the call through: it asks the user itself,
 				// with the change as a diff.
@@ -287,6 +304,17 @@ func (backend *App) startTodoMCP(binding *todoMCPBinding) (string, func(), error
 
 // claudeMCPDefinitions are the tools 1loop's MCP server gives Claude Code.
 func claudeMCPDefinitions(cfg Config) []map[string]any {
+	if cfg.Assistant != nil { // the host's, and the browser it gives
+		definitions := append([]map[string]any(nil), cfg.Assistant.Definitions...)
+		for _, group := range builtinToolGroups(cfg) {
+			for _, definition := range group.tools() {
+				if name, _ := definition["function"].(map[string]any)["name"].(string); cfg.toolAvailable(name) {
+					definitions = append(definitions, definition)
+				}
+			}
+		}
+		return definitions
+	}
 	definitions := projectMCPTools(cfg)
 	if cfg.ProjectTools == nil && cfg.toolAvailable("update_todo") {
 		definitions = append(definitions, todoToolDefinition())

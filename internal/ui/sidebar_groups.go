@@ -12,6 +12,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 
 	"1loop/internal/agent"
 	registry "1loop/internal/settings"
@@ -317,7 +318,8 @@ func (ui *desktopUI) addScratchGroup(chats []sideChat) {
 	if folded {
 		icon = iconChevronRight
 	}
-	header := newRow(noFolderLabel, icon, styleNav, func() { ui.foldProject(scratchGroup, !folded) })
+	header := newRow(thisComputerLabel, icon, styleNav, func() { ui.foldProject(scratchGroup, !folded) })
+	header.mark = theme.ComputerIcon()
 	header.accent = true
 	header.selected = ui.cfg.InScratch() && ui.current == nil
 	if folded && groupRunning(chats) {

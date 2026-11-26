@@ -46,6 +46,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -646,8 +648,8 @@ internal const val WEB_PICTURE_BYTES = 8 shl 20
 
 // readAtMost reads input whole if it holds at most limit bytes, else gives
 // null: a picture cut short would not decode, and one too big is not kept.
-internal fun readAtMost(input: java.io.InputStream, limit: Int): ByteArray? {
-    val out = java.io.ByteArrayOutputStream()
+internal fun readAtMost(input: InputStream, limit: Int): ByteArray? {
+    val out = ByteArrayOutputStream()
     val buffer = ByteArray(64 shl 10)
     while (true) {
         val read = input.read(buffer)

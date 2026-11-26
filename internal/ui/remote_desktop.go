@@ -270,6 +270,7 @@ type remoteDesktop struct {
 	approvalMode     string
 	autoMode         bool
 	namingModel      *agent.NamingModel       // the server's chat naming model
+	chatGPTSignIn    bool                     // it signs a ChatGPT account in with this computer's browser (remote_chatgpt.go)
 	convs            map[string]*conversation // the server's chats as this window shows them
 	fileAttachments  []agent.FileAttachment
 	thumbnails       map[string]image.Image // the pictures uploaded from here, by their path on the server
@@ -727,15 +728,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			Name, Workspace string
 			Chats           []remoteapi.Chat
 			Worktrees       map[string]string
-			Settings        struct {
-				Models                      []remoteapi.Model
-				Accounts                    []remoteapi.Account
-				DefaultPresets              bool
-				Model, Effort, ApprovalMode string
-				Tier                        string
-				AutoMode                    bool // the server's model has an Auto mode
-				NamingModel                 *agent.NamingModel
-			}
+			Settings        serverSettingsState
 		}
 		err := remote.client.json(ctx, "GET", "/api/state", nil, &state)
 		stateErr := err // whether the server answers (an open chat's error may only be the chat's)
@@ -775,11 +768,7 @@ func (remote *remoteDesktop) refreshLoop() {
 			}
 			remote.worktrees = state.Worktrees
 			remote.show(state.Name, state.Workspace, state.Chats, projects.Projects)
-			remote.models = state.Settings.Models
-			remote.accounts, remote.defaultPresets = state.Settings.Accounts, state.Settings.DefaultPresets
-			remote.model, remote.effort, remote.tier = state.Settings.Model, state.Settings.Effort, state.Settings.Tier
-			remote.approvalMode, remote.autoMode = state.Settings.ApprovalMode, state.Settings.AutoMode
-			remote.namingModel = state.Settings.NamingModel
+			remote.takeSettings(state.Settings)
 			remote.parent.updateApprovalControl()
 			if id == "" {
 				remote.showModel(remote.model, remote.effort)

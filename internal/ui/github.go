@@ -14,8 +14,9 @@ import (
 	"1loop/internal/githubconnector"
 )
 
-func (ui *desktopUI) connectorSettings() fyne.CanvasObject {
-	source := ui.githubSource()
+// connectorSettings is the Connectors page of a GitHub connector, under its
+// title.
+func (ui *desktopUI) connectorSettings(source githubSource, title fyne.CanvasObject) fyne.CanvasObject {
 	content := container.NewStack(note("Loading…"))
 	go func() {
 		ctx, cancel := context.WithTimeout(ui.ctx, 30*time.Second)
@@ -29,11 +30,11 @@ func (ui *desktopUI) connectorSettings() fyne.CanvasObject {
 			content.Refresh()
 		})
 	}()
-	return container.NewVBox(ui.prefs.pageTitle("Connectors", "Tools & extensions", nil), content)
+	return container.NewVBox(title, content)
 }
 
-// githubChange runs a change of the connector, then shows the page again.
-func (ui *desktopUI) githubChange(run func(context.Context) error) {
+// githubChange runs a change of the connector, then shows its page again.
+func (ui *desktopUI) githubChange(source githubSource, run func(context.Context) error) {
 	go func() {
 		ctx, cancel := context.WithTimeout(ui.ctx, 30*time.Second)
 		defer cancel()
@@ -42,7 +43,7 @@ func (ui *desktopUI) githubChange(run func(context.Context) error) {
 			if err != nil {
 				ui.notice("GitHub", err.Error())
 			}
-			ui.prefs.show("Connectors")
+			ui.prefs.show(source.page())
 		})
 	}()
 }
@@ -57,10 +58,7 @@ func (ui *desktopUI) githubSettings(source githubSource, state githubconnector.S
 			status += " · tools disabled"
 		}
 	}
-	target := "this execution target"
-	if ui.server != nil {
-		target = "the server, where the agent runs"
-	}
+	target := source.where()
 	body := container.NewVBox(
 		sectionTitle("GitHub"), note("Connect the GitHub account whose repositories the agent may use. Tools come from GitHub's official MCP server and follow your approval mode. Signing in does not authorize unrelated changes."),
 		card(settingRow("GitHub account", status, nil)))
@@ -75,21 +73,21 @@ func (ui *desktopUI) githubSettings(source githubSource, state githubconnector.S
 		body.Add(id)
 		body.Add(newRow("Save client ID", nil, stylePrimary, func() {
 			clientID := id.Text
-			ui.githubChange(func(ctx context.Context) error { return source.configure(ctx, clientID) })
+			ui.githubChange(source, func(ctx context.Context) error { return source.configure(ctx, clientID) })
 		}))
 		body.Add(newRow("Register a GitHub App", nil, styleOutline, func() { openLink("https://github.com/settings/apps/new") }))
 		return body
 	}
 	if state.Connected {
 		body.Add(card(settingRow("Enable GitHub tools", "Turning this off removes GitHub tools from subsequent model requests and rejects calls made after access is disabled.", newToggle(state.Enabled, func(on bool) {
-			ui.githubChange(func(ctx context.Context) error { return source.enable(ctx, on) })
+			ui.githubChange(source, func(ctx context.Context) error { return source.enable(ctx, on) })
 		}))))
 		body.Add(newRow("Review access on GitHub", nil, styleOutline, func() { openLink("https://github.com/settings/apps/authorizations") }))
 		body.Add(newRow("Manage repository access", nil, styleOutline, func() { openLink(state.InstallURL) }))
 		for _, object := range ui.githubAttachmentSettings(source, state, target) {
 			body.Add(object)
 		}
-		body.Add(newRow("Disconnect", nil, styleOutline, func() { ui.githubChange(source.disconnect) }))
+		body.Add(newRow("Disconnect", nil, styleOutline, func() { ui.githubChange(source, source.disconnect) }))
 		body.Add(note("Disconnect removes 1loop's authorization on " + target + ". You can also revoke the app in your GitHub settings. Credentials stay on " + target + "; they are not sent to the model."))
 		return body
 	}
@@ -147,7 +145,7 @@ func (ui *desktopUI) connectGitHub(source githubSource, current githubconnector.
 					} else if state.Error != "" {
 						ui.notice("GitHub sign-in", state.Error)
 					}
-					ui.prefs.show("Connectors")
+					ui.prefs.show(source.page())
 				})
 				return
 			}
@@ -189,7 +187,7 @@ func (ui *desktopUI) githubAttachmentSettings(source githubSource, state githubc
 		note("GitHub accepts attachments to issues, pull requests and comments only from a personal access token or GitHub CLI, not from this app's sign-in. Uploads ask for your approval; they cannot be deleted from GitHub."),
 		card(settingRow("Uploads as", detail, nil))}
 	save := func(token string) {
-		ui.githubChange(func(ctx context.Context) error { return source.setAttachmentToken(ctx, token) })
+		ui.githubChange(source, func(ctx context.Context) error { return source.setAttachmentToken(ctx, token) })
 	}
 	if state.AttachmentLogin != "" {
 		return append(objects, newRow("Remove token", nil, styleOutline, func() { save("") }))

@@ -44,7 +44,9 @@ type credentialManager struct{}
 
 func system() Store { return credentialManager{} }
 
-func target(account string) (*uint16, error) { return windows.UTF16PtrFromString(Service + ":" + account) }
+func target(account string) (*uint16, error) {
+	return windows.UTF16PtrFromString(Service + ":" + account)
+}
 
 func (credentialManager) Get(account string) (string, error) {
 	name, err := target(account)

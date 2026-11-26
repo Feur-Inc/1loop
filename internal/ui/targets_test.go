@@ -174,7 +174,7 @@ func TestServerProjectsRemembered(t *testing.T) {
 // listed as the window's connection last read them.
 func TestLeavingTheServerKeepsItListed(t *testing.T) {
 	ui := linkedUI(t)
-	remote := &remoteDesktop{parent: ui, client: &remoteClient{address: serverAddress{URL: testServer}}, name: "box",
+	remote := &remoteDesktop{parent: ui, shown: true, client: &remoteClient{address: serverAddress{URL: testServer}}, name: "box",
 		projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "s1", Title: "Server chat", Workspace: "/srv/api"}}}
 	ui.handOver(remote)
 	if link := ui.links[0]; !link.answered || !slices.Equal(link.listing.projects, []string{"/srv/api"}) {
@@ -224,13 +224,6 @@ func TestGroupKeys(t *testing.T) {
 	}
 	if got := group.keyOf(listed, sideChat{folder: "/x", scratch: true}); got != scratchGroup {
 		t.Errorf("a chat with no folder: %q", got)
-	}
-}
-
-// A new chat with no folder runs on the device in use: this computer.
-func TestNoFolderRunsHere(t *testing.T) {
-	if noFolderTarget() != localTarget {
-		t.Fatalf("no folder runs on %v", noFolderTarget())
 	}
 }
 

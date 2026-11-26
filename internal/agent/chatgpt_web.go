@@ -9,13 +9,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/chromedp/chromedp"
-	"github.com/chromedp/chromedp/kb"
 	"os"
 	"path/filepath"
 	"strings"
 	"sync"
 	"time"
+
+	"github.com/chromedp/chromedp"
+	"github.com/chromedp/chromedp/kb"
 
 	"1loop/internal/browser"
 	"1loop/internal/core"

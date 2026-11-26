@@ -24,7 +24,7 @@ func (remote *remoteDesktop) checkServerUpdate() {
 			return // an older server without updates
 		}
 		fyne.Do(func() {
-			if status.Available {
+			if releaseBehind(&status) { // a dev build is not behind
 				remote.update = &status
 				remote.status.SetText("Server " + status.Current + " · " + status.Latest + " is out: see the target menu")
 			}

@@ -35,6 +35,39 @@ func ChatContextUsage(cfg Config, history []Message, claude *ContextUsage, class
 	return &usage
 }
 
+// At is the breakdown brought to what the last call used: Claude Code only
+// counts by category once a turn ends, and a turn can add a lot, or compact.
+// What changed since that count is in the messages, and the free space
+// takes the rest.
+func (usage *ContextUsage) At(used int) *ContextUsage {
+	if usage == nil || used <= 0 || used == usage.Used {
+		return usage
+	}
+	at := *usage
+	at.Used, at.Categories = used, slices.Clone(usage.Categories)
+	messages, rest, buffer := -1, 0, 0
+	for i, category := range at.Categories {
+		switch {
+		case category.ID == "messages":
+			messages = i
+		case category.Kind == "used":
+			rest += category.Tokens
+		case category.Kind == "buffer":
+			buffer += category.Tokens
+		}
+	}
+	if messages >= 0 {
+		at.Categories[messages].Tokens = max(0, used-rest)
+	}
+	for i := range at.Categories {
+		if at.Categories[i].Kind == "free" {
+			at.Categories[i].Tokens = max(0, at.Window-used-buffer)
+			break
+		}
+	}
+	return &at
+}
+
 // Summary is the breakdown without the MCP tools' list, only their count:
 // what every state update carries; the list is asked when it is opened.
 func (usage *ContextUsage) Summary() *ContextUsage {

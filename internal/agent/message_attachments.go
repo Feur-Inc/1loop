@@ -227,13 +227,13 @@ func DeliverFiles(ctx context.Context, machine Machine, workspace string, files 
 func AttachmentsNote(provider string, attachments ChatAttachments) string {
 	var note string
 	if count := len(attachments.Files); count > 0 {
-		note += fmt.Sprintf(" %s went into its workspace's tmp/ folder, listed with the message.", plural(count, "file"))
+		note += fmt.Sprintf(" %s went into its workspace's tmp/ folder, listed with the message.", core.Plural(count, "file"))
 	}
 	count := len(attachments.Images)
 	if count == 0 {
 		return note
 	}
-	images := plural(count, "image")
+	images := core.Plural(count, "image")
 	switch provider {
 	case "antigravity":
 		return note + " " + images + " reached it as files its Antigravity agent opens with its file viewer."
@@ -243,13 +243,6 @@ func AttachmentsNote(provider string, attachments ChatAttachments) string {
 		return note + " " + images + " went with the message."
 	}
 	return note + " " + images + " went with the message, and its model sees them."
-}
-
-func plural(count int, noun string) string {
-	if count == 1 {
-		return "1 " + noun
-	}
-	return fmt.Sprintf("%d %ss", count, noun)
 }
 
 // filesPreview is the attached files' line in an approval's preview.

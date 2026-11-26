@@ -33,6 +33,7 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/agent"
+	"1loop/internal/core"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	"1loop/internal/sshmachine"
@@ -83,7 +84,7 @@ func (ui *desktopUI) trustHost(ctx context.Context, machine, address, keyType, f
 		body := container.NewVBox(
 			plainFlow("1loop has never connected to "+machine+" ("+address+"). Its host key is:", 13, colText),
 			plainFlow(keyType+" "+fingerprint, 13, colText),
-			plainFlow("Trust it only if it is the machine's key: on the machine, ssh-keygen -lf /etc/ssh/ssh_host_"+hostKeyFile(keyType)+"_key.pub shows it. 1loop remembers it and refuses the connection if it ever changes.", 12.5, colMuted))
+			plainFlow("Trust it only if it is the machine's key: on the machine, ssh-keygen -lf /etc/ssh/ssh_host_"+sshmachine.HostKeyFile(keyType)+"_key.pub shows it. 1loop remembers it and refuses the connection if it ever changes.", 12.5, colMuted))
 		cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
 		trust := newRow("Trust", nil, stylePrimary, func() { reply(true); dialog.dismiss() })
 		dialog = ui.modal("Trust this SSH machine?", body, 560, func() { reply(false) }, cancel, trust)
@@ -94,17 +95,6 @@ func (ui *desktopUI) trustHost(ctx context.Context, machine, address, keyType, f
 	case <-ctx.Done():
 		return false
 	}
-}
-
-// hostKeyFile is the name sshd gives the host key of this type.
-func hostKeyFile(keyType string) string {
-	switch {
-	case strings.Contains(keyType, "ed25519"):
-		return "ed25519"
-	case strings.HasPrefix(keyType, "ecdsa"):
-		return "ecdsa"
-	}
-	return "rsa"
 }
 
 func (ui *desktopUI) machineSettings(id string) (sshmachine.Settings, bool) {
@@ -203,15 +193,6 @@ func (ui *desktopUI) pickStart() string {
 	return ui.cfg.Workspace
 }
 
-// projectFolderRow is Settings → General's project folder: on an SSH
-// machine it is chosen in the sidebar, not with this computer's picker.
-func (ui *desktopUI) projectFolderRow(change fyne.CanvasObject) fyne.CanvasObject {
-	if ui.cfg.MachineID != "" {
-		return settingRow("Project folder", ui.targetLabel()+": "+ui.cfg.Workspace+". Choose another project of the machine in the sidebar.", nil)
-	}
-	return settingRow("Project folder", ui.cfg.Workspace, change)
-}
-
 // targetProjects are the target's projects: this computer's, or the
 // machine's (paths there).
 func (ui *desktopUI) targetProjects() []string {
@@ -219,17 +200,6 @@ func (ui *desktopUI) targetProjects() []string {
 		return ui.machineProjects[ui.cfg.MachineID]
 	}
 	return ui.projects
-}
-
-func (ui *desktopUI) setTargetProjects(projects []string) {
-	if ui.cfg.MachineID == "" {
-		ui.projects = projects
-		return
-	}
-	if ui.machineProjects == nil {
-		ui.machineProjects = map[string][]string{}
-	}
-	ui.machineProjects[ui.cfg.MachineID] = projects
 }
 
 func (ui *desktopUI) ensureTargetProject(path string) {
@@ -447,10 +417,10 @@ func (ui *desktopUI) machineFiles(machine *sshmachine.Machine, root string) file
 			switch {
 			case strings.HasPrefix(kind, "image/"):
 				preview.Image = true
-			case bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(trimHalfRune(data)):
+			case bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(core.TrimRune(data)):
 				preview.Binary = true
 			default:
-				preview.Text = string(trimHalfRune(data))
+				preview.Text = string(core.TrimRune(data))
 			}
 			return preview, nil
 		},
@@ -486,13 +456,6 @@ func (ui *desktopUI) machineFiles(machine *sshmachine.Machine, root string) file
 			return nil
 		},
 	}
-}
-
-func trimHalfRune(data []byte) []byte {
-	for i := 0; i < 3 && len(data) > 0 && !utf8.Valid(data); i++ {
-		data = data[:len(data)-1]
-	}
-	return data
 }
 
 // machineFilesTab is filesTab for a machine's project.

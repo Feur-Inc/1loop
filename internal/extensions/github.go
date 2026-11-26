@@ -57,6 +57,9 @@ type cachedSearch struct {
 	at     time.Time
 }
 
+// searchKept is how long a search answers again without asking.
+const searchKept = 10 * time.Minute
+
 var (
 	searchMu    sync.Mutex
 	searchCache = map[string]cachedSearch{}
@@ -111,7 +114,7 @@ func Search(ctx context.Context, kind, query, order string, page int) (SearchRes
 func searchKind(ctx context.Context, kind, query, order string, page, per int) (SearchResult, error) {
 	key := fmt.Sprintf("%s|%s|%s|%d|%d", kind, strings.TrimSpace(query), order, page, per)
 	searchMu.Lock()
-	if cached, ok := searchCache[key]; ok && time.Since(cached.at) < 10*time.Minute {
+	if cached, ok := searchCache[key]; ok && time.Since(cached.at) < searchKept {
 		searchMu.Unlock()
 		return cached.result, nil
 	}
@@ -158,6 +161,11 @@ func searchKind(ctx context.Context, kind, query, order string, page, per int) (
 		result.Listings = append(result.Listings, listing)
 	}
 	searchMu.Lock()
+	for old, cached := range searchCache { // those that answer nothing any more
+		if time.Since(cached.at) >= searchKept {
+			delete(searchCache, old)
+		}
+	}
 	searchCache[key] = cachedSearch{result: result, at: time.Now()}
 	searchMu.Unlock()
 	return result, nil

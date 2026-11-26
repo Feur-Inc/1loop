@@ -99,6 +99,17 @@ static void registryHandleGlobal(void* userData,
                                  &wl_data_device_manager_interface, 1);
         }
     }
+    else if (strcmp(interface, "zwp_primary_selection_device_manager_v1") == 0)
+    {
+        // 1loop: the primary selection (_glfwSetWaylandPrimarySelection)
+        if (!_glfw.wl.primarySelectionManager)
+        {
+            _glfw.wl.primarySelectionManager =
+                wl_registry_bind(registry, name,
+                                 &zwp_primary_selection_device_manager_v1_interface,
+                                 1);
+        }
+    }
     else if (strcmp(interface, "xdg_wm_base") == 0)
     {
         _glfw.wl.wmBase =
@@ -116,6 +127,12 @@ static void registryHandleGlobal(void* userData,
     {
         _glfw.wl.viewporter =
             wl_registry_bind(registry, name, &wp_viewporter_interface, 1);
+    }
+    else if (strcmp(interface, "wp_fractional_scale_manager_v1") == 0)
+    {
+        _glfw.wl.fractionalScaleManager =
+            wl_registry_bind(registry, name,
+                             &wp_fractional_scale_manager_v1_interface, 1);
     }
     else if (strcmp(interface, "zwp_relative_pointer_manager_v1") == 0)
     {
@@ -626,6 +643,14 @@ int _glfwPlatformInit(void)
         _glfwAddDataDeviceListenerWayland(_glfw.wl.dataDevice);
     }
 
+    if (_glfw.wl.seat && _glfw.wl.primarySelectionManager)
+    {
+        _glfw.wl.primarySelectionDevice =
+            zwp_primary_selection_device_manager_v1_get_device(
+                _glfw.wl.primarySelectionManager, _glfw.wl.seat);
+        _glfwAddPrimarySelectionListenerWayland(_glfw.wl.primarySelectionDevice);
+    }
+
     return GLFW_TRUE;
 }
 
@@ -698,6 +723,8 @@ void _glfwPlatformTerminate(void)
         wl_shm_destroy(_glfw.wl.shm);
     if (_glfw.wl.viewporter)
         wp_viewporter_destroy(_glfw.wl.viewporter);
+    if (_glfw.wl.fractionalScaleManager)
+        wp_fractional_scale_manager_v1_destroy(_glfw.wl.fractionalScaleManager);
     if (_glfw.wl.decorationManager)
         zxdg_decoration_manager_v1_destroy(_glfw.wl.decorationManager);
     if (_glfw.wl.wmBase)
@@ -708,6 +735,15 @@ void _glfwPlatformTerminate(void)
         wl_data_offer_destroy(_glfw.wl.dragOffer);
     if (_glfw.wl.selectionSource)
         wl_data_source_destroy(_glfw.wl.selectionSource);
+    if (_glfw.wl.primarySelectionOffer)
+        zwp_primary_selection_offer_v1_destroy(_glfw.wl.primarySelectionOffer);
+    if (_glfw.wl.primarySelectionSource)
+        zwp_primary_selection_source_v1_destroy(_glfw.wl.primarySelectionSource);
+    if (_glfw.wl.primarySelectionDevice)
+        zwp_primary_selection_device_v1_destroy(_glfw.wl.primarySelectionDevice);
+    if (_glfw.wl.primarySelectionManager)
+        zwp_primary_selection_device_manager_v1_destroy(_glfw.wl.primarySelectionManager);
+    free(_glfw.wl.primarySelectionString);
     if (_glfw.wl.dataDevice)
         wl_data_device_destroy(_glfw.wl.dataDevice);
     if (_glfw.wl.dataDeviceManager)

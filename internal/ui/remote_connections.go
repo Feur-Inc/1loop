@@ -2,9 +2,9 @@
 
 package ui
 
-// Settings → Connections while a server's chats are on screen: the
-// server's accounts (internal/server: /api/connections), which its chats
-// use. Their keys stay on the server: the page only says one is saved, and
+// A server's Connections page (Settings → Servers, and the browser
+// client's Models & accounts): the server's accounts (internal/server:
+// /api/connections), which its chats use. Their keys stay on the server: the page only says one is saved, and
 // sends a new one when it is typed.
 
 import (
@@ -31,32 +31,41 @@ type serverConnection struct {
 	Email      string
 }
 
-// The types a connection can be added with from here: a ChatGPT sign-in
-// comes back to the server itself.
-var serverConnectionTypes = []string{"OpenAI-compatible API", "OpenRouter", "Local vLLM", "Claude Code", "Antigravity CLI"}
+// serverConnectionTypes are the types a connection can be added with from
+// here. A ChatGPT account signs in with this computer's browser
+// (remote_chatgpt.go), on a server that can (chatGPTSignIn). ChatGPT (Web)
+// never is: it drives a browser of its own, on the desktop or the phone.
+func serverConnectionTypes(chatGPTSignIn bool) []string {
+	types := []string{"OpenAI-compatible API", "OpenRouter", "Local vLLM", "Claude Code", "Antigravity CLI"}
+	if chatGPTSignIn {
+		types = append(types, agent.ProviderName("openai"))
+	}
+	return types
+}
 
-func (remote *remoteDesktop) connectionSettings() fyne.CanvasObject {
-	ui := remote.parent
+// connectionSettings is the server's connections, under the page's head.
+func (remote *remoteDesktop) connectionSettings(head serverHead) fyne.CanvasObject {
 	content := container.NewStack(note("Loading the server's connections…"))
 	add := newRow("Add connection", iconPlus, stylePrimary, func() {
 		remote.connectionEditor(serverConnection{Connection: agent.Connection{Name: "New connection", Provider: "compatible", Enabled: true, AllModels: true}})
 	})
 	add.Hide()
-	page := container.NewVBox(ui.prefs.pageTitle("Connections", "", container.NewCenter(add)),
-		padded(0, 10, 2, 0, plainFlow("The server's accounts: chats on "+remote.name+" use the models of every enabled one. Their keys stay on the server.", 13, colMuted)),
+	page := container.NewVBox(head(container.NewCenter(add)),
+		padded(0, 10, 2, 0, plainFlow("The models of every enabled one are offered. Keys stay on the server.", 13, colMuted)),
 		content)
 	go func() {
 		ctx, cancel := context.WithTimeout(remote.ctx, 20*time.Second)
 		defer cancel()
-		var list struct{ Connections []serverConnection }
+		var list struct {
+			Connections   []serverConnection
+			ChatGPTSignIn bool
+		}
 		err := remote.client.json(ctx, "GET", "/api/connections", nil, &list)
 		fyne.Do(func() {
+			remote.chatGPTSignIn = list.ChatGPTSignIn
 			switch {
-			case err != nil && strings.HasPrefix(err.Error(), "404"): // an older server: its Default presets only
+			case olderServer(err) || err != nil && strings.HasPrefix(err.Error(), "404"): // an older server: its Default presets only
 				content.Objects = []fyne.CanvasObject{remote.defaultPresetSettings()}
-				page.Objects = []fyne.CanvasObject{content}
-				page.Refresh()
-				return
 			case err != nil:
 				content.Objects = []fyne.CanvasObject{note(err.Error())}
 			default:
@@ -129,7 +138,7 @@ func (remote *remoteDesktop) saveConnection(body map[string]any, done func(error
 			if err != nil {
 				remote.parent.notice("Connections", err.Error())
 			}
-			remote.parent.prefs.show("Connections")
+			remote.parent.prefs.show(remote.settingsPage("Connections"))
 		})
 	}()
 }
@@ -153,8 +162,8 @@ func (remote *remoteDesktop) connectionEditor(row serverConnection) {
 	status := plainFlow("", 13, colMuted)
 	say := func(text string) { setFlow(status, text) }
 
-	types := serverConnectionTypes
-	if !agent.Contains([]string{"compatible", "openrouter", "vllm", "claudecode", "antigravity"}, draft.Provider) {
+	types := serverConnectionTypes(remote.chatGPTSignIn)
+	if !agent.Contains(types, agent.ProviderName(draft.Provider)) {
 		types = []string{agent.ProviderName(draft.Provider)} // signed in on the server: it stays what it is
 	}
 	typePicker := newPicker(ui.window, "Connection type", styleField, nil)
@@ -264,9 +273,10 @@ func (remote *remoteDesktop) connectionEditor(row serverConnection) {
 		}()
 	}
 
+	chatGPTFields, stopSignIn := remote.chatGPTSignInFields(&draft, row, name, say, load.onTap)
 	typePicker.onChanged = func(label string) {
 		previous := draft.Provider
-		for _, id := range []string{"compatible", "openrouter", "vllm", "claudecode", "antigravity", draft.Provider} {
+		for _, id := range []string{"compatible", "openrouter", "vllm", "claudecode", "antigravity", "openai", draft.Provider} {
 			if agent.ProviderName(id) == label {
 				draft.Provider = id
 				break
@@ -274,6 +284,7 @@ func (remote *remoteDesktop) connectionEditor(row serverConnection) {
 		}
 		apiFields.Hide()
 		harnessFields.Hide()
+		chatGPTFields.Hide()
 		switch draft.Provider {
 		case "claudecode":
 			harness.SetText("Uses the Claude Code installed on the server, with its sign-in there (run claude once where the server runs, as its user).")
@@ -281,7 +292,9 @@ func (remote *remoteDesktop) connectionEditor(row serverConnection) {
 		case "antigravity":
 			harness.SetText("Uses the agy command installed on the server, with its Google sign-in there (run agy once where the server runs, as its user).")
 			harnessFields.Show()
-		case "openai", "chatgptweb":
+		case "openai":
+			chatGPTFields.Show()
+		case "chatgptweb":
 			harness.SetText("Signed in where the server runs.")
 			harnessFields.Show()
 		default:
@@ -319,7 +332,7 @@ func (remote *remoteDesktop) connectionEditor(row serverConnection) {
 			settingRow("Type", "", sized(340, typePicker.row)),
 			settingRow("Enabled", "Its models are offered in the composer.", enabled)),
 		sectionTitle("Access"),
-		container.NewStack(apiFields, harnessFields),
+		container.NewStack(apiFields, harnessFields, chatGPTFields),
 		sectionTitle("Models"),
 		card(
 			settingRow("Show every model", "Turn off to choose them one by one below.", allModels),
@@ -347,6 +360,7 @@ func (remote *remoteDesktop) connectionEditor(row serverConnection) {
 
 	save := newRow("Save connection", nil, stylePrimary, nil)
 	save.onTap = func() {
+		stopSignIn()
 		draft.Name = strings.TrimSpace(name.Text)
 		draft.BaseURL = strings.TrimSpace(base.Text)
 		if draft.Name == "" {
@@ -377,5 +391,5 @@ func (remote *remoteDesktop) connectionEditor(row serverConnection) {
 		container.NewCenter(sized(360, status)),
 		cancel,
 		save,
-	}, leave: func() { loadGeneration++ }})
+	}, leave: func() { loadGeneration++; stopSignIn() }})
 }

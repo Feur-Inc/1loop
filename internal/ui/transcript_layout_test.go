@@ -11,7 +11,9 @@ import (
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
+	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/test"
+	"fyne.io/fyne/v2/theme"
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
@@ -444,5 +446,77 @@ func TestTranscriptRowChangedWhileHiddenAtAnotherWidth(t *testing.T) {
 		if text.height > 0 && len(text.objects) == 0 {
 			t.Fatalf("shown again, a paragraph of %.0f px draws nothing", text.height)
 		}
+	}
+}
+
+// #440: an answer that streams while it is scrolled out of view, far above
+// the bottom of the chat, keeps the rows around it in their places, and is
+// drawn right when it is scrolled back to. Nothing in a hidden row's
+// height is measured again until its text changes (changed) or it is shown.
+func TestTranscriptStreamsWhileScrolledAway(t *testing.T) {
+	test.NewTempApp(t).Settings().SetTheme(loopTheme{theme.DefaultTheme()})
+	ui := &desktopUI{}
+	ui.items = &transcriptLayout{ui: ui}
+	ui.items.reset()
+	ui.transcript = container.New(ui.items)
+	ui.transcript.Resize(fyne.NewSize(712, 4000))
+	scroll := &kineticScroll{}
+	scroll.Content = ui.transcript
+	scroll.Resize(fyne.NewSize(712, 200))
+	ui.scroll = scroll
+
+	const rows, answerAt = 60, 5
+	var answer *markdownView
+	for i := range rows {
+		if i == answerAt {
+			answer = newMarkdownView("")
+			ui.transcript.Objects = append(ui.transcript.Objects, answer.box)
+			continue
+		}
+		row := canvas.NewRectangle(colText)
+		row.SetMinSize(fyne.NewSize(712, 30))
+		ui.transcript.Objects = append(ui.transcript.Objects, row)
+	}
+	scroll.Offset.Y = 1e6 // the bottom: the answer, near the top, is out of the band
+	relayout(ui.transcript)
+	if answer.box.Visible() {
+		t.Fatal("the answer is shown at the bottom of the chat: the test needs it out of view")
+	}
+
+	check := func(when string) {
+		t.Helper()
+		y := float32(0)
+		for i, object := range ui.transcript.Objects {
+			if abs32(object.Position().Y-y) > 0.5 {
+				t.Fatalf("%s: row %d at %.1f, expected at %.1f", when, i, object.Position().Y, y)
+			}
+			// The layout's height for a hidden row must be what its content
+			// needs now: a stale one is the bug.
+			if need := object.MinSize().Height; abs32(need-ui.items.heightOf(i)) > 0.5 {
+				t.Fatalf("%s: row %d is laid out %.1f high, its content needs %.1f", when, i, ui.items.heightOf(i), need)
+			}
+			y += ui.items.heightOf(i) + transcriptGap
+		}
+	}
+
+	long := strings.Repeat("words that wrap across the column ", 6)
+	full := "Here is the plan:\n\n- " + long + "\n- " + long + "\n  - " + long + "\n\nAnd " + long
+	text := ""
+	for _, word := range strings.SplitAfter(full, " ") {
+		text += word
+		answer.ParseMarkdown(text)
+		ui.items.changed(answer.box)
+		relayout(ui.transcript)
+		check(fmt.Sprintf("while hidden, after %q", text[max(0, len(text)-30):]))
+	}
+
+	scroll.Offset.Y = 0 // back to the top: the answer comes into view
+	relayout(ui.transcript)
+	if !answer.box.Visible() {
+		t.Fatal("the answer did not come back into view")
+	}
+	check("scrolled back")
+	if found := misplaced(ui.transcript, "transcript"); len(found) > 0 {
+		t.Fatal(strings.Join(found, "\n"))
 	}
 }

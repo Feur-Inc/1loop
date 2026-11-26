@@ -109,6 +109,26 @@ data class Item(
 
 data class Task(val id: String, val text: String, val status: String, val started: Long, val completed: Long)
 
+/**
+ * The chat's /goal (#444, agent/goal.go): its objective and state, and what it
+ * used. [seconds] is the time spent, the running turn apart: that one counts
+ * from [running], Unix milliseconds, while the agent works on it.
+ */
+data class Goal(
+    val id: String, val objective: String, val status: String, val label: String, val by: String, val reason: String, val idle: Boolean,
+    val tokensUsed: Int, val tokenBudget: Int, val turns: Int, val maxTurns: Int, val timeBudget: Int, val seconds: Double, val running: Long,
+) {
+    fun spentMillis(now: Long): Long = (seconds * 1000).toLong() + if (running > 0) (now - running).coerceAtLeast(0) else 0
+
+    companion object {
+        fun from(o: JSONObject) = Goal(
+            o.optString("id"), o.optString("objective"), o.optString("status"), o.optString("label"), o.optString("by"),
+            o.optString("reason"), o.optBoolean("idle"), o.optInt("tokensUsed"), o.optInt("tokenBudget"), o.optInt("turns"),
+            o.optInt("maxTurns"), o.optInt("timeBudget"), o.optDouble("seconds", 0.0), o.optLong("running"),
+        )
+    }
+}
+
 /** A tab of the chat's side panel on the computer. */
 data class PanelTab(val key: String, val kind: String, val title: String, val url: String, val index: Int)
 
@@ -252,6 +272,7 @@ data class Meta(
     val parent: String = "", val parentTitle: String = "", // a subchat's parent
     val subchats: List<Subchat> = emptyList(), // the chat's own, newest first
     val spent: String = "", // what the chat and its subchats spent (Usage.kt)
+    val goal: Goal? = null, // its /goal
 ) {
     companion object {
         fun from(o: JSONObject) = Meta(
@@ -277,6 +298,7 @@ data class Meta(
                 (0 until (array?.length() ?: 0)).map { i -> Subchat.from(array!!.getJSONObject(i)) }
             },
             spentText(o.optJSONObject("spent")),
+            o.optJSONObject("goal")?.let { Goal.from(it) },
         )
     }
 }
@@ -569,7 +591,6 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var defaultPresets by mutableStateOf(false)
     var defaultEffort by mutableStateOf("")
     var defaultTier by mutableStateOf("")
-    var defaultWindow by mutableStateOf(0)
     var approvalMode by mutableStateOf("approval")
     var autoMode by mutableStateOf(false) // the computer offers Auto mode
     var current by mutableStateOf<String?>(null) // null: a new chat
@@ -947,7 +968,6 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         defaultModel = ""
         defaultEffort = ""
         defaultTier = ""
-        defaultWindow = 0
         messageVersions = false
         attachmentsEnabled = false
         chats.clear()
@@ -958,6 +978,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         questions.clear()
         questionsAside.clear()
         questionDrafts.clear()
+        loopy.reset()
+        loopyFiles.clear()
         prefs.edit { putString("last", target.key) }
         screen = Screen.Chat
         readTargetsNow() // the target open before is read as the others now
@@ -1199,7 +1221,6 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         defaultModel = settings.optString("model")
         defaultEffort = settings.optString("effort")
         defaultTier = settings.optString("tier")
-        defaultWindow = settings.optInt("window")
         approvalMode = settings.optString("approvalMode", "approval")
         revokeAdbInApprovalMode()
         autoMode = settings.optBoolean("autoMode")
@@ -1216,11 +1237,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         AgentStatus.update(context, m)
         // On this phone, LocalRuntimeService notifies: it runs even without the app.
         val notify = !foreground && server?.localPhone != true
-        if (notify && wasRunning == true && !m.running) notifier.show(m.chat, m.title, "Done.")
+        if (notify && wasRunning == true && !m.running) notifier.showChat(m.chat, m.title, "Done.")
         if (!foreground && wasRunning == true && !m.running) loadNextStep(m.chat)
         if (notify) {
-            if (m.approval != null && approvals[m.chat]?.id != m.approval.id) notifier.show(m.chat, m.title, "Waiting for your approval: " + m.approval.title)
-            if (m.question != null && questions[m.chat]?.id != m.question.id) notifier.show(m.chat, m.title, m.question.questions.firstOrNull()?.text ?: "1loop has a question")
+            if (m.approval != null && approvals[m.chat]?.id != m.approval.id) notifier.showChat(m.chat, m.title, "Waiting for your approval: " + m.approval.title)
+            if (m.question != null && questions[m.chat]?.id != m.question.id) notifier.showChat(m.chat, m.title, m.question.questions.firstOrNull()?.text ?: "1loop has a question")
         }
         if (m.approval != null) approvals[m.chat] = m.approval else approvals.remove(m.chat)
         val previous = if (m.question != null) questions.put(m.chat, m.question) else questions.remove(m.chat)
@@ -1256,6 +1277,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             }
             "settings" -> applySettings(data)
             "extensions" -> extensionsRevision++
+            "loopy" -> loopy.apply(data)
+            "loopy_notice" -> if (!foreground && !target.localPhone) notifyLoopy(context, target, data.optString("title"), data.optString("text"), data.optJSONObject("message"), data.optString("level"), data.optString("picture"))
             "sharing" -> if (target.localPhone) scope.launch {
                 try {
                     refreshSharing(true)
@@ -1629,6 +1652,23 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     /** A background task's own Stop; the list follows through the "meta" event. */
     fun stopTask(id: String) = chatAction("/tasks/$id/stop", JSONObject())
 
+    /** A goal card's control: the /goal command it names, sent as typed (agent/goal.go). */
+    fun goalCommand(text: String) {
+        val generation = connectionGeneration
+        val target = server ?: return
+        val id = current ?: return
+        problem = null
+        scope.launch {
+            try {
+                onConnection(target, generation) { it.post("/api/send", JSONObject().put("chat", id).put("text", text)) }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                actionFailed(generation, e)
+            }
+        }
+    }
+
     /** The chat reloads through the "replace" event; a refusal (a reply under way) shows. */
     private fun chatAction(path: String, body: JSONObject) {
         val generation = connectionGeneration
@@ -1841,8 +1881,117 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             Api(engine).post("/api/local/sync", body, readTimeout = 3_600_000)
         }
 
+    /**
+     * Moves a chat with its project, its agent at work, between this phone's
+     * engine and a paired desktop or server (#18). It waits for the agent's
+     * step to end, so it may last.
+     */
+    suspend fun moveChat(peer: Server, pull: Boolean, local: String, remote: String, chat: String): JSONObject =
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) {
+            val engine = this@RemoteApp.local.activeServer.value ?: throw ApiError("Start the agent on this phone first (Local phone).")
+            val body = JSONObject()
+                .put("peer", JSONObject().put("url", "https://${peer.host}:${peer.port}").put("token", peer.token).put("fingerprint", peer.fingerprint))
+                .put("peerName", peer.name).put("direction", if (pull) "pull" else "push").put("local", local).put("remote", remote).put("chat", chat)
+            Api(engine).post("/api/local/move", body, readTimeout = 3_600_000)
+        }
+
     /** Files shared to 1loop from another app, waiting for the user to place them (Files.kt). */
     val shared = mutableStateListOf<android.net.Uri>()
+
+    // -- Loopy (Loopy.kt) -------------------------------------------------------
+
+    val loopy = LoopyStore(this, scope)
+    var loopyOpen by mutableStateOf(prefs.getBoolean("loopyOpen", false))
+        private set
+    var loopyPage by mutableStateOf<String?>(null) // "memory", "files", "settings", "routine:<id>"
+    var loopyTab by mutableStateOf("General") // of its settings
+    var loopyShow by mutableStateOf<String?>(null) // the message to bring on screen
+    var loopyDraft by mutableStateOf<String?>(null) // a text shared to Loopy
+    var loopySpeak by mutableStateOf(false) // asked aloud: answered aloud
+    val loopyFiles = mutableStateListOf<String>() // in Loopy's folder, for the next message
+
+    /** The target the user's Loopy lives on; null: the one open. */
+    var loopyHome by mutableStateOf(prefs.getString("loopyAt", null))
+        private set
+
+    /** Loopy's space: on the target it lives on, opened first when it is another one. */
+    fun openLoopy(show: String? = null) {
+        showLoopy(true)
+        loopyPage = null
+        loopyShow = show
+        val at = loopyHome?.takeIf { key -> linked.any { it.key == key } } ?: server?.key
+        if (at != null && at != server?.key) openOn(at)
+        LoopyCheckJob.schedule(context)
+    }
+
+    fun closeLoopy() = showLoopy(false)
+
+    private fun showLoopy(on: Boolean) {
+        loopyOpen = on
+        prefs.edit { putBoolean("loopyOpen", on) }
+    }
+
+    /** Another target's Loopy becomes the user's. */
+    fun chooseLoopyHome(key: String) {
+        loopyHome = key
+        prefs.edit { putString("loopyAt", key) }
+        if (key != server?.key) openOn(key)
+    }
+
+    suspend fun <T> loopyCall(call: (Api) -> T): T {
+        val target = server ?: throw ApiError("Connect first.")
+        return onConnection(target, connectionGeneration, call)
+    }
+
+    /** Sends what is written, with the files given since the last message. */
+    fun loopySend(text: String) {
+        val files = loopyFiles.toList()
+        loopyFiles.clear()
+        loopy.act {
+            try {
+                loopyCall { it.post("/api/loopy/send", JSONObject().put("text", text.trim()).put("files", JSONArray(files))) }
+            } catch (failure: Exception) {
+                if (failure !is CancellationException) { loopyDraft = text; loopyFiles.addAll(files) } // back in the composer
+                throw failure
+            }
+        }
+    }
+
+    /** Copies files into Loopy's folder; [done] gets where they are. */
+    fun loopyUpload(uris: List<android.net.Uri>, dir: String, done: (List<String>) -> Unit) = loopy.act {
+        val paths = uris.map { uri ->
+            var name = "file"
+            var size = -1L
+            runCatching {
+                context.contentResolver.query(uri, null, null, null, null)?.use { cursor ->
+                    if (cursor.moveToFirst()) {
+                        cursor.getColumnIndex(android.provider.OpenableColumns.DISPLAY_NAME).takeIf { it >= 0 }?.let { name = cursor.getString(it) ?: name }
+                        cursor.getColumnIndex(android.provider.OpenableColumns.SIZE).takeIf { it >= 0 && !cursor.isNull(it) }?.let { size = cursor.getLong(it) }
+                    }
+                }
+            }
+            fun encode(part: String) = java.net.URLEncoder.encode(part, "UTF-8")
+            loopyCall { api ->
+                context.contentResolver.openInputStream(uri)?.use { api.upload("/api/loopy/file?dir=${encode(dir)}&name=${encode(name)}", it, size) } ?: throw ApiError("Cannot read this file.")
+            }.optString("path")
+        }
+        done(paths)
+    }
+
+    /** Files for the next message to Loopy. */
+    fun loopyGive(uris: List<android.net.Uri>) {
+        if (uris.isNotEmpty()) loopyUpload(uris, "/inbox") { loopyFiles.addAll(it) }
+    }
+
+    /** A delegated task's chat, in 1loop's space. */
+    fun openLoopyTask(task: LoopyTask) {
+        if (task.chat.isEmpty()) {
+            loopyShow = loopy.messages.lastOrNull { it.card?.task == task.id }?.id
+            return
+        }
+        closeLoopy()
+        open(task.chat)
+    }
 
     /** Takes it out of the next message; the copy already in the workspace stays. */
     fun removeAttachment(key: String) {

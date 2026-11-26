@@ -60,6 +60,7 @@ func (ui *desktopUI) linkServers() {
 		link := &serverLink{address: address, cancel: cancel, wake: make(chan struct{}, 1)}
 		links = append(links, link)
 		go ui.followServer(ctx, link, client)
+		lendBrowser(ctx, address, client) // while the link lasts, if the user lets the server use this computer's browser
 	}
 	for _, link := range ui.links {
 		if !slices.Contains(links, link) {

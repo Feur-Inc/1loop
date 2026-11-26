@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
@@ -174,16 +175,24 @@ func (ui *desktopUI) sendToChat(chat *conversation, id, text string, images []co
 // turnEnded is the end of a chat's last turn in a row: a subchat notes how
 // it ended, and the chats that caused it hear it.
 func (ui *desktopUI) turnEnded(chat *conversation, ended string) {
+	reportTo := chat.ReportTo
+	chat.ReportTo = nil
 	if chat.Subchat != nil {
 		chat.Subchat.Ended = ended
 		chat.Subchat.Unseen = ui.viewOf(chat).current != chat // unread unless a pane shows it
 		if parent := ui.parentOf(chat); parent != nil {
+			// The parent last heard of a turn that did not end done: this
+			// one's end reaches it too, whoever caused it (#584).
+			if chat.Subchat.Owed() && !slices.Contains(reportTo, parent.ID) {
+				reportTo = append(reportTo, parent.ID)
+			}
+			if slices.Contains(reportTo, parent.ID) {
+				chat.Subchat.Reported = ended
+			}
 			ui.panel.todoChanged(parent)
 			ui.remote.metaChanged(parent)
 		}
 	}
-	reportTo := chat.ReportTo
-	chat.ReportTo = nil
 	for _, id := range reportTo {
 		target := ui.chatByID(id)
 		if target == nil {

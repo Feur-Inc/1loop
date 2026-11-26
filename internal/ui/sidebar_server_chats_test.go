@@ -71,7 +71,7 @@ func TestSidebarServerRowsDrawnAfterAFadeCutShort(t *testing.T) {
 	ui.renderChats() // Connecting…
 	ui.server.live.answered = true
 	ui.renderChats() // its state came: its rows fade in
-	if !ui.sideGlide.fresh[ui.sideRows[`chat:server:https://box.lan:47101|s1`].object] {
+	if !ui.sideGlide.fresh[ui.sideRows[chatKey("https://box.lan:47101", "s1")].object] {
 		t.Fatal("the server's chat is not fading in")
 	}
 	stopMotion(&ui.sideGlide.anim)

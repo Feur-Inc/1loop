@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -69,7 +68,7 @@ func coreToolDefinitions() []map[string]any {
 			"parameters":  map[string]any{"type": "object", "properties": properties, "required": required, "additionalProperties": false},
 		}})
 	}
-	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), wrapUpToolDefinition(), recallToolDefinition(), memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), chatsToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition())
+	return append(result, patchToolDefinition(), backgroundToolDefinition(), todoToolDefinition(), wrapUpToolDefinition(), recallToolDefinition(), memoryToolDefinition(), settingsToolDefinition(), subchatToolDefinition(), chatsToolDefinition(), checkpointToolDefinition(), questionToolDefinition(), permissionsToolDefinition(), changeDirectoryToolDefinition(), requestDirectoryToolDefinition(), goalToolDefinitions()[0], goalToolDefinitions()[1], goalToolDefinitions()[2])
 }
 
 // allToolDefinitions are every tool, loaded or not.
@@ -90,6 +89,9 @@ func availableCoreTools(cfg Config) []map[string]any {
 	if skill := skillToolDefinition(); skill != nil && cfg.toolAvailable("skill") {
 		definitions = append(definitions, skill)
 	}
+	if cfg.Assistant != nil {
+		definitions = append(definitions, cfg.Assistant.Definitions...)
+	}
 	return definitions
 }
 
@@ -101,28 +103,10 @@ func allToolDefinitions(cfg Config) []map[string]any {
 	return result
 }
 
+// WorkspacePath is core.WorkspacePath: path resolved with its links, inside
+// root.
 func WorkspacePath(root, path string) (string, error) {
-	if path == "" {
-		return "", fmt.Errorf("Missing path")
-	}
-	if !filepath.IsAbs(path) {
-		path = filepath.Join(root, path)
-	}
-	path = filepath.Clean(path)
-	resolved, err := filepath.EvalSymlinks(path)
-	if os.IsNotExist(err) {
-		var parent string
-		parent, err = filepath.EvalSymlinks(filepath.Dir(path))
-		resolved = filepath.Join(parent, filepath.Base(path))
-	}
-	if err != nil {
-		return "", err
-	}
-	rel, err := filepath.Rel(root, resolved)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
-		return "", fmt.Errorf("The path is outside the workspace")
-	}
-	return resolved, nil
+	return core.WorkspacePath(root, path)
 }
 
 // outputBuffer keeps the start and the end of a command's output: the start
@@ -145,7 +129,7 @@ func (buffer *outputBuffer) Write(p []byte) (int, error) {
 	if len(p) > 0 {
 		buffer.tail = append(buffer.tail, p...)
 		if len(buffer.tail) > 2*outputKeep {
-			buffer.tail = append([]byte(nil), buffer.tail[len(buffer.tail)-outputKeep:]...)
+			buffer.tail = buffer.tail[:copy(buffer.tail, buffer.tail[len(buffer.tail)-outputKeep:])]
 		}
 	}
 	return n, nil
@@ -157,6 +141,15 @@ func (buffer *outputBuffer) String() string {
 		return strings.ToValidUTF8(string(buffer.head)+fmt.Sprintf("\n…[%d bytes not kept]…\n", skipped)+string(tail), "")
 	}
 	return string(buffer.head) + string(tail)
+}
+
+// last is the end of the output, at most n bytes (n < outputKeep), without
+// making the whole of it.
+func (buffer *outputBuffer) last(n int) string {
+	if len(buffer.tail) >= n {
+		return string(buffer.tail[len(buffer.tail)-n:])
+	}
+	return string(buffer.head[max(0, len(buffer.head)+len(buffer.tail)-n):]) + string(buffer.tail)
 }
 
 // liveOutput is a shell command's output, also shown while it runs: the
@@ -196,15 +189,15 @@ func (live *liveOutput) stream(id string, emit emitter) (stop func()) {
 			live.mu.Lock()
 			total, text := live.buffer.total, ""
 			if total != shown {
-				text = live.buffer.String()
+				text = live.buffer.last(liveOutputKeep)
 			}
 			live.mu.Unlock()
 			if total == shown {
 				continue
 			}
 			shown = total
-			if len(text) > liveOutputKeep {
-				text = "…\n" + strings.ToValidUTF8(text[len(text)-liveOutputKeep:], "")
+			if total > liveOutputKeep {
+				text = "…\n" + strings.ToValidUTF8(text, "")
 			}
 			emit("tool_output", ToolOutcome{ID: id, Name: "shell", Output: text})
 		}
@@ -425,6 +418,10 @@ func (backend *App) executeTool(ctx context.Context, root string, call ToolCall,
 			result, err := handler(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
 			outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
 		}
+	} else if assistant := assistantOf(ctx); assistant.has(call.Function.Name) {
+		begin()
+		result, err := assistant.Run(ctx, call.Function.Name, json.RawMessage(call.Function.Arguments))
+		outcome.Output, outcome.Images, outcome.Err = result.Text, result.Images, err
 	} else {
 		outcome.Output, outcome.Diff, outcome.Err = backend.runTool(ctx, root, call, begin, emit)
 	}
@@ -534,6 +531,11 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		output, err = wrapUp(state, call.Function.Arguments, emit)
 		return
 	}
+	if isGoalTool(call.Function.Name) {
+		begin()
+		output, err = backend.goalTool(ctx, call.Function.Name, call.Function.Arguments, emit)
+		return
+	}
 	if call.Function.Name == "update_todo" {
 		state, _ := ctx.Value(todoContextKey{}).(*TodoState)
 		if state == nil {
@@ -595,7 +597,11 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 		cmd.Stdout = io.MultiWriter(&capture.stdout, output)
 		cmd.Stderr = io.MultiWriter(&capture.stderr, output)
 		stop := output.stream(call.ID, emit)
-		err := cmd.Run()
+		err := cmd.Start()
+		if err == nil {
+			platform.OOMFirst(cmd) // a build that fills the memory goes before 1loop (#584)
+			err = cmd.Wait()
+		}
 		stop()
 		code := -1
 		if cmd.ProcessState != nil {
@@ -678,8 +684,9 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	if err != nil {
 		return "", "", err
 	}
-	if !backend.confirm(ctx, emit, "Apply changes to "+rel+"?", diff) {
-		return "", diff, fmt.Errorf("Edit denied")
+	after, diff, note, err := backend.approveEdit(ctx, emit, rel, before, after, diff, create)
+	if err != nil {
+		return "", diff, err
 	}
 	begin()
 	// Recheck the target after approval: it may have changed while the user reviewed the diff.
@@ -707,5 +714,5 @@ func (backend *App) runTool(ctx context.Context, root string, call ToolCall, beg
 	if closeErr != nil {
 		return "", diff, closeErr
 	}
-	return "Changes applied: " + rel + "\n" + diff, diff, nil
+	return "Changes applied: " + rel + "\n" + note + diff, diff, nil
 }

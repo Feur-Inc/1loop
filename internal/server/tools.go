@@ -17,6 +17,7 @@ import (
 	"image/draw"
 	"image/png"
 	"io"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -70,7 +71,7 @@ func (server *headlessServer) detachTabLocked(chat *serverChat, index int) *serv
 	}
 	// Closing the last browser tab cancels its session. The next tab needs
 	// a fresh session, without restoring the tabs the user just closed.
-	chat.session = browser.NewBrowserSession(server.engine)
+	chat.session = browser.NewBrowserSession(server.engineOf(chat))
 	return tab
 }
 
@@ -78,7 +79,7 @@ func (server *headlessServer) ensureTabsLocked(chat *serverChat) {
 	if chat.session != nil {
 		return
 	}
-	chat.session = browser.NewBrowserSession(server.engine)
+	chat.session = browser.NewBrowserSession(server.engineOf(chat))
 	for _, info := range chat.Browsers {
 		server.addBrowserLocked(chat, info, "")
 	}
@@ -87,6 +88,9 @@ func (server *headlessServer) ensureTabsLocked(chat *serverChat) {
 func (server *headlessServer) addBrowserLocked(chat *serverChat, info browser.Info, attachTarget target.ID) *browser.Page {
 	page := browser.NewBrowserPage(chat.session, info)
 	page.AttachTarget = attachTarget
+	if chat.ID == loopyChat {
+		page.Record() // for its inspector and its scripts
+	}
 	chat.tabs = append(chat.tabs, &serverTab{browser: page})
 	page.OnPopup = func(id target.ID, address string) {
 		server.mu.Lock()
@@ -102,9 +106,31 @@ func (server *headlessServer) addBrowserLocked(chat *serverChat, info browser.In
 	return page
 }
 
-// hasBrowser says whether Browser Use can start a browser: the phone's
-// WebView, or a Chromium unless ONELOOP_BROWSER=none (the slim image).
+// engineOf is the browser a chat works in: Browser Use's, or Loopy's own,
+// another process with another profile.
+func (server *headlessServer) engineOf(chat *serverChat) *browser.Engine {
+	if chat.ID != loopyChat {
+		return server.engine
+	}
+	if server.loopyBrowser == nil {
+		server.loopyBrowser = browser.NewBrowserEngine(server.ctx)
+		server.loopyBrowser.Profile = filepath.Join(server.loopyDir(), "browser")
+		if native, ok := server.engine.Native.(*mobileBrowser); ok {
+			server.loopyBrowser.Native = &mobileBrowser{bridge: native.bridge, profile: "loopy"}
+		}
+	}
+	return server.loopyBrowser
+}
+
+// hasBrowser says whether Browser Use can start a browser: its own, or
+// one a paired client lends (lent_browser.go).
 func (server *headlessServer) hasBrowser() bool {
+	return server.ownBrowser() || server.lenders.current() != nil
+}
+
+// ownBrowser says whether the server has a browser of its own: the phone's
+// WebView, or a Chromium unless ONELOOP_BROWSER=none (the slim image).
+func (server *headlessServer) ownBrowser() bool {
 	return server.engine.Native != nil || !browser.Disabled()
 }
 
@@ -179,14 +205,29 @@ func (server *headlessServer) browserTools(chat *serverChat) agent.PanelToolHand
 		if page == nil {
 			return agent.PanelToolResult{}, fmt.Errorf("Open a browser tab with browser_tabs first")
 		}
-		if err := page.Run(ctx); err != nil {
-			return agent.PanelToolResult{}, err
+		var lender *browserLender
+		if !server.ownBrowser() {
+			lender = server.lenders.current()
 		}
-		if name == "browser_tabs" {
-			data, _ := json.Marshal(page.Snapshot())
-			return agent.PanelToolResult{Text: string(data)}, nil
+		result, err := func() (agent.PanelToolResult, error) {
+			if err := page.Run(ctx); err != nil {
+				return agent.PanelToolResult{}, err
+			}
+			if name == "browser_tabs" {
+				data, _ := json.Marshal(page.Snapshot())
+				return agent.PanelToolResult{Text: string(data)}, nil
+			}
+			return agent.ExecuteBrowserTool(ctx, page, name, args)
+		}()
+		if err != nil && lender != nil && lender.left() {
+			return result, fmt.Errorf("The browser %s lent went away during this call, which did not finish: %s stopped lending it (%v). The tabs open again when a paired desktop app lends its browser", lender.device, lender.device, err)
 		}
-		return agent.ExecuteBrowserTool(ctx, page, name, args)
+		if err != nil && lender != nil && !page.Started() {
+			// The lent browser did not start: the next call tries again
+			// in a new one, rather than failing as this one did.
+			server.reopenBrowsers()
+		}
+		return result, err
 	}
 }
 

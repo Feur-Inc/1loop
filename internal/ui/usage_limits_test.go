@@ -9,6 +9,10 @@ import (
 	"testing"
 
 	"fyne.io/fyne/v2"
+	"fyne.io/fyne/v2/container"
+	"fyne.io/fyne/v2/test"
+
+	"1loop/internal/usage"
 )
 
 // A dashed line keeps dashes of one length and gap, whatever its length:
@@ -84,6 +88,54 @@ func TestStrokeJointsAreSolid(t *testing.T) {
 			if a := img.NRGBAAt(x, y).A; a < 0xc0 {
 				t.Errorf("scale %v: the line has a hole at %v (alpha %d)", scale, p, a)
 			}
+		}
+	}
+}
+
+// The Usage page shows one account's windows at a time, each account's
+// windows staying together (#415).
+func TestLimitsByAccount(t *testing.T) {
+	limits := []usage.Limit{
+		{Connection: "a", Name: "Claude Code", Window: "7d", Title: "Weekly", Hours: 168},
+		{Connection: "b", Name: "Work", Window: "7d", Title: "Weekly", Hours: 168},
+		{Connection: "a", Name: "Claude Code", Window: "5h", Title: "5-hour", Hours: 5},
+		{Connection: "c", Window: "5h", Title: "5-hour", Hours: 5},
+	}
+	accounts := limitAccounts(limits)
+	if len(accounts) != 3 || accounts[0].name != "Claude Code" || len(accounts[0].windows) != 2 || accounts[2].name != "Subscription" {
+		t.Fatalf("accounts %+v", accounts)
+	}
+	if limitsSection(nil, "", nil) != nil {
+		t.Fatal("a section without limits")
+	}
+	test.NewApp()
+	// The account chosen; the first when the one chosen is gone.
+	for chosen, want := range map[string]string{"b": "Work", "a": "Claude Code", "gone": "Claude Code"} {
+		var selected []string
+		var tabs int
+		var walk func(object fyne.CanvasObject)
+		walk = func(object fyne.CanvasObject) {
+			switch object := object.(type) {
+			case *fyne.Container:
+				for _, child := range object.Objects {
+					walk(child)
+				}
+			case *container.Scroll:
+				walk(object.Content)
+			case *container.ThemeOverride: // a strip of tabs (stripScroll)
+				walk(object.Content)
+			case *tapRow:
+				if object.text == "Claude Code" || object.text == "Work" || object.text == "Subscription" {
+					tabs++
+					if object.selected {
+						selected = append(selected, object.text)
+					}
+				}
+			}
+		}
+		walk(limitsSection(limits, chosen, func(string) {}))
+		if tabs != 3 || len(selected) != 1 || selected[0] != want {
+			t.Errorf("%s chosen: %d tabs, selected %v, want %s", chosen, tabs, selected, want)
 		}
 	}
 }

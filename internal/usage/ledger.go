@@ -17,6 +17,8 @@ import (
 	"sort"
 	"sync"
 	"time"
+
+	"1loop/internal/core"
 )
 
 // Record is one model call. Input counts the prompt tokens read fresh: the
@@ -208,7 +210,7 @@ func (spend *ChatSpend) Text() string {
 	}
 	text := "Spent in this chat: " + amount(spend.Totals)
 	if spend.Calls > 0 {
-		text += fmt.Sprintf(" · %s tokens in %d model calls", Count(spend.Total()), spend.Calls)
+		text += fmt.Sprintf(" · %s tokens in %d model calls", core.CompactCount(spend.Total()), spend.Calls)
 	}
 	if spend.Subchats != nil {
 		text += " · its subchats: " + amount(*spend.Subchats)
@@ -220,7 +222,7 @@ func (spend *ChatSpend) Text() string {
 // the tokens when nothing could be priced.
 func amount(totals Totals) string {
 	if totals.Cost == 0 && totals.Unpriced > 0 {
-		return Count(totals.Total()) + " tokens, no known price"
+		return core.CompactCount(totals.Total()) + " tokens, no known price"
 	}
 	text := Money(totals.Cost)
 	if totals.PlanCost > 0 && totals.PlanCost >= totals.Cost*0.99 {

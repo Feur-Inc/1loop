@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
@@ -146,14 +147,22 @@ func (server *headlessServer) sendLocked(chat *serverChat, id, text string, imag
 // turnEndedLocked is the end of a chat's last turn in a row: a subchat
 // notes how it ended, and the chats that caused it hear it.
 func (server *headlessServer) turnEndedLocked(chat *serverChat, ended string) {
+	reportTo := chat.ReportTo
+	chat.ReportTo, chat.Resumed = nil, false
 	if chat.Subchat != nil {
 		chat.Subchat.Ended = ended
 		if parent := server.parentLocked(chat); parent != nil {
+			// The parent last heard of a turn that did not end done: this
+			// one's end reaches it too, whoever caused it (#584).
+			if chat.Subchat.Owed() {
+				reportTo = server.reportToLocked(chat, reportTo)
+			}
+			if slices.Contains(reportTo, parent.ID) {
+				chat.Subchat.Reported = ended
+			}
 			server.broadcastLocked("meta", server.metaLocked(parent))
 		}
 	}
-	reportTo := chat.ReportTo
-	chat.ReportTo = nil
 	for _, id := range reportTo {
 		target := server.chatLocked(id)
 		if target == nil {
@@ -167,4 +176,24 @@ func (server *headlessServer) turnEndedLocked(chat *serverChat, ended string) {
 		sender := agent.ChatSender{ID: chat.ID, Title: info.Title, Hops: chat.hops + 1}
 		server.wakeLocked(target, agent.TurnReport(sender, relationLocked(target, chat), info))
 	}
+}
+
+// goalCommandLocked runs a /goal sent to chat (agent/goal.go): its note
+// joins the chat, and a goal to work on now starts its turn.
+func (server *headlessServer) goalCommandLocked(chat *serverChat, command agent.GoalCommand) error {
+	if chat.Goal == nil {
+		chat.Goal = &agent.GoalState{}
+	}
+	outcome, err := chat.Goal.Command(command, chat.run != nil, chat.Config.Provider)
+	if err != nil {
+		return err
+	}
+	if outcome.Start != nil {
+		server.runLocked(chat, *outcome.Start) // its first line is the chat's note
+	} else if outcome.Note != "" {
+		server.changedLocked(chat, server.addLocked(chat, agent.ChatItem{Kind: "note", Text: outcome.Note}))
+	}
+	server.broadcastLocked("meta", server.metaLocked(chat))
+	server.scheduleSaveLocked()
+	return nil
 }

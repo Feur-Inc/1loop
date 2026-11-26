@@ -21,7 +21,6 @@ import (
 
 	"fyne.io/fyne/v2"
 
-	"1loop/internal/agent"
 	"1loop/internal/remoteapi"
 	"1loop/internal/sse"
 )
@@ -189,7 +188,7 @@ func (remote *remoteDesktop) apply(event serverEvent) {
 		}
 		remote.show(remote.name, remote.defaultWorkspace, remote.chats, listed.Projects)
 	case "settings":
-		var settings remoteSettings
+		var settings serverSettingsState
 		if json.Unmarshal([]byte(event.data), &settings) != nil {
 			return
 		}
@@ -263,35 +262,16 @@ func (remote *remoteDesktop) applyMeta(meta remoteapi.Meta) {
 	remote.meta = meta
 	conv := remote.conv(meta.Chat)
 	conv.Config.Model, conv.Config.Effort = meta.Model, meta.Effort // shown at once when it opens again
-	remote.parent.model.row.SetText(remote.modelText(meta.Model, meta.Effort))
+	remote.showModel(meta.Model, meta.Effort)
 	remote.showMeta(conv)
 	remote.renderTasks()
 }
 
-// remoteSettings are the server's settings, in its state and its settings
-// event.
-type remoteSettings struct {
-	Models                      []remoteapi.Model
-	Accounts                    []remoteapi.Account
-	DefaultPresets              bool
-	Model, Effort, ApprovalMode string
-	Tier                        string
-	AutoMode                    bool // the server's model has an Auto mode
-	NamingModel                 *agent.NamingModel
-	Loading                     bool // its accounts' models are still being read
-}
-
-func (remote *remoteDesktop) applySettings(settings remoteSettings) {
-	if len(settings.Models) > 0 || !settings.Loading { // kept while the server reads them again
-		remote.models = settings.Models
-	}
-	remote.accounts, remote.defaultPresets = settings.Accounts, settings.DefaultPresets
-	remote.model, remote.effort, remote.tier = settings.Model, settings.Effort, settings.Tier
-	remote.approvalMode, remote.autoMode = settings.ApprovalMode, settings.AutoMode
-	remote.namingModel = settings.NamingModel
+func (remote *remoteDesktop) applySettings(settings serverSettingsState) {
+	remote.takeSettings(settings)
 	remote.parent.updateApprovalControl()
 	if remote.current == "" {
-		remote.parent.model.row.SetText(remote.modelText(remote.model, remote.effort))
+		remote.showModel(remote.model, remote.effort)
 	}
 }
 
@@ -301,7 +281,7 @@ type remoteState struct {
 	Chats           []remoteapi.Chat
 	Projects        *[]string // nil from a server that lists them only at /api/projects
 	Worktrees       map[string]string
-	Settings        remoteSettings
+	Settings        serverSettingsState
 }
 
 // remoteChatRead is a full read of a chat.

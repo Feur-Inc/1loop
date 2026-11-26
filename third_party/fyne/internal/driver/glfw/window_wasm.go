@@ -89,6 +89,8 @@ type window struct {
 	pending []func()
 
 	lastWalkedTime time.Time
+
+	retention retention // 1loop: how its last frame was painted (damage.go)
 }
 
 func (w *window) SetFullScreen(full bool) {

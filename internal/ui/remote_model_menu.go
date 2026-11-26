@@ -60,7 +60,7 @@ func (remote *remoteDesktop) modelMenu() {
 		lists[i] = container.New(layout.NewCustomPaddedVBoxLayout(0))
 		var body fyne.CanvasObject = lists[i]
 		if i < 2 {
-			scrolls[i] = newKineticVScroll(lists[i])
+			scrolls[i] = newKineticVScroll(clearOfBar(lists[i]))
 			scrolls[i].SetMinSize(fyne.NewSize(0, 276-modelLimitsStripHeight))
 			body = scrolls[i]
 		}

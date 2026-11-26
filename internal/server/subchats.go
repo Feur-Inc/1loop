@@ -313,3 +313,67 @@ func (server *headlessServer) subchatCommandLocked(parent *serverChat, brief str
 	}()
 	return nil
 }
+
+// serverRestarted is what cut a turn off, as its chat and the chats it
+// reported to are told (agent.CutOffTurn).
+const serverRestarted = "the server restarted"
+
+// cutOffTurn is a turn the last stop of the server cut off: the chats it
+// was to report to, and the message that resumes it (nil: it waits).
+type cutOffTurn struct {
+	chat     *serverChat
+	reportTo []string
+	resume   *agent.Message
+}
+
+// resumeCutOffLocked goes on after a restart with the turns it cut off
+// (#584), once: those that can resume in their session do, then the chats
+// they were to report to (a subchat's parent always) are told, with the
+// last answer. start begins a turn (runLocked).
+func (server *headlessServer) resumeCutOffLocked(start func(*serverChat, agent.Message)) {
+	cutOffs := server.cutOffs
+	server.cutOffs = nil
+	cut := map[string]bool{}
+	for _, turn := range cutOffs {
+		cut[turn.chat.ID] = true
+	}
+	resumed := map[string]bool{}
+	for _, turn := range cutOffs {
+		chat := turn.chat
+		// Deleted meanwhile, or the user already went on with it.
+		if turn.resume == nil || server.chatLocked(chat.ID) != chat || chat.run != nil {
+			continue
+		}
+		chat.ReportTo = server.reportToLocked(chat, turn.reportTo) // its end reports as the cut one would have
+		chat.Resumed = true
+		resumed[chat.ID] = true
+		start(chat, *turn.resume)
+	}
+	for _, turn := range cutOffs {
+		chat := turn.chat
+		if server.chatLocked(chat.ID) != chat {
+			continue
+		}
+		info := agent.SubchatInfo{ID: chat.ID, Title: agent.SubchatTitle(chat.Title), Folder: chat.Config.Workspace, Last: agent.LastAnswer(chat.Items)}
+		if chat.Subchat != nil {
+			info = server.subchatInfoLocked(chat)
+		}
+		sender := agent.ChatSender{ID: chat.ID, Title: info.Title, Hops: chat.hops + 1}
+		for _, id := range server.reportToLocked(chat, turn.reportTo) {
+			if target := server.chatLocked(id); target != nil {
+				server.wakeLocked(target, agent.InterruptedReport(sender, relationLocked(target, chat), info, serverRestarted, resumed[chat.ID], cut[id]))
+			}
+		}
+	}
+	server.scheduleSaveLocked()
+}
+
+// reportToLocked is reportTo with chat's parent, for a subchat whose
+// parent is still there.
+func (server *headlessServer) reportToLocked(chat *serverChat, reportTo []string) []string {
+	reportTo = slices.Clone(reportTo)
+	if parent := server.parentLocked(chat); parent != nil && !slices.Contains(reportTo, parent.ID) {
+		reportTo = append(reportTo, parent.ID)
+	}
+	return reportTo
+}

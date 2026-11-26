@@ -18,6 +18,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/widget"
 
+	"1loop/internal/agent"
 	"1loop/internal/remoteapi"
 )
 
@@ -140,8 +141,11 @@ func (remote *remoteDesktop) stop() {
 }
 
 // approve answers the server's approval; if that fails, it is asked again.
-func (remote *remoteDesktop) approve(id string, allow bool) {
-	remote.act("/api/approve", map[string]any{"id": id, "allow": allow}, remoteAction{key: "approve:" + id, done: func(err error) {
+func (remote *remoteDesktop) approve(id string, answer agent.ApprovalAnswer) {
+	remote.act("/api/approve", struct {
+		ID string `json:"id"`
+		agent.ApprovalAnswer
+	}{id, answer}, remoteAction{key: "approve:" + id, done: func(err error) {
 		if err == nil {
 			return
 		}

@@ -23,6 +23,7 @@ import (
 	"github.com/alecthomas/chroma/v2"
 	"github.com/alecthomas/chroma/v2/lexers"
 
+	"1loop/internal/core"
 	"1loop/internal/remoteapi"
 )
 
@@ -69,17 +70,18 @@ func buildFileBrowser(ctx context.Context, window fyne.Window, source fileSource
 		icon := widget.NewIcon(iconDocument)
 		name := textLine("", 13, colText)
 		size := textLine("", 11, colMuted)
-		return container.NewBorder(nil, nil, icon, size, name)
+		// The sizes end clear of the list's scrollbar (#633).
+		return container.NewBorder(nil, nil, icon, padded(0, 0, 0, barRoom, size), name)
 	}, func(i widget.ListItemID, object fyne.CanvasObject) {
 		entry := browser.entries[i]
 		row := object.(*fyne.Container)
-		name, icon, size := row.Objects[0].(*canvas.Text), row.Objects[1].(*widget.Icon), row.Objects[2].(*canvas.Text)
+		name, icon, size := row.Objects[0].(*canvas.Text), row.Objects[1].(*widget.Icon), row.Objects[2].(*fyne.Container).Objects[0].(*canvas.Text)
 		name.Text = entry.Name
 		icon.SetResource(fileTypeIcon(entry.Name, entry.Dir))
 		if entry.Dir {
 			size.Text = ""
 		} else {
-			size.Text = byteSize(entry.Size)
+			size.Text = core.ByteSize(entry.Size)
 		}
 		name.Refresh()
 		size.Refresh()
@@ -184,7 +186,7 @@ func (browser *fileBrowser) show(file remoteapi.FileEntry) {
 	from, to := browser.from, browser.to
 	browser.from, browser.to = 0, 0
 	body := container.NewStack(padded(20, 20, 18, 18, note("Loading…")))
-	header := padded(8, 8, 10, 10, container.NewVBox(container.NewBorder(nil, nil, back, nil, title), container.NewHScroll(buttons)))
+	header := padded(8, 8, 10, 10, container.NewVBox(container.NewBorder(nil, nil, back, nil, title), strip(buttons)))
 	browser.content.Objects = []fyne.CanvasObject{container.NewBorder(header, nil, nil, nil, body)}
 	browser.content.Refresh()
 	go func() {
@@ -206,11 +208,11 @@ func (browser *fileBrowser) show(file remoteapi.FileEntry) {
 				view.SetMinSize(fyne.NewSize(240, 240))
 				body.Objects = []fyne.CanvasObject{padded(12, 12, 12, 12, view)}
 			case preview.Binary || preview.Image:
-				body.Objects = []fyne.CanvasObject{padded(20, 20, 18, 18, note(fmt.Sprintf("Binary file · %s. Download it to open it.", byteSize(preview.Size))))}
+				body.Objects = []fyne.CanvasObject{padded(20, 20, 18, 18, note(fmt.Sprintf("Binary file · %s. Download it to open it.", core.ByteSize(preview.Size))))}
 			default:
 				text := preview.Text
 				if preview.Truncated {
-					text += fmt.Sprintf("\n… (the preview shows the first %s of %s)", byteSize(int64(len(preview.Text))), byteSize(preview.Size))
+					text += fmt.Sprintf("\n… (the preview shows the first %s of %s)", core.ByteSize(int64(len(preview.Text))), core.ByteSize(preview.Size))
 				}
 				body.Objects = []fyne.CanvasObject{newCodeViewAt(file.Name, text, from, to)}
 			}
@@ -282,16 +284,4 @@ func newCodeViewAt(name, text string, from, to int) fyne.CanvasObject {
 	copyText := newRow("Copy", iconCopy, styleChip, func() { fyne.CurrentApp().Clipboard().SetContent(text) })
 	header := padded(6, 6, 12, 8, container.NewBorder(nil, nil, textLine(fmt.Sprintf("%d line(s)", len(lines)), 12, colMuted), copyText))
 	return container.NewBorder(header, nil, nil, nil, container.NewHScroll(content))
-}
-
-func byteSize(n int64) string {
-	switch {
-	case n >= 1<<30:
-		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
-	case n >= 1<<20:
-		return fmt.Sprintf("%.1f MB", float64(n)/(1<<20))
-	case n >= 1<<10:
-		return fmt.Sprintf("%.0f KB", float64(n)/(1<<10))
-	}
-	return fmt.Sprintf("%d B", n)
 }

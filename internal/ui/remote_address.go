@@ -8,6 +8,7 @@ package ui
 // client keeps them in the page's storage: remote_address_js.go).
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -36,6 +37,16 @@ func saveServerAddress(address serverAddress) error {
 	saved := loadPairings()
 	saved.add(address)
 	// Every paired server's token is in it: never half written (#523).
+	return core.WriteFileSafely(remoteAddressPath(), 0600, false, saved.encode())
+}
+
+// saveLendBrowser turns lending this computer's browser to a server on or
+// off.
+func saveLendBrowser(address string, on bool) error {
+	saved := loadPairings()
+	if !saved.setLendBrowser(address, on) {
+		return fmt.Errorf("This server is not paired")
+	}
 	return core.WriteFileSafely(remoteAddressPath(), 0600, false, saved.encode())
 }
 

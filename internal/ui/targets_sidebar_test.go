@@ -75,7 +75,7 @@ func TestSidebarKeepsThisComputerOnAMachine(t *testing.T) {
 // beside the server's.
 func TestSidebarKeepsThisComputerOnAServer(t *testing.T) {
 	ui := sidebarUI(t)
-	ui.server = &remoteDesktop{parent: ui, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: "https://box.lan:47101"}}, name: "box",
+	ui.server = &remoteDesktop{parent: ui, shown: true, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: "https://box.lan:47101"}}, name: "box",
 		projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "s1", Title: "Server chat", Workspace: "/srv/api"}}, convs: map[string]*conversation{}}
 	ui.renderChats()
 	wantListed(t, ui, "app", "Fix the parser", "site", "Deploy the site", "api", "Server chat")
@@ -88,7 +88,31 @@ func TestSidebarKeepsNoFolderChatsOnAMachine(t *testing.T) {
 	ui.chats = append(ui.chats, &conversation{ID: "loose", Title: "Quick question", Config: agent.Config{Workspace: "/state/scratch/a", Scratch: "/state/scratch/a"}})
 	ui.cfg.MachineID = "m1"
 	ui.renderChats()
-	wantListed(t, ui, noFolderLabel, "Quick question")
+	wantListed(t, ui, thisComputerLabel, "Quick question")
+}
+
+// A click on a server's project opens a connection to it, which lists
+// nothing until its first state arrives: the projects and chats its link
+// had read stay in the sidebar meanwhile. They left it for seconds.
+func TestSidebarKeepsAServerWhileItsConnectionOpens(t *testing.T) {
+	ui := sidebarUI(t)
+	address := "https://box.lan:47101"
+	ui.links = append(ui.links, &serverLink{address: serverAddress{URL: address}, answered: true,
+		listing: serverListing{name: "box", projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "s1", Title: "Server chat", Workspace: "/srv/api"}}}})
+	ui.reaches = map[string]targetReach{serverTarget(address).key(): {state: reachOnline}}
+	ui.renderChats()
+	wantListed(t, ui, "api", "Server chat")
+
+	// Chosen: the connection is open, its first state not yet in.
+	ui.server = &remoteDesktop{parent: ui, client: &remoteClient{address: serverAddress{URL: address}}}
+	ui.renderChats()
+	wantListed(t, ui, "api", "Server chat")
+
+	// Its state in: its own listing.
+	ui.server.shown, ui.server.live.answered, ui.server.name = true, true, "box"
+	ui.server.projects, ui.server.chats = []string{"/srv/api", "/srv/web"}, []remoteapi.Chat{{ID: "s1", Title: "Server chat", Workspace: "/srv/api"}}
+	ui.renderChats()
+	wantListed(t, ui, "api", "web", "Server chat")
 }
 
 // A project copied to a server keeps its chats' IDs (projectsync): the
@@ -121,7 +145,8 @@ func TestSidebarSameChatIDOnAServer(t *testing.T) {
 }
 
 // A server's chat with no folder runs in a folder the server made for it:
-// it is listed under No folder, not as a project of that folder's name.
+// it is listed under the server's Other chats, not as a project of that
+// folder's name, nor under This computer.
 func TestSidebarServerChatWithNoFolder(t *testing.T) {
 	ui := sidebarUI(t)
 	chats := []remoteapi.Chat{{ID: "q", Title: "Quick question", Workspace: "/data/scratch/x600", Scratch: true}}
@@ -132,7 +157,10 @@ func TestSidebarServerChatWithNoFolder(t *testing.T) {
 	ui.server = &remoteDesktop{parent: ui, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: "https://box.lan:47101"}}, name: "box",
 		projects: projects, chats: chats, convs: map[string]*conversation{}}
 	ui.renderChats()
-	wantListed(t, ui, noFolderLabel, "Quick question")
+	wantListed(t, ui, "Other chats", "Quick question")
+	if slices.Contains(sidebarTexts(ui), thisComputerLabel) {
+		t.Errorf("a server's chat is listed under %s: %q", thisComputerLabel, sidebarTexts(ui))
+	}
 	if slices.Contains(sidebarTexts(ui), "x600") {
 		t.Errorf("its folder is listed as a project: %q", sidebarTexts(ui))
 	}

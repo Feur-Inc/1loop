@@ -244,7 +244,7 @@ func TestServerSlowRequestShowsActivity(t *testing.T) {
 	if ui.serverBusy.Visible() {
 		t.Fatal("the activity line shows before the request is slow")
 	}
-	until(t, "the activity line", ui.serverBusy.Visible)
+	untilDrained(t, "the activity line", ui.serverBusy.Visible)
 	remote.busy(-1)
 	if ui.serverBusy.Visible() {
 		t.Fatal("the activity line stays once the server answered")
@@ -294,9 +294,9 @@ func TestServerChatCachedWhenOpenedAgain(t *testing.T) {
 	go remote.refreshLoop()
 	remote.notify()
 	remote.openChat("c1")
-	until(t, "the first read", func() bool { c := remote.live.cache["c1"]; return c != nil && c.loaded && c.hasTabs })
+	untilDrained(t, "the first read", func() bool { c := remote.live.cache["c1"]; return c != nil && c.loaded && c.hasTabs })
 	remote.openChat("c2")
-	until(t, "the other chat", func() bool { c := remote.live.cache["c2"]; return c != nil && c.loaded })
+	untilDrained(t, "the other chat", func() bool { c := remote.live.cache["c2"]; return c != nil && c.loaded })
 
 	remote.openChat("c1")
 	conv := remote.convs["c1"]
@@ -306,12 +306,12 @@ func TestServerChatCachedWhenOpenedAgain(t *testing.T) {
 	if !remote.meta.Running || remote.meta.Label != "Working" {
 		t.Fatalf("its state is not shown at once: %+v", remote.meta)
 	}
-	until(t, "the conditional read", func() bool {
+	untilDrained(t, "the conditional read", func() bool {
 		mu.Lock()
 		defer mu.Unlock()
 		return len(tags) == 3
 	})
-	until(t, "the read to be applied", func() bool { return !remote.live.cache["c1"].reading })
+	untilDrained(t, "the read to be applied", func() bool { return !remote.live.cache["c1"].reading })
 	mu.Lock()
 	defer mu.Unlock()
 	if tags[2] != `/api/chats/c1 "/api/chats/c1"` {

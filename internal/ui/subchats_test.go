@@ -14,7 +14,8 @@ import (
 
 // A subchat is still its parent's after 1loop restarts: the link is saved
 // with the chats and read back (#356). A turn that was to report when 1loop
-// closed shows stopped, and reports nothing later.
+// closed shows stopped and interrupted, and reports later only at the end
+// of the next turn.
 func TestSubchatLinkSurvivesRestart(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "state.json")
 	fresh := func() *desktopUI {
@@ -47,6 +48,10 @@ func TestSubchatLinkSurvivesRestart(t *testing.T) {
 	}
 	if cut := after.chatByID("cut"); cut.Subchat.Ended != agent.SubchatStopped || cut.ReportTo != nil {
 		t.Fatalf("a turn cut off by the restart: %+v, reports to %v", *cut.Subchat, cut.ReportTo)
+	}
+	// It says so, and its next turn's end reaches the parent (#584).
+	if cut := after.chatByID("cut"); len(cut.Items) != 1 || cut.Items[0].Kind != "error" || !strings.HasPrefix(cut.Items[0].Text, "Interrupted: 1loop closed") || !cut.Subchat.Owed() {
+		t.Fatalf("the cut-off turn shows %+v, link %+v", cut.Items, *cut.Subchat)
 	}
 	if after.parentOf(after.chatByID("done")) != loaded || parentTitle(after, after.chatByID("done")) != "Main" {
 		t.Fatal("the subchat does not find its parent")

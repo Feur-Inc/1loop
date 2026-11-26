@@ -175,7 +175,7 @@ func (trust *hostTrust) trustFunc(pinned string) sshmachine.TrustFunc {
 		fmt.Fprintf(trust.out, "SSH machine %s (%s) has never been connected to. Its host key is %s %s.\n"+
 			"Trust it only if it is the machine's key: there, ssh-keygen -lf /etc/ssh/ssh_host_%s_key.pub shows it.\n"+
 			"Type trust %d to accept it, refuse %d otherwise.\n",
-			machine, address, keyType, fingerprint, hostKeyFile(keyType), request.number, request.number)
+			machine, address, keyType, fingerprint, sshmachine.HostKeyFile(keyType), request.number, request.number)
 		select {
 		case trusted := <-request.answer:
 			return trusted
@@ -208,17 +208,6 @@ func (trust *hostTrust) waiting() []*hostKeyRequest {
 	}
 	sort.Slice(requests, func(i, j int) bool { return requests[i].number < requests[j].number })
 	return requests
-}
-
-// hostKeyFile is the name sshd gives the host key of this type.
-func hostKeyFile(keyType string) string {
-	switch {
-	case strings.Contains(keyType, "ed25519"):
-		return "ed25519"
-	case strings.HasPrefix(keyType, "ecdsa"):
-		return "ecdsa"
-	}
-	return "rsa"
 }
 
 // ---------------------------------------------------------------------------

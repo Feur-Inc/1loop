@@ -99,9 +99,8 @@ type remoteServer struct {
 	streams     map[chan struct{}]bool
 	fingerprint string
 
-	// The pending pairing and its sheet (UI thread only).
-	book      remoteapi.PairingBook
-	pairSheet *sheet
+	book      remoteapi.PairingBook // the pending pairing, its own lock
+	pairSheet *sheet                // its sheet (UI thread only)
 
 	// Changes waiting for the next flush (UI thread only).
 	dirty     map[*conversation]map[int]bool
@@ -320,20 +319,13 @@ func (server *remoteServer) pair(writer http.ResponseWriter, req *http.Request) 
 		core.Fail(writer, http.StatusBadRequest, "Invalid request")
 		return
 	}
-	var id string
-	var err error
-	server.onUI(func() {
-		var pending *remoteapi.Pairing
-		if pending, err = server.book.Request(body.Device); err == nil {
-			id = pending.ID
-			server.showPairSheet(server.ui.showPairing(pending, server.fingerprint))
-		}
-	})
+	pending, err := server.book.Request(body.Device, remoteapi.ClientAddress(req))
 	if err != nil {
 		core.Fail(writer, http.StatusTooManyRequests, err.Error())
 		return
 	}
-	core.WriteJSON(writer, http.StatusOK, map[string]string{"pairing": id})
+	server.onUI(func() { server.showPairSheet(server.ui.showPairing(pending, server.fingerprint)) })
+	core.WriteJSON(writer, http.StatusOK, map[string]string{"pairing": pending.ID})
 }
 
 // showPairSheet replaces the sheet of an earlier pairing.
@@ -355,11 +347,9 @@ func (server *remoteServer) confirmPair(writer http.ResponseWriter, req *http.Re
 		return
 	}
 	var token string
-	var err error
+	paired, err := server.book.Confirm(body.Pairing, body.Code, body.Device)
 	server.onUI(func() {
-		var paired *remoteapi.Pairing
-		paired, err = server.book.Confirm(body.Pairing, body.Code, body.Device)
-		if server.book.Pending == nil {
+		if server.book.Pending() == 0 {
 			server.showPairSheet(nil)
 		}
 		if errors.Is(err, remoteapi.ErrPairingLocked) {
@@ -409,7 +399,7 @@ func fingerprintCheck(fingerprint string) string {
 }
 
 // showPairing shows the code a phone must type.
-func (ui *desktopUI) showPairing(pending *remoteapi.Pairing, fingerprint string) *sheet {
+func (ui *desktopUI) showPairing(pending remoteapi.Pairing, fingerprint string) *sheet {
 	code := textLine(pending.Code[:3]+" "+pending.Code[3:], 40, colAmber)
 	code.TextStyle = fyne.TextStyle{Monospace: true, Bold: true}
 	intro := widget.NewLabel("“" + pending.Device + "” wants to control 1loop from the phone. Type this code in the app to allow it. It expires in two minutes.")

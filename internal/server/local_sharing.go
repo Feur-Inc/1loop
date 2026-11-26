@@ -98,6 +98,7 @@ func (server *headlessServer) setSharing(w http.ResponseWriter, r *http.Request)
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	if args.Enabled && server.sharing == nil {
+		server.pairing.Unlock() // the user is at the phone
 		listener, err := net.Listen("tcp", fmt.Sprintf(":%d", sharingPort))
 		if err != nil {
 			listener, err = net.Listen("tcp", ":0")
@@ -120,7 +121,7 @@ func (server *headlessServer) setSharing(w http.ResponseWriter, r *http.Request)
 	if !args.Enabled && server.sharing != nil {
 		shared := server.sharing
 		server.sharing = nil
-		server.pairs = map[string]*serverPair{}
+		server.pairing.Clear()
 		go func() {
 			stop, cancel := context.WithTimeout(context.Background(), 3*time.Second)
 			defer cancel()
@@ -148,23 +149,22 @@ func (server *headlessServer) answerPairing(w http.ResponseWriter, r *http.Reque
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	id := r.PathValue("id")
-	pair := server.pairs[id]
-	if pair == nil || time.Now().After(pair.Expires) || pair.Tries >= 5 {
+	pair, found := server.pairing.Get(id)
+	if !found {
 		core.Fail(w, 404, "This pairing has expired")
 		return
 	}
 	if !args.Approve {
-		delete(server.pairs, id)
+		server.pairing.Cancel(id)
 		server.pairingChangedLocked()
 		core.WriteJSON(w, 200, map[string]bool{"ok": true})
 		return
 	}
-	if subtle.ConstantTimeCompare([]byte(pair.Code), []byte(remoteapi.TokenHash(strings.TrimSpace(args.Code)))) != 1 {
-		pair.Tries++
+	if err := server.pairing.Approve(id, args.Code); err != nil {
+		server.pairingChangedLocked() // its last try drops it from the list
 		core.Fail(w, 403, "This is not the code the device shows")
 		return
 	}
-	pair.Approved = true
 	if !server.local {
 		fmt.Fprintf(os.Stderr, "Approved %q from a paired device.\n", pair.Device)
 	}

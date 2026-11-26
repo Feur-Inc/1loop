@@ -136,7 +136,7 @@ type headlessServer struct {
 	panelHomes                 map[string]*serverChat // project panels before the first prompt; not persisted
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
-	pairs                      map[string]*serverPair
+	pairing                    *remoteapi.PairingBook // the pairings waiting (security.go)
 	subs                       map[chan serverEvent]bool
 	streams                    map[chan struct{}]bool
 	choices                    map[string]agent.ModelChoice
@@ -193,7 +193,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		prices:       usage.OpenPrices(filepath.Join(dir, "usage-prices.json")),
 		backend:      &agent.App{Approvals: map[string]chan agent.ApprovalAnswer{}},
 		keys:         map[string]string{},
-		pairs:        map[string]*serverPair{},
+		pairing:      &remoteapi.PairingBook{Slots: maxPendingPairings, PerClient: pairingsPerAddress, Approval: true},
 		subs:         map[chan serverEvent]bool{},
 		streams:      map[chan struct{}]bool{},
 		choices:      map[string]agent.ModelChoice{},

@@ -289,6 +289,7 @@ private fun localNetworkAllowed(context: Context) =
 fun ServersScreen(app: RemoteApp) {
     var adding by remember { mutableStateOf(false) }
     var forgetting by remember { mutableStateOf<Server?>(null) } // a paired one, asked first (#428)
+    var settingUp by remember { mutableStateOf(false) } // Add a server: does one run, or how to set one up (#443)
     val desktop = app.target != ExecutionTarget.RemoteServer
     val shown = app.servers.filter { it.desktop == desktop }
     val scanner = rememberLauncherForActivityResult(ScanContract()) { result -> result.contents?.let(app::pairFromLink) }
@@ -339,7 +340,7 @@ fun ServersScreen(app: RemoteApp) {
                 Row(
                     Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface)
                         .border(1.dp, Palette.borderSoft, RoundedCornerShape(14.dp))
-                        .combinedClickable(onClick = { app.choose(server) }, onLongClick = { if (server.paired) forgetting = server else app.forget(server) })
+                        .combinedClickable(onClick = { app.choose(server) }, onLongClick = { forgetting = server })
                         .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -373,8 +374,8 @@ fun ServersScreen(app: RemoteApp) {
                 }
             } else if (shown.isEmpty()) {
                 Text(
-                    if (desktop) "No 1loop found. Open 1loop on your computer, on the same Wi-Fi, and check Settings → Phone."
-                    else "No server yet. Add one by its address.",
+                    if (desktop) "No 1loop found. Open 1loop on your computer, on the same Wi-Fi, and check Settings → Remote."
+                    else "No server yet. Add one, or set one up.",
                     style = Type.small, textAlign = TextAlign.Center, modifier = Modifier.fillMaxWidth().padding(vertical = 14.dp),
                 )
             }
@@ -387,12 +388,13 @@ fun ServersScreen(app: RemoteApp) {
         Spacer(Modifier.height(24.dp))
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             if (desktop) Pill("Search again", icon = Icons.refresh, enabled = !app.scanning) { app.scan() }
-            Pill("Add by address", icon = Icons.plus, primary = !desktop) { adding = true }
+            if (desktop) Pill("Add by address", icon = Icons.plus) { adding = true }
+            else Pill("Add a server", icon = Icons.plus, primary = true) { settingUp = true }
         }
         if (desktop) {
             Spacer(Modifier.height(10.dp))
             Pill("Scan QR code", primary = true, enabled = !app.busy) {
-                scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the code shown in 1loop on the computer: Settings → Phone → Pair a phone").setBeepEnabled(false).setOrientationLocked(false))
+                scanner.launch(ScanOptions().setDesiredBarcodeFormats(ScanOptions.QR_CODE).setPrompt("Scan the code shown in 1loop on the computer: Settings → Remote → Pair a phone").setBeepEnabled(false).setOrientationLocked(false))
             }
             if (app.busy) {
                 Spacer(Modifier.height(12.dp))
@@ -402,6 +404,7 @@ fun ServersScreen(app: RemoteApp) {
         Spacer(Modifier.height(32.dp))
     }
     if (adding) AddressSheet(onDone = { adding = false }) { app.addManually(it.first, it.second) }
+    if (settingUp) ServerSetupSheet(onDone = { settingUp = false }) { adding = true }
 }
 
 @OptIn(ExperimentalMaterial3Api::class)

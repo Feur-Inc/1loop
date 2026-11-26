@@ -14,7 +14,7 @@ package ui
 // the config folder), which phones pin by its SHA-256 fingerprint.
 //
 // Pairing (remoteapi.PairingBook): the user opens a QR code on the computer
-// (Settings → Phone), which gives the phone the address, the
+// (Settings → Remote), which gives the phone the address, the
 // fingerprint and a secret; or a phone asks and the user types the six
 // digits the computer shows, after checking the fingerprint's start shown
 // on both. The phone then gets a token; only its hash is kept. Every other
@@ -76,7 +76,6 @@ import (
 	"1loop/internal/gitrepo"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
-	registry "1loop/internal/settings"
 	"1loop/internal/usage"
 )
 
@@ -339,7 +338,7 @@ func (server *remoteServer) ConfirmPairing(_ *http.Request, body remoteapi.PairC
 			server.showPairSheet(nil)
 		}
 		if errors.Is(err, remoteapi.ErrPairingLocked) {
-			server.ui.notice("Phone pairing paused", "Too many wrong codes. To pair a phone, use Settings → Phone.")
+			server.ui.notice("Phone pairing paused", "Too many wrong codes. To pair a phone, use Settings → Remote.")
 		}
 		if err != nil {
 			return
@@ -347,8 +346,8 @@ func (server *remoteServer) ConfirmPairing(_ *http.Request, body remoteapi.PairC
 		token = core.Identifier()
 		server.ui.setDevices(append(server.ui.devices, remoteapi.PairedDevice{Name: paired.Device, TokenHash: remoteapi.TokenHash(token), Added: time.Now()}))
 		server.ui.save()
-		if server.ui.prefs.on("Phone") {
-			server.ui.prefs.show("Phone")
+		if server.ui.prefs.on("Remote") {
+			server.ui.prefs.show("Remote")
 		}
 	})
 	if err != nil {
@@ -1309,9 +1308,11 @@ func (server *remoteServer) setApprovalMode(writer http.ResponseWriter, req *htt
 }
 
 // ---------------------------------------------------------------------------
-// Settings: the remote switch and the paired phones.
+// Settings → Remote: the phone app's switch and the paired phones.
 
-func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
+// phoneAppRows are Remote's Phone app: the switch that lets the phone app
+// reach this computer, and pairing a phone while it is on.
+func (ui *desktopUI) phoneAppRows() []fyne.CanvasObject {
 	describe := func() string {
 		switch {
 		case ui.remote != nil:
@@ -1330,39 +1331,45 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 			ui.remote = nil
 		}
 		ui.save()
-		ui.prefs.show("Phone") // the state line and the list follow
+		ui.prefs.show("Remote") // the state line and the pairing row follow
 	})
+	rows := []fyne.CanvasObject{ui.prefs.mark("phone.remote", settingRow("Allow the 1loop phone app on this network", describe(), enabled))}
+	if ui.remote != nil {
+		rows = append(rows, settingRow("Pair a phone", "Shows a QR code to scan with the 1loop app; a phone without a camera types a six-digit code instead.", newRow("Pair a phone", iconPhone, styleChip, ui.showPairingQR)))
+	}
+	return rows
+}
+
+// pairedPhoneRows are the phones paired with this computer, each with
+// Forget, which asks first.
+func (ui *desktopUI) pairedPhoneRows() []fyne.CanvasObject {
 	var phones []fyne.CanvasObject
-	for i, pairedDevice := range ui.devices {
-		i := i
-		name := pairedDevice.Name
-		remove := newRow("Forget", iconTrash, styleChip, func() {
-			ui.confirm("Forget "+name+"?", name+" is unpaired: its access stops at once. It must pair again.", "Forget", func() { // #428
-				ui.setDevices(slices.Delete(slices.Clone(ui.devices), i, i+1))
-				ui.save()
-				if ui.remote != nil {
-					ui.remote.disconnectAll()
-				}
-				ui.prefs.show("Phone")
-			})
-		})
+	for _, pairedDevice := range ui.devices {
+		pairedDevice := pairedDevice
+		remove := newRow("Forget", iconTrash, styleChip, func() { ui.forgetPhone(pairedDevice) })
 		phones = append(phones, settingRow(pairedDevice.Name, "Paired "+pairedDevice.Added.Format("2 Jan 2006 15:04"), remove))
 	}
 	if len(phones) == 0 {
-		phones = append(phones, settingRow("No paired phone yet", "Open the 1loop app on a phone connected to the same network.", nil))
+		phones = append(phones, settingRow("No paired phone yet", "Turn on the phone app below, then pair a phone connected to the same network.", nil))
 	}
-	view := ui.prefs
-	page := container.NewVBox(
-		view.pageTitle("Phone", "", nil),
-		view.intro(registry.Phone),
-		sectionTitle("Phone app"),
-		card(view.mark("phone.remote", settingRow("Allow the 1loop phone app on this network", describe(), enabled))))
-	if ui.remote != nil { // a spacer here stretched and pushed the list to the bottom
-		page.Add(card(settingRow("Pair a phone", "Shows a QR code to scan with the 1loop app.", newRow("Pair a phone", iconPhone, styleChip, ui.showPairingQR))))
-	}
-	page.Add(sectionTitle("Paired phones"))
-	page.Add(view.mark("phone.pairing", card(phones...)))
-	return page
+	return phones
+}
+
+// forgetPhone asks, then unpairs a phone from this computer: its token
+// stops working and its open connections end.
+func (ui *desktopUI) forgetPhone(device remoteapi.PairedDevice) {
+	ui.confirm("Forget "+device.Name+"?", device.Name+" is unpaired: its access stops at once. It must pair again.", "Forget", func() { // #428, #443
+		i := slices.IndexFunc(ui.devices, func(have remoteapi.PairedDevice) bool { return have.TokenHash == device.TokenHash })
+		if i < 0 {
+			return // forgotten meanwhile
+		}
+		ui.setDevices(slices.Delete(slices.Clone(ui.devices), i, i+1))
+		ui.save()
+		if ui.remote != nil {
+			ui.remote.disconnectAll()
+		}
+		ui.reshowRemote()
+	})
 }
 
 // setDevices changes the paired phones (UI thread) and the tokens the

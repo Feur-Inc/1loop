@@ -316,7 +316,7 @@ type desktopApp struct {
 	inForeground     bool // the window has the focus
 	chats            []*conversation
 	projects         []string
-	sshMachines      []sshmachine.Settings          // Settings → General
+	sshMachines      []sshmachine.Settings          // Settings → Remote
 	machineProjects  map[string][]string            // each SSH machine's projects (paths there), by machine ID
 	machines         map[string]*sshmachine.Machine // the machines in use, by ID (ssh_machines.go)
 	worktrees        map[string]string              // this computer's worktrees: folder → project (worktrees.go)
@@ -1705,7 +1705,7 @@ func (ui *desktopUI) notReady() string {
 	}
 	if ui.cfg.MachineID != "" { // the project is on the machine: it is checked there
 		if ui.machineFor(ui.cfg.MachineID) == nil {
-			return "This SSH machine is no longer in Settings → General."
+			return "This SSH machine is no longer in Settings → Remote."
 		}
 		if ui.cfg.Workspace == "" {
 			return "Create a project on " + ui.targetLabel() + " first (Projects, +)."

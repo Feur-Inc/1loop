@@ -158,12 +158,30 @@ func (ui *desktopUI) toggleSidebar() {
 			shade.Hide()
 		}
 	})
-	if to == 0 {
-		ui.expand.Show()
-	} else {
-		ui.expand.Hide()
+	ui.syncExpand(to == 0)
+}
+
+// syncExpand shows the buttons that bring the sidebar back while it is
+// folded: the 1loop title bar's and Loopy's, whichever space is shown.
+func (ui *desktopUI) syncExpand(folded bool) {
+	if ui.tips != nil {
+		ui.tips.hide() // a button's hint, under the pointer as it hides
+	}
+	buttons := []*tapRow{ui.expand}
+	if ui.loopy != nil {
+		buttons = append(buttons, ui.loopy.expand)
+	}
+	for _, button := range buttons {
+		if folded {
+			button.Show()
+		} else {
+			button.Hide()
+		}
 	}
 	ui.headerBar.Refresh()
+	if ui.loopy != nil {
+		ui.loopy.main.Refresh()
+	}
 }
 
 func sectionHeader(text string, action fyne.CanvasObject) fyne.CanvasObject {

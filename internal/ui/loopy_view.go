@@ -72,13 +72,15 @@ type loopyMode struct {
 	sendBtn     *tapRow
 	stopBtn     *tapRow
 	modelChip   *tapRow
-	browserBtn  *tapRow
+	expand      *tapRow // brings the folded sidebar back, as the 1loop title bar's does
+	browserBtn  *tapRow // shows or hides the browser pane, as 1loop's side panel toggle
 	browserPane *fyne.Container
 	browserTab  fyne.CanvasObject
 	browserBar  *fyne.Container // who has it
-	browserOn   bool            // the user wants the pane while there is a page
+	browserOn   bool            // the user asked for the pane; a page alone never opens it
 	remoteTab   string
 	closeRemote context.CancelFunc
+	remoteShow  func(bool)             // streams a server's page while it is shown
 	drafts      map[string]*loopyDraft // what is typed in the cards' fields, by message
 }
 
@@ -117,9 +119,17 @@ func (ui *desktopUI) showSpace(loopySpace bool) {
 		ui.root.Objects[0], ui.root.Objects[1] = ui.oneloopSide, ui.oneloopMain
 	}
 	ui.inLoopy = on
+	// The sidebar swapped in folds as the one it replaces was: the slide
+	// hides only the sidebar shown when it ends.
+	if ui.pane.shown < 0.5 {
+		ui.root.Objects[0].Hide()
+	} else {
+		ui.root.Objects[0].Show()
+	}
 	if mode != nil {
 		mode.shown(on)
 	}
+	ui.syncExpand(ui.pane.shown < 0.5)
 	if on {
 		mode.brand.reveal()
 	} else if ui.brand != nil {
@@ -519,18 +529,31 @@ func (mode *loopyMode) buildMain() {
 	mode.body = container.NewStack(mode.scroll)
 	mode.modelChip = newRow("Model", nil, styleChip, mode.chooseModel)
 	title := textLine("Loopy", 14, colMuted)
+	mode.expand = newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
+	mode.expand.onHover = func(in bool) { hoverTip(ui, mode.expand, in, "Show sidebar") }
+	mode.expand.Hide()
 	right := container.New(layout.NewCustomPaddedHBoxLayout(2))
-	mode.browserBtn = newRow("Browser", iconBrowser, styleChip, func() {
+	// The browser Loopy uses stays out of the way: this button shows it.
+	mode.browserBtn = newRow("", iconPanel, styleWindow, func() {
+		ui.tips.hide() // it said what the click just did
 		mode.browserOn = !mode.browserOn
 		mode.syncBrowser()
 	})
+	mode.browserBtn.onHover = func(in bool) {
+		tip := "Show Loopy's browser"
+		if mode.browserOn {
+			tip = "Hide Loopy's browser"
+		}
+		hoverTip(ui, mode.browserBtn, in, tip)
+	}
 	mode.browserBtn.Hide()
-	right.Add(container.NewCenter(mode.browserBtn))
 	right.Add(container.NewCenter(mode.modelChip))
+	right.Add(container.NewCenter(mode.browserBtn))
 	if ui.chrome {
 		right.Add(windowControls(ui.window, ui.closeWindow))
 	}
-	bar := container.NewBorder(nil, nil, container.NewCenter(title), right)
+	left := container.NewHBox(padded(0, 0, 0, 8, container.NewCenter(mode.expand)), container.NewCenter(title))
+	bar := container.NewBorder(nil, nil, left, right)
 	var header fyne.CanvasObject = padded(14, 8, 24, 24, bar)
 	if ui.chrome {
 		header = container.NewStack(newDragArea(ui.window), padded(8, 4, 20, 8, bar))
@@ -544,6 +567,15 @@ func (mode *loopyMode) buildMain() {
 	}
 	mode.main = container.NewStack(mode.mainFill,
 		container.NewBorder(header, nil, nil, nil, container.New(&loopySplit{pane: mode.browserPane}, conversation, mode.browserPane)))
+}
+
+// hoverTip shows a button's hint while the pointer is on it.
+func hoverTip(ui *desktopUI, button fyne.CanvasObject, in bool, tip string) {
+	if in {
+		ui.tips.show(button, tip)
+	} else {
+		ui.tips.hide()
+	}
 }
 
 // submit sends what the user typed.
@@ -1067,11 +1099,11 @@ func (mode *loopyMode) showBrowser(view fyne.CanvasObject) {
 		mode.browserBtn.Hide()
 		mode.browserPane.Hide()
 		mode.browserTab = nil
+		mode.browserOn = false // the next session starts hidden too
 		return
 	}
-	if mode.browserTab == nil {
-		mode.browserOn = true // the first page opens the pane; the user may close it
-	}
+	// A page does not open the pane: the user rarely needs to watch Loopy
+	// browse, and the button beside the model shows it.
 	mode.browserBtn.Show()
 	mode.browserBtn.SetSelected(mode.browserOn)
 	if view != mode.browserTab {
@@ -1116,7 +1148,7 @@ func (mode *loopyMode) syncRemoteBrowser() {
 	if !mode.view.Browser {
 		if mode.closeRemote != nil {
 			mode.closeRemote()
-			mode.closeRemote, mode.remoteTab = nil, ""
+			mode.closeRemote, mode.remoteTab, mode.remoteShow = nil, "", nil
 		}
 		mode.showBrowser(nil)
 		return
@@ -1145,10 +1177,13 @@ func (mode *loopyMode) syncRemoteBrowser() {
 					status := widget.NewLabel("")
 					remote := &remoteDesktop{parent: mode.ui, client: client, ctx: mode.ui.ctx, window: mode.ui.window, current: loopyChatID, status: status}
 					content, closeTab, active := remote.panelContent(tab)
-					active(true)
-					mode.remoteTab, mode.closeRemote = tab.Key, closeTab
+					active(mode.browserOn)
+					mode.remoteTab, mode.closeRemote, mode.remoteShow = tab.Key, closeTab, active
 					mode.showBrowser(content)
 				} else {
+					if mode.remoteShow != nil {
+						mode.remoteShow(mode.browserOn)
+					}
 					mode.showBrowser(mode.browserTab)
 				}
 				return

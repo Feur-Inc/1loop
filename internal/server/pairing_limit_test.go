@@ -94,3 +94,23 @@ func TestPairingLockAndUnlock(t *testing.T) {
 		t.Fatalf("pairing after unlock: %d", code)
 	}
 }
+
+// The phone sees the same API from a server as from a desktop (#518):
+// remoteapi.PhoneRoutes, and a server's own routes only where listed.
+func TestRouteParity(t *testing.T) {
+	server, _, _ := testServer(t)
+	routes := server.Routes()
+	missing, extra := remoteapi.RouteDifference(routes, remoteapi.ServerOnlyRoutes)
+	if len(missing) > 0 || len(extra) > 0 {
+		t.Fatalf("missing %v; neither shared nor in remoteapi.ServerOnlyRoutes: %v", missing, extra)
+	}
+	for route := range remoteapi.ServerOnlyRoutes {
+		if routes[route] == nil {
+			t.Errorf("%s is listed as the server's but not served", route)
+		}
+	}
+	server.local = true // a phone's own engine: no approvals, no accounts over the API
+	if missing, extra := remoteapi.RouteDifference(server.Routes(), remoteapi.ServerOnlyRoutes); len(missing) > 0 || len(extra) > 0 {
+		t.Fatalf("local engine: missing %v, extra %v", missing, extra)
+	}
+}

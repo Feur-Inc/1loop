@@ -225,15 +225,6 @@ func (server *headlessServer) command(parts []string, out io.Writer) bool {
 	return true
 }
 
-// deviceID names a paired device in the API: the start of its token's
-// hash, which tells nothing of the token and stays the same across restarts.
-func deviceID(device remoteapi.PairedDevice) string {
-	if len(device.TokenHash) < 16 {
-		return device.TokenHash
-	}
-	return device.TokenHash[:16]
-}
-
 // removeDeviceLocked unpairs the device at index: its token stops working
 // on its next request, and the open streams end so that no device keeps one
 // it no longer may (the others reconnect at once). With no device left, a
@@ -267,7 +258,7 @@ func (server *headlessServer) pairedDevices(w http.ResponseWriter, r *http.Reque
 	devices := []map[string]any{}
 	for _, device := range server.devices {
 		current := subtle.ConstantTimeCompare([]byte(device.TokenHash), []byte(hash)) == 1
-		devices = append(devices, map[string]any{"id": deviceID(device), "name": device.Name, "added": device.Added, "current": current})
+		devices = append(devices, map[string]any{"id": remoteapi.DeviceID(device), "name": device.Name, "added": device.Added, "current": current})
 	}
 	core.WriteJSON(w, 200, map[string]any{"devices": devices})
 }
@@ -279,7 +270,7 @@ func (server *headlessServer) revokePairedDevice(w http.ResponseWriter, r *http.
 	server.mu.Lock()
 	defer server.mu.Unlock()
 	index := slices.IndexFunc(server.devices, func(device remoteapi.PairedDevice) bool {
-		return id != "" && deviceID(device) == id
+		return id != "" && remoteapi.DeviceID(device) == id
 	})
 	if index < 0 {
 		core.Fail(w, 404, "This device is not paired")

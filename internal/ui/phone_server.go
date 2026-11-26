@@ -38,6 +38,12 @@ package ui
 //   GET  /api/limits                    every account's usage windows
 //   POST /api/approval-mode {mode}              "approval" or "yolo"
 //   /api/chats/{id}/panel…                      the chat's side panel (phone_panel.go)
+//   GET  /api/devices, POST /api/devices/{id}/revoke, /api/projects/env,
+//   /api/projects/memory, POST /api/naming-model    as on a server (phone_parity.go)
+//
+// The HTTP layer (info, pairing, the token check, events, limits and
+// headers) is remoteapi's, shared with a headless server; the routes both
+// serve are remoteapi.PhoneRoutes, the server's own remoteapi.ServerOnlyRoutes.
 
 import (
 	"bytes"
@@ -207,6 +213,13 @@ func (server *remoteServer) Routes() map[string]http.HandlerFunc {
 	routes["GET /api/sync/manifest"] = syncManifest
 	routes["POST /api/sync/export"] = syncExport
 	routes["POST /api/sync/import"] = syncImport
+	routes["GET /api/projects/memory"] = server.projectFiles(remoteapi.ProjectMemory)
+	routes["POST /api/projects/memory"] = server.projectFiles(remoteapi.SaveProjectMemory)
+	routes["GET /api/projects/env"] = server.readProjectEnv
+	routes["POST /api/projects/env"] = server.saveProjectEnv
+	routes["POST /api/naming-model"] = server.setNamingModel
+	routes["GET /api/devices"] = server.pairedDevices
+	routes["POST /api/devices/{id}/revoke"] = server.revokePairedDevice
 	routes["GET /api/files"] = server.projectFiles(remoteapi.ListFiles)
 	routes["GET /api/files/content"] = server.projectFiles(remoteapi.FileContent)
 	routes["GET /api/files/download"] = server.projectFiles(remoteapi.DownloadFile)
@@ -1047,6 +1060,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 		}
 	}
 	return map[string]any{"defaultPresets": true, "autoResume": ui.autoResume, "userPreferences": ui.userInstructions, "preferencesEditable": true, "memory": !ui.memoryOff, "wrapUp": !ui.wrapUpOff, "messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
+		"namingModel":  ui.namingModel,
 		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": agent.AutoModeOffered(ui.cfg), "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.resolveModel(ui.cfg))}
 }
 

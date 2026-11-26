@@ -11,7 +11,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"path/filepath"
 	"slices"
 	"strings"
 	"time"
@@ -124,8 +123,8 @@ func (server *headlessServer) Routes() map[string]http.HandlerFunc {
 		"GET /api/files/content":                       server.projectFiles(remoteapi.FileContent),
 		"GET /api/files/download":                      server.projectFiles(remoteapi.DownloadFile),
 		"POST /api/files/upload":                       server.projectFiles(remoteapi.UploadFile),
-		"GET /api/projects/memory":                     server.projectFiles(projectMemory),
-		"POST /api/projects/memory":                    server.projectFiles(saveProjectMemory),
+		"GET /api/projects/memory":                     server.projectFiles(remoteapi.ProjectMemory),
+		"POST /api/projects/memory":                    server.projectFiles(remoteapi.SaveProjectMemory),
 		"POST /api/send":                               server.send,
 		"POST /api/stop":                               server.stop,
 		"POST /api/approve":                            server.approve,
@@ -971,32 +970,6 @@ func (server *headlessServer) projectFiles(handler func(http.ResponseWriter, *ht
 		}
 		handler(w, r, workspace)
 	}
-}
-
-// projectMemory is GET /api/projects/memory?workspace=: the project's
-// AGENTS.md, for the desktop's Project memory dialog.
-func projectMemory(w http.ResponseWriter, r *http.Request, workspace string) {
-	text, err := agent.ProjectMemory(workspace)
-	if err != nil {
-		core.Fail(w, http.StatusBadRequest, err.Error())
-		return
-	}
-	core.WriteJSON(w, http.StatusOK, map[string]any{"text": text, "exists": agent.ProjectMemoryExists(workspace), "path": filepath.Join(workspace, "AGENTS.md")})
-}
-
-// saveProjectMemory is POST /api/projects/memory?workspace= with
-// {before, after}: refused when the file changed since it was read.
-func saveProjectMemory(w http.ResponseWriter, r *http.Request, workspace string) {
-	var args struct{ Before, After string }
-	if core.ReadJSON(r, &args) != nil {
-		core.Fail(w, http.StatusBadRequest, "Invalid request")
-		return
-	}
-	if err := agent.SaveProjectMemory(workspace, args.Before, args.After); err != nil {
-		core.Fail(w, http.StatusConflict, err.Error())
-		return
-	}
-	core.WriteJSON(w, http.StatusOK, map[string]bool{"ok": true})
 }
 
 func (server *headlessServer) uploadAttachment(w http.ResponseWriter, r *http.Request) {

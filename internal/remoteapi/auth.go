@@ -55,3 +55,13 @@ func (tokens *Tokens) Allows(hash string) bool {
 	}
 	return allowed
 }
+
+// DeviceID names a paired device in the API (GET /api/devices): the start
+// of its token's hash, which tells nothing of the token and stays the same
+// across restarts.
+func DeviceID(device PairedDevice) string {
+	if len(device.TokenHash) < 16 {
+		return device.TokenHash
+	}
+	return device.TokenHash[:16]
+}

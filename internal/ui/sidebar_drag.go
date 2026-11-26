@@ -149,7 +149,7 @@ func (ui *desktopUI) dropSide() {
 // pane or a window of its own (not a server's): its row can be carried to
 // the panes.
 func (ui *desktopUI) splittable(key string) *conversation {
-	id, ok := strings.CutPrefix(key, chatKey(""))
+	id, ok := strings.CutPrefix(key, chatKey("", ""))
 	if !ok || ui.desktopApp == nil {
 		return nil
 	}

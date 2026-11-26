@@ -30,7 +30,7 @@ const (
 )
 
 var (
-	ErrPairingLocked  = errors.New("Too many wrong codes. Start pairing from Settings → Phone on the computer.")
+	ErrPairingLocked  = errors.New("Too many wrong codes. Start pairing from Settings → Remote on the computer.")
 	ErrPairingExpired = errors.New("This code has expired. Ask for a new one.")
 	ErrPairingBusy    = errors.New("A pairing was just requested. Try again in a few seconds.")
 	ErrPairingWaiting = errors.New("Another pairing is waiting for its code on the computer. Try again once it is done, or in two minutes.")

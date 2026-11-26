@@ -4,7 +4,7 @@ package ui
 
 // Install Chromium and Install Claude Code on a server without them (the
 // slim Docker image, issue #406), on the server's Installs page (Settings →
-// Servers) and in the browser client's Settings → General. The server downloads them
+// Servers) and in the browser client's Settings → Remote. The server downloads them
 // into its data folder (internal/server/install.go); this page starts the
 // install and follows it in /api/state.
 

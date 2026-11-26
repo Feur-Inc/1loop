@@ -16,10 +16,9 @@ import (
 	registry "1loop/internal/settings"
 )
 
-// SSH machines and the phone remote are this computer's: a page has neither.
-func settingsSectionShown(name string) bool {
-	return name != "SSH machines" && name != "Phone"
-}
+// Every section is shown: Remote has the page's servers and the devices
+// paired with them, without a computer's SSH machines and phone app.
+func settingsSectionShown(string) bool { return true }
 
 func (ui *desktopUI) browserSettings(section string) fyne.CanvasObject {
 	remote := ui.server
@@ -45,6 +44,8 @@ func (ui *desktopUI) browserSettings(section string) fyne.CanvasObject {
 		return nil // this page's own
 	case "Updates":
 		return remote.updateSettings(title(section, ""))
+	case "Remote":
+		return ui.browserRemoteSettings()
 	default:
 		return remote.generalSettings()
 	}

@@ -251,6 +251,26 @@
       "where": "desktop"
     },
     {
+      "key": "general.notifications",
+      "section": "general",
+      "title": "Notifications",
+      "description": "When a chat finishes or waits for you, with 1loop in the background.",
+      "keywords": [
+        "notification",
+        "notify",
+        "alert",
+        "popup",
+        "toast",
+        "mute",
+        "silence",
+        "do not disturb",
+        "done",
+        "background"
+      ],
+      "kind": "toggle",
+      "where": "both"
+    },
+    {
       "key": "general.discord_presence",
       "section": "general",
       "title": "Discord status",

@@ -359,6 +359,7 @@ type desktopApp struct {
 	loopyShown        bool               // the Loopy space was on screen when 1loop closed
 	loopyHome         loopyHome          // this computer's Loopy (loopy_host.go)
 	loopyUnlink       context.CancelFunc
+	notificationsOff  bool                       // settings: no system notification (notify.go)
 	lastCrash         *crash.Crash               // the last run's, offered once the window is up
 	trayNoticeShown   bool                       // the first close said that 1loop stays in the tray
 	tray              *trayIcon                  // the system tray icon (tray.go), nil without one
@@ -2375,6 +2376,7 @@ type savedState struct {
 	FoldedProjects    []string              `json:"foldedProjects,omitempty"` // sidebar groups folded
 	CloseQuits        bool                  `json:"closeQuits,omitempty"`
 	CrashReportsOff   bool                  `json:"crashReportsOff,omitempty"`
+	NotificationsOff  bool                  `json:"notificationsOff,omitempty"`
 	LoopyAt           string                `json:"loopyAt,omitempty"`
 	LoopyShown        bool                  `json:"loopyShown,omitempty"`
 	AnimationsOff     bool                  `json:"animationsOff,omitempty"`
@@ -2488,6 +2490,7 @@ func (ui *desktopUI) persist(wait bool) {
 		slices.Sorted(maps.Keys(ui.foldedProjects)),
 		ui.closeQuits,
 		ui.crashReportsOff,
+		ui.notificationsOff,
 		ui.loopyAt,
 		ui.loopyShown,
 		animationsOff,
@@ -2696,6 +2699,7 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 	ui.wrapUpOff = state.WrapUpOff
 	ui.closeQuits, ui.trayNoticeShown = state.CloseQuits, state.TrayNoticeShown
 	ui.crashReportsOff = state.CrashReportsOff
+	ui.notificationsOff = state.NotificationsOff
 	ui.loopyAt, ui.loopyShown = state.LoopyAt, state.LoopyShown
 	animationsOff = state.AnimationsOff
 	ui.autoResume = state.AutoResume

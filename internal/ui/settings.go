@@ -668,6 +668,10 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 			platform.Devf("ui", "close to tray %v", on)
 			ui.save()
 		})))))
+	page.Add(sectionTitle("Notifications"))
+	page.Add(card(view.mark(registry.KeyNotifications, settingRow("Notifications",
+		"When a chat finishes or waits for you, with 1loop in the background.",
+		newToggle(!ui.notificationsOff, ui.setNotifications)))))
 	page.Add(sectionTitle("Motion"))
 	page.Add(card(view.mark(registry.KeyAnimations, settingRow("Animations", "",
 		newToggle(!animationsOff, ui.setAnimations)))))
@@ -903,6 +907,12 @@ func (ui *desktopUI) advancedSettings() fyne.CanvasObject {
 }
 
 // setCrashReports turns the offer after a crash on or off.
+func (ui *desktopUI) setNotifications(on bool) {
+	ui.notificationsOff = !on
+	platform.Devf("ui", "notifications %v", on)
+	ui.save()
+}
+
 func (ui *desktopUI) setCrashReports(on bool) {
 	ui.crashReportsOff = !on
 	platform.Devf("ui", "crash reports %v", on)

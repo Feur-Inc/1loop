@@ -131,6 +131,7 @@ const (
 	KeyTheme             = "general.theme"
 	KeyAccent            = "general.accent"
 	KeyAnimations        = "general.animations"
+	KeyNotifications     = "general.notifications"
 	KeyShaderFPS         = "general.shader_fps"
 	KeyCrashReports      = "advanced.crash_reports"
 )
@@ -158,6 +159,9 @@ var list = []Setting{
 			{"teal", "Teal"}, {"green", "Green"}, {"custom", "Custom colour"}}},
 	{Key: "general.close_to_tray", Section: General, Title: "Close to tray", Where: OnDesktop, Kind: Action,
 		Keywords: []string{"tray", "close", "quit", "background", "minimize", "window"}},
+	{Key: KeyNotifications, Section: General, Title: "Notifications", Where: OnBoth, Kind: Toggle,
+		Description: "When a chat finishes or waits for you, with 1loop in the background.",
+		Keywords:    []string{"notification", "notify", "alert", "popup", "toast", "mute", "silence", "do not disturb", "done", "background"}},
 	{Key: KeyDiscordPresence, Section: General, Title: "Discord status", Where: OnDesktop, Kind: Toggle, Protected: true,
 		Description: "Shows on your Discord profile what the agent is doing.",
 		Keywords:    []string{"discord", "rich presence", "status", "activity", "profile", "playing", "rpc"}},

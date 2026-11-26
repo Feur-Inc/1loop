@@ -103,6 +103,9 @@ def _guard(job):
     native = (os.sep + "lib-dynload" + os.sep,)
 
     def hook(event, args):
+        if event == "import" and str(args[0]).split(".")[0] in natives:
+            # Native calls reach memory, and the guard with it.
+            raise ImportError("1loop: an AutoLink may not load native code (%s)" % args[0])
         if event == "open":
             path, mode, flags = args
             if path is None or isinstance(path, int):
@@ -142,10 +145,46 @@ def _guard(job):
             path = args[0] if args and args[0] is not None else os.getcwd()
             if event in ("os.listdir", "os.scandir", "os.chdir") and not under(path, reads):
                 no("list %s" % (path,))
-        elif event == "ctypes.dlopen":
-            if args[0] is not None:
-                no("load %s" % (args[0],))
+        elif event.startswith("ctypes."):
+            # Each native call, address and symbol: ctypes stays inert.
+            no("use native code (%s)" % event)
 
+    # Native modules that start programs or reach memory are made by these:
+    # refused there, whatever way the import takes. Python cannot be closed
+    # from inside: this stops mistakes and plain attempts, not a script
+    # written to undo it. What runs is what the user allowed on a card.
+    import _imp
+    natives = ("_ctypes", "ctypes", "_cffi_backend", "cffi", "_testcapi", "_testinternalcapi", "_xxsubinterpreters", "_interpreters")
+    starters = {"_posixsubprocess": ("fork_exec",), "_winapi": ("CreateProcess", "OpenProcess")}
+
+    def refused(*_, **__):
+        no("start a program")
+
+    def tame(module):
+        for name in starters.get(getattr(module, "__name__", ""), ()):
+            if hasattr(module, name):
+                setattr(module, name, refused)
+        return module
+
+    def guarded(real):
+        def create(spec, *args):
+            if spec.name.split(".")[0] in natives:
+                raise ImportError("1loop: an AutoLink may not load %s" % spec.name)
+            return tame(real(spec, *args))
+        return create
+
+    def executed(real):
+        def run(module):
+            result = real(module)
+            tame(module)
+            return result
+        return run
+
+    _imp.create_builtin, _imp.create_dynamic = guarded(_imp.create_builtin), guarded(_imp.create_dynamic)
+    _imp.exec_builtin, _imp.exec_dynamic = executed(_imp.exec_builtin), executed(_imp.exec_dynamic)
+    for loaded in starters:
+        if loaded in sys.modules:
+            tame(sys.modules[loaded])
     lookup = socket.getaddrinfo
 
     def getaddrinfo(host, *args, **kwargs):

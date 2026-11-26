@@ -199,11 +199,6 @@ func wider(link, next loopy.AutoLink) (out []string) {
 	return out
 }
 
-// powerful says whether a script's change matters more than itself.
-func powerful(link loopy.AutoLink) bool {
-	return len(link.Secrets) > 0 || len(link.Rights) > 0 || slices.Contains(link.Sites, "*")
-}
-
 // saveLink is loopy_autolink_save.
 func (e *Engine) saveLink(ctx context.Context, r *run, args toolArgs) (string, error) {
 	old, exists := loopy.AutoLink{}, false
@@ -289,7 +284,9 @@ func (e *Engine) saveLink(ctx context.Context, r *run, args toolArgs) (string, e
 		changed := code != e.linkCode(old.ID).Code
 		// On its own run what Loopy was told comes from outside: a script
 		// that can do more than read does not change without the user.
-		if len(more) == 0 && !(changed && r.why != "" && powerful(next)) {
+		// What a script does is the user's to see: a new script waits for
+		// their yes; only what is said of it changes without one.
+		if len(more) == 0 && !changed {
 			if err := e.writeLink(old.ID, "main.py", code); err != nil {
 				return "", err
 			}
@@ -300,7 +297,7 @@ func (e *Engine) saveLink(ctx context.Context, r *run, args toolArgs) (string, e
 			})
 			e.dropLinkCards(old.ID)
 			e.log("Changed the AutoLink " + next.Name + ".")
-			return "Changed (id " + old.ID + "): what it may do is as the user allowed. Run it to check.", nil
+			return "Changed (id " + old.ID + "): what it may do is as the user allowed.", nil
 		}
 		if err := e.writeLink(old.ID, "next.py", code); err != nil {
 			return "", err

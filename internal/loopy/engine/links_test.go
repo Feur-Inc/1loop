@@ -167,13 +167,29 @@ func TestLinkIsAllowedFirst(t *testing.T) {
 	if err != nil || !strings.Contains(got.Text, `{"double": 42}`) || !strings.Contains(got.Text, "⟦") {
 		t.Errorf("%q %v", got.Text, err)
 	}
-	// A change within what was allowed asks nothing.
-	if _, err := use(t, e, "loopy_autolink_save", linkArgs(m{"id": link.ID, "old": "* 2", "code": "* 3", "sites": []string{"api.example.com"}, "when": "every 1m"})); err != nil {
+	// What is said of it changes without a card; its script does not.
+	if _, err := use(t, e, "loopy_autolink_save", linkArgs(m{"id": link.ID, "about": "Doubles.", "code": "", "sites": []string{"api.example.com"}, "when": "every 1m"})); err != nil {
 		t.Fatal(err)
+	}
+	if got, _ := e.link(link.ID); got.About != "Doubles." {
+		t.Error(got.About)
 	}
 	if _, ok := cardWaiting(e, "autolink"); ok {
 		t.Error("a card for nothing")
 	}
+	if _, err := use(t, e, "loopy_autolink_save", linkArgs(m{"id": link.ID, "old": "* 2", "code": "* 3", "sites": []string{"api.example.com"}, "when": "every 1m"})); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := cardWaiting(e, "autolink"); !ok {
+		t.Fatal("a new script without the user's yes")
+	}
+	if got, _ := use(t, e, "loopy_autolink_run", m{"id": link.ID, "input_json": `{"n": 1}`}); !strings.Contains(got.Text, `"double": 2`) {
+		t.Error("the new script ran before the yes:", got.Text)
+	}
+	ended(e)
+	answer(t, e, "autolink", linkAuto)
+	until(t, "its turn", func() bool { return !e.Busy() })
+	running(e, "")
 	if got, _ := use(t, e, "loopy_autolink_run", m{"id": link.ID, "input_json": `{"n": 1}`}); !strings.Contains(got.Text, `"double": 3`) {
 		t.Error(got.Text)
 	}
@@ -210,8 +226,8 @@ func TestLinkIsAllowedFirst(t *testing.T) {
 	}
 }
 
-// What Loopy reads on its own runs comes from outside: a script that can do
-// more than read does not change without the user.
+// What Loopy reads on its own runs comes from outside: no script changes
+// without the user, whatever it may do.
 func TestLinkChangesOnItsOwn(t *testing.T) {
 	e, _ := wake(t, t.TempDir(), func([]heard) any { return "ok" })
 	havePython(t, e)
@@ -221,9 +237,10 @@ func TestLinkChangesOnItsOwn(t *testing.T) {
 	if _, err := use(t, e, "loopy_autolink_save", linkArgs(m{"id": plain.ID, "name": "Plain", "code": "print('fixed')"})); err != nil {
 		t.Fatal(err)
 	}
-	if _, ok := cardWaiting(e, "autolink"); ok || !strings.Contains(e.linkCode(plain.ID).Code, "fixed") {
-		t.Error("a plain script could not be fixed")
+	if _, ok := cardWaiting(e, "autolink"); !ok || strings.Contains(e.linkCode(plain.ID).Code, "fixed") {
+		t.Error("a script changed without the user")
 	}
+	e.dropLinkCards(plain.ID)
 	if _, err := use(t, e, "loopy_autolink_save", linkArgs(m{"id": link.ID, "code": "print('evil')", "rights": []string{"github_write"}})); err != nil {
 		t.Fatal(err)
 	}

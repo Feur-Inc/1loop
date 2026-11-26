@@ -277,11 +277,22 @@ func (c *glCanvas) paintArea(size fyne.Size, area *damageArea) {
 	}
 	c.Painter().Clear()
 
+	clipDepth, culledAt := 0, 0
 	paint := func(node *common.RenderCacheNode, pos fyne.Position) {
 		obj := node.Obj()
 		if driver.IsClip(obj) {
-			inner := clips.Push(pos, obj.Size())
-			c.Painter().StartClipping(inner.Rect())
+			clipDepth++
+			if culledAt == 0 {
+				if area != nil && !area.overlaps(pos, obj.Size()) {
+					culledAt = clipDepth
+					return
+				}
+				inner := clips.Push(pos, obj.Size())
+				c.Painter().StartClipping(inner.Rect())
+			}
+		}
+		if culledAt > 0 {
+			return
 		}
 		if size.Width <= 0 || size.Height <= 0 { // iconifying on Windows can do bad things
 			return
@@ -293,15 +304,22 @@ func (c *glCanvas) paintArea(size fyne.Size, area *damageArea) {
 	}
 	afterPaint := func(node *common.RenderCacheNode, pos fyne.Position) {
 		if driver.IsClip(node.Obj()) {
-			clips.Pop()
-			if top := clips.Top(); top != nil {
-				c.Painter().StartClipping(top.Rect())
-			} else {
-				c.Painter().StopClipping()
+			wasCulled := culledAt > 0
+			if clipDepth == culledAt {
+				culledAt = 0
+			}
+			clipDepth--
+			if !wasCulled {
+				clips.Pop()
+				if top := clips.Top(); top != nil {
+					c.Painter().StartClipping(top.Rect())
+				} else {
+					c.Painter().StopClipping()
+				}
 			}
 		}
 
-		if build.Mode == fyne.BuildDebug {
+		if culledAt == 0 && build.Mode == fyne.BuildDebug {
 			c.DrawDebugOverlay(node.Obj(), pos, size, clips.Top())
 		}
 	}

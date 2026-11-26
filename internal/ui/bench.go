@@ -178,7 +178,7 @@ var benchWords = strings.Fields("the layout of each item is measured again when 
 // benchStream writes an answer the way a model does: a few words every
 // 16 ms, a code block now and then, a tool call every 2 s, a new answer
 // every 20 s.
-func (ui *desktopUI) benchStream(until time.Time, sample func()) {
+func (ui *desktopUI) benchStream(until time.Time, sample func(string)) {
 	var chat *conversation
 	fyne.DoAndWait(func() {
 		chat = ui.current
@@ -234,7 +234,7 @@ func (ui *desktopUI) benchStream(until time.Time, sample func()) {
 			line := fmt.Sprintf("  soak %4.0f s: %d items, %s", now.Sub(started).Seconds(), len(chat.Items), benchMemory())
 			platform.Devf("perf", "%s", line)
 			fmt.Println(line)
-			sample()
+			sample(line)
 		}
 	}
 	fyne.DoAndWait(func() { current.finish() })
@@ -326,6 +326,7 @@ func (ui *desktopUI) bench(kind string) {
 	until := started.Add(span)
 	var reloads []time.Duration // theme: read, themeChanged, setAccent of each round
 	var scrolled float32        // scroll, split, sidebar: how far the view moved
+	var soakLines []string      // soak: periodic heap & RSS samples
 	switch kind {
 	case "scroll", "split":
 		scrolled = benchScroll(ui.scroll, until)
@@ -336,7 +337,7 @@ func (ui *desktopUI) bench(kind string) {
 	case "stream":
 		ui.benchStream(until, nil)
 	case "soak":
-		ui.benchStream(until, func() {})
+		ui.benchStream(until, func(line string) { soakLines = append(soakLines, line) })
 	case "type":
 		text := []rune("The quick brown fox jumps over the lazy dog, again and again. ")
 		for i := 0; time.Now().Before(until); i++ {
@@ -392,6 +393,7 @@ func (ui *desktopUI) bench(kind string) {
 		"  memory after launch  " + afterLaunch,
 		"  memory before span   " + before,
 		"  memory after span    " + benchMemory(),
+		strings.Join(soakLines, "\n"),
 		fmt.Sprintf("  launch (since package init at unix %d ms):", benchStarted.UnixMilli()),
 		marks,
 	}, "\n")

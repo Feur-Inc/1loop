@@ -997,6 +997,9 @@ func (ui *desktopUI) connectionRows() fyne.CanvasObject {
 		if connectionValue.Provider == "claudecode" {
 			detail += " · " + claudeAccountText(connectionValue)
 		}
+		if ui.keyMissing(connectionValue.ID) && !ui.keysLoading {
+			detail += " · " + keyNeeded
+		}
 		rows = append(rows, settingRow(connectionValue.Name, detail, container.New(layout.NewCustomPaddedHBoxLayout(14), container.NewCenter(enabled), edit)))
 	}
 	if len(rows) == 0 {
@@ -1016,7 +1019,7 @@ func (ui *desktopUI) removeConnection(conn agent.Connection, done func()) {
 				}
 			}
 			ui.connectionsList = kept
-			delete(ui.keys, conn.ID)
+			ui.setKey(conn.ID, "") // out of the secret store too
 			ui.save()
 			ui.refreshModels()
 			done()
@@ -1072,6 +1075,15 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	key := widget.NewPasswordEntry()
 	key.SetText(ui.keys[draft.ID])
 	key.SetPlaceHolder("Kept in memory until 1loop closes")
+	typedKey := key.Text // a key the field leaves as it was is not saved over one loaded meanwhile
+	keyNote := noKeyStore
+	if ui.vault.kept() {
+		key.SetPlaceHolder("Kept in the system's secret store")
+		keyNote = ""
+		if ui.keyMissing(draft.ID) && !ui.keysLoading {
+			keyNote = keyNeeded + "."
+		}
+	}
 	enabled := newToggle(draft.Enabled, func(on bool) { draft.Enabled = on })
 	typePicker := newPicker(ui.window, "Connection type", styleField, nil)
 	typePicker.Options = []string{"Local vLLM", "OpenRouter", "ChatGPT account", "OpenAI-compatible API", "Claude Code", "Antigravity CLI", "ChatGPT (Web)"}
@@ -1103,7 +1115,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	// Access: an address and a key, a ChatGPT sign-in, or nothing (Claude Code).
 	apiFields := card(
 		settingRow("API base URL", "The address of the service's /v1 API.", sized(340, base)),
-		settingRow("API key", "", sized(340, key)))
+		settingRow("API key", keyNote, sized(340, key)))
 	loginLink := widget.NewHyperlink("Open sign-in in your browser", nil)
 	loginLink.Hide()
 	account := plainFlow("Not signed in.", 12.5, colMuted)
@@ -1485,7 +1497,9 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		if !found {
 			ui.connectionsList = append(ui.connectionsList, cloneConnection(draft))
 		}
-		ui.keys[draft.ID] = key.Text
+		if key.Text != typedKey {
+			ui.setKey(draft.ID, key.Text)
+		}
 		platform.Devf("ui", "connection %q saved", draft.Name)
 		ui.save()
 		ui.refreshModels()

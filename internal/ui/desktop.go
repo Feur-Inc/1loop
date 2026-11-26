@@ -41,6 +41,7 @@ import (
 	"1loop/internal/crash"
 	"1loop/internal/discord"
 	"1loop/internal/extensions"
+	"1loop/internal/keyring"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	registry "1loop/internal/settings"
@@ -284,6 +285,9 @@ type desktopApp struct {
 	browser          *browser.Engine
 	backend          *agent.App
 	keys             map[string]string
+	keyed            map[string]bool // connections that had a key (connection_keys.go)
+	keysLoading      bool            // the saved keys are still being read
+	vault            *keyVault
 	connectionsList  []agent.Connection
 	webSetupWindows  map[*agent.ChatGPTWeb]fyne.Window
 	choices          map[string]agent.ModelChoice
@@ -412,7 +416,7 @@ func runDesktop(backend *agent.App, root, asked string) {
 	a.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
 	ctx, cancel := context.WithCancel(context.Background())
 	backend.EnableChatGPTWeb(ctx)
-	ui := &desktopUI{desktopApp: &desktopApp{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), shortcutKeys: map[string]string{}, statePath: statePath(root),
+	ui := &desktopUI{desktopApp: &desktopApp{backend: backend, ctx: ctx, shutdown: cancel, keys: make(map[string]string), keyed: map[string]bool{}, vault: newKeyVault(keyring.System()), shortcutKeys: map[string]string{}, statePath: statePath(root),
 		foldedProjects: map[string]bool{}, allChatsShown: map[string]bool{}, worktreesShown: map[string]bool{}, lastCrash: lastCrash},
 		cfg: agent.Config{Provider: "compatible", Workspace: root}}
 	ui.windows = []*desktopUI{ui}
@@ -467,6 +471,7 @@ func runDesktop(backend *agent.App, root, asked string) {
 	ui.updateHeader()
 	ui.renderChats()
 	benchMark("sidebar rendered")
+	ui.loadKeys()
 	ui.refreshModels()
 	ui.refreshContextRing()
 	// What the first frame does not show starts right after it (#475): the
@@ -2107,6 +2112,12 @@ func (ui *desktopUI) refreshModels() {
 	for id, key := range ui.keys {
 		keys[id] = key
 	}
+	keyProblems := map[string]string{}
+	for _, conn := range connections {
+		if problem := ui.keyProblem(conn); problem != "" {
+			keyProblems[conn.ID] = problem
+		}
+	}
 	ui.model.Disable()
 	ui.model.placeholder = "Loading models…"
 	ui.model.ClearSelected()
@@ -2120,7 +2131,7 @@ func (ui *desktopUI) refreshModels() {
 		results := make([]result, len(connections))
 		var wg sync.WaitGroup
 		for i, conn := range connections {
-			if !conn.Enabled {
+			if !conn.Enabled || keyProblems[conn.ID] != "" { // no request bound to fail with a 401
 				continue
 			}
 			wg.Add(1)
@@ -2153,6 +2164,10 @@ func (ui *desktopUI) refreshModels() {
 			var options []string
 			selected := ""
 			for i, result := range results {
+				if problem := keyProblems[connections[i].ID]; problem != "" && connections[i].Enabled {
+					ui.modelUnavailable[connections[i].ID] = problem
+					continue
+				}
 				if result.err != nil {
 					problem := "Models unavailable"
 					if agent.CLIHarness(connections[i].Provider) {
@@ -2204,6 +2219,9 @@ func (ui *desktopUI) refreshModels() {
 			if len(options) == 0 {
 				ui.cfg.Model = ""
 				ui.model.placeholder = "No model available"
+				if conn, ok := ui.keyNeededConnection(); ok {
+					ui.model.placeholder = conn.Name + " needs its API key again"
+				}
 				ui.model.refresh()
 				return
 			}
@@ -2265,6 +2283,9 @@ type savedState struct {
 	ProjectThemes map[string]string `json:"projectThemes,omitempty"`
 	// The Shader background setting; 30 fps when unset.
 	ShaderFPS string `json:"shaderFPS,omitempty"`
+	// The connections that had an API key, kept in the secret store
+	// (connection_keys.go): never the keys themselves.
+	KeyedConnections []string `json:"keyedConnections,omitempty"`
 }
 
 // save writes the state shortly after the last change, so bursts of
@@ -2379,6 +2400,7 @@ func (ui *desktopUI) persist(wait bool) {
 		ui.savedLayout(),
 		ui.projectThemes,
 		shaderFPSSaved(),
+		ui.keyedList(),
 	})
 	for _, view := range ui.allPanes() {
 		if view.panel != nil {
@@ -2521,6 +2543,9 @@ func (ui *desktopUI) loadFrom(state savedState, err error) {
 		ui.cfg.MachineID, ui.cfg.Workspace = "", ui.lastLocalWorkspace()
 	}
 	ui.connectionsList = state.Connections
+	for _, id := range state.KeyedConnections {
+		ui.keyed[id] = true
+	}
 	ui.userInstructions = state.UserInstructions
 	ui.approvalMode = state.ApprovalMode
 	ui.classicCompaction = state.ClassicCompaction

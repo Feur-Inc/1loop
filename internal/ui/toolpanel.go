@@ -126,8 +126,9 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 		}
 		panel.openTodo()
 	})
-	panel.strips = container.NewHScroll(panel.strip)
-	header := container.NewBorder(nil, nil, nil, container.NewHBox(todo, add, fold), panel.strips)
+	var strips fyne.CanvasObject
+	panel.strips, strips = stripScroll(panel.strip)
+	header := container.NewBorder(nil, nil, nil, container.NewHBox(todo, add, fold), strips)
 	panel.header = header
 	rule := canvas.NewRectangle(colBorderSoft)
 	rule.SetMinSize(fyne.NewSize(0, 1))

@@ -141,3 +141,23 @@ shows every change.
   child per frame; `RememberedMinSize`/`RememberMinSize` replace
   `MemoMinSize`, which took the computation as a method value. A full frame
   of the audit's state: 4,499 → 121 allocations.
+- `scrollbar/` (new), `internal/widget/scroller.go` (1loop #633): every
+  scroll (container.Scroll, List, Table, Tree, a multi-line Entry) has
+  1loop's bar, the one the conversation's own bar (#625) also draws from
+  the `scrollbar` package, so the two share their sizes, geometry and look.
+  The bar's area takes the pointer over 16 px, wider than the thumb it
+  draws, 4 px from the scroll's edge and from its track's ends (1loop's
+  resize handles and the window's resize edges reach 4 px over what lies
+  beside them). The thumb is never shorter than 40 px; under the pointer
+  it widens from `SizeNameScrollBarSmall` (6) to `SizeNameScrollBar` (10)
+  in `scrollbar.ColorNameHover` over a track in
+  `ColorNameScrollBarBackground`. Dragging the thumb or the track scrolls
+  (from the track, the thumb comes under the pointer by its middle); a tap
+  on the track pages, keeping 40 px of the view, on every platform
+  (`scroller_behavior_*.go`, which jumped there except on macOS, are
+  gone); the wheel over the bar goes on to the scroll. Where both bars
+  show, each ends before the other's corner. A theme giving
+  `SizeNameScrollBar` 0 has no bar. `Scroll.Bars` gives the bar areas that show,
+  for 1loop's text selection, which lies over code blocks and passes the
+  pointer on to them. `container/scroll_1loop_test.go` and
+  `scrollbar/scrollbar_test.go` check it.

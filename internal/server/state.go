@@ -137,7 +137,7 @@ type headlessServer struct {
 	chats                      []*serverChat
 	devices                    []remoteapi.PairedDevice
 	pairing                    *remoteapi.PairingBook // the pairings waiting (security.go)
-	hub                        *remoteapi.Events // the clients' event and browser streams
+	hub                        *remoteapi.Events      // the clients' event and browser streams
 	choices                    map[string]agent.ModelChoice
 	modelReload                sync.Mutex
 	modelRevision              uint64

@@ -18,7 +18,7 @@ func TestRemoteAuthorizedWithoutUI(t *testing.T) {
 	ui := &desktopUI{desktopApp: &desktopApp{ctx: context.Background()}}
 	ui.setDevices([]remoteapi.PairedDevice{{Name: "Pixel", TokenHash: remoteapi.TokenHash("secret")}})
 	server := &remoteServer{ui: ui}
-	handler := server.authorized(func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
+	handler := remoteapi.Authorized(server, func(w http.ResponseWriter, _ *http.Request) { w.WriteHeader(http.StatusNoContent) })
 	serve := func(token string) int {
 		req := httptest.NewRequest("GET", "/api/state", nil)
 		req.Header.Set("Authorization", "Bearer "+token)

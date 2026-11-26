@@ -8,7 +8,6 @@ package browser
 // (no administrator rights), then kept at Google's current stable version.
 
 import (
-	"archive/zip"
 	"bytes"
 	"context"
 	"crypto/md5"
@@ -27,6 +26,7 @@ import (
 	"sync"
 	"time"
 
+	"1loop/internal/core"
 	"1loop/internal/platform"
 )
 
@@ -288,77 +288,12 @@ func downloadChromium(ctx context.Context, dir, version, address string, shown b
 	return nil
 }
 
-// unzip extracts an archive into dest, keeping Unix permissions; an entry
-// that would land outside dest is refused.
+// unzip extracts Chromium's archive into dest, keeping its permissions and
+// its links (a macOS framework's Versions/Current), none of which may lead
+// outside dest (#524).
 func unzip(path, dest string) error {
-	reader, err := zip.OpenReader(path)
-	if err != nil {
-		return err
-	}
-	defer reader.Close()
-	for _, file := range reader.File {
-		target := filepath.Join(dest, filepath.FromSlash(file.Name))
-		if !strings.HasPrefix(target, dest+string(filepath.Separator)) {
-			return fmt.Errorf("the archive holds an unsafe path: %s", file.Name)
-		}
-		mode := file.Mode()
-		switch {
-		case mode.IsDir():
-			if err := os.MkdirAll(target, 0755); err != nil {
-				return err
-			}
-			continue
-		case mode&os.ModeSymlink != 0:
-			link, err := readEntry(file)
-			if err != nil {
-				return err
-			}
-			resolved := filepath.Join(filepath.Dir(target), string(link))
-			if filepath.IsAbs(string(link)) || !strings.HasPrefix(resolved, dest+string(filepath.Separator)) {
-				return fmt.Errorf("the archive holds an unsafe link: %s", file.Name)
-			}
-			if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-				return err
-			}
-			if err := os.Symlink(string(link), target); err != nil {
-				return err
-			}
-			continue
-		}
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-			return err
-		}
-		if err := writeEntry(file, target, mode.Perm()|0600); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
-func readEntry(file *zip.File) ([]byte, error) {
-	in, err := file.Open()
-	if err != nil {
-		return nil, err
-	}
-	defer in.Close()
-	return io.ReadAll(io.LimitReader(in, 4096))
-}
-
-func writeEntry(file *zip.File, target string, mode os.FileMode) error {
-	in, err := file.Open()
-	if err != nil {
-		return err
-	}
-	defer in.Close()
-	out, err := os.OpenFile(target, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
-	if err != nil {
-		return err
-	}
-	if _, err := io.Copy(out, in); err != nil {
-		out.Close()
-		return err
-	}
-	return out.Close()
+	_, err := core.Unpack{Links: true, MaxTotal: 4 << 30}.Zip(path, dest)
+	return err
 }
 
 var missingLibrary = regexp.MustCompile(`error while loading shared libraries: ([^:\s]+)`)

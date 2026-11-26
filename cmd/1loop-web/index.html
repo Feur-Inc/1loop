@@ -12,14 +12,28 @@
 <script>
 // Load timings for the spike (#267): window.loopTimings.
 window.loopTimings = {start: performance.now()};
-const go = new Go();
-WebAssembly.instantiateStreaming(fetch("1loop.wasm"), go.importObject).then(result => {
-  window.loopTimings.instantiated = performance.now();
-  document.getElementById("loading").remove();
-  go.run(result.instance);
-}).catch(err => {
-  document.getElementById("loading").textContent = "1loop could not start: " + err;
-});
+// Fyne draws with WebGL: without it the program panics on its first frame
+// and the page stays blank, so say why instead (#513).
+function hasWebGL() {
+  try {
+    const canvas = document.createElement("canvas");
+    return !!(canvas.getContext("webgl") || canvas.getContext("experimental-webgl"));
+  } catch (err) {
+    return false;
+  }
+}
+if (!hasWebGL()) {
+  document.getElementById("loading").textContent = "1loop's web client needs WebGL. Turn on hardware acceleration in your browser, or use the desktop or phone app.";
+} else {
+  const go = new Go();
+  WebAssembly.instantiateStreaming(fetch("1loop.wasm"), go.importObject).then(result => {
+    window.loopTimings.instantiated = performance.now();
+    document.getElementById("loading").remove();
+    go.run(result.instance);
+  }).catch(err => {
+    document.getElementById("loading").textContent = "1loop could not start: " + err;
+  });
+}
 </script>
 </body>
 </html>

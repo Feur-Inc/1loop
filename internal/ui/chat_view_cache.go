@@ -3,7 +3,7 @@
 package ui
 
 import (
-	"reflect"
+	"slices"
 
 	"fyne.io/fyne/v2"
 
@@ -18,8 +18,7 @@ type conversationViewCache struct {
 	objects []fyne.CanvasObject
 	views   map[int]any
 	copies  map[int]*fyne.Container
-	sizes   map[fyne.CanvasObject]fyne.Size
-	widths  map[fyne.CanvasObject]float32
+	layout  transcriptState
 	width   float32
 	scale   float32
 }
@@ -31,7 +30,7 @@ func (ui *desktopUI) rememberChatView(load *conversationLoad) {
 	}
 	ui.cachedChat = &conversationViewCache{
 		chat: chat, items: load.items, objects: ui.transcript.Objects,
-		views: ui.views, copies: ui.copyRows, sizes: ui.items.sizes, widths: ui.items.widths,
+		views: ui.views, copies: ui.copyRows, layout: ui.items.save(),
 		width: load.width, scale: ui.window.Canvas().Scale(),
 	}
 }
@@ -46,14 +45,14 @@ func (ui *desktopUI) restoreChatView(chat *conversation) bool {
 		return false
 	}
 	width := fyne.Min(760, fyne.Max(0, ui.chatViewport.Size().Width-48))
-	if width != cache.width || ui.window.Canvas().Scale() != cache.scale || !reflect.DeepEqual(chat.Items, cache.items) {
+	if width != cache.width || ui.window.Canvas().Scale() != cache.scale || !slices.EqualFunc(chat.Items, cache.items, sameItem) {
 		ui.cachedChat = nil
 		return false
 	}
 	ui.transcript.Hide()
 	ui.scroll.Show() // refresh only the empty transcript, before restoring it
 	ui.transcript.Objects, ui.views, ui.copyRows = cache.objects, cache.views, cache.copies
-	ui.items.sizes, ui.items.widths, ui.items.width = cache.sizes, cache.widths, cache.width
+	ui.items.restore(cache.layout)
 	for _, object := range cache.objects {
 		if row, ok := object.(*toolRow); ok && row.hover != 0 {
 			if row.anim != nil {

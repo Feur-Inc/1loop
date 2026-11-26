@@ -35,7 +35,7 @@ const (
 
 // ThemeFile is a theme read from a file.
 type ThemeFile struct {
-	ID        string        // the file name without .toml
+	ID        string        // the file name without .toml (the zip's or folder's name for a package)
 	Path      string        // where it is
 	Name      string        // as the picker shows it
 	Tokens    Tokens        // the base's tokens with the file's colours
@@ -46,6 +46,12 @@ type ThemeFile struct {
 	// ShaderOpacity is how opaque the background and the sidebar stay over
 	// the shader, from 0 to 1.
 	ShaderOpacity float64
+	// Blur is a blur radius by element (BlurElements), in Fyne units: what
+	// lies behind the element shows through it blurred. BlurTint is the
+	// translucent colour laid over that blur, by element; an element left
+	// out of it keeps its own colour, translucent.
+	Blur     map[string]float64
+	BlurTint map[string]color.NRGBA
 	// Fonts: a font file (.ttf, .otf) beside the theme or anywhere, or a
 	// family name the system knows (fc-match), by style. "" keeps 1loop's.
 	Fonts ThemeFonts
@@ -61,18 +67,37 @@ func (theme ThemeFile) Setting() string { return ThemeFilePrefix + theme.ID }
 
 // themeSource is a theme file as written.
 type themeSource struct {
-	Name      string            `toml:"name"`
-	Base      string            `toml:"base"`
-	Accents   []string          `toml:"accents"`
-	Roundness *float64          `toml:"roundness"`
-	Shader    string            `toml:"shader"`
-	Image     string            `toml:"background_image"`
-	Opacity   *float64          `toml:"shader_opacity"`
-	Font      string            `toml:"font"`
-	FontBold  string            `toml:"font_bold"`
-	FontItal  string            `toml:"font_italic"`
-	FontMono  string            `toml:"font_mono"`
-	Colors    map[string]string `toml:"colors"`
+	Name      string             `toml:"name"`
+	Base      string             `toml:"base"`
+	Accents   []string           `toml:"accents"`
+	Roundness *float64           `toml:"roundness"`
+	Shader    string             `toml:"shader"`
+	Image     string             `toml:"background_image"`
+	Opacity   *float64           `toml:"shader_opacity"`
+	Font      string             `toml:"font"`
+	FontBold  string             `toml:"font_bold"`
+	FontItal  string             `toml:"font_italic"`
+	FontMono  string             `toml:"font_mono"`
+	Colors    map[string]string  `toml:"colors"`
+	Blur      map[string]float64 `toml:"blur"`
+	BlurTint  map[string]string  `toml:"blur_tint"`
+}
+
+// BlurElements are the parts of the window a theme can blur ([blur] and
+// [blur_tint]): the sidebar, the side panel (tools, files, browser), the
+// composer, a split window's pane headers, menus and popovers, dialogs.
+var BlurElements = []string{"sidebar", "panel", "composer", "headers", "menus", "dialogs", "responses"}
+
+// MaxBlur is the widest blur radius a theme may ask for.
+const MaxBlur = 64
+
+func blurElement(name string) bool {
+	for _, element := range BlurElements {
+		if element == name {
+			return true
+		}
+	}
+	return false
 }
 
 // ThemeColourKeys are the [colors] a theme file may set, as written in the
@@ -194,6 +219,31 @@ func ParseTheme(id, text string) (ThemeFile, error) {
 		}
 		theme.ShaderOpacity = o
 	}
+	for element, radius := range source.Blur {
+		if !blurElement(element) {
+			return ThemeFile{}, fmt.Errorf("blur.%s: not an element 1loop blurs (%s)", element, strings.Join(BlurElements, ", "))
+		}
+		if math.IsNaN(radius) || radius < 0 || radius > MaxBlur {
+			return ThemeFile{}, fmt.Errorf("blur.%s: %v is outside 0 to %d", element, radius, MaxBlur)
+		}
+		if theme.Blur == nil {
+			theme.Blur = map[string]float64{}
+		}
+		theme.Blur[element] = radius
+	}
+	for element, text := range source.BlurTint {
+		if !blurElement(element) {
+			return ThemeFile{}, fmt.Errorf("blur_tint.%s: not an element 1loop blurs (%s)", element, strings.Join(BlurElements, ", "))
+		}
+		c, ok := ParseHexAlpha(text)
+		if !ok {
+			return ThemeFile{}, fmt.Errorf("blur_tint.%s: %q is not #rrggbb or #rrggbbaa", element, text)
+		}
+		if theme.BlurTint == nil {
+			theme.BlurTint = map[string]color.NRGBA{}
+		}
+		theme.BlurTint[element] = c
+	}
 	theme.Fonts = ThemeFonts{strings.TrimSpace(source.Font), strings.TrimSpace(source.FontBold), strings.TrimSpace(source.FontItal), strings.TrimSpace(source.FontMono)}
 	return theme, nil
 }
@@ -265,38 +315,77 @@ func ThemesDir() string {
 	return filepath.Join(dir, "1loop", "themes")
 }
 
-// LoadThemes reads every *.toml in dir, sorted by name, with the files
-// that failed apart.
+// LoadThemes reads every theme of dir, sorted by name: loose *.toml files,
+// *.zip files and theme folders (docs/THEMES.md), with the ones that failed
+// apart. A name used twice loads once; the other is an error.
 func LoadThemes(dir string) ([]ThemeFile, []ThemeError) {
-	paths, _ := filepath.Glob(filepath.Join(dir, "*.toml"))
-	sort.Strings(paths)
 	var themes []ThemeFile
 	var failed []ThemeError
-	for _, path := range paths {
-		data, err := os.ReadFile(path)
+	seen := map[string]string{}
+	take := func(path string, theme ThemeFile, err error) {
 		if err == nil {
-			var theme ThemeFile
-			theme, err = ParseTheme(strings.TrimSuffix(filepath.Base(path), ".toml"), string(data))
-			if err == nil {
-				theme.Path = path
-				if theme.Shader != "" && !filepath.IsAbs(theme.Shader) {
-					theme.Shader = filepath.Join(dir, theme.Shader)
-				}
-				if theme.Image != "" && !filepath.IsAbs(theme.Image) {
-					theme.Image = filepath.Join(dir, theme.Image)
-				}
-				for _, font := range []*string{&theme.Fonts.Regular, &theme.Fonts.Bold, &theme.Fonts.Italic, &theme.Fonts.Mono} {
-					if IsFontFile(*font) && !filepath.IsAbs(*font) {
-						*font = filepath.Join(dir, *font)
-					}
-				}
-				themes = append(themes, theme)
-				continue
+			if first, dup := seen[theme.ID]; dup {
+				err = fmt.Errorf("has the same name as %s: keep one of them", first)
 			}
 		}
-		failed = append(failed, ThemeError{Path: path, Err: err})
+		if err != nil {
+			failed = append(failed, ThemeError{Path: path, Err: err})
+			return
+		}
+		seen[theme.ID] = filepath.Base(path)
+		themes = append(themes, theme)
 	}
+	entries, _ := os.ReadDir(dir)
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		ext := strings.ToLower(filepath.Ext(entry.Name()))
+		switch {
+		case entry.IsDir() || entry.Type()&os.ModeSymlink != 0 && isDir(path):
+			if strings.HasPrefix(entry.Name(), ".") {
+				continue
+			}
+			theme, err := loadFolder(path)
+			take(path, theme, err)
+		case ext == ".zip":
+			theme, err := loadZip(path)
+			take(path, theme, err)
+		case ext == ".toml":
+			theme, err := loadLoose(dir, path)
+			take(path, theme, err)
+		}
+	}
+	sort.Slice(themes, func(i, j int) bool { return themes[i].ID < themes[j].ID })
 	return themes, failed
+}
+
+func isDir(path string) bool {
+	info, err := os.Stat(path)
+	return err == nil && info.IsDir()
+}
+
+// loadLoose reads a theme that is one .toml file with its files beside it.
+func loadLoose(dir, path string) (ThemeFile, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return ThemeFile{}, err
+	}
+	theme, err := ParseTheme(strings.TrimSuffix(filepath.Base(path), filepath.Ext(path)), string(data))
+	if err != nil {
+		return theme, err
+	}
+	theme.Path = path
+	if theme.Shader != "" && !filepath.IsAbs(theme.Shader) {
+		theme.Shader = filepath.Join(dir, theme.Shader)
+	}
+	if theme.Image != "" && !filepath.IsAbs(theme.Image) {
+		theme.Image = filepath.Join(dir, theme.Image)
+	}
+	for _, font := range []*string{&theme.Fonts.Regular, &theme.Fonts.Bold, &theme.Fonts.Italic, &theme.Fonts.Mono} {
+		if IsFontFile(*font) && !filepath.IsAbs(*font) {
+			*font = filepath.Join(dir, *font)
+		}
+	}
+	return theme, nil
 }
 
 // ThemeTemplate is what New theme writes: every key, commented, around
@@ -316,6 +405,10 @@ func ThemeTemplate(name string) string {
 	b.WriteString("# font_bold = \"IBM Plex Sans:bold\"\n")
 	b.WriteString("# font_italic = \"IBM Plex Sans:italic\"\n")
 	b.WriteString("# font_mono = \"JetBrains Mono\"  # code, terminals, diffs\n\n")
+	b.WriteString("# [blur]                  # what lies behind an element shows through it, blurred (radius 0 to 64)\n")
+	b.WriteString("# sidebar = 16            # also: panel, composer, headers, menus, dialogs, responses (the agent's blocks)\n")
+	b.WriteString("# [blur_tint]             # the colour laid over the blur; left out, the element's own, translucent\n")
+	b.WriteString("# sidebar = \"#0c0c0c99\"\n\n")
 	b.WriteString("[colors]\n")
 	b.WriteString("# Only the colours you set change; surfaces follow background and the quieter texts follow text.\n")
 	for _, key := range ThemeColourKeys() {

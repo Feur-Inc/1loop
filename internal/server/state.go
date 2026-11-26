@@ -9,7 +9,9 @@ import (
 	"context"
 	"crypto/tls"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -22,6 +24,7 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/browser"
 	"1loop/internal/core"
+	"1loop/internal/loopy/engine"
 	"1loop/internal/remoteapi"
 	"1loop/internal/sshmachine"
 	"1loop/internal/usage"
@@ -36,7 +39,10 @@ type serverChat struct {
 	Version  string              `json:"version,omitempty"`
 	Versions []agent.ChatVersion `json:"versions,omitempty"`
 	Todo     *agent.TodoState    `json:"todo"`
+	Goal     *agent.GoalState    `json:"goal,omitempty"` // its /goal (agent/goal.go)
 	Cache    *agent.ContextCache `json:"contextCache,omitempty"`
+	// Compaction is the one interrupted, and the last ones made (#128).
+	Compaction *agent.CompactionState `json:"compaction,omitempty"`
 	// ContextUsage is Claude Code's last count of the window by category.
 	ContextUsage *agent.ContextUsage     `json:"contextUsage,omitempty"`
 	grants       *agent.PermissionGrants // what request_permissions granted, until the server stops
@@ -47,9 +53,16 @@ type serverChat struct {
 	Subchat *agent.SubchatLink `json:"subchat,omitempty"`
 	// ReportTo: the chats whose message caused the running turn, told when
 	// it ends (chats.go). Saved, so a turn cut off by a restart shows so.
-	ReportTo     []string `json:"reportTo,omitempty"`
-	hops         int      // messages between chats since the user last wrote (agent.TurnHops)
+	ReportTo []string `json:"reportTo,omitempty"`
+	// Working: a turn was running at the last save. Still set when the
+	// server starts, the turn was cut off (agent.CutOffTurn, #584).
+	Working bool `json:"working,omitempty"`
+	// Resumed: 1loop resumed the chat after a restart cut its turn off,
+	// and that turn has not ended yet: cut off again, it waits for a message.
+	Resumed      bool `json:"resumed,omitempty"`
+	hops         int  // messages between chats since the user last wrote (agent.TurnHops)
 	run          *serverRun
+	moving       bool // paused to move to another device: it starts nothing (chat_move.go)
 	tabs         []*serverTab
 	session      *browser.Session
 	queue, steer []agent.Message
@@ -63,6 +76,9 @@ type serverRun struct {
 	states       map[int]string
 	index        int
 	used         int
+	pause        *agent.PauseSignal
+	ended        chan struct{} // closed once the run is over
+	paused       bool          // it ended between two steps, to move
 	label, mark  string
 	tool         string // executing now, from tool_exec to its tool_result
 	approval     *remoteapi.Approval
@@ -92,7 +108,14 @@ type serverSettings struct {
 
 type headlessServer struct {
 	mu                         sync.Mutex
-	usage                      *usage.Ledger // every model call's tokens (internal/usage)
+	loopyMu                    sync.Mutex // Loopy (loopy.go), woken on first use
+	loopy                      *engine.Engine
+	loopyClosed                bool
+	loopyOnce                  sync.Once
+	loopyEvents                chan func()
+	loopyBrowser               *browser.Engine // Loopy's own
+	adminReady                 atomic.Bool     // its admin socket listens: "1loop-server pair" reaches it
+	usage                      *usage.Ledger   // every model call's tokens (internal/usage)
 	prices                     *usage.Prices
 	terminalRevision           uint64
 	closing                    bool
@@ -100,6 +123,7 @@ type headlessServer struct {
 	shutdown                   context.CancelFunc
 	backend                    *agent.App
 	engine                     *browser.Engine
+	lenders                    *browserLenders // the paired clients lending their browser (lent_browser.go)
 	name, root, dir            string
 	projects                   []string
 	worktrees                  map[string]string              // worktree folder → project (worktrees.go)
@@ -122,6 +146,7 @@ type headlessServer struct {
 	devices                    []remoteapi.PairedDevice
 	pairs                      map[string]*serverPair
 	subs                       map[chan serverEvent]bool
+	eventSeq                   uint64 // the events sent so far: a client tells a read's snapshot from the events after it (#591)
 	streams                    map[chan struct{}]bool
 	choices                    map[string]agent.ModelChoice
 	modelReload                sync.Mutex
@@ -159,11 +184,15 @@ type headlessServer struct {
 	pending  map[*serverChat]map[int]bool
 	flushing bool
 	installs map[string]*installJob // Install Chromium / Claude Code (install.go)
+	// The turns the last stop cut off, resumed and reported once the
+	// models are loaded (resumeCutOffLocked).
+	cutOffs []cutOffTurn
 }
 
 type serverEvent struct {
 	kind string
 	data []byte
+	seq  uint64 // its place among the events, sent as the event's id
 }
 
 func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*headlessServer, error) {
@@ -175,7 +204,7 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		dir:          dir,
 		usage:        usage.Open(filepath.Join(dir, "usage.jsonl")),
 		prices:       usage.OpenPrices(filepath.Join(dir, "usage-prices.json")),
-		backend:      &agent.App{Approvals: map[string]chan bool{}},
+		backend:      &agent.App{Approvals: map[string]chan agent.ApprovalAnswer{}},
 		keys:         map[string]string{},
 		pairs:        map[string]*serverPair{},
 		subs:         map[chan serverEvent]bool{},
@@ -186,24 +215,15 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		trust:        &hostTrust{out: os.Stderr},
 		cfg:          agent.Config{Provider: "compatible", Workspace: root},
 	}
-	var saved struct {
-		Chats   []*serverChat
-		Devices []remoteapi.PairedDevice
-	}
-	data, err := os.ReadFile(filepath.Join(dir, "state.json"))
-	if err == nil {
-		if err = json.Unmarshal(data, &saved); err != nil {
-			return nil, err
-		}
-	} else if !os.IsNotExist(err) {
+	var err error
+	if server.chats, server.devices, err = readServerState(filepath.Join(dir, "state.json")); err != nil && !os.IsNotExist(err) {
 		return nil, err
 	}
-	server.chats, server.devices = saved.Chats, saved.Devices
 	customConfig := configPath != ""
 	if configPath == "" {
 		configPath = filepath.Join(dir, "config.json")
 	}
-	data, err = os.ReadFile(configPath)
+	data, err := os.ReadFile(configPath)
 	if err == nil {
 		var settings serverSettings
 		if err = json.Unmarshal(data, &settings); err != nil {
@@ -254,6 +274,8 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 	browser.BrowserProfileOverride = filepath.Join(dir, "browser") // and Install Chromium's, beside it
 	agent.ClaudeInstallDir = filepath.Join(dir, "claude-code")
 	server.engine = browser.NewBrowserEngine(ctx)
+	server.lenders = &browserLenders{changed: server.lentBrowserChanged}
+	server.engine.Remote = server.lenders
 	for _, chat := range server.chats {
 		if chat.Config.Workspace == "" {
 			chat.Config.Workspace = root
@@ -267,8 +289,21 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		if chat.Cache == nil {
 			chat.Cache = &agent.ContextCache{}
 		}
+		if chat.Compaction == nil {
+			chat.Compaction = &agent.CompactionState{}
+		}
 		chat.Versions = agent.ExpandVersions(chat.Versions, chat.History, chat.Items)
-		chat.Subchat.Restored(len(chat.ReportTo) > 0)
+		// A turn that was working (or, saved before Working, reporting) was
+		// cut off: it shows so at once, and goes on or is told once the
+		// models are loaded (#584).
+		if cutOff := chat.Working || len(chat.ReportTo) > 0; cutOff {
+			resume := chat.Subchat != nil || len(chat.ReportTo) > 0
+			turn := agent.CutOffTurn(chat.Config, serverRestarted, resume, chat.Resumed)
+			server.addLocked(chat, turn.Item)
+			server.cutOffs = append(server.cutOffs, cutOffTurn{chat: chat, reportTo: chat.ReportTo, resume: turn.Resume})
+			chat.Subchat.Restored(true)
+		}
+		chat.Working, chat.Resumed = false, false
 		chat.ReportTo = nil
 	}
 	return server, nil
@@ -276,6 +311,16 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 
 func (server *headlessServer) saveLocked() error {
 	return server.stateLocked()()
+}
+
+// saveOutsideLocked saves the state with server.mu released while it is
+// encoded and written (#520), and takes the lock back: whoever calls it
+// must check, after it, what another request may have changed meanwhile.
+func (server *headlessServer) saveOutsideLocked() error {
+	write := server.stateLocked()
+	server.mu.Unlock()
+	defer server.mu.Lock()
+	return write()
 }
 
 // stateLocked takes the state to save, under the lock, and returns what
@@ -299,8 +344,9 @@ func (server *headlessServer) stateLocked() (write func() error) {
 	for i, chat := range server.chats {
 		chats[i] = &serverChat{ID: chat.ID, Title: chat.Title, Config: chat.Config, History: append([]agent.Message{}, chat.History...),
 			Items: append([]agent.ChatItem{}, chat.Items...), Version: chat.Version, Versions: agent.CopyVersions(chat.Versions),
-			Todo: chat.Todo.Copy(), Cache: chat.Cache.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
-			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...)} // its parent: forgetting it detached every subchat on restart (#356)
+			Todo: chat.Todo.Copy(), Goal: chat.Goal.Copy(), Cache: chat.Cache.Copy(), Compaction: chat.Compaction.Copy(), ContextUsage: chat.ContextUsage, Browsers: append([]browser.Info{}, chat.Browsers...),
+			Subchat: chat.Subchat.Copy(), ReportTo: append([]string(nil), chat.ReportTo...), // its parent: forgetting it detached every subchat on restart (#356)
+			Working: chat.Working, Resumed: chat.Resumed}
 	}
 	devices := append([]remoteapi.PairedDevice{}, server.devices...)
 	server.saveCount++
@@ -312,14 +358,69 @@ func (server *headlessServer) stateLocked() (write func() error) {
 			return nil // a newer state is already on disk
 		}
 		server.saveDone = count
-		for _, chat := range chats {
-			chat.Versions = agent.CompactVersions(chat.Versions, chat.History, chat.Items)
-		}
-		return saveServerJSON(path, struct {
-			Chats   []*serverChat            `json:"chats"`
-			Devices []remoteapi.PairedDevice `json:"devices"`
-		}{chats, devices})
+		return core.WriteFileStreamed(path, 0600, false, func(w io.Writer) error { return writeServerState(w, chats, devices) })
 	}
+}
+
+// writeServerState writes the state, message by message (agent.WriteChatJSON):
+// encoded whole, it took several times its size in memory at every save.
+func writeServerState(w io.Writer, chats []*serverChat, devices []remoteapi.PairedDevice) error {
+	writer := core.NewJSONWriter(w)
+	writer.Raw([]byte(`{"chats":`))
+	core.WriteJSONList(writer, chats, func(chat **serverChat) {
+		copied := **chat
+		copied.Versions = agent.CompactVersions(copied.Versions, copied.History, copied.Items)
+		agent.WriteChatJSON(writer, &copied, &copied.History, &copied.Items, &copied.Versions)
+	})
+	writer.Raw([]byte(`,"devices":`))
+	writer.Value(devices)
+	writer.Raw([]byte{'}'})
+	return writer.Err()
+}
+
+// readServerState reads it the same way; what is found several times (a
+// picture, a tool's output) is kept once.
+func readServerState(path string) (chats []*serverChat, devices []remoteapi.PairedDevice, err error) {
+	type savedServer struct {
+		Chats   []*serverChat
+		Devices []remoteapi.PairedDevice
+	}
+	var saved savedServer
+	err = func() error {
+		file, err := os.Open(path)
+		if err != nil {
+			return err
+		}
+		defer file.Close()
+		reader := core.NewJSONReader(file)
+		rest, err := reader.Object(map[string]func() error{"chats": func() (err error) {
+			saved.Chats, err = core.ReadJSONList(reader, func(read **serverChat) error {
+				chat := &serverChat{}
+				null, err := agent.ReadChatJSON(reader, chat, &chat.History, &chat.Items, &chat.Versions)
+				if !null {
+					*read = chat
+				}
+				return err
+			})
+			return err
+		}})
+		if err == nil && rest != nil {
+			err = json.Unmarshal(rest, &saved)
+		}
+		if err == nil {
+			err = reader.End()
+		}
+		return err
+	}()
+	if err != nil && !os.IsNotExist(err) {
+		// What is wrong with it is encoding/json's to say, from the whole file.
+		var data []byte
+		if data, err = os.ReadFile(path); err == nil {
+			saved = savedServer{}
+			err = json.Unmarshal(data, &saved)
+		}
+	}
+	return saved.Chats, saved.Devices, err
 }
 
 func (server *headlessServer) scheduleSaveLocked() {
@@ -337,6 +438,7 @@ func (server *headlessServer) scheduleSaveLocked() {
 }
 
 func (server *headlessServer) close() {
+	server.closeLoopy()
 	server.mu.Lock()
 	server.closing = true
 	shared := server.sharing
@@ -595,7 +697,11 @@ func (server *headlessServer) metaLocked(chat *serverChat) remoteapi.Meta {
 		}
 		meta.Todo = append(meta.Todo, item)
 	}
+	meta.Goal = remoteapi.GoalOf(chat.Goal.Snapshot())
 	meta.Used = agent.HistoryEstimate(chat.History) + agent.ContextOverhead(chat.Config)
+	if chat.Config.Provider == "claudecode" && chat.ContextUsage != nil {
+		meta.Used = chat.ContextUsage.Used // Claude Code keeps its own history
+	}
 	if chat.run != nil {
 		meta.Label, meta.Mark, meta.Approval, meta.Question = chat.run.label, chat.run.mark, chat.run.approval, chat.run.question
 		meta.Tool = chat.run.tool
@@ -657,9 +763,10 @@ func (server *headlessServer) broadcastLocked(kind string, value any) {
 	if err != nil {
 		return
 	}
+	server.eventSeq++
 	for channel := range server.subs {
 		select {
-		case channel <- serverEvent{kind, data}:
+		case channel <- serverEvent{kind, data, server.eventSeq}:
 		default:
 			close(channel)
 			delete(server.subs, channel)
@@ -765,6 +872,7 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	if connection, ok := server.connectionLocked(cfg.ConnectionID); ok {
 		cfg = agent.ResolveDefault(cfg, connection, server.choices)
 		cfg.CompactAt = connection.ModelOptions[cfg.Model].CompactAt
+		cfg.ConnectionName = connection.Name
 	}
 	cfg.APIKey = server.keys[cfg.ConnectionID]
 	if machine := server.machineLocked(cfg.MachineID); machine != nil {
@@ -789,8 +897,15 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 	}
 	cfg.ClassicCompaction = server.classic
 	cfg.Todo = chat.Todo
+	if chat.Goal == nil {
+		chat.Goal = &agent.GoalState{}
+	}
+	cfg.Goal = chat.Goal
 	cfg.Tasks = server.chatTasksLocked(chat)
-	cfg.Cache = chat.Cache
+	if chat.Compaction == nil {
+		chat.Compaction = &agent.CompactionState{}
+	}
+	cfg.Cache, cfg.Compaction = chat.Cache, chat.Compaction
 	if chat.grants == nil {
 		chat.grants = &agent.PermissionGrants{}
 	}
@@ -867,18 +982,25 @@ func (server *headlessServer) runConfigLocked(chat *serverChat, capabilities cha
 }
 
 func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message, id string) {
+	if chat.moving { // it goes on with the chat, wherever that is
+		chat.queue = append(chat.queue, m)
+		return
+	}
 	chat.History = append(chat.History, m)
 	chat.hops = agent.TurnHops(chat.hops, false, m)
+	chat.Working = true
 	// The user's words, another chat's under its name, or a note for
 	// 1loop's own (a task's end, a report).
 	index := server.addLocked(chat, agent.MessageItem(id, m))
 	ctx, cancel := context.WithCancel(server.ctx)
-	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait"}
+	run := &serverRun{cancel: cancel, capabilities: make(chan struct{}, 1), calls: map[string]int{}, states: map[int]string{}, index: -1, label: "Waiting for the model…", mark: "wait",
+		pause: agent.NewPauseSignal(), ended: make(chan struct{})}
 	chat.run = run
 	if parent := server.parentLocked(chat); parent != nil { // its state in the parent's Tasks
 		server.broadcastLocked("meta", server.metaLocked(parent))
 	}
 	cfg := server.runConfigLocked(chat, run.capabilities)
+	cfg.Pause = run.pause
 	history := append([]agent.Message{}, chat.History...)
 	server.changedLocked(chat, index)
 	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
@@ -937,8 +1059,18 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			return
 		}
 		chat.run = nil
+		defer close(run.ended)
+		if server.ctx.Err() != nil && err != nil {
+			// The server stops: the turn stays working in the state it
+			// saves, cut off, which its next start shows (#584).
+			return
+		}
+		chat.Working = false
 		ended := agent.SubchatDone
-		if err != nil {
+		paused := errors.Is(err, agent.ErrPaused)
+		if paused {
+			run.paused = true
+		} else if err != nil {
 			server.addLocked(chat, agent.ChatItem{Kind: "error", Text: err.Error()})
 			ended = agent.SubchatFailed
 			if ctx.Err() == context.Canceled {
@@ -960,7 +1092,7 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		if connection, ok := server.connectionLocked(chat.Config.ConnectionID); ok {
 			go server.noteLimits(connection, server.keys[connection.ID], 10*time.Minute)
 		}
-		if server.ctx.Err() != nil {
+		if server.ctx.Err() != nil || paused || chat.moving {
 			return
 		}
 		if moved != "" { // the agent goes on in the new folder
@@ -968,8 +1100,10 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			return
 		}
 		// A message can arrive after the agent's last look at its inbox and
-		// before this: it starts the next turn rather than wait unseen.
-		if len(chat.steer) > 0 && err == nil {
+		// before this: it starts the next turn rather than wait unseen. So
+		// does one a failed turn never read: a subchat's report, left there,
+		// was never heard (#584). After a stop, it waits for the next turn.
+		if len(chat.steer) > 0 && ended != agent.SubchatStopped {
 			next := chat.steer[0]
 			chat.steer = chat.steer[1:]
 			server.runLocked(chat, next)
@@ -977,8 +1111,11 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 			next := chat.queue[0]
 			chat.queue = chat.queue[1:]
 			server.runLocked(chat, next)
+		} else if next, ok := chat.Goal.Next(chat.Config.Provider); ok && err == nil {
+			server.runLocked(chat, next) // the goal's next turn (agent/goal.go)
 		}
 		if chat.run == nil { // the last turn of the chain: it reports to who caused it
+			server.loopyEnded(chat, ended)
 			server.turnEndedLocked(chat, ended)
 		}
 	}()
@@ -1064,12 +1201,15 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		run.mark, run.label = "approval", "Waiting for your answer"
 	case "approval":
 		data := value.(map[string]any)
-		run.approval = &remoteapi.Approval{Chat: chat.ID, ID: fmt.Sprint(data["id"]), Title: fmt.Sprint(data["title"]), Preview: fmt.Sprint(data["preview"])}
+		run.approval = &remoteapi.Approval{Chat: chat.ID, ID: fmt.Sprint(data["id"]), Title: fmt.Sprint(data["title"]), Preview: fmt.Sprint(data["preview"]), Review: data["review"] == true}
 		run.mark, run.label = "approval", "Waiting for your approval"
 	case "context_note", "note":
 		index = server.addLocked(chat, agent.ChatItem{Kind: "note", Text: value.(string)})
 	case "usage":
 		run.used = value.(int)
+		if chat.Config.Provider == "claudecode" { // its own count comes when the turn ends
+			chat.ContextUsage = chat.ContextUsage.At(run.used)
+		}
 	case "context_usage":
 		usage := value.(agent.ContextUsage)
 		chat.ContextUsage = &usage
@@ -1082,7 +1222,9 @@ func (server *headlessServer) emit(chat *serverChat, run *serverRun, kind string
 		chat.Config.SyncClaudeSession(len(chat.Items))
 	case "notice":
 		run.label = value.(string)
+	case "goal": // its state, time or tokens changed: the meta goes out with the change
 	}
+	server.loopyFollow(chat, run, kind)
 	server.changedLocked(chat, index)
 }
 
@@ -1127,6 +1269,15 @@ func (server *headlessServer) usageNames(group, key string) string {
 		return chat.Title
 	}
 	return ""
+}
+
+// accountDisabled says whether a connection is kept but turned off: its
+// limits are not shown on the Usage page.
+func (server *headlessServer) accountDisabled(id string) bool {
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	connection, ok := server.connectionLocked(id)
+	return ok && !connection.Enabled
 }
 
 // noteLimits reads a subscription's usage windows into the usage ledger

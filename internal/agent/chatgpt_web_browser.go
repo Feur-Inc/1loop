@@ -3,9 +3,6 @@
 package agent
 
 import (
-	"1loop/internal/browser"
-	"1loop/internal/core"
-	"1loop/internal/platform"
 	"bytes"
 	"context"
 	"crypto/sha256"
@@ -13,8 +10,6 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"github.com/chromedp/cdproto/emulation"
-	"github.com/chromedp/cdproto/input"
 	"net/url"
 	"regexp"
 	"slices"
@@ -22,9 +17,15 @@ import (
 	"sync"
 	"time"
 
+	"github.com/chromedp/cdproto/emulation"
+	"github.com/chromedp/cdproto/input"
 	"github.com/chromedp/cdproto/runtime"
 	"github.com/chromedp/chromedp"
 	"github.com/chromedp/chromedp/kb"
+
+	"1loop/internal/browser"
+	"1loop/internal/core"
+	"1loop/internal/platform"
 )
 
 func evaluateWeb(script string, out any) chromedp.Action {

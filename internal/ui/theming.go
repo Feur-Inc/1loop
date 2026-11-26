@@ -138,8 +138,17 @@ func (changed recolour) of(c color.NRGBA) color.NRGBA {
 }
 
 func (changed recolour) any(c color.Color) color.Color {
-	if n, ok := c.(color.NRGBA); ok {
+	switch n := c.(type) {
+	case color.NRGBA:
 		return changed.of(n)
+	case color.RGBA:
+		// Where a colour animation left it (canvas.NewColorRGBAAnimation):
+		// the composer's outline kept the old theme's until its next focus.
+		if n.A == 0xff {
+			if next := changed.of(color.NRGBA{R: n.R, G: n.G, B: n.B, A: 0xff}); next != (color.NRGBA{R: n.R, G: n.G, B: n.B, A: 0xff}) {
+				return next
+			}
+		}
 	}
 	return c
 }
@@ -157,7 +166,7 @@ var tintedFrom = map[fyne.Resource]struct {
 
 // repaint maps the colours of everything in the app's windows to the new
 // theme's, then has Fyne draw it all again.
-func repaint(changed recolour) {
+func repaint(changed recolour, fontsChanged bool) {
 	for name, c := range tintColors {
 		next := changed.of(c)
 		tintColors[name] = next
@@ -169,12 +178,31 @@ func repaint(changed recolour) {
 	}
 	for _, glow := range glows {
 		glow.tint = changed.of(glow.tint)
+		glow.refresh() // its picture, in the new tint
 	}
 	app := fyne.CurrentApp()
 	if app == nil {
 		return
 	}
+	// Without the theme set again (#474): the pictures drawn in a colour
+	// that changed lose their texture, and the widgets are refreshed, which
+	// work out their colours again (from the theme, mixed with hovers and
+	// fades). Fyne's ApplyThemeTo also refreshed every container and
+	// picture, and laid them all out.
+	recoloured := fynedriver.Recoloured
+	var stale []fyne.CanvasObject
+	var widgets []fyne.Widget
+	fresh := map[color.NRGBA]bool{} // the colours some token takes now
+	for was, next := range changed {
+		if next != was {
+			fresh[next] = true
+		}
+	}
+	themed, variant := app.Settings().Theme(), app.Settings().ThemeVariant()
 	paint := func(object fyne.CanvasObject) {
+		if w, ok := object.(fyne.Widget); ok && recoloured != nil {
+			widgets = append(widgets, w)
+		}
 		switch o := object.(type) {
 		case *canvas.Rectangle:
 			o.FillColor, o.StrokeColor = changed.any(o.FillColor), changed.any(o.StrokeColor)
@@ -187,11 +215,20 @@ func repaint(changed recolour) {
 		case *canvas.Arc:
 			o.FillColor, o.StrokeColor = changed.any(o.FillColor), changed.any(o.StrokeColor)
 		case *canvas.LinearGradient:
-			o.StartColor, o.EndColor = changed.any(o.StartColor), changed.any(o.EndColor)
+			start, end := changed.any(o.StartColor), changed.any(o.EndColor)
+			if start != o.StartColor || end != o.EndColor {
+				o.StartColor, o.EndColor = start, end
+				stale = append(stale, o)
+			}
 		case *canvas.Image:
 			if from, ok := tintedFrom[o.Resource]; ok {
 				if next := changed.of(from.ink); next != from.ink {
 					o.Resource = tinted(from.icon, next)
+					stale = append(stale, o)
+				}
+			} else if icon, ok := o.Resource.(fyne.ThemedResource); ok {
+				if ink, ok := themed.Color(icon.ThemeColorName(), variant).(color.NRGBA); ok && fresh[ink] {
+					stale = append(stale, o) // drawn in the theme's colour of the moment
 				}
 			}
 		case repaintable:
@@ -206,9 +243,20 @@ func repaint(changed recolour) {
 			fynedriver.WalkObjects(root, paint)
 		}
 	}
+	if recoloured != nil && !fontsChanged {
+		// Texts need nothing more: Fyne keeps their textures by colour.
+		recoloured(stale)
+		for _, w := range widgets {
+			w.Refresh()
+		}
+		return
+	}
 	// Fyne's own widgets read the theme: setting it again draws every
-	// window anew.
+	// window anew. When the fonts are the same, the text already shaped is
+	// kept: only colours changed (#474).
+	fynedriver.KeepFonts = !fontsChanged
 	app.Settings().SetTheme(loopTheme{theme.DefaultTheme()})
+	fynedriver.KeepFonts = false
 }
 
 // themeChoice is the theme setting with the accent, as saved.
@@ -244,10 +292,11 @@ func (choice themeChoice) accentColour() color.NRGBA {
 	return palette.AccentColor(choice.accent)
 }
 
-// applyTheme sets the colours for the choice, the system's dark mode read
-// when it follows it, and repaints the windows when anything changed. A
-// theme file that is gone or broken paints 1loop's dark look meanwhile.
-func (choice themeChoice) apply() {
+// apply sets the colours for the choice, the system's dark mode read when
+// it follows it, and repaints the windows when anything changed. A theme
+// file that is gone or broken paints 1loop's dark look meanwhile. It says
+// whether colours and fonts changed.
+func (choice themeChoice) apply() (recoloured, fontsChanged bool) {
 	setting := choice.active()
 	tokens := palette.For(setting, setting == palette.ThemeSystem && systemDark())
 	roundness = 1
@@ -260,17 +309,20 @@ func (choice themeChoice) apply() {
 		roundness = max(float32(file.Roundness), 0.05) // never 0: radii scale back from it
 	}
 	file, _ := themeFile(setting)
-	fontsChanged := loadThemeFonts(file.Fonts)
+	fontsChanged = loadThemeFonts(file.Fonts)
 	if fontsChanged {
 		measuresMu.Lock()
 		clear(measures) // measured in the old font
 		measuresMu.Unlock()
 	}
 	changed := setColours(tokens, choice.accentColour())
+	defer setThemeBlur(themeFile(setting)) // after the repaint, which recolours the tints
 	platform.Devf("ui", "theme %s (dark %v), accent %s, roundness %.2f", setting, tokens.Dark, choice.accent, roundness)
-	if len(changed) > 0 || fontsChanged {
-		repaint(changed) // sets the theme again: Fyne drops its fonts
+	recoloured = len(changed) > 0
+	if recoloured || fontsChanged {
+		repaint(changed, fontsChanged) // sets the theme again
 	}
+	return recoloured, fontsChanged
 }
 
 // systemDark says whether the computer asks for dark windows. Fyne reads
@@ -349,6 +401,11 @@ func (row *tapRow) repaint(changed recolour) {
 func (flow *flowText) repaint(changed recolour) {
 	flow.ink = changed.any(flow.ink)
 	flow.cut = nil // its atoms keep their colours: measured again
+	// What it draws (text, bullets, link rules) was made with the old
+	// colours, and a colour that is not exactly a token, or one that two
+	// tokens shared, is not mapped by the walk: it is laid out again, from
+	// the colours now in use, at its next refresh (#436).
+	flow.paintedWidth = -1
 }
 
 func (label *fitLabel) repaint(changed recolour) { label.color = changed.any(label.color) }

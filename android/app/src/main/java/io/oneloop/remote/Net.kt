@@ -146,23 +146,26 @@ fun presentedFingerprint(host: String, port: Int): String {
 
 private val pinnedFactories = ConcurrentHashMap<String, SSLSocketFactory>()
 
-private fun fingerprintOf(certificate: X509Certificate): String =
+internal fun fingerprintOf(certificate: X509Certificate): String =
     MessageDigest.getInstance("SHA-256").digest(certificate.encoded).joinToString("") { "%02x".format(it.toInt() and 255) }
 
-private fun pinnedSocketFactory(expected: String): SSLSocketFactory = pinnedFactories.computeIfAbsent(expected) {
-    val trust = object : X509TrustManager {
-        override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
-        override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {
-            throw CertificateException("Client certificates are not used")
-        }
-        override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
-            if (chain.isEmpty() || fingerprintOf(chain[0]) != expected) {
-                throw CertificateException("Server certificate fingerprint changed. Verify it on the server console.")
-            }
-            chain[0].checkValidity()
-        }
+/** Trusts exactly the certificate whose fingerprint is expected, whatever its dates. */
+internal fun pinnedTrust(expected: String): X509TrustManager = object : X509TrustManager {
+    override fun getAcceptedIssuers(): Array<X509Certificate> = emptyArray()
+    override fun checkClientTrusted(chain: Array<X509Certificate>, authType: String) {
+        throw CertificateException("Client certificates are not used")
     }
-    SSLContext.getInstance("TLS").apply { init(null, arrayOf(trust), null) }.socketFactory
+    override fun checkServerTrusted(chain: Array<X509Certificate>, authType: String) {
+        if (chain.isEmpty() || fingerprintOf(chain[0]) != expected) {
+            throw CertificateException("Server certificate fingerprint changed. Verify it on the server console.")
+        }
+        // No date check: the server never renews its certificate (a new
+        // one would mean pairing again), and the pin says which it is (#517).
+    }
+}
+
+private fun pinnedSocketFactory(expected: String): SSLSocketFactory = pinnedFactories.computeIfAbsent(expected) {
+    SSLContext.getInstance("TLS").apply { init(null, arrayOf(pinnedTrust(expected)), null) }.socketFactory
 }
 
 private fun pin(connection: HttpsURLConnection, fingerprint: String) {

@@ -56,6 +56,9 @@ type chatEntry struct {
 	typing   func() // the text changed
 	sent     func() // the text was sent: the editor goes back to its place
 	fitting  bool
+	// placeholders, longest first: the entry shows the first that fits on
+	// its one line, so a narrow pane does not wrap and cut it (#285).
+	placeholders []string
 	// Drafts (prompt_drafts.go): the conversation whose draft is shown, its
 	// undo history, and the last text seen.
 	drafts                *promptDrafts
@@ -118,6 +121,7 @@ func (entry *chatEntry) fit() {
 	segment.Style.TextStyle = entry.TextStyle
 	entry.measure.Refresh()
 	entry.measure.Resize(fyne.NewSize(width, 1))
+	entry.fitPlaceholder(width - 2*th.Size(theme.SizeNameInnerPadding))
 	line := textSize("M", th.Size(theme.SizeNameText), entry.TextStyle).Height
 	rows := max(1, min(promptMaxRows, int(math.Round(float64((entry.measure.MinSize().Height-2*th.Size(theme.SizeNameInnerPadding))/line)))))
 	if rows != entry.rows {
@@ -127,6 +131,30 @@ func (entry *chatEntry) fit() {
 			entry.resized()
 		}
 	}
+}
+
+// fitPlaceholder shows the longest of the placeholders that fits in width,
+// else the shortest.
+func (entry *chatEntry) fitPlaceholder(width float32) {
+	if len(entry.placeholders) == 0 {
+		return
+	}
+	size := entry.Theme().Size(theme.SizeNameText)
+	text := pickPlaceholder(entry.placeholders, width, func(s string) float32 { return textSize(s, size, entry.TextStyle).Width })
+	if text != entry.PlaceHolder {
+		entry.SetPlaceHolder(text)
+	}
+}
+
+// pickPlaceholder is the first of texts, longest first, at most width wide
+// as measure measures it, else the last.
+func pickPlaceholder(texts []string, width float32, measure func(string) float32) string {
+	for _, text := range texts {
+		if measure(text) <= width {
+			return text
+		}
+	}
+	return texts[len(texts)-1]
 }
 
 func (entry *chatEntry) Resize(size fyne.Size) {
@@ -220,25 +248,58 @@ func (entry *chatEntry) FocusLost() {
 	}
 }
 
-// On narrow conversations, the two groups need separate lines when the
-// side panel is open. The split supplies the available width before sizing.
-// transient are the run controls that come and go: the choice of one or two
-// lines counts them even while hidden, so it does not flip as a task starts
-// or ends.
-type composerControlsLayout struct {
-	available float32
-	transient []fyne.CanvasObject
-}
+// composerControlsLayout puts the settings on the left and the run controls
+// on the right of one line.
+type composerControlsLayout struct{}
 
-func (layoutSpec *composerControlsLayout) widths(o []fyne.CanvasObject) (left, right fyne.Size, wide float32) {
-	left, right = o[0].MinSize(), o[1].MinSize()
-	wide = left.Width + right.Width + 8
-	for _, object := range layoutSpec.transient {
-		if !object.Visible() {
-			wide += object.MinSize().Width + 4
+// composerActionsLayout lines up the run controls, Steer first. Where there
+// is no room for all of them, the first go out of sight (Steer keeps its
+// shortcut), so that none is drawn over the settings (#429).
+type composerActionsLayout struct{}
+
+const composerActionsGap = 4
+
+// natural is the width of every control shown.
+func (composerActionsLayout) natural(o []fyne.CanvasObject) float32 {
+	width := float32(0)
+	for _, object := range o {
+		if object.Visible() {
+			if width > 0 {
+				width += composerActionsGap
+			}
+			width += object.MinSize().Width
 		}
 	}
-	return left, right, wide
+	return width
+}
+
+func (spec composerActionsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
+	height := float32(0)
+	for _, object := range o {
+		if object.Visible() {
+			height = fyne.Max(height, object.MinSize().Height)
+		}
+	}
+	return fyne.NewSize(spec.natural(o[1:]), height)
+}
+
+func (composerActionsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
+	x := size.Width
+	room := true
+	for i := len(o) - 1; i >= 0; i-- {
+		if !o[i].Visible() {
+			continue
+		}
+		min := o[i].MinSize()
+		o[i].Resize(min)
+		room = room && x-min.Width >= -0.5
+		if !room {
+			o[i].Move(fyne.NewPos(-10000, 0))
+			continue
+		}
+		o[i].Move(fyne.NewPos(x-min.Width, (size.Height-min.Height)/2))
+		x -= min.Width + composerActionsGap
+	}
 }
 
 // MinSize keeps the controls on one line: the settings shrink first
@@ -250,6 +311,18 @@ func (layoutSpec *composerControlsLayout) MinSize(o []fyne.CanvasObject) fyne.Si
 
 func (layoutSpec *composerControlsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
 	left, right := o[0].MinSize(), o[1].MinSize()
+	// Every run control, when the settings keep room for their shortest.
+	if actions, ok := o[1].(*fyne.Container); ok {
+		if spec, ok := actions.Layout.(composerActionsLayout); ok {
+			natural, least := spec.natural(actions.Objects), float32(0)
+			if settings, ok := o[0].(*fyne.Container); ok && len(settings.Objects) > 0 {
+				least = settings.Objects[0].MinSize().Width + composerSettingsGap + composerModelLeast
+			}
+			if size.Width-natural-8 >= least {
+				right.Width = natural
+			}
+		}
+	}
 	width := fyne.Max(0, fyne.Min(left.Width, size.Width-right.Width-8))
 	o[0].Resize(fyne.NewSize(width, left.Height))
 	o[0].Move(fyne.NewPos(0, (size.Height-left.Height)/2))
@@ -267,19 +340,22 @@ type haloLayout struct {
 func (layoutSpec *haloLayout) MinSize(o []fyne.CanvasObject) fyne.Size { return o[len(o)-1].MinSize() }
 
 func (layoutSpec *haloLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
-	layoutSpec.glow.layout(fyne.NewPos(0, -2), size, rounded(layoutSpec.radius))
+	layoutSpec.glow.layout(fyne.Position{}, size, rounded(layoutSpec.radius)) // even all around
 	layoutSpec.drop.layout(fyne.NewPos(0, 3), size, rounded(layoutSpec.radius))
 	o[len(o)-1].Move(fyne.Position{})
 	o[len(o)-1].Resize(size)
 }
 
-// composerSettingsLayout lines up the approval mode, the model and the
-// context ring. Its minimum is their natural width, which decides whether
+// composerSettingsLayout lines up the approval mode and the model. Its
+// minimum is their natural width, which decides whether
 // the controls take two lines; given less, the model's name is cut short so
 // that nothing leaves the card.
 type composerSettingsLayout struct{ model *tapRow }
 
 const composerSettingsGap = 4
+
+// composerModelLeast is the narrowest the model's name is cut to.
+const composerModelLeast = 56
 
 func (layoutSpec composerSettingsLayout) natural() float32 {
 	layoutSpec.model.truncate = false
@@ -288,33 +364,20 @@ func (layoutSpec composerSettingsLayout) natural() float32 {
 }
 
 func (layoutSpec composerSettingsLayout) MinSize(o []fyne.CanvasObject) fyne.Size {
-	width := o[0].MinSize().Width + layoutSpec.natural() + 2*composerSettingsGap
-	height := fyne.Max(o[0].MinSize().Height, o[1].MinSize().Height)
-	if o[2].Visible() {
-		width += o[2].MinSize().Width
-		height = fyne.Max(height, o[2].MinSize().Height)
-	}
-	return fyne.NewSize(width, height)
+	width := o[0].MinSize().Width + layoutSpec.natural() + composerSettingsGap
+	return fyne.NewSize(width, fyne.Max(o[0].MinSize().Height, o[1].MinSize().Height))
 }
 
 func (layoutSpec composerSettingsLayout) Layout(o []fyne.CanvasObject, size fyne.Size) {
-	approval, ring := o[0].MinSize(), fyne.Size{}
-	if o[2].Visible() {
-		ring = o[2].MinSize()
+	approval := o[0].MinSize()
+	// The model's name is cut short where there is no room for all of it.
+	model := fyne.Min(layoutSpec.natural(), size.Width-approval.Width-composerSettingsGap)
+	if model < composerModelLeast-1 { // not even its start: out of sight
+		model = 0
+		o[1].Move(fyne.NewPos(-10000, 0))
 	}
-	gaps := float32(2 * composerSettingsGap)
-	natural := layoutSpec.natural()
-	// Room is given up in this order: the model's name is cut short, then the
-	// context ring goes (its figure is in the side panel too).
-	model := fyne.Min(natural, size.Width-approval.Width-ring.Width-gaps)
-	if model < 70 && ring.Width > 0 {
-		ring = fyne.Size{}
-		model = fyne.Min(natural, size.Width-approval.Width-gaps)
-	}
-	model = fyne.Max(36, model)
-	o[2].Move(fyne.NewPos(-10000, 0)) // out of sight unless placed below
 	x := float32(0)
-	for i, s := range []fyne.Size{approval, fyne.NewSize(model, o[1].MinSize().Height), ring} {
+	for i, s := range []fyne.Size{approval, fyne.NewSize(model, o[1].MinSize().Height)} {
 		if s.Width == 0 {
 			continue
 		}
@@ -527,10 +590,19 @@ func (ui *desktopUI) renderAttachments() {
 	}
 	for i, file := range *files {
 		i := i
-		remove := newRow("", iconClose, styleWindow, func() {
+		removeFile := func() {
 			*files = append((*files)[:i], (*files)[i+1:]...)
 			ui.renderAttachments()
-		})
+		}
+		if ui.server != nil {
+			if img := ui.server.thumbnails[file.Path]; img != nil { // a picture uploaded from here (#543)
+				bounds := img.Bounds()
+				size := fitPictureBox(bounds.Dx(), bounds.Dy(), composerPictureWidth, composerPictureHeight)
+				ui.attachRow.Add(newPictureTile(img, size, func() { ui.openImage(file.Name, img) }, removeFile))
+				continue
+			}
+		}
+		remove := newRow("", iconClose, styleWindow, removeFile)
 		label := textLine(fitText(file.Name, 12.5, fyne.TextStyle{}, 180), 12.5, colText)
 		ui.attachRow.Add(surface(container.NewHBox(label, remove), colCode, colBorderSoft, 8, 6))
 	}
@@ -564,12 +636,13 @@ func (ui *desktopUI) renderAttachments() {
 type parkedAttachments struct {
 	images []core.ImagePart
 	files  []fileAttachment
+	server []agent.FileAttachment // a server chat's, already uploaded there (#544)
 }
 
 // switchAttachments sets aside the attachments of the draft being left and
 // brings back those of the draft about to show, so that a picture pasted in
-// one chat is never sent from another (#409). A server chat's own files are
-// dropped by remoteDesktop.selectChat.
+// one chat is never sent from another (#409). A server chat's uploaded files
+// are parked the same way.
 func (ui *desktopUI) switchAttachments(from, to string) {
 	if from == to {
 		return
@@ -577,15 +650,37 @@ func (ui *desktopUI) switchAttachments(from, to string) {
 	if ui.parked == nil {
 		ui.parked = map[string]parkedAttachments{}
 	}
-	if len(ui.attachments)+len(ui.fileAttachments) > 0 {
-		ui.parked[from] = parkedAttachments{ui.attachments, ui.fileAttachments}
+	var server []agent.FileAttachment
+	if ui.server != nil {
+		server = ui.server.fileAttachments
+	}
+	if len(ui.attachments)+len(ui.fileAttachments)+len(server) > 0 {
+		ui.parked[from] = parkedAttachments{ui.attachments, ui.fileAttachments, server}
 	} else {
 		delete(ui.parked, from)
 	}
 	back := ui.parked[to]
 	delete(ui.parked, to)
 	ui.attachments, ui.fileAttachments = back.images, back.files
+	if ui.server != nil {
+		ui.server.fileAttachments = back.server
+	}
 	ui.renderAttachments()
+}
+
+// parkServerFiles gives files uploaded for a draft not on screen (an upload
+// that ended, or a send that failed, after the user moved on) to that
+// draft, where they show when it comes back.
+func (ui *desktopUI) parkServerFiles(key string, files []agent.FileAttachment) {
+	if len(files) == 0 {
+		return
+	}
+	if ui.parked == nil {
+		ui.parked = map[string]parkedAttachments{}
+	}
+	parked := ui.parked[key]
+	parked.server = append(parked.server, files...)
+	ui.parked[key] = parked
 }
 
 // takeAttachments hands the staged pictures to a message and clears them.
@@ -599,13 +694,13 @@ func (ui *desktopUI) takeAttachments() []core.ImagePart {
 }
 
 // ---------------------------------------------------------------------------
-// While a task runs, a message sent (Enter, Ctrl+Enter, Send) steers it: it
+// While a task runs, a message sent with Enter or Send is queued: it waits
+// in a tray above the composer, where it can be reordered, edited in the
+// prompt, sent at once or dropped, and becomes the next turn once the task
+// is over (#433). One sent with Ctrl+Enter or Steer steers the task: it
 // shows at once at the conversation's end, greyed, and joins the running
 // task at the next gap between two model calls (after the current tool
-// calls), where it takes its place in the conversation. Messages kept for
-// the next turn (one that could not be sent, a queue left by a stopped
-// task) wait in a tray above the composer, where they can be reordered,
-// edited in the prompt, sent at once or dropped.
+// calls), where it takes its place in the conversation.
 
 func (ui *desktopUI) takeSteer(chat *conversation) []agent.Message {
 	ui = ui.viewOf(chat) // the window showing it (windows.go)
@@ -697,6 +792,7 @@ func (ui *desktopUI) renderQueue() {
 	chat := ui.current
 	ui.remote.metaChanged(chat)
 	ui.renderPending()
+	ui.renderQuestions() // the open chat's questions, if it has any
 	if chat == nil || len(chat.queue) == 0 {
 		ui.queueTray.Hide()
 		return
@@ -721,21 +817,25 @@ func (ui *desktopUI) renderPending() {
 	}
 	ui.pendingBox.RemoveAll()
 	type pendingMessage struct {
-		text  string
-		index int // in chat.steer; -1 for a server chat's
+		text   string
+		index  int  // in chat.steer; -1 for a server chat's
+		queued bool // a server chat's queue: sent once the task is over
 	}
 	var waiting []pendingMessage
 	running := false
 	if ui.server != nil {
 		meta := ui.server.meta
 		running = meta.Running
-		for _, text := range append(append([]string(nil), meta.Steer...), meta.Queue...) {
-			waiting = append(waiting, pendingMessage{text, -1})
+		for _, text := range meta.Steer {
+			waiting = append(waiting, pendingMessage{text, -1, false})
+		}
+		for _, text := range meta.Queue {
+			waiting = append(waiting, pendingMessage{text, -1, true})
 		}
 	} else if chat := ui.current; chat != nil {
 		running = chat.run != nil
 		for i, message := range chat.steer {
-			waiting = append(waiting, pendingMessage{pendingText(message), i})
+			waiting = append(waiting, pendingMessage{pendingText(message), i, false})
 		}
 	}
 	for _, message := range waiting {
@@ -745,6 +845,9 @@ func (ui *desktopUI) renderPending() {
 		bubble := container.New(&bubbleLayout{text: text, chrom: 2*pad + 4},
 			surface(padded(pad, pad, pad, pad, text), withAlpha(colRaised, 0.5), colBorderSoft, 14, 2))
 		note := "Sent at the next step"
+		if message.queued {
+			note = "Queued · sent when the task ends"
+		}
 		if !running {
 			note = "Not sent yet · press Enter to send"
 		}
@@ -965,101 +1068,27 @@ func (ui *desktopUI) finishEdit(commit bool) {
 }
 
 // ---------------------------------------------------------------------------
-// contextRing shows how much of the model's window the conversation fills:
-// amber for what is used, white for what is left. Hovering gives the figures.
+// Context use: what the open conversation fills of the model's window, shown
+// under the task list (context_usage.go) and in /status.
 
-type contextRing struct {
-	widget.BaseWidget
-	used, window int
-	plan         agent.PlanUsage // Claude Code: how much of the subscription's windows is used
-	tips         *tipLayer
-	track, fill  *canvas.Arc
-}
-
-func newContextRing(tips *tipLayer) *contextRing {
-	ring := &contextRing{tips: tips}
-	ring.track = canvas.NewArc(0, 360, 0.76, colText)
-	ring.fill = canvas.NewArc(0, 0, 0.76, colAmber)
-	ring.ExtendBaseWidget(ring)
-	return ring
-}
-
-func (ring *contextRing) set(used, window int) {
-	ring.used, ring.window = used, window
-	frac := float32(0)
-	if window > 0 {
-		frac = fyne.Min(1, float32(used)/float32(window))
+func (ui *desktopUI) describeContext() string {
+	if ui.contextWindow <= 0 {
+		return "Available once a model is selected"
 	}
-	ring.fill.EndAngle = 360 * frac
-	ring.fill.Refresh()
-	if ring.tips.anchor == ring {
-		ring.tips.place(ring, ring.describe())
-	}
+	return fmt.Sprintf("%d%% used · %s of %s tokens", min(100, ui.contextUsed*100/ui.contextWindow), core.CompactCount(ui.contextUsed), core.CompactCount(ui.contextWindow))
 }
 
-func (ring *contextRing) describe() string {
-	if ring.window <= 0 {
-		return "Context usage\nAvailable once a model is selected"
-	}
-	percent := ring.used * 100 / ring.window
-	if percent > 100 {
-		percent = 100
-	}
-	text := fmt.Sprintf("%d%% of the context used\n%s of %s tokens", percent, agent.Tokens(ring.used), agent.Tokens(ring.window))
-	if ring.plan != (agent.PlanUsage{}) {
-		text += fmt.Sprintf("\nClaude plan: %.0f%% of the 5 h window · %.0f%% of the week", ring.plan.FiveHour*100, ring.plan.Week*100)
-	}
-	return text
-}
-
-func (ring *contextRing) MouseIn(*desktop.MouseEvent)    { ring.tips.show(ring, ring.describe()) }
-func (ring *contextRing) MouseMoved(*desktop.MouseEvent) {}
-func (ring *contextRing) MouseOut()                      { ring.tips.hide() }
-
-func (ring *contextRing) CreateRenderer() fyne.WidgetRenderer { return &contextRingRenderer{ring} }
-
-type contextRingRenderer struct{ ring *contextRing }
-
-const contextRingSize = 16
-
-func (renderer *contextRingRenderer) MinSize() fyne.Size {
-	return fyne.NewSquareSize(contextRingSize + 12)
-}
-
-func (renderer *contextRingRenderer) Layout(size fyne.Size) {
-	at := fyne.NewPos((size.Width-contextRingSize)/2, (size.Height-contextRingSize)/2)
-	for _, arc := range []*canvas.Arc{renderer.ring.track, renderer.ring.fill} {
-		arc.Move(at)
-		arc.Resize(fyne.NewSquareSize(contextRingSize))
-	}
-}
-
-func (renderer *contextRingRenderer) Refresh() {
-	renderer.ring.track.Refresh()
-	renderer.ring.fill.Refresh()
-}
-
-func (renderer *contextRingRenderer) Objects() []fyne.CanvasObject {
-	return []fyne.CanvasObject{renderer.ring.track, renderer.ring.fill}
-}
-
-func (renderer *contextRingRenderer) Destroy() {}
-
-// setContextUsage updates the ring for the open conversation.
+// setContextUsage notes what the open conversation uses.
 func (ui *desktopUI) setContextUsage(used, window int) {
-	ui.contextRing.set(used, window)
+	ui.contextUsed, ui.contextWindow = used, window
 	if ui.panel != nil {
 		ui.panel.refreshTodoStatus()
 	}
 }
 
-// refreshContextRing recomputes the usage of the open conversation from its
-// history, so the ring is right after opening a chat or when nothing runs.
-func (ui *desktopUI) refreshContextRing() {
-	ui.contextRing.plan = agent.PlanUsage{}
-	if ui.cfg.Provider == "claudecode" {
-		ui.contextRing.plan = ui.plan
-	}
+// refreshContextUsage recomputes the usage of the open conversation from its
+// history, so it is right after opening a chat or when nothing runs.
+func (ui *desktopUI) refreshContextUsage() {
 	if ui.current == nil {
 		ui.setContextUsage(0, agent.ModelContextWindow(ui.resolveModel(ui.cfg)))
 		return
@@ -1069,6 +1098,9 @@ func (ui *desktopUI) refreshContextRing() {
 		if message.Usage > usage {
 			usage = message.Usage
 		}
+	}
+	if ui.current.Config.Provider == "claudecode" && ui.current.ContextUsage != nil {
+		usage = ui.current.ContextUsage.Used // Claude Code keeps its own history
 	}
 	ui.setContextUsage(usage, agent.ModelContextWindow(ui.resolveModel(ui.current.Config)))
 }

@@ -9,7 +9,6 @@ package agent
 // mode, 1loop's instructions, extensions…), for claudeIdleLimit at most.
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -18,6 +17,7 @@ import (
 	"sync"
 	"time"
 
+	"1loop/internal/core"
 	"1loop/internal/extensions"
 	"1loop/internal/platform"
 )
@@ -43,9 +43,11 @@ type claudeProcess struct {
 	stderr  *outputBuffer
 	binding *todoMCPBinding // nil without 1loop's MCP server
 	lines   chan []byte     // its output, line by line; closed when it exits
-	quit    chan struct{}   // closed when the process is dropped
-	done    chan struct{}   // closed once it exited and was waited for
-	cleanup []func()        // its MCP server and config files
+	readErr error           // why its output could not be read (a line over 64 MB); set before lines closes
+	quit    chan struct{}   // closed when the process is dropped: its output is drained
+	quitOne sync.Once
+	done    chan struct{} // closed once it exited and was waited for
+	cleanup []func()      // its MCP server and config files
 
 	writing sync.Mutex
 	open    bool
@@ -73,17 +75,26 @@ func startClaudeProcess(cmd *exec.Cmd, key string, binding *todoMCPBinding, clea
 		process.release()
 		return nil, err
 	}
+	platform.OOMFirst(cmd) // it, its tools and builds go before 1loop when memory runs out (#584)
 	go func() {
-		scanner := bufio.NewScanner(stdout)
-		scanner.Buffer(make([]byte, 64<<10), 64<<20)
+		scanner := core.NewLineReader(stdout, 64<<20)
 	read:
 		for scanner.Scan() {
 			select {
-			case process.lines <- append([]byte(nil), scanner.Bytes()...):
+			case process.lines <- scanner.Bytes():
 			case <-process.quit:
 				io.Copy(io.Discard, stdout)
 				break read
 			}
+		}
+		if err := scanner.Err(); err != nil {
+			// The turn cannot go on without its output: it ends with this
+			// error, and Claude Code, which may be blocked writing to a
+			// full pipe, is stopped and drained so Wait returns.
+			platform.Devf("claude", "output unreadable: %v", err)
+			process.readErr = fmt.Errorf("Claude Code's output could not be read: %w", err)
+			platform.KillProcessTree(cmd)
+			io.Copy(io.Discard, stdout)
 		}
 		cmd.Wait()
 		platform.Devf("claude", "process ended: %v", cmd.ProcessState)
@@ -132,6 +143,10 @@ func (process *claudeProcess) alive() bool {
 // released. It waits for the exit.
 func (process *claudeProcess) end(interrupt bool, grace time.Duration) {
 	process.finish(interrupt)
+	// Nobody reads its lines any more: the reader drains them, or it would
+	// wait to hand one over while this waits for the exit, which it reports
+	// (#545: Stop did nothing on a chat's second turn).
+	process.stopReading()
 	timer := time.NewTimer(grace)
 	defer timer.Stop()
 	select {
@@ -149,9 +164,14 @@ func (process *claudeProcess) kill() {
 	process.end(false, 4*time.Second)
 }
 
+// stopReading lets the reader drop the rest of the output.
+func (process *claudeProcess) stopReading() {
+	process.quitOne.Do(func() { close(process.quit) })
+}
+
 func (process *claudeProcess) release() {
 	process.once.Do(func() {
-		close(process.quit)
+		process.stopReading()
 		for _, clean := range process.cleanup {
 			clean()
 		}

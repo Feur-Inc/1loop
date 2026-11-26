@@ -6,6 +6,7 @@ import (
 	"context"
 	"path/filepath"
 	"slices"
+	"strings"
 	"testing"
 
 	"fyne.io/fyne/v2"
@@ -173,7 +174,7 @@ func TestServerProjectsRemembered(t *testing.T) {
 // listed as the window's connection last read them.
 func TestLeavingTheServerKeepsItListed(t *testing.T) {
 	ui := linkedUI(t)
-	remote := &remoteDesktop{parent: ui, client: &remoteClient{address: serverAddress{URL: testServer}}, name: "box",
+	remote := &remoteDesktop{parent: ui, shown: true, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: testServer}}, name: "box",
 		projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "s1", Title: "Server chat", Workspace: "/srv/api"}}}
 	ui.handOver(remote)
 	if link := ui.links[0]; !link.answered || !slices.Equal(link.listing.projects, []string{"/srv/api"}) {
@@ -226,13 +227,6 @@ func TestGroupKeys(t *testing.T) {
 	}
 }
 
-// A new chat with no folder runs on the device in use: this computer.
-func TestNoFolderRunsHere(t *testing.T) {
-	if noFolderTarget() != localTarget {
-		t.Fatalf("no folder runs on %v", noFolderTarget())
-	}
-}
-
 // The target's icon after a project's name never runs into its trailing
 // text: in a narrow sidebar it steps aside for the name.
 func TestRowMarkStepsAside(t *testing.T) {
@@ -247,8 +241,38 @@ func TestRowMarkStepsAside(t *testing.T) {
 	if end, trailing := renderer.mark.Position().X+renderer.mark.Size().Width, renderer.trailing.Position().X; end > trailing {
 		t.Fatalf("the mark ends at %v, past the trailing text at %v", end, trailing)
 	}
-	renderer.Layout(fyne.NewSize(150, 32)) // narrower than the narrowest sidebar
+	renderer.Layout(fyne.NewSize(110, 32)) // far narrower than the narrowest sidebar
 	if renderer.mark.Visible() {
 		t.Fatal("the mark stays where the name has no room")
+	}
+}
+
+// The name of a project comes before its branch: in a narrow row the
+// branch is cut short, then goes, and is never drawn over the name; the
+// name is cut only once the branch is gone.
+func TestRowTrailingYieldsToName(t *testing.T) {
+	test.NewTempApp(t)
+	row := newRow("1loop", iconChevron, styleNav, nil)
+	row.trailing, row.truncate, row.endInset = "feat/discord-presence", true, 38
+	renderer := test.TempWidgetRenderer(t, row).(*tapRowRenderer)
+	for width := float32(300); width >= 40; width -= 4 {
+		renderer.Layout(fyne.NewSize(width, 32))
+		if renderer.trailing.Text == "" {
+			continue
+		}
+		if renderer.label.Text != "1loop" {
+			t.Fatalf("at %v: the name is %q while the branch %q shows", width, renderer.label.Text, renderer.trailing.Text)
+		}
+		if end := renderer.label.Position().X + renderer.label.MinSize().Width; end > renderer.trailing.Position().X {
+			t.Fatalf("at %v: the name ends at %v, over the branch at %v", width, end, renderer.trailing.Position().X)
+		}
+	}
+	renderer.Layout(fyne.NewSize(180, 32))
+	if text := renderer.trailing.Text; text == "" || text == row.trailing || !strings.HasSuffix(text, "…") {
+		t.Errorf("at 180: branch %q, want it cut short", text)
+	}
+	renderer.Layout(fyne.NewSize(60, 32))
+	if renderer.trailing.Text != "" {
+		t.Errorf("at 60: branch %q, want it gone", renderer.trailing.Text)
 	}
 }

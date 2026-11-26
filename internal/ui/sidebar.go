@@ -174,9 +174,13 @@ func sectionHeader(text string, action fyne.CanvasObject) fyne.CanvasObject {
 	return container.NewBorder(nil, nil, nil, padded(10, 0, 0, 2, action), label)
 }
 
-// moreButtonInset is the room withMore keeps at a row's end for its ⋯.
+// moreButtonInset is the room withMore keeps at a row's end for its ⋯:
+// a styleWindow row's width (tapRowRenderer.metrics: its icon and padding,
+// which no theme changes), and 4. A constant, not a row built and measured
+// for each row of the sidebar.
 func moreButtonInset() float32 {
-	return newRow("", iconMore, styleWindow, nil).MinSize().Width + 4
+	const padX, icon = 8, 18 // styleWindow
+	return icon + 2*padX + 4
 }
 
 // withMore adds a "⋯" button that appears while the row is hovered; it and a
@@ -375,7 +379,7 @@ func (ui *desktopUI) projectMenu(anchor fyne.CanvasObject) {
 		if ui.cfg.InScratch() {
 			icon = iconCheck
 		}
-		actions = append(actions, menuAction{label: noFolderLabel, icon: icon, run: ui.chooseNoFolder})
+		actions = append(actions, menuAction{label: thisComputerLabel, icon: icon, run: ui.chooseNoFolder})
 	}
 	add := "Add folder…"
 	if ui.cfg.MachineID != "" {
@@ -399,6 +403,16 @@ func (ui *desktopUI) openChat(chat *conversation) {
 	ui.loadChat(chat, true)
 }
 
+// markRead clears a subchat's unread mark as the user opens it: its dot in
+// the sidebar goes, and so does its count in the summary row. Kept for the
+// next start.
+func (ui *desktopUI) markRead(chat *conversation) {
+	if chat.Subchat != nil && chat.Subchat.Unseen {
+		chat.Subchat.Unseen = false
+		ui.save()
+	}
+}
+
 func (ui *desktopUI) reloadChat(chat *conversation) {
 	ui.loadChat(chat, false)
 }
@@ -416,6 +430,7 @@ func (ui *desktopUI) loadChat(chat *conversation, reuse bool) {
 		chat.failed = false
 		ui.syncTray()
 	}
+	ui.markRead(chat)
 	ui.cfg = chat.Config
 	ui.syncProjectTheme()
 	ui.prompt.switchDraft(chat.ID)
@@ -453,7 +468,7 @@ func (ui *desktopUI) finishChatLoad() {
 	ui.updateHeader()
 	ui.renderChats()
 	ui.showChatModel()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 }
 
 func (ui *desktopUI) renameChat(chat *conversation) {
@@ -542,18 +557,6 @@ func (ui *desktopUI) removeChats(chats ...*conversation) {
 	ui.renderChats()
 }
 
-func (ui *desktopUI) chatMenu(chat *conversation, anchor fyne.CanvasObject) *sheet {
-	var window []menuAction
-	if ui.canOpenWindow(chat) { // windows.go, panes.go
-		window = append(window, menuAction{label: "Open in new window", icon: iconWindow, run: func() { ui.openWindow(chat) }},
-			menuAction{label: "Open in split view", icon: iconPanel, run: func() { ui.splitPane(chat, false) }})
-	}
-	return showMenu(ui.window, anchor, append(window, []menuAction{
-		{label: "Rename", icon: iconRename, run: func() { ui.renameChat(chat) }},
-		{label: "Delete", icon: iconTrash, danger: true, run: func() { ui.deleteChat(chat) }},
-	}...))
-}
-
 // confirm asks before a destructive action.
 func (ui *desktopUI) confirm(title, text, verb string, run func()) {
 	label := widget.NewLabel(text)
@@ -604,13 +607,15 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	ui.sideGlide = newGlideLayout()
 	ui.projectList = container.New(ui.sideGlide)
 
-	logo := brandLogo(30*1483.0/512.0, 30)
+	ui.brand = newBrandMark(false)
 	collapse := newRow("", iconSidebar, styleWindow, ui.toggleSidebar)
-	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, logo, container.NewCenter(collapse)))
+	var brand fyne.CanvasObject = padded(10, 12, 0, 0, container.NewBorder(nil, nil, ui.spaceSwitch(ui.brand.object()), container.NewCenter(collapse)))
 	if ui.chrome {
 		brand = container.NewStack(newDragArea(ui.window), brand)
 	}
-	ui.sideLists = container.NewVBox(sectionHeader("Projects", nil), container.NewStack(container.NewWithoutLayout(ui.sideGlide.pill), ui.projectList))
+	ui.sideMarker = canvas.NewRectangle(colAmber)
+	ui.sideMarker.Hide()
+	ui.sideLists = container.NewVBox(sectionHeader("Projects", nil), container.NewStack(container.NewWithoutLayout(ui.sideGlide.pill, ui.sideMarker), ui.projectList))
 	lists := ui.sideLists
 	divider := canvas.NewRectangle(colBorderSoft)
 	divider.SetMinSize(fyne.NewSize(0, 1))
@@ -620,7 +625,9 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	ui.usageRow = newRow("Usage", iconUsage, styleNav, ui.showUsage)
 	bottom := container.NewVBox(divider, padded(6, 0, 0, 0, ui.updateRow), padded(0, 0, 0, 0, ui.usageRow), padded(0, 8, 0, 0, ui.connections))
 	// Under the logo: the chats, or the settings' sections while they are open.
-	ui.sideApp = container.NewBorder(ui.sideActions(), bottom, nil, nil, newKineticVScroll(lists))
+	scroll := newKineticVScroll(lists)
+	ui.sideGlide.scroll = scroll
+	ui.sideApp = container.NewBorder(ui.sideActions(), bottom, nil, nil, scroll)
 	content := padded(0, 0, 12, 12, container.NewBorder(brand, nil, nil, nil, container.NewStack(ui.sideApp, ui.prefs.side)))
-	return container.NewStack(canvas.NewRectangle(colSidebar), content)
+	return container.NewStack(blurBehind("sidebar", canvas.NewRectangle(colSidebar), &colSidebar), content)
 }

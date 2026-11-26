@@ -3,7 +3,6 @@
 package ui
 
 import (
-	"reflect"
 	"slices"
 	"time"
 
@@ -102,9 +101,11 @@ func (ui *desktopUI) advanceChatLoad() {
 			ui.syncCopies()
 			load.copies = true
 		case load.measured < len(ui.transcript.Objects):
+			// Measured out of sight: its height, without drawing objects
+			// that only the rows shown at the end would use.
 			view := ui.transcript.Objects[load.measured]
-			ui.items.measure(view, load.width)
 			view.Hide()
+			ui.items.measure(view, load.width)
 			load.measured++
 		case load.checked < len(load.items):
 			index := load.checked
@@ -114,15 +115,15 @@ func (ui *desktopUI) advanceChatLoad() {
 				ui.reloadChat(load.chat)
 				return
 			}
-			if !reflect.DeepEqual(item, load.items[index]) || state != load.states[index] {
+			if !sameItem(item, load.items[index]) || state != load.states[index] {
 				ui.replaceLoadingItem(load, index)
 				load.items[index], load.states[index] = snapshotChatItem(item), state
 			}
 			if position := load.positions[index]; position >= 0 {
 				view := ui.transcript.Objects[position]
-				if _, known := ui.items.sizes[view]; !known {
-					ui.items.measure(view, load.width)
+				if !ui.items.known(view) {
 					view.Hide()
+					ui.items.measure(view, load.width)
 				}
 			}
 			load.checked++
@@ -137,6 +138,17 @@ func (ui *desktopUI) advanceChatLoad() {
 			return
 		}
 	}
+}
+
+// sameItem tells whether two chat items are the same, as reflect.DeepEqual
+// would (but nil and empty lists are the same), at the cost of comparing
+// strings that mostly share their bytes: through reflection, the check of
+// every item cost a long chat's opening more than drawing it.
+func sameItem(a, b agent.ChatItem) bool {
+	return a.ID == b.ID && a.Kind == b.Kind && a.Title == b.Title && a.Text == b.Text && a.Tool == b.Tool &&
+		a.Args == b.Args && a.Diff == b.Diff && a.Millis == b.Millis && a.Failed == b.Failed &&
+		slices.Equal(a.Images, b.Images) && slices.Equal(a.Files, b.Files) &&
+		(a.From == b.From || a.From != nil && b.From != nil && *a.From == *b.From)
 }
 
 func snapshotChatItem(item agent.ChatItem) agent.ChatItem {
@@ -155,5 +167,5 @@ func (ui *desktopUI) replaceLoadingItem(load *conversationLoad, index int) {
 	ui.appendItem(load.chat, index)
 	ui.transcript.Objects[position] = ui.transcript.Objects[count]
 	ui.transcript.Objects = ui.transcript.Objects[:count]
-	delete(ui.items.sizes, old)
+	ui.items.replaced(old)
 }

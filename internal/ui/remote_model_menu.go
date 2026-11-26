@@ -11,7 +11,6 @@ import (
 	"context"
 	"slices"
 	"strings"
-	"time"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/canvas"
@@ -60,7 +59,7 @@ func (remote *remoteDesktop) modelMenu() {
 		lists[i] = container.New(layout.NewCustomPaddedVBoxLayout(0))
 		var body fyne.CanvasObject = lists[i]
 		if i < 2 {
-			scrolls[i] = newKineticVScroll(lists[i])
+			scrolls[i] = newKineticVScroll(clearOfBar(lists[i]))
 			scrolls[i].SetMinSize(fyne.NewSize(0, 276-modelLimitsStripHeight))
 			body = scrolls[i]
 		}
@@ -84,16 +83,11 @@ func (remote *remoteDesktop) modelMenu() {
 	menu.menu, menu.columns, menu.anchor = true, true, ui.model.row
 	groups := [3][]*tapRow{}
 	shown := ""
-	values := map[string]agent.AccountLimits{}
 	refreshStrip := func() {
 		for _, account := range accounts {
 			if account.ID == shown {
-				limits, ok := values[account.ID]
-				if !ok {
-					limits = agent.AccountLimits{Note: "Loading limits…"}
-				}
 				conn := agent.Connection{ID: account.ID, Name: account.Name, Provider: account.Provider}
-				strip.Objects = []fyne.CanvasObject{modelLimitsStrip(conn, limits, account.Problem)}
+				strip.Objects = []fyne.CanvasObject{modelLimitsStrip(conn, remote.limits.of(account.ID), account.Problem)}
 			}
 		}
 		strip.Refresh()
@@ -121,7 +115,7 @@ func (remote *remoteDesktop) modelMenu() {
 		if !slices.ContainsFunc(model.Efforts, func(e remoteapi.Effort) bool { return e.Value == effort }) {
 			effort = model.DefaultEffort
 		}
-		remote.action("/api/model", map[string]string{"chat": remote.current, "label": model.Label})
+		remote.act("/api/model", map[string]string{"chat": remote.current, "label": model.Label}, remoteAction{key: "model:label:" + remote.current, control: remote.parent.model, latest: true, title: "Model"})
 		update(model.Account)
 	}
 	for _, account := range accounts {
@@ -201,7 +195,7 @@ func (remote *remoteDesktop) modelMenu() {
 				return
 			}
 			effort = efforts[index].Value
-			remote.action("/api/model", map[string]string{"chat": remote.current, "effort": effort})
+			remote.act("/api/model", map[string]string{"chat": remote.current, "effort": effort}, remoteAction{key: "model:effort:" + remote.current, control: remote.parent.model, latest: true, title: "Model"})
 			title.Text, about.Text = efforts[index].Label, fitText(efforts[index].About, 12, fyne.TextStyle{}, 180)
 			title.Refresh()
 			about.Refresh()
@@ -279,45 +273,11 @@ func (remote *remoteDesktop) modelMenu() {
 	ui.model.setOpen(true)
 	menu.Show()
 	ui.window.Canvas().Focus(menu)
-	go remote.watchLimits(ctx, func(limits []remoteapi.Limits) {
-		if menu.closing {
-			return
+	remote.watchLimits(ctx, func() {
+		if !menu.closing {
+			refreshStrip()
 		}
-		for _, account := range limits {
-			value := agent.AccountLimits{Note: account.Note, Checked: time.Now()}
-			for _, window := range account.Windows {
-				reset := time.Time{}
-				if window.Reset > 0 {
-					reset = time.UnixMilli(window.Reset)
-				}
-				value.Windows = append(value.Windows, agent.NewAccountLimitWindow(window.Label, window.Left, reset))
-			}
-			values[account.Account] = value
-		}
-		refreshStrip()
 	})
-}
-
-// watchLimits reads the server's account limits while the picker is open:
-// at once, then every minute, as the desktop does.
-func (remote *remoteDesktop) watchLimits(ctx context.Context, show func([]remoteapi.Limits)) {
-	ticker := time.NewTicker(time.Minute)
-	defer ticker.Stop()
-	for {
-		var limits []remoteapi.Limits
-		if remote.client.json(ctx, "GET", "/api/limits", nil, &limits) == nil {
-			fyne.Do(func() {
-				if ctx.Err() == nil {
-					show(limits)
-				}
-			})
-		}
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-		}
-	}
 }
 
 // speedToggle is the desktop's bolt button (model_controls.go) for a
@@ -341,7 +301,7 @@ func (remote *remoteDesktop) speedToggle(model remoteapi.Model, tier *string) fy
 	row = newRow(names[index], iconBolt, styleChip, func() {
 		index = (index + 1) % len(ids)
 		*tier = ids[index]
-		remote.action("/api/model", map[string]any{"chat": remote.current, "tier": ids[index]})
+		remote.act("/api/model", map[string]any{"chat": remote.current, "tier": ids[index]}, remoteAction{key: "model:tier:" + remote.current, control: remote.parent.model, latest: true, title: "Model"})
 		row.text, row.accent = names[index], index > 0
 		row.Refresh()
 	})

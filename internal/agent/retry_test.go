@@ -4,6 +4,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -132,5 +133,25 @@ func TestShownTextIsNotAskedAgain(t *testing.T) {
 	})
 	if _, err, _ := ask(cfg); err == nil || calls.Load() != 1 {
 		t.Fatalf("a broken stream with text on screen was asked again: %v after %d calls", err, calls.Load())
+	}
+}
+
+func TestRetryWaitNeverShorterThanBackOff(t *testing.T) {
+	now := time.Now()
+	for _, value := range []string{"0", "-5", now.Add(-time.Hour).UTC().Format(http.TimeFormat), "soon"} {
+		header := http.Header{"Retry-After": {value}}
+		if wait := retryWait(2, header); wait < retryBase<<2 {
+			t.Errorf("Retry-After %q: waited %s, less than the back-off %s", value, wait, retryBase<<2)
+		}
+		if err := rateLimitFailure(http.StatusTooManyRequests, "", header, errors.New("429")); !err.(*RateLimitError).Reset.IsZero() {
+			t.Errorf("Retry-After %q gave a reset time", value)
+		}
+	}
+	if wait := retryWait(0, http.Header{"Retry-After": {"30"}}); wait != 30*time.Second {
+		t.Errorf("Retry-After 30: waited %s", wait)
+	}
+	future := now.Add(time.Minute).UTC().Format(http.TimeFormat)
+	if wait := retryAfter(http.Header{"Retry-After": {future}}, now); wait < 59*time.Second || wait > time.Minute {
+		t.Errorf("Retry-After date a minute ahead: %s", wait)
 	}
 }

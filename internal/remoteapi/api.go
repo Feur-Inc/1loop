@@ -118,7 +118,8 @@ type Meta struct {
 	Tier   string `json:"tier,omitempty"` // its speed (see agent.TierFor)
 	Used   int    `json:"used"`
 	Window int    `json:"window"`
-	Todo   []Todo `json:"todo"` // the chat's task list
+	Todo   []Todo `json:"todo"`           // the chat's task list
+	Goal   *Goal  `json:"goal,omitempty"` // its /goal; "/goal pause", "resume" and "clear" sent as messages control it
 	// Its background commands; POST /api/chats/{id}/tasks/{task}/stop ends one.
 	Tasks []agent.BackgroundTaskInfo `json:"tasks"`
 	// Its account's type: a local phone keeps a ChatGPT (Web) chat's page open.
@@ -158,6 +159,8 @@ type Approval struct {
 	ID      string `json:"id"`
 	Title   string `json:"title"`
 	Preview string `json:"preview"`
+	// Review: an edit whose files can be read and changed first (GET /api/review).
+	Review bool `json:"review,omitempty"`
 }
 
 type Effort struct {
@@ -200,6 +203,7 @@ type Limits struct {
 	Account string        `json:"account"`
 	Note    string        `json:"note,omitempty"`
 	Windows []LimitWindow `json:"windows"`
+	Checked int64         `json:"checked,omitempty"` // Unix milliseconds: when the provider was asked
 }
 
 type LimitWindow struct {
@@ -214,6 +218,52 @@ type Tab struct {
 	Title string `json:"title"`
 	URL   string `json:"url,omitempty"`
 	Index int    `json:"index,omitempty"` // a tool tab: its item in the conversation
+}
+
+// Goal is a chat's goal as clients show it (agent.Goal): its clock counts
+// from Running, Unix milliseconds, while the agent works on it.
+type Goal struct {
+	ID          string  `json:"id"`
+	Objective   string  `json:"objective"`
+	Status      string  `json:"status"`
+	Label       string  `json:"label"` // the status as the views name it
+	By          string  `json:"by,omitempty"`
+	Reason      string  `json:"reason,omitempty"`
+	Idle        bool    `json:"idle,omitempty"`
+	TokensUsed  int     `json:"tokensUsed"`
+	TokenBudget int     `json:"tokenBudget,omitempty"`
+	Turns       int     `json:"turns"`
+	MaxTurns    int     `json:"maxTurns,omitempty"`
+	TimeBudget  int     `json:"timeBudget,omitempty"`
+	Seconds     float64 `json:"seconds"`
+	Running     int64   `json:"running,omitempty"`
+}
+
+// GoalOf is a goal for the clients, nil for none.
+func GoalOf(goal *agent.Goal) *Goal {
+	if goal == nil {
+		return nil
+	}
+	out := &Goal{ID: goal.ID, Objective: goal.Objective, Status: goal.Status, Label: agent.GoalStatusLabel(*goal), By: goal.By, Reason: goal.Reason, Idle: goal.Idle,
+		TokensUsed: goal.TokensUsed, TokenBudget: goal.TokenBudget, Turns: goal.Turns, MaxTurns: goal.MaxTurns, TimeBudget: goal.TimeBudget, Seconds: goal.Seconds}
+	if goal.RunningSince != nil {
+		out.Running = goal.RunningSince.UnixMilli()
+	}
+	return out
+}
+
+// AgentGoal is the goal a client got, as the desktop's views draw it.
+func (goal *Goal) AgentGoal() *agent.Goal {
+	if goal == nil {
+		return nil
+	}
+	out := &agent.Goal{ID: goal.ID, Objective: goal.Objective, Status: goal.Status, By: goal.By, Reason: goal.Reason, Idle: goal.Idle,
+		TokensUsed: goal.TokensUsed, TokenBudget: goal.TokenBudget, Turns: goal.Turns, MaxTurns: goal.MaxTurns, TimeBudget: goal.TimeBudget, Seconds: goal.Seconds}
+	if goal.Running > 0 {
+		since := time.UnixMilli(goal.Running)
+		out.RunningSince = &since
+	}
+	return out
 }
 
 type Todo struct {

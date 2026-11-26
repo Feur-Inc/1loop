@@ -59,19 +59,10 @@ func TestTurnFollowsItsChatToAnotherWindow(t *testing.T) {
 	}
 }
 
-// A hidden main window does not count as showing its chat: a notification
-// is due.
-func TestShowingIgnoresHiddenWindow(t *testing.T) {
+// A hidden main window does not count as on screen.
+func TestHiddenWindowIsNotOnScreen(t *testing.T) {
 	main, other := twoWindows(t)
-	chat := &conversation{ID: "c"}
-	main.current = chat
-	if !main.showing(chat) {
-		t.Fatal("the main window's chat is not on screen")
-	}
 	main.hiddenAlone = true
-	if main.showing(chat) {
-		t.Fatal("the hidden main window's chat counts as on screen")
-	}
 	// Closing the other window now closes the last one on screen: it
 	// follows the tray setting instead of only going away.
 	if other.otherWindowShown() || !main.otherWindowShown() {

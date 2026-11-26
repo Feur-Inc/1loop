@@ -264,13 +264,16 @@ func (ui *desktopUI) worktreeLabel(folder string) string {
 // worktreeRows are a project's other worktrees under it in the sidebar:
 // folded into one "N worktrees" row until it is unfolded, the open one
 // still showing. A project can have dozens; its chats come first.
-func (ui *desktopUI) worktreeRows(project string, open func(folder string)) []fyne.CanvasObject {
+//
+// keys name each row for the sidebar's animation: a worktree by its
+// folder, since two can bear the same label ("base (detached)"), and two
+// rows with one key were laid on the same place, leaving a gap.
+func (ui *desktopUI) worktreeRows(project string, open func(folder string)) (rows []fyne.CanvasObject, keys []string) {
 	state := ui.repoFor(project)
 	if state.repo == nil {
-		return nil
+		return nil, nil
 	}
 	shown := ui.worktreesShown[project]
-	var rows []fyne.CanvasObject
 	count := 0
 	for _, worktree := range gitrepo.Sorted(state.repo.Worktrees, ui.worktreeSort) {
 		if worktree.Main {
@@ -296,9 +299,10 @@ func (ui *desktopUI) worktreeRows(project string, open func(folder string)) []fy
 		rows = append(rows, padded(0, 0, 28, 0, ui.withMore(row, func(anchor fyne.CanvasObject) *sheet {
 			return showMenu(ui.window, anchor, ui.worktreeActions(project, worktree, open))
 		})))
+		keys = append(keys, "path:"+worktree.Path)
 	}
 	if count == 0 {
-		return nil // "New worktree…" is in the project's menu
+		return nil, nil // "New worktree…" is in the project's menu
 	}
 	label := fmt.Sprintf("%d worktrees", count)
 	if count == 1 {
@@ -315,13 +319,15 @@ func (ui *desktopUI) worktreeRows(project string, open func(folder string)) []fy
 	toggle.ink = colFaint
 	toggle.size = 13
 	rows = append([]fyne.CanvasObject{padded(0, 0, 14, 0, toggle)}, rows...)
+	keys = append([]string{"fold"}, keys...)
 	if shown {
 		add := newRow("New worktree", iconPlus, styleNav, func() { ui.newWorktreeDialog(project) })
 		add.ink = colFaint
 		add.size = 13
 		rows = append(rows, padded(0, 0, 28, 0, add))
+		keys = append(keys, "new")
 	}
-	return rows
+	return rows, keys
 }
 
 func (ui *desktopUI) worktreeRunning(folder string) bool {
@@ -355,7 +361,7 @@ func (ui *desktopUI) worktreeActions(project string, worktree gitrepo.Worktree, 
 	actions := []menuAction{{label: "New chat", icon: iconPlus, run: func() { open(worktree.Path); ui.startNew() }}}
 	if number := state.pulls[worktree.Path]; number > 0 && state.hub != nil {
 		actions = append(actions, menuAction{label: fmt.Sprintf("Open pull request #%d", number), icon: iconGlobe, run: func() {
-			openLink(fmt.Sprintf("%s/pull/%d", state.hub.URL, number))
+			openInBrowser(fmt.Sprintf("%s/pull/%d", state.hub.URL, number))
 		}})
 	} else if state.repo != nil && state.repo.Owner != "" && worktree.Branch != "" {
 		actions = append(actions, menuAction{label: "Create a pull request on GitHub", icon: iconGlobe, run: func() {

@@ -475,6 +475,9 @@ GLFWAPI struct wl_display* glfwGetWaylandDisplay(void);
  * descriptor, through GLFW's own data device. */
 GLFWAPI const char* glfwGetWaylandClipboardImageType(void);
 GLFWAPI int glfwReceiveWaylandClipboard(const char* mimeType, int fd);
+/* 1loop: offers text as the primary selection (a middle click pastes it);
+ * GLFW_FALSE when the compositor has none. */
+GLFWAPI int glfwSetWaylandPrimarySelection(const char* string);
 
 /*! @brief Returns the `struct wl_output*` of the specified monitor.
  *

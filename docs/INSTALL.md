@@ -141,6 +141,7 @@ plays or records sound, so it has no audio access.
 | `--filesystem=host` | Reading and editing your projects wherever they are, with the same paths the host commands and Claude Code use. | Only folders granted in another way are visible; projects elsewhere cannot be opened or edited. `--filesystem=home` is enough if all your projects are in your home folder. Read-only (`host:ro`) makes every edit fail. |
 | `--talk-name=org.freedesktop.Flatpak` | Commands, Terminal Use, Git, Browser Use, Computer Use's helper and Claude Code, which run on the host through `flatpak-spawn --host`. | None of them can run: commands print a message naming this permission, and Claude Code shows as not installed. Chats with API providers and file edits still work. |
 | `--talk-name=org.kde.StatusNotifierWatcher` | The tray icon: 1loop registers it with the desktop's tray, and asks whether a tray is there before closing the window hides it in the tray. | No tray icon, and closing the window quits 1loop. |
+| `--talk-name=org.freedesktop.secrets` | The API keys of OpenAI-compatible, OpenRouter and vLLM connections, kept in the Secret Service (GNOME Keyring, KWallet). | Keys are kept until 1loop closes and must be typed again after a restart. |
 | `--own-name=org.kde.StatusNotifierItem-2-1` | The tray icon's own bus name (`StatusNotifierItem-<process ID>-1`; 1loop is process 2 in the sandbox). | Nothing visible: the icon is also registered by its object path. |
 | `--share=network` | Model providers, MCP servers, SSH machines, Browser Use, the remote app. | No model can be reached. |
 | `--socket=ssh-auth` | SSH machines that sign in with your SSH agent. | Use a key file or a password for SSH machines. |
@@ -307,12 +308,20 @@ and ScreenCast (GNOME and KDE do).
 
 ## Windows desktop (Windows 10 1809 or newer, x64)
 
-1. Download `1loop-VERSION-windows-amd64.exe`.
-2. Put it in a folder you own, for example
-   `C:\Users\you\Applications\1loop`, and run it. It updates itself
-   there (Settings → Updates).
-3. Windows SmartScreen may say the app is unrecognized: choose
+1. Download `1loop-VERSION-windows-amd64-setup.exe` and run it. It installs
+   1loop for you alone, without administrator rights, in
+   `%LOCALAPPDATA%\Programs\1loop`, with a Start menu shortcut and, if you
+   ask, one on the desktop. 1loop updates itself there (Settings → Updates).
+2. Windows SmartScreen may say the app is unrecognized: choose
    **More info → Run anyway**.
+
+To remove it: **Settings → Apps → Installed apps → 1loop → Uninstall**. Your
+chats and settings (`%AppData%\1loop`) stay. `setup.exe /S` installs without
+a window (`/D=C:\folder`, last, sets where), and `uninstall.exe /S` removes it;
+both end with code 2 when 1loop is running.
+
+**Without installing:** download `1loop-VERSION-windows-amd64.exe`, put it in
+a folder you own and run it. It updates itself there too.
 
 On a PC without an OpenGL driver (a virtual machine, some remote desktops),
 1loop draws on the CPU by itself, with the Mesa it carries: the first time,

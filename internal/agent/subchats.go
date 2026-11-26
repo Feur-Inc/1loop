@@ -66,6 +66,9 @@ const (
 	SubchatDone    = "done"
 	SubchatFailed  = "failed"
 	SubchatStopped = "stopped"
+	// SubchatInterrupted: a restart cut its turn off (CutOffTurn). Only
+	// its report says so; it shows stopped.
+	SubchatInterrupted = "interrupted"
 )
 
 // SubchatRequest is a subchat to start. Context is "fresh" (the brief only)
@@ -98,6 +101,20 @@ type SubchatLink struct {
 	Parent string `json:"parent"`
 	Branch string `json:"branch,omitempty"` // the worktree's branch, "" when it shares the folder
 	Ended  string `json:"ended,omitempty"`  // how its last turn ended: done, stopped or failed
+	// Unseen: its turn ended and the user has not opened it since, so the
+	// sidebar marks it as an unread chat.
+	Unseen bool `json:"unseen,omitempty"`
+	// Reported is how its last turn the parent heard of ended: done,
+	// failed, stopped or interrupted (Owed).
+	Reported string `json:"reported,omitempty"`
+}
+
+// Owed says whether the end of a turn the parent did not cause still
+// reports to it: the last word it heard was not done (a failed,
+// stopped or interrupted turn), so the work that follows must reach it,
+// or that failure stays its last word (#584).
+func (link *SubchatLink) Owed() bool {
+	return link != nil && link.Reported != "" && link.Reported != SubchatDone
 }
 
 // Copy is the link as it is now, for a save encoded beside the chat's
@@ -126,14 +143,62 @@ type SubchatAccess struct {
 	Stop        func(ctx context.Context, id string) error
 }
 
-// Restored is the link as loaded at start. cutOff: the chat's turn was to
-// report when 1loop closed (its ReportTo was saved), so it shows stopped;
-// the host forgets that ReportTo, so a turn the user starts later does not
-// report in its place.
+// Restored is the link as loaded at start. cutOff: the chat's turn was
+// still working when 1loop closed (CutOffTurn), so it shows stopped, and
+// the parent's last word of it is that it was interrupted: the next turn's
+// end reaches the parent (Owed). The host forgets the saved ReportTo, so
+// a turn the user starts later does not report in its place.
 func (link *SubchatLink) Restored(cutOff bool) {
 	if link != nil && cutOff {
 		link.Ended = SubchatStopped
+		link.Reported = SubchatInterrupted
 	}
+}
+
+// CutOff is what becomes of a chat whose turn a restart cut off (#584):
+// the error it shows, and the message that resumes it, nil when it waits
+// for one from the user.
+type CutOff struct {
+	Item   ChatItem
+	Resume *Message
+}
+
+// CutOffTurn is a chat whose turn a restart cut off. why is what did
+// ("the server restarted"); resume: 1loop may go on with it unasked (a
+// subchat, or a turn another chat caused), which it does in a harness that
+// kept the session (Claude Code's --resume, Antigravity's); again: it was
+// resumed after the last restart and cut off once more before its turn
+// ended, so it is not resumed a second time (a build that brings the
+// machine down would do it again).
+func CutOffTurn(cfg Config, why string, resume, again bool) CutOff {
+	text := "Interrupted: " + why + " while this chat worked. Send a message to continue."
+	switch {
+	case !resume:
+	case again:
+		text = "Interrupted again: " + why + " while this chat worked, after it was resumed once. Send a message to continue."
+	case HarnessSession(cfg) != "":
+		text = "Interrupted: " + why + " while this chat worked. Resumed in its session."
+		return CutOff{Item: ChatItem{Kind: "error", Text: text}, Resume: &Message{Role: "user", Internal: true,
+			Content: "[Resumed: " + why + " while you worked]\n1loop cut your last turn off when " + why + ": a command you ran then may not have finished, and its result is lost. Check where the work stands (the files you were editing, git status), then go on with the task."}}
+	}
+	return CutOff{Item: ChatItem{Kind: "error", Text: text}}
+}
+
+// InterruptedReport tells another chat that sender's turn was cut off when
+// why happened: resumed, 1loop resumed it and its next end is reported
+// too; cutToo, the receiver's own turn was cut off as well.
+func InterruptedReport(sender ChatSender, relation string, info SubchatInfo, why string, resumed, cutToo bool) Message {
+	info.State = SubchatInterrupted
+	m := TurnReport(sender, relation, info)
+	if resumed {
+		m.Content += "\nIt was cut off when " + why + ", and 1loop resumed it in its session: its next report follows."
+	} else {
+		m.Content += "\nIt was cut off when " + why + ". Its session and files are kept: message it (chats, id " + sender.ID + ") to continue it."
+	}
+	if cutToo {
+		m.Content += "\nYour own last turn was cut off too: a command you ran then may not have finished."
+	}
+	return m
 }
 
 // SubchatState is a subchat's state from its chat's.
@@ -470,7 +535,7 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 			start = "with this conversation so far"
 			if access.ForkSize != nil {
 				size := access.ForkSize(ctx)
-				start += fmt.Sprintf(" (about %s tokens)", Tokens(size))
+				start += fmt.Sprintf(" (about %s tokens)", core.CompactCount(size))
 				if size >= ForkApprovalTokens {
 					ask = backend.askApproval // a large fork is the user's call, whatever the mode
 				}

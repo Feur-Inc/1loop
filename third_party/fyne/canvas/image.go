@@ -131,6 +131,9 @@ func (i *Image) Move(pos fyne.Position) {
 
 // Refresh causes this image to be redrawn with its configured state.
 func (i *Image) Refresh() {
+	if i.refreshCachedSVG() {
+		return
+	}
 	rc, err := i.updateReader()
 	if err != nil {
 		fyne.LogError("Failed to load image", err)
@@ -349,7 +352,7 @@ func (i *Image) updateAspectAndMinSize(reader io.Reader) (io.Reader, error) {
 	}
 
 	if i.FillMode == ImageFillOriginal {
-		i.SetMinSize(scale.ToFyneSize(i, pixWidth, pixHeight))
+		i.SetMinSize(scaleSize(i, pixWidth, pixHeight))
 	}
 	return reader, nil
 }
@@ -395,16 +398,24 @@ func (i *Image) renderSVG(width, height float32) (image.Image, error) {
 		screenHeight *= 2
 	}
 
-	tex := cache.GetSvg(i.name(), i, screenWidth, screenHeight)
+	// 1loop: one rasterised copy per size, not one per name: an icon shown
+	// at two sizes (a row's 18 px, a chip's 16 px) drew itself again each
+	// time the other size was asked for.
+	name := svgSizedName(i.name(), screenWidth, screenHeight)
+	tex := cache.GetSvg(name, i, screenWidth, screenHeight)
 	if tex != nil {
 		return tex, nil
 	}
 
 	var err error
+	svgDrawMu.Lock()
 	tex, err = i.icon.Draw(screenWidth, screenHeight)
+	svgDrawMu.Unlock()
 	if err != nil {
 		return nil, err
 	}
-	cache.SetSvg(i.name(), i, tex, screenWidth, screenHeight)
+	cache.SetSvg(name, i, tex, screenWidth, screenHeight)
 	return tex, nil
 }
+
+func scaleSize(i *Image, w, h int) fyne.Size { return scale.ToFyneSize(i, w, h) }

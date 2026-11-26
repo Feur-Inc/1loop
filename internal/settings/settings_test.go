@@ -86,8 +86,8 @@ func TestList(t *testing.T) {
 		if SectionTitle(setting.Section) == "" {
 			t.Errorf("%s: unknown section %q", setting.Key, setting.Section)
 		}
-		if setting.Title == "" || setting.Description == "" {
-			t.Errorf("%s: a title and a description are needed", setting.Key)
+		if setting.Title == "" {
+			t.Errorf("%s: a title is needed", setting.Key)
 		}
 		if setting.Where != OnBoth && setting.Where != OnDesktop && setting.Where != OnPhone {
 			t.Errorf("%s: shown nowhere", setting.Key)

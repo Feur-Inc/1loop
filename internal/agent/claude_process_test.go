@@ -5,10 +5,14 @@ package agent
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"testing"
+	"time"
+
+	"1loop/internal/platform"
 )
 
 // keptClaude puts on PATH a claude that counts its starts in starts.log and
@@ -83,5 +87,96 @@ func TestClaudeProcessKeptBetweenTurns(t *testing.T) {
 	claudeParked.Unlock()
 	if kept {
 		t.Fatal("still kept after DropClaudeProcess")
+	}
+}
+
+// A line over the reader's limit ends the output with an error instead of
+// leaving Claude Code blocked on a full pipe and the turn waiting forever.
+func TestClaudeProcessLineTooLong(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the fake claude is a shell script")
+	}
+	cmd := exec.Command("sh", "-c", `head -c 70000000 /dev/zero | tr '\0' a; echo; head -c 1000000 /dev/zero; sleep 30`)
+	platform.PrepareProcess(cmd)
+	process, err := startClaudeProcess(cmd, "too-long", nil, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	timeout := time.After(20 * time.Second)
+	for {
+		select {
+		case _, more := <-process.lines:
+			if more {
+				continue
+			}
+			if process.readErr == nil || !strings.Contains(process.readErr.Error(), "too long") {
+				t.Fatalf("read error: %v", process.readErr)
+			}
+			<-process.done
+			return
+		case <-timeout:
+			t.Fatal("the output never ended")
+		}
+	}
+}
+
+// A message queued during a Claude Code task becomes the next turn once
+// the task is over, not a message steered into it (#433).
+func TestClaudeQueuedMessageIsTheNextTurn(t *testing.T) {
+	dir := keptClaude(t)
+	asked := 0
+	inbox := Inbox{Steer: func() []Message { return nil }, Next: func() (Message, bool) {
+		asked++
+		if asked == 1 {
+			return Message{Role: "user", Content: "queued message"}, true
+		}
+		return Message{}, false
+	}}
+	cfg := Config{Provider: "claudecode", ConnectionID: "claude", Model: "sonnet", Workspace: t.TempDir(), ContextKey: "chat-queue"}
+	t.Cleanup(func() { DropClaudeProcess("chat-queue") })
+	var injected []string
+	emit := func(kind string, value any) {
+		if kind == "injected" {
+			injected = append(injected, value.(Message).Content)
+		}
+	}
+	if err := (&App{}).runClaudeCode(context.Background(), cfg, []Message{{Role: "user", Content: "first"}}, inbox, emit); err != nil {
+		t.Fatal(err)
+	}
+	input, _ := os.ReadFile(filepath.Join(dir, "input.jsonl"))
+	var prompts []string
+	for _, line := range strings.Split(string(input), "\n") {
+		if strings.Contains(line, `"type":"user"`) {
+			prompts = append(prompts, line)
+		}
+	}
+	if len(prompts) != 2 || !strings.Contains(prompts[0], "first") || !strings.Contains(prompts[1], "queued message") {
+		t.Fatalf("prompts sent to Claude Code: %q", prompts)
+	}
+	if strings.Contains(prompts[1], "while you were working") {
+		t.Fatal("the queued message was sent as a steered one")
+	}
+	if len(injected) != 1 || injected[0] != "queued message" {
+		t.Fatalf("injected %q", injected)
+	}
+}
+
+// A Read sent with a command waits for it in Claude Code: its row must not
+// count the command's time as its own.
+func TestClaudeRunningQueue(t *testing.T) {
+	for _, c := range []struct {
+		names []string
+		want  int
+	}{
+		{nil, 0},
+		{[]string{"Bash", "Read"}, 1},
+		{[]string{"Read", "Grep", "Bash", "Read"}, 2},
+		{[]string{"Read"}, 1},
+		{[]string{"Edit", "Edit"}, 1},
+		{[]string{"mcp__1loop_todo__update_todo", "Bash"}, 1},
+	} {
+		if got := claudeRunning(c.names); got != c.want {
+			t.Errorf("claudeRunning(%v) = %d, want %d", c.names, got, c.want)
+		}
 	}
 }

@@ -46,6 +46,31 @@ use `0700`. Keep that directory outside Git and back it up privately. The
 server's workspace is fixed by `-workspace`: clients cannot select another
 server-side project directory through the remote API.
 
+### Run it as a systemd service
+
+[`packaging/server/1loop-server.service`](../packaging/server/1loop-server.service)
+runs the server at boot and restarts it when it fails. Copy it to
+`/etc/systemd/system/`, set its `User`, paths and arguments, then
+`sudo systemctl daemon-reload && sudo systemctl enable --now 1loop-server`.
+
+On a small machine, builds and tests the agents run can fill the memory. The
+unit's `OOMScoreAdjust=-500` and the `oom_score_adj` of 500 that 1loop gives
+every process it starts for its agents (Claude Code, agy, shell commands,
+background tasks, terminals, and what they start in turn) make the kernel's
+out-of-memory killer pick that build, not the server and every chat with it.
+To add it to a unit you already have: `sudo systemctl edit 1loop-server`, then
+
+```ini
+[Service]
+OOMScoreAdjust=-500
+```
+
+When the server restarts all the same (a crash, a reboot, an update), a turn
+it cut off says *Interrupted: the server restarted*. A subchat working in
+Claude Code or Antigravity resumes in its session, once; the chats it was to
+report to, its parent always, are told, with its last answer. Other chats
+wait for a message to continue.
+
 ## Docker
 
 The image `ghcr.io/feur-inc/1loop-server` holds the server with Bash, Git,
@@ -359,8 +384,13 @@ start, with its options then.
 
 On first start the server generates an ECDSA TLS certificate, valid for one
 year, and prints its SHA-256 fingerprint. It reuses that certificate on later
-starts. You can instead supply a certificate and private key with
-`-tls-cert /path/server.crt -tls-key /path/server.key`.
+starts and never renews it, since a new one would have a new fingerprint:
+paired desktops and phones pin that exact certificate and ignore its dates,
+so they keep connecting after its first year. It is kept as `server.crt`
+and `server.key` in the data directory; back up both together. If one is missing or damaged, the server does not start and says
+which file: restore it, or delete both to make a new certificate, and then
+pair every device again. You can instead supply a certificate and private
+key with `-tls-cert /path/server.crt -tls-key /path/server.key`.
 Browsers cannot pin the fingerprint: for the web client without a
 certificate warning, see [Behind a reverse proxy](#behind-a-reverse-proxy).
 
@@ -442,7 +472,9 @@ or `docker attach` with a container started with `-it` (Compose:
 Certificate replacement requires verifying and entering the new fingerprint
 on each client. A private certificate's fingerprint replaces normal hostname
 verification only for that explicitly pinned connection. The clients still
-check certificate validity dates and the TLS proof of the private key.
+check the TLS proof of the private key, but not the pinned certificate's
+validity dates. A browser does check them: after the generated certificate's
+first year, it warns about it again.
 
 ## Models and configuration
 

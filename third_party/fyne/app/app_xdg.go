@@ -127,7 +127,11 @@ func watchTheme(s *settings) {
 		themeVariant := findFreedesktopColorScheme()
 		if themeVariant != systemTheme {
 			internalapp.CurrentVariant.Store(uint64(themeVariant))
-			fyne.Do(func() { s.applyVariant(themeVariant) })
+			fyne.Do(func() {
+				if s.variant != themeVariant { // 1loop: often the variant already in use
+					s.applyVariant(themeVariant)
+				}
+			})
 		}
 
 		portalSettings.OnSignalSettingChanged(func(changed portalSettings.Changed) {
@@ -146,5 +150,7 @@ func (a *fyneApp) registerRepositories() {
 
 func (s *settings) applyVariant(variant fyne.ThemeVariant) {
 	s.variant = variant
+	internalapp.VariantOnly = true
 	s.apply()
+	internalapp.VariantOnly = false
 }

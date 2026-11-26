@@ -39,7 +39,8 @@ func (ui *desktopUI) syncEngine() *projectsync.Local {
 		identity = ui.remote.fingerprint
 	}
 	return &projectsync.Local{
-		Device:   device,
+		Device:    device,
+		PauseChat: ui.pauseChat, ResumeChat: ui.resumeMoved, MovedChat: ui.movedChat,
 		Identity: identity,
 		Bases:    &projectsync.BaseStore{Path: filepath.Join(filepath.Dir(ui.statePath), "sync-bases.json")},
 		Resolve: func(project string, create bool) (string, error) {
@@ -129,13 +130,13 @@ func (ui *desktopUI) syncEngine() *projectsync.Local {
 					// The chat goes on here with this desktop's model; a Claude
 					// Code session here reads what happened elsewhere.
 					cfg := existing.Config
-					cfg.RanWith = copiedRanWith(copied.Config)
+					cfg.RanWith = agent.CopiedRanWith(copied.Config)
 					copied = copied.AtWorkspace(cfg)
 					existing.Config.ClearSessions() // every login's: none of them saw the copied turns
 					existing.Cache = &agent.ContextCache{}
 					existing.Title, existing.History, existing.Items = copied.Title, copied.History, copied.Items
 					existing.Todo, existing.Version, existing.Versions = copied.Todo, copied.Version, copied.Versions
-					existing.Config.RanWith = copiedRanWith(copied.Config)
+					existing.Config.RanWith = agent.CopiedRanWith(copied.Config)
 					if existing == ui.current {
 						ui.reloadChat(existing)
 					}
@@ -143,8 +144,8 @@ func (ui *desktopUI) syncEngine() *projectsync.Local {
 				}
 				cfg := ui.cfg
 				cfg.Workspace = workspace
-				cfg.ClearSessions()                        // ui.cfg is the chat on screen: none of its sessions belong to the copy
-				cfg.RanWith = copiedRanWith(copied.Config) // its next turn here goes through a handoff
+				cfg.ClearSessions()                              // ui.cfg is the chat on screen: none of its sessions belong to the copy
+				cfg.RanWith = agent.CopiedRanWith(copied.Config) // its next turn here goes through a handoff
 				copied = copied.AtWorkspace(cfg)
 				ui.chats = append([]*conversation{{ID: copied.ID, Title: copied.Title, Config: cfg, History: copied.History, Items: copied.Items,
 					Todo: copied.Todo, Version: copied.Version, Versions: copied.Versions}}, ui.chats...)
@@ -163,18 +164,6 @@ func (ui *desktopUI) syncEngine() *projectsync.Local {
 			return err
 		},
 	}
-}
-
-func copiedRanWith(cfg agent.Config) *agent.RunIdentity {
-	if cfg.RanWith != nil {
-		identity := *cfg.RanWith
-		return &identity
-	}
-	if cfg.Provider == "" {
-		return nil
-	}
-	identity := agent.IdentityOf(cfg)
-	return &identity
 }
 
 // copyProject is the remote desktop's Copy project dialog: the server's
@@ -230,7 +219,7 @@ func (remote *remoteDesktop) copyProject() {
 	toHere := newRow("Bring “"+filepath.Base(serverProject)+"” to this computer", nil, styleOutline, func() { run(true, true) })
 	toServer := newRow("Send “"+filepath.Base(localProject)+"” to the server", nil, styleOutline, func() { run(false, true) })
 	body := container.NewVBox(
-		note("Copies the project's files and its conversations. Each copy sends only what changed since the last one; what changed on both sides is kept twice, and a file deleted on one side goes to the other side's trash. Local credentials, .env files, private keys and generated caches are excluded. Links are not copied. Compare again after an interruption to retry only what is still missing."),
+		note("Copies the project's files and chats. Only changes are sent."),
 		toHere, toServer, status)
 	dialog = showModal(remote.window.Canvas(), "Copy project", body, 620, nil)
 }

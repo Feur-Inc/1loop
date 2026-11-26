@@ -8,6 +8,7 @@ How to set up 1loop and what it can do. To install it first, see
 - [Tools and the side panel](#tools-and-the-side-panel)
 - [Prompts, models and context](#prompts-models-and-context)
 - [Skills, plugins and MCP servers](#skills-plugins-and-mcp-servers)
+- [Loopy](#loopy)
 - [SSH machines](#ssh-machines)
 - [The phone app](#the-phone-app)
 - [Shortcuts](#shortcuts)
@@ -52,6 +53,12 @@ Choose in the composer:
   Claude Code and Antigravity CLI run with `--dangerously-skip-permissions`
   (Claude Code refuses it as root: 1loop then approves each of its requests).
 
+An edit opens in a **Review** tab of the side panel: the whole file with its
+changes. Click a change to leave it out, **Edit** the proposed text, leave out
+a file of a patch, or say why with **Deny**; the model is told what you
+changed. Ctrl+Enter approves, Escape denies. For a chat that is not on screen,
+or on a server, the dialog offers **Review…**; the phone shows the diff.
+
 Commands run with your user's permissions: approving one lets it act on your
 machine.
 
@@ -72,6 +79,11 @@ sharing.
 - Changing **provider, account or model** mid-conversation asks how the new
   model receives it: as it is, or summarized (by the previous model, which
   still has it cached, or by the new one), with 1loop's recommendation.
+- A chat **moves to another device**, its agent at work, from its ⋯ menu (on the
+  phone, hold it): the agent finishes its step, pauses, the project and the
+  conversation are copied, and it goes on there. If that fails, it goes on
+  where it was. Commands left running, terminals, browser tabs, ignored files
+  and secrets stay behind.
 - Long conversations are **compacted** when they near the model's real context
   window; details stay reachable through the agent's `recall` tool.
 
@@ -79,6 +91,9 @@ sharing.
 
 **Settings → Extensions** (also on the phone) has three tabs:
 
+  One interrupted (a stop, an error, 1loop closed) goes on where it stopped when
+  it is next needed; **Compare**, beside its note, shows the context before and
+  after.
 - **Store**: skills and plugins published on GitHub (topics `agent-skills`
   and `claude-code-plugin`), with their picture, stars and README, sorted by
   stars, last update or relevance. **Install** downloads the repository and
@@ -99,6 +114,47 @@ not get them.
 
 Without a `GITHUB_TOKEN` (or `GH_TOKEN`), GitHub allows about ten searches a
 minute.
+
+## Loopy
+
+Loopy is a personal agent apart from your projects: one conversation for mail,
+errands on the web, files and figures, reminders and the coding tasks it hands
+to an agent in a project. The logo at the top of the sidebar (of the menu on
+the phone) switches between 1loop and Loopy.
+
+- **Where it lives.** On this computer, on a [headless server](SERVER.md) or on
+  the phone (Settings → Loopy → Where Loopy lives). On a server its routines
+  go on when the computer is off. Each place has a Loopy of its own.
+- **It asks first.** Sending, buying, deleting or publishing always waits for
+  your yes on a card. Mail drafts are yours to edit before they go. Some
+  presses can be allowed for good, site by site.
+- **It remembers.** What you tell it and how you like things, from your own
+  words. **What I remember** shows every fact with the words it comes from:
+  edit, pin or forget any of them.
+- **Its own folder and computer.** Notes, files you give it and the results of
+  its scripts stay in its folder. The scripts run in a WebAssembly sandbox
+  that sees this folder and nothing else.
+- **Signing in.** You type a password in 1loop's own form, or it comes from
+  Loopy's encrypted vault: it goes straight into the page and Loopy never
+  sees it. For a CAPTCHA or a payment, **Take over** its browser, then press
+  **I'm done**.
+- **Routines.** On a schedule, or when a GitHub issue, a mail or a webhook
+  comes. A morning summary says what needs you.
+- **AutoLinks.** Ask Loopy to make one ("read my grades on EcoleDirecte",
+  "tell me when someone mentions me in a pull request of acme/app, in
+  French"): a Python script of its own that reaches a service, or drives its
+  own browser, without it. You allow each one on a card, with the sites it
+  reaches and what it may use, and choose **Run by itself** or **Ask me each
+  time**. It can watch something and wake Loopy, notify you, or start a
+  coding agent. Settings → Loopy → **AutoLinks** lists them: turn one on or
+  off, run it, read or change its script, see its history.
+- **The vault.** Settings → Loopy → **Vault**: a password manager behind a
+  master password, kept where Loopy lives and nowhere else. Sign-ins (with
+  two-step codes), keys and contact details. Loopy knows an entry is there,
+  never its value: 1loop types it in the page, or hands it to an AutoLink
+  you allowed. If you forget the master password, what it holds is lost.
+
+How it works, and how its memory was measured: [LOOPY.md](LOOPY.md).
 
 ## SSH machines
 

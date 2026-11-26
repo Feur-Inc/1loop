@@ -155,9 +155,9 @@ func (ui *desktopUI) linkServerAddress() {
 	}
 	address.OnSubmitted = func(string) { link.onTap() }
 	sheet = ui.modal("Link a server", container.NewVBox(
-		note("Another 1loop server's projects and chats are listed in the sidebar beside this one's, and its chats run there. The next step asks you to approve this page from a device already paired with it, or in its console."),
+		note("Its chats show in the sidebar. Approve it on a paired device."),
 		widget.NewLabel("HTTPS address"), address,
-		note("This browser must trust its certificate: if it is self-signed, open its address in a tab once and accept it first."),
+		note("This browser must trust the certificate: open its address once."),
 		status), 620, nil, link)
 	ui.window.Canvas().Focus(address)
 }

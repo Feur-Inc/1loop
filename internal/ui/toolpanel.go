@@ -67,14 +67,16 @@ type panelTab struct {
 	todoContextText string
 	todoUsage       *contextUsageState // what the user opened in the context breakdown
 	todoTimes       map[string]*canvas.Text
-	todoMarks       []*taskMark // the rings of the list as drawn, stopped when it is drawn again
+	todoMarks       []*taskMark  // the rings of the list as drawn, stopped when it is drawn again
+	goalClock       *canvas.Text // the goal card's time spent, ticking while the agent works (goal.go)
 	web             bool
 	webKey          string // the ChatGPT page shown: its chat's
 	webAccount      *agent.ChatGPTWeb
 	webPage         *browser.Page
 	workspace       string // manual tabs belong to a workspace, not a transcript item
 	files           *fileBrowser
-	ref             string // github: the issue or pull request shown, owner/name#N
+	review          *reviewView // an edit waiting for approval (review.go)
+	ref             string      // github: the issue or pull request shown, owner/name#N
 }
 
 const panelWidth = 840
@@ -91,7 +93,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 			case <-timer.C:
 				fyne.Do(func() {
 					if ui.ctx.Err() == nil {
-						panel.refreshTodoStatus()
+						panel.tickTodoClocks()
 					}
 				})
 			}
@@ -124,8 +126,9 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 		}
 		panel.openTodo()
 	})
-	panel.strips = container.NewHScroll(panel.strip)
-	header := container.NewBorder(nil, nil, nil, container.NewHBox(todo, add, fold), panel.strips)
+	var strips fyne.CanvasObject
+	panel.strips, strips = stripScroll(panel.strip)
+	header := container.NewBorder(nil, nil, nil, container.NewHBox(todo, add, fold), strips)
 	panel.header = header
 	rule := canvas.NewRectangle(colBorderSoft)
 	rule.SetMinSize(fyne.NewSize(0, 1))
@@ -139,7 +142,7 @@ func newToolPanel(ui *desktopUI) *toolPanel {
 	content := container.NewBorder(container.NewVBox(padded(6, 2, 8, 6, header), rule), nil, nil, nil, panel.page)
 	// The panel goes nearly to the window's edges: only a thin margin, which
 	// also leaves the window's own resize border within reach.
-	panel.view = padded(0, 6, 0, 6, container.NewStack(card, content))
+	panel.view = padded(0, 6, 0, 6, container.NewStack(blurBehind("panel", card, &colSurface), content))
 	panel.render()
 	return panel
 }
@@ -158,8 +161,18 @@ func (layoutSpec splitLayout) width(total float32) float32 {
 	return panelWidthWithin(width, total)
 }
 
+// The least the chat and the panel get side by side; with less than both,
+// the panel covers the chat instead of crushing it (#429).
+const chatLeast, panelLeast = 300, 280
+
+func panelCovers(total float32) bool { return total < chatLeast+panelLeast }
+
 func panelWidthWithin(width, total float32) float32 {
-	return fyne.Max(320, fyne.Min(width, total-360))
+	if panelCovers(total) {
+		return fyne.Max(0, total)
+	}
+	chat := fyne.Max(chatLeast, fyne.Min(360, total-320)) // the chat gives up room first
+	return fyne.Max(panelLeast, fyne.Min(width, total-chat))
 }
 
 func (layoutSpec splitLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
@@ -176,17 +189,21 @@ func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size
 	previousWidth := objects[0].Size().Width
 	full := layoutSpec.width(size.Width)
 	width := full * layoutSpec.toolPanel.shown
-	conversationWidth := size.Width - width
-	if layoutSpec.toolPanel.snap {
-		conversationWidth = size.Width - full*layoutSpec.toolPanel.target
-	}
-	layoutSpec.toolPanel.ui.controls.Layout.(*composerControlsLayout).available = fyne.Min(760, conversationWidth-48) - 20
-	if layoutSpec.toolPanel.snap {
+	covered := panelCovers(size.Width)
+	if covered { // at its full width, under the panel
+		objects[0].Resize(size)
+	} else if layoutSpec.toolPanel.snap {
 		// Wrapping a long conversation again on every frame is what made
 		// the slide stutter: it takes its final width at once instead.
 		objects[0].Resize(fyne.NewSize(size.Width-full*layoutSpec.toolPanel.target, size.Height))
 	} else {
 		objects[0].Resize(fyne.NewSize(size.Width-width, size.Height))
+	}
+	// Covered for good, nothing of it shows through a translucent panel.
+	if covered && layoutSpec.toolPanel.shown >= 1 {
+		objects[0].Hide()
+	} else {
+		objects[0].Show()
 	}
 	if objects[0].Size().Width != previousWidth {
 		for i, pane := range panes {
@@ -217,7 +234,13 @@ func (layoutSpec splitLayout) Layout(objects []fyne.CanvasObject, size fyne.Size
 	toggle := objects[3].MinSize()
 	row := layoutSpec.toolPanel.header.MinSize().Height
 	objects[3].Resize(toggle)
-	objects[3].Move(fyne.NewPos(size.Width-12-toggle.Width, 8+(row-toggle.Height)/2))
+	// In a split window, folded, it sits under the last pane's header, not
+	// over its ✕ (#285); it rises to the panel's header as the panel opens.
+	drop := float32(0)
+	if ui.isSplit() {
+		drop = paneHeadHeight * (1 - fyne.Min(1, layoutSpec.toolPanel.shown))
+	}
+	objects[3].Move(fyne.NewPos(size.Width-12-toggle.Width, drop+8+(row-toggle.Height)/2))
 }
 
 type panelResizeHandle struct {
@@ -296,6 +319,9 @@ func (panel *toolPanel) slide(to float32) {
 	})
 	panel.ui.panelToggle.SetSelected(to > 0)
 	panel.syncRows()
+	if to > 0 { // the context changed while the panel was folded: it was not redrawn
+		panel.refreshTodoStatus()
+	}
 	panel.ui.save() // open or folded is part of what the chat remembers
 }
 
@@ -353,6 +379,7 @@ func (panel *toolPanel) open(chat *conversation, index int) {
 func (panel *toolPanel) choose(i int) {
 	panel.active = i
 	panel.render()
+	panel.refreshTodoStatus() // the context changed while another tab was shown: it was not redrawn
 	panel.body.ScrollToTop()
 	if terminal := panel.tabs[i].terminal; terminal != nil {
 		panel.ui.window.Canvas().Focus(terminal.widget)
@@ -477,6 +504,18 @@ func (panel *toolPanel) render() {
 	panel.body.Refresh()
 	panel.place()
 	panel.syncRows()
+}
+
+// redraw paints the panel again once it is back on screen. Texts that were
+// written while it was hidden (a call finishing behind Settings) were never
+// queued for painting, so their commands stayed blank until the surface was
+// redrawn by something else (#492).
+func (panel *toolPanel) redraw() {
+	panel.place()
+	for _, well := range panel.texts {
+		well.Refresh()
+	}
+	panel.view.Refresh()
 }
 
 // place tells each code well which of its rows the panel shows.

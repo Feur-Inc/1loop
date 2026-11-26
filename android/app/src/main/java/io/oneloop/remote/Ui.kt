@@ -545,7 +545,7 @@ fun ChatScreen(app: RemoteApp) {
     SharedFilesDialog(app) // files shared to 1loop from another app
     val page = app.repositoryOpen?.let { ChatPage("repository", it) }
         ?: if (app.searchOpen) ChatPage("search")
-        else if (!app.settingsOpen) ChatPage("chat")
+        else if (!app.settingsOpen) ChatPage(if (app.loopyOpen) "loopy" else "chat")
         else if (app.extensionsOpen) ChatPage("extensions")
         else if (app.linuxOpen) ChatPage("linux")
         else if (app.usageOpen) ChatPage("usage")
@@ -567,6 +567,7 @@ fun ChatScreen(app: RemoteApp) {
             "usage" -> UsageScreen(app) { app.usageOpen = false }
             "settings" -> MobileSettings(app) { app.settingsOpen = false }
             "search" -> SearchScreen(app) { app.searchOpen = false }
+            "loopy" -> LoopyScreen(app)
             else -> ChatMain(app)
         }
     }
@@ -584,7 +585,7 @@ fun ChatScreen(app: RemoteApp) {
 
 /** A page of the connected app: the chat, Settings or one of its pages, a project's repository. */
 private data class ChatPage(val name: String, val project: String? = null) {
-    val depth get() = when (name) { "chat" -> 0; "settings", "repository", "search" -> 1; else -> 2 }
+    val depth get() = when (name) { "chat", "loopy" -> 0; "settings", "repository", "search" -> 1; else -> 2 }
 }
 
 @Composable
@@ -803,8 +804,9 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
         }
     }
     val tail by remember { derivedStateOf { items.size to (items.lastOrNull()?.text?.length ?: 0) } }
-    // Sent while the agent works: greyed at the end until the agent takes them in.
-    val pending = app.meta?.let { it.steer + it.queue }.orEmpty()
+    // Steered while the agent works: greyed at the end until the agent takes them in.
+    // Queued ones wait in the tray above the composer (QueueTray) for the task's end (#433).
+    val pending = app.meta?.steer.orEmpty()
     LaunchedEffect(tail, running, app.meta?.label, pending.size) {
         if (follow && items.isNotEmpty()) list.scrollToItem(items.size + 1 + pending.size, 0)
     }
@@ -1161,8 +1163,6 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                     if (history.undo.isNotEmpty()) RoundButton(Icons.undo, Color.Transparent, Palette.muted, size = 32.dp, iconSize = 17.dp, description = "Undo") { walk(true) }
                     if (history.redo.isNotEmpty()) RoundButton(Icons.redo, Color.Transparent, Palette.muted, size = 32.dp, iconSize = 17.dp, description = "Redo") { walk(false) }
                 }
-                val meta = app.meta
-                ContextRing(meta?.used?.takeIf { app.current != null } ?: 0, meta?.window?.takeIf { app.current != null && it > 0 } ?: app.defaultWindow)
                 // Not while a file is still on its way, or one failed and is still listed.
                 val staged = app.staged(draft)
                 val blocked = staged.any { it.sending || it.problem != null }
@@ -1180,8 +1180,11 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 }
                 if (running) {
                     if (ready) {
-                        // Joins the running task at its next step, shown greyed until then.
-                        RoundButton(Icons.send, Palette.amber, Palette.ink, size = 36.dp, description = "Send at the next step") { send("steer") }
+                        // The arrow joins the running task at its next step, shown greyed
+                        // until then; Send queues the message for when the task ends (#433).
+                        RoundButton(Icons.arrowTurn, Palette.raised, Palette.text, size = 36.dp, iconSize = 18.dp, description = "Steer: send at the next step") { send("steer") }
+                        Spacer(Modifier.width(8.dp))
+                        RoundButton(Icons.send, Palette.amber, Palette.ink, size = 36.dp, description = "Queue: send when the task ends") { send("queue") }
                         Spacer(Modifier.width(8.dp))
                     }
                     RoundButton(Icons.close, Palette.text, Palette.ink, size = 36.dp, iconSize = 18.dp, description = "Stop") { app.stop() }

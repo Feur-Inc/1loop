@@ -44,7 +44,7 @@ object CrashReports {
     private class Handler(val context: Context, val previous: Thread.UncaughtExceptionHandler?) : Thread.UncaughtExceptionHandler {
         override fun uncaughtException(thread: Thread, error: Throwable) {
             runCatching {
-                val ranFor = if (Build.VERSION.SDK_INT >= 24) SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime() else 0L
+                val ranFor = SystemClock.elapsedRealtime() - Process.getStartElapsedRealtime()
                 file(context).writeText(JSONObject()
                     .put("time", System.currentTimeMillis())
                     .put("ranFor", ranFor)

@@ -11,6 +11,7 @@ import (
 
 	"1loop/assets"
 
+	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/test"
 )
 
@@ -47,9 +48,12 @@ func TestAccentedArtwork(t *testing.T) {
 func TestLoopMarkStartsInAccent(t *testing.T) {
 	test.NewTempApp(t)
 	saved := colAmber
-	defer func() { colAmber, brandRingInk = saved, "" }()
+	defer func() { colAmber = saved }()
 	colAmber = color.NRGBA{0x2F, 0xC2, 0xA4, 0xFF} // teal
-	assertAccentRing(t, newLoopMark(60).image.Image)
+	mark := newLoopMark(60)
+	brandRingWait.Wait()
+	test.Drain() // the ring is shown by a fyne.Do queued on the test goroutine (#476)
+	assertAccentRing(t, mark.image.Image)
 }
 
 // An intro stopped before its end (a running chat opened over the welcome
@@ -57,7 +61,7 @@ func TestLoopMarkStartsInAccent(t *testing.T) {
 func TestStoppedIntroTakesNewAccent(t *testing.T) {
 	test.NewTempApp(t)
 	saved := colAmber
-	defer func() { colAmber, brandRingInk = saved, "" }()
+	defer func() { colAmber = saved }()
 	colAmber = color.NRGBA{0xA8, 0x7B, 0xFF, 0xFF} // purple
 	mark := newLoopMark(60)
 	mark.showBrand()     // a frame of the intro, in purple
@@ -65,6 +69,8 @@ func TestStoppedIntroTakesNewAccent(t *testing.T) {
 	mark.stop()
 	colAmber = color.NRGBA{0x2F, 0xC2, 0xA4, 0xFF} // teal
 	mark.recolour()
+	brandRingWait.Wait()
+	test.Drain() // the ring is shown by a fyne.Do queued on the test goroutine (#476)
 	assertAccentRing(t, mark.image.Image)
 }
 
@@ -92,5 +98,36 @@ func assertAccentRing(t *testing.T, img image.Image) {
 	}
 	if teal == 0 || other > 0 {
 		t.Fatalf("ring pixels: %d in the accent, %d in another colour", teal, other)
+	}
+}
+
+// The logo and the intro's frames are inked and resampled once per accent,
+// shared by every window and every intro, and drawn again in a new one
+// (#475).
+func TestArtworkInkedOncePerAccent(t *testing.T) {
+	test.NewTempApp(t)
+	saved := colAmber
+	defer func() { colAmber = saved }()
+	colAmber = color.NRGBA{0xA8, 0x7B, 0xFF, 0xFF} // purple
+	drawn := func(logo *canvas.Image) image.Image {
+		brandRingWait.Wait()
+		test.Drain() // the logo is shown by a fyne.Do queued on the test goroutine
+		return logo.Image
+	}
+	logo, frame := drawn(brandLogo(87, 30)), introFrameAt(63, 60)
+	if logo == nil || brandLogo(87, 30).Image != logo || introFrameAt(63, 60) != frame {
+		t.Fatal("the same accent drew the artwork again")
+	}
+	if logo.Bounds().Dx() != 261 || frame.Bounds().Dx() != 60 {
+		t.Fatalf("sizes %v and %v", logo.Bounds(), frame.Bounds())
+	}
+	colAmber = color.NRGBA{0x2F, 0xC2, 0xA4, 0xFF} // teal
+	if again := drawn(brandLogo(87, 30)); again == nil || again == logo {
+		t.Fatal("a new accent kept the logo of the old one")
+	}
+	if again := introFrameAt(63, 60); again == frame {
+		t.Fatal("a new accent kept the intro of the old one")
+	} else {
+		assertAccentRing(t, again)
 	}
 }

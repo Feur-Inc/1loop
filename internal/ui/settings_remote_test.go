@@ -16,8 +16,8 @@ import (
 	"1loop/internal/remoteapi"
 )
 
-// settingsUI is sidebarUI in a window, with its Settings page built.
-func settingsUI(t *testing.T) *desktopUI {
+// remoteSettingsUI is sidebarUI in a window, with its Settings page built.
+func remoteSettingsUI(t *testing.T) *desktopUI {
 	t.Helper()
 	t.Setenv("HOME", t.TempDir())
 	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
@@ -65,7 +65,7 @@ func topSheet(t *testing.T, ui *desktopUI) *sheet {
 // The pages of earlier versions open Remote, where their settings went
 // (#443), and Remote holds every remote setting in its three parts.
 func TestRemotePageHoldsTheOldPages(t *testing.T) {
-	ui := settingsUI(t)
+	ui := remoteSettingsUI(t)
 	for _, old := range []string{"Phone", "Phone remote", "SSH machines", "Remote server", "Remote"} {
 		ui.prefs.showNow(old)
 		if ui.prefs.page != "Remote" || ui.prefs.section != "Remote" {
@@ -93,7 +93,7 @@ func TestRemotePageHoldsTheOldPages(t *testing.T) {
 // Forget on a paired phone asks first: Cancel keeps it, Forget unpairs it
 // (#443).
 func TestForgetPhoneAsksFirst(t *testing.T) {
-	ui := settingsUI(t)
+	ui := remoteSettingsUI(t)
 	pixel := remoteapi.PairedDevice{Name: "Pixel", TokenHash: "aa", Added: time.Now()}
 	tablet := remoteapi.PairedDevice{Name: "Tablet", TokenHash: "bb", Added: time.Now()}
 	ui.devices = []remoteapi.PairedDevice{pixel, tablet}
@@ -122,7 +122,7 @@ func TestForgetPhoneAsksFirst(t *testing.T) {
 
 // Unlinking a server in the browser client asks first (#443).
 func TestUnlinkServerAsksFirst(t *testing.T) {
-	ui := settingsUI(t)
+	ui := remoteSettingsUI(t)
 	ui.home = "https://home.lan:47101"
 	other := serverAddress{URL: "https://other.lan:47101", Token: "o"}
 	if err := saveServerAddress(other); err != nil {

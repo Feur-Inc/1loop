@@ -252,6 +252,7 @@ type pictureViewer struct {
 	heading *fyne.Container
 	percent *canvas.Text
 	copy    *tapRow
+	layer   *fyne.Container // the window's pictureLayer it is shown in; nil over the whole canvas
 }
 
 // openPicture shows part in the viewer; nothing when it cannot be decoded.
@@ -267,15 +268,65 @@ func (ui *desktopUI) openPicture(title string, part core.ImagePart) {
 func (ui *desktopUI) openImage(title string, img image.Image) *pictureViewer {
 	viewer := &pictureViewer{ui: ui, canvas: ui.window.Canvas(), title: title, img: img, fit: true, zoom: 1}
 	viewer.ExtendBaseWidget(viewer)
-	viewer.Resize(viewer.canvas.Size())
-	viewer.canvas.Overlays().Add(viewer)
+	if layer := ui.windowOf().pictureLayer; layer != nil {
+		// Under 1loop's own title bar: its buttons and its drag area stay
+		// in reach, the window can still be moved, shrunk or closed.
+		viewer.layer = layer
+		layer.Add(viewer)
+		layer.Show()
+	} else {
+		viewer.Resize(viewer.canvas.Size())
+		viewer.canvas.Overlays().Add(viewer)
+	}
 	viewer.canvas.Focus(viewer)
 	return viewer
 }
 
 func (viewer *pictureViewer) close() {
-	viewer.canvas.Overlays().Remove(viewer)
+	if viewer.layer == nil {
+		viewer.canvas.Overlays().Remove(viewer)
+		return
+	}
+	viewer.layer.Remove(viewer)
+	if len(viewer.layer.Objects) == 0 {
+		viewer.layer.Hide()
+	}
+	viewer.canvas.Unfocus()
 }
+
+// closePicture closes the picture shown in ui's window, if any.
+func (ui *desktopUI) closePicture() bool {
+	layer := ui.windowOf().pictureLayer
+	if layer == nil || len(layer.Objects) == 0 {
+		return false
+	}
+	if viewer, ok := layer.Objects[len(layer.Objects)-1].(*pictureViewer); ok {
+		viewer.close()
+		return true
+	}
+	return false
+}
+
+// underTitleBar lays the picture viewer out over the window, below the
+// title bar drawn by 1loop (desktopUI.titleBar).
+type underTitleBar struct{ ui *desktopUI }
+
+func (under underTitleBar) top() float32 {
+	if bar := under.ui.titleBar; bar != nil && bar.Visible() {
+		return bar.Size().Height
+	}
+	return 0
+}
+
+func (under underTitleBar) Layout(objects []fyne.CanvasObject, size fyne.Size) {
+	top := under.top()
+	for _, object := range objects {
+		object.Move(fyne.NewPos(0, top))
+		object.Resize(fyne.NewSize(size.Width, fyne.Max(0, size.Height-top)))
+	}
+}
+
+func (under underTitleBar) MinSize([]fyne.CanvasObject) fyne.Size { return fyne.Size{} }
 
 // deviceScale is how many device pixels a Fyne unit is.
 func (viewer *pictureViewer) deviceScale() float32 {

@@ -16,13 +16,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"1loop/internal/core"
 )
 
 // Skill is an Agent Skill: a folder with a SKILL.md whose front matter gives
@@ -88,9 +93,6 @@ func defaultDir() string {
 // Dir is the extensions folder.
 func Dir() string { return dirFunc() }
 
-// SetDir moves the folder (tests).
-func SetDir(dir string) { dirFunc = func() string { return dir } }
-
 func registryPath() string { return filepath.Join(Dir(), "extensions.json") }
 
 // Load reads what is installed. A missing file is an empty registry.
@@ -123,11 +125,9 @@ func save(registry Registry) error {
 	if err != nil {
 		return err
 	}
-	temp := registryPath() + ".tmp"
-	if err := os.WriteFile(temp, data, 0o600); err != nil {
-		return err
-	}
-	return os.Rename(temp, registryPath())
+	err = core.WriteFileSafely(registryPath(), 0o600, false, data)
+	changes.Add(1) // after the plugins' folders too: an install writes them first
+	return err
 }
 
 // Update changes the registry under the lock and writes it.
@@ -254,8 +254,52 @@ type PluginHooks struct {
 	File   string
 }
 
-// Enabled reads what is active now.
+var (
+	// changes counts the registry's writes: each one makes Enabled read
+	// again, whatever the files' times say.
+	changes   atomic.Uint64
+	enabledMu sync.Mutex // not mu: Enabled loads the registry under it
+	enabled   struct {
+		path    string
+		changes uint64
+		stamps  *core.FileStamps
+		active  Active
+	}
+	// readEnabled reads what is active, stamping what it reads (tests count
+	// its calls).
+	readEnabled = readActive
+)
+
+// Enabled is what is active now. It is read once, then kept while
+// extensions.json and the enabled plugins' manifests, skills, MCP servers
+// and hooks files say the same to os.Stat, and until the next change made
+// through this package (#519): an agent asks at each model request and
+// twice per tool call. Each caller gets its own copy, free to change.
 func Enabled() Active {
+	enabledMu.Lock()
+	defer enabledMu.Unlock()
+	path, count := registryPath(), changes.Load() // before reading: a change while it reads is not missed
+	if enabled.path != path || enabled.changes != count || !enabled.stamps.Fresh() {
+		stamps := &core.FileStamps{}
+		active := readEnabled(stamps)
+		enabled.path, enabled.changes, enabled.stamps, enabled.active = path, count, stamps, active
+	}
+	return enabled.active.clone()
+}
+
+// clone is a copy sharing nothing that can be changed with active.
+func (active Active) clone() Active {
+	copied := Active{Skills: slices.Clone(active.Skills), MCP: slices.Clone(active.MCP),
+		Plugins: slices.Clone(active.Plugins), Hooks: slices.Clone(active.Hooks)}
+	for i := range copied.MCP {
+		server := &copied.MCP[i]
+		server.Args, server.Env, server.Headers = slices.Clone(server.Args), maps.Clone(server.Env), maps.Clone(server.Headers)
+	}
+	return copied
+}
+
+func readActive(stamps *core.FileStamps) Active {
+	stamps.Add(registryPath())
 	registry, err := Load()
 	if err != nil {
 		return Active{}
@@ -276,7 +320,7 @@ func Enabled() Active {
 			continue
 		}
 		active.Plugins = append(active.Plugins, plugin)
-		contents := ReadPlugin(plugin.Dir)
+		contents := readPlugin(plugin.Dir, stamps)
 		for _, skill := range contents.Skills {
 			skill.Plugin, skill.Enabled = plugin.ID, true
 			active.Skills = append(active.Skills, skill)

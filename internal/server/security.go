@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"io"
 	"math/big"
+	"net"
 	"net/http"
 	"os"
 	"slices"
@@ -26,6 +27,7 @@ import (
 
 type serverPair struct {
 	Device, Code string
+	Address      string // the client that asked: pairingsPerAddress pending each
 	Expires      time.Time
 	Approved     bool
 	Tries        int
@@ -72,7 +74,21 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 			delete(server.pairs, id)
 		}
 	}
-	if len(server.pairs) >= 8 {
+	// Per client, so that one device on the network cannot hold every slot
+	// and keep the real phone from pairing (#532): past its share, a new
+	// request replaces the client's oldest one still waiting for approval.
+	address := clientAddress(req)
+	var mine []string
+	for id, pair := range server.pairs {
+		if pair.Address == address && !pair.Approved {
+			mine = append(mine, id)
+		}
+	}
+	if len(mine) >= pairingsPerAddress {
+		oldest := slices.MinFunc(mine, func(a, b string) int { return server.pairs[a].Expires.Compare(server.pairs[b].Expires) })
+		delete(server.pairs, oldest)
+	}
+	if len(server.pairs) >= maxPendingPairings {
 		core.Fail(writer, 429, "Too many pending pairings; try again later")
 		return
 	}
@@ -83,17 +99,20 @@ func (server *headlessServer) pair(writer http.ResponseWriter, req *http.Request
 	}
 	id := core.Identifier()[:12]
 	code := fmt.Sprintf("%06d", number)
-	pair := &serverPair{Device: args.Device, Code: remoteapi.TokenHash(code), Expires: time.Now().Add(2 * time.Minute)}
+	pair := &serverPair{Device: args.Device, Code: remoteapi.TokenHash(code), Address: address, Expires: time.Now().Add(2 * time.Minute)}
 	server.pairs[id] = pair
 	if server.setup != "" && len(server.devices) == 0 && subtle.ConstantTimeCompare([]byte(server.setup), []byte(args.Setup)) == 1 {
 		// The setup link: approved at once, and used up.
 		pair.Approved, server.setup = true, ""
 		fmt.Fprintf(os.Stderr, "\n%q paired with the setup link.\n", args.Device)
 	} else {
-		fmt.Fprintf(os.Stderr, "\nPairing requested by %q. Approve it in 1loop on a paired device, or type: pair %s <code shown on that device>\n(or from another shell: %s)\n", args.Device, id, server.pairCommand(id, "<code>"))
+		fmt.Fprintf(os.Stderr, "\nPairing requested by %q. Approve it in 1loop on a paired device, or type: pair %s <code shown on that device>\n", args.Device, id)
+		if server.adminReady.Load() { // "1loop-server pair" reaches this server only through its admin socket
+			fmt.Fprintf(os.Stderr, "(or from another shell: %s)\n", server.pairCommand(id, "<code>"))
+		}
 		server.pairingChangedLocked()
 	}
-	core.WriteJSON(writer, 200, map[string]any{"pairing": id, "code": code, "console": true, "phone": server.local, "approved": pair.Approved, "expiresIn": 120, "command": server.pairCommand(id, code)})
+	core.WriteJSON(writer, 200, map[string]any{"pairing": id, "code": code, "console": true, "phone": server.local, "approved": pair.Approved, "expiresIn": 120, "command": server.adminCommandFor(id, code)})
 }
 
 // pairingChangedLocked tells the clients that can approve pairings: the
@@ -170,12 +189,13 @@ func (server *headlessServer) confirmPair(writer http.ResponseWriter, req *http.
 	token := core.Identifier()
 	device := remoteapi.PairedDevice{Name: pair.Device, TokenHash: remoteapi.TokenHash(token), Added: time.Now()}
 	server.devices = append(server.devices, device)
-	if err := server.saveLocked(); err != nil {
-		server.devices = server.devices[:len(server.devices)-1]
+	delete(server.pairs, args.Pairing) // the same code cannot pair twice while the state is saved
+	if err := server.saveOutsideLocked(); err != nil {
+		server.devices = slices.DeleteFunc(server.devices, func(paired remoteapi.PairedDevice) bool { return paired.TokenHash == device.TokenHash })
+		server.pairs[args.Pairing] = pair
 		core.Fail(writer, 500, "Unable to save paired device")
 		return
 	}
-	delete(server.pairs, args.Pairing)
 	server.setup = "" // a device is paired: no more setup link
 	if server.local {
 		server.broadcastLocked("sharing", map[string]bool{"enabled": server.sharing != nil})
@@ -278,15 +298,17 @@ func (server *headlessServer) removeDeviceLocked(index int) error {
 	if index < 0 || index >= len(server.devices) {
 		return fmt.Errorf("Unknown device")
 	}
-	before := append([]remoteapi.PairedDevice{}, server.devices...)
-	server.devices = append(server.devices[:index], server.devices[index+1:]...)
-	if err := server.saveLocked(); err != nil {
-		server.devices = before
+	removed := server.devices[index]
+	server.devices = slices.Delete(slices.Clone(server.devices), index, index+1)
+	server.disconnectStreamsLocked() // before the save: its streams end now
+	if err := server.saveOutsideLocked(); err != nil {
+		if !slices.ContainsFunc(server.devices, func(paired remoteapi.PairedDevice) bool { return paired.TokenHash == removed.TokenHash }) {
+			server.devices = append(server.devices, removed)
+		}
 		return err
 	}
-	server.disconnectStreamsLocked()
 	if !server.local {
-		fmt.Fprintf(os.Stderr, "\n%q is no longer paired.\n", before[index].Name)
+		fmt.Fprintf(os.Stderr, "\n%q is no longer paired.\n", removed.Name)
 	}
 	server.offerSetupLocked()
 	return nil
@@ -332,4 +354,19 @@ func saveServerJSON(path string, value any) error {
 		return err
 	}
 	return core.WriteFileSafely(path, 0600, false, data)
+}
+
+// Pending pairings: a few per client address, and a bound on them all.
+const (
+	pairingsPerAddress = 2
+	maxPendingPairings = 32
+)
+
+// clientAddress is the IP address a request comes from.
+func clientAddress(req *http.Request) string {
+	host, _, err := net.SplitHostPort(req.RemoteAddr)
+	if err != nil {
+		return req.RemoteAddr
+	}
+	return host
 }

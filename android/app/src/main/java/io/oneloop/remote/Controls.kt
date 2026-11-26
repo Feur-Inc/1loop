@@ -50,7 +50,6 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.res.painterResource
@@ -120,40 +119,6 @@ fun EffortSlider(steps: Int, index: Int, onChange: (Int) -> Unit) {
         val thumb = 18.dp.toPx() + grow.dp.toPx()
         drawCircle(Color.Black.copy(alpha = 0.18f), thumb + 1.dp.toPx(), Offset(x, h / 2 + 1.dp.toPx()))
         drawCircle(Palette.text, thumb, Offset(x, h / 2))
-    }
-}
-
-// ---------------------------------------------------------------------------
-// Context use: amber for what is used, white for what is left. A tap shows
-// the figures (phones have no hover).
-
-@Composable
-fun ContextRing(used: Int, window: Int) {
-    var open by remember { mutableStateOf(false) }
-    val fraction = if (window > 0) (used.toFloat() / window).coerceIn(0f, 1f) else 0f
-    val sweep by animateFloatAsState(fraction * 360f, tween(400), label = "context")
-    Box {
-        Box(Modifier.size(36.dp).clip(RoundedCornerShape(50)).clickable { open = true }, contentAlignment = Alignment.Center) {
-            Canvas(Modifier.size(17.dp)) {
-                val stroke = 3.dp.toPx()
-                val inset = stroke / 2
-                val arc = Size(size.width - stroke, size.height - stroke)
-                drawArc(Palette.text, 0f, 360f, false, Offset(inset, inset), arc, style = Stroke(stroke))
-                if (sweep > 0f) drawArc(Palette.amber, -90f, sweep, false, Offset(inset, inset), arc, style = Stroke(stroke))
-            }
-        }
-        if (open) GlassMenuOpen()
-        DropdownMenu(open, { open = false }, containerColor = Color.Transparent, modifier = Modifier.glassMenu(Palette.raised), border = GlassEdge, shape = GlassMenuShape) {
-            Column(Modifier.padding(horizontal = 14.dp, vertical = 6.dp)) {
-                if (window <= 0) {
-                    Text("Context usage", style = Type.body.copy(fontSize = 14.sp))
-                    Text("Available once a model is selected", style = Type.small)
-                } else {
-                    Text("${(fraction * 100).toInt()}% of the context used", style = Type.body.copy(fontSize = 14.sp))
-                    Text("${tokens(used)} of ${tokens(window)} tokens", style = Type.small)
-                }
-            }
-        }
     }
 }
 

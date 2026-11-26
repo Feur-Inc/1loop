@@ -121,9 +121,17 @@ func (d *gLDriver) runGL() {
 		d.trayStart()
 	}
 
+	driver.Recoloured = d.recoloured // 1loop
 	fyne.CurrentApp().Settings().AddListener(func(set fyne.Settings) {
-		painter.ClearFontCache()
-		cache.ResetThemeCaches()
+		if app.VariantOnly { // 1loop: the theme is the same (internal/app.VariantOnly)
+			return
+		}
+		if driver.KeepFonts {
+			cache.ResetThemeColourCaches()
+		} else {
+			painter.ClearFontCache()
+			cache.ResetThemeCaches()
+		}
 		app.ApplySettingsWithCallback(set, fyne.CurrentApp(), func(w fyne.Window) {
 			c, ok := w.Canvas().(*glCanvas)
 			if !ok {
@@ -204,6 +212,9 @@ func (d *gLDriver) runGL() {
 				}
 			}
 
+			if driver.TurnHook != nil {
+				driver.TurnHook()
+			}
 			d.animation.TickAnimations()
 			now := time.Now()
 			if d.drawSingleFrame() {
@@ -229,6 +240,26 @@ func (d *gLDriver) runGL() {
 				eventTick.Reset(time.Second / time.Duration(rate))
 			}
 		}
+	}
+}
+
+// recoloured is driver.Recoloured (1loop): what a change of colours makes
+// stale is dropped, and the windows are painted again.
+func (d *gLDriver) recoloured(objects []fyne.CanvasObject) {
+	cache.ResetThemeColourCaches()
+	for _, win := range d.windowList() {
+		w := win.(*window)
+		if w.view() == nil || w.canvas.Painter() == nil {
+			continue
+		}
+		w.RunWithContext(func() {
+			for _, obj := range objects {
+				if c, ok := cache.TextureCanvas(obj); ok && c == w.canvas {
+					w.canvas.Painter().Free(obj)
+				}
+			}
+		})
+		w.canvas.SetDirty()
 	}
 }
 
@@ -259,7 +290,31 @@ func (d *gLDriver) repaintWindow(w *window) bool {
 	sized := time.Now()
 
 	updateGLContext(w)
-	canvas.paint(canvas.Size())
+	// 1loop: the frame is painted into a texture kept from frame to frame,
+	// and when only small shapes were refreshed (the caret), only where
+	// they are (damage.go).
+	damaged, full := canvas.TakeDamage()
+	held, retained := false, false
+	if w.retention.retains(started) {
+		held, retained = canvas.Painter().StartRetained()
+	} else {
+		canvas.Painter().ForgetRetained()
+	}
+	partial := false
+	if held && !full {
+		var area damageArea
+		if area, partial = canvas.damageOf(damaged); partial {
+			canvas.paintArea(canvas.Size(), &area)
+			driver.PartialFrames.Add(1)
+		}
+	}
+	if !partial {
+		canvas.paint(canvas.Size())
+	}
+	if retained {
+		canvas.Painter().EndRetained()
+	}
+	w.retention = retention{last: started, partial: partial}
 	painted := time.Now()
 
 	view := w.viewport

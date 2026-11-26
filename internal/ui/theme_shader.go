@@ -12,7 +12,6 @@ package ui
 
 import (
 	"image/color"
-	"os"
 	"sync"
 	"time"
 
@@ -33,6 +32,8 @@ uniform vec4 u_text;
 uniform vec4 u_accent;
 uniform float u_state;       // STATE_IDLE, STATE_WORKING, STATE_WAITING or STATE_ERROR
 uniform float u_state_time;  // seconds since u_state changed
+uniform vec4 iMouse;         // xy: the pointer, zw: the last press, in gl_FragCoord's pixels; z < 0 once released
+uniform float u_mouse_inside; // 1 while the pointer is over the window, 0 once it left
 #define STATE_IDLE 0.0
 #define STATE_WORKING 1.0
 #define STATE_WAITING 2.0
@@ -73,10 +74,12 @@ type backdrop struct {
 	state        float32
 	stateChanged time.Duration
 	stop         chan struct{}
+	paused       bool // animateBackdrop's own: the window is not in front
 }
 
 func newBackdrop() *backdrop {
 	b := &backdrop{shader: canvas.NewShader(""), picture: canvas.NewImageFromImage(nil)}
+	b.shader.Watch = mouseUniforms
 	b.shader.Hide()
 	b.picture.FillMode = canvas.ImageFillCover
 	b.picture.ScaleMode = canvas.ImageScaleSmooth
@@ -115,6 +118,7 @@ func (ui *desktopUI) syncBackdrop() {
 		}
 	}
 	ui.syncPicture(file, on)
+	ui.syncMainFill()
 	if !on || file.Shader == "" {
 		if b.stop != nil {
 			close(b.stop)
@@ -125,7 +129,7 @@ func (ui *desktopUI) syncBackdrop() {
 		b.shader.Hide()
 		return
 	}
-	data, err := os.ReadFile(file.Shader)
+	data, err := palette.ReadThemeFile(file.Shader)
 	if err != nil {
 		ui.shaderFailed(file.Shader, err)
 		return
@@ -184,11 +188,25 @@ func (ui *desktopUI) animateBackdrop(b *backdrop, stop chan struct{}) {
 			return
 		case <-time.After(time.Second / time.Duration(fps)):
 		}
+		if paused := ui.backdropPaused(); paused != b.paused {
+			b.paused = paused
+			platform.Devf("frame", "shader background paused %v", paused)
+		}
+		if b.paused {
+			// Paused (#490): no frame and no trip to the UI thread; look again in a moment.
+			select {
+			case <-stop:
+				return
+			case <-time.After(250 * time.Millisecond):
+			}
+			last = time.Now()
+			continue
+		}
 		now := time.Now()
 		step := now.Sub(last)
 		last = now
 		fyne.Do(func() {
-			if ui.backdrop != b || b.stop != stop || animationsOff || !ui.inForeground || (ui.tray != nil && ui.tray.hidden) {
+			if ui.backdrop != b || b.stop != stop || animationsOff || ui.backdropPaused() {
 				return
 			}
 			b.mu.Lock()
@@ -201,6 +219,23 @@ func (ui *desktopUI) animateBackdrop(b *backdrop, stop chan struct{}) {
 			b.shader.Refresh()
 		})
 	}
+}
+
+// backdropPaused says whether the window's background stands still: the
+// window is hidden in the tray, minimised, or another window has the
+// focus. The window's own focus events are asked first (third_party/fyne):
+// the app's foreground missed the window losing the focus on Xwayland,
+// and the shader went on at full rate behind another window (#474).
+func (ui *desktopUI) backdropPaused() bool {
+	if ui.tray != nil && ui.tray.hidden {
+		return true
+	}
+	if w, ok := ui.window.(interface{ InFront() (bool, bool) }); ok {
+		if front, known := w.InFront(); known {
+			return !front
+		}
+	}
+	return !ui.inForeground
 }
 
 // shaderFPSSaved is the setting as saved: empty for the default.
@@ -218,4 +253,20 @@ func (ui *desktopUI) setShaderFPS(value string) {
 	}
 	shaderFPS = value
 	ui.themeChanged()
+}
+
+// syncMainFill clears the window colour laid behind the whole conversation
+// while a shader or picture is behind the window: the agent's blocks bring
+// their own backdrop, and the gaps, the user's messages and the composer
+// show the background itself (#503).
+func (ui *desktopUI) syncMainFill() {
+	if ui.mainFill == nil {
+		return
+	}
+	if shaderBehind {
+		ui.mainFill.FillColor = color.NRGBA{}
+	} else {
+		ui.mainFill.FillColor = colBackground
+	}
+	ui.mainFill.Refresh()
 }

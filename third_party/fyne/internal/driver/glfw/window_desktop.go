@@ -10,6 +10,7 @@ import (
 	"os"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"fyne.io/fyne/v2"
@@ -118,6 +119,23 @@ type window struct {
 	pending []func()
 
 	lastWalkedTime time.Time
+
+	// 1loop: whether the window has the keyboard focus (0 before the
+	// platform said, 1 yes, 2 no) and is minimised (InFront).
+	hasFocus  atomic.Int32
+	iconified atomic.Bool
+
+	retention retention // 1loop: how its last frame was painted (damage.go)
+}
+
+// InFront says whether the window has the keyboard focus and is not
+// minimised, from the platform's own focus and iconify events, whichever
+// window of the app had the focus before; known is false until the first
+// focus event. (1loop: its shader background pauses otherwise, on X11 and
+// Xwayland too.) Safe from any goroutine.
+func (w *window) InFront() (front, known bool) {
+	focus := w.hasFocus.Load()
+	return focus == 1 && !w.iconified.Load(), focus != 0
 }
 
 func (w *window) SetFullScreen(full bool) {
@@ -263,6 +281,45 @@ func (w *window) fitContent() {
 	}
 }
 
+// fitWorkArea keeps a size in screen coordinates within the work area of
+// the window's screen, the screen less its panels (1loop #512): a 1180×760
+// window on a 1280×800 screen with a 54 px panel went under the panel.
+func (w *window) fitWorkArea(width, height int) (int, int) {
+	return fitMonitor(w.getMonitorForWindow(), width, height)
+}
+
+// fitMonitor keeps a size within a screen's work area (fitArea).
+func fitMonitor(monitor *glfw.Monitor, width, height int) (int, int) {
+	if monitor == nil {
+		return width, height
+	}
+	_, _, areaWidth, areaHeight := monitor.GetWorkarea()
+	screenWidth, screenHeight := 0, 0
+	if mode := monitor.GetVideoMode(); mode != nil {
+		screenWidth, screenHeight = mode.Width, mode.Height
+	}
+	return fitArea(width, height, areaWidth, areaHeight, screenWidth, screenHeight)
+}
+
+// fitArea shrinks a size to fit the work area. Where the platform gives
+// none smaller than the screen (Wayland, or no panel), a tenth of the
+// screen is left around the window. Nothing is ever enlarged.
+func fitArea(width, height, areaWidth, areaHeight, screenWidth, screenHeight int) (int, int) {
+	if screenWidth > 0 && screenHeight > 0 && (areaWidth <= 0 || areaHeight <= 0 || areaWidth >= screenWidth && areaHeight >= screenHeight) {
+		areaWidth, areaHeight = screenWidth*9/10, screenHeight*9/10
+	}
+	if areaWidth <= 0 || areaHeight <= 0 {
+		return width, height
+	}
+	if width > areaWidth {
+		width = areaWidth
+	}
+	if height > areaHeight {
+		height = areaHeight
+	}
+	return width, height
+}
+
 // getMonitorScale returns the scale factor for a given monitor, handling platform-specific cases
 func getMonitorScale(monitor *glfw.Monitor) float32 {
 	widthMm, heightMm := monitor.GetPhysicalSize()
@@ -349,7 +406,16 @@ func (w *window) scaled(_ *glfw.Window, x float32, y float32) {
 		return
 	}
 
+	if w.canvas.texScale == x {
+		return
+	}
 	w.canvas.texScale = x
+	// Text textures are kept by text and colour, not by object: drawn
+	// at the old scale, they would be stretched to the new one (1loop:
+	// a fractional scale arrives after the first frames, at 1.0).
+	w.RunWithContext(func() {
+		cache.DeleteTextTexturesFor(w.canvas)
+	})
 	w.canvas.Refresh(w.canvas.content)
 }
 
@@ -405,12 +471,27 @@ func (w *window) setCustomCursor(rawCursor *glfw.Cursor, isCustomCursor bool) {
 func (w *window) mouseMoved(_ *glfw.Window, xpos, ypos float64) {
 	inputAt = time.Now() // the loop speeds up (loop.go)
 	w.processMouseMoved(xpos, ypos)
+	if hook := desktop.OnPointer; hook != nil { // 1loop
+		hook(desktop.PointerEvent{Canvas: w.canvas, Position: w.mousePos, Inside: true, Button: w.mouseButton})
+	}
+}
+
+// cursorEntered tells desktop.OnPointer the pointer left (1loop).
+func (w *window) cursorEntered(_ *glfw.Window, entered bool) {
+	if hook := desktop.OnPointer; hook != nil && !entered {
+		hook(desktop.PointerEvent{Canvas: w.canvas, Position: w.mousePos, Inside: false, Button: w.mouseButton})
+	}
 }
 
 func (w *window) mouseClicked(_ *glfw.Window, btn glfw.MouseButton, action glfw.Action, mods glfw.ModifierKey) {
 	inputAt = time.Now() // the loop speeds up (loop.go)
 	button, modifiers := convertMouseButton(btn, mods)
 	mouseAction := convertAction(action)
+	defer func() {
+		if hook := desktop.OnPointer; hook != nil {
+			hook(desktop.PointerEvent{Canvas: w.canvas, Position: w.mousePos, Inside: true, Button: w.mouseButton})
+		}
+	}()
 
 	w.processMouseClicked(button, mouseAction, modifiers)
 }
@@ -705,7 +786,17 @@ func (w *window) charInput(viewport *glfw.Window, char rune) {
 }
 
 func (w *window) focused(_ *glfw.Window, focused bool) {
+	if focused { // 1loop: InFront
+		w.hasFocus.Store(1)
+	} else {
+		w.hasFocus.Store(2)
+	}
 	w.processFocused(focused)
+}
+
+// iconify notes whether the window is minimised (1loop: InFront).
+func (w *window) iconify(_ *glfw.Window, iconified bool) {
+	w.iconified.Store(iconified)
 }
 
 func (w *window) DetachCurrentContext() {
@@ -769,6 +860,12 @@ func (w *window) create() {
 		pixHeight = 10
 	}
 
+	// 1loop: created within the work area too. On Wayland the compositor
+	// keeps the size a window is created with: the later Resize to fit
+	// (fitWorkArea) was not applied, and the canvas, laid out for the
+	// smaller size, was stretched over the larger surface (#512).
+	pixWidth, pixHeight = fitMonitor(glfw.GetPrimaryMonitor(), pixWidth, pixHeight)
+
 	win, err := glfw.CreateWindow(pixWidth, pixHeight, w.title, nil, nil)
 	if err != nil {
 		w.driver.initFailed("window creation error", err)
@@ -796,10 +893,12 @@ func (w *window) create() {
 	win.SetContentScaleCallback(w.scaled)
 	win.SetCursorPosCallback(w.mouseMoved)
 	win.SetMouseButtonCallback(w.mouseClicked)
+	win.SetCursorEnterCallback(w.cursorEntered) // 1loop: desktop.OnPointer
 	win.SetScrollCallback(w.mouseScrolled)
 	win.SetKeyCallback(w.keyPressed)
 	win.SetCharCallback(w.charInput)
 	win.SetFocusCallback(w.focused)
+	win.SetIconifyCallback(w.iconify) // 1loop: InFront
 
 	w.canvas.detectedScale = w.detectScale()
 	w.canvas.scale = w.calculatedScale()

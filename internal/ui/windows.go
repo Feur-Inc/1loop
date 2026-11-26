@@ -83,18 +83,6 @@ func (ui *desktopUI) shown() bool {
 	return !ui.windowOf().hiddenAlone && (ui.tray == nil || !ui.tray.hidden)
 }
 
-// showing reports whether a window the user can see shows chat.
-func (app *desktopApp) showing(chat *conversation) bool {
-	for _, view := range app.windows {
-		for _, view := range view.panesOf() {
-			if view.current == chat && view.shown() {
-				return true
-			}
-		}
-	}
-	return false
-}
-
 // activate notes ui as the window and pane the user works in: links and
 // #12 references in any window act there, the window's sidebar shows it.
 func (ui *desktopUI) activate() {
@@ -232,6 +220,7 @@ func (ui *desktopUI) newWindowView(cfg agent.Config, size fyne.Size) *desktopUI 
 	view.window.SetCloseIntercept(view.closeWindow)
 	view.registerShortcuts()
 	view.window.Canvas().AddShortcut(&fyne.ShortcutCopy{}, func(fyne.Shortcut) { view.focused().copySelection() })
+	view.window.Canvas().SetOnTypedKey(view.selectionKey)
 	view.updateHeader()
 	view.renderSidebar(view.sidebarGroups())
 	view.adoptModels(ui.mainView())
@@ -376,5 +365,5 @@ func (ui *desktopUI) adoptModels(from *desktopUI) {
 	}
 	ui.model.SetSelected(selected)
 	ui.send.Enable()
-	ui.refreshContextRing()
+	ui.refreshContextUsage()
 }

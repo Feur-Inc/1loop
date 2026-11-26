@@ -8,6 +8,7 @@ package ui
 // the window is hidden or in the background, or animations are off.
 
 import (
+	"bytes"
 	"image"
 	"image/draw"
 	"image/gif"
@@ -61,11 +62,11 @@ func gifFrames(g *gif.GIF) ([]image.Image, []time.Duration) {
 
 // readPicture reads a background picture: one frame, or a GIF's frames.
 func readPicture(path string) ([]image.Image, []time.Duration, error) {
-	f, err := os.Open(path)
+	data, err := palette.ReadThemeFile(path)
 	if err != nil {
 		return nil, nil, err
 	}
-	defer f.Close()
+	f := bytes.NewReader(data)
 	if strings.EqualFold(filepath.Ext(path), ".gif") {
 		g, err := gif.DecodeAll(f)
 		if err != nil {
@@ -124,7 +125,7 @@ func (ui *desktopUI) playPicture(b *backdrop, stop chan struct{}, frames []image
 		case <-time.After(max(delays[i], 20*time.Millisecond)):
 		}
 		fyne.DoAndWait(func() { // i is read again for the next delay
-			if b.picStop != stop || animationsOff || !ui.inForeground || (ui.tray != nil && ui.tray.hidden) {
+			if b.picStop != stop || animationsOff || ui.backdropPaused() {
 				return
 			}
 			i = (i + 1) % len(frames)

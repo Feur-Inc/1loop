@@ -56,3 +56,47 @@ func TestGlideLayout(t *testing.T) {
 		t.Error("the selection's fill stays with no row selected")
 	}
 }
+
+// A row that just came into the sidebar fades in; when the sidebar is
+// rendered again before the fade ends (a server chosen, then its state
+// arriving), the row is no longer new and nothing finished its fade: it
+// stayed transparent, the selection's fill drawn alone where it was.
+func TestGlideFadeCutShort(t *testing.T) {
+	test.NewTempApp(t)
+	animationsOff = false
+	glide := newGlideLayout()
+	list := container.New(glide)
+	list.Resize(fyne.NewSize(200, 400))
+	kept := map[string]*tapRow{} // the same widget from one rendering to the next, as reuseRow does
+	render := func(keys ...string) map[string]*tapRow {
+		rows := map[string]*tapRow{}
+		list.RemoveAll()
+		glide.begin()
+		for _, key := range keys {
+			row := kept[key]
+			if row == nil {
+				row = newRow(key, nil, styleNav, func() {})
+				kept[key] = row
+			}
+			rows[key] = row
+			glide.key(row, key)
+			list.Add(row)
+		}
+		glide.end(list)
+		return rows
+	}
+	render("a", "b")
+	first := render("server project", "a", "b")
+	if !glide.fresh[first["server project"]] {
+		t.Fatal("the new row is not fading in")
+	}
+	stopMotion(&glide.anim)
+	glide.step(0.3) // its fade under way
+	again := render("server project", "a", "b")
+	stopMotion(&glide.anim)
+	for key, row := range again {
+		if row.alpha != 1 {
+			t.Errorf("%s: alpha %v after the second rendering", key, row.alpha)
+		}
+	}
+}

@@ -232,9 +232,16 @@ fun SharedFilesDialog(app: RemoteApp) {
             }
         },
         dismissButton = {
-            Pill("Attach to message", enabled = !busy && app.connected) {
-                app.attach(app.shared.toList(), null)
-                app.shared.clear()
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                Pill("Attach to message", enabled = !busy && app.connected) {
+                    app.attach(app.shared.toList(), null)
+                    app.shared.clear()
+                }
+                Pill("Give Loopy", enabled = !busy && app.connected) {
+                    app.loopyGive(app.shared.toList())
+                    app.shared.clear()
+                    app.openLoopy()
+                }
             }
         },
     )

@@ -18,6 +18,7 @@ import (
 // simply go: those below close the gap.
 type glideLayout struct {
 	keys     map[fyne.CanvasObject]string // the rows being shown, as they were added
+	added    map[string]bool              // the keys added since begin
 	places   map[string]glidePlace        // where each key's row was put last
 	fresh    map[fyne.CanvasObject]bool   // rows that came in at the last change
 	building bool                         // rows are being added: no layout before the last one
@@ -31,6 +32,9 @@ type glideLayout struct {
 	pillFrom rect              // where the pill was when the glide started
 	pillTo   rect
 	pillFade [2]float32 // the pill's opacity at the start and the end of the glide
+	// scroll is what the list scrolls in, told when the list's height
+	// changed (renderSidebar).
+	scroll *kineticScroll
 }
 
 // glidePlace is a row's place: target is where the layout puts it, and
@@ -48,13 +52,28 @@ func newGlideLayout() *glideLayout {
 func (glide *glideLayout) begin() {
 	glide.building = true
 	clear(glide.keys)
+	clear(glide.added)
 }
 
-func (glide *glideLayout) key(object fyne.CanvasObject, key string) { glide.keys[object] = key }
+// key gives a row its key. It says false when the key was given already
+// since begin: the two rows would be drawn at one place.
+func (glide *glideLayout) key(object fyne.CanvasObject, key string) bool {
+	if glide.added == nil {
+		glide.added = map[string]bool{}
+	}
+	_, again := glide.keys[object]
+	again = again || glide.added[key]
+	glide.keys[object], glide.added[key] = key, true
+	return !again
+}
 
 func (glide *glideLayout) end(list *fyne.Container) {
 	glide.building, glide.changed = false, true
-	list.Refresh() // lays the new rows out from where the old ones were
+	// Lays the new rows out from where the old ones were. Not Refresh,
+	// which refreshed every row, changed or not: a row kept from the last
+	// rendering refreshes itself when it changed (reuseRow, #475).
+	relayout(list)
+	canvas.Refresh(list)
 }
 
 // at is where a place's row is drawn now, part way through a glide.
@@ -106,6 +125,11 @@ func (glide *glideLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 		} else {
 			if old, seen := glide.places[key]; seen {
 				place.offset = glide.at(old) - y
+				// A row still fading in when the sidebar was built again
+				// (a server chosen, then its state arriving) is no longer
+				// new: finish its fade, or it stays transparent with the
+				// selection's fill drawn alone where it is.
+				fadeRows(object, 1)
 			} else if glide.laidOut {
 				fresh[object] = true
 				place.offset = -6 // drops in from just above

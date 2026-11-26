@@ -79,6 +79,8 @@ func modelLimitsStrip(conn agent.Connection, limits agent.AccountLimits, problem
 	tag := "· selected account"
 	if problem != "" {
 		tag = "· " + problem
+	} else if len(limits.Windows) > 0 && limits.Note != "" {
+		tag = "· " + limits.Note // the numbers are the last good ones, and this is why
 	}
 	at := ""
 	if !limits.Checked.IsZero() {
@@ -93,7 +95,7 @@ func modelLimitsStrip(conn agent.Connection, limits agent.AccountLimits, problem
 		}
 		// Four windows fit at the reference width; extra windows remain
 		// accessible by scrolling rather than squeezing their dates.
-		body = container.NewHScroll(container.New(limitStripCellsLayout{}, cells...))
+		body = strip(container.New(limitStripCellsLayout{}, cells...))
 	}
 	rule := canvas.NewRectangle(colBorderSoft)
 	return container.New(limitStripLayout{}, rule, header, body)

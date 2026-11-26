@@ -30,7 +30,7 @@ func tapChoice(t *testing.T, dialog *sheet, n int) {
 // form; no lists the four ways to run one, each with its guide, whose
 // commands have a Copy button and whose last button opens the address form.
 func TestConnectServerGuidesTheSetup(t *testing.T) {
-	ui := settingsUI(t)
+	ui := remoteSettingsUI(t)
 	connected := 0
 	connect := func() { connected++ }
 
@@ -73,7 +73,7 @@ func TestConnectServerGuidesTheSetup(t *testing.T) {
 // The Remote page's Connect a server is one line and its button: the steps
 // moved to the guide.
 func TestConnectServerCardIsOneLine(t *testing.T) {
-	ui := settingsUI(t)
+	ui := remoteSettingsUI(t)
 	page := ui.remoteSettings()
 	for _, row := range tapRows(page) {
 		if row.text == "Connect a server…" {

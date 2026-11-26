@@ -8,13 +8,17 @@ package ui
 // time) with arrows to move it, its total and the month's pace, the last 30
 // days, then the period cut by model, connection, project, branch or chat.
 // A chat opens its turns. The page reads this computer's ledger, or, while
-// a server's chats are on screen, the server's through its API.
+// a server's chats are on screen, the server's through its API, with a
+// switch back to this computer's.
 
 import (
+	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"image/color"
 	"math"
+	"net/http"
 	"path/filepath"
 	"strconv"
 	"strings"
@@ -24,8 +28,10 @@ import (
 	"fyne.io/fyne/v2/canvas"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
+	"1loop/internal/core"
 	"1loop/internal/usage"
 )
 
@@ -43,7 +49,7 @@ type usageSource interface {
 }
 
 func (ui *desktopUI) usageSource() usageSource {
-	if ui.server != nil {
+	if ui.server != nil && !ui.usageHere {
 		return serverUsage{ui.server}
 	}
 	return localUsage{ui}
@@ -54,7 +60,9 @@ func (ui *desktopUI) usageSource() usageSource {
 type localUsage struct{ ui *desktopUI }
 
 func (local localUsage) report(_ context.Context, query usage.Query) (usage.Report, error) {
-	return usage.Build(local.ui.usage, local.ui.prices, local.ui.usageNames, query, time.Now()), nil
+	report := usage.Build(local.ui.usage, local.ui.prices, local.ui.usageNames, query, time.Now())
+	report.HideLimits(local.ui.accountDisabled)
+	return report, nil
 }
 
 func (local localUsage) priceTable(context.Context) ([]usage.PriceRow, error) {
@@ -81,6 +89,17 @@ func (ui *desktopUI) usageNames(group, key string) string {
 	return ""
 }
 
+// accountDisabled says whether a connection is kept but turned off: its
+// limits are not shown on the Usage page.
+func (ui *desktopUI) accountDisabled(id string) bool {
+	for _, conn := range ui.connectionsList {
+		if conn.ID == id {
+			return !conn.Enabled
+		}
+	}
+	return false
+}
+
 // serverUsage is the server's ledger (internal/usage/http.go).
 type serverUsage struct{ remote *remoteDesktop }
 
@@ -102,6 +121,7 @@ func (server serverUsage) setPrice(ctx context.Context, model string, price *usa
 type usagePage struct {
 	ui      *desktopUI
 	source  usageSource
+	where   *fyne.Container // in a server window: whose ledger, the server's or this computer's
 	body    *fyne.Container
 	loading int // the latest load: an older answer is dropped
 }
@@ -120,11 +140,34 @@ func openUsage(statePath string) (*usage.Ledger, *usage.Prices) {
 }
 
 func (ui *desktopUI) usageSettings() fyne.CanvasObject {
-	page := &usagePage{ui: ui, source: ui.usageSource(), body: container.NewVBox()}
+	page := &usagePage{ui: ui, where: container.NewVBox(), body: container.NewVBox()}
 	if ui.usageQuery.Group == "" {
 		ui.usageQuery = usage.Query{Period: "month", Group: "model"}
 	}
 	prices := newRow("Prices", iconPencil, styleChip, page.openPrices)
+	page.pick()
+	return container.NewVBox(ui.prefs.pageTitle("Usage", "", prices), page.where, page.body)
+}
+
+// pick shows the ledger chosen. In a server window it is the server's or
+// this computer's, with a switch and a line saying which.
+func (page *usagePage) pick() {
+	ui := page.ui
+	page.source = ui.usageSource()
+	page.where.Objects, page.body.Objects = nil, nil
+	if ui.server != nil {
+		name := cmp.Or(ui.server.name, serverName(ui.server.client.address.URL))
+		server := newRow(name, iconBrowser, styleChip, func() { ui.usageHere = false; page.pick() })
+		here := newRow("This computer", theme.ComputerIcon(), styleChip, func() { ui.usageHere = true; page.pick() })
+		server.SetSelected(!ui.usageHere)
+		here.SetSelected(ui.usageHere)
+		about := "The chats run on the server " + name + ", and its accounts' subscription limits."
+		if ui.usageHere {
+			about = "The chats run on this computer, and its accounts' subscription limits. The server's are under " + name + "."
+		}
+		page.where.Objects = []fyne.CanvasObject{padded(0, 4, 0, 0, container.NewHBox(server, here)), padded(0, 10, 2, 2, plainFlow(about, 12.5, colMuted))}
+	}
+	page.where.Refresh()
 	page.load()
 	if _, local := page.source.(localUsage); local {
 		// The subscriptions' windows as they are now, for their pace; a
@@ -135,7 +178,6 @@ func (ui *desktopUI) usageSettings() fyne.CanvasObject {
 			}
 		}
 	}
-	return container.NewVBox(ui.prefs.pageTitle("Usage", "", prices), page.body)
 }
 
 // load asks for the report of ui.usageQuery and shows it.
@@ -159,13 +201,22 @@ func (page *usagePage) load() {
 				return
 			}
 			if err != nil {
-				page.body.Objects = []fyne.CanvasObject{note("The server's usage could not be read: " + err.Error())}
+				page.body.Objects = []fyne.CanvasObject{note(serverUsageProblem(err))}
 				page.body.Refresh()
 				return
 			}
 			page.show(report)
 		})
 	}()
+}
+
+// serverUsageProblem says why the server's usage could not be read.
+func serverUsageProblem(err error) string {
+	var refused remoteError
+	if errors.As(err, &refused) && (refused.status == http.StatusNotFound || refused.status == http.StatusMethodNotAllowed) {
+		return "This server is too old to show its usage: update it"
+	}
+	return "The server's usage could not be read: " + err.Error()
 }
 
 func (page *usagePage) change(edit func(query *usage.Query)) {
@@ -175,7 +226,11 @@ func (page *usagePage) change(edit func(query *usage.Query)) {
 
 func (page *usagePage) show(report usage.Report) {
 	page.body.Objects = nil
-	if limits := limitsSection(report.Limits); limits != nil {
+	choose := func(connection string) {
+		page.ui.usageAccount = connection
+		page.show(report)
+	}
+	if limits := limitsSection(report.Limits, page.ui.usageAccount, choose); limits != nil {
 		page.body.Add(limits)
 	}
 	page.body.Objects = append(page.body.Objects,
@@ -185,7 +240,7 @@ func (page *usagePage) show(report usage.Report) {
 		usageChart(report),
 		page.groupBar(report.Group),
 		page.rows(report),
-		padded(10, 24, 2, 2, note(fmt.Sprintf("A call costs what its provider reported (OpenRouter), else your price under Prices, else the price its provider lists, else the model's API list price (as of %s); \":free\" models cost nothing. Subscriptions are not billed by the token: their cost is what the same tokens would cost on the API.", report.AsOf))),
+		padded(10, 24, 2, 2, note(fmt.Sprintf("Prices as of %s: the provider's, else yours, else the list.", report.AsOf))),
 	)
 	page.body.Refresh()
 }
@@ -308,7 +363,7 @@ func usageAmount(totals usage.Totals, previous *usage.Totals) fyne.CanvasObject 
 
 func costText(totals usage.Totals) string {
 	if totals.Cost == 0 && totals.Unpriced > 0 {
-		return usage.Count(totals.Total()) + " tokens"
+		return core.CompactCount(totals.Total()) + " tokens"
 	}
 	return usage.Money(totals.Cost)
 }
@@ -336,15 +391,15 @@ func usageDetail(detail string, totals usage.Totals) string {
 }
 
 func tokenBreakdown(tokens usage.Tokens) string {
-	parts := []string{usage.Count(tokens.Input) + " in", usage.Count(tokens.Output) + " out"}
+	parts := []string{core.CompactCount(tokens.Input) + " in", core.CompactCount(tokens.Output) + " out"}
 	if tokens.CacheRead > 0 {
-		parts = append(parts, usage.Count(tokens.CacheRead)+" cached")
+		parts = append(parts, core.CompactCount(tokens.CacheRead)+" cached")
 	}
 	if tokens.CacheWrite > 0 {
-		parts = append(parts, usage.Count(tokens.CacheWrite)+" cache writes")
+		parts = append(parts, core.CompactCount(tokens.CacheWrite)+" cache writes")
 	}
 	if tokens.Reasoning > 0 {
-		parts = append(parts, usage.Count(tokens.Reasoning)+" reasoning")
+		parts = append(parts, core.CompactCount(tokens.Reasoning)+" reasoning")
 	}
 	return strings.Join(parts, ", ")
 }
@@ -374,7 +429,7 @@ func usageSummary(report usage.Report) fyne.CanvasObject {
 	}
 	tiles := []fyne.CanvasObject{
 		statTile("Spent", usage.Money(totals.Cost), spentUnder, colText),
-		statTile("Tokens", usage.Count(totals.Total()), calls, colText),
+		statTile("Tokens", core.CompactCount(totals.Total()), calls, colText),
 		statTile("From the cache", cache, "of the prompt tokens read", colText),
 	}
 	switch pace, compare := report.Pace, report.Compare; {
@@ -394,7 +449,7 @@ func usageSummary(report usage.Report) fyne.CanvasObject {
 	}
 	lines := container.New(layout.NewCustomPaddedVBoxLayout(10), container.NewGridWithColumns(4, tiles...))
 	if totals.Unpriced > 0 {
-		lines.Add(plainFlow(usage.Count(totals.Unpriced)+" tokens are on models with no known price and are not in the cost. Set a price under Prices.", 12.5, colMuted))
+		lines.Add(plainFlow(core.CompactCount(totals.Unpriced)+" tokens are on models with no known price. Set one under Prices.", 12.5, colMuted))
 	}
 	return padded(0, 10, 0, 0, card(padded(14, 14, 16, 16, lines)))
 }
@@ -442,7 +497,7 @@ func rowDetail(row usage.Row) string {
 	if row.Calls == 1 {
 		calls = "1 call"
 	}
-	return strings.Join(append(parts, usage.Count(row.Total())+" tokens", calls), " · ")
+	return strings.Join(append(parts, core.CompactCount(row.Total())+" tokens", calls), " · ")
 }
 
 // shareRow is a breakdown row: its name and detail, a bar of its share of
@@ -475,7 +530,7 @@ func usageChart(report usage.Report) fyne.CanvasObject {
 	}
 	scale := func(v float64) string {
 		if byTokens {
-			return usage.Count(int(v))
+			return core.CompactCount(int(v))
 		}
 		return usage.Money(v)
 	}
@@ -654,7 +709,7 @@ func (page *usagePage) openPrices() {
 		}
 		add := newRow("Price another model", iconPlus, styleChip, func() { page.editPrice(usage.PriceRow{}, refresh) })
 		body.Objects = []fyne.CanvasObject{
-			note("In US dollars per million tokens. A call is costed at what its provider reported (OpenRouter), else at your price here, else at the price its provider lists (OpenRouter's catalog, or a compatible API that lists prices), else at 1loop's list prices. \":free\" models cost nothing. Your prices apply to past calls too."),
+			note("US dollars per million tokens. Your prices also apply to past calls."),
 			spacer(0, 8), card(items...), padded(10, 0, 0, 0, container.NewHBox(add)),
 		}
 		body.Refresh()
@@ -779,7 +834,7 @@ func (page *usagePage) editPrice(row usage.PriceRow, done func()) {
 		detail = "1loop's price, as shipped."
 	}
 	if row.Model == "" {
-		detail = "A model 1loop has no price for, or one whose price differs for you (a discount, a reseller)."
+		detail = "A model without a price here, or one that differs for you."
 	}
 	content := container.NewVBox(ui.prefs.pageTitle(title, "Prices", nil), note(detail), spacer(0, 8), card(form), problem)
 	ui.prefs.push(settingsFrame{content: content, actions: actions})
@@ -799,7 +854,7 @@ func todayText(totals usage.Totals) string {
 	case totals.Cost > 0:
 		return usage.Money(totals.Cost)
 	}
-	return usage.Count(totals.Total()) + " tok"
+	return core.CompactCount(totals.Total()) + " tok"
 }
 
 // followUsage keeps today's spend up to date in the sidebar and the tray.

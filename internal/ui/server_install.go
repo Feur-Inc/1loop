@@ -3,8 +3,8 @@
 package ui
 
 // Install Chromium and Install Claude Code on a server without them (the
-// slim Docker image, issue #406), in Settings → Remote of the desktop
-// connected to it and of the browser client. The server downloads them
+// slim Docker image, issue #406), on the server's Installs page (Settings →
+// Servers) and in the browser client's Settings → Remote. The server downloads them
 // into its data folder (internal/server/install.go); this page starts the
 // install and follows it in /api/state.
 
@@ -19,6 +19,7 @@ import (
 // serverInstall is /api/state's part about what the server can install.
 type serverInstall struct {
 	Browser    *bool // nil: a server from before #406, which always has it
+	OwnBrowser *bool // its own, not lent by a client (nil: from before lending)
 	ClaudeCode *bool
 	Installs   map[string]struct {
 		Running     bool
@@ -28,8 +29,9 @@ type serverInstall struct {
 
 // installRows are the server's Chromium and Claude Code, each with its
 // Install button while it lacks them, in a card under a title. They stay
-// hidden until the server says it lacks one.
-func (remote *remoteDesktop) installRows() fyne.CanvasObject {
+// hidden until the server says it lacks one; on a page of their own (full),
+// both are always there, installed or not.
+func (remote *remoteDesktop) installRows(full bool) fyne.CanvasObject {
 	type item struct {
 		what, title, detail, button string
 		has                         func(serverInstall) *bool
@@ -39,14 +41,28 @@ func (remote *remoteDesktop) installRows() fyne.CanvasObject {
 	}
 	items := []*item{
 		{what: "chromium", title: "Chromium", button: "Install Chromium",
-			detail: "For Browser Use: the agent's browser tabs run on the server. The server downloads Chromium (Chrome for Testing, about 200 MB, checked against Google's checksum) into its data folder, with the system libraries it needs from Debian's signed packages. No administrator rights; it stays across restarts and image updates.",
-			has:    func(state serverInstall) *bool { return state.Browser }},
+			detail: "For Browser Use: about 200 MB in its data folder, no admin.",
+			has: func(state serverInstall) *bool {
+				if state.OwnBrowser != nil {
+					return state.OwnBrowser // a browser a client lends does not make it installed
+				}
+				return state.Browser
+			}},
 		{what: "claude-code", title: "Claude Code", button: "Install Claude Code",
-			detail: "For Claude Code connections. The server downloads Anthropic's claude command into its data folder, checked against Anthropic's release signature and checksum. Then sign in from Models & accounts.",
+			detail: "For Claude Code connections. Downloads the claude command.",
 			has:    func(state serverInstall) *bool { return state.ClaudeCode }},
 	}
+	if browserClient {
+		items[0].detail += " Or use the 1loop desktop app on a computer paired with this server: it can lend the server that computer's browser (in its Settings, the server's Installs page). This browser page cannot."
+	} else {
+		items[0].detail += " Or let the server use this computer's browser, below."
+	}
 	box := container.NewVBox()
-	box.Hide()
+	if full {
+		box.Add(card(settingRow("Checking what the server has…", "", nil)))
+	} else {
+		box.Hide()
+	}
 	var refresh func()
 	for _, entry := range items {
 		entry.status = plainFlow("", 12.5, colMuted)
@@ -79,6 +95,10 @@ func (remote *remoteDesktop) installRows() fyne.CanvasObject {
 			err := remote.client.json(ctx, "GET", "/api/state", nil, &state)
 			fyne.Do(func() {
 				if err != nil {
+					if full {
+						box.Objects = []fyne.CanvasObject{card(settingRow("The server cannot say", err.Error(), nil))}
+						box.Refresh()
+					}
 					return
 				}
 				box.Objects = nil
@@ -94,7 +114,7 @@ func (remote *remoteDesktop) installRows() fyne.CanvasObject {
 						entry.install.SetText("Installing…")
 						setFlow(entry.status, job.Text)
 					case has == nil || *has:
-						if job.Error == "" && hasKey(state.Installs, entry.what) { // installed from here: say so once
+						if full || job.Error == "" && hasKey(state.Installs, entry.what) { // installed from here: say so once
 							setFlow(entry.status, entry.title+" is installed on the server.")
 							entry.install.Hide()
 							rows = append(rows, entry.row)
@@ -117,7 +137,10 @@ func (remote *remoteDesktop) installRows() fyne.CanvasObject {
 					box.Hide()
 					return
 				}
-				box.Objects = []fyne.CanvasObject{sectionTitle("On the server"), card(rows...)}
+				box.Objects = []fyne.CanvasObject{card(rows...)}
+				if !full {
+					box.Objects = []fyne.CanvasObject{sectionTitle("On the server"), card(rows...)}
+				}
 				box.Show()
 				box.Refresh()
 				if running && !following {

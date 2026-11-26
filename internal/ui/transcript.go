@@ -5,6 +5,7 @@ package ui
 import (
 	"fmt"
 	"image/color"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -371,7 +372,10 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		ui.views[index] = view
 		ui.copyRows[index] = copyRow
 		view.layer = newSelectLayer(ui, view.box)
-		ui.place(container.NewVBox(container.NewStack(view.box, view.layer), copyRow))
+		row := container.NewVBox(container.NewStack(view.box, view.layer), copyRow)
+		ui.items.own(view.box, row)
+		ui.items.own(copyRow, row)
+		ui.place(row)
 	case "user":
 		if item.From != nil { // another chat's message, not the user's
 			ui.appendChatMessage(chat, item)
@@ -401,6 +405,7 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 			view.box = container.NewVBox(padded(0, transcriptGap-4, 0, 0, nextStepCard(wrap, nil, item.Text)), view.box)
 		}
 		ui.views[index] = view
+		ui.items.alone(view.box)
 		ui.place(view.box)
 	case "error":
 		text := newFlowText(plainSpans(item.Text), theme.TextSize(), colDanger)
@@ -417,7 +422,11 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		}
 		icon := canvas.NewImageFromResource(tinted(glyph, colFaint))
 		icon.SetMinSize(fyne.NewSquareSize(15))
-		ui.place(container.NewBorder(nil, nil, container.NewCenter(icon), nil, newFlowText([]span{{text: item.Text}}, 12.5, colFaint)))
+		var compare fyne.CanvasObject
+		if compactionNote(item) {
+			compare = newRow("Compare", nil, styleChip, func() { ui.compareCompaction(chat, item.Text) })
+		}
+		ui.place(container.NewBorder(nil, nil, container.NewCenter(icon), compare, newFlowText([]span{{text: item.Text}}, 12.5, colFaint)))
 	case "tool":
 		if agent.WrapUpTool(item.Tool) {
 			return // drawn as the next-step card
@@ -466,17 +475,47 @@ func (ui *desktopUI) place(view fyne.CanvasObject) {
 // whole history. A hidden item costs nothing: it keeps its place with the
 // size it last measured, and is measured again when it comes back in view.
 type transcriptLayout struct {
-	ui     *desktopUI
-	sizes  map[fyne.CanvasObject]fyne.Size // each item's last measured minimum size
-	widths map[fyne.CanvasObject]float32   // the width each was measured at
-	width  float32                         // the column's width
-	stale  bool                            // items out of sight keep an earlier width's size (remeasure)
-	shift  float32                         // how much the items above the view grew since the scroll last moved
+	ui *desktopUI
+	// Each item's last measured size, in the transcript's order, and the
+	// top of each (tops[i]; tops[len] is the bottom). Only the items near
+	// the view are measured at a frame: a long chat costs as little as a
+	// short one to lay out, scroll and stream into.
+	rows    []transcriptRow
+	tops    []float32
+	dirty   int                                     // tops from this row on are out of date
+	index   map[fyne.CanvasObject]int               // row -> its place in rows
+	owner   map[fyne.CanvasObject]fyne.CanvasObject // part -> the row that holds it (changed)
+	early   map[fyne.CanvasObject]transcriptRow     // measured before being laid out (chat_loading.go)
+	lo, hi  int                                     // the rows shown at the last layout
+	added   int                                     // rows from here on came since: shown, perhaps
+	widest  float32                                 // the widest row
+	pending bool                                    // some rows were never measured, or changed
+	todo    []int                                   // those rows (pending), so a change costs no walk of the chat
+	swapped bool                                    // a row was put in another's place (replaced): sync compares them all
+	width   float32                                 // the column's width
+	stale   bool                                    // items out of sight keep an earlier width's size (remeasure)
+	shift   float32                                 // how much the items above the view grew since the scroll last moved
 	// Items that just came in rise a few points into place while a veil of
 	// the background over them clears: Fyne can't fade a whole message, but
 	// it can fade one rectangle over it.
 	arrivals map[fyne.CanvasObject]*arrival
 	veils    *fyne.Container // over the transcript, in its coordinates
+	// Behind each run of the agent's rows (its answers, tool rows, notes)
+	// one rounded card, the theme's backdrop over a picture or shader:
+	// not behind the user's messages, nor the gaps between turns (#503).
+	cards   *fyne.Container            // under the transcript, in its coordinates
+	cardSet []fyne.CanvasObject        // the cards made so far, reused
+	apart   map[fyne.CanvasObject]bool // rows that are in no card (the user's messages)
+	// What the developer log last said of each row (audit).
+	reported map[fyne.CanvasObject]string
+}
+
+// transcriptRow is an item of the transcript and its measured size.
+type transcriptRow struct {
+	object fyne.CanvasObject
+	size   fyne.Size
+	width  float32 // the width it was measured at
+	known  bool
 }
 
 // arrival is an item coming into the conversation.
@@ -546,55 +585,289 @@ func (layoutSpec *transcriptLayout) settle() {
 const transcriptGap = 14
 
 func (layoutSpec *transcriptLayout) reset() {
-	layoutSpec.sizes, layoutSpec.widths = map[fyne.CanvasObject]fyne.Size{}, map[fyne.CanvasObject]float32{}
+	layoutSpec.rows, layoutSpec.tops, layoutSpec.dirty = nil, nil, 0
+	layoutSpec.index = map[fyne.CanvasObject]int{}
+	layoutSpec.owner = map[fyne.CanvasObject]fyne.CanvasObject{}
+	layoutSpec.early = map[fyne.CanvasObject]transcriptRow{}
+	layoutSpec.apart = map[fyne.CanvasObject]bool{}
+	layoutSpec.lo, layoutSpec.hi, layoutSpec.added, layoutSpec.widest, layoutSpec.pending = 0, 0, 0, 0, false
+	layoutSpec.todo, layoutSpec.swapped = layoutSpec.todo[:0], false
 	layoutSpec.stale, layoutSpec.shift = false, 0
+	layoutSpec.reported = nil
 	layoutSpec.settle()
 }
 
-// changed forgets the size of the item that holds part: it changed while
-// perhaps out of sight, where nothing measures it.
-//
-// It looks from the end: the part is nearly always in the answer being
-// written, and going through every item of a long chat at each streamed
-// word walked the whole conversation.
-func (layoutSpec *transcriptLayout) changed(part fyne.CanvasObject) {
-	items := layoutSpec.ui.transcript.Objects
-	for i := len(items) - 1; i >= 0; i-- {
-		if _, holds := offsetIn(items[i], part); holds {
-			delete(layoutSpec.sizes, items[i])
-			return
+// transcriptState is what a cached chat view keeps of the layout.
+type transcriptState struct {
+	rows  []transcriptRow
+	index map[fyne.CanvasObject]int
+	owner map[fyne.CanvasObject]fyne.CanvasObject
+	early map[fyne.CanvasObject]transcriptRow
+	apart map[fyne.CanvasObject]bool
+	width float32
+}
+
+func (layoutSpec *transcriptLayout) save() transcriptState {
+	return transcriptState{layoutSpec.rows, layoutSpec.index, layoutSpec.owner, layoutSpec.early, layoutSpec.apart, layoutSpec.width}
+}
+
+func (layoutSpec *transcriptLayout) restore(state transcriptState) {
+	layoutSpec.reset()
+	layoutSpec.rows, layoutSpec.index, layoutSpec.owner, layoutSpec.early, layoutSpec.apart, layoutSpec.width =
+		state.rows, state.index, state.owner, state.early, state.apart, state.width
+	layoutSpec.hi = len(layoutSpec.rows) // any of them may be shown: the next layout looks at each once
+	layoutSpec.pending = true
+	for i, row := range layoutSpec.rows {
+		layoutSpec.widest = fyne.Max(layoutSpec.widest, row.size.Width)
+		if !row.known {
+			layoutSpec.todo = append(layoutSpec.todo, i)
 		}
 	}
 }
 
+// alone keeps a row out of the agent's cards: a message of the user's.
+func (layoutSpec *transcriptLayout) alone(row fyne.CanvasObject) {
+	if layoutSpec.apart == nil {
+		layoutSpec.apart = map[fyne.CanvasObject]bool{}
+	}
+	layoutSpec.apart[row] = true
+}
+
+// own tells which row holds part, so that changed finds it at once.
+func (layoutSpec *transcriptLayout) own(part, row fyne.CanvasObject) {
+	layoutSpec.owner[part] = row
+}
+
+// sync follows the transcript's objects: rows added at the end are the
+// usual change; anything else builds the list again, keeping the sizes
+// of the rows still there. Rows are added at the end, or all of them
+// change (another chat, a row removed): the same first and last rows
+// mean the same rows, unless one was put in another's place (replaced).
+func (layoutSpec *transcriptLayout) sync(objects []fyne.CanvasObject) {
+	rows := layoutSpec.rows
+	same := len(objects) >= len(rows)
+	if n := len(rows); same && n > 0 && !layoutSpec.swapped && objects[0] == rows[0].object && objects[n-1] == rows[n-1].object {
+		// Comparing every row cost a walk of the chat at each layout.
+	} else {
+		for i := range rows {
+			if !same {
+				break
+			}
+			same = objects[i] == rows[i].object
+		}
+	}
+	layoutSpec.swapped = false
+	if same && len(objects) == len(rows) {
+		return
+	}
+	start := len(rows)
+	if !same {
+		old := rows
+		known := make(map[fyne.CanvasObject]transcriptRow, len(old))
+		for _, row := range old {
+			known[row.object] = row
+		}
+		rows, start = make([]transcriptRow, 0, len(objects)), 0
+		clear(layoutSpec.index)
+		layoutSpec.todo = layoutSpec.todo[:0] // the places changed: those below are found again
+		for _, object := range objects {
+			row, ok := known[object]
+			if !ok {
+				row = transcriptRow{object: object}
+			}
+			rows = append(rows, row)
+		}
+		layoutSpec.lo, layoutSpec.hi = 0, len(rows) // look at each once: some may still be shown
+		layoutSpec.widest = 0
+		for _, row := range rows {
+			layoutSpec.widest = fyne.Max(layoutSpec.widest, row.size.Width)
+		}
+		layoutSpec.dirty = 0
+	}
+	for i := start; i < len(objects); i++ {
+		if i >= len(rows) {
+			rows = append(rows, transcriptRow{object: objects[i]})
+		}
+		if early, ok := layoutSpec.early[objects[i]]; ok && !rows[i].known {
+			early.object = objects[i]
+			rows[i] = early
+			layoutSpec.widest = fyne.Max(layoutSpec.widest, early.size.Width)
+		}
+		delete(layoutSpec.early, objects[i])
+		layoutSpec.index[objects[i]] = i
+		if !rows[i].known {
+			layoutSpec.pending = true
+			layoutSpec.todo = append(layoutSpec.todo, i)
+		}
+	}
+	layoutSpec.rows = rows
+	layoutSpec.dirty = min(layoutSpec.dirty, start)
+	layoutSpec.added = min(layoutSpec.added, start)
+	if layoutSpec.hi > len(rows) {
+		layoutSpec.hi = len(rows)
+	}
+}
+
+// changed forgets the size of the item that holds part: it changed while
+// perhaps out of sight, where nothing measures it.
+func (layoutSpec *transcriptLayout) changed(part fyne.CanvasObject) {
+	row, ok := layoutSpec.owner[part]
+	if !ok {
+		if _, isRow := layoutSpec.index[part]; isRow {
+			row, ok = part, true
+		}
+	}
+	if !ok { // not told: look from the end, where the parts that change are
+		items := layoutSpec.ui.transcript.Objects
+		for i := len(items) - 1; i >= 0; i-- {
+			if _, holds := offsetIn(items[i], part); holds {
+				row, ok = items[i], true
+				layoutSpec.owner[part] = row
+				break
+			}
+		}
+	}
+	if !ok {
+		return
+	}
+	layoutSpec.forget(row)
+}
+
+// forget makes the row be measured again at the next layout.
+func (layoutSpec *transcriptLayout) forget(row fyne.CanvasObject) {
+	delete(layoutSpec.early, row)
+	if i, ok := layoutSpec.index[row]; ok && i < len(layoutSpec.rows) && layoutSpec.rows[i].object == row {
+		if layoutSpec.rows[i].known {
+			layoutSpec.todo = append(layoutSpec.todo, i)
+		}
+		layoutSpec.rows[i].known = false
+		layoutSpec.pending = true
+	}
+}
+
+// replaced tells that a row was put in the place of old, which goes.
+func (layoutSpec *transcriptLayout) replaced(old fyne.CanvasObject) {
+	layoutSpec.forget(old)
+	layoutSpec.swapped = true
+}
+
+// known tells whether a row was measured.
+func (layoutSpec *transcriptLayout) known(object fyne.CanvasObject) bool {
+	if _, ok := layoutSpec.early[object]; ok {
+		return true
+	}
+	i, ok := layoutSpec.index[object]
+	return ok && i < len(layoutSpec.rows) && layoutSpec.rows[i].object == object && layoutSpec.rows[i].known
+}
+
+// heightOf is the measured height of row i.
+func (layoutSpec *transcriptLayout) heightOf(i int) float32 { return layoutSpec.rows[i].size.Height }
+
 // measure sizes an item at the column's width: wrapped text only knows its
-// height once it has its width.
+// height once it has its width. An item not laid out yet (a chat being
+// built) keeps its size until it is.
 func (layoutSpec *transcriptLayout) measure(object fyne.CanvasObject, width float32) fyne.Size {
+	min := measureRow(object, width)
+	if i, ok := layoutSpec.index[object]; ok && i < len(layoutSpec.rows) && layoutSpec.rows[i].object == object {
+		layoutSpec.store(i, min, width)
+		layoutSpec.rest(i)
+	} else {
+		layoutSpec.early[object] = transcriptRow{object: object, size: min, width: width, known: true}
+		if !object.Visible() {
+			releaseTranscriptText(object)
+		}
+	}
+	return min
+}
+
+func (layoutSpec *transcriptLayout) measureAt(i int, width float32) fyne.Size {
+	min := measureRow(layoutSpec.rows[i].object, width)
+	layoutSpec.store(i, min, width)
+	layoutSpec.rest(i)
+	return min
+}
+
+// rest lets row i, measured out of sight, drop its words and lines: only
+// its height counts until it is shown. Not the last row: the answer being
+// written keeps them, so each delta lays out only what it adds (grow).
+func (layoutSpec *transcriptLayout) rest(i int) {
+	if object := layoutSpec.rows[i].object; !object.Visible() && i < len(layoutSpec.rows)-1 {
+		releaseTranscriptText(object)
+	}
+}
+
+func (layoutSpec *transcriptLayout) store(i int, measured fyne.Size, width float32) {
+	row := &layoutSpec.rows[i]
+	if !row.known || row.size.Height != measured.Height {
+		layoutSpec.dirty = min(layoutSpec.dirty, i+1)
+	}
+	row.size, row.width, row.known = measured, width, true
+	layoutSpec.widest = fyne.Max(layoutSpec.widest, measured.Width)
+}
+
+func measureRow(object fyne.CanvasObject, width float32) fyne.Size {
 	// Hidden paragraphs still need their exact height, but not new drawing
 	// objects, selection geometry or link hitboxes for every transient width.
-	if !object.Visible() {
+	hidden := !object.Visible()
+	if hidden {
 		measureTranscriptText(object, true)
 		defer measureTranscriptText(object, false)
 	}
 	row, fixed := object.(*toolRow)
 	// Plain calls have a fixed height. Resize only when they enter the
 	// viewport, otherwise BaseWidget.Resize creates every hidden renderer.
-	if (!fixed || row.preview != nil) && object.Size().Width != width {
-		object.Resize(fyne.NewSize(width, object.Size().Height))
+	if !fixed || row.preview != nil {
+		if object.Size().Width != width {
+			object.Resize(fyne.NewSize(width, object.Size().Height))
+		}
+		// A box lays its parts out with their heights from before the new
+		// width wrapped them: lay it out again, once its text knows its
+		// height, or its parts overlap or leave gaps (#440).
+		if box, ok := object.(*fyne.Container); ok && !hidden {
+			settleBox(box)
+		}
 	}
-	min := object.MinSize()
-	layoutSpec.sizes[object] = min
-	layoutSpec.widths[object] = width
-	return min
+	return object.MinSize()
 }
 
+// settleBox lays a box and the boxes in it out again at their sizes.
+func settleBox(box *fyne.Container) {
+	if box.Layout != nil {
+		box.Layout.Layout(box.Objects, box.Size())
+	}
+	for _, child := range box.Objects {
+		if inner, ok := child.(*fyne.Container); ok && inner.Visible() {
+			settleBox(inner)
+		}
+	}
+}
+
+// measureTranscriptText marks the paragraphs of an item as measured only
+// (no drawing objects), and when that ends for an item out of sight, lets
+// them drop their words and lines: only its height is kept.
 func measureTranscriptText(object fyne.CanvasObject, measuring bool) {
 	switch object := object.(type) {
 	case *flowText:
 		object.measuring = measuring
+		if !measuring && !object.Visible() {
+			object.release()
+		}
 	case *fyne.Container:
 		for _, child := range object.Objects {
 			measureTranscriptText(child, measuring)
+		}
+	}
+}
+
+// releaseTranscriptText lets the paragraphs of an item gone out of sight
+// drop their words and lines: they are made again when it comes back.
+func releaseTranscriptText(object fyne.CanvasObject) {
+	switch object := object.(type) {
+	case *flowText:
+		object.release()
+	case *fyne.Container:
+		for _, child := range object.Objects {
+			releaseTranscriptText(child)
 		}
 	}
 }
@@ -617,69 +890,200 @@ func (layoutSpec *transcriptLayout) view() (top, bottom float32) {
 	return offset - margin, offset + height + margin
 }
 
-func (layoutSpec *transcriptLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
-	size := fyne.NewSize(120, 0)
-	for i, object := range objects {
-		min, known := layoutSpec.sizes[object]
-		if object.Visible() || !known {
-			min = object.MinSize()
+// prepare brings the rows up to date with the objects: the rows never
+// measured are, and the tops below a change are summed again. Rows out of
+// sight move to their new places only then.
+func (layoutSpec *transcriptLayout) prepare(objects []fyne.CanvasObject, width float32) {
+	layoutSpec.sync(objects)
+	if layoutSpec.pending {
+		layoutSpec.pending = false
+		for _, i := range layoutSpec.todo {
+			if i < len(layoutSpec.rows) && !layoutSpec.rows[i].known {
+				if width > 0 {
+					layoutSpec.measureAt(i, width)
+				} else {
+					layoutSpec.store(i, layoutSpec.rows[i].object.MinSize(), 0)
+				}
+			}
 		}
-		size.Width = fyne.Max(size.Width, min.Width)
-		size.Height += min.Height
-		if i > 0 {
-			size.Height += transcriptGap
+		layoutSpec.todo = layoutSpec.todo[:0]
+	}
+	layoutSpec.sum()
+}
+
+// sum makes the tops from the first row whose top is out of date, and
+// moves the rows out of sight there.
+func (layoutSpec *transcriptLayout) sum() {
+	rows := layoutSpec.rows
+	if len(layoutSpec.tops) != len(rows)+1 {
+		layoutSpec.tops = append(layoutSpec.tops[:0], make([]float32, len(rows)+1)...)
+		layoutSpec.dirty = 0
+	}
+	if layoutSpec.dirty > len(rows) {
+		return
+	}
+	y := float32(0)
+	from := layoutSpec.dirty
+	if from > 0 {
+		y = layoutSpec.tops[from-1] + rows[from-1].size.Height + transcriptGap
+	}
+	for i := from; i < len(rows); i++ {
+		layoutSpec.tops[i] = y
+		if (i < layoutSpec.lo || i >= layoutSpec.hi) && rows[i].object.Position().Y != y {
+			rows[i].object.Move(fyne.NewPos(0, y))
+		}
+		y += rows[i].size.Height + transcriptGap
+	}
+	layoutSpec.tops[len(rows)] = y
+	layoutSpec.dirty = len(rows) + 1
+}
+
+// height is the whole transcript's.
+func (layoutSpec *transcriptLayout) height() float32 {
+	n := len(layoutSpec.rows)
+	if n == 0 {
+		return 0
+	}
+	return layoutSpec.tops[n] - transcriptGap
+}
+
+// first is the first row whose bottom is at or below y.
+func (layoutSpec *transcriptLayout) first(y float32) int {
+	rows, tops := layoutSpec.rows, layoutSpec.tops
+	return sort.Search(len(rows), func(i int) bool { return tops[i]+rows[i].size.Height >= y })
+}
+
+func (layoutSpec *transcriptLayout) MinSize(objects []fyne.CanvasObject) fyne.Size {
+	layoutSpec.prepare(objects, layoutSpec.width)
+	// What is shown may have changed without telling (a row's state).
+	for i := layoutSpec.lo; i < layoutSpec.hi && i < len(layoutSpec.rows); i++ {
+		if object := layoutSpec.rows[i].object; object.Visible() {
+			layoutSpec.store(i, object.MinSize(), layoutSpec.rows[i].width)
 		}
 	}
-	return size
+	layoutSpec.sum()
+	return fyne.NewSize(fyne.Max(120, layoutSpec.widest), layoutSpec.height())
 }
 
 func (layoutSpec *transcriptLayout) Layout(objects []fyne.CanvasObject, size fyne.Size) {
 	if size.Width <= 0 {
 		return // not on screen yet: nothing can be measured
 	}
+	if size.Width != layoutSpec.width {
+		layoutSpec.stale = true
+	}
 	layoutSpec.width = size.Width
+	layoutSpec.prepare(objects, size.Width)
+	rows := layoutSpec.rows
 	top, bottom := layoutSpec.view()
 	shown := top // the view's top: view adds a margin above it
 	if scroll := layoutSpec.ui.scroll; scroll != nil {
 		shown += fyne.Max(scroll.Size().Height, 600)
 	}
-	y := float32(0)
-	for _, object := range objects {
-		min, known := layoutSpec.sizes[object]
-		switch {
-		case object.Visible() || !known:
-			min = layoutSpec.measure(object, size.Width)
-		case layoutSpec.widths[object] != size.Width:
-			// Measured at another width: now if it is near the view, otherwise
-			// over the next frames (remeasure). Measuring every item of a long
-			// chat at once froze the window at each step of a resize.
-			if y+min.Height >= top && y <= bottom {
-				before := min.Height
-				min = layoutSpec.measure(object, size.Width)
-				if y+before <= shown {
-					layoutSpec.shift += min.Height - before
-				}
-			} else {
-				layoutSpec.stale = true
-			}
+	lo := layoutSpec.first(top)
+	i, y := lo, float32(0)
+	if lo < len(rows) {
+		y = layoutSpec.tops[lo]
+	}
+	for ; i < len(rows) && y <= bottom; i++ {
+		row := &rows[i]
+		object := row.object
+		before := row.size.Height
+		resized := row.width != size.Width
+		min := row.size
+		// A row already shown at this width was measured by MinSize, or
+		// by prepare when it changed: only the others are measured here.
+		revived := !object.Visible()
+		if revived || resized {
+			object.Show() // it may have changed while out of sight
+			min = layoutSpec.measureAt(i, size.Width)
 		}
-		near := y+min.Height >= top && y <= bottom
-		switch {
-		case near && !object.Visible():
-			object.Show()
-			min = layoutSpec.measure(object, size.Width) // it may have changed while out of sight
-		case !near && object.Visible():
-			object.Hide()
+		if resized && y+before <= shown {
+			layoutSpec.shift += min.Height - before
 		}
 		object.Move(fyne.NewPos(0, y))
-		if near {
-			object.Resize(fyne.NewSize(size.Width, min.Height))
-		}
-		if coming := layoutSpec.arrivals[object]; coming != nil {
-			coming.y, coming.laid = y, true
-			layoutSpec.placeArrival(object, coming)
+		object.Resize(fyne.NewSize(size.Width, min.Height))
+		row.size = min
+		if revived {
+			// Its text was only measured (or released) while hidden, and a
+			// Resize to the size it already has lays nothing out: draw it
+			// again, or it keeps its height and shows nothing (#497).
+			object.Refresh()
 		}
 		y += min.Height + transcriptGap
+	}
+	hi := i
+	hide := func(from, to int) {
+		for j := from; j < to && j < len(rows); j++ {
+			if (j < lo || j >= hi) && rows[j].object.Visible() {
+				rows[j].object.Hide()
+				releaseTranscriptText(rows[j].object)
+			}
+		}
+	}
+	hide(layoutSpec.lo, layoutSpec.hi)
+	hide(layoutSpec.added, len(rows))
+	layoutSpec.lo, layoutSpec.hi, layoutSpec.added = lo, hi, len(rows)
+	layoutSpec.sum()
+	layoutSpec.placeCards(lo, hi, size.Width)
+	for object, coming := range layoutSpec.arrivals {
+		if at, ok := layoutSpec.index[object]; ok && at < len(rows) && rows[at].object == object {
+			coming.y, coming.laid = layoutSpec.tops[at], true
+			layoutSpec.placeArrival(object, coming)
+		}
+	}
+	layoutSpec.audit(lo, hi, size.Width)
+}
+
+// Cards reach a little past their rows: the text keeps a margin inside.
+const cardPadX, cardPadY = 14, 10
+
+// placeCards puts one card behind each run of the agent's rows among the
+// rows shown (lo to hi), from the top of its first row to the bottom of
+// its last, the gaps between them included.
+func (layoutSpec *transcriptLayout) placeCards(lo, hi int, width float32) {
+	if layoutSpec.cards == nil {
+		return
+	}
+	used := 0
+	if !shaderBehind { // the plain background: the turns need no card
+		lo = hi
+	}
+	card := func(top, bottom float32) {
+		if used == len(layoutSpec.cardSet) {
+			fill := canvas.NewRectangle(colBackground)
+			fill.CornerRadius = rounded(14)
+			fill.StrokeColor, fill.StrokeWidth = colBorderSoft, 1
+			made := blurBehind("responses", fill, &colBackground)
+			layoutSpec.cardSet = append(layoutSpec.cardSet, made)
+			layoutSpec.cards.Add(made)
+		}
+		made := layoutSpec.cardSet[used]
+		used++
+		made.Move(fyne.NewPos(-cardPadX, top-cardPadY))
+		made.Resize(fyne.NewSize(width+2*cardPadX, bottom-top+2*cardPadY))
+		made.Show()
+	}
+	start, end := -1, -1
+	for i := lo; i < hi && i < len(layoutSpec.rows); i++ {
+		row := layoutSpec.rows[i]
+		if layoutSpec.apart[row.object] || !row.object.Visible() || row.size.Height <= 0 {
+			if start >= 0 {
+				card(layoutSpec.tops[start], layoutSpec.tops[end]+layoutSpec.rows[end].size.Height)
+				start = -1
+			}
+			continue
+		}
+		if start < 0 {
+			start = i
+		}
+		end = i
+	}
+	if start >= 0 {
+		card(layoutSpec.tops[start], layoutSpec.tops[end]+layoutSpec.rows[end].size.Height)
+	}
+	for _, extra := range layoutSpec.cardSet[used:] {
+		extra.Hide()
 	}
 }
 
@@ -697,20 +1101,20 @@ func (ui *desktopUI) remeasure() {
 	}
 	deadline := time.Now().Add(4 * time.Millisecond)
 	width, y, done := layoutSpec.width, float32(0), true
-	for _, object := range ui.transcript.Objects {
-		min := layoutSpec.sizes[object]
-		if layoutSpec.widths[object] != width && layoutSpec.stale {
+	for i := range layoutSpec.rows {
+		row := &layoutSpec.rows[i]
+		if row.width != width && layoutSpec.stale {
 			if time.Now().After(deadline) {
 				done = false
 				break
 			}
-			before := min.Height
-			min = layoutSpec.measure(object, width)
+			before := row.size.Height
+			min := layoutSpec.measureAt(i, width)
 			if y+before <= shown {
 				layoutSpec.shift += min.Height - before
 			}
 		}
-		y += min.Height + transcriptGap
+		y += row.size.Height + transcriptGap
 	}
 	layoutSpec.stale = layoutSpec.stale && !done
 	if !ui.followTail {
@@ -1035,6 +1439,7 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		}
 		ui.showApproval(currentTurn.chat, p)
 		currentTurn.show(agent.Activity{State: "approval", Detail: approvalSubject(p)})
+		ui.loopyStep(currentTurn.chat, "Waiting for your approval", true)
 	case "question":
 		request := uiEventValue.data.(agent.QuestionRequest)
 		ui.showQuestions(currentTurn.chat, request)
@@ -1045,6 +1450,8 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 			currentTurn.setRow(index, "running")
 		}
 		currentTurn.showRun(toolOutcomeValue)
+		verb, target, _ := agent.DescribeTool(agent.ChatItem{Tool: toolOutcomeValue.Name, Args: toolOutcomeValue.Args}, true)
+		ui.loopyStep(currentTurn.chat, strings.TrimSpace(verb+" "+target), false)
 	case "tool_output": // a running command's output so far
 		o := uiEventValue.data.(agent.ToolOutcome)
 		if index, ok := currentTurn.calls[o.ID]; ok {
@@ -1066,6 +1473,13 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		currentTurn.setRow(index, "done")
 		delete(currentTurn.states, index)
 		ui.panel.changed(currentTurn.chat, index)
+		// Another call still running keeps its words: the model only
+		// takes over once every call it sent has its result.
+		for _, state := range currentTurn.states {
+			if state == "running" {
+				return
+			}
+		}
 		currentTurn.show(agent.Activity{State: "wait"})
 	case "injected":
 		messageValue := uiEventValue.data.(agent.Message)
@@ -1078,7 +1492,7 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		ui.save()
 	case "history":
 		currentTurn.chat.History = uiEventValue.data.([]agent.Message)
-	case "cache":
+	case "cache", "compaction":
 		ui.save()
 	case "context_note", "note":
 		ui.addItem(currentTurn.chat, agent.ChatItem{Kind: "note", Text: uiEventValue.data.(string)})
@@ -1086,8 +1500,13 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 	case "todo":
 		ui.todoUpdated(currentTurn.chat)
 		ui.save()
+	case "goal": // its state, time or tokens changed (goal.go)
+		ui.goalUpdated(currentTurn.chat)
 	case "usage":
 		currentTurn.usage = uiEventValue.data.(int)
+		if currentTurn.cfg.Provider == "claudecode" { // its own count comes when the turn ends
+			currentTurn.chat.ContextUsage = currentTurn.chat.ContextUsage.At(currentTurn.usage)
+		}
 		ui.remote.metaChanged(currentTurn.chat)
 		if currentTurn.chat == ui.current {
 			ui.setContextUsage(uiEventValue.data.(int), agent.ModelContextWindow(currentTurn.cfg))
@@ -1124,9 +1543,6 @@ func (currentTurn *turn) handle(uiEventValue uiEvent) {
 		ui.save()
 	case "plan":
 		ui.plan = uiEventValue.data.(agent.PlanUsage)
-		if currentTurn.chat == ui.current {
-			ui.contextRing.plan = ui.plan
-		}
 	}
 }
 

@@ -49,6 +49,12 @@ type Canvas struct {
 	refreshQueue deduplicatedObjectQueue
 	dirty        bool
 
+	// 1loop: what changed since the last frame, for a frame that paints
+	// only that (TakeDamage): the objects refreshed, unless the canvas was
+	// made dirty another way (moves, resizes, layouts), or too many were.
+	damaged    []fyne.CanvasObject
+	damageFull bool
+
 	mWindowHeadTree, contentTree, menuTree *renderCacheTree
 }
 
@@ -233,6 +239,11 @@ func (c *Canvas) FreeDirtyTextures() uint64 {
 	objectsToFree := c.refreshQueue.Len()
 	for object := c.refreshQueue.Out(); object != nil; object = c.refreshQueue.Out() {
 		c.freeObject(object)
+		if len(c.damaged) < MaxDamaged { // 1loop: TakeDamage
+			c.damaged = append(c.damaged, object)
+		} else {
+			c.damageFull = true
+		}
 	}
 
 	cache.RangeExpiredTexturesFor(c.impl, c.painter.Free)
@@ -282,7 +293,26 @@ func (c *Canvas) Painter() gl.Painter {
 // Refresh refreshes a canvas object.
 func (c *Canvas) Refresh(obj fyne.CanvasObject) {
 	c.refreshQueue.In(obj)
-	async.EnsureMain(c.SetDirty)
+	async.EnsureMain(c.setRefreshed)
+}
+
+// setRefreshed makes the canvas dirty for objects refreshed, which the
+// next frame may paint alone (1loop: TakeDamage).
+func (c *Canvas) setRefreshed() {
+	c.dirty = true
+}
+
+// MaxDamaged is how many objects refreshed a frame may paint alone.
+const MaxDamaged = 8
+
+// TakeDamage says what changed since the last frame: the objects refreshed
+// (their textures freed by FreeDirtyTextures), or full when anything else
+// made the canvas dirty. It starts again for the next frame. The objects
+// are valid until the next FreeDirtyTextures. (1loop)
+func (c *Canvas) TakeDamage() (objects []fyne.CanvasObject, full bool) {
+	objects, full = c.damaged, c.damageFull || len(c.damaged) == 0
+	c.damaged, c.damageFull = c.damaged[:0], false
+	return objects, full
 }
 
 // RemoveShortcut removes a shortcut from the canvas.
@@ -317,6 +347,7 @@ func (c *Canvas) CheckDirtyAndClear() bool {
 // SetDirty sets canvas dirty flag atomically.
 func (c *Canvas) SetDirty() {
 	c.dirty = true
+	c.damageFull = true // 1loop: the whole frame is painted again
 }
 
 // SetMenuTreeAndFocusMgr sets menu tree and focus manager.

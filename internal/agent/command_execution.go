@@ -30,7 +30,7 @@ func (stream *commandStream) Write(p []byte) (int, error) {
 	stream.total += len(p)
 	stream.tail = append(stream.tail, p[max(0, len(p)-8192):]...)
 	if len(stream.tail) > 8192 {
-		stream.tail = append([]byte(nil), stream.tail[len(stream.tail)-8192:]...)
+		stream.tail = stream.tail[:copy(stream.tail, stream.tail[len(stream.tail)-8192:])]
 	}
 	stream.data = append(stream.data, p[:min(len(p), commandStreamLimit-len(stream.data))]...)
 	return len(p), nil

@@ -15,7 +15,7 @@ keeps the plain version.
 |---|---|
 | `packaging/linux/build.sh binaries tarball deb appimage` | `1loop-VERSION-linux-amd64.tar.gz`, `1loop-VERSION-amd64.deb`, `1loop-VERSION-x86_64.AppImage` |
 | `packaging/server/build.sh` | `1loop-server-VERSION-linux-amd64`, `1loop-server-VERSION-windows-amd64.exe` |
-| `packaging/windows/build.sh` | `1loop-VERSION-windows-amd64.exe` |
+| `packaging/windows/build.sh` | `1loop-VERSION-windows-amd64-setup.exe`, `1loop-VERSION-windows-amd64.exe` |
 | `packaging/android/build.sh debug` | `1loop-VERSION-debug.apk`, `1loop-VERSION-android-native-sources.zip` |
 | `packaging/android/build.sh release` | `1loop-VERSION.apk` (only with the release key), same native sources |
 
@@ -38,6 +38,19 @@ Always start `bin/1loop`: in a Wayland session it hands over to
 `make tarball deb`, `make appimage`, `make flatpak` and `make nix` build the
 Linux downloads. Natively on Windows: MinGW-w64 GCC on `PATH`, then
 `go build -trimpath -ldflags="-s -w -H=windowsgui -extldflags=-static" -o bin/1loop.exe ./cmd/1loop`.
+
+### Environment variables
+
+For work on 1loop itself; those of an installation are in
+[INSTALL.md](INSTALL.md).
+
+| Variable | Effect |
+|---|---|
+| `ONELOOP_DEV=1` | The developer log, as with `-dev` |
+| `ONELOOP_BENCH=<kind>` | With `-dev`, drives the window and measures it: see `internal/ui/bench.go` for the kinds, `ONELOOP_BENCH_SECONDS` and `ONELOOP_BENCH_PROFILE` |
+| `ONELOOP_VSYNC=1` | Wayland: leaves frame pacing to the OpenGL driver |
+| `ONELOOP_UPDATE_URL=<url>` | The update manifest to read instead of the release page's |
+| `ONELOOP_COMPUTER_BACKEND=<path>` | The `codex-computer-use-linux` to run, instead of the one found on `PATH` |
 
 ## Checks
 
@@ -113,7 +126,10 @@ sudo apt-get install gcc-mingw-w64-x86-64 p7zip-full xz-utils
 packaging/windows/build.sh
 ```
 
-The download is the desktop exe alone; the server is
+The downloads are the desktop exe, which the updater fetches, and a setup
+which installs it (`cmd/1loop-setup`, which draws its own window; the exe is
+at the end of its file; `ONELOOP_SETUP_PREVIEW=DIR go test ./cmd/1loop-setup`
+writes its screens as images); the server is
 `packaging/server/build.sh`'s. Both exes carry the 1loop icon and their
 version (Properties → Details): `go run ./cmd/1loop-release winres` writes
 them as a `.syso` beside the command's sources, which `go build` links, and

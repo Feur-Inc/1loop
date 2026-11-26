@@ -12,9 +12,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/chromedp/cdproto/target"
+
 	"1loop/internal/browser"
 	"1loop/internal/core"
-	"github.com/chromedp/cdproto/target"
 )
 
 // Only the engine knows the unguessable CDP route. The socket itself is owned

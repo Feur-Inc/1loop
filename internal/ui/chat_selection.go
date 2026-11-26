@@ -8,6 +8,10 @@ package ui
 // the start of the last, and Ctrl+C copies them in reading order. A press
 // in the conversation's margins, or between two messages, starts at the
 // nearest message's text (selectCatcher), as in a text editor.
+//
+// It also holds what the gestures share between messages: the press the
+// selection grows from (its anchor), the unit it grows by, and the count of
+// the presses of a double or triple click.
 
 import (
 	"strings"
@@ -20,7 +24,12 @@ import (
 type chatSelection struct {
 	ui     *desktopUI
 	anchor *selectLayer   // where the press was
+	lo, hi int            // what the press selected in it: a caret, a word, a paragraph
+	unit   int            // what the selection grows by (selection_units.go)
 	marked []*selectLayer // the layers holding part of the selection, in reading order
+	// pressed is the layer the button went down on: its drags extend.
+	pressed *selectLayer
+	clicks  clickCounter
 }
 
 // start makes a press in layer the beginning of a new selection.
@@ -31,49 +40,76 @@ func (chatSel *chatSelection) start(layer *selectLayer) {
 			other.clearSelection()
 		}
 	}
-	chatSel.anchor, chatSel.marked = layer, []*selectLayer{layer}
+	chatSel.anchor, chatSel.pressed, chatSel.marked = layer, layer, []*selectLayer{layer}
+}
+
+// press starts a selection at a point of layer: the caret there, or the
+// word or the paragraph under it.
+func (chatSel *chatSelection) press(layer *selectLayer, at fyne.Position, unit int) {
+	chatSel.start(layer)
+	chatSel.unit = unit
+	if len(layer.pieces) == 0 {
+		chatSel.lo, chatSel.hi = 0, 0
+		layer.clearSelection()
+		return
+	}
+	lo := layer.caretAt(at)
+	hi := lo
+	if unit != byChar {
+		lo, hi = layer.unitAt(unit, layer.hitAt(at))
+	}
+	chatSel.lo, chatSel.hi = lo, hi
+	layer.mark(lo, hi)
 }
 
 // placed is a layer of the conversation with its place on the screen.
 type placed struct {
 	layer *selectLayer
 	at    fyne.Position
+	shown bool // on screen: out of sight, its place is not known
 }
 
-// layers are the conversation's selection layers on screen, in reading order.
+// layers are the conversation's selection layers, in reading order, those
+// out of sight too.
 func (chatSel *chatSelection) layers() []placed {
 	var found []placed
-	var walk func(fyne.CanvasObject)
-	walk = func(object fyne.CanvasObject) {
-		if object == nil || !object.Visible() {
+	var walk func(fyne.CanvasObject, bool)
+	walk = func(object fyne.CanvasObject, shown bool) {
+		if object == nil {
 			return
 		}
+		shown = shown && object.Visible()
 		switch o := object.(type) {
 		case *selectLayer:
-			found = append(found, placed{layer: o})
+			found = append(found, placed{layer: o, shown: shown})
 		case *fyne.Container:
 			for _, child := range o.Objects {
-				walk(child)
+				walk(child, shown)
 			}
 		}
 	}
 	if chatSel.ui.transcript != nil {
-		walk(chatSel.ui.transcript)
+		walk(chatSel.ui.transcript, true)
 	}
 	if app := fyne.CurrentApp(); app != nil {
 		driver := app.Driver()
 		for i := range found {
-			found[i].at = driver.AbsolutePositionForObject(found[i].layer)
+			if found[i].shown {
+				found[i].at = driver.AbsolutePositionForObject(found[i].layer)
+			}
 		}
 	}
 	return found
 }
 
-// nearest is the layer at the height of a point on the screen, else the
+// nearest is the layer on screen at the height of a point, else the
 // closest one above or below it. -1 when there is none.
 func nearest(layers []placed, at fyne.Position) int {
 	best, bestDistance := -1, float32(0)
 	for i, candidate := range layers {
+		if !candidate.shown {
+			continue
+		}
 		top, bottom := candidate.at.Y, candidate.at.Y+candidate.layer.Size().Height
 		distance := float32(0)
 		if at.Y < top {
@@ -88,59 +124,77 @@ func nearest(layers []placed, at fyne.Position) int {
 	return best
 }
 
-// drag moves the selection's moving end to the pointer, wherever it is in
-// the conversation, and scrolls when the pointer goes past its top or bottom.
-func (chatSel *chatSelection) drag(layer *selectLayer, d *fyne.DragEvent) {
-	if chatSel.anchor != layer {
-		chatSel.start(layer)
+// extend moves the selection's moving end to a point on the screen,
+// wherever it is in the conversation (a drag, a Shift+click): from the
+// anchor's unit to the unit under the pointer. False when the anchor is no
+// longer in the conversation.
+func (chatSel *chatSelection) extend(at fyne.Position) bool {
+	anchor := chatSel.anchor
+	if anchor == nil {
+		return false
 	}
-	chatSel.follow(d.AbsolutePosition)
+	chatSel.ui.selectIn(chatSel)
 	layers := chatSel.layers()
-	from, to := -1, nearest(layers, d.AbsolutePosition)
+	from, to := -1, nearest(layers, at)
 	for i, candidate := range layers {
-		if candidate.layer == layer {
+		if candidate.layer == anchor {
 			from = i
 		}
 	}
-	top, bottom := float32(0), float32(0)
-	if from >= 0 {
-		top = layers[from].at.Y
-		bottom = top + layer.Size().Height
+	if from < 0 || to < 0 {
+		return false
 	}
-	// Within the press's own message (or level with it): only that one.
-	if from < 0 || to < 0 || to == from || (d.AbsolutePosition.Y >= top && d.AbsolutePosition.Y <= bottom) {
-		for _, other := range chatSel.marked {
-			if other != layer {
-				other.clearSelection()
+	if anchor.stale || len(anchor.pieces) == 0 {
+		anchor.known()
+	}
+	// Level with the anchor's message: it alone.
+	if shown := layers[from]; shown.shown && at.Y >= shown.at.Y && at.Y <= shown.at.Y+anchor.Size().Height {
+		to = from
+	}
+	var marked []*selectLayer
+	if to == from {
+		local := at.Subtract(layers[from].at)
+		lo, hi := extendSpan(anchor.text, chatSel.unit, chatSel.lo, chatSel.hi, anchor.hitAt(local), anchor.caretAt(local))
+		anchor.mark(lo, hi)
+		marked = []*selectLayer{anchor}
+	} else {
+		forward := to > from
+		first, last := from, to
+		if !forward {
+			first, last = to, from
+		}
+		for i := first; i <= last; i++ {
+			current := layers[i].layer
+			if layers[i].shown && current.stale {
+				current.gather()
+			}
+			marked = append(marked, current)
+			switch {
+			case i == from && forward: // the press's message: from the press to its end
+				current.mark(chatSel.lo, -1)
+			case i == from:
+				current.mark(0, chatSel.hi)
+			case i == to: // the pointer's message: from its start or end to the pointer
+				reach := current.reach(at.Subtract(layers[i].at), chatSel.unit, forward)
+				if forward {
+					current.mark(0, reach)
+				} else {
+					current.mark(reach, -1)
+				}
+			default:
+				current.mark(0, -1)
 			}
 		}
-		chatSel.marked = []*selectLayer{layer}
-		layer.point = layer.locate(d.Position)
-		layer.Refresh()
-		return
 	}
-	forward := to > from
-	first, last := from, to
-	if !forward {
-		first, last = to, from
-	}
+	chatSel.keep(marked)
+	return true
+}
+
+// keep makes marked the layers holding the selection: the others let go.
+func (chatSel *chatSelection) keep(marked []*selectLayer) {
 	keep := map[*selectLayer]bool{}
-	var marked []*selectLayer
-	for i := first; i <= last; i++ {
-		current := layers[i].layer
-		if current.stale {
-			current.gather()
-		}
-		keep[current] = true
-		marked = append(marked, current)
-		switch {
-		case i == from: // the press's message: from the press to its end or start
-			current.mark(current.from, current.edge(forward))
-		case i == to: // the pointer's message: from its start or end to the pointer
-			current.mark(current.edge(!forward), current.locate(d.AbsolutePosition.Subtract(layers[i].at)))
-		default:
-			current.mark(current.edge(false), current.edge(true))
-		}
+	for _, layer := range marked {
+		keep[layer] = true
 	}
 	for _, other := range chatSel.marked {
 		if !keep[other] {
@@ -148,6 +202,27 @@ func (chatSel *chatSelection) drag(layer *selectLayer, d *fyne.DragEvent) {
 		}
 	}
 	chatSel.marked = marked
+}
+
+// selectAll selects the whole conversation (Ctrl+A).
+func (chatSel *chatSelection) selectAll() {
+	layers := chatSel.layers()
+	if len(layers) == 0 {
+		return
+	}
+	chatSel.ui.selectIn(chatSel)
+	var marked []*selectLayer
+	for _, candidate := range layers {
+		if candidate.shown {
+			candidate.layer.gather()
+		}
+		candidate.layer.mark(0, -1)
+		marked = append(marked, candidate.layer)
+	}
+	chatSel.keep(marked)
+	chatSel.anchor, chatSel.pressed = marked[0], nil
+	chatSel.lo, chatSel.hi, chatSel.unit = 0, 0, byChar
+	chatSel.offer()
 }
 
 // follow scrolls the conversation while the pointer is past its top or the
@@ -198,7 +273,15 @@ func (chatSel *chatSelection) clearSelection() {
 	for _, layer := range chatSel.marked {
 		layer.clearSelection()
 	}
-	chatSel.anchor, chatSel.marked = nil, nil
+	chatSel.anchor, chatSel.pressed, chatSel.marked = nil, nil, nil
+}
+
+// offer makes what is selected the primary selection, which a middle click
+// pastes in other programs (Linux: selection_primary_*.go).
+func (chatSel *chatSelection) offer() {
+	if text := chatSel.selectedText(); text != "" {
+		setPrimarySelection(chatSel.ui.window, text)
+	}
 }
 
 // selectCatcher lies under the conversation, behind every message: a press
@@ -220,6 +303,10 @@ func (catcher *selectCatcher) CreateRenderer() fyne.WidgetRenderer { return empt
 
 func (catcher *selectCatcher) MouseDown(e *desktop.MouseEvent) {
 	catcher.target = nil
+	if e.Button == desktop.MouseButtonSecondary {
+		catcher.ui.chatSel.menu(e.AbsolutePosition)
+		return
+	}
 	if e.Button != desktop.MouseButtonPrimary {
 		return
 	}
@@ -235,7 +322,11 @@ func (catcher *selectCatcher) MouseDown(e *desktop.MouseEvent) {
 	catcher.target.MouseDown(&local)
 }
 
-func (catcher *selectCatcher) MouseUp(*desktop.MouseEvent) {}
+func (catcher *selectCatcher) MouseUp(e *desktop.MouseEvent) {
+	if catcher.target != nil && e.Button == desktop.MouseButtonPrimary {
+		catcher.ui.chatSel.offer()
+	}
+}
 
 func (catcher *selectCatcher) Dragged(d *fyne.DragEvent) {
 	if catcher.target == nil {

@@ -12,6 +12,7 @@ import (
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/theme"
 
 	"1loop/internal/agent"
 	registry "1loop/internal/settings"
@@ -23,6 +24,7 @@ const groupChatLimit = 5
 // sideChat is a chat as the sidebar lists it: this computer's, a machine's
 // or a server's.
 type sideChat struct {
+	target   string // the server it is on, "" here: a moved chat has its ID on both
 	id       string
 	parent   string // a subchat's parent, "" for another chat
 	ended    string // how a subchat's last turn ended: done, stopped or failed
@@ -156,10 +158,10 @@ func (ui *desktopUI) renderSidebar(groups []targetGroup) {
 		}
 		all = append(all, groups[i].chats...)
 		groups[i].chats = nestSubchats(groups[i].chats)
-		sortByRank(groups[i].chats, func(chat sideChat) string { return chatKey(chat.id) }, ui.sideRank)
+		sortByRank(groups[i].chats, func(chat sideChat) string { return chatKey(chat.target, chat.id) }, ui.sideRank)
 		groups[i].chats = slices.DeleteFunc(groups[i].chats, func(chat sideChat) bool {
 			switch {
-			case ui.isPinned(chatKey(chat.id)):
+			case ui.isPinned(chatKey(chat.target, chat.id)):
 				pinned = append(pinned, chat)
 			case chat.scratch:
 				scratch = append(scratch, chat)
@@ -202,7 +204,7 @@ func (ui *desktopUI) addPinned(groups []targetGroup, chats []sideChat) {
 			continue
 		}
 		for _, chat := range chats {
-			if chatKey(chat.id) == key {
+			if chatKey(chat.target, chat.id) == key {
 				ui.sideOrder = append(ui.sideOrder, chat)
 				ui.addChatRow(chat, "", false, slices.Clone(ui.pinned))
 			}
@@ -361,7 +363,8 @@ func (ui *desktopUI) addScratchGroup(chats []sideChat) {
 	if folded {
 		icon = iconChevronRight
 	}
-	header := newRow(noFolderLabel, icon, styleNav, func() { ui.foldProject(scratchGroup, !folded) })
+	header := newRow(thisComputerLabel, icon, styleNav, func() { ui.foldProject(scratchGroup, !folded) })
+	header.mark = theme.ComputerIcon()
 	header.accent = true
 	header.selected = ui.cfg.InScratch() && ui.current == nil
 	if folded && groupRunning(chats) {
@@ -435,13 +438,13 @@ func (ui *desktopUI) addChatRow(chat sideChat, project string, indent bool, sibl
 	if nested, _ := nestedCount(chat.subchats); nested > 0 {
 		row.mark, row.markText = iconBranch, strconv.Itoa(nested)
 	}
-	ui.dragRow(row, chatKey(chat.id), siblings)
+	ui.dragRow(row, chatKey(chat.target, chat.id), siblings)
 	var wrap func(fyne.CanvasObject) fyne.CanvasObject
 	if indent {
 		wrap = func(object fyne.CanvasObject) fyne.CanvasObject { return padded(0, 0, 28, 0, object) }
 	}
-	ui.addSide(chatKey(chat.id), ui.reuseRow(chatKey(chat.id), row, wrap, func(anchor fyne.CanvasObject) *sheet {
-		return showMenu(ui.window, anchor, append(slices.Clip(chat.menu), ui.orderActions(chatKey(chat.id), siblings)...))
+	ui.addSide(chatKey(chat.target, chat.id), ui.reuseRow(chatKey(chat.target, chat.id), row, wrap, func(anchor fyne.CanvasObject) *sheet {
+		return showMenu(ui.window, anchor, append(slices.Clip(chat.menu), ui.orderActions(chatKey(chat.target, chat.id), siblings)...))
 	}))
 	ui.addSubchatTree(chat)
 }

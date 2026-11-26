@@ -46,6 +46,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -641,6 +643,21 @@ private val webPictures = object : LruCache<String, ImageBitmap>(24 shl 20) {
     override fun sizeOf(key: String, value: ImageBitmap) = value.width * value.height * 4
 }
 
+/** The largest picture read, as on the desktop: one past it could take the whole heap. */
+private const val WEB_PICTURE_BYTES = 8 shl 20
+
+/** Everything the stream holds, null when that is more than [limit]. */
+private fun InputStream.readAtMost(limit: Int): ByteArray? {
+    val out = ByteArrayOutputStream()
+    val buffer = ByteArray(64 shl 10)
+    while (true) {
+        val read = read(buffer)
+        if (read < 0) return out.toByteArray()
+        if (out.size() + read > limit) return null
+        out.write(buffer, 0, read)
+    }
+}
+
 @Composable
 private fun WebPicture(address: String, modifier: Modifier) {
     val picture by produceState(webPictures.get(address), address) {
@@ -651,7 +668,7 @@ private fun WebPicture(address: String, modifier: Modifier) {
                 connection.connectTimeout = 15000
                 connection.readTimeout = 30000
                 connection.setRequestProperty("User-Agent", "1loop")
-                val bytes = try { connection.inputStream.use { it.readBytes() } } finally { connection.disconnect() }
+                val bytes = try { connection.inputStream.use { it.readAtMost(WEB_PICTURE_BYTES) } } finally { connection.disconnect() } ?: return@runCatching null
                 val bounds = BitmapFactory.Options().apply { inJustDecodeBounds = true }
                 BitmapFactory.decodeByteArray(bytes, 0, bytes.size, bounds)
                 var sample = 1

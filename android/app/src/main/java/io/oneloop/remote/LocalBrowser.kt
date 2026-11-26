@@ -57,7 +57,7 @@ class LocalBrowser(private val context: Context, private val profile: String? = 
                 if (!pages.containsKey(id)) {
                     WebView.setWebContentsDebuggingEnabled(true)
                     val view = WebView(context)
-                    profile?.let { usingProfile(view, it) }
+                    profile?.let { if (it != LOOPY || profilesSupported()) usingProfile(view, it) } // an old WebView has one profile for all
                     view.settings.apply {
                         javaScriptEnabled = true
                         domStorageEnabled = true
@@ -166,6 +166,9 @@ class LocalBrowser(private val context: Context, private val profile: String? = 
 
     companion object {
         private val open = mutableListOf<LocalBrowser>()
+
+        /** The profile of Loopy's browser. */
+        const val LOOPY = "loopy"
 
         /** WebViews shown outside these browsers (the ChatGPT sign-in), on the main thread. */
         var screens = 0

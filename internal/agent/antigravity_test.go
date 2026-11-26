@@ -111,7 +111,7 @@ esac
 
 func TestRunAntigravityApprovesRefusedCommand(t *testing.T) {
 	log := fakeAgy(t)
-	backend := &App{Approvals: map[string]chan bool{}}
+	backend := &App{Approvals: map[string]chan ApprovalAnswer{}}
 	var events []string
 	var session string
 	emit := func(kind string, value any) {
@@ -148,7 +148,7 @@ func TestRunAntigravityApprovesRefusedCommand(t *testing.T) {
 
 func TestRunAntigravityDeniedCommandStops(t *testing.T) {
 	log := fakeAgy(t)
-	backend := &App{Approvals: map[string]chan bool{}}
+	backend := &App{Approvals: map[string]chan ApprovalAnswer{}}
 	emit := func(kind string, value any) {
 		if kind == "approval" {
 			go backend.Approve(value.(map[string]any)["id"].(string), false)

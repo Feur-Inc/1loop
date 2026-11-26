@@ -12,7 +12,9 @@ import (
 	"crypto/x509/pkix"
 	"encoding/hex"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"io/fs"
 	"math/big"
 	"os"
 	"path/filepath"
@@ -74,8 +76,20 @@ func Certificate(dir, certPath, keyPath string) (tls.Certificate, error) {
 				return tls.Certificate{}, err
 			}
 		}
+		certificate, err := tls.LoadX509KeyPair(certPath, keyPath)
+		var unreadable *fs.PathError
+		if err != nil && !errors.As(err, &unreadable) {
+			// Damaged, or the halves of two certificates: never replaced
+			// here, since a new one would unpair every device.
+			return tls.Certificate{}, fmt.Errorf("%s and %s do not make a certificate (%v): restore both from a backup, or delete both to make a new one (paired devices then pair again)", certPath, keyPath, err)
+		}
+		return certificate, err
 	}
-	return tls.LoadX509KeyPair(certPath, keyPath)
+	certificate, err := tls.LoadX509KeyPair(certPath, keyPath)
+	if err != nil {
+		return tls.Certificate{}, fmt.Errorf("-tls-cert %s and -tls-key %s: %v", certPath, keyPath, err)
+	}
+	return certificate, nil
 }
 
 // Fingerprint is the SHA-256 of the certificate, in lowercase hexadecimal.

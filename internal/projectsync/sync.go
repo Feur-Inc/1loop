@@ -49,9 +49,25 @@ func (chat Chat) Revision() string {
 			chat.Versions[i].Snapshot.Config = agent.Config{}
 		}
 	}
-	data, _ := json.Marshal([]any{chat.Title, chat.History, chat.Items, chat.Todo, chat.Version, chat.Versions})
-	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:12])
+	sum := sha256.New()
+	writer := core.NewJSONWriter(sum) // what json.Marshal makes of the list of these
+	writer.Raw([]byte{'['})
+	writer.Value(chat.Title)
+	writer.Raw([]byte{','})
+	agent.WriteMessagesJSON(writer, chat.History)
+	writer.Raw([]byte{','})
+	agent.WriteItemsJSON(writer, chat.Items)
+	writer.Raw([]byte{','})
+	writer.Value(chat.Todo)
+	writer.Raw([]byte{','})
+	writer.Value(chat.Version)
+	writer.Raw([]byte{','})
+	agent.WriteVersionsJSON(writer, chat.Versions)
+	writer.Raw([]byte{']'})
+	if writer.Err() != nil {
+		sum.Reset()
+	}
+	return hex.EncodeToString(sum.Sum(nil)[:12])
 }
 
 const relocationPrefix = "[Project copied between devices]"
@@ -59,9 +75,19 @@ const relocationPrefix = "[Project copied between devices]"
 // Portable returns an independent snapshot: account settings and CLI sessions
 // belong to their device, while messages, tool results, images and TODO travel.
 func (chat Chat) Portable() Chat {
-	data, _ := json.Marshal(chat)
-	var copied Chat
-	_ = json.Unmarshal(data, &copied)
+	copied := chat // its lists are made again below; texts and pictures, never edited in place, are shared
+	copied.Todo = chat.Todo.Copy()
+	copied.Versions = nil
+	for _, version := range agent.CopyVersions(chat.Versions) {
+		if version.Snapshot != nil {
+			snapshot := *version.Snapshot
+			version.Snapshot = &snapshot
+		}
+		if len(version.Selected) == 0 {
+			version.Selected = nil
+		}
+		copied.Versions = append(copied.Versions, version)
+	}
 	cleanConfig := func(cfg agent.Config) agent.Config {
 		identity := agent.IdentityOf(cfg)
 		if cfg.RanWith != nil {
@@ -71,7 +97,7 @@ func (chat Chat) Portable() Chat {
 		return agent.Config{Provider: cfg.Provider, Model: cfg.Model, Workspace: cfg.Workspace, RanWith: &identity}
 	}
 	cleanHistory := func(history []agent.Message) []agent.Message {
-		out := history[:0]
+		out := make([]agent.Message, 0, len(history))
 		for _, message := range history {
 			if message.Internal && strings.HasPrefix(message.Content, relocationPrefix) {
 				continue
@@ -93,9 +119,9 @@ func (chat Chat) Portable() Chat {
 		return out
 	}
 	cleanItems := func(items []agent.ChatItem) []agent.ChatItem {
-		out := items[:0]
+		out := make([]agent.ChatItem, 0, len(items))
 		for _, item := range items {
-			if item.Kind != "note" || !strings.HasPrefix(item.Text, relocationPrefix) {
+			if item.Kind != "note" || !strings.HasPrefix(item.Text, relocationPrefix) && !strings.HasPrefix(item.Text, movedPrefix) {
 				out = append(out, item)
 			}
 		}
@@ -480,19 +506,36 @@ func Export(w io.Writer, root, from string, plan Plan, chats []Chat) error {
 		if !wanted[chat.ID] {
 			continue
 		}
-		data, err := json.Marshal(chat.Portable())
+		// An archive says an entry's size first: written to nowhere, it is
+		// known without the conversation ever being whole in memory.
+		chat = chat.Portable()
+		size, err := chat.writeJSON(io.Discard)
 		if err != nil {
 			return err
 		}
-		if err := writeEntry(archive, "chats/"+chat.ID+".json", 0600, data); err != nil {
+		if err := archive.WriteHeader(entryHeader("chats/"+chat.ID+".json", 0600, size)); err != nil {
+			return err
+		}
+		if _, err := chat.writeJSON(archive); err != nil {
 			return err
 		}
 	}
 	return archive.Close()
 }
 
+func entryHeader(name string, mode, size int64) *tar.Header {
+	return &tar.Header{Name: name, Mode: mode, Size: size, ModTime: time.Now(), Typeflag: tar.TypeReg}
+}
+
+// writeJSON writes the chat as json.Marshal encodes it, and says its size.
+func (chat Chat) writeJSON(w io.Writer) (int64, error) {
+	writer := core.NewJSONWriter(w)
+	agent.WriteChatJSON(writer, &chat, &chat.History, &chat.Items, &chat.Versions)
+	return writer.Written, writer.Err()
+}
+
 func writeEntry(archive *tar.Writer, name string, mode int64, data []byte) error {
-	if err := archive.WriteHeader(&tar.Header{Name: name, Mode: mode, Size: int64(len(data)), ModTime: time.Now(), Typeflag: tar.TypeReg}); err != nil {
+	if err := archive.WriteHeader(entryHeader(name, mode, int64(len(data)))); err != nil {
 		return err
 	}
 	_, err := archive.Write(data)
@@ -630,15 +673,14 @@ func inside(root, relative string) (string, error) {
 		return "", fmt.Errorf("invalid path in the copy: %q", relative)
 	}
 	target := filepath.Join(root, filepath.FromSlash(clean))
-	rel, err := filepath.Rel(root, target)
-	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+	// No link on the way may lead outside the project: its folder is
+	// resolved as agent.WorkspacePath does (core.NewPath). The path itself
+	// is kept as written, so a link of the project is read as a link.
+	if !core.Within(root, target) {
 		return "", fmt.Errorf("invalid path in the copy: %q", relative)
 	}
-	// No link on the way may lead outside the project.
-	for dir := filepath.Dir(target); dir != root && strings.HasPrefix(dir, root); dir = filepath.Dir(dir) {
-		if info, err := os.Lstat(dir); err == nil && info.Mode()&os.ModeSymlink != 0 {
-			return "", fmt.Errorf("invalid path in the copy: %q", relative)
-		}
+	if _, err := core.NewPath(root, filepath.Dir(target)); err != nil {
+		return "", fmt.Errorf("invalid path in the copy: %q", relative)
 	}
 	return target, nil
 }

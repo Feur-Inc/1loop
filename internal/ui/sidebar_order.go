@@ -25,7 +25,12 @@ func projectKey(target projectTarget, project string) string {
 	return "project:" + groupKey(target, project)
 }
 
-func chatKey(id string) string { return "chat:" + id }
+func chatKey(server, id string) string {
+	if server != "" { // a moved chat has its ID here and on the server
+		return "chat:" + server + ":" + id
+	}
+	return "chat:" + id
+}
 
 // touchOrder ranks a project and a chat first: a message was sent in them.
 func (ui *desktopUI) touchOrder(target projectTarget, project, chatID string) {
@@ -37,7 +42,11 @@ func (ui *desktopUI) touchOrder(target projectTarget, project, chatID string) {
 		ui.sideRank[projectKey(target, project)] = now
 	}
 	if chatID != "" {
-		ui.sideRank[chatKey(chatID)] = now
+		server := ""
+		if target.kind == targetServer {
+			server = target.id
+		}
+		ui.sideRank[chatKey(server, chatID)] = now
 	}
 	ui.save()
 }
@@ -194,7 +203,7 @@ func (ui *desktopUI) siblingProjects(group targetGroup) []string {
 func (ui *desktopUI) unpinnedChatKeys(chats []sideChat) []string {
 	var keys []string
 	for _, chat := range chats {
-		if key := chatKey(chat.id); !ui.isPinned(key) {
+		if key := chatKey(chat.target, chat.id); !ui.isPinned(key) {
 			keys = append(keys, key)
 		}
 	}

@@ -29,6 +29,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"strings"
+	"sync"
 	"time"
 
 	"1loop/internal/core"
@@ -61,20 +62,50 @@ func HooksPath() string {
 	return filepath.Join(dir, "1loop", "hooks.json")
 }
 
-// loadHooks reads the hooks file at each event, so an edit applies at once.
-func loadHooks() (hooksFile, error) {
-	var file hooksFile
-	data, err := os.ReadFile(HooksPath())
-	if errors.Is(err, os.ErrNotExist) {
-		return file, nil
+// loadHooks is the user's hooks file, checked at each event so an edit
+// applies at once.
+func loadHooks() (hooksFile, error) { return cachedHooks(HooksPath()) }
+
+// hookFiles are the hooks files as last read (the user's and the enabled
+// plugins'), by path, each kept while os.Stat says the same of it (#519):
+// a tool call checks them twice. What they hold is shared by every caller
+// and never changed: read it only.
+var hookFiles = struct {
+	sync.Mutex
+	byPath map[string]hooksRead
+}{byPath: map[string]hooksRead{}}
+
+type hooksRead struct {
+	stamps *core.FileStamps
+	file   hooksFile
+	err    error
+}
+
+// readHooksFile reads a hooks file (tests count its calls).
+var readHooksFile = os.ReadFile
+
+// cachedHooks is the hooks file at path, read again only when it changed;
+// a missing file has no hooks.
+func cachedHooks(path string) (hooksFile, error) {
+	hookFiles.Lock()
+	defer hookFiles.Unlock()
+	read, found := hookFiles.byPath[path]
+	if !found || !read.stamps.Fresh() {
+		read = hooksRead{stamps: &core.FileStamps{}}
+		read.stamps.Add(path)
+		data, err := readHooksFile(path)
+		switch {
+		case errors.Is(err, os.ErrNotExist):
+		case err != nil:
+			read.err = err
+		default:
+			if err := json.Unmarshal(data, &read.file); err != nil {
+				read.file, read.err = hooksFile{}, fmt.Errorf("%s: %w", path, err)
+			}
+		}
+		hookFiles.byPath[path] = read
 	}
-	if err != nil {
-		return file, err
-	}
-	if err := json.Unmarshal(data, &file); err != nil {
-		return file, fmt.Errorf("%s: %w", HooksPath(), err)
-	}
-	return file, nil
+	return read.file, read.err
 }
 
 // hookResult is what an event's hooks said: blocked (exit 2) with feedback,
@@ -93,6 +124,36 @@ func runHooks(ctx context.Context, event, target string, payload map[string]any)
 		result.problems = append(result.problems, err.Error())
 		return result
 	}
+	// The user's file, then the enabled plugins' hooks: written for Claude
+	// Code, they also match its names of 1loop's tools, and find their
+	// plugin's folder in CLAUDE_PLUGIN_ROOT.
+	type match struct {
+		hook hookCommand
+		root string
+	}
+	var matches []match
+	collect := func(matchers []hookMatcher, root string) {
+		for _, matcher := range matchers {
+			if !hookMatches(matcher.Matcher, target) && (root == "" || !claudeHookMatches(matcher.Matcher, target)) {
+				continue
+			}
+			for _, hook := range matcher.Hooks {
+				if hook.Type != "" && hook.Type != "command" || strings.TrimSpace(hook.Command) == "" {
+					continue
+				}
+				matches = append(matches, match{hook, root})
+			}
+		}
+	}
+	collect(file.Hooks[event], "")
+	for _, plugin := range pluginHookFiles() {
+		if hooks, err := cachedHooks(plugin.File); err == nil {
+			collect(hooks.Hooks[event], plugin.Root)
+		}
+	}
+	if len(matches) == 0 {
+		return result // the payload, a tool's whole output after it, is never encoded
+	}
 	payload["hook_event_name"] = event
 	input, _ := json.Marshal(payload)
 	cwd, _ := payload["cwd"].(string)
@@ -101,108 +162,85 @@ func runHooks(ctx context.Context, event, target string, payload map[string]any)
 	if machine != nil {
 		dir, _ = os.UserHomeDir()
 	}
-	// The user's file, then the enabled plugins' hooks: written for Claude
-	// Code, they also match its names of 1loop's tools, and find their
-	// plugin's folder in CLAUDE_PLUGIN_ROOT.
-	type source struct {
-		matchers []hookMatcher
-		root     string
-	}
-	sources := []source{{file.Hooks[event], ""}}
-	for _, plugin := range pluginHookFiles() {
-		var hooks hooksFile
-		if data, err := os.ReadFile(plugin.File); err == nil && json.Unmarshal(data, &hooks) == nil {
-			sources = append(sources, source{hooks.Hooks[event], plugin.Root})
+	for _, matched := range matches {
+		hook, root := matched.hook, matched.root
+		timeout := time.Duration(max(1, hook.Timeout)) * time.Second
+		if hook.Timeout == 0 {
+			timeout = 60 * time.Second
 		}
-	}
-	for _, from := range sources {
-		for _, matcher := range from.matchers {
-			if !hookMatches(matcher.Matcher, target) && (from.root == "" || !claudeHookMatches(matcher.Matcher, target)) {
+		parent := ctx
+		if hook.Async {
+			parent = context.Background() // outlives the tool call it follows
+		}
+		run, cancel := context.WithTimeout(parent, timeout)
+		expand := func(text string) string {
+			if root == "" {
+				return text
+			}
+			return strings.ReplaceAll(text, "${CLAUDE_PLUGIN_ROOT}", root)
+		}
+		var cmd *exec.Cmd
+		if len(hook.Args) > 0 {
+			args := make([]string, len(hook.Args))
+			for i, arg := range hook.Args {
+				args[i] = expand(arg)
+			}
+			cmd = exec.CommandContext(run, expand(hook.Command), args...)
+		} else {
+			cmd = platform.ShellCommand(run, expand(hook.Command))
+		}
+		platform.WorkspaceCommand(cmd, dir, platform.WorkspaceYOLO(ctx))
+		cmd.Env = append(os.Environ(), "ONELOOP_WORKSPACE="+cwd, "ONELOOP_HOOK_EVENT="+event)
+		if machine != nil {
+			cmd.Env = append(cmd.Env, "ONELOOP_MACHINE="+machine.Label())
+		}
+		if root != "" {
+			cmd.Env = append(cmd.Env, "CLAUDE_PLUGIN_ROOT="+root, "CLAUDE_PROJECT_DIR="+cwd)
+		}
+		cmd.Stdin = bytes.NewReader(input)
+		// Bounded, like a tool's output: a chatty hook cannot grow
+		// memory while it runs.
+		stdout, stderr := &outputBuffer{}, &outputBuffer{}
+		cmd.Stdout, cmd.Stderr = stdout, stderr
+		platform.PrepareProcess(cmd)
+		cmd.Cancel = func() error { return platform.KillProcessTree(cmd) }
+		if hook.Async {
+			if err := cmd.Start(); err != nil {
+				cancel()
+				result.problems = append(result.problems, fmt.Sprintf("Hook %q failed (%s): %s", hook.Command, event, err))
 				continue
 			}
-			for _, hook := range matcher.Hooks {
-				if hook.Type != "" && hook.Type != "command" || strings.TrimSpace(hook.Command) == "" {
-					continue
-				}
-				timeout := time.Duration(max(1, hook.Timeout)) * time.Second
-				if hook.Timeout == 0 {
-					timeout = 60 * time.Second
-				}
-				parent := ctx
-				if hook.Async {
-					parent = context.Background() // outlives the tool call it follows
-				}
-				run, cancel := context.WithTimeout(parent, timeout)
-				expand := func(text string) string {
-					if from.root == "" {
-						return text
-					}
-					return strings.ReplaceAll(text, "${CLAUDE_PLUGIN_ROOT}", from.root)
-				}
-				var cmd *exec.Cmd
-				if len(hook.Args) > 0 {
-					args := make([]string, len(hook.Args))
-					for i, arg := range hook.Args {
-						args[i] = expand(arg)
-					}
-					cmd = exec.CommandContext(run, expand(hook.Command), args...)
-				} else {
-					cmd = platform.ShellCommand(run, expand(hook.Command))
-				}
-				platform.WorkspaceCommand(cmd, dir, platform.WorkspaceYOLO(ctx))
-				cmd.Env = append(os.Environ(), "ONELOOP_WORKSPACE="+cwd, "ONELOOP_HOOK_EVENT="+event)
-				if machine != nil {
-					cmd.Env = append(cmd.Env, "ONELOOP_MACHINE="+machine.Label())
-				}
-				if from.root != "" {
-					cmd.Env = append(cmd.Env, "CLAUDE_PLUGIN_ROOT="+from.root, "CLAUDE_PROJECT_DIR="+cwd)
-				}
-				cmd.Stdin = bytes.NewReader(input)
-				// Bounded, like a tool's output: a chatty hook cannot grow
-				// memory while it runs.
-				stdout, stderr := &outputBuffer{}, &outputBuffer{}
-				cmd.Stdout, cmd.Stderr = stdout, stderr
-				platform.PrepareProcess(cmd)
-				cmd.Cancel = func() error { return platform.KillProcessTree(cmd) }
-				if hook.Async {
-					if err := cmd.Start(); err != nil {
-						cancel()
-						result.problems = append(result.problems, fmt.Sprintf("Hook %q failed (%s): %s", hook.Command, event, err))
-						continue
-					}
-					go func() {
-						err := cmd.Wait()
-						cancel()
-						platform.Devf("hooks", "%s %q in the background on %s: %v %s", event, hook.Command, target, err, platform.DevText(strings.TrimSpace(stderr.String()), 300))
-					}()
-					continue
-				}
-				err := cmd.Run()
+			go func() {
+				err := cmd.Wait()
 				cancel()
-				code := 0
-				var exit *exec.ExitError
-				if errors.As(err, &exit) {
-					code = exit.ExitCode()
-				} else if err != nil {
-					code = -1
-				}
-				platform.Devf("hooks", "%s %q on %s: exit %d", event, hook.Command, target, code)
-				switch code {
-				case 0:
-					if text := strings.TrimSpace(stdout.String()); text != "" {
-						result.output += text + "\n"
-					}
-				case 2:
-					result.blocked = true
-					result.feedback += strings.TrimSpace(stderr.String()) + "\n"
-				default:
-					detail := strings.TrimSpace(stderr.String())
-					if detail == "" && err != nil {
-						detail = err.Error()
-					}
-					result.problems = append(result.problems, fmt.Sprintf("Hook %q failed (%s): %s", hook.Command, event, platform.DevText(detail, 300)))
-				}
+				platform.Devf("hooks", "%s %q in the background on %s: %v %s", event, hook.Command, target, err, platform.DevText(strings.TrimSpace(stderr.String()), 300))
+			}()
+			continue
+		}
+		err := cmd.Run()
+		cancel()
+		code := 0
+		var exit *exec.ExitError
+		if errors.As(err, &exit) {
+			code = exit.ExitCode()
+		} else if err != nil {
+			code = -1
+		}
+		platform.Devf("hooks", "%s %q on %s: exit %d", event, hook.Command, target, code)
+		switch code {
+		case 0:
+			if text := strings.TrimSpace(stdout.String()); text != "" {
+				result.output += text + "\n"
 			}
+		case 2:
+			result.blocked = true
+			result.feedback += strings.TrimSpace(stderr.String()) + "\n"
+		default:
+			detail := strings.TrimSpace(stderr.String())
+			if detail == "" && err != nil {
+				detail = err.Error()
+			}
+			result.problems = append(result.problems, fmt.Sprintf("Hook %q failed (%s): %s", hook.Command, event, platform.DevText(detail, 300)))
 		}
 	}
 	// Both enter the model's context, on every turn for UserPromptSubmit.
@@ -318,5 +356,11 @@ func SaveHooks(content string) error {
 		os.Remove(temp.Name())
 		return err
 	}
-	return os.Rename(temp.Name(), path)
+	if err := os.Rename(temp.Name(), path); err != nil {
+		return err
+	}
+	hookFiles.Lock()
+	delete(hookFiles.byPath, path) // read again at the next event, whatever the clock says
+	hookFiles.Unlock()
+	return nil
 }

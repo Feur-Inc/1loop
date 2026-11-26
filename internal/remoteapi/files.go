@@ -144,20 +144,12 @@ func ReadPreview(root, relative string) (FilePreview, error) {
 	switch {
 	case strings.HasPrefix(kind, "image/"):
 		preview.Image = true
-	case bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(trimRune(data)):
+	case bytes.IndexByte(data, 0) >= 0 || !utf8.Valid(core.TrimRune(data)):
 		preview.Binary = true
 	default:
-		preview.Text = string(trimRune(data))
+		preview.Text = string(core.TrimRune(data))
 	}
 	return preview, nil
-}
-
-// trimRune drops a multi-byte character the limit cut in half.
-func trimRune(data []byte) []byte {
-	for i := 0; i < 3 && len(data) > 0 && !utf8.Valid(data); i++ {
-		data = data[:len(data)-1]
-	}
-	return data
 }
 
 // FileContent is GET /api/files/content?workspace=&path=.

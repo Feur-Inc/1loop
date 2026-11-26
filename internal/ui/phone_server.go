@@ -157,6 +157,12 @@ func (ui *desktopUI) startRemote() {
 	}) {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
+	for path, handler := range server.loopyHandlers() { // this computer's Loopy
+		mux.HandleFunc(path, server.authorized(handler))
+	}
+	if hook := server.loopyHook(); hook != nil {
+		mux.HandleFunc("POST /api/loopy/hook/{token}", hook) // the token is the key
+	}
 	for path, handler := range githubconnector.Handlers() {
 		mux.HandleFunc(path, server.authorized(handler))
 	}
@@ -168,7 +174,11 @@ func (ui *desktopUI) startRemote() {
 		server.onUI(func() { name = server.ui.usageNames(group, key) })
 		return name
 	}
-	for path, handler := range usage.Handlers(ui.usage, ui.prices, names, func() { server.onUI(ui.usageChanged) }) {
+	disabled := func(connection string) (off bool) {
+		server.onUI(func() { off = server.ui.accountDisabled(connection) })
+		return off
+	}
+	for path, handler := range usage.Handlers(ui.usage, ui.prices, names, disabled, func() { server.onUI(ui.usageChanged) }) {
 		if path == "GET /api/usage" {
 			serve := handler
 			handler = func(w http.ResponseWriter, r *http.Request) {
@@ -357,7 +367,7 @@ func (server *remoteServer) confirmPair(writer http.ResponseWriter, req *http.Re
 			server.showPairSheet(nil)
 		}
 		if errors.Is(err, remoteapi.ErrPairingLocked) {
-			server.ui.notice("Phone pairing paused", "Too many wrong pairing codes were typed. To pair a phone, open Settings → Phone and choose Pair a phone.")
+			server.ui.notice("Phone pairing paused", "Too many wrong codes. To pair a phone, use Settings → Phone.")
 		}
 		if err != nil {
 			return
@@ -406,10 +416,10 @@ func fingerprintCheck(fingerprint string) string {
 func (ui *desktopUI) showPairing(pending *remoteapi.Pairing, fingerprint string) *sheet {
 	code := textLine(pending.Code[:3]+" "+pending.Code[3:], 40, colAmber)
 	code.TextStyle = fyne.TextStyle{Monospace: true, Bold: true}
-	intro := widget.NewLabel("“" + pending.Device + "” wants to control 1loop from the phone. Type this code in the app to allow it. It expires in two minutes.")
+	intro := widget.NewLabel("“" + pending.Device + "” wants to control 1loop. Type its code in the app to allow it.")
 	intro.Wrapping = fyne.TextWrapWord
 	check := note("The phone must show the same check: " + fingerprintCheck(fingerprint))
-	hint := note("A paired phone can send messages and approve commands. Remove it any time in Settings.")
+	hint := note("A paired phone can send messages and approve. Remove it in Settings.")
 	body := container.NewVBox(intro, spacer(0, 6), container.NewCenter(code), spacer(0, 6), check, hint)
 	server := ui.remote
 	var dialog *sheet
@@ -448,9 +458,9 @@ func (ui *desktopUI) showPairingQR() {
 	view.FillMode = canvas.ImageFillContain
 	view.ScaleMode = canvas.ImageScalePixels
 	view.SetMinSize(fyne.NewSize(240, 240))
-	intro := widget.NewLabel("In the 1loop app on the phone, choose Remote desktop, then Scan QR code. The code works once, for two minutes.")
+	intro := widget.NewLabel("In the phone app: Remote desktop, Scan QR code. Works once.")
 	intro.Wrapping = fyne.TextWrapWord
-	hint := note("No camera? Pick this computer in the app's list and type the six digits it then shows here.")
+	hint := note("No camera? Pick this computer and type the six digits shown.")
 	var dialog *sheet
 	cancel := newRow("Cancel", nil, styleOutline, func() { dialog.dismiss() })
 	dialog = ui.modal("Pair a phone", container.NewVBox(intro, spacer(0, 6), container.NewCenter(view), spacer(0, 6), hint), 460,
@@ -579,6 +589,9 @@ func (ui *desktopUI) metaForPhone(chat *conversation) remoteapi.Meta {
 	}
 	for _, h := range chat.History {
 		remoteMetaValue.Used = max(remoteMetaValue.Used, h.Usage)
+	}
+	if chat.Config.Provider == "claudecode" && chat.ContextUsage != nil {
+		remoteMetaValue.Used = chat.ContextUsage.Used // Claude Code keeps its own history
 	}
 	if run := chat.run; run != nil {
 		if run.turn.usage > 0 {
@@ -1394,7 +1407,7 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 	describe := func() string {
 		switch {
 		case ui.remote != nil:
-			return fmt.Sprintf("Listening on port %d as “%s” (HTTPS). A phone must be paired with a QR code or a code shown on this screen.", ui.remote.port, ui.remote.name)
+			return fmt.Sprintf("Listening on port %d as “%s” (HTTPS). Pair a phone with its QR code.", ui.remote.port, ui.remote.name)
 		case ui.remoteEnabled:
 			return "The remote could not start: the network is unavailable."
 		}
@@ -1416,7 +1429,7 @@ func (ui *desktopUI) remoteSettings() fyne.CanvasObject {
 		i := i
 		name := pairedDevice.Name
 		remove := newRow("Forget", iconTrash, styleChip, func() {
-			ui.confirm("Forget "+name+"?", name+" is unpaired from this computer: its access stops at once, and it must be paired again to use 1loop here.", "Forget", func() { // #428
+			ui.confirm("Forget "+name+"?", name+" is unpaired: its access stops at once. It must pair again.", "Forget", func() { // #428
 				ui.devices = append(ui.devices[:i], ui.devices[i+1:]...)
 				ui.save()
 				if ui.remote != nil {

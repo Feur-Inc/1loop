@@ -137,6 +137,7 @@ class LocalRuntimeService : Service() {
             try {
                 Api(server).events(onOpen = { wait = 500L }) { name, data ->
                     if (name == "meta") scope.launch { changed(Meta.from(data)) }
+                    if (name == "loopy_notice" && !runtime.appForeground) notifyLoopy(this, server, data.optString("title"), data.optString("text"), data.optJSONObject("message"), data.optString("level"), data.optString("picture"))
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -154,9 +155,9 @@ class LocalRuntimeService : Service() {
         val approval = m.approval?.id
         val question = m.question?.id
         if (!runtime.appForeground) {
-            if (wasRunning == true && !m.running) notifier.show(m.chat, m.title, "Done.")
-            if (m.approval != null && approvals[m.chat] != approval) notifier.show(m.chat, m.title, "Waiting for your approval: " + m.approval.title)
-            if (m.question != null && questions[m.chat] != question) notifier.show(m.chat, m.title, m.question.questions.firstOrNull()?.text ?: "1loop has a question")
+            if (wasRunning == true && !m.running) notifier.showChat(m.chat, m.title, "Done.")
+            if (m.approval != null && approvals[m.chat] != approval) notifier.showChat(m.chat, m.title, "Waiting for your approval: " + m.approval.title)
+            if (m.question != null && questions[m.chat] != question) notifier.showChat(m.chat, m.title, m.question.questions.firstOrNull()?.text ?: "1loop has a question")
         }
         if (approval != null) approvals[m.chat] = approval else approvals.remove(m.chat)
         if (question != null) questions[m.chat] = question else questions.remove(m.chat)

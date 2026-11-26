@@ -66,8 +66,8 @@ func TestPairedConnections(t *testing.T) {
 	if code, _ := call("GET", "/api/connections", nil, false); code != http.StatusUnauthorized {
 		t.Fatalf("unpaired list: %d", code)
 	}
-	if code, body := call("POST", "/api/connections", map[string]any{"connection": map[string]any{"name": "ChatGPT", "provider": "openai"}}, true); code != http.StatusBadRequest {
-		t.Fatalf("a ChatGPT sign-in from another device: %d %s", code, body)
+	if code, body := call("POST", "/api/connections", map[string]any{"connection": map[string]any{"name": "ChatGPT", "provider": "chatgptweb"}}, true); code != http.StatusBadRequest {
+		t.Fatalf("a ChatGPT (Web) connection from another device: %d %s", code, body)
 	}
 	draft := map[string]any{"name": "Test service", "provider": "compatible", "baseURL": service.URL + "/v1", "enabled": true, "allModels": true}
 	code, body := call("POST", "/api/connections/models", map[string]any{"connection": draft, "apiKey": key}, true)

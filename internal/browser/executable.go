@@ -14,7 +14,7 @@ import (
 
 // NoBrowserProblem is what Browser Use answers where ONELOOP_BROWSER=none
 // turns it off: the slim server image, which has no Chromium.
-const NoBrowserProblem = "This server has no browser: it runs without Chromium (ONELOOP_BROWSER=none, as in the slim Docker image). Install Chromium from Settings, let the 1loop desktop app lend its computer's browser (its Settings → General, on a computer paired with this server), or use the server image with Chromium for Browser Use."
+const NoBrowserProblem = "This server has no browser: it runs without Chromium (ONELOOP_BROWSER=none, as in the slim Docker image). Install Chromium from Settings, let the 1loop desktop app lend its computer's browser (in its Settings, this server's Installs page, on a computer paired with this server), or use the server image with Chromium for Browser Use."
 
 // Disabled says whether Browser Use is off here: ONELOOP_BROWSER=none, and
 // no Chromium installed since with Install Chromium (InstallChromium). No

@@ -104,7 +104,7 @@ func (ui *desktopUI) editMessage(chat *conversation, index int) {
 			dialog.Hide()
 		}
 	})
-	dialog = ui.modal("Edit message", container.NewVBox(entry, note("A new version will start here. The previous conversation remains available with the version arrows.")), 600, nil, cancel, send)
+	dialog = ui.modal("Edit message", container.NewVBox(entry, note("A new version starts here. Earlier ones stay, see the arrows.")), 600, nil, cancel, send)
 	ui.window.Canvas().Focus(entry)
 }
 

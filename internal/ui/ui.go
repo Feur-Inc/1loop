@@ -19,6 +19,7 @@ import (
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/driver/desktop"
 	"fyne.io/fyne/v2/layout"
+	"fyne.io/fyne/v2/scrollbar"
 	"fyne.io/fyne/v2/theme"
 	"fyne.io/fyne/v2/widget"
 
@@ -125,8 +126,10 @@ func (themeSpec loopTheme) Color(name fyne.ThemeColorName, _ fyne.ThemeVariant) 
 		return colBorderSoft
 	case theme.ColorNameScrollBar:
 		return colScrollBar
-	case theme.ColorNameScrollBarBackground:
-		return color.Transparent
+	case theme.ColorNameScrollBarBackground: // the track, under the pointer
+		return overlay(0x0c)
+	case scrollbar.ColorNameHover:
+		return withAlpha(colMuted, 0.85)
 	case theme.ColorNameShadow:
 		return color.NRGBA{A: 0x30} // scroll edge fades; dialog dims are drawn by our sheets
 	}
@@ -207,9 +210,9 @@ func (themeSpec loopTheme) Size(name fyne.ThemeSizeName) float32 {
 	case theme.SizeNameSelectionRadius:
 		return rounded(3)
 	case theme.SizeNameScrollBar:
-		return 6
+		return scrollbar.Wide
 	case theme.SizeNameScrollBarSmall:
-		return 3
+		return scrollbar.Thin
 	case theme.SizeNameSeparatorThickness:
 		return 1
 	}
@@ -415,6 +418,8 @@ type tapRow struct {
 	icon      fyne.Resource
 	style     rowStyle
 	onTap     func()
+	onDrag    func(*fyne.DragEvent) // a sidebar row dragged among its siblings, or to the panes (sidebar_drag.go)
+	onDrop    func()
 	selected  bool
 	disabled  bool
 	accent    bool
@@ -511,6 +516,19 @@ func (row *tapRow) MouseDown(e *desktop.MouseEvent) {
 	}
 }
 func (row *tapRow) MouseUp(*desktop.MouseEvent) { row.setSink(0) }
+
+// Dragged and DragEnd pass a drag on to onDrag and onDrop, when a row has them.
+func (row *tapRow) Dragged(e *fyne.DragEvent) {
+	if row.onDrag != nil {
+		row.onDrag(e)
+	}
+}
+
+func (row *tapRow) DragEnd() {
+	if row.onDrop != nil {
+		row.onDrop()
+	}
+}
 
 // setSink presses the row in (1) or lets it back out (0): in quickly, out
 // a little slower, like a key.
@@ -621,6 +639,9 @@ type tapRowRenderer struct {
 	markedBy fyne.Resource // the mark's resource, as tinted
 	markTint color.NRGBA
 	markText *canvas.Text // row.markText
+
+	objects []fyne.CanvasObject // Objects, kept while the row has the same parts
+	parts   [3]bool             // icon, badge, mark: what objects was made with
 }
 
 // The mark after a row's text: its size, the gap before it, and the room
@@ -1044,17 +1065,24 @@ func (renderer *tapRowRenderer) Refresh() {
 	renderer.markText.Refresh()
 }
 
+// Objects are made again only when the row gains or loses a part: Fyne
+// asks for them at every walk of the window, several times a frame (#474).
 func (renderer *tapRowRenderer) Objects() []fyne.CanvasObject {
+	parts := [3]bool{renderer.row.icon != nil, renderer.row.badge != nil, renderer.row.mark != nil}
+	if renderer.objects != nil && parts == renderer.parts {
+		return renderer.objects
+	}
 	objects := []fyne.CanvasObject{renderer.bg, renderer.label, renderer.trailing, renderer.detail}
-	if renderer.row.icon != nil {
+	if parts[0] {
 		objects = append(objects, renderer.icon)
 	}
-	if renderer.row.badge != nil {
+	if parts[1] {
 		objects = append(objects, renderer.badge)
 	}
-	if renderer.row.mark != nil {
+	if parts[2] {
 		objects = append(objects, renderer.mark, renderer.markText)
 	}
+	renderer.objects, renderer.parts = objects, parts
 	return objects
 }
 
@@ -1643,8 +1671,8 @@ func (pickerControl *picker) show() {
 	}
 	var content fyne.CanvasObject = list
 	if len(pickerControl.Options) > 9 {
-		scroll := newKineticVScroll(list)
-		scroll.SetMinSize(fyne.NewSize(list.MinSize().Width, 9*list.Objects[0].MinSize().Height))
+		scroll := newKineticVScroll(clearOfBar(list))
+		scroll.SetMinSize(fyne.NewSize(list.MinSize().Width+barRoom, 9*list.Objects[0].MinSize().Height))
 		content = scroll
 	}
 	width := fyne.Max(content.MinSize().Width+10, 200)
@@ -1759,7 +1787,7 @@ func showMenu(window fyne.Window, anchor fyne.CanvasObject, actions []menuAction
 	var content fyne.CanvasObject = list
 	var field *keyEntry
 	if len(items) > menuFilterAt {
-		scroll := newKineticVScroll(list)
+		scroll := newKineticVScroll(clearOfBar(list))
 		scroll.SetMinSize(fyne.NewSize(0, menuRows*(items[0].MinSize().Height+2)))
 		field = newKeyEntry()
 		field.SetPlaceHolder("Filter")
@@ -1856,9 +1884,43 @@ func newTipLayer() *tipLayer {
 	tooltip.bg.CornerRadius = rounded(8)
 	tooltip.bg.StrokeColor = colPopBorder
 	tooltip.bg.StrokeWidth = 1
-	tooltip.layer = container.NewWithoutLayout(tooltip.bg)
+	tooltip.layer = container.New(tipLayout{}, tooltip.bg)
 	tooltip.layer.Hide()
 	return tooltip
+}
+
+// tipLayout leaves the hint where placeAt puts it and asks for no room: a
+// container without a layout is as big as its widest child, and a long
+// hint made the whole window that wide.
+type tipLayout struct{}
+
+func (tipLayout) MinSize([]fyne.CanvasObject) fyne.Size { return fyne.NewSize(0, 0) }
+func (tipLayout) Layout([]fyne.CanvasObject, fyne.Size) {}
+
+// tipWidth is the widest a hint's line gets before it wraps.
+const tipWidth = 360
+
+// wrapTip breaks the plain lines wider than tipWidth at spaces; a line of
+// several colours stays as it is.
+func wrapTip(lines [][]tipRun) [][]tipRun {
+	var wrapped [][]tipRun
+	for _, line := range lines {
+		if len(line) != 1 || fyne.MeasureText(line[0].text, 12.5, fyne.TextStyle{}).Width <= tipWidth {
+			wrapped = append(wrapped, line)
+			continue
+		}
+		current := ""
+		for _, word := range strings.Fields(line[0].text) {
+			if next := strings.TrimSpace(current + " " + word); current == "" || fyne.MeasureText(next, 12.5, fyne.TextStyle{}).Width <= tipWidth {
+				current = next
+				continue
+			}
+			wrapped = append(wrapped, []tipRun{{current, line[0].ink}})
+			current = word
+		}
+		wrapped = append(wrapped, []tipRun{{current, line[0].ink}})
+	}
+	return wrapped
 }
 
 // show displays text (one hint per line) above anchor after a short delay,
@@ -1918,7 +1980,7 @@ func (tooltip *tipLayer) placeAt(at fyne.Position, area fyne.Size, lines [][]tip
 	tooltip.layer.Objects = []fyne.CanvasObject{tooltip.bg}
 	tooltip.lines, tooltip.inks = nil, nil
 	width, height := float32(0), float32(0)
-	for _, line := range lines {
+	for _, line := range wrapTip(lines) {
 		x, tall := float32(0), float32(0)
 		for _, run := range line {
 			label := textLine(run.text, 12.5, withAlpha(run.ink, quantize(tooltip.alpha, 4))) // the fade brings it up

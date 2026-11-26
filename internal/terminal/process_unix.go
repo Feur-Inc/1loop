@@ -39,6 +39,7 @@ func NewTerminalProcess(ctx context.Context, dir string, hosts ...NativeHost) (P
 	if err != nil {
 		return nil, err
 	}
+	platform.OOMFirst(command) // what runs in it goes before 1loop when memory runs out (#584)
 	return &unixTerminal{File: file, command: command}, nil
 }
 

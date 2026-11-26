@@ -21,4 +21,4 @@ func (ui *desktopUI) buildLendBar() fyne.CanvasObject {
 	return ui.lendBar
 }
 
-func (ui *desktopUI) lendRows() fyne.CanvasObject { return nil }
+func (ui *desktopUI) lendRows(string) fyne.CanvasObject { return nil }

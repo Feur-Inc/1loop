@@ -63,7 +63,7 @@ func (ui *desktopUI) modelMenu() {
 		lists[i] = container.New(layout.NewCustomPaddedVBoxLayout(0))
 		var body fyne.CanvasObject = lists[i]
 		if i < 2 {
-			scrolls[i] = newKineticVScroll(lists[i])
+			scrolls[i] = newKineticVScroll(clearOfBar(lists[i]))
 			scrolls[i].SetMinSize(fyne.NewSize(0, 276-modelLimitsStripHeight))
 			body = scrolls[i]
 		}
@@ -139,7 +139,7 @@ func (ui *desktopUI) modelMenu() {
 		})
 		if problem := ui.modelUnavailable[account.ID]; problem != "" {
 			r.detail = problem
-			if account.Provider == "vllm" {
+			if account.Provider == "vllm" && problem != keyNeeded { // its page stays a click away
 				r.Disable()
 			}
 		}
@@ -147,7 +147,7 @@ func (ui *desktopUI) modelMenu() {
 		if values[account.ID].Checked.IsZero() {
 			values[account.ID] = agent.AccountLimits{Note: "Loading limits…"}
 		}
-		if r.disabled {
+		if r.disabled || ui.modelUnavailable[account.ID] == keyNeeded {
 			values[account.ID] = agent.AccountLimits{Note: r.detail}
 		}
 		groups[0] = append(groups[0], r)
@@ -182,7 +182,11 @@ func (ui *desktopUI) modelMenu() {
 				if problem := ui.modelUnavailable[shown]; problem != "" {
 					message = problem
 				}
-				lists[1].Add(padded(7, 7, 9, 9, note(message)))
+				if message == keyNeeded {
+					lists[1].Add(padded(7, 7, 9, 9, ui.keyNeededNote(shown, menu.dismiss)))
+				} else {
+					lists[1].Add(padded(7, 7, 9, 9, note(message)))
+				}
 			}
 		}
 		refreshStrip()
@@ -304,6 +308,9 @@ func (ui *desktopUI) modelMenu() {
 		}
 	}
 	initial := ui.cfg.ConnectionID
+	if conn, ok := ui.keyNeededConnection(); ok && ui.cfg.Model == "" {
+		initial = conn.ID // what stands between the user and a model
+	}
 	if !slices.ContainsFunc(accounts, func(conn agent.Connection) bool { return conn.ID == initial }) {
 		initial = accounts[0].ID
 	}
@@ -314,7 +321,7 @@ func (ui *desktopUI) modelMenu() {
 	ui.window.Canvas().Focus(menu)
 	for i, account := range accounts {
 		account := account
-		if groups[0][i].disabled {
+		if groups[0][i].disabled || ui.modelUnavailable[account.ID] == keyNeeded {
 			continue
 		}
 		ui.loadAccountLimits(ctx, menu, account, func(limits agent.AccountLimits) {

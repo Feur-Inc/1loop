@@ -147,7 +147,9 @@ type selectLayer struct {
 	dragged bool
 	plain   bool // the last press was a plain click: its release goes to what is below
 	over    *selTap
-	hand    bool // the pointer is on a link
+	hand    bool    // the pointer is on a link
+	onBar   bool    // the pointer is on a scrollbar (#633)
+	grabbed *selTap // the scrollbar the press was on: it gets the drag
 }
 
 func newSelectLayer(ui *desktopUI, under fyne.CanvasObject) *selectLayer {
@@ -310,6 +312,9 @@ func (selection *selectLayer) collect(object fyne.CanvasObject, origin fyne.Posi
 			shown = [2]float32{fyne.Max(shown[0], clip[0]), fyne.Min(shown[1], clip[1])}
 		}
 		selection.collect(o.Content, origin.Add(o.Content.Position()), &shown)
+		for _, bar := range o.Bars() { // drawn over its lines (#633)
+			selection.taps = append(selection.taps, selTap{bar, origin.Add(bar.Position())})
+		}
 	}
 }
 
@@ -469,10 +474,23 @@ func (selection *selectLayer) below(at fyne.Position) *selTap {
 	return nil
 }
 
+// isScrollBar tells a scroll's bar among what lies under the layer: it is
+// dragged. A row is draggable too (the sidebar's, #283), but one in a
+// message is a button.
+func isScrollBar(object fyne.CanvasObject) bool {
+	if _, row := object.(*tapRow); row {
+		return false
+	}
+	_, ok := object.(fyne.Draggable)
+	return ok
+}
+
 // Hovering is passed on to what is below, and decides the pointer: the
 // hand on a link or a button, the text cursor elsewhere.
 func (selection *selectLayer) MouseIn(e *desktop.MouseEvent) {
-	selection.ui.activate()
+	if !selection.ui.dragging() { // a drag passing over a pane leaves the focus where it is
+		selection.ui.activate()
+	}
 	selection.stale = true
 	selection.MouseMoved(e)
 }
@@ -492,9 +510,12 @@ func (selection *selectLayer) MouseMoved(e *desktop.MouseEvent) {
 			hover.MouseMoved(selection.local(e, tap))
 		}
 	}
-	selection.hand = false
-	link := ""
+	selection.hand, selection.onBar = false, false
 	if tap != nil {
+		selection.onBar = isScrollBar(tap.object)
+	}
+	link := ""
+	if tap != nil && !selection.onBar {
 		if links, ok := tap.object.(linkSource); ok {
 			link = links.linkAt(e.Position.Subtract(tap.at))
 			selection.hand = link != ""
@@ -527,6 +548,9 @@ func (selection *selectLayer) local(e *desktop.MouseEvent, tap *selTap) *desktop
 }
 
 func (selection *selectLayer) Cursor() desktop.Cursor {
+	if selection.onBar {
+		return desktop.DefaultCursor
+	}
 	if selection.hand {
 		return desktop.PointerCursor
 	}
@@ -544,8 +568,14 @@ func (selection *selectLayer) MouseDown(e *desktop.MouseEvent) {
 	default:
 		return
 	}
+	selection.dragged, selection.grabbed = false, nil
+	if tap := selection.below(e.Position); tap != nil {
+		if isScrollBar(tap.object) { // it scrolls, nothing is selected
+			selection.grabbed = tap
+			return
+		}
+	}
 	selection.gather()
-	selection.dragged = false
 	chatSel := &selection.ui.chatSel
 	count := chatSel.clicks.press(time.Now(), e.AbsolutePosition, clickInterval())
 	if e.Modifier&fyne.KeyModifierShift != 0 && chatSel.anchor != nil {
@@ -583,9 +613,16 @@ func (selection *selectLayer) MouseUp(e *desktop.MouseEvent) {
 	if e.Button != desktop.MouseButtonPrimary {
 		return
 	}
-	selection.ui.chatSel.offer()
-	if selection.dragged || !selection.plain {
-		return
+	if selection.grabbed != nil {
+		if selection.dragged {
+			return // DragEnd lets the bar go
+		}
+		selection.grabbed = nil // a tap on the bar: it pages
+	} else {
+		selection.ui.chatSel.offer()
+		if selection.dragged || !selection.plain {
+			return
+		}
 	}
 	if tap := selection.below(e.Position); tap != nil {
 		if target, ok := tap.object.(fyne.Tappable); ok {
@@ -596,6 +633,13 @@ func (selection *selectLayer) MouseUp(e *desktop.MouseEvent) {
 
 // Dragged follows the pointer, into the other messages too (chatSelection).
 func (selection *selectLayer) Dragged(d *fyne.DragEvent) {
+	if tap := selection.grabbed; tap != nil {
+		selection.dragged = true
+		local := *d
+		local.Position = d.Position.Subtract(tap.at)
+		tap.object.(fyne.Draggable).Dragged(&local)
+		return
+	}
 	chatSel := &selection.ui.chatSel
 	if chatSel.anchor == nil || chatSel.pressed != selection {
 		return
@@ -638,7 +682,12 @@ func (selection *selectLayer) markPoints(from, to selPoint) {
 	selection.mark(selection.text.at(from, false), selection.text.at(to, false))
 }
 
-func (selection *selectLayer) DragEnd() {}
+func (selection *selectLayer) DragEnd() {
+	if tap := selection.grabbed; tap != nil {
+		selection.grabbed = nil
+		tap.object.(fyne.Draggable).DragEnd()
+	}
+}
 
 // changed is called when the text below was laid out again (an answer
 // still being written): the selection keeps its place in it.

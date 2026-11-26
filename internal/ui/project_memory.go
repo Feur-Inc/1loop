@@ -109,10 +109,10 @@ func (ui *desktopUI) projectMemoryDialog(project string, file memoryFile, saved 
 	entry.Wrapping = fyne.TextWrapWord
 	entry.SetMinRowsVisible(14)
 	entry.SetText(saved)
-	entry.SetPlaceHolder("Nothing saved yet: build and test commands, layout, the project's rules…")
+	entry.SetPlaceHolder("Nothing saved yet: build and test commands, layout, rules…")
 	about := file.path + " · read by 1loop and the other agents in this project."
 	if !exists {
-		about = file.path + " does not exist yet: Save creates it. 1loop and the other agents read it in this project."
+		about = file.path + " does not exist yet. Save creates it; agents read it here."
 	}
 	status := note("")
 	status.Hide()

@@ -301,7 +301,7 @@ func (ui *desktopUI) projectThemeAction(project string) menuAction {
 			ui.save()
 			ui.syncProjectTheme()
 		}
-		body := container.NewVBox(note("This project's chats use this theme while they are on screen; the others keep the global one."), picker.row)
+		body := container.NewVBox(note("Only this project's chats use this theme."), picker.row)
 		dialog = ui.modal("Theme of "+ui.projectName(project), body, 420, nil, newRow("Done", nil, stylePrimary, func() { dialog.dismiss() }))
 	}}
 }
@@ -373,7 +373,7 @@ func (ui *desktopUI) themeFileControls() fyne.CanvasObject {
 	}))
 	// Read as the row's second line of explanation, not the faint grey of
 	// something disabled (#508).
-	where := plainFlow("Themes are read from "+themesDir+": a .zip each, a folder, or loose .toml files. They update the app as soon as they are saved. Format: docs/THEMES.md.", 12.5, colMuted)
+	where := plainFlow("Themes are read from "+themesDir+". Zip, folder or .toml each. Format: docs/THEMES.md.", 12.5, colMuted)
 	rows := container.New(layout.NewCustomPaddedVBoxLayout(8), where, actions)
 	for _, failed := range themeFileErrors {
 		problem := note(failed.Error())

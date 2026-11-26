@@ -7,8 +7,6 @@ package extensions
 // Install then copies what the user kept. Nothing runs during either.
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -187,7 +185,7 @@ func (plan *Plan) addMarketplace(ctx context.Context, root string, registry Regi
 		switch {
 		case json.Unmarshal(entry.Source, &path) == nil:
 			dir = filepath.Join(root, filepath.FromSlash(strings.TrimPrefix(path, "./")))
-			if rel, err := filepath.Rel(root, dir); err != nil || strings.HasPrefix(rel, "..") {
+			if !core.Within(root, dir) {
 				dir = ""
 			}
 		case json.Unmarshal(entry.Source, &source) == nil && source.Source == "github" && validRepo(source.Repo) && fetched < 10:
@@ -258,8 +256,8 @@ func assemble(entry marketEntry, source, target string) error {
 			json.Unmarshal(raw, &paths)
 		}
 		for _, path := range paths {
-			from := filepath.Join(source, filepath.FromSlash(strings.TrimPrefix(path, "./")))
-			if rel, err := filepath.Rel(source, from); err != nil || strings.HasPrefix(rel, "..") {
+			from, err := core.WorkspacePath(source, filepath.Join(source, filepath.FromSlash(strings.TrimPrefix(path, "./"))))
+			if err != nil {
 				continue
 			}
 			info, err := os.Stat(from)
@@ -458,8 +456,7 @@ func Remove(kind, id string) error {
 // removeInside deletes a folder of the extensions folder, never anything
 // outside it.
 func removeInside(dir string) error {
-	rel, err := filepath.Rel(Dir(), dir)
-	if err != nil || rel == "." || strings.HasPrefix(rel, "..") || filepath.IsAbs(rel) {
+	if !core.Within(Dir(), dir) || filepath.Clean(dir) == filepath.Clean(Dir()) {
 		return fmt.Errorf("%s is not in %s: not removed", dir, Dir())
 	}
 	return os.RemoveAll(dir)
@@ -553,56 +550,21 @@ func downloadRepo(ctx context.Context, repo, dir string) (int64, error) {
 	if response.StatusCode != http.StatusOK {
 		return 0, fmt.Errorf("GitHub answered %d for %s", response.StatusCode, repo)
 	}
-	unzipped, err := gzip.NewReader(io.LimitReader(response.Body, maxDownload))
+	// Every path is under one top folder (owner-repo-sha/): dropped. Links
+	// and devices are left out, nothing lands outside dir (#524).
+	total, err := core.Unpack{
+		Strip: 1,
+		Mode: func(perm os.FileMode) os.FileMode {
+			if perm&0o111 != 0 {
+				return 0o700
+			}
+			return 0o600
+		},
+		DirMode:  0o700,
+		MaxTotal: maxDownload,
+	}.Tar(io.LimitReader(response.Body, maxDownload), dir)
 	if err != nil {
-		return 0, err
-	}
-	archive := tar.NewReader(unzipped)
-	var total int64
-	for {
-		header, err := archive.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return 0, fmt.Errorf("%s: the download was cut: %w", repo, err)
-		}
-		// Every path is under one top folder (owner-repo-sha/): dropped.
-		_, rest, found := strings.Cut(header.Name, "/")
-		if !found || rest == "" {
-			continue
-		}
-		target := filepath.Join(dir, filepath.FromSlash(rest))
-		if rel, err := filepath.Rel(dir, target); err != nil || strings.HasPrefix(rel, "..") {
-			continue // never outside the staging folder
-		}
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(target, 0o700); err != nil {
-				return 0, err
-			}
-		case tar.TypeReg:
-			total += header.Size
-			if total > maxDownload {
-				return 0, fmt.Errorf("%s is larger than %d MB", repo, maxDownload>>20)
-			}
-			if err := os.MkdirAll(filepath.Dir(target), 0o700); err != nil {
-				return 0, err
-			}
-			mode := os.FileMode(0o600)
-			if header.FileInfo().Mode().Perm()&0o111 != 0 {
-				mode = 0o700
-			}
-			out, err := os.OpenFile(target, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, mode)
-			if err != nil {
-				return 0, err
-			}
-			_, err = io.Copy(out, archive)
-			out.Close()
-			if err != nil {
-				return 0, err
-			}
-		} // links and devices are left out
+		return 0, fmt.Errorf("%s: %w", repo, err)
 	}
 	return total, nil
 }

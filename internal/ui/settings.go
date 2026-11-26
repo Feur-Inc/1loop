@@ -35,7 +35,6 @@ import (
 	"fyne.io/fyne/v2/widget"
 
 	"1loop/internal/agent"
-	"1loop/internal/browser"
 	"1loop/internal/computeruse"
 	"1loop/internal/core"
 	"1loop/internal/githubconnector"
@@ -85,6 +84,7 @@ var subPages = map[string]string{
 	"Extensions":           registry.Tools,
 	"Connectors":           registry.Tools,
 	registry.ShortcutsPage: registry.General,
+	loopySettingsPage:      registry.Agent,
 }
 
 // pageAliases are pages of earlier versions, still named by links and
@@ -116,8 +116,10 @@ type settingsFrame struct {
 type settingsView struct {
 	ui      *desktopUI
 	open    bool
-	section string // the section selected in the sidebar
-	page    string // the page shown: the section, or one of its sub-pages
+	toLoopy bool    // closing goes back to Loopy's space
+	leave   *tapRow // what closes it
+	section string  // the section selected in the sidebar
+	page    string  // the page shown: the section, or one of its sub-pages
 	rows    map[string]*tapRow
 	side    fyne.CanvasObject // what the sidebar shows
 	view    *fyne.Container   // what the main area shows
@@ -131,11 +133,21 @@ type settingsView struct {
 	search    *widget.Entry
 	searching bool                      // the results are on screen
 	anchors   map[string]*settingAnchor // the rows of the page shown, by setting
+
+	// Servers (settings_servers.go).
+	serverNav  *fyne.Container            // the Servers group of the sidebar
+	sideScroll *settingsScroll            // the sidebar's sections and servers, scrolled
+	server     string                     // the server whose page is shown, "" for this computer's
+	folded     bool                       // that server's row folded its pages
+	serverRow  *tapRow                    // and its row
+	servers    map[string]*settingsServer // the settings' own connections, by address
+	waiting    bool                       // the server's page shows only that it connects or does not answer
 }
 
 func (ui *desktopUI) buildSettings() {
-	view := &settingsView{ui: ui, rows: map[string]*tapRow{}, section: "General", page: "General", anchors: map[string]*settingAnchor{}}
+	view := &settingsView{ui: ui, rows: map[string]*tapRow{}, section: "General", page: "General", anchors: map[string]*settingAnchor{}, servers: map[string]*settingsServer{}}
 	back := newRow("Back to 1loop", iconChevronLeft, styleNav, view.close)
+	view.leave = back
 	nav := container.New(layout.NewCustomPaddedVBoxLayout(1))
 	for _, section := range registry.Sections() {
 		name := section.Title
@@ -155,11 +167,16 @@ func (ui *desktopUI) buildSettings() {
 	view.search.SetPlaceHolder("Search settings")
 	view.search.OnChanged = view.find
 	view.search.OnSubmitted = func(query string) {
-		if matches := registry.Search(registry.On(registry.OnDesktop), query); len(matches) > 0 {
-			view.jump(matches[0].Setting.Key)
+		if matches := view.findSettings(query); len(matches) > 0 {
+			view.openMatch(matches[0])
 		}
 	}
-	view.side = container.NewVBox(back, padded(14, 6, 12, 0, textLine("Settings", 13, colFaint)), padded(0, 8, 6, 6, view.search), nav)
+	view.serverNav = container.New(layout.NewCustomPaddedVBoxLayout(1))
+	// The sections and servers scroll, under what stays at the top: with a
+	// server's pages listed, they run below a small window's bottom.
+	view.sideScroll = newSettingsScroll(container.NewVBox(nav, view.serverNav))
+	view.side = newSideColumn(container.NewBorder(container.NewVBox(back, padded(14, 6, 12, 0, textLine("Settings", 13, colFaint)), padded(0, 8, 6, 6, view.search)),
+		nil, nil, nil, view.sideScroll), view.sideScroll)
 	view.side.Hide()
 
 	view.column = container.NewStack()
@@ -191,6 +208,7 @@ func (view *settingsView) openOn(page string) {
 		ui.panelToggle.Hide()
 		ui.sideApp.Hide()
 		view.side.Show()
+		view.sideScroll.fit()
 		ui.paneArea().Hide()
 		view.view.Show()
 		ui.header.SetText("Settings")
@@ -212,6 +230,7 @@ func (view *settingsView) closeNow() {
 		view.drop()
 	}
 	view.open = false
+	view.release("")
 	view.clearSearch()
 	view.side.Hide()
 	ui.sideApp.Show()
@@ -226,6 +245,11 @@ func (view *settingsView) closeNow() {
 	ui.relayoutColumn()
 	ui.curtain.reveal()
 	ui.window.Canvas().Focus(ui.prompt)
+	if view.toLoopy { // opened from there
+		view.toLoopy = false
+		view.leave.SetText("Back to 1loop")
+		ui.openLoopy()
+	}
 }
 
 // show opens a page, leaving whatever was open.
@@ -234,7 +258,7 @@ func (view *settingsView) show(page string) {
 }
 
 // base is how many frames the page shown has of its own: a sub-page is
-// opened over its section.
+// opened over its section. A server's page is its own section.
 func (view *settingsView) base() int {
 	if _, ok := subPages[view.page]; ok {
 		return 2
@@ -259,10 +283,21 @@ func (view *settingsView) showNow(page string) {
 		page = alias
 	}
 	section := pageSection(page)
+	view.server = ""
+	if address, name, ok := serverPageOf(page); ok {
+		if _, known := serverPageNamed(name); known {
+			view.server, section = address, page
+		}
+	}
+	view.release(view.server)
+	view.page, view.folded = page, false // the group's pages are listed under its server
+	view.renderServers()
 	if _, ok := view.rows[section]; !ok {
-		section, page = "General", "General"
+		section, page, view.server = "General", "General", ""
+		view.renderServers()
 	}
 	view.section, view.page = section, page
+	view.waiting = false
 	for name, row := range view.rows {
 		row.SetSelected(name == section)
 	}
@@ -272,11 +307,15 @@ func (view *settingsView) showNow(page string) {
 		view.frames = append(view.frames, settingsFrame{content: view.build(page)})
 	}
 	view.present()
+	view.keepInView()
 }
 
 // build makes a page from what is stored now.
 func (view *settingsView) build(page string) fyne.CanvasObject {
 	ui := view.ui
+	if address, name, ok := serverPageOf(page); ok {
+		return view.buildServer(address, name)
+	}
 	if content := ui.browserSettings(page); content != nil {
 		return content
 	}
@@ -295,10 +334,12 @@ func (view *settingsView) build(page string) fyne.CanvasObject {
 		return ui.advancedSettings()
 	case registry.ShortcutsPage:
 		return ui.shortcutSettings()
+	case loopySettingsPage:
+		return ui.loopySettings()
 	case "Extensions":
-		return ui.extensionSettings()
+		return ui.extensionSettings(localExtensions{ui}, container.NewVBox(view.pageTitle("Extensions", "Tools & extensions", nil), view.scope()))
 	case "Connectors":
-		return ui.connectorSettings()
+		return ui.connectorSettings(localGitHub{}, container.NewVBox(view.pageTitle("Connectors", "Tools & extensions", nil), view.scope()))
 	case UsagePage:
 		return ui.usageSettings()
 	}
@@ -422,7 +463,12 @@ func card(rows ...fyne.CanvasObject) fyne.CanvasObject {
 
 // settingRow is a title and its explanation, with a control at the end.
 func settingRow(title, detail string, control fyne.CanvasObject) fyne.CanvasObject {
-	text := container.New(layout.NewCustomPaddedVBoxLayout(3), plainFlow(title, 14, colText))
+	return settingRowTitled(plainFlow(title, 14, colText), detail, control)
+}
+
+// settingRowTitled is settingRow with a title of its own, such as titleInfo's.
+func settingRowTitled(title fyne.CanvasObject, detail string, control fyne.CanvasObject) fyne.CanvasObject {
+	text := container.New(layout.NewCustomPaddedVBoxLayout(3), title)
 	if detail != "" {
 		text.Add(plainFlow(detail, 12.5, colMuted))
 	}
@@ -436,11 +482,35 @@ func settingRow(title, detail string, control fyne.CanvasObject) fyne.CanvasObje
 
 // settingStack is a title and its explanation above a wide control.
 func settingStack(title, detail string, below fyne.CanvasObject) fyne.CanvasObject {
-	text := container.New(layout.NewCustomPaddedVBoxLayout(3), plainFlow(title, 14, colText))
+	return settingStackTitled(plainFlow(title, 14, colText), detail, below)
+}
+
+// settingStackTitled is settingStack with a title of its own.
+func settingStackTitled(title fyne.CanvasObject, detail string, below fyne.CanvasObject) fyne.CanvasObject {
+	text := container.New(layout.NewCustomPaddedVBoxLayout(3), title)
 	if detail != "" {
 		text.Add(plainFlow(detail, 12.5, colMuted))
 	}
 	return padded(13, 14, 16, 16, container.New(layout.NewCustomPaddedVBoxLayout(9), text, below))
+}
+
+// iconInfo is the (i) after a title that has a longer explanation.
+var iconInfo = lineIcon("info", `<circle cx="8" cy="8" r="5.5"/><path d="M8 7.2v3.8M8 4.8h.01" stroke-width="1.8"/>`)
+
+// titleInfo is a title with an (i) after it: the explanation shows in a
+// tooltip while the (i) is hovered, so the row's own text can stay short.
+func titleInfo(tips *tipLayer, title, explanation string) fyne.CanvasObject {
+	mark := newRow("", iconInfo, styleIcon, nil)
+	mark.onHover = func(in bool) {
+		if in {
+			tips.show(mark, explanation)
+		} else {
+			tips.hide()
+		}
+	}
+	// One line: in a box a wrapping text gets its narrowest width and
+	// breaks after every word.
+	return container.NewHBox(container.NewCenter(textLine(title, 14, colText)), padded(2, 0, 6, 0, mark))
 }
 
 // widthLayout gives its content a width of its own and the height it
@@ -552,13 +622,14 @@ func (renderer *toggleRenderer) Destroy() {}
 
 func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 	view := ui.prefs
-	change := newRow("Change…", nil, styleOutline, func() {
-		ui.pick(pickRequest{title: "Choose the workspace", start: ui.cfg.Workspace, folder: true}, func(paths []string) {
+	change := newRow("Open…", nil, styleOutline, func() {
+		ui.pick(pickRequest{title: "Open a project", start: ui.computerConfig().Workspace, folder: true}, func(paths []string) {
 			root, err := agent.ResolveWorkspace(paths[0])
 			if err != nil {
 				ui.notice("Workspace", err.Error())
 				return
 			}
+			ui.useComputer() // a folder of this computer: its chats run here
 			if root != ui.cfg.Workspace {
 				ui.selectProject(root) // shows the project's start screen: come back here
 				view.openOn("General")
@@ -582,51 +653,38 @@ func (ui *desktopUI) generalSettings() fyne.CanvasObject {
 			}
 		}
 	}
-	worktrees := view.mark(registry.KeyWorktreeSort, settingRow(order.Title, "How the sidebar and the Repository window order a project's git worktrees.", sized(230, sortPicker.row)))
+	worktrees := view.mark(registry.KeyWorktreeSort, settingRow(order.Title, "", sized(230, sortPicker.row)))
 	page := container.NewVBox(view.pageTitle("General", "", nil), view.intro(registry.General), sectionTitle("Workspace"))
-	if ui.server == nil { // on a server, its projects are chosen in the sidebar
-		page.Add(card(view.mark("general.workspace", ui.projectFolderRow(change)), worktrees))
-	} else {
-		page.Add(card(worktrees))
-	}
+	page.Add(card(view.mark("general.workspace", settingRow("Project folder", "", change)), worktrees))
 	for _, object := range ui.targetRows() {
 		page.Add(object)
 	}
-	if ui.server != nil { // Install Chromium / Claude Code, while the server lacks them
-		page.Add(ui.server.installRows())
-		if rows := ui.lendRows(); rows != nil { // or this computer's browser, lent to it
-			page.Add(rows)
-		}
-	}
 	page.Add(sectionTitle("Appearance"))
 	page.Add(card(ui.appearanceRows(view)...))
-	if ui.server == nil {
-		page.Add(sectionTitle("Window"))
-		page.Add(card(view.mark("general.close_to_tray", settingRow("Close to tray",
-			"On: closing the window keeps 1loop running in the system tray, so running tasks and the phone connection go on. Quit from the tray icon's menu or with Ctrl+Q. Off: closing the window quits. Without a tray (GNOME without an AppIndicator extension, a bar that shows no tray items) closing always quits.",
-			newToggle(!ui.closeQuits, func(on bool) {
-				ui.closeQuits = !on
-				platform.Devf("ui", "close to tray %v", on)
-				ui.save()
-			})))))
-	}
+	page.Add(sectionTitle("Window"))
+	page.Add(card(view.mark("general.close_to_tray", settingRow("Close to tray", "",
+		newToggle(!ui.closeQuits, func(on bool) {
+			ui.closeQuits = !on
+			platform.Devf("ui", "close to tray %v", on)
+			ui.save()
+		})))))
+	page.Add(sectionTitle("Notifications"))
+	page.Add(card(view.mark(registry.KeyNotifications, settingRow("Notifications",
+		"When a chat finishes or waits for you, with 1loop in the background.",
+		newToggle(!ui.notificationsOff, ui.setNotifications)))))
 	page.Add(sectionTitle("Motion"))
-	page.Add(card(view.mark(registry.KeyAnimations, settingRow("Animations",
-		"Short animations as you click and hover, as menus and dialogs open, as messages arrive and the sidebar changes. Off, every change shows at once. They are off too while the system asks for reduced motion.",
+	page.Add(card(view.mark(registry.KeyAnimations, settingRow("Animations", "",
 		newToggle(!animationsOff, ui.setAnimations)))))
 	page.Add(sectionTitle("Discord"))
-	page.Add(card(view.mark(registry.KeyDiscordPresence, settingRow("Discord status",
-		"While the agent works, your Discord profile shows “Playing 1loop” with the model, what it is doing (thinking, running a command, editing files…) and for how long; “Idle” the rest of the time. Needs the Discord app open on this computer.",
+	page.Add(card(view.mark(registry.KeyDiscordPresence, settingRow("Discord status", "Shows what the agent is doing on your Discord profile.",
 		newToggle(ui.discordPresence, func(on bool) { ui.setDiscordPresence(on, ui.discordDetails) }))),
 		view.mark(registry.KeyDiscordDetails, settingRow("Share the chat",
-			"Also shows the chat's title, its project and the command or file the agent is on. Off, they stay on this computer.",
+			"Adds the chat's title and project to the status.",
 			newToggle(ui.discordDetails, func(on bool) { ui.setDiscordPresence(ui.discordPresence, on) })))))
-	if ui.server == nil {
-		page.Add(sectionTitle("Keyboard"))
-		page.Add(card(settingRow(registry.ShortcutsPage, "New chat, search, find in the chat and more: see their keys, and change them.", view.pageButton(registry.ShortcutsPage))))
-	}
+	page.Add(sectionTitle("Keyboard"))
+	page.Add(card(settingRow(registry.ShortcutsPage, "", view.pageButton(registry.ShortcutsPage))))
 	page.Add(sectionTitle("Usage"))
-	page.Add(card(view.mark("general.usage", settingRow("Usage & spend", "Where the tokens and the money went, by model, connection, project, branch and chat, and the prices behind it.", view.pageButton(UsagePage)))))
+	page.Add(card(view.mark("general.usage", settingRow("Usage & spend", "", view.pageButton(UsagePage)))))
 	page.Add(sectionTitle("Import"))
 	page.Add(card(view.mark("general.import", ui.importRow())))
 	return page
@@ -683,10 +741,6 @@ func (view *settingsView) intro(section string) fyne.CanvasObject {
 // a rate limit.
 func (ui *desktopUI) modelSettings() fyne.CanvasObject {
 	view := ui.prefs
-	if ui.server != nil { // the server's chats use the server's
-		return container.NewVBox(view.mark("models.connections", ui.server.connectionSettings()),
-			sectionTitle("Chat names"), card(view.mark(registry.KeyNamingModel, ui.server.namingSetting())))
-	}
 	add := newRow("Add connection", iconPlus, stylePrimary, func() {
 		id := core.Identifier()
 		ui.connectionEditor(agent.Connection{ID: id, AuthProfile: id, Name: "New connection", Provider: "compatible", Enabled: true, AllModels: true})
@@ -702,12 +756,13 @@ func (ui *desktopUI) modelSettings() fyne.CanvasObject {
 	return container.NewVBox(
 		view.pageTitle("Models & accounts", "", nil),
 		view.intro(registry.Models),
+		view.scope(),
 		container.NewBorder(nil, nil, nil, padded(14, 4, 0, 0, add), sectionTitle("Connections")),
-		padded(0, 10, 2, 0, plainFlow("Connect several services and accounts at once. The models of every enabled connection appear together in the composer.", 13, colMuted)),
+		padded(0, 10, 2, 0, plainFlow("Each enabled connection's models appear in the composer.", 13, colMuted)),
 		view.mark("models.connections", ui.connectionRows()),
 		sectionTitle("Rate limits"),
 		card(view.mark(registry.KeyAutoResume, settingRow("Automatic resumption",
-			"What 1loop does when a conversation reaches a rate limit: wait for the reset, or go on with another model, in the order you choose.",
+			"Waits for the reset, or switches model in your order.",
 			container.New(layout.NewCustomPaddedHBoxLayout(14), container.NewCenter(resumeToggle), newRow("Configure…", nil, styleOutline, ui.configureAutoResume))))),
 		sectionTitle("Chat names"),
 		card(view.mark(registry.KeyNamingModel, ui.namingSetting())),
@@ -735,7 +790,7 @@ func (ui *desktopUI) agentSettings() fyne.CanvasObject {
 	mode := newPicker(ui.window, "Tool permissions", styleField, nil)
 	mode.Options = []string{"Approval required", "YOLO mode"}
 	modes := []string{"approval", "yolo"}
-	if agent.AutoModeOffered(ui.cfg) { // ChatGPT and Claude Code only
+	if agent.AutoModeOffered(ui.computerConfig()) { // ChatGPT and Claude Code only
 		mode.Options, modes = append(mode.Options, "Auto mode"), append(modes, "auto")
 	}
 	selected := mode.Options[0]
@@ -759,7 +814,7 @@ func (ui *desktopUI) agentSettings() fyne.CanvasObject {
 	entry.Wrapping = fyne.TextWrapWord
 	entry.SetMinRowsVisible(10)
 	entry.SetText(ui.userInstructions)
-	entry.SetPlaceHolder("Describe your preferences: language, tone, coding conventions, level of detail…")
+	entry.SetPlaceHolder("Language, tone, coding conventions, level of detail…")
 	entry.OnChanged = func(text string) {
 		ui.userInstructions = strings.TrimSpace(text)
 		ui.save()
@@ -768,27 +823,28 @@ func (ui *desktopUI) agentSettings() fyne.CanvasObject {
 	page := container.NewVBox(
 		view.pageTitle("Agent & approvals", "", nil),
 		view.intro(registry.Agent),
+		view.scope(),
 		sectionTitle("Permissions"),
-		card(view.mark(registry.KeyApprovalMode, settingRow("Tool permissions",
-			"Approval asks before each shell command or file edit. YOLO runs them at once, with your user's rights. Auto works as Codex: reads run at once, other commands run in a sandbox that writes only the workspace, and destructive ones go to Codex's review (ChatGPT account) or Claude Code's own Auto mode; other connections have no Auto mode and ask.",
+		card(view.mark(registry.KeyApprovalMode, settingRowTitled(titleInfo(ui.tips, "Tool permissions", "Auto runs reads at once and other commands in a sandbox. YOLO runs everything with your rights."), "Asks before commands and edits. YOLO runs them at once.",
 			sized(230, mode.row)))),
 		sectionTitle("Instructions and memory"),
 		card(view.mark("agent.preferences", settingStack("Your preferences",
-			"Added to 1loop's own system prompt, whose workspace and tool rules stay in place, in every chat. Saved as you type; they apply from the next turn.",
+			"Added to every chat's system prompt, from the next turn.",
 			entry)),
 			view.mark(registry.KeyMemory, settingRow("Memory",
-				"The agent adds what it learns about you to these preferences, each change shown to you for approval. Off: it is not offered the memory tool.",
+				"The agent proposes what it learns; you approve each change.",
 				newToggle(!ui.memoryOff, func(on bool) { ui.setMemory(on) })))),
 		card(view.mark(registry.KeyWrapUp, settingRow("Next-step card",
-			"At the end of a turn that did work, the agent sums it up in a card and, when the next move is yours, asks with one or two reply buttons. Off: it is not offered the wrap_up tool.",
+			"A recap at the end of each turn, with buttons for your reply.",
 			newToggle(!ui.wrapUpOff, func(on bool) { ui.setWrapUp(on) })))),
 		sectionTitle("Project memory"),
 		view.mark("agent.project_memory", card(settingRow("Project memory",
-			"Each project's AGENTS.md, which 1loop and the other agents read there. Open it with Project memory… in the project's … menu in the sidebar.", nil))),
+			"Each project's AGENTS.md. Edit it from the project's … menu.", nil))),
 	)
+	page.Add(sectionTitle("Loopy"))
+	page.Add(card(settingRow("Loopy, the personal agent", "Its model, its morning summary, its context and its memory.", newRow("Open", iconChevronRight, styleChip, view.link(loopySettingsPage)))))
 	page.Add(sectionTitle("Context"))
-	page.Add(card(view.mark(registry.KeyDynamicCompaction, settingRow("Dynamic compaction",
-		"On: 1loop compacts at the natural breaks of the work (when a prompt is done, between two tasks of the list, at a stopping point the model chooses), lightens a context whose provider cache has expired, and shortens very large tool outputs as they arrive. Off: the classic way, one summary when the context is nearly full, wherever the work is. Claude Code manages its own context either way.",
+	page.Add(card(view.mark(registry.KeyDynamicCompaction, settingRow("Dynamic compaction", "Compacts at natural breaks in the work, not when nearly full.",
 		newToggle(!ui.classicCompaction, func(on bool) { ui.setDynamicCompaction(on) })))))
 	return page
 }
@@ -823,14 +879,13 @@ func (ui *desktopUI) toolSettings() fyne.CanvasObject {
 		view.pageTitle("Tools & extensions", "", nil),
 		view.intro(registry.Tools),
 		sectionTitle("Extensions"),
-		card(view.mark("tools.extensions", settingRow("Skills, plugins and MCP servers", "Skills and plugins from GitHub, and the MCP servers the agent uses.", view.pageButton("Extensions"))),
-			view.mark("tools.github", settingRow("GitHub connector", "Lets the agent use your GitHub repositories, issues and pull requests. "+github, view.pageButton("Connectors")))),
+		card(view.mark("tools.extensions", settingRow("Skills, plugins and MCP servers", "", view.pageButton("Extensions"))),
+			view.mark("tools.github", settingRow("GitHub connector", "Lets the agent work on your repositories and issues. "+github, view.pageButton("Connectors")))),
 		sectionTitle("Browser"),
-		card(view.mark("tools.browser_data", settingRow("Browsing data",
-			"The agents' browser keeps its cookies and logins, cache, site data and history from one session to the next, in "+browser.ProfileDir()+". Clear erases all of it.",
+		card(view.mark("tools.browser_data", settingRow("Browsing data", "Cookies, logins and history the agents' browser keeps.",
 			ui.clearBrowserButton())),
 			view.mark("tools.import_cookies", settingRow("Import cookies",
-				"Import a cookie JSON export or a compatible local browser profile into Browser Use. Review the accounts you are sharing before confirming.",
+				"Cookies from an export or a browser profile. Review them first.",
 				newRow("Import…", nil, styleOutline, ui.importCookies)))),
 		sectionTitle("Computer Use"),
 		card(view.mark("tools.computer_screen", ui.computerScreenRow())),
@@ -846,13 +901,18 @@ func (ui *desktopUI) advancedSettings() fyne.CanvasObject {
 		sectionTitle("Hooks"),
 		card(view.mark("advanced.hooks", ui.hooksRow())),
 		sectionTitle("Crashes"),
-		card(view.mark(registry.KeyCrashReports, settingRow("Offer to report crashes",
-			"After 1loop closes unexpectedly, the next start shows what happened, anonymized, and offers to open a GitHub issue with it that you check and submit from your own account. 1loop sends nothing by itself. Off after Don't ask again.",
+		card(view.mark(registry.KeyCrashReports, settingRow("Offer to report crashes", "After a crash, offers an anonymous report to file on GitHub.",
 			newToggle(!ui.crashReportsOff, ui.setCrashReports)))),
 	)
 }
 
 // setCrashReports turns the offer after a crash on or off.
+func (ui *desktopUI) setNotifications(on bool) {
+	ui.notificationsOff = !on
+	platform.Devf("ui", "notifications %v", on)
+	ui.save()
+}
+
 func (ui *desktopUI) setCrashReports(on bool) {
 	ui.crashReportsOff = !on
 	platform.Devf("ui", "crash reports %v", on)
@@ -864,7 +924,7 @@ func (ui *desktopUI) setCrashReports(on bool) {
 func (ui *desktopUI) hooksRow() fyne.CanvasObject {
 	path := agent.HooksPath()
 	count := agent.HookCount()
-	detail := fmt.Sprintf("Your commands around the agent's work, in Claude Code's format: PreToolUse (exit code 2 blocks the tool), PostToolUse, UserPromptSubmit and Stop. They apply to 1loop's own agent (Claude Code has its own hooks). %d configured, in %s.", count, path)
+	detail := fmt.Sprintf("%d configured, in %s.", count, path)
 	edit := newRow("Edit", nil, styleOutline, ui.editHooks)
 	return settingRow("Hook commands", detail, container.NewHBox(edit, newRow("Open file", nil, styleChip, func() {
 		if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -911,7 +971,7 @@ func (ui *desktopUI) editHooks() {
 func (ui *desktopUI) clearBrowserButton() fyne.CanvasObject {
 	var button *tapRow
 	button = newRow("Clear…", iconTrash, styleOutline, func() {
-		ui.confirm("Clear browsing data?", "Cookies and logins, cache, site data and history of the agents' browser will be erased. Sites will ask to log in again.", "Clear", func() {
+		ui.confirm("Clear browsing data?", "Cookies, logins and history of the agents' browser will be erased.", "Clear", func() {
 			button.Disable()
 			ui.clearBrowserData(func(err error) {
 				button.Enable()
@@ -930,9 +990,9 @@ func (ui *desktopUI) clearBrowserButton() fyne.CanvasObject {
 // pick another one in the desktop's dialog or to forget the permission.
 func (ui *desktopUI) computerScreenRow() fyne.CanvasObject {
 	grant := computeruse.LoadComputerGrant()
-	detail := "The first use asks which screen to share. Select \u201cRemember this permission\u201d or \u201cRemember this choice\u201d in that dialog and 1loop will not ask again, even after a restart."
+	detail := "Asks which screen to share. Choose \u201cRemember\u201d to stop asking."
 	if grant.Token != "" {
-		detail = fmt.Sprintf("Shared without asking, even after a restart: the screen of %d \u00d7 %d at %d, %d. Change screen opens the desktop's dialog to pick another; Forget stops sharing and asks next time.",
+		detail = fmt.Sprintf("Shared without asking: %d \u00d7 %d at %d, %d. Forget stops it.",
 			grant.Width, grant.Height, grant.X, grant.Y)
 	}
 	refresh := func() { // the page, if it is still the one on screen
@@ -987,6 +1047,9 @@ func (ui *desktopUI) connectionRows() fyne.CanvasObject {
 		if connectionValue.Provider == "claudecode" {
 			detail += " · " + claudeAccountText(connectionValue)
 		}
+		if ui.keyMissing(connectionValue.ID) && !ui.keysLoading {
+			detail += " · " + keyNeeded
+		}
 		rows = append(rows, settingRow(connectionValue.Name, detail, container.New(layout.NewCustomPaddedHBoxLayout(14), container.NewCenter(enabled), edit)))
 	}
 	if len(rows) == 0 {
@@ -997,7 +1060,7 @@ func (ui *desktopUI) connectionRows() fyne.CanvasObject {
 
 // removeConnection forgets a connection (and signs a ChatGPT account out).
 func (ui *desktopUI) removeConnection(conn agent.Connection, done func()) {
-	ui.confirm("Remove connection?", "Remove “"+conn.Name+"” from 1loop? Existing chats are kept. ChatGPT sessions will be disconnected.", "Remove", func() {
+	ui.confirm("Remove connection?", "Remove “"+conn.Name+"” from 1loop? Chats are kept. ChatGPT sessions end.", "Remove", func() {
 		finish := func() {
 			kept := []agent.Connection{}
 			for _, entry := range ui.connectionsList {
@@ -1006,7 +1069,7 @@ func (ui *desktopUI) removeConnection(conn agent.Connection, done func()) {
 				}
 			}
 			ui.connectionsList = kept
-			delete(ui.keys, conn.ID)
+			ui.setKey(conn.ID, "") // out of the secret store too
 			ui.save()
 			ui.refreshModels()
 			done()
@@ -1062,6 +1125,15 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	key := widget.NewPasswordEntry()
 	key.SetText(ui.keys[draft.ID])
 	key.SetPlaceHolder("Kept in memory until 1loop closes")
+	typedKey := key.Text // a key the field leaves as it was is not saved over one loaded meanwhile
+	keyNote := noKeyStore
+	if ui.vault.kept() {
+		key.SetPlaceHolder("Kept in the system's secret store")
+		keyNote = ""
+		if ui.keyMissing(draft.ID) && !ui.keysLoading {
+			keyNote = keyNeeded + "."
+		}
+	}
 	enabled := newToggle(draft.Enabled, func(on bool) { draft.Enabled = on })
 	typePicker := newPicker(ui.window, "Connection type", styleField, nil)
 	typePicker.Options = []string{"Local vLLM", "OpenRouter", "ChatGPT account", "OpenAI-compatible API", "Claude Code", "Antigravity CLI", "ChatGPT (Web)"}
@@ -1092,8 +1164,8 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 
 	// Access: an address and a key, a ChatGPT sign-in, or nothing (Claude Code).
 	apiFields := card(
-		settingRow("API base URL", "The address of the service's /v1 API.", sized(340, base)),
-		settingRow("API key", "", sized(340, key)))
+		settingRow("API base URL", "", sized(340, base)),
+		settingRow("API key", keyNote, sized(340, key)))
 	loginLink := widget.NewHyperlink("Open sign-in in your browser", nil)
 	loginLink.Hide()
 	account := plainFlow("Not signed in.", 12.5, colMuted)
@@ -1160,7 +1232,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 			})
 		}()
 	}
-	oauthFields := card(settingStack("ChatGPT account", "Uses your ChatGPT subscription, with a sign-in in your browser (OAuth with PKCE).",
+	oauthFields := card(settingStack("ChatGPT account", "Uses your ChatGPT subscription. Sign in with your browser.",
 		container.NewVBox(account, container.NewHBox(login), loginLink)))
 	claudeState := plainFlow("", 12.5, colMuted)
 	claudeAccount := plainFlow("", 12.5, colMuted)
@@ -1202,28 +1274,26 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		}
 	}
 	installClaude.onTap = func() { ui.installClaudeCode(showClaude) }
-	claudeFields := card(settingStack("Claude Code on this computer",
-		"Uses the Claude Code installed here, unmodified, with its own sign-in (your Claude subscription), tools, permission rules, CLAUDE.md and MCP servers. The work runs in Claude Code's harness: 1loop sends your messages, shows what it does and relays its permission requests. If a run is ever billed outside your subscription, 1loop stops it.",
+	claudeFields := card(settingStackTitled(titleInfo(ui.tips, "Claude Code on this computer", "Runs in Claude Code's own harness on your subscription. A run billed outside it is stopped."), "Runs the Claude Code installed here, with its own sign-in.",
 		container.NewVBox(claudeState, container.NewHBox(installClaude))),
-		settingRow("Login", "The system login is the one claude uses in a terminal. A connection with its own login signs in to its own account, keeps its own usage limits and sessions, and leaves the other connections signed in.", sized(340, claudeLogin.row)),
+		settingRow("Login", "The system login, or this connection's own account.", sized(340, claudeLogin.row)),
 		settingStack("Account", "", container.NewVBox(claudeAccount, container.NewHBox(signInClaude))))
 	agyState := plainFlow("", 12.5, colMuted)
 	showAgy := func() {
 		if path, err := agent.AgyExecutable(); err == nil {
 			setFlow(agyState, "Installed: "+path+". Sign in by running agy once in a terminal.")
 		} else {
-			setFlow(agyState, "Not installed on this computer. Install the Antigravity CLI with Google's instructions (antigravity.google), then run agy once in a terminal to sign in.")
+			setFlow(agyState, "Not installed. Install the Antigravity CLI, then run agy once.")
 		}
 	}
-	agyFields := card(settingStack("Antigravity CLI on this computer",
-		"Uses the agy command installed here with its own Google sign-in, tools, settings and MCP servers. The work runs in Antigravity's harness: 1loop sends your messages and shows what it does. Headless agy cannot ask for permissions: when it refuses a command, 1loop asks you and, if you allow it, runs it again with a rule for that command only.",
+	agyFields := card(settingStack("Antigravity CLI on this computer", "Runs the agy command here, with its own Google sign-in.",
 		container.NewVBox(agyState, plainFlow(agent.AgyTerms, 12, colMuted))))
 	webFields, releaseWebSetup := ui.chatGPTWebSettings(&draft, say)
 	access := container.NewStack(apiFields, oauthFields, claudeFields, agyFields, webFields)
 
 	routing := jsonEntry(draft.Routing)
 	parameters := jsonEntry(draft.Parameters)
-	routingRow := settingStack("OpenRouter routing (JSON)", "Provider order, fallbacks and the other routing options, for every model of this connection.", routing)
+	routingRow := settingStack("OpenRouter routing (JSON)", "Provider order and fallbacks, for every model here.", routing)
 	advanced := container.NewVBox()
 	showAdvanced := func() {
 		rows := []fyne.CanvasObject{}
@@ -1231,7 +1301,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 			rows = append(rows, routingRow)
 		}
 		rows = append(rows, settingStack("Request parameters (JSON)",
-			"For instance temperature, top_p, max_tokens, seed, chat_template_kwargs. The model, the tools and streaming are 1loop's own.", parameters))
+			"Such as temperature or seed. Model and tools stay 1loop's.", parameters))
 		advanced.Objects = []fyne.CanvasObject{card(rows...)}
 		advanced.Refresh()
 	}
@@ -1294,7 +1364,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		}
 		switch {
 		case len(models) == 0:
-			modelRows.Add(settingRow("No catalog loaded", "Load the models to choose which ones to show and to configure them one by one.", nil))
+			modelRows.Add(settingRow("No catalog loaded", "Load the models to choose which ones to show.", nil))
 		case matching == 0:
 			modelRows.Add(settingRow("No model matches", "", nil))
 		case matching > count:
@@ -1406,7 +1476,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 	page := container.NewVBox(
 		settings.pageTitle(title, "Models & accounts", nil),
 		card(
-			settingRow("Name", "As it appears in the settings.", sized(340, name)),
+			settingRow("Name", "", sized(340, name)),
 			settingRow("Type", "", sized(340, typePicker.row)),
 			settingRow("Enabled", "Its models are offered in the composer.", enabled)),
 		sectionTitle("Access"),
@@ -1428,7 +1498,7 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		})
 		remove.danger = true
 		page.Add(sectionTitle("Remove"))
-		page.Add(card(settingRow("Remove this connection", "Existing chats are kept. A ChatGPT account, or a Claude Code account with its own login, is signed out.", remove)))
+		page.Add(card(settingRow("Remove this connection", "Chats are kept; any account here is signed out.", remove)))
 	}
 	page.Add(spacer(0, 16))
 
@@ -1475,7 +1545,9 @@ func (ui *desktopUI) connectionEditor(original agent.Connection) {
 		if !found {
 			ui.connectionsList = append(ui.connectionsList, cloneConnection(draft))
 		}
-		ui.keys[draft.ID] = key.Text
+		if key.Text != typedKey {
+			ui.setKey(draft.ID, key.Text)
+		}
 		platform.Devf("ui", "connection %q saved", draft.Name)
 		ui.save()
 		ui.refreshModels()
@@ -1601,7 +1673,7 @@ func (ui *desktopUI) modelPreferencesEditor(conn *agent.Connection, model agent.
 		})
 		page.Add(sectionTitle("Routing"))
 		page.Add(card(
-			settingRow("Upstream provider", "Which provider OpenRouter sends this model's requests to.", container.New(layout.NewCustomPaddedHBoxLayout(8), fetch, sized(220, upstream.row))),
+			settingRow("Upstream provider", "", container.New(layout.NewCustomPaddedHBoxLayout(8), fetch, sized(220, upstream.row))),
 			settingRow("Allow fallback providers", "", fallbacks),
 			settingStack("Routing overrides (JSON)", "", routing)))
 	}
@@ -1609,7 +1681,7 @@ func (ui *desktopUI) modelPreferencesEditor(conn *agent.Connection, model agent.
 	page.Add(card(settingStack("Compact at (tokens)", agent.CompactHelp(compactConfig), compactAt)))
 	page.Add(sectionTitle("Parameters"))
 	page.Add(card(settingStack("Request parameter overrides (JSON)",
-		"They replace the matching defaults of the connection. Save the connection afterwards to apply them.", parameters)))
+		"Replace this connection's defaults. Save to apply them.", parameters)))
 	page.Add(spacer(0, 16))
 	save := newRow("Save model settings", nil, stylePrimary, func() {
 		compact := 0
@@ -1617,7 +1689,7 @@ func (ui *desktopUI) modelPreferencesEditor(conn *agent.Connection, model agent.
 			var err error
 			compact, err = strconv.Atoi(value)
 			if err != nil || compact < 1 || compact > 1000000 || conn.Provider == "claudecode" && compact < 100000 {
-				say("Enter a token count from 1 to 1,000,000 (100,000 minimum for Claude Code), or leave it empty.")
+				say("Enter 1 to 1,000,000 tokens (100,000 for Claude Code), or empty.")
 				return
 			}
 		}
@@ -1696,7 +1768,7 @@ func (ui *desktopUI) chatGPTConnected(email string, loadModels func()) {
 		padded(16, 2, 0, 0, next),
 		step("1", "Load models: 1loop asks this account which models it can use."),
 		step("2", "Choose the models to show and, if you like, one for each level."),
-		step("3", "Save connection, at the bottom of the page. Its models then show in the model menu under the message box."),
+		step("3", "Save at the bottom. Its models then show in the model menu."),
 	)
 	var dialog *sheet
 	later := newRow("Later", nil, styleOutline, func() { dialog.dismiss() })

@@ -74,7 +74,7 @@ func TestSidebarKeepsThisComputerOnAMachine(t *testing.T) {
 // beside the server's.
 func TestSidebarKeepsThisComputerOnAServer(t *testing.T) {
 	ui := sidebarUI(t)
-	ui.server = &remoteDesktop{parent: ui, shown: true, client: &remoteClient{address: serverAddress{URL: "https://box.lan:47101"}}, name: "box",
+	ui.server = &remoteDesktop{parent: ui, shown: true, live: remoteSync{answered: true}, client: &remoteClient{address: serverAddress{URL: "https://box.lan:47101"}}, name: "box",
 		projects: []string{"/srv/api"}, chats: []remoteapi.Chat{{ID: "s1", Title: "Server chat", Workspace: "/srv/api"}}, convs: map[string]*conversation{}}
 	ui.renderChats()
 	wantListed(t, ui, "app", "Fix the parser", "site", "Deploy the site", "api", "Server chat")
@@ -87,7 +87,7 @@ func TestSidebarKeepsNoFolderChatsOnAMachine(t *testing.T) {
 	ui.chats = append(ui.chats, &conversation{ID: "loose", Title: "Quick question", Config: agent.Config{Workspace: "/state/scratch/a", Scratch: "/state/scratch/a"}})
 	ui.cfg.MachineID = "m1"
 	ui.renderChats()
-	wantListed(t, ui, noFolderLabel, "Quick question")
+	wantListed(t, ui, thisComputerLabel, "Quick question")
 }
 
 // A click on a server's project opens a connection to it, which lists

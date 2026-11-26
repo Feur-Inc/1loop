@@ -7,7 +7,7 @@ package ui
 // Lending this computer's browser to a paired server (issue #406): a
 // server with no Chromium may run Browser Use in a headless Chromium here
 // (internal/browser/lend.go). It is off unless the user turns it on for
-// that server, in Settings → General while working on it. It lasts as long
+// that server, on its Installs page in Settings. It lasts as long
 // as the server's link (target_link.go). While the server's agent uses the
 // browser, a bar above the composer says so, with Stop.
 
@@ -180,8 +180,8 @@ func (ui *desktopUI) renderLending() {
 			ui.lendBar.Hide()
 		}
 	}
-	if ui.lendStatus != nil && ui.server != nil {
-		setFlow(ui.lendStatus, lendStatusText(ui.server.client.address.URL))
+	if ui.lendStatus != nil && ui.lendAddress != "" {
+		setFlow(ui.lendStatus, lendStatusText(ui.lendAddress))
 	}
 }
 
@@ -200,15 +200,11 @@ func (ui *desktopUI) stopLending() {
 	showLending()
 }
 
-// lendRows are Settings → General's switch for the server the window
-// works on.
-func (ui *desktopUI) lendRows() fyne.CanvasObject {
-	if ui.server == nil {
-		return nil
-	}
-	address := ui.server.client.address.URL
+// lendRows are the switch, on a paired server's Installs page in
+// Settings, that lends it this computer's browser.
+func (ui *desktopUI) lendRows(address string) fyne.CanvasObject {
 	saved, _ := pairedServer(address)
-	ui.lendStatus = plainFlow("", 12.5, colMuted)
+	ui.lendStatus, ui.lendAddress = plainFlow("", 12.5, colMuted), address
 	toggle := newToggle(saved.LendBrowser, func(on bool) {
 		if err := saveLendBrowser(address, on); err != nil {
 			setFlow(ui.lendStatus, err.Error())

@@ -123,6 +123,13 @@ func (s Size) IsZero() bool {
 	return s.Width == 0.0 && s.Height == 0.0
 }
 
+// Larger is Max for two sizes, without the Vector2 interface: passing a
+// Size to Max put it on the heap, an allocation for each child of each
+// layout measured at each frame. (1loop)
+func (s Size) Larger(o Size) Size {
+	return NewSize(Max(s.Width, o.Width), Max(s.Height, o.Height))
+}
+
 // Max returns a new [Size] that is the maximum of the current Size and s2.
 func (s Size) Max(v Vector2) Size {
 	x, y := v.Components()

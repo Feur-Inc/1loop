@@ -10,6 +10,7 @@ import (
 	"context"
 	"fmt"
 	"path/filepath"
+	"slices"
 
 	"1loop/internal/agent"
 	"1loop/internal/core"
@@ -146,14 +147,22 @@ func (server *headlessServer) sendLocked(chat *serverChat, id, text string, imag
 // turnEndedLocked is the end of a chat's last turn in a row: a subchat
 // notes how it ended, and the chats that caused it hear it.
 func (server *headlessServer) turnEndedLocked(chat *serverChat, ended string) {
+	reportTo := chat.ReportTo
+	chat.ReportTo, chat.Resumed = nil, false
 	if chat.Subchat != nil {
 		chat.Subchat.Ended = ended
 		if parent := server.parentLocked(chat); parent != nil {
+			// The parent last heard of a turn that did not end done: this
+			// one's end reaches it too, whoever caused it (#584).
+			if chat.Subchat.Owed() {
+				reportTo = server.reportToLocked(chat, reportTo)
+			}
+			if slices.Contains(reportTo, parent.ID) {
+				chat.Subchat.Reported = ended
+			}
 			server.broadcastLocked("meta", server.metaLocked(parent))
 		}
 	}
-	reportTo := chat.ReportTo
-	chat.ReportTo = nil
 	for _, id := range reportTo {
 		target := server.chatLocked(id)
 		if target == nil {

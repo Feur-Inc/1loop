@@ -94,6 +94,9 @@ func remoteTabOf(chat *conversation, tab panelTab) remoteapi.Tab {
 // Home panels keep remote tools usable before the first prompt, without a saved chat.
 // Called on the UI thread, like the other panel lookups.
 func (server *remoteServer) panelChat(id string) *conversation {
+	if id == loopyChatID {
+		return server.ui.loopyHome.chat
+	}
 	workspace, home := strings.CutPrefix(id, "home:")
 	if !home {
 		return server.ui.chatByID(id)

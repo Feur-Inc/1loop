@@ -21,9 +21,9 @@ import (
 	"1loop/internal/cookieimport"
 )
 
-const cookieWarning = "Imported cookies can give agents access to your accounts, including ones you did not intend to share: mail, banking, shopping, work or social networks. An agent could send messages, buy, delete or change settings using those accounts. Mistakes and malicious pages can cause harmful actions. Import only accounts you accept to give agents access to. Clear browsing data removes the browser's local sessions; it does not undo actions already performed."
+const cookieWarning = "Agents can act in imported accounts. Import only what you accept."
 
-const cookieExportGuide = "1. Open the browser and profile containing the accounts you want to import. Use a dedicated profile or export only the sites you need.\n\n2. With a cookie-export extension you trust (for example Cookie-Editor), explicitly allow access to those sites, then choose Export and JSON. If it copies JSON to the clipboard, paste it into a local text editor and save cookies.json. Chrome and Edge do not provide a built-in cookie-file export. Modern Windows profiles cannot be imported by copying their encrypted cookie database.\n\n3. In 1loop, choose JSON file, select the export, read the warning, enable I understand, then click Import. JSON arrays and objects containing a cookies array are supported.\n\n4. Open the site in Browser Use to check the connection. Some sites require signing in again, and an imported cookie does not guarantee a working login. Session cookies may expire when the browser closes.\n\n5. The export contains sensitive session data. Keep it private and remove it yourself when no longer needed. 1loop reads this file locally without deleting or changing it. Disable or remove the export extension if you no longer need it.\n\nDirect profile import is also available for Firefox-family browsers on Windows and Linux, and compatible Chromium-family browsers on Linux. Close the source browser first to obtain a consistent copy. Private, container and partitioned cookies are skipped."
+const cookieExportGuide = "1. Open the browser profile with the accounts to import.\n\n2. With a trusted cookie-export extension, export JSON for them.\n\n3. In 1loop, choose JSON file, select the export, then Import.\n\n4. Open the site in Browser Use to check the login.\n\n5. The export holds logins: keep it private and delete it after.\n\nFirefox, or Chromium on Linux, imports directly. Close it first."
 
 func heading(text string) *canvas.Text {
 	line := textLine(text, 14, colText)
@@ -108,7 +108,7 @@ func (ui *desktopUI) chooseCookieProfile(profiles []cookieimport.Profile) {
 	sources := container.NewVBox(sectionTitle("From a JSON export"), note("Chrome, Edge and other browsers, including protected Windows profiles."), container.NewHBox(chooseFile, guide), fileLabel)
 	if len(profiles) > 0 {
 		sources.Add(sectionTitle("Or from a local profile"))
-		sources.Add(note("Close the source browser before importing. Protected Windows Chromium profiles require a JSON export."))
+		sources.Add(note("Close the source browser first. Windows Chromium needs a JSON export."))
 		sources.Add(list) // the dialog scrolls; a scroll of its own here would catch the wheel
 	} else {
 		sources.Add(note("No compatible local profile found. Choose a JSON export instead."))
@@ -154,9 +154,9 @@ func (ui *desktopUI) chooseCookieProfile(profiles []cookieimport.Profile) {
 					ui.notice("Import cookies", err.Error())
 					return
 				}
-				text := fmt.Sprintf("Imported %s from %s into the agents' browser. Open your site in Browser Use to check whether it is signed in.", countText(kept, "cookie"), source)
+				text := fmt.Sprintf("Imported %s from %s. Open your site in Browser Use to check it.", countText(kept, "cookie"), source)
 				if len(result.Cookies) == 0 {
-					text = "No usable cookies were found. Try a JSON export from the source browser."
+					text = "No usable cookies found. Try a JSON export."
 				}
 				if refused := len(result.Cookies) - kept; refused > 0 {
 					text += " The browser refused " + countText(refused, "invalid cookie") + "."
@@ -166,7 +166,7 @@ func (ui *desktopUI) chooseCookieProfile(profiles []cookieimport.Profile) {
 					if result.Skipped == 1 {
 						verb = "was"
 					}
-					text += fmt.Sprintf(" %s %s left out (incomplete, expired, private, partitioned or session-only).", countText(result.Skipped, "cookie"), verb)
+					text += fmt.Sprintf(" %s %s left out (incomplete, expired or private).", countText(result.Skipped, "cookie"), verb)
 				}
 				ui.notice("Import cookies", text)
 			})

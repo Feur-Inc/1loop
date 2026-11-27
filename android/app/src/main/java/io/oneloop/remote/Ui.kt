@@ -95,6 +95,7 @@ import androidx.compose.material3.rememberDrawerState
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.derivedStateOf
@@ -591,6 +592,10 @@ private data class ChatPage(val name: String, val project: String? = null) {
 @Composable
 private fun ChatMain(app: RemoteApp) {
     var panel by remember(app.current, app.selectedProject, app.server?.key) { mutableStateOf(false) }
+    // The open chat's project, for a theme of its own (#704).
+    val workspace = app.chats.firstOrNull { it.id == app.current }?.workspace ?: app.selectedProject
+    val project = workspace?.takeIf { it != NO_FOLDER }?.let { app.worktrees[it] ?: it }?.let { "${app.server?.key}|$it" }
+    SideEffect { ThemeChoice.project = project }
     ChatGPTWebLease(app)
     BoxWithConstraints(Modifier.fillMaxSize()) {
         if (maxWidth >= 720.dp) {

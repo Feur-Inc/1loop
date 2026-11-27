@@ -146,36 +146,68 @@ fun parseHex(text: String?): Color? {
 fun hex(c: Color) = "#%02x%02x%02x".format(channel(c.red), channel(c.green), channel(c.blue))
 
 // The theme setting with the accent, kept on the phone: dark, light or
-// system (Android's dark theme), and a preset or #rrggbb.
+// system (Android's dark theme), or a theme file (ThemeFiles.kt, "file:<id>"),
+// and a preset or #rrggbb. A project can have a theme of its own (#704), used
+// while its chats are on screen.
 object ThemeChoice {
     private const val PREFERENCES = "1loop-theme"
     var theme by mutableStateOf("dark")
         private set
     var accent by mutableStateOf(PaletteTokens.defaultAccent)
         private set
+    /** The projects' own themes, by "target|project". */
+    var projectThemes by mutableStateOf<Map<String, String>>(emptyMap())
+        private set
+    /** The open chat's project, as projectThemes names it; null for none. */
+    var project by mutableStateOf<String?>(null)
     private var loaded = false
 
     fun load(context: Context) {
         if (loaded) return
         loaded = true
+        ThemeFiles.load(context)
         val prefs = context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE)
         theme = prefs.getString("theme", null) ?: "dark"
         accent = prefs.getString("accent", null) ?: PaletteTokens.defaultAccent
+        projectThemes = prefs.getStringSet("projectThemes", null).orEmpty()
+            .mapNotNull { entry -> entry.substringBeforeLast('=').takeIf { '=' in entry }?.let { it to entry.substringAfterLast('=') } }.toMap()
     }
 
     fun set(context: Context, theme: String = this.theme, accent: String = this.accent) {
+        // Switching to a theme with accents takes its first, as on the desktop.
+        val chosen = if (theme != this.theme && accent == this.accent) themeFile(theme)?.accents?.firstOrNull()?.let { hex(it) } ?: accent else accent
         this.theme = theme
-        this.accent = accent
-        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit { putString("theme", theme); putString("accent", accent) }
+        this.accent = chosen
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit { putString("theme", theme); putString("accent", chosen) }
     }
+
+    /** A project's own theme, or null for the app's. */
+    fun setProject(context: Context, key: String, theme: String?) {
+        projectThemes = if (theme == null) projectThemes - key else projectThemes + (key to theme)
+        context.getSharedPreferences(PREFERENCES, Context.MODE_PRIVATE).edit {
+            putStringSet("projectThemes", projectThemes.map { (k, v) -> "$k=$v" }.toSet())
+        }
+    }
+
+    private fun themeFile(theme: String) = theme.takeIf { it.startsWith(ThemeFiles.PREFIX) }?.let { ThemeFiles.find(it.removePrefix(ThemeFiles.PREFIX)) }
+
+    /** The theme on screen: the open project's own, else the app's. */
+    val shown get() = project?.let { projectThemes[it] } ?: theme
+
+    /** The accent on screen: a project's theme with accents brings its first. */
+    val shownAccent get() = project?.let { projectThemes[it] }?.let { themeFile(it) }?.accents?.firstOrNull()?.let { hex(it) } ?: accent
+
+    /** The accents to choose among: the theme's own, or the presets. */
+    val themeAccents get() = themeFile(theme)?.accents.orEmpty()
 
     /** The accent as the settings list names it: a preset, or custom. */
     val accentSetting get() = if (PaletteTokens.accents.any { it.id == accent }) accent else "custom"
 
-    fun tokens(systemDark: Boolean) = when (theme) {
+    fun tokens(systemDark: Boolean) = when (val shown = shown) {
         "light" -> PaletteTokens.light
         "system" -> if (systemDark) PaletteTokens.dark else PaletteTokens.light
-        else -> PaletteTokens.dark
+        // A theme file that is gone or broken shows 1loop's dark look.
+        else -> themeFile(shown)?.tokens ?: PaletteTokens.dark
     }
 }
 
@@ -201,7 +233,7 @@ fun OneLoopTheme(content: @Composable () -> Unit) {
     // isSystemInDarkTheme follows the configuration: Android's dark theme,
     // live, as it changes.
     val tokens = ThemeChoice.tokens(isSystemInDarkTheme())
-    Palette.set(tokens, accentColor(ThemeChoice.accent))
+    Palette.set(tokens, accentColor(ThemeChoice.shownAccent))
     val view = LocalView.current
     val activity = context as? Activity
     if (activity != null && !view.isInEditMode) {

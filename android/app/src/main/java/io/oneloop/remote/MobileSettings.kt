@@ -2,6 +2,8 @@
 
 package io.oneloop.remote
 
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import android.content.Intent
 import android.net.Uri
 import android.os.Build
@@ -385,13 +387,37 @@ private fun PreferencesSection(app: RemoteApp) {
 @Composable
 private fun ThemeSection() {
     val context = LocalContext.current
+    var notice by remember { mutableStateOf<String?>(null) }
+    // A theme file from the phone's files: its .toml, or the .zip it was shared as (#704).
+    val pick = rememberLauncherForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) return@rememberLauncherForActivityResult
+        val name = context.contentResolver.query(uri, arrayOf(android.provider.OpenableColumns.DISPLAY_NAME), null, null, null)
+            ?.use { if (it.moveToFirst()) it.getString(0) else null } ?: uri.lastPathSegment.orEmpty()
+        notice = try {
+            val theme = ThemeFiles.add(context, uri, name)
+            ThemeChoice.set(context, theme = ThemeFiles.PREFIX + theme.id)
+            null
+        } catch (failure: Exception) {
+            "$name: ${failure.message ?: "this theme can't be read."}"
+        }
+    }
     Text("Theme", style = Type.title)
-    Text("Dark is 1loop's own look. System follows the phone's dark theme, and changes with it.", style = Type.small)
+    Text("Dark is 1loop's own look. System follows the phone's dark theme, and changes with it. A theme file brings its colours and accents; its shader or picture, fonts, blur and roundness are the desktop's.", style = Type.small)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-        for ((id, label) in listOf("dark" to "Dark", "light" to "Light", "system" to "System")) {
+        for ((id, label) in listOf("dark" to "Dark", "light" to "Light", "system" to "System") + ThemeFiles.themes.map { ThemeFiles.PREFIX + it.id to it.name }) {
             Pill(label, primary = ThemeChoice.theme == id) { ThemeChoice.set(context, theme = id) }
         }
     }
+    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Pill("Add a theme file", icon = Icons.plus) { pick.launch(arrayOf("*/*")) }
+        ThemeChoice.theme.takeIf { it.startsWith(ThemeFiles.PREFIX) }?.let { chosen ->
+            Pill("Remove") {
+                ThemeChoice.set(context, theme = "dark")
+                ThemeFiles.remove(context, chosen.removePrefix(ThemeFiles.PREFIX))
+            }
+        }
+    }
+    notice?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }
 }
 
 // The accent: a preset, or a colour of the user's own as #rrggbb.
@@ -403,7 +429,10 @@ private fun AccentSection() {
     Text("Accent colour", style = Type.title)
     Text("Buttons, links and highlights. On the light theme it is darkened until it reads on white.", style = Type.small)
     FlowRow(horizontalArrangement = Arrangement.spacedBy(10.dp), verticalArrangement = Arrangement.spacedBy(10.dp)) {
-        for (preset in PaletteTokens.accents) {
+        // A theme file's accents replace the presets, as on the desktop.
+        val own = ThemeChoice.themeAccents
+        if (own.isNotEmpty()) for (color in own) Swatch(color, hex(color), ThemeChoice.accent == hex(color)) { ThemeChoice.set(context, accent = hex(color)) }
+        else for (preset in PaletteTokens.accents) {
             Swatch(preset.color, preset.label, ThemeChoice.accent == preset.id) { ThemeChoice.set(context, accent = preset.id) }
         }
     }

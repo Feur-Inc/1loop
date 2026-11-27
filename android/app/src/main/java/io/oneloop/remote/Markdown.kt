@@ -326,6 +326,10 @@ private fun MarkdownText(renderer: Markwon, text: Spanned, textSize: Float, modi
         update = { view ->
             view.tag = onCite
             view.change {
+                // Read here, not only when the view is made: a project's own theme (#704)
+                // changes the colours while the chat stays on screen.
+                view.setTextColor(Palette.text.toArgb())
+                view.setLinkTextColor(Palette.amber.toArgb())
                 view.setTextSize(TypedValue.COMPLEX_UNIT_PX, textSize)
                 TextViewCompat.setLineHeight(view, lineHeight)
                 renderer.setParsedMarkdown(view, text)

@@ -53,9 +53,15 @@ func TestProjectMenuIsTheSameEverywhere(t *testing.T) {
 					ui.cfg.MachineID = c.target.id
 				}
 			}
-			got := labels(ui.projectActionsOn(targetGroup{target: c.target, active: active}, project))
+			actions := ui.projectActionsOn(targetGroup{target: c.target, active: active}, project)
+			got := labels(actions)
 			if got != c.want {
 				t.Errorf("%s, active %v:\n got %s\nwant %s", c.name, active, got, c.want)
+			}
+			for _, action := range actions {
+				if action.icon == nil || action.icon == blankIcon {
+					t.Errorf("%s, active %v: %q has no icon", c.name, active, action.label)
+				}
 			}
 		}
 	}

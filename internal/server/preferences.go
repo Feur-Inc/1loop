@@ -68,6 +68,27 @@ func (server *headlessServer) setWrapUp(w http.ResponseWriter, r *http.Request) 
 	core.WriteJSON(w, 200, map[string]any{"wrapUp": args.Enabled})
 }
 
+// setDynamicCompaction is POST /api/dynamic-compaction {enabled}: the
+// server compacts at natural breaks in the work, or when nearly full (#705).
+func (server *headlessServer) setDynamicCompaction(w http.ResponseWriter, r *http.Request) {
+	var args struct{ Enabled bool }
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Say whether dynamic compaction is on")
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	previous := server.classic
+	server.classic = !args.Enabled
+	if err := server.saveSettingsLocked(); err != nil {
+		server.classic = previous
+		core.Fail(w, 500, "Unable to save the setting")
+		return
+	}
+	server.broadcastLocked("settings", server.settingsLocked())
+	core.WriteJSON(w, 200, map[string]any{"dynamicCompaction": args.Enabled})
+}
+
 func (server *headlessServer) setMaxSubchats(w http.ResponseWriter, r *http.Request) {
 	var args struct {
 		MaxSubchats int `json:"maxSubchats"`

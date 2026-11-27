@@ -82,7 +82,7 @@
           "label": "Pull requests first"
         }
       ],
-      "where": "desktop"
+      "where": "both"
     },
     {
       "key": "general.theme",
@@ -427,7 +427,7 @@
         "privacy"
       ],
       "kind": "action",
-      "where": "desktop"
+      "where": "both"
     },
     {
       "key": "agent.approval_mode",
@@ -674,7 +674,7 @@
         "window"
       ],
       "kind": "toggle",
-      "where": "desktop"
+      "where": "both"
     },
     {
       "key": "tools.extensions",

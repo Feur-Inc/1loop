@@ -526,6 +526,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var projectMachines by mutableStateOf(mapOf<String, String>())
     val repositories = mutableStateMapOf<String, Repository>() // by project
     var repositoryOpen by mutableStateOf<String?>(null) // the project the Repository screen shows
+    /** The target's chat naming model (agent.NamingModel: connectionId and model), null for none (#695). */
+    var namingModel by mutableStateOf<JSONObject?>(null)
+    /** A server's subchats at once: 0 automatic (defaultMaxSubchats); null when the target has no such setting (#696). */
+    var maxSubchats by mutableStateOf<Int?>(null)
+    var defaultMaxSubchats by mutableStateOf(0)
+    /** Dynamic compaction on the target; null for one too old to say (#705). */
+    var dynamicCompaction by mutableStateOf<Boolean?>(null)
     var worktreeSort by mutableStateOf(prefs.getString("worktreeSort", null) ?: "recent")
         private set
 
@@ -962,6 +969,9 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         preferencesEditable = false
         memoryEnabled = null
         wrapUpEnabled = null
+        namingModel = null
+        maxSubchats = null
+        dynamicCompaction = null
         userPreferences = ""
         running.clear()
         AgentStatus.clear(context)
@@ -1188,6 +1198,10 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         preferencesEditable = settings.optBoolean("preferencesEditable")
         memoryEnabled = if (settings.has("memory")) settings.optBoolean("memory") else null
         wrapUpEnabled = if (settings.has("wrapUp")) settings.optBoolean("wrapUp") else null
+        namingModel = settings.optJSONObject("namingModel")
+        maxSubchats = if (settings.has("maxSubchats")) settings.optInt("maxSubchats") else null
+        defaultMaxSubchats = settings.optInt("defaultMaxSubchats")
+        dynamicCompaction = if (settings.has("dynamicCompaction")) settings.optBoolean("dynamicCompaction") else null
         messageVersions = settings.optBoolean("messageVersions")
         attachmentsEnabled = settings.optBoolean("attachments")
         val array = settings.optJSONArray("models")
@@ -1519,6 +1533,26 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val generation = connectionGeneration
         val reply = onConnection(target, generation) { it.post("/api/wrap-up", JSONObject().put("enabled", enabled)) }
         wrapUpEnabled = reply.optBoolean("wrapUp")
+    }
+
+    /** model: an account's model (connectionId, model), or null for none. */
+    suspend fun setNamingModel(model: JSONObject?) {
+        val target = server ?: error("Connect first.")
+        val reply = onConnection(target, connectionGeneration) { it.post("/api/naming-model", JSONObject().put("model", model ?: JSONObject.NULL)) }
+        namingModel = reply.optJSONObject("namingModel")
+    }
+
+    /** 0: automatic, from the server's memory. */
+    suspend fun setMaxSubchats(count: Int) {
+        val target = server ?: error("Connect first.")
+        val reply = onConnection(target, connectionGeneration) { it.post("/api/max-subchats", JSONObject().put("maxSubchats", count)) }
+        maxSubchats = reply.optInt("maxSubchats")
+    }
+
+    suspend fun setDynamicCompaction(enabled: Boolean) {
+        val target = server ?: error("Connect first.")
+        val reply = onConnection(target, connectionGeneration) { it.post("/api/dynamic-compaction", JSONObject().put("enabled", enabled)) }
+        dynamicCompaction = reply.optBoolean("dynamicCompaction")
     }
 
     suspend fun saveAutoResume(policy: JSONObject) {

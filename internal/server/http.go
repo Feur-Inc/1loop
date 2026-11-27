@@ -138,6 +138,7 @@ func (server *headlessServer) Routes() map[string]http.HandlerFunc {
 		"POST /api/preferences":                        server.setPreferences,
 		"POST /api/memory":                             server.setMemory,
 		"POST /api/wrap-up":                            server.setWrapUp,
+		"POST /api/dynamic-compaction":                 server.setDynamicCompaction,
 		"POST /api/max-subchats":                       server.setMaxSubchats,
 		"POST /api/model":                              server.setModel,
 		"POST /api/auto-resume":                        server.setAutoResume,

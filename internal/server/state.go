@@ -656,6 +656,7 @@ func (server *headlessServer) settingsLocked() map[string]any {
 		"preferencesEditable": true,
 		"memory":              !server.memoryOff,
 		"wrapUp":              !server.wrapUpOff,
+		"dynamicCompaction":   !server.classic,
 		"models":              models,
 		"accounts":            accounts,
 		"model":               server.labelLocked(server.cfg),

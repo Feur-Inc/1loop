@@ -1107,6 +1107,14 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         chat.optJSONObject("meta")?.let { applyMeta(Meta.from(it)) }
     }
 
+    /** A chat's last compactions, to compare one (#697). */
+    suspend fun compactions(chat: String): List<CompactionRecord> {
+        val target = server ?: error("Connect first.")
+        val reply = onConnection(target, connectionGeneration) { it.get("/api/chats/$chat/compactions") }
+        val array = reply.optJSONArray("records") ?: return emptyList()
+        return (0 until array.length()).map { CompactionRecord.from(array.getJSONObject(it)) }
+    }
+
     /** Loads the page before the first item shown; returns how many came. */
     suspend fun loadEarlier(): Int {
         val target = server ?: return 0

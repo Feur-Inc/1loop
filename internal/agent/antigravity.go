@@ -128,6 +128,7 @@ func agyProcess(ctx context.Context, dir string, args ...string) (*exec.Cmd, err
 		}
 		cmd.Env = append(cmd.Env, pair)
 	}
+	platform.ApplyProjectEnv(ctx, cmd)
 	platform.PrepareProcess(cmd)
 	cmd.Cancel = func() error { return platform.InterruptProcess(cmd) }
 	cmd.WaitDelay = 3 * time.Second

@@ -338,22 +338,91 @@ func TestForkHistory(t *testing.T) {
 }
 
 func TestSubchatConfig(t *testing.T) {
-	parent := Config{Provider: "claudecode", ConnectionID: "c", Model: "opus", Session: "s", Scratch: "/tmp/x", Workspace: "/tmp/x", RanWith: &RunIdentity{Provider: "claudecode"}}
-	cfg := SubchatConfig(parent, nil)
-	if cfg.Session != "" || cfg.RanWith != nil || cfg.Scratch != "" || cfg.Model != "opus" || cfg.Workspace != "/tmp/x" {
+	parent := Config{Provider: "claudecode", ConnectionID: "c", Model: "opus", Effort: "medium", Session: "s", Scratch: "/tmp/x", Workspace: "/tmp/x", RanWith: &RunIdentity{Provider: "claudecode"}}
+	cfg := SubchatConfig(parent, nil, "")
+	if cfg.Session != "" || cfg.RanWith != nil || cfg.Scratch != "" || cfg.Model != "opus" || cfg.Effort != "medium" || cfg.Workspace != "/tmp/x" {
 		t.Fatalf("config %+v", cfg)
+	}
+	if high := SubchatConfig(parent, nil, "high"); high.Effort != "high" {
+		t.Fatalf("explicit effort on parent model: %+v", high)
 	}
 	choices := map[string]ModelChoice{
 		"a": {Connection: Connection{ID: "c", Enabled: true}, ID: "haiku"},
 		"b": {Connection: Connection{ID: "d", Enabled: true}, ID: "haiku"},
 		"c": {Connection: Connection{ID: "e", Enabled: false}, ID: "off"},
+		"d": {Connection: Connection{ID: "c", Enabled: true}, ID: "opus", Name: "Opus 5.5", Resolved: "claude-opus-5-5", Efforts: []string{"low", "medium", "high", "xhigh", "max"}, DefaultEffort: "medium"},
 	}
 	choice, err := ChooseSubchatModel(choices, "HAIKU", parent)
 	if err != nil || choice.Connection.ID != "c" {
 		t.Fatalf("the parent's connection first: %+v %v", choice, err)
 	}
-	if _, err := ChooseSubchatModel(choices, "off", parent); err == nil || !strings.Contains(err.Error(), "haiku") {
+	if resolved, err := ChooseSubchatModel(choices, "claude-opus-5-5", parent); err != nil || resolved.ID != "opus" {
+		t.Fatalf("resolved model id: %+v %v", resolved, err)
+	}
+	if _, err := ChooseSubchatModel(choices, "off", parent); err == nil || !strings.Contains(err.Error(), "haiku") || !strings.Contains(err.Error(), "claude-opus-5-5") {
 		t.Fatalf("a disabled model: %v", err)
+	}
+	opus := choices["d"]
+	if chosen := SubchatConfig(parent, &opus, "xhigh"); chosen.Effort != "xhigh" {
+		t.Fatalf("explicit effort on chosen model: %+v", chosen)
+	}
+	if chosen := SubchatConfig(parent, &opus, ""); chosen.Effort != "medium" {
+		t.Fatalf("inherited parent effort on chosen model: %+v", chosen)
+	}
+}
+
+func TestSubchatEffort(t *testing.T) {
+	parent := Config{Provider: "claudecode", ConnectionID: "c", Model: "opus", Effort: "medium"}
+	choices := map[string]ModelChoice{
+		"opus":  {Connection: Connection{ID: "c", Enabled: true}, ID: "opus", Name: "Opus 5.5", Efforts: []string{"low", "medium", "high", "xhigh", "max"}, DefaultEffort: "medium"},
+		"haiku": {Connection: Connection{ID: "c", Enabled: true}, ID: "haiku", Name: "Haiku"},
+	}
+	// Valid value, case-insensitive, and label match.
+	if got, err := ResolveSubchatEffort(choices, "opus", "HIGH", parent); err != nil || got != "high" {
+		t.Fatalf("ResolveSubchatEffort HIGH = %q, %v", got, err)
+	}
+	if got, err := ResolveSubchatEffort(choices, "", "Extra high", parent); err != nil || got != "xhigh" {
+		t.Fatalf("ResolveSubchatEffort label = %q, %v", got, err)
+	}
+	if got, err := ResolveSubchatEffort(choices, "opus", "", parent); err != nil || got != "" {
+		t.Fatalf("ResolveSubchatEffort empty = %q, %v", got, err)
+	}
+	// Unsupported effort lists the model's offered efforts.
+	if _, err := ResolveSubchatEffort(choices, "opus", "turbo", parent); err == nil || !strings.Contains(err.Error(), "low, medium, high, xhigh, max") {
+		t.Fatalf("expected offered efforts in error, got: %v", err)
+	}
+	// Model without efforts gives a clear error.
+	if _, err := ResolveSubchatEffort(choices, "haiku", "high", parent); err == nil || !strings.Contains(err.Error(), "does not offer a reasoning effort") {
+		t.Fatalf("expected no-efforts error, got: %v", err)
+	}
+
+	// Tool start validates effort before approval, includes it in the preview,
+	// and passes the resolved effort in SubchatRequest.
+	host := &fakeSubchats{}
+	access := host.access("")
+	access.Model = func(_ context.Context, name string) (string, error) {
+		found, err := ChooseSubchatModel(choices, name, parent)
+		return found.Display(), err
+	}
+	access.Effort = func(_ context.Context, model, effort string) (string, error) {
+		return ResolveSubchatEffort(choices, model, effort, parent)
+	}
+	if _, err, asked := runSubchat(t, access, false, true, map[string]any{
+		"action": "start", "title": "Hard task", "brief": "do it", "model": "opus", "effort": "bogus",
+	}); err == nil || len(asked) != 0 {
+		t.Fatalf("invalid effort should fail before approval: err=%v asked=%v", err, asked)
+	}
+	out, err, asked := runSubchat(t, access, false, true, map[string]any{
+		"action": "start", "title": "Hard task", "brief": "do it", "model": "opus", "effort": "HIGH",
+	})
+	if err != nil {
+		t.Fatalf("start with effort failed: %v (%s)", err, out)
+	}
+	if len(asked) != 1 || !strings.Contains(asked[0], "with Opus 5.5 (High effort).") {
+		t.Fatalf("approval preview missing effort: %v", asked)
+	}
+	if len(host.started) != 1 || host.started[0].Effort != "high" {
+		t.Fatalf("started request = %+v, want Effort=high", host.started)
 	}
 }
 
@@ -450,7 +519,7 @@ func TestNestedSubchatStart(t *testing.T) {
 
 func TestForkConfigForksTheParentsClaudeSession(t *testing.T) {
 	parent := Config{Provider: "claudecode", Model: "opus", Workspace: "/w", Session: "abc"}
-	cfg := SubchatConfig(parent, nil)
+	cfg := SubchatConfig(parent, nil, "")
 	if args, forked := claudeSessionArgs(cfg); forked || len(args) != 0 {
 		t.Fatalf("a fresh subchat resumed %v", args)
 	}
@@ -465,14 +534,14 @@ func TestForkConfigForksTheParentsClaudeSession(t *testing.T) {
 		t.Fatalf("after its first turn: %v, %v", args, forked)
 	}
 	// In its own worktree, Claude Code would not find the parent's session.
-	other := SubchatConfig(parent, nil)
+	other := SubchatConfig(parent, nil, "")
 	ForkConfig(&other, parent)
 	other.Workspace = "/w/.worktrees/x"
 	if _, forked := claudeSessionArgs(other); forked {
 		t.Fatal("forked a session from another folder")
 	}
 	// Another model falls back to the recap.
-	changed := SubchatConfig(parent, nil)
+	changed := SubchatConfig(parent, nil, "")
 	changed.Model = "sonnet"
 	ForkConfig(&changed, parent)
 	if changed.ForkSession != "" {

@@ -75,10 +75,12 @@ const (
 // SubchatRequest is a subchat to start. Context is "fresh" (the brief only)
 // or "fork" (the conversation so far, then the brief); Isolation is
 // "worktree" (its own Git worktree and branch) or "shared" (the parent's
-// folder); Model is a model of the picker, "" for the parent's.
+// folder); Model is a model of the picker, "" for the parent's; Effort is a
+// reasoning effort the chosen model offers, "" for the parent's (or the
+// model's default).
 type SubchatRequest struct {
-	Title, Brief, Context, Isolation, Model string
-	Attachments                             ChatAttachments // attached to the brief
+	Title, Brief, Context, Isolation, Model, Effort string
+	Attachments                                     ChatAttachments // attached to the brief
 }
 
 // SubchatInfo is a subchat as its parent sees it.
@@ -140,6 +142,7 @@ type SubchatAccess struct {
 	MaxSubchats int // host limit when higher than MaxRunningSubchats; 0 uses MaxRunningSubchats
 	Start       func(ctx context.Context, request SubchatRequest) (SubchatInfo, error)
 	Model       func(ctx context.Context, name string) (string, error)
+	Effort      func(ctx context.Context, model, effort string) (string, error)
 	ForkSize    func(ctx context.Context) int // the parent's context, in tokens: what a fork carries
 	List        func(ctx context.Context) []SubchatInfo
 	Stop        func(ctx context.Context, id string) error
@@ -291,8 +294,8 @@ func subchatPlace(info SubchatInfo) string {
 	return ""
 }
 
-// ChooseSubchatModel finds a model of the picker by its id or name, the
-// parent's connection first. The error lists the models there are.
+// ChooseSubchatModel finds a model of the picker by its id, resolved id, or
+// name, the parent's connection first. The error lists the models there are.
 func ChooseSubchatModel(choices map[string]ModelChoice, want string, parent Config) (ModelChoice, error) {
 	want = strings.TrimSpace(want)
 	var found []ModelChoice
@@ -302,7 +305,10 @@ func ChooseSubchatModel(choices map[string]ModelChoice, want string, parent Conf
 			continue
 		}
 		names = append(names, choice.ID)
-		if strings.EqualFold(choice.ID, want) || strings.EqualFold(choice.Display(), want) || strings.EqualFold(label, want) {
+		if choice.Resolved != "" && !strings.EqualFold(choice.Resolved, choice.ID) {
+			names = append(names, choice.Resolved)
+		}
+		if strings.EqualFold(choice.ID, want) || (choice.Resolved != "" && strings.EqualFold(choice.Resolved, want)) || strings.EqualFold(choice.Display(), want) || strings.EqualFold(label, want) {
 			found = append(found, choice)
 		}
 	}
@@ -323,9 +329,73 @@ func ChooseSubchatModel(choices map[string]ModelChoice, want string, parent Conf
 	return ModelChoice{}, fmt.Errorf("No model %q: use one of %s, or null for this chat's", want, strings.Join(names, ", "))
 }
 
+// CurrentSubchatModel finds the parent chat's ModelChoice in choices, if present.
+func CurrentSubchatModel(choices map[string]ModelChoice, parent Config) *ModelChoice {
+	var fallback *ModelChoice
+	for _, choice := range choices {
+		if !choice.Connection.Enabled {
+			continue
+		}
+		if !strings.EqualFold(choice.ID, parent.Model) && (choice.Resolved == "" || !strings.EqualFold(choice.Resolved, parent.Model)) {
+			continue
+		}
+		c := choice
+		if choice.Connection.ID == parent.ConnectionID {
+			return &c
+		}
+		if fallback == nil {
+			fallback = &c
+		}
+	}
+	return fallback
+}
+
+// ChooseSubchatEffort checks want against choice's offered reasoning efforts
+// (matching either the effort value or its display label, case-insensitively)
+// and returns the canonical effort value.
+func ChooseSubchatEffort(choice *ModelChoice, want string) (string, error) {
+	want = strings.TrimSpace(want)
+	if want == "" {
+		return "", nil
+	}
+	if choice == nil || len(choice.Efforts) == 0 {
+		if choice != nil && choice.Display() != "" {
+			return "", fmt.Errorf("%s does not offer a reasoning effort setting (use null)", choice.Display())
+		}
+		return "", fmt.Errorf("This model does not offer a reasoning effort setting (use null)")
+	}
+	for _, effort := range choice.Efforts {
+		if strings.EqualFold(effort, want) || strings.EqualFold(EffortLabel(effort), want) {
+			return effort, nil
+		}
+	}
+	return "", fmt.Errorf("No reasoning effort %q for %s: use one of %s, or null for this chat's", want, choice.Display(), strings.Join(choice.Efforts, ", "))
+}
+
+// ResolveSubchatEffort resolves effort against the chosen subchat model (or
+// the parent chat's model when model is "").
+func ResolveSubchatEffort(choices map[string]ModelChoice, model, effort string, parent Config) (string, error) {
+	effort = strings.TrimSpace(effort)
+	if effort == "" {
+		return "", nil
+	}
+	var choice *ModelChoice
+	if strings.TrimSpace(model) != "" {
+		found, err := ChooseSubchatModel(choices, model, parent)
+		if err != nil {
+			return "", err
+		}
+		choice = &found
+	} else {
+		choice = CurrentSubchatModel(choices, parent)
+	}
+	return ChooseSubchatEffort(choice, effort)
+}
+
 // SubchatConfig is a new subchat's configuration: the parent's, or with
-// another model; never its sessions, which belong to the parent.
-func SubchatConfig(parent Config, choice *ModelChoice) Config {
+// another model and/or reasoning effort; never its sessions, which belong to
+// the parent.
+func SubchatConfig(parent Config, choice *ModelChoice, effort string) Config {
 	cfg := parent
 	if choice != nil {
 		cfg = choice.Connection.Config(parent.Workspace)
@@ -341,6 +411,9 @@ func SubchatConfig(parent Config, choice *ModelChoice) Config {
 		options := choice.Connection.ModelOptions[choice.ID]
 		cfg.Parameters = MergeOptions(cfg.Parameters, options.Parameters)
 		cfg.Routing = MergeOptions(cfg.Routing, options.Provider)
+	}
+	if effort != "" {
+		cfg.Effort = effort
 	}
 	cfg.ClearSessions()
 	cfg.RanWith, cfg.WebConversation = nil, nil
@@ -395,10 +468,10 @@ func subchatToolDefinition() map[string]any {
 	return map[string]any{"type": "function", "function": map[string]any{
 		"name": "subchat",
 		"description": "Start and follow subchats: conversations under this chat in the sidebar that run in parallel, for independent work; the user can open, steer or stop them. " +
-			"start returns its id at once (approved per the approval mode); brief is all it needs: the task, the files, what done means. context: fresh (null, preferred) or fork (it gets this whole conversation: costly, only when the brief cannot carry it). isolation: worktree (null: own branch from the last commit, without uncommitted changes) or shared (this folder, read-only work). model: a name from the model picker, null for this chat's. " +
+			"start returns its id at once (approved per the approval mode); brief is all it needs: the task, the files, what done means. context: fresh (null, preferred) or fork (it gets this whole conversation: costly, only when the brief cannot carry it). isolation: worktree (null: own branch from the last commit, without uncommitted changes) or shared (this folder, read-only work). model: a name from the model picker, null for this chat's. effort: a reasoning effort the model offers, null for this chat's. " +
 			"Its report comes as a message when its turn ends: do not poll. Follow-ups go through the chats tool. status lists the subchats (id null) or one; stop stops one and those under it. At most " + fmt.Sprint(MaxSubchatDepth) + " levels below the user's chat, " + fmt.Sprint(MaxRunningSubchats) + " working at once. Leave unused fields null.",
 		"parameters": map[string]any{"type": "object", "additionalProperties": false,
-			"required": []string{"action", "id", "title", "brief", "context", "isolation", "model", "files"},
+			"required": []string{"action", "id", "title", "brief", "context", "isolation", "model", "effort", "files"},
 			"properties": map[string]any{
 				"action":    map[string]any{"type": "string", "enum": []string{"start", "status", "stop"}},
 				"id":        map[string]any{"type": []string{"string", "null"}, "description": "status, stop: the subchat's id."},
@@ -407,6 +480,7 @@ func subchatToolDefinition() map[string]any {
 				"context":   map[string]any{"type": []string{"string", "null"}, "enum": []any{"fresh", "fork", nil}},
 				"isolation": map[string]any{"type": []string{"string", "null"}, "enum": []any{"worktree", "shared", nil}},
 				"model":     map[string]any{"type": []string{"string", "null"}},
+				"effort":    map[string]any{"type": []string{"string", "null"}},
 				"files":     filesProperty("start"),
 			}},
 	}}
@@ -460,9 +534,9 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 	}
 	access := *cfg.Subchats
 	var args struct {
-		Action                                            string
-		ID, Title, Brief, Text, Context, Isolation, Model *string
-		Files                                             []string
+		Action                                                    string
+		ID, Title, Brief, Text, Context, Isolation, Model, Effort *string
+		Files                                                     []string
 	}
 	if err := json.Unmarshal([]byte(arguments), &args); err != nil {
 		return "", err
@@ -482,7 +556,7 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 		if access.Start == nil {
 			return "", fmt.Errorf("This chat cannot start subchats: ask the parent (chats tool, action message, id parent) if more work should split off")
 		}
-		request := SubchatRequest{Title: value(args.Title), Brief: value(args.Brief), Context: value(args.Context), Isolation: value(args.Isolation), Model: value(args.Model)}
+		request := SubchatRequest{Title: value(args.Title), Brief: value(args.Brief), Context: value(args.Context), Isolation: value(args.Isolation), Model: value(args.Model), Effort: value(args.Effort)}
 		if request.Brief == "" {
 			return "", fmt.Errorf("Give the subchat a brief: the task, the files and what done means")
 		}
@@ -532,6 +606,15 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 				}
 			}
 		}
+		if request.Effort != "" && access.Effort != nil { // checked now: the user only approves a start that can run
+			resolved, err := access.Effort(ctx, request.Model, request.Effort)
+			if err != nil {
+				return "", err
+			}
+			if resolved != "" {
+				request.Effort = resolved
+			}
+		}
 		start := "fresh, with the brief only"
 		ask := backend.confirm
 		if request.Context == "fork" {
@@ -549,7 +632,11 @@ func (backend *App) subchatTool(ctx context.Context, arguments string, begin fun
 			return "", err
 		}
 		request.Attachments = attachments
-		preview := fmt.Sprintf("%s\n\nStarts %s, %s, with %s.\n\n%s%s", request.Title, start, place, model, request.Brief, filesPreview(args.Files))
+		with := model
+		if request.Effort != "" {
+			with += " (" + EffortLabel(request.Effort) + " effort)"
+		}
+		preview := fmt.Sprintf("%s\n\nStarts %s, %s, with %s.\n\n%s%s", request.Title, start, place, with, request.Brief, filesPreview(args.Files))
 		if !ask(ctx, emit, "Start a subchat?", preview) {
 			return "", fmt.Errorf("The user did not start the subchat")
 		}

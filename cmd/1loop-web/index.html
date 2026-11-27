@@ -3,15 +3,61 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, interactive-widget=resizes-content">
+<meta name="theme-color" content="#141418">
 <title>1loop</title>
-<style>html,body{margin:0;height:100%;overflow:hidden;background:#111;color:#ccc;font:14px sans-serif}canvas{display:block}#loading{position:fixed;inset:0;display:flex;align-items:center;justify-content:center}</style>
+<link id="favicon" rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20viewBox%3D%220%200%20120%20120%22%3E%3Crect%20width%3D%22120%22%20height%3D%22120%22%20rx%3D%2228%22%20fill%3D%22%23141418%22%2F%3E%3Cpath%20d%3D%22M95.24%2030.43%20A46%2046%200%201%201%2067.99%2014.70%22%20fill%3D%22none%22%20stroke%3D%22%23FFB000%22%20stroke-width%3D%2212%22%20stroke-linecap%3D%22round%22%2F%3E%3Ccircle%20cx%3D%2283%22%20cy%3D%2220.2%22%20r%3D%226%22%20fill%3D%22%23F4F4F4%22%2F%3E%3Cpath%20d%3D%22M49%2046%20L62%2038%20L62%2080%22%20fill%3D%22none%22%20stroke%3D%22%23F4F4F4%22%20stroke-width%3D%2212%22%20stroke-linecap%3D%22round%22%20stroke-linejoin%3D%22round%22%2F%3E%3C%2Fsvg%3E">
+<style>
+html,body{margin:0;height:100%;overflow:hidden;background:#111;color:#ccc;font:14px sans-serif}
+canvas{display:block}
+#loading{position:fixed;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:14px}
+#loading svg{width:56px;height:56px}
+#loading .ring{transform-origin:60px 60px;animation:loop-spin 4.8s linear infinite}
+@keyframes loop-spin{to{transform:rotate(360deg)}}
+@media (prefers-reduced-motion:reduce){#loading .ring{animation:none}}
+</style>
 </head>
 <body>
-<div id="loading">Loading 1loop…</div>
+<div id="loading">
+  <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120" aria-hidden="true">
+    <g class="ring">
+      <path d="M95.24 30.43 A46 46 0 1 1 67.99 14.70" fill="none" stroke="#FFB000" stroke-width="12" stroke-linecap="round"/>
+      <circle cx="83" cy="20.2" r="6" fill="#F4F4F4"/>
+    </g>
+    <path d="M49 46 L62 38 L62 80" fill="none" stroke="#F4F4F4" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>
+  </svg>
+  <span id="loading-text">Loading 1loop…</span>
+</div>
 <script src="wasm_exec.js"></script>
 <script>
 // Load timings for the spike (#267): window.loopTimings.
 window.loopTimings = {start: performance.now()};
+
+// Animate the 1loop favicon by orbiting the amber loop and dot around the "1".
+// Updating the SVG data URI works across Chromium, Firefox and Safari (which
+// pause SMIL/CSS animations inside <link rel="icon">).
+(function animateFavicon() {
+  const link = document.getElementById("favicon");
+  if (!link || window.matchMedia("(prefers-reduced-motion: reduce)").matches) return;
+  let angle = 0;
+  const prefix = "data:image/svg+xml," + encodeURIComponent(
+    '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 120 120">' +
+    '<rect width="120" height="120" rx="28" fill="#141418"/>' +
+    '<g transform="rotate('
+  );
+  const middle = encodeURIComponent(
+    ' 60 60)">' +
+    '<path d="M95.24 30.43 A46 46 0 1 1 67.99 14.70" fill="none" stroke="#FFB000" stroke-width="12" stroke-linecap="round"/>' +
+    '<circle cx="83" cy="20.2" r="6" fill="#F4F4F4"/>' +
+    '</g>' +
+    '<path d="M49 46 L62 38 L62 80" fill="none" stroke="#F4F4F4" stroke-width="12" stroke-linecap="round" stroke-linejoin="round"/>' +
+    '</svg>'
+  );
+  setInterval(() => {
+    angle = (angle + 6) % 360;
+    link.href = prefix + angle + middle;
+  }, 80);
+})();
+
 // Fyne draws with WebGL: without it the program panics on its first frame
 // and the page stays blank, so say why instead (#513).
 function hasWebGL() {
@@ -22,8 +68,9 @@ function hasWebGL() {
     return false;
   }
 }
+const loadingText = document.getElementById("loading-text");
 if (!hasWebGL()) {
-  document.getElementById("loading").textContent = "1loop's web client needs WebGL. Turn on hardware acceleration in your browser, or use the desktop or phone app.";
+  loadingText.textContent = "1loop's web client needs WebGL. Turn on hardware acceleration in your browser, or use the desktop or phone app.";
 } else {
   const go = new Go();
   WebAssembly.instantiateStreaming(fetch("1loop.wasm"), go.importObject).then(result => {
@@ -31,7 +78,7 @@ if (!hasWebGL()) {
     document.getElementById("loading").remove();
     go.run(result.instance);
   }).catch(err => {
-    document.getElementById("loading").textContent = "1loop could not start: " + err;
+    loadingText.textContent = "1loop could not start: " + err;
   });
 }
 </script>

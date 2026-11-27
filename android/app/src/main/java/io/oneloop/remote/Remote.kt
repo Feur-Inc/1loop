@@ -379,6 +379,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var screen by mutableStateOf<Screen>(Screen.Launch)
     var target by mutableStateOf<ExecutionTarget?>(null) // the kind of target being linked
     var fileFocus by mutableStateOf<Citation?>(null) // a citation to show in the panel's Files tab
+    var panelFocus by mutableStateOf<String?>(null) // a tab the panel opens on, once
     val local = AndroidLocalRuntime.get(context)
     var starting by mutableStateOf(false) // the local engine is starting
     private var localStartGeneration = -1L
@@ -603,14 +604,16 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var chatgptPage by mutableStateOf<JSONObject?>(null)
     val approvals = mutableStateMapOf<String, Approval>() // by chat
     val questions = mutableStateMapOf<String, Questions>() // by chat
-    val questionsAside = mutableStateListOf<String>() // closed unanswered: reopened from the composer
+    // A question waits in a card above the composer, as on the desktop (#703);
+    // its sheet opens from there, and closing it unanswered puts it back.
+    val questionsOpen = mutableStateListOf<String>()
     private val questionDrafts = mutableMapOf<String, QuestionDraft>() // by request
 
     fun questionDraft(request: Questions) = questionDrafts.getOrPut(request.id) { QuestionDraft() }
 
     private fun forgetQuestion(request: Questions?) {
         if (request == null) return
-        questionsAside.remove(request.id)
+        questionsOpen.remove(request.id)
         questionDrafts.remove(request.id)
     }
     var busy by mutableStateOf(false)
@@ -976,7 +979,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         current = null
         approvals.clear()
         questions.clear()
-        questionsAside.clear()
+        questionsOpen.clear()
         questionDrafts.clear()
         loopy.reset()
         loopyFiles.clear()

@@ -22,9 +22,30 @@ func TestChatScrollThemeHidesOnlyTheChatsBar(t *testing.T) {
 	if chat.Size(theme.SizeNameScrollBar) != 0 || chat.Size(theme.SizeNameScrollBarSmall) != 0 {
 		t.Fatal("the chat's scroll still makes room for its own bar")
 	}
+	if chat.Color(scrollbar.ColorNameHover, theme.VariantDark) != color.Transparent {
+		t.Fatal("the chat's scroll hover colour is not transparent")
+	}
 	flat := flatScrollTheme{loopTheme{theme.DefaultTheme()}}
 	if flat.Size(theme.SizeNameScrollBar) == 0 {
 		t.Fatal("the settings page lost its scrollbar")
+	}
+}
+
+// Even if Fyne recreates the conversation scroll's renderer (for example after
+// switching spaces or panes), its internal scrollBarArea must inherit the
+// chatScrollTheme override so a second scrollbar never appears beside chatBar.
+func TestChatScrollNeverShowsBuiltInBarAfterRendererRecreate(t *testing.T) {
+	window := scrolledWindow(t)
+	if bars := window.scroll.Bars(); len(bars) != 0 {
+		t.Fatalf("expected no built-in scrollbars on conversation scroll, got %d", len(bars))
+	}
+	// Simulate Fyne recreating the scroll renderer without ThemeOverride.Refresh().
+	window.openLoopy()
+	window.showSpace(false)
+	window.scroll.Resize(window.scroll.Size())
+	window.scroll.Refresh()
+	if bars := window.scroll.Bars(); len(bars) != 0 {
+		t.Fatalf("after switching space, built-in scrollbars reappeared: %d", len(bars))
 	}
 }
 

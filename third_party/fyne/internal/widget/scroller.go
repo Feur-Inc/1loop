@@ -184,8 +184,18 @@ type scrollBarAreaRenderer struct {
 	track, thumb *canvas.Rectangle
 }
 
+func (r *scrollBarAreaRenderer) theme() fyne.Theme {
+	if custom := cache.WidgetTheme(r.area); custom != nil {
+		return custom
+	}
+	if custom := cache.WidgetTheme(r.area.scroll.super()); custom != nil {
+		return custom
+	}
+	return theme.Current()
+}
+
 func (r *scrollBarAreaRenderer) Layout(size fyne.Size) {
-	r.layoutWithTheme(theme.CurrentForWidget(r.area), size)
+	r.layoutWithTheme(r.theme(), size)
 }
 
 func (r *scrollBarAreaRenderer) layoutWithTheme(th fyne.Theme, size fyne.Size) {
@@ -212,12 +222,12 @@ func (r *scrollBarAreaRenderer) layoutWithTheme(th fyne.Theme, size fyne.Size) {
 }
 
 func (r *scrollBarAreaRenderer) MinSize() fyne.Size {
-	hit := scrollBarHit(theme.CurrentForWidget(r.area))
+	hit := scrollBarHit(r.theme())
 	return fyne.NewSize(hit, hit)
 }
 
 func (r *scrollBarAreaRenderer) Refresh() {
-	th := theme.CurrentForWidget(r.area)
+	th := r.theme()
 	width, thumb, track := scrollbar.Look(th, r.area.isLarge())
 	r.thumb.FillColor, r.track.FillColor = thumb, track
 	r.thumb.CornerRadius, r.track.CornerRadius = width/2, width/2
@@ -398,6 +408,9 @@ func (s *Scroll) CreateRenderer() fyne.WidgetRenderer {
 	scr.rightShadow = NewShadow(ShadowLeft, SubmergedContentLevel)
 	scr.SetObjects(append(scr.Objects(), scr.topShadow, scr.bottomShadow, scr.leftShadow, scr.rightShadow,
 		scr.vertArea, scr.horizArea))
+	for _, child := range []fyne.CanvasObject{scr.topShadow, scr.bottomShadow, scr.leftShadow, scr.rightShadow, scr.vertArea, scr.horizArea} {
+		cache.OverrideThemeMatchingScope(child, s.super())
+	}
 	scr.updatePosition()
 
 	return scr

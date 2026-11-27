@@ -36,7 +36,7 @@ type chatScrollTheme struct{ flatScrollTheme }
 
 func (themeSpec chatScrollTheme) Color(name fyne.ThemeColorName, v fyne.ThemeVariant) color.Color {
 	switch name {
-	case theme.ColorNameScrollBar, theme.ColorNameScrollBarBackground:
+	case theme.ColorNameScrollBar, theme.ColorNameScrollBarBackground, scrollbar.ColorNameHover:
 		return color.Transparent
 	}
 	return themeSpec.flatScrollTheme.Color(name, v)

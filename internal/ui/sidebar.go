@@ -633,7 +633,7 @@ func (ui *desktopUI) buildSidebar() fyne.CanvasObject {
 	}
 	ui.sideMarker = canvas.NewRectangle(colAmber)
 	ui.sideMarker.Hide()
-	ui.sideLists = container.NewVBox(sectionHeader("Projects", nil), container.NewStack(container.NewWithoutLayout(ui.sideGlide.pill, ui.sideMarker), ui.projectList))
+	ui.sideLists = container.NewVBox(container.NewStack(container.NewWithoutLayout(ui.sideGlide.pill, ui.sideMarker), ui.projectList))
 	lists := ui.sideLists
 	divider := canvas.NewRectangle(colBorderSoft)
 	divider.SetMinSize(fyne.NewSize(0, 1))

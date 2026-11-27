@@ -182,3 +182,42 @@ func TestScrollBarDrag(t *testing.T) {
 		t.Fatalf("drag from the track scrolled to %v, want %v", scroll.Offset.Y, want)
 	}
 }
+
+type noBarTheme struct{ fyne.Theme }
+
+func (th noBarTheme) Size(name fyne.ThemeSizeName) float32 {
+	if name == theme.SizeNameScrollBar || name == theme.SizeNameScrollBarSmall {
+		return 0
+	}
+	return th.Theme.Size(name)
+}
+
+// A ThemeOverride giving SizeNameScrollBar 0 hides the scroll's bar both on
+// initial render and after the scroll's renderer is destroyed and recreated.
+func TestScrollBarHiddenByThemeOverride(t *testing.T) {
+	test.NewTempApp(t).Settings().SetTheme(barTheme{test.Theme()})
+	tall := canvas.NewRectangle(color.Black)
+	tall.SetMinSize(fyne.NewSize(100, 10000))
+	scroll := container.NewVScroll(tall)
+	override := container.NewThemeOverride(scroll, noBarTheme{barTheme{test.Theme()}})
+
+	w := test.NewTempWindow(t, override)
+	w.Resize(fyne.NewSize(200, 300))
+
+	if bars := scroll.Bars(); len(bars) != 0 {
+		t.Fatalf("initial render: %d bars visible under noBarTheme, want 0", len(bars))
+	}
+
+	// Simulate Fyne recreating the scroll's renderer (e.g. after switching
+	// views/spaces where the renderer cache drops the scroll's renderer).
+	r := scroll.CreateRenderer()
+	r.Layout(scroll.Size())
+	for _, obj := range r.Objects() {
+		if area, ok := obj.(barArea); ok && area.Visible() {
+			t.Fatalf("after CreateRenderer: bar area visible (size %v), want hidden", area.Size())
+		}
+	}
+	if bars := scroll.Bars(); len(bars) != 0 {
+		t.Fatalf("after CreateRenderer: %d bars visible under noBarTheme, want 0", len(bars))
+	}
+}

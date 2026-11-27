@@ -168,8 +168,11 @@ shows every change.
   show, each ends before the other's corner. A theme giving
   `SizeNameScrollBar` 0 has no bar. `Scroll.Bars` gives the bar areas that show,
   for 1loop's text selection, which lies over code blocks and passes the
-  pointer on to them. `container/scroll_1loop_test.go` and
-  `scrollbar/scrollbar_test.go` check it.
+  pointer on to them. `Scroll.CreateRenderer` propagates the scroll's
+  theme override to its bar areas and shadows, and `scrollBarAreaRenderer`
+  falls back to the scroll's overridden theme, so a `ThemeOverride` hiding
+  the bar still holds after renderer recreation. `container/scroll_1loop_test.go`
+  and `scrollbar/scrollbar_test.go` check it.
 - `canvas/image.go` (renderSVG), `canvas/image_svgcache.go` (#475): an
   SVG's rasterised copy is cached per pixel size, not one per name: an
   icon shown at two sizes (a row's 18 px, a chip's 16 px) drew itself

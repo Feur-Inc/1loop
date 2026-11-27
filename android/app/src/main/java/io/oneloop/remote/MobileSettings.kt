@@ -83,7 +83,9 @@ fun phoneSettingsShown(app: RemoteApp, list: SettingsList, workProfile: Boolean)
     val local = app.server?.localPhone == true
     return list.onPhone().filter { setting ->
         when (setting.key) {
-            "models.connections", "tools.linux", "phone.adb", "phone.background", "phone.sharing" -> local
+            "tools.linux", "phone.adb", "phone.background", "phone.sharing" -> local
+            // This phone's accounts, or a headless server's for its paired devices (#691); a computer manages its own in its window.
+            "models.connections" -> local || app.server?.desktop == false
             "phone.work_profile" -> workProfile
             "phone.pairing" -> app.server?.let { !it.localPhone && !it.desktop } == true // the headless server's devices
             "models.default_preset" -> app.defaultPresets
@@ -240,7 +242,7 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
         "phone.pairing" -> ServerDevicesSection(app)
         "models.connections" -> {
             Text("Connections", style = Type.title)
-            Text("The services and accounts this phone's agent takes its models from.", style = Type.small)
+            Text(if (app.server?.localPhone == false) "The services and accounts ${app.server?.name}'s agent takes its models from, kept on the server." else "The services and accounts this phone's agent takes its models from.", style = Type.small)
             Pill("Accounts and models", onClick = { app.connectionsOpen = true })
         }
         "models.default_preset" -> DefaultModelsSection(app)

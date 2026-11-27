@@ -57,6 +57,7 @@ import androidx.compose.ui.window.DialogProperties
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
@@ -64,7 +65,21 @@ import org.json.JSONObject
 
 // Local phone's connections, as the desktop's Settings → Connections: the
 // accounts and APIs this phone's agent uses. Each target keeps its own; a
-// key is sent once and never read back.
+// key is sent once and never read back. A headless server's are managed
+// here too, as from the desktop's server window (#691): the same editor on
+// its /api/connections, where a ChatGPT account signs in with this phone's
+// browser (relayChatGPTSignIn), and Claude Code and the Antigravity CLI sign
+// in where the server runs.
+
+/** Where the open target keeps its connections: this phone's engine, or a server's for its paired devices. */
+private class ConnectionPaths(val network: Boolean, val where: String) {
+    val base = if (network) "/api/connections" else "/api/local/connections"
+}
+
+private fun RemoteApp.connectionPaths(): ConnectionPaths {
+    val target = server
+    return if (target != null && !target.localPhone && !target.desktop) ConnectionPaths(true, target.name) else ConnectionPaths(false, "this phone")
+}
 
 data class LocalLogin(val state: String, val url: String, val problem: String)
 
@@ -91,8 +106,8 @@ private suspend fun RemoteApp.localCall(path: String, body: JSONObject? = null):
     return withContext(Dispatchers.IO) { if (body == null) Api(target).get(path) else Api(target).post(path, body) }
 }
 
-private suspend fun RemoteApp.localConnections(): Pair<List<LocalConnection>, Boolean> {
-    val reply = localCall("/api/local/connections")
+private suspend fun RemoteApp.localConnections(paths: ConnectionPaths): Pair<List<LocalConnection>, Boolean> {
+    val reply = localCall(paths.base)
     val rows = reply.optJSONArray("connections") ?: JSONArray()
     val list = (0 until rows.length()).map { i ->
         val row = rows.getJSONObject(i)
@@ -157,13 +172,14 @@ private class ConnectionDraft(val original: LocalConnection?) {
 @Composable
 fun ConnectionsSheet(app: RemoteApp, onDone: () -> Unit) {
     val scope = rememberCoroutineScope()
+    val paths = remember(app.server) { app.connectionPaths() }
     var list by remember { mutableStateOf<List<LocalConnection>?>(null) }
     var claudeInstalled by remember { mutableStateOf(false) }
     var problem by remember { mutableStateOf<String?>(null) }
     var editing by remember { mutableStateOf<ConnectionDraft?>(null) }
     suspend fun reload() {
         try {
-            val (rows, claude) = app.localConnections()
+            val (rows, claude) = app.localConnections(paths)
             list = rows
             claudeInstalled = claude
             problem = null
@@ -180,10 +196,10 @@ fun ConnectionsSheet(app: RemoteApp, onDone: () -> Unit) {
             val draft = editing
             if (draft == null) {
                 BackHandler(onBack = onDone)
-                ConnectionList(list, problem, onBack = onDone, onEdit = { editing = ConnectionDraft(it) }, onAdd = { editing = ConnectionDraft(null) })
+                ConnectionList(paths, list, problem, onBack = onDone, onEdit = { editing = ConnectionDraft(it) }, onAdd = { editing = ConnectionDraft(null) })
             } else {
                 val current = list?.firstOrNull { it.id == draft.original?.id }
-                ConnectionEditor(app, draft, current, claudeInstalled, reload = { reload() }, onClose = {
+                ConnectionEditor(app, paths, draft, current, claudeInstalled, reload = { reload() }, onClose = {
                     editing = null
                     scope.launch { reload() }
                 }, onSaved = { id ->
@@ -199,10 +215,14 @@ fun ConnectionsSheet(app: RemoteApp, onDone: () -> Unit) {
 }
 
 @Composable
-private fun ConnectionList(list: List<LocalConnection>?, problem: String?, onBack: () -> Unit, onEdit: (LocalConnection) -> Unit, onAdd: () -> Unit) {
+private fun ConnectionList(paths: ConnectionPaths, list: List<LocalConnection>?, problem: String?, onBack: () -> Unit, onEdit: (LocalConnection) -> Unit, onAdd: () -> Unit) {
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(horizontal = 20.dp)) {
         Header("Connections", onBack)
-        Text("The accounts and APIs this phone's agent uses. A computer or a server keeps its own.", style = Type.small)
+        Text(
+            if (paths.network) "The accounts and APIs the agent of ${paths.where} uses, kept on the server."
+            else "The accounts and APIs this phone's agent uses. A computer or a server keeps its own.",
+            style = Type.small,
+        )
         Spacer(Modifier.height(18.dp))
         when {
             list == null && problem == null -> Row(verticalAlignment = Alignment.CenterVertically) {
@@ -247,7 +267,7 @@ private fun accessText(connection: LocalConnection) = when (connection.provider)
 
 @Composable
 private fun ConnectionEditor(
-    app: RemoteApp, draft: ConnectionDraft, current: LocalConnection?, claudeInstalled: Boolean,
+    app: RemoteApp, paths: ConnectionPaths, draft: ConnectionDraft, current: LocalConnection?, claudeInstalled: Boolean,
     reload: suspend () -> Unit, onClose: () -> Unit, onSaved: (String) -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -272,7 +292,7 @@ private fun ConnectionEditor(
     suspend fun persist(): JSONObject {
         val body = JSONObject().put("connection", draft.json())
         if (draft.apiKey.isNotEmpty()) body.put("apiKey", draft.apiKey)
-        val saved = app.localCall("/api/local/connections", body).optJSONObject("connection") ?: JSONObject()
+        val saved = app.localCall(paths.base, body).optJSONObject("connection") ?: JSONObject()
         draft.apiKey = ""
         return saved
     }
@@ -303,6 +323,7 @@ private fun ConnectionEditor(
         say(null)
         scope.launch {
             var savedId: String? = null
+            var cancelled = false // the editor closed meanwhile: it is not opened again on the saved one
             try {
                 var id = draft.original?.id.orEmpty()
                 var authProfile = current?.json?.optString("authProfile").orEmpty()
@@ -316,12 +337,13 @@ private fun ConnectionEditor(
                 step(id, authProfile)
                 if (savedId == null) reload()
             } catch (e: CancellationException) {
+                cancelled = true
                 throw e
             } catch (e: Exception) {
                 say(e.message ?: "Unable to sign in.", error = true)
             } finally {
                 busy = false
-                savedId?.let(onSaved)
+                if (!cancelled) savedId?.let(onSaved)
             }
         }
     }
@@ -344,7 +366,8 @@ private fun ConnectionEditor(
         Spacer(Modifier.height(16.dp))
         Caption("Type")
         Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-            for ((id, label) in providers) Chip(label, draft.provider == id) {
+            // ChatGPT (Web) signs in in the browser where its engine runs: not from here for a server.
+            for ((id, label) in providers.filter { !paths.network || it.first != "chatgptweb" || draft.original?.provider == it.first }) Chip(label, draft.provider == id) {
                 if (id != draft.provider) catalogGeneration++
                 draft.chooseProvider(id)
                 catalog = null
@@ -366,19 +389,25 @@ private fun ConnectionEditor(
             "openai" -> ChatGPTAccess(draft, account, busy) { action ->
                 withSaved { id, _ ->
                     when (action) {
-                        "login" -> {
-                            val url = app.localCall("/api/local/connections/$id/login", JSONObject()).optString("url")
+                        "login" -> if (paths.network) {
+                            say("Authorize 1loop in your browser, then come back here.")
+                            val email = app.relayChatGPTSignIn(context, paths, id)
+                            say("Signed in" + email.takeIf { it.isNotEmpty() }?.let { " as $it" }.orEmpty() + " on ${paths.where}.")
+                        } else {
+                            val url = app.localCall("${paths.base}/$id/login", JSONObject()).optString("url")
                             if (url.isNotEmpty()) openLink(context, url)
                         }
                         "open" -> account?.login?.url?.takeIf { it.isNotEmpty() }?.let { openLink(context, it) }
-                        "disconnect" -> app.localCall("/api/local/connections/$id/disconnect", JSONObject())
+                        "disconnect" -> app.localCall("${paths.base}/$id/disconnect", JSONObject())
                             .optString("warning").takeIf { it.isNotEmpty() }?.let { say(it) }
                     }
                 }
             }
-            "claudecode" -> ClaudeAccess(app, claudeInstalled, current, reload) { claudePending = it }
-            "antigravity" -> Text("Uses the Antigravity CLI (agy) installed where the 1loop agent runs, with its own Google sign-in: run agy once there in a terminal to sign in. 1loop never reads its sign-in and runs it for you only.", style = Type.small)
-            "chatgptweb" -> WebAccess(app, draft, account, busy) { step -> withSaved(step) }
+            "claudecode" -> if (paths.network) Text("Uses the server's claude. Run claude there once to sign in.", style = Type.small)
+                else ClaudeAccess(app, claudeInstalled, current, reload) { claudePending = it }
+            "antigravity" -> if (paths.network) Text("Uses the server's agy. Run agy there once to sign in.", style = Type.small) else Text("Uses the Antigravity CLI (agy) installed where the 1loop agent runs, with its own Google sign-in: run agy once there in a terminal to sign in. 1loop never reads its sign-in and runs it for you only.", style = Type.small)
+            "chatgptweb" -> if (paths.network) Text("Signed in where the server runs.", style = Type.small)
+                else WebAccess(app, draft, account, busy) { step -> withSaved(step) }
             else -> Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 if (draft.provider == "openrouter") {
                     Text("Address: $OPENROUTER", style = Type.small)
@@ -421,7 +450,7 @@ private fun ConnectionEditor(
                 if (draft.apiKey.isNotEmpty()) body.put("apiKey", draft.apiKey)
                 scope.launch {
                     try {
-                        val array = app.localCall("/api/local/connections/models", body).optJSONArray("models") ?: JSONArray()
+                        val array = app.localCall("${paths.base}/models", body).optJSONArray("models") ?: JSONArray()
                         if (generation != catalogGeneration) return@launch // the type changed meanwhile
                         catalog = (0 until array.length()).map { array.getJSONObject(it).let { m -> m.optString("id") to m.optString("name").ifEmpty { m.optString("id") } } }
                         say("${catalog!!.size} models loaded.")
@@ -496,14 +525,14 @@ private fun ConnectionEditor(
         AlertDialog(
             onDismissRequest = { removing = false }, containerColor = GlassSurface, modifier = GlassDialogEdge,
             title = { Text("Remove connection?", style = Type.title) },
-            text = { Text("Remove “${draft.original?.name}” from this phone? Existing chats are kept.", style = Type.small) },
+            text = { Text("Remove “${draft.original?.name}” from ${paths.where}? Existing chats are kept.", style = Type.small) },
             confirmButton = {
                 TextButton(onClick = {
                     removing = false
                     busy = true
                     scope.launch {
                         try {
-                            app.localCall("/api/local/connections", JSONObject().put("connection", draft.original!!.json).put("remove", true))
+                            app.localCall(paths.base, JSONObject().put("connection", draft.original!!.json).put("remove", true))
                             onClose()
                         } catch (e: CancellationException) {
                             throw e
@@ -747,6 +776,65 @@ private fun ClaudeSignIn(app: RemoteApp, current: LocalConnection?, reload: susp
         else -> Pill("Sign in with Claude", enabled = !busy) { send(JSONObject()) }
     }
     problem?.let { Text(it, style = Type.small.copy(color = Palette.danger), modifier = Modifier.padding(top = 10.dp)) }
+}
+
+/**
+ * A server's ChatGPT account, signed in with this phone's browser (the
+ * desktop's remote_chatgpt.go). The server makes the link and keeps the PKCE
+ * verifier; OpenAI sends the browser back to localhost:1455, the only address
+ * its client accepts, which this phone answers, and the code goes on to the
+ * server, which trades it for the tokens. They never come here. Returns the
+ * account's email.
+ */
+private suspend fun RemoteApp.relayChatGPTSignIn(context: android.content.Context, paths: ConnectionPaths, id: String): String {
+    val begun = localCall("${paths.base}/$id/login", JSONObject())
+    val link = begun.optString("url")
+    val state = begun.optString("state")
+    val host = runCatching { Uri.parse(link) }.getOrNull()
+    if (host?.scheme != "https" || host.host != "auth.openai.com" || state.isEmpty()) throw ApiError("The server gave an invalid sign-in link.")
+    val listener = withContext(Dispatchers.IO) {
+        try {
+            java.net.ServerSocket(1455, 4, java.net.InetAddress.getByName("127.0.0.1")).apply { soTimeout = 500 }
+        } catch (_: java.io.IOException) {
+            throw ApiError("Another ChatGPT sign-in is waiting on this phone (port 1455 is in use). Finish or cancel it, then try again.")
+        }
+    }
+    try {
+        openLink(context, link)
+        return kotlinx.coroutines.withTimeout(5 * 60_000L) {
+            withContext(Dispatchers.IO) {
+                var email: String? = null // the account's, once signed in
+                while (email == null) {
+                    ensureActive()
+                    val socket = try { listener.accept() } catch (_: java.net.SocketTimeoutException) { continue }
+                    socket.use {
+                        val line = it.getInputStream().bufferedReader().readLine().orEmpty() // GET /auth/callback?code=…&state=… HTTP/1.1
+                        val target = Uri.parse("http://localhost" + line.split(" ").getOrElse(1) { "" })
+                        fun reply(status: String, text: String) {
+                            val body = text.toByteArray()
+                            it.getOutputStream().write(("HTTP/1.1 $status\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: ${body.size}\r\nConnection: close\r\n\r\n").toByteArray() + body)
+                        }
+                        if (!line.startsWith("GET ") || target.path != "/auth/callback" || target.getQueryParameter("state") != state) {
+                            reply("400 Bad Request", "Invalid OAuth state")
+                            return@use
+                        }
+                        val outcome = runCatching {
+                            if (!target.getQueryParameter("error").isNullOrEmpty()) throw ApiError("OpenAI sign-in denied.")
+                            localCall("${paths.base}/$id/login/complete", JSONObject().put("state", state).put("code", target.getQueryParameter("code").orEmpty()))
+                        }
+                        if (outcome.isSuccess) reply("200 OK", "Sign-in successful: the account is connected on ${paths.where}. You can return to 1loop.")
+                        else reply("400 Bad Request", "Sign-in failed. Check 1loop for details.")
+                        email = outcome.getOrThrow().optString("email")
+                    }
+                }
+                email.orEmpty()
+            }
+        }
+    } catch (_: kotlinx.coroutines.TimeoutCancellationException) {
+        throw ApiError("The sign-in timed out; start it again.")
+    } finally {
+        withContext(kotlinx.coroutines.NonCancellable + Dispatchers.IO) { runCatching { listener.close() } }
+    }
 }
 
 private fun openLink(context: android.content.Context, url: String) {

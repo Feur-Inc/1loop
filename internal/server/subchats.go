@@ -202,6 +202,11 @@ func (server *headlessServer) subchatAccess(chat *serverChat) *agent.SubchatAcce
 		found, err := agent.ChooseSubchatModel(server.choices, name, chat.Config)
 		return found.Display(), err
 	}
+	access.Effort = func(_ context.Context, model, effort string) (string, error) {
+		server.mu.Lock()
+		defer server.mu.Unlock()
+		return agent.ResolveSubchatEffort(server.choices, model, effort, chat.Config)
+	}
 	return access
 }
 
@@ -222,7 +227,12 @@ func (server *headlessServer) startSubchat(ctx context.Context, parent *serverCh
 		}
 		choice = &found
 	}
-	cfg := agent.SubchatConfig(parent.Config, choice)
+	effort, err := agent.ResolveSubchatEffort(server.choices, request.Model, request.Effort, parent.Config)
+	if err != nil {
+		server.mu.Unlock()
+		return agent.SubchatInfo{}, err
+	}
+	cfg := agent.SubchatConfig(parent.Config, choice, effort)
 	var history []agent.Message
 	var items []agent.ChatItem
 	if request.Context == "fork" {

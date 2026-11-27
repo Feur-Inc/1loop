@@ -121,6 +121,12 @@ func (ui *desktopUI) subchatAccess(chat *conversation) *agent.SubchatAccess {
 		})
 		return display, err
 	}
+	access.Effort = func(ctx context.Context, model, effort string) (resolved string, err error) {
+		ui.onUI(ctx, func() {
+			resolved, err = agent.ResolveSubchatEffort(ui.choices, model, effort, chat.Config)
+		})
+		return resolved, err
+	}
 	return access
 }
 
@@ -145,7 +151,12 @@ func (ui *desktopUI) startSubchat(ctx context.Context, parent *conversation, req
 			}
 			choice = &found
 		}
-		cfg = agent.SubchatConfig(parent.Config, choice)
+		effort, problem := agent.ResolveSubchatEffort(ui.choices, request.Model, request.Effort, parent.Config)
+		if problem != nil {
+			err = problem
+			return
+		}
+		cfg = agent.SubchatConfig(parent.Config, choice, effort)
 		machine = ui.attachmentMachine(cfg.MachineID)
 		if request.Context == "fork" {
 			agent.ForkConfig(&cfg, parent.Config)

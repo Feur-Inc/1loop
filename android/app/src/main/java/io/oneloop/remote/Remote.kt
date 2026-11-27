@@ -521,6 +521,8 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     var projects by mutableStateOf(listOf<String>())
     // The target's worktrees, folder → project: their chats belong to the project (Worktrees.kt).
     var worktrees by mutableStateOf(mapOf<String, String>())
+    /** The open target's sidebar order: its pinned projects and chats, and their ranks (#699). */
+    var sidebar by mutableStateOf(SidebarOrder())
     // The headless server's SSH machines, and the projects that are folders of one (Machines.kt).
     var machines by mutableStateOf(listOf<SshMachine>())
     var projectMachines by mutableStateOf(mapOf<String, String>())
@@ -1064,6 +1066,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             val state = onConnection(target, generation) { it.get("/api/state") }
             chats.clear()
             chats.addAll(parseChats(state.optJSONArray("chats")))
+            sidebar = SidebarOrder.from(state.optJSONObject("sidebar"))
             projects = strings(state.optJSONArray("projects"))
             worktrees = stringMap(state.optJSONObject("worktrees"))
             machines = parseMachines(state.optJSONArray("machines"))
@@ -1128,6 +1131,26 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
             return 0
         } finally {
             if (generation == connectionGeneration) loadingEarlier = false
+        }
+    }
+
+    /**
+     * Pins or unpins a project or chat of the open target, or moves it to index
+     * to among siblings, the keys of its list in the drawer's order (#699).
+     */
+    fun changeSidebar(action: String, key: String, siblings: List<String> = emptyList(), to: Int = 0) {
+        val generation = connectionGeneration
+        val target = server ?: return
+        scope.launch {
+            try {
+                val body = JSONObject().put("action", action).put("key", key).put("siblings", JSONArray(siblings)).put("to", to)
+                val reply = onConnection(target, generation) { it.post("/api/sidebar", body) }
+                if (generation == connectionGeneration) sidebar = SidebarOrder.from(reply.optJSONObject("sidebar"))
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                actionFailed(generation, e)
+            }
         }
     }
 
@@ -1258,6 +1281,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
                 val list = parseChats(data.optJSONArray("chats"))
                 chats.clear()
                 chats.addAll(list)
+                data.optJSONObject("sidebar")?.let { sidebar = SidebarOrder.from(it) }
                 if (current != null && chats.none { it.id == current }) open(null)
             }
             "item" -> {

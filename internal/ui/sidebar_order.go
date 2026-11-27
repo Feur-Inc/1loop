@@ -7,6 +7,8 @@ import (
 	"slices"
 	"strings"
 	"time"
+
+	"1loop/internal/remoteapi"
 )
 
 // The sidebar's order (#283). A project or chat sorts by when a message was
@@ -49,6 +51,7 @@ func (ui *desktopUI) touchOrder(target projectTarget, project, chatID string) {
 		ui.sideRank[chatKey(server, chatID)] = now
 	}
 	ui.save()
+	ui.remote.chatsChanged() // the phones list them in the same order (#699)
 }
 
 // touchChatOrder ranks a local or SSH chat, and its project, first.
@@ -83,6 +86,7 @@ func (ui *desktopUI) moveBy(siblings []string, key string, delta int) {
 	}
 	ui.save()
 	ui.renderChats()
+	ui.remote.chatsChanged()
 }
 
 // moveRank moves key one place in the direction delta among siblings, in the
@@ -97,23 +101,14 @@ func moveRank(rank map[string]int64, siblings []string, key string, delta int, b
 	return true
 }
 
-// placeRank puts key at index to among siblings, in the sidebar's order: the
-// siblings take ranks from base in their new order, so the sidebar shows it.
+// placeRank and reorderKeys are the engines' (remoteapi/sidebar.go): the
+// phone moves the desktop's own projects and chats the same way (#699).
 func placeRank(rank map[string]int64, siblings []string, key string, to int, base int64) {
-	for k, sibling := range reorderKeys(siblings, key, to) {
-		rank[sibling] = base + int64(k)
-	}
+	remoteapi.PlaceRank(rank, siblings, key, to, base)
 }
 
-// reorderKeys is list with key moved to index to. The list is unchanged when
-// it does not hold key.
 func reorderKeys(list []string, key string, to int) []string {
-	if !slices.Contains(list, key) {
-		return list
-	}
-	rest := slices.DeleteFunc(slices.Clone(list), func(k string) bool { return k == key })
-	to = min(max(to, 0), len(rest))
-	return slices.Insert(rest, to, key)
+	return remoteapi.ReorderKeys(list, key, to)
 }
 
 // movePinned moves a pinned project or chat up or down the pinned section.
@@ -126,6 +121,7 @@ func (ui *desktopUI) movePinned(key string, delta int) {
 	ui.pinned[i], ui.pinned[j] = ui.pinned[j], ui.pinned[i]
 	ui.save()
 	ui.renderChats()
+	ui.remote.chatsChanged()
 }
 
 // setPinned pins a project or chat, at the end of the pinned section, or
@@ -139,6 +135,7 @@ func (ui *desktopUI) setPinned(key string, pinned bool) {
 	}
 	ui.save()
 	ui.renderChats()
+	ui.remote.chatsChanged()
 }
 
 // isPinned says whether a project or chat is in the pinned section.

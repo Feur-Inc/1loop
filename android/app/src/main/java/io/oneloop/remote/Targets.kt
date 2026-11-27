@@ -173,3 +173,42 @@ fun parseRemembered(text: String?): Map<String, List<String>> = runCatching {
 
 fun rememberedText(remembered: Map<String, List<String>>): String =
     JSONObject().apply { remembered.forEach { (key, projects) -> put(key, JSONArray(projects)) } }.toString()
+
+/**
+ * The open target's sidebar order (#699, remoteapi.SidebarOrder): its pinned
+ * projects and chats, in the order the user gave them, then by rank (a
+ * message sent ranks first, a move ranks the siblings in their new order;
+ * 0: never used or moved, in the order they came).
+ */
+data class SidebarOrder(val pinned: List<String> = emptyList(), val rank: Map<String, Long> = emptyMap()) {
+    fun pinned(key: String) = key in pinned
+
+    private val comparator = compareBy<String>({ pinned.indexOf(it).let { at -> if (at < 0) Int.MAX_VALUE else at } }, { rank[it] ?: 0L })
+
+    /** items sorted by their keys: pinned first, then by rank; stable. */
+    fun <T> sorted(items: List<T>, key: (T) -> String): List<T> = items.sortedWith(compareBy(comparator) { key(it) })
+
+    companion object {
+        fun projectKey(project: String) = "project:$project"
+        fun chatKey(id: String) = "chat:$id"
+
+        fun from(o: JSONObject?): SidebarOrder {
+            if (o == null) return SidebarOrder()
+            val pinned = o.optJSONArray("pinned").let { a -> (0 until (a?.length() ?: 0)).map { a!!.optString(it) } }
+            val rank = o.optJSONObject("rank")?.let { r -> r.keys().asSequence().associateWith { r.optLong(it) } }.orEmpty()
+            return SidebarOrder(pinned, rank)
+        }
+    }
+}
+
+/** The drawer's groups with the open target's projects and chats in its sidebar order (#699); other targets' keep theirs. */
+fun orderedGroups(groups: List<DrawerGroup>, order: SidebarOrder): List<DrawerGroup> {
+    val active = groups.withIndex().filter { (_, group) -> group.target?.active == true && group.project != null }
+    val sorted = order.sorted(active.map { it.value }) { SidebarOrder.projectKey(it.project!!) }
+    val result = groups.toMutableList()
+    active.forEachIndexed { i, (index, _) -> result[index] = sorted[i] }
+    return result.map { group ->
+        if (group.target?.active != true) group
+        else group.copy(chats = order.sorted(group.chats) { SidebarOrder.chatKey(it.chat.id) })
+    }
+}

@@ -228,6 +228,7 @@ func (server *remoteServer) Routes() map[string]http.HandlerFunc {
 	routes["GET /api/files/download"] = server.projectFiles(remoteapi.DownloadFile)
 	routes["POST /api/files/upload"] = server.projectFiles(remoteapi.UploadFile)
 	routes["POST /api/send"] = server.send
+	routes["POST /api/sidebar"] = server.changeSidebar
 	routes["POST /api/stop"] = server.stop
 	routes["POST /api/approve"] = server.approve
 	routes["GET /api/review"] = server.review
@@ -487,6 +488,59 @@ func phoneChats(all []*conversation) []remoteapi.Chat {
 	return chats
 }
 
+// phoneSidebar is the order of the desktop's own projects and chats, the
+// ones the phone lists: a server's or an SSH machine's keys stay here (#699).
+func (ui *desktopUI) phoneSidebar() remoteapi.SidebarOrder {
+	own := func(key string) bool {
+		if id, ok := strings.CutPrefix(key, "chat:"); ok {
+			return !strings.Contains(id, ":")
+		}
+		project, ok := strings.CutPrefix(key, "project:")
+		return ok && !strings.Contains(project, "|")
+	}
+	order := remoteapi.SidebarOrder{Pinned: []string{}, Rank: map[string]int64{}}
+	for _, key := range ui.pinned {
+		if own(key) {
+			order.Pinned = append(order.Pinned, key)
+		}
+	}
+	for key, rank := range ui.sideRank {
+		if own(key) {
+			order.Rank[key] = rank
+		}
+	}
+	return order
+}
+
+// changeSidebar is POST /api/sidebar: the phone pins or moves one of the
+// desktop's own projects or chats, as the sidebar's menu does (#699).
+func (server *remoteServer) changeSidebar(writer http.ResponseWriter, req *http.Request) {
+	var change remoteapi.SidebarChange
+	if core.ReadJSON(req, &change) != nil {
+		core.Fail(writer, 400, "Invalid request")
+		return
+	}
+	var err error
+	var out remoteapi.SidebarOrder
+	server.onUI(func() {
+		ui := server.ui
+		order := remoteapi.SidebarOrder{Pinned: ui.pinned, Rank: ui.sideRank}
+		if err = order.Apply(change, time.Now().UnixNano()); err != nil {
+			return
+		}
+		ui.pinned, ui.sideRank = order.Pinned, order.Rank
+		ui.save()
+		ui.renderChats()
+		server.chatsChanged()
+		out = ui.phoneSidebar()
+	})
+	if err != nil {
+		core.Fail(writer, 400, err.Error())
+		return
+	}
+	core.WriteJSON(writer, 200, map[string]any{"sidebar": out})
+}
+
 func chatSummary(chat *conversation) remoteapi.Chat {
 	status, blocked := agent.WrapUpStatus(chat.Items)
 	summary := remoteapi.Chat{ID: chat.ID, Title: chat.Title, Workspace: chat.Config.Workspace, Scratch: chat.Config.InScratch(), Running: chat.run != nil, Items: len(chat.Items), Status: status, Blocked: blocked}
@@ -586,7 +640,7 @@ func (server *remoteServer) state(writer http.ResponseWriter, _ *http.Request) {
 			worktrees[folder] = project
 		}
 		out = map[string]any{"name": server.name, "projects": projects, "worktrees": worktrees, "workspace": workspace,
-			"projectManagement": true, "projectActions": true, "chats": chats, "current": current, "settings": server.ui.settingsForPhone()}
+			"projectManagement": true, "projectActions": true, "chats": chats, "sidebar": server.ui.phoneSidebar(), "current": current, "settings": server.ui.settingsForPhone()}
 	})
 	core.WriteJSON(writer, http.StatusOK, out)
 }
@@ -821,7 +875,7 @@ func (server *remoteServer) flush() {
 	}
 	if server.chatsDirt {
 		chats := phoneChats(server.ui.chats)
-		server.broadcast("chats", map[string]any{"chats": chats})
+		server.broadcast("chats", map[string]any{"chats": chats, "sidebar": server.ui.phoneSidebar()})
 	}
 	for chat, indexes := range server.dirty {
 		for index := range indexes {

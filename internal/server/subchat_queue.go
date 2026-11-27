@@ -79,7 +79,7 @@ func (server *headlessServer) startOrQueueSubchatLocked(sub *serverChat, prompt 
 	server.subchatQueue = append(server.subchatQueue, sub)
 	server.ensureSubchatQueueTimerLocked()
 	server.broadcastLocked("meta", server.metaLocked(sub))
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.broadcastLocked("chats", server.chatsEventLocked())
 	server.scheduleSaveLocked()
 	return true, reason
 }
@@ -144,7 +144,7 @@ func (server *headlessServer) cancelQueuedSubchatNoDrainLocked(sub *serverChat) 
 	sub.QueuedReason = ""
 	server.subchatQueue = slices.DeleteFunc(server.subchatQueue, func(c *serverChat) bool { return c == sub })
 	server.broadcastLocked("meta", server.metaLocked(sub))
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.broadcastLocked("chats", server.chatsEventLocked())
 	server.turnEndedLocked(sub, agent.SubchatStopped)
 	server.scheduleSaveLocked()
 }

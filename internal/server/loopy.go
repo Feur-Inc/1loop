@@ -281,7 +281,7 @@ func (host loopyHost) StartChat(project, title, brief string) (string, error) {
 	chat := &serverChat{ID: core.Identifier()[:16], Title: string(name[:min(50, len(name))]), Config: cfg, Todo: &agent.TodoState{}, Cache: &agent.ContextCache{}}
 	server.chats = append([]*serverChat{chat}, server.chats...)
 	server.runLocked(chat, agent.Message{Role: "user", Content: brief})
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.broadcastLocked("chats", server.chatsEventLocked())
 	server.scheduleSaveLocked()
 	return chat.ID, nil
 }

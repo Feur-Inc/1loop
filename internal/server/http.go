@@ -12,6 +12,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
+	"maps"
 	"net/http"
 	"slices"
 	"strconv"
@@ -131,6 +133,7 @@ func (server *headlessServer) Routes() map[string]http.HandlerFunc {
 		"GET /api/projects/memory":                     server.projectFiles(remoteapi.ProjectMemory),
 		"POST /api/projects/memory":                    server.projectFiles(remoteapi.SaveProjectMemory),
 		"POST /api/send":                               server.send,
+		"POST /api/sidebar":                            server.changeSidebar,
 		"POST /api/stop":                               server.stop,
 		"POST /api/approve":                            server.approve,
 		"GET /api/review":                              server.review,
@@ -227,6 +230,7 @@ func (server *headlessServer) state(w http.ResponseWriter, r *http.Request) {
 		"projectManagement": true,
 		"projectActions":    true,
 		"chats":             server.summariesLocked(),
+		"sidebar":           server.sidebarLocked(),
 		"settings":          server.settingsLocked(),
 		"browser":           server.hasBrowser(), // false: no Browser Use here (the slim image, no client lending its browser)
 		"ownBrowser":        server.ownBrowser(), // false: no Chromium of its own (Install Chromium)
@@ -392,7 +396,7 @@ func (server *headlessServer) deleteChatsLocked(gone []*serverChat) ([]string, e
 	}
 	server.subchatQueue = slices.DeleteFunc(server.subchatQueue, func(c *serverChat) bool { return slices.Contains(gone, c) })
 	server.drainSubchatQueueLocked()
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.broadcastLocked("chats", server.chatsEventLocked())
 	server.mu.Unlock()
 	for _, tab := range tabs {
 		tab.close()
@@ -676,6 +680,20 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// The sidebar lists the chat and its project first (#699).
+	keys := []string{remoteapi.ChatKey(chat.ID)}
+	if !chat.Config.InScratch() {
+		project := chat.Config.Workspace
+		if owner := server.worktrees[project]; owner != "" {
+			project = owner
+		}
+		keys = append(keys, remoteapi.ProjectKey(project))
+	}
+	server.sidebar.Touch(time.Now().UnixNano(), keys...)
+	if err := server.saveSettingsLocked(); err != nil {
+		log.Printf("Unable to save the sidebar's order: %v", err)
+	}
+
 	if chat.run != nil {
 		// A message sent while the agent works is queued for the next turn
 		// ("send", "queue"); "steer" joins the task at its next step (#433).
@@ -689,6 +707,30 @@ func (server *headlessServer) send(w http.ResponseWriter, r *http.Request) {
 		server.runLocked(chat, m)
 	}
 	core.WriteJSON(w, 200, map[string]string{"chat": chat.ID})
+}
+
+// changeSidebar is POST /api/sidebar: a client pins or moves a project or
+// chat (#699); every client gets the new order with the chats.
+func (server *headlessServer) changeSidebar(w http.ResponseWriter, r *http.Request) {
+	var change remoteapi.SidebarChange
+	if core.ReadJSON(r, &change) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	previous := remoteapi.SidebarOrder{Pinned: slices.Clone(server.sidebar.Pinned), Rank: maps.Clone(server.sidebar.Rank)}
+	if err := server.sidebar.Apply(change, time.Now().UnixNano()); err != nil {
+		core.Fail(w, 400, err.Error())
+		return
+	}
+	if err := server.saveSettingsLocked(); err != nil {
+		server.sidebar = previous
+		core.Fail(w, 500, "Unable to save the order")
+		return
+	}
+	server.broadcastLocked("chats", server.chatsEventLocked())
+	core.WriteJSON(w, 200, map[string]any{"sidebar": server.sidebarLocked()})
 }
 
 func (server *headlessServer) stop(w http.ResponseWriter, r *http.Request) {

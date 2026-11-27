@@ -93,7 +93,7 @@ internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit)
     val shownInFull = remember { mutableStateListOf<String>() } // groups whose every chat is listed
     val active = app.server?.key
     val targets = app.drawerTargets()
-    val groups = drawerGroups(targets, app.selectedProject == NO_FOLDER)
+    val groups = orderedGroups(drawerGroups(targets, app.selectedProject == NO_FOLDER), app.sidebar)
     val side = SideChats(groups.flatMap { it.chats })
     Column(modifier.background(Palette.sidebar).windowInsetsPadding(WindowInsets.safeDrawing).padding(horizontal = 12.dp)) {
         // The ring and the "1" take the accent, drawn over the rest of the logo.
@@ -131,8 +131,9 @@ internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit)
                     group.name, null,
                     selected = app.current == null && (if (group.key == SCRATCH_GROUP) app.selectedProject == NO_FOLDER else onOpenTarget && group.project != null && group.project == app.selectedProject),
                     chevron = if (folded) Icons.chevronRight else Icons.chevron,
-                    mark = markIcon(target?.let { projectMark(it.target.kind) }),
-                    markLabel = target?.target?.name,
+                    mark = if (target?.active == true && group.project != null && app.sidebar.pinned(SidebarOrder.projectKey(group.project))) Icons.bookmark
+                        else markIcon(target?.let { projectMark(it.target.kind) }),
+                    markLabel = if (target?.active == true && group.project != null && app.sidebar.pinned(SidebarOrder.projectKey(group.project))) "Pinned" else target?.target?.name,
                     running = folded && group.chats.any { side.workingHere(it) },
                     trailing = trailing,
                     onLongClick = if (hasMenu) ({ groupMenu = group.key }) else null,
@@ -186,6 +187,8 @@ internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit)
             group.project != null -> ProjectActionsSheet(
                 app, group.project, onNewWorktree = { newWorktree = group.project },
                 onNewChat = { app.selectProject(group.project); app.open(null); onPicked() },
+                order = orderActions(app, SidebarOrder.projectKey(group.project),
+                    groups.filter { it.target?.active == true && it.project != null }.map { SidebarOrder.projectKey(it.project!!) }),
             ) { groupMenu = null }
             else -> SideMenuSheet("No folder", listOf(SideAction("New chat with no folder", Icons.plus) { app.newChatWithNoFolder(); onPicked() })) { groupMenu = null }
         }
@@ -203,6 +206,10 @@ internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit)
                     if (chat.parent.isNotEmpty() && chat.running) SideAction("Stop", Icons.close) { app.stop(chat.id) } else null,
                     if (parent != null) SideAction("Open parent", Icons.subchat) { app.open(parent.id); onPicked() } else null,
                     SideAction("Rename", Icons.pencil) { renaming = chat },
+                    // Its place in the drawer, as the desktop's menu (#699): among its project's chats.
+                    *orderActions(app, SidebarOrder.chatKey(chat.id),
+                        groups.firstOrNull { group -> group.chats.any { it.chat.id == chat.id } }?.chats.orEmpty()
+                            .filter { it.chat.parent.isEmpty() }.map { SidebarOrder.chatKey(it.chat.id) }).toTypedArray(),
                     if (!chat.scratch && chat.workspace.isNotEmpty()) SideAction("Move to another device", Icons.server) { moving = chat } else null,
                     SideAction("Delete", Icons.trash, danger = true) { deleting = chat },
                 ),
@@ -240,6 +247,7 @@ private fun GroupChats(app: RemoteApp, group: DrawerGroup, side: SideChats, full
             NavRow(
                 chat.title, null, selected = app.isOpen(entry), running = chat.running, status = chat.status, blocked = chat.blocked,
                 trailing = branch, onLongClick = { onMenu(entry) }, longClickLabel = "Chat menu", onMore = { onMenu(entry) }, moreLabel = "Menu of ${chat.title}",
+                mark = if (onOpenTarget && app.sidebar.pinned(SidebarOrder.chatKey(chat.id))) Icons.bookmark else null, markLabel = "Pinned",
             ) { app.openOn(entry.target, chat = chat.id); onPicked() }
             SubchatRows(app, side, entry, 1, onPicked, onMenu)
         }
@@ -418,4 +426,22 @@ private fun DeleteChatSheet(app: RemoteApp, chat: ChatSummary, onDone: () -> Uni
             }
         }
     }
+}
+
+/**
+ * A project's or chat's menu entries for its place (#699, the desktop's
+ * orderActions): a pinned one can be unpinned and moved within the pinned
+ * ones; any other can be pinned and moved among siblings, its list's
+ * unpinned keys in the drawer's order.
+ */
+internal fun orderActions(app: RemoteApp, key: String, list: List<String>): List<SideAction> {
+    val order = app.sidebar
+    val pinned = order.pinned(key)
+    val siblings = if (pinned) order.pinned else list.filter { !order.pinned(it) }
+    val at = siblings.indexOf(key)
+    return listOfNotNull(
+        SideAction(if (pinned) "Unpin" else "Pin", Icons.bookmark) { app.changeSidebar(if (pinned) "unpin" else "pin", key) },
+        if (at > 0) SideAction("Move up", Icons.chevronUp) { app.changeSidebar("move", key, siblings, at - 1) } else null,
+        if (at >= 0 && at < siblings.size - 1) SideAction("Move down", Icons.chevron) { app.changeSidebar("move", key, siblings, at + 1) } else null,
+    )
 }

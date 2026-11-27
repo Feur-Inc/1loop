@@ -22,7 +22,7 @@ func (chat *serverChat) applyBranch(state agent.VersionState) {
 func (server *headlessServer) replaceLocked(chat *serverChat) {
 	server.broadcastLocked("replace", map[string]string{"chat": chat.ID})
 	server.changedLocked(chat, -1)
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.broadcastLocked("chats", server.chatsEventLocked())
 }
 
 func (server *headlessServer) editMessage(w http.ResponseWriter, r *http.Request) {

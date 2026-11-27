@@ -171,6 +171,8 @@ internal fun ChatsPane(app: RemoteApp, modifier: Modifier, onPicked: () -> Unit)
         Spacer(Modifier.height(8.dp))
         // Projects come from every linked target: another one is linked here, none is switched to.
         NavRow("Link a target", Icons.plus, selected = false) { app.linkTarget() }
+        // As the desktop's sidebar, Usage has its own entry (#701, #415).
+        NavRow("Usage", Icons.usage, selected = false) { app.usageOpen = true; onPicked() }
         NavRow("Settings", Icons.settings, selected = false) { app.settingsOpen = true; onPicked() }
         Spacer(Modifier.height(8.dp))
     }

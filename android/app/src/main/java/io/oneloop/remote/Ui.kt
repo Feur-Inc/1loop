@@ -545,10 +545,10 @@ fun ChatScreen(app: RemoteApp) {
     SharedFilesDialog(app) // files shared to 1loop from another app
     val page = app.repositoryOpen?.let { ChatPage("repository", it) }
         ?: if (app.searchOpen) ChatPage("search")
+        else if (app.usageOpen) ChatPage("usage") // from Settings or from the drawer (#701)
         else if (!app.settingsOpen) ChatPage(if (app.loopyOpen) "loopy" else "chat")
         else if (app.extensionsOpen) ChatPage("extensions")
         else if (app.linuxOpen) ChatPage("linux")
-        else if (app.usageOpen) ChatPage("usage")
         else ChatPage("settings")
     AnimatedContent(
         page, label = "page",

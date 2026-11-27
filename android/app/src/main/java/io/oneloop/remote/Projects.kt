@@ -120,12 +120,26 @@ fun ProjectActionsSheet(app: RemoteApp, path: String, onNewWorktree: () -> Unit 
             verticalArrangement = Arrangement.spacedBy(14.dp),
         ) {
             Text(when (action) {
+                "theme" -> "Theme"
                 "rename" -> "Rename project"
                 "delete" -> "Delete project?"
                 else -> projectName(path)
             }, style = Type.title)
             Text(path, style = Type.small)
             when (action) {
+                "theme" -> {
+                    // A theme of the project's own (#704): its chats use it while on screen.
+                    val context = androidx.compose.ui.platform.LocalContext.current
+                    val key = "${app.server?.key}|$path"
+                    val own = ThemeChoice.projectThemes[key]
+                    Text("Its chats use this theme while they are on screen; the others keep the app's.", style = Type.body)
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Pill("As the app", primary = own == null) { ThemeChoice.setProject(context, key, null); onDone() }
+                        for ((id, label) in listOf("dark" to "Dark", "light" to "Light") + ThemeFiles.themes.map { ThemeFiles.PREFIX + it.id to it.name }) {
+                            Pill(label, primary = own == id) { ThemeChoice.setProject(context, key, id); onDone() }
+                        }
+                    }
+                }
                 "rename" -> {
                     Text("Renames this folder and keeps its contents and chats. Stop its agents and close its terminals first.", style = Type.body)
                     Field(name, { name = it }, "Folder name", KeyboardType.Text)
@@ -151,6 +165,7 @@ fun ProjectActionsSheet(app: RemoteApp, path: String, onNewWorktree: () -> Unit 
                         Pill("Rename") { action = "rename" }
                         Pill("Delete project") { action = "delete" }
                     }
+                    Pill("Theme") { action = "theme" }
                 }
             }
             problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }

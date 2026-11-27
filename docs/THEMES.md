@@ -2,7 +2,7 @@
 
 # Theme files
 
-1loop's desktop app reads themes of your own from a folder. Theme files are desktop only for now: the phone keeps its own Dark / Light / System setting and accent.
+1loop's desktop app reads themes of your own from a folder. The phone app takes them too: **Settings → General → Theme → Add a theme file** reads a theme's `.toml`, or the `.zip` it was shared as, from the phone's files. On the phone a theme brings its name, `base`, `accents` and `[colors]` (the colours it leaves out derived as on the desktop); its `shader` or `background_image`, fonts, `[blur]` and `roundness` are the desktop's for now. A project can have its own theme there too: the project's menu → **Theme**.
 
 
 - Linux: `~/.config/1loop/themes/`

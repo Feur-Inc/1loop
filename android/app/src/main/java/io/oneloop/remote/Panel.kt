@@ -123,6 +123,9 @@ import org.json.JSONObject
 // tabs open there (browsers, terminals, Git changes, tool calls). Browsers
 // and terminals are live and take the phone's touches and typing.
 
+/** The calls that update a chat's task list (agent.TodoTool): 1loop's, its MCP server's, Claude Code's. */
+fun todoTool(name: String) = name == "update_todo" || name == "mcp__1loop_todo__update_todo" || name == "TodoWrite"
+
 /** The hidden chat of Loopy's browser on the target it lives on. */
 const val LOOPY_CHAT = "loopy"
 
@@ -149,6 +152,7 @@ fun PanelScreen(app: RemoteApp, chat: String, onClose: () -> Unit) {
         }
     }
     LaunchedEffect(app.fileFocus) { if (app.fileFocus != null) selected = "files" }
+    LaunchedEffect(app.panelFocus) { app.panelFocus?.let { selected = it; app.panelFocus = null } }
     val tasks = app.meta?.todo.orEmpty()
     Column(back.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically) {

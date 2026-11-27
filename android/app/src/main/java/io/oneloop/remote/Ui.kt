@@ -576,7 +576,7 @@ fun ChatScreen(app: RemoteApp) {
     if (page.name != "chat") return
     val approval = app.approvals.values.firstOrNull()
     if (approval != null) ApprovalSheet(app, approval)
-    val question = app.questions.values.firstOrNull { it.id !in app.questionsAside }
+    val question = app.questions.values.firstOrNull { it.id in app.questionsOpen }
     // A sheet per request: closing one shows the next with its own state, not the last one's Hidden.
     if (approval == null && question != null) key(question.id) { QuestionSheet(app, question) }
     if (app.connectionsOpen) ConnectionsSheet(app) { app.connectionsOpen = false }
@@ -747,7 +747,14 @@ private fun Conversation(app: RemoteApp, onMenu: (() -> Unit)?, modifier: Modifi
                         android.widget.Toast.makeText(context, failure.message ?: "The file did not open.", android.widget.Toast.LENGTH_LONG).show()
                     }
                 }
-            }) { tool = it }
+            }) { item ->
+                // A task list update opens the panel on Tasks, not its raw call (#702).
+                if (todoTool(item.tool)) {
+                    focus.clearFocus(force = true)
+                    app.panelFocus = "tasks"
+                    onPanelChange(true)
+                } else tool = item
+            }
         }
         Composer(app, running)
     }
@@ -1089,9 +1096,9 @@ private fun Composer(app: RemoteApp, running: Boolean) {
             }
         }
         if (meta != null && meta.queue.isNotEmpty()) QueueTray(meta)
-        // Questions closed without an answer: the run still waits for them.
-        app.current?.let { app.questions[it] }?.takeIf { it.id in app.questionsAside }?.let { request ->
-            QuestionTray(request) { app.questionsAside.remove(request.id) }
+        // The chat's question waits here, above the composer; Answer opens its sheet.
+        app.current?.let { app.questions[it] }?.takeIf { it.id !in app.questionsOpen }?.let { request ->
+            QuestionTray(request) { app.questionsOpen.add(request.id) }
         }
         app.problem?.let { Text(it, style = Type.small.copy(color = Palette.danger), modifier = Modifier.padding(bottom = 6.dp)) }
         // The desktop's context line: the project and the computer.
@@ -1375,10 +1382,10 @@ private fun QuestionSheet(app: RemoteApp, request: Questions) {
     val draft = app.questionDraft(request) // survives the sheet being set aside
     val index = draft.page.coerceIn(0, (request.questions.size - 1).coerceAtLeast(0))
     val question = request.questions.getOrNull(index) ?: return
-    // Closing (swipe, back, outside tap) sets the questions aside, to answer
-    // from the composer: the run keeps waiting for them.
+    // Closing (swipe, back, outside tap) puts the questions back above the
+    // composer: the run keeps waiting for them.
     GlassBackdrop()
-    ModalBottomSheet(onDismissRequest = { app.questionsAside.add(request.id) }, sheetState = state, containerColor = Palette.surface, scrimColor = GlassScrim) {
+    ModalBottomSheet(onDismissRequest = { app.questionsOpen.remove(request.id) }, sheetState = state, containerColor = Palette.surface, scrimColor = GlassScrim) {
         Column(Modifier.verticalScroll(rememberScrollState()).padding(horizontal = 20.dp).padding(bottom = 24.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 WorkRing("approval", 34.dp)

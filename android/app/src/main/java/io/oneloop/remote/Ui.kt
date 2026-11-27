@@ -779,6 +779,9 @@ private fun Welcome(app: RemoteApp) {
     }
 }
 
+/** The error row of a turn the user stopped, as every engine writes it (agent.StoppedText). */
+private const val STOPPED_TEXT = "Response stopped."
+
 @Composable
 private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> Unit, onTool: (Item) -> Unit) {
     val list = rememberLazyListState()
@@ -862,7 +865,8 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
                             if (item.images > 0) ItemImages(app, app.firstItem + index, item.images, Modifier.padding(start = 32.dp, top = 2.dp))
                         }
                         "error" -> Column {
-                            Text(item.text, style = Type.body.copy(color = Palette.danger))
+                            // The user's Stop (agent.StoppedText) is not a failure (#687).
+                            Text(item.text, style = Type.body.copy(color = if (item.text == STOPPED_TEXT) Palette.muted else Palette.danger))
                             if (!(running && index > lastUser)) MessageActions(app, item, running) { app.retryMessage(index) }
                         }
                         "note" -> Text(

@@ -87,4 +87,12 @@ done
 		t.Fatalf("stop: %d %s in %s", code, data, took)
 	}
 	waitFor(t, server, "the stop", func() bool { return server.chatLocked(reply.Chat).run == nil })
+	// It reads as a stop, as on the desktop, not as "context canceled" (#687).
+	server.mu.Lock()
+	items := server.chatLocked(reply.Chat).Items
+	last := items[len(items)-1]
+	server.mu.Unlock()
+	if last.Kind != "error" || last.Text != agent.StoppedText {
+		t.Fatalf("after Stop, the last item is %s %q, want error %q", last.Kind, last.Text, agent.StoppedText)
+	}
 }

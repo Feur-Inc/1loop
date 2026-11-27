@@ -245,7 +245,7 @@ private fun ApprovalCard(approval: Approval, onApprove: (Approval, Boolean) -> U
             Spacer(Modifier.width(8.dp))
             Text(approval.title, style = Type.body, maxLines = 2, overflow = TextOverflow.Ellipsis)
         }
-        Text("1loop needs your approval to perform this action on the computer.", style = Type.small)
+        Text("1loop needs your approval to do this.", style = Type.small)
         if (approval.preview.isNotEmpty()) {
             Text(
                 approval.preview, style = Type.small.copy(color = Palette.text), maxLines = 6, overflow = TextOverflow.Ellipsis,

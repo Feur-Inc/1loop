@@ -514,7 +514,7 @@ fun PairScreen(app: RemoteApp, pair: Screen.Pair) {
         app.problem?.let { Text(it, style = Type.small.copy(color = Palette.danger), textAlign = TextAlign.Center) }
         Spacer(Modifier.height(20.dp))
         Text(
-            "A paired phone can send messages and approve commands on the computer.",
+            "A paired phone can send messages and approve commands on ${pair.server.name}.",
             style = Type.caption, textAlign = TextAlign.Center, modifier = Modifier.widthIn(max = 320.dp),
         )
     }
@@ -1180,14 +1180,18 @@ private fun Composer(app: RemoteApp, running: Boolean) {
                 }
                 if (running) {
                     if (ready) {
-                        // The arrow joins the running task at its next step, shown greyed
-                        // until then; Send queues the message for when the task ends (#433).
+                        // With text, the right end sends as it always does, here
+                        // queueing for when the task ends (#433); Stop steps aside so
+                        // that a tap where Send usually is never stops the run (#688).
+                        // The arrow joins the running task at its next step, shown greyed until then.
+                        RoundButton(Icons.close, Palette.raised, Palette.text, size = 36.dp, iconSize = 18.dp, description = "Stop") { app.stop() }
+                        Spacer(Modifier.width(8.dp))
                         RoundButton(Icons.arrowTurn, Palette.raised, Palette.text, size = 36.dp, iconSize = 18.dp, description = "Steer: send at the next step") { send("steer") }
                         Spacer(Modifier.width(8.dp))
                         RoundButton(Icons.send, Palette.amber, Palette.ink, size = 36.dp, description = "Queue: send when the task ends") { send("queue") }
-                        Spacer(Modifier.width(8.dp))
+                    } else {
+                        RoundButton(Icons.close, Palette.text, Palette.ink, size = 36.dp, iconSize = 18.dp, description = "Stop") { app.stop() }
                     }
-                    RoundButton(Icons.close, Palette.text, Palette.ink, size = 36.dp, iconSize = 18.dp, description = "Stop") { app.stop() }
                 } else {
                     RoundButton(Icons.send, if (ready) Palette.amber else Palette.raised, if (ready) Palette.ink else Palette.faint, size = 36.dp, description = "Send") { send("send") }
                 }
@@ -1490,7 +1494,8 @@ private fun ApprovalSheet(app: RemoteApp, approval: Approval) {
                     Text(title, style = Type.caption.copy(color = Palette.muted), maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
-            Text("1loop needs your approval to perform this action on the computer.", style = Type.small)
+            // Named after the target: a server or this phone may run it, not always a computer (#689).
+            Text(app.server?.name?.let { "1loop needs your approval to do this on $it." } ?: "1loop needs your approval to do this.", style = Type.small)
             CodeWell(approval.preview, "Preview", diff = approval.preview.startsWith("---"))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
                 Pill("Deny") { app.answer(approval, false) }

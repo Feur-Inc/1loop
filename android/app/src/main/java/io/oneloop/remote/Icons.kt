@@ -43,6 +43,7 @@ object Icons {
         line("M10.5 5.5V4.2c0-.7-.5-1.2-1.2-1.2H4.2C3.5 3 3 3.5 3 4.2v5.1c0 .7.5 1.2 1.2 1.2h1.3"))
     val folder = lineIcon("folder", line("M2.5 5c0-.8.6-1.5 1.4-1.5h2.7l1.3 1.4h4.2c.8 0 1.4.6 1.4 1.4v4.9c0 .8-.6 1.3-1.4 1.3H3.9c-.8 0-1.4-.5-1.4-1.3z"))
     val send = lineIcon("send", line("M8 13.2V2.9M3.5 7.4 8 2.9l4.5 4.5", 2f))
+    val usage = lineIcon("usage", line("M2.4 12.2A6 6 0 1 1 13.6 12.2"), line("M8 9.8 10.9 6.6"), line("M8 9.9h.01", 2.4f)) // the desktop's gauge
     val shield = lineIcon("shield", line("M8 2.2l4.6 1.8v3.5c0 3-2 5.1-4.6 6.3-2.6-1.2-4.6-3.3-4.6-6.3V4z"))
     val bolt = lineIcon("bolt", line("M8.9 1.8 3.7 9h4.1l-.7 5.2L12.3 7H8.2z"))
     val shieldCheck = lineIcon("shield-check", line("M8 2.2l4.6 1.8v3.5c0 3-2 5.1-4.6 6.3-2.6-1.2-4.6-3.3-4.6-6.3V4z"), line("M5.9 7.8 7.4 9.3l2.8-3"))

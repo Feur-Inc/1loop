@@ -200,6 +200,8 @@ fun UsageScreen(app: RemoteApp, onBack: () -> Unit) {
     var group by rememberSaveable { mutableStateOf("model") }
     var comparing by rememberSaveable { mutableStateOf(false) }
     var chat by remember { mutableStateOf<UsageRow?>(null) } // a chat whose turns are open
+    // One account's subscription windows at a time, a tab per account, as on the desktop (#701, #415).
+    var account by rememberSaveable { mutableStateOf("") }
     var report by remember { mutableStateOf<UsageReport?>(null) }
     var problem by remember { mutableStateOf<String?>(null) }
     val leave = { if (chat != null) chat = null else onBack() }
@@ -221,15 +223,32 @@ fun UsageScreen(app: RemoteApp, onBack: () -> Unit) {
             Text(chat?.label ?: "Usage", style = Type.title, maxLines = 1, overflow = TextOverflow.Ellipsis, modifier = Modifier.padding(start = 12.dp))
         }
         LazyColumn(Modifier.weight(1f), contentPadding = PaddingValues(horizontal = 16.dp, vertical = 4.dp), verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            // Whose usage this is: the target's chats and accounts, not this phone's others (#701, a37604c).
+            if (chat == null) app.server?.let { target ->
+                item {
+                    Text(
+                        if (target.localPhone) "The chats run on this phone, and its accounts' subscription limits."
+                        else "The chats run on ${target.name}, and its accounts' subscription limits.",
+                        style = Type.caption.copy(color = Palette.muted),
+                    )
+                }
+            }
             val limits = report?.limits.orEmpty()
             if (chat == null && limits.isNotEmpty()) {
+                val accounts = limits.groupBy { it.connection }
+                val shownAccount = account.takeIf { it in accounts } ?: accounts.keys.first()
                 item {
                     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
                         Text("Subscription limits", style = Type.title.copy(fontSize = 15.sp))
                         Text("How much of each subscription window is left, and the pace that makes it last until it resets.", style = Type.caption.copy(color = Palette.muted))
                     }
                 }
-                items(limits.groupBy { it.connection }.values.toList(), key = { "limits/" + it.first().connection }) { windows -> LimitsCard(windows) }
+                if (accounts.size > 1) item {
+                    Row(Modifier.horizontalScroll(rememberScrollState()), horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        for ((id, windows) in accounts) Chip(windows.first().name.ifEmpty { "Subscription" }, id == shownAccount) { account = id }
+                    }
+                }
+                item(key = "limits/$shownAccount") { LimitsCard(accounts.getValue(shownAccount)) }
             }
             if (chat == null) item { Text("Spend", style = Type.title.copy(fontSize = 15.sp), modifier = Modifier.padding(top = if (limits.isEmpty()) 0.dp else 8.dp)) }
             if (chat == null) item {

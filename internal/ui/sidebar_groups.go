@@ -178,8 +178,26 @@ func (ui *desktopUI) renderSidebar(groups []targetGroup) {
 	}
 	ui.sideChats = all
 	ui.sideOrder = ui.sideOrder[:0]
-	ui.addPinned(groups, pinned)
-	if len(scratch) > 0 || ui.server == nil && ui.cfg.MachineID == "" && ui.cfg.InScratch() {
+	pinnedShown := ui.addPinned(groups, pinned)
+	showScratch := len(scratch) > 0 || ui.server == nil && ui.cfg.MachineID == "" && ui.cfg.InScratch()
+	hasUnpinned := showScratch
+	if !hasUnpinned {
+		for _, group := range groups {
+			for _, chats := range groupByProject(group.listed(), group.chats, func(chat sideChat) string { return chat.folder }, group.projectOf) {
+				if !ui.isPinned("project:" + groupKey(group.target, chats.project)) {
+					hasUnpinned = true
+					break
+				}
+			}
+			if hasUnpinned {
+				break
+			}
+		}
+	}
+	if !pinnedShown || hasUnpinned {
+		ui.addSide("projects:header", ui.reuseObject("projects:header", func() fyne.CanvasObject { return sectionHeader("Projects", nil) }))
+	}
+	if showScratch {
 		ui.addScratchGroup(scratch)
 	}
 	ui.sideOrder = append(ui.sideOrder, scratch...)
@@ -214,12 +232,12 @@ func refit(scroll *kineticScroll, content *fyne.Container) {
 
 // addPinned lists the pinned section above the projects (#283): the pinned
 // projects with their chats, and the pinned chats out of their projects, in
-// the order the user gave them.
-func (ui *desktopUI) addPinned(groups []targetGroup, chats []sideChat) {
+// the order the user gave them. Reports whether any pinned item was shown.
+func (ui *desktopUI) addPinned(groups []targetGroup, chats []sideChat) bool {
 	if len(ui.pinned) == 0 {
-		return
+		return false
 	}
-	ui.addSide("pinned:header", sectionHeader("Pinned", nil))
+	start := len(ui.projectList.Objects)
 	for _, key := range ui.pinned {
 		if isProjectKey(key) {
 			for _, group := range groups {
@@ -234,6 +252,13 @@ func (ui *desktopUI) addPinned(groups []targetGroup, chats []sideChat) {
 			}
 		}
 	}
+	if len(ui.projectList.Objects) == start {
+		return false
+	}
+	header := ui.reuseObject("pinned:header", func() fyne.CanvasObject { return sectionHeader("Pinned", nil) })
+	ui.sideGlide.key(header, "pinned:header")
+	ui.projectList.Objects = append(ui.projectList.Objects[:start], append([]fyne.CanvasObject{header}, ui.projectList.Objects[start:]...)...)
+	return true
 }
 
 // offlineMark is what a project shows, in place of its branch, while

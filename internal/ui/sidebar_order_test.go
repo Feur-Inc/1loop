@@ -103,3 +103,27 @@ func TestPlaceRankFollowsDrop(t *testing.T) {
 		t.Fatalf("after dropping c first: %v, want %v", sorted, want)
 	}
 }
+
+func TestSidebarProjectsHeaderSitsBelowPinned(t *testing.T) {
+	window, _ := deleteTreeWindow(t)
+	window.projects = []string{"/p/dev", "/p/other"}
+	window.pinned = []string{projectKey(projectTarget{}, "/p/dev")}
+	window.renderChats()
+
+	var keys []string
+	for _, obj := range window.projectList.Objects {
+		if key := window.sideGlide.keys[obj]; key != "" {
+			keys = append(keys, key)
+		}
+	}
+	pinnedIdx := slices.Index(keys, "pinned:header")
+	devIdx := slices.Index(keys, projectKey(projectTarget{}, "/p/dev"))
+	projectsIdx := slices.Index(keys, "projects:header")
+	otherIdx := slices.Index(keys, projectKey(projectTarget{}, "/p/other"))
+	if pinnedIdx < 0 || devIdx < 0 || projectsIdx < 0 || otherIdx < 0 {
+		t.Fatalf("missing expected sidebar keys: %v", keys)
+	}
+	if !(pinnedIdx < devIdx && devIdx < projectsIdx && projectsIdx < otherIdx) {
+		t.Fatalf("sidebar order = %v, want pinned:header < /p/dev < projects:header < /p/other", keys)
+	}
+}

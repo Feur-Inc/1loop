@@ -128,27 +128,6 @@ func frostedBackdrop(c fyne.Canvas) (*image.NRGBA, image.Image) {
 	return small, shot
 }
 
-// windowControlsCut copies the window buttons out of shot, sharp, so a
-// dialog can keep them in view over its frosted backdrop.
-func windowControlsCut(c fyne.Canvas, shot image.Image) image.Image {
-	if windowControlsBox == nil || !windowControlsBox.Visible() || c.Size().Width <= 0 {
-		return nil
-	}
-	at := fyne.CurrentApp().Driver().AbsolutePositionForObject(windowControlsBox)
-	scale := float32(shot.Bounds().Dx()) / c.Size().Width
-	r := image.Rect(int(at.X*scale), int(at.Y*scale), int((at.X+windowControlsBox.Size().Width)*scale), int((at.Y+windowControlsBox.Size().Height)*scale)).Intersect(shot.Bounds())
-	if r.Empty() {
-		return nil
-	}
-	cut := image.NewNRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
-	for y := 0; y < r.Dy(); y++ {
-		for x := 0; x < r.Dx(); x++ {
-			cut.Set(x, y, shot.At(r.Min.X+x, r.Min.Y+y))
-		}
-	}
-	return cut
-}
-
 // boxBlur blurs img in place, rows then columns, over 2*radius+1 pixels,
 // with a running sum: its cost does not grow with the radius.
 func boxBlur(img *image.NRGBA, radius int) {

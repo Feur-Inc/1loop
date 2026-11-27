@@ -550,7 +550,7 @@ func (mode *loopyMode) buildMain() {
 	right.Add(container.NewCenter(mode.modelChip))
 	right.Add(container.NewCenter(mode.browserBtn))
 	if ui.chrome {
-		right.Add(windowControls(ui.window, ui.closeWindow))
+		right.Add(windowControls(ui.window, ui.closeWindow, func() bool { return ui.inLoopy }))
 	}
 	left := container.NewHBox(padded(0, 0, 0, 8, container.NewCenter(mode.expand)), container.NewCenter(title))
 	bar := container.NewBorder(nil, nil, left, right)

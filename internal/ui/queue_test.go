@@ -4,6 +4,8 @@ package ui
 
 import (
 	"testing"
+
+	"1loop/internal/remoteapi"
 )
 
 // Enter while the agent works queues the message for the end of the task;
@@ -24,5 +26,58 @@ func TestEnterQueuesWhileRunningCtrlEnterSteers(t *testing.T) {
 	}
 	if !window.queueTray.Visible() {
 		t.Fatal("the queued message is not shown in the tray")
+	}
+}
+
+// A server chat shows its queued messages in the same queue tray as a local
+// chat (not as read-only bubbles in pendingBox) and only shows steer messages
+// in pendingBox, with the same queue actions.
+func TestServerChatUsesSameQueueTrayAsLocal(t *testing.T) {
+	window, _ := deleteTreeWindow(t)
+	window.server = &remoteDesktop{
+		parent:  window,
+		current: "srv-chat",
+		meta: remoteapi.Meta{
+			Chat:    "srv-chat",
+			Running: true,
+			Queue:   []string{"first queued", "second queued"},
+			Steer:   []string{"steer now"},
+		},
+	}
+	window.renderQueue()
+
+	if !window.queueTray.Visible() {
+		t.Fatal("server chat queued messages are not shown in queueTray")
+	}
+	if got := len(window.queueList.Objects); got != 2 {
+		t.Fatalf("queueList has %d rows, want 2", got)
+	}
+	if got := len(window.pendingBox.Objects); got != 1 {
+		t.Fatalf("pendingBox has %d items, want 1 (only steer, not queue)", got)
+	}
+
+	window.moveQueued(1, -1)
+	if window.server.meta.Queue[0] != "second queued" || window.server.meta.Queue[1] != "first queued" {
+		t.Fatalf("after moveQueued: queue = %v", window.server.meta.Queue)
+	}
+
+	window.sendQueuedNow(1)
+	if len(window.server.meta.Queue) != 1 || len(window.server.meta.Steer) != 2 || window.server.meta.Steer[1] != "first queued" {
+		t.Fatalf("after sendQueuedNow: queue=%v steer=%v", window.server.meta.Queue, window.server.meta.Steer)
+	}
+
+	window.editQueued(false, 0)
+	if window.prompt.Text != "second queued" {
+		t.Fatalf("prompt = %q, want %q", window.prompt.Text, "second queued")
+	}
+	window.prompt.SetText("second updated")
+	window.finishEdit(true)
+	if window.server.meta.Queue[0] != "second updated" {
+		t.Fatalf("after edit: queue = %v", window.server.meta.Queue)
+	}
+
+	window.clearQueue()
+	if window.queueTray.Visible() || len(window.pendingBox.Objects) != 0 {
+		t.Fatalf("after clearQueue: tray visible=%v pending=%d", window.queueTray.Visible(), len(window.pendingBox.Objects))
 	}
 }

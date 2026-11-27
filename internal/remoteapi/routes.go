@@ -61,6 +61,7 @@ var PhoneRoutes = []string{
 	"POST /api/chats/{id}/panel",
 	"POST /api/chats/{id}/panel/{key}/input",
 	"POST /api/chats/{id}/pause",
+	"POST /api/chats/{id}/queue",
 	"POST /api/chats/{id}/rename",
 	"POST /api/chats/{id}/resume",
 	"POST /api/chats/{id}/tasks/{task}/stop",

@@ -121,6 +121,7 @@ func (server *headlessServer) Routes() map[string]http.HandlerFunc {
 		"POST /api/browser/clear":                      server.clearBrowser,
 		"POST /api/chats/{id}/message":                 server.editMessage,
 		"POST /api/chats/{id}/version":                 server.selectVersion,
+		"POST /api/chats/{id}/queue":                   server.editQueue,
 		"POST /api/attachments":                        server.uploadAttachment,
 		"GET /api/update":                              server.updateStatus,
 		"POST /api/update":                             server.installUpdate,
@@ -707,6 +708,64 @@ func (server *headlessServer) stop(w http.ResponseWriter, r *http.Request) {
 		chat.queue = nil
 		chat.steer = nil
 	}
+	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+func (server *headlessServer) editQueue(w http.ResponseWriter, r *http.Request) {
+	var args remoteapi.QueueAction
+	if core.ReadJSON(r, &args) != nil {
+		core.Fail(w, 400, "Invalid request")
+		return
+	}
+	server.mu.Lock()
+	defer server.mu.Unlock()
+	chat := server.chatLocked(r.PathValue("id"))
+	if chat == nil {
+		core.Fail(w, 404, "Chat not found")
+		return
+	}
+	lane := &chat.queue
+	if args.Steer {
+		lane = &chat.steer
+	}
+	switch args.Action {
+	case "move":
+		to := args.Index + args.Delta
+		if args.Index >= 0 && to >= 0 && args.Index < len(chat.queue) && to < len(chat.queue) {
+			chat.queue[args.Index], chat.queue[to] = chat.queue[to], chat.queue[args.Index]
+		}
+	case "remove":
+		if args.Index >= 0 && args.Index < len(*lane) {
+			*lane = append((*lane)[:args.Index], (*lane)[args.Index+1:]...)
+		}
+	case "send_now":
+		if args.Index >= 0 && args.Index < len(chat.queue) {
+			msg := chat.queue[args.Index]
+			chat.queue = append(chat.queue[:args.Index], chat.queue[args.Index+1:]...)
+			if chat.run != nil {
+				chat.steer = append(chat.steer, msg)
+			} else {
+				server.runLocked(chat, msg)
+			}
+		}
+	case "edit":
+		if args.Index >= 0 && args.Index < len(*lane) {
+			text := strings.TrimSpace(args.Text)
+			msg := (*lane)[args.Index]
+			if text == "" && len(msg.Images) == 0 && len(msg.Files) == 0 {
+				*lane = append((*lane)[:args.Index], (*lane)[args.Index+1:]...)
+			} else {
+				msg.Content = agent.AttachmentText(text, msg.Files)
+				(*lane)[args.Index] = msg
+			}
+		}
+	case "clear":
+		chat.queue, chat.steer = nil, nil
+	default:
+		core.Fail(w, 400, "Unknown queue action")
+		return
+	}
+	server.changedLocked(chat, -1)
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
 }
 

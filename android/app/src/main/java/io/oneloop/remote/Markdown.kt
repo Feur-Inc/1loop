@@ -3,10 +3,13 @@
 package io.oneloop.remote
 
 import android.content.Context
+import android.content.Intent
 import android.content.res.Resources
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.RectF
+import android.net.Uri
+import android.provider.Browser
 import android.text.Spannable
 import android.text.SpannableStringBuilder
 import android.text.Spanned
@@ -46,6 +49,7 @@ import androidx.core.content.res.ResourcesCompat
 import androidx.core.widget.TextViewCompat
 import io.noties.markwon.AbstractMarkwonPlugin
 import io.noties.markwon.Markwon
+import io.noties.markwon.MarkwonConfiguration
 import io.noties.markwon.core.MarkwonTheme
 import io.noties.markwon.core.spans.LinkSpan
 import io.noties.markwon.ext.latex.JLatexMathPlugin
@@ -87,6 +91,20 @@ private fun markdownRenderer(context: Context, textSize: Float) = Markwon.builde
         builder.theme().textColor(Palette.text.toArgb())
     })
     .usePlugin(object : AbstractMarkwonPlugin() {
+        override fun configureConfiguration(builder: MarkwonConfiguration.Builder) {
+            builder.linkResolver { view, link ->
+                fileLinkCitation(link)?.let { citation ->
+                    @Suppress("UNCHECKED_CAST")
+                    (view.tag as? ((Citation) -> Unit))?.invoke(citation)
+                    return@linkResolver
+                }
+                val external = safeExternalLink(link) ?: return@linkResolver
+                val intent = Intent(Intent.ACTION_VIEW, Uri.parse(external))
+                    .putExtra(Browser.EXTRA_APPLICATION_ID, view.context.packageName)
+                runCatching { view.context.startActivity(intent) }
+            }
+        }
+
         override fun configureTheme(builder: MarkwonTheme.Builder) {
             builder.linkColor(Palette.amber.toArgb())
                 .codeBackgroundColor(Palette.raised.toArgb())
@@ -95,6 +113,43 @@ private fun markdownRenderer(context: Context, textSize: Float) = Markwon.builde
         }
     })
     .build()
+
+private val externalLinkSchemes = setOf("http", "https", "mailto", "tel")
+private val fileLineFragment = Regex("""^L(\d+)(?:-L?(\d+))?$""", RegexOption.IGNORE_CASE)
+
+/**
+ * Only web, mail and phone links are handed to Android's ACTION_VIEW.
+ * Passing file:// (or content:// / intent://) URIs directly to startActivity
+ * throws FileUriExposedException on Android 7+ (#671).
+ */
+internal fun safeExternalLink(link: String): String? {
+    val trimmed = link.trim()
+    val colon = trimmed.indexOf(':')
+    if (colon <= 0) return null
+    val scheme = trimmed.substring(0, colon).lowercase()
+    return if (scheme in externalLinkSchemes) trimmed else null
+}
+
+/**
+ * Parses a markdown file:// link (such as file:///path/to/file.go#L10-L20)
+ * into a Citation so tapping it opens in the Files panel instead of crashing
+ * Android with FileUriExposedException (#671).
+ */
+internal fun fileLinkCitation(link: String): Citation? {
+    val trimmed = link.trim()
+    if (!trimmed.startsWith("file:", ignoreCase = true)) return null
+    val hash = trimmed.indexOf('#')
+    val beforeFragment = if (hash >= 0) trimmed.substring(0, hash) else trimmed
+    val fragment = if (hash >= 0) trimmed.substring(hash + 1) else ""
+    val decodedPath = runCatching { java.net.URI(beforeFragment).path }.getOrNull()
+        ?: beforeFragment.replaceFirst(Regex("^file:(?://)?", RegexOption.IGNORE_CASE), "")
+    val path = decodedPath.trim()
+    if (path.isEmpty()) return null
+    val match = fileLineFragment.matchEntire(fragment)
+    val start = match?.groupValues?.get(1)?.toIntOrNull() ?: 0
+    val end = match?.groupValues?.get(2)?.toIntOrNull() ?: start
+    return Citation(path, start, end)
+}
 
 // Markwon uses $$ for inline math. Normalize the model's common TeX delimiters,
 // preserving code examples and escaped dollars verbatim. Incomplete streaming

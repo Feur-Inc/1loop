@@ -83,6 +83,7 @@ type Engine struct {
 	queue      []queued // own runs waiting: routines, answers
 	state      string
 	label      string
+	calling    string // the tool behind the state, "" for none
 	used       int
 	window     int
 	waits      map[string]chan loopy.Answer // a run waiting on a card
@@ -339,20 +340,23 @@ func (e *Engine) drop(id string) {
 // tell hands the views what changed.
 func (e *Engine) tell(messages []loopy.Message, gone []string, all bool) {
 	e.mu.Lock()
-	change := loopy.Change{Version: e.version, Messages: messages, Gone: gone, State: e.state, Label: e.label, Running: e.run != nil, Used: e.used, Window: e.window, All: all}
+	change := loopy.Change{Version: e.version, Messages: messages, Gone: gone, State: e.state, Label: e.label, Tool: e.calling, Running: e.run != nil, Used: e.used, Window: e.window, All: all}
 	e.mu.Unlock()
 	e.host.Changed(change)
 }
 
 // set is the face's state and its words.
-func (e *Engine) set(state, label string) {
+func (e *Engine) set(state, label string) { e.setCalling(state, label, "") }
+
+// setCalling changes the face for what a tool does.
+func (e *Engine) setCalling(state, label, tool string) {
 	e.mu.Lock()
 	if e.settle != nil {
 		e.settle.Stop()
 		e.settle = nil
 	}
-	same := e.state == state && e.label == label
-	e.state, e.label = state, label
+	same := e.state == state && e.label == label && e.calling == tool
+	e.state, e.label, e.calling = state, label, tool
 	e.mu.Unlock()
 	if !same {
 		e.tell(nil, nil, false)
@@ -400,7 +404,7 @@ func (e *Engine) waiting() []string {
 // View is what a view shows first.
 func (e *Engine) View() loopy.View {
 	e.mu.Lock()
-	view := loopy.View{Host: e.host.Name(), Version: e.version, State: e.state, Label: e.label, Running: e.run != nil, Used: e.used, Window: e.window}
+	view := loopy.View{Host: e.host.Name(), Version: e.version, State: e.state, Label: e.label, Tool: e.calling, Running: e.run != nil, Used: e.used, Window: e.window}
 	problem := e.problem
 	e.mu.Unlock()
 	view.Waiting = e.waiting()
@@ -749,7 +753,11 @@ func (e *Engine) event(r *run, kind string, data any) {
 	case "activity":
 		activity, _ := data.(agent.Activity)
 		state, label := activityOf(activity)
-		e.set(state, label)
+		tool := ""
+		if activity.State == "call" {
+			tool = activity.Tool
+		}
+		e.setCalling(state, label, tool)
 	case "context_note":
 		if text, ok := data.(string); ok && text != "" {
 			e.add(loopy.Message{From: "loopy", Note: text})
@@ -962,8 +970,8 @@ func (e *Engine) ask(ctx context.Context, card loopy.Card) (loopy.Answer, error)
 	}
 	e.mu.Unlock()
 	message := e.add(loopy.Message{ID: id, From: "loopy", Card: &card})
-	before := func() (string, string) { e.mu.Lock(); defer e.mu.Unlock(); return e.state, e.label }
-	state, label := before()
+	before := func() (string, string, string) { e.mu.Lock(); defer e.mu.Unlock(); return e.state, e.label, e.calling }
+	state, label, tool := before()
 	e.set("waiting", "Waiting for you")
 	e.notify(card.Title, card.Body, &message, true)
 	defer func() {
@@ -976,7 +984,7 @@ func (e *Engine) ask(ctx context.Context, card loopy.Card) (loopy.Answer, error)
 		if !ok {
 			return loopy.Answer{}, context.Canceled
 		}
-		e.set(state, label)
+		e.setCalling(state, label, tool)
 		return answer, nil
 	case <-ctx.Done():
 		e.update(id, func(m *loopy.Message) {

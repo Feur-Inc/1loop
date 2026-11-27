@@ -957,6 +957,17 @@ func (mode *loopyMode) renderSide() {
 	if mode.loaded {
 		mode.memoryRow.SetTrailing(fmt.Sprint(view.Facts))
 	}
+	name := loopyModelName(view)
+	if name == "" {
+		name = "Choose a model"
+	}
+	mode.modelChip.SetText(name)
+	mode.sideList.Refresh()
+	mode.syncBrowser()
+}
+
+// loopyModelName is the name of the model Loopy works with, "" for none.
+func loopyModelName(view loopy.View) string {
 	name := view.Model
 	if view.Settings.Model != "" {
 		for _, model := range view.Models {
@@ -965,12 +976,7 @@ func (mode *loopyMode) renderSide() {
 			}
 		}
 	}
-	if name == "" {
-		name = "Choose a model"
-	}
-	mode.modelChip.SetText(name)
-	mode.sideList.Refresh()
-	mode.syncBrowser()
+	return name
 }
 
 // scrollTo brings a message on screen.

@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"context"
 	"fmt"
 	"image"
 	"image/color"
@@ -14,7 +15,10 @@ import (
 	"strings"
 	"time"
 
+	"fyne.io/fyne/v2"
+
 	"1loop/internal/discord"
+	"1loop/internal/loopy"
 	"1loop/internal/platform"
 )
 
@@ -86,6 +90,16 @@ func (ui *desktopUI) presenceActivity() *discord.Activity {
 			working = chat
 		}
 	}
+	if ui.loopyDoing.Running {
+		running++
+		if working == nil || ui.loopySince.After(working.run.started) {
+			ui.loopyPresence(activity)
+			if running > 1 {
+				activity.State += fmt.Sprintf(" (+%d)", running-1)
+			}
+			return activity
+		}
+	}
 	if working == nil {
 		activity.Details = "Idle"
 		activity.LargeImage, activity.LargeText = discordArt+"1loop-ring-on-black.png", "1loop"
@@ -115,6 +129,83 @@ func (ui *desktopUI) presenceActivity() *discord.Activity {
 		activity.State += fmt.Sprintf(" (+%d)", running-1)
 	}
 	return activity
+}
+
+// loopyPresence is what the profile says while Loopy works: what it does
+// and with which model, and its own words for it only if the user chose to
+// share the chat.
+func (ui *desktopUI) loopyPresence(activity *discord.Activity) {
+	doing := ui.loopyDoing
+	mark := "think"
+	switch {
+	case doing.State == "waiting":
+		mark = "approval"
+	case doing.State == "typing":
+		mark = "write"
+	case doing.State == "reading" && !strings.HasPrefix(doing.Tool, "browser_"):
+		mark = "read"
+	case doing.State == "reading", doing.State == "copy":
+		mark = "call"
+	}
+	what := discordActivities[mark]
+	switch {
+	case strings.HasPrefix(doing.Tool, "browser_") || doing.Tool == "loopy_inspect":
+		what = "Browsing the web"
+	case mark == "read":
+		what = "Reading"
+	}
+	activity.Start = ui.loopySince
+	activity.LargeImage = discordArt + "discord/" + mark + ".gif"
+	activity.LargeText, activity.Details, activity.State = what+" · Loopy", "Working with Loopy", what
+	if ui.loopyModel != "" {
+		activity.LargeText, activity.Details = what+" · "+ui.loopyModel, "Loopy · "+ui.loopyModel
+	}
+	// Its other words speak to the user ("Waiting for you"): only a tool's
+	// say what it does.
+	if label := strings.TrimSuffix(doing.Label, "…"); ui.discordDetails && label != "" && (doing.State == "reading" || doing.State == "copy") {
+		activity.State = label
+	}
+}
+
+// noteLoopy keeps what the app's Loopy at at does for the Discord status,
+// and reads the model it works with each time it starts.
+func (ui *desktopUI) noteLoopy(at string, change loopy.Change) {
+	started := change.Running && !ui.loopyDoing.Running
+	ui.loopyDoing = change
+	if started {
+		ui.loopySince = time.Now()
+	}
+	ui.syncPresence()
+	// A server's events start again with a change that only says to read it
+	// all: whether it works is in its view.
+	if !ui.discordPresence || !started && change.Version >= 0 {
+		return
+	}
+	go func() {
+		ctx, cancel := context.WithTimeout(ui.ctx, 30*time.Second)
+		defer cancel()
+		client, err := ui.loopyClient(at)
+		if err != nil {
+			return
+		}
+		view, err := client.View(ctx)
+		if err != nil {
+			return
+		}
+		fyne.Do(func() {
+			if at != ui.loopyServer() {
+				return
+			}
+			ui.loopyModel = loopyModelName(view)
+			if change.Version < 0 && ui.loopyDoing.Version < 0 {
+				if view.Running {
+					ui.loopySince = time.Now()
+				}
+				ui.loopyDoing = loopy.Change{Version: view.Version, State: view.State, Label: view.Label, Tool: view.Tool, Running: view.Running}
+			}
+			ui.syncPresence()
+		})
+	}()
 }
 
 // discordArtPeriod is the length of one loop of the presence GIFs: the

@@ -263,6 +263,7 @@ type View struct {
 	More     bool         `json:"more,omitempty"`
 	State    string       `json:"state"` // its face: "idle", "thinking", "reading", "copy", "typing", "waiting", "blocked", "done", "ding"
 	Label    string       `json:"label,omitempty"`
+	Tool     string       `json:"tool,omitempty"` // the tool behind the state, "" for none
 	Running  bool         `json:"running"`
 	Waiting  []string     `json:"waiting,omitempty"` // the cards that wait, the latest first
 	Tasks    []Task       `json:"tasks,omitempty"`
@@ -292,6 +293,7 @@ type Change struct {
 	Gone     []string  `json:"gone,omitempty"` // messages removed
 	State    string    `json:"state"`
 	Label    string    `json:"label,omitempty"`
+	Tool     string    `json:"tool,omitempty"` // the tool behind the state, "" for none
 	Running  bool      `json:"running"`
 	Used     int       `json:"used,omitempty"`
 	Window   int       `json:"window,omitempty"`

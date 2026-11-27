@@ -113,6 +113,8 @@ func (ui *desktopUI) followLoopy(ctx context.Context, at string) {
 // setLoopyAt changes where the app's Loopy lives.
 func (ui *desktopUI) setLoopyAt(at string) {
 	ui.loopyAt = at
+	ui.loopyDoing = loopy.Change{} // the other one says what it does
+	ui.syncPresence()
 	ui.save()
 	ui.linkLoopy()
 	for _, view := range ui.windows {
@@ -142,6 +144,7 @@ func (ui *desktopUI) loopyChanged(at string, change loopy.Change) {
 	if at != ui.loopyServer() {
 		return
 	}
+	ui.noteLoopy(at, change)
 	for _, view := range ui.windows {
 		if view.loopy != nil {
 			view.loopy.apply(change)

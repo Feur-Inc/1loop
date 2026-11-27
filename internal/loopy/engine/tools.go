@@ -174,7 +174,7 @@ func (e *Engine) tool(ctx context.Context, name string, arguments json.RawMessag
 		return "", context.Canceled
 	}
 	state, label := toolActivity(name, "")
-	e.set(state, label)
+	e.setCalling(state, label, name)
 	switch name {
 	case "loopy_react":
 		e.store.Lock()

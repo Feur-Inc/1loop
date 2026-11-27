@@ -44,6 +44,7 @@ import (
 	"1loop/internal/discord"
 	"1loop/internal/extensions"
 	"1loop/internal/keyring"
+	"1loop/internal/loopy"
 	"1loop/internal/platform"
 	"1loop/internal/remoteapi"
 	registry "1loop/internal/settings"
@@ -366,6 +367,9 @@ type desktopApp struct {
 	loopyShown        bool               // the Loopy space was on screen when 1loop closed
 	loopyHome         loopyHome          // this computer's Loopy (loopy_host.go)
 	loopyUnlink       context.CancelFunc
+	loopyDoing        loopy.Change               // what the app's Loopy does now, for the Discord status
+	loopySince        time.Time                  // when it started working
+	loopyModel        string                     // the model it works with, read again each time it starts
 	notificationsOff  bool                       // settings: no system notification (notify.go)
 	lastCrash         *crash.Crash               // the last run's, offered once the window is up
 	trayNoticeShown   bool                       // the first close said that 1loop stays in the tray

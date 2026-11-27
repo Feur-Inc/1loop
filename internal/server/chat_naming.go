@@ -17,7 +17,7 @@ import (
 func (server *headlessServer) setTitleLocked(chat *serverChat, title string) error {
 	chat.Title = title
 	server.scheduleSaveLocked() // written apart: a rename must not hold the lock (#520)
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.broadcastLocked("chats", server.chatsEventLocked())
 	return nil
 }
 

@@ -120,7 +120,7 @@ func (server *headlessServer) movedChat(id, to string) error {
 	chat.moving = false
 	index := server.addLocked(chat, agent.ChatItem{Kind: "note", Text: projectsync.MovedNote(to)})
 	server.changedLocked(chat, index)
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.broadcastLocked("chats", server.chatsEventLocked())
 	server.scheduleSaveLocked()
 	return nil
 }

@@ -191,7 +191,7 @@ func (server *headlessServer) changeProject(w http.ResponseWriter, r *http.Reque
 	}
 	reply := map[string]any{"workspace": destination, "previous": args.Path, "projects": projects}
 	server.broadcastLocked("projects", reply)
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.broadcastLocked("chats", server.chatsEventLocked())
 	server.mu.Unlock()
 	for _, tab := range tabs {
 		tab.close()

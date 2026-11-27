@@ -105,6 +105,7 @@ var PhoneRoutes = []string{
 	"POST /api/projects/memory",
 	"POST /api/projects/{action}",
 	"POST /api/send",
+	"POST /api/sidebar",
 	"POST /api/stop",
 	"POST /api/sync/base",
 	"POST /api/sync/export",

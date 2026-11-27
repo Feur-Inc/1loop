@@ -87,7 +87,7 @@ fun ProjectsSheet(app: RemoteApp, onDone: () -> Unit) {
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun ProjectActionsSheet(app: RemoteApp, path: String, onNewWorktree: () -> Unit = {}, onNewChat: (() -> Unit)? = null, onDone: () -> Unit) {
+internal fun ProjectActionsSheet(app: RemoteApp, path: String, onNewWorktree: () -> Unit = {}, onNewChat: (() -> Unit)? = null, order: List<SideAction> = emptyList(), onDone: () -> Unit) {
     var action by remember(path) { mutableStateOf("") }
     var name by remember(path) { mutableStateOf(projectName(path)) }
     var busy by remember { mutableStateOf(false) }
@@ -143,6 +143,8 @@ fun ProjectActionsSheet(app: RemoteApp, path: String, onNewWorktree: () -> Unit 
                 }
                 else -> {
                     onNewChat?.let { Pill("New chat in ${projectName(path)}", primary = true, icon = Icons.plus) { onDone(); it() } }
+                    // Its place in the drawer: pin, unpin, move (#699).
+                    for (entry in order) Pill(entry.label, icon = entry.icon) { onDone(); entry.run() }
                     if (app.repositories[path]?.let { it.loaded && it.error == null } == true) {
                         Pill("New worktree", icon = Icons.branch) { onDone(); onNewWorktree() }
                         Pill("Repository", icon = Icons.branch) { onDone(); app.repositoryOpen = path }

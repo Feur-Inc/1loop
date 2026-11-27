@@ -108,6 +108,8 @@ type serverSettings struct {
 	ProjectMachines map[string]string `json:"projectMachines,omitempty"`
 	// Projects' environment variables (#408), by project folder.
 	ProjectEnv map[string]map[string]string `json:"projectEnv,omitempty"`
+	// The sidebar's order of its projects and chats, for every client (#699).
+	Sidebar *remoteapi.SidebarOrder `json:"sidebar,omitempty"`
 }
 
 type headlessServer struct {
@@ -141,11 +143,12 @@ type headlessServer struct {
 	keys                       map[string]string
 	instructions, approvalMode string
 	classic                    bool
-	memoryOff                  bool               // the agent's memory tool turned off
-	wrapUpOff                  bool               // the next-step card (wrap_up tool) turned off
-	autoResume                 *agent.AutoResume  // what a rate limit does to a run, for every chat
-	namingModel                *agent.NamingModel // the model that names new chats, nil for none
-	maxSubchats                int                // 0 = automatic from machine memory (#649)
+	memoryOff                  bool                   // the agent's memory tool turned off
+	wrapUpOff                  bool                   // the next-step card (wrap_up tool) turned off
+	autoResume                 *agent.AutoResume      // what a rate limit does to a run, for every chat
+	namingModel                *agent.NamingModel     // the model that names new chats, nil for none
+	maxSubchats                int                    // 0 = automatic from machine memory (#649)
+	sidebar                    remoteapi.SidebarOrder // pinned projects and chats, and their ranks (#699)
 	readMemory                 func() platform.MemoryStatus
 	subchatQueue               []*serverChat // subchats waiting for a slot or memory (#649)
 	subchatQueueTimer          *time.Timer
@@ -248,6 +251,9 @@ func newHeadlessServer(ctx context.Context, root, dir, configPath string) (*head
 		server.autoResume = settings.AutoResume
 		server.namingModel = settings.NamingModel
 		server.maxSubchats = settings.MaxSubchats
+		if settings.Sidebar != nil {
+			server.sidebar = *settings.Sidebar
+		}
 		if settings.ApprovalMode != "" {
 			server.approvalMode = settings.ApprovalMode
 		}
@@ -671,6 +677,23 @@ func (server *headlessServer) settingsLocked() map[string]any {
 	}
 }
 
+// chatsEventLocked is the "chats" event: the chats and the sidebar's order.
+func (server *headlessServer) chatsEventLocked() map[string]any {
+	return map[string]any{"chats": server.summariesLocked(), "sidebar": server.sidebarLocked()}
+}
+
+// sidebarLocked is the sidebar's order as clients read it: never null.
+func (server *headlessServer) sidebarLocked() remoteapi.SidebarOrder {
+	order := server.sidebar
+	if order.Pinned == nil {
+		order.Pinned = []string{}
+	}
+	if order.Rank == nil {
+		order.Rank = map[string]int64{}
+	}
+	return order
+}
+
 func (server *headlessServer) summariesLocked() []remoteapi.Chat {
 	out := []remoteapi.Chat{}
 	for _, chat := range server.chats {
@@ -1008,7 +1031,7 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 	cfg.Pause = run.pause
 	history := append([]agent.Message{}, chat.History...)
 	server.changedLocked(chat, index)
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.broadcastLocked("chats", server.chatsEventLocked())
 	inboxValue := agent.Inbox{Steer: func() []agent.Message {
 		server.mu.Lock()
 		defer server.mu.Unlock()
@@ -1085,7 +1108,7 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		moved := server.finishMoveLocked(chat, cfg.Move)
 		server.broadcastLocked("replace", map[string]string{"chat": chat.ID})
 		server.broadcastLocked("meta", server.metaLocked(chat))
-		server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+		server.broadcastLocked("chats", server.chatsEventLocked())
 		server.scheduleSaveLocked()
 		// The turn used the account: its limits are asked again the next
 		// time someone looks at them, as on the desktop.
@@ -1252,6 +1275,7 @@ func (server *headlessServer) saveSettingsLocked() error {
 		SSHMachines:       server.machines,
 		ProjectMachines:   server.projectMachines,
 		ProjectEnv:        server.projectEnv,
+		Sidebar:           &server.sidebar,
 	})
 }
 

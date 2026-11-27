@@ -28,6 +28,7 @@ private fun line(d: String, width: Float = 1.5f) = d to width
 
 object Icons {
     val chevron = lineIcon("chevron", line("M4.5 6.5 8 10l3.5-3.5"))
+    val chevronUp = lineIcon("chevron-up", line("M4.5 9.5 8 6l3.5 3.5"))
     val chevronRight = lineIcon("chevron-right", line("M6.5 4.5 10 8l-3.5 3.5"))
     val check = lineIcon("check", line("M3.5 8.4 6.6 11.4 12.5 4.8"))
     val close = lineIcon("close", line("M4.5 4.5l7 7M11.5 4.5l-7 7"))

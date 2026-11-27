@@ -146,7 +146,7 @@ func (server *headlessServer) syncEngine() *projectsync.Local {
 			if err := server.saveOutsideLocked(); err != nil {
 				return err
 			}
-			server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+			server.broadcastLocked("chats", server.chatsEventLocked())
 			return nil
 		},
 	}

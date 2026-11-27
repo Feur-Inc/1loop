@@ -78,7 +78,7 @@ func (target gitTarget) Removed(project, worktree string) {
 		tabs = append(tabs, chat.tabs...)
 		chat.tabs = nil
 	}
-	server.broadcastLocked("chats", map[string]any{"chats": server.summariesLocked()})
+	server.broadcastLocked("chats", server.chatsEventLocked())
 	server.broadcastLocked("projects", map[string]any{"projects": server.projects, "worktrees": server.worktrees})
 	server.mu.Unlock()
 	for _, tab := range tabs {

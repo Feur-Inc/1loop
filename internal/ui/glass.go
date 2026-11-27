@@ -14,7 +14,6 @@ import (
 	"hash/maphash"
 	"image"
 	"image/color"
-	"image/draw"
 	"runtime"
 	"sync"
 	"time"
@@ -127,15 +126,6 @@ func frostedBackdrop(c fyne.Canvas) (*image.NRGBA, image.Image) {
 	}
 	platform.Devf("perf", "glass backdrop %dx%d in %s", w, h, time.Since(started).Round(100*time.Microsecond))
 	return small, shot
-}
-
-// cropBelow is img from row top down, as a copy at the origin: Fyne draws a
-// sub-image (its bounds elsewhere) as nothing.
-func cropBelow(img *image.NRGBA, top int) *image.NRGBA {
-	top = min(max(0, top), img.Rect.Dy())
-	out := image.NewNRGBA(image.Rect(0, 0, img.Rect.Dx(), img.Rect.Dy()-top))
-	draw.Draw(out, out.Rect, img, image.Pt(img.Rect.Min.X, img.Rect.Min.Y+top), draw.Src)
-	return out
 }
 
 // boxBlur blurs img in place, rows then columns, over 2*radius+1 pixels,

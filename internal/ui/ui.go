@@ -1118,15 +1118,16 @@ type sheet struct {
 	dim        *canvas.Rectangle
 	panel      *canvas.Rectangle
 	shadow     *shadow
-	glass      *image.NRGBA  // the window blurred as the sheet opened (glass.go), nil without
-	backdrop   *canvas.Image // a dialog's: the whole frosted window behind it
-	frost      *canvas.Image // a menu's: the frosted part of the window under its panel
-	frostAt    rect          // the panel rectangle frost was cut for
-	strip      float32       // a dialog's: the title bar's height, left uncovered and usable (titleStrip)
-	cropOf     *image.NRGBA  // the glass the backdrop was cut from, below the strip
-	live       *canvas.Blur  // a theme's blur instead ([blur] menus, dialogs: theme_blur.go)
-	liveTint   color.NRGBA   // the panel's colour over it
-	solid      bool          // an opaque panel, no glass: over busy text, the blur reads as a smudge
+	glass      *image.NRGBA    // the window blurred as the sheet opened (glass.go), nil without
+	backdrop   *canvas.Image   // a dialog's: the whole frosted window behind it
+	frost      *canvas.Image   // a menu's: the frosted part of the window under its panel
+	frostAt    rect            // the panel rectangle frost was cut for
+	chrome     *fyne.Container // a dialog's: the window's buttons and a drag area, over the frosted title bar (titleChrome)
+	chromeAt   rect            // where the title bar's buttons are
+	chromeTop  float32         // the title bar's height
+	live       *canvas.Blur    // a theme's blur instead ([blur] menus, dialogs: theme_blur.go)
+	liveTint   color.NRGBA     // the panel's colour over it
+	solid      bool            // an opaque panel, no glass: over busy text, the blur reads as a smudge
 	open       bool
 	closing    bool
 	items      []*tapRow
@@ -1164,12 +1165,12 @@ func (dialog *sheet) Show() {
 	}
 	dialog.Resize(dialog.canvas.Size())
 	dialog.openSize = dialog.canvas.Size()
-	dialog.strip = dialog.titleStrip()
+	dialog.chrome = dialog.titleChrome()
 	dialog.syncLive()
 	if !dialog.live.Visible() && !dialog.solid {
 		dialog.glass, _ = frostedBackdrop(dialog.canvas) // before the sheet is drawn: what it covers
 	}
-	dialog.frostAt, dialog.cropOf = rect{}, nil
+	dialog.frostAt = rect{}
 	dialog.canvas.Overlays().Add(dialog)
 	dialog.Refresh()
 	duration := 180 * time.Millisecond
@@ -1212,7 +1213,7 @@ func (dialog *sheet) Hide() {
 		found = found || object == dialog
 	}
 	stack.Remove(dialog)
-	dialog.glass, dialog.cropOf = nil, nil // the backdrop is only worth its memory while shown
+	dialog.glass = nil // the backdrop is only worth its memory while shown
 	if dialog.backdrop != nil {
 		dialog.backdrop.Image, dialog.frost.Image = nil, nil
 	}
@@ -1249,26 +1250,24 @@ func (dialog *sheet) dismiss() {
 	}
 }
 
-// titleStrip is how much of the window's top a dialog leaves alone: the
-// custom title bar, down to below its window buttons. The window still
-// moves, maximizes and closes while a dialog is open, and the bar is drawn
-// as it is, not frosted. A menu covers it: a tap there dismisses the menu.
-func (dialog *sheet) titleStrip() float32 {
+// titleChrome is what a dialog keeps of the custom title bar, over the
+// window it frosts whole: the window's own buttons, sharp in their place,
+// and the bar's height to drag the window by. Nothing else of the bar
+// answers (the logo's switch, the sidebar's button): the dialog is modal.
+// A menu has none: a tap there dismisses it.
+func (dialog *sheet) titleChrome() *fyne.Container {
 	if dialog.menu {
-		return 0
+		return nil
 	}
-	controls := titleBarControls(dialog.canvas)
-	if controls == nil {
-		return 0
+	bar := titleBarOf(dialog.canvas)
+	if bar == nil {
+		return nil
 	}
-	at := fyne.CurrentApp().Driver().AbsolutePositionForObject(controls)
-	return at.Y + controls.Size().Height + at.Y/2
-}
-
-// PassesThrough lets the pointer reach the title bar under a dialog
-// (third_party/fyne: the window asks the top overlay).
-func (dialog *sheet) PassesThrough(at fyne.Position) bool {
-	return !dialog.menu && dialog.open && at.Y < dialog.strip
+	at := fyne.CurrentApp().Driver().AbsolutePositionForObject(bar.controls)
+	size := bar.controls.Size()
+	dialog.chromeAt = rect{at, fyne.NewPos(size.Width, size.Height)}
+	dialog.chromeTop = at.Y + size.Height + at.Y/2
+	return container.NewWithoutLayout(newDragArea(bar.window), windowButtons(bar.window, bar.quit))
 }
 
 func (dialog *sheet) Tapped(e *fyne.PointEvent) {
@@ -1403,9 +1402,14 @@ func (renderer *sheetRenderer) Layout(size fyne.Size) {
 	if sheet.open && size != sheet.openSize && size.Width > 0 {
 		renderer.windowResized(size)
 	}
-	below := fyne.NewSize(size.Width, fyne.Max(0, size.Height-sheet.strip)) // under the title bar a dialog leaves alone
-	sheet.dim.Move(fyne.NewPos(0, sheet.strip))
-	sheet.dim.Resize(below)
+	sheet.dim.Resize(size)
+	if sheet.chrome != nil {
+		drag, buttons := sheet.chrome.Objects[0], sheet.chrome.Objects[1]
+		sheet.chrome.Resize(size)
+		drag.Resize(fyne.NewSize(size.Width, sheet.chromeTop))
+		buttons.Move(sheet.chromeAt.pos)
+		buttons.Resize(fyne.NewSize(sheet.chromeAt.size.X, sheet.chromeAt.size.Y))
+	}
 	box := sheet.panelRect()
 	var panelPos fyne.Position
 	panelSize := fyne.NewSize(box.size.X, box.size.Y)
@@ -1432,8 +1436,8 @@ func (renderer *sheetRenderer) Layout(size fyne.Size) {
 		sheet.live.Resize(panelSize)
 		sheet.live.CornerRadius = sheet.panel.CornerRadius
 	} else {
-		sheet.live.Move(fyne.NewPos(0, sheet.strip))
-		sheet.live.Resize(below)
+		sheet.live.Move(fyne.Position{})
+		sheet.live.Resize(size)
 	}
 	sheet.panel.Move(panelPos)
 	sheet.panel.Resize(panelSize)
@@ -1460,13 +1464,15 @@ func (renderer *sheetRenderer) windowResized(size fyne.Size) {
 			sheet.anchorAt = fyne.CurrentApp().Driver().AbsolutePositionForObject(sheet.anchor)
 			sheet.anchorSz = sheet.anchor.Size()
 		}
-		sheet.strip = sheet.titleStrip()
+		if sheet.chrome != nil { // the buttons follow the window's new width
+			sheet.chrome = sheet.titleChrome()
+		}
 		if sheet.glass != nil && !sheet.live.Visible() {
 			// The capture draws the whole window: the sheet steps out of it.
 			sheet.BaseWidget.Hide()
 			glass, _ := frostedBackdrop(sheet.canvas)
 			sheet.BaseWidget.Show()
-			sheet.glass, sheet.frostAt, sheet.cropOf = glass, rect{}, nil
+			sheet.glass, sheet.frostAt = glass, rect{}
 		}
 		renderer.Refresh()
 	})
@@ -1483,15 +1489,12 @@ func (renderer *sheetRenderer) layoutGlass(size fyne.Size, box rect, panelPos fy
 		return
 	}
 	if !sheet.menu {
-		if sheet.cropOf != sheet.glass {
-			// The window frosted below the title bar, which stays as it is.
-			sheet.cropOf = sheet.glass
-			top := int(sheet.strip * float32(sheet.glass.Rect.Dx()) / size.Width)
-			sheet.backdrop.Image = cropBelow(sheet.glass, top)
+		if sheet.backdrop.Image != sheet.glass {
+			sheet.backdrop.Image = sheet.glass
 			sheet.backdrop.Refresh()
 		}
-		sheet.backdrop.Move(fyne.NewPos(0, sheet.strip))
-		sheet.backdrop.Resize(fyne.NewSize(size.Width, fyne.Max(0, size.Height-sheet.strip)))
+		sheet.backdrop.Move(fyne.Position{})
+		sheet.backdrop.Resize(size)
 		sheet.backdrop.Show()
 		return
 	}
@@ -1599,6 +1602,9 @@ func (renderer *sheetRenderer) Objects() []fyne.CanvasObject {
 		objects = append(objects, renderer.dialog.live) // the window blurred, then dimmed
 	}
 	objects = append(objects, renderer.dialog.dim)
+	if renderer.dialog.chrome != nil {
+		objects = append(objects, renderer.dialog.chrome)
+	}
 	objects = append(objects, renderer.dialog.shadow.objects()...)
 	if renderer.dialog.menu {
 		objects = append(objects, renderer.dialog.live)
@@ -2156,31 +2162,37 @@ func resizeEdges(window fyne.Window) fyne.CanvasObject {
 // windowControls builds a custom title bar's buttons; shown says while its
 // title bar is the one on screen (1loop's or Loopy's, in the same window).
 func windowControls(window fyne.Window, quit func(), shown func() bool) fyne.CanvasObject {
+	box := windowButtons(window, quit)
+	titleBars = append(titleBars, &titleBar{window: window, controls: box, quit: quit, shown: shown})
+	return box
+}
+
+// windowButtons are the minimize, maximize and close buttons.
+func windowButtons(window fyne.Window, quit func()) *fyne.Container {
 	minimize := newRow("", iconMinimize, styleWindow, func() { windowMinimize(window) })
 	maximize := newRow("", iconMaximize, styleWindow, func() { windowToggleMaximize(window) })
 	closeButton := newRow("", iconClose, styleWindow, quit)
 	closeButton.hoverFill = colClose
-	box := container.New(layout.NewCustomPaddedHBoxLayout(2), minimize, maximize, closeButton)
-	titleBars = append(titleBars, titleBar{window: window, controls: box, shown: shown})
-	return box
+	return container.New(layout.NewCustomPaddedHBoxLayout(2), minimize, maximize, closeButton)
 }
 
-// titleBar is a custom title bar's buttons: a dialog leaves the bar down to
-// them alone (sheet.titleStrip), so 1loop can always be moved and closed.
+// titleBar is a custom title bar's buttons: a dialog draws its own over
+// them (sheet.titleChrome), so 1loop can always be moved and closed.
 type titleBar struct {
 	window   fyne.Window
 	controls *fyne.Container
+	quit     func()
 	shown    func() bool
 }
 
-var titleBars []titleBar
+var titleBars []*titleBar
 
-// titleBarControls is the buttons of the title bar on screen in a window,
-// nil without a custom one.
-func titleBarControls(c fyne.Canvas) *fyne.Container {
+// titleBarOf is the title bar on screen in a window, nil without a custom
+// one: 1loop's or Loopy's, whichever space is shown.
+func titleBarOf(c fyne.Canvas) *titleBar {
 	for _, bar := range slices.Backward(titleBars) {
 		if bar.window.Canvas() == c && bar.controls.Visible() && (bar.shown == nil || bar.shown()) {
-			return bar.controls
+			return bar
 		}
 	}
 	return nil

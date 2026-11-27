@@ -467,9 +467,9 @@ func ForkHistory(history []Message) []Message {
 func subchatToolDefinition() map[string]any {
 	return map[string]any{"type": "function", "function": map[string]any{
 		"name": "subchat",
-		"description": "Start and follow subchats: conversations under this chat in the sidebar that run in parallel, for independent work; the user can open, steer or stop them. " +
-			"start returns its id at once (approved per the approval mode); brief is all it needs: the task, the files, what done means. context: fresh (null, preferred) or fork (it gets this whole conversation: costly, only when the brief cannot carry it). isolation: worktree (null: own branch from the last commit, without uncommitted changes) or shared (this folder, read-only work). model: a name from the model picker, null for this chat's. effort: a reasoning effort the model offers, null for this chat's. " +
-			"Its report comes as a message when its turn ends: do not poll. Follow-ups go through the chats tool. status lists the subchats (id null) or one; stop stops one and those under it. At most " + fmt.Sprint(MaxSubchatDepth) + " levels below the user's chat, " + fmt.Sprint(MaxRunningSubchats) + " working at once. Leave unused fields null.",
+		"description": "Start and follow subchats: parallel conversations under this chat for independent work; the user can open, steer or stop them. " +
+			"start returns its id at once (per approval mode); brief covers task, files, and done. context: fresh (null, preferred) or fork (full history: costly, only if brief cannot carry it). isolation: worktree (null: own branch from last commit, no uncommitted changes) or shared (this folder, read-only). model/effort: picker model name / its reasoning effort (null for this chat's). " +
+			"Reports arrive when the turn ends: do not poll. Follow up via chats. status lists all (id null) or one; stop ends one and its children. Max " + fmt.Sprint(MaxSubchatDepth) + " levels deep, " + fmt.Sprint(MaxRunningSubchats) + " active. Unused fields null.",
 		"parameters": map[string]any{"type": "object", "additionalProperties": false,
 			"required": []string{"action", "id", "title", "brief", "context", "isolation", "model", "effort", "files"},
 			"properties": map[string]any{

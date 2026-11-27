@@ -609,15 +609,7 @@ func (ui *desktopUI) renderChats() {
 }
 
 // chatTexts are a chat's messages, what search reads: not tool output.
-func chatTexts(items []agent.ChatItem) []string {
-	var texts []string
-	for _, item := range items {
-		if item.Kind == "user" || item.Kind == "assistant" {
-			texts = append(texts, item.Text)
-		}
-	}
-	return texts
-}
+func chatTexts(items []agent.ChatItem) []string { return remoteapi.ChatTexts(items) }
 
 // buildSidebar assembles the sidebar column.
 func (ui *desktopUI) buildSidebar() fyne.CanvasObject {

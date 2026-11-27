@@ -20,10 +20,14 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.delay
 
 // The drawer's Search, as the desktop's (internal/ui/sidebar_search.go): one
-// field and the tags All / Chats / Settings. A chat is found by its title (the
-// phone holds the chats' messages only for the chat that is open), a setting
+// field and the tags All / Chats / Settings. A chat is found by its title, or
+// else by its messages with the words around the match, which the target
+// searches (GET /api/search, #700: the phone holds the messages of the open
+// chat only); a target too old for it finds titles here. A setting is found
 // by the same search as Settings' own. A result opens it.
 
 /** Search shows this many chats at most: past that, more words narrow it. */
@@ -42,8 +46,17 @@ fun SearchScreen(app: RemoteApp, onBack: () -> Unit) {
     val adb = if (local) app.local.adb.collectAsState().value else null
     val settings = phoneSettingsShown(app, list, adb?.let { it.allowed && it.connected } == true)
     val words = query.lowercase().split(Regex("\\s+")).filter { it.isNotEmpty() }
-    // Title matches, in the chats' order; with no word, every chat.
-    val chats = app.chats.filter { chat -> words.all { chat.title.lowercase().contains(it) } }
+    // The target's answer for these words: chats by id, with a snippet when their messages matched.
+    var remote by remember { mutableStateOf<Pair<String, List<Pair<String, String>>>?>(null) }
+    LaunchedEffect(query, app.server) {
+        if (words.isEmpty()) return@LaunchedEffect
+        delay(250) // typing on
+        remote = try { query to app.searchChats(query) } catch (cancelled: CancellationException) { throw cancelled } catch (_: Exception) { null }
+    }
+    val answer = remote?.takeIf { it.first == query }?.second
+    // Title matches, in the chats' order, until the target answers; with no word, every chat.
+    val chats = if (answer == null || words.isEmpty()) app.chats.filter { chat -> words.all { chat.title.lowercase().contains(it) } }.map { it to "" }
+    else answer.mapNotNull { (id, snippet) -> app.chats.firstOrNull { it.id == id }?.let { it to snippet } }
     val found = if (query.isBlank()) emptyList() else SettingsSearch.search(list, settings, query)
     Column(back.fillMaxSize().background(Palette.background).windowInsetsPadding(WindowInsets.safeDrawing)) {
         Row(Modifier.padding(12.dp), verticalAlignment = Alignment.CenterVertically) {
@@ -66,16 +79,17 @@ fun SearchScreen(app: RemoteApp, onBack: () -> Unit) {
             if (shownChats.isEmpty() && shownSettings.isEmpty()) {
                 Column(Modifier.fillMaxWidth().background(Palette.surface, RoundedCornerShape(14.dp)).padding(16.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
                     Text(if (query.isBlank()) "Nothing here yet" else "Nothing matches “${query.trim()}”", style = Type.body)
-                    Text("Try another word: a chat's title, or a setting's name or what it does.", style = Type.small)
+                    Text("Try another word: from a chat's title or messages, or a setting's name or what it does.", style = Type.small)
                 }
             }
             if (shownChats.isNotEmpty()) {
                 SearchHeading("Chats")
                 Column(Modifier.fillMaxWidth().clip(RoundedCornerShape(14.dp)).background(Palette.surface)) {
-                    for (chat in shownChats) {
+                    for ((chat, snippet) in shownChats) {
                         SearchRow(
                             if (chat.parent.isNotEmpty()) Icons.subchat else Icons.chats, chat.title,
-                            app.folderName(chat.workspace.takeIf { !chat.scratch } ?: NO_FOLDER), running = chat.running,
+                            app.folderName(chat.workspace.takeIf { !chat.scratch } ?: NO_FOLDER) + snippet.takeIf { it.isNotEmpty() }?.let { " · $it" }.orEmpty(),
+                            running = chat.running,
                         ) { app.searchOpen = false; app.open(chat.id) }
                     }
                 }

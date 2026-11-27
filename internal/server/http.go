@@ -134,6 +134,7 @@ func (server *headlessServer) Routes() map[string]http.HandlerFunc {
 		"POST /api/stop":                               server.stop,
 		"POST /api/approve":                            server.approve,
 		"GET /api/review":                              server.review,
+		"GET /api/search":                              server.searchChats,
 		"POST /api/answer":                             server.answer,
 		"POST /api/preferences":                        server.setPreferences,
 		"POST /api/memory":                             server.setMemory,
@@ -740,6 +741,18 @@ func (server *headlessServer) approve(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	core.WriteJSON(w, 200, map[string]bool{"ok": true})
+}
+
+// searchChats is GET /api/search?q= (#700): the server's chats by their
+// title or their messages.
+func (server *headlessServer) searchChats(w http.ResponseWriter, r *http.Request) {
+	server.mu.Lock()
+	entries := make([]remoteapi.SearchEntry, 0, len(server.chats))
+	for _, chat := range server.chats {
+		entries = append(entries, remoteapi.NewSearchEntry(chat.ID, chat.Title, remoteapi.ChatTexts(chat.Items)))
+	}
+	server.mu.Unlock()
+	remoteapi.SearchChats(w, r, entries)
 }
 
 // review is the files of an edit waiting for approval (#242).

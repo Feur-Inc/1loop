@@ -44,6 +44,7 @@ var PhoneRoutes = []string{
 	"GET /api/projects/env",
 	"GET /api/projects/memory",
 	"GET /api/review",
+	"GET /api/search",
 	"GET /api/state",
 	"GET /api/sync/base",
 	"GET /api/sync/manifest",

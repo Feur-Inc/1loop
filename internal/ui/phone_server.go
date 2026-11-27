@@ -231,6 +231,7 @@ func (server *remoteServer) Routes() map[string]http.HandlerFunc {
 	routes["POST /api/stop"] = server.stop
 	routes["POST /api/approve"] = server.approve
 	routes["GET /api/review"] = server.review
+	routes["GET /api/search"] = server.searchChats
 	routes["POST /api/answer"] = server.answer
 	routes["POST /api/preferences"] = server.setPreferences
 	routes["POST /api/memory"] = server.setMemory
@@ -477,6 +478,20 @@ func (ui *desktopUI) chatByID(id string) *conversation {
 
 // phoneChats are the chats the phone sees: this computer's. Those of SSH
 // machines stay in the window.
+// searchChats is GET /api/search?q= (#700): the chats the phone lists, by
+// their title or their messages.
+func (server *remoteServer) searchChats(writer http.ResponseWriter, req *http.Request) {
+	var entries []remoteapi.SearchEntry
+	server.onUI(func() {
+		for _, chat := range server.ui.chats {
+			if chat.Config.MachineID == "" {
+				entries = append(entries, remoteapi.NewSearchEntry(chat.ID, chat.Title, remoteapi.ChatTexts(chat.Items)))
+			}
+		}
+	})
+	remoteapi.SearchChats(writer, req, entries)
+}
+
 func phoneChats(all []*conversation) []remoteapi.Chat {
 	chats := []remoteapi.Chat{}
 	for _, chat := range all {

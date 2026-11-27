@@ -74,28 +74,28 @@ func TestMatchChats(t *testing.T) {
 	} {
 		var got []int
 		for _, hit := range matchChats(c.query, entries) {
-			got = append(got, hit.index)
+			got = append(got, hit.Index)
 		}
 		if !slices.Equal(got, c.want) {
 			t.Errorf("matchChats(%q) = %v, want %v", c.query, got, c.want)
 		}
 	}
 	hits := matchChats("flickers", entries)
-	if len(hits) != 1 || hits[0].snippet != "The sidebar flickers when the manifest is signed" {
+	if len(hits) != 1 || hits[0].Snippet != "The sidebar flickers when the manifest is signed" {
 		t.Errorf("snippet = %+v", hits)
 	}
 }
 
 func TestSearchSnippet(t *testing.T) {
 	long := strings.Repeat("word ", 30) + "needle " + strings.Repeat("étoile ", 30)
-	snippet := newSearchEntry("", []string{long}).snippet("needle")
+	snippet := newSearchEntry("", []string{long}).Snippet("needle")
 	if !strings.HasPrefix(snippet, "…") || !strings.HasSuffix(snippet, "…") || !strings.Contains(snippet, "needle") {
 		t.Errorf("snippet = %q, want the words around the match, cut on both sides", snippet)
 	}
 	if !utf8.ValidString(snippet) {
 		t.Errorf("snippet %q cuts a character in two", snippet)
 	}
-	if got := newSearchEntry("", []string{"two\nlines"}).snippet("lines"); got != "two lines" {
+	if got := newSearchEntry("", []string{"two\nlines"}).Snippet("lines"); got != "two lines" {
 		t.Errorf("snippet = %q, want one line", got)
 	}
 }
@@ -163,7 +163,7 @@ func TestFindAll(t *testing.T) {
 
 	// Both kinds, chats first.
 	kind, found := findAll("permissions", searchAll, chats, settings)
-	if kind != searchAll || len(found.chats) != 1 || found.chats[0].index != 0 || !has(found.settings, "Tool permissions") {
+	if kind != searchAll || len(found.chats) != 1 || found.chats[0].Index != 0 || !has(found.settings, "Tool permissions") {
 		t.Errorf("all: kind %v, chats %+v, settings %d", kind, found.chats, len(found.settings))
 	}
 	// Settings go through their own matcher, which forgives a typo.
@@ -184,7 +184,7 @@ func TestFindAll(t *testing.T) {
 	if _, found := findAll("setting:", searchAll, chats, settings); len(found.chats) != 0 || len(found.settings) != len(settings) {
 		t.Errorf("setting: alone: %d chats, %d settings, want all %d", len(found.chats), len(found.settings), len(settings))
 	}
-	if _, found := findAll("hero", searchAll, chats, settings); len(found.chats) != 1 || found.chats[0].snippet != "hero text" {
+	if _, found := findAll("hero", searchAll, chats, settings); len(found.chats) != 1 || found.chats[0].Snippet != "hero text" {
 		t.Errorf("content: %+v", found.chats)
 	}
 }

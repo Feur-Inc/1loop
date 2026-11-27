@@ -1472,6 +1472,34 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         if (current != null && chats.none { it.id == current }) open(null)
     }
 
+    /** A project's environment variables, for its chats' commands and terminals (#693, GET /api/projects/env). */
+    suspend fun projectEnv(path: String): JSONObject {
+        val target = server ?: error("Connect first.")
+        val reply = onConnection(target, connectionGeneration) { it.get("/api/projects/env?path=" + java.net.URLEncoder.encode(path, "UTF-8")) }
+        return reply.optJSONObject("env") ?: JSONObject()
+    }
+
+    /** Replaces a project's variables; none forgets them. */
+    suspend fun saveProjectEnv(path: String, env: JSONObject) {
+        val target = server ?: error("Connect first.")
+        onConnection(target, connectionGeneration) { it.post("/api/projects/env", JSONObject().put("path", path).put("env", env)) }
+    }
+
+    /** A project's AGENTS.md, its project memory (#694): its text, and whether the file exists. */
+    suspend fun projectMemory(path: String): Pair<String, Boolean> {
+        val target = server ?: error("Connect first.")
+        val reply = onConnection(target, connectionGeneration) { it.get("/api/projects/memory?workspace=" + java.net.URLEncoder.encode(path, "UTF-8")) }
+        return reply.optString("text") to reply.optBoolean("exists")
+    }
+
+    /** Saves AGENTS.md; refused when it changed since before was read. */
+    suspend fun saveProjectMemory(path: String, before: String, after: String) {
+        val target = server ?: error("Connect first.")
+        onConnection(target, connectionGeneration) {
+            it.post("/api/projects/memory?workspace=" + java.net.URLEncoder.encode(path, "UTF-8"), JSONObject().put("before", before).put("after", after))
+        }
+    }
+
     private fun applyProjects(data: JSONObject) {
         projects = strings(data.optJSONArray("projects"))
         data.optJSONObject("worktrees")?.let { worktrees = stringMap(it) }

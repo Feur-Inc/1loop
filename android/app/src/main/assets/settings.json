@@ -526,7 +526,7 @@
         "claude.md"
       ],
       "kind": "action",
-      "where": "desktop"
+      "where": "both"
     },
     {
       "key": "loopy.home",

@@ -213,7 +213,7 @@ var list = []Setting{
 	{Key: KeyWrapUp, Section: Agent, Title: "Next-step card", Where: OnBoth, Kind: Toggle,
 		Description: "A recap at the end of each turn, with buttons for your reply.",
 		Keywords:    []string{"wrap up", "next step", "recap", "card", "buttons", "end of turn"}},
-	{Key: "agent.project_memory", Section: Agent, Title: "Project memory", Where: OnDesktop, Kind: Action,
+	{Key: "agent.project_memory", Section: Agent, Title: "Project memory", Where: OnBoth, Kind: Action,
 		Description: "Each project's AGENTS.md, read by every agent.",
 		Keywords:    []string{"agents.md", "project", "instructions", "memory", "claude.md"}},
 	{Key: "loopy.home", Section: Agent, Page: "Loopy", Title: "Where Loopy lives", Where: OnDesktop, Kind: Action, Protected: true,

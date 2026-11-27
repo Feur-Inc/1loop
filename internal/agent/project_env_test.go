@@ -5,10 +5,15 @@ package agent
 import (
 	"context"
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+
+	"1loop/internal/platform"
 )
 
 // A project's environment variables (#408) reach the shell tool and its
@@ -49,5 +54,29 @@ func TestProjectEnvReachesShellNotModel(t *testing.T) {
 	}
 	if prompt := systemInstructions(cfg); strings.Contains(prompt, "s3cr") || strings.Contains(prompt, "ONELOOP_TEST_TOKEN") {
 		t.Fatal("the variables are in the model's instructions")
+	}
+}
+
+// Antigravity CLI runs receive the project's environment variables (#408)
+// through agyProcess, just like Claude Code and the built-in shell tool.
+func TestProjectEnvReachesAntigravityProcess(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell script stub")
+	}
+	bin := t.TempDir()
+	stub := filepath.Join(bin, "agy")
+	if err := os.WriteFile(stub, []byte("#!/bin/sh\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("PATH", bin+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("ONELOOP_FLATPAK", "")
+
+	ctx := platform.WithProjectEnv(context.Background(), map[string]string{"TEST1LOOP": "hello-env"})
+	cmd, err := agyCommand(ctx, t.TempDir())
+	if err != nil {
+		t.Fatalf("agyCommand: %v", err)
+	}
+	if !slices.Contains(cmd.Env, "TEST1LOOP=hello-env") {
+		t.Fatalf("agyCommand env missing TEST1LOOP=hello-env")
 	}
 }

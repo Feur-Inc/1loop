@@ -32,6 +32,7 @@ import (
 	"1loop/internal/agent"
 	"1loop/internal/core"
 	"1loop/internal/platform"
+	"1loop/internal/remoteapi"
 )
 
 // ---------------------------------------------------------------------------
@@ -742,6 +743,10 @@ func lane(chat *conversation, steer bool) *[]agent.Message {
 }
 
 func (ui *desktopUI) moveQueued(index, delta int) {
+	if ui.server != nil {
+		ui.server.queueAction(remoteapi.QueueAction{Action: "move", Index: index, Delta: delta})
+		return
+	}
 	queue := ui.current.queue
 	to := index + delta
 	if index < 0 || to < 0 || to >= len(queue) {
@@ -752,6 +757,10 @@ func (ui *desktopUI) moveQueued(index, delta int) {
 }
 
 func (ui *desktopUI) dropQueued(steer bool, index int) {
+	if ui.server != nil {
+		ui.server.queueAction(remoteapi.QueueAction{Action: "remove", Steer: steer, Index: index})
+		return
+	}
 	waiting := lane(ui.current, steer)
 	if index < 0 || index >= len(*waiting) {
 		return
@@ -763,6 +772,10 @@ func (ui *desktopUI) dropQueued(steer bool, index int) {
 // sendQueuedNow steers a queued message into the running task, or sends it
 // right away when nothing runs.
 func (ui *desktopUI) sendQueuedNow(index int) {
+	if ui.server != nil {
+		ui.server.queueAction(remoteapi.QueueAction{Action: "send_now", Index: index})
+		return
+	}
 	chat := ui.current
 	if index < 0 || index >= len(chat.queue) {
 		return
@@ -779,6 +792,10 @@ func (ui *desktopUI) sendQueuedNow(index int) {
 }
 
 func (ui *desktopUI) clearQueue() {
+	if ui.server != nil {
+		ui.server.queueAction(remoteapi.QueueAction{Action: "clear"})
+		return
+	}
 	if ui.current != nil {
 		ui.current.queue, ui.current.steer = nil, nil
 	}
@@ -790,52 +807,62 @@ func (ui *desktopUI) clearQueue() {
 func (ui *desktopUI) renderQueue() {
 	ui.queueList.RemoveAll()
 	chat := ui.current
-	ui.remote.metaChanged(chat)
+	if ui.server == nil {
+		ui.remote.metaChanged(chat)
+	}
 	ui.renderPending()
 	ui.renderQuestions() // the open chat's questions, if it has any
-	if chat == nil || len(chat.queue) == 0 {
+	var texts []string
+	running := false
+	if ui.server != nil {
+		running = ui.server.meta.Running
+		for _, text := range ui.server.meta.Queue {
+			texts = append(texts, strings.Join(strings.Fields(text), " "))
+		}
+	} else if chat != nil {
+		running = chat.run != nil
+		for _, messageValue := range chat.queue {
+			texts = append(texts, queueRowText(messageValue))
+		}
+	}
+	if len(texts) == 0 {
 		ui.queueTray.Hide()
 		return
 	}
-	for i, messageValue := range chat.queue {
-		ui.queueList.Add(ui.queueRow(false, i, messageValue))
+	for i, text := range texts {
+		ui.queueList.Add(ui.queueRow(false, i, len(texts), running, text))
 	}
-	label := fmt.Sprintf("%d queued for the next turn", len(chat.queue))
-	if chat.run == nil {
+	label := fmt.Sprintf("%d queued for the next turn", len(texts))
+	if !running {
 		label = "Queue paused · press Enter to resume"
 	}
 	ui.queueTitle.SetText(label)
 	ui.queueTray.Show()
 }
 
-// renderPending shows the messages sent while the agent works, greyed at
-// the conversation's end, until the agent takes them in. A server chat's
-// come from the server (its metadata), without actions.
+// renderPending shows the messages steering the running task, greyed at the
+// conversation's end, until the agent takes them in.
 func (ui *desktopUI) renderPending() {
 	if ui.pendingBox == nil {
 		return
 	}
 	ui.pendingBox.RemoveAll()
 	type pendingMessage struct {
-		text   string
-		index  int  // in chat.steer; -1 for a server chat's
-		queued bool // a server chat's queue: sent once the task is over
+		text  string
+		index int // in steer
 	}
 	var waiting []pendingMessage
 	running := false
 	if ui.server != nil {
 		meta := ui.server.meta
 		running = meta.Running
-		for _, text := range meta.Steer {
-			waiting = append(waiting, pendingMessage{text, -1, false})
-		}
-		for _, text := range meta.Queue {
-			waiting = append(waiting, pendingMessage{text, -1, true})
+		for i, text := range meta.Steer {
+			waiting = append(waiting, pendingMessage{text, i})
 		}
 	} else if chat := ui.current; chat != nil {
 		running = chat.run != nil
 		for i, message := range chat.steer {
-			waiting = append(waiting, pendingMessage{pendingText(message), i, false})
+			waiting = append(waiting, pendingMessage{pendingText(message), i})
 		}
 	}
 	for _, message := range waiting {
@@ -845,9 +872,6 @@ func (ui *desktopUI) renderPending() {
 		bubble := container.New(&bubbleLayout{text: text, chrom: 2*pad + 4},
 			surface(padded(pad, pad, pad, pad, text), withAlpha(colRaised, 0.5), colBorderSoft, 14, 2))
 		note := "Sent at the next step"
-		if message.queued {
-			note = "Queued · sent when the task ends"
-		}
 		if !running {
 			note = "Not sent yet · press Enter to send"
 		}
@@ -878,16 +902,24 @@ func pendingText(messageValue agent.Message) string {
 	return text
 }
 
-// queueRow shows one waiting message; its actions appear on hover.
-func (ui *desktopUI) queueRow(steer bool, index int, messageValue agent.Message) fyne.CanvasObject {
+func queueRowText(messageValue agent.Message) string {
 	text := strings.Join(strings.Fields(messageValue.Typed()), " ")
 	if text == "" && len(messageValue.Files) > 0 {
 		text = messageValue.Files[0].Name
 	}
 	if text == "" {
-		text = "[image]"
-	} else if len(messageValue.Images) > 0 {
+		return "[image]"
+	}
+	if len(messageValue.Images) > 0 {
 		text += fmt.Sprintf("  [+%d image]", len(messageValue.Images))
+	}
+	return text
+}
+
+// queueRow shows one waiting message; its actions appear on hover.
+func (ui *desktopUI) queueRow(steer bool, index, total int, running bool, text string) fyne.CanvasObject {
+	if text == "" {
+		text = "[message]"
 	}
 	var badge fyne.CanvasObject
 	if steer {
@@ -915,7 +947,7 @@ func (ui *desktopUI) queueRow(steer bool, index int, messageValue agent.Message)
 		if index > 0 {
 			action(iconChevronUp, "Move up", func() { ui.moveQueued(index, -1) })
 		}
-		if index < len(ui.current.queue)-1 {
+		if index < total-1 {
 			action(iconChevron, "Move down", func() { ui.moveQueued(index, +1) })
 		}
 	}
@@ -927,7 +959,7 @@ func (ui *desktopUI) queueRow(steer bool, index int, messageValue agent.Message)
 		send.onHover = func(in bool) {
 			if in {
 				tip := "Send this message"
-				if ui.current.run != nil {
+				if running {
 					tip = "Join the current task at the next step"
 				}
 				ui.tips.show(send, tip)
@@ -1004,17 +1036,37 @@ func revealOnHover(label *tapRow, hover *canvas.Rectangle, actions []*tapRow, ti
 // It leaves the queue meanwhile, so the running task cannot send it half
 // edited; Enter puts it back in its place, Escape restores it unchanged.
 type queueEdit struct {
-	chat     *conversation
-	steer    bool
-	index    int
-	original agent.Message
-	draft    string // what the prompt held before
-	images   []core.ImagePart
-	files    []fileAttachment
+	chat       *conversation
+	server     bool
+	serverChat string
+	steer      bool
+	index      int
+	original   agent.Message
+	draft      string // what the prompt held before
+	images     []core.ImagePart
+	files      []fileAttachment
 }
 
 func (ui *desktopUI) editQueued(steer bool, index int) {
 	ui.finishEdit(false)
+	if ui.server != nil {
+		list := ui.server.meta.Queue
+		if steer {
+			list = ui.server.meta.Steer
+		}
+		if index < 0 || index >= len(list) {
+			return
+		}
+		text := list[index]
+		ui.editing = &queueEdit{server: true, serverChat: ui.server.current, steer: steer, index: index, draft: ui.prompt.Text}
+		ui.prompt.SetText(text)
+		lines := strings.Split(text, "\n")
+		ui.prompt.CursorRow, ui.prompt.CursorColumn = len(lines)-1, len([]rune(lines[len(lines)-1]))
+		ui.prompt.Refresh()
+		ui.editBar.Show()
+		ui.window.Canvas().Focus(ui.prompt)
+		return
+	}
 	chat := ui.current
 	waiting := lane(chat, steer)
 	if index < 0 || index >= len(*waiting) {
@@ -1039,15 +1091,27 @@ func (ui *desktopUI) editQueued(steer bool, index int) {
 // set (dropped if emptied), unchanged otherwise; the prompt gets its draft
 // back.
 func (ui *desktopUI) finishEdit(commit bool) {
+	queueEdit := ui.editing
+	if queueEdit == nil {
+		return
+	}
+	if queueEdit.server {
+		ui.editing = nil
+		edited := strings.TrimSpace(ui.prompt.Text)
+		ui.prompt.SetText(queueEdit.draft)
+		ui.editBar.Hide()
+		if commit && ui.server != nil && ui.server.current == queueEdit.serverChat {
+			ui.server.queueAction(remoteapi.QueueAction{Action: "edit", Steer: queueEdit.steer, Index: queueEdit.index, Text: edited})
+		} else {
+			ui.renderQueue()
+		}
+		return
+	}
 	if commit {
 		if problem := ui.attachmentProblem(); problem != "" {
 			ui.notice("Attachments", problem)
 			return
 		}
-	}
-	queueEdit := ui.editing
-	if queueEdit == nil {
-		return
 	}
 	ui.editing = nil
 	messageValue := queueEdit.original

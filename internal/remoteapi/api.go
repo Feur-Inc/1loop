@@ -132,6 +132,15 @@ type Meta struct {
 	Subchats    []agent.SubchatInfo `json:"subchats,omitempty"`
 }
 
+// QueueAction mutates a chat's waiting messages via POST /api/chats/{id}/queue.
+type QueueAction struct {
+	Action string `json:"action"`          // "move", "remove", "send_now", "edit", "clear"
+	Steer  bool   `json:"steer,omitempty"` // true for the steer lane, false for the next-turn queue
+	Index  int    `json:"index,omitempty"`
+	Delta  int    `json:"delta,omitempty"` // -1 or +1 for "move"
+	Text   string `json:"text,omitempty"`  // replacement text for "edit" (empty drops the message)
+}
+
 // Page is the part of a chat's items GET /api/chats/{id} returns: all of
 // them, or with ?limit=N the N before ?before= (the end by default), so a
 // long chat opens on its last messages and the rest loads on demand.

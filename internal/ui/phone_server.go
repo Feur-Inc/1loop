@@ -203,6 +203,7 @@ func (server *remoteServer) Routes() map[string]http.HandlerFunc {
 	routes["GET /api/chats/{id}/items/{index}/images/{n}"] = server.itemImage
 	routes["POST /api/chats/{id}/message"] = server.editMessage
 	routes["POST /api/chats/{id}/version"] = server.selectVersion
+	routes["POST /api/chats/{id}/queue"] = server.editQueue
 	routes["POST /api/attachments"] = server.uploadAttachment
 	syncEngine := server.ui.syncEngine()
 	syncEngine.Identity = server.fingerprint
@@ -985,6 +986,74 @@ func (server *remoteServer) answer(writer http.ResponseWriter, req *http.Request
 	})
 	if !found {
 		core.Fail(writer, http.StatusNotFound, "These questions were already answered")
+		return
+	}
+	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})
+}
+
+func (server *remoteServer) editQueue(writer http.ResponseWriter, req *http.Request) {
+	var args remoteapi.QueueAction
+	if core.ReadJSON(req, &args) != nil {
+		core.Fail(writer, http.StatusBadRequest, "Invalid request")
+		return
+	}
+	status := http.StatusOK
+	problem := ""
+	server.onUI(func() {
+		chat := server.ui.chatByID(req.PathValue("id"))
+		if chat == nil {
+			status, problem = http.StatusNotFound, "Chat not found"
+			return
+		}
+		waiting := lane(chat, args.Steer)
+		switch args.Action {
+		case "move":
+			to := args.Index + args.Delta
+			if args.Index >= 0 && to >= 0 && args.Index < len(chat.queue) && to < len(chat.queue) {
+				chat.queue[args.Index], chat.queue[to] = chat.queue[to], chat.queue[args.Index]
+			}
+		case "remove":
+			if args.Index >= 0 && args.Index < len(*waiting) {
+				*waiting = append((*waiting)[:args.Index], (*waiting)[args.Index+1:]...)
+			}
+		case "send_now":
+			if args.Index >= 0 && args.Index < len(chat.queue) {
+				msg := chat.queue[args.Index]
+				chat.queue = append(chat.queue[:args.Index], chat.queue[args.Index+1:]...)
+				if chat.run != nil {
+					chat.steer = append(chat.steer, msg)
+				} else {
+					if server.ui.current != chat {
+						server.ui.openLocalChat(chat)
+					}
+					server.ui.start(msg)
+				}
+			}
+		case "edit":
+			if args.Index >= 0 && args.Index < len(*waiting) {
+				text := strings.TrimSpace(args.Text)
+				msg := (*waiting)[args.Index]
+				if text == "" && len(msg.Images) == 0 && len(msg.Files) == 0 {
+					*waiting = append((*waiting)[:args.Index], (*waiting)[args.Index+1:]...)
+				} else {
+					msg.Content = agent.AttachmentText(text, msg.Files)
+					(*waiting)[args.Index] = msg
+				}
+			}
+		case "clear":
+			chat.queue, chat.steer = nil, nil
+		default:
+			status, problem = http.StatusBadRequest, "Unknown queue action"
+			return
+		}
+		if server.ui.current == chat {
+			server.ui.renderQueue()
+		} else {
+			server.metaChanged(chat)
+		}
+	})
+	if problem != "" {
+		core.Fail(writer, status, problem)
 		return
 	}
 	core.WriteJSON(writer, http.StatusOK, map[string]bool{"ok": true})

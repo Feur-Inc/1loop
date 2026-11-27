@@ -1031,6 +1031,53 @@ func (remote *remoteDesktop) syncRun() {
 	remote.syncSending()
 }
 
+// queueAction mutates the open server chat's queue or steer list, updating the
+// local mirror immediately and syncing with the server.
+func (remote *remoteDesktop) queueAction(action remoteapi.QueueAction) {
+	chatID := remote.current
+	if chatID == "" {
+		return
+	}
+	waiting := &remote.meta.Queue
+	if action.Steer {
+		waiting = &remote.meta.Steer
+	}
+	switch action.Action {
+	case "move":
+		to := action.Index + action.Delta
+		if action.Index >= 0 && to >= 0 && action.Index < len(remote.meta.Queue) && to < len(remote.meta.Queue) {
+			remote.meta.Queue[action.Index], remote.meta.Queue[to] = remote.meta.Queue[to], remote.meta.Queue[action.Index]
+		}
+	case "remove":
+		if action.Index >= 0 && action.Index < len(*waiting) {
+			*waiting = append((*waiting)[:action.Index], (*waiting)[action.Index+1:]...)
+		}
+	case "send_now":
+		if action.Index >= 0 && action.Index < len(remote.meta.Queue) {
+			msg := remote.meta.Queue[action.Index]
+			remote.meta.Queue = append(remote.meta.Queue[:action.Index], remote.meta.Queue[action.Index+1:]...)
+			if remote.meta.Running {
+				remote.meta.Steer = append(remote.meta.Steer, msg)
+			}
+		}
+	case "edit":
+		if action.Index >= 0 && action.Index < len(*waiting) {
+			text := strings.TrimSpace(action.Text)
+			if text == "" {
+				*waiting = append((*waiting)[:action.Index], (*waiting)[action.Index+1:]...)
+			} else {
+				(*waiting)[action.Index] = text
+			}
+		}
+	case "clear":
+		remote.meta.Queue, remote.meta.Steer = nil, nil
+	}
+	remote.parent.renderQueue()
+	if remote.client != nil {
+		remote.action("/api/chats/"+chatID+"/queue", action)
+	}
+}
+
 // modelChip is what the composer's chip shows for a server chat's model: its
 // name, and its effort after it, as for this computer's chats (#581).
 func (remote *remoteDesktop) modelChip(label, effort string) (text, trailing string) {

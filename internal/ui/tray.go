@@ -130,6 +130,7 @@ func (ui *desktopUI) startTray(a fyne.App) {
 // to the tray host when they change.
 func (ui *desktopUI) syncTray() {
 	ui.backdropState() // the shader background follows the same state (#464)
+	ui.syncPresence()
 	tray := ui.tray
 	if tray == nil {
 		return

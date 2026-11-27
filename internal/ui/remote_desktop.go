@@ -1029,6 +1029,7 @@ func (remote *remoteDesktop) syncRun() {
 		ui.workMark.setState("brand")
 	}
 	remote.syncSending()
+	ui.syncPresence()
 }
 
 // modelChip is what the composer's chip shows for a server chat's model: its

@@ -1142,6 +1142,13 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         if (index >= 0) chats[index] = chats[index].copy(title = kept)
     }
 
+    /** An issue's or pull request's whole page, read by the target from GitHub (#698); ref: #12, owner/name#12 or its address. */
+    suspend fun githubItem(project: String, ref: String): JSONObject {
+        val target = server ?: error("Connect first.")
+        fun encode(value: String) = java.net.URLEncoder.encode(value, "UTF-8")
+        return onConnection(target, connectionGeneration) { it.get("/api/git/github/item?project=${encode(project)}&ref=${encode(ref)}&detail=1") }
+    }
+
     fun deleteChat(id: String) {
         val generation = connectionGeneration
         val target = server ?: return

@@ -199,11 +199,13 @@ private class CiteChip : ReplacementSpan() {
     }
 }
 
+/** What a tap on the text's citations and references does: the TextView's tag. */
+private class MarkdownLinks(val onCite: ((Citation) -> Unit)?, val onRef: ((String) -> Unit)?)
+
 /** A tap on a chip hands the citation to the TextView's tag (Markdown's onCite). */
 private class CiteSpan(val link: String) : ClickableSpan() {
     override fun onClick(widget: View) {
-        @Suppress("UNCHECKED_CAST")
-        val onCite = (widget.tag as? ((Citation) -> Unit)) ?: return
+        val onCite = (widget.tag as? MarkdownLinks)?.onCite ?: return
         val lines = link.removePrefix(CITE_SCHEME).substringBefore(':')
         onCite(Citation(link.substringAfter(':').substringAfter(':'), lines.substringBefore('-').toInt(), lines.substringAfter('-').toInt()))
     }
@@ -211,6 +213,42 @@ private class CiteSpan(val link: String) : ClickableSpan() {
     override fun updateDrawState(paint: TextPaint) {
         paint.isUnderlineText = false
     }
+}
+
+/** An issue or pull request cited (#12, owner/name#12, or its GitHub address): a tap opens it (#698, the desktop's references.go). */
+private class RefSpan(val ref: String) : ClickableSpan() {
+    override fun onClick(widget: View) {
+        (widget.tag as? MarkdownLinks)?.onRef?.invoke(ref)
+    }
+
+    override fun updateDrawState(paint: TextPaint) {
+        paint.color = Palette.amber.toArgb()
+        paint.isUnderlineText = false
+    }
+}
+
+// #12 or owner/name#12, as gitrepo.ParseRef reads them, not inside a word or a path.
+private val refText = Regex("""(?<![\w/.#-])(?:[A-Za-z0-9][A-Za-z0-9-]{0,38}/[A-Za-z0-9._-]{1,100})?#[1-9][0-9]{0,6}(?![\w])""")
+private val refURL = Regex("""^https?://(?:www\.)?github\.com/[A-Za-z0-9][A-Za-z0-9-]*/[A-Za-z0-9._-]+/(?:pull|issues)/[1-9][0-9]{0,6}(?:[/?#]\S*)?$""")
+
+/** The text rendered with its issues and pull requests made references: GitHub addresses, and #12 outside code and links. */
+private fun references(rendered: Spanned): Spanned {
+    val text = rendered as? Spannable ?: SpannableStringBuilder(rendered)
+    for (link in text.getSpans(0, text.length, LinkSpan::class.java).filter { refURL.matches(it.link) }) {
+        val start = text.getSpanStart(link)
+        val end = text.getSpanEnd(link)
+        text.removeSpan(link)
+        text.setSpan(RefSpan(link.link), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+    for (match in refText.findAll(text)) {
+        val start = match.range.first
+        val end = match.range.last + 1
+        val taken = text.getSpans(start, end, Any::class.java).any {
+            it is LinkSpan || it is ClickableSpan || it is io.noties.markwon.core.spans.CodeSpan || it is io.noties.markwon.core.spans.CodeBlockSpan
+        }
+        if (!taken) text.setSpan(RefSpan(match.value), start, end, Spanned.SPAN_EXCLUSIVE_EXCLUSIVE)
+    }
+    return text
 }
 
 /** The text rendered, its citation links made chips. */
@@ -228,12 +266,12 @@ private fun chips(rendered: Spanned): Spanned {
     return text
 }
 
-private fun markdownParts(renderer: Markwon, text: String): List<MarkdownPart> {
+private fun markdownParts(renderer: Markwon, text: String, refs: Boolean = false): List<MarkdownPart> {
     val parts = mutableListOf<MarkdownPart>()
     val parsed = renderer.parse(normalizeMath(text))
     var section = Document()
     fun flush() {
-        if (section.firstChild != null) parts.add(MarkdownPart.Text(chips(renderer.render(section))))
+        if (section.firstChild != null) parts.add(MarkdownPart.Text(chips(renderer.render(section)).let { if (refs) references(it) else it }))
         section = Document()
     }
     var node = parsed.firstChild
@@ -263,12 +301,14 @@ private fun markdownParts(renderer: Markwon, text: String): List<MarkdownPart> {
 }
 
 @Composable
-fun Markdown(text: String, modifier: Modifier = Modifier, onCite: ((Citation) -> Unit)? = null) {
+fun Markdown(text: String, modifier: Modifier = Modifier, onCite: ((Citation) -> Unit)? = null, onRef: ((String) -> Unit)? = null) {
     val context = LocalContext.current
     val density = LocalDensity.current
     val textSize = with(density) { Type.body.fontSize.toPx() }
     val renderer = remember(context, textSize) { markdownRenderer(context, textSize) }
-    val parts = remember(renderer, text) { markdownParts(renderer, text) }
+    val refs = onRef != null
+    val parts = remember(renderer, text, refs) { markdownParts(renderer, text, refs) }
+    val links = MarkdownLinks(onCite, onRef)
     Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
         for (part in parts) when (part) {
             is MarkdownPart.Code -> CodeWell(part.content, part.language.ifEmpty { "code" })
@@ -276,10 +316,10 @@ fun Markdown(text: String, modifier: Modifier = Modifier, onCite: ((Citation) ->
                 BoxWithConstraints(Modifier.fillMaxWidth()) {
                     val tableWidth = maxOf(maxWidth, (part.columns * 140).dp)
                     Row(Modifier.horizontalScroll(rememberScrollState())) {
-                        MarkdownText(renderer, part.content, textSize, Modifier.width(tableWidth), onCite)
+                        MarkdownText(renderer, part.content, textSize, Modifier.width(tableWidth), links)
                     }
                 }
-            } else MarkdownText(renderer, part.content, textSize, Modifier.fillMaxWidth(), onCite)
+            } else MarkdownText(renderer, part.content, textSize, Modifier.fillMaxWidth(), links)
         }
     }
 }
@@ -311,7 +351,7 @@ private class MarkdownTextView(context: Context) : TextView(context) {
 }
 
 @Composable
-private fun MarkdownText(renderer: Markwon, text: Spanned, textSize: Float, modifier: Modifier, onCite: ((Citation) -> Unit)?) {
+private fun MarkdownText(renderer: Markwon, text: Spanned, textSize: Float, modifier: Modifier, links: MarkdownLinks) {
     val lineHeight = with(LocalDensity.current) { Type.body.lineHeight.toPx() }.toInt()
     AndroidView(
         modifier = modifier,
@@ -324,7 +364,7 @@ private fun MarkdownText(renderer: Markwon, text: Spanned, textSize: Float, modi
             movementMethod = TableAwareMovementMethod.create()
         } },
         update = { view ->
-            view.tag = onCite
+            view.tag = links
             view.change {
                 view.setTextSize(TypedValue.COMPLEX_UNIT_PX, textSize)
                 TextViewCompat.setLineHeight(view, lineHeight)

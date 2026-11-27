@@ -132,7 +132,8 @@ data class Goal(
 /** A tab of the chat's side panel on the computer. */
 data class PanelTab(val key: String, val kind: String, val title: String, val url: String, val index: Int)
 
-data class Approval(val chat: String, val id: String, val title: String, val preview: String)
+/** review: an edit whose files can be read and changed before approving it (GET /api/review, Review.kt). */
+data class Approval(val chat: String, val id: String, val title: String, val preview: String, val review: Boolean = false)
 
 data class QuestionOption(val label: String, val description: String)
 
@@ -278,7 +279,7 @@ data class Meta(
         fun from(o: JSONObject) = Meta(
             o.optString("chat"), o.optString("title"), o.optBoolean("running"),
             o.optString("label"), o.optString("mark"), strings(o.optJSONArray("queue")), strings(o.optJSONArray("steer")),
-            o.optJSONObject("approval")?.let { Approval(it.optString("chat"), it.optString("id"), it.optString("title"), it.optString("preview")) },
+            o.optJSONObject("approval")?.let { Approval(it.optString("chat"), it.optString("id"), it.optString("title"), it.optString("preview"), it.optBoolean("review")) },
             o.optJSONObject("question")?.let { Questions.from(it) },
             o.optString("model"), o.optString("effort"), o.optInt("used"), o.optInt("window"),
             o.optJSONArray("todo").let { array ->
@@ -2144,14 +2145,28 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         }
     }
 
-    fun answer(approval: Approval, allow: Boolean) {
+    /** files: the texts the user changed in the review, by path; denied: the files refused; note: to the model (agent.ApprovalAnswer). */
+    fun answer(approval: Approval, allow: Boolean, files: Map<String, String> = emptyMap(), denied: List<String> = emptyList(), note: String = "") {
         val generation = connectionGeneration
         val target = server ?: return
         approvals.remove(approval.chat)
+        val body = JSONObject().put("id", approval.id).put("allow", allow)
+        if (files.isNotEmpty()) body.put("files", JSONObject(files))
+        if (denied.isNotEmpty()) body.put("denied", JSONArray(denied))
+        if (note.isNotBlank()) body.put("note", note.trim())
         scope.launch {
             runCatching {
-                onConnection(target, generation) { it.post("/api/approve", JSONObject().put("id", approval.id).put("allow", allow)) }
+                onConnection(target, generation) { it.post("/api/approve", body) }
             }.onFailure { actionFailed(generation, it) }
         }
+    }
+
+    /** The files of an edit waiting for approval, to review it (#690). */
+    suspend fun review(approval: Approval): List<ReviewFile> {
+        val generation = connectionGeneration
+        val target = server ?: error("Connect first.")
+        val reply = onConnection(target, generation) { it.get("/api/review?id=" + java.net.URLEncoder.encode(approval.id, "UTF-8")) }
+        val array = reply.optJSONArray("files") ?: return emptyList()
+        return (0 until array.length()).map { ReviewFile.from(array.getJSONObject(it)) }
     }
 }

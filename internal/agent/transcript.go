@@ -29,6 +29,10 @@ type ChatItem struct {
 	From   *ChatSender      `json:"from,omitempty"`   // user and note rows: the chat that sent it (chats.go)
 }
 
+// StoppedText is the error row of a turn the user stopped, on every engine
+// (#687): a stop, not a failure, so the clients draw it muted.
+const StoppedText = "Response stopped."
+
 func ToolArgs(raw string) (path, command string, creates bool) {
 	var args struct {
 		Path    string  `json:"path"`

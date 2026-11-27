@@ -408,7 +408,11 @@ func (ui *desktopUI) appendItem(chat *conversation, index int) {
 		ui.items.alone(view.box)
 		ui.place(view.box)
 	case "error":
-		text := newFlowText(plainSpans(item.Text), theme.TextSize(), colDanger)
+		ink := colDanger
+		if item.Text == agent.StoppedText { // the user's Stop is not a failure (#687)
+			ink = colMuted
+		}
+		text := newFlowText(plainSpans(item.Text), theme.TextSize(), ink)
 		text.tail, text.tight = "", true
 		ui.place(container.NewVBox(padded(theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(), theme.InnerPadding(),
 			container.NewStack(text, newSelectLayer(ui, text))), ui.responseControls(chat, index)))

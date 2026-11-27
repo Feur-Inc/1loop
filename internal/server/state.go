@@ -1076,11 +1076,12 @@ func (server *headlessServer) runWithIDLocked(chat *serverChat, m agent.Message,
 		if paused {
 			run.paused = true
 		} else if err != nil {
-			server.addLocked(chat, agent.ChatItem{Kind: "error", Text: err.Error()})
 			ended = agent.SubchatFailed
-			if ctx.Err() == context.Canceled {
-				ended = agent.SubchatStopped
+			text := err.Error()
+			if ctx.Err() == context.Canceled { // the user's Stop, as on the desktop (#687)
+				ended, text = agent.SubchatStopped, agent.StoppedText
 			}
+			server.addLocked(chat, agent.ChatItem{Kind: "error", Text: text})
 		}
 		moved := server.finishMoveLocked(chat, cfg.Move)
 		server.broadcastLocked("replace", map[string]string{"chat": chat.ID})

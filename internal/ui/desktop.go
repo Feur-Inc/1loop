@@ -1915,7 +1915,7 @@ func (ui *desktopUI) startIn(chat *conversation, messageValue agent.Message, id 
 				ended = "stopped"
 				text := err.Error()
 				if canceled {
-					text = "Response stopped."
+					text = agent.StoppedText
 				} else {
 					ui.runFailed(chat)
 				}

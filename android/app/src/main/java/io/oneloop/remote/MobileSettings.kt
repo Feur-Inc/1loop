@@ -286,6 +286,10 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
             }
             notice?.let { Text(it, style = Type.small) }
         }
+        "agent.project_memory" -> {
+            Text("Project memory", style = Type.title)
+            Text("Each project's AGENTS.md, read by every agent. Edit it from the project's … menu.", style = Type.small)
+        }
         "loopy.model" -> {
             Text("Loopy", style = Type.title)
             Text("The personal agent you reach from the logo at the top of the menu: where it lives, its model, its summary, memory, accounts and vault.", style = Type.small)

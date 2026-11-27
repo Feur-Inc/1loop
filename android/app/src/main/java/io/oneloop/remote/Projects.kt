@@ -2,7 +2,11 @@
 
 package io.oneloop.remote
 
+import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -13,6 +17,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.rememberModalBottomSheetState
 import androidx.compose.runtime.*
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.CancellationException
@@ -121,6 +126,8 @@ fun ProjectActionsSheet(app: RemoteApp, path: String, onNewWorktree: () -> Unit 
         ) {
             Text(when (action) {
                 "rename" -> "Rename project"
+                "env" -> "Environment variables"
+                "memory" -> "Project memory"
                 "delete" -> "Delete project?"
                 else -> projectName(path)
             }, style = Type.title)
@@ -134,6 +141,8 @@ fun ProjectActionsSheet(app: RemoteApp, path: String, onNewWorktree: () -> Unit 
                         Pill("Rename", primary = true, enabled = !busy && name.isNotBlank() && name.trim() != projectName(path) && name.trim() !in listOf(".", "..") && name.none { it == '/' || it == '\\' }) { apply() }
                     }
                 }
+                "env" -> ProjectEnvEditor(app, path) { action = "" }
+                "memory" -> ProjectMemoryEditor(app, path) { action = "" }
                 "delete" -> {
                     Text("Permanently deletes this folder, ALL its files and subfolders, and its chats. This cannot be undone. Stop its agents and close its terminals first.", style = Type.body)
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
@@ -147,6 +156,9 @@ fun ProjectActionsSheet(app: RemoteApp, path: String, onNewWorktree: () -> Unit 
                         Pill("New worktree", icon = Icons.branch) { onDone(); onNewWorktree() }
                         Pill("Repository", icon = Icons.branch) { onDone(); app.repositoryOpen = path }
                     }
+                    // As in the desktop's project menu (#693, #694).
+                    Pill("Environment variables", icon = Icons.terminal) { action = "env" }
+                    Pill("Project memory", icon = Icons.document) { action = "memory" }
                     if (app.projectActions) {
                         Pill("Rename") { action = "rename" }
                         Pill("Delete project") { action = "delete" }
@@ -156,4 +168,113 @@ fun ProjectActionsSheet(app: RemoteApp, path: String, onNewWorktree: () -> Unit 
             problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }
         }
     }
+}
+
+/**
+ * A project's environment variables (#693, the desktop's #408): its chats'
+ * commands, background tasks and terminals get them, on its target. One
+ * NAME=value per line; Save replaces them all, none forgets them. They are
+ * kept where the project is, never logged nor put in a prompt.
+ */
+@Composable
+private fun ProjectEnvEditor(app: RemoteApp, path: String, onDone: () -> Unit) {
+    var text by remember(path) { mutableStateOf<String?>(null) }
+    var problem by remember(path) { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(path) {
+        try {
+            val env = app.projectEnv(path)
+            text = env.keys().asSequence().sorted().joinToString("\n") { it + "=" + env.optString(it) }
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { problem = failure.message ?: "Could not read the variables." }
+    }
+    Text("Its chats' commands, background tasks and terminals get them. One NAME=value per line.", style = Type.body)
+    val current = text
+    if (current == null) {
+        if (problem == null) WorkRing("wait", 24.dp)
+    } else {
+        BasicTextField(
+            current, { text = it },
+            Modifier.fillMaxWidth().heightIn(min = 120.dp).background(Palette.code, RoundedCornerShape(10.dp))
+                .border(1.dp, Palette.border, RoundedCornerShape(10.dp)).padding(12.dp),
+            textStyle = Type.mono, cursorBrush = SolidColor(Palette.amber),
+        )
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Pill("Back", enabled = !busy, onClick = onDone)
+        Pill("Save", primary = true, enabled = !busy && current != null) {
+            val env = JSONObject()
+            for (line in current.orEmpty().lines()) {
+                val at = line.indexOf('=')
+                if (line.isBlank()) continue
+                if (at <= 0) { problem = "Not NAME=value: ${line.trim()}"; return@Pill }
+                env.put(line.substring(0, at).trim(), line.substring(at + 1))
+            }
+            busy = true
+            problem = null
+            scope.launch {
+                try { app.saveProjectEnv(path, env); onDone() }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) { problem = failure.message ?: "Could not save the variables." }
+                finally { busy = false }
+            }
+        }
+    }
+    problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }
+}
+
+/**
+ * Project memory (#694): the project's AGENTS.md, the instructions every
+ * agent reads there and where the agent saves what it learns about the
+ * project. A file of the project: written only with Save, and refused when
+ * it changed since it was read.
+ */
+@Composable
+private fun ProjectMemoryEditor(app: RemoteApp, path: String, onDone: () -> Unit) {
+    var read by remember(path) { mutableStateOf<String?>(null) } // as read, for Save's check
+    var text by remember(path) { mutableStateOf("") }
+    var exists by remember(path) { mutableStateOf(true) }
+    var problem by remember(path) { mutableStateOf<String?>(null) }
+    var busy by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
+    LaunchedEffect(path) {
+        try {
+            val (memory, found) = app.projectMemory(path)
+            read = memory
+            text = memory
+            exists = found
+        } catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { problem = failure.message ?: "Could not read AGENTS.md." }
+    }
+    Text(
+        if (exists) "AGENTS.md: what every agent reads in this project, and where it saves what it learns about it."
+        else "No AGENTS.md yet: Save creates it. Every agent reads it in this project.",
+        style = Type.body,
+    )
+    val before = read
+    if (before == null) {
+        if (problem == null) WorkRing("wait", 24.dp)
+    } else {
+        BasicTextField(
+            text, { text = it },
+            Modifier.fillMaxWidth().heightIn(min = 180.dp).background(Palette.code, RoundedCornerShape(10.dp))
+                .border(1.dp, Palette.border, RoundedCornerShape(10.dp)).padding(12.dp),
+            textStyle = Type.mono, cursorBrush = SolidColor(Palette.amber),
+        )
+    }
+    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+        Pill("Back", enabled = !busy, onClick = onDone)
+        Pill("Save", primary = true, enabled = !busy && before != null && text != before) {
+            busy = true
+            problem = null
+            scope.launch {
+                try { app.saveProjectMemory(path, before.orEmpty(), text); onDone() }
+                catch (cancelled: CancellationException) { throw cancelled }
+                catch (failure: Exception) { problem = failure.message ?: "Could not save AGENTS.md." }
+                finally { busy = false }
+            }
+        }
+    }
+    problem?.let { Text(it, style = Type.small.copy(color = Palette.danger)) }
 }

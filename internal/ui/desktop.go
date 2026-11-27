@@ -373,6 +373,7 @@ type desktopApp struct {
 	discordPresence   bool                       // settings: show on Discord what the agent is doing
 	discordDetails    bool                       // settings: with the chat, project and tool
 	presence          *discord.Presence          // while discordPresence is on
+	presenceStarted   map[string]time.Time       // first-seen start time for running remote server chats
 	refCache          map[string]*referenceCache // what was read of each, by owner/name#N
 	shortcutKeys      map[string]string          // shortcut → key, where the user chose another than its default
 	allChatsShown     map[string]bool            // projects whose every chat is listed

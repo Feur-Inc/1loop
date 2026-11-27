@@ -3,6 +3,7 @@
 package ui
 
 import (
+	"cmp"
 	"fmt"
 	"image"
 	"image/color"
@@ -10,6 +11,7 @@ import (
 	"image/gif"
 	"math"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"time"
@@ -71,48 +73,213 @@ func (ui *desktopUI) syncPresence() {
 	ui.presence.Set(ui.presenceActivity())
 }
 
-func (ui *desktopUI) presenceActivity() *discord.Activity {
-	activity := &discord.Activity{
-		Buttons: []discord.Button{{Label: "Get 1loop", URL: "https://github.com/Feur-Inc/1loop"}},
+type presenceWork struct {
+	title     string
+	workspace string
+	scratch   bool
+	model     string
+	mark      string
+	label     string
+	started   time.Time
+	rich      bool // true when mark/label came from live turn state rather than a chat list summary
+}
+
+func (ui *desktopUI) presenceStartFor(key string, now time.Time) time.Time {
+	if ui.presenceStarted == nil {
+		ui.presenceStarted = map[string]time.Time{}
 	}
-	var working *conversation
-	running := 0
+	if started, ok := ui.presenceStarted[key]; ok {
+		return started
+	}
+	ui.presenceStarted[key] = now
+	return now
+}
+
+func (ui *desktopUI) presenceWorkList() []presenceWork {
+	now := time.Now()
+	var list []presenceWork
+	seenRemoteKeys := map[string]bool{}
+
 	for _, chat := range ui.chats {
 		if chat.run == nil || chat.run.turn == nil {
 			continue
 		}
-		running++
-		if working == nil || chat.run.started.After(working.run.started) {
-			working = chat
+		list = append(list, presenceWork{
+			title:     chat.Title,
+			workspace: chat.Config.Workspace,
+			scratch:   chat.Config.InScratch(),
+			model:     ui.modelName(chat.Config),
+			mark:      chat.run.turn.mark,
+			label:     chat.run.turn.label,
+			started:   chat.run.started,
+			rich:      true,
+		})
+	}
+
+	seenServers := map[string]bool{}
+	addRemote := func(remote *remoteDesktop) {
+		if remote == nil || remote.client == nil {
+			return
+		}
+		addr := remote.client.address.URL
+		if seenServers[addr] {
+			return
+		}
+		seenServers[addr] = true
+
+		addedCurrent := false
+		if remote.current != "" && remote.meta.Running {
+			addedCurrent = true
+			key := addr + "\x00" + remote.current
+			seenRemoteKeys[key] = true
+			title, workspace, scratch := "", "", false
+			for _, chat := range remote.chats {
+				if chat.ID == remote.current {
+					title, workspace, scratch = chat.Title, chat.Workspace, chat.Scratch
+					break
+				}
+			}
+			if conv := remote.convs[remote.current]; conv != nil {
+				if title == "" {
+					title = conv.Title
+				}
+				if workspace == "" {
+					workspace = conv.Config.Workspace
+				}
+			}
+			mark := remote.meta.Mark
+			if remote.meta.Approval != nil || remote.meta.Question != nil {
+				mark = "approval"
+			}
+			model := ""
+			if m := cmp.Or(remote.meta.Model, remote.model); m != "" {
+				model, _ = remote.modelChip(m, "")
+			}
+			list = append(list, presenceWork{
+				title:     title,
+				workspace: workspace,
+				scratch:   scratch,
+				model:     model,
+				mark:      mark,
+				label:     remote.meta.Label,
+				started:   ui.presenceStartFor(key, now),
+				rich:      true,
+			})
+		}
+
+		defaultModel := ""
+		if remote.model != "" {
+			defaultModel, _ = remote.modelChip(remote.model, "")
+		}
+		for _, chat := range remote.chats {
+			if !chat.Running || (addedCurrent && chat.ID == remote.current) {
+				continue
+			}
+			key := addr + "\x00" + chat.ID
+			seenRemoteKeys[key] = true
+			mark := "think"
+			if chat.Blocked {
+				mark = "approval"
+			}
+			list = append(list, presenceWork{
+				title:     chat.Title,
+				workspace: chat.Workspace,
+				scratch:   chat.Scratch,
+				model:     defaultModel,
+				mark:      mark,
+				started:   ui.presenceStartFor(key, now),
+			})
 		}
 	}
-	if working == nil {
+
+	addRemote(ui.server)
+	for _, view := range ui.allPanes() {
+		addRemote(view.server)
+	}
+	for _, link := range ui.links {
+		if !link.answered || seenServers[link.address.URL] {
+			continue
+		}
+		seenServers[link.address.URL] = true
+		for _, chat := range link.listing.chats {
+			if !chat.Running {
+				continue
+			}
+			key := link.address.URL + "\x00" + chat.ID
+			seenRemoteKeys[key] = true
+			mark := "think"
+			if chat.Blocked {
+				mark = "approval"
+			}
+			list = append(list, presenceWork{
+				title:     chat.Title,
+				workspace: chat.Workspace,
+				scratch:   chat.Scratch,
+				mark:      mark,
+				started:   ui.presenceStartFor(key, now),
+			})
+		}
+	}
+
+	// Drop start times for remote chats that are no longer running.
+	for key := range ui.presenceStarted {
+		if !seenRemoteKeys[key] {
+			delete(ui.presenceStarted, key)
+		}
+	}
+	return list
+}
+
+func (ui *desktopUI) presenceActivity() *discord.Activity {
+	activity := &discord.Activity{
+		Buttons: []discord.Button{{Label: "Get 1loop", URL: "https://github.com/Feur-Inc/1loop"}},
+	}
+	work := ui.presenceWorkList()
+	if len(work) == 0 {
 		activity.Details = "Idle"
 		activity.LargeImage, activity.LargeText = discordArt+"1loop-ring-on-black.png", "1loop"
 		return activity
 	}
-	currentTurn := working.run.turn
-	mark := currentTurn.mark
+	chosen := work[0]
+	for _, candidate := range work[1:] {
+		if candidate.started.After(chosen.started) || (candidate.started.Equal(chosen.started) && candidate.rich && !chosen.rich) {
+			chosen = candidate
+		}
+	}
+	mark := chosen.mark
 	if discordActivities[mark] == "" {
 		mark = "think"
 	}
 	doing := discordActivities[mark]
-	model := ui.modelName(working.Config)
-	activity.Start = working.run.started
+	activity.Start = chosen.started
 	activity.LargeImage = discordArt + "discord/" + mark + ".gif"
-	activity.LargeText = doing + " · " + model
-	activity.Details, activity.State = "Working with "+model, doing
+	if chosen.model != "" {
+		activity.LargeText = doing + " · " + chosen.model
+		activity.Details = "Working with " + chosen.model
+	} else {
+		activity.LargeText = doing
+		activity.Details = "Working on a server"
+	}
+	activity.State = doing
 	if ui.discordDetails {
-		activity.Details = working.Title
-		if project := filepath.Base(working.Config.Workspace); working.Config.Workspace != "" && project != "." {
-			activity.Details = project + " · " + working.Title
+		if chosen.title != "" {
+			activity.Details = chosen.title
 		}
-		if label := strings.TrimSuffix(currentTurn.label, "…"); label != "" && mark != "wait" { // the wait counts seconds
+		if !chosen.scratch && chosen.workspace != "" {
+			if project := path.Base(filepath.ToSlash(chosen.workspace)); project != "" && project != "." && project != "/" {
+				if chosen.title != "" {
+					activity.Details = project + " · " + chosen.title
+				} else {
+					activity.Details = project
+				}
+			}
+		}
+		if label := strings.TrimSuffix(chosen.label, "…"); label != "" && mark != "wait" { // the wait counts seconds
 			activity.State = label
 		}
 	}
-	if running > 1 {
-		activity.State += fmt.Sprintf(" (+%d)", running-1)
+	if len(work) > 1 {
+		activity.State += fmt.Sprintf(" (+%d)", len(work)-1)
 	}
 	return activity
 }

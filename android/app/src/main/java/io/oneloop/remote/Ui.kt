@@ -815,6 +815,12 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
     val appeared = remember(app.current) { mutableSetOf<Int>() }
     val first = items.firstOrNull()
     LaunchedEffect(first) { fresh = items.size; appeared.clear() }
+    var referencing by remember { mutableStateOf<String?>(null) } // an issue or pull request cited, being read (#698)
+    referencing?.let { ref ->
+        // #12 is the project's repository: the chat's project, a worktree's own.
+        val workspace = app.chats.firstOrNull { it.id == app.current }?.workspace ?: app.selectedProject ?: app.workspace
+        ReferenceSheet(app, app.worktrees[workspace] ?: workspace, ref) { referencing = null }
+    }
     LazyColumn(
         state = list, modifier = Modifier.fillMaxSize(),
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
@@ -835,7 +841,7 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
                             }
                         }
                         "assistant" -> Column {
-                            Markdown(item.text, onCite = onCite)
+                            Markdown(item.text, onCite = onCite, onRef = { referencing = it })
                             // One Copy per finished answer: under its last text, not while it runs.
                             val endsTurn = (index + 1 until items.size).takeWhile { items[it].kind != "user" }.none { items[it].kind == "assistant" }
                             if (endsTurn && !(running && index > lastUser)) {

@@ -267,8 +267,10 @@ func (ui *desktopUI) syncProjectTheme() {
 }
 
 // projectThemeAction binds a project to a theme.
+var iconPalette = lineIcon("palette", `<path d="M8 2.4a5.6 5.6 0 1 0 0 11.2c.9 0 1.4-.5 1.4-1.1 0-.3-.1-.6-.3-.8-.2-.2-.3-.5-.3-.8 0-.6.5-1.1 1.1-1.1h1.3A2.4 2.4 0 0 0 13.6 7.4C13.6 4.6 11.1 2.4 8 2.4z"/><circle cx="5.4" cy="7.2" r=".7" fill="currentColor" stroke="none"/><circle cx="7.4" cy="5.2" r=".7" fill="currentColor" stroke="none"/><circle cx="10.2" cy="5.8" r=".7" fill="currentColor" stroke="none"/>`)
+
 func (ui *desktopUI) projectThemeAction(project string) menuAction {
-	return menuAction{label: "Theme…", icon: blankIcon, run: func() {
+	return menuAction{label: "Theme…", icon: iconPalette, run: func() {
 		const global = "The global theme"
 		picker := newPicker(ui.window, "Theme", styleField, nil)
 		picker.Options = []string{global}

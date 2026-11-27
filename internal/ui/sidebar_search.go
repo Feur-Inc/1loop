@@ -4,13 +4,13 @@ package ui
 
 import (
 	"strings"
-	"unicode/utf8"
 
 	"fyne.io/fyne/v2"
 	"fyne.io/fyne/v2/container"
 	"fyne.io/fyne/v2/layout"
 	"fyne.io/fyne/v2/widget"
 
+	"1loop/internal/remoteapi"
 	registry "1loop/internal/settings"
 )
 
@@ -20,48 +20,20 @@ var (
 )
 
 // Search shows this many chats at most: past that, more words narrow it.
-const searchLimit = 50
+const searchLimit = remoteapi.SearchLimit
 
-// searchEntry is a chat as search reads it, lowered once per search.
-type searchEntry struct {
-	title, text       string
-	lowTitle, lowText string
-}
+// The chat search is shared with the phone's (remoteapi/search.go, #700).
+type (
+	searchEntry = remoteapi.SearchEntry
+	chatHit     = remoteapi.ChatHit
+)
 
 func newSearchEntry(title string, texts []string) searchEntry {
-	text := strings.Join(texts, "\n")
-	return searchEntry{title: title, text: text, lowTitle: strings.ToLower(title), lowText: strings.ToLower(text)}
+	return remoteapi.NewSearchEntry("", title, texts)
 }
 
-// chatHit is a chat search found: by its title, or by its messages, with
-// the words around the first match.
-type chatHit struct {
-	index   int
-	snippet string // "" for a title match
-}
-
-// matchChats finds the chats whose title, or else whose title and messages
-// together, hold every word of the query: title matches first, each in the
-// chats' order. An empty query matches every chat.
 func matchChats(query string, entries []searchEntry) []chatHit {
-	words := strings.Fields(strings.ToLower(query))
-	var byTitle, byText []chatHit
-	for i, entry := range entries {
-		if containsAll(entry.lowTitle, words) {
-			byTitle = append(byTitle, chatHit{index: i})
-		} else if len(words) > 0 && containsAll(entry.lowTitle+"\n"+entry.lowText, words) {
-			// Show a word the title does not explain.
-			word := words[0]
-			for _, w := range words {
-				if !strings.Contains(entry.lowTitle, w) {
-					word = w
-					break
-				}
-			}
-			byText = append(byText, chatHit{index: i, snippet: entry.snippet(word)})
-		}
-	}
-	return append(byTitle, byText...)
+	return remoteapi.MatchChats(query, entries)
 }
 
 func containsAll(text string, words []string) bool {
@@ -71,33 +43,6 @@ func containsAll(text string, words []string) bool {
 		}
 	}
 	return true
-}
-
-// snippet is the text around the first place word is found, on one line.
-func (entry searchEntry) snippet(word string) string {
-	at := strings.Index(entry.lowText, word)
-	if at < 0 {
-		return ""
-	}
-	text := entry.text
-	if len(text) != len(entry.lowText) { // lowering changed the byte offsets
-		text = entry.lowText
-	}
-	start, end := max(0, at-30), min(len(text), at+len(word)+60)
-	for start > 0 && !utf8.RuneStart(text[start]) {
-		start--
-	}
-	for end < len(text) && !utf8.RuneStart(text[end]) {
-		end++
-	}
-	snippet := strings.Join(strings.Fields(text[start:end]), " ")
-	if start > 0 {
-		snippet = "…" + snippet
-	}
-	if end < len(text) {
-		snippet += "…"
-	}
-	return snippet
 }
 
 // What the search looks for: everything, or one kind, chosen with a tag
@@ -247,14 +192,14 @@ func (ui *desktopUI) search() {
 			heading("Chats")
 		}
 		for _, hit := range found.chats {
-			chat := chats[hit.index]
+			chat := chats[hit.Index]
 			row := newRow(chat.title, nil, styleMenu, nil)
 			row.detail = "Other chats"
 			if project := ui.projectOf(chat.folder); project != "" {
 				row.detail = ui.projectName(project)
 			}
-			if hit.snippet != "" {
-				row.detail += " · " + hit.snippet
+			if hit.Snippet != "" {
+				row.detail += " · " + hit.Snippet
 			}
 			if chat.running {
 				row.badge = iconDot

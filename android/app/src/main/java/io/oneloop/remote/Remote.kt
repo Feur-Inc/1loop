@@ -1182,6 +1182,14 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         if (id != null) scope.launch { load(id, target, generation) }
     }
 
+    /** The target's chats found by their title or messages (#700): ids and, for a match in the messages, the words around it. */
+    suspend fun searchChats(query: String): List<Pair<String, String>> {
+        val target = server ?: error("Connect first.")
+        val reply = onConnection(target, connectionGeneration) { it.get("/api/search?q=" + java.net.URLEncoder.encode(query, "UTF-8")) }
+        val array = reply.optJSONArray("chats") ?: return emptyList()
+        return (0 until array.length()).map { array.getJSONObject(it).let { hit -> hit.optString("id") to hit.optString("snippet") } }
+    }
+
     private fun applySettings(settings: JSONObject) {
         defaultAutoResume = settings.optJSONObject("autoResume")
         userPreferences = settings.optString("userPreferences")

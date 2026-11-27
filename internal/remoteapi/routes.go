@@ -66,6 +66,7 @@ var PhoneRoutes = []string{
 	"POST /api/chats/{id}/tasks/{task}/stop",
 	"POST /api/chats/{id}/version",
 	"POST /api/devices/{id}/revoke",
+	"POST /api/dynamic-compaction",
 	"POST /api/extensions/enable",
 	"POST /api/extensions/install",
 	"POST /api/extensions/mcp",

@@ -150,7 +150,7 @@ var list = []Setting{
 	// General.
 	{Key: "general.workspace", Section: General, Title: "Project folder", Where: OnDesktop, Kind: Action, Protected: true,
 		Keywords: []string{"workspace", "directory", "project", "folder", "path", "cwd"}},
-	{Key: KeyWorktreeSort, Section: General, Title: "Worktree order", Where: OnDesktop, Kind: Choice,
+	{Key: KeyWorktreeSort, Section: General, Title: "Worktree order", Where: OnBoth, Kind: Choice,
 		Keywords: []string{"worktree", "sort", "order", "branch", "git", "sidebar"},
 		Values:   []Value{{"recent", "Latest commit"}, {"name", "Name"}, {"pull", "Pull requests first"}}},
 	{Key: KeyTheme, Section: General, Title: "Theme", Where: OnBoth, Kind: Choice,
@@ -196,7 +196,7 @@ var list = []Setting{
 	{Key: KeyAutoResume, Section: Models, Title: "Automatic resumption", Where: OnBoth, Kind: Toggle,
 		Description: "At a rate limit, wait for the reset or switch model.",
 		Keywords:    []string{"rate limit", "quota", "resume", "fallback", "wait", "retry", "switch model", "usage"}},
-	{Key: KeyNamingModel, Section: Models, Title: "Chat naming model", Where: OnDesktop, Kind: Action,
+	{Key: KeyNamingModel, Section: Models, Title: "Chat naming model", Where: OnBoth, Kind: Action,
 		Keywords: []string{"name", "naming", "title", "rename", "auto name", "auto title", "summarize", "summary", "chat name", "files", "privacy"}},
 
 	// Agent & approvals.
@@ -237,7 +237,7 @@ var list = []Setting{
 	{Key: "loopy.autolinks", Section: Agent, Page: "Loopy", Title: "Loopy's AutoLinks", Where: OnBoth, Kind: Action, Protected: true,
 		Description: "The scripts Loopy made to reach a service or watch something: what each may do, when it runs, its history, its script.",
 		Keywords:    []string{"loopy", "autolink", "connector", "script", "python", "automation", "automate", "watch", "trigger"}},
-	{Key: KeyDynamicCompaction, Section: Agent, Title: "Dynamic compaction", Where: OnDesktop, Kind: Toggle,
+	{Key: KeyDynamicCompaction, Section: Agent, Title: "Dynamic compaction", Where: OnBoth, Kind: Toggle,
 		Description: "Compacts at natural breaks in the work, not when nearly full.",
 		Keywords:    []string{"context", "compact", "summary", "summarize", "tokens", "window"}},
 

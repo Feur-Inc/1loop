@@ -89,6 +89,7 @@ fun phoneSettingsShown(app: RemoteApp, list: SettingsList, workProfile: Boolean)
             "models.default_preset" -> app.defaultPresets
             "agent.memory" -> app.memoryEnabled != null
             "agent.wrap_up" -> app.wrapUpEnabled != null
+            "agent.dynamic_compaction" -> app.dynamicCompaction != null
             "loopy.summary", "loopy.memory", "loopy.accounts", "loopy.vault" -> false // all under loopy.model's button
             else -> true
         }
@@ -203,6 +204,7 @@ private fun SettingBlock(key: String, anchors: SettingAnchors, content: @Composa
 }
 
 /** A setting's title, explanation and controls, by its key in the shared list. */
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAdbState?) {
     val scope = rememberCoroutineScope()
@@ -236,6 +238,7 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
             }
             // The paired phones moved to their own setting, phone.pairing (#443).
             if (app.server?.localPhone == false) ServerInstallSection(app) // Install Chromium / Claude Code (#406)
+            if (app.server?.let { !it.localPhone && !it.desktop } == true && app.maxSubchats != null) SubchatLimitSection(app) // #696
         }
         "phone.pairing" -> ServerDevicesSection(app)
         "models.connections" -> {
@@ -290,6 +293,33 @@ private fun ColumnScope.SettingContent(app: RemoteApp, key: String, adb: LocalAd
             Text("Loopy", style = Type.title)
             Text("The personal agent you reach from the logo at the top of the menu: where it lives, its model, its summary, memory, accounts and vault.", style = Type.small)
             Pill("Loopy's settings", enabled = app.connected) { app.settingsOpen = false; app.openLoopy(); app.loopyPage = "settings" }
+        }
+        "models.naming_model" -> NamingModelSection(app)
+        "general.worktree_sort" -> {
+            Text("Worktree order", style = Type.title)
+            Text("How a project's worktrees are listed, the main one first.", style = Type.small)
+            FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+                for ((id, label) in listOf("recent" to "Latest commit", "name" to "Name", "pull" to "Pull requests first")) {
+                    Pill(label, primary = app.worktreeSort == id) { app.chooseWorktreeSort(id) }
+                }
+            }
+        }
+        "agent.dynamic_compaction" -> app.dynamicCompaction?.let { enabled ->
+            var notice by remember { mutableStateOf<String?>(null) }
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                Column(Modifier.weight(1f).padding(end = 12.dp), verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                    Text("Dynamic compaction", style = Type.title)
+                    Text("Compacts at natural breaks in the work, not when nearly full.", style = Type.small)
+                }
+                Toggle(enabled, enabled = app.connected) { on ->
+                    scope.launch {
+                        try { app.setDynamicCompaction(on); notice = null }
+                        catch (cancelled: CancellationException) { throw cancelled }
+                        catch (failure: Exception) { notice = failure.message ?: "Could not change dynamic compaction." }
+                    }
+                }
+            }
+            notice?.let { Text(it, style = Type.small) }
         }
         "tools.extensions" -> {
             Text("Skills, plugins and MCP servers", style = Type.title)
@@ -885,4 +915,56 @@ fun UpdateDialog(app: RemoteApp, onDismiss: () -> Unit) {
         text = { Column(Modifier.verticalScroll(rememberScrollState()), verticalArrangement = Arrangement.spacedBy(10.dp)) { UpdateActions(app) } },
         confirmButton = { Pill("Close") { onDismiss() } },
     )
+}
+
+/** The model that names new chats (#695), as the desktop's Chat naming model: none, or one of the target's models. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun NamingModelSection(app: RemoteApp) {
+    val scope = rememberCoroutineScope()
+    var notice by remember { mutableStateOf<String?>(null) }
+    val current = app.namingModel
+    fun choose(model: JSONObject?) = scope.launch {
+        try { app.setNamingModel(model); notice = null }
+        catch (cancelled: CancellationException) { throw cancelled }
+        catch (failure: Exception) { notice = failure.message ?: "Could not change the naming model." }
+    }
+    Text("Chat naming model", style = Type.title)
+    Text("A model that names new chats. None: a chat takes the first words of its message.", style = Type.small)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Pill("None", primary = current == null, enabled = app.connected) { choose(null) }
+        for (model in app.models.filter { it.id.isNotEmpty() }) {
+            val chosen = current != null && current.optString("connectionId") == model.account && current.optString("model") == model.id
+            Pill(model.name + model.detail.takeIf { it.isNotEmpty() }?.let { " · $it" }.orEmpty(), primary = chosen, enabled = app.connected) {
+                choose(JSONObject().put("connectionId", model.account).put("model", model.id))
+            }
+        }
+    }
+    if (current != null && app.models.none { it.account == current.optString("connectionId") && it.id == current.optString("model") }) {
+        Text("${current.optString("model")} is unavailable.", style = Type.small.copy(color = Palette.danger))
+    }
+    notice?.let { Text(it, style = Type.small) }
+}
+
+/** A headless server's subchats at once (#696), as on the desktop's Servers page: more wait in a queue. */
+@OptIn(ExperimentalLayoutApi::class)
+@Composable
+private fun SubchatLimitSection(app: RemoteApp) {
+    val scope = rememberCoroutineScope()
+    var notice by remember { mutableStateOf<String?>(null) }
+    Text("Subchats at once", style = Type.title)
+    Text("Extra subchats wait in a queue when this limit is reached or memory is low.", style = Type.small)
+    FlowRow(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        for (count in 0..8) { // agent.MaxSubchatsSettingLimit
+            val label = if (count == 0) "Auto (${app.defaultMaxSubchats.takeIf { it > 0 } ?: 4})" else "$count"
+            Pill(label, primary = app.maxSubchats == count, enabled = app.connected) {
+                scope.launch {
+                    try { app.setMaxSubchats(count); notice = null }
+                    catch (cancelled: CancellationException) { throw cancelled }
+                    catch (failure: Exception) { notice = failure.message ?: "Could not change the limit." }
+                }
+            }
+        }
+    }
+    notice?.let { Text(it, style = Type.small) }
 }

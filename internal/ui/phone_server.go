@@ -235,6 +235,7 @@ func (server *remoteServer) Routes() map[string]http.HandlerFunc {
 	routes["POST /api/preferences"] = server.setPreferences
 	routes["POST /api/memory"] = server.setMemory
 	routes["POST /api/wrap-up"] = server.setWrapUp
+	routes["POST /api/dynamic-compaction"] = server.setDynamicCompaction
 	routes["GET /api/projects"] = server.projectFolders
 	routes["POST /api/projects"] = server.addProject
 	routes["POST /api/projects/{action}"] = server.changeProject
@@ -1065,7 +1066,7 @@ func (ui *desktopUI) settingsForPhone() map[string]any {
 			accounts = append(accounts, remoteapi.Account{ID: conn.ID, Name: conn.Name, Provider: conn.Provider, Kind: agent.ProviderName(conn.Provider), Problem: ui.modelUnavailable[conn.ID], DefaultModels: conn.DefaultModels})
 		}
 	}
-	return map[string]any{"defaultPresets": true, "autoResume": ui.autoResume, "userPreferences": ui.userInstructions, "preferencesEditable": true, "memory": !ui.memoryOff, "wrapUp": !ui.wrapUpOff, "messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
+	return map[string]any{"defaultPresets": true, "autoResume": ui.autoResume, "userPreferences": ui.userInstructions, "preferencesEditable": true, "memory": !ui.memoryOff, "wrapUp": !ui.wrapUpOff, "dynamicCompaction": !ui.classicCompaction, "messageVersions": true, "attachments": true, "models": models, "accounts": accounts, "model": ui.choiceLabel(ui.cfg), "effort": ui.cfg.Effort, "tier": ui.cfg.ServiceTier,
 		"namingModel":  ui.namingModel,
 		"approvalMode": agent.ApprovalFor(ui.approvalMode, ui.cfg), "autoMode": agent.AutoModeOffered(ui.cfg), "loading": ui.modelsLoading, "window": agent.ModelContextWindow(ui.resolveModel(ui.cfg))}
 }

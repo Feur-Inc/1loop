@@ -1000,7 +1000,7 @@ func (ui *desktopUI) buildTitleBar(sidebar fyne.CanvasObject) {
 	ui.expand.Hide()
 	right := container.New(layout.NewCustomPaddedHBoxLayout(2))
 	if ui.chrome {
-		right.Add(windowControls(ui.window, ui.closeWindow))
+		right.Add(windowControls(ui.window, ui.closeWindow, func() bool { return !ui.inLoopy }))
 	}
 	ui.parentLink = newRow("", iconSubchat, styleChip, ui.openParent)
 	ui.parentLink.Hide()

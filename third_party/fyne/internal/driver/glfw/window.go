@@ -322,7 +322,13 @@ func (w *window) processRefresh() {
 }
 
 func (w *window) findObjectAtPositionMatching(canvas *glCanvas, mouse fyne.Position, matches func(object fyne.CanvasObject) bool) (fyne.CanvasObject, fyne.Position, int) {
-	return driver.FindObjectAtPositionMatching(mouse, matches, canvas.Overlays().Top(), canvas.menu, canvas.Content())
+	over := canvas.Overlays().Top()
+	// 1loop: an overlay may leave part of the window to what is under it (a
+	// dialog leaves the custom title bar usable).
+	if through, ok := over.(interface{ PassesThrough(fyne.Position) bool }); ok && through.PassesThrough(mouse) {
+		over = nil
+	}
+	return driver.FindObjectAtPositionMatching(mouse, matches, over, canvas.menu, canvas.Content())
 }
 
 func (w *window) processMouseMoved(xpos float64, ypos float64) {

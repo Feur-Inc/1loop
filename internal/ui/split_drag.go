@@ -130,11 +130,39 @@ func (ui *desktopUI) dragging() bool {
 	return false
 }
 
-// catchDragEscape makes Escape cancel a drag, whatever has the focus.
+// catchDragEscape makes Escape cancel a drag, whatever has the focus, and
+// otherwise close the pop-up on top (escapeOverlay).
 func (ui *desktopUI) catchDragEscape() {
-	desktop.OnKeyDown = func(_ fyne.Canvas, key *fyne.KeyEvent) bool {
-		return key.Name == fyne.KeyEscape && ui.cancelDrag()
+	desktop.OnKeyDown = func(c fyne.Canvas, key *fyne.KeyEvent) bool {
+		return key.Name == fyne.KeyEscape && (ui.cancelDrag() || escapeOverlay(c))
 	}
+}
+
+// escapeOverlay closes the pop-up on top of a window, a dialog, a menu or
+// a picture, whatever has the focus: a dialog's field had it, and Escape
+// went to the field. A sheet's own keys come first (a filter field's).
+func escapeOverlay(c fyne.Canvas) bool {
+	if c == nil {
+		return false
+	}
+	switch top := c.Overlays().Top().(type) {
+	case *sheet:
+		if !top.shown() {
+			return false
+		}
+		top.TypedKey(&fyne.KeyEvent{Name: fyne.KeyEscape})
+		return true
+	case *pictureViewer:
+		top.close()
+		return true
+	case *widget.PopUpMenu:
+		top.Hide()
+		return true
+	case *widget.PopUp:
+		top.Hide()
+		return true
+	}
+	return false
 }
 
 // carriedPane is the pane of the window a drag moves: the pane dragged by

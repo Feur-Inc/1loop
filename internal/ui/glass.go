@@ -14,6 +14,7 @@ import (
 	"hash/maphash"
 	"image"
 	"image/color"
+	"image/draw"
 	"runtime"
 	"sync"
 	"time"
@@ -128,25 +129,13 @@ func frostedBackdrop(c fyne.Canvas) (*image.NRGBA, image.Image) {
 	return small, shot
 }
 
-// windowControlsCut copies the window buttons out of shot, sharp, so a
-// dialog can keep them in view over its frosted backdrop.
-func windowControlsCut(c fyne.Canvas, shot image.Image) image.Image {
-	if windowControlsBox == nil || !windowControlsBox.Visible() || c.Size().Width <= 0 {
-		return nil
-	}
-	at := fyne.CurrentApp().Driver().AbsolutePositionForObject(windowControlsBox)
-	scale := float32(shot.Bounds().Dx()) / c.Size().Width
-	r := image.Rect(int(at.X*scale), int(at.Y*scale), int((at.X+windowControlsBox.Size().Width)*scale), int((at.Y+windowControlsBox.Size().Height)*scale)).Intersect(shot.Bounds())
-	if r.Empty() {
-		return nil
-	}
-	cut := image.NewNRGBA(image.Rect(0, 0, r.Dx(), r.Dy()))
-	for y := 0; y < r.Dy(); y++ {
-		for x := 0; x < r.Dx(); x++ {
-			cut.Set(x, y, shot.At(r.Min.X+x, r.Min.Y+y))
-		}
-	}
-	return cut
+// cropBelow is img from row top down, as a copy at the origin: Fyne draws a
+// sub-image (its bounds elsewhere) as nothing.
+func cropBelow(img *image.NRGBA, top int) *image.NRGBA {
+	top = min(max(0, top), img.Rect.Dy())
+	out := image.NewNRGBA(image.Rect(0, 0, img.Rect.Dx(), img.Rect.Dy()-top))
+	draw.Draw(out, out.Rect, img, image.Pt(img.Rect.Min.X, img.Rect.Min.Y+top), draw.Src)
+	return out
 }
 
 // boxBlur blurs img in place, rows then columns, over 2*radius+1 pixels,

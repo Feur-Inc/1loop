@@ -1476,6 +1476,8 @@ private fun ChoiceMark(picked: Boolean, multi: Boolean) {
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 private fun ApprovalSheet(app: RemoteApp, approval: Approval) {
+    var reviewing by remember(approval.id) { mutableStateOf(false) }
+    if (reviewing) return ReviewSheet(app, approval) { reviewing = false }
     // Only Deny or Allow close it: a hidden sheet left in place would block every touch.
     val state = rememberModalBottomSheetState(skipPartiallyExpanded = true, confirmValueChange = { it != SheetValue.Hidden })
     val title = app.chats.firstOrNull { it.id == approval.chat }?.title.orEmpty()
@@ -1494,6 +1496,8 @@ private fun ApprovalSheet(app: RemoteApp, approval: Approval) {
             CodeWell(approval.preview, "Preview", diff = approval.preview.startsWith("---"))
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(10.dp, Alignment.End)) {
                 Pill("Deny") { app.answer(approval, false) }
+                // An edit: its files read whole and changed before approving (#690).
+                if (approval.review) Pill("Review…") { reviewing = true }
                 Pill("Allow", primary = true) { app.answer(approval, true) }
             }
         }

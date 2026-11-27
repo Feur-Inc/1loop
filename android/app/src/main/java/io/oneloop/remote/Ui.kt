@@ -786,6 +786,7 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
     val items = app.items
     val lastUser by remember { derivedStateOf { items.indexOfLast { it.kind == "user" } } }
     var editing by remember { mutableStateOf<Pair<Int, String>?>(null) } // a user message being edited: its index in the whole chat
+    var comparing by remember { mutableStateOf<String?>(null) } // a compaction note being compared
     // Following the newest line until the reader scrolls up, like the desktop.
     LaunchedEffect(list) {
         snapshotFlow { list.isScrollInProgress }.collect { scrolling -> if (!scrolling) follow = !list.canScrollForward }
@@ -865,13 +866,20 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
                             Text(item.text, style = Type.body.copy(color = Palette.danger))
                             if (!(running && index > lastUser)) MessageActions(app, item, running) { app.retryMessage(index) }
                         }
-                        "note" -> Text(
-                            item.text, style = Type.caption, textAlign = TextAlign.Center,
-                            // Another chat's report opens that chat.
-                            modifier = Modifier.fillMaxWidth().then(
-                                if (item.fromId.isEmpty()) Modifier else Modifier.clickable(onClickLabel = "Open the chat") { app.open(item.fromId) }
-                            ),
-                        )
+                        "note" -> Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
+                            Text(
+                                item.text, style = Type.caption, textAlign = TextAlign.Center,
+                                // Another chat's report opens that chat.
+                                modifier = Modifier.fillMaxWidth().then(
+                                    if (item.fromId.isEmpty()) Modifier else Modifier.clickable(onClickLabel = "Open the chat") { app.open(item.fromId) }
+                                ),
+                            )
+                            // A compaction of 1loop's: its context before and after (#697).
+                            if (compactionNote(item)) Text(
+                                "Compare", style = Type.caption.copy(color = Palette.amber),
+                                modifier = Modifier.clip(RoundedCornerShape(8.dp)).clickable { comparing = item.text }.padding(horizontal = 8.dp, vertical = 4.dp),
+                            )
+                        }
                     }
                 }
         
@@ -910,6 +918,7 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
     }
     TranscriptFade(list)
     editing?.let { (index, text) -> EditSheet(text, onSend = { app.editMessage(index, it) }) { editing = null } }
+    comparing?.let { note -> app.current?.let { chat -> CompactionSheet(app, chat, note) { comparing = null } } }
 }
 
 // The conversation fades under the composer instead of a hard edge, while

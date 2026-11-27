@@ -74,7 +74,6 @@ import androidx.compose.foundation.layout.windowInsetsPadding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.foundation.lazy.itemsIndexed
-import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -153,6 +152,7 @@ import com.journeyapps.barcodescanner.ScanContract
 import com.journeyapps.barcodescanner.ScanOptions
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.drop
 import kotlinx.coroutines.launch
 import org.json.JSONObject
 import java.util.Locale
@@ -781,14 +781,18 @@ private fun Welcome(app: RemoteApp) {
 
 @Composable
 private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citation) -> Unit, onTool: (Item) -> Unit) {
-    val list = rememberLazyListState()
-    var follow by remember { mutableStateOf(true) }
+    // The list and following live in the app (#686): a Transcript composed
+    // again (back from Settings, a rotation) takes up where it was.
+    val list = app.transcript
+    var follow by app::followEnd
     val items = app.items
     val lastUser by remember { derivedStateOf { items.indexOfLast { it.kind == "user" } } }
     var editing by remember { mutableStateOf<Pair<Int, String>?>(null) } // a user message being edited: its index in the whole chat
     // Following the newest line until the reader scrolls up, like the desktop.
+    // Only a scroll that ends decides it: the first value is no scroll at all,
+    // and a list composed again is not at its end yet.
     LaunchedEffect(list) {
-        snapshotFlow { list.isScrollInProgress }.collect { scrolling -> if (!scrolling) follow = !list.canScrollForward }
+        snapshotFlow { list.isScrollInProgress }.drop(1).collect { scrolling -> if (!scrolling) follow = !list.canScrollForward }
     }
     // Scrolled near the top of a long chat: the page before it, the view kept
     // on the same message. Not while following the end: a chat shown again
@@ -807,7 +811,7 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
     // Steered while the agent works: greyed at the end until the agent takes them in.
     // Queued ones wait in the tray above the composer (QueueTray) for the task's end (#433).
     val pending = app.meta?.steer.orEmpty()
-    LaunchedEffect(tail, running, app.meta?.label, pending.size) {
+    LaunchedEffect(tail, running, app.meta?.label, pending.size, follow) {
         if (follow && items.isNotEmpty()) list.scrollToItem(items.size + 1 + pending.size, 0)
     }
     // Items from fresh on arrived after the chat opened; older ones loaded above reset it.
@@ -909,7 +913,26 @@ private fun BoxScope.Transcript(app: RemoteApp, running: Boolean, onCite: (Citat
         }
     }
     TranscriptFade(list)
+    JumpToEnd(shown = !follow && list.canScrollForward) { follow = true } // the effect above scrolls
     editing?.let { (index, text) -> EditSheet(text, onSend = { app.editMessage(index, it) }) { editing = null } }
+}
+
+// The jump to the end (#692, the desktop's #605): while the conversation is
+// scrolled up, a small round down arrow sits just above the composer, at its
+// right end. A tap brings the conversation back to its end and follows the
+// live answer again.
+@Composable
+private fun BoxScope.JumpToEnd(shown: Boolean, onJump: () -> Unit) {
+    AnimatedVisibility(
+        shown, modifier = Modifier.align(Alignment.BottomEnd).padding(end = 16.dp, bottom = 10.dp),
+        enter = fadeIn(motion(tween(160))) + scaleIn(motion(tween(160)), initialScale = 0.8f),
+        exit = fadeOut(motion(tween(120))),
+    ) {
+        RoundButton(
+            Icons.arrowDown, Palette.surface, Palette.muted, description = "Jump to the end",
+            modifier = Modifier.border(1.dp, Palette.border, CircleShape), size = 34.dp, iconSize = 16.dp, onClick = onJump,
+        )
+    }
 }
 
 // The conversation fades under the composer instead of a hard edge, while

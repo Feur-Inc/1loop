@@ -42,6 +42,7 @@ object Icons {
     val copy = lineIcon("copy", line("M7.1 5.5h4.3a1.6 1.6 0 0 1 1.6 1.6v4.3a1.6 1.6 0 0 1-1.6 1.6H7.1a1.6 1.6 0 0 1-1.6-1.6V7.1a1.6 1.6 0 0 1 1.6-1.6z"),
         line("M10.5 5.5V4.2c0-.7-.5-1.2-1.2-1.2H4.2C3.5 3 3 3.5 3 4.2v5.1c0 .7.5 1.2 1.2 1.2h1.3"))
     val folder = lineIcon("folder", line("M2.5 5c0-.8.6-1.5 1.4-1.5h2.7l1.3 1.4h4.2c.8 0 1.4.6 1.4 1.4v4.9c0 .8-.6 1.3-1.4 1.3H3.9c-.8 0-1.4-.5-1.4-1.3z"))
+    val arrowDown = lineIcon("arrow-down", line("M8 3.2v9.4M3.9 8.5 8 12.6l4.1-4.1", 1.8f))
     val send = lineIcon("send", line("M8 13.2V2.9M3.5 7.4 8 2.9l4.5 4.5", 2f))
     val shield = lineIcon("shield", line("M8 2.2l4.6 1.8v3.5c0 3-2 5.1-4.6 6.3-2.6-1.2-4.6-3.3-4.6-6.3V4z"))
     val bolt = lineIcon("bolt", line("M8.9 1.8 3.7 9h4.1l-.7 5.2L12.3 7H8.2z"))

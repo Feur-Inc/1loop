@@ -6,6 +6,7 @@ import androidx.core.content.edit
 import android.content.Context
 import android.os.Build
 import android.provider.Settings
+import androidx.compose.foundation.lazy.LazyListState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateListOf
@@ -598,6 +599,11 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     /** The index of items[0] in the chat: a long chat opens on its last page. */
     var firstItem by mutableStateOf(0)
     private var loadingEarlier = false
+    /** Where the open chat's transcript is, and whether it follows the end. Kept here, not in the
+     *  composition, so Settings, a rotation or a reconnect leave the reader where they were (#686). */
+    var transcript by mutableStateOf(LazyListState())
+        private set
+    var followEnd by mutableStateOf(true)
     var meta by mutableStateOf<Meta?>(null)
     /** The ChatGPT (Web) page of the chat shown on a local phone, as the engine last answered (see ChatGPTWebLease). */
     var chatgptPage by mutableStateOf<JSONObject?>(null)
@@ -1169,6 +1175,10 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
     }
 
     fun open(id: String?) {
+        if (id != current) {
+            transcript = LazyListState()
+            followEnd = true
+        }
         current = id
         chats.firstOrNull { it.id == id }?.let { if (it.scratch) NO_FOLDER else it.workspace }?.let {
             selectedProject = it
@@ -1321,6 +1331,7 @@ class RemoteApp(private val context: Context, private val scope: CoroutineScope)
         val pending = "sending:${java.util.UUID.randomUUID()}|$draft"
         drafts.save(pending, text)
         problem = null
+        followEnd = true // sending a message returns to the live answer, as on the desktop (#685)
         sendRequest(target, generation, draft, text, body, sent, pending)
     }
 
